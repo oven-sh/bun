@@ -86,7 +86,7 @@ impl ConcurrentCppTask {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNoContext) {
+pub(crate) extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNoContext) {
     crate::mark_binding!();
     // `EventLoopTaskNoContext` is an `opaque_ffi!` ZST handle; `opaque_ref` is
     // the centralised non-null deref proof. C++ just handed it over.

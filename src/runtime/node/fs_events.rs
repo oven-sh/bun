@@ -1,4 +1,4 @@
-use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
+use core::ffi::{c_char, c_int, c_long, c_void};
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
 
@@ -13,29 +13,23 @@ use bun_threading::{Mutex, Semaphore, UnboundedQueue};
 use super::node_fs_watcher::Event;
 use super::path_watcher::EventType;
 
-pub type CFAbsoluteTime = f64;
-pub type CFTimeInterval = f64;
-pub type CFArrayCallBacks = c_void;
+pub(crate) type CFAbsoluteTime = f64;
+pub(crate) type CFTimeInterval = f64;
 
-pub type FSEventStreamEventFlags = c_int;
-pub type OSStatus = c_int;
-pub type CFIndex = c_long;
+pub(crate) type FSEventStreamEventFlags = c_int;
+pub(crate) type CFIndex = c_long;
 
-pub type FSEventStreamCreateFlags = u32;
-pub type FSEventStreamEventId = u64;
+pub(crate) type FSEventStreamCreateFlags = u32;
+pub(crate) type FSEventStreamEventId = u64;
 
-pub type CFStringEncoding = c_uint;
-
-pub type CFArrayRef = *mut c_void;
-pub type CFAllocatorRef = *mut c_void;
-pub type CFBundleRef = *mut c_void;
-pub type CFDictionaryRef = *mut c_void;
-pub type CFRunLoopRef = *mut c_void;
-pub type CFRunLoopSourceRef = *mut c_void;
-pub type CFStringRef = *mut c_void;
-pub type CFTypeRef = *mut c_void;
-pub type FSEventStreamRef = *mut c_void;
-pub type FSEventStreamCallback = unsafe extern "C" fn(
+pub(crate) type CFArrayRef = *mut c_void;
+pub(crate) type CFAllocatorRef = *mut c_void;
+pub(crate) type CFRunLoopRef = *mut c_void;
+pub(crate) type CFRunLoopSourceRef = *mut c_void;
+pub(crate) type CFStringRef = *mut c_void;
+pub(crate) type CFTypeRef = *mut c_void;
+pub(crate) type FSEventStreamRef = *mut c_void;
+pub(crate) type FSEventStreamCallback = unsafe extern "C" fn(
     FSEventStreamRef,
     *mut c_void,
     usize,
@@ -76,51 +70,35 @@ impl Default for FSEventStreamContext {
     }
 }
 
-pub const K_CF_STRING_ENCODING_UTF8: CFStringEncoding = 0x8000100;
-pub const NO_ERR: OSStatus = 0;
+pub(crate) const K_FS_EVENT_STREAM_CREATE_FLAG_NO_DEFER: c_int = 2;
+pub(crate) const K_FS_EVENT_STREAM_CREATE_FLAG_FILE_EVENTS: c_int = 16;
 
-pub const K_FS_EVENT_STREAM_CREATE_FLAG_NO_DEFER: c_int = 2;
-pub const K_FS_EVENT_STREAM_CREATE_FLAG_FILE_EVENTS: c_int = 16;
+pub(crate) const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CHANGE_OWNER: c_int = 0x4000;
+pub(crate) const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CREATED: c_int = 0x100;
+pub(crate) const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_FINDER_INFO_MOD: c_int = 0x2000;
+pub(crate) const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_INODE_META_MOD: c_int = 0x400;
+pub(crate) const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_IS_DIR: c_int = 0x20000;
+pub(crate) const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_MODIFIED: c_int = 0x1000;
+pub(crate) const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_REMOVED: c_int = 0x200;
+pub(crate) const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_RENAMED: c_int = 0x800;
+pub(crate) const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_XATTR_MOD: c_int = 0x8000;
 
-pub const K_FS_EVENT_STREAM_EVENT_FLAG_EVENT_IDS_WRAPPED: c_int = 8;
-pub const K_FS_EVENT_STREAM_EVENT_FLAG_HISTORY_DONE: c_int = 16;
-pub const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CHANGE_OWNER: c_int = 0x4000;
-pub const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CREATED: c_int = 0x100;
-pub const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_FINDER_INFO_MOD: c_int = 0x2000;
-pub const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_INODE_META_MOD: c_int = 0x400;
-pub const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_IS_DIR: c_int = 0x20000;
-pub const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_MODIFIED: c_int = 0x1000;
-pub const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_REMOVED: c_int = 0x200;
-pub const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_RENAMED: c_int = 0x800;
-pub const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_XATTR_MOD: c_int = 0x8000;
-pub const K_FS_EVENT_STREAM_EVENT_FLAG_KERNEL_DROPPED: c_int = 4;
-pub const K_FS_EVENT_STREAM_EVENT_FLAG_MOUNT: c_int = 64;
-pub const K_FS_EVENT_STREAM_EVENT_FLAG_ROOT_CHANGED: c_int = 32;
-pub const K_FS_EVENT_STREAM_EVENT_FLAG_UNMOUNT: c_int = 128;
-pub const K_FS_EVENT_STREAM_EVENT_FLAG_USER_DROPPED: c_int = 2;
-
-pub const K_FS_EVENTS_MODIFIED: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CHANGE_OWNER
+pub(crate) const K_FS_EVENTS_MODIFIED: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CHANGE_OWNER
     | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_FINDER_INFO_MOD
     | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_INODE_META_MOD
     | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_MODIFIED
     | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_XATTR_MOD;
 
-pub const K_FS_EVENTS_RENAMED: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CREATED
+pub(crate) const K_FS_EVENTS_RENAMED: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CREATED
     | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_REMOVED
     | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_RENAMED;
 
-pub const K_FS_EVENTS_SYSTEM: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_USER_DROPPED
-    | K_FS_EVENT_STREAM_EVENT_FLAG_KERNEL_DROPPED
-    | K_FS_EVENT_STREAM_EVENT_FLAG_EVENT_IDS_WRAPPED
-    | K_FS_EVENT_STREAM_EVENT_FLAG_HISTORY_DONE
-    | K_FS_EVENT_STREAM_EVENT_FLAG_MOUNT
-    | K_FS_EVENT_STREAM_EVENT_FLAG_UNMOUNT
-    | K_FS_EVENT_STREAM_EVENT_FLAG_ROOT_CHANGED;
-
+#[allow(dead_code)]
 static FSEVENTS_DEFAULT_LOOP_MUTEX: Mutex = Mutex::new();
 // PORTING.md §Global mutable state: written under FSEVENTS_DEFAULT_LOOP_MUTEX,
 // read with double-checked-locking. AtomicPtr gives safe load/store; the mutex
 // serialises the init/teardown writes (Acquire/Release publishes the pointee).
+#[allow(dead_code)]
 static FSEVENTS_DEFAULT_LOOP: AtomicPtr<FSEventsLoop> = AtomicPtr::new(ptr::null_mut());
 
 #[cfg(unix)]
@@ -381,10 +359,12 @@ unsafe impl bun_threading::Linked for ConcurrentTask {
     }
 }
 
-pub type ConcurrentTaskQueue = UnboundedQueue<ConcurrentTask>;
-
 impl ConcurrentTask {
-    pub fn from(this: &mut ConcurrentTask, task: Task, auto_delete: bool) -> &mut ConcurrentTask {
+    pub(crate) fn from(
+        this: &mut ConcurrentTask,
+        task: Task,
+        auto_delete: bool,
+    ) -> &mut ConcurrentTask {
         *this = ConcurrentTask {
             task,
             next: bun_threading::Link::new(),
@@ -766,6 +746,7 @@ impl FSEventsLoop {
         }
     }
 
+    #[allow(dead_code)]
     fn register_watcher(&mut self, watcher: *mut FSEventsWatcher) {
         {
             let _guard = self.mutex.lock_guard();
@@ -895,7 +876,7 @@ pub struct FSEventsWatcher {
 }
 
 pub type Callback = fn(ctx: *mut c_void, event: Event, is_file: bool);
-pub type UpdateEndCallback = fn(ctx: *mut c_void);
+pub(crate) type UpdateEndCallback = fn(ctx: *mut c_void);
 
 impl FSEventsWatcher {
     /// # Safety
@@ -903,7 +884,8 @@ impl FSEventsWatcher {
     /// global default loop from `FSEventsLoop::init`) for the lifetime of the
     /// returned watcher; mutable access to its watcher list is serialized by
     /// `loop_.mutex` inside `register_watcher`.
-    pub fn init(
+    #[allow(dead_code)]
+    pub(crate) fn init(
         loop_: NonNull<FSEventsLoop>,
         path: &[u8],
         recursive: bool,
@@ -925,11 +907,11 @@ impl FSEventsWatcher {
         this
     }
 
-    pub fn emit(&self, event: Event, is_file: bool) {
+    pub(crate) fn emit(&self, event: Event, is_file: bool) {
         (self.callback)(self.ctx, event, is_file);
     }
 
-    pub fn flush(&self) {
+    pub(crate) fn flush(&self) {
         (self.flush_callback)(self.ctx);
     }
 }
@@ -949,6 +931,7 @@ impl Drop for FSEventsWatcher {
     }
 }
 
+#[allow(dead_code)]
 pub fn watch(
     path: &[u8],
     recursive: bool,
@@ -985,11 +968,13 @@ pub fn watch(
 }
 
 /// `extern "C"` thunk so this fits `bun_core::Global::ExitFn`.
+#[allow(dead_code)]
 extern "C" fn close_and_wait_on_exit() {
     close_and_wait()
 }
 
-pub fn close_and_wait() {
+#[allow(dead_code)]
+pub(crate) fn close_and_wait() {
     #[cfg(not(target_os = "macos"))]
     {
         return;

@@ -49,22 +49,22 @@ use bun_jsc::c_api::{JSObjectGetPropertyAtIndex, JSObjectGetProxyTarget};
 /// matcher gets a sibling `expect_js::*` module the same way `mod.rs` does for
 /// `Expect`.
 mod expect_js {
-    pub mod any {
+    pub(super) mod any {
         ::bun_jsc::codegen_cached_accessors!("ExpectAny"; constructorValue);
     }
-    pub mod close_to {
+    pub(super) mod close_to {
         ::bun_jsc::codegen_cached_accessors!("ExpectCloseTo"; numberValue, digitsValue);
     }
-    pub mod object_containing {
+    pub(super) mod object_containing {
         ::bun_jsc::codegen_cached_accessors!("ExpectObjectContaining"; objectValue);
     }
-    pub mod string_containing {
+    pub(super) mod string_containing {
         ::bun_jsc::codegen_cached_accessors!("ExpectStringContaining"; stringValue);
     }
-    pub mod string_matching {
+    pub(super) mod string_matching {
         ::bun_jsc::codegen_cached_accessors!("ExpectStringMatching"; testValue);
     }
-    pub mod custom {
+    pub(super) mod custom {
         ::bun_jsc::codegen_cached_accessors!("ExpectCustomAsymmetricMatcher"; capturedArgs, matcherFn);
     }
 }

@@ -34,13 +34,13 @@ bun_output::declare_scope!(bun_test, hidden);
 // adapter dispatches). Drop once the body is normalised to call
 // `code_coverage::{text,lcov}` directly with `<ENABLE_ANSI_COLORS>`.
 mod coverage {
-    pub use bun_sourcemap_jsc::code_coverage::{
+    pub(super) use bun_sourcemap_jsc::code_coverage::{
         ByteRangeMapping, Fraction, Report as CodeCoverageReport, lcov as Lcov,
     };
 
     /// `std.sort.pdq(..., isLessThan)` adapter — Rust `sort_by` wants `Ordering`.
     #[inline]
-    pub fn is_less_than_cmp(
+    pub(super) fn is_less_than_cmp(
         a: &&mut ByteRangeMapping,
         b: &&mut ByteRangeMapping,
     ) -> core::cmp::Ordering {
@@ -48,13 +48,13 @@ mod coverage {
     }
 
     #[allow(non_snake_case)]
-    pub mod Text {
+    pub(super) mod Text {
         use super::*;
         use bun_sourcemap_jsc::code_coverage::text;
 
         /// Runtime-bool → const-generic dispatch for `text::write_format`.
         #[inline]
-        pub fn write_format(
+        pub(crate) fn write_format(
             report: &CodeCoverageReport,
             max_filename_length: usize,
             fraction: &mut Fraction,
@@ -77,7 +77,7 @@ mod coverage {
 
         /// Runtime-bool → const-generic dispatch for `text::write_format_with_values`.
         #[inline]
-        pub fn write_format_with_values(
+        pub(crate) fn write_format_with_values(
             filename: &[u8],
             max_filename_length: usize,
             vals: Fraction,
@@ -133,18 +133,21 @@ mod bun_test {
 
     /// `add_result()` queue payload — Zig spells it `bun_test.ResultMsg.start`;
     /// Rust port collapsed it into `RefDataValue`.
-    pub use crate::test_runner::bun_test::RefDataValue as ResultMsg;
-    pub use crate::test_runner::bun_test::*;
-    pub use crate::test_runner::execution::{
+    pub(super) use crate::test_runner::bun_test::RefDataValue as ResultMsg;
+    pub(super) use crate::test_runner::bun_test::*;
+    pub(super) use crate::test_runner::execution::{
         Basic as BasicResult, ExpectAssertions, PendingIs as PendingMode,
     };
     #[allow(non_snake_case)]
-    pub mod Execution {
-        pub use crate::test_runner::execution::*;
+    pub(super) mod Execution {
+        pub(crate) use crate::test_runner::execution::*;
     }
 }
 
-pub fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
+pub(crate) fn escape_xml(
+    str_: &[u8],
+    writer: &mut impl bun_io::Write,
+) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
     let mut last: usize = 0;
     let mut i: usize = 0;
@@ -258,7 +261,7 @@ pub struct Metrics {
 }
 
 impl Metrics {
-    pub fn add(&mut self, other: &Metrics) {
+    pub(crate) fn add(&mut self, other: &Metrics) {
         self.test_cases += other.test_cases;
         self.assertions += other.assertions;
         self.failures += other.failures;
@@ -813,11 +816,6 @@ pub struct ReportersConfig {
 // type DotColorMap = enum_map::EnumMap<TestRunner::Test::Status, Option<&'static [u8]>>;
 
 impl CommandLineReporter {
-    // TODO(port): Zig `TestRunner.Callback` was a vtable struct; not yet
-    // ported. These hooks are no-ops in the Zig source too — keep the
-    // signature shape but take `&mut Self` until the callback type lands.
-    pub fn handle_update_count(_: &mut Self, _: u32, _: u32) {}
-
     pub fn handle_test_start(_: &mut Self, _: /* TestRunner.Test.ID */ u32) {}
 
     fn print_test_line<const DIM: bool>(
@@ -1960,7 +1958,9 @@ impl CommandLineReporter {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun_core::String) -> bool {
+pub(crate) extern "C" fn BunTest__shouldGenerateCodeCoverage(
+    test_name_str: bun_core::String,
+) -> bool {
     let zig_slice = test_name_str.to_utf8();
     // In this particular case, we don't actually care about non-ascii latin1 characters.
     // so we skip the ascii check
@@ -2001,14 +2001,13 @@ pub extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun_core::S
     true
 }
 
-pub struct TestCommand;
+pub(crate) struct TestCommand;
 
 impl TestCommand {
-    pub const NAME: &'static str = "test";
     // pub use bun_options_types::code_coverage_options::{CodeCoverageOptions, Reporter, Reporters};
     // PORT NOTE: re-exports moved to top-level `use` per crate map.
 
-    pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
         Output::IS_GITHUB_ACTION.store(
             Output::is_github_action(),
             core::sync::atomic::Ordering::Relaxed,
@@ -3039,7 +3038,7 @@ impl TestCommand {
         }
     }
 
-    pub fn run_all_tests(
+    pub(crate) fn run_all_tests(
         reporter_: &mut CommandLineReporter,
         vm_: &mut VirtualMachine,
         files_: &[PathString],
@@ -3050,7 +3049,7 @@ impl TestCommand {
             files: &'a [PathString],
         }
         impl<'a> Context<'a> {
-            pub fn begin(&mut self) {
+            pub(crate) fn begin(&mut self) {
                 let reporter = &mut *self.reporter;
                 let vm = &mut *self.vm;
                 let files = self.files;
@@ -3114,7 +3113,7 @@ impl TestCommand {
         unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
     }
 
-    pub fn run(
+    pub(crate) fn run(
         reporter: &mut CommandLineReporter,
         vm: &mut VirtualMachine,
         file_name: &[u8],
@@ -3339,21 +3338,13 @@ impl TestCommand {
     }
 }
 
-pub fn handle_top_level_test_error_before_javascript_start(err: bun_core::Error) -> ! {
+pub(crate) fn handle_top_level_test_error_before_javascript_start(err: bun_core::Error) -> ! {
     if cfg!(debug_assertions) {
         if err != bun_core::err!("ModuleNotFound") {
             bun_core::debug_warn!("Unhandled error: {}", err.name());
         }
     }
     Global::exit(1);
-}
-
-pub fn export() {
-    // PORT NOTE: force-reference for linkage. In Rust, #[unsafe(no_mangle)] on
-    // BunTest__shouldGenerateCodeCoverage above is sufficient. Kept as no-op.
-    let _ = BunTest__shouldGenerateCodeCoverage;
-    // TODO(port): Zig referenced Scanner.BunTest__shouldGenerateCodeCoverage — verify the
-    // export lives here vs in Scanner module.
 }
 
 // ported from: src/cli/test_command.zig

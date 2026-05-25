@@ -67,7 +67,7 @@ impl BackendError {
     /// `codecs.rs` (`Ok(None)` = BackendUnavailable → fall through to the
     /// pure-Rust codec path).
     #[inline]
-    pub fn split<T>(r: Result<T, Self>) -> Result<Option<T>, codecs::Error> {
+    pub(crate) fn split<T>(r: Result<T, Self>) -> Result<Option<T>, codecs::Error> {
         match r {
             Ok(v) => Ok(Some(v)),
             Err(Self::BackendUnavailable) => Ok(None),
@@ -170,7 +170,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
     })
 }
 
-pub fn encode(
+pub(crate) fn encode(
     rgba: &[u8],
     width: u32,
     height: u32,
@@ -370,9 +370,9 @@ struct IUnknown {
     vt: *const IUnknownVTable,
 }
 
-/// VARIANT/PROPBAG2 layout is fiddly enough (union padding, BRECORD/DECIMAL
-/// arms) that hand-rolling it as `extern struct` is asking for an ABI drift.
-/// The C++ shim uses the SDK's own headers; we just hand it the bag pointer.
+// VARIANT/PROPBAG2 layout is fiddly enough (union padding, BRECORD/DECIMAL
+// arms) that hand-rolling it as `extern struct` is asking for an ABI drift.
+// The C++ shim uses the SDK's own headers; we just hand it the bag pointer.
 // TODO(port): move to runtime_sys
 unsafe extern "C" {
     fn bun_wic_propbag_write_f32(props: *mut c_void, name: *const u16, value: f32) -> i32;
@@ -975,12 +975,12 @@ const CF_DIBV5: c_uint = 17;
 /// the source app wrote.
 const NAMED_FORMATS: [&CStr; 4] = [c"PNG", c"image/png", c"JFIF", c"image/webp"];
 
-pub fn clipboard_change_count() -> i64 {
+pub(crate) fn clipboard_change_count() -> i64 {
     // SAFETY: GetClipboardSequenceNumber has no preconditions.
     unsafe { GetClipboardSequenceNumber() as i64 }
 }
 
-pub fn has_clipboard_image() -> bool {
+pub(crate) fn has_clipboard_image() -> bool {
     // IsClipboardFormatAvailable doesn't require OpenClipboard.
     // SAFETY: no preconditions.
     if unsafe { IsClipboardFormatAvailable(CF_DIBV5) } != 0
@@ -1000,7 +1000,7 @@ pub fn has_clipboard_image() -> bool {
 }
 
 // TODO(port): narrow error set — Zig: error{BackendUnavailable, OutOfMemory}!?[]u8
-pub fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
+pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     // hwnd=null associates the open with the current task; fine for read-only.
     // SAFETY: null hwnd is documented as valid.
     if unsafe { OpenClipboard(ptr::null_mut()) } == 0 {

@@ -17,7 +17,6 @@
 //! a real ownership story (likely `bun_core::String` or a `'source` lifetime
 //! threaded through `Location`/`Data`/`Msg`) is still needed.
 
-#![warn(unreachable_pub)]
 use core::fmt;
 use std::borrow::Cow;
 
@@ -84,8 +83,6 @@ pub enum ImportKind {
     Internal = 11,
 }
 
-pub type ImportKindLabel = enum_map::EnumMap<ImportKind, &'static [u8]>;
-
 // E0015: EnumMap indexing isn't const; Zig's `comptime brk: { ... }` initializer
 // is folded into match arms inside label()/error_label() below — same lookup
 // table, zero runtime init (PORTING.md §Concurrency: prefer no-lock over OnceLock
@@ -135,16 +132,6 @@ impl ImportKind {
     #[inline]
     pub fn is_common_js(self) -> bool {
         matches!(self, Self::Require | Self::RequireResolve)
-    }
-
-    // TODO(port): Zig `jsonStringify` uses the std.json writer protocol; replace
-    // with a `serde::Serialize` impl or the project's JSON writer trait. For now
-    // emit the quoted string directly — every tag name is a plain ASCII
-    // identifier with no chars that need JSON escaping.
-    pub fn json_stringify<W: core::fmt::Write>(self, writer: &mut W) -> core::fmt::Result {
-        writer.write_char('"')?;
-        writer.write_str(<&'static str>::from(self))?;
-        writer.write_char('"')
     }
 
     pub fn is_from_css(self) -> bool {
@@ -712,28 +699,6 @@ impl Loc {
     pub fn is_empty(self) -> bool {
         self.eql(Self::EMPTY)
     }
-
-    pub fn json_stringify(self, writer: &mut impl JsonWriter) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        writer.write_i32(self.start)
-    }
-}
-
-// TODO(port): `writer: anytype` for jsonStringify — the Zig calls
-// `writer.write(value)` for arbitrary `value`. Model as a single generic
-// `write<V>` until the real serializer exists.
-pub trait JsonWriter {
-    fn write<V: ?Sized>(&mut self, value: &V) -> core::result::Result<(), bun_core::Error>;
-
-    // Legacy specialised entry points (Loc/Range) — default to `write`.
-    #[inline]
-    fn write_i32(&mut self, v: i32) -> core::result::Result<(), bun_core::Error> {
-        self.write(&v)
-    }
-    #[inline]
-    fn write_i32_pair(&mut self, v: [i32; 2]) -> core::result::Result<(), bun_core::Error> {
-        self.write(&v)
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -890,6 +855,25 @@ impl Location {
     }
 
     pub fn init_or_null(_source: Option<&Source>, r: Range) -> Option<Location> {
+        Self::init_or_null_impl(_source, r, None)
+    }
+
+    /// `init_or_null`, but computing the line/column through a
+    /// [`LineColumnTracker`] so repeated diagnostics against the same source
+    /// don't rescan it from the start for every message.
+    fn init_or_null_tracked(
+        _source: Option<&Source>,
+        r: Range,
+        tracker: &mut LineColumnTracker,
+    ) -> Option<Location> {
+        Self::init_or_null_impl(_source, r, Some(tracker))
+    }
+
+    fn init_or_null_impl(
+        _source: Option<&Source>,
+        r: Range,
+        tracker: Option<&mut LineColumnTracker>,
+    ) -> Option<Location> {
         if let Some(source) = _source {
             if r.is_empty() {
                 return Some(Location {
@@ -902,7 +886,10 @@ impl Location {
                     offset: 0,
                 });
             }
-            let data = source.init_error_position(r.loc);
+            let data = match tracker {
+                Some(tracker) => tracker.error_position(source, r.loc),
+                None => source.init_error_position(r.loc),
+            };
             let mut full_line = &source.contents[data.line_start..data.line_end];
             if full_line.len() > 80 + data.column_count {
                 full_line = &full_line[data.column_count.max(40) - 40
@@ -1517,10 +1504,6 @@ impl Range {
         // std.math.lossyCast(usize, ...) — saturates negatives to 0.
         (self.loc.start + self.len).max(0) as usize
     }
-
-    pub fn json_stringify(self, writer: &mut impl JsonWriter) -> Result<(), bun_core::Error> {
-        writer.write_i32_pair([self.loc.start, self.len + self.loc.start])
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1545,6 +1528,14 @@ pub struct Log {
     /// for the life of `self` because `Box<[u8]>` is heap-stable across `Vec`
     /// growth. See PORTING.md §Allocators (arena pattern).
     pub owned_strings: Vec<Box<[u8]>>,
+
+    /// Incremental line/column scanner for the messages this log creates, so
+    /// a flood of diagnostics against one source doesn't rescan it from byte
+    /// 0 for every message; see [`LineColumnTracker`]. Boxed and allocated
+    /// lazily by the first located diagnostic: most logs never report
+    /// anything, and `Log` is embedded by value in types that are sensitive
+    /// to its size (e.g. `TaskError` in the isolated installer).
+    pub line_column_tracker: Option<Box<LineColumnTracker>>,
 }
 
 impl Default for Log {
@@ -1560,6 +1551,7 @@ impl Default for Log {
             },
             clone_line_text: false,
             owned_strings: Vec::new(),
+            line_column_tracker: None,
         }
     }
 }
@@ -1636,6 +1628,30 @@ impl Level {
 pub static DEFAULT_LOG_LEVEL: bun_core::AtomicCell<Level> = bun_core::AtomicCell::new(Level::Warn);
 
 impl Log {
+    /// [`range_data`], but with the line/column computed through this log's
+    /// [`LineColumnTracker`] so successive diagnostics against the same
+    /// source resume the previous scan instead of restarting from byte 0.
+    fn tracked_range_data(
+        &mut self,
+        source: Option<&Source>,
+        r: Range,
+        text: impl IntoText,
+    ) -> Data {
+        let location = if source.is_some() {
+            Location::init_or_null_tracked(
+                source,
+                r,
+                self.line_column_tracker.get_or_insert_default(),
+            )
+        } else {
+            Location::init_or_null(source, r)
+        };
+        Data {
+            text: text.into_text(),
+            location,
+        }
+    }
+
     pub fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
         for msg in &self.msgs {
@@ -1653,6 +1669,10 @@ impl Log {
         self.msgs.clear();
         self.warnings = 0;
         self.errors = 0;
+        // Drop the per-source scan cache with the messages it was built for;
+        // its identity check is pointer-based, so don't let it outlive the
+        // logical reuse boundary.
+        self.line_column_tracker = None;
     }
 
     pub fn has_any(&self) -> bool {
@@ -1720,16 +1740,17 @@ impl Log {
     #[cold]
     pub fn add_verbose(&mut self, source: Option<&Source>, loc: Loc, text: Str) {
         if Kind::Verbose.should_print(self.level) {
+            let data = self.tracked_range_data(
+                source,
+                Range {
+                    loc,
+                    ..Default::default()
+                },
+                text,
+            );
             self.add_msg(Msg {
                 kind: Kind::Verbose,
-                data: range_data(
-                    source,
-                    Range {
-                        loc,
-                        ..Default::default()
-                    },
-                    text,
-                ),
+                data,
                 ..Default::default()
             });
         }
@@ -1771,6 +1792,8 @@ impl Log {
         // backed by `self.owned_strings` (see `Log::dupe`); move the backing
         // boxes so they outlive the messages now in `other`.
         other.owned_strings.append(&mut self.owned_strings);
+        // See `reset` — the scan cache goes with the messages.
+        self.line_column_tracker = None;
     }
 
     pub fn clone_to_with_recycled(&mut self, other: &mut Log, recycled: bool) {
@@ -1808,6 +1831,8 @@ impl Log {
         self.msgs.shrink_to_fit();
         // See `append_to` — keep `owned_strings` backing alive for the moved msgs.
         other.owned_strings.append(&mut self.owned_strings);
+        // See `reset` — the scan cache goes with the messages.
+        self.line_column_tracker = None;
     }
 
     pub fn append_to_maybe_recycled(&mut self, other: &mut Log, source: &Source) {
@@ -1820,6 +1845,8 @@ impl Log {
         self.msgs.shrink_to_fit();
         // self.warnings = 0;
         // self.errors = 0;
+        // See `reset` — the scan cache goes with the messages.
+        self.line_column_tracker = None;
     }
 }
 
@@ -1840,16 +1867,17 @@ impl Log {
             return;
         }
 
+        let data = self.tracked_range_data(
+            source,
+            Range {
+                loc,
+                ..Default::default()
+            },
+            text,
+        );
         self.add_msg(Msg {
             kind: Kind::Verbose,
-            data: range_data(
-                source,
-                Range {
-                    loc,
-                    ..Default::default()
-                },
-                text,
-            ),
+            data,
             notes,
             ..Default::default()
         })
@@ -1877,7 +1905,7 @@ impl Log {
             Kind::Warn => self.warnings += 1,
             _ => {}
         }
-        let mut data = range_data(source, r, text);
+        let mut data = self.tracked_range_data(source, r, text);
         if clone {
             data = data.clone_line_text(self.clone_line_text);
         }
@@ -1914,7 +1942,7 @@ impl Log {
 
         let data = if DUPE_TEXT {
             'brk: {
-                let mut _data = range_data(source, r, text);
+                let mut _data = self.tracked_range_data(source, r, text);
                 if let Some(loc) = &mut _data.location {
                     if let Some(_line) = loc.line_text.as_deref() {
                         // Zig: `try log.msgs.allocator.dupe(u8, line)`.
@@ -1924,7 +1952,7 @@ impl Log {
                 break 'brk _data;
             }
         } else {
-            range_data(source, r, text)
+            self.tracked_range_data(source, r, text)
         };
 
         let msg = Msg {
@@ -1986,9 +2014,10 @@ impl Log {
     #[cold]
     pub fn add_range_error(&mut self, source: Option<&Source>, r: Range, text: Str) {
         self.errors += 1;
+        let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
             kind: Kind::Err,
-            data: range_data(source, r, text),
+            data,
             ..Default::default()
         })
     }
@@ -2074,9 +2103,10 @@ impl Log {
 
         let notes: Box<[Data]> = Box::new([range_data(None, Range::NONE, alloc_print(note_args))]);
 
+        let data = self.tracked_range_data(None, Range::NONE, err.name().as_bytes());
         self.add_msg(Msg {
             kind: Kind::Err,
-            data: range_data(None, Range::NONE, err.name().as_bytes()),
+            data,
             notes,
             ..Default::default()
         })
@@ -2088,9 +2118,12 @@ impl Log {
             return;
         }
         self.warnings += 1;
+        let data = self
+            .tracked_range_data(source, r, text)
+            .clone_line_text(self.clone_line_text);
         self.add_msg(Msg {
             kind: Kind::Warn,
-            data: range_data(source, r, text).clone_line_text(self.clone_line_text),
+            data,
             ..Default::default()
         })
     }
@@ -2193,11 +2226,13 @@ impl Log {
         }
         self.warnings += 1;
 
-        let notes: Box<[Data]> = Box::new([range_data(source, note_range, alloc_print(note_args))]);
+        let notes: Box<[Data]> =
+            Box::new([self.tracked_range_data(source, note_range, alloc_print(note_args))]);
 
+        let data = self.tracked_range_data(source, r, alloc_print(args));
         self.add_msg(Msg {
             kind: Kind::Warn,
-            data: range_data(source, r, alloc_print(args)),
+            data,
             notes,
             ..Default::default()
         })
@@ -2229,11 +2264,13 @@ impl Log {
         }
         self.errors += 1;
 
-        let notes: Box<[Data]> = Box::new([range_data(source, note_range, alloc_print(note_args))]);
+        let notes: Box<[Data]> =
+            Box::new([self.tracked_range_data(source, note_range, alloc_print(note_args))]);
 
+        let data = self.tracked_range_data(source, r, alloc_print(args));
         self.add_msg(Msg {
             kind: Kind::Err,
-            data: range_data(source, r, alloc_print(args)),
+            data,
             notes,
             ..Default::default()
         })
@@ -2245,16 +2282,17 @@ impl Log {
             return;
         }
         self.warnings += 1;
+        let data = self.tracked_range_data(
+            source,
+            Range {
+                loc: l,
+                ..Default::default()
+            },
+            text,
+        );
         self.add_msg(Msg {
             kind: Kind::Warn,
-            data: range_data(
-                source,
-                Range {
-                    loc: l,
-                    ..Default::default()
-                },
-                text,
-            ),
+            data,
             ..Default::default()
         })
     }
@@ -2272,7 +2310,7 @@ impl Log {
         }
         self.warnings += 1;
 
-        let notes: Box<[Data]> = Box::new([range_data(
+        let notes: Box<[Data]> = Box::new([self.tracked_range_data(
             source,
             Range {
                 loc: l,
@@ -2281,9 +2319,10 @@ impl Log {
             alloc_print(note_args),
         )]);
 
+        let data = self.tracked_range_data(None, Range::NONE, warn);
         self.add_msg(Msg {
             kind: Kind::Warn,
-            data: range_data(None, Range::NONE, warn),
+            data,
             notes,
             ..Default::default()
         })
@@ -2294,9 +2333,10 @@ impl Log {
         if !Kind::Debug.should_print(self.level) {
             return;
         }
+        let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
             kind: Kind::Debug,
-            data: range_data(source, r, text),
+            data,
             ..Default::default()
         })
     }
@@ -2313,9 +2353,10 @@ impl Log {
             return;
         }
         // log.de += 1;
+        let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
             kind: Kind::Debug,
-            data: range_data(source, r, text),
+            data,
             notes,
             ..Default::default()
         })
@@ -2330,9 +2371,10 @@ impl Log {
         notes: Box<[Data]>,
     ) {
         self.errors += 1;
+        let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
             kind: Kind::Err,
-            data: range_data(source, r, text),
+            data,
             notes,
             ..Default::default()
         })
@@ -2350,11 +2392,12 @@ impl Log {
             return;
         }
         self.warnings += 1;
+        let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
             // PORT NOTE: Zig has `.kind = .warning` here which doesn't exist in
             // `Kind`; presumed dead code / typo for `.warn`.
             kind: Kind::Warn,
-            data: range_data(source, r, text),
+            data,
             notes,
             ..Default::default()
         })
@@ -2367,16 +2410,17 @@ impl Log {
     #[cold]
     pub fn add_error(&mut self, _source: Option<&Source>, loc: Loc, text: impl IntoText) {
         self.errors += 1;
+        let data = self.tracked_range_data(
+            _source,
+            Range {
+                loc,
+                ..Default::default()
+            },
+            text,
+        );
         self.add_msg(Msg {
             kind: Kind::Err,
-            data: range_data(
-                _source,
-                Range {
-                    loc,
-                    ..Default::default()
-                },
-                text,
-            ),
+            data,
             ..Default::default()
         })
     }
@@ -2385,16 +2429,17 @@ impl Log {
     #[cold]
     pub fn add_error_opts(&mut self, text: Str, opts: AddErrorOptions<'_>) {
         self.errors += 1;
+        let data = self.tracked_range_data(
+            opts.source,
+            Range {
+                loc: opts.loc,
+                len: opts.len,
+            },
+            text,
+        );
         self.add_msg(Msg {
             kind: Kind::Err,
-            data: range_data(
-                opts.source,
-                Range {
-                    loc: opts.loc,
-                    len: opts.len,
-                },
-                text,
-            ),
+            data,
             redact_sensitive_information: opts.redact_sensitive_information,
             ..Default::default()
         })
@@ -2411,7 +2456,7 @@ impl Log {
             "\"{}\" was originally declared here",
             bstr::BStr::new(name)
         ));
-        let notes: Box<[Data]> = Box::new([range_data(
+        let notes: Box<[Data]> = Box::new([self.tracked_range_data(
             Some(source),
             source.range_of_identifier(old_loc),
             note_text,
@@ -2655,6 +2700,197 @@ pub struct ErrorPosition {
     pub line_count: usize,
 }
 
+/// Scanner state shared by [`Source::init_error_position`] and
+/// [`LineColumnTracker`] — the loop locals of the error-position scan,
+/// captured after consuming every codepoint before some byte offset.
+#[derive(Clone, Copy)]
+struct ErrorPositionState {
+    line_start: usize,
+    line_count: usize,
+    column_number: usize,
+    prev_code_point: i32,
+}
+
+impl Default for ErrorPositionState {
+    fn default() -> Self {
+        ErrorPositionState {
+            line_start: 0,
+            line_count: 1,
+            column_number: 1,
+            prev_code_point: 0,
+        }
+    }
+}
+
+impl ErrorPositionState {
+    /// Consume the codepoints of `contents[from..to]`, updating line/column
+    /// exactly the way `Source::init_error_position` always has (`\r` resets
+    /// the column to 0, `\r\n` counts as a single line break, U+2028/U+2029
+    /// are line breaks). Returns `true` if a line break was crossed.
+    fn advance(&mut self, contents: &[u8], from: usize, to: usize) -> bool {
+        use bun_core::immutable::{CodepointIterator, Cursor};
+        let iter_ = CodepointIterator::init(&contents[from..to]);
+        let mut iter = Cursor::default();
+        let mut crossed_line_break = false;
+
+        while iter_.next(&mut iter) {
+            match iter.c {
+                0x0A => {
+                    // '\n'
+                    self.column_number = 1;
+                    self.line_start = from + iter.width as usize + iter.i as usize;
+                    if self.prev_code_point != ('\r' as i32) {
+                        self.line_count += 1;
+                    }
+                    crossed_line_break = true;
+                }
+                0x0D => {
+                    // '\r'
+                    self.column_number = 0;
+                    self.line_start = from + iter.width as usize + iter.i as usize;
+                    self.line_count += 1;
+                    crossed_line_break = true;
+                }
+                0x2028 | 0x2029 => {
+                    // These take three bytes to encode in UTF-8
+                    self.line_start = from + iter.width as usize + iter.i as usize;
+                    self.line_count += 1;
+                    self.column_number = 1;
+                    crossed_line_break = true;
+                }
+                _ => {
+                    self.column_number += 1;
+                }
+            }
+
+            self.prev_code_point = iter.c;
+        }
+
+        crossed_line_break
+    }
+
+    fn to_error_position(self, line_end: usize) -> ErrorPosition {
+        ErrorPosition {
+            line_start: if self.line_start > 0 {
+                self.line_start - 1
+            } else {
+                self.line_start
+            },
+            line_end,
+            line_count: self.line_count,
+            column_count: self.column_number,
+        }
+    }
+}
+
+/// Byte offset of the line break at or after `offset` (the end of the line
+/// containing `offset`), or the end of the file if this is the last line.
+fn scan_line_end(contents: &[u8], offset: usize) -> usize {
+    use bun_core::immutable::{CodepointIterator, Cursor};
+    let iter_ = CodepointIterator::init(&contents[offset..]);
+    let mut iter = Cursor::default();
+
+    while iter_.next(&mut iter) {
+        match iter.c {
+            0x0D | 0x0A | 0x2028 | 0x2029 => return offset + iter.i as usize,
+            _ => {}
+        }
+    }
+
+    contents.len()
+}
+
+/// Clamp a diagnostic `Loc` into `contents` the way `init_error_position`
+/// always has.
+#[inline]
+fn clamp_error_offset(contents: &[u8], offset_loc: Loc) -> usize {
+    (usize::try_from(offset_loc.start).expect("int cast")).min(contents.len().max(1) - 1)
+}
+
+/// Incremental line/column scanner for diagnostics (the esbuild
+/// `LineColumnTracker` approach). [`Source::init_error_position`] walks the
+/// source from byte 0 on every call, so a parse that reports many diagnostics
+/// against one file pays O(diagnostics × file size) just computing their
+/// positions — a few hundred KB of malformed JSONC that errors on nearly
+/// every token used to take minutes. The [`Log`] owns one of these:
+/// diagnostics for the same source at non-decreasing offsets resume the
+/// previous scan, so N diagnostics cost O(file size + N) in total. Results
+/// are identical to `Source::init_error_position`.
+#[derive(Default)]
+pub struct LineColumnTracker {
+    /// Identity of the tracked source (`contents` and `path.text` pointers +
+    /// lengths, stored as `usize` so the tracker stays `Send`). A diagnostic
+    /// for a different source resets the scan.
+    contents_ptr: usize,
+    contents_len: usize,
+    path_ptr: usize,
+    path_len: usize,
+    cursors: [ScanCursor; 4],
+}
+
+#[derive(Clone, Copy, Default)]
+struct ScanCursor {
+    offset: usize,
+    state: ErrorPositionState,
+    line_end: Option<usize>,
+}
+
+impl LineColumnTracker {
+    fn matches(&self, source: &Source) -> bool {
+        self.contents_ptr == source.contents.as_ptr() as usize
+            && self.contents_len == source.contents.len()
+            && self.path_ptr == source.path.text.as_ptr() as usize
+            && self.path_len == source.path.text.len()
+    }
+
+    fn reset_for(&mut self, source: &Source) {
+        *self = LineColumnTracker {
+            contents_ptr: source.contents.as_ptr() as usize,
+            contents_len: source.contents.len(),
+            path_ptr: source.path.text.as_ptr() as usize,
+            path_len: source.path.text.len(),
+            ..Default::default()
+        };
+    }
+
+    /// [`Source::init_error_position`], resuming from the previous call's
+    /// offset when possible instead of rescanning from the start.
+    pub fn error_position(&mut self, source: &Source, offset_loc: Loc) -> ErrorPosition {
+        debug_assert!(!offset_loc.is_empty());
+        let contents: &[u8] = &source.contents;
+        let offset = clamp_error_offset(contents, offset_loc);
+
+        if !self.matches(source) {
+            self.reset_for(source);
+        }
+
+        if offset < contents.len() && contents[offset] & 0xC0 == 0x80 {
+            return source.init_error_position(offset_loc);
+        }
+
+        let Some(index) = self.cursors.iter().position(|c| c.offset <= offset) else {
+            return source.init_error_position(offset_loc);
+        };
+        let cursor = &mut self.cursors[index];
+
+        if cursor.state.advance(contents, cursor.offset, offset) {
+            cursor.line_end = None;
+        }
+        cursor.offset = offset;
+
+        let line_end = match cursor.line_end {
+            Some(line_end) => line_end,
+            None => {
+                let line_end = scan_line_end(contents, offset);
+                cursor.line_end = Some(line_end);
+                line_end
+            }
+        };
+
+        cursor.state.to_error_position(line_end)
+    }
+}
+
 impl Source {
     /// Borrowed view of the source bytes. Provided as a method so callers that
     /// were written against a future owning-`contents` shape (`Vec<u8>`/`Cow`)
@@ -2834,76 +3070,15 @@ impl Source {
     }
 
     pub fn init_error_position(&self, offset_loc: Loc) -> ErrorPosition {
-        use bun_core::immutable::{CodepointIterator, Cursor};
         debug_assert!(!offset_loc.is_empty());
-        let mut prev_code_point: i32 = 0;
-        let offset: usize = (usize::try_from(offset_loc.start).expect("int cast"))
-            .min(self.contents.len().max(1) - 1);
-
         let contents: &[u8] = &self.contents;
+        let offset = clamp_error_offset(contents, offset_loc);
 
-        let mut iter_ = CodepointIterator::init(&self.contents[0..offset]);
-        let mut iter = Cursor::default();
+        let mut state = ErrorPositionState::default();
+        state.advance(contents, 0, offset);
 
-        let mut line_start: usize = 0;
-        let mut line_count: usize = 1;
-        let mut column_number: usize = 1;
-
-        while iter_.next(&mut iter) {
-            match iter.c {
-                0x0A => {
-                    // '\n'
-                    column_number = 1;
-                    line_start = iter.width as usize + iter.i as usize;
-                    if prev_code_point != ('\r' as i32) {
-                        line_count += 1;
-                    }
-                }
-                0x0D => {
-                    // '\r'
-                    column_number = 0;
-                    line_start = iter.width as usize + iter.i as usize;
-                    line_count += 1;
-                }
-                0x2028 | 0x2029 => {
-                    line_start = iter.width as usize + iter.i as usize; // These take three bytes to encode in UTF-8
-                    line_count += 1;
-                    column_number = 1;
-                }
-                _ => {
-                    column_number += 1;
-                }
-            }
-
-            prev_code_point = iter.c;
-        }
-
-        iter_ = CodepointIterator::init(&self.contents[offset..]);
-
-        iter = Cursor::default();
         // Scan to the end of the line (or end of file if this is the last line)
-        let mut line_end: usize = contents.len();
-
-        'loop_: while iter_.next(&mut iter) {
-            match iter.c {
-                0x0D | 0x0A | 0x2028 | 0x2029 => {
-                    line_end = offset + iter.i as usize;
-                    break 'loop_;
-                }
-                _ => {}
-            }
-        }
-
-        ErrorPosition {
-            line_start: if line_start > 0 {
-                line_start - 1
-            } else {
-                line_start
-            },
-            line_end,
-            line_count,
-            column_count: column_number,
-        }
+        state.to_error_position(scan_line_end(contents, offset))
     }
 
     pub fn line_col_to_byte_offset(
@@ -2993,7 +3168,7 @@ pub fn source_from_file(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys
 ///
 /// MOVE_DOWN from `bun_sys::File::to_source_at`. Zig source:
 /// `src/sys/File.zig:toSourceAt`.
-pub fn source_from_file_at(
+pub(crate) fn source_from_file_at(
     dir_fd: bun_sys::Fd,
     path: &bun_core::ZStr,
     opts: ToSourceOptions,
@@ -3010,16 +3185,7 @@ pub fn source_from_file_at(
     Ok(Source::init_path_string_owned(path.as_bytes(), bytes))
 }
 
-/// Read `path` (relative to `dir_fd`) into memory and wrap it in a `Source`.
-pub fn to_source_at(
-    dir_fd: bun_sys::Fd,
-    path: &bun_core::ZStr,
-    opts: ToSourceOptions,
-) -> bun_sys::Result<Source> {
-    source_from_file_at(dir_fd, path, opts)
-}
-
-/// `to_source_at` rooted at the process CWD.
+/// `source_from_file_at` rooted at the process CWD.
 pub fn to_source(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys::Result<Source> {
     source_from_file(path, opts)
 }
@@ -3249,7 +3415,7 @@ pub mod store_ast_alloc_heap {
         core::ptr::eq(ast_alloc::active_state_id(), STATE_ID.get())
     }
 
-    pub fn enter() {
+    pub(crate) fn enter() {
         if bun_core::getenv_z(bun_core::zstr!("BUN_DISABLE_STORE_AST_HEAP")).is_some() {
             return;
         }
@@ -3278,7 +3444,7 @@ pub mod store_ast_alloc_heap {
         ast_alloc::reset_active_state();
     }
 
-    pub fn exit() {
+    pub(crate) fn exit() {
         if STATE_ID.get().is_null() {
             return;
         }
@@ -3309,11 +3475,11 @@ static DATA_STORE_OVERRIDE: core::cell::Cell<*const bun_alloc::Arena> =
     core::cell::Cell::new(core::ptr::null());
 
 #[inline]
-pub fn data_store_override() -> *const bun_alloc::Arena {
+pub(crate) fn data_store_override() -> *const bun_alloc::Arena {
     DATA_STORE_OVERRIDE.get()
 }
 #[inline]
-pub fn set_data_store_override(p: *const bun_alloc::Arena) {
+pub(crate) fn set_data_store_override(p: *const bun_alloc::Arena) {
     DATA_STORE_OVERRIDE.set(p);
 }
 
@@ -3434,5 +3600,167 @@ impl Drop for DisableStoreReset {
     fn drop(&mut self) {
         expr::data::Store::set_disable_reset(false);
         stmt::data::Store::set_disable_reset(false);
+    }
+}
+
+#[cfg(test)]
+mod line_column_tracker_tests {
+    use super::*;
+
+    fn check_corpus_entry(contents: &[u8]) {
+        let source = Source::init_path_string(b"tracker-test.js" as &[u8], contents);
+        let len = contents.len();
+
+        // Non-decreasing offsets (the parser/lexer pattern): every result must
+        // match a from-scratch scan.
+        let mut tracker = LineColumnTracker::default();
+        for offset in 0..len.max(1) {
+            let loc = usize2loc(offset);
+            let expected = source.init_error_position(loc);
+            let got = tracker.error_position(&source, loc);
+            assert_eq!(
+                (
+                    expected.line_start,
+                    expected.line_end,
+                    expected.line_count,
+                    expected.column_count
+                ),
+                (
+                    got.line_start,
+                    got.line_end,
+                    got.line_count,
+                    got.column_count
+                ),
+                "forward scan diverged at offset {offset} of {contents:?}"
+            );
+        }
+
+        // Repeated, backwards, and strided offsets against a reused tracker.
+        let mut tracker = LineColumnTracker::default();
+        let mut offsets: Vec<usize> = (0..len.max(1)).step_by(3).collect();
+        offsets.extend((0..len.max(1)).rev().step_by(7));
+        offsets.extend([0, len.max(1) - 1, 0, len / 2, len / 2]);
+        for offset in offsets {
+            let loc = usize2loc(offset);
+            let expected = source.init_error_position(loc);
+            let got = tracker.error_position(&source, loc);
+            assert_eq!(
+                (
+                    expected.line_start,
+                    expected.line_end,
+                    expected.line_count,
+                    expected.column_count
+                ),
+                (
+                    got.line_start,
+                    got.line_end,
+                    got.line_count,
+                    got.column_count
+                ),
+                "mixed-order scan diverged at offset {offset} of {contents:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn line_column_tracker_matches_full_scan() {
+        let corpus: &[&[u8]] = &[
+            b"",
+            b"x",
+            b"hello world, no newline at all but a reasonably long single line of text",
+            b"line one\nline two\nline three\n",
+            b"crlf one\r\ncrlf two\r\nno trailing",
+            b"lone\rcarriage\rreturns\r",
+            b"\n\n\n\n",
+            b"\r\n\r\n\r\r\n\n",
+            "unicode \u{2028} separator \u{2029} and emoji \u{1F600}\u{1F600} plus \u{00E9}\u{4E2D}\u{6587}\nsecond line \u{00E9}\n".as_bytes(),
+            b"mixed\ninvalid \xff\xfe bytes \x80 here\r\nlast line",
+            b"[{\"\":[{\"\":[{\"\":[{\"\":[{\"\":[{\"\":[{\"\":[{\"\":[{\"\":[{\"\":",
+        ];
+        for contents in corpus {
+            check_corpus_entry(contents);
+        }
+    }
+
+    #[test]
+    fn line_column_tracker_interleaved_diagnostic_streams_match_full_scan() {
+        let statement = b"try {} catch ([a,a,a,a,a,a,a,a,a,a,a,a, `]) {}\n";
+        let mut contents = Vec::new();
+        for _ in 0..12 {
+            contents.extend_from_slice(statement);
+        }
+        let source = Source::init_path_string(b"tracker-test.js" as &[u8], contents.as_slice());
+
+        let mut offsets = Vec::new();
+        for statement_index in 0..12usize {
+            let start = statement_index * statement.len();
+            let first_binding = start + 15;
+            offsets.push(start + statement.len() - 6);
+            for duplicate in 1..12usize {
+                offsets.push(first_binding);
+                offsets.push(first_binding + duplicate * 2);
+            }
+        }
+
+        let mut tracker = LineColumnTracker::default();
+        for offset in offsets {
+            let loc = usize2loc(offset);
+            let expected = source.init_error_position(loc);
+            let got = tracker.error_position(&source, loc);
+            assert_eq!(
+                (
+                    expected.line_start,
+                    expected.line_end,
+                    expected.line_count,
+                    expected.column_count
+                ),
+                (
+                    got.line_start,
+                    got.line_end,
+                    got.line_count,
+                    got.column_count
+                ),
+                "interleaved scan diverged at offset {offset}"
+            );
+        }
+    }
+
+    #[test]
+    fn line_column_tracker_resets_for_a_different_source() {
+        let a = Source::init_path_string(b"a.js" as &[u8], b"first\nsource\nhere" as &[u8]);
+        let b = Source::init_path_string(
+            b"b.js" as &[u8],
+            b"a totally different\r\nsecond source\r\nwith more lines\r\n" as &[u8],
+        );
+
+        let mut tracker = LineColumnTracker::default();
+        for (source, offset) in [
+            (&a, 8usize),
+            (&b, 30),
+            (&a, 10),
+            (&b, 40),
+            (&b, 45),
+            (&a, 2),
+        ] {
+            let loc = usize2loc(offset);
+            let expected = source.init_error_position(loc);
+            let got = tracker.error_position(source, loc);
+            assert_eq!(
+                (
+                    expected.line_start,
+                    expected.line_end,
+                    expected.line_count,
+                    expected.column_count
+                ),
+                (
+                    got.line_start,
+                    got.line_end,
+                    got.line_count,
+                    got.column_count
+                ),
+                "diverged at offset {offset} of {:?}",
+                bstr::BStr::new(source.contents())
+            );
+        }
     }
 }

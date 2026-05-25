@@ -6,7 +6,6 @@ use bun_core::Output;
 use bun_core::ZStr;
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP};
 
-use crate::external_slice::ExternalSlice;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{DepSorter, DependencyIDList, DependencyIDSlice, Lockfile};
 use crate::package_manager::{PackageManager, WorkspaceFilter};
@@ -52,17 +51,16 @@ impl Default for Tree {
 
 pub type Id = u32;
 
-pub const EXTERNAL_SIZE: usize = core::mem::size_of::<Id>()
+pub(crate) const EXTERNAL_SIZE: usize = core::mem::size_of::<Id>()
     + core::mem::size_of::<PackageID>()
     + core::mem::size_of::<Id>()
     + core::mem::size_of::<DependencyIDSlice>();
 
-pub type External = [u8; EXTERNAL_SIZE];
-pub type Slice = ExternalSlice<Tree>;
+pub(crate) type External = [u8; EXTERNAL_SIZE];
 pub type List = Vec<Tree>;
 
-pub const ROOT_DEP_ID: DependencyID = invalid_package_id - 1;
-pub const INVALID_ID: Id = Id::MAX;
+pub(crate) const ROOT_DEP_ID: DependencyID = invalid_package_id - 1;
+pub(crate) const INVALID_ID: Id = Id::MAX;
 
 impl Tree {
     pub const INVALID_ID: Id = INVALID_ID;
@@ -70,9 +68,9 @@ impl Tree {
 }
 
 // max number of node_modules folders
-pub const MAX_DEPTH: usize = (MAX_PATH_BYTES / b"node_modules".len()) + 1;
+pub(crate) const MAX_DEPTH: usize = (MAX_PATH_BYTES / b"node_modules".len()) + 1;
 
-pub type DepthBuf = [Id; MAX_DEPTH];
+pub(crate) type DepthBuf = [Id; MAX_DEPTH];
 
 /// Zig `var depth_buf: Tree.DepthBuf = undefined;` — write-only scratch buffer
 /// for [`relative_path_and_depth`]. Every slot is written before it is read
@@ -82,7 +80,7 @@ pub type DepthBuf = [Id; MAX_DEPTH];
 /// Same shape/contract as [`bun_core::PathBuffer::uninit`].
 #[inline]
 #[allow(invalid_value, clippy::uninit_assumed_init)]
-pub fn depth_buf_uninit() -> DepthBuf {
+pub(crate) fn depth_buf_uninit() -> DepthBuf {
     // SAFETY: `DepthBuf` is `[u32; N]`; every bit pattern is a valid `u32`.
     // Callers treat this as a write-only scratch buffer — no element is read
     // before being assigned by `relative_path_and_depth`.
@@ -132,7 +130,7 @@ impl Tree {
 // HoistDependencyResult
 // ──────────────────────────────────────────────────────────────────────────
 
-pub enum HoistDependencyResult {
+pub(crate) enum HoistDependencyResult {
     DependencyLoop,
     Hoisted,
     Resolve(PackageID),
@@ -141,13 +139,13 @@ pub enum HoistDependencyResult {
     Placement(Placement),
 }
 
-pub struct ResolveReplace {
+pub(crate) struct ResolveReplace {
     pub id: Id,
     pub dep_id: DependencyID,
 }
 
 #[derive(Default)]
-pub struct Placement {
+pub(crate) struct Placement {
     pub id: Id,
     pub bundled: bool,
 }
@@ -300,11 +298,18 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
     }
 }
 
+/// Tree folder names are joined into install destinations as
+/// `node_modules/<name>/...`; this path and the tree builder must agree on the
+/// same validator.
+pub fn folder_name_is_safe(name: &[u8]) -> bool {
+    crate::dependency::is_safe_install_folder_name(name)
+}
+
 /// Returns relative path and the depth of the tree
 // PORT NOTE: reshaped — Zig takes `*const Lockfile`; here we take the three
 // buffer slices directly so callers from both `crate::lockfile` (stub) and
 // `crate::lockfile_real` can use this without a shared `Lockfile` type.
-pub fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
+pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
     trees: &[Tree],
     dependencies: &[Dependency],
     string_buf: &[u8],
@@ -365,6 +370,13 @@ pub fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
 
             let id = depth_buf[depth_buf_len];
             let name = trees[id as usize].folder_name(dependencies, buf);
+            if !folder_name_is_safe(name) {
+                Output::err_generic(
+                    "Lockfile is malformed (dependency name \"{}\" is not a valid folder name)",
+                    (bstr::BStr::new(name),),
+                );
+                bun_core::Global::crash();
+            }
             let name_end = match path_written.checked_add(name.len()) {
                 Some(end) if end < MAX_PATH_BYTES => end,
                 _ => path_too_long(),
@@ -449,13 +461,13 @@ pub struct BuilderEntry {
 }
 
 bun_collections::multi_array_columns! {
-    pub trait BuilderEntryColumns for BuilderEntry {
+    pub(crate) trait BuilderEntryColumns for BuilderEntry {
         tree: Tree,
         dependencies: DependencyIDList,
     }
 }
 
-pub struct CleanResult {
+pub(crate) struct CleanResult {
     pub trees: Vec<Tree>,
     pub dep_ids: Vec<DependencyID>,
 }
@@ -473,33 +485,21 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     /// `&mut self.<field>` borrows can coexist) should copy the `ParentRef`
     /// out first: `let lf = builder.lockfile; lf.get()`.
     #[inline]
-    pub fn lockfile(&self) -> &Lockfile {
+    pub(crate) fn lockfile(&self) -> &Lockfile {
         self.lockfile.get()
     }
 
-    pub fn maybe_report_error(&mut self, args: core::fmt::Arguments<'_>) {
+    pub(crate) fn maybe_report_error(&mut self, args: core::fmt::Arguments<'_>) {
         // TODO(port): bun_ast::Log::add_error_fmt signature — allocator param dropped.
         let _ = self.log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
     }
 
-    pub fn buf(&self) -> &[u8] {
+    pub(crate) fn buf(&self) -> &[u8] {
         self.lockfile().buffers.string_bytes.as_slice()
     }
 
-    pub fn package_name(&self, id: PackageID) -> bun_semver::string::Formatter<'_> {
-        self.lockfile().packages.items_name()[id as usize]
-            .fmt(self.lockfile().buffers.string_bytes.as_slice())
-    }
-
-    pub fn package_version(&self, id: PackageID) -> crate::resolution::Formatter<'_, u64> {
-        self.lockfile().packages.items_resolution()[id as usize].fmt(
-            self.lockfile().buffers.string_bytes.as_slice(),
-            bun_core::fmt::PathSep::Auto,
-        )
-    }
-
     /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
-    pub fn clean(&mut self) -> Result<CleanResult, AllocError> {
+    pub(crate) fn clean(&mut self) -> Result<CleanResult, AllocError> {
         let mut total: u32 = 0;
 
         // TODO(port): Zig captured `list.bytes` raw pointer to reuse the MultiArrayList backing
@@ -557,7 +557,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 // but `Builder` holds a live `&mut [PackageID]` over that buffer (see `Builder.lockfile`
 // safety contract), so callers must thread `resolutions` explicitly to avoid an
 // aliasing read through the shared `&Lockfile`.
-pub fn is_filtered_dependency_or_workspace(
+pub(crate) fn is_filtered_dependency_or_workspace(
     dep_id: DependencyID,
     parent_pkg_id: PackageID,
     workspace_filters: &[WorkspaceFilter],
@@ -805,6 +805,20 @@ impl Tree {
             }
 
             let dependency = &dependencies[dep_id as usize];
+
+            if !crate::dependency::is_safe_install_folder_name(
+                dependency
+                    .name
+                    .slice(lockfile.buffers.string_bytes.as_slice()),
+            ) {
+                builder.maybe_report_error(format_args!(
+                    "Invalid dependency name \"{}\"",
+                    dependency
+                        .name
+                        .fmt(lockfile.buffers.string_bytes.as_slice()),
+                ));
+                continue 'dep;
+            }
 
             let hoisted: HoistDependencyResult = 'hoisted: {
                 // don't hoist if it's a folder dependency or a bundled dependency.
@@ -1150,7 +1164,7 @@ pub struct FillItem {
 
 // bun.LinearFifo(FillItem, .Dynamic) — std.fifo.LinearFifo wrapper.
 // Mapped to bun_collections::LinearFifo<T, DynamicBuffer<T>> (dynamic, heap-backed ring buffer).
-pub type TreeFiller =
+pub(crate) type TreeFiller =
     bun_collections::LinearFifo<FillItem, bun_collections::linear_fifo::DynamicBuffer<FillItem>>;
 
 // ported from: src/install/lockfile/Tree.zig

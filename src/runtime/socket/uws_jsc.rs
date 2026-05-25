@@ -93,7 +93,7 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-pub fn any_web_socket_get_topics_as_js_array(
+pub(crate) fn any_web_socket_get_topics_as_js_array(
     this: AnyWebSocket,
     global_object: &JSGlobalObject,
 ) -> JSValue {
@@ -111,7 +111,7 @@ pub fn any_web_socket_get_topics_as_js_array(
 /// `socket` and `buffer` must be valid, non-null pointers for the duration of the call
 /// (guaranteed by the C++ caller `JSNodeHTTPServerSocket.cpp`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn us_socket_buffered_js_write(
+pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
     socket: *mut us_socket_t,
     // kept for ABI parity with the C++ caller; TLS is now per-socket
     _ssl: bool,
@@ -129,8 +129,50 @@ pub unsafe extern "C" fn us_socket_buffered_js_write(
     // pointers (`*uws.us_socket_t` / `*us_socket_stream_buffer_t`) with no uniqueness
     // assertion, so we mirror that here.
 
-    // SAFETY: caller (JSNodeHTTPServerSocket.cpp) guarantees `buffer` is valid for the call;
-    // borrow is dropped before any JS execution below.
+    // PERF(port): was stack-fallback (std.heap.stackFallback(16 * 1024)) — profile if hot.
+    //
+    // Convert `data`/`encoding` BEFORE materializing the stream buffer into an owning
+    // `Vec<u8>`: the conversion can run arbitrary JS (toString/Symbol.toPrimitive,
+    // Request/Response body coercion) which can re-enter this function on the same
+    // socket. Taking the buffer first would leave two owning `Vec`s over the same
+    // `list_ptr`; the inner call's realloc would free the allocation out from under
+    // the outer frame (use-after-free).
+    let node_buffer: BlobOrStringOrBuffer = if data.is_undefined() {
+        BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::EMPTY)
+    } else {
+        match BlobOrStringOrBuffer::from_js_with_encoding_value_allow_request_response(
+            global_object,
+            data,
+            encoding,
+            true,
+        ) {
+            Err(_) => return JSValue::ZERO,
+            Ok(Some(v)) => v,
+            Ok(None) => {
+                if !global_object.has_exception() {
+                    let _ = global_object.throw_invalid_argument_type_value(
+                        "data",
+                        "string, buffer, or blob",
+                        data,
+                    );
+                }
+                return JSValue::ZERO;
+            }
+        }
+    };
+
+    if let BlobOrStringOrBuffer::Blob(ref blob) = node_buffer {
+        if blob.needs_to_read_file() {
+            let _ = global_object.throw(format_args!(
+                "File blob not supported yet in this function."
+            ));
+            return JSValue::ZERO;
+        }
+    }
+
+    // SAFETY: caller (JSNodeHTTPServerSocket.cpp) guarantees `buffer` is valid for the call.
+    // No JS executes between here and the `update()` below, so this owning `Vec` is the
+    // sole owner of `list_ptr` for the remainder of the function.
     let mut stream_buffer = unsafe { &mut *buffer }.to_stream_buffer();
     let mut total_written: usize = 0;
 
@@ -138,40 +180,6 @@ pub unsafe extern "C" fn us_socket_buffered_js_write(
     // reshaped as a labeled block + post-block cleanup so the side effects run on every
     // exit path without a scopeguard borrow conflict.
     let result: JSValue = 'body: {
-        // PERF(port): was stack-fallback (std.heap.stackFallback(16 * 1024)) — profile if hot.
-        let node_buffer: BlobOrStringOrBuffer = if data.is_undefined() {
-            BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::EMPTY)
-        } else {
-            match BlobOrStringOrBuffer::from_js_with_encoding_value_allow_request_response(
-                global_object,
-                data,
-                encoding,
-                true,
-            ) {
-                Err(_) => break 'body JSValue::ZERO,
-                Ok(Some(v)) => v,
-                Ok(None) => {
-                    if !global_object.has_exception() {
-                        let _ = global_object.throw_invalid_argument_type_value(
-                            "data",
-                            "string, buffer, or blob",
-                            data,
-                        );
-                    }
-                    break 'body JSValue::ZERO;
-                }
-            }
-        };
-
-        if let BlobOrStringOrBuffer::Blob(ref blob) = node_buffer {
-            if blob.needs_to_read_file() {
-                let _ = global_object.throw(format_args!(
-                    "File blob not supported yet in this function."
-                ));
-                break 'body JSValue::ZERO;
-            }
-        }
-
         let data_slice = node_buffer.slice();
         // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
         // No JS executes between here and `JSValue::TRUE/FALSE` below, so the

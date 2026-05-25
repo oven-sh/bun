@@ -291,7 +291,7 @@ impl Drop for GarbageCollectionController {
     }
 }
 
-pub extern "C" fn on_gc_timer(timer: *mut uws::Timer) {
+pub(crate) extern "C" fn on_gc_timer(timer: *mut uws::Timer) {
     let this = GarbageCollectionController::from_timer_ext(timer);
     if this.disabled {
         return;
@@ -299,7 +299,7 @@ pub extern "C" fn on_gc_timer(timer: *mut uws::Timer) {
     this.gc_timer_state = GCTimerState::RunOnNextTick;
 }
 
-pub extern "C" fn on_gc_repeating_timer(timer: *mut uws::Timer) {
+pub(crate) extern "C" fn on_gc_repeating_timer(timer: *mut uws::Timer) {
     let this = GarbageCollectionController::from_timer_ext(timer);
     let prev_heap_size = this.gc_last_heap_size_on_repeating_timer;
     this.perform_gc();

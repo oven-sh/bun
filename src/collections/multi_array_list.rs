@@ -246,7 +246,7 @@ macro_rules! __mal_column_impl {
 /// cached in fixed-size `[_; MAX_FIELDS]` arrays so `Slice<T>` can be a plain
 /// value type without a `where [(); field_count::<T>()]:` bound propagating to
 /// every caller.
-pub const MAX_FIELDS: usize = 32;
+pub(crate) const MAX_FIELDS: usize = 32;
 
 // ──────────────────────── const-eval reflection helpers ───────────────────
 
@@ -270,7 +270,7 @@ const fn fields_of<T>() -> &'static [core::mem::type_info::Field] {
 
 /// Number of fields in `T`.
 #[inline(always)]
-pub const fn field_count<T>() -> usize {
+pub(crate) const fn field_count<T>() -> usize {
     fields_of::<T>().len()
 }
 

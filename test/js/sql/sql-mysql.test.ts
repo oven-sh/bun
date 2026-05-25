@@ -39,6 +39,26 @@ if (isDockerEnabled()) {
         concurrent: true,
       },
       container => {
+        test("rejects a bind parameter that cannot be framed in a single wire packet", async () => {
+          await using db = new SQL({ ...getOptions(), max: 1 });
+
+          // A large but representable payload round-trips normally.
+          const ok = Buffer.alloc(1024 * 1024, 0x42);
+          expect((await db`select length(${ok}) as n`)[0].n).toBe(ok.length);
+
+          // The MySQL packet header stores the payload length in 24 bits. A
+          // payload of >= 0xFFFFFF cannot be framed as a single packet; the
+          // client must refuse to send it instead of emitting a truncated
+          // length that the server would reparse as additional, independently
+          // framed client packets.
+          const oversized = Buffer.alloc(0xffffff + 64, 0x41);
+          const err = await db`select length(${oversized}) as n`.then(
+            () => ({ code: "UNEXPECTED_SUCCESS" }),
+            e => ({ code: (e as any)?.code ?? String(e) }),
+          );
+          expect(err).toEqual({ code: "ERR_MYSQL_OVERFLOW" });
+        });
+
         let sql: SQL;
         const password = image.image === "mysql_plain" ? "" : "bun";
         const getOptions = (): Bun.SQL.Options => ({

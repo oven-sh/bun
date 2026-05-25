@@ -55,7 +55,7 @@ impl From<bun_core::Error> for RedisError {
 /// RESP protocol types
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum RESPType {
+pub(crate) enum RESPType {
     // RESP2 types
     SimpleString = b'+',
     Error = b'-',
@@ -77,7 +77,7 @@ pub enum RESPType {
 }
 
 impl RESPType {
-    pub fn from_byte(byte: u8) -> Option<RESPType> {
+    pub(crate) fn from_byte(byte: u8) -> Option<RESPType> {
         match byte {
             x if x == RESPType::SimpleString as u8 => Some(RESPType::SimpleString),
             x if x == RESPType::Error as u8 => Some(RESPType::Error),

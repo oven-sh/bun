@@ -278,7 +278,7 @@ pub(crate) const PC_OFFSET: usize = StackIterator::PC_OFFSET;
 /// If no frame matches (e.g. inlining moved the boundary), the full untrimmed
 /// trace is returned rather than an empty one — a noisier trace beats none.
 #[inline(never)]
-pub fn capture_current(first_address: Option<usize>, out: &mut [usize]) -> usize {
+pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -> usize {
     #[cfg(windows)]
     let n = {
         let cap = out.len().min(u16::MAX as usize) as u32;

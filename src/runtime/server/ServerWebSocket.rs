@@ -1568,7 +1568,7 @@ struct Corker<'a> {
 }
 
 impl<'a> Corker<'a> {
-    pub fn run(&mut self) {
+    pub(crate) fn run(&mut self) {
         let this_value = self.this_value;
         self.result = match self.callback.call(
             self.global_object,

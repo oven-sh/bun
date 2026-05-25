@@ -104,7 +104,7 @@ pub struct ConcurrentGroup {
 }
 
 impl ConcurrentGroup {
-    pub fn init(sequence_start: usize, sequence_end: usize, next_index: usize) -> ConcurrentGroup {
+    pub(crate) fn init(sequence_start: usize, sequence_end: usize, next_index: usize) -> ConcurrentGroup {
         ConcurrentGroup {
             sequence_start,
             sequence_end,
@@ -115,7 +115,7 @@ impl ConcurrentGroup {
         }
     }
 
-    pub fn try_extend(&mut self, next_sequence_start: usize, next_sequence_end: usize) -> bool {
+    pub(crate) fn try_extend(&mut self, next_sequence_start: usize, next_sequence_end: usize) -> bool {
         if self.sequence_end != next_sequence_start {
             return false;
         }
@@ -124,16 +124,13 @@ impl ConcurrentGroup {
         true
     }
 
-    pub fn sequences<'a>(&self, execution: &'a Execution) -> &'a [ExecutionSequence] {
+    pub(crate) fn sequences<'a>(&self, execution: &'a Execution) -> &'a [ExecutionSequence] {
         &execution.sequences[self.sequence_start..self.sequence_end]
     }
 
-    pub fn sequences_mut<'a>(&self, execution: &'a mut Execution) -> &'a mut [ExecutionSequence] {
-        &mut execution.sequences[self.sequence_start..self.sequence_end]
-    }
 
     /// Immutable view of [`Self::sequences`] for read-only callers (e.g. debug dumps).
-    pub fn sequences_const<'a>(&self, execution: &'a Execution) -> &'a [ExecutionSequence] {
+    pub(crate) fn sequences_const<'a>(&self, execution: &'a Execution) -> &'a [ExecutionSequence] {
         &execution.sequences[self.sequence_start..self.sequence_end]
     }
 }
@@ -171,9 +168,9 @@ pub struct FlakyAttempt {
 }
 
 impl ExecutionSequence {
-    pub const MAX_FLAKY_ATTEMPTS: usize = 16;
+    pub(crate) const MAX_FLAKY_ATTEMPTS: usize = 16;
 
-    pub fn init(
+    pub(crate) fn init(
         first_entry: Option<NonNull<ExecutionEntry>>,
         test_entry: Option<NonNull<ExecutionEntry>>,
         retry_count: u32,
@@ -197,7 +194,7 @@ impl ExecutionSequence {
         }
     }
 
-    pub fn flaky_attempts(&self) -> &[FlakyAttempt] {
+    pub(crate) fn flaky_attempts(&self) -> &[FlakyAttempt] {
         &self.flaky_attempts_buf[0..self.flaky_attempt_count]
     }
 
@@ -821,7 +818,7 @@ impl Execution {
     }
 }
 
-pub fn step_group(
+pub(crate) fn step_group(
     buntest_strong: &BunTestPtr,
     global_this: &JSGlobalObject,
     now: &mut Timespec,

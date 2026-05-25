@@ -3,7 +3,7 @@ use core::fmt;
 use bun_core::ZigString;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
 
-pub fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigString {
+pub(crate) fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigString {
     let js_type = value.js_type();
     if js_type.is_array() {
         return ZigString::static_("array");
@@ -14,7 +14,7 @@ pub fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigStrin
 }
 
 #[cold]
-pub fn throw_err_invalid_arg_value(
+pub(crate) fn throw_err_invalid_arg_value(
     global_this: &JSGlobalObject,
     args: fmt::Arguments<'_>,
 ) -> JsError {
@@ -25,7 +25,7 @@ pub fn throw_err_invalid_arg_value(
 }
 
 #[cold]
-pub fn throw_err_invalid_arg_type_with_message(
+pub(crate) fn throw_err_invalid_arg_type_with_message(
     global_this: &JSGlobalObject,
     args: fmt::Arguments<'_>,
 ) -> JsError {
@@ -42,7 +42,7 @@ pub fn throw_err_invalid_arg_type_with_message(
 // already-formatted name as anything `Display`-able (e.g. `&str` or
 // `format_args!(...)`) and we embed it via `{}`.
 #[cold]
-pub fn throw_err_invalid_arg_type(
+pub(crate) fn throw_err_invalid_arg_type(
     global_this: &JSGlobalObject,
     name: impl fmt::Display,
     expected_type: &str,
@@ -59,7 +59,7 @@ pub fn throw_err_invalid_arg_type(
 }
 
 #[cold]
-pub fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>) -> JsError {
+pub(crate) fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>) -> JsError {
     // Zig: `global.ERR(.OUT_OF_RANGE, fmt, args).throw()` — RangeError with `.code = "ERR_OUT_OF_RANGE"`.
     global_this.err(jsc::ErrorCode::OUT_OF_RANGE, args).throw()
 }
@@ -104,7 +104,7 @@ fn throw_range_error_min_max<V: bun_core::fmt::OutOfRangeValue>(
 // `comptime { @compileError }` bounds check. `Option<i64>` is not a valid const-
 // generic type on stable, so demoted to runtime params + debug_assert.
 // PERF(port): was comptime monomorphization.
-pub fn validate_integer(
+pub(crate) fn validate_integer(
     global_this: &JSGlobalObject,
     value: JSValue,
     name: &str,
@@ -155,42 +155,7 @@ pub fn validate_integer(
     Ok(num as i64)
 }
 
-pub fn validate_integer_or_big_int(
-    global_this: &JSGlobalObject,
-    value: JSValue,
-    name: &str,
-    min_value: Option<i64>,
-    max_value: Option<i64>,
-) -> JsResult<i64> {
-    let min = min_value.unwrap_or(jsc::MIN_SAFE_INTEGER);
-    let max = max_value.unwrap_or(jsc::MAX_SAFE_INTEGER);
-
-    if value.is_big_int() {
-        let num = value.to_int64();
-        if num < min || num > max {
-            return Err(throw_range_error_min_max(global_this, num, name, min, max));
-        }
-        return Ok(num);
-    }
-
-    if !value.is_number() {
-        return Err(global_this.throw_invalid_argument_type_value(name, "number", value));
-    }
-
-    let num = value.as_number();
-
-    if !value.is_any_int() {
-        return Err(throw_range_error_msg(global_this, num, name, b"an integer"));
-    }
-
-    let int = value.as_int52();
-    if int < min || int > max {
-        return Err(throw_range_error_min_max(global_this, int, name, min, max));
-    }
-    Ok(int)
-}
-
-pub fn validate_int32(
+pub(crate) fn validate_int32(
     global_this: &JSGlobalObject,
     value: JSValue,
     name: impl fmt::Display + Copy,
@@ -237,7 +202,7 @@ pub fn validate_int32(
     Ok(num as i32)
 }
 
-pub fn validate_uint32(
+pub(crate) fn validate_uint32(
     global_this: &JSGlobalObject,
     value: JSValue,
     name: impl fmt::Display + Copy,
@@ -282,7 +247,7 @@ pub fn validate_uint32(
     Ok(num as u32)
 }
 
-pub fn validate_string(
+pub(crate) fn validate_string(
     global_this: &JSGlobalObject,
     value: JSValue,
     name: impl fmt::Display,
@@ -298,7 +263,7 @@ pub fn validate_string(
     Ok(())
 }
 
-pub fn validate_number(
+pub(crate) fn validate_number(
     global_this: &JSGlobalObject,
     value: JSValue,
     name: &str,
@@ -354,7 +319,7 @@ pub fn validate_number(
     Ok(num)
 }
 
-pub fn validate_boolean(
+pub(crate) fn validate_boolean(
     global_this: &JSGlobalObject,
     value: JSValue,
     name: impl fmt::Display,
@@ -372,7 +337,7 @@ pub fn validate_boolean(
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
-    pub struct ValidateObjectOptions: u8 {
+    pub(crate) struct ValidateObjectOptions: u8 {
         const ALLOW_NULLABLE = 1 << 0;
         const ALLOW_ARRAY    = 1 << 1;
         const ALLOW_FUNCTION = 1 << 2;
@@ -381,21 +346,21 @@ bitflags::bitflags! {
 
 impl ValidateObjectOptions {
     #[inline]
-    pub fn allow_nullable(self) -> bool {
+    pub(crate) fn allow_nullable(self) -> bool {
         self.contains(Self::ALLOW_NULLABLE)
     }
     #[inline]
-    pub fn allow_array(self) -> bool {
+    pub(crate) fn allow_array(self) -> bool {
         self.contains(Self::ALLOW_ARRAY)
     }
     #[inline]
-    pub fn allow_function(self) -> bool {
+    pub(crate) fn allow_function(self) -> bool {
         self.contains(Self::ALLOW_FUNCTION)
     }
 }
 
 // PERF(port): `options` was `comptime` in Zig (monomorphized per call site).
-pub fn validate_object(
+pub(crate) fn validate_object(
     global_this: &JSGlobalObject,
     value: JSValue,
     name: impl fmt::Display + Copy,
@@ -450,7 +415,7 @@ pub fn validate_object(
     Ok(())
 }
 
-pub fn validate_array(
+pub(crate) fn validate_array(
     global_this: &JSGlobalObject,
     value: JSValue,
     name: impl fmt::Display + Copy,
@@ -478,7 +443,7 @@ pub fn validate_array(
     Ok(())
 }
 
-pub fn validate_string_array(
+pub(crate) fn validate_string_array(
     global_this: &JSGlobalObject,
     value: JSValue,
     name: impl fmt::Display + Copy,
@@ -500,7 +465,7 @@ pub fn validate_string_array(
     Ok(i)
 }
 
-pub fn validate_boolean_array(
+pub(crate) fn validate_boolean_array(
     global_this: &JSGlobalObject,
     value: JSValue,
     name: impl fmt::Display + Copy,
@@ -522,41 +487,29 @@ pub fn validate_boolean_array(
     Ok(i)
 }
 
-pub fn validate_function(global: &JSGlobalObject, name: &str, value: JSValue) -> JsResult<JSValue> {
+pub(crate) fn validate_function(
+    global: &JSGlobalObject,
+    name: &str,
+    value: JSValue,
+) -> JsResult<JSValue> {
     if !value.is_function() {
         return Err(global.throw_invalid_argument_type_value(name, "function", value));
     }
     Ok(value)
 }
 
-pub fn validate_undefined(
-    global_this: &JSGlobalObject,
-    value: JSValue,
-    name: impl fmt::Display,
-) -> JsResult<()> {
-    if !value.is_undefined() {
-        return Err(throw_err_invalid_arg_type(
-            global_this,
-            name,
-            "undefined",
-            value,
-        ));
-    }
-    Ok(())
-}
-
 /// Zig used `@typeInfo(T).@"enum".fields` to iterate variants and match by
 /// `@tagName`. Rust has no field reflection; enums opt in via this trait.
 /// Implementors should typically `#[derive(strum::EnumString, strum::VariantNames)]`
 /// and provide `VALUES_INFO` as the `|`-joined variant names.
-pub trait StringEnum: Sized {
+pub(crate) trait StringEnum: Sized {
     /// `|`-joined list of variant names (matches Zig's comptime-built `values_info`).
     const VALUES_INFO: &'static str;
     /// Match `s` against variant names exactly (Zig: `str.eqlComptime(field.name)`).
     fn from_bun_string(s: &bun_core::String) -> Option<Self>;
 }
 
-pub fn validate_string_enum<T: StringEnum>(
+pub(crate) fn validate_string_enum<T: StringEnum>(
     global_this: &JSGlobalObject,
     value: JSValue,
     name: impl fmt::Display,

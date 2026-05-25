@@ -20,9 +20,9 @@ use crate::api::bun_process::{self as process, Dup2 as ProcessDup2, StdioKind};
 // can't nest type decls, so process.rs exposes `PosixStdio` / `WindowsStdio`;
 // alias the active one as `SpawnOptionsStdio` so the body stays platform-neutral.
 #[cfg(not(windows))]
-pub type SpawnOptionsStdio = process::PosixStdio;
+pub(crate) type SpawnOptionsStdio = process::PosixStdio;
 #[cfg(windows)]
-pub type SpawnOptionsStdio = process::WindowsStdio;
+pub(crate) type SpawnOptionsStdio = process::WindowsStdio;
 
 // `bun.FD.Stdio` (the StdIn/StdOut/StdErr tag enum) is `bun_core::Stdio`,
 // re-exported through `bun_sys`. Alias so `FdStdio::StdIn` etc. read as the

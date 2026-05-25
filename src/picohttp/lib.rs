@@ -1,5 +1,4 @@
 #![warn(unused_must_use)]
-#![warn(unreachable_pub)]
 use core::ffi::c_int;
 use core::fmt;
 
@@ -16,8 +15,8 @@ use bun_core::pretty_fmt;
 // its moved-out buffer) alive while the returned slices are in use.
 pub use bun_core::StringBuilder;
 
-// TODO(port): bun_picohttp_sys crate missing — local FFI stub surface.
-// Real bindings would come from bindgen over vendor/picohttpparser.
+// FFI surface over vendor/picohttpparser. Hand-written (three functions, two
+// structs) rather than bindgen-generated.
 #[allow(non_camel_case_types)]
 mod c {
     use core::ffi::{c_char, c_int};

@@ -20,11 +20,11 @@ pub struct JSSourceMap {
 
 /// TODO: when we implement --enable-source-map CLI flag, set this to true.
 // PORT NOTE: Zig `pub var @"--enable-source-maps"` — mutable global; use AtomicBool for safe mutation.
-pub static ENABLE_SOURCE_MAPS: AtomicBool = AtomicBool::new(false);
+pub(crate) static ENABLE_SOURCE_MAPS: AtomicBool = AtomicBool::new(false);
 
 /// Zig: `comptime { @export(&jsFunctionFindSourceMap, .{ .name = "Bun__JSSourceMap__find" }) }`
 #[bun_jsc::host_fn(export = "Bun__JSSourceMap__find")]
-pub fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // Node.js doesn't enable source maps by default.
     // In Bun, we do use them for almost all files since we transpile almost all files
     // If we enable this by default, we don't have a `payload` object since we don't internally create one.

@@ -45,7 +45,7 @@ pub enum CatState {
 }
 
 /// Internal: what to do after dropping the &mut state borrow.
-enum Step {
+pub enum Step {
     Suspend,
     Done(ExitCode),
     Next,

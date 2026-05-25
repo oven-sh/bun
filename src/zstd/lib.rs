@@ -1,5 +1,4 @@
 #![warn(unused_must_use)]
-#![warn(unreachable_pub)]
 use core::ffi::{c_ulonglong, c_void};
 
 use bun_core::ZStr;
@@ -22,24 +21,19 @@ pub mod c {
     }
 
     /// `typedef ZSTD_DCtx ZSTD_DStream;` — same opaque object.
-    pub type ZSTD_DCtx = ZSTD_DStream;
+    pub(crate) type ZSTD_DCtx = ZSTD_DStream;
 
     // C enums passed by value across FFI — model as `c_uint` (their declared
     // underlying type) so callers can pass raw values without transmute.
-    pub type ZSTD_ErrorCode = c_uint;
-    pub type ZSTD_EndDirective = c_uint;
-    pub type ZSTD_ResetDirective = c_uint;
-    pub type ZSTD_cParameter = c_uint;
-    pub type ZSTD_dParameter = c_uint;
+    pub(crate) type ZSTD_ErrorCode = c_uint;
+    pub(crate) type ZSTD_EndDirective = c_uint;
+    pub(crate) type ZSTD_ResetDirective = c_uint;
+    pub(crate) type ZSTD_cParameter = c_uint;
+    pub(crate) type ZSTD_dParameter = c_uint;
 
     // ZSTD_EndDirective
     pub const ZSTD_e_continue: ZSTD_EndDirective = 0;
-    pub const ZSTD_e_flush: ZSTD_EndDirective = 1;
-    pub const ZSTD_e_end: ZSTD_EndDirective = 2;
 
-    // ZSTD_ResetDirective
-    pub const ZSTD_reset_session_only: ZSTD_ResetDirective = 1;
-    pub const ZSTD_reset_parameters: ZSTD_ResetDirective = 2;
     pub const ZSTD_reset_session_and_parameters: ZSTD_ResetDirective = 3;
 
     // ZSTD_ErrorCode (zstd_errors.h) — only the public stable subset.
@@ -87,15 +81,15 @@ pub mod c {
     }
 
     unsafe extern "C" {
-        pub fn ZSTD_compress(
+        pub(crate) fn ZSTD_compress(
             dst: *mut c_void,
             dst_capacity: usize,
             src: *const c_void,
             src_size: usize,
             compression_level: c_int,
         ) -> usize;
-        pub safe fn ZSTD_compressBound(src_size: usize) -> usize;
-        pub fn ZSTD_decompress(
+        pub(crate) safe fn ZSTD_compressBound(src_size: usize) -> usize;
+        pub(crate) fn ZSTD_decompress(
             dst: *mut c_void,
             dst_capacity: usize,
             src: *const c_void,
@@ -103,12 +97,12 @@ pub mod c {
         ) -> usize;
         // Pure scalar fns — no preconditions.
         pub safe fn ZSTD_isError(code: usize) -> c_uint;
-        pub safe fn ZSTD_getErrorName(code: usize) -> *const c_char;
-        pub safe fn ZSTD_defaultCLevel() -> c_int;
+        pub(crate) safe fn ZSTD_getErrorName(code: usize) -> *const c_char;
+        pub(crate) safe fn ZSTD_defaultCLevel() -> c_int;
 
-        pub safe fn ZSTD_createDStream() -> *mut ZSTD_DStream;
-        pub fn ZSTD_freeDStream(zds: *mut ZSTD_DStream) -> usize;
-        pub fn ZSTD_initDStream(zds: *mut ZSTD_DStream) -> usize;
+        pub(crate) safe fn ZSTD_createDStream() -> *mut ZSTD_DStream;
+        pub(crate) fn ZSTD_freeDStream(zds: *mut ZSTD_DStream) -> usize;
+        pub(crate) fn ZSTD_initDStream(zds: *mut ZSTD_DStream) -> usize;
         pub fn ZSTD_decompressStream(
             zds: *mut ZSTD_DStream,
             output: *mut ZSTD_outBuffer,
@@ -136,7 +130,8 @@ pub mod c {
         // note 5 : ZSTD_findDecompressedSize handles multiple frames, and so it must traverse the input to
         //          read each contained frame header.  This is fast as most of the data is skipped,
         //          however it does mean that all frame data must be present and valid. */
-        pub fn ZSTD_findDecompressedSize(src: *const c_void, src_size: usize) -> c_ulonglong;
+        pub(crate) fn ZSTD_findDecompressedSize(src: *const c_void, src_size: usize)
+        -> c_ulonglong;
 
         // ── streaming-compress / advanced API (used by NativeZstd) ───────
         pub safe fn ZSTD_createCCtx() -> *mut ZSTD_CCtx;

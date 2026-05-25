@@ -105,7 +105,7 @@ pub fn find_imported_files_in_css_order<'a>(
             BStr::new(&sources[source_index.get() as usize].path.pretty)
         }
 
-        pub fn visit(
+        pub(crate) fn visit(
             &mut self,
             source_index: Index,
             wrapping_conditions: &mut Vec<ImportConditions>,
@@ -835,7 +835,7 @@ fn import_conditions_are_equal(a: &[ImportConditions], b: &[ImportConditions]) -
 ///
 /// Note that all of this deliberately ignores the existence of "@layer" because
 /// that is handled separately. All of this is only for handling unlayered styles.
-pub fn is_conditional_import_redundant(
+pub(crate) fn is_conditional_import_redundant(
     earlier: &Vec<ImportConditions>,
     later: &Vec<ImportConditions>,
 ) -> bool {

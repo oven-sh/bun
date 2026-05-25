@@ -2662,10 +2662,32 @@ mod stylesheet_impl {
                 css_modules: self.options.css_modules.is_some(),
                 extra,
                 err: None,
+                selector_expansion_multiplier: 1,
+                selector_expansion_total: 0,
             };
 
             if self.rules.minify(&mut minify_ctx, false).is_err() {
-                panic!("TODO: Handle");
+                // Rule-level minify signals failure with the unit `MinifyErr`
+                // and records the diagnostic out-of-band on the context.
+                debug_assert!(minify_ctx.err.is_some());
+                let e = minify_ctx.err.take().unwrap_or_else(|| MinifyError {
+                    kind: MinifyErrorKind::unknown,
+                    loc: crate::Location::default(),
+                });
+                let filename: &[u8] = self
+                    .sources
+                    .get(e.loc.source_index as usize)
+                    .map(|source| &**source)
+                    .unwrap_or(self.options.filename);
+                let minify_error = Err {
+                    kind: e.kind,
+                    loc: Some(ErrorLocation {
+                        filename,
+                        line: e.loc.line,
+                        column: e.loc.column,
+                    }),
+                };
+                return Err(minify_error);
             }
 
             Ok(())
@@ -6838,6 +6860,15 @@ pub fn fract(val: f32) -> f32 {
 
 pub fn f32_length_with_5_digits(n_input: f32) -> usize {
     let mut n = (n_input * 100000.0).round();
+
+    // Huge values (>= ~3.4e33) overflow to infinity when scaled, and infinity
+    // never drops below 1.0 no matter how many times it is divided by 10, so
+    // the loop below would spin forever. Treat non-finite values as longer
+    // than any finite representation.
+    if !n.is_finite() {
+        return usize::MAX;
+    }
+
     let mut count: usize = 0;
     let mut i: usize = 0;
 

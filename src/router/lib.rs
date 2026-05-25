@@ -4,7 +4,6 @@
 // Despite being Next.js-compatible, it's not tied to Next.js.
 // It does not handle the framework parts of rendering pages.
 // All it does is resolve URL paths to the appropriate entry point and parse URL params/query.
-#![warn(unreachable_pub)]
 use core::cmp::Ordering;
 use core::ptr::NonNull;
 use std::cell::RefCell;

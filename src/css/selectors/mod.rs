@@ -56,14 +56,6 @@ pub mod impl_ {
         type PseudoElement = super::parser::PseudoElement;
         type VendorPrefix = VendorPrefix;
     }
-
-    pub mod local_identifier {
-        use super::*;
-        #[inline]
-        pub fn from_ident(ident: Ident) -> IdentOrRef {
-            IdentOrRef::from_ident(ident)
-        }
-    }
 }
 
 // ported from: src/css/selectors/

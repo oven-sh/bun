@@ -12,7 +12,7 @@ use bun_parsers::json;
 use bun_paths::{self as path, PathBuffer};
 use bun_sys;
 
-pub struct PmPkgCommand;
+pub(crate) struct PmPkgCommand;
 
 /// Process-lifetime arena for `E::Object::put()` / `json::parse` calls.
 /// Route through the shared CLI arena (`MimallocArena` is `Sync`, so this is
@@ -48,7 +48,7 @@ struct PackageJson {
 }
 
 impl PmPkgCommand {
-    pub fn exec(
+    pub(crate) fn exec(
         ctx: &Context,
         pm: &mut PackageManager,
         positionals: &[&[u8]],

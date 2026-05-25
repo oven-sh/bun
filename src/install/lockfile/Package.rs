@@ -114,7 +114,7 @@ pub struct Package<SemverIntType: VersionInt = u64> {
     pub scripts: Scripts,
 }
 
-type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
+pub type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
 
 // ─── ResolverContext ─────────────────────────────────────────────────────────
 //
@@ -216,7 +216,7 @@ impl ResolverContext for () {
 //
 // `count`/`resolve` keep their `StringBuilder<'_>` borrow — lifetimes are
 // permitted on object-safe trait methods, only type generics are not.
-pub trait ResolverContextDyn {
+pub(crate) trait ResolverContextDyn {
     fn is_void(&self) -> bool;
     fn is_git(&self) -> bool;
     fn check_bundled_dependencies(&self) -> bool;
@@ -308,7 +308,7 @@ fn dep_sort_cmp(buf: &[u8], a: &Dependency, b: &Dependency) -> core::cmp::Orderi
 /// serializer iterates fields by tag to write column blobs in a fixed order.
 #[repr(usize)]
 #[derive(Copy, Clone)]
-pub enum PackageField {
+pub(crate) enum PackageField {
     Name = 0,
     NameHash = 1,
     Resolution = 2,
@@ -320,7 +320,7 @@ pub enum PackageField {
 }
 
 impl PackageField {
-    pub const ALL: [PackageField; 8] = [
+    pub(crate) const ALL: [PackageField; 8] = [
         PackageField::Name,
         PackageField::NameHash,
         PackageField::Resolution,
@@ -331,7 +331,8 @@ impl PackageField {
         PackageField::Scripts,
     ];
 
-    pub fn name(self) -> &'static [u8] {
+    #[allow(dead_code)]
+    pub(crate) fn name(self) -> &'static [u8] {
         match self {
             PackageField::Name => b"name",
             PackageField::NameHash => b"name_hash",
@@ -378,14 +379,14 @@ pub use bun_install_types::DependencyGroup;
 // Borrows into lockfile.packages SoA columns + string_bytes; `RawSlice`
 // carries the outlives-holder invariant (the lockfile outlives every sort
 // pass that constructs an Alphabetizer).
-pub struct Alphabetizer<SemverIntType: VersionInt> {
+pub(crate) struct Alphabetizer<SemverIntType: VersionInt> {
     pub names: bun_ptr::RawSlice<String>,
     pub buf: bun_ptr::RawSlice<u8>,
     pub resolutions: bun_ptr::RawSlice<Resolution<SemverIntType>>,
 }
 
 impl<SemverIntType: VersionInt> Alphabetizer<SemverIntType> {
-    pub fn order(&self, lhs: PackageID, rhs: PackageID) -> core::cmp::Ordering {
+    pub(crate) fn order(&self, lhs: PackageID, rhs: PackageID) -> core::cmp::Ordering {
         let (names, buf, resolutions) = (
             self.names.slice(),
             self.buf.slice(),
@@ -394,10 +395,6 @@ impl<SemverIntType: VersionInt> Alphabetizer<SemverIntType> {
         names[lhs as usize]
             .order(names[rhs as usize], buf, buf)
             .then_with(|| resolutions[lhs as usize].order(&resolutions[rhs as usize], buf, buf))
-    }
-
-    pub fn is_alphabetical(&self, lhs: PackageID, rhs: PackageID) -> bool {
-        self.order(lhs, rhs) == core::cmp::Ordering::Less
     }
 }
 
@@ -975,16 +972,7 @@ impl Package<u64> {
 
 // ─── Diff ────────────────────────────────────────────────────────────────────
 
-pub struct Diff;
-
-#[repr(u8)]
-pub enum DiffOp {
-    Add,
-    Remove,
-    Update,
-    Unlink,
-    Link,
-}
+pub(crate) struct Diff;
 
 /// A trusted dependency newly added by the current diff. `name` is the exact
 /// byte string the truncated key hash was computed from.
@@ -1013,14 +1001,7 @@ pub struct DiffSummary {
 
 impl DiffSummary {
     #[inline]
-    pub fn sum(&mut self, that: &DiffSummary) {
-        self.add += that.add;
-        self.remove += that.remove;
-        self.update += that.update;
-    }
-
-    #[inline]
-    pub fn has_diffs(&self) -> bool {
+    pub(crate) fn has_diffs(&self) -> bool {
         self.add > 0
             || self.remove > 0
             || self.update > 0
@@ -1037,7 +1018,7 @@ impl Diff {
     // instantiation `Lockfile` ever holds). Dropping the generic avoids a
     // spurious `Package<I>` ≠ `Package<u64>` mismatch on the recursive call
     // through `from_lockfile.packages.get(...)`.
-    pub fn generate(
+    pub(crate) fn generate(
         pm: &mut PackageManager,
         log: &mut bun_ast::Log,
         from_lockfile: &mut Lockfile,
@@ -3166,93 +3147,17 @@ pub mod serializer {
     use super::*;
 
     /// Number of columns in the on-disk package table. Zig: `sizes.Types.len`.
-    pub const FIELD_COUNT: usize = PackageField::ALL.len();
+    pub(crate) const FIELD_COUNT: usize = PackageField::ALL.len();
 
-    // Zig: comptime block computing per-field sizes/indices sorted by alignment
-    // (descending) via `@typeInfo`/`std.meta.fields`. Rust has no struct
-    // reflection, so the 8 fields are hand-expanded and the same stable
-    // insertion sort is reproduced at call time. (`Types` is dropped — Rust
-    // can't store a `[type; N]`, and the only consumer was `AlignmentType`,
     // which is unused on the load/save paths we port.)
     pub struct Sizes {
         pub bytes: [usize; FIELD_COUNT],
         pub fields: [usize; FIELD_COUNT],
     }
 
-    /// Port of Package.zig `Serializer.sizes` comptime block, evaluated per
-    /// `SemverIntType` instantiation.
-    pub fn sizes<SemverIntType: VersionInt>() -> Sizes {
-        #[derive(Copy, Clone)]
-        struct Data {
-            size: usize,
-            size_index: usize,
-            alignment: usize,
-        }
-
-        macro_rules! entry {
-            ($i:expr, $T:ty) => {
-                Data {
-                    size: mem::size_of::<$T>(),
-                    size_index: $i,
-                    alignment: if mem::size_of::<$T>() == 0 {
-                        1
-                    } else {
-                        mem::align_of::<$T>()
-                    },
-                }
-            };
-        }
-        // Declaration order — must match `struct Package` field order exactly.
-        let mut data: [Data; FIELD_COUNT] = [
-            entry!(0, String),
-            entry!(1, PackageNameHash),
-            entry!(2, ResolutionType<SemverIntType>),
-            entry!(3, DependencySlice),
-            entry!(4, PackageIDSlice),
-            entry!(5, Meta),
-            entry!(6, Bin),
-            entry!(7, Scripts),
-        ];
-        // Stable insertion sort, key = alignment descending (Zig:
-        // `std.sort.insertionContext` with `lessThan = lhs.align > rhs.align`).
-        let mut i = 1;
-        while i < FIELD_COUNT {
-            let mut j = i;
-            while j > 0 && data[j].alignment > data[j - 1].alignment {
-                data.swap(j, j - 1);
-                j -= 1;
-            }
-            i += 1;
-        }
-        let mut bytes = [0usize; FIELD_COUNT];
-        let mut fields = [0usize; FIELD_COUNT];
-        let mut k = 0;
-        while k < FIELD_COUNT {
-            bytes[k] = data[k].size;
-            fields[k] = data[k].size_index;
-            k += 1;
-        }
-        Sizes { bytes, fields }
-    }
-
     // Zig: `const FieldsEnum = @typeInfo(List.Field).@"enum";`
     // → `PackageField::ALL` (declaration order, same as the MultiArrayList
     //    field enum Zig reflects over).
-
-    pub fn byte_size<SemverIntType: VersionInt>(list: &List<SemverIntType>) -> usize {
-        // Zig used a SIMD @Vector reduction over `sizes.bytes`; equivalent
-        // scalar dot-product. Order is irrelevant for the sum, so use the
-        // declaration-order size table directly.
-        // PERF(port): comptime @Vector reduce — profile if hot.
-        let len = list.len();
-        let mut sum: usize = 0;
-        for fi in 0..FIELD_COUNT {
-            let sz =
-                bun_collections::multi_array_list::Slice::<Package<SemverIntType>>::field_size(fi);
-            sum += sz * len;
-        }
-        sum
-    }
 
     // Zig: `const AlignmentType = sizes.Types[sizes.fields[0]];`
     // Unused by save/load (the live aligner uses `@TypeOf(list.bytes)`), so
@@ -3347,7 +3252,7 @@ pub mod serializer {
     }
 
     #[derive(Default)]
-    pub struct PackagesLoadResult<SemverIntType: VersionInt> {
+    pub(crate) struct PackagesLoadResult<SemverIntType: VersionInt> {
         pub list: List<SemverIntType>,
         pub needs_update: bool,
     }
@@ -3356,7 +3261,7 @@ pub mod serializer {
     // below hard-codes `u32 → u64` (`VersionedURL.migrate()` returns `<u64>`).
     // The only caller (`bun.lockb.rs`) instantiates at `u64`, so bind concretely
     // instead of carrying a phantom generic that can't typecheck the migrate arm.
-    pub fn load(
+    pub(crate) fn load(
         stream: &mut Stream,
         end: usize,
         migrate_from_v2: bool,
@@ -3544,8 +3449,8 @@ pub mod serializer {
                     let install_script_at = mem::offset_of!(Meta, has_install_script);
                     debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
                     for raw in src.chunks_exact(stride) {
-                        if !matches!(raw[origin_at], 0 | 1 | 2)
-                            || !matches!(raw[install_script_at], 0 | 1 | 2)
+                        if !matches!(raw[origin_at], 0..=2)
+                            || !matches!(raw[install_script_at], 0..=2)
                         {
                             return Err(bun_core::err!(
                                 "Lockfile validation failed: invalid package meta"
@@ -3560,7 +3465,7 @@ pub mod serializer {
                     let tag_at = mem::offset_of!(Bin, tag);
                     debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
                     for raw in src.chunks_exact(stride) {
-                        if !matches!(raw[tag_at], 0 | 1 | 2 | 3 | 4) {
+                        if !matches!(raw[tag_at], 0..=4) {
                             return Err(bun_core::err!(
                                 "Lockfile validation failed: invalid bin tag"
                             ));

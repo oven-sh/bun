@@ -147,7 +147,7 @@ pub const fn convert_params_array<Id, const N: usize>(params: &[Param<Id>]) -> [
 ///
 /// Panics (at const-eval, i.e. a build error) if `name` is not in `converted`
 /// — matching Zig's `@compileError("no param '…'")`.
-pub const fn find_param_index(converted: &[Param<usize>], name: &[u8]) -> usize {
+pub(crate) const fn find_param_index(converted: &[Param<usize>], name: &[u8]) -> usize {
     if name.len() > 2 && name[0] == b'-' && name[1] == b'-' {
         let (_, key) = name.split_at(2);
         let mut i = 0;
@@ -243,7 +243,7 @@ pub const fn build_long_index<Id, const M: usize>(params: &[Param<Id>]) -> [Long
 }
 
 /// `[i16; 128]` ASCII → index into `converted`. `-1` = no such short.
-pub const fn build_short_index(converted: &[Param<usize>]) -> [i16; 128] {
+pub(crate) const fn build_short_index(converted: &[Param<usize>]) -> [i16; 128] {
     let mut idx = [-1i16; 128];
     let mut i = 0;
     while i < converted.len() {
@@ -262,7 +262,7 @@ pub const fn build_short_index(converted: &[Param<usize>]) -> [i16; 128] {
 /// FNV-1a 64. `const fn` so `comptime_table!` can pre-hash; also used at
 /// runtime for the long-name index.
 #[inline]
-pub const fn fnv1a64(bytes: &[u8]) -> u64 {
+pub(crate) const fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut i = 0;
     while i < bytes.len() {

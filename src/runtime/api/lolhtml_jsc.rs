@@ -15,7 +15,7 @@ use bun_lolhtml_sys::HTMLString;
 /// the lol-html buffer transfers to WTF and is freed by
 /// [`HTMLString::deinit_external`]); otherwise clones as UTF-8 and frees the
 /// original.
-pub fn html_string_to_string(this: HTMLString) -> BunString {
+pub(crate) fn html_string_to_string(this: HTMLString) -> BunString {
     let bytes = this.slice();
     if !bytes.is_empty() && strings::is_all_ascii(bytes) {
         // SAFETY: `bytes` aliases `this.ptr[..this.len]`, which lol-html keeps
@@ -34,7 +34,7 @@ pub fn html_string_to_string(this: HTMLString) -> BunString {
     s
 }
 
-pub fn html_string_to_js(this: HTMLString, global: &JSGlobalObject) -> JsResult<JSValue> {
+pub(crate) fn html_string_to_js(this: HTMLString, global: &JSGlobalObject) -> JsResult<JSValue> {
     // Zig: `var str = this.toString(); defer str.deref();` — `bun_core::String`
     // is `Copy` with NO `Drop`; `OwnedString` is the RAII wrapper that releases
     // the +1 ref returned by `html_string_to_string` on scope exit.

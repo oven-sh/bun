@@ -3,7 +3,7 @@ use bun_js_printer as js_printer;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, LogJsc, StringJsc};
 use bun_parsers::toml::TOML;
 
-pub fn create(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     bun_jsc::create_host_function_object(global, &[("parse", __jsc_host_parse, 1)])
 }
 

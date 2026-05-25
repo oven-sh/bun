@@ -846,7 +846,7 @@ impl ByteRangeMapping {
 // source_url is NOT freed, matching Zig deinit.
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ByteRangeMapping__generate(
+pub(crate) extern "C" fn ByteRangeMapping__generate(
     str_: bun_core::String,
     source_contents_str: bun_core::String,
     source_id: i32,
@@ -868,12 +868,12 @@ pub extern "C" fn ByteRangeMapping__generate(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ByteRangeMapping__getSourceID(this: &ByteRangeMapping) -> i32 {
+pub(crate) extern "C" fn ByteRangeMapping__getSourceID(this: &ByteRangeMapping) -> i32 {
     this.source_id
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ByteRangeMapping__find(
+pub(crate) extern "C" fn ByteRangeMapping__find(
     path: bun_core::String,
 ) -> Option<NonNull<ByteRangeMapping>> {
     let slice = path.to_utf8();
@@ -887,7 +887,7 @@ pub extern "C" fn ByteRangeMapping__find(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ByteRangeMapping__findExecutedLines(
+pub(crate) extern "C" fn ByteRangeMapping__findExecutedLines(
     global_this: &JSGlobalObject,
     source_url: bun_core::String,
     blocks_ptr: NonNull<BasicBlockRange>,

@@ -285,7 +285,7 @@ pub fn write_query<Context: WriterContext>(
     Ok(())
 }
 
-pub fn prepare_and_query_with_signature<Context: WriterContext>(
+pub(crate) fn prepare_and_query_with_signature<Context: WriterContext>(
     global: &JSGlobalObject,
     query: &[u8],
     array_value: JSValue,
@@ -321,7 +321,7 @@ pub fn prepare_and_query_with_signature<Context: WriterContext>(
     Ok(())
 }
 
-pub fn bind_and_execute<Context: WriterContext>(
+pub(crate) fn bind_and_execute<Context: WriterContext>(
     global: &JSGlobalObject,
     statement: &PostgresSQLStatement,
     array_value: JSValue,
@@ -420,7 +420,7 @@ pub fn parse_and_bind_and_execute<Context: WriterContext>(
     Ok(())
 }
 
-pub fn execute_query<Context: WriterContext>(
+pub(crate) fn execute_query<Context: WriterContext>(
     query: &[u8],
     mut writer: protocol::NewWriter<Context>,
 ) -> Result<(), AnyPostgresError> {
@@ -430,7 +430,7 @@ pub fn execute_query<Context: WriterContext>(
     Ok(())
 }
 
-pub fn on_data<Context: ReaderContext>(
+pub(crate) fn on_data<Context: ReaderContext>(
     connection: &PostgresSQLConnection,
     mut reader: protocol::NewReader<Context>,
 ) -> Result<(), AnyPostgresError> {
@@ -501,7 +501,7 @@ pub fn on_data<Context: ReaderContext>(
 
 // `bun.LinearFifo(*PostgresSQLQuery, .Dynamic)` — element is a raw pointer
 // (queries are JS-wrapper-owned, not Box-owned by the queue).
-pub type Queue = bun_collections::linear_fifo::LinearFifo<
+pub(crate) type Queue = bun_collections::linear_fifo::LinearFifo<
     *mut PostgresSQLQuery,
     bun_collections::linear_fifo::DynamicBuffer<*mut PostgresSQLQuery>,
 >;

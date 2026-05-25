@@ -7,8 +7,6 @@
 //! `Mapping.rs`, `ParsedSourceMap.rs`, `VLQ.rs`.
 
 // ── crate aliases ─────────────────────────────────────────────────────────
-#![warn(unreachable_pub)]
-extern crate bun_core as bun_str;
 use bun_collections::VecExt;
 
 // ── sibling modules ───────────────────────────────────────────────────────
@@ -226,12 +224,6 @@ impl Default for ParseResultFail {
     }
 }
 
-#[derive(Default)]
-pub struct SourceContent {
-    pub value: Box<[u16]>,
-    pub quoted: Box<[u8]>,
-}
-
 /// The sourcemap spec says line and column offsets are zero-based.
 #[derive(Clone, Copy)]
 pub struct LineColumnOffset {
@@ -381,7 +373,7 @@ pub struct SourceMapPieces {
 }
 
 /// This function is extremely hot.
-pub fn append_mapping_to_buffer(
+pub(crate) fn append_mapping_to_buffer(
     buffer: &mut bun_core::MutableString,
     last_byte: u8,
     prev_state: SourceMapState,
@@ -850,44 +842,11 @@ pub mod SerializedSourceMap {
 
     impl SerializedSourceMap {
         #[inline]
-        pub fn header(self) -> Header {
+        pub(crate) fn header(self) -> Header {
             // Zig: `*align(1) const Header` — read_unaligned because the blob
             // sits at an arbitrary offset inside the executable.
             // SAFETY: callers guarantee `bytes.len() >= size_of::<Header>()`.
             unsafe { core::ptr::read_unaligned(self.bytes.as_ptr().cast::<Header>()) }
-        }
-
-        pub fn mapping_blob(self) -> Option<&'static [u8]> {
-            if self.bytes.len() < size_of::<Header>() {
-                return None;
-            }
-            let head = self.header();
-            let start = size_of::<Header>()
-                + head.source_files_count as usize * size_of::<StringPointer>() * 2;
-            if start > self.bytes.len() || head.map_bytes_length as usize > self.bytes.len() - start
-            {
-                return None;
-            }
-            Some(&self.bytes[start..][..head.map_bytes_length as usize])
-        }
-
-        /// Zig returns `[]align(1) const StringPointer` (StandaloneModuleGraph.zig)
-        /// because the blob sits at an arbitrary offset in the executable. Rust
-        /// cannot soundly form a `&[StringPointer]` here — that would require
-        /// 4-byte alignment regardless of target. Read each element unaligned
-        /// by index instead.
-        pub fn source_file_name_at(self, index: usize) -> StringPointer {
-            // SAFETY: caller guarantees `index < header().source_files_count`;
-            // the layout doc on `Header` places this array immediately after
-            // the header within `bytes`, so the offset stays in-bounds.
-            unsafe {
-                core::ptr::read_unaligned(
-                    self.bytes
-                        .as_ptr()
-                        .add(size_of::<Header>() + index * size_of::<StringPointer>())
-                        .cast::<StringPointer>(),
-                )
-            }
         }
 
         fn compressed_source_file_at(self, index: usize) -> StringPointer {
@@ -918,7 +877,7 @@ pub mod SerializedSourceMap {
     }
 
     impl Loaded {
-        pub fn source_file_contents(&mut self, index: usize) -> Option<&[u8]> {
+        pub(crate) fn source_file_contents(&mut self, index: usize) -> Option<&[u8]> {
             // PORT NOTE: reshaped for borrowck — Zig checked the cache, then
             // wrote and re-read in the same scope. Here we populate first if
             // empty, then take a single borrow at the end.

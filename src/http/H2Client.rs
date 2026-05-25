@@ -14,14 +14,14 @@ use core::sync::atomic::AtomicI32;
 /// once half has been consumed.
 // PORT NOTE: Zig type was `u31` (HTTP/2 window sizes are 31-bit); Rust has no
 // `u31`, so widen to `u32`. Value `1 << 24` is well within range.
-pub const LOCAL_INITIAL_WINDOW_SIZE: u32 = 1 << 24;
+pub(crate) const LOCAL_INITIAL_WINDOW_SIZE: u32 = 1 << 24;
 
 /// Advertised as SETTINGS_MAX_HEADER_LIST_SIZE and enforced as a hard cap on
 /// both the wire header block (HEADERS + CONTINUATION accumulation) and the
 /// decoded header list, so a CONTINUATION flood or HPACK-amplification bomb
 /// can't OOM the process. RFC 9113 §6.5.2 makes the setting advisory, so the
 /// cap is checked locally regardless of what the server honors.
-pub const LOCAL_MAX_HEADER_LIST_SIZE: u32 = 256 * 1024;
+pub(crate) const LOCAL_MAX_HEADER_LIST_SIZE: u32 = 256 * 1024;
 
 /// `write_buffer` high-water mark. `writeDataWindowed` stops queueing once the
 /// userland send buffer crosses this even if flow-control window remains, so a
@@ -146,14 +146,8 @@ pub(crate) mod bridge {
 
     impl NewHTTPContext<true> {
         #[inline]
-        pub fn h2_register(&mut self, session: *mut super::ClientSession) {
+        pub(crate) fn h2_register(&mut self, session: *mut super::ClientSession) {
             self.register_h2(session);
-        }
-        #[inline]
-        pub fn h2_unregister(&mut self, session: *const super::ClientSession) {
-            // Forward the raw heap pointer so `deref()` can reclaim the Box
-            // with its original write-capable provenance intact.
-            self.unregister_h2(session);
         }
     }
 }

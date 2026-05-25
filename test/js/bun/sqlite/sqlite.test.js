@@ -1544,3 +1544,96 @@ it("internal SQL helpers reject out-of-range database handles", async () => {
     exitCode: 0,
   });
 });
+
+// Property getters on a bindings object run arbitrary JS in the middle of the
+// bind loop. A getter for a later parameter must not be able to (1) change the
+// bytes sqlite stores for an earlier blob parameter by mutating/detaching its
+// ArrayBuffer after it was bound, or (2) keep the bind/step loop running on a
+// statement it just finalized. Run in a subprocess because the unsafe variant
+// of (2) operates on a freed sqlite3_stmt.
+it("binds blob parameters by copy and rejects statements finalized while binding", async () => {
+  const src = `
+    const { Database } = require("bun:sqlite");
+    const out = {};
+
+    // 1. The getter for $b mutates and detaches the buffer that was already
+    //    bound for $a. The stored blob must be the bytes as they were at bind
+    //    time, not whatever the buffer's memory holds when the query runs.
+    {
+      const db = new Database(":memory:");
+      db.run("CREATE TABLE t (a BLOB, b INT)");
+      const ab = new ArrayBuffer(256);
+      const u8 = new Uint8Array(ab);
+      u8.fill(0xab);
+      db.run("INSERT INTO t VALUES ($a, $b)", {
+        get $a() {
+          return u8;
+        },
+        get $b() {
+          u8.fill(0xee);
+          ab.transfer();
+          return 1;
+        },
+      });
+      const row = db.query("SELECT a, b FROM t").get();
+      out.blobLength = row.a.length;
+      out.blobIsOriginal = row.a.every(byte => byte === 0xab);
+      out.b = row.b;
+      db.close();
+    }
+
+    // 2. A getter that finalizes the statement whose parameters are being
+    //    bound must result in an error, not continued use of the statement.
+    {
+      const db = new Database(":memory:");
+      const q = db.query("SELECT $x AS x");
+      let message = "did not throw";
+      try {
+        q.get({
+          get $x() {
+            q.finalize();
+            return 1;
+          },
+        });
+      } catch (e) {
+        message = e.message;
+      }
+      out.finalizeDuringBind = message;
+      out.dbStillWorks = db.query("SELECT 123 AS y").get().y;
+      db.close();
+    }
+
+    // 3. Plain blob binding still round-trips.
+    {
+      const db = new Database(":memory:");
+      db.run("CREATE TABLE t (a BLOB)");
+      db.run("INSERT INTO t VALUES ($a)", { $a: new Uint8Array([1, 2, 3]) });
+      out.plainBlob = Array.from(db.query("SELECT a FROM t").get().a);
+      db.close();
+    }
+
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(
+    JSON.stringify({
+      blobLength: 256,
+      blobIsOriginal: true,
+      b: 1,
+      finalizeDuringBind: "Statement has finalized",
+      dbStillWorks: 123,
+      plainBlob: [1, 2, 3],
+    }),
+  );
+  expect(exitCode).toBe(0);
+});

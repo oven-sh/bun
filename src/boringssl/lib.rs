@@ -2,7 +2,6 @@
 // the translated file can be provided by `zig translate-c`
 
 #![warn(unused_must_use)]
-#![warn(unreachable_pub)]
 use core::ffi::{c_int, c_void};
 use core::ptr;
 use std::cell::Cell;

@@ -38,16 +38,9 @@ pub const NID_commonName: c_int = 13;
 /// `#define NID_subject_alt_name 85`
 pub const NID_subject_alt_name: c_int = 85;
 
-// GENERAL_NAME.type discriminants (`openssl/x509v3.h`).
-pub const GEN_OTHERNAME: c_int = 0;
-pub const GEN_EMAIL: c_int = 1;
 pub const GEN_DNS: c_int = 2;
-pub const GEN_X400: c_int = 3;
-pub const GEN_DIRNAME: c_int = 4;
-pub const GEN_EDIPARTY: c_int = 5;
 pub const GEN_URI: c_int = 6;
 pub const GEN_IPADD: c_int = 7;
-pub const GEN_RID: c_int = 8;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ASN.1 string types
@@ -63,9 +56,9 @@ pub struct asn1_string_st {
     pub flags: c_long,
 }
 
-pub type ASN1_STRING = asn1_string_st;
+pub(crate) type ASN1_STRING = asn1_string_st;
 pub type ASN1_OCTET_STRING = asn1_string_st;
-pub type ASN1_IA5STRING = asn1_string_st;
+pub(crate) type ASN1_IA5STRING = asn1_string_st;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Opaque handles
@@ -274,15 +267,15 @@ pub struct GENERAL_NAME {
 // OPENSSL_STACK low-level ABI (used by the typed `sk_*` inline wrappers)
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub type OPENSSL_sk_free_func = Option<unsafe extern "C" fn(*mut c_void)>;
-pub type OPENSSL_sk_call_free_func =
+pub(crate) type OPENSSL_sk_free_func = Option<unsafe extern "C" fn(*mut c_void)>;
+pub(crate) type OPENSSL_sk_call_free_func =
     Option<unsafe extern "C" fn(OPENSSL_sk_free_func, *mut c_void)>;
-pub type OPENSSL_sk_cmp_func =
+pub(crate) type OPENSSL_sk_cmp_func =
     Option<unsafe extern "C" fn(*const *const c_void, *const *const c_void) -> c_int>;
 
 /// `struct stack_st` / `OPENSSL_STACK`.
 #[repr(C)]
-pub struct OPENSSL_STACK {
+pub(crate) struct OPENSSL_STACK {
     pub num: usize,
     pub data: *mut *mut c_void,
     pub sorted: c_int,
@@ -309,7 +302,7 @@ unsafe extern "C" {
     // ── crypto / err ──────────────────────────────────────────────────────
     // No-arg init calls — no preconditions, idempotent.
     pub safe fn CRYPTO_library_init();
-    pub fn CRYPTO_memcmp(a: *const c_void, b: *const c_void, len: usize) -> c_int;
+    pub(crate) fn CRYPTO_memcmp(a: *const c_void, b: *const c_void, len: usize) -> c_int;
     pub fn ERR_error_string_n(packed_error: u32, buf: *mut c_char, len: usize) -> *mut c_char;
     pub safe fn ERR_load_BIO_strings();
     pub safe fn OpenSSL_add_all_algorithms();
@@ -452,7 +445,7 @@ unsafe extern "C" {
 
 /// Per-stack free callback type used by `sk_GENERAL_NAME_pop_free`
 /// (matches Zig's `stack_GENERAL_NAME_free_func`).
-pub type sk_GENERAL_NAME_free_func = unsafe extern "C" fn(*mut struct_stack_st_GENERAL_NAME);
+pub(crate) type sk_GENERAL_NAME_free_func = unsafe extern "C" fn(*mut struct_stack_st_GENERAL_NAME);
 
 #[inline]
 pub unsafe fn sk_X509_value(sk: *const struct_stack_st_X509, i: usize) -> *mut X509 {
@@ -536,15 +529,11 @@ pub unsafe fn sk_GENERAL_NAME_pop_free(
 // (`vendor/boringssl/include/openssl/ssl.h`)
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub const SSL_ERROR_NONE: c_int = 0;
 pub const SSL_ERROR_SSL: c_int = 1;
 pub const SSL_ERROR_WANT_READ: c_int = 2;
 pub const SSL_ERROR_WANT_WRITE: c_int = 3;
-pub const SSL_ERROR_WANT_X509_LOOKUP: c_int = 4;
 pub const SSL_ERROR_SYSCALL: c_int = 5;
 pub const SSL_ERROR_ZERO_RETURN: c_int = 6;
-pub const SSL_ERROR_WANT_CONNECT: c_int = 7;
-pub const SSL_ERROR_WANT_ACCEPT: c_int = 8;
 pub const SSL_ERROR_WANT_RENEGOTIATE: c_int = 19;
 
 pub const SSL_VERIFY_NONE: c_int = 0x00;
@@ -552,24 +541,17 @@ pub const SSL_VERIFY_PEER: c_int = 0x01;
 pub const SSL_VERIFY_FAIL_IF_NO_PEER_CERT: c_int = 0x02;
 pub const SSL_VERIFY_PEER_IF_NO_OBC: c_int = 0x04;
 
-pub const SSL_SENT_SHUTDOWN: c_int = 1;
 pub const SSL_RECEIVED_SHUTDOWN: c_int = 2;
 
 pub const SSL_TLSEXT_ERR_OK: c_int = 0;
-pub const SSL_TLSEXT_ERR_ALERT_WARNING: c_int = 1;
 pub const SSL_TLSEXT_ERR_ALERT_FATAL: c_int = 2;
 pub const SSL_TLSEXT_ERR_NOACK: c_int = 3;
 
-pub const OPENSSL_NPN_UNSUPPORTED: c_int = 0;
 pub const OPENSSL_NPN_NEGOTIATED: c_int = 1;
-pub const OPENSSL_NPN_NO_OVERLAP: c_int = 2;
 
 /// `enum ssl_renegotiate_mode_t` — passed to `SSL_set_renegotiate_mode`.
 pub type ssl_renegotiate_mode_t = c_uint;
 pub const ssl_renegotiate_never: ssl_renegotiate_mode_t = 0;
-pub const ssl_renegotiate_once: ssl_renegotiate_mode_t = 1;
-pub const ssl_renegotiate_freely: ssl_renegotiate_mode_t = 2;
-pub const ssl_renegotiate_ignore: ssl_renegotiate_mode_t = 3;
 pub const ssl_renegotiate_explicit: ssl_renegotiate_mode_t = 4;
 
 /// `SSL_OP_LEGACY_SERVER_CONNECT` — BoringSSL defines this as 0 (no-op flag);
@@ -585,14 +567,14 @@ pub const RSA_PKCS1_OAEP_PADDING: c_int = 4;
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// `CRYPTO_refcount_t` (`openssl/thread.h`) — atomic-ish u32 in BoringSSL.
-pub type CRYPTO_refcount_t = u32;
+pub(crate) type CRYPTO_refcount_t = u32;
 
 /// `ossl_ssize_t` — signed counterpart of `size_t` for BoringSSL "length or -1"
 /// parameters. Mirrors the `isize` definition in `boringssl.zig`.
-pub type ossl_ssize_t = isize;
+pub(crate) type ossl_ssize_t = isize;
 
 /// `bio_info_cb` — callback type for `BIO_METHOD.callback_ctrl`.
-pub type bio_info_cb =
+pub(crate) type bio_info_cb =
     Option<unsafe extern "C" fn(*mut BIO, c_int, *const c_char, c_int, c_long, c_long) -> c_long>;
 
 /// `struct bio_method_st` — vtable for a BIO implementation. Laid out by-value
@@ -656,7 +638,8 @@ opaque!(
 pub type SSL_verify_cb = Option<unsafe extern "C" fn(c_int, *mut X509_STORE_CTX) -> c_int>;
 
 /// `int pem_password_cb(char *buf, int size, int rwflag, void *userdata)`.
-pub type pem_password_cb = unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut c_void) -> c_int;
+pub(crate) type pem_password_cb =
+    unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut c_void) -> c_int;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Extern functions — SSL / BIO / ERR / HMAC / RSA / PBKDF2

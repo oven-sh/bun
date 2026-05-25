@@ -54,7 +54,7 @@ mod dom_call_slowpath {
         ($( $sym:ident => $target:path ),* $(,)?) => {$(
             #[unsafe(no_mangle)]
             #[bun_jsc::host_call]
-            pub fn $sym(
+            pub(crate) fn $sym(
                 global: *mut JSGlobalObject,
                 this_value: JSValue,
                 arguments_ptr: *const JSValue,
@@ -89,7 +89,7 @@ mod dom_call_slowpath {
     // exceptions), so no `to_js_host_call` mapping.
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
-    pub fn FFI__ptr__slowpath(
+    pub(super) fn FFI__ptr__slowpath(
         global: *mut JSGlobalObject,
         this_value: JSValue,
         arguments_ptr: *const JSValue,
@@ -126,14 +126,14 @@ mod TCC {
         all(windows, target_arch = "aarch64")
     )))]
     unsafe extern "C" {
-        pub fn tcc_delete(s: *mut State);
+        pub(super) fn tcc_delete(s: *mut State);
     }
     #[cfg(any(
         target_os = "android",
         target_os = "freebsd",
         all(windows, target_arch = "aarch64")
     ))]
-    pub unsafe fn tcc_delete(_s: *mut State) {
+    pub(super) unsafe fn tcc_delete(_s: *mut State) {
         unreachable!("tcc_delete: TinyCC not built on this target (cfg.tinycc = false)");
     }
 }
@@ -151,9 +151,7 @@ pub(crate) fn get_dl_error() -> Box<[u8]> {
     #[cfg(windows)]
     {
         use std::io::Write as _;
-        // SAFETY: GetLastError() reads thread-local Win32 state, takes no
-        // arguments, and has no preconditions; always safe to call.
-        let err = unsafe { bun_sys::windows::GetLastError() };
+        let err = bun_sys::windows::GetLastError();
         let err_int = err as u32;
         let mut v = Vec::new();
         write!(&mut v, "error code {}", err_int).ok();
@@ -326,16 +324,6 @@ impl Function {
             }
         }
         false
-    }
-
-    pub(super) fn fail(&mut self, msg: &'static [u8]) {
-        if !matches!(self.step, Step::Failed { .. }) {
-            // PORT NOTE: @branchHint(.likely) — Rust has no statement-level hint; left as-is
-            self.step = Step::Failed {
-                msg: Box::<[u8]>::from(msg),
-                allocated: false,
-            };
-        }
     }
 
     pub fn ffi_header() -> &'static [u8] {

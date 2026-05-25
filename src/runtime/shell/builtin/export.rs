@@ -18,7 +18,7 @@ enum State {
 }
 
 impl Export {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         if argc == 0 {
             // No args: print all exported vars.
@@ -74,7 +74,7 @@ impl Export {
         Builtin::done(interp, cmd, 0)
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,

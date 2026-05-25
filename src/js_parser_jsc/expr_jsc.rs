@@ -69,7 +69,7 @@ pub fn data_to_js(this: &ExprData, global: &JSGlobalObject) -> Result<JSValue, T
     }
 }
 
-pub fn array_to_js(this: &E::Array, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
+pub(crate) fn array_to_js(this: &E::Array, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
     let items = this.items.slice();
     let array = JSValue::create_empty_array(global, items.len()).map_err(js_err)?;
     let _guard = array.protected();
@@ -82,24 +82,14 @@ pub fn array_to_js(this: &E::Array, global: &JSGlobalObject) -> Result<JSValue, 
     Ok(array)
 }
 
-pub fn bool_to_js(this: E::Boolean, _ctx: &JSGlobalObject) -> JSValue {
-    // Zig returns `jsc.C.JSValueRef` via `JSValueMakeBoolean`; the Rust C-API
-    // shim is `#[deprecated]` in favour of `JSValue`. `JSValue::js_boolean`
-    // yields the same encoded immediate (`ValueTrue`/`ValueFalse`) without the
-    // FFI hop. Callers needing a raw ref can `.as_ref()` on the result.
-    JSValue::js_boolean(this.value)
-}
-
-pub fn number_to_js(this: E::Number) -> JSValue {
+pub(crate) fn number_to_js(this: E::Number) -> JSValue {
     JSValue::js_number(this.value)
 }
 
-pub fn big_int_to_js(_: &E::BigInt) -> JSValue {
-    // TODO:
-    JSValue::js_number(0.0)
-}
-
-pub fn object_to_js(this: &E::Object, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
+pub(crate) fn object_to_js(
+    this: &E::Object,
+    global: &JSGlobalObject,
+) -> Result<JSValue, ToJSError> {
     let obj = JSValue::create_empty_object(global, this.properties.len_u32() as usize);
     let _guard = obj.protected();
     let props: &[G::Property] = this.properties.slice();

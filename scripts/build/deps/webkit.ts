@@ -3,13 +3,13 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-// Preview autobuild of oven-sh/WebKit#235 rebased on current main — the
-// ucontext-SP fix for JSC's signalHandlerSuspendResume (so the GC
+// Preview autobuild of oven-sh/WebKit#235 rebased on current main —
+// the ucontext-SP fix for JSC's signalHandlerSuspendResume (so the GC
 // thread-suspend signal works under SA_ONSTACK, e.g. Go cgo's initsig,
-// instead of spinning forever). Rebased on 782504c968 (current main's
-// pin) so ICU/JSC ABI matches. Swap back to the merged hash once #235
-// lands.
-export const WEBKIT_VERSION = "autobuild-preview-pr-235-f9079851";
+// instead of spinning forever). Rebased on cf8fb22b701140 (current
+// main's pin) so ICU/JSC ABI and the LTO-variant asset set match. Swap
+// back to the merged hash once #235 lands.
+export const WEBKIT_VERSION = "autobuild-preview-pr-235-925c056e";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -94,9 +94,9 @@ function prebuiltDestDir(cfg: Config): string {
   const v = cfg.webkitVersion;
   const version16 = v.startsWith("autobuild-") ? v.slice("autobuild-".length) : v.slice(0, 16);
   // Cross-compiled targets share a host (and cache dir) with native builds,
-  // so include os+arch in the key — otherwise a FreeBSD/arm64 extraction
-  // collides with a Linux/x64 one at the same WebKit version.
-  const osKey = cfg.freebsd ? "-freebsd" : cfg.abi === "android" ? "-android" : "";
+  // so include os+arch in the key — otherwise a FreeBSD/arm64 or macOS/x64
+  // extraction collides with a Linux/x64 one at the same WebKit version.
+  const osKey = cfg.freebsd ? "-freebsd" : cfg.darwin ? "-macos" : cfg.abi === "android" ? "-android" : "";
   const archKey = cfg.arm64 ? "-arm64" : "";
   return resolve(cfg.cacheDir, `webkit-${version16}${osKey}${archKey}${prebuiltSuffix(cfg)}`);
 }
@@ -245,7 +245,7 @@ export const webkit: Dependency = {
     // PIE-default distros — without it the driver still passes -pie and the
     // -fno-pic probe object fails R_X86_64_32S relocation, killing FindThreads.
     if (cfg.unix && cfg.abi !== "android") optFlags.push("-fno-pic", "-fno-pie", "-no-pie");
-    if (cfg.lto) optFlags.push("-flto=full");
+    if (cfg.lto) optFlags.push("-flto=thin");
     if (cfg.pgoGenerate) optFlags.push(`-fprofile-generate=${cfg.pgoGenerate}`);
     if (cfg.pgoUse) {
       optFlags.push(

@@ -327,7 +327,7 @@ impl<'bump> DeclarationBlock<'bump> {
 
 // ─── PropertyDeclarationParser ────────────────────────────────────────────
 
-pub struct PropertyDeclarationParser<'a, 'bump> {
+pub(crate) struct PropertyDeclarationParser<'a, 'bump> {
     pub important_declarations: &'a mut DeclarationList<'bump>,
     pub declarations: &'a mut DeclarationList<'bump>,
     pub options: &'a css::ParserOptions<'a>,

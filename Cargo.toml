@@ -6,7 +6,6 @@ members = [
   "src/api",
   "src/base64",
   "src/bundler",
-  "src/codegen",
   "src/collections",
   "src/css",
   "src/errno",
@@ -19,8 +18,6 @@ members = [
   "src/js",
   "src/libarchive",
   "src/md",
-  "src/meta",
-  "src/node-fallbacks",
   "src/paths",
   "src/resolver",
   "src/safety",
@@ -29,7 +26,6 @@ members = [
   "src/sql",
   "src/sys",
   "src/threading",
-  "src/unicode",
   "src/valkey",
   "src/watcher",
   "src/cares_sys",
@@ -51,7 +47,6 @@ members = [
   "src/js_parser",
   "src/js_parser_jsc",
   "src/js_printer",
-  "src/libarchive_sys",
   "src/libdeflate_sys",
   "src/libuv_sys",
   "src/ast",
@@ -65,7 +60,6 @@ members = [
   "src/platform",
   "src/sha_hmac",
   "src/sys_jsc",
-  "src/url_jsc",
   "src/zlib_sys",
   "src/dispatch",
   "src/brotli",
@@ -82,7 +76,6 @@ members = [
   "src/brotli_sys",
   "src/bun_alloc",
   "src/mimalloc_sys",
-  "src/picohttp_sys",
   "src/semver_jsc",
   "src/standalone_graph",
   "src/uws",
@@ -188,11 +181,26 @@ codegen-units = 1
 strip = "symbols"
 
 [workspace.lints.rust]
+# Every rustc warning is an error. Individual lints below can override this
+# back to "warn" (their priority 0 beats the group's -1) where a warning level
+# is intentional.
+warnings = { level = "deny", priority = -1 }
 # `bun_asan` is set via RUSTFLAGS (`--cfg=bun_asan` + `--check-cfg=cfg(bun_asan)`)
 # by scripts/build/rust.ts for asan builds; register it here so a plain
 # `cargo build` / `cargo check` (without those flags) doesn't warn.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)'] }
+# link.exe unconditionally prints "Creating library X.dll.lib and object
+# X.dll.exp" to stdout when linking each proc-macro DLL on Windows hosts;
+# there is no linker flag to suppress it. The lint already exempts itself
+# from `-D warnings`, so this only silences the noise.
+linker_messages = "allow"
 dead_code = "deny"
+# Every crate in this workspace is an internal implementation detail of one
+# binary, so `pub` is a claim that *another crate* imports the item. If it
+# doesn't, write `pub(crate)` — that keeps the item under `dead_code` analysis
+# instead of being exempted as an external API root. Macro-generated items that
+# must stay `pub` carry `#[allow(unreachable_pub)]` at the expansion site.
+unreachable_pub = "deny"
 unused_imports = "deny"
 unused_variables = "deny"
 unused_mut = "deny"
@@ -339,7 +347,6 @@ memchr = "2"
 rustix = { version = "0.38", default-features = false, features = ["std", "fs", "event", "process", "net"] }
 bitflags = "2"
 thiserror = "2"
-crossbeam = "0.8"
 smallvec = "1"
 bumpalo = { version = "3", features = ["collections", "boxed"] }
 typed-arena = "2"
@@ -349,7 +356,6 @@ bun_analytics = { path = "src/analytics" }
 bun_api = { path = "src/api" }
 bun_base64 = { path = "src/base64" }
 bun_bundler = { path = "src/bundler" }
-bun_codegen = { path = "src/codegen" }
 bun_collections = { path = "src/collections" }
 bun_css = { path = "src/css" }
 bun_errno = { path = "src/errno" }
@@ -361,8 +367,6 @@ bun_io = { path = "src/io" }
 bun_js = { path = "src/js" }
 bun_libarchive = { path = "src/libarchive" }
 bun_md = { path = "src/md" }
-bun_meta = { path = "src/meta" }
-bun_node-fallbacks = { path = "src/node-fallbacks" }
 bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
 bun_safety = { path = "src/safety" }
@@ -371,7 +375,6 @@ bun_sourcemap = { path = "src/sourcemap" }
 bun_sql = { path = "src/sql" }
 bun_sys = { path = "src/sys" }
 bun_threading = { path = "src/threading" }
-bun_unicode = { path = "src/unicode" }
 bun_valkey = { path = "src/valkey" }
 bun_watcher = { path = "src/watcher" }
 bun_cares_sys = { path = "src/cares_sys" }
@@ -393,7 +396,6 @@ bun_install_types = { path = "src/install_types" }
 bun_js_parser = { path = "src/js_parser" }
 bun_js_parser_jsc = { path = "src/js_parser_jsc" }
 bun_js_printer = { path = "src/js_printer" }
-bun_libarchive_sys = { path = "src/libarchive_sys" }
 bun_libdeflate_sys = { path = "src/libdeflate_sys" }
 bun_libuv_sys = { path = "src/libuv_sys" }
 bun_ast = { path = "src/ast" }
@@ -407,7 +409,6 @@ bun_patch = { path = "src/patch" }
 bun_platform = { path = "src/platform" }
 bun_sha_hmac = { path = "src/sha_hmac" }
 bun_sys_jsc = { path = "src/sys_jsc" }
-bun_url_jsc = { path = "src/url_jsc" }
 bun_zlib_sys = { path = "src/zlib_sys" }
 bun_dispatch = { path = "src/dispatch" }
 bun_brotli = { path = "src/brotli" }
@@ -424,7 +425,6 @@ bun_boringssl = { path = "src/boringssl" }
 bun_brotli_sys = { path = "src/brotli_sys" }
 bun_alloc = { path = "src/bun_alloc" }
 bun_mimalloc_sys = { path = "src/mimalloc_sys" }
-bun_picohttp_sys = { path = "src/picohttp_sys" }
 bun_semver_jsc = { path = "src/semver_jsc" }
 bun_standalone_graph = { path = "src/standalone_graph" }
 bun_uws = { path = "src/uws" }

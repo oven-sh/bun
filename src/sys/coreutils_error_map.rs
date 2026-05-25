@@ -15,7 +15,7 @@ use crate::SystemErrno;
 // `SystemErrno` enum so callers get an O(1) `EnumMap` index. Variants whose
 // names have no entry in the bun_core table fall back to `UNKNOWN`, matching
 // the Zig `@hasField` filter.
-pub static COREUTILS_ERROR_MAP: LazyLock<EnumMap<SystemErrno, &'static str>> =
+pub(crate) static COREUTILS_ERROR_MAP: LazyLock<EnumMap<SystemErrno, &'static str>> =
     LazyLock::new(|| {
         let map = EnumMap::from_fn(|errno: SystemErrno| {
             bun_core::coreutils_error_map::get_by_name(<&'static str>::from(errno))
@@ -31,7 +31,7 @@ pub static COREUTILS_ERROR_MAP: LazyLock<EnumMap<SystemErrno, &'static str>> =
 /// Sentinel default for errnos with no coreutils label. Stored by pointer
 /// identity in `COREUTILS_ERROR_MAP` so `get()` can distinguish "unmapped"
 /// from a real entry.
-pub const UNKNOWN: &str = "unknown error";
+pub(crate) const UNKNOWN: &str = "unknown error";
 
 /// Spec: Zig `coreutils_error_map.get(errno)` returns `?[]const u8`. The Rust
 /// `EnumMap` is total, so we treat the `UNKNOWN` sentinel as `None` to preserve

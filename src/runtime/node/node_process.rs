@@ -19,7 +19,7 @@ unsafe extern "C" {
 // `extern "C"`; the C++ caller guarantees a live pointer, so the reference
 // param discharges the non-null obligation at the type level.
 #[unsafe(export_name = "Bun__Process__createArgv0")]
-pub extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
+pub(crate) extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
     let argv0 = bun_core::argv()
         .get(0)
         .map(|z| z.as_bytes())
@@ -28,7 +28,7 @@ pub extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
 }
 
 #[unsafe(export_name = "Bun__Process__getExecPath")]
-pub extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
+pub(crate) extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
     let Ok(out) = bun_core::self_exe_path() else {
         // if for any reason we are unable to get the executable path, we just return argv[0]
         return create_argv0(global_object);
@@ -38,11 +38,11 @@ pub extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
 
 // ───────────────────────────── argv (C++ accessor wrappers) ─────────────────
 
-pub extern "C" fn get_argv(global: &JSGlobalObject) -> JSValue {
+pub(crate) extern "C" fn get_argv(global: &JSGlobalObject) -> JSValue {
     Bun__Process__getArgv(global)
 }
 
-pub extern "C" fn get_exec_argv(global: &JSGlobalObject) -> JSValue {
+pub(crate) extern "C" fn get_exec_argv(global: &JSGlobalObject) -> JSValue {
     Bun__Process__getExecArgv(global)
 }
 
@@ -66,12 +66,12 @@ pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
 // ───────────────────────────── misc exports ─────────────────────────────
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
+pub(crate) extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
     feature_flag::NODE_NO_WARNINGS.get().unwrap_or(false)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__suppressCrashOnProcessKillSelfIfDesired() {
+pub(crate) extern "C" fn Bun__suppressCrashOnProcessKillSelfIfDesired() {
     if feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF
         .get()
         .unwrap_or(false)
@@ -85,19 +85,19 @@ pub extern "C" fn Bun__suppressCrashOnProcessKillSelfIfDesired() {
 // `#[repr(transparent)]` newtype so the C++ side still sees a single
 // `const char*`-sized symbol.
 #[repr(transparent)]
-pub struct CStrPtr(*const c_char);
+pub(crate) struct CStrPtr(*const c_char);
 // SAFETY: the wrapped pointer always targets a `'static` NUL-terminated
 // rodata literal produced by `concatcp!`; it is never written through.
 unsafe impl Sync for CStrPtr {}
 
 #[unsafe(no_mangle)]
-pub static Bun__version: CStrPtr = CStrPtr(
+pub(crate) static Bun__version: CStrPtr = CStrPtr(
     const_format::concatcp!("v", Global::package_json_version, "\0")
         .as_ptr()
         .cast::<c_char>(),
 );
 #[unsafe(no_mangle)]
-pub static Bun__version_with_sha: CStrPtr = CStrPtr(
+pub(crate) static Bun__version_with_sha: CStrPtr = CStrPtr(
     const_format::concatcp!("v", Global::package_json_version_with_sha, "\0")
         .as_ptr()
         .cast::<c_char>(),
@@ -105,19 +105,19 @@ pub static Bun__version_with_sha: CStrPtr = CStrPtr(
 // Version exports removed - now handled by build-generated header (bun_dependency_versions.h)
 // The C++ code in BunProcess.cpp uses the generated header directly
 #[unsafe(no_mangle)]
-pub static Bun__versions_uws: CStrPtr = CStrPtr(
+pub(crate) static Bun__versions_uws: CStrPtr = CStrPtr(
     const_format::concatcp!(Environment::GIT_SHA, "\0")
         .as_ptr()
         .cast::<c_char>(),
 );
 #[unsafe(no_mangle)]
-pub static Bun__versions_usockets: CStrPtr = CStrPtr(
+pub(crate) static Bun__versions_usockets: CStrPtr = CStrPtr(
     const_format::concatcp!(Environment::GIT_SHA, "\0")
         .as_ptr()
         .cast::<c_char>(),
 );
 #[unsafe(no_mangle)]
-pub static Bun__version_sha: CStrPtr = CStrPtr(
+pub(crate) static Bun__version_sha: CStrPtr = CStrPtr(
     const_format::concatcp!(Environment::GIT_SHA, "\0")
         .as_ptr()
         .cast::<c_char>(),
@@ -145,7 +145,7 @@ mod _impl {
     // ───────────────────────────── title ─────────────────────────────
 
     #[unsafe(export_name = "Bun__Process__getTitle")]
-    pub extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
+    pub(super) extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
         let guard = crate::cli::Bun__Node__ProcessTitle.lock();
         let str_ = guard.as_deref().unwrap_or(b"bun");
         // SAFETY: title is a valid out-param provided by C++ caller
@@ -156,7 +156,10 @@ mod _impl {
 
     // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
     #[unsafe(export_name = "Bun__Process__setTitle")]
-    pub extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: *mut BunString) {
+    pub(super) extern "C" fn set_title(
+        _global_object: *const JSGlobalObject,
+        newvalue: *mut BunString,
+    ) {
         // SAFETY: newvalue is a valid pointer from C++; we consume one ref before
         // returning. `String` is `Copy`, so read it out by value and let
         // `OwnedString`'s Drop release the ref (Zig: `defer newvalue.deref()`).
@@ -177,7 +180,9 @@ mod _impl {
     // (headers.h) declares `EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*)`,
     // not a `JSHostFunctionType`. Hand-roll the wrap1 shim instead of `#[bun_jsc::host_fn]`.
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__Process__createExecArgv(global_object: &JSGlobalObject) -> JSValue {
+    pub(super) extern "C" fn Bun__Process__createExecArgv(
+        global_object: &JSGlobalObject,
+    ) -> JSValue {
         bun_jsc::to_js_host_fn_result(global_object, create_exec_argv(global_object))
     }
 
@@ -314,7 +319,7 @@ mod _impl {
     // ───────────────────────────── argv ─────────────────────────────
 
     #[unsafe(export_name = "Bun__Process__createArgv")]
-    pub extern "C" fn create_argv(global_object: &JSGlobalObject) -> JSValue {
+    pub(super) extern "C" fn create_argv(global_object: &JSGlobalObject) -> JSValue {
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
 
@@ -389,7 +394,7 @@ mod _impl {
     // ───────────────────────────── eval ─────────────────────────────
 
     #[unsafe(export_name = "Bun__Process__getEval")]
-    pub extern "C" fn get_eval(global_object: &JSGlobalObject) -> JSValue {
+    pub(super) extern "C" fn get_eval(global_object: &JSGlobalObject) -> JSValue {
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
         if let Some(source) = vm.module_loader.eval_source.as_deref() {
@@ -404,7 +409,7 @@ mod _impl {
     // `EncodedJSValue Bun__Process__getCwd(JSGlobalObject*)`. Hand-roll the wrap1
     // shim instead of `#[bun_jsc::host_fn]` (caller is not a JSHostFunction).
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__Process__getCwd(global_object: &JSGlobalObject) -> JSValue {
+    pub(super) extern "C" fn Bun__Process__getCwd(global_object: &JSGlobalObject) -> JSValue {
         bun_jsc::to_js_host_fn_result(global_object, get_cwd(global_object))
     }
 
@@ -420,7 +425,7 @@ mod _impl {
     // `EncodedJSValue Bun__Process__setCwd(JSGlobalObject*, ZigString*)`. Hand-roll
     // the wrap2 shim; the second arg is the raw `*mut ZigString`, not a CallFrame.
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__Process__setCwd(
+    pub(super) extern "C" fn Bun__Process__setCwd(
         global_object: &JSGlobalObject,
         to: &ZigString,
     ) -> JSValue {
@@ -508,7 +513,7 @@ mod _impl {
     // TODO: switch this to using *bun.wtf.String when it is added
     #[cfg(windows)]
     #[unsafe(export_name = "Bun__Process__editWindowsEnvVar")]
-    pub extern "C" fn bun_process_edit_windows_env_var(k: BunString, v: BunString) {
+    pub(super) extern "C" fn bun_process_edit_windows_env_var(k: BunString, v: BunString) {
         const _: () = assert!(cfg!(windows));
         if k.tag() == bun_core::Tag::Empty {
             return;

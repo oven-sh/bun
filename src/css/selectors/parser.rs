@@ -4121,7 +4121,9 @@ fn parse_qualified_name_eplicit_namespace_helper<Impl: BunSelectorImpl>(
     let t = input.next_including_whitespace()?.clone();
     match &t {
         Token::Ident(local_name) => return Ok(OptionalQName::Some(namespace, Some(*local_name))),
-        Token::Delim(c) if *c == b'*' as u32 => {
+        // `*` is only a valid local name outside of attribute selectors;
+        // `[ns|*]` must fall through to the `InvalidQualNameInAttr` error below.
+        Token::Delim(c) if *c == b'*' as u32 && !in_attr_selector => {
             return Ok(OptionalQName::Some(namespace, None));
         }
         _ => {}

@@ -5,7 +5,7 @@ use super::Expect;
 use super::get_signature;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_throw_error_matching_snapshot(
+pub(crate) fn to_throw_error_matching_snapshot(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,

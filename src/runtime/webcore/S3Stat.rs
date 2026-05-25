@@ -12,11 +12,11 @@ pub struct S3Stat {
 }
 
 impl S3Stat {
-    pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<Box<Self>> {
+    pub(crate) fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<Box<Self>> {
         Err(global.throw_illegal_constructor("S3Stat"))
     }
 
-    pub fn init(
+    pub(crate) fn init(
         size: u64,
         etag: &[u8],
         content_type: &[u8],
@@ -37,22 +37,22 @@ impl S3Stat {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_size(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_size(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::js_number(self.size as f64)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_etag(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_etag(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         self.etag.to_js(global)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_content_type(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_content_type(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         self.content_type.to_js(global)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_last_modified(&self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_last_modified(&self, global: &JSGlobalObject) -> JSValue {
         JSValue::from_date_number(global, self.last_modified)
     }
 }

@@ -11,7 +11,7 @@ use bun_core::{Error, Global, err, pretty_errorln};
 // schema Loader.
 // TODO(port): if a single `T` ever needs two distinct resolvers, split this back
 // into `<T, R: ValueResolver<T>>` with a PhantomData marker.
-pub trait ColonListValue: Sized {
+pub(crate) trait ColonListValue: Sized {
     /// Mirrors `comptime value_resolver(str)`.
     fn resolve_value(input: &[u8]) -> Result<Self, Error>;
 
@@ -19,7 +19,7 @@ pub trait ColonListValue: Sized {
     const IS_LOADER: bool = false;
 }
 
-pub struct ColonListType<T: ColonListValue> {
+pub(crate) struct ColonListType<T: ColonListValue> {
     // TODO(port): lifetime — keys borrow slices out of CLI argv (process-lifetime
     // in practice). Uses &'static; may need to thread a `'a` if needed.
     pub keys: Vec<&'static [u8]>,
@@ -27,7 +27,7 @@ pub struct ColonListType<T: ColonListValue> {
 }
 
 impl<T: ColonListValue> ColonListType<T> {
-    pub fn init(count: usize) -> Result<Self, Error> {
+    pub(crate) fn init(count: usize) -> Result<Self, Error> {
         // PORT NOTE: reshaped — Zig allocs two uninit slices of `count` and
         // index-assigns in `load`; Rust uses `Vec::with_capacity` + `push`.
         let keys = Vec::with_capacity(count);
@@ -37,7 +37,7 @@ impl<T: ColonListValue> ColonListType<T> {
         Ok(ColonListType { keys, values })
     }
 
-    pub fn load(&mut self, input: &[&'static [u8]]) -> Result<(), Error> {
+    pub(crate) fn load(&mut self, input: &[&'static [u8]]) -> Result<(), Error> {
         for str in input.iter() {
             // Support either ":" or "=" as the separator, preferring whichever is first.
             // ":" is less confusing IMO because that syntax is used with flags
@@ -79,7 +79,7 @@ impl<T: ColonListValue> ColonListType<T> {
         Ok(())
     }
 
-    pub fn resolve(input: &[&'static [u8]]) -> Result<Self, Error> {
+    pub(crate) fn resolve(input: &[&'static [u8]]) -> Result<Self, Error> {
         let mut list = Self::init(input.len())?;
         match list.load(input) {
             Ok(()) => {}

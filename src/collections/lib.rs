@@ -11,9 +11,7 @@
     allocator_api
 )]
 #![allow(incomplete_features, internal_features)]
-#![warn(unused_must_use, unreachable_pub)]
-
-extern crate self as bun_collections;
+#![warn(unused_must_use)]
 
 pub mod hive_array;
 pub mod multi_array_list;

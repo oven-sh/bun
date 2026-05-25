@@ -367,7 +367,8 @@ impl Expansion {
     /// but the glob matcher has no general backslash-escape that survives
     /// `build_pattern_components` on every platform, so each byte is wrapped
     /// in a single-character class (`[c]`) — or a one-branch brace group for
-    /// `!` — which the matcher provably treats as that literal character.
+    /// a component-leading `!` — which the matcher provably treats as that
+    /// literal character.
     /// `current_out` itself is not mutated: the no-match error message and the
     /// assignment-position literal fallback keep using the original word.
     fn neutralize_glob_metachars(current_out: &[u8], meta_offsets: &[u32]) -> Vec<u8> {
@@ -384,10 +385,26 @@ impl Expansion {
                 b'*' | b'?' | b'[' | b']' | b'{' | b'}' | b',' => {
                     pattern.extend_from_slice(&[b'[', b, b']']);
                 }
-                // `[!]`/`[^]` would be a negated class and a bare leading `!`
-                // flips the matcher's negation loop, so wrap `!` in a
-                // one-branch brace group whose sole branch is the literal `!`.
-                b'!' => pattern.extend_from_slice(b"{!}"),
+                // `[!]`/`[^]` would be a negated class, so `!` cannot use the
+                // class wrapper. Only a `!` at the start of a path component
+                // (the same split `build_pattern_components` performs) can act
+                // as pattern syntax — the matcher's negation loop — so wrap
+                // that one in a one-branch brace group whose sole branch is
+                // the literal `!`. Every other `!` already matches literally
+                // and is emitted bare: wrapping each one costs a brace-stack
+                // slot per byte, and a run of more than 10 interpolated `!`
+                // would overflow the matcher's bounded brace stack and turn
+                // the whole word into a spurious no-match.
+                b'!' => {
+                    let starts_component = pattern
+                        .last()
+                        .is_none_or(|&prev| bun_core::path_sep::is_sep_native(prev));
+                    if starts_component {
+                        pattern.extend_from_slice(b"{!}");
+                    } else {
+                        pattern.push(b'!');
+                    }
+                }
                 // `[\\]` is a class containing an escaped `\`; the 3-byte
                 // `[\]` would mis-parse as a class containing an escaped `]`.
                 #[cfg(not(windows))]
@@ -632,18 +649,17 @@ impl Expansion {
     ) {
         use crate::shell::dispatch_tasks::ShellGlobErr;
         log!("Expansion {} onGlobWalkDone", this);
-        if let Some(err) = err {
-            let shell_err = match err {
-                ShellGlobErr::Syscall(e) => ShellErr::new_sys(&e),
-                ShellGlobErr::Unknown(e) => ShellErr::Custom(e.to_string().into_bytes().into()),
-            };
-            interp.throw(shell_err);
-            interp.as_expansion_mut(this).state = ExpansionState::Done;
-            Yield::Next(this).run(interp);
-            return;
-        }
+        let walk_err = match err {
+            Some(ShellGlobErr::Syscall(e))
+                if matches!(e.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) =>
+            {
+                log!("Expansion {} glob walk failed: {}", this, e);
+                None
+            }
+            other => other,
+        };
 
-        if result.is_empty() {
+        if result.is_empty() || walk_err.is_some() {
             // Spec lines 559-578: in variable assignments a no-match glob
             // expands to the literal pattern; otherwise it's an error.
             let parent = interp.as_expansion(this).base.parent;
@@ -659,6 +675,12 @@ impl Expansion {
             if in_assign {
                 Self::push_current_out(me);
                 me.state = ExpansionState::Done;
+            } else if let Some(err) = walk_err {
+                let shell_err = match err {
+                    ShellGlobErr::Syscall(e) => ShellErr::new_sys(&e),
+                    ShellGlobErr::Unknown(e) => ShellErr::Custom(e.to_string().into_bytes().into()),
+                };
+                me.state = ExpansionState::Err(Box::new(shell_err));
             } else {
                 let msg = format!("no matches found: {}", bstr::BStr::new(&me.current_out));
                 me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));

@@ -1,5 +1,4 @@
 // These are all extern so they can't be top-level structs.
-#![warn(unreachable_pub)]
 pub use crate::external_string::ExternalString;
 pub use crate::semver_string::String;
 pub use crate::version::PinnedVersion;

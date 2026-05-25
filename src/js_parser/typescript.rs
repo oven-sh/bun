@@ -231,7 +231,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 } // end impl P (predicate fns)
 
 pub mod identifier {
-    pub enum StmtIdentifier {
+    pub(crate) enum StmtIdentifier {
         SType,
 
         SNamespace,
@@ -245,7 +245,7 @@ pub mod identifier {
         SDeclare,
     }
 
-    pub fn for_str(str: &[u8]) -> Option<StmtIdentifier> {
+    pub(crate) fn for_str(str: &[u8]) -> Option<StmtIdentifier> {
         match str.len() {
             // "type".len
             4 => {
@@ -301,7 +301,7 @@ pub mod identifier {
     // Length 6 is the only cluster (6 entries) so it gets a first-byte
     // sub-dispatch. Mirrors the `clap::find_param` pattern (12577e958d71).
     #[inline]
-    pub fn kind_for_identifier(ident: &[u8]) -> Option<Kind> {
+    pub(crate) fn kind_for_identifier(ident: &[u8]) -> Option<Kind> {
         match ident.len() {
             3 => {
                 if ident == b"any" {
@@ -397,7 +397,6 @@ pub enum SkipTypeOptions {
 // inherent associated types (`impl Foo { type Bar = ...; }`) are unstable
 // (`inherent_associated_types`), so the alias and empty constant are hoisted
 // to module scope.
-pub type SkipTypeOptionsBitset = enumset::EnumSet<SkipTypeOptions>;
-pub const SKIP_TYPE_OPTIONS_EMPTY: SkipTypeOptionsBitset = enumset::EnumSet::empty();
+pub(crate) type SkipTypeOptionsBitset = enumset::EnumSet<SkipTypeOptions>;
 
 // ported from: src/js_parser/ast/TypeScript.zig

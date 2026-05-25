@@ -26,7 +26,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use crate::{ConnectingSocket, us_socket_t};
+use crate::us_socket_t;
 
 /// Marker for `#[repr(C)]` zero-sized opaque FFI handles
 /// (`UnsafeCell<[u8; 0]>` + `PhantomPinned`).
@@ -88,7 +88,7 @@ pub unsafe trait OpaqueHandle: Sized {
 /// Thin re-export of [`bun_core::ffi::conjure_zst`] kept for the shorter
 /// `thunk::zst::<H>()` spelling at the ~20 uWS trampoline call sites.
 #[inline(always)]
-pub fn zst<H>() -> H {
+pub(crate) fn zst<H>() -> H {
     bun_core::ffi::conjure_zst::<H>()
 }
 
@@ -99,7 +99,7 @@ pub fn zst<H>() -> H {
 /// live `U` with no other live `&mut`/`&` to it for the duration of the
 /// returned borrow (uWS callbacks fire single-threaded from the event loop).
 #[inline(always)]
-pub unsafe fn user_mut<'a, U>(p: *mut c_void) -> Option<&'a mut U> {
+pub(crate) unsafe fn user_mut<'a, U>(p: *mut c_void) -> Option<&'a mut U> {
     if p.is_null() {
         None
     } else {
@@ -116,7 +116,7 @@ pub unsafe fn user_mut<'a, U>(p: *mut c_void) -> Option<&'a mut U> {
 /// `p` must be non-null and live for the duration of the callback (guaranteed
 /// by uWS for every handle it passes into a callback).
 #[inline(always)]
-pub unsafe fn handle_mut<'a, T>(p: *mut T) -> &'a mut T {
+pub(crate) unsafe fn handle_mut<'a, T>(p: *mut T) -> &'a mut T {
     debug_assert!(!p.is_null());
     // SAFETY: per caller contract above.
     unsafe { &mut *p }
@@ -129,7 +129,7 @@ pub unsafe fn handle_mut<'a, T>(p: *mut T) -> &'a mut T {
 /// When `len > 0`, `ptr` must be valid for `len` reads and the bytes must
 /// outlive `'a` (uWS guarantees this for the duration of the callback).
 #[inline(always)]
-pub unsafe fn c_slice<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
+pub(crate) unsafe fn c_slice<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
     if len == 0 || ptr.is_null() {
         &[]
     } else {
@@ -151,43 +151,12 @@ pub unsafe fn ext_owner<'a, T>(ext: &Option<NonNull<T>>) -> Option<&'a mut T> {
     ext.map(|mut p| unsafe { p.as_mut() })
 }
 
-/// Read the `Option<NonNull<T>>` ext slot directly off a raw `*us_socket_t`
-/// and dereference it. Combines `(*s).ext::<Option<NonNull<T>>>()` +
-/// [`ext_owner`].
-///
-/// # Safety
-/// `s` is a live socket from uWS dispatch; the ext slot was sized for
 /// `Option<NonNull<T>>` at context creation; pointee (if any) is live and
 /// uniquely accessed.
 #[inline(always)]
 pub unsafe fn socket_ext_owner<'a, T>(s: *mut us_socket_t) -> Option<&'a mut T> {
     // SAFETY: per caller contract above.
     unsafe { ext_owner(&*(*s).ext::<Option<NonNull<T>>>()) }
-}
-
-/// As [`socket_ext_owner`] but for `*us_connecting_socket_t`.
-///
-/// # Safety
-/// See [`socket_ext_owner`].
-#[inline(always)]
-pub unsafe fn connecting_ext_owner<'a, T>(c: *mut ConnectingSocket) -> Option<&'a mut T> {
-    // SAFETY: per caller contract above.
-    unsafe { ext_owner(&*(*c).ext::<Option<NonNull<T>>>()) }
-}
-
-/// Read the raw `Option<NonNull<T>>` word out of a socket ext slot **without**
-/// dereferencing it. Used by handlers that pass `*mut T` onward (the
-/// `RawSocketEvents` family) instead of forming `&mut T`.
-///
-/// # Safety
-/// See [`socket_ext_owner`].
-#[inline(always)]
-pub unsafe fn connecting_ext_ptr<T>(c: *mut ConnectingSocket) -> Option<NonNull<T>> {
-    // S008: `ConnectingSocket` is an `opaque_ffi!` ZST — `opaque_mut` is the
-    // safe const-asserted ZST deref accessor; reading the `Copy` slot needs
-    // no further `unsafe`. (Function stays `unsafe fn` for the type-pun
-    // contract: caller asserts the ext slot was sized for `Option<NonNull<T>>`.)
-    *ConnectingSocket::opaque_mut(c).ext::<Option<NonNull<T>>>()
 }
 
 // ───────────────────────── safe-surface trampoline ──────────────────────────

@@ -284,7 +284,7 @@ impl Drop for ExternColumnIdentifier {
     }
 }
 
-pub type InitializeCallback =
+pub(crate) type InitializeCallback =
     extern "C" fn(ctx: *mut c_void, obj: *mut JSObject, global: &JSGlobalObject);
 
 /// Zig's `Initializer(comptime Ctx, comptime func)` returned a type with a

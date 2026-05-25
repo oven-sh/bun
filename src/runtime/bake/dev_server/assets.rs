@@ -12,7 +12,7 @@ use crate::webcore::AnyBlob;
 
 /// `bun.GenericIndex(u30, Assets)`.
 pub enum AssetsMarker {}
-pub type EntryIndex = bun_core::GenericIndex<u32, AssetsMarker>;
+pub(crate) type EntryIndex = bun_core::GenericIndex<u32, AssetsMarker>;
 
 #[derive(Default)]
 pub struct Assets {

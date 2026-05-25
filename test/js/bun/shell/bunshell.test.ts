@@ -54,6 +54,7 @@ afterAll(async () => {
 });
 
 const BUN = bunExe();
+const isRoot = process.getuid?.() === 0;
 
 describe("bunshell", () => {
   describe("exit codes", async () => {
@@ -764,6 +765,94 @@ booga"
           expect(out.replaceAll("\\", "/")).toContain("sub/b.txt");
         })
         .runAsTest("literal ** still recurses");
+
+      // A run of interpolated `!` longer than the matcher's brace-nesting
+      // limit (10) must still match literally: neutralizing every `!` as its
+      // own `{!}` group used to overflow the brace stack and turn the whole
+      // word into "no matches found".
+      const bangRun = Buffer.alloc(11, "!").toString();
+
+      TestBuilder.command`echo prefix${bangRun}*`
+        .ensureTempDir()
+        .file(`prefix${bangRun}x.txt`, "")
+        .file("prefixy.txt", "")
+        .stdout(out => {
+          expect(out).toContain(`prefix${bangRun}x.txt`);
+          expect(out).not.toContain("prefixy.txt");
+        })
+        .runAsTest("long run of injected ! inside a word stays literal");
+
+      TestBuilder.command`echo ${bangRun}keep*`
+        .ensureTempDir()
+        .file(`${bangRun}keep1.txt`, "")
+        .file("keep2.txt", "")
+        .stdout(out => {
+          expect(out).toContain(`${bangRun}keep1.txt`);
+          expect(out).not.toContain("keep2.txt");
+        })
+        .runAsTest("long leading run of injected ! stays literal");
+    });
+
+    test("glob on a nonexistent absolute directory does not crash the process", async () => {
+      const missing = join(tmpdirSync(), "does-not-exist").replaceAll("\\", "/");
+      const script = `
+        import { $ } from "bun";
+        const missing = ${JSON.stringify(missing)};
+        const results = [];
+
+        {
+          const r = await $\`echo \${missing}/*\`.nothrow().quiet();
+          results.push({ exitCode: r.exitCode, stderr: r.stderr.toString() });
+        }
+
+        try {
+          await $\`echo \${missing}/*\`.quiet();
+          results.push({ threw: false });
+        } catch (e) {
+          results.push({ threw: true, exitCode: e.exitCode, stderr: e.stderr.toString() });
+        }
+
+        {
+          const r = await $\`FOO=\${missing}/*; echo $FOO\`.nothrow().quiet();
+          results.push({ exitCode: r.exitCode, stdout: r.stdout.toString() });
+        }
+
+        console.log(JSON.stringify(results));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        { exitCode: 1, stderr: `bun: no matches found: ${missing}/*\n` },
+        { threw: true, exitCode: 1, stderr: `bun: no matches found: ${missing}/*\n` },
+        { exitCode: 0, stdout: `${missing}/*\n` },
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.if(isPosix && !isRoot)("glob over an unreadable directory reports the real error", async () => {
+      const dir = tempDirWithFiles("glob-eacces", { "placeholder.txt": "" });
+      const noaccess = join(dir, "noaccess").replaceAll("\\", "/");
+      mkdirSync(noaccess);
+      chmodSync(noaccess, 0o000);
+      try {
+        const { stderr, exitCode } = await $`echo ${noaccess}/*`.quiet().nothrow();
+        expect(stderr.toString()).toContain(`bun: Permission denied: ${noaccess}`);
+        expect(stderr.toString()).not.toContain("no matches found");
+        expect(exitCode).toBe(1);
+
+        const assign = await $`FOO=${noaccess}/*; echo $FOO`.quiet().nothrow();
+        expect(assign.stderr.toString()).toBe("");
+        expect(assign.stdout.toString()).toBe(`${noaccess}/*\n`);
+        expect(assign.exitCode).toBe(0);
+      } finally {
+        chmodSync(noaccess, 0o755);
+      }
     });
   });
 
@@ -954,7 +1043,7 @@ booga"
     // handleChangeCwdErr's `else` arm previously returned `.failed` without writing
     // to stderr or calling done(), so any errno other than NOTDIR/NOENT/NAMETOOLONG
     // (e.g. EACCES, ELOOP) left the shell promise unresolved forever.
-    test.if(isPosix)("cd with EACCES fails with exit code 1 instead of hanging", async () => {
+    test.if(isPosix && !isRoot)("cd with EACCES fails with exit code 1 instead of hanging", async () => {
       const dir = tempDirWithFiles("cd-eacces", { "placeholder.txt": "" });
       const noaccess = join(dir, "noaccess");
       mkdirSync(noaccess);
@@ -2703,3 +2792,31 @@ function sentinelByte(buf: Uint8Array): number {
   }
   throw new Error("No sentinel byte");
 }
+
+describe("interpolated values in assignment position", () => {
+  // An `=` that arrives via an interpolated template value is data, not shell
+  // syntax. The value must remain a single inert command word instead of being
+  // reinterpreted as an environment-variable assignment applied to the rest of
+  // the command line.
+  TestBuilder.command`${"FOO_INJECTED=1"} echo hi`
+    .exitCode(1)
+    .stderr("bun: command not found: FOO_INJECTED=1\n")
+    .runAsTest("interpolated word containing equals stays a single command word");
+
+  // The assignment-shaped value must not land in a spawned child's environment
+  // with the following word promoted to the command name.
+  TestBuilder.command`${"SHELL_TEST_INJECTED=evil"} ${BUN} -e ${"console.log(process.env.SHELL_TEST_INJECTED)"}`
+    .exitCode(1)
+    .stderr("bun: command not found: SHELL_TEST_INJECTED=evil\n")
+    .runAsTest("interpolated word containing equals is not exported to the child environment");
+
+  // Legitimate uses keep working: a literal `=` in the template source still
+  // creates an assignment even when its value is interpolated, and an
+  // interpolated `=` in argument position passes through verbatim.
+  TestBuilder.command`FOO=${"bar"} ${BUN} -e ${"console.log(process.env.FOO)"}`
+    .stdout("bar\n")
+    .runAsTest("literal assignment with interpolated value still works");
+  TestBuilder.command`echo ${"a=b"}`
+    .stdout("a=b\n")
+    .runAsTest("interpolated equals in argument position passes through");
+});

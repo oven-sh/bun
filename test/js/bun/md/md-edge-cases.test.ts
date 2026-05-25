@@ -87,6 +87,33 @@ describe("fuzzer-like edge cases", () => {
     expect(typeof Markdown.html(input)).toBe("string");
   });
 
+  test("ansi: pathologically nested lists produce linear output", () => {
+    // Every rendered list-item line starts with its indentation, so if the
+    // per-line indent grows without bound the output becomes quadratic in
+    // the nesting depth (a ~240 KB fuzzer document of `- - - …` lines
+    // produced gigabytes of ANSI output). The renderer caps the emitted
+    // indent, keeping the output proportional to the number of items.
+    const depth = 2000;
+    const input = Buffer.alloc(depth * 2, "- ").toString() + "hi";
+    const out = Markdown.ansi(input);
+    expect(out).toContain("hi");
+    expect(out).toContain("•");
+    // ~8 MB without the indent cap, ~300 KB with it.
+    expect(out.length).toBeLessThan(2_000_000);
+  });
+
+  test("ansi: pathologically nested blockquotes + lists produce linear output", () => {
+    // Same idea as above, but the per-line prefix is dominated by the
+    // blockquote `│ ` bars instead of list indent spaces.
+    const depth = 1500;
+    const input = Buffer.alloc(depth * 2, "> ").toString() + Buffer.alloc(depth * 2, "- ").toString() + "hi";
+    const out = Markdown.ansi(input);
+    expect(out).toContain("hi");
+    expect(out).toContain("│");
+    // ~9 MB without the indent cap, ~450 KB with it.
+    expect(out.length).toBeLessThan(2_000_000);
+  });
+
   test("deeply nested emphasis", () => {
     const depth = 50;
     const open = Buffer.alloc(depth, "*").toString();
@@ -651,5 +678,113 @@ describe("pathological bracket inputs", () => {
     expect(Markdown.html(wiki(30), { wikiLinks: true })).toContain('data-target="t"');
     // Past the cap the outer candidate is rejected.
     expect(Markdown.html(wiki(40), { wikiLinks: true })).not.toContain('data-target="t"');
+  });
+});
+
+// ============================================================================
+// Pathological inputs: unterminated inline HTML openers. Every `<!--` / `<?` /
+// `<!DECL` / `<![CDATA[` candidate used to rescan from its own position to the
+// end of the paragraph for a terminator that never appears, so a paragraph
+// with many such openers was O(n²) (found by fuzzing: a ~260 KB flood of
+// bracket runs + `<!--` spun in find_html_tag). The child process is killed
+// after 30s so a regression fails fast instead of hanging the test runner.
+// ============================================================================
+
+describe("pathological inline HTML inputs", () => {
+  async function expectRendersQuickly(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("DONE");
+    expect(exitCode).toBe(0);
+  }
+
+  test("unterminated inline HTML openers render in linear time", async () => {
+    await expectRendersQuickly(`
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        const cases = [
+          ["unterminated comments", fill(100000, "x <!-- y --\\n"), out => out.includes("&lt;!-- y")],
+          ["unterminated processing instructions", fill(100000, "x <? y\\n"), out => out.includes("&lt;? y")],
+          ["unterminated declarations", fill(100000, "x <!DOCTYPE y\\n"), out => out.includes("&lt;!DOCTYPE y")],
+          ["unterminated CDATA sections", fill(100000, "x <![CDATA[ y\\n"), out => out.includes("&lt;![CDATA[ y")],
+          ["bracket runs with unterminated comments", fill(20000, "[[[[[[[ foo <!-- this is a --\\n"), out => out.includes("[[[[[[[") && out.includes("&lt;!--")],
+          ["inline links between unterminated comments", fill(20000, "[a](b) <!-- x "), out => out.includes('<a href="b">') && out.includes("&lt;!-- x")],
+          ["unterminated comments inside link labels", fill(20000, "[<!-- x](u) <!-- y "), out => out.includes('<a href="u">') && out.includes("&lt;!-- y")],
+          ["adjacent comment-label links between unterminated comments", fill(15000, "[<!-- a](u)[<!-- b](v) <!-- c "), out => out.includes('<a href="v">') && out.includes("&lt;!-- c")],
+          ["images between unterminated comments", fill(20000, "![a](b) <!-- x "), out => out.includes("<img") && out.includes("&lt;!-- x")],
+          ["reference links between unterminated comments", "[r]: /u\\n\\n" + fill(20000, "[a][r] <!-- x "), out => out.includes('<a href="/u">') && out.includes("&lt;!-- x")],
+          ["one link with a comment-flooded label", "[" + fill(40000, "<!-- x ") + "](u)", out => out.includes('<a href="u">') && out.includes("&lt;!-- x")],
+          ["comment-label link before a comment-flooded label", "[<!-- a](u)[" + fill(40000, "<!-- x ") + "](v) <!-- tail", out => out.includes('<a href="v">') && out.includes("&lt;!-- tail")],
+          ["nested comment-label links", fill(20000, "[<!-- ") + "x" + fill(20000, "](u)"), out => out.includes('<a href="u">') && out.includes("[&lt;!--")],
+        ];
+        for (const [name, input, check] of cases) {
+          const out = Bun.markdown.html(input);
+          if (!check(out)) throw new Error("unexpected output for " + name + ": " + JSON.stringify(out.slice(0, 200)));
+          console.log("OK " + name);
+        }
+        // The fuzzer hit this through the custom-renderer API — exercise it too.
+        if (typeof Bun.markdown.render(fill(20000, "[[[[[[[ foo <!-- this is a --\\n"), {}) !== "string") {
+          throw new Error("render() did not return a string");
+        }
+        console.log("DONE");
+      `);
+  }, 90_000);
+
+  test("unterminated inline HTML openers stay escaped text", () => {
+    expect(Markdown.html("a <!-- b\n")).toBe("<p>a &lt;!-- b</p>\n");
+    expect(Markdown.html("a <? b\n")).toBe("<p>a &lt;? b</p>\n");
+    expect(Markdown.html("a <!D b\n")).toBe("<p>a &lt;!D b</p>\n");
+    expect(Markdown.html("a <![CDATA[ b\n")).toBe("<p>a &lt;![CDATA[ b</p>\n");
+  });
+
+  test("a terminated HTML span after an unterminated opener of another kind is still recognized", () => {
+    // The failed `<?` scan must not suppress the later `<!-- c -->` comment.
+    expect(Markdown.html("a <? x y <!-- c --> d\n")).toBe("<p>a &lt;? x y <!-- c --> d</p>\n");
+    // And the other way around: a failed `<!--` scan with a later `?>`-less `<?`.
+    expect(Markdown.html("a <!-- x y <? c d\n")).toBe("<p>a &lt;!-- x y &lt;? c d</p>\n");
+  });
+
+  test("inline comments spanning multiple lines still become raw HTML", () => {
+    expect(Markdown.html("before <!-- mid\nstill comment --> after\n")).toBe(
+      "<p>before <!-- mid\nstill comment --> after</p>\n",
+    );
+    expect(Markdown.html("x <!-- y -- z <!--> w\n")).toBe("<p>x <!-- y -- z <!--> w</p>\n");
+  });
+
+  test("consecutive same-length paragraphs do not share unterminated-scan state", () => {
+    // Both paragraphs merge to 12-byte inline slices; the recycled buffer must
+    // not carry the first paragraph's failed `-->` search into the second.
+    expect(Markdown.html("a <!-- bcdef\n\na <!-- b -->\n")).toBe("<p>a &lt;!-- bcdef</p>\n<p>a <!-- b --></p>\n");
+  });
+
+  test("unterminated comment openers inside link labels keep the surrounding text literal", () => {
+    expect(Markdown.html("[t <!-- u](v) <!-- w --> q\n")).toBe("<p>[t <!-- u](v) <!-- w --> q</p>\n");
+  });
+
+  test("links and images interleaved with unterminated comment openers render unchanged", () => {
+    expect(Markdown.html("[a](b) <!-- x [a](b)\n")).toBe('<p><a href="b">a</a> &lt;!-- x <a href="b">a</a></p>\n');
+    expect(Markdown.html("[<!-- x](u) <!-- y\n")).toBe('<p><a href="u">&lt;!-- x</a> &lt;!-- y</p>\n');
+    expect(Markdown.html("![<!-- x](u) <!-- y\n")).toBe('<p><img src="u" alt="&lt;!-- x" /> &lt;!-- y</p>\n');
+    expect(Markdown.html("[r]: /u\n\n[a][r] <!-- x [a][r]\n")).toBe(
+      '<p><a href="/u">a</a> &lt;!-- x <a href="/u">a</a></p>\n',
+    );
+    expect(Markdown.html("[<!-- x <!-- x <!-- x ](u)\n")).toBe(
+      '<p><a href="u">&lt;!-- x &lt;!-- x &lt;!-- x </a></p>\n',
+    );
+    expect(Markdown.html("[<!-- a](u)[<!-- b](v) <!-- c\n")).toBe(
+      '<p><a href="u">&lt;!-- a</a><a href="v">&lt;!-- b</a> &lt;!-- c</p>\n',
+    );
+    // Nested link candidates: only the innermost is a link (links cannot
+    // contain links), and the unterminated openers at every level stay text.
+    expect(Markdown.html("[<!-- [<!-- [<!-- x](u)](u)](u)\n")).toBe(
+      '<p>[&lt;!-- [&lt;!-- <a href="u">&lt;!-- x</a>](u)](u)</p>\n',
+    );
   });
 });

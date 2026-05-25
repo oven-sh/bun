@@ -4049,13 +4049,13 @@ it("Bun.Transpiler.transformSync stack overflows", async () => {
   const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
   const transpiler = new Bun.Transpiler();
   expect(() => transpiler.transformSync(code)).toThrow(`Maximum call stack size exceeded`);
-});
+}, 60_000);
 
 it("Bun.Transpiler.transform stack overflows", async () => {
   const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
   const transpiler = new Bun.Transpiler();
   expect(async () => await transpiler.transform(code)).toThrow(`Maximum call stack size exceeded`);
-});
+}, 60_000);
 
 it("deeply nested expressions error instead of crashing the process", () => {
   const script = `

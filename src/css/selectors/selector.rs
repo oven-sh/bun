@@ -1183,8 +1183,6 @@ pub mod serialize {
             PseudoClass::Dir { .. } => unreachable!(),
             PseudoClass::Custom { name } => {
                 dest.write_char(b':')?;
-                // The name was unescaped while parsing, so re-escape it to keep
-                // the output parseable (e.g. a name containing a space).
                 return dest.serialize_identifier(name);
             }
             PseudoClass::CustomFunction { name, arguments } => {
@@ -1325,8 +1323,6 @@ pub mod serialize {
             }
             PseudoElement::Custom { name } => {
                 dest.write_str(b"::")?;
-                // The name was unescaped while parsing, so re-escape it to keep
-                // the output parseable (e.g. a name containing a space).
                 return dest.serialize_identifier(name);
             }
             PseudoElement::CustomFunction { name, arguments } => {

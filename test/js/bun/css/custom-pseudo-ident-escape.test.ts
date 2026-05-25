@@ -3,19 +3,10 @@ import { expect, test } from "bun:test";
 
 const { minifyTest } = cssInternals;
 
-// Unknown (custom) pseudo-class/pseudo-element names are unescaped while parsing, but used to be
-// printed raw. A name that needs escaping (e.g. an escaped space, `:\ `) was emitted as a bare `: `,
-// so the minified output no longer parsed (found by fuzzing `:\ {w:`).
-
 test("custom pseudo-class names are re-escaped when printed", () => {
-  // fuzzer-minimized input: escaped space as the entire pseudo-class name
   expect(minifyTest(":\\ {w:", "")).toBe(":\\ {w:}");
   expect(minifyTest(":\\ {color: red}", "")).toBe(":\\ {color:red}");
-
-  // escapes in the middle of the name
   expect(minifyTest(":hover\\:focus {color: red}", "")).toBe(":hover\\:focus{color:red}");
-
-  // unknown functional pseudo-class
   expect(minifyTest(":\\ (x) {color: red}", "")).toBe(":\\ (x){color:red}");
 });
 
@@ -27,7 +18,6 @@ test("custom pseudo-element names are re-escaped when printed", () => {
 test("minified output with escaped pseudo names round-trips", () => {
   for (const source of [":\\ {w:", ":\\ {color: red}", "::\\ {color: red}", ":hover\\:focus {color: red}"]) {
     const minified = minifyTest(source, "");
-    // Re-parsing and re-minifying the output must not throw and must be stable.
     expect(minifyTest(minified, "")).toBe(minified);
   }
 });

@@ -1105,10 +1105,12 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             }
             debug_assert!(this.entry.is_none());
 
-            // Borrowed Latin-1 view: `to_file` only reads `byte_slice()` + the encoding
-            // tag (unmarked 8-bit ZigString -> Encoding::LATIN1, same as clone_latin1),
-            // and `output_code_bytes` outlives the synchronous `to_file` call.
-            let output_code = BunString::ascii(output_code_bytes);
+            // `clone_utf8` (not `ascii`) so `Entry::save` tags the on-disk
+            // encoding from the actual contents — Latin-1 for ASCII, UTF-16
+            // for non-ASCII (#18115). Guard the +1 refcount: unlike the
+            // non-vtable `put()`, nothing here takes ownership of `output_code`.
+            let output_code = BunString::clone_utf8(output_code_bytes);
+            let _output_code_guard = scopeguard::guard(output_code, |s| s.deref());
             let result = RuntimeTranspilerCache::to_file(
                 this.input_byte_length.unwrap(),
                 this.input_hash.unwrap(),

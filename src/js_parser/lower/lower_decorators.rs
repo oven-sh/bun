@@ -1464,7 +1464,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Pre-scan: determine if all private members need lowering
         let mut lower_all_private = false;
-        let mut private_ref_in_static_block = false;
+        let mut private_ref_in_extracted_code = false;
         {
             let mut has_any_private = false;
             let mut has_any_decorated = false;
@@ -1498,11 +1498,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 lower_all_private = true;
             }
 
-            // Static blocks are moved out of the class body below so they run
-            // after decoration. If one references a private name declared on
-            // this class, the reference would end up outside the class and be
-            // a syntax error, so those privates must be lowered to runtime
-            // helper calls as well.
+            // Static blocks and static auto-accessor initializers are moved out
+            // of the class body below so they run after decoration. If they
+            // reference a private name declared on this class, the reference
+            // would end up outside the class and be a syntax error, so those
+            // privates must be lowered to runtime helper calls as well.
             if !lower_all_private && has_any_private {
                 let mut declared_privates: HashMap<u32, ()> = HashMap::default();
                 for cprop in cprops.iter() {
@@ -1516,14 +1516,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 for cprop in cprops.iter() {
-                    if cprop.kind != PropertyKind::ClassStaticBlock {
-                        continue;
-                    }
-                    if let Some(sb) = cprop.class_static_block_ref()
-                        && stmts_reference_private_name(sb.stmts.slice(), &declared_privates)
+                    let references_private = if cprop.kind == PropertyKind::ClassStaticBlock {
+                        cprop.class_static_block_ref().is_some_and(|sb| {
+                            stmts_reference_private_name(sb.stmts.slice(), &declared_privates)
+                        })
+                    } else if cprop.kind == PropertyKind::AutoAccessor
+                        && cprop.flags.contains(Flags::Property::IsStatic)
                     {
+                        // Static auto-accessor initializers are emitted after the
+                        // class as `__privateAdd(Class, storage, <init>)`.
+                        cprop.initializer.is_some_and(|init| {
+                            expr_references_private_name(&init, &declared_privates)
+                        })
+                    } else {
+                        false
+                    };
+                    if references_private {
                         lower_all_private = true;
-                        private_ref_in_static_block = true;
+                        private_ref_in_extracted_code = true;
                         break;
                     }
                 }
@@ -1654,14 +1664,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         name
                     };
                     let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, accessor_name);
-                    // When a static block references this class's private names,
-                    // record the storage WeakMap for private auto-accessors too so
-                    // that references like `#x in obj` inside the extracted block
-                    // can be rewritten into runtime helper calls. The getter/setter
-                    // pair stays declared on the class, so references elsewhere are
-                    // left alone otherwise (the rewriter does not handle update or
-                    // compound-assignment expressions on private members).
-                    if private_ref_in_static_block
+                    // When code that is moved out of the class body references this
+                    // class's private names, record the storage WeakMap for private
+                    // auto-accessors too so that references like `#x in obj` inside
+                    // the extracted code can be rewritten into runtime helper calls.
+                    // The getter/setter pair stays declared on the class, so
+                    // references elsewhere are left alone otherwise (the rewriter
+                    // does not handle update or compound-assignment expressions on
+                    // private members).
+                    if private_ref_in_extracted_code
                         && let Some(k) = prop.key
                         && let js_ast::ExprData::EPrivateIdentifier(pi) = &k.data
                     {

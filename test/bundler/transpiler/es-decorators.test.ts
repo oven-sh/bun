@@ -1033,12 +1033,30 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("static accessor initializer referencing a private method without decorators", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Foo {
+          #a() {
+            return 5;
+          }
+          accessor x = 1;
+          static accessor y = #a in new Foo();
+        }
+        console.log(Foo.y);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("Bun.Transpiler output with private references in field initializers reparses", () => {
       const transpiler = new Bun.Transpiler({ loader: "js", target: "node", minifyWhitespace: true });
       const inputs = [
         // instance private field initializer referencing another private
         "class Broken { @id accessor label = ''; #name = 'hello'; #callback = () => this.#name; }",
-        // kept public field initializer referencing a lowered private
+        // kept public field initializer referencing a lowered private (must print as valid syntax;
+        // evaluation order of kept fields vs. constructor-injected private storage is a separate,
+        // pre-existing limitation of this lowering)
         "class Foo { @id accessor a = 1; #name = 2; pub = this.#name; }",
         // static private field + static auto-accessor initializers referencing a lowered private
         "class Foo { @id accessor a = 1; #name = 2; static #s = new Foo().#name; static accessor t = new Foo().#name; }",

@@ -2717,7 +2717,7 @@ fn transpile_source_code_inner(
                         _ => (core::ptr::null_mut(), 0),
                     };
                     return Ok(OwnedResolvedSource::from(ResolvedSource {
-                        source_code: bun_core::String::clone_latin1(&source.contents),
+                        source_code: bun_core::String::clone_utf8(&source.contents),
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
                         already_bundled: true,
@@ -3085,7 +3085,9 @@ fn transpile_source_code_inner(
                 // does, and `r#impl` is `Some(Jsc)` here), so it is always
                 // `None`.
                 debug_assert!(cache.output_code.is_none());
-                let source_code = bun_core::String::clone_latin1(written);
+                // UTF-8 decode is required — the printer emits raw non-ASCII
+                // bytes for `String.raw` / `RegExp.source` (#18115).
+                let source_code = bun_core::String::clone_utf8(written);
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                 if written.len() > 1024 * 1024 * 2 || unsafe { &*jsc_vm }.smol {
                     // PERF(port): spec deinits the printer buffer; Rust drops on

@@ -190,7 +190,8 @@ class BunWebSocket extends EventEmitter {
       // `ws` forwards top-level TLS options (rejectUnauthorized, ca, cert, ...)
       // to https.request/tls.connect. An explicit `tls` object stays
       // authoritative for back-compat with Bun's existing shape.
-      tlsOptions = $isObject(options.tls) ? options.tls : extractTlsOptions(options);
+      const explicitTls = $isObject(options.tls);
+      tlsOptions = explicitTls ? options.tls : extractTlsOptions(options);
       if ("perMessageDeflate" in options && !options.perMessageDeflate) {
         disableDeflate = true;
       }
@@ -203,12 +204,12 @@ class BunWebSocket extends EventEmitter {
         if (!proxy && agentProxy) {
           proxy = agentProxy;
         }
-        // Merge rather than replace: in `ws`, top-level TLS options and the
-        // agent's connect options both reach the connection. Keep top-level
-        // keys winning on conflict while letting the agent fill the gaps (e.g.
-        // an HttpsProxyAgent carrying cert/key alongside a top-level
-        // rejectUnauthorized), instead of dropping one side wholesale.
-        if (agentTls) {
+        // An explicit `tls` object is a hard override — don't let an agent's
+        // connect options (which semantically target the proxy hop) leak into
+        // it. Otherwise merge: top-level keys win on conflict while the agent
+        // fills gaps (e.g. an HttpsProxyAgent carrying cert/key alongside a
+        // top-level rejectUnauthorized), instead of dropping one side wholesale.
+        if (!explicitTls && agentTls) {
           tlsOptions = tlsOptions ? { ...agentTls, ...tlsOptions } : agentTls;
         }
       }

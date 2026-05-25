@@ -97,4 +97,22 @@ describe("ws top-level TLS options", () => {
 
     await promise;
   });
+
+  // An explicit Bun `tls` object is a hard override: an agent's connect options
+  // (which target the proxy hop) must not leak into it. Here the explicit `tls`
+  // leaves `rejectUnauthorized` at its default (true) while the agent carries
+  // `rejectUnauthorized: false`. The agent's value must not disable target
+  // verification, so the self-signed server is still rejected.
+  it("keeps an explicit tls object authoritative over agent options", async () => {
+    await using server = serveTls();
+    const { resolve, reject, promise } = Promise.withResolvers<{ message: string }>();
+
+    const agent = { connectOpts: { rejectUnauthorized: false } };
+    const ws = new WebSocket(`wss://localhost:${server.port}`, { tls: {}, agent });
+    ws.on("open", () => reject(new Error("agent rejectUnauthorized:false leaked into explicit tls")));
+    ws.on("error", resolve);
+
+    const err = await promise;
+    expect(err.message).toContain("TLS handshake failed");
+  });
 });

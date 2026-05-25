@@ -23,10 +23,10 @@ using namespace JSC;
 static JSC::Identifier bakeReferrerKeyFromSourceOrigin(JSC::VM& vm, const JSC::SourceOrigin& sourceOrigin)
 {
     if (sourceOrigin.isNull())
-        return { };
+        return {};
     const auto& url = sourceOrigin.url();
     if (url.isEmpty())
-        return { };
+        return {};
     String keyString;
     if (url.protocolIsFile())
         keyString = url.fileSystemPath();
@@ -35,7 +35,7 @@ static JSC::Identifier bakeReferrerKeyFromSourceOrigin(JSC::VM& vm, const JSC::S
     else
         keyString = url.string();
     if (keyString.isEmpty())
-        return { };
+        return {};
     return JSC::Identifier::fromString(vm, keyString);
 }
 

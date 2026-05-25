@@ -81,7 +81,11 @@ const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
 
 function endNT(socket, callback, err) {
-  socket.$end();
+  // Half-close the write side only. The read side stays open so any data the
+  // peer sends before their FIN (e.g. a loopback echo server responding to what
+  // we just wrote) still reaches `on_data`. `socket.$end()` would close the
+  // whole fd and drop that pending data.
+  socket.shutdown();
   callback(err);
 }
 function emitCloseNT(self, hasError) {

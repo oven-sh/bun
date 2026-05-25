@@ -732,6 +732,52 @@ it("should trigger error when aborted even if connection failed, and the signal 
   expect(err.name).toBe("TimeoutError");
 });
 
+describe("client write+end against a loopback echo server #31383", () => {
+  // Calling end() in the same tick as write() (directly, inside the write
+  // callback, or via end(chunk)) used to close the whole fd, so any bytes the
+  // peer echoed back before the FIN were dropped from the kernel recv buffer
+  // before on_data could push them. end() must half-close the write side only.
+  async function withEchoServer(onConnect: (sock: Socket) => void, allowHalfOpen = false) {
+    const server = createServer(s => s.pipe(s));
+    try {
+      await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+      const { port } = server.address() as { port: number };
+      const sock = connect({ host: "127.0.0.1", port, allowHalfOpen });
+      const { promise, resolve } = Promise.withResolvers<string>();
+      const chunks: Buffer[] = [];
+      sock.on("data", c => chunks.push(c));
+      sock.on("close", () => resolve(Buffer.concat(chunks).toString()));
+      sock.once("connect", () => onConnect(sock));
+      return await promise;
+    } finally {
+      server.close();
+    }
+  }
+
+  it("echo arrives before close when end() runs inside write callback", async () => {
+    const received = await withEchoServer(s => s.write("hello", () => s.end()));
+    expect(received).toBe("hello");
+  });
+
+  it("echo arrives before close when write() and end() are in the same tick", async () => {
+    const received = await withEchoServer(s => {
+      s.write("hello");
+      s.end();
+    });
+    expect(received).toBe("hello");
+  });
+
+  it("echo arrives before close when end(chunk) is used", async () => {
+    const received = await withEchoServer(s => s.end("hello"));
+    expect(received).toBe("hello");
+  });
+
+  it("echo arrives before close with allowHalfOpen: true", async () => {
+    const received = await withEchoServer(s => s.write("hello", () => s.end()), true);
+    expect(received).toBe("hello");
+  });
+});
+
 it.if(isWindows)(
   "should work with named pipes",
   async () => {

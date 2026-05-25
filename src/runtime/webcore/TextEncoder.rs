@@ -88,7 +88,9 @@ fn encode16_impl(global_this: &JSGlobalObject, slice: &[u16]) -> JSValue {
             return JSValue::ZERO;
         };
         debug_assert!(array_buffer.len == written);
-        array_buffer.byte_slice_mut().copy_from_slice(&buf[..written]);
+        array_buffer
+            .byte_slice_mut()
+            .copy_from_slice(&buf[..written]);
         return uint8array;
     }
 

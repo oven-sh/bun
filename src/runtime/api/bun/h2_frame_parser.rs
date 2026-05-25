@@ -3745,6 +3745,30 @@ impl H2FrameParser {
                     );
                     return data.len();
                 }
+                if frame.flags & DataFrameFlags::PADDED as u8 != 0 {
+                    if frame.length < 1 {
+                        self.send_go_away(
+                            frame.stream_identifier,
+                            ErrorCode::FRAME_SIZE_ERROR,
+                            b"Invalid data frame size",
+                            self.last_stream_id.get(),
+                            true,
+                        );
+                        return data.len();
+                    }
+                    if self.remaining_length.get() == frame.length as i32
+                        && data.first().is_some_and(|&pad| pad as u32 >= frame.length)
+                    {
+                        self.send_go_away(
+                            frame.stream_identifier,
+                            ErrorCode::PROTOCOL_ERROR,
+                            b"Invalid data frame padding",
+                            self.last_stream_id.get(),
+                            true,
+                        );
+                        return data.len();
+                    }
+                }
                 let end: usize = (self.remaining_length.get() as usize).min(data.len());
                 self.adjust_window_size(None, end as u32);
                 self.remaining_length

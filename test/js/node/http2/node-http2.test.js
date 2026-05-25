@@ -2881,3 +2881,62 @@ it("http2 client rejects a frame interleaved inside a late header block for a st
     server.close();
   }
 });
+
+it("http2 client rejects an oversized-padding DATA frame for a stream it already reset", async () => {
+  // RFC 9113 section 6.1: a Pad Length of the frame payload length or greater
+  // is a connection error of type PROTOCOL_ERROR, even when the frame
+  // addresses a stream the client has already reset and released.
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  const server = net.createServer(socket => {
+    socket.on("error", () => {});
+    let prefaceSeen = false;
+    let responded = false;
+    const scan = makeFrameScanner((type, flags, streamId) => {
+      // 0x3 = RST_STREAM
+      if (type === 0x3 && streamId === 1 && !responded) {
+        responded = true;
+        // DATA (type=0), flags = PADDED (0x8), stream=1, length=2,
+        // payload = [0xFF, 0x00] -> Pad Length = 255 >= frame length 2.
+        socket.write(Buffer.concat([new http2utils.Frame(2, 0, 0x8, 1).data, Buffer.from([0xff, 0x00])]));
+      }
+    });
+    let prefaceBuffer = Buffer.alloc(0);
+    socket.on("data", chunk => {
+      if (!prefaceSeen) {
+        // 24-byte client connection preface, then frames. May span TCP chunks.
+        prefaceBuffer = prefaceBuffer.length === 0 ? chunk : Buffer.concat([prefaceBuffer, chunk]);
+        if (prefaceBuffer.length < 24) return;
+        prefaceSeen = true;
+        socket.write(new http2utils.SettingsFrame(false).data);
+        socket.write(new http2utils.SettingsFrame(true).data);
+        chunk = prefaceBuffer.subarray(24);
+        prefaceBuffer = Buffer.alloc(0);
+        if (chunk.length === 0) return;
+      }
+      scan(chunk);
+    });
+  });
+
+  await new Promise(r => server.listen(0, r));
+  const port = server.address().port;
+  const client = http2.connect(`http://localhost:${port}`);
+  client.on("error", resolve);
+
+  client.on("connect", () => {
+    const req1 = client.request({ ":path": "/cancelled" });
+    req1.on("error", () => {});
+    req1.on("response", () => reject(new Error("req1 must not receive a response")));
+    req1.resume();
+    req1.close(http2.constants.NGHTTP2_CANCEL);
+  });
+
+  try {
+    const result = await promise;
+    expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
+    expect(result.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});

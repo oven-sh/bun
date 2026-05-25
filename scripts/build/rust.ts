@@ -512,7 +512,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   if (!cfg.windows) rustflags.push(`-Clink-arg=-fuse-ld=lld`);
   if (cfg.crossLangLto) {
     // Cross-language LTO: emit LLVM bitcode (not machine code) into the .a
-    // so the final lld `-flto=full` link sees through Rust↔C++ call edges.
+    // so the final lld `-flto=thin` link sees through Rust↔C++ call edges.
     // `linker-plugin-lto` supersedes Cargo's `[profile.release] lto="fat"`
     // (cargo skips its own LTO pass and defers to the linker), so there's no
     // double-LTO cost.

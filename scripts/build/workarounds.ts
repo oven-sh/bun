@@ -90,7 +90,7 @@ export const workarounds: Workaround[] = [
     description:
       "rust-lld's link-stage LTO segfaults in the `globalopt` pass on the bun_runtime " +
       "bitcode module on aarch64-unknown-linux-musl. Disable cross-language LTO for " +
-      "that target only — both halves still LTO independently (C++ via -flto=full, " +
+      "that target only — both halves still LTO independently (C++ via -flto=thin, " +
       'Rust via [profile.release] lto = "fat"); only Rust↔C++ inlining is lost.',
     // Only exercised on the lane the crash hits.
     applies: cfg => cfg.lto && cfg.arm64 && cfg.abi === "musl",

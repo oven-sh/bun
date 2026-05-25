@@ -116,9 +116,9 @@ export interface Config {
   lto: boolean;
   /**
    * Cross-language LTO: rustc emits LLVM bitcode (`-Clinker-plugin-lto`) into
-   * `libbun_rust.a` so the final lld `-flto=full` link sees through Rust↔C++
+   * `libbun_rust.a` so the final lld `-flto=thin` link sees through Rust↔C++
    * call edges. When false but `lto` is true, both halves still LTO
-   * independently (C++ via `-flto=full`, Rust via `[profile.release] lto =
+   * independently (C++ via `-flto=thin`, Rust via `[profile.release] lto =
    * "fat"`); only the cross-language inlining is lost.
    *
    * Normally tracks `lto`. Exists as a separate field so per-target toolchain

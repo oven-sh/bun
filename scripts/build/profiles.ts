@@ -105,7 +105,7 @@ export const profiles = {
    * so PORT-vs-SYS comparisons measure what we'd actually ship — no PGO, no
    * symbol ordering, no special-case linker layout. lto=true selects the
    * `-lto` WebKit prebuilt (LLVM bitcode, re-codegen'd `-fno-pic` under
-   * `-flto=full -fwhole-program-vtables`) so cross-TU inlining runs; without
+   * `-flto=thin -fwhole-program-vtables`) so cross-TU inlining runs; without
    * it the non-LTO WebKit .a lands ~555 KB of C++ vtables in `.data.rel.ro`,
    * keeps `.eh_frame` (+962 KB), and outlines JSC slow-paths — the bench then
    * reports a ~6-8% time / ~1 MB RSS "regression" that is pure binary layout.

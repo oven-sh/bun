@@ -455,9 +455,15 @@ export const globalFlags: Flag[] = [
 
   // ─── LTO (compile-side) ───
   {
-    flag: "-flto=full",
+    // Thin, not full: each .o carries a per-module summary so the link runs
+    // the LTO backends in parallel (and could cache them) instead of merging
+    // every module into one serial multi-gigabyte regular-LTO partition. The
+    // WebKit -lto prebuilts and rustc's -Clinker-plugin-lto bitcode are both
+    // ThinLTO-summaried, so this makes the whole link one uniform ThinLTO
+    // graph with cross-module importing across C++/Rust/JSC boundaries.
+    flag: "-flto=thin",
     when: c => c.unix && c.lto,
-    desc: "Full link-time optimization (not thin)",
+    desc: "Thin link-time optimization",
   },
   {
     flag: "-flto",
@@ -781,9 +787,9 @@ export const linkerFlags: Flag[] = [
 
   // ─── LTO (link-side) ───
   {
-    flag: ["-flto=full", "-fwhole-program-vtables", "-fforce-emit-vtables"],
+    flag: ["-flto=thin", "-fwhole-program-vtables", "-fforce-emit-vtables"],
     when: c => c.unix && c.lto,
-    desc: "LTO at link time (matches compile-side -flto=full)",
+    desc: "LTO at link time (matches compile-side -flto=thin)",
   },
   {
     // Without -O at link time, clang's driver defaults LTO codegen to -O2.

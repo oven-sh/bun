@@ -3636,13 +3636,18 @@ impl H2FrameParser {
             }
         }
 
-        self.dispatch_with_3_extra(
-            JSH2FrameParser::Gc::onStreamHeaders,
-            stream.get_identifier(),
-            headers,
-            sensitive_headers,
-            JSValue::js_number(flags as f64),
-        );
+        // A CLOSED stream can still own an unfinished header block (it is kept
+        // in the map until END_HEADERS so the HPACK dynamic table stays in
+        // sync). The block must be decoded, but never surfaced to JS.
+        if stream.state != StreamState::CLOSED {
+            self.dispatch_with_3_extra(
+                JSH2FrameParser::Gc::onStreamHeaders,
+                stream.get_identifier(),
+                headers,
+                sensitive_headers,
+                JSValue::js_number(flags as f64),
+            );
+        }
         Ok(self.streams.get().get(&stream_id).copied())
     }
 
@@ -4505,7 +4510,14 @@ impl H2FrameParser {
                 identifier.ensure_still_alive();
 
                 if stream.is_waiting_more_headers {
-                    if stream.state != StreamState::CLOSED {
+                    // `handle_continuation_frame` only tracks END_HEADERS, so
+                    // this is the last place the END_STREAM transition for a
+                    // split header block can be applied. If our side already
+                    // ended, both sides are now done: close here (the entry
+                    // stays in the map until END_HEADERS drains the block).
+                    if stream.state == StreamState::HALF_CLOSED_LOCAL {
+                        self.close_stream(stream);
+                    } else if stream.state != StreamState::CLOSED {
                         stream.state = StreamState::HALF_CLOSED_REMOTE;
                     }
                 } else {

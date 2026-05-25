@@ -1683,6 +1683,34 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
+  it("JSX bare key prop followed by key with a value does not crash", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const t = new Bun.Transpiler({
+            loader: "jsx",
+            define: { "process.env.NODE_ENV": JSON.stringify("development") },
+            logLevel: "error",
+          });
+          process.stdout.write(t.transformSync('console.log(<div key key="duplicate"></div>);'));
+          process.stdout.write(t.transformSync('console.log(<div key className="x" key="duplicate"></div>);'));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      'console.log(jsxDEV_7x81h0kn("div", {}, "duplicate", false, undefined, this));\n' +
+        'console.log(jsxDEV_7x81h0kn("div", {\n  className: "x"\n}, "duplicate", false, undefined, this));\n',
+    );
+    expect(exitCode).toBe(0);
+  });
+
   it("parses TSX arrow functions correctly", () => {
     var transpiler = new Bun.Transpiler({
       loader: "tsx",
@@ -2050,6 +2078,30 @@ console.log(<div {...obj} key="after" />);`),
       expectParseError("!x ** 0", "Unexpected **");
       expectParseError("await x ** 0", "Unexpected **");
       expectParseError("await -x ** 0", "Unexpected **");
+    });
+
+    it("for-of loop variable named async", () => {
+      // "\u0061sync" is the identifier `async`, which is legal as a for-of loop
+      // variable, but printing it as the raw token sequence `async of` is a
+      // syntax error, so the printer must parenthesize it.
+      expectPrinted_("for (\\u0061sync of [7]);", "for ((async) of [7])\n  ;\n");
+      expectPrinted_("for ((async) of [7]);", "for ((async) of [7])\n  ;\n");
+      expectPrinted_(
+        "async function f() { for await (\\u0061sync of [7]); }",
+        "async function f() {\n  for await ((async) of [7])\n    ;\n}",
+      );
+
+      // The same identifier needs no parentheses when it is not directly followed by `of`
+      expectPrinted_("for (async.x of [7]);", "for (async.x of [7])\n  ;\n");
+      expectPrinted_("for (\\u0061sync[0] of [7]);", "for (async[0] of [7])\n  ;\n");
+      expectPrinted_("for (x[\\u0061sync] of [7]);", "for (x[async] of [7])\n  ;\n");
+      expectPrinted_("for (\\u0061sync in x);", "for (async in x)\n  ;\n");
+
+      // `let` as a for-of loop variable keeps its parentheses too
+      expectPrinted_("for ((let) of [7]);", "for ((let) of [7])\n  ;\n");
+
+      // The keyword spelling is a syntax error, which is why the parentheses matter
+      expect(() => parsed("for (async of [7]);", false, false)).toThrow();
     });
 
     it("await", () => {
@@ -3824,6 +3876,23 @@ console.log("boop");
     expectCapturePrintedSnapshot(`for await (await using a of b) { c(a); a(c) }`);
   });
 
+  it("await of the identifier 'using' is not an await using declaration", () => {
+    // "await using" only starts a declaration when followed by an identifier on
+    // the same line. Otherwise it's an "await" expression of the identifier "using".
+    expectPrinted_(
+      "async function f() { await using instanceof o }",
+      "async function f() {\n  await using instanceof o;\n}",
+    );
+    expectPrinted_("async function f() { await using }", "async function f() {\n  await using;\n}");
+    expectPrinted_("async function f() { await using\n x = 1 }", "async function f() {\n  await using;\n  x = 1;\n}");
+    expectPrinted_("async function f() { await using.foo() }", "async function f() {\n  await using.foo();\n}");
+    expectPrinted_(
+      "async function f() { for (await using instanceof o;;); }",
+      "async function f() {\n  for (await using instanceof o;; )\n    ;\n}",
+    );
+    expectBunPrinted_("await using instanceof o", "await using instanceof o");
+  });
+
   it("using top level", () => {
     expectPrintedSnapshot(`
       using a = b;
@@ -4043,6 +4112,89 @@ it("deeply nested expressions error instead of crashing the process", () => {
   expect(stdout.toString()).toBe("depth-ok\n");
   expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
 }, 60_000);
+
+it("deeply nested TypeScript types error instead of crashing the process", () => {
+  const script = `
+    const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();
+    const shapes = [
+      // TSX generic arrow function whose "extends" constraint is a deeply nested tuple type
+      { loader: "tsx", code: n => "<T extends " + repeat("[", n) + "0" + repeat("]", n) + ">(x: T) => x" },
+      // same shape nested inside array literals (matches the fuzzer-found input)
+      {
+        loader: "tsx",
+        code: n =>
+          repeat("[", 1000) + "<T extends " + repeat("[", n) + "0" + repeat("]", n) + ">(x: T) => x" + repeat("]", 1000),
+      },
+      // deeply nested tuple type in a type alias
+      { loader: "ts", code: n => "type A = " + repeat("[", n) + "0" + repeat("]", n) + ";" },
+      // deeply nested destructuring pattern in a function type's arguments
+      { loader: "ts", code: n => "type A = (" + repeat("[", n) + "a" + repeat("]", n) + ": any) => void;" },
+    ];
+    for (const { loader, code } of shapes) {
+      for (const n of [4000, 20000, 100000]) {
+        const transpiler = new Bun.Transpiler({
+          loader,
+          target: "bun",
+          minifyWhitespace: true,
+          deadCodeElimination: true,
+        });
+        try {
+          transpiler.transformSync(code(n));
+        } catch (e) {
+          if (!/Maximum call stack size exceeded|StackOverflow/.test(String(e?.message))) throw e;
+        }
+      }
+    }
+    console.log("type-depth-ok");
+  `;
+  const { stdout, exitCode, signalCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-e", script],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stdout.toString()).toBe("type-depth-ok\n");
+  expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
+}, 60_000);
+
+it("deeply nested statement blocks error instead of crashing the process", () => {
+  const script = `
+    const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();
+    const shapes = [
+      n => repeat("{", n) + 'class Test1 { static "prop1" = 0; }' + repeat("}", n),
+      n => repeat("{", n) + "let x = 1;" + repeat("}", n),
+      n => repeat("if (x) {", n) + "y();" + repeat("}", n),
+      n => "if (x) { y(); }" + repeat(" else if (x) { y(); }", n),
+    ];
+    const check = (transpiler, src) => {
+      try {
+        transpiler.transformSync(src);
+      } catch (e) {
+        if (!/Maximum call stack size exceeded|StackOverflow/.test(String(e?.message))) throw e;
+      }
+    };
+    for (const shape of shapes) {
+      for (const n of [600, 800, 990]) {
+        check(
+          new Bun.Transpiler({ loader: "tsx", target: "bun", minifyWhitespace: true, deadCodeElimination: true }),
+          shape(n),
+        );
+        check(new Bun.Transpiler({ loader: "js" }), shape(n));
+      }
+    }
+    console.log("depth-ok");
+  `;
+  const { stdout, exitCode, signalCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-e", script],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stdout.toString()).toBe("depth-ok\n");
+  expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
+});
 
 it("running a file with deeply nested unary operators does not crash the process", () => {
   const code = Buffer.alloc(2 * 4000, "- ").toString() + "1";
@@ -4364,5 +4516,50 @@ describe("minifyWhitespace keeps the space before keyword operators", () => {
 
   it("between a numeric literal and 'in'", () => {
     expect(minifier.transformSync("1 in y")).toBe("1 in y;");
+  });
+});
+
+// A numeric literal property name like `1e999` overflows to the number Infinity, which the
+// printer emits as "1/0" / "1 / 0". That is not valid syntax in property-name position, so such
+// keys must be printed as computed properties instead.
+describe("numeric property keys that overflow to Infinity", () => {
+  const minifier = new Bun.Transpiler({ loader: "ts", minifyWhitespace: true });
+  const plain = new Bun.Transpiler({ loader: "ts" });
+
+  it("are printed as computed properties when minifying whitespace", () => {
+    expect(minifier.transformSync("x = { 1e999: 1 };")).toBe("x={[1/0]:1};");
+    expect(minifier.transformSync("x = { 1e999() {} };")).toBe("x={[1/0](){}};");
+    expect(minifier.transformSync("x = { get 1e999() {} };")).toBe("x={get[1/0](){}};");
+    expect(minifier.transformSync("x = { set 1e999(v) {} };")).toBe("x={set[1/0](v){}};");
+    expect(minifier.transformSync("x = class { 1e999() {} };")).toBe("x=class{[1/0](){}};");
+    expect(minifier.transformSync("x = class { static 1e999() {} };")).toBe("x=class{static[1/0](){}};");
+    expect(minifier.transformSync("x = class { 1e999 = 1 };")).toBe("x=class{[1/0]=1};");
+    expect(minifier.transformSync("x = class { static 1e999 = 1 };")).toBe("x=class{static[1/0]=1};");
+    expect(minifier.transformSync("const { 1e999: y } = x;")).toBe("const{[1/0]:y}=x;");
+    expect(minifier.transformSync("({ 1e999: x.y } = z);")).toBe("({[1/0]:x.y}=z);");
+  });
+
+  it("are printed as computed properties without minification", () => {
+    expect(plain.transformSync("x = { 1e999: 1 };")).toBe("x = { [1 / 0]: 1 };\n");
+    expect(plain.transformSync("x = class { 1e999() {} };")).toBe("x = class {\n  [1 / 0]() {}\n};\n");
+    expect(plain.transformSync("const { 1e999: y } = x;")).toBe("const { [1 / 0]: y } = x;\n");
+  });
+
+  it("handles a method name with hundreds of digits", () => {
+    const digits = Buffer.alloc(325, "9").toString();
+    expect(minifier.transformSync(`(class { ${digits}() {} });`)).toBe("(class{[1/0](){}});");
+  });
+
+  it("still refers to the same property at runtime", () => {
+    const out = minifier.transformSync(`
+      const obj = { 1e999: "object" };
+      const { 1e999: destructured } = { 1e999: "destructured" };
+      class C {
+        1e999() { return "method"; }
+        static 1e999 = "static";
+      }
+      var result = [obj[Infinity], destructured, new C()[Infinity](), C[Infinity]];
+    `);
+    expect(new Function(`${out}; return result;`)()).toEqual(["object", "destructured", "method", "static"]);
   });
 });

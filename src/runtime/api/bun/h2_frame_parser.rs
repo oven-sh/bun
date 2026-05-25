@@ -1281,6 +1281,9 @@ pub struct H2FrameParser {
     out_standing_pings: Cell<u64>,
     max_send_header_block_length: Cell<u32>,
     last_stream_id: Cell<u32>,
+    // Stream id whose header block is awaiting CONTINUATION frames
+    // (RFC 9113 §4.3); 0 when none.
+    expecting_continuation: Cell<u32>,
     is_server: Cell<bool>,
     preface_received_len: Cell<u8>,
     // we buffer requests until we get the first settings ACK
@@ -1464,6 +1467,12 @@ pub struct Stream {
     is_waiting_more_headers: bool,
     header_block_size: usize,
     header_block_count: usize,
+    // Header block fragments buffered across HEADERS + CONTINUATION until
+    // END_HEADERS arrives (RFC 9113 §4.3); capped at `max_header_list_size`.
+    pending_header_block: Vec<u8>,
+    // Flags from the HEADERS frame that started `pending_header_block`;
+    // CONTINUATION frames only carry END_HEADERS.
+    pending_header_flags: u8,
     padding: Option<u8>,
     padding_strategy: PaddingStrategy,
     rst_code: u32,
@@ -2024,6 +2033,8 @@ impl Stream {
             is_waiting_more_headers: false,
             header_block_size: 0,
             header_block_count: 0,
+            pending_header_block: Vec::new(),
+            pending_header_flags: 0,
             padding: None,
             padding_strategy,
             rst_code: 0,
@@ -2655,7 +2666,7 @@ impl H2FrameParser {
 
     pub(crate) fn send_go_away(
         &self,
-        stream_identifier: u32,
+        triggering_stream_id: u32,
         rst_code: ErrorCode,
         debug_data: &[u8],
         last_stream_id: u32,
@@ -2664,7 +2675,7 @@ impl H2FrameParser {
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_GOAWAY {} code {} debug_data {} emitError {}",
-            stream_identifier,
+            triggering_stream_id,
             rst_code.0,
             BStr::new(debug_data),
             emit_error
@@ -2672,10 +2683,15 @@ impl H2FrameParser {
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 8];
         let mut stream = FixedBufferStream::new(&mut buffer);
 
+        // RFC 9113 section 6.8: GOAWAY frames are always sent on stream 0. A
+        // GOAWAY with a non-zero stream identifier is itself a connection
+        // error of type PROTOCOL_ERROR. The stream that triggered the GOAWAY
+        // is only used for logging above; the last processed stream id goes in
+        // the payload below.
         let frame = FrameHeader {
             type_: FrameType::HTTP_FRAME_GOAWAY as u8,
             flags: 0,
-            stream_identifier,
+            stream_identifier: 0,
             length: u32::try_from(8 + debug_data.len()).expect("int cast"),
         };
         let _ = frame.write(&mut stream);
@@ -3533,10 +3549,27 @@ impl H2FrameParser {
 
         let mut sensitive_headers: JSValue = JSValue::UNDEFINED;
 
-        loop {
+        // Stream-level limit violations seen mid-decode. The loop must consume
+        // the whole block regardless: the HPACK dynamic table is
+        // connection-scoped, so abandoning the block midway would desync it
+        // for every other stream. The rejection is applied once after the loop.
+        let mut rejected = false;
+
+        while offset < payload.len() {
             let header = match self.decode(&payload[offset..]) {
                 Ok(h) => h,
-                Err(_) => break,
+                Err(_) => {
+                    // RFC 9113 §4.3: a decoding error in a header block is a
+                    // connection error of type COMPRESSION_ERROR.
+                    self.send_go_away(
+                        stream_id,
+                        ErrorCode::COMPRESSION_ERROR,
+                        b"Invalid HPACK header block",
+                        self.last_stream_id.get(),
+                        true,
+                    );
+                    return Ok(None);
+                }
             };
             offset += header.next;
             bun_output::scoped_log!(
@@ -3553,46 +3586,23 @@ impl H2FrameParser {
                     self.last_stream_id.get(),
                     true,
                 );
-                return Ok(self.streams.get().get(&stream_id).copied());
+                return Ok(None);
             }
 
             // RFC 7540 Section 6.5.2: Calculate header list size
             // Size = name length + value length + HPACK entry overhead per header
             stream.header_block_size +=
                 header.name.len() + header.value.len() + HPACK_ENTRY_OVERHEAD;
-
-            // Check against maxHeaderListSize setting
-            if stream.header_block_size > self.local_settings.get().max_header_list_size as usize {
-                self.rejected_streams.set(self.rejected_streams.get() + 1);
-                if self.max_rejected_streams.get() <= self.rejected_streams.get() {
-                    self.send_go_away(
-                        stream_id,
-                        ErrorCode::ENHANCE_YOUR_CALM,
-                        b"ENHANCE_YOUR_CALM",
-                        self.last_stream_id.get(),
-                        true,
-                    );
-                } else {
-                    self.end_stream(stream, ErrorCode::ENHANCE_YOUR_CALM);
-                }
-                return Ok(self.streams.get().get(&stream_id).copied());
-            }
-
             stream.header_block_count += 1;
-            if (self.max_header_list_pairs.get() as usize) < stream.header_block_count {
-                self.rejected_streams.set(self.rejected_streams.get() + 1);
-                if self.max_rejected_streams.get() <= self.rejected_streams.get() {
-                    self.send_go_away(
-                        stream_id,
-                        ErrorCode::ENHANCE_YOUR_CALM,
-                        b"ENHANCE_YOUR_CALM",
-                        self.last_stream_id.get(),
-                        true,
-                    );
-                } else {
-                    self.end_stream(stream, ErrorCode::ENHANCE_YOUR_CALM);
-                }
-                return Ok(self.streams.get().get(&stream_id).copied());
+
+            // Check against maxHeaderListSize / maxHeaderListPairs.
+            if rejected
+                || stream.header_block_size
+                    > self.local_settings.get().max_header_list_size as usize
+                || (self.max_header_list_pairs.get() as usize) < stream.header_block_count
+            {
+                rejected = true;
+                continue;
             }
 
             if let Some(js_header_name) =
@@ -3630,10 +3640,22 @@ impl H2FrameParser {
                 js_header_name.ensure_still_alive();
                 js_header_value.ensure_still_alive();
             }
+        }
 
-            if offset >= payload.len() {
-                break;
+        if rejected {
+            self.rejected_streams.set(self.rejected_streams.get() + 1);
+            if self.max_rejected_streams.get() <= self.rejected_streams.get() {
+                self.send_go_away(
+                    stream_id,
+                    ErrorCode::ENHANCE_YOUR_CALM,
+                    b"ENHANCE_YOUR_CALM",
+                    self.last_stream_id.get(),
+                    true,
+                );
+            } else {
+                self.end_stream(stream, ErrorCode::ENHANCE_YOUR_CALM);
             }
+            return Ok(None);
         }
 
         // A CLOSED stream can still own an unfinished header block (it is kept
@@ -4310,30 +4332,6 @@ impl H2FrameParser {
         data.len()
     }
 
-    /// Apply the END_STREAM transition for an inbound header block once
-    /// END_HEADERS has been seen, then tell JS the remote side ended. Called
-    /// from `handle_headers_frame` for an unsplit block and from
-    /// `handle_continuation_frame` for the final fragment of a split one.
-    fn finish_headers_end_stream(&self, stream: &mut Stream) {
-        let identifier = stream.get_identifier();
-        identifier.ensure_still_alive();
-        if stream.state == StreamState::HALF_CLOSED_LOCAL {
-            // Our side already ended, so both directions are now done.
-            self.close_stream(stream);
-            stream.free_resources::<false>(self);
-        } else if stream.state != StreamState::CLOSED {
-            // A synchronous `close()`/`rstStream()` (or a header encoding
-            // error) from the 'stream' handler dispatched above may have
-            // already closed the stream; don't resurrect it.
-            stream.state = StreamState::HALF_CLOSED_REMOTE;
-        }
-        self.dispatch_with_extra(
-            JSH2FrameParser::Gc::onStreamEnd,
-            identifier,
-            JSValue::js_number(stream.state as u8 as f64),
-        );
-    }
-
     /// RFC 7540 Section 6.10: Handle CONTINUATION frame (type=0x9).
     pub(crate) fn handle_continuation_frame(
         &self,
@@ -4398,17 +4396,42 @@ impl H2FrameParser {
             let payload = content.data();
             let end = content.end;
             self.read_buffer.with_mut(|rb| rb.reset());
-            stream = match self.decode_header_block(payload, stream, frame.flags)? {
+            if stream.pending_header_block.len() + payload.len()
+                > self.local_settings.get().max_header_list_size as usize
+            {
+                // Cap the buffered compressed block at max_header_list_size as a
+                // DoS bound; the decoded list size is checked separately in
+                // decode_header_block.
+                self.send_go_away(
+                    frame.stream_identifier,
+                    ErrorCode::ENHANCE_YOUR_CALM,
+                    b"ENHANCE_YOUR_CALM",
+                    self.last_stream_id.get(),
+                    true,
+                );
+                return Ok(end);
+            }
+            stream.pending_header_block.extend_from_slice(payload);
+            if frame.flags & HeadersFrameFlags::END_HEADERS as u8 == 0 {
+                // keep buffering until END_HEADERS arrives
+                return Ok(end);
+            }
+            stream.is_waiting_more_headers = false;
+            self.expecting_continuation.set(0);
+            // Take ownership of the buffer so re-entrant parser calls from the
+            // onStreamHeaders dispatch can't alias or free the bytes being decoded.
+            let block = core::mem::take(&mut stream.pending_header_block);
+            // Report the original HEADERS frame's flags (plus END_HEADERS now
+            // that the block is complete), not the CONTINUATION frame's.
+            let block_flags = stream.pending_header_flags | HeadersFrameFlags::END_HEADERS as u8;
+            stream = match self.decode_header_block(&block, stream, block_flags)? {
                 // SAFETY: s is *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                 Some(s) => unsafe { &mut *s },
                 None => return Ok(end),
             };
-            stream.is_waiting_more_headers =
-                frame.flags & HeadersFrameFlags::END_HEADERS as u8 == 0;
-            // END_HEADERS completes the block: apply the END_STREAM
-            // transition that `handle_headers_frame` deferred so the
-            // intermediate fragments were still surfaced to JS.
-            if !stream.is_waiting_more_headers && stream.end_after_headers {
+            // END_STREAM finalization was deferred by handle_headers_frame
+            // until the complete header block had been dispatched.
+            if stream.end_after_headers {
                 self.finish_headers_end_stream(stream);
             }
             return Ok(end);
@@ -4416,6 +4439,33 @@ impl H2FrameParser {
 
         // needs more data
         Ok(data.len())
+    }
+
+    /// Finalize a stream whose HEADERS frame carried END_STREAM, after the
+    /// complete header block has been decoded and dispatched.
+    fn finish_headers_end_stream(&self, stream: &mut Stream) {
+        // The stream can be reset (req.close(), AbortSignal) between the
+        // HEADERS fragment and the CONTINUATION that completes the block;
+        // don't regress a CLOSED stream or dispatch onStreamEnd after
+        // onStreamError.
+        if stream.state == StreamState::CLOSED {
+            return;
+        }
+        let identifier = stream.get_identifier();
+        identifier.ensure_still_alive();
+
+        // no more continuation headers we can call it closed
+        if stream.state == StreamState::HALF_CLOSED_LOCAL {
+            self.close_stream(stream);
+            stream.free_resources::<false>(self);
+        } else {
+            stream.state = StreamState::HALF_CLOSED_REMOTE;
+        }
+        self.dispatch_with_extra(
+            JSH2FrameParser::Gc::onStreamEnd,
+            identifier,
+            JSValue::js_number(stream.state as u8 as f64),
+        );
     }
 
     pub(crate) fn handle_headers_frame(
@@ -4526,18 +4576,38 @@ impl H2FrameParser {
             stream.end_after_headers = frame.flags & HeadersFrameFlags::END_STREAM as u8 != 0;
             stream.header_block_size = 0;
             stream.header_block_count = 0;
+            stream.pending_header_block.clear();
+            stream.is_waiting_more_headers =
+                frame.flags & HeadersFrameFlags::END_HEADERS as u8 == 0;
+            if stream.is_waiting_more_headers {
+                // Buffer fragments until END_HEADERS (RFC 9113 §4.3); the block is
+                // decoded and END_STREAM finalized in handle_continuation_frame so
+                // the JS event order stays onStreamHeaders -> onStreamEnd.
+                let fragment = &payload[offset..end];
+                if fragment.len() > self.local_settings.get().max_header_list_size as usize {
+                    // Cap the buffered compressed block at max_header_list_size
+                    // as a DoS bound; the decoded list size is checked separately
+                    // in decode_header_block.
+                    self.send_go_away(
+                        frame.stream_identifier,
+                        ErrorCode::ENHANCE_YOUR_CALM,
+                        b"ENHANCE_YOUR_CALM",
+                        self.last_stream_id.get(),
+                        true,
+                    );
+                    return Ok(end_);
+                }
+                stream.pending_header_block.extend_from_slice(fragment);
+                stream.pending_header_flags = frame.flags;
+                self.expecting_continuation.set(frame.stream_identifier);
+                return Ok(end_);
+            }
             stream = match self.decode_header_block(&payload[offset..end], stream, frame.flags)? {
                 // SAFETY: s is *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                 Some(s) => unsafe { &mut *s },
                 None => return Ok(end_),
             };
-            stream.is_waiting_more_headers =
-                frame.flags & HeadersFrameFlags::END_HEADERS as u8 == 0;
-            // For a split header block the END_STREAM transition is deferred
-            // until END_HEADERS (`finish_headers_end_stream` from
-            // `handle_continuation_frame`) so the remaining fragments are
-            // still decoded and surfaced to JS before the stream closes.
-            if stream.end_after_headers && !stream.is_waiting_more_headers {
+            if stream.end_after_headers {
                 self.finish_headers_end_stream(stream);
             }
             return Ok(end_);
@@ -4839,6 +4909,13 @@ impl H2FrameParser {
         if frame_type != FrameType::HTTP_FRAME_HEADERS as u8 || !self.is_server.get() {
             return None;
         }
+        // RFC 9113 §4.3: while a header block is mid-reassembly the only legal
+        // frame is a CONTINUATION for that stream, and dispatch_frame will
+        // reject this one. Don't allocate stream state, bump last_stream_id,
+        // or fire onStreamStart for a frame that is about to be rejected.
+        if self.expecting_continuation.get() != 0 {
+            return None;
+        }
         // Client-initiated streams must use odd identifiers (RFC 9113 §5.1.1).
         if stream_identifier & 1 == 0 {
             return None;
@@ -5002,6 +5079,23 @@ impl H2FrameParser {
         stream: Option<*mut Stream>,
         add: usize,
     ) -> JsResult<usize> {
+        // RFC 9113 §4.3 / §6.10: once a HEADERS frame without END_HEADERS has
+        // been received, the only frame permitted on the connection is a
+        // CONTINUATION for that same stream until the header block is complete.
+        let expecting = self.expecting_continuation.get();
+        if expecting != 0
+            && (header.type_ != FrameType::HTTP_FRAME_CONTINUATION as u8
+                || header.stream_identifier != expecting)
+        {
+            self.send_go_away(
+                header.stream_identifier,
+                ErrorCode::PROTOCOL_ERROR,
+                b"Expected CONTINUATION frame",
+                self.last_stream_id.get(),
+                true,
+            );
+            return Ok(bytes.len() + add);
+        }
         Ok(match header.type_ {
             x if x == FrameType::HTTP_FRAME_SETTINGS as u8 => {
                 self.handle_settings_frame(header, bytes) + add
@@ -7889,6 +7983,7 @@ impl H2FrameParser {
             out_standing_pings: Cell::new(0),
             max_send_header_block_length: Cell::new(0),
             last_stream_id: Cell::new(0),
+            expecting_continuation: Cell::new(0),
             is_server: Cell::new(false),
             preface_received_len: Cell::new(0),
             write_buffer: JsCell::new(Vec::<u8>::default()),

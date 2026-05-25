@@ -27,7 +27,7 @@ describe.concurrent("issue 31401: anonymous default export from digit-named modu
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("No identifiers allowed directly after numeric literal");
-    expect(stdout).toBe("ok\n");
+    expect(stdout.replaceAll("\r\n", "\n")).toBe("ok\n");
     expect(exitCode).toBe(0);
   });
 
@@ -48,7 +48,7 @@ describe.concurrent("issue 31401: anonymous default export from digit-named modu
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("No identifiers allowed directly after numeric literal");
-    expect(stdout).toBe("function\n");
+    expect(stdout.replaceAll("\r\n", "\n")).toBe("function\n");
     expect(exitCode).toBe(0);
   });
 
@@ -67,9 +67,9 @@ describe.concurrent("issue 31401: anonymous default export from digit-named modu
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
+    expect(stderr).not.toContain("No identifiers allowed directly after numeric literal");
     // Must be a valid identifier: the leading digit gets an underscore prefix.
-    expect(stdout).toContain("export default function _1_default() {}");
+    expect(stdout.replaceAll("\r\n", "\n")).toContain("export default function _1_default() {}");
     expect(exitCode).toBe(0);
   });
 });

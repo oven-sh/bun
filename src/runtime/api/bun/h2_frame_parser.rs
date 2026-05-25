@@ -4310,6 +4310,30 @@ impl H2FrameParser {
         data.len()
     }
 
+    /// Apply the END_STREAM transition for an inbound header block once
+    /// END_HEADERS has been seen, then tell JS the remote side ended. Called
+    /// from `handle_headers_frame` for an unsplit block and from
+    /// `handle_continuation_frame` for the final fragment of a split one.
+    fn finish_headers_end_stream(&self, stream: &mut Stream) {
+        let identifier = stream.get_identifier();
+        identifier.ensure_still_alive();
+        if stream.state == StreamState::HALF_CLOSED_LOCAL {
+            // Our side already ended, so both directions are now done.
+            self.close_stream(stream);
+            stream.free_resources::<false>(self);
+        } else if stream.state != StreamState::CLOSED {
+            // A synchronous `close()`/`rstStream()` (or a header encoding
+            // error) from the 'stream' handler dispatched above may have
+            // already closed the stream; don't resurrect it.
+            stream.state = StreamState::HALF_CLOSED_REMOTE;
+        }
+        self.dispatch_with_extra(
+            JSH2FrameParser::Gc::onStreamEnd,
+            identifier,
+            JSValue::js_number(stream.state as u8 as f64),
+        );
+    }
+
     /// RFC 7540 Section 6.10: Handle CONTINUATION frame (type=0x9).
     pub(crate) fn handle_continuation_frame(
         &self,
@@ -4379,10 +4403,14 @@ impl H2FrameParser {
                 Some(s) => unsafe { &mut *s },
                 None => return Ok(end),
             };
-            // END_STREAM (end_after_headers) was already finalized by
-            // handle_headers_frame; only track END_HEADERS here.
             stream.is_waiting_more_headers =
                 frame.flags & HeadersFrameFlags::END_HEADERS as u8 == 0;
+            // END_HEADERS completes the block: apply the END_STREAM
+            // transition that `handle_headers_frame` deferred so the
+            // intermediate fragments were still surfaced to JS.
+            if !stream.is_waiting_more_headers && stream.end_after_headers {
+                self.finish_headers_end_stream(stream);
+            }
             return Ok(end);
         }
 
@@ -4505,39 +4533,12 @@ impl H2FrameParser {
             };
             stream.is_waiting_more_headers =
                 frame.flags & HeadersFrameFlags::END_HEADERS as u8 == 0;
-            if stream.end_after_headers {
-                let identifier = stream.get_identifier();
-                identifier.ensure_still_alive();
-
-                if stream.is_waiting_more_headers {
-                    // `handle_continuation_frame` only tracks END_HEADERS, so
-                    // this is the last place the END_STREAM transition for a
-                    // split header block can be applied. If our side already
-                    // ended, both sides are now done: close here (the entry
-                    // stays in the map until END_HEADERS drains the block).
-                    if stream.state == StreamState::HALF_CLOSED_LOCAL {
-                        self.close_stream(stream);
-                    } else if stream.state != StreamState::CLOSED {
-                        stream.state = StreamState::HALF_CLOSED_REMOTE;
-                    }
-                } else {
-                    // no more continuation headers we can call it closed
-                    if stream.state == StreamState::HALF_CLOSED_LOCAL {
-                        self.close_stream(stream);
-                        stream.free_resources::<false>(self);
-                    } else if stream.state != StreamState::CLOSED {
-                        // A synchronous `close()`/`rstStream()` (or a header
-                        // encoding error) from the 'stream' handler dispatched
-                        // above may have already closed the stream; don't
-                        // resurrect it.
-                        stream.state = StreamState::HALF_CLOSED_REMOTE;
-                    }
-                }
-                self.dispatch_with_extra(
-                    JSH2FrameParser::Gc::onStreamEnd,
-                    identifier,
-                    JSValue::js_number(stream.state as u8 as f64),
-                );
+            // For a split header block the END_STREAM transition is deferred
+            // until END_HEADERS (`finish_headers_end_stream` from
+            // `handle_continuation_frame`) so the remaining fragments are
+            // still decoded and surfaced to JS before the stream closes.
+            if stream.end_after_headers && !stream.is_waiting_more_headers {
+                self.finish_headers_end_stream(stream);
             }
             return Ok(end_);
         }

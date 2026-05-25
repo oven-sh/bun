@@ -2254,3 +2254,92 @@ it("http2 server does not spawn a second request for late HEADERS on a stream it
     server.close();
   }
 });
+
+it("http2 client receives every fragment of a trailer block split across CONTINUATION frames", async () => {
+  // A trailing HEADERS frame may carry END_STREAM without END_HEADERS, with
+  // the rest of the trailer block following in CONTINUATION frames (RFC 9113
+  // section 4.3). The stream must not be torn down — and trailer fragments
+  // must not stop being delivered — until END_HEADERS completes the block.
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  // :status: 200 — static table index 8.
+  const responseBlock = Buffer.from([0x88]);
+  // x-trailer-a: 1 / x-trailer-b: 2 — literal without indexing, new name.
+  // Each fragment is a complete HPACK block on its own so it decodes
+  // independently of where the sender split the frames.
+  const trailerFragment1 = Buffer.from([0x00, 0x0b, ...Buffer.from("x-trailer-a"), 0x01, 0x31]);
+  const trailerFragment2 = Buffer.from([0x00, 0x0b, ...Buffer.from("x-trailer-b"), 0x01, 0x32]);
+
+  const server = net.createServer(socket => {
+    socket.on("error", () => {});
+    let prefaceSeen = false;
+    let responded = false;
+    const scan = makeFrameScanner((type, flags, streamId) => {
+      // 0x1 = HEADERS: the client's request for stream 1 has arrived.
+      if (type === 0x1 && streamId === 1 && !responded) {
+        responded = true;
+        socket.write(
+          Buffer.concat([
+            new http2utils.HeadersFrame(1, responseBlock, 0, true, false).data,
+            new http2utils.DataFrame(1, Buffer.from("ok"), 0, false).data,
+            // Trailers: END_STREAM without END_HEADERS, completed by a
+            // CONTINUATION frame carrying the rest of the block.
+            new http2utils.HeadersFrame(1, trailerFragment1, 0, false, true).data,
+            new http2utils.ContinuationFrame(1, trailerFragment2, 0, false).data,
+          ]),
+        );
+      }
+    });
+    let prefaceBuffer = Buffer.alloc(0);
+    socket.on("data", chunk => {
+      if (!prefaceSeen) {
+        // 24-byte client connection preface, then frames. May span TCP chunks.
+        prefaceBuffer = prefaceBuffer.length === 0 ? chunk : Buffer.concat([prefaceBuffer, chunk]);
+        if (prefaceBuffer.length < 24) return;
+        prefaceSeen = true;
+        socket.write(new http2utils.SettingsFrame(false).data);
+        socket.write(new http2utils.SettingsFrame(true).data);
+        chunk = prefaceBuffer.subarray(24);
+        prefaceBuffer = Buffer.alloc(0);
+        if (chunk.length === 0) return;
+      }
+      scan(chunk);
+    });
+  });
+
+  await new Promise(r => server.listen(0, r));
+  const port = server.address().port;
+  const client = http2.connect(`http://localhost:${port}`);
+  client.on("error", err => reject(err));
+  client.on("goaway", () => reject(new Error("session received GOAWAY")));
+
+  client.on("connect", () => {
+    const req = client.request({ ":path": "/" });
+    req.on("error", err => reject(err));
+    let body = "";
+    const trailers = {};
+    req.setEncoding("utf8");
+    req.on("data", d => (body += d));
+    req.on("trailers", headers => {
+      Object.assign(trailers, headers);
+    });
+    req.on("close", () => {
+      try {
+        expect(body).toBe("ok");
+        expect(trailers["x-trailer-a"]).toBe("1");
+        expect(trailers["x-trailer-b"]).toBe("2");
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    });
+    req.end();
+  });
+
+  try {
+    await promise;
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});

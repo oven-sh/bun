@@ -924,4 +924,83 @@ describe("ES Decorators", () => {
       expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(output)).not.toThrow();
     });
   });
+
+  // When private members get lowered to WeakMap/WeakSet helpers, their initializers are
+  // moved into the constructor / static `__privateAdd` blocks / after the class. Private
+  // references inside those initializers must be rewritten as well.
+  describe("field initializers referencing lowered privates", () => {
+    test("private field initializer referencing another private field (#28118)", async () => {
+      using dir = tempDir("es-dec-28118", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+        "test.ts": `
+          function id(
+            value: ClassAccessorDecoratorTarget<any, any>,
+            context: ClassAccessorDecoratorContext,
+          ): ClassAccessorDecoratorResult<any, any> {
+            return value;
+          }
+
+          class Broken {
+            @id accessor label: string = "";
+            #name = "hello";
+            #callback = () => this.#name;
+            run() {
+              return this.#callback();
+            }
+          }
+
+          console.log(new Broken().run());
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("hello\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("static field and static accessor initializers referencing a private field", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function id(value, context) {
+          return value;
+        }
+        class Foo {
+          @id accessor a = 1;
+          #name = 2;
+          static #s = new Foo().#name + 1;
+          static accessor t = new Foo().#name + 5;
+          static getS() {
+            return Foo.#s;
+          }
+        }
+        console.log(Foo.getS(), Foo.t);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("3 7\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Bun.Transpiler output with private references in field initializers reparses", () => {
+      const transpiler = new Bun.Transpiler({ loader: "js", target: "node", minifyWhitespace: true });
+      const inputs = [
+        // instance private field initializer referencing another private
+        "class Broken { @id accessor label = ''; #name = 'hello'; #callback = () => this.#name; }",
+        // kept public field initializer referencing a lowered private
+        "class Foo { @id accessor a = 1; #name = 2; pub = this.#name; }",
+        // static private field + static auto-accessor initializers referencing a lowered private
+        "class Foo { @id accessor a = 1; #name = 2; static #s = new Foo().#name; static accessor t = new Foo().#name; }",
+      ];
+      for (const input of inputs) {
+        const output = transpiler.transformSync(input);
+        expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(output)).not.toThrow();
+      }
+    });
+  });
 });

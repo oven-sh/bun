@@ -2077,6 +2077,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(v) = &mut nprop.value {
                     p.rewrite_private_accesses_in_expr(v, &private_lowered_map);
                 }
+                if let Some(init) = &mut nprop.initializer {
+                    p.rewrite_private_accesses_in_expr(init, &private_lowered_map);
+                }
                 if let Some(sb) = nprop.class_static_block_mut() {
                     p.rewrite_private_accesses_in_stmts(sb.stmts.slice_mut(), &private_lowered_map);
                 }
@@ -2106,6 +2109,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.rewrite_private_accesses_in_expr(elem, &private_lowered_map);
             }
             for elem in instance_field_decorate.iter_mut() {
+                p.rewrite_private_accesses_in_expr(elem, &private_lowered_map);
+            }
+            // Initializers of non-decorated private fields/accessors were moved
+            // into `__privateAdd(...)` calls in the constructor, in static
+            // `__privateAdd` blocks, or in the suffix (static auto-accessors),
+            // so their private references need rewriting as well.
+            p.rewrite_private_accesses_in_stmts(
+                &mut constructor_inject_stmts,
+                &private_lowered_map,
+            );
+            for sp in static_private_add_blocks.iter_mut() {
+                if let Some(sb) = sp.class_static_block_mut() {
+                    p.rewrite_private_accesses_in_stmts(sb.stmts.slice_mut(), &private_lowered_map);
+                }
+            }
+            for elem in suffix_exprs.iter_mut() {
                 p.rewrite_private_accesses_in_expr(elem, &private_lowered_map);
             }
             p.rewrite_private_accesses_in_stmts(&mut pre_eval_stmts, &private_lowered_map);

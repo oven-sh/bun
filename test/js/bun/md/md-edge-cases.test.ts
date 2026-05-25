@@ -87,6 +87,33 @@ describe("fuzzer-like edge cases", () => {
     expect(typeof Markdown.html(input)).toBe("string");
   });
 
+  test("ansi: pathologically nested lists produce linear output", () => {
+    // Every rendered list-item line starts with its indentation, so if the
+    // per-line indent grows without bound the output becomes quadratic in
+    // the nesting depth (a ~240 KB fuzzer document of `- - - …` lines
+    // produced gigabytes of ANSI output). The renderer caps the emitted
+    // indent, keeping the output proportional to the number of items.
+    const depth = 2000;
+    const input = Buffer.alloc(depth * 2, "- ").toString() + "hi";
+    const out = Markdown.ansi(input);
+    expect(out).toContain("hi");
+    expect(out).toContain("•");
+    // ~8 MB without the indent cap, ~300 KB with it.
+    expect(out.length).toBeLessThan(2_000_000);
+  });
+
+  test("ansi: pathologically nested blockquotes + lists produce linear output", () => {
+    // Same idea as above, but the per-line prefix is dominated by the
+    // blockquote `│ ` bars instead of list indent spaces.
+    const depth = 1500;
+    const input = Buffer.alloc(depth * 2, "> ").toString() + Buffer.alloc(depth * 2, "- ").toString() + "hi";
+    const out = Markdown.ansi(input);
+    expect(out).toContain("hi");
+    expect(out).toContain("│");
+    // ~9 MB without the indent cap, ~450 KB with it.
+    expect(out.length).toBeLessThan(2_000_000);
+  });
+
   test("deeply nested emphasis", () => {
     const depth = 50;
     const open = Buffer.alloc(depth, "*").toString();

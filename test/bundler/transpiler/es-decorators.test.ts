@@ -637,6 +637,98 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("decorated foo\n42\n");
       expect(exitCode).toBe(0);
     });
+
+    test("export default anonymous class with auto-accessor and no decorators", async () => {
+      using dir = tempDir("es-dec-export-default-anon-accessor", {
+        "entry.js": `
+          import Cls from "./mod.js";
+          const c = new Cls();
+          console.log(c.op);
+          c.op = 42;
+          console.log(c.op);
+          const desc = Object.getOwnPropertyDescriptor(Cls.prototype, "op");
+          console.log(typeof desc.get, typeof desc.set);
+        `,
+        "mod.js": `
+          export default class {
+            accessor op;
+          }
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("undefined\n42\nfunction function\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("export default anonymous TypeScript class with auto-accessor and no decorators", async () => {
+      using dir = tempDir("es-dec-export-default-anon-accessor-ts", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+        "entry.ts": `
+          import Cls from "./mod.ts";
+          const c = new Cls();
+          c.op = "hello";
+          console.log(c.op);
+        `,
+        "mod.ts": `
+          export default class {
+            accessor op: string | undefined;
+          }
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("hello\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Bun.build bundles export default anonymous class with auto-accessor", async () => {
+      using dir = tempDir("es-dec-build-anon-accessor", {
+        "build.js": `
+          const result = await Bun.build({
+            entrypoints: ["./mod.ts"],
+            target: "bun",
+            minify: true,
+            sourcemap: "external",
+            throw: false,
+          });
+          console.log(result.success);
+        `,
+        "mod.ts": `
+          export default class {
+            accessor op;
+          }
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("true\n");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("anonymous class expressions with reserved-word inferred names", () => {

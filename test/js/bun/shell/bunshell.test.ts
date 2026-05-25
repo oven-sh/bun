@@ -54,6 +54,7 @@ afterAll(async () => {
 });
 
 const BUN = bunExe();
+const isRoot = process.getuid?.() === 0;
 
 describe("bunshell", () => {
   describe("exit codes", async () => {
@@ -811,6 +812,68 @@ booga"
         })
         .runAsTest("long leading run of injected ! stays literal");
     });
+
+    test("glob on a nonexistent absolute directory does not crash the process", async () => {
+      const missing = join(tmpdirSync(), "does-not-exist").replaceAll("\\", "/");
+      const script = `
+        import { $ } from "bun";
+        const missing = ${JSON.stringify(missing)};
+        const results = [];
+
+        {
+          const r = await $\`echo \${missing}/*\`.nothrow().quiet();
+          results.push({ exitCode: r.exitCode, stderr: r.stderr.toString() });
+        }
+
+        try {
+          await $\`echo \${missing}/*\`.quiet();
+          results.push({ threw: false });
+        } catch (e) {
+          results.push({ threw: true, exitCode: e.exitCode, stderr: e.stderr.toString() });
+        }
+
+        {
+          const r = await $\`FOO=\${missing}/*; echo $FOO\`.nothrow().quiet();
+          results.push({ exitCode: r.exitCode, stdout: r.stdout.toString() });
+        }
+
+        console.log(JSON.stringify(results));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        { exitCode: 1, stderr: `bun: no matches found: ${missing}/*\n` },
+        { threw: true, exitCode: 1, stderr: `bun: no matches found: ${missing}/*\n` },
+        { exitCode: 0, stdout: `${missing}/*\n` },
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.if(isPosix && !isRoot)("glob over an unreadable directory reports the real error", async () => {
+      const dir = tempDirWithFiles("glob-eacces", { "placeholder.txt": "" });
+      const noaccess = join(dir, "noaccess").replaceAll("\\", "/");
+      mkdirSync(noaccess);
+      chmodSync(noaccess, 0o000);
+      try {
+        const { stderr, exitCode } = await $`echo ${noaccess}/*`.quiet().nothrow();
+        expect(stderr.toString()).toContain(`bun: Permission denied: ${noaccess}`);
+        expect(stderr.toString()).not.toContain("no matches found");
+        expect(exitCode).toBe(1);
+
+        const assign = await $`FOO=${noaccess}/*; echo $FOO`.quiet().nothrow();
+        expect(assign.stderr.toString()).toBe("");
+        expect(assign.stdout.toString()).toBe(`${noaccess}/*\n`);
+        expect(assign.exitCode).toBe(0);
+      } finally {
+        chmodSync(noaccess, 0o755);
+      }
+    });
   });
 
   describe("brace expansion", () => {
@@ -1000,7 +1063,7 @@ booga"
     // handleChangeCwdErr's `else` arm previously returned `.failed` without writing
     // to stderr or calling done(), so any errno other than NOTDIR/NOENT/NAMETOOLONG
     // (e.g. EACCES, ELOOP) left the shell promise unresolved forever.
-    test.if(isPosix)("cd with EACCES fails with exit code 1 instead of hanging", async () => {
+    test.if(isPosix && !isRoot)("cd with EACCES fails with exit code 1 instead of hanging", async () => {
       const dir = tempDirWithFiles("cd-eacces", { "placeholder.txt": "" });
       const noaccess = join(dir, "noaccess");
       mkdirSync(noaccess);

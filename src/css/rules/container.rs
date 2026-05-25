@@ -176,7 +176,7 @@ impl QueryCondition for StyleQuery {
     fn needs_parens(&self, parent_operator: Option<Operator>, _targets: &css::Targets) -> bool {
         match self {
             StyleQuery::Not(_) => true,
-            StyleQuery::Operation { operator, .. } => Some(*operator) == parent_operator,
+            StyleQuery::Operation { operator, .. } => Some(*operator) != parent_operator,
             StyleQuery::Feature(_) => true,
         }
     }
@@ -296,7 +296,7 @@ impl QueryCondition for ContainerCondition {
     fn needs_parens(&self, parent_operator: Option<Operator>, targets: &css::Targets) -> bool {
         match self {
             ContainerCondition::Not(_) => true,
-            ContainerCondition::Operation { operator, .. } => Some(*operator) == parent_operator,
+            ContainerCondition::Operation { operator, .. } => Some(*operator) != parent_operator,
             ContainerCondition::Feature(f) => f.needs_parens(parent_operator, targets),
             ContainerCondition::Style(_) => false,
         }

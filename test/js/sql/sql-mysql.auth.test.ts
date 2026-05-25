@@ -207,14 +207,75 @@ test("caching_sha2_password scramble hashes the double-SHA256 before the nonce",
       const digest3 = sha256(Buffer.concat([digest2, nonce]));
       return Buffer.from(digest1.map((byte, i) => byte ^ digest3[i])).toString("hex");
     };
-    // The spec nonce is 20 bytes (part1 + the first 12 bytes of part2). Bun currently
-    // also keeps part2's trailing filler byte (#26195, fixed separately in #28161), so
-    // accept either nonce length: this test pins only the concatenation order.
+    // The spec nonce is 20 bytes (part1 + the first 12 bytes of part2); part2's 13th
+    // byte is the protocol's trailing NUL filler, not nonce data (#26195, fixed in #28161).
     const nonce20 = Buffer.concat([MYSQL_MOCK_AUTH_DATA_PART_1, MYSQL_MOCK_AUTH_DATA_PART_2.subarray(0, 12)]);
     const nonce21 = Buffer.concat([MYSQL_MOCK_AUTH_DATA_PART_1, MYSQL_MOCK_AUTH_DATA_PART_2]);
-    expect([expected(nonce20), expected(nonce21)]).toContain(sent.toString("hex"));
+    expect(sent.toString("hex")).toBe(expected(nonce20));
+    expect(sent.toString("hex")).not.toBe(expected(nonce21));
     expect(rows).toEqual([{ v: "REAL-ROW" }]);
   } finally {
     server.close();
   }
 });
+
+// Regression for #26195: caching_sha2_password's RSA path XORs the password
+// cyclically against the server nonce, so a stray trailing NUL (21-byte nonce)
+// leaves byte 20 of the password unmasked. Use a container whose default
+// plugin is caching_sha2_password so the bug is reached via the initial
+// handshake rather than via AuthSwitchRequest.
+describeWithContainer(
+  "mysql caching_sha2_password",
+  {
+    image: "mysql_caching_sha2",
+    env: {},
+    args: [],
+    concurrent: true,
+  },
+  container => {
+    const userUrl = (user: string, password: string) =>
+      `mysql://${user}:${password}@${container.host}:${container.port}/bun_sql_test`;
+
+    async function createUser(user: string, password: string) {
+      // `simple` (text protocol) doesn't take bound parameters; user/password
+      // are test-controlled string literals, so inline them.
+      await using sql = new SQL({
+        url: `mysql://root:bun@${container.host}:${container.port}/bun_sql_test`,
+        max: 1,
+        allowPublicKeyRetrieval: true,
+      });
+      await sql.unsafe(`DROP USER IF EXISTS '${user}'@'%';`).simple();
+      await sql
+        .unsafe(
+          `CREATE USER '${user}'@'%' IDENTIFIED WITH caching_sha2_password BY '${password}';
+           GRANT ALL PRIVILEGES ON bun_sql_test.* TO '${user}'@'%';
+           FLUSH PRIVILEGES;`,
+        )
+        .simple();
+    }
+
+    async function expectAuthSucceeds(user: string, password: string) {
+      await using sql = new SQL({ url: userUrl(user, password), allowPublicKeyRetrieval: true });
+      const result = await sql`select 1 as x`;
+      expect(result).toEqual([{ x: 1 }]);
+    }
+
+    test("short password (< 20 chars)", async () => {
+      await createUser("short_pass", "short");
+      // Twice: first connection hits the RSA path, second hits the cached
+      // fast-auth path. Both must succeed.
+      await expectAuthSucceeds("short_pass", "short");
+      await expectAuthSucceeds("short_pass", "short");
+    });
+
+    test("boundary password (exactly 20 chars)", async () => {
+      await createUser("boundary", "exactly20charpasswd!");
+      await expectAuthSucceeds("boundary", "exactly20charpasswd!");
+    });
+
+    test("long password (> 19 chars)", async () => {
+      await createUser("long_pass", "ThisIsAVeryLongPassword123!");
+      await expectAuthSucceeds("long_pass", "ThisIsAVeryLongPassword123!");
+    });
+  },
+);

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { join } from "node:path";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/31401
 //

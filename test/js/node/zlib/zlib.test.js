@@ -689,3 +689,50 @@ describe("async write buffer lifetime", () => {
     }
   });
 });
+
+describe("dictionary buffer lifetime", () => {
+  it("decompresses correctly when the dictionary's ArrayBuffer is detached after stream creation", async () => {
+    const dictText = "hello hello hello world world world ";
+    const input = Buffer.from(dictText.repeat(16));
+
+    // Each call returns a dictionary backed by its own non-pooled ArrayBuffer
+    // so it can be transferred independently.
+    const makeDict = () => {
+      const dict = new Uint8Array(new ArrayBuffer(dictText.length));
+      dict.set(Buffer.from(dictText));
+      return dict;
+    };
+
+    // Produce a zlib stream whose header demands this dictionary (FDICT set),
+    // so inflate must re-read the dictionary bytes mid-stream (Z_NEED_DICT).
+    const compressed = zlib.deflateSync(input, { dictionary: makeDict() });
+
+    // Sanity: an intact dictionary round-trips.
+    expect(zlib.inflateSync(compressed, { dictionary: makeDict() }).equals(input)).toBe(true);
+
+    // Create the inflater, then detach the dictionary's backing store. The
+    // native handle only consumes the dictionary later, when inflate reports
+    // Z_NEED_DICT on the worker thread, so it must keep its own copy of the
+    // bytes rather than a pointer into the (now freed) JS allocation.
+    const dict = makeDict();
+    const inflater = zlib.createInflate({ dictionary: dict });
+    dict.buffer.transfer(0);
+    expect(dict.buffer.detached).toBe(true);
+
+    // Churn the heap so a stale pointer would observe different bytes.
+    let garbage = [];
+    for (let i = 0; i < 256; i++) garbage.push(new Uint8Array(dictText.length).fill(0xaa));
+    Bun.gc(true);
+    garbage = [];
+
+    const chunks = [];
+    const { promise, resolve, reject } = Promise.withResolvers();
+    inflater.on("data", c => chunks.push(c));
+    inflater.on("end", resolve);
+    inflater.on("error", reject);
+    inflater.end(compressed);
+    await promise;
+
+    expect(Buffer.concat(chunks).toString()).toBe(input.toString());
+  });
+});

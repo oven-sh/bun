@@ -584,7 +584,7 @@ fn read_string32<'a>(
 /// movement, OSC 52 clipboard writes, hyperlinks). UTF-8-encoded C1 controls
 /// (U+0080..=U+009F, i.e. `0xC2 0x80..=0x9F`) are also replaced: xterm-family
 /// terminals decode them back to C1, so `0xC2 0x9B` would otherwise act as CSI.
-fn sanitize_for_terminal<'a>(s: &'a [u8], arena: &'a Arena) -> &'a [u8] {
+pub(crate) fn sanitize_for_terminal<'a>(s: &'a [u8], arena: &'a Arena) -> &'a [u8] {
     fn is_disallowed(prev: u8, b: u8) -> bool {
         // Lone 0x80..=0x9F bytes are continuation bytes of legitimate
         // multi-byte characters and must not be blanked; only the encoded C1

@@ -1948,3 +1948,91 @@ it("socket handle write keeps buffered data intact when encoding coercion re-ent
   expect(stdout).toContain("received=" + expectedTotal + " a=" + 8 * MB + " b=" + 4 * MB + " c=" + 4 * MB);
   expect(exitCode).toBe(0);
 }, 30_000);
+
+it("client request path that does not begin with a slash stays on the configured host", async () => {
+  // `options.path` must only ever influence the path/query of the outgoing
+  // request. Bun builds the destination as a WHATWG URL, so a path that does
+  // not start with "/" (e.g. "@other-host:port/") would otherwise be parsed as
+  // a continuation of the authority, turning the configured host into userinfo
+  // and connecting to a different server.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const http = require("node:http");
+
+        // The server the request is configured to reach.
+        const intended = http.createServer((req, res) => {
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end("intended " + req.url);
+        });
+
+        // A second server that must never receive the request.
+        let decoyRequests = 0;
+        const decoy = http.createServer((req, res) => {
+          decoyRequests++;
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end("decoy");
+        });
+
+        function get(options) {
+          return new Promise((resolve, reject) => {
+            const req = http.request(options, res => {
+              let data = "";
+              res.setEncoding("utf8");
+              res.on("data", chunk => (data += chunk));
+              res.on("end", () => resolve(data));
+            });
+            req.on("error", reject);
+            req.end();
+          });
+        }
+
+        intended.listen(0, "127.0.0.1", () => {
+          decoy.listen(0, "127.0.0.1", async () => {
+            const intendedPort = intended.address().port;
+            const decoyPort = decoy.address().port;
+            try {
+              // A path of "@host:port/" must stay on the configured host and be
+              // sent as the request path.
+              const answered = await get({
+                host: "127.0.0.1",
+                port: intendedPort,
+                path: "@127.0.0.1:" + decoyPort + "/",
+              });
+              if (!answered.startsWith("intended ")) {
+                throw new Error("request was answered by the wrong server: " + answered);
+              }
+              if (!answered.includes("@127.0.0.1:" + decoyPort)) {
+                throw new Error("request path was not preserved: " + answered);
+              }
+              // An ordinary path still reaches the configured host unchanged.
+              const ok = await get({ host: "127.0.0.1", port: intendedPort, path: "/hello?world" });
+              if (ok !== "intended /hello?world") {
+                throw new Error("ordinary path broke: " + ok);
+              }
+              if (decoyRequests !== 0) {
+                throw new Error("the other server received " + decoyRequests + " request(s)");
+              }
+              console.log("OK");
+            } catch (err) {
+              console.error(err && (err.stack || err.message || err));
+              process.exitCode = 1;
+            } finally {
+              intended.close();
+              decoy.close();
+            }
+          });
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("OK");
+  expect(exitCode).toBe(0);
+}, 15_000);

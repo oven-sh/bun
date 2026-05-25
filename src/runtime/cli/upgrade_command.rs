@@ -726,6 +726,20 @@ impl UpgradeCommand {
 
             let version_name = version.name().unwrap();
 
+            if version_name.is_empty()
+                || version_name.as_slice() == b"."
+                || version_name.as_slice() == b".."
+                || strings::index_of_char(&version_name, 0).is_some()
+                || strings::index_of_char(&version_name, b'/').is_some()
+                || strings::index_of_char(&version_name, b'\\').is_some()
+            {
+                Output::err_generic(
+                    "Refusing to use release tag as a directory name: {}",
+                    (bstr::BStr::new(&version_name),),
+                );
+                Global::exit(1);
+            }
+
             let save_dir_: sys::Dir = match filesystem.tmpdir() {
                 Ok(d) => d,
                 Err(err) => {
@@ -734,10 +748,22 @@ impl UpgradeCommand {
                 }
             };
 
-            let save_dir_it = match save_dir_.make_open_path(&version_name, Default::default()) {
+            let _ = save_dir_.delete_tree(&version_name);
+            let version_name_z = bun_core::ZBox::from_bytes(&version_name);
+            if let Err(err) = sys::mkdirat(&save_dir_, version_name_z.as_zstr(), 0o700) {
+                Output::err_generic(
+                    "Failed to create temporary directory: {}",
+                    (bstr::BStr::new(err.name()),),
+                );
+                Global::exit(1);
+            }
+            let save_dir_it = match save_dir_.open_at(&version_name) {
                 Ok(d) => d,
                 Err(err) => {
-                    Output::err_generic("Failed to open temporary directory: {}", (err.name(),));
+                    Output::err_generic(
+                        "Failed to open temporary directory: {}",
+                        (bstr::BStr::new(err.name()),),
+                    );
                     Global::exit(1);
                 }
             };

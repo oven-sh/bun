@@ -842,6 +842,7 @@ impl S3Credentials {
         }
 
         if contains_newline_or_cr(aws_content_hash)
+            || search_params.is_some_and(contains_newline_or_cr)
             || acl.is_some_and(contains_newline_or_cr)
             || storage_class.is_some_and(contains_newline_or_cr)
             || content_md5.as_deref().is_some_and(contains_newline_or_cr)

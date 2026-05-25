@@ -248,6 +248,10 @@ pub(crate) fn handle_internal_message_primary(
         return Ok(());
     };
 
+    if !ipc_data.internal_msg_queue.is_ready() {
+        return Ok(());
+    }
+
     let event_loop = global.bun_vm().event_loop_mut();
 
     // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.

@@ -1636,6 +1636,10 @@ impl PostgresSQLConnection {
     /// pair (16 callers in `clean_up_requests` / `advance`).
     #[inline]
     fn discard_request(&self, request: *mut PostgresSQLQuery) {
+        if self.requests.get().readable_length() == 0 || self.requests.get().peek_item(0) != request
+        {
+            return;
+        }
         // SAFETY: `request` was obtained via `self.requests.get().peek_item(_)`
         // (queue invariant: every stored pointer is a live, heap-allocated
         // `PostgresSQLQuery` with refcount ≥ 1 held by the queue itself); this
@@ -2649,14 +2653,11 @@ impl PostgresSQLConnection {
                 // ReadyForQuery. Free any previous fields before overwriting and
                 // invalidate state derived from them so the next DataRow builds
                 // the correct structure instead of reusing a stale cached one.
-                if !statement.fields.is_empty() {
-                    // PORT NOTE: Vec<FieldDescription> drop runs each field's Drop.
-                    statement.fields = Vec::new();
-                    statement.cached_structure = Default::default();
-                    statement.needs_duplicate_check = true;
-                    statement.fields_flags = Default::default();
-                }
+                // PORT NOTE: Vec<FieldDescription> drop runs each field's Drop.
                 statement.fields = description.fields.into_vec();
+                statement.cached_structure = Default::default();
+                statement.needs_duplicate_check = true;
+                statement.fields_flags = Default::default();
             }
             MessageType::Authentication => {
                 let auth =

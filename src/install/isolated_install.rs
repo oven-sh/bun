@@ -1275,13 +1275,6 @@ pub(crate) fn install_isolated_packages(
                                         break 'eligible false;
                                     }
                                 }
-                                // `run_preinstall()` authorizes scripts by the
-                                // dependency *alias* name, so an aliased install
-                                // like `foo: npm:bar@1` is trusted if `foo` is in
-                                // trustedDependencies even though the package name
-                                // is `bar`. Mirror that here so the alias case
-                                // can't slip past the eligibility check.
-                                //
                                 // Intentionally *not* gated on `do.run_scripts`
                                 // (a later install without `--ignore-scripts`
                                 // would run the postinstall through the project

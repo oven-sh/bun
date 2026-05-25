@@ -693,6 +693,79 @@ describe("Bun.Archive", () => {
   });
 
   describe("path safety", () => {
+    test("skips tar entries whose pathname exceeds the platform path limit", async () => {
+      // GNU `@LongLink` ('L') records let a tar entry carry a pathname of
+      // arbitrary length, far beyond what fits in the extractor's fixed-size
+      // path buffer (PATH_MAX). Such an entry must be skipped during
+      // extraction instead of aborting the process, and the remaining entries
+      // in the archive must still be extracted.
+      // ~40 K characters: longer than the platform path buffer everywhere,
+      // including Windows where wide paths may be up to 32767 UTF-16 code units.
+      const longName = Buffer.alloc(40000, "d/").toString() + "payload.txt";
+
+      // GNU longname record: a header with typeflag 'L' whose data block holds
+      // the real (overlong) pathname for the entry that follows.
+      const nameBytes = Buffer.concat([Buffer.from(longName, "utf8"), Buffer.from([0])]);
+      const longLink = Buffer.alloc(512);
+      longLink.write("././@LongLink", 0, 100, "utf8");
+      longLink.write("0000644\0", 100);
+      longLink.write("0000000\0", 108);
+      longLink.write("0000000\0", 116);
+      longLink.write(nameBytes.length.toString(8).padStart(11, "0") + "\0", 124);
+      longLink.write("00000000000\0", 136);
+      longLink.write("        ", 148);
+      longLink.write("L", 156);
+      longLink.write("ustar\0", 257);
+      longLink.write("00", 263);
+      let longLinkSum = 0;
+      for (let i = 0; i < 512; i++) longLinkSum += longLink[i];
+      longLink.write(longLinkSum.toString(8).padStart(6, "0") + "\0 ", 148);
+      const namePad = Buffer.alloc((512 - (nameBytes.length % 512)) % 512);
+
+      const tarball = Buffer.concat([
+        ustarEntry("safe.txt", Buffer.from("safe contents")),
+        longLink,
+        nameBytes,
+        namePad,
+        // The real entry header carries a truncated name; readers replace it
+        // with the pathname from the preceding 'L' record.
+        ustarEntry(longName.slice(0, 99), Buffer.from("overlong contents")),
+        Buffer.alloc(1024),
+      ]);
+
+      using dir = tempDir("archive-overlong-path", {
+        "input.tar": tarball,
+        "extract.ts": `
+          const fs = require("node:fs");
+          const tar = fs.readFileSync("input.tar");
+          fs.mkdirSync("out", { recursive: true });
+          const archive = new Bun.Archive(new Uint8Array(tar));
+          const count = await archive.extract("out");
+          console.log("count:" + count);
+          console.log("safe:" + fs.readFileSync("out/safe.txt", "utf8"));
+        `,
+      });
+
+      // Run extraction in a child process: the failure mode being guarded
+      // against is a hard process abort, which would otherwise take down the
+      // test runner itself.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "extract.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // The well-formed entry is still extracted; the overlong one is skipped
+      // and does not contribute to the returned count.
+      expect(stdout).toContain("count:1");
+      expect(stdout).toContain("safe:safe contents");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     test("normalizes paths with redundant separators", async () => {
       const archive = new Bun.Archive({
         "dir//subdir///file.txt": "content",

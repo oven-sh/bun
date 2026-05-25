@@ -296,6 +296,9 @@ impl HmrSocket {
                 }
 
                 if dev.broadcast_console_log_from_browser_to_server {
+                    let arena = bun_alloc::Arena::new();
+                    let data =
+                        super::error_report_request_body::sanitize_for_terminal(data, &arena);
                     match kind {
                         ConsoleLogKind::Log => {
                             Output::pretty(format_args!(

@@ -94,4 +94,25 @@ describe("ws client upgrade event", () => {
 
     wss.close();
   });
+
+  // ws / EventEmitter consumers also subscribe via addListener /
+  // prependListener / prependOnceListener; each must wire the native handshake
+  // listener so `upgrade` actually fires.
+  for (const method of ["addListener", "prependListener", "prependOnceListener"] as const) {
+    it(`fires upgrade when subscribed via ${method}`, async () => {
+      const wss = new WebSocketServer({ port: 0 });
+      wss.on("connection", () => {});
+
+      const { promise, resolve, reject } = Promise.withResolvers<IncomingMessage>();
+      const ws = new WebSocket("ws://localhost:" + wss.address().port);
+      ws[method]("upgrade", resolve);
+      ws.on("open", () => ws.close());
+      ws.on("error", reject);
+      const res = await promise;
+      expect(res.statusCode).toBe(101);
+      await once(ws, "close");
+
+      wss.close();
+    });
+  }
 });

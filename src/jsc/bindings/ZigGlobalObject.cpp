@@ -3473,6 +3473,37 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         }
     }
 
+    // Registry key of the module whose body is initiating this dynamic
+    // import, for the #30651 dep == initiator discriminator. Inverts
+    // Zig::toSourceOrigin — `node:fs` is stored under `node:fs` but its
+    // sourceOrigin URL is `builtin://node/fs`, so a raw `substring(10)`
+    // would yield `node/fs` and miss the registry. Query-string-loaded
+    // file modules (`import("./x.mjs?v=1")`) are still not round-trip-
+    // recoverable from sourceOrigin alone — those fall back to the
+    // coarse VM::hasPendingDynamicImport() gate on the WebKit side.
+    auto referrerKeyFromSourceOrigin = [&]() -> JSC::Identifier {
+        const auto& url = sourceOrigin.url();
+        if (url.isEmpty())
+            return { };
+        String keyString;
+        if (url.protocolIsFile()) {
+            keyString = url.fileSystemPath();
+        } else if (url.protocol() == "builtin"_s && url.string().startsWith("builtin://"_s)) {
+            auto rest = url.string().substring(10);
+            if (rest.startsWith("node/"_s))
+                keyString = makeString("node:"_s, rest.substring(5));
+            else if (rest.startsWith("bun/"_s))
+                keyString = makeString("bun:"_s, rest.substring(4));
+            else
+                keyString = WTF::move(rest);
+        } else {
+            keyString = url.string();
+        }
+        if (keyString.isEmpty())
+            return { };
+        return JSC::Identifier::fromString(vm, keyString);
+    };
+
     JSC::Identifier resolvedIdentifier;
 
     auto moduleName = moduleNameValue->value(globalObject);
@@ -3481,7 +3512,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         if (auto resolution = globalObject->onLoadPlugins.resolveVirtualModule(moduleName, sourceOrigin.url().protocolIsFile() ? sourceOrigin.url().fileSystemPath() : String())) {
             resolvedIdentifier = JSC::Identifier::fromString(vm, resolution.value());
 
-            auto result = JSC::importModule(globalObject, resolvedIdentifier, JSC::Identifier(), parameters, nullptr);
+            auto result = JSC::importModule(globalObject, resolvedIdentifier, referrerKeyFromSourceOrigin(), parameters, nullptr);
             if (scope.exception()) [[unlikely]] {
                 return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
             }
@@ -3554,29 +3585,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     // The C++ module loader now extracts `with.type` into a
     // ScriptFetchParameters before calling this hook, so `parameters` is
     // already the parsed RefPtr (or null). Just forward it.
-    //
-    // Pass the sourceOrigin-derived referrer key so JSC's
-    // requestImportModule can find the initiator CyclicModuleRecord in
-    // the registry (see #30651 — the initiator is used to tell the
-    // Nitro self-deadlock apart from unrelated parallel dynamic imports
-    // of the same TLA dep). Bun keys the registry by the file-system
-    // path (or the substring after `builtin://` for builtins), not the
-    // URL — mirror the resolve() path above.
-    JSC::Identifier referrerKey;
-    auto referrerURL = sourceOrigin.url();
-    if (!referrerURL.isEmpty()) {
-        String referrerKeyString;
-        if (referrerURL.protocolIsFile())
-            referrerKeyString = referrerURL.fileSystemPath();
-        else if (referrerURL.protocol() == "builtin"_s && referrerURL.string().startsWith("builtin://"_s))
-            referrerKeyString = referrerURL.string().substring(10);
-        else
-            referrerKeyString = referrerURL.string();
-        if (!referrerKeyString.isEmpty())
-            referrerKey = JSC::Identifier::fromString(vm, referrerKeyString);
-    }
     auto result = JSC::importModule(globalObject, resolvedIdentifier,
-        referrerKey, WTF::move(parameters), nullptr);
+        referrerKeyFromSourceOrigin(), WTF::move(parameters), nullptr);
     if (scope.exception()) [[unlikely]] {
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
     }

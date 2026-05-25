@@ -217,9 +217,11 @@ test("parallel dynamic imports of the same TLA dep wait instead of running again
   expect(exitCode).toBe(0);
 });
 
-// Same as above but the TLA dep is reached indirectly through different parents
-// (so neither parent is on the DFS stack when the second one visits it). Guards
-// against discriminating by "is an asyncParentModule on the stack".
+// Variant of the "static sibling import waits for a TLA dep that suspended
+// earlier in the same Evaluate()" test above — the TLA dep is reached
+// indirectly through different parents (so neither parent is on the DFS
+// stack when the second one visits it). Guards against discriminating by
+// "is an asyncParentModule on the stack".
 test("static sibling import waits for an indirectly-shared TLA dep in the same Evaluate()", async () => {
   using dir = tempDir("static-sibling-tla-indirect", {
     "root.ts": `

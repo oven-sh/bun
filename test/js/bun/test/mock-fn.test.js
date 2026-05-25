@@ -886,6 +886,16 @@ describe("spyOn", () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
+  if (isBun) {
+    test("constructing a spy on a missing property returns an object", () => {
+      const target = {};
+      const fn = spyOn(target, "doesNotExist");
+      expect(typeof Reflect.construct(fn, [])).toBe("object");
+      expect(typeof new fn()).toBe("object");
+      fn.mockRestore();
+    });
+  }
+
   test("override impl after doesnt break restore", () => {
     var obj = {
       original() {

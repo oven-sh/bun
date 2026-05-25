@@ -317,13 +317,27 @@ mod host {
                 while idx < line.len() && line[idx] == b' ' {
                     idx += 1;
                 }
-                let rest = &line[idx..];
+                let mut rest = &line[idx..];
                 // tokenizer.next(): program token
-                let prog_start = idx;
+                let mut prog_start = idx;
                 while idx < line.len() && line[idx] != b' ' {
                     idx += 1;
                 }
-                let program = &line[prog_start..idx];
+                let mut program = &line[prog_start..idx];
+                // `env -S` (a.k.a. `--split-string`) forwards the remainder as separate args to
+                // the interpreter — it's the standard way to pass flags through a shebang on
+                // Linux/BSD. Skip it so the actual interpreter becomes the program/launcher.
+                if eql_comptime(program, b"-S") {
+                    while idx < line.len() && line[idx] == b' ' {
+                        idx += 1;
+                    }
+                    rest = &line[idx..];
+                    prog_start = idx;
+                    while idx < line.len() && line[idx] != b' ' {
+                        idx += 1;
+                    }
+                    program = &line[prog_start..idx];
+                }
                 if program.is_empty() {
                     return Ok(Self::parse_from_bin_path(bin_path));
                 }
@@ -488,3 +502,102 @@ mod host {
         })
     }
 } // mod host
+
+#[cfg(test)]
+#[cfg(not(feature = "shim_standalone"))]
+mod tests {
+    use super::Shebang;
+
+    /// A UTF-16 path stand-in — `Shebang::parse` only consults the extension
+    /// when the shebang is absent/invalid; a bare filename is enough here.
+    fn bin_path() -> Vec<u16> {
+        "index.js".encode_utf16().collect()
+    }
+
+    #[track_caller]
+    fn parse_ok<'a>(contents: &'a [u8], bp: &[u16]) -> Shebang<'a> {
+        Shebang::parse(contents, bp)
+            .expect("parse returned Err")
+            .expect("parse returned None")
+    }
+
+    #[test]
+    fn env_bun_no_flags() {
+        let bp = bin_path();
+        let s = parse_ok(b"#!/usr/bin/env bun\n", &bp);
+        assert_eq!(s.launcher, b"bun");
+        assert!(s.is_node_or_bun);
+    }
+
+    #[test]
+    fn env_node_no_flags() {
+        let bp = bin_path();
+        let s = parse_ok(b"#!/usr/bin/env node\n", &bp);
+        assert_eq!(s.launcher, b"node");
+        assert!(s.is_node_or_bun);
+    }
+
+    // https://github.com/oven-sh/bun/issues/31387 — the shim's shebang parser
+    // must recognize `-S` (`env --split-string`) and skip past it, otherwise
+    // the launcher becomes `-S bun --flag` and Windows fails to spawn `-S`.
+    #[test]
+    fn env_dash_s_strips_flag_bun() {
+        let bp = bin_path();
+        let s = parse_ok(b"#!/usr/bin/env -S bun --no-env-file\n", &bp);
+        assert_eq!(s.launcher, b"bun --no-env-file");
+        assert!(s.is_node_or_bun);
+    }
+
+    #[test]
+    fn env_dash_s_strips_flag_node() {
+        let bp = bin_path();
+        let s = parse_ok(b"#!/usr/bin/env -S node --experimental-vm-modules\n", &bp);
+        assert_eq!(s.launcher, b"node --experimental-vm-modules");
+        assert!(s.is_node_or_bun);
+    }
+
+    // `-S` with an unknown interpreter must still strip the flag so the
+    // program (not `-S`) is what the shim tries to launch.
+    #[test]
+    fn env_dash_s_strips_flag_other_program() {
+        let bp = bin_path();
+        let s = parse_ok(b"#!/usr/bin/env -S python3 -u\n", &bp);
+        assert_eq!(s.launcher, b"python3 -u");
+        assert!(!s.is_node_or_bun);
+    }
+
+    #[test]
+    fn env_dash_s_alone_falls_back_to_bin_path() {
+        let bp = bin_path();
+        // `#!/usr/bin/env -S\n` — no program after `-S`; parse falls back to
+        // deriving the launcher from the file extension (`.js` → `bun run`).
+        let s = parse_ok(b"#!/usr/bin/env -S\n", &bp);
+        assert_eq!(s.launcher, b"bun run");
+    }
+
+    #[test]
+    fn env_multiple_spaces_before_dash_s() {
+        let bp = bin_path();
+        let s = parse_ok(b"#!/usr/bin/env   -S   bun   --flag\n", &bp);
+        // Tokenizer collapses runs of spaces, but `.rest()` preserves
+        // the interior spacing from the source line.
+        assert_eq!(s.launcher, b"bun   --flag");
+        assert!(s.is_node_or_bun);
+    }
+
+    #[test]
+    fn env_dash_s_with_crlf() {
+        let bp = bin_path();
+        let s = parse_ok(b"#!/usr/bin/env -S bun --no-env-file\r\n", &bp);
+        assert_eq!(s.launcher, b"bun --no-env-file");
+        assert!(s.is_node_or_bun);
+    }
+
+    #[test]
+    fn bin_env_variant_also_handles_dash_s() {
+        let bp = bin_path();
+        let s = parse_ok(b"#!/bin/env -S bun --flag\n", &bp);
+        assert_eq!(s.launcher, b"bun --flag");
+        assert!(s.is_node_or_bun);
+    }
+}

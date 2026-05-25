@@ -81,9 +81,11 @@ function cargoProfile(cfg: Config): { name: string; subdir: string } {
  *     installs prebuilt std, no foreign linker needed for a staticlib.
  *   freebsd × {x64,aarch64}: yes — Tier 2/3 (`-Zbuild-std` for aarch64),
  *     staticlib needs no FreeBSD libc to produce.
- *   darwin × {x64,aarch64}: NOT from a stock linux box. rustc itself is
- *     fine, but any `cc`-crate build script in the dep graph needs an
- *     osxcross SDK + `cctools` ar. CI runs these on a darwin agent.
+ *   darwin × {x64,aarch64}: yes — Tier 2 prebuilt std, and a staticlib
+ *     needs no Mach-O link. No build script in the current dep graph
+ *     compiles C for the target; if one ever does, emitRust's
+ *     CFLAGS_<triple>/SDKROOT forwarding (set when the SDK is resolved)
+ *     points cc-rs at the macOS SDK.
  *   windows-msvc × {x64,aarch64}: NOT from linux without `cargo-xwin`
  *     (or wine + the MSVC SDK). CI runs these on a Windows agent.
  *
@@ -95,7 +97,8 @@ function cargoProfile(cfg: Config): { name: string; subdir: string } {
 export function rustCanCrossFromLinux(cfg: Config): boolean {
   if (cfg.linux) return true; // gnu, musl, android — all archs
   if (cfg.freebsd) return true;
-  // darwin, windows: native agent required.
+  if (cfg.darwin) return true;
+  // windows: native agent required.
   return false;
 }
 
@@ -509,7 +512,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   if (!cfg.windows) rustflags.push(`-Clink-arg=-fuse-ld=lld`);
   if (cfg.crossLangLto) {
     // Cross-language LTO: emit LLVM bitcode (not machine code) into the .a
-    // so the final lld `-flto=full` link sees through Rust↔C++ call edges.
+    // so the final lld `-flto=thin` link sees through Rust↔C++ call edges.
     // `linker-plugin-lto` supersedes Cargo's `[profile.release] lto="fat"`
     // (cargo skips its own LTO pass and defers to the linker), so there's no
     // double-LTO cost.
@@ -521,19 +524,33 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // of clang's — see workarounds.ts "rust-lld-for-crosslang-lto".
     rustflags.push("-Clinker-plugin-lto");
     rustflags.push("-Cembed-bitcode=yes");
-    // C++ is built with -fwhole-program-vtables, which sets the
-    // EnableSplitLTOUnit module flag in every bitcode module's summary index.
-    // lld reads that flag from the SUMMARY (not the module-flags metadata)
-    // and errors with "inconsistent LTO Unit splitting" if any bitcode input
-    // disagrees. So Rust bitcode must (a) carry a summary index and (b) set
-    // the flag to 1 in it. -Zsplit-lto-unit handles (b); for (a), see the
-    // CARGO_PROFILE_RELEASE_LTO override below — `lto = "fat"` makes rustc
-    // pre-merge all crates into one summary-less blob, which lld then reads
-    // as EnableSplitLTOUnit=0.
-    rustflags.push("-Zsplit-lto-unit");
+    // EnableSplitLTOUnit consistency: lld errors with "inconsistent LTO Unit
+    // splitting" if any bitcode module in the link disagrees with the others.
+    // The Rust value must match whatever the C++ side produces, and that
+    // differs per platform:
+    //
+    //   - darwin (ThinLTO): the C/C++ side passes -fno-split-lto-unit
+    //     everywhere (index-based WPD, no hybrid split mode) and Apple
+    //     targets default to 0 anyway, so every C/C++ module is 0. rustc's
+    //     default is also 0 — pass nothing. Adding -Zsplit-lto-unit here
+    //     would make the Rust modules the inconsistent ones and abort the
+    //     link.
+    //   - linux (full LTO): -fwhole-program-vtables on ELF defaults the
+    //     split ON for C++, so every C++ module (ours and the WebKit -lto
+    //     prebuilts) carries EnableSplitLTOUnit=1. The Rust ThinLTO
+    //     summaries must say 1 to match → -Zsplit-lto-unit.
+    //
+    // The CARGO_PROFILE_RELEASE_LTO override below keeps the per-CGU
+    // ThinLTO summaries that the consistency check (and cross-language
+    // importing) reads — `lto = "fat"` would pre-merge all crates into one
+    // summary-less blob.
+    //
     // (`-Clink-arg=-fuse-ld=lld` is pushed unconditionally above — under LTO
     // it doubles as making rustc's bitcode link go through the LTO-aware
     // linker our final link uses, not BFD `/usr/bin/ld`.)
+    if (!cfg.darwin) {
+      rustflags.push("-Zsplit-lto-unit");
+    }
   }
 
   // ─── Environment ───
@@ -583,14 +600,30 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // across worktrees; rustup's directory walk could otherwise resolve a
   // different worktree's `rust-toolchain.toml`.
   if (cfg.rustToolchain !== undefined) env.RUSTUP_TOOLCHAIN = cfg.rustToolchain;
+  // Darwin cross-compile from a non-darwin host: point anything in the dep
+  // graph that cares about the Apple SDK at the extracted sysroot. rustc
+  // itself doesn't need it for a staticlib, but cc-rs (build scripts
+  // compiling target C) honours CFLAGS_<triple>/SDKROOT, and
+  // MACOSX_DEPLOYMENT_TARGET keeps the LC_BUILD_VERSION minos rustc stamps
+  // into its objects consistent with the C++ side's -mmacosx-version-min.
+  if (cfg.darwin && cfg.host.os !== "darwin") {
+    if (cfg.osxDeploymentTarget !== undefined) env.MACOSX_DEPLOYMENT_TARGET = cfg.osxDeploymentTarget;
+    if (cfg.osxSysroot !== undefined && cfg.crossTarget !== undefined && cfg.osxDeploymentTarget !== undefined) {
+      env.SDKROOT = cfg.osxSysroot;
+      const sdkFlags = `--target=${cfg.crossTarget} -isysroot ${cfg.osxSysroot} -mmacosx-version-min=${cfg.osxDeploymentTarget}`;
+      const tripleEnv = triple.replace(/-/g, "_");
+      env[`CFLAGS_${tripleEnv}`] = sdkFlags;
+      env[`CXXFLAGS_${tripleEnv}`] = sdkFlags;
+    }
+  }
   if (cfg.crossLangLto) {
     // The workspace `[profile.release]` sets `lto = "fat"` so non-LTO release
     // builds (where the rust .a is linked as native code) still get
     // intra-Rust inlining. With `-Clinker-plugin-lto` that pre-merge is
     // wasted work — the linker re-merges everything anyway — and it strips
     // the per-module summary index lld needs for the EnableSplitLTOUnit
-    // consistency check (see -Zsplit-lto-unit above). Override to `off` so
-    // each crate's bitcode reaches lld with its summary intact.
+    // consistency check (see the EnableSplitLTOUnit note above). Override to
+    // `off` so each crate's bitcode reaches lld with its summary intact.
     env.CARGO_PROFILE_RELEASE_LTO = "off";
   } else if (cfg.asan) {
     // release-asan has `cfg.lto` forced off (config.ts), but without this

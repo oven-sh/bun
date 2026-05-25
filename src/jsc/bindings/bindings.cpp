@@ -3539,7 +3539,7 @@ JSC::EncodedJSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, J
     }
 }
 
-VirtualMachine* JSC__JSGlobalObject__bunVM(JSC::JSGlobalObject* arg0)
+__attribute__((__always_inline__)) VirtualMachine* JSC__JSGlobalObject__bunVM(JSC::JSGlobalObject* arg0)
 {
     return reinterpret_cast<VirtualMachine*>(WebCore::clientData(arg0->vm())->bunVM);
 }
@@ -3975,7 +3975,10 @@ JSC::EncodedJSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC::JSGlobalObjec
     return result;
 }
 
-JSC::VM* JSC__JSGlobalObject__vm(JSC::JSGlobalObject* arg0) { return &arg0->vm(); };
+// One load. always_inline so ThinLTO importers and the inliner never leave
+// this as an out-of-line cross-language call (it is the single most-called
+// Rust -> C++ boundary function).
+__attribute__((__always_inline__)) JSC::VM* JSC__JSGlobalObject__vm(JSC::JSGlobalObject* arg0) { return &arg0->vm(); };
 
 void JSC__JSGlobalObject__handleRejectedPromises(JSC::JSGlobalObject* arg0)
 {
@@ -4181,7 +4184,7 @@ void JSC__JSValue__forEach(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* ar
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
 }
-JSC::EncodedJSValue JSC__JSValue__jsNumberFromDouble(double arg0)
+__attribute__((__always_inline__)) JSC::EncodedJSValue JSC__JSValue__jsNumberFromDouble(double arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
 }
@@ -5246,7 +5249,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__fastGetOwn(JSC::EncodedJSValue JSVa
     return {};
 }
 
-bool JSC__JSValue__toBoolean(JSC::EncodedJSValue JSValue0)
+__attribute__((__always_inline__)) bool JSC__JSValue__toBoolean(JSC::EncodedJSValue JSValue0)
 {
     // We count masquerades as undefined as true.
     return JSValue::decode(JSValue0).pureToBoolean() != TriState::False;
@@ -6333,7 +6336,7 @@ extern "C" double Bun__JSC__operationMathPow(double x, double y)
 }
 
 #if !ENABLE(EXCEPTION_SCOPE_VERIFICATION)
-extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__RETURN_IF_EXCEPTION(JSC::JSGlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((__always_inline__)) bool Bun__RETURN_IF_EXCEPTION(JSC::JSGlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     RETURN_IF_EXCEPTION(scope, true);

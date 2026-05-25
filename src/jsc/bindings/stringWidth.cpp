@@ -38,188 +38,61 @@ namespace Bun {
 namespace StringWidth {
 
 // ============================================================================
-// Codepoint classification (zero-width + East Asian Width)
+// Codepoint classification (grapheme break class + width + emoji, one lookup)
 // ============================================================================
 
-static bool isInSortedRanges(char32_t cp, const StringWidthTables::CodepointRange* ranges, size_t count)
+// Each codepoint maps to one packed byte via the 3-stage table in
+// stringWidthTables.h (regenerate with scripts/generate-stringwidth-tables.mjs):
+//   bits 0-4  GraphemeBreakClass ordinal
+//   bits 5-6  width class: 0 zero-width, 1 narrow, 2 wide, 3 East Asian Ambiguous
+//   bit  7    Emoji property (with the isEmojiPresentation() early-outs baked in)
+// The kEastAsianWideRanges / kEastAsianAmbiguousRanges / kEmojiPresentationRanges
+// tables earlier in that header are the generator's source data.
+static constexpr uint8_t kFusedClassMask = 0x1F;
+static constexpr uint8_t kFusedWidthShift = 5;
+static constexpr uint8_t kFusedWidthMask = 0x3;
+static constexpr uint8_t kFusedWidthAmbiguous = 3;
+static constexpr uint8_t kFusedEmojiBit = 0x80;
+
+static constexpr uint8_t fusedClassify(char32_t cp)
 {
-    // Binary search: find the last range whose `lo` is <= cp, then check `hi`.
-    size_t lo = 0;
-    size_t hi = count;
-    while (lo < hi) {
-        const size_t mid = lo + (hi - lo) / 2;
-        if (ranges[mid].lo <= cp)
-            lo = mid + 1;
-        else
-            hi = mid;
-    }
-    if (lo == 0)
-        return false;
-    return cp <= ranges[lo - 1].hi;
+    const size_t high = cp >> 8;
+    const size_t low = cp & 0xFF;
+    const size_t stage2Index = StringWidthTables::kGraphemeBreakStage1[high] + low;
+    return StringWidthTables::kGraphemeBreakStage3[StringWidthTables::kGraphemeBreakStage2[stage2Index]];
 }
 
-// Codepoints that occupy no terminal columns: C0/C1 controls, soft hyphen,
-// combining marks, zero-width joiners/spaces, variation selectors, surrogates,
-// format characters, etc.
-static bool isZeroWidthCodepoint(char32_t cp)
+// Terminal column width from a packed classification byte.
+static constexpr uint8_t widthFromFused(uint8_t packed, bool ambiguousAsWide)
 {
-    if (cp <= 0x1f)
-        return true;
-
-    if (cp >= 0x7f && cp <= 0x9f) {
-        // DEL + C1 control characters
-        return true;
-    }
-
-    // Soft hyphen (U+00AD) - invisible/zero-width
-    if (cp == 0xad)
-        return true;
-
-    if (cp >= 0x300 && cp <= 0x36f) {
-        // Combining Diacritical Marks
-        return true;
-    }
-
-    if (cp >= 0x200b && cp <= 0x200f) {
-        // Modifying Invisible Characters (ZWS, ZWNJ, ZWJ, LRM, RLM)
-        return true;
-    }
-
-    if (cp >= 0x2060 && cp <= 0x2064) {
-        // Word joiner (U+2060), invisible operators
-        return true;
-    }
-
-    if (cp >= 0x20d0 && cp <= 0x20ff) {
-        // Combining Diacritical Marks for Symbols
-        return true;
-    }
-
-    if (cp >= 0xfe00 && cp <= 0xfe0f) {
-        // Variation Selectors
-        return true;
-    }
-    if (cp >= 0xfe20 && cp <= 0xfe2f) {
-        // Combining Half Marks
-        return true;
-    }
-
-    if (cp == 0xfeff) {
-        // Zero Width No-Break Space (BOM, ZWNBSP)
-        return true;
-    }
-
-    if (cp >= 0xd800 && cp <= 0xdfff) {
-        // Surrogates (including lone surrogates)
-        return true;
-    }
-
-    // Arabic formatting characters
-    if ((cp >= 0x600 && cp <= 0x605) || cp == 0x6dd || cp == 0x70f || cp == 0x8e2)
-        return true;
-
-    // Indic script combining marks (Devanagari through Malayalam)
-    if (cp >= 0x900 && cp <= 0xd4f) {
-        const char32_t offset = cp & 0x7f;
-        // Signs at block start (except position 0x03 which is often a visible Visarga)
-        if (offset <= 0x02)
-            return true;
-        // Vowel signs, virama (0x3a-0x4d), but exclude:
-        // - 0x3D (Avagraha - visible letter in most blocks)
-        if (offset >= 0x3a && offset <= 0x4d && offset != 0x3d)
-            return true;
-        // Position 0x4E-0x4F are visible symbols in some blocks (e.g., Malayalam Sign Para)
-        // Stress signs (0x51-0x57)
-        if (offset >= 0x51 && offset <= 0x57)
-            return true;
-        // Vowel signs (0x62-0x63)
-        if (offset >= 0x62 && offset <= 0x63)
-            return true;
-    }
-
-    // Thai combining marks
-    // Note: U+0E32 (SARA AA) and U+0E33 (SARA AM) are Grapheme_Base (spacing vowels), not combining
-    if (cp == 0xe31 || (cp >= 0xe34 && cp <= 0xe3a) || (cp >= 0xe47 && cp <= 0xe4e))
-        return true;
-
-    // Lao combining marks
-    // Note: U+0EB2 and U+0EB3 are spacing vowels like Thai, not combining
-    if (cp == 0xeb1 || (cp >= 0xeb4 && cp <= 0xebc) || (cp >= 0xec8 && cp <= 0xecd))
-        return true;
-
-    // Combining Diacritical Marks Extended
-    if (cp >= 0x1ab0 && cp <= 0x1aff)
-        return true;
-
-    // Combining Diacritical Marks Supplement
-    if (cp >= 0x1dc0 && cp <= 0x1dff)
-        return true;
-
-    // Tag characters
-    if (cp >= 0xe0000 && cp <= 0xe007f)
-        return true;
-
-    if (cp >= 0xe0100 && cp <= 0xe01ef) {
-        // Variation Selectors Supplement
-        return true;
-    }
-
-    return false;
+    const uint8_t width = (packed >> kFusedWidthShift) & kFusedWidthMask;
+    if (width == kFusedWidthAmbiguous)
+        return ambiguousAsWide ? 2 : 1;
+    return width;
 }
 
-// East Asian Width `W` (wide) or `F` (fullwidth) — occupies two columns.
-static bool isEastAsianWideCodepoint(char32_t cp)
-{
-    if (cp < 0x1100)
-        return false;
-    return isInSortedRanges(cp, StringWidthTables::kEastAsianWideRanges, std::size(StringWidthTables::kEastAsianWideRanges));
-}
-
-// East Asian Width `A` (ambiguous) — one column by default, two columns when
-// `ambiguousIsNarrow: false`.
-static bool isEastAsianAmbiguousCodepoint(char32_t cp)
-{
-    return isInSortedRanges(cp, StringWidthTables::kEastAsianAmbiguousRanges, std::size(StringWidthTables::kEastAsianAmbiguousRanges));
-}
+// Spot-check the generated table against known codepoints.
+static_assert(widthFromFused(fusedClassify(U'A'), false) == 1);
+static_assert(widthFromFused(fusedClassify(0x1B), false) == 0); // ESC: control, zero width
+static_assert(widthFromFused(fusedClassify(0xAD), false) == 0); // soft hyphen
+static_assert(widthFromFused(fusedClassify(0x4E2D), false) == 2); // CJK ideograph: wide
+static_assert(widthFromFused(fusedClassify(0xFF21), false) == 2); // fullwidth A: wide
+static_assert(widthFromFused(fusedClassify(0xA7), false) == 1); // section sign: ambiguous, narrow by default
+static_assert(widthFromFused(fusedClassify(0xA7), true) == 2); // section sign: ambiguous as wide
+static_assert((fusedClassify(0x1F600) & kFusedEmojiBit) != 0); // emoji
+static_assert((fusedClassify(U'#') & kFusedEmojiBit) == 0); // '#': below the U+203C early-out
+static_assert((fusedClassify(0xFE0F) & kFusedEmojiBit) == 0); // VS16 handled separately
 
 uint8_t visibleCodepointWidth(char32_t cp, bool ambiguousAsWide)
 {
-    // Fast path for the most common East-Asian-Wide blocks (kana letters, CJK
-    // Unified Ideographs, Hangul syllables, fullwidth forms): always wide,
-    // never zero-width, never ambiguous — skip the classification chain.
-    if (cp >= 0x3041 && cp <= 0xFF60) {
-        if ((cp >= 0x4E00 && cp <= 0x9FFF) // CJK Unified Ideographs
-            || cp <= 0x3096 // Hiragana letters (0x3041..0x3096)
-            || (cp >= 0x30A1 && cp <= 0x30FA) // Katakana letters
-            || (cp >= 0xAC00 && cp <= 0xD7A3) // Hangul syllables
-            || cp >= 0xFF01) // Fullwidth forms (0xFF01..0xFF60)
-            return 2;
-    }
-
-    if (isZeroWidthCodepoint(cp))
-        return 0;
-    if (isEastAsianWideCodepoint(cp))
-        return 2;
-    if (ambiguousAsWide && isEastAsianAmbiguousCodepoint(cp))
-        return 2;
-    return 1;
+    ASSERT(cp <= 0x10FFFF);
+    return widthFromFused(fusedClassify(cp), ambiguousAsWide);
 }
 
 bool isEmojiPresentation(char32_t cp)
 {
-    // Fast path: nothing below U+203C can be an emoji base
-    if (cp < 0x203C)
-        return false;
-
-    // Fast path: common non-emoji BMP ranges
-    if (cp >= 0x2C00 && cp < 0x1F000)
-        return false;
-
-    // Exclude variation selectors and ZWJ which are handled separately
-    if (cp == 0xFE0E || cp == 0xFE0F || cp == 0x200D)
-        return false;
-
-    return isInSortedRanges(cp, StringWidthTables::kEmojiPresentationRanges, std::size(StringWidthTables::kEmojiPresentationRanges));
+    ASSERT(cp <= 0x10FFFF);
+    return fusedClassify(cp) & kFusedEmojiBit;
 }
 
 // ============================================================================
@@ -249,6 +122,7 @@ enum class GraphemeBreakClass : uint8_t {
     IndicConjunctBreakConsonant,
 };
 static constexpr size_t kGraphemeBreakClassCount = 17;
+static_assert(kGraphemeBreakClassCount <= kFusedClassMask + 1);
 static_assert(static_cast<uint8_t>(GraphemeBreakClass::RegionalIndicator) == 2);
 static_assert(static_cast<uint8_t>(GraphemeBreakClass::Zwj) == 9);
 static_assert(static_cast<uint8_t>(GraphemeBreakClass::IndicConjunctBreakConsonant) == kGraphemeBreakClassCount - 1);
@@ -264,15 +138,15 @@ enum class GraphemeBreakState : uint8_t {
 };
 static constexpr size_t kGraphemeBreakStateCount = 5;
 
+static constexpr GraphemeBreakClass graphemeBreakClassFromFused(uint8_t packed)
+{
+    return static_cast<GraphemeBreakClass>(packed & kFusedClassMask);
+}
+
 static GraphemeBreakClass graphemeBreakClass(char32_t cp)
 {
-    // 3-stage table lookup: stage1 maps the high bits to a stage2 block,
-    // stage2 maps to a stage3 index, stage3 holds the class.
     ASSERT(cp <= 0x10FFFF);
-    const size_t high = cp >> 8;
-    const size_t low = cp & 0xFF;
-    const size_t stage2Index = StringWidthTables::kGraphemeBreakStage1[high] + low;
-    return static_cast<GraphemeBreakClass>(StringWidthTables::kGraphemeBreakStage3[StringWidthTables::kGraphemeBreakStage2[stage2Index]]);
+    return graphemeBreakClassFromFused(fusedClassify(cp));
 }
 
 static constexpr bool isIndicConjunctBreakExtend(GraphemeBreakClass gb)
@@ -528,7 +402,7 @@ struct GraphemeState {
     static bool isRegionalIndicator(char32_t cp) { return cp >= 0x1F1E6 && cp <= 0x1F1FF; }
     static bool isSkinToneModifier(char32_t cp) { return cp >= 0x1F3FB && cp <= 0x1F3FF; }
 
-    void reset(char32_t cp, bool ambiguousAsWide)
+    void reset(char32_t cp, uint8_t packed, bool ambiguousAsWide)
     {
         firstCp = cp;
 
@@ -543,11 +417,11 @@ struct GraphemeState {
             return;
         }
 
-        const uint8_t w = visibleCodepointWidth(cp, ambiguousAsWide);
+        const uint8_t w = widthFromFused(packed, ambiguousAsWide);
         count = 1;
         baseWidth = w;
         nonEmojiWidth = w;
-        emojiBase = isEmojiPresentation(cp);
+        emojiBase = packed & kFusedEmojiBit;
         keycap = (cp == 0x20E3);
         regionalIndicator = isRegionalIndicator(cp);
         skinTone = isSkinToneModifier(cp);
@@ -556,7 +430,7 @@ struct GraphemeState {
         vs16 = false;
     }
 
-    void add(char32_t cp, bool ambiguousAsWide)
+    void add(char32_t cp, uint8_t packed, bool ambiguousAsWide)
     {
         if (count < UINT8_MAX)
             count++;
@@ -567,10 +441,9 @@ struct GraphemeState {
         vs15 = vs15 || (cp == 0xFE0E);
         vs16 = vs16 || (cp == 0xFE0F);
 
-        if (!isZeroWidthCodepoint(cp)) {
-            const uint32_t newWidth = static_cast<uint32_t>(nonEmojiWidth) + visibleCodepointWidth(cp, ambiguousAsWide);
-            nonEmojiWidth = static_cast<uint16_t>(std::min<uint32_t>(newWidth, 1023));
-        }
+        // Zero-width codepoints contribute nothing here.
+        const uint32_t newWidth = static_cast<uint32_t>(nonEmojiWidth) + widthFromFused(packed, ambiguousAsWide);
+        nonEmojiWidth = static_cast<uint16_t>(std::min<uint32_t>(newWidth, 1023));
     }
 
     size_t width() const
@@ -939,9 +812,10 @@ size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors
                         len += countPrintableAscii16(input.first(bulkEnd - 1));
 
                     const char32_t lastCp = input[bulkEnd - 1];
-                    graphemeState.reset(lastCp, ambiguousAsWide);
+                    const uint8_t lastPacked = fusedClassify(lastCp);
+                    graphemeState.reset(lastCp, lastPacked, ambiguousAsWide);
                     hasPrevVisible = true;
-                    prevClass = graphemeBreakClass(lastCp);
+                    prevClass = graphemeBreakClassFromFused(lastPacked);
                     breakState = GraphemeBreakState::Default;
 
                     if (bulkEnd == idx) {
@@ -1025,16 +899,17 @@ size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors
                     continue;
                 }
                 if (!excludeAnsiColors || cp != 0x1b) {
-                    const GraphemeBreakClass cpClass = graphemeBreakClass(cp);
+                    const uint8_t packed = fusedClassify(cp);
+                    const GraphemeBreakClass cpClass = graphemeBreakClassFromFused(packed);
                     if (hasPrevVisible) {
                         if (graphemeBreakClasses(prevClass, cpClass, breakState)) {
                             len += graphemeState.width();
-                            graphemeState.reset(cp, ambiguousAsWide);
+                            graphemeState.reset(cp, packed, ambiguousAsWide);
                         } else {
-                            graphemeState.add(cp, ambiguousAsWide);
+                            graphemeState.add(cp, packed, ambiguousAsWide);
                         }
                     } else {
-                        graphemeState.reset(cp, ambiguousAsWide);
+                        graphemeState.reset(cp, packed, ambiguousAsWide);
                     }
                     hasPrevVisible = true;
                     prevClass = cpClass;
@@ -1080,16 +955,17 @@ size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors
             saw1b = false;
         }
 
-        const GraphemeBreakClass cpClass = graphemeBreakClass(cp);
+        const uint8_t packed = fusedClassify(cp);
+        const GraphemeBreakClass cpClass = graphemeBreakClassFromFused(packed);
         if (hasPrevVisible) {
             if (graphemeBreakClasses(prevClass, cpClass, breakState)) {
                 len += graphemeState.width();
-                graphemeState.reset(cp, ambiguousAsWide);
+                graphemeState.reset(cp, packed, ambiguousAsWide);
             } else {
-                graphemeState.add(cp, ambiguousAsWide);
+                graphemeState.add(cp, packed, ambiguousAsWide);
             }
         } else {
-            graphemeState.reset(cp, ambiguousAsWide);
+            graphemeState.reset(cp, packed, ambiguousAsWide);
         }
         hasPrevVisible = true;
         prevClass = cpClass;
@@ -1129,6 +1005,11 @@ extern "C" size_t Bun__visibleWidthExcludeANSI_utf8IndexAtWidth(const uint8_t* p
 
 extern "C" uint8_t Bun__codepointWidth(uint32_t cp, bool ambiguous_as_wide)
 {
+    // Guard the exported ABI: the classification table covers the Unicode
+    // scalar range only. Out-of-range input falls back to width 1, matching
+    // the previous range-check implementation.
+    if (cp > 0x10FFFF)
+        return 1;
     return StringWidth::visibleCodepointWidth(cp, ambiguous_as_wide);
 }
 
@@ -1144,6 +1025,8 @@ extern "C" bool Bun__graphemeBreak(uint32_t cp1, uint32_t cp2, uint8_t* state)
 
 extern "C" bool Bun__isEmojiPresentation(uint32_t cp)
 {
+    if (cp > 0x10FFFF)
+        return false;
     return StringWidth::isEmojiPresentation(cp);
 }
 

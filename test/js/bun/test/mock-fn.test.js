@@ -156,6 +156,12 @@ describe("mock()", () => {
     const classInstance = new classLike();
     expect(classInstance.greet()).toBe("hello");
     expect(classInstance instanceof classLike).toBe(true);
+
+    // Reflect.construct with an explicit newTarget uses its prototype
+    function NewTarget() {}
+    NewTarget.prototype = { marker: true };
+    const withNewTarget = Reflect.construct(jest.fn(), [], NewTarget);
+    expect(Object.getPrototypeOf(withNewTarget)).toBe(NewTarget.prototype);
   });
 
   test("mockName returns this", () => {
@@ -868,6 +874,30 @@ describe("spyOn", () => {
     expect(obj.original()).toBe(42);
     expect(fn).not.toHaveBeenCalled();
   });
+
+  test("constructing a spy calls the original with the new instance", () => {
+    var obj = {
+      Original: function () {
+        this.ok = true;
+      },
+    };
+    const fn = spyOn(obj, "Original");
+    const instance = Reflect.construct(obj.Original, []);
+    expect(typeof instance).toBe("object");
+    expect(instance.ok).toBe(true);
+    expect(fn).toHaveBeenCalledTimes(1);
+    fn.mockRestore();
+  });
+
+  if (isBun) {
+    test("constructing a spy on a missing property returns an object", () => {
+      const target = {};
+      const fn = spyOn(target, "doesNotExist");
+      expect(typeof Reflect.construct(fn, [])).toBe("object");
+      expect(typeof new fn()).toBe("object");
+      fn.mockRestore();
+    });
+  }
 
   test("override impl after doesnt break restore", () => {
     var obj = {

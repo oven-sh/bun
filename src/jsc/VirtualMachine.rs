@@ -2558,14 +2558,18 @@ pub fn process_fetch_log(
         }
 
         _ => {
-            // Spec caps at 256 (`var errors_stack: [256]JSValue`). PERF(port):
-            // was inline switch — Zig stack-allocated; we heap-allocate the
-            // exact `len` since `JSValue` is a thin u64 and 256 * 8 B = 2 KiB
-            // is fine either way, but `Vec` avoids the uninit-array dance.
-            let len = log.msgs.len().min(256);
-            let mut errors: alloc::vec::Vec<JSValue> = alloc::vec::Vec::with_capacity(len);
-            for msg in log.msgs.drain(..len) {
-                let v = match msg.metadata {
+            // Spec caps at 256 (`var errors_stack: [256]JSValue`). The array
+            // must stay on the stack like the Zig spec: until
+            // `create_aggregate_error` runs, these freshly created
+            // BuildMessage/ResolveMessage wrappers have no other GC-visible
+            // reference, and `create()` can trigger a collection mid-loop.
+            // JSC's conservative scan only covers the stack/registers, so a
+            // heap `Vec<JSValue>` would let earlier wrappers be swept (and
+            // their native payloads freed) before the AggregateError exists.
+            let mut errors_stack = [JSValue::ZERO; 256];
+            let len = log.msgs.len().min(errors_stack.len());
+            for (i, msg) in log.msgs.drain(..len).enumerate() {
+                errors_stack[i] = match msg.metadata {
                     bun_ast::Metadata::Build => take(BuildMessage::create(global_this, msg)),
                     bun_ast::Metadata::Resolve(_) => take(ResolveMessage::create(
                         global_this,
@@ -2573,8 +2577,8 @@ pub fn process_fetch_log(
                         referrer_utf8.slice(),
                     )),
                 };
-                errors.push(v);
             }
+            let errors = &errors_stack[..len];
 
             // C++ `Zig::toString` does `createWithoutCopying`, so the buffer
             // must outlive the AggregateError. Mark it global so JSC adopts it
@@ -2588,7 +2592,7 @@ pub fn process_fetch_log(
             message.mark_global();
             *ret = ErrorableResolvedSource::err(
                 err,
-                take(global_this.create_aggregate_error(&errors, &message)),
+                take(global_this.create_aggregate_error(errors, &message)),
             );
         }
     }

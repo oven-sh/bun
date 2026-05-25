@@ -117,6 +117,33 @@ describe("mock()", () => {
     expect(fn).toHaveBeenCalledWith();
   });
 
+  test("are constructable", () => {
+    // Constructing a mock must always produce an object, even when the
+    // implementation returns a primitive or there is no implementation at all.
+    const fn = jest.fn();
+    expect(new fn()).toBeInstanceOf(Object);
+    expect(Reflect.construct(fn, [])).toBeInstanceOf(Object);
+    expect(fn).toHaveBeenCalledTimes(2);
+
+    const withPrimitive = jest.fn(() => 42);
+    expect(new withPrimitive()).toBeInstanceOf(Object);
+
+    const withReturnValue = jest.fn();
+    withReturnValue.mockReturnValue(5);
+    expect(new withReturnValue()).toBeInstanceOf(Object);
+    expect(Reflect.construct(withReturnValue, [])).toBeInstanceOf(Object);
+
+    const result = { a: 1 };
+    const withObject = jest.fn(() => result);
+    expect(new withObject()).toBe(result);
+    expect(Reflect.construct(withObject, [])).toBe(result);
+
+    const thrower = jest.fn(() => {
+      throw new Error("boom");
+    });
+    expect(() => new thrower()).toThrow("boom");
+  });
+
   test("mockName returns this", () => {
     const fn = jest.fn();
     expect(fn.mockName()).toBe(fn);

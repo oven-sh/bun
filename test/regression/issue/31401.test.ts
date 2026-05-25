@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/31401
@@ -27,7 +27,7 @@ describe.concurrent("issue 31401: anonymous default export from digit-named modu
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("No identifiers allowed directly after numeric literal");
-    expect(stdout.replaceAll("\r\n", "\n")).toBe("ok\n");
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"ok"`);
     expect(exitCode).toBe(0);
   });
 
@@ -47,7 +47,7 @@ describe.concurrent("issue 31401: anonymous default export from digit-named modu
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("No identifiers allowed directly after numeric literal");
-    expect(stdout.replaceAll("\r\n", "\n")).toBe("function\n");
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"function"`);
     expect(exitCode).toBe(0);
   });
 
@@ -67,7 +67,7 @@ describe.concurrent("issue 31401: anonymous default export from digit-named modu
 
     expect(stderr).not.toContain("No identifiers allowed directly after numeric literal");
     // Must be a valid identifier: the leading digit gets an underscore prefix.
-    expect(stdout.replaceAll("\r\n", "\n")).toContain("export default function _1_default() {}");
+    expect(normalizeBunSnapshot(stdout)).toContain("export default function _1_default() {}");
     expect(exitCode).toBe(0);
   });
 });

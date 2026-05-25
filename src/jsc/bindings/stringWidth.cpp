@@ -29,6 +29,7 @@
 // SIMD kernels implemented in highway_strings.cpp.
 extern "C" size_t highway_visible_latin1_width(const uint8_t* input, size_t len);
 extern "C" size_t highway_visible_latin1_width_exclude_ansi(const uint8_t* input, size_t len);
+extern "C" size_t highway_visible_utf16_width(const uint16_t* input, size_t len, size_t* width);
 extern "C" size_t highway_count_printable_ascii16(const uint16_t* input, size_t len);
 extern "C" size_t highway_first_non_ascii16(const uint16_t* input, size_t len);
 extern "C" size_t highway_first_non_ascii8(const uint8_t* input, size_t len);
@@ -780,6 +781,39 @@ size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors
     bool sawOsc = false; // inside OSC: ESC ]
 
     while (true) {
+        // Bulk fast path: leading code units that are always their own
+        // grapheme cluster with a fixed width (ASCII, most Latin/Greek/
+        // Cyrillic letters, the main CJK/kana/Hangul-syllable/fullwidth
+        // blocks) are classified and counted in one SIMD pass
+        // (highway_visible_utf16_width). The last consumed unit seeds the
+        // grapheme state instead of being counted, so a combining mark, jamo
+        // or ZWJ immediately after the run still joins its cluster. Skipped
+        // when ambiguous-width characters count as wide (Greek/Cyrillic are
+        // East-Asian-Ambiguous) and while inside an escape sequence; the
+        // first-unit check skips the call when the next codepoint (surrogate
+        // pair, control, ESC) clearly needs the scalar path anyway.
+        if (!ambiguousAsWide && !saw1b && !sawCsi && !sawOsc && !input.empty()
+            && input[0] >= 0x20 && !U16_IS_SURROGATE(input[0])) {
+            size_t bulkWidth = 0;
+            const size_t consumed = highway_visible_utf16_width(
+                reinterpret_cast<const uint16_t*>(input.data()), input.size(), &bulkWidth);
+            if (consumed > 0) {
+                // Flush any pending grapheme cluster from preceding text.
+                if (graphemeState.count > 0)
+                    len += graphemeState.width();
+
+                const char32_t lastCp = input[consumed - 1];
+                const uint8_t lastPacked = fusedClassify(lastCp);
+                len += bulkWidth - widthFromFused(lastPacked, ambiguousAsWide);
+                graphemeState.reset(lastCp, lastPacked, ambiguousAsWide);
+                hasPrevVisible = true;
+                prevClass = graphemeBreakClassFromFused(lastPacked);
+                breakState = GraphemeBreakState::Default;
+                input = input.subspan(consumed);
+                continue;
+            }
+        }
+
         {
             // Length of the leading all-ASCII (<= 0x7F) run. Peek the first
             // unit before paying for a SIMD scan — runs of non-ASCII

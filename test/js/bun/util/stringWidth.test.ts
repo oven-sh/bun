@@ -1183,3 +1183,116 @@ describe("ANSI escapes across SIMD chunk boundaries", () => {
     expect(Bun.stringWidth(rep(unit, 100), { countAnsiEscapeCodes: true })).toBe(1100);
   });
 });
+
+// The UTF-16 path has a SIMD bulk kernel (highway_visible_utf16_width) that
+// counts runs of codepoints which are always their own grapheme cluster with
+// a fixed width, bailing to the scalar grapheme loop for everything else.
+// These tests pin the kernel's allowlisted ranges against the scalar
+// classifier and the clustering behavior at the bail points.
+describe("UTF-16 bulk width fast path", () => {
+  // Must mirror the ranges in ClassifyBulkUTF16Unit (highway_strings.cpp).
+  const narrowRanges: Array<[number, number]> = [
+    [0x20, 0x7e],
+    [0xa0, 0x2ff],
+    [0x370, 0x482],
+    [0x48a, 0x52f],
+  ];
+  const narrowExcluded = new Set([0xa9, 0xad, 0xae]);
+  const wideRanges: Array<[number, number]> = [
+    [0x3041, 0x3096],
+    [0x309b, 0x30ff],
+    [0x3400, 0x4dbf],
+    [0x4e00, 0x9fff],
+    [0xac00, 0xd7a3],
+    [0xff01, 0xff60],
+  ];
+
+  test("every codepoint in the allowlisted ranges has the expected fixed width", () => {
+    const mismatches: string[] = [];
+    const checkRange = (lo: number, hi: number, perChar: number, excluded?: Set<number>) => {
+      // Walk the range in chunks so every codepoint passes through the SIMD
+      // path, and the chunk sum catches any unexpected cluster joining.
+      const chunkSize = 256;
+      for (let start = lo; start <= hi; start += chunkSize) {
+        const end = Math.min(start + chunkSize - 1, hi);
+        let chars = "";
+        let expected = 0;
+        for (let cp = start; cp <= end; cp++) {
+          if (excluded?.has(cp)) continue;
+          chars += String.fromCharCode(cp);
+          expected += perChar;
+        }
+        const got = Bun.stringWidth(chars);
+        if (got !== expected) {
+          mismatches.push(`U+${start.toString(16)}..U+${end.toString(16)}: got ${got}, expected ${expected}`);
+        }
+      }
+    };
+    for (const [lo, hi] of narrowRanges) checkRange(lo, hi, 1, narrowExcluded);
+    for (const [lo, hi] of wideRanges) checkRange(lo, hi, 2);
+    expect(mismatches).toEqual([]);
+  });
+
+  test("excluded and boundary codepoints keep their scalar behavior", () => {
+    expect(Bun.stringWidth("\xa9")).toBe(1); // © is excluded from the bulk path (Extended_Pictographic)
+    expect(Bun.stringWidth("\xae")).toBe(1); // ®
+    expect(Bun.stringWidth("\xad")).toBe(0); // soft hyphen
+    expect(Bun.stringWidth("a\xa9b\xaec\xadd")).toBe(6);
+    expect(Bun.stringWidth("\u0483")).toBe(1); // combining Cyrillic titlo (just past 0x482, excluded from bulk)
+    expect(Bun.stringWidth("я\u0483")).toBe(2); // joins the previous letter as one cluster
+    expect(Bun.stringWidth("\u3099")).toBe(2); // combining voicing mark alone (wide, joins nothing)
+    expect(Bun.stringWidth("\u3040")).toBe(1); // unassigned, just below the hiragana letters range
+    expect(Bun.stringWidth("\u309a")).toBe(2); // combining semi-voiced mark (excluded from bulk)
+  });
+
+  test("clusters still join across the bulk/scalar boundary", () => {
+    // Combining voicing mark right after a bulk kana run: joins the last kana.
+    expect(Bun.stringWidth("か\u3099")).toBe(4);
+    expect(Bun.stringWidth("こんにちはか\u3099")).toBe(14);
+    // Jamo T after a Hangul LV syllable: one cluster.
+    expect(Bun.stringWidth("가\u11a8")).toBe(3);
+    expect(Bun.stringWidth("각")).toBe(2);
+    // Combining acute after a CJK ideograph at the end of a long bulk run.
+    expect(Bun.stringWidth("中".repeat(40) + "\u0301")).toBe(80);
+    // Combining mark after an ASCII run inside a longer mixed string.
+    expect(Bun.stringWidth("abc中で🎉x\u0301y")).toBe(11);
+    // ZWJ emoji sequence immediately after a CJK run.
+    expect(Bun.stringWidth("日本👩‍👩‍👧‍👦")).toBe(6);
+  });
+
+  test("matches expected widths for common non-ASCII scripts", () => {
+    expect(Bun.stringWidth("αβγδε")).toBe(5);
+    expect(Bun.stringWidth("привет")).toBe(6);
+    expect(Bun.stringWidth("ĀāĂăĄą")).toBe(6);
+    expect(Bun.stringWidth("ɐɑɒɓɔɕ")).toBe(6);
+    expect(Bun.stringWidth("\u309b\u309c\u309d\u30fb\u30fc")).toBe(10);
+    expect(Bun.stringWidth("ＡＢＣ！")).toBe(8);
+    expect(Bun.stringWidth("㐀㐁㐂")).toBe(6);
+    expect(Bun.stringWidth("こんにちは世界".repeat(64))).toBe(14 * 64);
+    expect(Bun.stringWidth("한국어 텍스트")).toBe(13);
+  });
+
+  test("ambiguousIsNarrow: false skips the bulk path but stays correct", () => {
+    expect(Bun.stringWidth("αβγδε", { ambiguousIsNarrow: false })).toBe(10);
+    expect(Bun.stringWidth("привет", { ambiguousIsNarrow: false })).toBe(12);
+    expect(Bun.stringWidth("abcαβγ中中", { ambiguousIsNarrow: false })).toBe(3 + 6 + 4);
+    expect(Bun.stringWidth("abcαβγ中中")).toBe(3 + 3 + 4);
+    // CJK is unambiguous: same width either way.
+    expect(Bun.stringWidth("こんにちは世界", { ambiguousIsNarrow: false })).toBe(14);
+  });
+
+  test("escape sequences interleaved with bulk runs", () => {
+    expect(Bun.stringWidth("\x1b[31m中文\x1b[0m")).toBe(4);
+    expect(Bun.stringWidth("中文\x1b[31m中文\x1b[0m中文")).toBe(12);
+    expect(Bun.stringWidth("\x1b]8;;https://example.com\x07日本語リンク\x1b]8;;\x07")).toBe(12);
+    expect(Bun.stringWidth("αβ\x1b[38;2;255;0;0mγδ\x1b[0m中", { countAnsiEscapeCodes: false })).toBe(6);
+    expect(Bun.stringWidth("\x1b[31m中文\x1b[0m", { countAnsiEscapeCodes: true })).toBe(4 + 7);
+  });
+
+  test("long mixed-script strings match the sum of their parts", () => {
+    const part = "hello 世界 Ωμέγα Привет ｗｉｄｅ 가나다 ";
+    const partWidth = Bun.stringWidth(part);
+    expect(partWidth).toBe(40); // 6 + 5 + 6 + 7 + 9 + 7
+    expect(Bun.stringWidth(part.repeat(50))).toBe(partWidth * 50);
+  });
+});

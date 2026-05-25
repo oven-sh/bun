@@ -752,7 +752,7 @@ size_t VisibleLatin1WidthExcludeANSIImpl(const uint8_t* HWY_RESTRICT input, size
     const auto vec_soft_hyphen = hn::Set(d, uint8_t { 0xAD });
 
     // visible = (c >= 0x20) && !(0x7F <= c <= 0x9F) && (c != 0xAD)
-    const auto classifyPrintable = [&](auto chunk) {
+    const auto classifyPrintable = [&](auto chunk) HWY_ATTR {
         const auto ge_0x20 = hn::Ge(chunk, vec_0x20);
         const auto in_c1_range = hn::Le(hn::Sub(chunk, vec_0x7F), vec_0x20); // 0x7F..0x9F
         const auto is_soft_hyphen = hn::Eq(chunk, vec_soft_hyphen);
@@ -769,7 +769,7 @@ size_t VisibleLatin1WidthExcludeANSIImpl(const uint8_t* HWY_RESTRICT input, size
 
         // Extracts a mask as bits (bit k = lane k).
         alignas(8) uint8_t maskBytes[8];
-        const auto maskToBits = [&](auto mask) -> uint64_t {
+        const auto maskToBits = [&](auto mask) HWY_ATTR -> uint64_t {
             std::memset(maskBytes, 0, sizeof(maskBytes));
             hn::StoreMaskBits(d, mask, maskBytes);
             uint64_t bits;
@@ -941,6 +941,125 @@ size_t VisibleLatin1WidthExcludeANSIImpl(const uint8_t* HWY_RESTRICT input, size
     return count;
 }
 
+// --- Bulk UTF-16 visible width -------------------------------------------
+//
+// Used by Bun.stringWidth's UTF-16 path (stringWidth.cpp). Consumes leading
+// code units that are always their own grapheme cluster with a fixed width:
+// printable ASCII, most Latin-1/Latin-Extended/IPA, Greek and Cyrillic
+// letters (width 1, East-Asian-Ambiguous letters count as narrow), and the
+// main always-wide blocks (kana letters and marks, CJK Unified Ideographs and
+// Extension A, Hangul syllables, fullwidth forms; width 2). Anything else —
+// surrogates, combining marks, ZWJ/variation selectors, jamo, ESC, the long
+// tail — ends the run so the scalar grapheme-cluster loop can take over.
+//
+// Returns the number of units consumed and adds their total width to *width.
+// Only valid when ambiguous-width characters count as narrow (the default);
+// the caller skips this path for `ambiguousIsNarrow: false`.
+// stringWidth.test.ts verifies every codepoint in these ranges against the
+// scalar classifier.
+
+static HWY_INLINE bool ClassifyBulkUTF16Unit(uint16_t u, uint8_t& unitWidth)
+{
+    // Narrow: always width 1, always a standalone cluster.
+    if ((u >= 0x20 && u <= 0x7E)
+        || (u >= 0xA0 && u <= 0x2FF && u != 0xA9 && u != 0xAD && u != 0xAE)
+        || (u >= 0x370 && u <= 0x482)
+        || (u >= 0x48A && u <= 0x52F)) {
+        unitWidth = 1;
+        return true;
+    }
+    // Wide: always width 2; Hangul syllables (LV/LVT) always break between
+    // each other and everything else in this allowlist.
+    if ((u >= 0x3041 && u <= 0x3096)
+        || (u >= 0x309B && u <= 0x30FF)
+        || (u >= 0x3400 && u <= 0x4DBF)
+        || (u >= 0x4E00 && u <= 0x9FFF)
+        || (u >= 0xAC00 && u <= 0xD7A3)
+        || (u >= 0xFF01 && u <= 0xFF60)) {
+        unitWidth = 2;
+        return true;
+    }
+    return false;
+}
+
+size_t VisibleUTF16WidthImpl(const uint16_t* HWY_RESTRICT input, size_t len, size_t* HWY_RESTRICT width)
+{
+    const hn::ScalableTag<uint16_t> d;
+    const size_t N = hn::Lanes(d);
+
+    size_t w = 0;
+    size_t i = 0;
+
+    if (len >= N) {
+        // `v - lo <= hi - lo` (unsigned)  <=>  lo <= v <= hi.
+        const auto vec_ascii_lo = hn::Set(d, uint16_t { 0x20 });
+        const auto vec_ascii_span = hn::Set(d, uint16_t { 0x7E - 0x20 });
+        const auto vec_latin_lo = hn::Set(d, uint16_t { 0xA0 });
+        const auto vec_latin_span = hn::Set(d, uint16_t { 0x2FF - 0xA0 });
+        const auto vec_0xA9 = hn::Set(d, uint16_t { 0xA9 });
+        const auto vec_0xAD = hn::Set(d, uint16_t { 0xAD });
+        const auto vec_0xAE = hn::Set(d, uint16_t { 0xAE });
+        const auto vec_greek_lo = hn::Set(d, uint16_t { 0x370 });
+        const auto vec_greek_span = hn::Set(d, uint16_t { 0x482 - 0x370 });
+        const auto vec_cyrillic_lo = hn::Set(d, uint16_t { 0x48A });
+        const auto vec_cyrillic_span = hn::Set(d, uint16_t { 0x52F - 0x48A });
+        const auto vec_hiragana_lo = hn::Set(d, uint16_t { 0x3041 });
+        const auto vec_hiragana_span = hn::Set(d, uint16_t { 0x3096 - 0x3041 });
+        const auto vec_katakana_lo = hn::Set(d, uint16_t { 0x309B });
+        const auto vec_katakana_span = hn::Set(d, uint16_t { 0x30FF - 0x309B });
+        const auto vec_cjk_ext_lo = hn::Set(d, uint16_t { 0x3400 });
+        const auto vec_cjk_ext_span = hn::Set(d, uint16_t { 0x4DBF - 0x3400 });
+        const auto vec_cjk_lo = hn::Set(d, uint16_t { 0x4E00 });
+        const auto vec_cjk_span = hn::Set(d, uint16_t { 0x9FFF - 0x4E00 });
+        const auto vec_hangul_lo = hn::Set(d, uint16_t { 0xAC00 });
+        const auto vec_hangul_span = hn::Set(d, uint16_t { 0xD7A3 - 0xAC00 });
+        const auto vec_fullwidth_lo = hn::Set(d, uint16_t { 0xFF01 });
+        const auto vec_fullwidth_span = hn::Set(d, uint16_t { 0xFF60 - 0xFF01 });
+
+        while (i + N <= len) {
+            const auto v = hn::LoadU(d, input + i);
+
+            const auto is_ascii = hn::Le(hn::Sub(v, vec_ascii_lo), vec_ascii_span);
+            const auto latin1_extended = hn::AndNot(
+                hn::Or(hn::Eq(v, vec_0xA9), hn::Or(hn::Eq(v, vec_0xAD), hn::Eq(v, vec_0xAE))),
+                hn::Le(hn::Sub(v, vec_latin_lo), vec_latin_span));
+            const auto greek = hn::Le(hn::Sub(v, vec_greek_lo), vec_greek_span);
+            const auto cyrillic = hn::Le(hn::Sub(v, vec_cyrillic_lo), vec_cyrillic_span);
+            const auto narrow = hn::Or(hn::Or(is_ascii, latin1_extended), hn::Or(greek, cyrillic));
+
+            const auto hiragana = hn::Le(hn::Sub(v, vec_hiragana_lo), vec_hiragana_span);
+            const auto katakana = hn::Le(hn::Sub(v, vec_katakana_lo), vec_katakana_span);
+            const auto cjk_ext = hn::Le(hn::Sub(v, vec_cjk_ext_lo), vec_cjk_ext_span);
+            const auto cjk = hn::Le(hn::Sub(v, vec_cjk_lo), vec_cjk_span);
+            const auto hangul = hn::Le(hn::Sub(v, vec_hangul_lo), vec_hangul_span);
+            const auto fullwidth = hn::Le(hn::Sub(v, vec_fullwidth_lo), vec_fullwidth_span);
+            const auto wide = hn::Or(
+                hn::Or(hn::Or(hiragana, katakana), hn::Or(cjk_ext, cjk)),
+                hn::Or(hangul, fullwidth));
+
+            const auto ok = hn::Or(narrow, wide);
+            if (!hn::AllTrue(d, ok))
+                break; // the scalar loop below consumes the qualifying prefix
+
+            // narrow lanes contribute 1, wide lanes contribute 2.
+            w += N + hn::CountTrue(d, wide);
+            i += N;
+        }
+    }
+
+    // Scalar: short inputs, the final partial vector, and the qualifying
+    // prefix of a vector that contained a non-allowlisted unit.
+    for (; i < len; i++) {
+        uint8_t unitWidth;
+        if (!ClassifyBulkUTF16Unit(input[i], unitWidth))
+            break;
+        w += unitWidth;
+    }
+
+    *width += w;
+    return i;
+}
+
 // Count of UTF-16 code units in [0x20, 0x7E] (printable ASCII). Bulk-ASCII
 // helper for Bun.stringWidth's UTF-16 path (stringWidth.cpp).
 size_t CountPrintableAscii16Impl(const uint16_t* HWY_RESTRICT input, size_t len)
@@ -1095,6 +1214,7 @@ HWY_EXPORT(MemMemImpl);
 HWY_EXPORT(ScanCharFrequencyImpl);
 HWY_EXPORT(VisibleLatin1WidthExcludeANSIImpl);
 HWY_EXPORT(VisibleLatin1WidthImpl);
+HWY_EXPORT(VisibleUTF16WidthImpl);
 // Define the C-callable wrappers that use HWY_DYNAMIC_DISPATCH.
 // These need to be defined *after* the HWY_EXPORT block and INSIDE namespace bun
 // so that HWY_DYNAMIC_DISPATCH(FuncImpl) correctly resolves to bun::N_*::FuncImpl.
@@ -1213,6 +1333,11 @@ size_t highway_visible_latin1_width(const uint8_t* HWY_RESTRICT input, size_t le
 size_t highway_visible_latin1_width_exclude_ansi(const uint8_t* HWY_RESTRICT input, size_t len)
 {
     return HWY_DYNAMIC_DISPATCH(VisibleLatin1WidthExcludeANSIImpl)(input, len);
+}
+
+size_t highway_visible_utf16_width(const uint16_t* HWY_RESTRICT input, size_t len, size_t* HWY_RESTRICT width)
+{
+    return HWY_DYNAMIC_DISPATCH(VisibleUTF16WidthImpl)(input, len, width);
 }
 
 size_t highway_count_printable_ascii16(const uint16_t* HWY_RESTRICT input, size_t len)

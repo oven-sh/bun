@@ -21,6 +21,12 @@ const encoder = new TextEncoder();
 // reads them from the `tls` option, so collect them off the top-level options.
 // Booleans use `!== undefined` so an explicit `false` (e.g. `rejectUnauthorized:
 // false`, the whole point of connecting to a self-signed server) is forwarded.
+//
+// `ALPNProtocols` is intentionally omitted: Node/`ws` accept the `string[]`
+// form, but SSLConfig.fromJS only takes string/ArrayBuffer/null and throws on
+// an array. Forwarding it would turn a previously-ignored option into a
+// constructor throw, so leave it a no-op (WebSocket negotiates subprotocols via
+// Sec-WebSocket-Protocol, not TLS ALPN).
 const tlsBooleanKeys = ["rejectUnauthorized", "requestCert", "lowMemoryMode"];
 const tlsValueKeys = [
   "ca",
@@ -35,15 +41,13 @@ const tlsValueKeys = [
   "keyFile",
   "certFile",
   "caFile",
-  "ALPNProtocols",
   "clientRenegotiationLimit",
   "clientRenegotiationWindow",
 ];
 
 // Agents (e.g. HttpsProxyAgent) stuff connection options into `connectOpts`
-// that aren't all valid Bun TLS options — an array-form `ALPNProtocols`, for
-// one, which SSLConfig.fromJS rejects. Keep the agent path to the subset ws
-// users historically pass through an agent.
+// that aren't all valid Bun TLS options, so keep the agent path to the subset
+// ws users historically pass through an agent.
 const agentTlsValueKeys = ["ca", "cert", "key", "passphrase"];
 
 /**

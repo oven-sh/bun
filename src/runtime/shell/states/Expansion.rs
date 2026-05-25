@@ -649,18 +649,17 @@ impl Expansion {
     ) {
         use crate::shell::dispatch_tasks::ShellGlobErr;
         log!("Expansion {} onGlobWalkDone", this);
-        if let Some(err) = err {
-            let shell_err = match err {
-                ShellGlobErr::Syscall(e) => ShellErr::new_sys(&e),
-                ShellGlobErr::Unknown(e) => ShellErr::Custom(e.to_string().into_bytes().into()),
-            };
-            interp.throw(shell_err);
-            interp.as_expansion_mut(this).state = ExpansionState::Done;
-            Yield::Next(this).run(interp);
-            return;
-        }
+        let walk_err = match err {
+            Some(ShellGlobErr::Syscall(e))
+                if matches!(e.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) =>
+            {
+                log!("Expansion {} glob walk failed: {}", this, e);
+                None
+            }
+            other => other,
+        };
 
-        if result.is_empty() {
+        if result.is_empty() || walk_err.is_some() {
             // Spec lines 559-578: in variable assignments a no-match glob
             // expands to the literal pattern; otherwise it's an error.
             let parent = interp.as_expansion(this).base.parent;
@@ -676,6 +675,12 @@ impl Expansion {
             if in_assign {
                 Self::push_current_out(me);
                 me.state = ExpansionState::Done;
+            } else if let Some(err) = walk_err {
+                let shell_err = match err {
+                    ShellGlobErr::Syscall(e) => ShellErr::new_sys(&e),
+                    ShellGlobErr::Unknown(e) => ShellErr::Custom(e.to_string().into_bytes().into()),
+                };
+                me.state = ExpansionState::Err(Box::new(shell_err));
             } else {
                 let msg = format!("no matches found: {}", bstr::BStr::new(&me.current_out));
                 me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));

@@ -1045,6 +1045,20 @@ pub struct StyleContext<'a> {
     pub parent: Option<&'a StyleContext<'a>>,
 }
 
+/// Upper bound on the number of selectors that compiling nested rules away for
+/// the configured targets may expand a stylesheet into.
+///
+/// When the targets don't support CSS nesting (or a rule's selectors need to be
+/// split for compatibility), every nesting level multiplies the parent
+/// selector list into its nested rules. That expansion is exponential in the
+/// nesting depth, so a few hundred bytes of adversarial input (e.g. 20+ levels
+/// of two-selector rules) would otherwise balloon into gigabytes of cloned
+/// rules and output. Real-world stylesheets stay far below this limit — 65,536
+/// expanded selectors already corresponds to megabytes of output — so exceeding
+/// it is reported as a `selector_expansion_limit_exceeded` minify error
+/// instead.
+pub const MAX_SELECTOR_EXPANSION: u32 = 65_536;
+
 /// Per-stylesheet minification state threaded through `CssRuleList::minify`
 /// and every leaf rule's `minify`.
 ///
@@ -1075,6 +1089,13 @@ pub struct MinifyContext<'a, 'bump> {
     pub css_modules: bool,
     /// First minification error encountered (Zig surfaced this out-of-band).
     pub err: Option<css::error::MinifyError>,
+    /// How many copies of the current rule's selectors compiling the enclosing
+    /// nesting for the targets will produce — the product of the enclosing
+    /// style rules' selector-list lengths. `1` at the top level.
+    pub selector_expansion_multiplier: u32,
+    /// Running total of selectors that compiling nested rules for the targets
+    /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
+    pub selector_expansion_total: u32,
 }
 
 // ported from: src/css/rules/rules.zig

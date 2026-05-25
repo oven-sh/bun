@@ -527,15 +527,4 @@ void std::__libcpp_verbose_abort(char const* format, ...) noexcept
 
 #endif
 
-#ifndef U_SHOW_CPLUSPLUS_API
-#define U_SHOW_CPLUSPLUS_API 0
-#endif
-
-#include <unicode/uchar.h>
-
-extern "C" bool icu_hasBinaryProperty(UChar32 cp, unsigned int prop)
-{
-    return u_hasBinaryProperty(cp, static_cast<UProperty>(prop));
-}
-
 extern "C" __attribute__((weak)) void mi_thread_set_in_threadpool() {}

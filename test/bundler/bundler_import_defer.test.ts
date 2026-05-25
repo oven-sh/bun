@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 // Tests for `import defer * as ns from "..."` (TC39 deferred module evaluation)
@@ -141,6 +141,10 @@ describe("bundler", () => {
     bundleWarnings: {
       "/entry.js": ['This "import defer" is evaluated eagerly'],
     },
+    onAfterBundle(api) {
+      // The eager fallback must not wrap the module in a lazy closure.
+      expect(api.readFile("out.js")).not.toContain("__esm(");
+    },
     run: {
       stdout: "dep evaluated\ncaptured object\n42",
     },
@@ -232,5 +236,42 @@ describe("bundler", () => {
         stdout: "shared evaluated\nb: 42",
       },
     ],
+  });
+
+  itBundled("importdefer/ObjectShorthandProperty", {
+    files: {
+      "/entry.js": /* js */ `
+        import defer * as ns from "./dep.js";
+        console.log("before");
+        const obj = { value: ns.value };
+        console.log(obj.value);
+      `,
+      "/dep.js": /* js */ `
+        console.log("dep evaluated");
+        export const value = 42;
+      `,
+    },
+    run: {
+      stdout: "before\ndep evaluated\n42",
+    },
+  });
+
+  itBundled("importdefer/TSEnumAccessTriggersEvaluation", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import defer * as ns from "./enums.ts";
+        console.log("before");
+        console.log(ns.Color.Red);
+      `,
+      "/enums.ts": /* ts */ `
+        console.log("enums evaluated");
+        export enum Color {
+          Red = 1,
+        }
+      `,
+    },
+    run: {
+      stdout: "before\nenums evaluated\n1",
+    },
   });
 });

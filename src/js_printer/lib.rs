@@ -3770,7 +3770,17 @@ pub mod __gated_printer {
                         if let Some(inlined) =
                             self.try_to_get_imported_enum_value(e.target, &e.name)
                         {
-                            self.print_inlined_enum(inlined, &e.name, level);
+                            // `import defer`: the access must still evaluate the
+                            // deferred module even though the value is inlined.
+                            if let Some(init_ref) = self.deferred_init_for_enum_target(e.target) {
+                                self.print(b"(");
+                                self.print_symbol(init_ref);
+                                self.print_whitespacer(ws!(b"(), "));
+                                self.print_inlined_enum(inlined, &e.name, level);
+                                self.print(b")");
+                            } else {
+                                self.print_inlined_enum(inlined, &e.name, level);
+                            }
                             return;
                         }
                     } else {
@@ -3822,7 +3832,20 @@ pub mod __gated_printer {
                                 if let Some(value) =
                                     self.try_to_get_imported_enum_value(e.target, str.slice8())
                                 {
-                                    self.print_inlined_enum(value, str.slice8(), level);
+                                    // `import defer`: the access must still evaluate
+                                    // the deferred module even though the value is
+                                    // inlined.
+                                    if let Some(init_ref) =
+                                        self.deferred_init_for_enum_target(e.target)
+                                    {
+                                        self.print(b"(");
+                                        self.print_symbol(init_ref);
+                                        self.print_whitespacer(ws!(b"(), "));
+                                        self.print_inlined_enum(value, str.slice8(), level);
+                                        self.print(b")");
+                                    } else {
+                                        self.print_inlined_enum(value, str.slice8(), level);
+                                    }
                                     return;
                                 }
                             }
@@ -4749,8 +4772,11 @@ pub mod __gated_printer {
                     if let ExprData::EDot(dot) =
                         &item.key.as_ref().expect("infallible: prop has key").data
                     {
-                        if let Some(value) =
-                            self.try_to_get_imported_enum_value(dot.target, dot.name.slice())
+                        // Keep the key as a computed property access for `import defer`
+                        // items so it still triggers evaluation of the deferred module.
+                        if let Some(value) = self
+                            .try_to_get_imported_enum_value(dot.target, dot.name.slice())
+                            .filter(|_| self.deferred_init_for_enum_target(dot.target).is_none())
                         {
                             match value {
                                 js_ast::InlinedEnumValueDecoded::String(str) => {
@@ -4912,6 +4938,15 @@ pub mod __gated_printer {
                                     if self.options.input_files_for_dev_server.is_some() {
                                         break 'inner;
                                     }
+                                    // Keep `key: (init_foo(), value)` for `import defer`
+                                    // items — the shorthand would skip the init call.
+                                    if self
+                                        .options
+                                        .deferred_import_inits
+                                        .is_some_and(|map| map.contains_key(&e.ref_))
+                                    {
+                                        break 'inner;
+                                    }
                                     if let Some(symbol) = self.symbols().get_const(ref_) {
                                         if symbol.namespace_alias.is_none()
                                             && key_str.slice8() == self.name_for_symbol(e.ref_)
@@ -4952,7 +4987,13 @@ pub mod __gated_printer {
                                 ExprData::EImportIdentifier(e) => {
                                     let ref_ = self.symbols().follow(e.ref_);
                                     if let Some(symbol) = self.symbols().get_const(ref_) {
+                                        // Keep `key: (init_foo(), value)` for `import defer`
+                                        // items — the shorthand would skip the init call.
                                         if symbol.namespace_alias.is_none()
+                                            && !self
+                                                .options
+                                                .deferred_import_inits
+                                                .is_some_and(|map| map.contains_key(&e.ref_))
                                             && strings::utf16_eql_string(
                                                 key_str.slice16(),
                                                 self.name_for_symbol(e.ref_),
@@ -6850,6 +6891,20 @@ pub mod __gated_printer {
                         }
                     }
                 }
+            }
+            None
+        }
+
+        /// If `target` is an import item reached through an `import defer`
+        /// namespace, returns the `__esm` wrapper symbol that must be invoked
+        /// before an inlined enum value can replace the property access.
+        pub fn deferred_init_for_enum_target(&self, target: Expr) -> Option<Ref> {
+            if let ExprData::EImportIdentifier(id) = &target.data {
+                return self
+                    .options
+                    .deferred_import_inits
+                    .and_then(|map| map.get(&id.ref_))
+                    .copied();
             }
             None
         }

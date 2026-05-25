@@ -14,6 +14,31 @@ extern "C" BunString BakeToWindowsPath(BunString a);
 namespace Bake {
 using namespace JSC;
 
+// Map a SourceOrigin to the registry key JSC's requestImportModule looks
+// up to resolve the initiator CyclicModuleRecord (see #30651). Mirrors the
+// logic in Zig::GlobalObject::moduleLoaderImportModule: file:// → fs path,
+// builtin:// → substring after the prefix, bake:/ → the bake key, else the
+// URL string as-is. Returns an empty Identifier on nullptr/empty origin;
+// the WebKit side falls back to the coarse pre-PR gate in that case.
+static JSC::Identifier bakeReferrerKeyFromSourceOrigin(JSC::VM& vm, const JSC::SourceOrigin& sourceOrigin)
+{
+    if (sourceOrigin.isNull())
+        return { };
+    const auto& url = sourceOrigin.url();
+    if (url.isEmpty())
+        return { };
+    String keyString;
+    if (url.protocolIsFile())
+        keyString = url.fileSystemPath();
+    else if (url.protocol() == "builtin"_s && url.string().startsWith("builtin://"_s))
+        keyString = url.string().substring(10);
+    else
+        keyString = url.string();
+    if (keyString.isEmpty())
+        return { };
+    return JSC::Identifier::fromString(vm, keyString);
+}
+
 JSC::JSPromise*
 bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
     JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleNameValue,
@@ -26,7 +51,7 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
     if (keyString.startsWith("bake:/"_s)) {
         auto& vm = JSC::getVM(global);
         return JSC::importModule(global, JSC::Identifier::fromString(vm, keyString),
-            JSC::Identifier(), WTF::move(parameters), nullptr);
+            bakeReferrerKeyFromSourceOrigin(vm, sourceOrigin), WTF::move(parameters), nullptr);
     }
 
     if (!sourceOrigin.isNull() && sourceOrigin.string().startsWith("bake:/"_s)) {
@@ -45,8 +70,11 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
         BunString result = BakeProdResolve(global, Bun::toString(refererString), Bun::toString(keyString));
         RETURN_IF_EXCEPTION(scope, nullptr);
 
+        // refererString is already the bake:/ registry key — pass it as-is;
+        // bakeModuleLoaderResolve keys the registry by BakeProdResolve()'s
+        // output of which refererString is already a previously-produced key.
         return JSC::importModule(global, JSC::Identifier::fromString(vm, result.toWTFString()),
-            JSC::Identifier(), WTF::move(parameters), nullptr);
+            JSC::Identifier::fromString(vm, refererString), WTF::move(parameters), nullptr);
     }
 
     // TODO: make static cast instead of jscast

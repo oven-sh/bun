@@ -25,6 +25,11 @@ static inline std::string_view sv(const char* p, size_t n) { return p ? std::str
 
 extern "C" {
 
+// Same treatment as libuwsockets.cpp: every function below is a thin C-ABI
+// wrapper around a uWS template method — force ThinLTO to inline the wrapper
+// into its (Rust) callers.
+#pragma clang attribute push(__attribute__((always_inline)), apply_to = function)
+
 typedef struct uws_h3_app_s uws_h3_app_t;
 typedef struct uws_h3_res_s uws_h3_res_t;
 typedef struct uws_h3_req_s uws_h3_req_t;
@@ -296,5 +301,7 @@ size_t uws_h3_req_get_parameter(uws_h3_req_t* req, unsigned short index, const c
 {
     return ffi_sv(((Http3Request*)req)->getParameter(index), dest);
 }
+
+#pragma clang attribute pop
 
 } // extern "C"

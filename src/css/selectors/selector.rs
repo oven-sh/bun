@@ -1183,11 +1183,13 @@ pub mod serialize {
             PseudoClass::Dir { .. } => unreachable!(),
             PseudoClass::Custom { name } => {
                 dest.write_char(b':')?;
-                return dest.write_str(name);
+                // The name was unescaped while parsing, so re-escape it to keep
+                // the output parseable (e.g. a name containing a space).
+                return dest.serialize_identifier(name);
             }
             PseudoClass::CustomFunction { name, arguments } => {
                 dest.write_char(b':')?;
-                dest.write_str(name)?;
+                dest.serialize_identifier(name)?;
                 dest.write_char(b'(')?;
                 // blocked_on: properties::custom (TokenList::to_css_raw) un-gate.
 
@@ -1323,11 +1325,13 @@ pub mod serialize {
             }
             PseudoElement::Custom { name } => {
                 dest.write_str(b"::")?;
-                return dest.write_str(name);
+                // The name was unescaped while parsing, so re-escape it to keep
+                // the output parseable (e.g. a name containing a space).
+                return dest.serialize_identifier(name);
             }
             PseudoElement::CustomFunction { name, arguments } => {
                 dest.write_str(b"::")?;
-                dest.write_str(name)?;
+                dest.serialize_identifier(name)?;
                 dest.write_char(b'(')?;
                 // blocked_on: properties::custom (TokenList::to_css_raw) un-gate.
 

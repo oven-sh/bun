@@ -1368,8 +1368,7 @@ impl BlobExt for Blob {
         }
         // Zig: `var blob_internal: PathOrBlob = .{ .blob = this.* }` — a raw
         // bitwise copy with NO ref bumps; `write_file_internal` then `dupe()`s
-        // its own owned `destination_blob` from it. `borrowed_view()` is the
-        // sound Rust spelling — see its doc for why `dupe()` would leak here.
+        // its own owned `destination_blob` from it.
         let mut blob_internal = PathOrBlob::Blob(Box::new(self.borrowed_view()));
         write_file_internal(
             global_this,
@@ -2523,14 +2522,13 @@ impl BlobExt for Blob {
             unsafe { (*s.as_ptr()).is_all_ascii = Some(is_all_ascii) };
             store = Some(s);
         }
-        Blob {
-            size: Cell::new(len as SizeType),
-            store: JsCell::new(store),
-            content_type: Cell::new(std::ptr::from_ref::<[u8]>(b"" as &'static [u8])),
-            global_this: Cell::new(global_this),
-            charset: Cell::new(strings::AsciiStatus::from_bool(Some(is_all_ascii))),
-            ..Default::default()
-        }
+        let blob = Blob::default();
+        blob.size.set(len as SizeType);
+        blob.store.set(store);
+        blob.global_this.set(global_this);
+        blob.charset
+            .set(strings::AsciiStatus::from_bool(Some(is_all_ascii)));
+        blob
     }
 
     fn create_with_bytes_and_allocator(
@@ -2539,21 +2537,20 @@ impl BlobExt for Blob {
         was_string: bool,
     ) -> Blob {
         let len = bytes.len();
-        Blob {
-            size: Cell::new(len as SizeType),
-            store: JsCell::new(if len > 0 {
-                Some(Store::init(bytes))
-            } else {
-                None
-            }),
-            content_type: Cell::new(if was_string {
-                std::ptr::from_ref::<[u8]>(bun_http_types::MimeType::TEXT.value.as_ref())
-            } else {
-                std::ptr::from_ref::<[u8]>(b"" as &'static [u8])
-            }),
-            global_this: Cell::new(global_this),
-            ..Default::default()
+        let blob = Blob::default();
+        blob.size.set(len as SizeType);
+        blob.store.set(if len > 0 {
+            Some(Store::init(bytes))
+        } else {
+            None
+        });
+        if was_string {
+            blob.content_type.set(std::ptr::from_ref::<[u8]>(
+                bun_http_types::MimeType::TEXT.value.as_ref(),
+            ));
         }
+        blob.global_this.set(global_this);
+        blob
     }
 
     fn try_create(
@@ -3306,10 +3303,7 @@ impl BlobExt for Blob {
     ) -> JsResult<Blob> {
         let mut current = arg;
         if current.is_undefined_or_null() {
-            return Ok(Blob {
-                global_this: Cell::new(global),
-                ..Default::default()
-            });
+            return Ok(Blob::init_empty(global));
         }
 
         let mut top_value = current;
@@ -3322,10 +3316,7 @@ impl BlobExt for Blob {
                 let mut top_iter = jsc::JSArrayIterator::init(current, global)?;
                 might_only_be_one_thing = top_iter.len == 1;
                 if top_iter.len == 0 {
-                    return Ok(Blob {
-                        global_this: Cell::new(global),
-                        ..Default::default()
-                    });
+                    return Ok(Blob::init_empty(global));
                 }
                 if might_only_be_one_thing {
                     top_value = top_iter.next()?.unwrap();
@@ -4688,15 +4679,7 @@ pub fn write_file_with_source_destination(
         }));
 
         // Zig passes `destination_blob.*` / `source_blob.*` (raw struct copy,
-        // +0 store ref) and `WriteFile.create` then calls `store.?.ref()`. The
-        // Rust port folds that pair into RAII: callers hand over a +1 `Blob`
-        // via `borrowed_view()` (clones the `StoreRef`/`name`; `content_type`
-        // is aliased — unused by `WriteFile*`, no `Drop`) and
-        // `WriteFile::create` does NOT re-bump (see PORT NOTE in
-        // `write_file.rs::create_with_ctx`); the matching deref runs when
-        // `heap::take` drops the embedded `StoreRef`/`name` in `then`/`deinit`.
-        // Net ref balance is identical. `dupe()` is wrong here: it boxes a
-        // fresh `content_type`, which is not released by `Blob`'s drop glue.
+        // +0 store ref) and `WriteFile.create` then calls `store.?.ref()`.
         #[cfg(windows)]
         {
             let promise = JSPromise::create(ctx);
@@ -5234,10 +5217,6 @@ pub fn write_file_internal(
                             bun_core::heap::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
                                 global_this: bun_ptr::BackRef::new(global_this),
                                 // Zig moves `destination_blob` by value into the task
-                                // (single store ref transfers; outer local is dead after the
-                                // early return). `dupe()` here would leak one StoreRef since
-                                // Blob has no Drop. Take the value and leave an empty blob
-                                // behind so the residual local owns no store.
                                 file_blob: core::mem::replace(
                                     &mut destination_blob,
                                     Blob::init_empty(global_this),
@@ -6506,8 +6485,6 @@ impl Any {
                     // `StoreRef` exposes interior-mutable `data_mut()` (no DerefMut).
                     let internal = s.data_mut().as_bytes_mut().to_internal_blob();
                     // PORT NOTE: Zig deref's the store; StoreRef::drop on replace handles it.
-                    // `content_type` is a raw pointer not covered by any field's
-                    // drop glue — free it explicitly.
                     blob.free_content_type();
                     *self = Any::InternalBlob(internal);
                     return;
@@ -6807,10 +6784,6 @@ impl Any {
     pub fn detach(&mut self) {
         match self {
             Any::Blob(b) => {
-                // `content_type` is a raw `*const [u8]` not covered by `Blob`'s drop
-                // glue; release it here so a heap-owned content_type (e.g. the
-                // `multipart/form-data; boundary=…` string from `from_dom_form_data`)
-                // doesn't leak when the AnyBlob is torn down.
                 b.free_content_type();
                 b.detach();
                 *self = Any::Blob(Blob::default());

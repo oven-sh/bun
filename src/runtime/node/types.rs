@@ -68,9 +68,6 @@ impl Drop for BlobOrStringOrBuffer {
     fn drop(&mut self) {
         match self {
             Self::Blob(blob) => {
-                // `.blob` is a raw bitwise copy of a live JS Blob — it does NOT own
-                // content_type/name. Only release the store reference.
-                // `StoreRef::drop` (via `Option::take`) calls `Store::deref()`.
                 let _ = blob.store.with_mut(|s| s.take());
             }
             Self::StringOrBuffer(_) => {
@@ -1983,13 +1980,6 @@ impl PathOrBlob {
             ));
         };
         if let Some(blob) = arg.as_class_ref::<Blob>() {
-            // Zig: `blob.*` — a raw bitwise copy with no ref bumps that callers
-            // never `deinit()`. `borrowed_view()` is the sound Rust spelling: it
-            // clones the `StoreRef`/`name` (whose `Drop`s balance the +1) and
-            // aliases `content_type`; `dupe()` would leak the boxed
-            // `content_type` copy. `as_class_ref` is the safe shared-borrow
-            // downcast — the JS wrapper roots the payload while `arg` is on the
-            // stack.
             return Ok(PathOrBlob::Blob(Box::new(blob.borrowed_view())));
         }
         Err(ctx.throw_invalid_argument_type_value(

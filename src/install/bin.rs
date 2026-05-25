@@ -1327,13 +1327,17 @@ impl<'a> Linker<'a> {
             // Git/file dependencies can ship the bin target as a symlink, and
             // `chmod` follows symlinks — a package could point `bin/x` at a file
             // outside node_modules and have the installer change that file's mode.
+            let mode = 0o777 & !(UMASK.load(Ordering::Acquire) as Mode);
+            if sys::lchmod(abs_target, mode).is_ok() {
+                return;
+            }
             let Ok(st) = sys::lstat(abs_target) else {
                 return;
             };
             if sys::posix::s_islnk(st.st_mode as u32) {
                 return;
             }
-            let _ = sys::chmod(abs_target, 0o777 & !(UMASK.load(Ordering::Acquire) as Mode));
+            let _ = sys::chmod(abs_target, mode);
         }
     }
 

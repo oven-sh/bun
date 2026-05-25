@@ -1414,10 +1414,27 @@ pub(crate) fn allocate_package_manager() {
     let ptr =
         bun_core::heap::into_raw(Box::<PackageManager>::new_uninit()).cast::<PackageManager>();
     holder::RAW_PTR.store(ptr, core::sync::atomic::Ordering::Release);
-    bun_core::add_exit_callback(deinit_caches_at_exit);
+    // The exit callback exists only so LeakSanitizer does not report the
+    // caches as still reachable at exit. In non-ASAN builds it is wasted work
+    // at process exit, so don't register it. (`ENABLE_ASAN` is a compile-time
+    // const, so this branch folds away while keeping `deinit_caches_at_exit`
+    // referenced.)
+    if bun_core::Environment::ENABLE_ASAN {
+        bun_core::add_exit_callback(deinit_caches_at_exit);
+    }
 }
 
 extern "C" fn deinit_caches_at_exit() {
+    // Exit callbacks run on whichever thread called `Global::exit()` — e.g.
+    // the HTTP client thread when CA-file validation fails in
+    // `http_thread_on_init_error`. The cache's `MimallocArena` heaps are
+    // created by and belong to the main thread, and the main thread may still
+    // be mutating the cache concurrently, so off-main this would be both a
+    // wrong-thread `mi_heap_destroy` and a data race. Skip it and let the OS
+    // reclaim the memory.
+    if !bun_crash_handler::cli_state::is_main_thread() {
+        return;
+    }
     if !holder::INITIALIZED.load(core::sync::atomic::Ordering::Acquire) {
         return;
     }
@@ -1425,7 +1442,8 @@ extern "C" fn deinit_caches_at_exit() {
     if ptr.is_null() {
         return;
     }
-    // SAFETY: `deinit_caches()` only touches main-thread-owned fields.
+    // SAFETY: `deinit_caches()` only touches main-thread-owned fields, and the
+    // main-thread precondition is checked above (not assumed).
     unsafe { (*ptr).deinit_caches() };
 }
 

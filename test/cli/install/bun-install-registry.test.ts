@@ -260,6 +260,42 @@ describe("certificate authority", () => {
     expect(await exited).toBe(1);
   });
 
+  test("non-existent --cafile with workspaces exits 1 without crashing", async () => {
+    // The workspace walk in `PackageManager::init()` populates the workspace
+    // package.json cache before the HTTP thread starts. When the HTTP thread
+    // then fails CA validation and drives process exit, the exit path must not
+    // tear down that main-thread-owned cache from the HTTP thread.
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "1.1.1" },
+        }),
+      ),
+      ...["a", "b", "c"].map(name =>
+        write(
+          join(packageDir, "packages", name, "package.json"),
+          JSON.stringify({ name: `pkg-${name}`, version: "1.0.0" }),
+        ),
+      ),
+    ]);
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--cafile", "/does/not/exist"],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "pipe",
+      env,
+    });
+    const out = await stdout.text();
+    expect(out).not.toContain("no-deps");
+    const err = await stderr.text();
+    expect(err).toContain(`HTTPThread: could not find CA file: '/does/not/exist'`);
+    expect(await exited).toBe(1);
+  });
+
   test("cafile from bunfig does not exist", async () => {
     await Promise.all([
       write(

@@ -546,46 +546,30 @@ TLSSocket.prototype._start = function _start() {
 };
 
 TLSSocket.prototype._final = function _final(callback) {
-  // Defer the FIN until the TLS handshake completes. net.Socket._final calls
-  // socket.shutdown(), which while SSL is still in init half-closes the write
-  // side before the client's Finished has been flushed — the peer then sees a
-  // bare FIN and reports an incomplete handshake (e.g. socket.end('') right
-  // after tls.connect()). Node's native TLSWrap.DoShutdown likewise waits for
-  // the handshake output before the underlying stream's FIN.
-  // A never-connected TLSSocket (e.g. new tls.TLSSocket().end(cb)) has no
-  // handle and no handshake to wait for; finish immediately like the
-  // no-handle fast path in net.Socket._final, otherwise the deferred
-  // callback would never fire.
-  if (!this._handle) return callback();
-  if (this.secureConnecting) {
-    // Handshake may fail instead of succeeding (peer rejected, cert error,
-    // socket hang up, ...); in that case 'secureConnect' never fires but 'end'
-    // / 'close' / 'error' do. Pair the secureConnect listener with one-shot
-    // cleanup so the _final callback is never stranded and neither listener
-    // outlives the one that fires.
-    const onSecure = () => {
-      this.removeListener("end", onEnd);
-      this.removeListener("error", onErr);
-      NetSocket.prototype._final.$call(this, callback);
-    };
-    const onEnd = () => {
-      this.removeListener("secureConnect", onSecure);
-      this.removeListener("error", onErr);
-      // Socket is already half/fully closed on the wire — nothing to flush.
-      callback();
-    };
-    const onErr = err => {
-      this.removeListener("secureConnect", onSecure);
-      this.removeListener("end", onEnd);
-      callback(err);
-    };
-    this.once("secureConnect", onSecure);
-    this.once("end", onEnd);
-    this.once("error", onErr);
-    return;
+  // net.Socket._final half-closes the write side with socket.shutdown() so a
+  // loopback echo peer's bytes (issue #31383) still arrive on a plain TCP/unix
+  // socket. That half-close model doesn't fit TLS: there is no TCP-level
+  // SHUT_WR analogue for an encrypted stream (the close_notify alert has to be
+  // driven through the SSL state machine), and routing TLS `.end()` through
+  // shutdown() left the SSL shutdown half-done across several transports
+  // (upgraded-duplex TLS-over-TLS, Windows named pipes, and a plain TLS server
+  // socket) — the peer saw neither a flushed close_notify nor a FIN and
+  // teardown hung. Keep the pre-#31383 behavior for TLS: socket.$end() runs
+  // the full write-then-graceful-SSL-close path (endBuffered → internalFlush →
+  // markInactive → closeAndDetach(.normal)), which sends close_notify and
+  // closes once the peer replies. A never-connected TLSSocket (e.g.
+  // new tls.TLSSocket().end(cb)) has no handle and nothing to flush.
+  if (this.connecting) {
+    return this.once("connect", () => this._final(callback));
   }
-  return NetSocket.prototype._final.$call(this, callback);
+  const socket = this._handle;
+  if (!socket) return callback();
+  process.nextTick(tlsEndNT, socket, callback);
 };
+function tlsEndNT(socket, callback) {
+  socket.$end();
+  callback();
+}
 
 TLSSocket.prototype.getSession = function getSession() {
   return this._handle?.getSession?.();

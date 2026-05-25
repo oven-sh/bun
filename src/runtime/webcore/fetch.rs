@@ -508,9 +508,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // `init` is a Web IDL dictionary; a non-nullish primitive must reject with
     // TypeError. Checked *after* `StringOrURL::from_js` so that a throwing
     // `toString` on an object `input` surfaces first (WebIDL left-to-right
-    // argument conversion). `url_str_optional`'s WTFStringImpl +1 is released
-    // by its `Drop` when we return `Err` here — no explicit deref needed in
-    // Rust (unlike the Zig original which paired it with `defer`).
+    // argument conversion).
     let options_object: Option<JSValue> = 'brk: {
         let Some(options) = init_arg else {
             break 'brk None;
@@ -521,12 +519,25 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         if options.is_object() || options.js_type() == jsc::JSType::DOMWrapper {
             break 'brk Some(options);
         }
-        return Err(global_this
-            .err(
-                jsc::ErrorCode::INVALID_ARG_TYPE,
-                format_args!("The \"init\" argument must be of type object, undefined, or null."),
-            )
-            .throw());
+        // `fetch()` returns a Promise, so argument-conversion failures reject
+        // rather than throw synchronously (WebIDL §3.7.10) — matches every
+        // other validation error in this function and the `.zig` reference.
+        // `bun_core::String` is `Copy` with NO `Drop`, so the +1 WTFStringImpl
+        // ref from `StringOrURL::from_js` must be released explicitly here; the
+        // `OwnedString` wrap that normally does this is past the early return.
+        if let Some(s) = url_str_optional {
+            s.deref();
+        }
+        let err = ctx.to_type_error(
+            jsc::ErrorCode::INVALID_ARG_TYPE,
+            format_args!("The \"init\" argument must be of type object, undefined, or null."),
+        );
+        return Ok(
+            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global_this,
+                err,
+            ),
+        );
     };
 
     let request_init_object: Option<JSValue> = 'brk: {

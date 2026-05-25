@@ -1132,8 +1132,10 @@ impl Request {
         }
 
         // https://fetch.spec.whatwg.org/#dom-request — init is a Web IDL dictionary.
-        // Checked after the url-string branch so an invalid-URL error on a string
-        // input surfaces first.
+        // Checked after the first-argument `BunString::from_js` call above so that a
+        // throwing `toString` on that argument surfaces first, matching WebIDL
+        // left-to-right argument conversion. (URL validity is checked much later,
+        // after `init` has been consumed.)
         if arguments.len() > 1 && !arguments[1].is_undefined_or_null() && !arguments[1].is_object()
         {
             bail!(Err(global_this

@@ -366,6 +366,21 @@ describe("errors", () => {
     }).toThrow("plugin target must be one of 'node', 'bun' or 'browser'");
   });
 
+  it("handles a 'target' that throws while being converted to a string", () => {
+    const opts = {
+      setup: () => {},
+      target: {
+        [Symbol.toPrimitive]() {
+          return [];
+        },
+      },
+    };
+
+    expect(() => {
+      plugin(opts as any);
+    }).toThrow("Symbol.toPrimitive returned an object");
+  });
+
   it("invalid loaders throw", () => {
     const invalidLoaders = ["blah", "blah2", "blah3", "blah4"];
     const inputs = ["body { background: red; }", "<h1>hi</h1>", '{"hi": "there"}', "hi"];

@@ -329,15 +329,22 @@ class BunWebSocket extends EventEmitter {
     this.emit("upgrade", res);
   }
 
-  #onOrOnce(event, listener, once) {
+  // Wire the native `#ws` listener that forwards an event to this EventEmitter,
+  // without registering a user listener. `once` truthy means the caller is a
+  // `once`/`prependOnceListener` registration (the native listener auto-removes
+  // and the persistent `#eventId` bit is not set). Shared by every
+  // subscription entry point (`on`/`once`/`addListener`/`prepend*`) so they all
+  // arm the bridge consistently.
+  #armNativeBridge(event, once) {
     if (event === "unexpected-response" || event === "redirect") {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
+      return;
     }
     if (event === "upgrade") {
       // Lazily wire the native handshake listener; `upgrade` is emitted from
       // #onHandshake.
       this.#ensureHandshakeListener();
-      return once ? super.once(event, listener) : super.on(event, listener);
+      return;
     }
     const mask = 1 << eventIds[event];
     const hasPersistentListener = mask && (this.#eventId & mask) === mask;
@@ -409,6 +416,10 @@ class BunWebSocket extends EventEmitter {
         );
       }
     }
+  }
+
+  #onOrOnce(event, listener, once) {
+    this.#armNativeBridge(event, once);
     return once ? super.once(event, listener) : super.on(event, listener);
   }
 
@@ -418,6 +429,26 @@ class BunWebSocket extends EventEmitter {
 
   once(event, listener) {
     return this.#onOrOnce(event, listener, onceObject);
+  }
+
+  // `addListener` is an alias of `on`; `prependListener`/`prependOnceListener`
+  // add to the front of the listener list. ws / EventEmitter consumers reach
+  // for all of these, so each must arm the native bridge too — otherwise the
+  // handler sits on the EventEmitter list but the native event that drives
+  // `this.emit(...)` is never wired up and the callback silently never fires
+  // (e.g. `ws.addListener("upgrade", cb)`).
+  addListener(event, listener) {
+    return this.#onOrOnce(event, listener, undefined);
+  }
+
+  prependListener(event, listener) {
+    this.#armNativeBridge(event, undefined);
+    return super.prependListener(event, listener);
+  }
+
+  prependOnceListener(event, listener) {
+    this.#armNativeBridge(event, onceObject);
+    return super.prependOnceListener(event, listener);
   }
 
   send(data, opts, cb) {

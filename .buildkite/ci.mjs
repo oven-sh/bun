@@ -49,10 +49,9 @@ import {
  * @property {Profile} [profile]
  * @property {boolean} [crossCompile]
  *   Build on a Linux host for a foreign target OS (currently: darwin).
- *   Keys/labels/artifacts get a `-cross` suffix so they never collide with
- *   the native lanes for the same target, and agents/images resolve to the
- *   Linux build fleet. FreeBSD/Android don't set this — they have no native
- *   lane to collide with and already imply a Linux host.
+ *   Agents/images resolve to the Linux build fleet; keys/labels/artifacts are
+ *   unaffected — these ARE the darwin lanes, there is no native macOS build.
+ *   FreeBSD/Android don't set this — they already imply a Linux host.
  */
 
 /**
@@ -60,7 +59,7 @@ import {
  * @returns {string}
  */
 function getTargetKey(target) {
-  const { os, arch, abi, baseline, profile, crossCompile } = target;
+  const { os, arch, abi, baseline, profile } = target;
   let key = `${os}-${arch}`;
   if (abi) {
     key += `-${abi}`;
@@ -71,9 +70,6 @@ function getTargetKey(target) {
   if (profile && profile !== "release") {
     key += `-${profile}`;
   }
-  if (crossCompile) {
-    key += "-cross";
-  }
   return key;
 }
 
@@ -82,7 +78,7 @@ function getTargetKey(target) {
  * @returns {string}
  */
 function getTargetLabel(target) {
-  const { os, arch, abi, baseline, profile, crossCompile } = target;
+  const { os, arch, abi, baseline, profile } = target;
   let label = `${getBuildkiteEmoji(os)} ${arch}`;
   if (abi) {
     label += `-${abi}`;
@@ -92,9 +88,6 @@ function getTargetLabel(target) {
   }
   if (profile && profile !== "release") {
     label += `-${profile}`;
-  }
-  if (crossCompile) {
-    label += "-cross";
   }
   return label;
 }
@@ -134,8 +127,13 @@ function getAzureVmSize(os, arch, tier = "build") {
  * @type {Platform[]}
  */
 const buildPlatforms = [
-  { os: "darwin", arch: "aarch64", release: "14" },
-  { os: "darwin", arch: "x64", release: "14" },
+  // macOS is cross-compiled from glibc amazonlinux (clang --target + the
+  // Apple SDK fetched by xmac + ld64.lld — see scripts/build/macos-sdk.ts and
+  // scripts/build/flags.ts). There is no native macOS build lane: the mac
+  // fleet only runs tests, against these artifacts (see testPlatforms), and
+  // these are the darwin artifacts the release ships.
+  { os: "darwin", arch: "aarch64", crossCompile: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
+  { os: "darwin", arch: "x64", crossCompile: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
@@ -151,12 +149,6 @@ const buildPlatforms = [
   // same model as Android. Target os/arch are explicit.
   { os: "freebsd", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "freebsd", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  // macOS cross-compiled from glibc amazonlinux (clang --target + macOS SDK +
-  // ld64.lld — see scripts/build/macos-sdk.ts). The darwin test steps run
-  // against these artifacts (see testPlatforms); the native darwin lanes
-  // above still produce the artifacts that ship from the release step.
-  { os: "darwin", arch: "aarch64", crossCompile: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "darwin", arch: "x64", crossCompile: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "windows", arch: "x64", release: "2019" },
   { os: "windows", arch: "x64", baseline: true, release: "2019" },
   { os: "windows", arch: "aarch64", release: "11" },
@@ -172,13 +164,12 @@ const testPlatforms = [
   // whichever Intel box is free. Intel Macs can't run latest macOS and the
   // tier split bottlenecked the smaller pool, so x64 trades guaranteed
   // version coverage for throughput. The `release` field only labels the step.
-  // crossCompile: the darwin test suite runs against the Linux-built
-  // (`-cross`) artifacts — the test steps download from the
-  // `darwin-<arch>-cross-build-bun` steps. Tests still run on real macOS
-  // agents (getTestAgent ignores crossCompile).
-  { os: "darwin", arch: "aarch64", release: "26", tier: "latest", crossCompile: true },
-  { os: "darwin", arch: "aarch64", release: "14", tier: "previous", crossCompile: true },
-  { os: "darwin", arch: "x64", release: "14", tier: "latest", crossCompile: true },
+  // The darwin test suite runs on real macOS agents against the Linux-built
+  // artifacts from the `darwin-<arch>-build-bun` steps (the only darwin build
+  // lanes — see buildPlatforms).
+  { os: "darwin", arch: "aarch64", release: "26", tier: "latest" },
+  { os: "darwin", arch: "aarch64", release: "14", tier: "previous" },
+  { os: "darwin", arch: "x64", release: "14", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "13", tier: "latest" },
@@ -670,7 +661,7 @@ function getLinkBunStep(platform, options) {
  * @returns {string}
  */
 function getTargetTriplet(platform) {
-  const { os, arch, abi, baseline, crossCompile } = platform;
+  const { os, arch, abi, baseline } = platform;
   let triplet = `bun-${os}-${arch}`;
   if (abi === "musl") {
     triplet += "-musl";
@@ -680,11 +671,6 @@ function getTargetTriplet(platform) {
   }
   if (baseline) {
     triplet += "-baseline";
-  }
-  if (crossCompile) {
-    // Matches computeBunTriplet() in scripts/build/ci.ts — cross-built
-    // artifacts must never collide with the native lanes' zips.
-    triplet += "-cross";
   }
   return triplet;
 }
@@ -974,9 +960,7 @@ function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
 
-  // The release only ships artifacts from the native lanes; -cross lanes are
-  // build verification and must not be able to block a release.
-  const releasePlatforms = buildPlatforms.filter(p => !p.crossCompile);
+  const releasePlatforms = buildPlatforms;
 
   // When signing ran, depend on windows-sign instead of the raw Windows builds
   // so we wait for signed artifacts before releasing.
@@ -1200,16 +1184,13 @@ function getOptionsStep() {
         multiple: true,
         default: [],
         options: buildPlatforms.map(platform => {
-          const { os, arch, abi, baseline, crossCompile } = platform;
+          const { os, arch, abi, baseline } = platform;
           let label = `${getEmoji(os)} ${arch}`;
           if (abi) {
             label += `-${abi}`;
           }
           if (baseline) {
             label += `-baseline`;
-          }
-          if (crossCompile) {
-            label += `-cross`;
           }
           return {
             label,
@@ -1228,8 +1209,7 @@ function getOptionsStep() {
         // into the first (plain) entry since profiles come from `build-profiles`.
         // The option value must be that entry's *platform* key: it's what
         // getPipelineOptions() resolves through testPlatformsMap, and the image
-        // key isn't a platform key (for the darwin `-cross` lanes it names the
-        // linux host image).
+        // key isn't a platform key.
         options: testPlatforms
           .filter((platform, index, array) => index === array.findIndex(p => getImageKey(p) === getImageKey(platform)))
           .map(platform => {
@@ -1490,10 +1470,8 @@ async function getPipeline(options = {}) {
     }
   }
 
-  // Binary-size tracking covers the artifacts that ship — the -cross lanes
-  // build the same sources for the same targets, so their sizes would be
-  // redundant noise in the baseline comparison.
-  const strippedPlatforms = buildPlatforms.filter(p => (p.profile ?? "release") === "release" && !p.crossCompile);
+  // Binary-size tracking covers the artifacts that ship.
+  const strippedPlatforms = buildPlatforms.filter(p => (p.profile ?? "release") === "release");
   if (!buildId && strippedPlatforms.length) {
     steps.push(getBinarySizeStep(strippedPlatforms, options, { recordOnly: isMainBranch() }));
   }

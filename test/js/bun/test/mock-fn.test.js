@@ -796,31 +796,31 @@ describe("mock()", () => {
   });
 
   test("can be invoked with new", () => {
-    const noImpl = mock();
+    const noImpl = jest.fn();
     const instance = new noImpl();
     expect(instance).toBeInstanceOf(Object);
     expect(noImpl.mock.contexts[0]).toBe(instance);
     expect(Reflect.construct(noImpl, [])).toBeInstanceOf(Object);
 
-    const primitiveImpl = mock(() => 42);
+    const primitiveImpl = jest.fn(() => 42);
     expect(new primitiveImpl()).toBeInstanceOf(Object);
     expect(primitiveImpl.mock.results[0]).toEqual({ type: "return", value: 42 });
 
-    const usesThis = mock(function () {
+    const usesThis = jest.fn(function () {
       this.x = 1;
     });
     expect(new usesThis()).toEqual({ x: 1 });
 
-    const returnsObject = mock(() => ({ y: 2 }));
+    const returnsObject = jest.fn(() => ({ y: 2 }));
     expect(new returnsObject()).toEqual({ y: 2 });
 
-    const throws = mock(() => {
+    const throws = jest.fn(() => {
       throw new Error("boom");
     });
     expect(() => new throws()).toThrow("boom");
 
     class Target {}
-    const withNewTarget = mock();
+    const withNewTarget = jest.fn();
     expect(Object.getPrototypeOf(Reflect.construct(withNewTarget, [], Target))).toBe(Target.prototype);
   });
 });

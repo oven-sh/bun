@@ -3043,23 +3043,18 @@ pub mod args {
         }
     }
 
-    /// Zig: `fn wrapTo(comptime T: type, in: i64) T` where `T` is unsigned.
     /// Only ever instantiated with `uid_t`/`gid_t` — `u32` on POSIX, `u8` on
     /// Windows (libuv's `uv_uid_t`/`uv_gid_t` are `unsigned char`). Hard-code
     /// the per-platform wrap rather than pulling `num_traits`.
     #[cfg(not(windows))]
     #[inline]
     fn wrap_to<T: From<u32>>(in_: i64) -> T {
-        // Zig spec (node_fs.zig:1586): `@intCast(@mod(in, std.math.maxInt(T)))`
-        // — modulus is `u32::MAX` (2^32 - 1), **not** 2^32. So `-1 → 4294967294`
-        // and `4294967295 → 0`. Match the spec exactly.
-        T::from(in_.rem_euclid(u32::MAX as i64) as u32)
+        T::from(in_ as u32)
     }
     #[cfg(windows)]
     #[inline]
     fn wrap_to<T: From<u8>>(in_: i64) -> T {
-        // Same `@mod(in, maxInt(T))` semantics with `T = u8`.
-        T::from(in_.rem_euclid(u8::MAX as i64) as u8)
+        T::from(in_ as u8)
     }
 
     pub type LChown = Chown;
@@ -3791,6 +3786,7 @@ pub mod args {
         pub length: u64,
         pub position: Option<ReadPosition>,
         pub encoding: Encoding,
+        pub pinned: bool,
     }
     impl Default for Write {
         fn default() -> Self {
@@ -3801,12 +3797,18 @@ pub mod args {
                 length: u64::MAX,
                 position: None,
                 encoding: Encoding::Buffer,
+                pinned: false,
             }
         }
     }
     impl Unprotect for Write {
         #[inline]
         fn unprotect(&mut self) {
+            if self.pinned {
+                if let Some(buffer) = self.buffer.buffer() {
+                    buffer.buffer.unpin();
+                }
+            }
             self.buffer.unprotect();
         }
     }
@@ -3924,6 +3926,15 @@ pub mod args {
                             arguments.eat();
                         }
                     }
+                }
+            }
+            if arguments.will_be_async && matches!(args.buffer, StringOrBuffer::Buffer(_)) {
+                if let Some(pinned) = bv.as_pinned_arraybuffer(ctx) {
+                    args.buffer = StringOrBuffer::Buffer(Buffer {
+                        buffer: pinned,
+                        owns_buffer: false,
+                    });
+                    args.pinned = true;
                 }
             }
             Ok(args)
@@ -7709,7 +7720,16 @@ impl NodeFS {
             // SAFETY: instance() returns the leaked singleton; INSTANCE_LOADED checked above.
             let fs = FileSystem::get();
             let parts = [fs.top_level_dir, path_slice];
-            let path_len = fs.abs_buf(&parts, &mut inbuf[..]).len();
+            let inbuf_len = inbuf.len();
+            let Some(joined) = fs.abs_buf_checked(&parts, &mut inbuf[..inbuf_len - 1]) else {
+                return Err(sys::Error {
+                    errno: E::ENAMETOOLONG as _,
+                    syscall: sys::Tag::realpath,
+                    path: args.path.slice().into(),
+                    ..Default::default()
+                });
+            };
+            let path_len = joined.len();
             inbuf[path_len] = 0;
             let path = ZStr::from_buf(&inbuf[..], path_len);
 

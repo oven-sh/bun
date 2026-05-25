@@ -41,7 +41,7 @@ const {
   validateNumber,
 } = require("internal/validators");
 
-const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
+const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBunStringWidth", 1);
 
 const PromiseReject = Promise.$reject;
 

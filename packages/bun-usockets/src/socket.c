@@ -73,11 +73,11 @@ void us_socket_local_address(struct us_socket_t *s, char *buf, int *length) {
     }
 }
 
-struct us_socket_group_t *us_socket_group(struct us_socket_t *s) {
+__attribute__((always_inline)) struct us_socket_group_t *us_socket_group(struct us_socket_t *s) {
     return s->group;
 }
 
-unsigned char us_socket_kind(struct us_socket_t *s) {
+__attribute__((always_inline)) unsigned char us_socket_kind(struct us_socket_t *s) {
     return s->kind;
 }
 
@@ -89,7 +89,7 @@ void us_socket_set_ssl_raw_tap(struct us_socket_t *s, int enabled) {
     s->ssl_raw_tap = !!enabled;
 }
 
-int us_socket_is_tls(struct us_socket_t *s) {
+__attribute__((always_inline)) int us_socket_is_tls(struct us_socket_t *s) {
     return s->ssl != NULL;
 }
 
@@ -101,7 +101,7 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) {
     return c->kind;
 }
 
-void us_socket_timeout(struct us_socket_t *s, unsigned int seconds) {
+__attribute__((always_inline)) void us_socket_timeout(struct us_socket_t *s, unsigned int seconds) {
     if (seconds) {
         s->timeout = ((unsigned int)s->group->timestamp + ((seconds + 3) >> 2)) % 240;
     } else {
@@ -117,7 +117,7 @@ void us_connecting_socket_timeout(struct us_connecting_socket_t *c, unsigned int
     }
 }
 
-void us_socket_long_timeout(struct us_socket_t *s, unsigned int minutes) {
+__attribute__((always_inline)) void us_socket_long_timeout(struct us_socket_t *s, unsigned int minutes) {
     if (minutes) {
         s->long_timeout = ((unsigned int)s->group->long_timestamp + minutes) % 240;
     } else {
@@ -133,13 +133,13 @@ void us_connecting_socket_long_timeout(struct us_connecting_socket_t *c, unsigne
     }
 }
 
-void us_socket_flush(struct us_socket_t *s) {
+__attribute__((always_inline)) void us_socket_flush(struct us_socket_t *s) {
     if (!us_socket_is_shut_down(s)) {
         bsd_socket_flush(us_poll_fd((struct us_poll_t *) s));
     }
 }
 
-int us_socket_is_closed(struct us_socket_t *s) {
+__attribute__((always_inline)) int us_socket_is_closed(struct us_socket_t *s) {
     return s->flags.is_closed;
 }
 
@@ -161,7 +161,7 @@ int us_connecting_socket_is_closed(struct us_connecting_socket_t *c) {
     return c->closed;
 }
 
-int us_socket_is_established(struct us_socket_t *s) {
+__attribute__((always_inline)) int us_socket_is_established(struct us_socket_t *s) {
     /* Everything that is not POLL_TYPE_SEMI_SOCKET is established */
     return us_internal_poll_type((struct us_poll_t *) s) != POLL_TYPE_SEMI_SOCKET;
 }
@@ -324,7 +324,7 @@ struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code
     return s;
 }
 
-struct us_socket_t *us_socket_close(struct us_socket_t *s, int code, void *reason) {
+__attribute__((always_inline)) struct us_socket_t *us_socket_close(struct us_socket_t *s, int code, void *reason) {
     if (s->ssl && !us_socket_is_closed(s)) {
         return us_internal_ssl_close(s, code, reason);
     }
@@ -526,15 +526,15 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
 }
 #endif
 
-void *us_socket_ext(struct us_socket_t *s) {
+__attribute__((always_inline)) void *us_socket_ext(struct us_socket_t *s) {
     return s + 1;
 }
 
-void *us_connecting_socket_ext(struct us_connecting_socket_t *c) {
+__attribute__((always_inline)) void *us_connecting_socket_ext(struct us_connecting_socket_t *c) {
     return c + 1;
 }
 
-int us_socket_is_shut_down(struct us_socket_t *s) {
+__attribute__((always_inline)) int us_socket_is_shut_down(struct us_socket_t *s) {
     if (s->ssl) {
         return us_internal_ssl_is_shut_down(s);
     }
@@ -556,7 +556,7 @@ void us_internal_socket_raw_shutdown(struct us_socket_t *s) {
     }
 }
 
-void us_socket_shutdown(struct us_socket_t *s) {
+__attribute__((always_inline)) void us_socket_shutdown(struct us_socket_t *s) {
     if (s->ssl) {
         us_internal_ssl_shutdown(s);
         return;

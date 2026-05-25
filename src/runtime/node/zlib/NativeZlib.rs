@@ -198,11 +198,6 @@ mod _impl {
                 write_callback.with_async_context_if_needed(global),
             );
 
-            // Keep the dictionary alive by keeping a reference to it in the JS object.
-            if dictionary.is_some() {
-                js::dictionary_set_cached(this_value, global, arguments.ptr[6]);
-            }
-
             self.stream
                 .with_mut(|s| s.init(level, window_bits, mem_level, strategy, dictionary));
 
@@ -264,10 +259,7 @@ pub struct Context {
     pub state: c::z_stream,
     pub err: c::ReturnCode,
     pub flush: c::FlushValue,
-    // Borrows a JS ArrayBuffer kept alive via `js::dictionary_set_cached`
-    // (BACKREF/FFI class) for the lifetime of the JS wrapper, which strictly
-    // outlives this Context — `RawSlice` invariant. Default is `EMPTY`.
-    pub dictionary: bun_ptr::RawSlice<u8>,
+    pub dictionary: Vec<u8>,
     pub gzip_id_bytes_read: u8,
 }
 
@@ -278,7 +270,7 @@ impl Default for Context {
             state: bun_core::ffi::zeroed::<c::z_stream>(),
             err: c::ReturnCode::Ok,
             flush: c::FlushValue::NoFlush,
-            dictionary: bun_ptr::RawSlice::EMPTY,
+            dictionary: Vec::new(),
             gzip_id_bytes_read: 0,
         }
     }
@@ -290,7 +282,7 @@ impl Context {
 
     #[inline]
     fn dictionary(&self) -> &[u8] {
-        self.dictionary.slice()
+        &self.dictionary
     }
 
     pub fn init(
@@ -315,10 +307,9 @@ impl Context {
             ZSTD_COMPRESS | ZSTD_DECOMPRESS => unreachable!(),
         };
 
-        // See field comment on `dictionary` — `RawSlice` invariant.
         self.dictionary = match dictionary {
-            Some(d) => bun_ptr::RawSlice::new(d),
-            None => bun_ptr::RawSlice::EMPTY,
+            Some(d) => d.to_vec(),
+            None => Vec::new(),
         };
 
         match self.mode {
@@ -369,11 +360,11 @@ impl Context {
         };
         self.err = c::ReturnCode::Ok;
         match self.mode {
-            // SAFETY: FFI — state is an initialized deflate stream; dict_ptr/dict_len borrow a rooted ArrayBuffer.
+            // SAFETY: FFI — state is an initialized deflate stream; dict_ptr/dict_len borrow the Context-owned dictionary copy.
             DEFLATE | DEFLATERAW => unsafe {
                 self.err = c::deflateSetDictionary(&raw mut self.state, dict_ptr, dict_len);
             },
-            // SAFETY: FFI — state is an initialized inflate stream; dict_ptr/dict_len borrow a rooted ArrayBuffer.
+            // SAFETY: FFI — state is an initialized inflate stream; dict_ptr/dict_len borrow the Context-owned dictionary copy.
             INFLATERAW => unsafe {
                 self.err = c::inflateSetDictionary(&raw mut self.state, dict_ptr, dict_len);
             },
@@ -556,7 +547,7 @@ impl Context {
                 let dict = self.dictionary();
                 (dict.as_ptr(), u32::try_from(dict.len()).expect("int cast"))
             };
-            // SAFETY: FFI — state is an initialized inflate stream; dict is rooted.
+            // SAFETY: FFI — state is an initialized inflate stream; dict is the Context-owned copy.
             self.err = unsafe { c::inflateSetDictionary(&raw mut self.state, dict_ptr, dict_len) };
 
             if self.err == c::ReturnCode::Ok {

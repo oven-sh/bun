@@ -4519,6 +4519,50 @@ describe("minifyWhitespace keeps the space before keyword operators", () => {
   });
 });
 
+it("transform() result is unaffected by detaching the input ArrayBuffer while the task is in flight", async () => {
+  // The async transform parses the input on a work-pool thread. The input bytes
+  // must be copied before the thread hop so that detaching the ArrayBuffer from
+  // the JS thread mid-parse cannot change or free the memory being read.
+  const script = `
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    const size = 1 << 20;
+    const source = "export const original = 12345;";
+    const bytes = new Uint8Array(size).fill(0x20);
+    new TextEncoder().encodeInto(source, bytes);
+    const expected = transpiler.transformSync(new TextDecoder().decode(bytes), "js");
+
+    const promise = transpiler.transform(bytes, "js");
+    // Detach the backing store while the worker thread may still be parsing it.
+    bytes.buffer.transfer(0);
+    // Recycle similarly-sized allocations holding different valid JS so a stale
+    // read of the old backing store would produce observably different output.
+    const decoys = [];
+    for (let i = 0; i < 8; i++) {
+      const decoy = new Uint8Array(size).fill(0x20);
+      new TextEncoder().encodeInto("export const replaced" + i + " = " + i + ";", decoy);
+      decoys.push(decoy);
+    }
+    const out = await promise;
+    if (out === expected && !out.includes("replaced")) {
+      console.log("OK");
+    } else {
+      console.log("MISMATCH " + JSON.stringify(out.slice(0, 200)));
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+});
+
 // A numeric literal property name like `1e999` overflows to the number Infinity, which the
 // printer emits as "1/0" / "1 / 0". That is not valid syntax in property-name position, so such
 // keys must be printed as computed properties instead.
@@ -4562,4 +4606,52 @@ describe("numeric property keys that overflow to Infinity", () => {
     `);
     expect(new Function(`${out}; return result;`)()).toEqual(["object", "destructured", "method", "static"]);
   });
+});
+
+describe("parse error flood", () => {
+  it("reports duplicate-binding floods in linear time", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const transpiler = new Bun.Transpiler({
+            loader: "js",
+            target: "browser",
+            minifyWhitespace: true,
+            deadCodeElimination: true,
+          });
+          const check = (label, statement, repeats) => {
+            const input = Buffer.alloc(statement.length * repeats, statement).toString();
+            let threw;
+            try {
+              transpiler.transformSync(input);
+            } catch (e) {
+              threw = e;
+            }
+            if (threw?.name !== "AggregateError") throw new Error("expected AggregateError, got " + threw);
+            if (!threw.errors.some(e => String(e.message).includes("has already been declared"))) {
+              throw new Error("expected duplicate-declaration errors");
+            }
+            console.log("OK " + label);
+          };
+          const bindings = Buffer.alloc(420, "a,").toString();
+          check("template catch flood", "try {} catch ([" + bindings + "a, \`]) {}\\n", 800);
+          check("duplicate catch flood", "try {} catch ([" + bindings + "a]) {}\\n", 400);
+          console.log("DONE");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("OK template catch flood");
+    expect(stdout).toContain("OK duplicate catch flood");
+    expect(stdout).toContain("DONE");
+    expect(exitCode).toBe(0);
+  }, 90_000);
 });

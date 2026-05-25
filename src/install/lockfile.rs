@@ -3336,16 +3336,14 @@ pub mod default_trusted_dependencies {
 impl Lockfile {
     pub fn has_trusted_dependency(
         &self,
-        alias: &[u8],
+        _alias: &[u8],
         pkg_name: &[u8],
         resolution: &Resolution,
     ) -> bool {
         if let Some(trusted_dependencies) = &self.trusted_dependencies {
-            let hash = SemverStringBuilder::string_hash(alias) as u32;
-            // Empty value = legacy bun.lockb sentinel (no name stored);
-            // match by hash alone.
+            let hash = SemverStringBuilder::string_hash(pkg_name) as u32;
             return match trusted_dependencies.get(&hash) {
-                Some(name) => name.is_empty() || **name == *alias,
+                Some(name) => !name.is_empty() && **name == *pkg_name,
                 None => false,
             };
         }
@@ -3354,7 +3352,34 @@ impl Lockfile {
         // resolved package's real name, not the dependency alias, so an
         // `npm:`-aliased package can't inherit trust from a default-trusted
         // name.
-        resolution.tag == ResolutionTag::Npm && default_trusted_dependencies::has(pkg_name)
+        if resolution.tag != ResolutionTag::Npm || !default_trusted_dependencies::has(pkg_name) {
+            return false;
+        }
+
+        let buf = self.buffers.string_bytes.as_slice();
+        let npm = resolution.npm();
+        let url = npm.url.slice(buf);
+        if url.is_empty() {
+            return true;
+        }
+        let registry = PackageManager::get()
+            .scope_for_package_name(pkg_name)
+            .url
+            .href();
+        let Ok(canonical_url) = crate::extract_tarball::build_url_with_printer(
+            registry,
+            &strings::StringOrTinyString::init(pkg_name),
+            npm.version,
+            buf,
+            |args| -> Result<Vec<u8>, std::io::Error> {
+                let mut out: Vec<u8> = Vec::new();
+                out.write_fmt(args)?;
+                Ok(out)
+            },
+        ) else {
+            return false;
+        };
+        url == canonical_url.as_slice()
     }
 }
 

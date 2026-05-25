@@ -13,6 +13,7 @@ import { assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja, Rule } from "./ninja.ts";
 import { quote } from "./shell.ts";
+import { machoPostlinkCommand } from "./shims.ts";
 import { streamPath } from "./stream.ts";
 
 // ---------------------------------------------------------------------------
@@ -149,11 +150,16 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // everything after passes verbatim to lld-link. Our ldflags are all
   // pure linker options (/STACK, /DEF, /OPT, /errorlimit, system libs)
   // that clang-cl's driver doesn't recognize.
+  //
+  // Darwin cross links append `&& macho-postlink $out ...` (the suffix is
+  // empty everywhere else): ninja runs the whole command through `sh -c`,
+  // so the fixup runs after the link succeeds and the declared output is
+  // already the final, patched, re-signed artifact. See shims.ts.
   const wrap = `${cfg.jsRuntime} ${q(streamPath)} link --console`;
   n.rule("link", {
     command: cfg.windows
       ? `${wrap} ${cxx} /nologo -fuse-ld=lld @$out.rsp /Fe$out /link $ldflags`
-      : `${wrap} ${cxx} @$out.rsp $ldflags -o $out`,
+      : `${wrap} ${cxx} @$out.rsp $ldflags -o $out${machoPostlinkCommand(cfg)}`,
     description: "link $out",
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",

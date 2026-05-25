@@ -360,7 +360,6 @@ pub mod bun_object {
         BunObject_callback_sha => super::static_adapters::sha,
         BunObject_callback_shellEscape => super::shell_escape,
         BunObject_callback_shrink => super::shrink,
-        BunObject_callback_stringWidth => super::string_width,
         BunObject_callback_sleepSync => super::sleep_sync,
         BunObject_callback_spawn => super::static_adapters::subprocess_spawn,
         BunObject_callback_spawnSync => super::static_adapters::subprocess_spawn_sync,
@@ -571,6 +570,9 @@ pub(crate) fn braces(
             return Err(
                 global.throw_pretty(format_args!("Unexpected token while expanding braces"))
             );
+        }
+        Err(Braces::ParserError::TooManyBraces) => {
+            return Err(global.throw_pretty(format_args!("Too many braces in brace expansion")));
         }
     }
 
@@ -2184,14 +2186,6 @@ pub(crate) fn get_semver(global_this: &JSGlobalObject, _: &JSObject) -> JSValue 
 
 pub(crate) fn get_unsafe(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     UnsafeObject::create(global_this)
-}
-
-#[bun_jsc::host_fn]
-pub(crate) fn string_width(
-    global_object: &JSGlobalObject,
-    call_frame: &CallFrame,
-) -> JsResult<JSValue> {
-    bun_jsc::bun_string_jsc::js_get_string_width(global_object, call_frame)
 }
 
 /// EnvironmentVariables is runtime defined.

@@ -379,17 +379,20 @@ export function resolveLlvmToolchain(
   | "ar"
   | "ranlib"
   | "ld"
+  | "ld64Lld"
   | "rustLld"
   | "rustLlvmVersion"
   | "rustSysroot"
   | "rustHostTriple"
   | "strip"
+  | "llvmStrip"
   | "dsymutil"
   | "ccache"
   | "rc"
   | "mt"
   | "nasm"
   | "clangVersion"
+  | "clangResourceDir"
 > {
   // Compute search paths ONCE. Contains a brew spawn on macOS (~100ms)
   // so calling it per-tool would burn ~600ms. Every tool below gets
@@ -409,6 +412,23 @@ export function resolveLlvmToolchain(
     checkVersion: false,
     required: true,
   })?.path;
+
+  // Resource dir (builtin headers live at <resource-dir>/include). Needed by
+  // darwin cross-compiles, which rebuild the include search path explicitly
+  // (-nostdinc) so nothing from the build host can leak in. One ~10ms spawn;
+  // skipped on Windows where nothing consumes it.
+  let clangResourceDir: string | undefined;
+  if (os !== "windows") {
+    const probe = spawnSync(ccResult!.path, ["-print-resource-dir"], {
+      encoding: "utf8",
+      timeout: 30_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (!probe.error && probe.status === 0) {
+      const dir = (probe.stdout ?? "").trim();
+      if (dir.length > 0) clangResourceDir = dir;
+    }
+  }
 
   // ar: llvm-ar (or llvm-lib on Windows)
   // No version check — ar doesn't always print a parseable version,
@@ -440,18 +460,35 @@ export function resolveLlvmToolchain(
     ld = ""; // darwin: unused
   }
 
-  // strip: GNU strip on Linux (more features), llvm-strip elsewhere
-  let strip: string;
-  if (os === "linux") {
-    strip = findTool({ names: ["strip"], required: true, hint: "Install binutils for your distro" })?.path ?? "";
-  } else {
-    strip = findLlvmTool("llvm-strip", paths, os, { checkVersion: false, required: true })?.path ?? "";
+  // ld64.lld: lld's Mach-O port. Only used when a non-darwin host
+  // cross-compiles FOR darwin (resolveConfig swaps it in as cfg.ld); the
+  // target isn't known here, so resolve it opportunistically — it ships in
+  // the same LLVM install as ld.lld, and the lookup is a handful of stats.
+  let ld64Lld: string | undefined;
+  if (os !== "darwin" && os !== "windows") {
+    ld64Lld = findLlvmTool("ld64.lld", paths, os, { checkVersion: false, required: false })?.path;
   }
 
-  // dsymutil: darwin only
+  // strip: GNU strip on Linux (more features), llvm-strip elsewhere.
+  // llvm-strip is also resolved on Linux (optional) — GNU strip can't read
+  // Mach-O, so darwin cross-compiles need it (resolveConfig swaps it in).
+  let strip: string;
+  let llvmStrip: string | undefined;
+  if (os === "linux") {
+    strip = findTool({ names: ["strip"], required: true, hint: "Install binutils for your distro" })?.path ?? "";
+    llvmStrip = findLlvmTool("llvm-strip", paths, os, { checkVersion: false, required: false })?.path;
+  } else {
+    strip = findLlvmTool("llvm-strip", paths, os, { checkVersion: false, required: true })?.path ?? "";
+    llvmStrip = strip;
+  }
+
+  // dsymutil: required on darwin; optional elsewhere (needed only when
+  // cross-compiling a darwin release from a non-darwin host).
   let dsymutil: string | undefined;
   if (os === "darwin") {
     dsymutil = findLlvmTool("dsymutil", paths, os, { checkVersion: false, required: true })?.path;
+  } else if (os !== "windows") {
+    dsymutil = findLlvmTool("dsymutil", paths, os, { checkVersion: false, required: false })?.path;
   }
 
   // rc/mt: windows only. Passed to nested cmake — when CMAKE_C_COMPILER
@@ -503,15 +540,18 @@ export function resolveLlvmToolchain(
   return {
     cc: ccResult.path,
     clangVersion: ccResult.version,
+    clangResourceDir,
     cxx,
     ar,
     ranlib,
     ld,
+    ld64Lld,
     rustLld,
     rustLlvmVersion,
     rustSysroot,
     rustHostTriple,
     strip,
+    llvmStrip,
     dsymutil,
     ccache,
     rc,

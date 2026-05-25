@@ -115,7 +115,7 @@ mod _impl {
         pub fn estimated_size(&self) -> usize {
             // @sizeOf(@cImport(@cInclude("deflate.h")).internal_state) @ cloudflare/zlib @ 92530568d2c128b4432467b76a3b54d93d6350bd
             const INTERNAL_STATE_SIZE: usize = 3309;
-            mem::size_of::<Self>() + INTERNAL_STATE_SIZE
+            mem::size_of::<Self>() + INTERNAL_STATE_SIZE + self.stream.get().dictionary.len()
         }
 
         #[bun_jsc::host_fn(method)]
@@ -198,11 +198,6 @@ mod _impl {
                 write_callback.with_async_context_if_needed(global),
             );
 
-            // Keep the dictionary alive by keeping a reference to it in the JS object.
-            if dictionary.is_some() {
-                js::dictionary_set_cached(this_value, global, arguments.ptr[6]);
-            }
-
             self.stream
                 .with_mut(|s| s.init(level, window_bits, mem_level, strategy, dictionary));
 
@@ -264,10 +259,13 @@ pub struct Context {
     pub state: c::z_stream,
     pub err: c::ReturnCode,
     pub flush: c::FlushValue,
-    // Borrows a JS ArrayBuffer kept alive via `js::dictionary_set_cached`
-    // (BACKREF/FFI class) for the lifetime of the JS wrapper, which strictly
-    // outlives this Context — `RawSlice` invariant. Default is `EMPTY`.
-    pub dictionary: bun_ptr::RawSlice<u8>,
+    // Owned copy of the user-supplied dictionary. The user's ArrayBuffer can
+    // be detached after `init()` (e.g. `ArrayBuffer.prototype.transfer()`),
+    // freeing its backing store while inflate still reads the dictionary
+    // lazily from the threadpool on `Z_NEED_DICT` (and on `reset()`), so
+    // borrowing the JS buffer would be a use-after-free. Node.js copies too
+    // (`ZlibContext::dictionary_` is a `std::vector<unsigned char>`).
+    pub dictionary: Box<[u8]>,
     pub gzip_id_bytes_read: u8,
 }
 
@@ -278,7 +276,7 @@ impl Default for Context {
             state: bun_core::ffi::zeroed::<c::z_stream>(),
             err: c::ReturnCode::Ok,
             flush: c::FlushValue::NoFlush,
-            dictionary: bun_ptr::RawSlice::EMPTY,
+            dictionary: Box::default(),
             gzip_id_bytes_read: 0,
         }
     }
@@ -290,7 +288,7 @@ impl Context {
 
     #[inline]
     fn dictionary(&self) -> &[u8] {
-        self.dictionary.slice()
+        &self.dictionary
     }
 
     pub fn init(
@@ -315,10 +313,10 @@ impl Context {
             ZSTD_COMPRESS | ZSTD_DECOMPRESS => unreachable!(),
         };
 
-        // See field comment on `dictionary` — `RawSlice` invariant.
+        // See field comment on `dictionary` — copy into an owned buffer.
         self.dictionary = match dictionary {
-            Some(d) => bun_ptr::RawSlice::new(d),
-            None => bun_ptr::RawSlice::EMPTY,
+            Some(d) => Box::from(d),
+            None => Box::default(),
         };
 
         match self.mode {
@@ -625,6 +623,7 @@ impl Context {
         }
         debug_assert!(status == c::ReturnCode::Ok || status == c::ReturnCode::DataError);
         self.mode = NONE;
+        self.dictionary = Box::default();
     }
 }
 

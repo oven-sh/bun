@@ -26,6 +26,20 @@ describe.concurrent("node-module-module", () => {
     expect(Array.isArray(require("module").globalPaths)).toBe(true);
   });
 
+  test("native module functions are not constructors", () => {
+    // Constructing these used to crash instead of throwing.
+    const compile = new Module("not-a-constructor-test")._compile;
+    expect(typeof compile).toBe("function");
+    expect(() => new compile()).toThrow(TypeError);
+    expect(() => Reflect.construct(compile, [])).toThrow(TypeError);
+    expect(() => new Module.runMain()).toThrow(TypeError);
+    expect(() => Reflect.construct(Module.runMain, [])).toThrow(TypeError);
+    expect(() => new Module._resolveFilename("fs")).toThrow(TypeError);
+    expect(() => Reflect.construct(Module._resolveFilename, ["fs"])).toThrow(TypeError);
+    // Calling still works.
+    expect(Module._resolveFilename("fs")).toBe("fs");
+  });
+
   test("createRequire trailing slash", () => {
     const req = createRequire(import.meta.dir + "/");
     expect(req.resolve("./node-module-module.test.js")).toBe(

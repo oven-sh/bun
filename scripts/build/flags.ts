@@ -476,6 +476,19 @@ export const globalFlags: Flag[] = [
     lang: "cxx",
     desc: "Enable devirtualization across whole program (LTO only)",
   },
+  {
+    // -fwhole-program-vtables (above) makes clang set EnableSplitLTOUnit=1 in
+    // every C++ module's ThinLTO summary, but it's a cxx-only flag, so the C
+    // modules (zlib, c-ares, mimalloc, boringssl's .c files, ...) default to
+    // 0 and the link dies with "inconsistent LTO Unit splitting". Force the
+    // flag on for every language. The Rust side passes the equivalent
+    // -Zsplit-lto-unit (see rust.ts). Not on darwin: clang suppresses LTO
+    // unit splitting entirely for Apple targets, so everything is uniformly
+    // 0 there and forcing 1 would recreate the same mismatch.
+    flag: "-fsplit-lto-unit",
+    when: c => c.unix && !c.darwin && c.lto,
+    desc: "Consistent EnableSplitLTOUnit across C/C++/Rust ThinLTO summaries",
+  },
 
   // ─── PGO (compile-side) ───
   {

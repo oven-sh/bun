@@ -1134,9 +1134,7 @@ impl Request {
         // https://fetch.spec.whatwg.org/#dom-request — init is a Web IDL dictionary.
         // Checked after the url-string branch so an invalid-URL error on a string
         // input surfaces first.
-        if arguments.len() > 1
-            && !arguments[1].is_undefined_or_null()
-            && !arguments[1].is_object()
+        if arguments.len() > 1 && !arguments[1].is_undefined_or_null() && !arguments[1].is_object()
         {
             bail!(Err(global_this
                 .err(

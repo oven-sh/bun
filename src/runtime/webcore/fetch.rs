@@ -524,9 +524,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Err(global_this
             .err(
                 jsc::ErrorCode::INVALID_ARG_TYPE,
-                format_args!(
-                    "The \"init\" argument must be of type object, undefined, or null."
-                ),
+                format_args!("The \"init\" argument must be of type object, undefined, or null."),
             )
             .throw());
     };

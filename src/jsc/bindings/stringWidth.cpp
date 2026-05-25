@@ -24,7 +24,7 @@
 #include <optional>
 #include <span>
 #include <wtf/text/WTFString.h>
-#include <unicode/uchar.h>
+#include <unicode/utf16.h>
 
 // SIMD kernels implemented in highway_strings.cpp.
 extern "C" size_t highway_visible_latin1_width(const uint8_t* input, size_t len);
@@ -184,6 +184,18 @@ static bool isEastAsianAmbiguousCodepoint(char32_t cp)
 
 uint8_t visibleCodepointWidth(char32_t cp, bool ambiguousAsWide)
 {
+    // Fast path for the most common East-Asian-Wide blocks (kana letters, CJK
+    // Unified Ideographs, Hangul syllables, fullwidth forms): always wide,
+    // never zero-width, never ambiguous — skip the classification chain.
+    if (cp >= 0x3041 && cp <= 0xFF60) {
+        if ((cp >= 0x4E00 && cp <= 0x9FFF) // CJK Unified Ideographs
+            || cp <= 0x3096 // Hiragana letters (0x3041..0x3096)
+            || (cp >= 0x30A1 && cp <= 0x30FA) // Katakana letters
+            || (cp >= 0xAC00 && cp <= 0xD7A3) // Hangul syllables
+            || cp >= 0xFF01) // Fullwidth forms (0xFF01..0xFF60)
+            return 2;
+    }
+
     if (isZeroWidthCodepoint(cp))
         return 0;
     if (isEastAsianWideCodepoint(cp))
@@ -207,7 +219,7 @@ bool isEmojiPresentation(char32_t cp)
     if (cp == 0xFE0E || cp == 0xFE0F || cp == 0x200D)
         return false;
 
-    return u_hasBinaryProperty(static_cast<UChar32>(cp), UCHAR_EMOJI);
+    return isInSortedRanges(cp, StringWidthTables::kEmojiPresentationRanges, std::size(StringWidthTables::kEmojiPresentationRanges));
 }
 
 // ============================================================================
@@ -467,15 +479,21 @@ static constexpr auto kGraphemeBreakDecisions = []() constexpr {
     return result;
 }();
 
-// Returns true when there is a grapheme cluster break between cp1 and cp2.
-// Must be called sequentially, carrying `state` between calls. Control
-// characters, CR and LF are not handled here — callers treat them before
-// consulting the break algorithm (they always terminate a cluster).
-static bool graphemeBreak(char32_t cp1, char32_t cp2, GraphemeBreakState& state)
+// Returns true when there is a grapheme cluster break between two consecutive
+// codepoints with the given break classes. Must be called sequentially,
+// carrying `state` between calls. Control characters, CR and LF are not
+// handled here — callers treat them before consulting the break algorithm
+// (they always terminate a cluster).
+static bool graphemeBreakClasses(GraphemeBreakClass gb1, GraphemeBreakClass gb2, GraphemeBreakState& state)
 {
-    const uint8_t value = kGraphemeBreakDecisions[graphemeBreakKey(graphemeBreakClass(cp1), graphemeBreakClass(cp2), state)];
+    const uint8_t value = kGraphemeBreakDecisions[graphemeBreakKey(gb1, gb2, state)];
     state = static_cast<GraphemeBreakState>(value >> 1);
     return value & 1;
+}
+
+static bool graphemeBreak(char32_t cp1, char32_t cp2, GraphemeBreakState& state)
+{
+    return graphemeBreakClasses(graphemeBreakClass(cp1), graphemeBreakClass(cp2), state);
 }
 
 bool graphemeBreak(char32_t cp1, char32_t cp2, uint8_t& state)
@@ -876,10 +894,12 @@ static UTF16Decoded decodeUTF16Codepoint(std::span<const char16_t> input)
 size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors, bool ambiguousAsWide)
 {
     size_t len = 0;
-    // Last *visible* codepoint, used for grapheme break decisions. Escape
+    // Break class of the last *visible* codepoint, used for grapheme break
+    // decisions (carried so each codepoint is classified only once). Escape
     // sequence bytes must not participate: a CSI final byte like 'm' would
     // otherwise wrongly join to a following combining mark.
-    std::optional<char32_t> prevVisible;
+    bool hasPrevVisible = false;
+    GraphemeBreakClass prevClass = GraphemeBreakClass::Other;
     GraphemeBreakState breakState = GraphemeBreakState::Default;
     GraphemeState graphemeState;
     bool saw1b = false; // saw ESC, deciding what follows
@@ -920,7 +940,8 @@ size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors
 
                     const char32_t lastCp = input[bulkEnd - 1];
                     graphemeState.reset(lastCp, ambiguousAsWide);
-                    prevVisible = lastCp;
+                    hasPrevVisible = true;
+                    prevClass = graphemeBreakClass(lastCp);
                     breakState = GraphemeBreakState::Default;
 
                     if (bulkEnd == idx) {
@@ -1004,8 +1025,9 @@ size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors
                     continue;
                 }
                 if (!excludeAnsiColors || cp != 0x1b) {
-                    if (prevVisible) {
-                        if (graphemeBreak(*prevVisible, cp, breakState)) {
+                    const GraphemeBreakClass cpClass = graphemeBreakClass(cp);
+                    if (hasPrevVisible) {
+                        if (graphemeBreakClasses(prevClass, cpClass, breakState)) {
                             len += graphemeState.width();
                             graphemeState.reset(cp, ambiguousAsWide);
                         } else {
@@ -1014,7 +1036,8 @@ size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors
                     } else {
                         graphemeState.reset(cp, ambiguousAsWide);
                     }
-                    prevVisible = cp;
+                    hasPrevVisible = true;
+                    prevClass = cpClass;
                     continue;
                 }
                 saw1b = true;
@@ -1057,8 +1080,9 @@ size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors
             saw1b = false;
         }
 
-        if (prevVisible) {
-            if (graphemeBreak(*prevVisible, cp, breakState)) {
+        const GraphemeBreakClass cpClass = graphemeBreakClass(cp);
+        if (hasPrevVisible) {
+            if (graphemeBreakClasses(prevClass, cpClass, breakState)) {
                 len += graphemeState.width();
                 graphemeState.reset(cp, ambiguousAsWide);
             } else {
@@ -1067,7 +1091,8 @@ size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors
         } else {
             graphemeState.reset(cp, ambiguousAsWide);
         }
-        prevVisible = cp;
+        hasPrevVisible = true;
+        prevClass = cpClass;
     }
 
     // Add the width of the final grapheme.

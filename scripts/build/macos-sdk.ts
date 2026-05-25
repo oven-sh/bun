@@ -8,39 +8,45 @@
  *
  *   1. `--macos-sdk=<path>` / `$MACOS_SDK_PATH` — explicit, always wins.
  *   2. A well-known install location (`/opt/MacOSX*.sdk`, an osxcross tree).
- *   3. `<cacheDir>/MacOSX<version>.sdk` — downloaded on demand at configure
- *      time from the same mirror bootstrap.sh's `--osxcross` feature already
- *      uses (github.com/alexey-lysiuk/macos-sdk), then cached like the WebKit
- *      prebuilt. ~50 MB download, ~730 MB extracted.
+ *   3. `<cacheDir>/MacOSX<version>.sdk` — extracted on demand at configure
+ *      time by the vendored `xmac` tool (scripts/build/xmac.mjs), which
+ *      downloads the Command Line Tools SDK package (~60 MB) directly from
+ *      Apple's public software-update CDN — the same approach `xwin` uses for
+ *      the Windows SDK. Nothing is fetched from a third-party mirror and
+ *      nothing is redistributed; every machine downloads from Apple itself.
  *
  * Only the SDK is needed — no osxcross, no cctools. clang is inherently a
  * cross-compiler and lld's Mach-O port (`ld64.lld`) does the link, so the
  * sysroot (headers + .tbd stubs + frameworks) is the only Apple bit required.
+ *
+ * The deployment target (`-mmacosx-version-min`, `cfg.osxDeploymentTarget`)
+ * — not the SDK version — controls the oldest macOS the binary runs on, so
+ * the pin tracks the newest SDK Apple serves: newer SDKs list more symbols in
+ * their `.tbd` stubs (required when the WebKit prebuilt was built against a
+ * newer SDK than ours) and that is the only direction that can't break the
+ * link.
  */
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
-import { downloadWithRetry } from "./download.ts";
+import { join, resolve } from "node:path";
 import { BuildError } from "./error.ts";
 
 /**
- * Pinned SDK version for the auto-download path. Newer SDKs list more
- * symbols in their .tbd stubs (required when the WebKit prebuilt was built
- * against a newer SDK than ours), and the deployment target — not the SDK —
- * controls the oldest macOS the binary runs on, so tracking a recent SDK is
- * the safe direction. Bump when github.com/alexey-lysiuk/macos-sdk publishes
- * a newer release worth tracking.
+ * Pinned SDK + Command Line Tools release for the auto-extract path. Apple's
+ * software-update catalog is a rolling window — old CLT releases eventually
+ * stop being served — so when the build fails saying the release is gone, run
+ * `bun scripts/build/xmac.mjs list` and bump both pins to the newest entry.
  */
-export const MACOS_SDK_VERSION = "15.5";
+export const MACOS_SDK_VERSION = "26.5";
+/** The Command Line Tools release whose package contains MACOS_SDK_VERSION. */
+export const MACOS_SDK_CLT_RELEASE = "26.5";
 
-/** Download URL for the pinned SDK tarball. */
-export function macosSdkUrl(version: string = MACOS_SDK_VERSION): string {
-  return `https://github.com/alexey-lysiuk/macos-sdk/releases/download/${version}/MacOSX${version}.tar.xz`;
-}
+/** The vendored xmac bundle (see the header of that file for provenance). */
+export const XMAC_PATH = join(import.meta.dirname, "xmac.mjs");
 
-/** `<cacheDir>/MacOSX<version>.sdk` — where the auto-download lands. */
+/** `<cacheDir>/MacOSX<version>.sdk` — where the auto-extract lands. */
 export function macosSdkCachePath(cacheDir: string, version: string = MACOS_SDK_VERSION): string {
   return resolve(cacheDir, `MacOSX${version}.sdk`);
 }
@@ -95,23 +101,25 @@ export function resolveMacosSdkPath(explicit: string | undefined, cacheDir: stri
     if (candidate !== undefined) return candidate;
   }
 
-  // 3. The cache dir — a previous auto-download of the *pinned* version is
+  // 3. The cache dir — a previous auto-extract of the *pinned* version is
   //    reused as-is; any other MacOSX*.sdk in there is deliberately ignored so
   //    that bumping MACOS_SDK_VERSION fetches the new pin instead of silently
-  //    reusing a stale SDK. ensureMacosSdk() downloads into this path when it
+  //    reusing a stale SDK. ensureMacosSdk() extracts into this path when it
   //    doesn't exist yet.
   return macosSdkCachePath(cacheDir);
 }
 
 /**
- * Make sure `cfg.osxSysroot` exists on disk, downloading the pinned SDK into
- * the cache dir when that's where resolveMacosSdkPath() pointed. Called from
- * configure() before ninja runs so compile edges never race the extraction.
+ * Make sure `cfg.osxSysroot` exists on disk, downloading + extracting the
+ * pinned SDK into the cache dir when that's where resolveMacosSdkPath()
+ * pointed. Called from configure() before ninja runs so compile edges never
+ * race the extraction.
  */
 export async function ensureMacosSdk(cfg: {
   osxSysroot: string | undefined;
   cacheDir: string;
   darwin: boolean;
+  bun: string;
   host: { os: string };
 }): Promise<void> {
   if (!cfg.darwin || cfg.host.os === "darwin" || cfg.osxSysroot === undefined) return;
@@ -124,46 +132,82 @@ export async function ensureMacosSdk(cfg: {
     throw new BuildError(`macOS SDK not found at ${cfg.osxSysroot}`, {
       hint:
         `Install a macOS SDK there, or unset MACOS_SDK_PATH/--macos-sdk to let the build ` +
-        `download MacOSX${MACOS_SDK_VERSION}.sdk into ${expected}.`,
+        `fetch MacOSX${MACOS_SDK_VERSION}.sdk from Apple into ${expected}.`,
     });
   }
 
-  const url = macosSdkUrl();
-  console.log(`[macos-sdk] downloading MacOSX${MACOS_SDK_VERSION}.sdk (targeting macOS from a ${cfg.host.os} host)`);
-  console.log(`[macos-sdk] ${url}`);
+  // The SDK is Apple's, under the "macOS SDK and Xcode Agreement". xmac
+  // downloads it from Apple's own CDN to this machine (nothing is
+  // redistributed), but extracting and using it means accepting Apple's
+  // terms — say so before passing --accept-license on the user's behalf.
+  console.log(`[macos-sdk] targeting macOS from a ${cfg.host.os} host; fetching MacOSX${MACOS_SDK_VERSION}.sdk`);
+  console.log(`[macos-sdk] the SDK is downloaded directly from Apple's software-update CDN and is subject to`);
+  console.log(
+    `[macos-sdk] Apple's SDK license terms (https://www.apple.com/legal/sla/ — \`bun ${relativeXmac()} license\`).`,
+  );
 
-  // Download + extract with the same staging-then-rename discipline as
-  // fetchPrebuilt() so an interrupted configure never leaves a half-extracted
-  // tree claiming to be an SDK.
+  // Extract into a staging dir, then rename the .sdk into place — same
+  // discipline as fetchPrebuilt() so an interrupted configure never leaves a
+  // half-extracted tree claiming to be an SDK. The downloaded .pkg itself is
+  // cached separately under <cacheDir>/xmac so a failed/interrupted
+  // extraction doesn't re-download ~60 MB.
   const suffix = `.${process.pid}.${Date.now().toString(36)}`;
-  const tarball = `${expected}${suffix}.tar.xz`;
   const staging = `${expected}${suffix}.staging`;
   await mkdir(cfg.cacheDir, { recursive: true });
-  await downloadWithRetry(url, tarball, "macos-sdk");
 
   try {
-    await mkdir(staging, { recursive: true });
-    // -J: the SDK tarballs are .tar.xz (GNU tar + bsdtar both take -J; xz
-    // itself ships on every supported build host / CI image).
-    const result = spawnSync("tar", ["-xJmf", tarball, "-C", staging], {
-      stdio: ["ignore", "ignore", "pipe"],
-      encoding: "utf8",
-    });
+    const result = spawnSync(
+      cfg.bun,
+      [
+        XMAC_PATH,
+        "splat",
+        "--accept-license",
+        "--sdk-only",
+        "--release",
+        MACOS_SDK_CLT_RELEASE,
+        "--sdk",
+        MACOS_SDK_VERSION,
+        "--output",
+        staging,
+        "--cache-dir",
+        join(cfg.cacheDir, "xmac"),
+      ],
+      // Progress goes to the terminal (stderr); the `key: value` result lines
+      // on stdout are not needed — the output layout is deterministic.
+      { stdio: ["ignore", "inherit", "inherit"], encoding: "utf8" },
+    );
     if (result.error || result.status !== 0) {
-      throw new BuildError(`Failed to extract ${basename(tarball)}: ${result.stderr || result.error?.message}`, {
-        hint: "Extraction needs `tar` with xz support (apt install xz-utils).",
+      throw new BuildError(
+        `Failed to fetch MacOSX${MACOS_SDK_VERSION}.sdk from Apple's CDN` +
+          (result.error ? `: ${result.error.message}` : ` (exit ${result.status})`),
+        {
+          hint:
+            `Apple's software-update catalog is a rolling window; if Command Line Tools ` +
+            `${MACOS_SDK_CLT_RELEASE} is no longer served, run \`bun ${relativeXmac()} list\` and bump ` +
+            `MACOS_SDK_VERSION / MACOS_SDK_CLT_RELEASE in scripts/build/macos-sdk.ts. ` +
+            `Extraction also needs \`xz\` on PATH (apt install xz-utils).`,
+        },
+      );
+    }
+
+    // xmac's splat layout is `<output>/SDKs/<name>.sdk` (plus version-alias
+    // symlinks); move the one real SDK directory to the flat cache path the
+    // rest of the build expects.
+    const extracted = join(staging, "SDKs", `MacOSX${MACOS_SDK_VERSION}.sdk`);
+    if (!isMacosSdk(extracted)) {
+      throw new BuildError(`xmac did not produce ${extracted}`, {
+        hint: `Expected MacOSX${MACOS_SDK_VERSION}.sdk inside the Command Line Tools ${MACOS_SDK_CLT_RELEASE} package.`,
       });
     }
-    // Tarball layout: single top-level MacOSX<version>.sdk directory.
-    const top = readdirSync(staging).find(e => /^MacOSX.*\.sdk$/.test(e));
-    if (top === undefined || !isMacosSdk(join(staging, top))) {
-      throw new BuildError(`Unexpected macOS SDK tarball layout (no MacOSX*.sdk in ${basename(tarball)})`);
-    }
     await rm(expected, { recursive: true, force: true });
-    await rename(join(staging, top), expected);
+    await rename(extracted, expected);
     console.log(`[macos-sdk] extracted to ${expected}`);
   } finally {
-    await rm(tarball, { force: true }).catch(() => {});
     await rm(staging, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+/** `scripts/build/xmac.mjs` relative to the repo root, for log messages. */
+function relativeXmac(): string {
+  return "scripts/build/xmac.mjs";
 }

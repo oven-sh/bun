@@ -472,15 +472,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // In Rust, all of these are owning types whose Drop runs on early return
     // (`signal` via `SignalRef`).
 
-    let options_object: Option<JSValue> = 'brk: {
-        if let Some(options) = args.next_eat() {
-            let options: JSValue = options;
-            if options.is_object() || options.js_type() == jsc::JSType::DOMWrapper {
-                break 'brk Some(options);
-            }
-        }
-        break 'brk None;
-    };
+    // Grab the raw init argument but defer validation until after the first
+    // argument has been converted — WebIDL converts arguments left-to-right,
+    // so a throwing `toString` on an object `input` must surface before the
+    // init type check (https://fetch.spec.whatwg.org/#dom-request).
+    let init_arg: Option<JSValue> = args.next_eat();
 
     // PORT NOTE: kept as raw `*mut Request` because the body re-borrows it
     // multiple times across long-lived option/init reads (Zig had no borrowck).
@@ -507,6 +503,32 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         StringOrURL::from_js(first_arg, global_this)?
     } else {
         None
+    };
+
+    // `init` is a Web IDL dictionary; a non-nullish primitive must reject with
+    // TypeError. Checked *after* `StringOrURL::from_js` so that a throwing
+    // `toString` on an object `input` surfaces first (WebIDL left-to-right
+    // argument conversion). `url_str_optional`'s WTFStringImpl +1 is released
+    // by its `Drop` when we return `Err` here — no explicit deref needed in
+    // Rust (unlike the Zig original which paired it with `defer`).
+    let options_object: Option<JSValue> = 'brk: {
+        let Some(options) = init_arg else {
+            break 'brk None;
+        };
+        if options.is_undefined_or_null() {
+            break 'brk None;
+        }
+        if options.is_object() || options.js_type() == jsc::JSType::DOMWrapper {
+            break 'brk Some(options);
+        }
+        return Err(global_this
+            .err(
+                jsc::ErrorCode::INVALID_ARG_TYPE,
+                format_args!(
+                    "The \"init\" argument must be of type object, undefined, or null."
+                ),
+            )
+            .throw());
     };
 
     let request_init_object: Option<JSValue> = 'brk: {

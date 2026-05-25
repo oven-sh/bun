@@ -393,7 +393,16 @@ pub fn close(this: *UpgradedDuplex) void {
 
 pub fn shutdown(this: *UpgradedDuplex) void {
     if (this.wrapper) |*wrapper| {
-        _ = wrapper.shutdown(false);
+        // TLS-over-TLS: fast-shutdown so `triggerCloseCallback` runs and the
+        // inner wrapper cleans up its hold on the outer Duplex. The graceful
+        // path (`shutdown(false)`) only sends close_notify and waits for the
+        // peer's — with nothing driving inbound traffic through the wrapper
+        // once the stream is half-ended, the close never fires and teardown
+        // hangs (test-tls-inception timed out on every Windows target with
+        // `shutdown(false)` here). Matches pre-half-close behavior where
+        // `endNT → $end() → close_and_detach → UpgradedDuplex.close()` already
+        // took this branch.
+        _ = wrapper.shutdown(true);
     }
 }
 

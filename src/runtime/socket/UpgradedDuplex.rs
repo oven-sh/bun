@@ -389,7 +389,16 @@ impl UpgradedDuplex {
     #[uws_callback(export = "UpgradedDuplex__shutdown")]
     pub(crate) fn shutdown(&mut self) {
         if let Some(wrapper) = &mut self.wrapper {
-            let _ = wrapper.shutdown(false);
+            // TLS-over-TLS: fast-shutdown so `triggerCloseCallback` runs and the
+            // inner wrapper cleans up its hold on the outer Duplex. The graceful
+            // path (`shutdown(false)`) only sends close_notify and waits for the
+            // peer's — with nothing driving inbound traffic through the wrapper
+            // once the stream is half-ended, the close never fires and teardown
+            // hangs (test-tls-inception timed out on every Windows target with
+            // `shutdown(false)` here). Matches pre-half-close behavior where
+            // `endNT → $end() → close_and_detach → UpgradedDuplex::close()` already
+            // took this branch.
+            let _ = wrapper.shutdown(true);
         }
     }
 

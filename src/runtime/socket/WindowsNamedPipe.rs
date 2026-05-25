@@ -1219,18 +1219,18 @@ impl WindowsNamedPipe {
                     unsafe { (*this).wrapper = None };
                 }
             }
-        } else {
-            // Plain (non-TLS) named pipe: close the writer so the peer sees
-            // EOF. `src/io` doesn't expose `uv_shutdown`, so this tears down
-            // both directions — same as `close()` just above — but that's
-            // fine here: it restores the pre-half-close behavior (endNT →
-            // $end() fell through to this same `writer.end()` via
-            // `close_and_detach`) and avoids the peer hang seen without it.
-            // True half-close on a libuv pipe would need uv_shutdown plumbing
-            // in src/io — follow-up.
-            // SAFETY: `this` aliases the live `&mut self`; single JS thread.
-            unsafe { (*this).writer.end() };
         }
+        // Close the writer so the peer sees EOF, whether or not TLS is in play.
+        // `src/io` doesn't expose `uv_shutdown`, so `writer.end()` tears down
+        // both directions — identical to `close()` above. That's the
+        // pre-half-close behavior (endNT → $end() → close_and_detach → close()
+        // already ran both steps), so a Windows named-pipe `Socket.end()` still
+        // signals the peer and doesn't hang; the TLS branch alone would only
+        // write close_notify into the in-memory BIO without flushing it. True
+        // half-close on a libuv pipe would need uv_shutdown plumbing in src/io
+        // — follow-up.
+        // SAFETY: `this` is still live; `writer.end()` is idempotent.
+        unsafe { (*this).writer.end() };
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__shutdown_read")]

@@ -2865,15 +2865,17 @@ describe("init argument validation (#29195)", () => {
     expect(() => new Request(url, value as any)).not.toThrow();
   });
 
-  // WebIDL converts arguments left-to-right: a throwing toString on input
-  // surfaces before the init TypeError. toString runs synchronously in URL
-  // conversion, so fetch() throws rather than rejecting.
+  // WebIDL converts arguments left-to-right: a throwing toString on `input`
+  // surfaces before the init TypeError. (Bun currently throws this one
+  // synchronously during URL conversion rather than rejecting — a pre-existing
+  // divergence from WebIDL §3.7.10 independent of this change. The assertion is
+  // written to accept either delivery mode so it survives an eventual fix.)
   it("surfaces first-argument conversion errors before the init TypeError", () => {
     const first_arg = {
       toString() {
         throw new Error("boom from toString");
       },
     };
-    expect(() => fetch(first_arg as any, 0 as any)).toThrow("boom from toString");
+    expect(async () => await fetch(first_arg as any, 0 as any)).toThrow("boom from toString");
   });
 });

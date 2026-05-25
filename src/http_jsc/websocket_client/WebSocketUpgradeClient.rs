@@ -1603,17 +1603,23 @@ impl<const SSL: bool> HTTPClient<SSL> {
             );
         }
 
-        // Ownership transfer: `overflow` is HANDED OFF across FFI —
+        // Owned copy of the bytes that trailed the 101 header block. It is
+        // HANDED OFF across FFI in the success arms below —
         // `WebSocket__didConnect` → `Bun__WebSocketClient__init`/`_initWithTunnel`
         // adopts the raw `(ptr, len)` into an `InitialDataHandler` queued as a
         // microtask, which reclaims it via `Box::<[u8]>::from_raw` when the
-        // microtask runs. Allocate as `Box<[u8]>` and `heap::alloc` it so the
-        // alloc/free pair through the SAME Rust global allocator (mimalloc).
-        // Do NOT keep a `Vec`/`Box` binding past the FFI call — it would drop
-        // at scope exit and leave the queued microtask with a dangling pointer
-        // (UAF on read in `handle_data`, then double-free on drop).
+        // microtask runs. Allocate as `Box<[u8]>` so the alloc/free pair goes
+        // through the SAME Rust global allocator (mimalloc).
+        //
+        // Keep it as an owned `Box` (NOT leaked yet) until a success arm is
+        // reached. A `handshake`/`upgrade` handler can synchronously close the
+        // socket (see the note above), which makes the `!tcp.is_closed() &&
+        // has_ws` re-check below fail and route into an else-arm that never
+        // calls `did_connect`; leaking the buffer up-front would then orphan it
+        // (no consumer to reclaim it). By only `heap::into_raw`-ing it at the
+        // moment of handoff, the else-arms drop the `Box` normally instead.
         let overflow_len = remain_buf.len();
-        let overflow_ptr: *mut u8 = if overflow_len > 0 {
+        let mut overflow_box: Option<Box<[u8]>> = if overflow_len > 0 {
             let mut v: Vec<u8> = Vec::new();
             if v.try_reserve_exact(overflow_len).is_err() {
                 // Spec .zig:1020 — OOM here terminates with `invalid_response`
@@ -1623,11 +1629,18 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 return;
             }
             v.extend_from_slice(remain_buf);
-            // Leak across the FFI boundary; `InitialDataHandler` reconstructs
-            // the `Box<[u8]>` and drops it after delivery.
-            bun_core::heap::into_raw(v.into_boxed_slice()).cast::<u8>()
+            Some(v.into_boxed_slice())
         } else {
-            core::ptr::null_mut()
+            None
+        };
+        // Leak the owned buffer across the FFI boundary right before handoff;
+        // `InitialDataHandler` reconstructs the `Box<[u8]>` and drops it after
+        // delivery. Returns a null thin pointer when there is no overflow.
+        let take_overflow_ptr = |b: &mut Option<Box<[u8]>>| -> *mut u8 {
+            match b.take() {
+                Some(boxed) => bun_core::heap::into_raw(boxed).cast::<u8>(),
+                None => core::ptr::null_mut(),
+            }
         };
 
         // Check if we're using a proxy tunnel (wss:// through HTTP proxy)
@@ -1655,7 +1668,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // SAFETY: short-lived `&mut` for the field take.
                     let ws = unsafe { (*this).outgoing_websocket.take().unwrap() };
 
-                    // Create the WebSocket client with the tunnel
+                    // Create the WebSocket client with the tunnel. Hand off the
+                    // overflow buffer (leak it across FFI) only now that we're
+                    // committed to delivering it.
+                    let overflow_ptr = take_overflow_ptr(&mut overflow_box);
                     // SAFETY: live C++ back-reference.
                     unsafe {
                         (*ws).did_connect_with_tunnel(
@@ -1714,6 +1730,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // SAFETY: short-lived `&mut` for the field detach; ends before the FFI call below.
             unsafe { (*this).tcp.detach() };
             if let uws::InternalSocket::Connected(native_socket) = socket.socket {
+                // Hand off the overflow buffer (leak it across FFI) only now
+                // that `did_connect` will consume it. If the socket is not
+                // Connected (else-arm), `overflow_box` is dropped instead.
+                let overflow_ptr = take_overflow_ptr(&mut overflow_box);
                 // SAFETY: live C++ back-reference.
                 unsafe {
                     (*ws).did_connect(

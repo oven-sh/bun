@@ -98,17 +98,21 @@ let lazyReadable;
 function makeHandshakeResponse(statusCode, statusMessage, rawHeaders, body) {
   lazyReadable ??= require("node:stream").Readable;
   const res = new lazyReadable({ read() {} });
-  const headers = (res.headers = { __proto__: null });
+  // Match node's http.IncomingMessage.headers: a plain object that inherits
+  // from Object.prototype (so `res.headers.hasOwnProperty(...)` works). Use
+  // Object.hasOwn for the dup-check so a header literally named "constructor"
+  // is not confused with Object.prototype.constructor.
+  const headers = (res.headers = {});
   res.rawHeaders = rawHeaders;
   for (let i = 0; i < rawHeaders.length; i += 2) {
     const lower = rawHeaders[i].toLowerCase();
     const value = rawHeaders[i + 1];
-    const prev = headers[lower];
+    const seen = Object.hasOwn(headers, lower);
     if (lower === "set-cookie") {
-      if (prev === undefined) headers[lower] = [value];
-      else prev.push(value);
+      if (!seen) headers[lower] = [value];
+      else headers[lower].push(value);
     } else {
-      headers[lower] = prev === undefined ? value : prev + ", " + value;
+      headers[lower] = !seen ? value : headers[lower] + ", " + value;
     }
   }
   res.statusCode = statusCode;

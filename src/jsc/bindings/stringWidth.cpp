@@ -138,6 +138,8 @@ enum class GraphemeBreakState : uint8_t {
     IndicConjunctBreakLinker,
 };
 static constexpr size_t kGraphemeBreakStateCount = 5;
+// The state is packed into bits 0-2 of graphemeBreakKey().
+static_assert(kGraphemeBreakStateCount <= (1 << 3));
 
 static constexpr GraphemeBreakClass graphemeBreakClassFromFused(uint8_t packed)
 {

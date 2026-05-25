@@ -142,7 +142,10 @@ describe("multipart serialization (new Response(formData))", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    if (exitCode !== 0) console.error(stderr);
+    if (exitCode !== 0) {
+      // Surface the crashed child's own error output in the assertion diff.
+      expect(stderr).toBe("");
+    }
 
     const { deltaMB, alive } = JSON.parse(stdout.trim());
     expect(alive).toBe(true);

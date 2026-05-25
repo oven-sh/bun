@@ -459,7 +459,7 @@ ctiMasmProbeTrampolineAVX  [AVX]
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SIMD. Gate: HWY_DYNAMIC_DISPATCH via hwy::SupportedTargets.
-# (96 symbols)
+# (102 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_AVX3_SPR10MemMemImplEPKhmS2_m                                       [AVX, AVX512BW, AVX512F, BMI1]
 _ZN3bun10N_AVX3_SPR15CopyU16ToU8ImplEPKtmPh                                    [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
@@ -471,6 +471,7 @@ _ZN3bun10N_AVX3_SPR20FillWithSkipMaskImplEPKhmPhS2_mb                          [
 _ZN3bun10N_AVX3_SPR22VisibleLatin1WidthImplEPKhm                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun10N_AVX3_SPR25CountPrintableAscii16ImplEPKtm                            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun10N_AVX3_SPR28IndexOfNewlineOrNonASCIIImplEPKhm                         [AVX, AVX512BW, AVX512F]
+_ZN3bun10N_AVX3_SPR33VisibleLatin1WidthExcludeANSIImplEPKhm                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun10N_AVX3_SPR35IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                  [AVX, AVX512BW, AVX512F]
 _ZN3bun10N_AVX3_SPR36ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                 [AVX, AVX512BW, AVX512F]
 _ZN3bun10N_AVX3_SPR38IndexOfNewlineOrNonASCIIOrHashOrAtImplEPKhm               [AVX, AVX512BW, AVX512F]
@@ -487,6 +488,7 @@ _ZN3bun11N_AVX3_ZEN420FillWithSkipMaskImplEPKhmPhS2_mb                         [
 _ZN3bun11N_AVX3_ZEN422VisibleLatin1WidthImplEPKhm                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun11N_AVX3_ZEN425CountPrintableAscii16ImplEPKtm                           [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun11N_AVX3_ZEN428IndexOfNewlineOrNonASCIIImplEPKhm                        [AVX, AVX512BW, AVX512F]
+_ZN3bun11N_AVX3_ZEN433VisibleLatin1WidthExcludeANSIImplEPKhm                   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun11N_AVX3_ZEN435IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                 [AVX, AVX512BW, AVX512F]
 _ZN3bun11N_AVX3_ZEN436ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                [AVX, AVX512BW, AVX512F]
 _ZN3bun11N_AVX3_ZEN438IndexOfNewlineOrNonASCIIOrHashOrAtImplEPKhm              [AVX, AVX512BW, AVX512F]
@@ -503,6 +505,7 @@ _ZN3bun6N_AVX220FillWithSkipMaskImplEPKhmPhS2_mb                               [
 _ZN3bun6N_AVX222VisibleLatin1WidthImplEPKhm                                    [AVX, AVX2]
 _ZN3bun6N_AVX225CountPrintableAscii16ImplEPKtm                                 [AVX, AVX2]
 _ZN3bun6N_AVX228IndexOfNewlineOrNonASCIIImplEPKhm                              [AVX, AVX2]
+_ZN3bun6N_AVX233VisibleLatin1WidthExcludeANSIImplEPKhm                         [AVX, AVX2, BMI1, BMI2]
 _ZN3bun6N_AVX235IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                       [AVX, AVX2]
 _ZN3bun6N_AVX236ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                      [AVX, AVX2]
 _ZN3bun6N_AVX238IndexOfNewlineOrNonASCIIOrHashOrAtImplEPKhm                    [AVX, AVX2]
@@ -519,6 +522,7 @@ _ZN3bun6N_AVX320FillWithSkipMaskImplEPKhmPhS2_mb                               [
 _ZN3bun6N_AVX322VisibleLatin1WidthImplEPKhm                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun6N_AVX325CountPrintableAscii16ImplEPKtm                                 [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun6N_AVX328IndexOfNewlineOrNonASCIIImplEPKhm                              [AVX, AVX512BW, AVX512F]
+_ZN3bun6N_AVX333VisibleLatin1WidthExcludeANSIImplEPKhm                         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun6N_AVX335IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                       [AVX, AVX512BW, AVX512F]
 _ZN3bun6N_AVX336ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                      [AVX, AVX512BW, AVX512F]
 _ZN3bun6N_AVX338IndexOfNewlineOrNonASCIIOrHashOrAtImplEPKhm                    [AVX, AVX512BW, AVX512F]
@@ -535,6 +539,7 @@ _ZN3bun9N_AVX10_220FillWithSkipMaskImplEPKhmPhS2_mb                            [
 _ZN3bun9N_AVX10_222VisibleLatin1WidthImplEPKhm                                 [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun9N_AVX10_225CountPrintableAscii16ImplEPKtm                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun9N_AVX10_228IndexOfNewlineOrNonASCIIImplEPKhm                           [AVX, AVX512BW, AVX512F]
+_ZN3bun9N_AVX10_233VisibleLatin1WidthExcludeANSIImplEPKhm                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun9N_AVX10_235IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                    [AVX, AVX512BW, AVX512F]
 _ZN3bun9N_AVX10_236ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                   [AVX, AVX512BW, AVX512F]
 _ZN3bun9N_AVX10_238IndexOfNewlineOrNonASCIIOrHashOrAtImplEPKhm                 [AVX, AVX512BW, AVX512F]
@@ -551,6 +556,7 @@ _ZN3bun9N_AVX3_DL20FillWithSkipMaskImplEPKhmPhS2_mb                            [
 _ZN3bun9N_AVX3_DL22VisibleLatin1WidthImplEPKhm                                 [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun9N_AVX3_DL25CountPrintableAscii16ImplEPKtm                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun9N_AVX3_DL28IndexOfNewlineOrNonASCIIImplEPKhm                           [AVX, AVX512BW, AVX512F]
+_ZN3bun9N_AVX3_DL33VisibleLatin1WidthExcludeANSIImplEPKhm                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun9N_AVX3_DL35IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                    [AVX, AVX512BW, AVX512F]
 _ZN3bun9N_AVX3_DL36ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                   [AVX, AVX512BW, AVX512F]
 _ZN3bun9N_AVX3_DL38IndexOfNewlineOrNonASCIIOrHashOrAtImplEPKhm                 [AVX, AVX512BW, AVX512F]

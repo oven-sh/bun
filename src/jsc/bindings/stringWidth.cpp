@@ -28,6 +28,7 @@
 
 // SIMD kernels implemented in highway_strings.cpp.
 extern "C" size_t highway_visible_latin1_width(const uint8_t* input, size_t len);
+extern "C" size_t highway_visible_latin1_width_exclude_ansi(const uint8_t* input, size_t len);
 extern "C" size_t highway_count_printable_ascii16(const uint16_t* input, size_t len);
 extern "C" size_t highway_first_non_ascii16(const uint16_t* input, size_t len);
 extern "C" size_t highway_first_non_ascii8(const uint8_t* input, size_t len);
@@ -618,79 +619,15 @@ size_t visibleLatin1Width(std::span<const uint8_t> input)
 
 // Visible width treating ANSI escape sequences (ESC[...<final>, ESC]...BEL/ST)
 // as zero-width. Ref: https://cs.stanford.edu/people/miles/iso8859.html
+//
+// Implemented as a single-pass SIMD kernel (highway_strings.cpp): each chunk
+// is classified once into printable/escape bitmasks, so dense SGR input does
+// not pay a separate scan per escape sequence.
 size_t visibleLatin1WidthExcludeANSI(std::span<const uint8_t> input)
 {
-    size_t length = 0;
-    const uint8_t* ptr = input.data();
-    size_t len = input.size();
-
-    while (true) {
-        // Consecutive escape sequences are common (e.g. `ESC[39m ESC[22m`);
-        // peek before paying for a SIMD scan of the remainder.
-        const size_t i = (len != 0 && ptr[0] == 0x1b) ? 0 : highway_index_of_char(ptr, len, 0x1b);
-        if (i == len)
-            break;
-        length += visibleLatin1Width({ ptr, i });
-        ptr += i;
-        len -= i;
-
-        // ptr[0] == ESC
-        if (len < 2)
-            return length;
-
-        if (ptr[1] == '[') {
-            // CSI sequence: ESC [ <params> <final byte>. The final byte is in
-            // [0x40, 0x7E]; SIMD-scan for it (parameters can be 1-15+ bytes,
-            // e.g. ESC [ 1;31;48;2;255;0;0 m).
-            if (len < 3)
-                return length;
-            ptr += 2;
-            len -= 2;
-            const uint8_t* term = ANSI::scanForByteInRange<0x40, 0x7e>(ptr, ptr + len);
-            if (!term)
-                return length;
-            const size_t consumed = static_cast<size_t>(term - ptr) + 1;
-            ptr += consumed;
-            len -= consumed;
-        } else if (ptr[1] == ']') {
-            // OSC sequence: ESC ] ... terminated by BEL (0x07), C1 ST (0x9C)
-            // or 7-bit ST (ESC \). The payload is opaque (titles, hyperlinks,
-            // filenames) — SIMD-scan for the terminators.
-            ptr += 2;
-            len -= 2;
-            while (true) {
-                const uint8_t* term = ANSI::scanForAnyByte<0x07, 0x9c, 0x1b>(ptr, ptr + len);
-                if (!term) {
-                    ptr += len;
-                    len = 0;
-                    break;
-                }
-                const size_t t = static_cast<size_t>(term - ptr);
-                if (*term == 0x07 || *term == 0x9c) {
-                    // Single-byte terminator (BEL or C1 ST).
-                    ptr += t + 1;
-                    len -= t + 1;
-                    break;
-                }
-                // ESC at offset t — check if the next byte is '\' (ST = ESC \).
-                if (t + 1 < len && ptr[t + 1] == '\\') {
-                    ptr += t + 2;
-                    len -= t + 2;
-                    break;
-                }
-                // Stray ESC inside the OSC payload — skip it and keep scanning.
-                ptr += t + 1;
-                len -= t + 1;
-            }
-        } else {
-            // ESC followed by anything else: only the ESC itself is dropped.
-            ptr += 1;
-            len -= 1;
-        }
-    }
-
-    length += visibleLatin1Width({ ptr, len });
-    return length;
+    if (input.empty())
+        return 0;
+    return highway_visible_latin1_width_exclude_ansi(input.data(), input.size());
 }
 
 // ============================================================================

@@ -1000,3 +1000,186 @@ test("options lookup ignores Object.prototype pollution", () => {
     delete (Object.prototype as any).ambiguousIsNarrow;
   }
 });
+
+// The Latin-1 ANSI-excluding width is computed by a single-pass SIMD kernel
+// (highway_visible_latin1_width_exclude_ansi) that classifies 16-64 byte
+// chunks into bitmasks and carries in-CSI / in-OSC state across chunk
+// boundaries. These tests pin its behavior at and around those boundaries and
+// against a scalar reference implementation of the same escape semantics:
+//   CSI  ESC [ <params> <final byte in [0x40, 0x7E]>   -> zero width
+//   OSC  ESC ] <payload> (BEL | 0x9C | ESC \)           -> zero width
+//   bare ESC followed by anything else                  -> only the ESC is dropped
+//   C0 controls, DEL, C1 controls, soft hyphen (0xAD)   -> zero width
+describe("ANSI escapes across SIMD chunk boundaries", () => {
+  const ESC = "\x1b";
+  const rep = (fill: string, count: number) => Buffer.alloc(fill.length * count, fill, "latin1").toString("latin1");
+
+  function referenceWidthExcludeAnsiLatin1(str: string): number {
+    let width = 0;
+    let i = 0;
+    const len = str.length;
+    while (i < len) {
+      const c = str.charCodeAt(i);
+      if (c === 0x1b) {
+        if (i + 1 >= len) {
+          i++;
+          continue;
+        }
+        const next = str.charCodeAt(i + 1);
+        if (next === 0x5b /* [ */) {
+          i += 2;
+          while (i < len && !(str.charCodeAt(i) >= 0x40 && str.charCodeAt(i) <= 0x7e)) i++;
+          i++;
+          continue;
+        }
+        if (next === 0x5d /* ] */) {
+          i += 2;
+          while (i < len) {
+            const t = str.charCodeAt(i);
+            if (t === 0x07 || t === 0x9c) {
+              i++;
+              break;
+            }
+            if (t === 0x1b && i + 1 < len && str.charCodeAt(i + 1) === 0x5c /* \ */) {
+              i += 2;
+              break;
+            }
+            i++;
+          }
+          continue;
+        }
+        i++;
+        continue;
+      }
+      width += c >= 0x20 && !(c >= 0x7f && c <= 0x9f) && c !== 0xad ? 1 : 0;
+      i++;
+    }
+    return width;
+  }
+
+  const expectMatchesReference = (str: string) => {
+    expect(Bun.stringWidth(str)).toBe(referenceWidthExcludeAnsiLatin1(str));
+  };
+
+  test("plain ASCII around chunk-size lengths", () => {
+    for (const n of [15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257]) {
+      expect(Bun.stringWidth(rep("a", n))).toBe(n);
+    }
+  });
+
+  test("SGR sequences at every offset across a chunk boundary", () => {
+    // Slide a short SGR pair across positions 0..192 so the ESC, the '[', the
+    // parameters and the final byte each land on 16/32/64-byte boundaries.
+    for (let pad = 0; pad <= 192; pad++) {
+      const str = rep("a", pad) + `${ESC}[31m` + "bcd" + `${ESC}[0m` + rep("e", 8);
+      expect(Bun.stringWidth(str)).toBe(pad + 3 + 8);
+    }
+  });
+
+  test("OSC hyperlink payload spanning many chunks", () => {
+    const url = "https://example.com/" + rep("x", 300);
+    for (const terminator of ["\x07", `${ESC}\\`, "\x9c"]) {
+      const link = `${ESC}]8;;${url}${terminator}click here${ESC}]8;;${terminator}`;
+      expect(Bun.stringWidth(link)).toBe("click here".length);
+      // And with text before/after whose width must still be counted.
+      expect(Bun.stringWidth(rep("a", 70) + link + rep("b", 70))).toBe(70 + "click here".length + 70);
+    }
+  });
+
+  test("ESC ST terminator straddling a chunk boundary", () => {
+    // Position the two-byte "ESC \" OSC terminator so it straddles 64-byte
+    // boundaries (ESC at 63, '\' at 64, etc.).
+    for (let pad = 50; pad <= 80; pad++) {
+      const str = rep("a", 10) + `${ESC}]8;;${rep("u", pad)}${ESC}\\done`;
+      expect(Bun.stringWidth(str)).toBe(10 + 4);
+      expectMatchesReference(str);
+    }
+  });
+
+  test("dense SGR runs (bash prompt shape)", () => {
+    const unit = `${ESC}[31mword${ESC}[0m ${ESC}[32mword${ESC}[0m ${ESC}[33mword${ESC}[0m`;
+    for (const n of [1, 3, 10, 100, 500]) {
+      const str = rep(unit, n);
+      // "word word word" = 14 visible columns per unit (incl. two spaces).
+      expect(Bun.stringWidth(str)).toBe(14 * n);
+    }
+  });
+
+  test("truecolor SGR parameters crossing chunk boundaries", () => {
+    const unit = `${ESC}[38;2;255;128;64mhello${ESC}[39m`;
+    for (const n of [1, 2, 5, 50, 200]) {
+      expect(Bun.stringWidth(rep(unit, n))).toBe(5 * n);
+    }
+  });
+
+  test("unterminated sequences at the end of long strings", () => {
+    expect(Bun.stringWidth(rep("a", 100) + `${ESC}[31;38;2;1;2;3`)).toBe(100);
+    expect(Bun.stringWidth(rep("a", 100) + `${ESC}]0;title with no terminator`)).toBe(100);
+    expect(Bun.stringWidth(rep("a", 100) + ESC)).toBe(100);
+    expect(Bun.stringWidth(rep("a", 63) + ESC)).toBe(63);
+    expect(Bun.stringWidth(rep("a", 64) + ESC)).toBe(64);
+    expect(Bun.stringWidth(rep("a", 100) + `${ESC}[`)).toBe(100);
+    expect(Bun.stringWidth(rep("a", 63) + `${ESC}[`)).toBe(63);
+    expect(Bun.stringWidth(rep("a", 100) + `${ESC}]`)).toBe(100);
+  });
+
+  test("bare ESC followed by ordinary characters", () => {
+    // Only the ESC itself is dropped; the next character still counts.
+    expect(Bun.stringWidth(`${ESC}A`)).toBe(1);
+    expect(Bun.stringWidth(rep("a", 63) + `${ESC}A` + rep("b", 10))).toBe(63 + 1 + 10);
+    expect(Bun.stringWidth(rep(`${ESC}a`, 100))).toBe(100);
+    // ESC ESC [1m : the first ESC is dropped, the second starts a CSI.
+    expect(Bun.stringWidth(`${ESC}${ESC}[1mx${ESC}[0m`)).toBe(1);
+  });
+
+  test("malformed CSI with an ESC inside the parameters", () => {
+    // The scan for the final byte treats the second '[' (0x5B) as the final
+    // byte of the first sequence, so "32m" remains visible. This matches the
+    // previous implementation.
+    expect(Bun.stringWidth(`${ESC}[31;${ESC}[32m`)).toBe(3);
+    expectMatchesReference(`${ESC}[31;${ESC}[32m`);
+    expectMatchesReference(rep("a", 60) + `${ESC}[31;${ESC}[32m` + rep("b", 60));
+  });
+
+  test("Latin-1 high bytes, C1 controls and soft hyphen mixed with escapes", () => {
+    // é (0xE9) is width 1, soft hyphen (0xAD) and C1 control (0x85) are width 0.
+    const latin1 = "caf\xe9\xad\x85!";
+    expect(Bun.stringWidth(latin1)).toBe(5);
+    const str = rep(latin1, 40) + `${ESC}[31m` + rep(latin1, 40) + `${ESC}[0m`;
+    expect(Bun.stringWidth(str)).toBe(5 * 80);
+    expectMatchesReference(str);
+  });
+
+  test("matches the scalar reference on pseudo-random escape-heavy inputs", () => {
+    // Deterministic LCG so failures are reproducible.
+    let seed = 0x12345678;
+    const next = () => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed;
+    };
+    const alphabet = "\x1b[]m;19aZ \x07\x9c\\\xad\x01\x7f\x80\x9f\xa0\xe9\xff@~?K";
+    const mismatches: string[] = [];
+    for (let iter = 0; iter < 500; iter++) {
+      const len = next() % 300;
+      let chars = "";
+      for (let k = 0; k < len; k++) chars += alphabet[next() % alphabet.length];
+      const width = Bun.stringWidth(chars);
+      const expected = referenceWidthExcludeAnsiLatin1(chars);
+      if (width !== expected) {
+        // Record the exact input bytes so failures are reproducible.
+        const dump = [...chars].map(c => "\\x" + c.charCodeAt(0).toString(16).padStart(2, "0")).join("");
+        mismatches.push(`${dump}: got ${width}, expected ${expected}`);
+      }
+    }
+    expect(mismatches).toEqual([]);
+  });
+
+  test("countAnsiEscapeCodes: true still counts escape bytes", () => {
+    const unit = `${ESC}[31mword${ESC}[0m`;
+    // "word" (4) plus the non-control bytes of the two escape sequences
+    // ("[31m" and "[0m" = 7); the ESC bytes themselves are control characters
+    // and contribute 0 even when counted.
+    expect(Bun.stringWidth(unit, { countAnsiEscapeCodes: true })).toBe(11);
+    expect(Bun.stringWidth(rep(unit, 100), { countAnsiEscapeCodes: true })).toBe(1100);
+  });
+});

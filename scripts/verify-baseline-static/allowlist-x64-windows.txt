@@ -437,7 +437,7 @@ ctiMasmProbeTrampolineAVX  [AVX]
 
 # ----------------------------------------------------------------------------
 # Highway. MSVC-mangled bun::N_AVX* names.
-# (96 symbols)
+# (102 symbols)
 # ----------------------------------------------------------------------------
 bun::N_AVX10_2::ContainsNewlineOrNonASCIIOrQuoteImpl                 [AVX, AVX512BW, AVX512F]
 bun::N_AVX10_2::CopyU16ToU8Impl                                      [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
@@ -454,6 +454,7 @@ bun::N_AVX10_2::IndexOfNewlineOrNonASCIIImpl                         [AVX, AVX51
 bun::N_AVX10_2::IndexOfNewlineOrNonASCIIOrHashOrAtImpl               [AVX, AVX512BW, AVX512F]
 bun::N_AVX10_2::IndexOfSpaceOrNewlineOrNonASCIIImpl                  [AVX, AVX512BW, AVX512F]
 bun::N_AVX10_2::MemMemImpl                                           [AVX, AVX512BW, AVX512F, BMI1]
+bun::N_AVX10_2::VisibleLatin1WidthExcludeANSIImpl                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX10_2::VisibleLatin1WidthImpl                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX2::ContainsNewlineOrNonASCIIOrQuoteImpl                    [AVX, AVX2]
 bun::N_AVX2::CopyU16ToU8Impl                                         [AVX, AVX2]
@@ -470,6 +471,7 @@ bun::N_AVX2::IndexOfNewlineOrNonASCIIImpl                            [AVX, AVX2]
 bun::N_AVX2::IndexOfNewlineOrNonASCIIOrHashOrAtImpl                  [AVX, AVX2]
 bun::N_AVX2::IndexOfSpaceOrNewlineOrNonASCIIImpl                     [AVX, AVX2]
 bun::N_AVX2::MemMemImpl                                              [AVX, AVX2]
+bun::N_AVX2::VisibleLatin1WidthExcludeANSIImpl                       [AVX, AVX2, BMI1, BMI2]
 bun::N_AVX2::VisibleLatin1WidthImpl                                  [AVX, AVX2]
 bun::N_AVX3::ContainsNewlineOrNonASCIIOrQuoteImpl                    [AVX, AVX512BW, AVX512F]
 bun::N_AVX3::CopyU16ToU8Impl                                         [AVX, AVX512BW, AVX512F, AVX512VL]
@@ -486,6 +488,7 @@ bun::N_AVX3::IndexOfNewlineOrNonASCIIImpl                            [AVX, AVX51
 bun::N_AVX3::IndexOfNewlineOrNonASCIIOrHashOrAtImpl                  [AVX, AVX512BW, AVX512F]
 bun::N_AVX3::IndexOfSpaceOrNewlineOrNonASCIIImpl                     [AVX, AVX512BW, AVX512F]
 bun::N_AVX3::MemMemImpl                                              [AVX, AVX512BW, AVX512F, BMI1]
+bun::N_AVX3::VisibleLatin1WidthExcludeANSIImpl                       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3::VisibleLatin1WidthImpl                                  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3_DL::ContainsNewlineOrNonASCIIOrQuoteImpl                 [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_DL::CopyU16ToU8Impl                                      [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
@@ -502,6 +505,7 @@ bun::N_AVX3_DL::IndexOfNewlineOrNonASCIIImpl                         [AVX, AVX51
 bun::N_AVX3_DL::IndexOfNewlineOrNonASCIIOrHashOrAtImpl               [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_DL::IndexOfSpaceOrNewlineOrNonASCIIImpl                  [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_DL::MemMemImpl                                           [AVX, AVX512BW, AVX512F, BMI1]
+bun::N_AVX3_DL::VisibleLatin1WidthExcludeANSIImpl                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3_DL::VisibleLatin1WidthImpl                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3_SPR::ContainsNewlineOrNonASCIIOrQuoteImpl                [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_SPR::CopyU16ToU8Impl                                     [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
@@ -518,6 +522,7 @@ bun::N_AVX3_SPR::IndexOfNewlineOrNonASCIIImpl                        [AVX, AVX51
 bun::N_AVX3_SPR::IndexOfNewlineOrNonASCIIOrHashOrAtImpl              [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_SPR::IndexOfSpaceOrNewlineOrNonASCIIImpl                 [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_SPR::MemMemImpl                                          [AVX, AVX512BW, AVX512F, BMI1]
+bun::N_AVX3_SPR::VisibleLatin1WidthExcludeANSIImpl                   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3_SPR::VisibleLatin1WidthImpl                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3_ZEN4::ContainsNewlineOrNonASCIIOrQuoteImpl               [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_ZEN4::CopyU16ToU8Impl                                    [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
@@ -534,6 +539,7 @@ bun::N_AVX3_ZEN4::IndexOfNewlineOrNonASCIIImpl                       [AVX, AVX51
 bun::N_AVX3_ZEN4::IndexOfNewlineOrNonASCIIOrHashOrAtImpl             [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_ZEN4::IndexOfSpaceOrNewlineOrNonASCIIImpl                [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_ZEN4::MemMemImpl                                         [AVX, AVX512BW, AVX512F, BMI1]
+bun::N_AVX3_ZEN4::VisibleLatin1WidthExcludeANSIImpl                  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3_ZEN4::VisibleLatin1WidthImpl                             [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 
 

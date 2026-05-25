@@ -762,6 +762,7 @@ describe("Bun.Archive", () => {
       // and does not contribute to the returned count.
       expect(stdout).toContain("count:1");
       expect(stdout).toContain("safe:safe contents");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 

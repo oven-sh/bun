@@ -167,5 +167,6 @@ test("explicit ca option replaces the default trust store instead of appending t
   expect(stdout).toContain("pinned-to-unrelated-ca rejected");
   // Pinning the actual issuer still connects.
   expect(stdout).toContain("pinned-to-issuer connected");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

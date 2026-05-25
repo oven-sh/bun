@@ -26,7 +26,13 @@ const EventEmitter = require("node:events");
 let dns: typeof import("node:dns");
 
 const normalizedArgsSymbol = Symbol("normalizedArgs");
-const { ExceptionWithHostPort, ConnResetException, NodeAggregateError, ErrnoException, owner_symbol } = require("internal/shared");
+const {
+  ExceptionWithHostPort,
+  ConnResetException,
+  NodeAggregateError,
+  ErrnoException,
+  owner_symbol,
+} = require("internal/shared");
 import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
 import type { TLSSocket } from "node:tls";

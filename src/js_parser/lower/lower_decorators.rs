@@ -137,6 +137,158 @@ fn can_be_class_binding_name(name: &[u8]) -> bool {
         && !is_eval_or_arguments(name)
 }
 
+// ── Private-name usage scan ──────────────────────────────────────────────────
+// `lower_impl` moves every class static block out of the class body so it runs
+// after decoration. A reference to one of the class's own private names
+// (`#a in x`, `this.#a`, …) inside such a block would then appear outside the
+// class and be a syntax error, so the lowering needs to know up front whether
+// that can happen in order to force private lowering. Traversal mirrors
+// `rewrite_private_accesses_in_expr`/`_stmts`, which is what rewrites the
+// references afterwards.
+
+fn expr_references_private_name(expr: &Expr, names: &HashMap<u32, ()>) -> bool {
+    match &expr.data {
+        js_ast::ExprData::EPrivateIdentifier(pi) => names.contains_key(&pi.ref_.inner_index()),
+        js_ast::ExprData::EIndex(e) => {
+            expr_references_private_name(&e.target, names)
+                || expr_references_private_name(&e.index, names)
+        }
+        js_ast::ExprData::EBinary(e) => {
+            expr_references_private_name(&e.left, names)
+                || expr_references_private_name(&e.right, names)
+        }
+        js_ast::ExprData::ECall(e) => {
+            expr_references_private_name(&e.target, names)
+                || e.args
+                    .slice()
+                    .iter()
+                    .any(|arg| expr_references_private_name(arg, names))
+        }
+        js_ast::ExprData::ENew(e) => {
+            expr_references_private_name(&e.target, names)
+                || e.args
+                    .slice()
+                    .iter()
+                    .any(|arg| expr_references_private_name(arg, names))
+        }
+        js_ast::ExprData::EUnary(e) => expr_references_private_name(&e.value, names),
+        js_ast::ExprData::EDot(e) => expr_references_private_name(&e.target, names),
+        js_ast::ExprData::ESpread(e) => expr_references_private_name(&e.value, names),
+        js_ast::ExprData::EIf(e) => {
+            expr_references_private_name(&e.test_, names)
+                || expr_references_private_name(&e.yes, names)
+                || expr_references_private_name(&e.no, names)
+        }
+        js_ast::ExprData::EAwait(e) => expr_references_private_name(&e.value, names),
+        js_ast::ExprData::EYield(e) => e
+            .value
+            .is_some_and(|v| expr_references_private_name(&v, names)),
+        js_ast::ExprData::EArray(e) => e
+            .items
+            .slice()
+            .iter()
+            .any(|item| expr_references_private_name(item, names)),
+        js_ast::ExprData::EObject(e) => e.properties.slice().iter().any(|prop| {
+            prop.key
+                .is_some_and(|k| expr_references_private_name(&k, names))
+                || prop
+                    .value
+                    .is_some_and(|v| expr_references_private_name(&v, names))
+                || prop
+                    .initializer
+                    .is_some_and(|init| expr_references_private_name(&init, names))
+        }),
+        js_ast::ExprData::ETemplate(e) => {
+            e.tag
+                .is_some_and(|tag| expr_references_private_name(&tag, names))
+                || e.parts()
+                    .iter()
+                    .any(|part| expr_references_private_name(&part.value, names))
+        }
+        js_ast::ExprData::EFunction(e) => {
+            stmts_reference_private_name(e.func.body.stmts.slice(), names)
+        }
+        js_ast::ExprData::EArrow(e) => stmts_reference_private_name(e.body.stmts.slice(), names),
+        _ => false,
+    }
+}
+
+fn stmts_reference_private_name(stmts: &[Stmt], names: &HashMap<u32, ()>) -> bool {
+    stmts.iter().any(|stmt| match &stmt.data {
+        js_ast::StmtData::SExpr(data) => expr_references_private_name(&data.value, names),
+        js_ast::StmtData::SReturn(data) => data
+            .value
+            .is_some_and(|v| expr_references_private_name(&v, names)),
+        js_ast::StmtData::SThrow(data) => expr_references_private_name(&data.value, names),
+        js_ast::StmtData::SLocal(data) => data.decls.slice().iter().any(|decl| {
+            decl.value
+                .is_some_and(|v| expr_references_private_name(&v, names))
+        }),
+        js_ast::StmtData::SIf(data) => {
+            expr_references_private_name(&data.test_, names)
+                || stmts_reference_private_name(core::slice::from_ref(&data.yes), names)
+                || data.no.is_some_and(|no| {
+                    stmts_reference_private_name(core::slice::from_ref(&no), names)
+                })
+        }
+        js_ast::StmtData::SBlock(data) => stmts_reference_private_name(data.stmts.slice(), names),
+        js_ast::StmtData::SFor(data) => {
+            data.init.is_some_and(|init| {
+                stmts_reference_private_name(core::slice::from_ref(&init), names)
+            }) || data
+                .test_
+                .is_some_and(|t| expr_references_private_name(&t, names))
+                || data
+                    .update
+                    .is_some_and(|u| expr_references_private_name(&u, names))
+                || stmts_reference_private_name(core::slice::from_ref(&data.body), names)
+        }
+        js_ast::StmtData::SForIn(data) => {
+            expr_references_private_name(&data.value, names)
+                || stmts_reference_private_name(core::slice::from_ref(&data.body), names)
+        }
+        js_ast::StmtData::SForOf(data) => {
+            expr_references_private_name(&data.value, names)
+                || stmts_reference_private_name(core::slice::from_ref(&data.body), names)
+        }
+        js_ast::StmtData::SWhile(data) => {
+            expr_references_private_name(&data.test_, names)
+                || stmts_reference_private_name(core::slice::from_ref(&data.body), names)
+        }
+        js_ast::StmtData::SDoWhile(data) => {
+            expr_references_private_name(&data.test_, names)
+                || stmts_reference_private_name(core::slice::from_ref(&data.body), names)
+        }
+        js_ast::StmtData::SSwitch(data) => {
+            expr_references_private_name(&data.test_, names)
+                || data.cases.slice().iter().any(|case| {
+                    case.value
+                        .is_some_and(|v| expr_references_private_name(&v, names))
+                        || stmts_reference_private_name(case.body.slice(), names)
+                })
+        }
+        js_ast::StmtData::STry(data) => {
+            stmts_reference_private_name(data.body.slice(), names)
+                || data
+                    .catch_
+                    .as_ref()
+                    .is_some_and(|c| stmts_reference_private_name(c.body.slice(), names))
+                || data
+                    .finally
+                    .as_ref()
+                    .is_some_and(|f| stmts_reference_private_name(f.stmts.slice(), names))
+        }
+        js_ast::StmtData::SLabel(data) => {
+            stmts_reference_private_name(core::slice::from_ref(&data.stmt), names)
+        }
+        js_ast::StmtData::SWith(data) => {
+            expr_references_private_name(&data.value, names)
+                || stmts_reference_private_name(core::slice::from_ref(&data.body), names)
+        }
+        _ => false,
+    })
+}
+
 // ── impl P ───────────────────────────────────────────────────────────────────
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -1337,6 +1489,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if !lower_all_private && has_any_private && has_any_decorated {
                 lower_all_private = true;
             }
+
+            // Static blocks are moved out of the class body below so they run
+            // after decoration. If one references a private name declared on
+            // this class, the reference would end up outside the class and be
+            // a syntax error, so those privates must be lowered to runtime
+            // helper calls as well.
+            if !lower_all_private && has_any_private {
+                let mut declared_privates: HashMap<u32, ()> = HashMap::default();
+                for cprop in cprops.iter() {
+                    if cprop.kind == PropertyKind::ClassStaticBlock {
+                        continue;
+                    }
+                    if let Some(key) = cprop.key
+                        && let js_ast::ExprData::EPrivateIdentifier(pi) = &key.data
+                    {
+                        declared_privates.insert(pi.ref_.inner_index(), ());
+                    }
+                }
+                for cprop in cprops.iter() {
+                    if cprop.kind != PropertyKind::ClassStaticBlock {
+                        continue;
+                    }
+                    if let Some(sb) = cprop.class_static_block_ref()
+                        && stmts_reference_private_name(sb.stmts.slice(), &declared_privates)
+                    {
+                        lower_all_private = true;
+                        break;
+                    }
+                }
+            }
         }
 
         let props_slice2: &mut [Property] = class.properties.slice_mut();
@@ -1463,6 +1645,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         name
                     };
                     let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, accessor_name);
+                    // When all privates are being lowered, record the storage
+                    // WeakMap for private auto-accessors too so that references
+                    // like `#x in obj` inside extracted static blocks can be
+                    // rewritten into runtime helper calls.
+                    if lower_all_private
+                        && let Some(k) = prop.key
+                        && let js_ast::ExprData::EPrivateIdentifier(pi) = &k.data
+                    {
+                        private_lowered_map
+                            .insert(pi.ref_.inner_index(), PrivateLoweredInfo::new(wm_ref));
+                    }
                     let wme = p.new_weak_map_expr(loc);
                     prefix_stmts.push(p.var_decl(wm_ref, Some(wme), loc));
 

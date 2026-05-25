@@ -40,6 +40,7 @@ use bun_sys::{self as sys, Fd};
 use bun_wyhash::{Wyhash, Wyhash11};
 
 use crate::analytics;
+#[cfg(unix)]
 use crate::bin_real as bin;
 use crate::bun_bunfig::Arguments as Command;
 use crate::bun_progress::{Node as ProgressNode, Progress};

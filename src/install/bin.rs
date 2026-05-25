@@ -1325,16 +1325,7 @@ impl<'a> Linker<'a> {
         // PORT NOTE: hoisted from `defer` block in create_symlink
         if err.is_none() {
             let mode = 0o777 & !(UMASK.load(Ordering::Acquire) as Mode);
-            if sys::lchmod(abs_target, mode).is_ok() {
-                return;
-            }
-            let Ok(st) = sys::lstat(abs_target) else {
-                return;
-            };
-            if sys::posix::s_islnk(st.st_mode as u32) {
-                return;
-            }
-            let _ = sys::chmod(abs_target, mode);
+            let _ = sys::fchmodat(Fd::cwd(), abs_target, mode, libc::AT_SYMLINK_NOFOLLOW);
         }
     }
 

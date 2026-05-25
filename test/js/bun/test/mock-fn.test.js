@@ -1015,3 +1015,39 @@ describe("spyOn", () => {
 
   // spyOn does not work with getters/setters yet.
 });
+
+describe("mock constructor calls", () => {
+  test("constructing a mock with no implementation returns an object", () => {
+    const fn = jest.fn();
+    const instance = new fn();
+    expect(typeof instance).toBe("object");
+    expect(typeof Reflect.construct(fn, [])).toBe("object");
+    expect(fn.mock.contexts[0]).toBe(instance);
+  });
+
+  test("constructing a mock whose implementation returns a primitive returns an object", () => {
+    const fn = jest.fn(() => 42);
+    expect(typeof new fn()).toBe("object");
+    expect(typeof Reflect.construct(fn, [])).toBe("object");
+    expect(fn.mock.results).toEqual([
+      { type: "return", value: 42 },
+      { type: "return", value: 42 },
+    ]);
+  });
+
+  test("constructing a mock whose implementation returns an object returns that object", () => {
+    const obj = { a: 1 };
+    const fn = jest.fn(() => obj);
+    expect(new fn()).toBe(obj);
+    expect(Reflect.construct(fn, [])).toBe(obj);
+  });
+
+  if (isBun) {
+    test("constructing a spy on a missing property does not crash", () => {
+      const target = {};
+      const spy = spyOn(target, "doesNotExist");
+      expect(typeof Reflect.construct(spy, [])).toBe("object");
+      spy.mockRestore();
+    });
+  }
+});

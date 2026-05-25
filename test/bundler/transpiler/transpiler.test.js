@@ -4563,3 +4563,51 @@ describe("numeric property keys that overflow to Infinity", () => {
     expect(new Function(`${out}; return result;`)()).toEqual(["object", "destructured", "method", "static"]);
   });
 });
+
+describe("parse error flood", () => {
+  it("reports duplicate-binding floods in linear time", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const transpiler = new Bun.Transpiler({
+            loader: "js",
+            target: "browser",
+            minifyWhitespace: true,
+            deadCodeElimination: true,
+          });
+          const check = (label, statement, repeats) => {
+            const input = Buffer.alloc(statement.length * repeats, statement).toString();
+            let threw;
+            try {
+              transpiler.transformSync(input);
+            } catch (e) {
+              threw = e;
+            }
+            if (threw?.name !== "AggregateError") throw new Error("expected AggregateError, got " + threw);
+            if (!threw.errors.some(e => String(e.message).includes("has already been declared"))) {
+              throw new Error("expected duplicate-declaration errors");
+            }
+            console.log("OK " + label);
+          };
+          const bindings = Buffer.alloc(420, "a,").toString();
+          check("template catch flood", "try {} catch ([" + bindings + "a, \`]) {}\\n", 800);
+          check("duplicate catch flood", "try {} catch ([" + bindings + "a]) {}\\n", 400);
+          console.log("DONE");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("OK template catch flood");
+    expect(stdout).toContain("OK duplicate catch flood");
+    expect(stdout).toContain("DONE");
+    expect(exitCode).toBe(0);
+  }, 90_000);
+});

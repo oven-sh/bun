@@ -2558,14 +2558,16 @@ pub fn process_fetch_log(
         }
 
         _ => {
-            // Spec caps at 256 (`var errors_stack: [256]JSValue`). PERF(port):
-            // was inline switch — Zig stack-allocated; we heap-allocate the
-            // exact `len` since `JSValue` is a thin u64 and 256 * 8 B = 2 KiB
-            // is fine either way, but `Vec` avoids the uninit-array dance.
+            // Spec caps at 256 (`var errors_stack: [256]JSValue`). The array
+            // must stay on the stack: the freshly created message cells are
+            // only reachable through it until the AggregateError adopts them,
+            // so they have to be visible to JSC's conservative stack scan — a
+            // heap `Vec<JSValue>` is invisible to the GC and the cells get
+            // collected if any allocation below triggers a collection.
             let len = log.msgs.len().min(256);
-            let mut errors: alloc::vec::Vec<JSValue> = alloc::vec::Vec::with_capacity(len);
-            for msg in log.msgs.drain(..len) {
-                let v = match msg.metadata {
+            let mut errors_stack = [JSValue::UNDEFINED; 256];
+            for (slot, msg) in errors_stack.iter_mut().zip(log.msgs.drain(..len)) {
+                *slot = match msg.metadata {
                     bun_ast::Metadata::Build => take(BuildMessage::create(global_this, msg)),
                     bun_ast::Metadata::Resolve(_) => take(ResolveMessage::create(
                         global_this,
@@ -2573,8 +2575,8 @@ pub fn process_fetch_log(
                         referrer_utf8.slice(),
                     )),
                 };
-                errors.push(v);
             }
+            let errors = &errors_stack[..len];
 
             // C++ `Zig::toString` does `createWithoutCopying`, so the buffer
             // must outlive the AggregateError. Mark it global so JSC adopts it
@@ -2588,7 +2590,7 @@ pub fn process_fetch_log(
             message.mark_global();
             *ret = ErrorableResolvedSource::err(
                 err,
-                take(global_this.create_aggregate_error(&errors, &message)),
+                take(global_this.create_aggregate_error(errors, &message)),
             );
         }
     }

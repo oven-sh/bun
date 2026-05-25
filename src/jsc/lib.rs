@@ -2143,12 +2143,15 @@ impl LogJsc for bun_ast::Log {
             0 => Ok(JSValue::UNDEFINED),
             1 => msg_to_js(&msgs[0], global),
             _ => {
-                let mut errors_stack: Vec<JSValue> = Vec::with_capacity(count);
-                for msg in &msgs[0..count] {
-                    errors_stack.push(msg_to_js(msg, global)?);
+                // Stack array (not a heap Vec): the created cells must be
+                // visible to the conservative stack scan until the
+                // AggregateError adopts them.
+                let mut errors_stack = [JSValue::UNDEFINED; 256];
+                for (slot, msg) in errors_stack.iter_mut().zip(&msgs[0..count]) {
+                    *slot = msg_to_js(msg, global)?;
                 }
                 let out = bun_core::ZigString::init(message.as_bytes());
-                global.create_aggregate_error(&errors_stack, &out)
+                global.create_aggregate_error(&errors_stack[..count], &out)
             }
         }
     }

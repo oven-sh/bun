@@ -117,6 +117,47 @@ describe("mock()", () => {
     expect(fn).toHaveBeenCalledWith();
   });
 
+  test("are constructable with new", () => {
+    // no implementation: `new` should produce a fresh object, like `new` on an ordinary function
+    const fn = jest.fn();
+    const instance = new fn(1, 2);
+    expect(typeof instance).toBe("object");
+    expect(instance).not.toBe(null);
+    expect(fn.mock.calls).toEqual([[1, 2]]);
+    expect(fn.mock.contexts[0]).toBe(instance);
+
+    // Reflect.construct used to crash when the mock returned a non-object
+    const reflected = Reflect.construct(fn, []);
+    expect(typeof reflected).toBe("object");
+
+    // implementation operating on `this`
+    const withImpl = jest.fn(function (value) {
+      this.value = value;
+    });
+    const constructed = new withImpl(42);
+    expect(constructed.value).toBe(42);
+    expect(withImpl.mock.contexts[0]).toBe(constructed);
+
+    // implementation returning an object wins over the created `this`
+    const returnsObject = jest.fn(() => ({ a: 1 }));
+    expect(new returnsObject()).toEqual({ a: 1 });
+
+    // primitive return values are ignored by `new`, like ordinary functions
+    const returnsPrimitive = jest.fn().mockReturnValue(42);
+    expect(typeof new returnsPrimitive()).toBe("object");
+
+    // newTarget.prototype is respected
+    const classLike = jest.fn();
+    classLike.prototype = {
+      greet() {
+        return "hello";
+      },
+    };
+    const classInstance = new classLike();
+    expect(classInstance.greet()).toBe("hello");
+    expect(classInstance instanceof classLike).toBe(true);
+  });
+
   test("mockName returns this", () => {
     const fn = jest.fn();
     expect(fn.mockName()).toBe(fn);

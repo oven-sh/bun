@@ -22,8 +22,8 @@
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import { chmodSync } from "node:fs";
 import { bunEnv, bunExe, isPosix, isWindows, tempDirWithFiles } from "harness";
+import { chmodSync } from "node:fs";
 import { join } from "path";
 
 function makeFixture() {
@@ -107,9 +107,7 @@ function decodeBunxLauncher(bytes: Buffer): string {
   expect(launcherStart).toBeGreaterThanOrEqual(0);
 
   // Drop the trailing space the encoder writes so we compare against the raw launcher.
-  const launcher = bytes
-    .subarray(launcherStart, launcherEnd - 2)
-    .toString("utf16le");
+  const launcher = bytes.subarray(launcherStart, launcherEnd - 2).toString("utf16le");
   return launcher;
 }
 

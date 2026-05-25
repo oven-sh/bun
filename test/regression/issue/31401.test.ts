@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // https://github.com/oven-sh/bun/issues/31401
@@ -11,15 +12,14 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // "No identifiers allowed directly after numeric literal".
 // The generated name must be sanitized up-front (→ `_1_default`).
 describe.concurrent("issue 31401: anonymous default export from digit-named module", () => {
-  test("bun run a digit-named module with an anonymous default function", async () => {
+  test("run a digit-named module with an anonymous default function", async () => {
     using dir = tempDir("issue-31401-run", {
       "1.ts": `export default function () {}\nconsole.log("ok");\n`,
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "1.ts"],
+      cmd: [bunExe(), join(String(dir), "1.ts")],
       env: bunEnv,
-      cwd: String(dir),
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -38,9 +38,8 @@ describe.concurrent("issue 31401: anonymous default export from digit-named modu
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "index.ts"],
+      cmd: [bunExe(), join(String(dir), "index.ts")],
       env: bunEnv,
-      cwd: String(dir),
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -58,9 +57,8 @@ describe.concurrent("issue 31401: anonymous default export from digit-named modu
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--no-bundle", "1.ts"],
+      cmd: [bunExe(), "build", "--no-bundle", join(String(dir), "1.ts")],
       env: bunEnv,
-      cwd: String(dir),
       stderr: "pipe",
       stdout: "pipe",
     });

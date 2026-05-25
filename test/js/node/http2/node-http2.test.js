@@ -2520,6 +2520,67 @@ it("http2 server does not spawn a second request for late HEADERS on a stream it
   }
 });
 
+it("http2 server still receives the request body after responding mid-way through a split request header block", async () => {
+  // HEADERS(no END_STREAM, no END_HEADERS) + CONTINUATION(END_HEADERS) +
+  // DATA(END_STREAM). The 'stream' handler responds with endStream: true as
+  // soon as the header block completes; that local half-close must not be
+  // mistaken for the peer ending its side, or the request body that follows
+  // is silently dropped.
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  const server = http2.createServer();
+  server.on("session", session => {
+    session.on("error", err => reject(err));
+  });
+  server.on("stream", stream => {
+    stream.on("error", () => {});
+    let body = "";
+    stream.setEncoding("utf8");
+    stream.on("data", d => (body += d));
+    stream.on("close", () => {
+      try {
+        expect(body).toBe("request body");
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    });
+    stream.respond({ ":status": 200 }, { endStream: true });
+  });
+
+  await new Promise(r => server.listen(0, r));
+  const port = server.address().port;
+
+  const socket = net.connect(port, "127.0.0.1");
+  socket.on("error", err => reject(err));
+
+  // :method: POST, :path: /, :scheme: http (static-table indexed) +
+  // :authority: x (literal without indexing, indexed name 1), split across
+  // a HEADERS frame and a CONTINUATION frame.
+  const requestFragment1 = Buffer.from([0x83, 0x84, 0x86]);
+  const requestFragment2 = Buffer.from([0x01, 0x01, 0x78]);
+
+  socket.on("data", () => {});
+  socket.on("connect", () => {
+    socket.write(
+      Buffer.concat([
+        http2utils.kClientMagic,
+        new http2utils.SettingsFrame(false).data,
+        new http2utils.HeadersFrame(1, requestFragment1, 0, false, false).data,
+        new http2utils.ContinuationFrame(1, requestFragment2, 0, false).data,
+        new http2utils.DataFrame(1, Buffer.from("request body"), 0, true).data,
+      ]),
+    );
+  });
+
+  try {
+    await promise;
+  } finally {
+    socket.destroy();
+    server.close();
+  }
+});
+
 it("http2 client receives every fragment of a trailer block split across CONTINUATION frames", async () => {
   // A trailing HEADERS frame may carry END_STREAM without END_HEADERS, with
   // the rest of the trailer block following in CONTINUATION frames (RFC 9113

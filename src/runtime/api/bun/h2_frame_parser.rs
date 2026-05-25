@@ -1459,6 +1459,12 @@ pub struct Stream {
     js_context: StrongOptional, // jsc.Strong.Optional
     wait_for_trailers: bool,
     end_after_headers: bool,
+    // END_STREAM seen on the *inbound* HEADERS frame that opened the header
+    // block currently being processed; the half-close it implies is applied
+    // once END_HEADERS completes the block. Kept separate from
+    // `end_after_headers`, which `js_request` also sets for the *outbound*
+    // direction and which backs the `endAfterHeaders` getter.
+    inbound_end_stream: bool,
     /// Both directions have sent END_STREAM (ours on the response HEADERS),
     /// but the CLOSED transition is deferred until the JS writable side
     /// finishes so the stream object observes its normal end-of-stream
@@ -2029,6 +2035,7 @@ impl Stream {
             js_context: StrongOptional::empty(),
             wait_for_trailers: false,
             end_after_headers: false,
+            inbound_end_stream: false,
             close_on_local_finish: false,
             is_waiting_more_headers: false,
             header_block_size: 0,
@@ -4430,8 +4437,10 @@ impl H2FrameParser {
                 None => return Ok(end),
             };
             // END_STREAM finalization was deferred by handle_headers_frame
-            // until the complete header block had been dispatched.
-            if stream.end_after_headers {
+            // until the complete header block had been dispatched. Read the
+            // inbound-only flag: `end_after_headers` may have been flipped by
+            // a re-entrant `respond({endStream})` during the dispatch above.
+            if stream.inbound_end_stream {
                 self.finish_headers_end_stream(stream);
             }
             return Ok(end);
@@ -4574,6 +4583,7 @@ impl H2FrameParser {
             }
             let end = payload.len() - padding;
             stream.end_after_headers = frame.flags & HeadersFrameFlags::END_STREAM as u8 != 0;
+            stream.inbound_end_stream = stream.end_after_headers;
             stream.header_block_size = 0;
             stream.header_block_count = 0;
             stream.pending_header_block.clear();
@@ -4607,7 +4617,7 @@ impl H2FrameParser {
                 Some(s) => unsafe { &mut *s },
                 None => return Ok(end_),
             };
-            if stream.end_after_headers {
+            if stream.inbound_end_stream {
                 self.finish_headers_end_stream(stream);
             }
             return Ok(end_);

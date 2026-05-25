@@ -1415,15 +1415,12 @@ pub(crate) fn allocate_package_manager() {
         bun_core::heap::into_raw(Box::<PackageManager>::new_uninit()).cast::<PackageManager>();
     holder::RAW_PTR.store(ptr, core::sync::atomic::Ordering::Release);
     // The exit callback exists only so LeakSanitizer does not report the
-    // caches as still reachable at exit. In non-ASAN builds it is wasted work
-    // at process exit, so don't register it. (`ENABLE_ASAN` is a compile-time
-    // const, so this branch folds away while keeping `deinit_caches_at_exit`
-    // referenced.)
-    if bun_core::Environment::ENABLE_ASAN {
-        bun_core::add_exit_callback(deinit_caches_at_exit);
-    }
+    // caches as still reachable at exit; non-ASAN builds don't compile it in.
+    #[cfg(bun_asan)]
+    bun_core::add_exit_callback(deinit_caches_at_exit);
 }
 
+#[cfg(bun_asan)]
 extern "C" fn deinit_caches_at_exit() {
     // Exit callbacks run on whichever thread called `Global::exit()` — e.g.
     // the HTTP client thread when CA-file validation fails in

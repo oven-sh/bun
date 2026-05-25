@@ -37,7 +37,18 @@ const tlsScalarKeys = ["passphrase", "secureOptions", "clientRenegotiationLimit"
 // File/identity options where an empty string means "absent": an empty `ca`
 // (etc.) must not be forwarded, or the native parser treats it as a real (empty)
 // value and the handshake breaks. These stay on a truthy check.
-const tlsFileKeys = ["ca", "cert", "key", "dhParamsFile", "keyFile", "certFile", "caFile", "servername", "serverName", "ciphers"];
+const tlsFileKeys = [
+  "ca",
+  "cert",
+  "key",
+  "dhParamsFile",
+  "keyFile",
+  "certFile",
+  "caFile",
+  "servername",
+  "serverName",
+  "ciphers",
+];
 const tlsValueKeys = [...tlsScalarKeys, ...tlsFileKeys];
 
 // Agents (e.g. HttpsProxyAgent) stuff connection options into `connectOpts`

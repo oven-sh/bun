@@ -115,7 +115,7 @@ mod _impl {
         pub fn estimated_size(&self) -> usize {
             // @sizeOf(@cImport(@cInclude("deflate.h")).internal_state) @ cloudflare/zlib @ 92530568d2c128b4432467b76a3b54d93d6350bd
             const INTERNAL_STATE_SIZE: usize = 3309;
-            mem::size_of::<Self>() + INTERNAL_STATE_SIZE + self.stream.get().dictionary.len()
+            mem::size_of::<Self>() + INTERNAL_STATE_SIZE
         }
 
         #[bun_jsc::host_fn(method)]
@@ -367,11 +367,13 @@ impl Context {
         };
         self.err = c::ReturnCode::Ok;
         match self.mode {
-            // SAFETY: FFI — state is an initialized deflate stream; dict_ptr/dict_len borrow a rooted ArrayBuffer.
+            // SAFETY: FFI — state is an initialized deflate stream; dict_ptr/dict_len point into
+            // `self.dictionary` (owned Box), which outlives this call.
             DEFLATE | DEFLATERAW => unsafe {
                 self.err = c::deflateSetDictionary(&raw mut self.state, dict_ptr, dict_len);
             },
-            // SAFETY: FFI — state is an initialized inflate stream; dict_ptr/dict_len borrow a rooted ArrayBuffer.
+            // SAFETY: FFI — state is an initialized inflate stream; dict_ptr/dict_len point into
+            // `self.dictionary` (owned Box), which outlives this call.
             INFLATERAW => unsafe {
                 self.err = c::inflateSetDictionary(&raw mut self.state, dict_ptr, dict_len);
             },
@@ -554,7 +556,8 @@ impl Context {
                 let dict = self.dictionary();
                 (dict.as_ptr(), u32::try_from(dict.len()).expect("int cast"))
             };
-            // SAFETY: FFI — state is an initialized inflate stream; dict is rooted.
+            // SAFETY: FFI — state is an initialized inflate stream; dict_ptr/dict_len point into
+            // `self.dictionary` (owned Box), which outlives this call.
             self.err = unsafe { c::inflateSetDictionary(&raw mut self.state, dict_ptr, dict_len) };
 
             if self.err == c::ReturnCode::Ok {

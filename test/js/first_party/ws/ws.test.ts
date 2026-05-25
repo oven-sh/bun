@@ -3,7 +3,7 @@ import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { once } from "events";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tls as tlsCert } from "harness";
 import { createServer } from "http";
 import { AddressInfo, connect } from "net";
 import path from "node:path";
@@ -904,5 +904,55 @@ describe("ping/pong no-arg payload", () => {
     const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
     ws.on("open", () => ws.pong(Buffer.from("hello")));
     await promise;
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/31396
+// `ws` forwards top-level TLS options (e.g. `rejectUnauthorized: false`) to the
+// underlying connection. Before the fix, Bun's shim only read `options.tls`, so
+// connecting to a self-signed `wss://` server with `rejectUnauthorized: false`
+// failed the TLS handshake.
+describe("top-level TLS options", () => {
+  function serveTls() {
+    return Bun.serve({
+      port: 0,
+      tls: { key: tlsCert.key, cert: tlsCert.cert },
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("expected websocket", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          ws.close();
+        },
+        message() {},
+      },
+    });
+  }
+
+  it("rejectUnauthorized: false connects to a self-signed server", async () => {
+    await using server = serveTls();
+    const { resolve, reject, promise } = Promise.withResolvers<void>();
+
+    const ws = new WebSocket(`wss://localhost:${server.port}`, { rejectUnauthorized: false });
+    ws.on("open", () => {
+      ws.close();
+      resolve();
+    });
+    ws.on("error", reject);
+
+    await promise;
+  });
+
+  it("a self-signed server is still rejected without rejectUnauthorized: false", async () => {
+    await using server = serveTls();
+    const { resolve, reject, promise } = Promise.withResolvers<{ message: string }>();
+
+    const ws = new WebSocket(`wss://localhost:${server.port}`);
+    ws.on("open", () => reject(new Error("unexpectedly connected to a self-signed server")));
+    ws.on("error", resolve);
+
+    const err = await promise;
+    expect(err.message).toContain("TLS handshake failed");
   });
 });

@@ -228,6 +228,21 @@ pub fn scan_imports_and_exports(
                             col!(exports_kind)[other_file] = ExportsKind::Cjs;
                             col!(flags)[other_file].wrap = WrapKind::Cjs;
                         }
+
+                        // `import defer` of an ES module: wrap the target in a
+                        // lazy `__esm` closure so its evaluation can be deferred
+                        // until the first property access on the namespace.
+                        if record.flags.contains(ImportRecordFlags::PHASE_DEFER)
+                            && output_format != Format::InternalBakeDev
+                            && !other_flags.contains(AstFlags::HAS_LAZY_EXPORT)
+                            && col_ref!(flags)[other_file].wrap == WrapKind::None
+                            && matches!(
+                                col_ref!(exports_kind)[other_file],
+                                ExportsKind::Esm | ExportsKind::EsmWithDynamicFallback
+                            )
+                        {
+                            col!(flags)[other_file].wrap = WrapKind::Esm;
+                        }
                     }
                     ImportKind::Require =>
                     // Files that are imported with require() must be CommonJS modules
@@ -483,6 +498,124 @@ pub fn scan_imports_and_exports(
                     &mut col!(wrapper_part_indices)[source_index],
                     source_index_.get(),
                 );
+            }
+        }
+
+        // Decide how to lower `import defer` records.
+        //
+        // A deferred import of an ES module that is `__esm`-wrapped keeps its
+        // lazy-evaluation semantics when bundling: the importer skips the eager
+        // `init()` call (see `should_remove_import_export_stmt`) and every
+        // property access on the namespace prints as `(init_foo(), x)` instead
+        // (see `deferred_import_inits` in the printer options).
+        //
+        // Records that can't preserve those semantics fall back to eager
+        // evaluation: non-ESM targets, subgraphs containing top-level await,
+        // and namespace objects that are captured rather than only accessed by
+        // property. For those PHASE_DEFER is removed and a warning is emitted.
+        if output_format != Format::InternalBakeDev {
+            let _trace = perf::trace("Bundler.ImportDefer");
+            for source_index_ in &reachable {
+                let id = source_index_.get() as usize;
+
+                if id >= col_ref!(import_records_list).len() || col_ref!(css_asts)[id].is_some() {
+                    continue;
+                }
+
+                let record_count = col_ref!(import_records_list)[id].as_slice().len();
+                for record_index in 0..record_count {
+                    let (record_flags, record_kind, record_source_index, record_range) = {
+                        let record = &col_ref!(import_records_list)[id].as_slice()[record_index];
+                        (record.flags, record.kind, record.source_index, record.range)
+                    };
+
+                    if !record_flags.contains(ImportRecordFlags::PHASE_DEFER)
+                        || record_kind != ImportKind::Stmt
+                        || !record_source_index.is_valid()
+                    {
+                        continue;
+                    }
+
+                    let other_id = record_source_index.get() as usize;
+                    if other_id >= col_ref!(flags).len() {
+                        continue;
+                    }
+                    let other_flags = col_ref!(flags)[other_id];
+                    let wrapper_ref = col_ref!(wrapper_refs)[other_id];
+
+                    // Collect the import items generated from property accesses on
+                    // this record's namespace, and check whether the namespace
+                    // object itself is captured (anything other than a property
+                    // access keeps a use of the namespace symbol).
+                    let mut namespace_is_captured = false;
+                    let mut deferred_items: Vec<(Ref, Vec<u32>)> = Vec::new();
+                    if id < col_ref!(named_imports).len() {
+                        for (item_ref, named_import) in col_ref!(named_imports)[id].iter() {
+                            if named_import.import_record_index as usize != record_index {
+                                continue;
+                            }
+                            if named_import.alias_is_star {
+                                if named_import.is_exported
+                                    || this.graph.symbol(*item_ref).use_count_estimate > 0
+                                {
+                                    namespace_is_captured = true;
+                                }
+                            } else {
+                                deferred_items.push((
+                                    *item_ref,
+                                    named_import.local_parts_with_uses.slice().to_vec(),
+                                ));
+                            }
+                        }
+                    }
+
+                    let fallback_reason: Option<&str> = if other_flags.wrap != WrapKind::Esm
+                        || wrapper_ref.is_empty()
+                    {
+                        Some("it is only supported for ECMAScript modules when bundling")
+                    } else if other_flags.is_async_or_has_async_dependency {
+                        Some("the deferred module or one of its dependencies uses top-level await")
+                    } else if namespace_is_captured {
+                        Some(
+                            "the namespace object is captured (only property accesses can be deferred when bundling)",
+                        )
+                    } else {
+                        None
+                    };
+
+                    if let Some(reason) = fallback_reason {
+                        col!(import_records_list)[id].as_mut_slice()[record_index]
+                            .flags
+                            .remove(ImportRecordFlags::PHASE_DEFER);
+
+                        this.log_disjoint().add_range_warning_fmt(
+                            Some(&col_ref!(input_files)[id]),
+                            record_range,
+                            format_args!(
+                                "This \"import defer\" is evaluated eagerly because {}",
+                                reason
+                            ),
+                        );
+                        continue;
+                    }
+
+                    for (item_ref, parts_with_uses) in deferred_items {
+                        this.deferred_import_inits.put(item_ref, wrapper_ref)?;
+
+                        // Make every part that touches the namespace depend on the
+                        // wrapper so `init_foo` stays in the bundle (and is imported
+                        // across chunks) even though the eager call was removed.
+                        for part_index in parts_with_uses {
+                            this.graph.generate_symbol_import_and_use(
+                                id as u32,
+                                part_index,
+                                wrapper_ref,
+                                1,
+                                Index::source(other_id as u32),
+                            )?;
+                        }
+                    }
+                }
             }
         }
 

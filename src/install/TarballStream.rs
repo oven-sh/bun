@@ -1087,12 +1087,13 @@ impl TarballStream {
                     if self.resolved_github_dirname.is_empty() {
                         break 'insert_tag;
                     }
-                    let _ = bun_sys::unlinkat(self.dest.unwrap(), bun_core::zstr!(".bun-tag"));
-                    if bun_sys::File::write_file(
+                    if bun_sys::File::openat(
                         self.dest.unwrap(),
                         bun_core::zstr!(".bun-tag"),
-                        self.resolved_github_dirname,
+                        O::WRONLY | O::CREAT | O::TRUNC | O::NOFOLLOW,
+                        0o664,
                     )
+                    .and_then(|f| f.write_all(self.resolved_github_dirname))
                     .is_err()
                     {
                         let _ = bun_sys::unlinkat(self.dest.unwrap(), bun_core::zstr!(".bun-tag"));

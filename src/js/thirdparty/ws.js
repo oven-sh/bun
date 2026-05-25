@@ -28,22 +28,17 @@ const encoder = new TextEncoder();
 // constructor throw, so leave it a no-op (WebSocket negotiates subprotocols via
 // Sec-WebSocket-Protocol, not TLS ALPN).
 const tlsBooleanKeys = ["rejectUnauthorized", "requestCert", "lowMemoryMode"];
-const tlsValueKeys = [
-  "ca",
-  "cert",
-  "key",
-  "passphrase",
-  "servername",
-  "serverName",
-  "ciphers",
-  "dhParamsFile",
-  "secureOptions",
-  "keyFile",
-  "certFile",
-  "caFile",
-  "clientRenegotiationLimit",
-  "clientRenegotiationWindow",
-];
+// Scalar options where a falsy value is a legitimate setting (0, ""), so they
+// are forwarded on `!= null` rather than truthiness — matching how `options.tls`
+// would pass them through. `secureOptions`/`clientRenegotiation*` default to 0
+// in SSLConfig, so 0 is effectively a no-op, but this keeps the two paths
+// consistent and preserves an explicit `passphrase: ""`.
+const tlsScalarKeys = ["passphrase", "secureOptions", "clientRenegotiationLimit", "clientRenegotiationWindow"];
+// File/identity options where an empty string means "absent": an empty `ca`
+// (etc.) must not be forwarded, or the native parser treats it as a real (empty)
+// value and the handshake breaks. These stay on a truthy check.
+const tlsFileKeys = ["ca", "cert", "key", "dhParamsFile", "keyFile", "certFile", "caFile", "servername", "serverName", "ciphers"];
+const tlsValueKeys = [...tlsScalarKeys, ...tlsFileKeys];
 
 // Agents (e.g. HttpsProxyAgent) stuff connection options into `connectOpts`
 // that aren't all valid Bun TLS options, so keep the agent path to the subset
@@ -52,8 +47,9 @@ const agentTlsValueKeys = ["ca", "cert", "key", "passphrase"];
 
 /**
  * Collects the TLS options the native WebSocket understands from a source
- * object. `valueKeys` narrows the non-boolean set for callers that can't pass
- * the full set (see {@link agentTlsValueKeys}).
+ * object. `valueKeys` narrows the set for callers that can't pass the full set
+ * (see {@link agentTlsValueKeys}). Scalar keys (see {@link tlsScalarKeys})
+ * preserve explicit falsy values; everything else is copied when truthy.
  * @param {Object} source
  * @param {string[]} [valueKeys]
  * @returns {Object|null} The TLS options, or null if none were present
@@ -68,7 +64,10 @@ function extractTlsOptions(source, valueKeys = tlsValueKeys) {
     }
   }
   for (const key of valueKeys) {
-    if (source[key]) {
+    // Scalars forward an explicit falsy value (0, "") like `options.tls` would;
+    // file/identity keys treat a falsy value (e.g. `ca: ""`) as absent.
+    const keep = tlsScalarKeys.includes(key) ? source[key] != null : source[key];
+    if (keep) {
       (tls ??= {})[key] = source[key];
     }
   }

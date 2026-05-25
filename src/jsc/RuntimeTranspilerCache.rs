@@ -747,10 +747,6 @@ impl RuntimeTranspilerCache {
             .len();
         }
 
-        // PORT NOTE: Zig fell back to `$TMPDIR/bun/@t@` here. The shared temp
-        // dir is world-writable, so another local user could pre-create it and
-        // plant forged `.pile` entries whose `output_code` Bun would execute in
-        // place of the real transpiled source. Disable the cache instead.
         0
     }
 

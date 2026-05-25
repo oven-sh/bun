@@ -53,10 +53,6 @@ pub struct ClientSession {
     /// into the keepalive pool so a strict caller never reuses a session whose
     /// hostname was never validated.
     pub established_with_reject_unauthorized: bool,
-    /// Hash of the Host-header SNI override the TLS handshake was verified
-    /// against (`HTTPClient::proxy_auth_hash()`; 0 when none). Part of the
-    /// session key so a request expecting validation against `url.hostname`
-    /// never multiplexes onto a session validated against a different name.
     pub host_header_hash: u64,
 
     /// Queued bytes for the socket; whole frames are written here and

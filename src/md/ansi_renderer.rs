@@ -701,9 +701,6 @@ impl<'a> AnsiRenderer<'a> {
     // ========================================
 
     pub fn text(&mut self, text_type: TextType, content: &[u8]) {
-        // The parser hands raw ESC / C0 control bytes through as ordinary
-        // text — strip them so attacker-controlled markdown can't inject
-        // its own terminal control sequences (OSC 52, title changes, ...).
         let mut sanitized: Vec<u8> = Vec::new();
         let content = sanitize_source_text(content, &mut sanitized);
         match text_type {
@@ -722,8 +719,6 @@ impl<'a> AnsiRenderer<'a> {
             TextType::Entity => {
                 let mut buf = [0u8; 8];
                 let decoded = helpers::decode_entity_to_utf8(content, &mut buf).unwrap_or(content);
-                // A numeric reference like `&#27;` decodes to a raw control
-                // byte — sanitize the decoded form too.
                 let mut decoded_sanitized: Vec<u8> = Vec::new();
                 let decoded = sanitize_source_text(decoded, &mut decoded_sanitized);
                 self.write_content(decoded);
@@ -2340,20 +2335,10 @@ fn visible_index_at(s: &[u8], max_cols: usize) -> usize {
     strings::visible::width::exclude_ansi_colors::utf8_index_at_width(s, max_cols)
 }
 
-/// Strip raw terminal control bytes from source-derived text so the only
-/// escape sequences reaching the terminal are the ones the renderer itself
-/// emits. ESC-initiated sequences (CSI / OSC / two-byte) are dropped whole,
-/// mirroring the image-alt stripper in `emit_inline`; other C0 controls and
-/// DEL are dropped except `\t` and `\n`. UTF-8-encoded C1 controls
-/// (U+0080..=U+009F, i.e. `0xC2 0x80..=0x9F`) are dropped too — terminals
-/// that honor C1 treat U+009B / U+009D as CSI / OSC introducers. Returns the
-/// input unchanged (and leaves `scratch` untouched) when there is nothing to
-/// strip.
 fn sanitize_source_text<'b>(bytes: &'b [u8], scratch: &'b mut Vec<u8>) -> &'b [u8] {
     fn is_disallowed(c: u8) -> bool {
         (c < 0x20 && c != b'\n' && c != b'\t') || c == 0x7f
     }
-    // Two-byte UTF-8 encoding of a C1 control (U+0080..=U+009F) starting at `i`.
     fn is_utf8_c1(bytes: &[u8], i: usize) -> bool {
         bytes[i] == 0xC2 && i + 1 < bytes.len() && (0x80..=0x9F).contains(&bytes[i + 1])
     }

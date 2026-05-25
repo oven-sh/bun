@@ -439,9 +439,6 @@ pub(crate) fn on_data<Context: ReaderContext>(
         reader.mark_message_start();
         let c = reader.int::<u8>()?;
         bun_core::scoped_log!(Postgres, "read: {}", c as char);
-        // While the SSLRequest answer is pending, the only valid bytes are
-        // 'S' or 'N'. Anything else is plaintext injected before TLS is
-        // established (CVE-2021-23222 class) — reject instead of dispatching.
         if matches!(connection.tls_status.get(), TlsStatus::MessageSent(_))
             && c != b'S'
             && c != b'N'

@@ -107,7 +107,6 @@ bool JSHash::initZig(JSGlobalObject* globalObject, ThrowScope& scope, ExternZigH
     }
 
     if (xofLen.has_value() && xofLen.value() != m_mdLen) {
-        // Mirror init() above: a custom outputLength is only valid for XOF algorithms.
         if (!ExternZigHash::isXof(hasher)) {
             EVPerr(EVP_F_EVP_DIGESTFINALXOF, EVP_R_NOT_XOF_OR_INVALID_LENGTH);
             return false;

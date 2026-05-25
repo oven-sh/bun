@@ -908,10 +908,6 @@ impl<'a> ParseArgsState<'a> {
 
 #[bun_jsc::host_fn(export = "Bun__NodeUtil__jsParseArgs")]
 pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    // Option `default` values are stored in a heap-allocated Vec<OptionDefinition>
-    // that JSC's conservative stack scan cannot see. Root them in a stack
-    // MarkedArgumentBuffer for the duration of the call so a GC triggered while
-    // tokenizing the args cannot collect them before Phase 3 consumes them.
     MarkedArgumentBuffer::new(|default_roots| parse_args_impl(global, callframe, default_roots))
 }
 

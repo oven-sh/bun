@@ -1634,13 +1634,6 @@ impl PostgresSQLConnection {
     /// the FIFO head. One audited `unsafe` here replaces the per-site
     /// `unsafe { PostgresSQLQuery::deref(ptr) }; self.requests.with_mut(|q| q.discard(1));`
     /// pair (16 callers in `clean_up_requests` / `advance`).
-    ///
-    /// No-op if `request` is no longer the queue head: re-entrant JS between
-    /// `peek_item` and this call (e.g. `sql.close()` from a parameter's
-    /// `toString` during bind, or a rejection callback inside
-    /// `clean_up_requests`) may have already discarded the entry, releasing
-    /// the queue's ref. Releasing it again would drop the refcount to 0 while
-    /// the JS wrapper still points at the query and underflow the FIFO count.
     #[inline]
     fn discard_request(&self, request: *mut PostgresSQLQuery) {
         if self.requests.get().readable_length() == 0 || self.requests.get().peek_item(0) != request
@@ -2660,10 +2653,6 @@ impl PostgresSQLConnection {
                 // ReadyForQuery. Free any previous fields before overwriting and
                 // invalidate state derived from them so the next DataRow builds
                 // the correct structure instead of reusing a stale cached one.
-                // This must happen even when the previous field list was empty:
-                // a zero-column result set still caches a zero-property
-                // Structure, and reusing it for a wider field list would write
-                // past the new row object's inline capacity.
                 // PORT NOTE: Vec<FieldDescription> drop runs each field's Drop.
                 statement.fields = description.fields.into_vec();
                 statement.cached_structure = Default::default();

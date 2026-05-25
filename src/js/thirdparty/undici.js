@@ -211,7 +211,6 @@ async function request(
     throw new Error("signal must be an instance of AbortSignal");
   }
 
-  // undici only follows redirects when `maxRedirections` is a positive number.
   const followRedirects = maxRedirections != null && maxRedirections > 0;
 
   /** @type {Response} */

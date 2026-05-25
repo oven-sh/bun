@@ -3046,12 +3046,6 @@ pub mod args {
     /// Only ever instantiated with `uid_t`/`gid_t` — `u32` on POSIX, `u8` on
     /// Windows (libuv's `uv_uid_t`/`uv_gid_t` are `unsigned char`). Hard-code
     /// the per-platform wrap rather than pulling `num_traits`.
-    ///
-    /// Node validates `-1..=u32::MAX` and then does a truncating
-    /// `static_cast<uv_uid_t>(v)` (reduction mod 2^32), so both `-1` and
-    /// `4294967295` become `(uid_t)-1` — the chown(2) "leave unchanged"
-    /// sentinel. Reducing mod `u32::MAX` (2^32 - 1) instead would map
-    /// `4294967295` to 0 (root) and `-1` to `4294967294`.
     #[cfg(not(windows))]
     #[inline]
     fn wrap_to<T: From<u32>>(in_: i64) -> T {
@@ -3792,8 +3786,6 @@ pub mod args {
         pub length: u64,
         pub position: Option<ReadPosition>,
         pub encoding: Encoding,
-        /// True when `from_js` pinned `buffer`'s backing store for the async
-        /// path; balanced in `unprotect()` (the JS-thread release hook).
         pub pinned: bool,
     }
     impl Default for Write {
@@ -3936,10 +3928,6 @@ pub mod args {
                     }
                 }
             }
-            // The work-pool thread reads the backing store through the raw
-            // pointer captured above; pin it so JS cannot detach/transfer it
-            // mid-write, and re-derive the pointer after pinning (mirrors
-            // `args::Read::from_js`).
             if arguments.will_be_async && matches!(args.buffer, StringOrBuffer::Buffer(_)) {
                 if let Some(pinned) = bv.as_pinned_arraybuffer(ctx) {
                     args.buffer = StringOrBuffer::Buffer(Buffer {
@@ -7732,8 +7720,6 @@ impl NodeFS {
             // SAFETY: instance() returns the leaked singleton; INSTANCE_LOADED checked above.
             let fs = FileSystem::get();
             let parts = [fs.top_level_dir, path_slice];
-            // The joined cwd + user path can exceed the fixed PathBuffer. Bail out
-            // with ENAMETOOLONG instead of writing past the end of the buffer.
             let inbuf_len = inbuf.len();
             let Some(joined) = fs.abs_buf_checked(&parts, &mut inbuf[..inbuf_len - 1]) else {
                 return Err(sys::Error {

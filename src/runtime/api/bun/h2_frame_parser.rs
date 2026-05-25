@@ -611,19 +611,11 @@ fn is_valid_request_pseudo_header(name: &[u8]) -> bool {
     }
 }
 
-/// RFC 9113 Section 8.2.1: a field value MUST NOT contain the zero value
-/// (NUL, 0x00), line feed (LF, 0x0a), or carriage return (CR, 0x0d) at any
-/// position. These bytes survive HPACK encoding verbatim and enable response
-/// splitting / request smuggling when the message crosses an h2-to-h1 hop.
 #[inline]
 fn is_valid_header_value(value: &[u8]) -> bool {
     !value.iter().any(|&c| matches!(c, 0 | b'\n' | b'\r'))
 }
 
-/// RFC 9113 §8.2.1 inbound validation: a field name must be a lowercase
-/// RFC 9110 token, with at most one leading ':' for pseudo-headers. Mirrors
-/// `is_malformed_response_field` on the fetch() HTTP/2 client path and
-/// nghttp2's `nghttp2_check_header_name`.
 #[inline]
 fn is_malformed_field_name(name: &[u8]) -> bool {
     let rest = match name.split_first() {
@@ -1912,13 +1904,6 @@ impl Stream {
                 lf!().end_stream = end_stream;
                 // we can only hold 1 callback at a time so we conclude the last one, and keep the last one as pending
                 // this is fine is like a per-stream CORKING in a frame level
-                //
-                // Install the new callback *before* dispatching the old one:
-                // the write callback runs arbitrary JS that can re-enter
-                // `queue_frame` and push onto `data_frame_queue`, reallocating
-                // its backing store and dangling `last_frame`. Holding the old
-                // callback in a local `StrongOptional` keeps it alive for the
-                // dispatch without touching the queue afterwards.
                 let old_callback = core::mem::replace(
                     &mut lf!().callback,
                     StrongOptional::create(callback, &global_this),
@@ -1957,11 +1942,6 @@ impl Stream {
                     lf!().end_stream = end_stream;
                     // we can only hold 1 callback at a time so we conclude the last one, and keep the last one as pending
                     // this is fine is like a per-stream CORKING in a frame level
-                    //
-                    // See the `bytes.is_empty()` branch above: install the new
-                    // callback before dispatching the old one so no pointer
-                    // into `data_frame_queue` is dereferenced after the JS
-                    // call can have reallocated it.
                     let old_callback = core::mem::replace(
                         &mut lf!().callback,
                         StrongOptional::create(callback, &global_this),
@@ -3392,12 +3372,6 @@ impl H2FrameParser {
                 continue;
             }
 
-            // RFC 9113 §8.2.1/§8.3: a request or response carrying a field
-            // name or value with forbidden octets, or an undefined
-            // pseudo-header for its direction, is malformed. Keep decoding the
-            // rest of the block so the HPACK dynamic table stays in sync, but
-            // do not deliver any of its headers to JS; reset the stream
-            // instead.
             if malformed
                 || is_malformed_field_name(header.name)
                 || is_malformed_field_value(header.value)
@@ -5719,9 +5693,6 @@ impl H2FrameParser {
 impl H2FrameParser {
     // get memory usage in MB
     fn get_session_memory_usage(&self) -> usize {
-        // Count CLOSED streams too: entries stay in the map until connection
-        // teardown, so excluding them would let a peer accumulate per-stream
-        // state invisible to the session memory cap.
         let stream_count = self.streams.get().len();
         (self.write_buffer.get().len_u32() as usize
             + self.queued_data_size.get() as usize

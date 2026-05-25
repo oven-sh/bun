@@ -1110,10 +1110,6 @@ static JSC::JSValue rebindStatement(JSC::JSGlobalObject* lexicalGlobalObject, JS
         if (array->canGetIndexQuickly(static_cast<unsigned>(i))) [[likely]] {
             value = array->getIndexQuickly(i);
         } else {
-            // Sparse / ArrayStorage-backed arrays can have a public length
-            // greater than the butterfly's vector length, so getIndexQuickly()
-            // would read out of bounds. Fall back to the slow path, which can
-            // run arbitrary JS (getters), so re-validate the statement after.
             value = array->getDirectIndex(lexicalGlobalObject, i);
             RETURN_IF_EXCEPTION(scope, {});
             if (statement && statement->stmt != stmt) [[unlikely]] {
@@ -1848,9 +1844,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    // Some file-control opcodes write a pointer or an int64 through pArg
-    // (e.g. SQLITE_FCNTL_VFSNAME, SQLITE_FCNTL_MMAP_SIZE, SQLITE_FCNTL_FILE_POINTER),
-    // so the output slot must be at least 8 bytes even when JS passes a 32-bit int.
     int64_t resultInt = -1;
     void* resultPtr = nullptr;
     if (resultValue.isObject()) {
@@ -2200,8 +2193,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
                     RETURN_IF_EXCEPTION(scope, {});
                     resultArray->push(lexicalGlobalObject, result);
                     RETURN_IF_EXCEPTION(scope, {});
-                    // push() can re-enter JS (e.g. an indexed accessor on
-                    // Array.prototype), which can finalize this statement.
                     if (castedThis->stmt != stmt) [[unlikely]] {
                         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement has finalized"_s));
                         return {};
@@ -2362,7 +2353,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
                     }
                     resultArray->push(lexicalGlobalObject, row);
                     RETURN_IF_EXCEPTION(scope, {});
-                    // push() can re-enter JS, which can finalize this statement.
                     if (castedThis->stmt != stmt) [[unlikely]] {
                         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement has finalized"_s));
                         return {};
@@ -2457,7 +2447,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JS
                         RELEASE_AND_RETURN(scope, {});
                     }
 
-                    // push() can re-enter JS, which can finalize this statement.
                     if (castedThis->stmt != stmt) [[unlikely]] {
                         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement has finalized"_s));
                         return {};

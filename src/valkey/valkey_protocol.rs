@@ -250,8 +250,6 @@ impl<'a> ValkeyReader<'a> {
 
     pub fn read_until_crlf(&mut self) -> Result<&'a [u8], RedisError> {
         let buffer = &self.buffer[self.pos..];
-        // Only the first `MAX_LINE_LEN + 1` positions may legally start the
-        // terminating CRLF.
         let limit = buffer.len().min(Self::MAX_LINE_LEN + 1);
         for (i, &byte) in buffer[..limit].iter().enumerate() {
             if byte == b'\r' && buffer.len() > i + 1 && buffer[i + 1] == b'\n' {
@@ -345,12 +343,6 @@ impl<'a> ValkeyReader<'a> {
     /// attacker-chosen size.
     const MAX_BULK_LEN: i64 = 512 * 1024 * 1024;
 
-    /// Maximum accepted length for a single CRLF-terminated RESP line (scalar
-    /// payloads and aggregate length headers; bulk payloads are governed by
-    /// `MAX_BULK_LEN` instead). Real servers never send multi-megabyte simple
-    /// strings, errors, or numbers. Without a cap, a hostile server can stream
-    /// an unterminated line forever and force `read_until_crlf` to rescan the
-    /// whole accumulated line on every socket read — O(n^2) CPU in total.
     const MAX_LINE_LEN: usize = 512 * 1024;
 
     /// Caps an aggregate's `Vec::with_capacity` so the total bytes reserved

@@ -1316,9 +1316,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut authorized = success == 1;
         let mut hostname_mismatch = false;
 
-        // A certificate that chains to a trusted root but was issued for a
-        // different host must not be reported as authorized. The hostname
-        // precedence (SNI server name, then connect() host) matches on_open.
         if SSL && authorized && !handlers.mode.is_server() {
             if let Some(ssl_ptr) = this.socket.get().ssl() {
                 let hostname: &[u8] = if let Some(server_name) = this.server_name.get() {
@@ -1725,9 +1722,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         // is very usefull to have this feature depending on the user workflow
         let ssl_error = this.socket.get().get_verify_error();
         if ssl_error.error_no == 0 {
-            // A certificate that failed hostname verification in `on_handshake`
-            // still reads `X509_V_OK` out of BoringSSL (its verify callback only
-            // covers chain validation), so report the mismatch recorded there.
             if this.flags.get().contains(Flags::HOSTNAME_MISMATCH) {
                 let mismatch = SystemError {
                     errno: 0,
@@ -3438,12 +3432,7 @@ bitflags::bitflags! {
         /// pre-handshake bytes / read the underlying TCP stream.
         const BYPASS_TLS           = 1 << 9;
         const OWNS_HANDLERS        = 1 << 10;
-        /// The client handshake completed and the certificate chain verified,
-        /// but the peer certificate did not match the requested hostname.
-        /// BoringSSL's stored verify result is still `X509_V_OK` in that case,
-        /// so `getAuthorizationError()` consults this flag instead.
         const HOSTNAME_MISMATCH    = 1 << 11;
-        // bits 12..15 unused (Zig: `_: u6 = 0`)
     }
 }
 

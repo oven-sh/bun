@@ -198,9 +198,6 @@ mod _impl {
                 write_callback.with_async_context_if_needed(global),
             );
 
-            // No JS-side reference to the dictionary is kept: `Context::init`
-            // copies the bytes into its own Vec, so the original ArrayBuffer
-            // does not need to outlive this call.
             self.stream
                 .with_mut(|s| s.init(level, window_bits, mem_level, strategy, dictionary));
 
@@ -262,12 +259,6 @@ pub struct Context {
     pub state: c::z_stream,
     pub err: c::ReturnCode,
     pub flush: c::FlushValue,
-    // Owned copy of the user-supplied dictionary bytes. The JS ArrayBuffer
-    // they came from can be detached/transferred/resized (or, for a fast
-    // typed array, have its storage moved by GC) after `init` returns, while
-    // `set_dictionary` / `Z_NEED_DICT` re-read the bytes on every reset and
-    // on the worker thread — so a borrowed pointer would dangle. Node copies
-    // too (`std::vector<unsigned char>` in `node_zlib.cc`).
     pub dictionary: Vec<u8>,
     pub gzip_id_bytes_read: u8,
 }
@@ -316,7 +307,6 @@ impl Context {
             ZSTD_COMPRESS | ZSTD_DECOMPRESS => unreachable!(),
         };
 
-        // See field comment on `dictionary`.
         self.dictionary = match dictionary {
             Some(d) => d.to_vec(),
             None => Vec::new(),

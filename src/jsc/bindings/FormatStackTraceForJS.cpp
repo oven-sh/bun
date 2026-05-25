@@ -701,11 +701,6 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
         WTF::Vector<JSC::StackFrame> emptyTrace;
         result = computeErrorInfoToJSValue(vm, emptyTrace, line, column, sourceURL, errorObject, nullptr);
     } else {
-        // Take ownership of the frames before running code that can re-enter
-        // JavaScript (Error.prepareStackTrace) or trigger a GC:
-        // ErrorInstance::finalizeUnconditionally and a re-entrant read of
-        // `error.stack` both reset m_stackTrace, which would free the Vector
-        // while we still hold a reference to it.
         auto ownedStackTrace = makeUnique<WTF::Vector<JSC::StackFrame>>(WTF::move(*stackTrace));
         result = computeErrorInfoToJSValue(vm, *ownedStackTrace, line, column, sourceURL, errorObject, nullptr);
         errorObject->setStackFrames(vm, {});

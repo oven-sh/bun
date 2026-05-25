@@ -421,8 +421,6 @@ impl<'src> HtmlRenderer<'src> {
                     self.write_html_escaped(&content[start..]);
                 }
             }
-            // Always escape, even between filtered disallowed tags — emitting
-            // raw text there would let `\<` reassemble a live `<script>`.
             _ => self.write_html_escaped(content),
         }
     }
@@ -716,9 +714,7 @@ fn match_tag_name_ci(content: &[u8], pos: usize, tag: &[u8]) -> bool {
     if !strings::eql_case_insensitive_ascii_ignore_length(&content[pos..pos + tag.len()], tag) {
         return false;
     }
-    // Check delimiter after tag name. This must accept every byte the inline
-    // HTML scanner treats as whitespace (`helpers::is_whitespace`) or a tag
-    // like `<script\x0C...>` slips through unfiltered.
+    // Check delimiter after tag name
     let end = pos + tag.len();
     if end >= content.len() {
         return true;

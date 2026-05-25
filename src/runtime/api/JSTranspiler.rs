@@ -1454,10 +1454,6 @@ impl JSTranspiler {
                 "string or Uint8Array",
             ));
         };
-        // The work-pool thread parses `code` while JS keeps running; `protect()`
-        // prevents GC but not detachment (`ArrayBuffer.prototype.transfer`,
-        // `postMessage` transfer lists), which would free the backing store
-        // mid-parse — so copy array-buffer-backed input to an owned slice.
         let mut code = code;
         if let StringOrBuffer::Buffer(buffer) = &code {
             let bytes = buffer.slice().to_vec();

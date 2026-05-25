@@ -2989,22 +2989,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
     }
 
-    /// Hash counterpart of `yaml_merge_key_expr_eql`: keys that compare equal
-    /// must hash equal. Cross-variant collisions are tolerated — callers
-    /// confirm candidates with `yaml_merge_key_expr_eql`.
     fn yaml_merge_key_expr_hash(key: &Expr) -> u64 {
         match &key.data {
             ast::ExprData::ENull(_) => 0,
             ast::ExprData::EBoolean(b) => 1 + b.value as u64,
             ast::ExprData::ENumber(n) => {
-                // `yaml_merge_key_expr_eql` compares numbers with `==`, so `0.0`
-                // and `-0.0` must hash identically. NaN never compares equal, so
-                // its hash does not matter.
                 let value = if n.value == 0.0 { 0.0 } else { n.value };
                 value.to_bits()
             }
             ast::ExprData::EString(s) => s.hash(),
-            // pointer identity, mirroring the pointer comparison above
             ast::ExprData::EArray(a) => a.as_ptr() as usize as u64,
             ast::ExprData::EObject(o) => o.as_ptr() as usize as u64,
             _ => u64::MAX,
@@ -3309,11 +3302,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
 pub struct MappingProps {
     list: G::PropertyList,
-    /// Lazily-built index from `yaml_merge_key_expr_hash(key)` to indices into
-    /// `list`, used by `merge()` to deduplicate `<<` merge keys without
-    /// rescanning the whole property list for every merged key (which is
-    /// cubic in the document size for `<<: [*a, *a, ...]`). `merge_indexed`
-    /// counts how many entries of `list` have been added to the index.
     merge_index: bun_collections::HashMap<u64, Vec<u32>>,
     merge_indexed: usize,
 }
@@ -3336,7 +3324,6 @@ impl MappingProps {
         self.list.reserve(merge_props.len());
         // PERF(port): was ensureUnusedCapacity
 
-        // Index any properties appended since the last merge.
         while self.merge_indexed < self.list.len() {
             let idx = self.merge_indexed;
             let key = self.list[idx].key.as_ref().unwrap();

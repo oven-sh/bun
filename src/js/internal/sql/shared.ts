@@ -846,10 +846,6 @@ function parseOptions(
     }
   }
 
-  // Certificate and hostname verification only happen when sslMode is at least
-  // verify-ca. An explicit `rejectUnauthorized: true` or a user-supplied CA
-  // means the caller expects verification, so upgrade the mode (matching
-  // node-postgres/mysql2 and libpq).
   if ($isObject(tls) && sslMode < SSLMode.verify_ca) {
     if (tls.rejectUnauthorized === true || (tls.rejectUnauthorized !== false && tls.ca)) {
       sslMode = SSLMode.verify_full;

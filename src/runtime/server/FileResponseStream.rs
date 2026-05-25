@@ -89,7 +89,6 @@ bitflags::bitflags! {
         const FINISHED      = 1 << 1;
         const ERRORED       = 1 << 2;
         const RESP_DETACHED = 1 << 3;
-        /// An in-flight-read ref is outstanding; see `take_read_ref`.
         const READ_REF_HELD = 1 << 4;
     }
 }
@@ -313,8 +312,6 @@ impl FileResponseStream {
         self.fail_with(err);
     }
 
-    /// Take the in-flight-read ref before calling `reader.read()`. No-op if it
-    /// is already held so a repeated `on_writable` cannot double-acquire.
     fn hold_read_ref(&mut self) {
         if self.state.contains(State::READ_REF_HELD) {
             return;
@@ -323,11 +320,6 @@ impl FileResponseStream {
         self.ref_();
     }
 
-    /// Release the in-flight-read ref exactly once. Returns a guard that
-    /// derefs on drop, or `None` if a prior backpressure/done/error callback
-    /// already consumed it — a still-armed poll can deliver extra reader
-    /// callbacks after the ref was released, and releasing it again would free
-    /// the object while uWS still holds it as callback userdata.
     fn take_read_ref(&mut self) -> Option<bun_ptr::ScopedRef<Self>> {
         if !self.state.contains(State::READ_REF_HELD) {
             return None;

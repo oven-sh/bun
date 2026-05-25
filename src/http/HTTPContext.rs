@@ -898,10 +898,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
         if SSL {
             if client.can_offer_h2() {
                 let cfg = SSLConfig::raw_ptr(client.tls_props.as_ref());
-                // The TLS handshake verifies the peer against get_tls_hostname()
-                // — which prefers the Host-header override over url.hostname —
-                // so the override must discriminate the session key, mirroring
-                // the keep-alive pool's proxy_auth_hash.
                 let host_header_hash = client.proxy_auth_hash();
                 for &session in &self.active_h2_sessions {
                     // Active sessions are kept alive by registry refs; `&mut`

@@ -115,9 +115,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
     ASSERT(static_cast<size_t>(bufLen) <= outBuf->byteLength());
 
     if (!res && cipher->m_kind == CipherKind::Decipher && cipher->m_ctx.isCcmMode()) {
-        // EVP_CipherUpdate wrote no output; don't expose the uninitialized
-        // buffer. Node.js returns a zero-length buffer here and defers the
-        // auth failure to final().
         cipher->m_pendingAuthFailed = true;
         RELEASE_AND_RETURN(scope, JSValue::encode(JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), 0)));
     }

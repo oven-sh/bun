@@ -950,8 +950,6 @@ pub fn convert_utf8_to_utf16_in_buffer_z<'a>(buf: &'a mut [u16], input: &[u8]) -
         buf[0] = 0;
         return wstr_in_buf(buf, 0);
     }
-    // simdutf writes up to the UTF-16 length of `input` without consulting
-    // `buf.len()`, and the NUL terminator below needs one more slot.
     assert!(
         input.len() < buf.len() || element_length_utf8_into_utf16(input) < buf.len(),
         "convert_utf8_to_utf16_in_buffer_z: buf too small (have {} u16 for {} input bytes)",

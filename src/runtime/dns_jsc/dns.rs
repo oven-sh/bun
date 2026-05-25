@@ -258,13 +258,10 @@ pub(super) mod lib_info {
                     // set the `used` bit, so failing to unset it here permanently orphans
                     // the slot and leaves `buffer[pos].lookup` pointing at the request we
                     // are about to free (UAF on the next `.inflight` hit).
-                    // `PendingCacheKey` owns its `name` buffer, so use `put` (which
-                    // runs `T::drop`) rather than `put_raw`.
                     let pos = (*request).cache.pos_in_pending();
                     this.pending_host_cache_native.with_mut(|c| {
                         let slot = c.ptr_at(pos as usize);
-                        // SAFETY: `pos` was alloc'd; no other token outstanding; the
-                        // slot holds a fully-initialized key written by `get_init`.
+                        // SAFETY: `pos` was alloc'd; no other token outstanding.
                         c.put(slot);
                     });
                 }
@@ -616,7 +613,6 @@ pub mod resolve_info_request {
     pub struct PendingCacheKey<T: CAresRecordType> {
         pub hash: u64,
         pub len: u16,
-        /// Owned copy of the queried name; `hash` alone is only a fast reject.
         pub name: Box<[u8]>,
         pub lookup: *mut ResolveInfoRequest<T>,
     }
@@ -759,7 +755,6 @@ pub mod get_host_by_addr_info_request {
     pub struct PendingCacheKey {
         pub hash: u64,
         pub len: u16,
-        /// Owned copy of the queried name; `hash` alone is only a fast reject.
         pub name: Box<[u8]>,
         pub lookup: *mut GetHostByAddrInfoRequest,
     }
@@ -1013,7 +1008,6 @@ pub mod get_name_info_request {
     pub struct PendingCacheKey {
         pub hash: u64,
         pub len: u16,
-        /// Owned copy of the queried name; `hash` alone is only a fast reject.
         pub name: Box<[u8]>,
         pub lookup: *mut GetNameInfoRequest,
     }
@@ -1161,7 +1155,6 @@ pub mod get_addr_info_request {
     pub struct PendingCacheKey {
         pub hash: u64,
         pub len: u16,
-        /// Owned copy of the queried name; `hash` alone is only a fast reject.
         pub name: Box<[u8]>,
         pub lookup: *mut GetAddrInfoRequest,
     }
@@ -3823,16 +3816,15 @@ pub trait HasPendingCacheKey {
         field: PendingCacheField,
     ) -> &mut HiveArray<Self::PendingCacheKey, 32>;
 
-    /// `key.hash` — all `PendingCacheKey` shapes carry `{ hash: u64, len: u16, name, lookup: *mut _ }`.
+    /// `key.hash` — all `PendingCacheKey` shapes carry `{ hash: u64, len: u16, lookup: *mut _ }`.
     fn key_hash(key: &Self::PendingCacheKey) -> u64;
     /// `key.len`
     fn key_len(key: &Self::PendingCacheKey) -> u16;
-    /// `key.name` — the queried name's bytes.
     fn key_name(key: &Self::PendingCacheKey) -> &[u8];
-    /// Construct a fully-initialized `PendingCacheKey { hash, len, name, lookup: null }`
-    /// from the probe key, for `HiveArray::get_init`. `lookup` is filled in later by
-    /// `*Request::init` once the request has been heap-allocated; until then it is a
-    /// defined null rather than uninit garbage, so the `iter_set` loop in
+    /// Construct a fully-initialized `PendingCacheKey { hash, len, lookup: null }`
+    /// for `HiveArray::get_init`. `lookup` is filled in later by `*Request::init`
+    /// once the request has been heap-allocated; until then it is a defined null
+    /// rather than uninit garbage, so the `iter_set` loop in
     /// `get_or_put_into_resolve_pending_cache` can safely materialise
     /// `&mut PendingCacheKey` over the slot.
     fn key_new(key: &Self::PendingCacheKey) -> Self::PendingCacheKey;
@@ -4714,8 +4706,6 @@ impl Resolver {
         while let Some(index) = inflight_iter.next() {
             // SAFETY: `used` bit is set ⇒ slot was initialized.
             let entry = unsafe { &mut *cache.ptr_at(index) };
-            // The hash is wyhash with a fixed seed — not collision resistant —
-            // so it is only a fast reject; the actual name bytes decide.
             if R::key_hash(entry) == R::key_hash(key)
                 && R::key_len(entry) == R::key_len(key)
                 && R::key_name(entry) == R::key_name(key)
@@ -4742,8 +4732,6 @@ impl Resolver {
         while let Some(index) = inflight_iter.next() {
             // SAFETY: `used` bit is set ⇒ slot was initialized.
             let entry = unsafe { &mut *cache.ptr_at(index) };
-            // The hash is wyhash with a fixed seed — not collision resistant —
-            // so it is only a fast reject; the actual name bytes decide.
             if entry.hash == key.hash && entry.len == key.len && entry.name == key.name {
                 return CacheHit::Inflight(std::ptr::from_mut(entry));
             }

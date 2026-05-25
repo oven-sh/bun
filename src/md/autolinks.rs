@@ -378,8 +378,6 @@ fn post_process_autolink_end(content: &[u8], beg: usize, end_in: usize) -> usize
 
     // Trim trailing unbalanced `)`: count all ( and ) in the URL.
     // If closing > opening, remove trailing ) until balanced.
-    // Count once up front; every trimmed byte is a `)`, so only `close`
-    // changes as `end` shrinks. Keeps this linear in the URL length.
     let mut open: i32 = 0;
     let mut close: i32 = 0;
     for &ch in &content[beg..end] {

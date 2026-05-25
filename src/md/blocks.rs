@@ -220,11 +220,6 @@ impl Parser<'_> {
                             + align_mask_)
                             & !align_mask_;
                         if top_off + size_of::<BlockHeader>() <= self.block_bytes.len() {
-                            // The trailing BlockHeader-sized window may land inside
-                            // VerbatimLine data rather than on a header (md4c has the
-                            // same quirk). Compare the raw discriminant byte instead of
-                            // materializing a BlockType, which would be UB for an
-                            // out-of-range byte.
                             let top_type =
                                 self.block_bytes[self.block_bytes.len() - size_of::<BlockHeader>()];
                             if top_type == BlockType::Li as u8 {
@@ -245,11 +240,6 @@ impl Parser<'_> {
                         && self.current_block.is_none()
                         && self.block_bytes.len() > size_of::<BlockHeader>()
                     {
-                        // The trailing BlockHeader-sized window may land inside
-                        // VerbatimLine data rather than on a header (md4c has the
-                        // same quirk). Compare the raw discriminant byte instead of
-                        // materializing a BlockType, which would be UB for an
-                        // out-of-range byte.
                         let top_type =
                             self.block_bytes[self.block_bytes.len() - size_of::<BlockHeader>()];
                         if top_type == BlockType::Li as u8 {

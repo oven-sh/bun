@@ -3220,10 +3220,6 @@ pub fn convert_utf8_to_utf16_in_buffer<'a>(buf: &'a mut [u16], input: &[u8]) -> 
     if input.is_empty() {
         return &mut buf[..0];
     }
-    // PORT NOTE: Zig forwards only `buf.ptr` to simdutf (heap overflow if
-    // undersized); enforce the documented `capacity >= input.len()` precondition
-    // in release too. On overflow, fall back to the exact post-conversion length
-    // so multi-byte inputs whose UTF-16 form fits are not over-rejected.
     assert!(
         input.len() <= buf.len() || element_length_utf8_into_utf16(input) <= buf.len(),
         "convert_utf8_to_utf16_in_buffer: buf too small (have {} u16 for {} input bytes)",

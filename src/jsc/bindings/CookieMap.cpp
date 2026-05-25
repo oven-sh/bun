@@ -112,9 +112,6 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
                     continue;
                 }
 
-                // Cookie names are never percent-decoded: decoding would let a name
-                // like "__%48ost-x" alias "__Host-x" and bypass the __Host-/__Secure-
-                // prefix checks. Only values are decoded.
                 name = nameView.toString();
 
                 if (hasAnyPercentEncoded) {

@@ -3341,17 +3341,7 @@ impl Lockfile {
         resolution: &Resolution,
     ) -> bool {
         if let Some(trusted_dependencies) = &self.trusted_dependencies {
-            // Match the resolved package's real name, never the dependency
-            // alias: a dependent package anywhere in the tree controls the
-            // aliases of its own dependencies, so `"esbuild": "npm:evil@1"`
-            // must not inherit trust from a `trustedDependencies: ["esbuild"]`
-            // entry.
             let hash = SemverStringBuilder::string_hash(pkg_name) as u32;
-            // The key is only the truncated 32-bit hash, so a colliding name
-            // would otherwise inherit lifecycle-script trust. Require an exact
-            // name match; an empty value (legacy bun.lockb sentinel, no name
-            // stored) never grants trust on its own — the diff against
-            // package.json backfills those entries with their real names.
             return match trusted_dependencies.get(&hash) {
                 Some(name) => !name.is_empty() && **name == *pkg_name,
                 None => false,
@@ -3366,22 +3356,10 @@ impl Lockfile {
             return false;
         }
 
-        // The recorded name alone does not prove the tarball *is* that
-        // package: a tampered lockfile can keep a default-trusted name while
-        // pointing the tarball URL at a different package or host, and the
-        // integrity hash comes from the same tampered file so it does not
-        // help. Only extend the default lifecycle-script grant when the
-        // tarball URL is exactly the canonical tarball URL for this name and
-        // version on the registry configured for the package's scope.
-        // Anything else still installs, but has to be trusted explicitly via
-        // `trustedDependencies` / `bun pm trust`.
         let buf = self.buffers.string_bytes.as_slice();
         let npm = resolution.npm();
         let url = npm.url.slice(buf);
         if url.is_empty() {
-            // No URL recorded: the download URL is derived from the package
-            // name and the configured registry (`NetworkTask::for_tarball`),
-            // so it cannot be redirected.
             return true;
         }
         let registry = PackageManager::get()

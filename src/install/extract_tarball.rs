@@ -494,10 +494,6 @@ impl ExtractTarball {
             // here the entire body lives inside the thread_local borrow closure.
             let folder_name: &[u8] = match self.resolution.tag {
                 ResolutionTag::Npm => {
-                    // `name` is written verbatim into the cache folder name and
-                    // the install-index path. It originates from lockfiles and
-                    // manifests, so refuse anything that could resolve outside
-                    // the cache directory.
                     if !bun_install::dependency::is_safe_install_folder_name(name) {
                         log.add_error_fmt(
                             None,

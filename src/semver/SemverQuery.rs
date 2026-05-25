@@ -35,8 +35,6 @@ pub struct Query {
 
 impl Clone for Query {
     fn clone(&self) -> Self {
-        // Clone the chain iteratively so a derived recursive clone can't
-        // overflow the stack on very long AND chains.
         let mut out = Query {
             range: self.range,
             next: None,
@@ -210,8 +208,6 @@ impl Clone for List {
             out.tail = Some(tail);
         }
 
-        // Clone the OR chain iteratively so a recursive clone can't overflow
-        // the stack on very long OR chains.
         let mut src = &self.next;
         let mut dst = &mut out.next;
         while let Some(node) = src {

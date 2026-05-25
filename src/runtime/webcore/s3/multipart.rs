@@ -700,9 +700,6 @@ impl MultiPartUpload {
                     }
                 }
                 this.uploadid_buffer = response.body;
-                // The upload id is echoed into the request line of every
-                // subsequent UploadPart/Complete/Abort request; reject control
-                // characters so a malicious endpoint cannot inject CR/LF.
                 if this.upload_id.is_empty()
                     || this.upload_id.len() > Self::MAX_UPLOAD_ID_LEN
                     || this.upload_id.iter().any(|b| b.is_ascii_control())

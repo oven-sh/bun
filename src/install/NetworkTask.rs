@@ -489,15 +489,6 @@ impl NetworkTask {
             // This actually duplicates the string! So we defer deref the WTF managed one above.
             let url_bytes = tmp.to_owned_slice().into_boxed_slice();
 
-            // The package name is attacker-controlled (e.g. an `npm:` alias
-            // target) and WHATWG URL joining treats '\' as '/' for special
-            // schemes, so "\\evil.com\pkg" joins to "https://evil.com/pkg" and
-            // would receive this scope's Authorization header; "..\\x\\pkg" can
-            // likewise escape the registry path within the same origin. Reject
-            // any join that leaves the registry's origin or path directory.
-            // Protocol/hostname compare case-insensitively because WTF::URL
-            // lowercases the joined href while `scope.url` keeps the configured
-            // spelling.
             {
                 let joined = URL::parse(&url_bytes);
                 let registry = scope.url.url();

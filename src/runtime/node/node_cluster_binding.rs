@@ -248,9 +248,6 @@ pub(crate) fn handle_internal_message_primary(
         return Ok(());
     };
 
-    // A child can send a message that decodes as "internal" before the parent
-    // ever registers the worker/cb via `onInternalMessagePrimary`; drop it
-    // instead of unwrapping the unset Strongs below.
     if !ipc_data.internal_msg_queue.is_ready() {
         return Ok(());
     }

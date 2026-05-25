@@ -45,11 +45,6 @@ pub(crate) struct OptionDefinition {
 
     pub multiple: bool,
 
-    /// Bare `JSValue` is safe here only because the caller (`parse_args.rs`)
-    /// roots each default value in a stack `MarkedArgumentBuffer` for the
-    /// lifetime of `parseArgs`. This struct lives in a heap-allocated `Vec`
-    /// that JSC's conservative stack scan cannot see, so the value must be
-    /// rooted elsewhere.
     pub default_value: Option<JSValue>,
 }
 

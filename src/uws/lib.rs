@@ -952,18 +952,6 @@ pub mod ssl_wrapper {
 
         /// Handle reading data. Returns true if we can call handle_writing.
         fn handle_reading(&mut self, buffer: &mut [u8; BUFFER_SIZE]) -> bool {
-            // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
-            // `trigger_data_callback` / `trigger_close_callback` /
-            // `trigger_handshake_callback` / `shutdown` invoke the
-            // user-supplied handler vtable which can re-enter via a fresh
-            // `&mut SSLWrapper` from the owning socket and `deinit()` (sets
-            // `self.ssl = None` and `SSL_free`s it). The post-callback
-            // `self.ssl.is_none()` liveness guards must observe that write,
-            // otherwise the next loop iteration calls `SSL_read` on a freed
-            // `SSL*`. Launder so each field access goes through an opaque
-            // pointer; mirrors `handle_writing` below. All field access goes
-            // through [`Self::r`], whose doc comment carries the encapsulated
-            // SAFETY proof.
             let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
             let mut read: usize = 0;
 
@@ -1140,14 +1128,6 @@ pub mod ssl_wrapper {
         }
 
         fn handle_traffic(&mut self) {
-            // PORT_NOTES_PLAN R-2: `update_handshake_state` / `handle_writing`
-            // / `handle_reading` all dispatch the user-supplied handler vtable,
-            // which can re-enter and `deinit()` the wrapper. `has_pending_read`
-            // reads `self.ssl` between those calls, so it must not be served a
-            // load cached across them through this function's `noalias`
-            // `&mut self`. Launder; all field/method access goes through
-            // [`Self::r`], whose doc comment carries the encapsulated SAFETY
-            // proof.
             let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
             // always handle the handshake first
             if Self::r(this).update_handshake_state() {

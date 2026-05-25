@@ -226,9 +226,6 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
             i += 1;
             continue;
         }
-        // RFC 9114 §4.1.2/§4.2: same response-field validation as the
-        // HTTP/2 path. Trailers (status_code already set) are discarded
-        // without delivery, so they skip the check like the H2 path does.
         if stream.status_code == 0
             && (is_malformed_response_field(name) || is_malformed_response_value(value))
         {

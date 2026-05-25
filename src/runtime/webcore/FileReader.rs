@@ -670,10 +670,6 @@ impl FileReader {
             // PORT NOTE: reshaped for borrowck — Zig `defer { clear; run() }` becomes a
             // labeled block computing `ret`, then cleanup + run + return.
             let ret: bool = 'pending: {
-                // Re-derive the destination from the GC-rooted view instead of trusting
-                // the raw pointer captured at pull time: JS can detach or transfer the
-                // backing ArrayBuffer between the pull and the data arriving, leaving
-                // `pending_view` dangling. A detached view re-derives to an empty slice.
                 let global = self.parent_global();
                 let mut pending_array_buffer = self
                     .pending_value

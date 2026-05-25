@@ -33,9 +33,6 @@ fn js_to_parser_err(e: bun_jsc::JsError) -> ParserError {
     }
 }
 
-/// The parser borrows a TypedArray input's backing store while render
-/// callbacks can run user JS; pin it so it cannot be detached, and unpin when
-/// the render returns.
 struct PinnedView(ArrayBuffer);
 
 impl PinnedView {

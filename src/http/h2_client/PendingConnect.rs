@@ -24,9 +24,6 @@ pub struct PendingConnect {
     /// coalescing path apply the same strictness guard *before* the session
     /// exists, so a strict caller never waits on a connect started by a lax one.
     pub reject_unauthorized: bool,
-    /// Hash of the leader's Host-header SNI override (`proxy_auth_hash()`),
-    /// mirrored into the eventual `ClientSession.host_header_hash`. Coalescing
-    /// must not mix requests whose TLS verification hostname differs.
     pub host_header_hash: u64,
     // BACKREF: waiters are borrowed HTTP clients owned elsewhere; lifetime-erased.
     pub waiters: Vec<NonNull<HTTPClient<'static>>>,

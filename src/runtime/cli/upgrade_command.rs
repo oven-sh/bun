@@ -726,10 +726,6 @@ impl UpgradeCommand {
 
             let version_name = version.name().unwrap();
 
-            // `version_name` is derived from remote release metadata and is used
-            // below as a single directory component inside the shared temp dir
-            // (delete_tree / mkdirat / open_at). Reject anything that could name
-            // a path outside that directory or truncate the path early.
             if version_name.is_empty()
                 || version_name.as_slice() == b"."
                 || version_name.as_slice() == b".."
@@ -752,9 +748,6 @@ impl UpgradeCommand {
                 }
             };
 
-            // The staging dir has a predictable name in the shared temp dir. Never
-            // reuse a pre-existing entry: another local user could own it and swap
-            // the verified binary before it is moved into place.
             let _ = save_dir_.delete_tree(&version_name);
             let version_name_z = bun_core::ZBox::from_bytes(&version_name);
             if let Err(err) = sys::mkdirat(&save_dir_, version_name_z.as_zstr(), 0o700) {

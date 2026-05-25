@@ -1324,9 +1324,6 @@ impl<'a> Linker<'a> {
     fn chmod_on_ok(err: Option<Error>, abs_target: &ZStr) {
         // PORT NOTE: hoisted from `defer` block in create_symlink
         if err.is_none() {
-            // Git/file dependencies can ship the bin target as a symlink, and
-            // `chmod` follows symlinks — a package could point `bin/x` at a file
-            // outside node_modules and have the installer change that file's mode.
             let mode = 0o777 & !(UMASK.load(Ordering::Acquire) as Mode);
             if sys::lchmod(abs_target, mode).is_ok() {
                 return;

@@ -288,13 +288,6 @@ pub enum BuiltinInput {
     Ignore,
 }
 
-/// `ArrayBufferStrong` whose backing `JSC::ArrayBuffer` is pinned for the
-/// lifetime of the handle. Builtins cache the buffer's raw `ptr`/`byte_len`
-/// and read/write through them across event-loop ticks, so JS must not be
-/// able to `transfer()`/detach the buffer (freeing the backing store) while
-/// a redirect slot still holds it. The pin is released on `Drop` (JS thread,
-/// alongside the `Strong`); `pinned` records whether the pin was actually
-/// taken so `Drop` never unbalances the pin count.
 pub struct PinnedArrayBuf {
     buf: crate::jsc::array_buffer::ArrayBufferStrong,
     pinned: bool,
@@ -758,8 +751,7 @@ impl Builtin {
                 let jsval = interp.jsobjs[idx];
 
                 if let Some(buf) = jsval.as_array_buffer(global) {
-                    // Pin the backing buffer per slot (see `PinnedArrayBuf`).
-                    // Each slot gets its own pin and Strong (sharing one would
+                    // Each slot gets its own Strong (sharing one would
                     // double-free on Drop).
                     let mk = || {
                         let pinned = jsval.as_pinned_arraybuffer(global);

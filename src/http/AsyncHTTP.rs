@@ -537,8 +537,6 @@ impl<'a> AsyncHTTP<'a> {
             this.client.flags.disable_decompression = val;
         }
         if let Some(val) = options.max_redirects {
-            // remaining_redirect_count is decremented on each redirect response
-            // and the request fails when it reaches 0, so N follows need N + 1.
             this.client.remaining_redirect_count = (val.min(126) + 1) as i8;
         }
         if let Some(val) = options.disable_keepalive {

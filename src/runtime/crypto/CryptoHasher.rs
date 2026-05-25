@@ -199,8 +199,6 @@ impl CryptoHasher {
         }
     }
 
-    /// Only XOF digests may honor a custom `outputLength`; fixed-output
-    /// algorithms write exactly `digest_length` bytes into the output buffer.
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__isXof", no_catch)]
     pub fn extern_is_xof(&self) -> bool {
         match self {

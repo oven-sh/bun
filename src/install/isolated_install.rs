@@ -1275,12 +1275,6 @@ pub(crate) fn install_isolated_packages(
                                         break 'eligible false;
                                     }
                                 }
-                                // `run_preinstall()` authorizes scripts via
-                                // `has_trusted_dependency`, which keys trust on
-                                // the resolved package name (never the alias a
-                                // dependent chose for it). Mirror that here so
-                                // the eligibility check agrees.
-                                //
                                 // Intentionally *not* gated on `do.run_scripts`
                                 // (a later install without `--ignore-scripts`
                                 // would run the postinstall through the project

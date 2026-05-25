@@ -129,10 +129,6 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_execute, (JSGlobalObject * globalObject, C
             return {};
         }
 
-        // llhttp synchronously invokes JS callbacks (kOnHeaders, kOnHeadersComplete,
-        // kOnBody) while it still holds pointers into this buffer. Pin the backing
-        // ArrayBuffer so those callbacks cannot detach it (e.g. via transfer() or a
-        // transferring structuredClone()) and free the memory mid-parse.
         RefPtr<ArrayBuffer> backingBuffer = buffer->possiblySharedBuffer();
         if (!backingBuffer) {
             throwOutOfMemoryError(globalObject, scope);

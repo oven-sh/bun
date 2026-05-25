@@ -1415,9 +1415,8 @@ pub(super) enum DevHandlerId {
     MemoryVisualizer,
 }
 
-/// DNS-rebinding guard for the dev server's routes: `/_bun/...` internals,
-/// the Chrome DevTools `/.well-known/...` route, and the HTML/framework
-/// responses that embed the `client_script_generation` secret. A rebound origin
+/// DNS-rebinding guard for `/_bun/...` internal routes and the Chrome
+/// DevTools `/.well-known/...` route. A rebound origin
 /// (`attacker.com` → 127.0.0.1) presents `Host: attacker.com`; rejecting
 /// non-loopback / non-IP / non-configured hostnames prevents the attacker's
 /// page from reading bundled source via same-origin fetch.
@@ -5330,9 +5329,6 @@ impl DevServer {
         req: &mut Request,
         resp: AnyResponse,
     ) -> Result<(), AllocError> {
-        // The served HTML embeds the `client_script_generation` secret in its
-        // `/_bun/client/...` script URL; apply the same DNS-rebinding guard as
-        // the `/_bun/*` routes before disclosing it.
         if !is_allowed_dev_host(self, req) {
             host_forbidden(resp);
             return Ok(());
@@ -5424,9 +5420,6 @@ impl DevServer {
                     });
                 }
             },
-            // Zig: `std.crypto.random.int(u32)` — OS CSPRNG. This value gates
-            // cross-origin access to the client bundle URL, so it must not
-            // come from the predictable xoshiro stream (`fast_random`).
             client_script_generation: {
                 let mut buf = [0u8; 4];
                 bun_core::csprng(&mut buf);

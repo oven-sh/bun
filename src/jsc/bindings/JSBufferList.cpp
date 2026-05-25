@@ -90,10 +90,6 @@ JSC::JSValue JSBufferList::join(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalO
     }
     const bool needSeq = seq->length() != 0;
 
-    // toString() below can run arbitrary JS (Symbol.toPrimitive / toString /
-    // valueOf) which may re-enter this BufferList and mutate m_deque,
-    // invalidating the deque iterators. Snapshot the contents first; the
-    // MarkedArgumentBuffer keeps the values alive across re-entrant JS.
     MarkedArgumentBuffer values;
     values.ensureCapacity(m_deque.size());
     for (auto& entry : m_deque)

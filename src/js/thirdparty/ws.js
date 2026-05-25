@@ -16,6 +16,61 @@ const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
 
 const encoder = new TextEncoder();
 
+// TLS keys that the native WebSocket understands (parsed by SSLConfig.fromJS).
+// `ws` forwards top-level TLS options to `https.request`/`tls.connect`; Bun
+// reads them from the `tls` option, so collect them off the top-level options.
+// Booleans use `!== undefined` so an explicit `false` (e.g. `rejectUnauthorized:
+// false`, the whole point of connecting to a self-signed server) is forwarded.
+const tlsBooleanKeys = ["rejectUnauthorized", "requestCert", "lowMemoryMode"];
+const tlsValueKeys = [
+  "ca",
+  "cert",
+  "key",
+  "passphrase",
+  "servername",
+  "serverName",
+  "ciphers",
+  "dhParamsFile",
+  "secureOptions",
+  "keyFile",
+  "certFile",
+  "caFile",
+  "ALPNProtocols",
+  "clientRenegotiationLimit",
+  "clientRenegotiationWindow",
+];
+
+// Agents (e.g. HttpsProxyAgent) stuff connection options into `connectOpts`
+// that aren't all valid Bun TLS options — an array-form `ALPNProtocols`, for
+// one, which SSLConfig.fromJS rejects. Keep the agent path to the subset ws
+// users historically pass through an agent.
+const agentTlsValueKeys = ["ca", "cert", "key", "passphrase"];
+
+/**
+ * Collects the TLS options the native WebSocket understands from a source
+ * object. `valueKeys` narrows the non-boolean set for callers that can't pass
+ * the full set (see {@link agentTlsValueKeys}).
+ * @param {Object} source
+ * @param {string[]} [valueKeys]
+ * @returns {Object|null} The TLS options, or null if none were present
+ */
+function extractTlsOptions(source, valueKeys = tlsValueKeys) {
+  if (!$isObject(source)) return null;
+
+  let tls = null;
+  for (const key of tlsBooleanKeys) {
+    if (source[key] !== undefined) {
+      (tls ??= {})[key] = source[key];
+    }
+  }
+  for (const key of valueKeys) {
+    if (source[key]) {
+      (tls ??= {})[key] = source[key];
+    }
+  }
+  return tls;
+}
+
 /**
  * Extracts TLS and proxy options from an agent object.
  * @param {Object} agent The agent object to extract options from
@@ -23,39 +78,9 @@ const encoder = new TextEncoder();
  */
 function extractAgentOptions(agent) {
   const connectOpts = agent?.connectOpts || agent?.options;
-  let tls = null;
   let proxy = null;
 
-  if ($isObject(connectOpts)) {
-    // Build TLS options
-    const newTlsOptions = {};
-    let hasTlsOptions = false;
-
-    if (connectOpts.rejectUnauthorized !== undefined) {
-      newTlsOptions.rejectUnauthorized = connectOpts.rejectUnauthorized;
-      hasTlsOptions = true;
-    }
-    if (connectOpts.ca) {
-      newTlsOptions.ca = connectOpts.ca;
-      hasTlsOptions = true;
-    }
-    if (connectOpts.cert) {
-      newTlsOptions.cert = connectOpts.cert;
-      hasTlsOptions = true;
-    }
-    if (connectOpts.key) {
-      newTlsOptions.key = connectOpts.key;
-      hasTlsOptions = true;
-    }
-    if (connectOpts.passphrase) {
-      newTlsOptions.passphrase = connectOpts.passphrase;
-      hasTlsOptions = true;
-    }
-
-    if (hasTlsOptions) {
-      tls = newTlsOptions;
-    }
-  }
+  const tls = extractTlsOptions(connectOpts, agentTlsValueKeys);
 
   // Build proxy - check connectOpts.proxy first, then agent.proxy
   const agentProxy = connectOpts?.proxy || agent?.proxy;
@@ -158,7 +183,10 @@ class BunWebSocket extends EventEmitter {
     if ($isObject(options)) {
       headers = options?.headers;
       proxy = options?.proxy;
-      tlsOptions = options?.tls;
+      // `ws` forwards top-level TLS options (rejectUnauthorized, ca, cert, ...)
+      // to https.request/tls.connect. An explicit `tls` object stays
+      // authoritative for back-compat with Bun's existing shape.
+      tlsOptions = $isObject(options.tls) ? options.tls : extractTlsOptions(options);
       if ("perMessageDeflate" in options && !options.perMessageDeflate) {
         disableDeflate = true;
       }

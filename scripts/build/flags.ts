@@ -458,12 +458,30 @@ export const globalFlags: Flag[] = [
     // Thin, not full: each .o carries a per-module summary so the link runs
     // the LTO backends in parallel (and could cache them) instead of merging
     // every module into one serial multi-gigabyte regular-LTO partition. The
-    // WebKit -lto prebuilts and rustc's -Clinker-plugin-lto bitcode are both
-    // ThinLTO-summaried, so this makes the whole link one uniform ThinLTO
-    // graph with cross-module importing across C++/Rust/JSC boundaries.
+    // WebKit macos -lto prebuilts and rustc's -Clinker-plugin-lto bitcode are
+    // both ThinLTO-summaried, so this makes the whole link one uniform
+    // ThinLTO graph with cross-module importing across C++/Rust/JSC
+    // boundaries. Darwin only for now — see the -flto=full entry below.
     flag: "-flto=thin",
-    when: c => c.unix && c.lto,
+    when: c => c.darwin && c.lto,
     desc: "Thin link-time optimization",
+  },
+  {
+    // Linux stays on full LTO: the LLVM 22 ThinLTO backend pipeline
+    // (rust-lld) miscompiles JavaScriptCore on linux at every opt level
+    // above --lto-O0 — a JIT-tier correctness bug plus several bundler hangs
+    // in the test suite, on both x64 and aarch64, with cross-module
+    // importing disabled, ICF ruled out, and WPD ruled out. The same
+    // bitcode through ld64.lld on darwin is fine. Full LTO uses a different
+    // (regular-LTO) pass pipeline over one merged module and has shipped
+    // green for months. Costs: the link is serial (~14 min vs ~1.5 min) and
+    // there is no Rust<->C++ cross-language inlining (the Rust thin
+    // partition cannot import from the C++ regular partition). Revisit once
+    // the miscompiling pass is isolated — the repro is
+    // `bun -e 'require("axobject-query")'` failing in the DFG tier.
+    flag: "-flto=full",
+    when: c => c.unix && !c.darwin && c.lto,
+    desc: "Full link-time optimization (linux: ThinLTO miscompiles JSC, see comment)",
   },
   {
     flag: "-flto",
@@ -489,9 +507,11 @@ export const globalFlags: Flag[] = [
     // (typeidCompatibleVTable entries) and whole-program devirtualization
     // runs in index-based mode via --lto-whole-program-visibility at link
     // time. 0 is also the default for rustc, for Apple targets, and for the
-    // WebKit -lto prebuilts, so this is the configuration that can't drift.
+    // WebKit macos -lto prebuilts, so this is the configuration that can't
+    // drift. Darwin only: linux uses full LTO (no per-module summaries, so
+    // the flag is meaningless there).
     flag: "-fno-split-lto-unit",
-    when: c => c.unix && c.lto,
+    when: c => c.darwin && c.lto,
     desc: "Index-based WPD: keep type metadata in the ThinLTO summaries, no regular-LTO half",
   },
 
@@ -812,15 +832,21 @@ export const linkerFlags: Flag[] = [
     // only fires for classes explicitly annotated [[clang::lto_visibility]],
     // i.e. never. A static executable that only dlopens C-ABI addons (NAPI)
     // satisfies the whole-program assumption. ld64.lld has no named option
-    // for this; -mllvm reaches the underlying cl::opt directly.
-    flag: c => (c.darwin ? ["-Wl,-mllvm,-whole-program-visibility"] : ["-Wl,--lto-whole-program-visibility"]),
-    when: c => c.unix && c.lto,
+    // for this; -mllvm reaches the underlying cl::opt directly. Darwin only:
+    // linux is on full LTO where this was never enabled.
+    flag: ["-Wl,-mllvm,-whole-program-visibility"],
+    when: c => c.darwin && c.lto,
     desc: "Enable index-based whole-program devirtualization at link time",
   },
   {
     flag: ["-flto=thin", "-fwhole-program-vtables", "-fforce-emit-vtables"],
-    when: c => c.unix && c.lto,
+    when: c => c.darwin && c.lto,
     desc: "LTO at link time (matches compile-side -flto=thin)",
+  },
+  {
+    flag: ["-flto=full", "-fwhole-program-vtables", "-fforce-emit-vtables"],
+    when: c => c.unix && !c.darwin && c.lto,
+    desc: "LTO at link time (matches compile-side -flto=full)",
   },
   {
     // Without -O at link time, clang's driver defaults LTO codegen to -O2.

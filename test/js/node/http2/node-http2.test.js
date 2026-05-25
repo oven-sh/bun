@@ -2529,6 +2529,60 @@ it("http2 client still decodes the next response's HPACK references when a late 
   }
 });
 
+it("http2 client treats an HPACK decode error in a late header block for a reset stream as COMPRESSION_ERROR", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  const server = net.createServer(socket => {
+    socket.on("error", () => {});
+    let prefaceSeen = false;
+    let responded = false;
+    const scan = makeFrameScanner((type, flags, streamId) => {
+      if (type === 0x3 && streamId === 1 && !responded) {
+        responded = true;
+        socket.write(
+          new http2utils.HeadersFrame(1, http2utils.kFakeResponseHeaders.subarray(0, 7), 0, true, false).data,
+        );
+      }
+    });
+    let prefaceBuffer = Buffer.alloc(0);
+    socket.on("data", chunk => {
+      if (!prefaceSeen) {
+        prefaceBuffer = prefaceBuffer.length === 0 ? chunk : Buffer.concat([prefaceBuffer, chunk]);
+        if (prefaceBuffer.length < 24) return;
+        prefaceSeen = true;
+        socket.write(new http2utils.SettingsFrame(false).data);
+        socket.write(new http2utils.SettingsFrame(true).data);
+        chunk = prefaceBuffer.subarray(24);
+        prefaceBuffer = Buffer.alloc(0);
+        if (chunk.length === 0) return;
+      }
+      scan(chunk);
+    });
+  });
+
+  await new Promise(r => server.listen(0, r));
+  const port = server.address().port;
+  const client = http2.connect(`http://localhost:${port}`);
+  client.on("error", err => resolve(err));
+
+  client.on("connect", () => {
+    const req1 = client.request({ ":path": "/cancelled" });
+    req1.on("error", () => {});
+    req1.on("response", () => reject(new Error("req1 must not receive a response")));
+    req1.resume();
+    req1.close(http2.constants.NGHTTP2_CANCEL);
+  });
+
+  try {
+    const err = await promise;
+    expect(err.code).toBe("ERR_HTTP2_SESSION_ERROR");
+    expect(err.message).toBe("Session closed with error code NGHTTP2_COMPRESSION_ERROR");
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
 it("http2 server does not spawn a second request for late HEADERS on a stream it already reset", async () => {
   // Server-side dual of the cancel race: the server refuses stream 1 with
   // RST_STREAM, then the client's trailer HEADERS for stream 1 (already in

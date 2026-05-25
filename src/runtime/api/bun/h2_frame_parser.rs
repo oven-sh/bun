@@ -2295,14 +2295,21 @@ impl H2FrameParser {
     /// RFC 9113 §4.3: every header block on the connection MUST be processed
     /// by the decoder to keep the dynamic table in sync, even when the frame
     /// itself is discarded.
-    fn discard_header_block(&self, payload: &[u8]) {
+    fn discard_header_block(&self, stream_id: u32, payload: &[u8]) {
         let mut offset: usize = 0;
         while offset < payload.len() {
             match self.decode(&payload[offset..]) {
                 Ok(header) => offset += header.next,
-                // Match `decode_header_block`: a decode failure terminates the
-                // loop without escalating to a connection error.
-                Err(_) => break,
+                Err(_) => {
+                    self.send_go_away(
+                        stream_id,
+                        ErrorCode::COMPRESSION_ERROR,
+                        b"Invalid HPACK header block",
+                        self.last_stream_id.get(),
+                        true,
+                    );
+                    return;
+                }
             }
         }
     }
@@ -2391,7 +2398,7 @@ impl H2FrameParser {
             && self.discarded_block.get().is_empty()
         {
             self.expecting_continuation.set(0);
-            self.discard_header_block(fragment);
+            self.discard_header_block(frame.stream_identifier, fragment);
             return Ok(end_);
         }
         if self.discarded_block.get().len() + fragment.len()
@@ -2417,7 +2424,7 @@ impl H2FrameParser {
         self.expecting_continuation.set(0);
         let mut block = self.discarded_block.replace(Vec::new());
         block.extend_from_slice(fragment);
-        self.discard_header_block(&block);
+        self.discard_header_block(frame.stream_identifier, &block);
         Ok(end_)
     }
 
@@ -4860,7 +4867,8 @@ impl H2FrameParser {
         data.len()
     }
 
-    /// Returned *Stream is heap-allocated and stable for the lifetime of this H2FrameParser.
+    /// Returned *Stream is heap-allocated and valid while at least one `ActivityGuard` is held;
+    /// `evict_closed_streams` may free CLOSED entries once the activity depth returns to 0.
     fn handle_received_stream_id(&self, stream_identifier: u32) -> Option<*mut Stream> {
         // connection stream
         if stream_identifier == 0 {

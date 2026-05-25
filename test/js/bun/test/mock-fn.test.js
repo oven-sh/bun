@@ -794,6 +794,35 @@ describe("mock()", () => {
 
     expect(bar()()).toBe(true);
   });
+
+  test("can be invoked with new", () => {
+    const noImpl = mock();
+    const instance = new noImpl();
+    expect(instance).toBeInstanceOf(Object);
+    expect(noImpl.mock.contexts[0]).toBe(instance);
+    expect(Reflect.construct(noImpl, [])).toBeInstanceOf(Object);
+
+    const primitiveImpl = mock(() => 42);
+    expect(new primitiveImpl()).toBeInstanceOf(Object);
+    expect(primitiveImpl.mock.results[0]).toEqual({ type: "return", value: 42 });
+
+    const usesThis = mock(function () {
+      this.x = 1;
+    });
+    expect(new usesThis()).toEqual({ x: 1 });
+
+    const returnsObject = mock(() => ({ y: 2 }));
+    expect(new returnsObject()).toEqual({ y: 2 });
+
+    const throws = mock(() => {
+      throw new Error("boom");
+    });
+    expect(() => new throws()).toThrow("boom");
+
+    class Target {}
+    const withNewTarget = mock();
+    expect(Object.getPrototypeOf(Reflect.construct(withNewTarget, [], Target))).toBe(Target.prototype);
+  });
 });
 
 describe("spyOn", () => {
@@ -1010,6 +1039,13 @@ describe("spyOn", () => {
       expect(arr[14]).toBe(original);
       expect(arr[14]()).toBe(456);
       expect(fn).not.toHaveBeenCalled();
+    });
+
+    test("constructing a spy on a missing property returns an object", () => {
+      const target = {};
+      const fn = spyOn(target, "missing");
+      expect(Reflect.construct(fn, [])).toBeInstanceOf(Object);
+      expect(new fn()).toBeInstanceOf(Object);
     });
   }
 

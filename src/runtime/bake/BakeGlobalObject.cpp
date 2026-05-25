@@ -19,7 +19,8 @@ using namespace JSC;
 // logic in Zig::GlobalObject::moduleLoaderImportModule: file:// → fs path,
 // builtin:// → substring after the prefix, bake:/ → the bake key, else the
 // URL string as-is. Returns an empty Identifier on nullptr/empty origin;
-// the WebKit side falls back to the coarse pre-PR gate in that case.
+// the WebKit side falls back to the coarse VM::hasPendingDynamicImport()
+// gate in that case.
 static JSC::Identifier bakeReferrerKeyFromSourceOrigin(JSC::VM& vm, const JSC::SourceOrigin& sourceOrigin)
 {
     if (sourceOrigin.isNull())

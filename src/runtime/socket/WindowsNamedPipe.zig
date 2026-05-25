@@ -509,11 +509,13 @@ pub fn shutdown(this: *WindowsNamedPipe) void {
     if (this.wrapper) |*wrapper| {
         _ = wrapper.shutdown(false);
     } else {
-        // Plain (non-TLS) named pipe: half-close the write side so the peer
-        // observes EOF. Without this, `Socket.prototype.end()` over a Windows
-        // named pipe (endNT → shutdown()) never signals the peer, and an
-        // `allowHalfOpen` peer waiting on 'end' hangs. `writer.end()` is
-        // idempotent, mirroring `close`'s unconditional writer teardown.
+        // Plain (non-TLS) named pipe: close the writer so the peer sees EOF.
+        // `src/io` doesn't expose `uv_shutdown`, so this tears down both
+        // directions — same as `close()` just above — but that's fine here:
+        // it restores the pre-half-close behavior (endNT → $end() fell
+        // through to this same `writer.end()` via `close_and_detach`) and
+        // avoids the peer hang seen without it. True half-close on a libuv
+        // pipe would need uv_shutdown plumbing in src/io — follow-up.
         this.writer.end();
     }
 }

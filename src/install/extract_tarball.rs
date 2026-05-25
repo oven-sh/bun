@@ -420,7 +420,10 @@ impl ExtractTarball {
                         if sys::File::openat(
                             extract_destination.fd(),
                             ZStr::from_static(b".bun-tag\0"),
-                            sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC | sys::O::NOFOLLOW,
+                            sys::O::WRONLY
+                                | sys::O::CREAT
+                                | sys::O::TRUNC
+                                | if cfg!(windows) { 0 } else { sys::O::NOFOLLOW },
                             0o664,
                         )
                         .and_then(|f| f.write_all(resolved))

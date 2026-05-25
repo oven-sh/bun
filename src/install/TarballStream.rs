@@ -1090,7 +1090,10 @@ impl TarballStream {
                     if bun_sys::File::openat(
                         self.dest.unwrap(),
                         bun_core::zstr!(".bun-tag"),
-                        O::WRONLY | O::CREAT | O::TRUNC | O::NOFOLLOW,
+                        O::WRONLY
+                            | O::CREAT
+                            | O::TRUNC
+                            | if cfg!(windows) { 0 } else { O::NOFOLLOW },
                         0o664,
                     )
                     .and_then(|f| f.write_all(self.resolved_github_dirname))

@@ -3838,6 +3838,9 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& ar
                 throwVMError(globalObject, scope, "Failed to call nextTick"_s);
                 return;
             }
+            // Also repair the JS-visible property, which was reified as undefined by the
+            // failed initialization, so user code calling process.nextTick() recovers too.
+            this->putDirect(vm, Identifier::fromString(vm, "nextTick"_s), nextTickFn, 0);
         }
     }
     ASSERT_WITH_MESSAGE(!args.at(0).inherits<AsyncContextFrame>(), "queueNextTick must not pass an AsyncContextFrame. This will cause a crash.");

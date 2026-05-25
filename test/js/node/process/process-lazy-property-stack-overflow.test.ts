@@ -93,8 +93,11 @@ test("first use of process.nextTick during stack exhaustion does not break Worke
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  if (exitCode !== 0) {
+    expect(stderr).toBe("");
+  }
   expect(stdout).toContain("WORKER_OK");
   expect(exitCode).toBe(0);
 });

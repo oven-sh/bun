@@ -19,43 +19,113 @@ pub(crate) unsafe extern "C" fn TextEncoder__encode8(
     ptr: *const u8,
     len: usize,
 ) -> JSValue {
-    // as much as possible, rely on jsc to own the memory
-    // their code is more battle-tested than bun's code
-    // so we do a stack allocation here
-    // and then copy into jsc memory
-    // unless it's huge
-    // JSC will GC Uint8Array that occupy less than 512 bytes
-    // so it's extra good for that case
-    // this also means there won't be reallocations for small strings
-    let mut buf = [0u8; 2048];
     // SAFETY: caller guarantees ptr[0..len] is valid Latin-1 data
     let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
 
-    if slice.len() <= buf.len() / 2 {
-        let result = strings::copy_latin1_into_utf8(&mut buf, slice);
-        let Ok(uint8array) = create_uninitialized_uint8_array(global_this, result.written as usize)
-        else {
+    // Encode straight into a JSC-owned Uint8Array sized exactly for the input:
+    // no intermediate stack/heap buffer and no second copy. JSC owning the
+    // memory keeps small arrays cheap for the GC and avoids external-buffer
+    // bookkeeping for large ones.
+    if strings::first_non_ascii(slice).is_none() {
+        // ASCII fast path: the UTF-8 output is byte-for-byte the input.
+        let Ok(uint8array) = create_uninitialized_uint8_array(global_this, slice.len()) else {
             return JSValue::ZERO;
         };
-        debug_assert!(result.written as usize <= buf.len());
-        debug_assert!(result.read as usize == slice.len());
         let Some(mut array_buffer) = uint8array.as_array_buffer(global_this) else {
             return JSValue::ZERO;
         };
-        debug_assert!(result.written as usize == array_buffer.len);
-        array_buffer.byte_slice_mut()[..result.written as usize]
-            .copy_from_slice(&buf[..result.written as usize]);
-        uint8array
-    } else {
-        let Ok(bytes) = strings::allocate_latin1_into_utf8(slice) else {
-            return global_this.throw_out_of_memory_value();
-        };
-        debug_assert!(bytes.len() >= slice.len());
-        // PORT NOTE: ownership transfers to JSC via to_js_unchecked; leak the Vec.
-        ArrayBuffer::from_bytes(bytes.leak(), JSType::Uint8Array)
-            .to_js_unchecked(global_this)
-            .unwrap_or(JSValue::ZERO)
+        debug_assert!(array_buffer.len == slice.len());
+        array_buffer.byte_slice_mut().copy_from_slice(slice);
+        return uint8array;
     }
+
+    // Latin-1 bytes ≥ 0x80 expand to two UTF-8 bytes: size the array exactly
+    // and convert directly into it.
+    let utf8_len = strings::element_length_latin1_into_utf8(slice);
+    let Ok(uint8array) = create_uninitialized_uint8_array(global_this, utf8_len) else {
+        return JSValue::ZERO;
+    };
+    let Some(mut array_buffer) = uint8array.as_array_buffer(global_this) else {
+        return JSValue::ZERO;
+    };
+    debug_assert!(array_buffer.len == utf8_len);
+    let result = strings::copy_latin1_into_utf8(array_buffer.byte_slice_mut(), slice);
+    debug_assert!(result.written as usize == utf8_len);
+    debug_assert!(result.read as usize == slice.len());
+    uint8array
+}
+
+fn replacement_char_uint8_array(global_this: &JSGlobalObject) -> JSValue {
+    let Ok(uint8array) = create_uninitialized_uint8_array(global_this, 3) else {
+        return JSValue::ZERO;
+    };
+    let Some(mut array_buffer) = uint8array.as_array_buffer(global_this) else {
+        return JSValue::ZERO;
+    };
+    const REPLACEMENT_CHAR: [u8; 3] = [239, 191, 189];
+    array_buffer.byte_slice_mut()[..REPLACEMENT_CHAR.len()].copy_from_slice(&REPLACEMENT_CHAR);
+    uint8array
+}
+
+fn encode16_impl(global_this: &JSGlobalObject, slice: &[u16]) -> JSValue {
+    // Small strings: convert into a stack buffer sized for the worst case
+    // (3 bytes per code unit), which lets copy_utf16_into_utf8 go straight to
+    // the simdutf conversion without an exact length pass, then copy the
+    // written bytes into a JSC-owned Uint8Array.
+    const SMALL_BUF_LEN: usize = 192;
+    if slice.len() <= SMALL_BUF_LEN / 3 {
+        let mut buf = [0u8; SMALL_BUF_LEN];
+        let result = strings::copy_utf16_into_utf8(&mut buf, slice);
+        if result.read == 0 || result.written == 0 {
+            return replacement_char_uint8_array(global_this);
+        }
+        let written = result.written as usize;
+        debug_assert!(result.read as usize == slice.len());
+        let Ok(uint8array) = create_uninitialized_uint8_array(global_this, written) else {
+            return JSValue::ZERO;
+        };
+        let Some(mut array_buffer) = uint8array.as_array_buffer(global_this) else {
+            return JSValue::ZERO;
+        };
+        debug_assert!(array_buffer.len == written);
+        array_buffer.byte_slice_mut().copy_from_slice(&buf[..written]);
+        return uint8array;
+    }
+
+    // Exact UTF-8 size of the input (valid surrogate pairs count as 4 bytes,
+    // everything else 1–3 bytes per code unit).
+    let need = strings::element_length_utf16_into_utf8(slice);
+
+    if need == 0 {
+        // Nothing to encode: preserve the historical behavior of returning a
+        // single U+FFFD replacement character.
+        return replacement_char_uint8_array(global_this);
+    }
+
+    // Encode straight into a JSC-owned Uint8Array of exactly `need` bytes —
+    // no intermediate heap buffer and no second copy.
+    let Ok(uint8array) = create_uninitialized_uint8_array(global_this, need) else {
+        return JSValue::ZERO;
+    };
+    let Some(mut array_buffer) = uint8array.as_array_buffer(global_this) else {
+        return JSValue::ZERO;
+    };
+    debug_assert!(array_buffer.len == need);
+    let result =
+        strings::copy_utf16_into_utf8_with_utf8_len(array_buffer.byte_slice_mut(), slice, need);
+    if result.written as usize == need && result.read as usize == slice.len() {
+        return uint8array;
+    }
+
+    // Unpaired surrogates: the U+FFFD-replaced output does not necessarily fit
+    // the exact-size buffer above, so redo the conversion through the
+    // allocating path (which replaces each unpaired surrogate with U+FFFD) and
+    // hand those bytes to JSC. The array allocated above is discarded.
+    let bytes = strings::to_utf8_alloc_with_type(slice);
+    // PORT NOTE: ownership transfers to JSC via to_js_unchecked; leak the Vec.
+    ArrayBuffer::from_bytes(bytes.leak(), JSType::Uint8Array)
+        .to_js_unchecked(global_this)
+        .unwrap_or(JSValue::ZERO)
 }
 
 /// # Safety
@@ -66,49 +136,9 @@ pub(crate) unsafe extern "C" fn TextEncoder__encode16(
     ptr: *const u16,
     len: usize,
 ) -> JSValue {
-    // as much as possible, rely on jsc to own the memory
-    // their code is more battle-tested than bun's code
-    // so we do a stack allocation here
-    // and then copy into jsc memory
-    // unless it's huge
-    // JSC will GC Uint8Array that occupy less than 512 bytes
-    // so it's extra good for that case
-    // this also means there won't be reallocations for small strings
-    let mut buf = [0u8; 2048];
-
     // SAFETY: caller guarantees ptr[0..len] is valid UTF-16 data
     let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
-
-    // max utf16 -> utf8 length
-    if slice.len() <= buf.len() / 4 {
-        let result = strings::copy_utf16_into_utf8(&mut buf, slice);
-        if result.read == 0 || result.written == 0 {
-            let Ok(uint8array) = create_uninitialized_uint8_array(global_this, 3) else {
-                return JSValue::ZERO;
-            };
-            let mut array_buffer = uint8array.as_array_buffer(global_this).unwrap();
-            const REPLACEMENT_CHAR: [u8; 3] = [239, 191, 189];
-            array_buffer.slice_mut()[..REPLACEMENT_CHAR.len()].copy_from_slice(&REPLACEMENT_CHAR);
-            return uint8array;
-        }
-        let Ok(uint8array) = create_uninitialized_uint8_array(global_this, result.written as usize)
-        else {
-            return JSValue::ZERO;
-        };
-        debug_assert!(result.written as usize <= buf.len());
-        debug_assert!(result.read as usize == slice.len());
-        let mut array_buffer = uint8array.as_array_buffer(global_this).unwrap();
-        debug_assert!(result.written as usize == array_buffer.len);
-        array_buffer.slice_mut()[..result.written as usize]
-            .copy_from_slice(&buf[..result.written as usize]);
-        uint8array
-    } else {
-        let bytes = strings::to_utf8_alloc_with_type(slice);
-        // PORT NOTE: ownership transfers to JSC via to_js_unchecked; leak the Vec.
-        ArrayBuffer::from_bytes(bytes.leak(), JSType::Uint8Array)
-            .to_js_unchecked(global_this)
-            .unwrap_or(JSValue::ZERO)
-    }
+    encode16_impl(global_this, slice)
 }
 
 /// # Safety
@@ -119,49 +149,9 @@ pub(crate) unsafe extern "C" fn c(
     ptr: *const u16,
     len: usize,
 ) -> JSValue {
-    // as much as possible, rely on jsc to own the memory
-    // their code is more battle-tested than bun's code
-    // so we do a stack allocation here
-    // and then copy into jsc memory
-    // unless it's huge
-    // JSC will GC Uint8Array that occupy less than 512 bytes
-    // so it's extra good for that case
-    // this also means there won't be reallocations for small strings
-    let mut buf = [0u8; 2048];
-
     // SAFETY: caller guarantees ptr[0..len] is valid UTF-16 data
     let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
-
-    // max utf16 -> utf8 length
-    if slice.len() <= buf.len() / 4 {
-        let result = strings::copy_utf16_into_utf8(&mut buf, slice);
-        if result.read == 0 || result.written == 0 {
-            let Ok(uint8array) = create_uninitialized_uint8_array(global_this, 3) else {
-                return JSValue::ZERO;
-            };
-            let mut array_buffer = uint8array.as_array_buffer(global_this).unwrap();
-            const REPLACEMENT_CHAR: [u8; 3] = [239, 191, 189];
-            array_buffer.slice_mut()[..REPLACEMENT_CHAR.len()].copy_from_slice(&REPLACEMENT_CHAR);
-            return uint8array;
-        }
-        let Ok(uint8array) = create_uninitialized_uint8_array(global_this, result.written as usize)
-        else {
-            return JSValue::ZERO;
-        };
-        debug_assert!(result.written as usize <= buf.len());
-        debug_assert!(result.read as usize == slice.len());
-        let mut array_buffer = uint8array.as_array_buffer(global_this).unwrap();
-        debug_assert!(result.written as usize == array_buffer.len);
-        array_buffer.slice_mut()[..result.written as usize]
-            .copy_from_slice(&buf[..result.written as usize]);
-        uint8array
-    } else {
-        let bytes = strings::to_utf8_alloc_with_type(slice);
-        // PORT NOTE: ownership transfers to JSC via to_js_unchecked; leak the Vec.
-        ArrayBuffer::from_bytes(bytes.leak(), JSType::Uint8Array)
-            .to_js_unchecked(global_this)
-            .unwrap_or(JSValue::ZERO)
-    }
+    encode16_impl(global_this, slice)
 }
 
 // This is a fast path for copying a Rope string into a Uint8Array.
@@ -270,24 +260,22 @@ pub(crate) extern "C" fn TextEncoder__encodeRopeString(
     rope_str: &JSString,
 ) -> JSValue {
     debug_assert!(rope_str.is_8bit());
-    let mut stack_buf = [0u8; 2048];
-    let stack_buf_len = stack_buf.len();
-    let mut buf_to_use: &mut [u8] = &mut stack_buf;
+    // The rope is ASCII-only on this fast path, so the UTF-8 byte length equals
+    // the string length: allocate the JSC-owned Uint8Array up front and let the
+    // rope iterator write each segment directly into it (no stack buffer, no
+    // second copy). If a non-ASCII byte shows up we bail with `undefined` and
+    // the caller re-encodes through the resolved-string path.
     let length = rope_str.length();
-    let mut array: JSValue = JSValue::ZERO;
-    // PORT NOTE: store the ArrayBuffer view so the borrowed slice outlives the if-branch.
-    let mut heap_ab: ArrayBuffer;
-    if length > stack_buf_len / 2 {
-        array = match create_uninitialized_uint8_array(global_this, length) {
-            Ok(v) => v,
-            Err(_) => return JSValue::ZERO,
-        };
-        array.ensure_still_alive();
-        heap_ab = array.as_array_buffer(global_this).unwrap();
-        buf_to_use = heap_ab.slice_mut();
-    }
+    let array = match create_uninitialized_uint8_array(global_this, length) {
+        Ok(v) => v,
+        Err(_) => return JSValue::ZERO,
+    };
+    array.ensure_still_alive();
+    let Some(mut array_buffer) = array.as_array_buffer(global_this) else {
+        return JSValue::ZERO;
+    };
     let mut encoder = RopeStringEncoder {
-        buf: buf_to_use,
+        buf: array_buffer.byte_slice_mut(),
         tail: 0,
         any_non_ascii: false,
     };
@@ -298,20 +286,6 @@ pub(crate) extern "C" fn TextEncoder__encodeRopeString(
 
     if encoder.any_non_ascii {
         return JSValue::UNDEFINED;
-    }
-
-    if array.is_empty() {
-        array = match create_uninitialized_uint8_array(global_this, length) {
-            Ok(v) => v,
-            Err(_) => return JSValue::ZERO,
-        };
-        array.ensure_still_alive();
-        // PORT NOTE: reshaped for borrowck — encoder.buf aliases stack_buf here
-        array
-            .as_array_buffer(global_this)
-            .unwrap()
-            .byte_slice_mut()
-            .copy_from_slice(&encoder.buf[..length]);
     }
 
     array

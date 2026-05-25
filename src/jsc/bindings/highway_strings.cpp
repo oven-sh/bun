@@ -1140,6 +1140,69 @@ size_t FirstNonAscii8Impl(const uint8_t* HWY_RESTRICT input, size_t len)
     return len;
 }
 
+// Copy the leading all-ASCII run of `src` into `dst`, stopping at the first
+// byte greater than 0x7F. Returns the number of bytes copied (== the index of
+// the first non-ASCII byte, or `len` when the whole input is ASCII). Exactly
+// that many bytes of `dst` are written. This fuses the "find first non-ASCII"
+// scan with the copy so the Latin-1 → UTF-8 ASCII fast path (TextEncoder,
+// copyLatin1IntoUTF8) reads the input once instead of scan-then-memcpy.
+size_t CopyAsciiPrefixImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
+{
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_0x7F = hn::Set(d, uint8_t { 0x7F });
+
+    size_t i = 0;
+    if (len >= N) {
+        const size_t simd_len = len - (len % N);
+        for (; i < simd_len; i += N) {
+            const auto chunk = hn::LoadU(d, src + i);
+            const auto non_ascii = hn::Gt(chunk, vec_0x7F);
+            const intptr_t pos = hn::FindFirstTrue(d, non_ascii);
+            if (pos >= 0) {
+                // Copy only the ASCII prefix of this vector.
+                if (pos > 0) {
+                    std::memcpy(dst + i, src + i, static_cast<size_t>(pos));
+                }
+                return i + static_cast<size_t>(pos);
+            }
+            hn::StoreU(chunk, d, dst + i);
+        }
+
+        // Tail: one overlapping vector covering the last N bytes. The overlap
+        // [len - N, i) was already copied and verified ASCII, so re-storing it
+        // is harmless and nothing is written past `dst + len`.
+        if (i < len) {
+            const size_t start = len - N;
+            const auto chunk = hn::LoadU(d, src + start);
+            const auto non_ascii = hn::Gt(chunk, vec_0x7F);
+            const intptr_t pos = hn::FindFirstTrue(d, non_ascii);
+            if (pos < 0) {
+                hn::StoreU(chunk, d, dst + start);
+                return len;
+            }
+            // The first non-ASCII byte is at or after `i` (everything before
+            // `i` was verified ASCII above).
+            const size_t stop = start + static_cast<size_t>(pos);
+            if (stop > i) {
+                std::memcpy(dst + i, src + i, stop - i);
+            }
+            return stop;
+        }
+        return len;
+    }
+
+    for (; i < len; ++i) {
+        const uint8_t c = src[i];
+        if (c > 0x7F) {
+            return i;
+        }
+        dst[i] = c;
+    }
+    return len;
+}
+
 // Implementation for WebSocket mask application
 void FillWithSkipMaskImpl(const uint8_t* HWY_RESTRICT mask, size_t mask_len, uint8_t* HWY_RESTRICT output, const uint8_t* HWY_RESTRICT input, size_t length, bool skip_mask)
 {
@@ -1197,6 +1260,7 @@ namespace bun {
 // Define the dispatch tables. The names here must exactly match
 // the *Impl function names defined within the HWY_NAMESPACE block above.
 HWY_EXPORT(ContainsNewlineOrNonASCIIOrQuoteImpl);
+HWY_EXPORT(CopyAsciiPrefixImpl);
 HWY_EXPORT(CopyU16ToU8Impl);
 HWY_EXPORT(CountPrintableAscii16Impl);
 HWY_EXPORT(FillWithSkipMaskImpl);
@@ -1353,6 +1417,11 @@ size_t highway_first_non_ascii16(const uint16_t* HWY_RESTRICT input, size_t len)
 size_t highway_first_non_ascii8(const uint8_t* HWY_RESTRICT input, size_t len)
 {
     return HWY_DYNAMIC_DISPATCH(FirstNonAscii8Impl)(input, len);
+}
+
+size_t highway_copy_ascii_prefix(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
+{
+    return HWY_DYNAMIC_DISPATCH(CopyAsciiPrefixImpl)(src, len, dst);
 }
 
 } // extern "C"

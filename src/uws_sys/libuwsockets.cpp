@@ -23,6 +23,13 @@ using TCPWebSocket = uWS::WebSocket<false, true, void *>;
 extern "C"
 {
 
+// Every function in this block is a thin C-ABI wrapper around a uWS template
+// method, called from Rust. Force ThinLTO to import + inline the wrapper into
+// every caller so the FFI boundary never costs an extra call frame; the
+// underlying uWS method call is then visible to the caller's optimizer. The
+// out-of-line definitions are still emitted for non-LTO builds.
+#pragma clang attribute push(__attribute__((always_inline)), apply_to = function)
+
   void uws_loop_date_header_timer_update(us_loop_t *loop) {
     uWS::LoopData *loopData = uWS::Loop::data(loop);
     loopData->updateDate();
@@ -1926,4 +1933,6 @@ __attribute__((callback (corker, ctx)))
   extern "C" void bun_clear_loop_at_thread_exit() {
       uWS::Loop::clearLoopAtThreadExit();
   }
+
+#pragma clang attribute pop
 }

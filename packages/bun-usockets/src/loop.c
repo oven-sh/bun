@@ -97,7 +97,7 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
     us_internal_async_close(loop->data.wakeup_async);
 }
 
-void us_wakeup_loop(struct us_loop_t *loop) {
+__attribute__((always_inline)) void us_wakeup_loop(struct us_loop_t *loop) {
 #ifndef LIBUS_USE_LIBUV
     __atomic_fetch_add(&loop->pending_wakeups, 1, __ATOMIC_RELEASE);
 #endif
@@ -326,7 +326,7 @@ void sweep_timer_cb(struct us_internal_callback_t *cb) {
     us_internal_timer_sweep(cb->loop);
 }
 
-long long us_loop_iteration_number(struct us_loop_t *loop) {
+__attribute__((always_inline)) long long us_loop_iteration_number(struct us_loop_t *loop) {
     return loop->data.iteration_nr;
 }
 
@@ -804,7 +804,7 @@ void us_loop_integrate(struct us_loop_t *loop) {
     /* Timer is now controlled dynamically by socket count, not enabled automatically */
 }
 
-void *us_loop_ext(struct us_loop_t *loop) {
+__attribute__((always_inline)) void *us_loop_ext(struct us_loop_t *loop) {
     return loop + 1;
 }
 

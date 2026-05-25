@@ -510,9 +510,20 @@ extern "C" int __wrap___libc_start_main(int (*main)(int, char**, char**), int ar
 #endif
 #endif
 
+// Match the header's exception specification:
+//   libc++ <= 19 (Apple SDK headers) declares it without noexcept,
+//   libc++ 20 uses _LIBCPP_VERBOSE_ABORT_NOEXCEPT,
+//   libc++ 21+ declares it noexcept unconditionally.
+#if defined(_LIBCPP_VERBOSE_ABORT_NOEXCEPT)
+#define BUN_VERBOSE_ABORT_NOEXCEPT _LIBCPP_VERBOSE_ABORT_NOEXCEPT
+#elif defined(_LIBCPP_VERSION) && _LIBCPP_VERSION < 200000
+#define BUN_VERBOSE_ABORT_NOEXCEPT
+#else
+#define BUN_VERBOSE_ABORT_NOEXCEPT noexcept
+#endif
+
 // Provide our implementation
-// LLVM 20 used _LIBCPP_VERBOSE_ABORT_NOEXCEPT, LLVM 21+ uses _NOEXCEPT (always noexcept).
-void std::__libcpp_verbose_abort(char const* format, ...) noexcept
+void std::__libcpp_verbose_abort(char const* format, ...) BUN_VERBOSE_ABORT_NOEXCEPT
 {
     va_list list;
     va_start(list, format);

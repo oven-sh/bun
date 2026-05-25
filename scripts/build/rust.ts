@@ -525,12 +525,20 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     rustflags.push("-Clinker-plugin-lto");
     rustflags.push("-Cembed-bitcode=yes");
     // EnableSplitLTOUnit consistency: lld errors with "inconsistent LTO Unit
-    // splitting" if any summaried bitcode module disagrees with the others.
-    // The C/C++ side passes -fno-split-lto-unit everywhere (whole-program
-    // devirt uses the index-based mode via --lto-whole-program-visibility,
-    // not the hybrid split mode), so every C/C++ module is 0. rustc's
-    // default is also 0 — nothing to pass. Do NOT add -Zsplit-lto-unit
-    // here; it would make the Rust modules the inconsistent ones.
+    // splitting" if any bitcode module in the link disagrees with the others.
+    // The Rust value must match whatever the C++ side produces, and that
+    // differs per platform:
+    //
+    //   - darwin (ThinLTO): the C/C++ side passes -fno-split-lto-unit
+    //     everywhere (index-based WPD, no hybrid split mode) and Apple
+    //     targets default to 0 anyway, so every C/C++ module is 0. rustc's
+    //     default is also 0 — pass nothing. Adding -Zsplit-lto-unit here
+    //     would make the Rust modules the inconsistent ones and abort the
+    //     link.
+    //   - linux (full LTO): -fwhole-program-vtables on ELF defaults the
+    //     split ON for C++, so every C++ module (ours and the WebKit -lto
+    //     prebuilts) carries EnableSplitLTOUnit=1. The Rust ThinLTO
+    //     summaries must say 1 to match → -Zsplit-lto-unit.
     //
     // The CARGO_PROFILE_RELEASE_LTO override below keeps the per-CGU
     // ThinLTO summaries that the consistency check (and cross-language
@@ -540,6 +548,9 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // (`-Clink-arg=-fuse-ld=lld` is pushed unconditionally above — under LTO
     // it doubles as making rustc's bitcode link go through the LTO-aware
     // linker our final link uses, not BFD `/usr/bin/ld`.)
+    if (!cfg.darwin) {
+      rustflags.push("-Zsplit-lto-unit");
+    }
   }
 
   // ─── Environment ───

@@ -55,4 +55,24 @@ describe("ws top-level TLS options", () => {
     const err = await promise;
     expect(err.message).toContain("TLS handshake failed");
   });
+
+  // A top-level TLS key must not shadow TLS material an agent carries: `ws`
+  // forwards both to the connection. Here the agent supplies `ca` (the
+  // self-signed cert is its own CA, so validation passes with the default
+  // `rejectUnauthorized: true`) while the top level supplies `servername`.
+  // Both must reach the handshake — a naive replace would drop the agent's `ca`.
+  it("merges agent TLS options with top-level TLS options", async () => {
+    await using server = serveTls();
+    const { resolve, reject, promise } = Promise.withResolvers<void>();
+
+    const agent = { connectOpts: { ca: tlsCert.cert } };
+    const ws = new WebSocket(`wss://localhost:${server.port}`, { agent, servername: "localhost" });
+    ws.on("open", () => {
+      ws.close();
+      resolve();
+    });
+    ws.on("error", reject);
+
+    await promise;
+  });
 });

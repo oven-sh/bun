@@ -199,8 +199,13 @@ class BunWebSocket extends EventEmitter {
         if (!proxy && agentProxy) {
           proxy = agentProxy;
         }
-        if (!tlsOptions && agentTls) {
-          tlsOptions = agentTls;
+        // Merge rather than replace: in `ws`, top-level TLS options and the
+        // agent's connect options both reach the connection. Keep top-level
+        // keys winning on conflict while letting the agent fill the gaps (e.g.
+        // an HttpsProxyAgent carrying cert/key alongside a top-level
+        // rejectUnauthorized), instead of dropping one side wholesale.
+        if (agentTls) {
+          tlsOptions = tlsOptions ? { ...agentTls, ...tlsOptions } : agentTls;
         }
       }
     }

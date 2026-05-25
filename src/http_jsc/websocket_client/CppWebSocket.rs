@@ -22,6 +22,28 @@ bun_opaque::opaque_ffi! {
     pub struct CppWebSocket;
 }
 
+/// A single handshake response header borrowed from the parse buffer, matching
+/// the C++ `WebCore::WebSocket::HandshakeRawHeader` layout. Only valid for the
+/// duration of the [`CppWebSocket::did_receive_handshake_response`] call.
+#[repr(C)]
+pub(crate) struct HandshakeRawHeader {
+    name_ptr: *const u8,
+    name_len: usize,
+    value_ptr: *const u8,
+    value_len: usize,
+}
+
+impl HandshakeRawHeader {
+    pub(crate) fn new(name: &[u8], value: &[u8]) -> Self {
+        Self {
+            name_ptr: name.as_ptr(),
+            name_len: name.len(),
+            value_ptr: value.as_ptr(),
+            value_len: value.len(),
+        }
+    }
+}
+
 // FFI surface for `WebCore::WebSocket` (src/jsc/bindings/webcore/WebSocket.cpp).
 // Kept private to this module — the safe wrappers below are the only callers.
 //
@@ -61,6 +83,16 @@ unsafe extern "C" {
     safe fn WebSocket__incrementPendingActivity(websocket_context: &CppWebSocket);
     safe fn WebSocket__decrementPendingActivity(websocket_context: &CppWebSocket);
     fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: *mut BunString);
+    fn WebSocket__didReceiveHandshakeResponse(
+        websocket_context: &CppWebSocket,
+        status_code: u16,
+        status_message: *const u8,
+        status_message_len: usize,
+        headers: *const HandshakeRawHeader,
+        headers_len: usize,
+        body: *const u8,
+        body_len: usize,
+    );
 }
 
 // PORT NOTE: receivers are `&self` (not `&mut self`) because `CppWebSocket` is
@@ -169,6 +201,38 @@ impl CppWebSocket {
                 buffered_data,
                 buffered_len,
                 deflate_params.map_or(core::ptr::null(), std::ptr::from_ref),
+            )
+        };
+        event_loop.exit();
+    }
+
+    /// Forward the parsed HTTP handshake response to C++ so the `ws` shim can
+    /// emit `upgrade` / `unexpected-response`. The C++ side skips all work when
+    /// no `handshake` listener is registered, so the common browser-style path
+    /// stays zero-cost. All slices must outlive the call (they borrow the parse
+    /// buffer, which the caller keeps alive).
+    pub(crate) fn did_receive_handshake_response(
+        &self,
+        status_code: u16,
+        status_message: &[u8],
+        headers: &[HandshakeRawHeader],
+        body: &[u8],
+    ) {
+        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
+        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
+        let event_loop = VirtualMachine::get().event_loop_mut();
+        event_loop.enter();
+        // SAFETY: self is a valid C++ WebCore::WebSocket; all slices outlive the call.
+        unsafe {
+            WebSocket__didReceiveHandshakeResponse(
+                self,
+                status_code,
+                status_message.as_ptr(),
+                status_message.len(),
+                headers.as_ptr(),
+                headers.len(),
+                body.as_ptr(),
+                body.len(),
             )
         };
         event_loop.exit();

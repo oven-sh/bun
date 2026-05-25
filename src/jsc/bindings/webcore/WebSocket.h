@@ -130,6 +130,16 @@ public:
         CLOSED = 3,
     };
 
+    // A single handshake response header, borrowed from the buffer PicoHTTP
+    // parsed. Only valid for the duration of the didReceiveHandshakeResponse
+    // call that receives it.
+    struct HandshakeRawHeader {
+        const uint8_t* name_ptr;
+        size_t name_len;
+        const uint8_t* value_ptr;
+        size_t value_len;
+    };
+
     enum Opcode : unsigned char {
         Continue = 0x0,
         Text = 0x1,
@@ -206,6 +216,7 @@ public:
     void didReceiveMessage(String&& message);
     void didReceiveData(const char* data, size_t length);
     void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData);
+    void didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, std::span<const uint8_t> body);
 
     void updateHasPendingActivity();
     bool hasPendingActivity() const

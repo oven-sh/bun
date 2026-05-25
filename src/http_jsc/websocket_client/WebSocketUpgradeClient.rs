@@ -37,7 +37,7 @@ use bun_picohttp as picohttp;
 use bun_ptr::ThisPtr;
 use bun_uws::{self as uws, SocketHandler, SocketKind, SslCtx};
 
-use super::cpp_websocket::CppWebSocket;
+use super::cpp_websocket::{CppWebSocket, HandshakeRawHeader};
 use super::websocket_deflate as WebSocketDeflate;
 use super::websocket_proxy::WebSocketProxy;
 use super::websocket_proxy_tunnel::WebSocketProxyTunnel;
@@ -1570,6 +1570,37 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // SAFETY: no `&mut Self` is live across this call.
             unsafe { Self::terminate(this, ErrorCode::MismatchWebsocketAcceptHeader) };
             return;
+        }
+
+        // Forward the parsed 101 handshake response to the C++ WebSocket so the
+        // `ws` shim can emit `upgrade` (before `open`). The C++ side is a no-op
+        // unless a `handshake` listener is registered, so the browser-style
+        // `new WebSocket()` path pays nothing. This dispatches into JS *before*
+        // `did_connect` (while the socket is still CONNECTING, matching node's
+        // `ws`) so a `handshake`/`upgrade` handler that synchronously closes the
+        // socket is handled by the existing `!tcp.is_closed() && has_ws`
+        // re-check below: `cancel()` takes `outgoing_websocket`, so `has_ws`
+        // becomes false and `did_connect` is skipped.
+        //
+        // The header name/value slices borrow the parse buffer (`body` in
+        // `handle_data`), which is still alive here — `clear_data()` (which
+        // frees it) runs further below. `remain_buf` is passed as the response
+        // body; for a 101 it's the first WebSocket frame, so the shim drops it.
+        //
+        // SAFETY: short-lived read of `outgoing_websocket`.
+        if let Some(ws) = unsafe { (*this).outgoing_websocket } {
+            let mut raw_headers: Vec<HandshakeRawHeader> =
+                Vec::with_capacity(response.headers.list.len());
+            for header in response.headers.list {
+                raw_headers.push(HandshakeRawHeader::new(header.name(), header.value()));
+            }
+            let status_code = u16::try_from(response.status_code).unwrap_or(0);
+            CppWebSocket::opaque_ref(ws).did_receive_handshake_response(
+                status_code,
+                response.status,
+                &raw_headers,
+                remain_buf,
+            );
         }
 
         // Ownership transfer: `overflow` is HANDED OFF across FFI —

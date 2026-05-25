@@ -90,6 +90,38 @@ function emitWarning(type, message) {
   console.warn("[bun] Warning:", message);
 }
 
+// ws emits `upgrade` / `unexpected-response` with an `http.IncomingMessage` for
+// the handshake response. We bypass node:http, so build a minimal
+// IncomingMessage-shaped Readable from the status + rawHeaders the native
+// WebSocket parsed. Lazily pull in node:stream the first time it's needed.
+let lazyReadable;
+function makeHandshakeResponse(statusCode, statusMessage, rawHeaders, body) {
+  lazyReadable ??= require("node:stream").Readable;
+  const res = new lazyReadable({ read() {} });
+  const headers = (res.headers = { __proto__: null });
+  res.rawHeaders = rawHeaders;
+  for (let i = 0; i < rawHeaders.length; i += 2) {
+    const lower = rawHeaders[i].toLowerCase();
+    const value = rawHeaders[i + 1];
+    const prev = headers[lower];
+    if (lower === "set-cookie") {
+      if (prev === undefined) headers[lower] = [value];
+      else prev.push(value);
+    } else {
+      headers[lower] = prev === undefined ? value : prev + ", " + value;
+    }
+  }
+  res.statusCode = statusCode;
+  res.statusMessage = statusMessage;
+  res.httpVersion = "1.1";
+  res.httpVersionMajor = 1;
+  res.httpVersionMinor = 1;
+  res.socket = res.connection = null;
+  if (body && body.length) res.push(body);
+  res.push(null);
+  return res;
+}
+
 // TODO: add private method on WebSocket to avoid these allocations
 function normalizeData(data, opts) {
   const isBinary = opts?.binary;
@@ -124,6 +156,7 @@ class BunWebSocket extends EventEmitter {
   #paused = false;
   #fragments = false;
   #binaryType = "nodebuffer";
+  #handshakeListenerRegistered = false;
   // Bitset to track whether event handlers are set.
   #eventId = 0;
 
@@ -266,13 +299,41 @@ class BunWebSocket extends EventEmitter {
     }
     let ws = (this.#ws = new WebSocket(url, wsOptions));
     ws.binaryType = "nodebuffer";
+    // The native 'handshake' listener is registered lazily (from
+    // #onOrOnce when the user subscribes to 'upgrade'/'unexpected-response')
+    // so callers that only listen to 'open'/'message'/'close' never exercise
+    // the native handshake-dispatch path.
 
     return ws;
   }
 
+  #ensureHandshakeListener() {
+    if (this.#handshakeListenerRegistered) return;
+    this.#handshakeListenerRegistered = true;
+    this.#ws.addEventListener("handshake", event => this.#onHandshake(event.data), onceObject);
+  }
+
+  #onHandshake(data) {
+    const { statusCode, statusMessage, rawHeaders } = data;
+    // The native client only forwards the successful 101 handshake here; it
+    // fails the connection on any other status before reaching this point. On a
+    // 101, bytes after the header block are the first WebSocket frame (not an
+    // HTTP body) and the native client forwards them to the protocol reader on
+    // connect, so don't include a body in the IncomingMessage.
+    const res = makeHandshakeResponse(statusCode, statusMessage, rawHeaders, null);
+    // ws emits `upgrade` with `(response)`, right before `open`.
+    this.emit("upgrade", res);
+  }
+
   #onOrOnce(event, listener, once) {
-    if (event === "unexpected-response" || event === "upgrade" || event === "redirect") {
+    if (event === "unexpected-response" || event === "redirect") {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
+    }
+    if (event === "upgrade") {
+      // Lazily wire the native handshake listener; `upgrade` is emitted from
+      // #onHandshake.
+      this.#ensureHandshakeListener();
+      return once ? super.once(event, listener) : super.on(event, listener);
     }
     const mask = 1 << eventIds[event];
     const hasPersistentListener = mask && (this.#eventId & mask) === mask;

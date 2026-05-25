@@ -16,7 +16,7 @@
 //        (rewrites src/jsc/bindings/stringWidthTables.h in place)
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const headerPath = join(dirname(fileURLToPath(import.meta.url)), "../src/jsc/bindings/stringWidthTables.h");

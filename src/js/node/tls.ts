@@ -545,6 +545,24 @@ TLSSocket.prototype._start = function _start() {
   this.connect();
 };
 
+TLSSocket.prototype._final = function _final(callback) {
+  // Defer the FIN until the TLS handshake completes. net.Socket._final calls
+  // socket.shutdown(), which while SSL is still in init half-closes the write
+  // side before the client's Finished has been flushed — the peer then sees a
+  // bare FIN and reports an incomplete handshake (e.g. socket.end('') right
+  // after tls.connect()). Node's native TLSWrap.DoShutdown likewise waits for
+  // the handshake output before the underlying stream's FIN.
+  // A never-connected TLSSocket (e.g. new tls.TLSSocket().end(cb)) has no
+  // handle and no handshake to wait for; finish immediately like the
+  // no-handle fast path in net.Socket._final, otherwise the deferred
+  // callback would never fire.
+  if (!this._handle) return callback();
+  if (this.secureConnecting) {
+    return this.once("secureConnect", NetSocket.prototype._final.bind(this, callback));
+  }
+  return NetSocket.prototype._final.$call(this, callback);
+};
+
 TLSSocket.prototype.getSession = function getSession() {
   return this._handle?.getSession?.();
 };

@@ -1087,11 +1087,16 @@ impl TarballStream {
                     if self.resolved_github_dirname.is_empty() {
                         break 'insert_tag;
                     }
-                    if bun_sys::File::write_file(
+                    if bun_sys::File::openat(
                         self.dest.unwrap(),
                         bun_core::zstr!(".bun-tag"),
-                        self.resolved_github_dirname,
+                        O::WRONLY
+                            | O::CREAT
+                            | O::TRUNC
+                            | if cfg!(windows) { 0 } else { O::NOFOLLOW },
+                        0o664,
                     )
+                    .and_then(|f| f.write_all(self.resolved_github_dirname))
                     .is_err()
                     {
                         let _ = bun_sys::unlinkat(self.dest.unwrap(), bun_core::zstr!(".bun-tag"));
@@ -1404,6 +1409,18 @@ fn make_symlink(
         // directory.
         let symlink_dir = bun_paths::dirname(path_slice).unwrap_or(b"");
         let target_bytes = target.as_bytes();
+        let mut seen_named_component = false;
+        for component in target_bytes.split(|c| *c == b'/') {
+            match component {
+                b"" | b"." => {}
+                b".." => {
+                    if seen_named_component {
+                        return false;
+                    }
+                }
+                _ => seen_named_component = true,
+            }
+        }
         let mut join_buf = PathBuffer::uninit();
         if symlink_dir.len() + 1 + target_bytes.len() >= join_buf.len() {
             return false;

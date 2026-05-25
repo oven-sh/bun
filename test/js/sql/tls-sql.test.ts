@@ -1,6 +1,8 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { describe, expect, test } from "bun:test";
 import { describeWithContainer, isDockerEnabled } from "harness";
+import net from "node:net";
+import path from "node:path";
 
 if (!isDockerEnabled()) {
   test.skip("skipping TLS SQL tests - Docker is not available", () => {});
@@ -11,6 +13,46 @@ if (!isDockerEnabled()) {
       image: "postgres_tls",
     },
     container => {
+      test("tls options that request certificate verification reject an untrusted server certificate", async () => {
+        await container.ready;
+        const url = `postgres://postgres@${container.host}:${container.port}/bun_sql_test`;
+
+        // `tls: { rejectUnauthorized: true }` is an explicit request to verify
+        // the server certificate (the node-postgres / mysql2 idiom). The
+        // container's certificate is self-signed, so the connection must be
+        // refused instead of the verification verdict being discarded.
+        {
+          await using sql = new SQL({
+            url,
+            adapter: "postgres",
+            max: 1,
+            tls: { rejectUnauthorized: true },
+          });
+          const error = await sql`SELECT 1 as x`.then(
+            () => null,
+            e => e,
+          );
+          expect(error).not.toBeNull();
+          expect(error.code || error).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+        }
+
+        // Supplying the CA that actually issued the server certificate still
+        // connects: verification is enforced and passes.
+        {
+          await using sql = new SQL({
+            url,
+            adapter: "postgres",
+            max: 1,
+            tls: {
+              ca: Bun.file(path.join(import.meta.dir, "docker-tls", "server.crt")),
+              serverName: "localhost",
+            },
+          });
+          const [{ x }] = await sql`SELECT 1 as x`;
+          expect(x).toBe(1);
+        }
+      });
+
       // Test with prepared statements on and off
       for (const prepare of [true, false]) {
         describe(`prepared: ${prepare}`, () => {
@@ -239,3 +281,70 @@ if (!isDockerEnabled()) {
     },
   );
 }
+
+// Uses a minimal mock PostgreSQL server, so it runs without Docker.
+test("postgres client refuses protocol messages received in place of the SSLRequest answer", async () => {
+  // Until the server answers the 8-byte SSLRequest with 'S' or 'N', the socket
+  // is still plaintext. A peer on the network path can answer with an
+  // AuthenticationCleartextPassword message instead; if the client dispatches
+  // it, it writes the password onto the unencrypted socket. Only 'S'/'N' may
+  // be accepted while the SSLRequest answer is pending.
+  const password = "hunter2-must-not-appear-on-the-wire";
+  const sslRequest = [0x00, 0x00, 0x00, 0x08, 0x04, 0xd2, 0x16, 0x2f];
+  // AuthenticationCleartextPassword: 'R', int32 length 8, int32 auth type 3.
+  const cleartextPasswordRequest = Buffer.from([0x52, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x03]);
+
+  let preTlsClientBytes = Buffer.alloc(0);
+  let answeredSslRequest = false;
+  const plaintextAfterAuthRequest: Buffer[] = [];
+  const clientWroteToPlaintextSocket = Promise.withResolvers<void>();
+  const sockets = new Set<import("node:net").Socket>();
+
+  const server = net.createServer(socket => {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    socket.on("data", data => {
+      if (!answeredSslRequest) {
+        preTlsClientBytes = Buffer.concat([preTlsClientBytes, data]);
+        if (preTlsClientBytes.length < 8) return;
+        answeredSslRequest = true;
+        socket.write(cleartextPasswordRequest);
+        return;
+      }
+      plaintextAfterAuthRequest.push(Buffer.from(data));
+      clientWroteToPlaintextSocket.resolve();
+      socket.end();
+    });
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as import("node:net").AddressInfo;
+
+  try {
+    await using sql = new SQL({
+      url: `postgres://postgres:${password}@127.0.0.1:${port}/bun_sql_test`,
+      adapter: "postgres",
+      max: 1,
+      tls: true,
+    });
+    const outcome = await Promise.race([
+      sql`select 1`.then(
+        () => ({ kind: "connected" }),
+        e => ({ kind: "rejected", code: e?.code ?? String(e) }),
+      ),
+      clientWroteToPlaintextSocket.promise.then(() => ({ kind: "wrote to the plaintext socket" })),
+    ]);
+
+    // The client was waiting on the SSLRequest answer, so the only bytes it may
+    // have written so far are the 8-byte SSLRequest itself.
+    expect(Array.from(preTlsClientBytes)).toEqual(sslRequest);
+    // Nothing -- least of all the password -- may be written to the
+    // still-unencrypted socket in response to the injected auth request.
+    expect(Buffer.concat(plaintextAfterAuthRequest).toString("latin1")).not.toContain(password);
+    expect(plaintextAfterAuthRequest.length).toBe(0);
+    // And the connection must fail cleanly instead of proceeding in plaintext.
+    expect(outcome).toEqual({ kind: "rejected", code: "ERR_POSTGRES_UNEXPECTED_MESSAGE" });
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});

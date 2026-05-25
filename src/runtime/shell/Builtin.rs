@@ -266,7 +266,7 @@ pub enum BuiltinIO {
     /// stderr aimed at stdout's buffer.
     Buf(IoKind),
     ArrayBuf {
-        buf: crate::jsc::array_buffer::ArrayBufferStrong,
+        buf: PinnedArrayBuf,
         i: u32,
     },
     Blob(Arc<BuiltinBlob>),
@@ -281,11 +281,38 @@ pub enum BuiltinInput {
     /// pipeline-from-builtin.
     Buf(Vec<u8>),
     ArrayBuf {
-        buf: crate::jsc::array_buffer::ArrayBufferStrong,
+        buf: PinnedArrayBuf,
         i: u32,
     },
     Blob(Arc<BuiltinBlob>),
     Ignore,
+}
+
+pub struct PinnedArrayBuf {
+    buf: crate::jsc::array_buffer::ArrayBufferStrong,
+    pinned: bool,
+}
+
+impl core::ops::Deref for PinnedArrayBuf {
+    type Target = crate::jsc::array_buffer::ArrayBufferStrong;
+
+    fn deref(&self) -> &Self::Target {
+        &self.buf
+    }
+}
+
+impl core::ops::DerefMut for PinnedArrayBuf {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.buf
+    }
+}
+
+impl Drop for PinnedArrayBuf {
+    fn drop(&mut self) {
+        if self.pinned {
+            self.buf.array_buffer.unpin();
+        }
+    }
 }
 
 /// Spec: Builtin.zig `BuiltinIO.Blob` — refcounted wrapper around a
@@ -726,9 +753,15 @@ impl Builtin {
                 if let Some(buf) = jsval.as_array_buffer(global) {
                     // Each slot gets its own Strong (sharing one would
                     // double-free on Drop).
-                    let mk = || crate::jsc::array_buffer::ArrayBufferStrong {
-                        array_buffer: buf,
-                        held: crate::jsc::StrongOptional::create(buf.value, global),
+                    let mk = || {
+                        let pinned = jsval.as_pinned_arraybuffer(global);
+                        PinnedArrayBuf {
+                            buf: crate::jsc::array_buffer::ArrayBufferStrong {
+                                array_buffer: pinned.unwrap_or(buf),
+                                held: crate::jsc::StrongOptional::create(buf.value, global),
+                            },
+                            pinned: pinned.is_some(),
+                        }
                     };
                     let me = Self::of_mut(interp, cmd);
                     if redirect.stdin() {

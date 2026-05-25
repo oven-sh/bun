@@ -533,9 +533,14 @@ impl Stdio {
                 return Ok(());
             }
 
+            let copied_value =
+                jsc::array_buffer::ArrayBuffer::create_buffer(global, array_buffer.byte_slice())?;
+            let copied = copied_value
+                .as_array_buffer(global)
+                .expect("create_buffer returns a Uint8Array");
             *out_stdio = Stdio::ArrayBuffer(jsc::array_buffer::ArrayBufferStrong {
-                array_buffer,
-                held: jsc::StrongOptional::create(array_buffer.value, global),
+                array_buffer: copied,
+                held: jsc::StrongOptional::create(copied.value, global),
             });
             return Ok(());
         }

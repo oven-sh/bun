@@ -3049,6 +3049,12 @@ pub fn convert_utf8_to_utf16_in_buffer<'a>(buf: &'a mut [u16], input: &[u8]) -> 
     if input.is_empty() {
         return &mut buf[..0];
     }
+    assert!(
+        input.len() <= buf.len() || element_length_utf8_into_utf16(input) <= buf.len(),
+        "convert_utf8_to_utf16_in_buffer: buf too small (have {} u16 for {} input bytes)",
+        buf.len(),
+        input.len(),
+    );
     let r = simdutf::convert::utf8::to::utf16::with_errors::le(input, buf);
     if r.is_successful() {
         return &mut buf[..r.count];

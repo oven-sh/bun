@@ -91,6 +91,48 @@ describe("HTTPParser.prototype.finish", () => {
 });
 
 describe("HTTPParser.prototype.execute", () => {
+  test("keeps the input buffer attached when a callback transfers it mid-parse", async () => {
+    const kOnBody = HTTPParser.kOnBody;
+    const kOnMessageComplete = HTTPParser.kOnMessageComplete;
+
+    const parser = new HTTPParser();
+    parser.initialize(HTTPParser.REQUEST, {});
+
+    const input = Buffer.from("POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 11\r\n\r\nhello world");
+    const inputLength = input.byteLength;
+
+    const bodyChunks: string[] = [];
+    const { promise, resolve, reject } = Promise.withResolvers();
+
+    parser[kOnHeadersComplete] = function () {
+      try {
+        // llhttp still holds pointers into `input` here and will keep reading
+        // from it after this callback returns. Transferring the backing
+        // ArrayBuffer must not free that memory out from under the parser:
+        // the original buffer stays attached for the rest of execute().
+        input.buffer.transfer();
+        expect(input.buffer.detached).toBe(false);
+        expect(input.byteLength).toBe(inputLength);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    parser[kOnBody] = function (chunk) {
+      bodyChunks.push(chunk.toString());
+    };
+    parser[kOnMessageComplete] = function () {
+      resolve();
+    };
+
+    const executed = parser.execute(input);
+    await promise;
+
+    // The parser kept reading from the original, still-live allocation, so the
+    // body it reports is the request's actual body.
+    expect(bodyChunks.join("")).toBe("hello world");
+    expect(executed).toBe(inputLength);
+  });
+
   test("rejects re-entrant execute, even after a nested finish()", async () => {
     const parser = new HTTPParser();
     parser.initialize(HTTPParser.REQUEST, {});

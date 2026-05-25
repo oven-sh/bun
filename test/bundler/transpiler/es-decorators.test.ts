@@ -909,6 +909,52 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("function declaration inside a static block referencing a private method", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Foo {
+          accessor a = 1;
+          #m() {
+            return 7;
+          }
+          static {
+            function check(o) {
+              return #m in o;
+            }
+            console.log(check(new Foo()), check({}));
+          }
+        }
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true false\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("update and compound assignment on a private auto-accessor still work with decorated members", async () => {
+      // The rewriter must not touch references to private auto-accessors that stay
+      // declared on the class (e.g. `this.#x++` cannot be expressed with __privateGet).
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(fn, ctx) {
+          return fn;
+        }
+        class Foo {
+          @dec m() {}
+          accessor #x = 0;
+          inc() {
+            return this.#x++;
+          }
+          add(n) {
+            this.#x += n;
+            return this.#x;
+          }
+        }
+        const f = new Foo();
+        console.log(f.inc(), f.add(2));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("0 3\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("Bun.Transpiler output with private name in static block reparses", () => {
       // Fuzzer-found: "#a in _" used to be printed after the class body, which does not parse.
       const transpiler = new Bun.Transpiler({

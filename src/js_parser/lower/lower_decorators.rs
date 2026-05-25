@@ -285,6 +285,9 @@ fn stmts_reference_private_name(stmts: &[Stmt], names: &HashMap<u32, ()>) -> boo
             expr_references_private_name(&data.value, names)
                 || stmts_reference_private_name(core::slice::from_ref(&data.body), names)
         }
+        js_ast::StmtData::SFunction(data) => {
+            stmts_reference_private_name(data.func.body.stmts.slice(), names)
+        }
         _ => false,
     })
 }
@@ -1123,6 +1126,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.rewrite_private_accesses_in_stmts(core::slice::from_mut(&mut body), map);
                     data.body = body;
                 }
+                js_ast::StmtData::SFunction(data) => {
+                    let stmts = data.func.body.stmts.slice_mut();
+                    self.rewrite_private_accesses_in_stmts(stmts, map);
+                }
                 _ => {}
             }
         }
@@ -1457,6 +1464,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Pre-scan: determine if all private members need lowering
         let mut lower_all_private = false;
+        let mut private_ref_in_static_block = false;
         {
             let mut has_any_private = false;
             let mut has_any_decorated = false;
@@ -1515,6 +1523,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && stmts_reference_private_name(sb.stmts.slice(), &declared_privates)
                     {
                         lower_all_private = true;
+                        private_ref_in_static_block = true;
                         break;
                     }
                 }
@@ -1645,11 +1654,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         name
                     };
                     let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, accessor_name);
-                    // When all privates are being lowered, record the storage
-                    // WeakMap for private auto-accessors too so that references
-                    // like `#x in obj` inside extracted static blocks can be
-                    // rewritten into runtime helper calls.
-                    if lower_all_private
+                    // When a static block references this class's private names,
+                    // record the storage WeakMap for private auto-accessors too so
+                    // that references like `#x in obj` inside the extracted block
+                    // can be rewritten into runtime helper calls. The getter/setter
+                    // pair stays declared on the class, so references elsewhere are
+                    // left alone otherwise (the rewriter does not handle update or
+                    // compound-assignment expressions on private members).
+                    if private_ref_in_static_block
                         && let Some(k) = prop.key
                         && let js_ast::ExprData::EPrivateIdentifier(pi) = &k.data
                     {

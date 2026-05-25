@@ -416,19 +416,14 @@ impl ExtractTarball {
                     // installed from GitHub. package.json version becomes sort of
                     // meaningless in cases like this.
                     if !resolved.is_empty() {
-                        // A malicious tarball can plant a `.bun-tag` symlink;
-                        // remove it so the tag write below cannot follow it
-                        // out of the extraction directory.
-                        let _ = sys::unlinkat(
-                            extract_destination.fd(),
-                            ZStr::from_static(b".bun-tag\0"),
-                        );
                         // `std.fs.Dir.createFileZ(".bun-tag", .{ .truncate = true })` + write
-                        if sys::File::write_file(
+                        if sys::File::openat(
                             extract_destination.fd(),
                             ZStr::from_static(b".bun-tag\0"),
-                            resolved,
+                            sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC | sys::O::NOFOLLOW,
+                            0o664,
                         )
+                        .and_then(|f| f.write_all(resolved))
                         .is_err()
                         {
                             let _ = sys::unlinkat(

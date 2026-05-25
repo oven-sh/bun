@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux } from "harness";
 
 // Serializing a FormData body (`new Response(formData)` / `new Request(..., { body: formData })`)
 // goes through Blob::from_dom_form_data, which joins the multipart parts out of
 // borrowed views of the FormData's strings and blob bytes. These tests lock in
 // the exact wire format (boundary shape, part layout, name/filename escaping,
-// content-type fallback) and verify the serialize → parse round-trip, including
-// non-ASCII strings and large binary payloads.
+// content-type fallback), verify the serialize → parse round-trip (including
+// non-ASCII strings and large binary payloads), and check that serialization
+// does not duplicate in-memory blob contents.
 describe("multipart serialization (new Response(formData))", () => {
   test("serializes string fields, blobs, unicode and escaped names exactly", async () => {
     const formData = new FormData();
@@ -98,5 +100,56 @@ describe("multipart serialization (new Response(formData))", () => {
     expect(payload.size).toBe(bytes.length);
     expect(new Uint8Array(await payload.arrayBuffer())).toEqual(bytes);
     expect(parsed.get("after")).toBe("still-parses");
+  });
+
+  // Serializing an in-memory blob entry borrows its bytes; the only blob-sized
+  // allocation made by `new Response(formData)` is the joined multipart body
+  // itself, so peak memory grows by ~1x the blob size (measured ~1.0x on both
+  // release and ASAN debug builds). Copying the blob's bytes into the joiner
+  // (an extra full copy alive while the output is assembled) pushes the peak to
+  // ~2x, which the 1.5x threshold catches with a wide margin on both sides.
+  // Linux-only: peak RSS is read from /proc/self/status (VmHWM), which has no
+  // portable equivalent.
+  test.skipIf(!isLinux)("does not duplicate in-memory blob bytes while serializing", async () => {
+    const blobSizeMB = 128;
+    const script = `
+      const blobSizeMB = ${blobSizeMB};
+      const bytes = Buffer.alloc(blobSizeMB * 1024 * 1024, 0x61);
+      // Two parts force the Blob to materialize its own store now, so the
+      // baseline below already includes one copy of the payload and the only
+      // thing measured across the Response constructor is serialization.
+      const blob = new Blob([bytes, "x"]);
+      const formData = new FormData();
+      formData.append("payload", blob, "payload.bin");
+      formData.append("field", "value");
+
+      function peakRssMB() {
+        const status = require("fs").readFileSync("/proc/self/status", "utf8");
+        const start = status.indexOf("VmHWM:");
+        return parseInt(status.slice(start + "VmHWM:".length), 10) / 1024;
+      }
+
+      const before = peakRssMB();
+      const response = new Response(formData);
+      const after = peakRssMB();
+      console.log(JSON.stringify({ deltaMB: after - before, alive: response instanceof Response }));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error(stderr);
+    expect(exitCode).toBe(0);
+
+    const { deltaMB, alive } = JSON.parse(stdout.trim());
+    expect(alive).toBe(true);
+    // Sanity: the serialized body was actually materialized during the sample.
+    expect(deltaMB).toBeGreaterThan(blobSizeMB * 0.5);
+    // An extra copy of the blob bytes would put this at ~2x the blob size.
+    expect(deltaMB).toBeLessThan(blobSizeMB * 1.5);
   });
 });

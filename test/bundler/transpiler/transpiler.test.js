@@ -3642,6 +3642,7 @@ console.log(foo, array);
     expectPrinted("String.raw`🐰`", "String.raw`🐰`");
     expectPrinted("/╭─╮/.source", "/╭─╮/.source");
     expectPrinted("/Redémarrage/.source", "/Redémarrage/.source");
+    expectPrinted("/🐰/.source", "/🐰/.source");
   });
 
   describe("scan", () => {

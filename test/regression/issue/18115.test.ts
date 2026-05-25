@@ -14,9 +14,15 @@ test("String.raw preserves non-ASCII characters", async () => {
       "process.stdout.write(JSON.stringify([String.raw`Redémarrage`, String.raw`a中`, String.raw`╭─╮`, String.raw`🐰`]))",
     ],
     env: bunEnv,
+    stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
+  expect(stderr).toBe("");
   expect(stdout).toBe(JSON.stringify(["Redémarrage", "a中", "╭─╮", "🐰"]));
   expect(exitCode).toBe(0);
 });
@@ -29,9 +35,15 @@ test("RegExp.source preserves non-ASCII characters", async () => {
       "process.stdout.write(JSON.stringify([/Redémarrage/.source, /╭─╮/.source, /a中/.source]))",
     ],
     env: bunEnv,
+    stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
+  expect(stderr).toBe("");
   expect(stdout).toBe(JSON.stringify(["Redémarrage", "╭─╮", "a中"]));
   expect(exitCode).toBe(0);
 });

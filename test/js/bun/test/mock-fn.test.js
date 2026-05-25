@@ -117,6 +117,34 @@ describe("mock()", () => {
     expect(fn).toHaveBeenCalledWith();
   });
 
+  test("can be constructed with new", () => {
+    // with no implementation, `new` returns a newly created object
+    const fn = jest.fn();
+    const instance = new fn();
+    expect(typeof instance).toBe("object");
+    expect(instance).not.toBeNull();
+    const reflected = Reflect.construct(fn, []);
+    expect(typeof reflected).toBe("object");
+    expect(reflected).not.toBeNull();
+    expect(fn).toHaveBeenCalledTimes(2);
+
+    // a primitive return value is ignored, like ordinary constructors
+    const returnsPrimitive = jest.fn(() => 42);
+    expect(typeof new returnsPrimitive()).toBe("object");
+    expect(typeof Reflect.construct(returnsPrimitive, [])).toBe("object");
+
+    // an object return value is passed through, like ordinary constructors
+    const result = { value: 42 };
+    const returnsObject = jest.fn(() => result);
+    expect(new returnsObject()).toBe(result);
+    expect(Reflect.construct(returnsObject, [])).toBe(result);
+
+    // mockReturnValue with a primitive still constructs an object
+    const mockedReturnValue = jest.fn().mockReturnValue(123);
+    expect(typeof new mockedReturnValue()).toBe("object");
+    expect(typeof Reflect.construct(mockedReturnValue, [])).toBe("object");
+  });
+
   test("mockName returns this", () => {
     const fn = jest.fn();
     expect(fn.mockName()).toBe(fn);
@@ -827,6 +855,22 @@ describe("spyOn", () => {
     expect(obj.original()).toBe(42);
     expect(fn).not.toHaveBeenCalled();
   });
+
+  if (isBun) {
+    test("spy on a missing property can be constructed with new", () => {
+      // the spy's implementation returns the original value (undefined), which
+      // must not escape as the result of a [[Construct]]
+      const target = {};
+      const fn = spyOn(target, "doesNotExist");
+      const instance = new fn();
+      expect(typeof instance).toBe("object");
+      expect(instance).not.toBeNull();
+      const reflected = Reflect.construct(fn, []);
+      expect(typeof reflected).toBe("object");
+      expect(reflected).not.toBeNull();
+      fn.mockRestore();
+    });
+  }
 
   test("override impl after doesnt break restore", () => {
     var obj = {

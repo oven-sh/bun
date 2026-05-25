@@ -1584,8 +1584,13 @@ impl<const SSL: bool> HTTPClient<SSL> {
         //
         // The header name/value slices borrow the parse buffer (`body` in
         // `handle_data`), which is still alive here — `clear_data()` (which
-        // frees it) runs further below. `remain_buf` is passed as the response
-        // body; for a 101 it's the first WebSocket frame, so the shim drops it.
+        // frees it) runs further below. The body is passed empty: for a 101 the
+        // trailing `remain_buf` bytes are the first WebSocket frame (not an HTTP
+        // body), and they're forwarded to the protocol reader via `did_connect`
+        // below — the `ws` shim drops the handshake event's body anyway, so
+        // don't copy them into a Uint8Array that's immediately discarded. (The
+        // C++ `body` param stays for a future `unexpected-response`, which would
+        // carry a real HTTP body.)
         //
         // SAFETY: short-lived read of `outgoing_websocket`.
         if let Some(ws) = unsafe { (*this).outgoing_websocket } {
@@ -1599,7 +1604,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 status_code,
                 response.status,
                 &raw_headers,
-                remain_buf,
+                &[],
             );
         }
 

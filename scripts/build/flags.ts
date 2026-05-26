@@ -972,7 +972,11 @@ export const linkerFlags: Flag[] = [
       // (0x1)` crash in the fs/promises writeFile async-iterable path under
       // `panic = "abort"` — flip it back locally if that investigation needs
       // an unfolded PDB again.)
-      "/OPT:SAFEICF",
+      // EXPERIMENT (do not merge): NOICF to test whether identical-code-folding
+      // of the ThinLTO-generated chunks is what breaks the windows x64 LTO
+      // binary (SAFEICF relies on address-significance info that LTO output
+      // may not carry).
+      "/OPT:NOICF",
       // String-literal tail merging (lld-specific; MSVC link.exe has no
       // equivalent). Helps .rdata the same way --icf handles .rodata.cst on ELF.
       "/OPT:lldtailmerge",

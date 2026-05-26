@@ -195,6 +195,11 @@ impl SSLContextCache {
     /// canonical one for that digest and future `get_or_create` for the same
     /// digest must build fresh. Clears `ex_data` so the later `SSL_CTX_free`
     /// tombstone fires into a no-op instead of touching a destroyed Entry.
+    // `ctx` is used only as a comparison key and forwarded by value to the
+    // C `SSL_CTX_set_ex_data` FFI — it is never dereferenced here (the `(*entry)`
+    // deref is of the map's heap Entry, not `ctx`), so not_unsafe_ptr_arg_deref
+    // is a false positive.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn invalidate(&mut self, ctx: *mut boringssl::SSL_CTX, d: &Digest) {
         let _guard = self.mutex.lock_guard();
         if let Some(&entry) = self.map.get(d) {

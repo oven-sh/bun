@@ -266,11 +266,11 @@ impl SecureContext {
         // Detach from the per-VM native cache AND the per-global JS cache
         // BEFORE mutating the SSL_CTX — both are keyed by the original config
         // digest, and a mutated CTX no longer matches that digest's contract.
+        let state = crate::jsc_hooks::runtime_state();
+        debug_assert!(!state.is_null(), "RuntimeState not installed");
         // SAFETY: `runtime_state()` is the boxed per-thread RuntimeState; the
         // embedded `ssl_ctx_cache` has a stable address for the VM's lifetime
         // and is only touched from the JS thread.
-        let state = crate::jsc_hooks::runtime_state();
-        debug_assert!(!state.is_null(), "RuntimeState not installed");
         let cache = unsafe { &mut (*state).ssl_ctx_cache };
         cache.invalidate(self.ctx, &self.digest);
 

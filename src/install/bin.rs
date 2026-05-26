@@ -1,9 +1,10 @@
 use core::fmt;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 use bun_alloc::AllocError;
 use bun_collections::{StringHashMap, VecExt};
 use bun_core::Error;
+use bun_core::Output;
 use bun_core::ZStr;
 #[cfg(windows)]
 use bun_core::w;
@@ -23,6 +24,7 @@ use bun_sys::{self as sys, Fd, FdExt as _};
 use crate::bun_json::{Expr, ExprData};
 use crate::dependency::{Dependency, DependencyExt as _};
 use crate::install::{DependencyID, ExternalStringList};
+use crate::lockfile::DependencySlice;
 #[cfg(windows)]
 use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
 #[cfg(windows)]
@@ -705,6 +707,7 @@ impl<'a> NamesIterator<'a> {
 pub struct PriorityQueueContext {
     pub dependencies: bun_ptr::BackRef<Vec<Dependency>>,
     pub string_buf: bun_ptr::BackRef<Vec<u8>>,
+    pub root_dependencies: DependencySlice,
 }
 
 impl PriorityQueueContext {
@@ -717,9 +720,20 @@ impl PriorityQueueContext {
         // `BackRef<Vec>` (header) on every compare instead of caching a slice.
         let deps = self.dependencies.as_slice();
         let buf = self.string_buf.as_slice();
-        let a_name = deps[a as usize].name.slice(buf);
-        let b_name = deps[b as usize].name.slice(buf);
-        strings::order(a_name, b_name)
+        let a_dep = &deps[a as usize];
+        let b_dep = &deps[b as usize];
+        let a_direct = self.is_direct_root_dependency(a, a_dep);
+        let b_direct = self.is_direct_root_dependency(b, b_dep);
+        b_direct.cmp(&a_direct).then_with(|| {
+            let a_name = a_dep.name.slice(buf);
+            let b_name = b_dep.name.slice(buf);
+            strings::order(a_name, b_name)
+        })
+    }
+
+    fn is_direct_root_dependency(&self, id: DependencyID, dep: &Dependency) -> bool {
+        self.root_dependencies.contains(id)
+            && (dep.behavior.is_prod() || dep.behavior.is_dev() || dep.behavior.is_optional())
     }
 }
 
@@ -755,6 +769,29 @@ pub(crate) fn normalized_bin_name(name: &[u8]) -> &[u8] {
     }
 
     name
+}
+
+const RUNTIME_BIN_NAMES: [&[u8]; 7] = [b"node", b"bun", b"bunx", b"npm", b"npx", b"yarn", b"pnpm"];
+
+static WARNED_RUNTIME_BIN_NAMES: AtomicU8 = AtomicU8::new(0);
+
+fn warn_on_runtime_bin_shadow(package_name: &[u8], bin_name: &[u8]) {
+    let Some(index) = RUNTIME_BIN_NAMES.iter().position(|name| *name == bin_name) else {
+        return;
+    };
+    if package_name == bin_name {
+        return;
+    }
+    let bit = 1u8 << index;
+    if WARNED_RUNTIME_BIN_NAMES.fetch_or(bit, Ordering::Relaxed) & bit != 0 {
+        return;
+    }
+    Output::warn(format_args!(
+        "\"{}\" installs a bin named \"{}\", which shadows the \"{}\" executable",
+        bstr::BStr::new(package_name),
+        bstr::BStr::new(bin_name),
+        bstr::BStr::new(bin_name),
+    ));
 }
 
 /// True when a `bin` entry's target value would resolve outside the package
@@ -1483,6 +1520,8 @@ impl<'a> Linker<'a> {
                     let unscoped_package_name =
                         Dependency::unscoped_package_name(self.package_name.slice());
 
+                    warn_on_runtime_bin_shadow(self.package_name.slice(), unscoped_package_name);
+
                     // for normalizing `target`
                     let abs_target: &ZStr = {
                         let package_dir = &self.abs_target_buf[0..package_dir_len];
@@ -1532,6 +1571,8 @@ impl<'a> Linker<'a> {
                         return;
                     }
 
+                    warn_on_runtime_bin_shadow(self.package_name.slice(), normalized_name);
+
                     // for normalizing `target`
                     let abs_target: &ZStr = {
                         let package_dir = &self.abs_target_buf[0..package_dir_len];
@@ -1580,6 +1621,8 @@ impl<'a> Linker<'a> {
                             self.err = Some(bun_core::err!("NameTooLong"));
                             return;
                         }
+
+                        warn_on_runtime_bin_shadow(self.package_name.slice(), normalized_bin_dest);
 
                         let abs_target: &ZStr = {
                             let package_dir = &self.abs_target_buf[0..package_dir_len];
@@ -1670,6 +1713,9 @@ impl<'a> Linker<'a> {
                                     self.err = Some(bun_core::err!("NameTooLong"));
                                     return;
                                 }
+
+                                warn_on_runtime_bin_shadow(self.package_name.slice(), entry_name);
+
                                 dest_off = abs_dest_dir_end;
                                 self.abs_dest_buf[dest_off..dest_off + entry_name.len()]
                                     .copy_from_slice(entry_name);

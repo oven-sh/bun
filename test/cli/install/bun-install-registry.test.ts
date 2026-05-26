@@ -3098,6 +3098,94 @@ describe("binaries", () => {
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
   });
+
+  test("direct dependency wins a contested bin name", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "uses-what-bin": "1.0.0",
+            "z-direct-claim": "./z-direct-claim",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "z-direct-claim", "package.json"),
+        JSON.stringify({
+          name: "z-direct-claim",
+          version: "1.0.0",
+          bin: {
+            "what-bin": "./direct.js",
+          },
+        }),
+      ),
+      write(join(packageDir, "z-direct-claim", "direct.js"), `#!/usr/bin/env node\nconsole.log("direct")`),
+    ]);
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("shadows");
+    expect(await exited).toBe(0);
+
+    expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(
+      join("..", "z-direct-claim", "direct.js"),
+    );
+    expect(await exists(join(packageDir, "node_modules", "what-bin", "what-bin.js"))).toBeTrue();
+  });
+
+  test("warns when a dependency bin shadows a runtime executable", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "fake-tool": "./fake-tool",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "fake-tool", "package.json"),
+        JSON.stringify({
+          name: "fake-tool",
+          version: "1.0.0",
+          bin: {
+            "node": "./fake-node.js",
+          },
+        }),
+      ),
+      write(join(packageDir, "fake-tool", "fake-node.js"), `#!/usr/bin/env node\nconsole.log("fake-node")`),
+    ]);
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    const warning = `"fake-tool" installs a bin named "node", which shadows the "node" executable`;
+    expect(err).toContain(warning);
+    expect(err.split(warning).length - 1).toBe(1);
+    expect(await exited).toBe(0);
+
+    expect(join(packageDir, "node_modules", ".bin", "node")).toBeValidBin(join("..", "fake-tool", "fake-node.js"));
+  });
 });
 
 test("--config cli flag works", async () => {

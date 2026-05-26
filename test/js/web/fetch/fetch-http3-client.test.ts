@@ -754,11 +754,9 @@ test("custom TLS trust options are rejected on protocol: http3 and excluded from
       console.log("second status=%d sessions=%d", r.status, liveCounts().sessions);
     }
   `;
-  using dir = tempDir("h3-tls-trust", { "fixture.ts": fixture });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture.ts"],
+    cmd: [bunExe(), "-e", fixture],
     env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT: "1" },
-    cwd: String(dir),
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

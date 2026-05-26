@@ -1584,14 +1584,15 @@ describe("deeply nested parse results", () => {
       function makeInput(depth) {
         return Buffer.alloc(depth, "[").toString() + "1" + Buffer.alloc(depth, "]").toString();
       }
-      function arrayDepth(value) {
+      function isExpectedNestedArray(value, depth) {
         let d = 0;
         let cur = value;
         while (Array.isArray(cur)) {
+          if (cur.length !== 1) return false;
           cur = cur[0];
           d++;
         }
-        return d;
+        return d === depth && cur === 1;
       }
       function probe(parse, depth) {
         const input = makeInput(depth);
@@ -1605,7 +1606,7 @@ describe("deeply nested parse results", () => {
           }
           return "error";
         }
-        if (arrayDepth(value) !== depth) {
+        if (!isExpectedNestedArray(value, depth)) {
           console.log("wrong shape at depth " + depth);
           process.exit(1);
         }

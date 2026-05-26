@@ -537,9 +537,10 @@ test("Blob type from a consumed Response keeps the original content-type after c
     const b1 = await r1.blob();
 
     // Consume every clone (same shared store) with a different, same-length content-type.
+    const cloneTypes = [];
     for (const clone of clones) {
       clone.headers.set("content-type", replacementType);
-      await clone.blob();
+      cloneTypes.push((await clone.blob()).type);
     }
 
     // Consume a batch of unrelated bodies whose content-type has the same length,
@@ -551,6 +552,7 @@ test("Blob type from a consumed Response keeps the original content-type after c
     }
 
     console.log(b1.type);
+    console.log(cloneTypes.every(type => type === replacementType) ? "clone-ok" : "clone-bad");
     console.log(churned.every(b => b.type === churnType) ? "churn-ok" : "churn-bad");
   `;
 
@@ -563,6 +565,6 @@ test("Blob type from a consumed Response keeps the original content-type after c
 
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  expect(stdout.trim().split("\n")).toEqual(["application/x-original-type-0000000000000001", "churn-ok"]);
+  expect(stdout.trim().split("\n")).toEqual(["application/x-original-type-0000000000000001", "clone-ok", "churn-ok"]);
   expect(exitCode).toBe(0);
 });

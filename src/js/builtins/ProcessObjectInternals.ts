@@ -325,15 +325,18 @@ export function getStdinStream(
     // dead if the new load doesn't re-enter raw mode itself.
     if (stream.isRaw) stream.setRawMode?.(false);
     // node:readline is cached in the InternalModuleRegistry and is NOT
-    // re-evaluated on reload, so its module-local KEYPRESS_DECODER /
-    // ESCAPE_DECODER symbols keep pointing at properties left on this
-    // stream. emitKeypressEvents() early-returns when it sees them, so it
-    // would never reinstall the 'data' → 'keypress' bridge we remove below
-    // and terminal-mode readline would go silent after a reload. Delete
-    // them so the next createInterface() wires keypress events up again.
+    // re-evaluated on reload, so its module-local KEYPRESS_DECODER symbol
+    // keeps pointing at the marker left on this stream.
+    // emitKeypressEvents() early-returns when it sees it, so it would never
+    // reinstall the 'data' → 'keypress' bridge we remove below and
+    // terminal-mode readline would go silent after a reload. Delete it so
+    // the next createInterface() wires keypress events up again. The
+    // escape-decoder generator is left alone: emitKeypressEvents()
+    // overwrites it unconditionally once the guard passes, and a pending
+    // escape-sequence timer from the previous load dereferences it, so
+    // deleting it would turn that timer into an uncaught TypeError.
     for (const sym of Object.getOwnPropertySymbols(stream)) {
-      const description = sym.description;
-      if (description === "keypress-decoder" || description === "escape-decoder") {
+      if (sym.description === "keypress-decoder") {
         delete stream[sym];
       }
     }

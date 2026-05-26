@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
-import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
+import { chmodSync, copyFileSync, readdirSync, statSync, symlinkSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
@@ -1232,20 +1232,19 @@ it.skipIf(!isWindows)("should not crash on corrupted .bunx file with missing quo
   expect(stderr).not.toContain("reached unreachable code");
 });
 
-// The bunx cache root lives at a predictable path inside the shared temp dir
-// ($TMPDIR/bunx-<uid>-<pkg>@<version>). bunx must refuse to reuse a
-// pre-existing cache root that is not a private directory owned by the
-// current user, because the owner of that directory can replace any of the
-// cached package's module files after install. The check happens before any
-// network or filesystem access inside the cache, so this test is fully
-// offline. The check is Unix-only (no uid/world-writable-tmp model on
-// Windows).
+// The bunx cache root lives at a predictable path inside the per-user bun
+// install cache (<install cache>/.bunx-<uid>/<pkg>@<version>). bunx must
+// refuse to reuse a pre-existing cache root that is not a private directory
+// owned by the current user, because the owner of that directory can replace
+// any of the cached package's module files after install. The check happens
+// before any network or filesystem access inside the cache, so this test is
+// fully offline. The check is Unix-only (no uid model on Windows).
 it.concurrent.skipIf(isWindows)(
   "refuses to reuse a bunx cache directory that other local users can modify",
   async () => {
     const { x_dir, env } = setup();
     const pkg = "bunx-cache-root-fixture";
-    const cacheRoot = join(env.TMPDIR, `bunx-${process.getuid!()}-${pkg}@latest`);
+    const cacheRoot = join(env.BUN_INSTALL_CACHE_DIR, `.bunx-${process.getuid!()}`, `${pkg}@latest`);
 
     const run = () => {
       const subprocess = spawn({
@@ -1298,5 +1297,80 @@ it.concurrent.skipIf(isWindows)(
       expect(out).toHaveLength(0);
       expect(exitCode).toBe(1);
     }
+  },
+);
+
+// On POSIX the bunx package cache is stored under the per-user bun install
+// cache directory (BUN_INSTALL_CACHE_DIR here), inside a 0700 `.bunx-<uid>`
+// directory, instead of the shared temp dir.
+it.concurrent.skipIf(isWindows)("stores the package cache under the per-user bun install cache directory", async () => {
+  const { x_dir, env } = setup();
+  const uid = process.getuid!();
+
+  const run = async (args: string[]) => {
+    const subprocess = spawn({
+      cmd: [bunExe(), "x", ...args],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    return Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited] as const);
+  };
+
+  {
+    const [err, out, exitCode] = await run(["uglify-js@3.14.1", "-v"]);
+    expect(err).not.toContain("error:");
+    expect(out.split(/\r?\n/)).toEqual(["uglify-js 3.14.1", ""]);
+    expect(exitCode).toBe(0);
+  }
+
+  const userCacheRoot = join(env.BUN_INSTALL_CACHE_DIR, `.bunx-${uid}`);
+  const rootStat = statSync(userCacheRoot);
+  expect(rootStat.isDirectory()).toBe(true);
+  expect(rootStat.mode & 0o777).toBe(0o700);
+  expect(statSync(join(userCacheRoot, "uglify-js@3.14.1", "node_modules", ".bin")).isDirectory()).toBe(true);
+  expect(readdirSync(env.TMPDIR).filter(entry => entry.startsWith("bunx-"))).toEqual([]);
+
+  // The cache at the new location is reused across runs.
+  {
+    const [err, out, exitCode] = await run(["--no-install", "uglify-js@3.14.1", "-v"]);
+    expect(err).not.toContain("error:");
+    expect(out.split(/\r?\n/)).toEqual(["uglify-js 3.14.1", ""]);
+    expect(exitCode).toBe(0);
+  }
+});
+
+// When no install cache directory can be resolved (no BUN_INSTALL_CACHE_DIR,
+// BUN_INSTALL, XDG_CACHE_HOME, or HOME), the cache falls back to the temp
+// directory, keyed by uid and package as before.
+it.concurrent.skipIf(isWindows)(
+  "falls back to the temp directory when no install cache directory can be resolved",
+  async () => {
+    const { x_dir, env } = setup();
+    const uid = process.getuid!();
+    delete env.BUN_INSTALL_CACHE_DIR;
+    delete env.BUN_INSTALL;
+    delete env.XDG_CACHE_HOME;
+    delete env.HOME;
+
+    const subprocess = spawn({
+      cmd: [bunExe(), "x", "uglify-js@3.14.1", "-v"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([
+      subprocess.stderr.text(),
+      subprocess.stdout.text(),
+      subprocess.exited,
+    ]);
+    expect(err).not.toContain("error:");
+    expect(out.split(/\r?\n/)).toEqual(["uglify-js 3.14.1", ""]);
+    expect(exitCode).toBe(0);
+    expect(statSync(join(env.TMPDIR, `bunx-${uid}-uglify-js@3.14.1`, "node_modules", ".bin")).isDirectory()).toBe(true);
   },
 );

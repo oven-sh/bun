@@ -1938,18 +1938,26 @@ pub(crate) mod strings_impl {
 
         const HIGH_BITS: u64 = 0x8080_8080_8080_8080;
         let mut copied = 0usize;
-        for (d, s) in dst.chunks_exact_mut(8).zip(src.chunks_exact(8)) {
-            let word = u64::from_ne_bytes(s.try_into().expect("infallible: size matches"));
+
+        // `dst` and `src` are the same length (asserted above), so they split
+        // into the same number of `&[u8; 8]` words and equal-length remainders.
+        // The array `s` makes the word load a plain `from_ne_bytes(*s)` with no
+        // fallible `try_into`, and the store a fixed-size array assignment.
+        let (dst_chunks, dst_remainder) = dst.as_chunks_mut::<8>();
+        let (src_chunks, src_remainder) = src.as_chunks::<8>();
+
+        for (d, s) in dst_chunks.iter_mut().zip(src_chunks.iter()) {
+            let word = u64::from_ne_bytes(*s);
             let mask = word & HIGH_BITS;
             if mask != 0 {
                 let ascii = (mask.trailing_zeros() / 8) as usize;
                 d[..ascii].copy_from_slice(&s[..ascii]);
                 return copied + ascii;
             }
-            d.copy_from_slice(&word.to_ne_bytes());
+            *d = word.to_ne_bytes();
             copied += 8;
         }
-        for (d, &s) in dst[copied..].iter_mut().zip(&src[copied..]) {
+        for (d, &s) in dst_remainder.iter_mut().zip(src_remainder.iter()) {
             if s >= 0x80 {
                 return copied;
             }

@@ -5,10 +5,12 @@
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SVE/SVE2 targets. Gate: hwy::SupportedTargets via getauxval(AT_HWCAP).
-# (80 symbols)
+# (88 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_SVE2_12810MemMemImplEPKhmS2_m                                      [SVE]
+_ZN3bun10N_SVE2_12814DecodeHex8ImplEPKhPhm                                    [SVE]
 _ZN3bun10N_SVE2_12815CopyU16ToU8ImplEPKtmPh                                   [SVE]
+_ZN3bun10N_SVE2_12815DecodeHex16ImplEPKtPhm                                   [SVE]
 _ZN3bun10N_SVE2_12815IndexOfCharImplEPKhmh                                    [SVE]
 _ZN3bun10N_SVE2_12818EncodeHexLowerImplEPKhmPh                                [SVE]
 _ZN3bun10N_SVE2_12818FirstNonAscii8ImplEPKhm                                  [SVE]
@@ -28,7 +30,9 @@ _ZN3bun10N_SVE2_12846IndexOfInterestingCharacterInStringLiteralImplEPKhmh     [S
 _ZN3bun10N_SVE2_12846IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh     [SVE]
 _ZN3bun10N_SVE2_12849IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh  [SVE]
 _ZN3bun5N_SVE10MemMemImplEPKhmS2_m                                            [SVE]
+_ZN3bun5N_SVE14DecodeHex8ImplEPKhPhm                                          [SVE]
 _ZN3bun5N_SVE15CopyU16ToU8ImplEPKtmPh                                         [SVE]
+_ZN3bun5N_SVE15DecodeHex16ImplEPKtPhm                                         [SVE]
 _ZN3bun5N_SVE15IndexOfCharImplEPKhmh                                          [SVE]
 _ZN3bun5N_SVE18EncodeHexLowerImplEPKhmPh                                      [SVE]
 _ZN3bun5N_SVE18FirstNonAscii8ImplEPKhm                                        [SVE]
@@ -48,7 +52,9 @@ _ZN3bun5N_SVE46IndexOfInterestingCharacterInStringLiteralImplEPKhmh           [S
 _ZN3bun5N_SVE46IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh           [SVE]
 _ZN3bun5N_SVE49IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh        [SVE]
 _ZN3bun6N_SVE210MemMemImplEPKhmS2_m                                           [SVE]
+_ZN3bun6N_SVE214DecodeHex8ImplEPKhPhm                                         [SVE]
 _ZN3bun6N_SVE215CopyU16ToU8ImplEPKtmPh                                        [SVE]
+_ZN3bun6N_SVE215DecodeHex16ImplEPKtPhm                                        [SVE]
 _ZN3bun6N_SVE215IndexOfCharImplEPKhmh                                         [SVE]
 _ZN3bun6N_SVE218EncodeHexLowerImplEPKhmPh                                     [SVE]
 _ZN3bun6N_SVE218FirstNonAscii8ImplEPKhm                                       [SVE]
@@ -68,7 +74,9 @@ _ZN3bun6N_SVE246IndexOfInterestingCharacterInStringLiteralImplEPKhmh          [S
 _ZN3bun6N_SVE246IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh          [SVE]
 _ZN3bun6N_SVE249IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh       [SVE]
 _ZN3bun9N_SVE_25610MemMemImplEPKhmS2_m                                        [SVE]
+_ZN3bun9N_SVE_25614DecodeHex8ImplEPKhPhm                                      [SVE]
 _ZN3bun9N_SVE_25615CopyU16ToU8ImplEPKtmPh                                     [SVE]
+_ZN3bun9N_SVE_25615DecodeHex16ImplEPKtPhm                                     [SVE]
 _ZN3bun9N_SVE_25615IndexOfCharImplEPKhmh                                      [SVE]
 _ZN3bun9N_SVE_25618EncodeHexLowerImplEPKhmPh                                  [SVE]
 _ZN3bun9N_SVE_25618FirstNonAscii8ImplEPKhm                                    [SVE]

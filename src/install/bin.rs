@@ -747,7 +747,7 @@ impl bun_collections::PriorityCompare<DependencyID> for PriorityQueueContext {
 }
 
 // Port of `std.PriorityQueue(DependencyID, PriorityQueueContext, lessThan)`.
-// Min-heap keyed by `PriorityQueueContext::less_than` (string-order of dep names).
+// Min-heap keyed by `PriorityQueueContext::less_than` (direct root dependencies first, then string order of dep names).
 pub(crate) type PriorityQueue = bun_collections::PriorityQueue<DependencyID, PriorityQueueContext>;
 
 // PORT NOTE: Zig's `Bin.PriorityQueue.Context` is an inherent associated type;

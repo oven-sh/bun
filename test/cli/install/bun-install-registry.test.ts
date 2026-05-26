@@ -3186,6 +3186,49 @@ describe("binaries", () => {
 
     expect(join(packageDir, "node_modules", ".bin", "node")).toBeValidBin(join("..", "fake-tool", "fake-node.js"));
   });
+
+  test("does not warn when a runtime package claims its companion bin", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "npm": "./npm-pkg",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "npm-pkg", "package.json"),
+        JSON.stringify({
+          name: "npm",
+          version: "1.0.0",
+          bin: {
+            "npm": "./npm-cli.js",
+            "npx": "./npx-cli.js",
+          },
+        }),
+      ),
+      write(join(packageDir, "npm-pkg", "npm-cli.js"), `#!/usr/bin/env node\nconsole.log("npm")`),
+      write(join(packageDir, "npm-pkg", "npx-cli.js"), `#!/usr/bin/env node\nconsole.log("npx")`),
+    ]);
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("shadows");
+    expect(await exited).toBe(0);
+
+    expect(join(packageDir, "node_modules", ".bin", "npx")).toBeValidBin(join("..", "npm", "npx-cli.js"));
+  });
 });
 
 test("--config cli flag works", async () => {

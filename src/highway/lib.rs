@@ -51,6 +51,8 @@ unsafe extern "C" {
     fn highway_copy_u16_to_u8(input: *const u16, count: usize, output: *mut u8);
 
     fn highway_copy_ascii_prefix(src: *const u8, len: usize, dst: *mut u8) -> usize;
+
+    fn highway_encode_hex_lower(input: *const u8, len: usize, output: *mut u8);
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -256,6 +258,20 @@ pub fn copy_ascii_prefix(src: &[u8], dst: &mut [u8]) -> usize {
     debug_assert!(copied == len || src[copied] >= 0x80);
 
     copied
+}
+
+/// Lowercase hex encode: writes exactly `2 * src.len()` bytes to `dst`.
+#[inline(always)]
+pub fn encode_hex_lower(src: &[u8], dst: &mut [u8]) {
+    debug_assert!(dst.len() >= src.len() * 2);
+    if src.is_empty() {
+        return;
+    }
+
+    // SAFETY: `src` is readable for `src.len()` bytes and `dst` is writable
+    // for `2 * src.len()` bytes (asserted above); the kernel writes exactly
+    // that many bytes and the slices cannot overlap (`&`/`&mut`).
+    unsafe { highway_encode_hex_lower(src.as_ptr(), src.len(), dst.as_mut_ptr()) }
 }
 
 /// Apply a WebSocket mask to data using SIMD acceleration

@@ -1191,6 +1191,43 @@ size_t CopyAsciiPrefixImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t*
     return len;
 }
 
+// Lowercase hex encode: writes 2 output bytes per input byte.
+// Per 16-byte block: split each byte into nibbles, map both nibble vectors
+// through the hex-digit table (TableLookupBytes), then interleave so the
+// high-nibble digit precedes the low-nibble digit of every byte.
+void EncodeHexLowerImpl(const uint8_t* HWY_RESTRICT input, size_t len, uint8_t* HWY_RESTRICT output)
+{
+    alignas(16) static constexpr uint8_t kHexDigits[16] = {
+        '0', '1', '2', '3', '4', '5', '6', '7',
+        '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'
+    };
+
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto table = hn::LoadDup128(d, kHexDigits);
+    const auto low_nibble_mask = hn::Set(d, uint8_t { 0x0F });
+
+    size_t i = 0;
+    if (len >= N) {
+        const size_t simd_len = len - (len % N);
+        for (; i < simd_len; i += N) {
+            const auto bytes = hn::LoadU(d, input + i);
+            const auto hi = hn::ShiftRight<4>(bytes);
+            const auto lo = hn::And(bytes, low_nibble_mask);
+            const auto hi_chars = hn::TableLookupBytes(table, hi);
+            const auto lo_chars = hn::TableLookupBytes(table, lo);
+            hn::StoreInterleaved2(hi_chars, lo_chars, d, output + i * 2);
+        }
+    }
+
+    for (; i < len; ++i) {
+        const uint8_t byte = input[i];
+        output[i * 2] = kHexDigits[byte >> 4];
+        output[i * 2 + 1] = kHexDigits[byte & 0x0F];
+    }
+}
+
 // Implementation for WebSocket mask application
 void FillWithSkipMaskImpl(const uint8_t* HWY_RESTRICT mask, size_t mask_len, uint8_t* HWY_RESTRICT output, const uint8_t* HWY_RESTRICT input, size_t length, bool skip_mask)
 {
@@ -1251,6 +1288,7 @@ HWY_EXPORT(ContainsNewlineOrNonASCIIOrQuoteImpl);
 HWY_EXPORT(CopyAsciiPrefixImpl);
 HWY_EXPORT(CopyU16ToU8Impl);
 HWY_EXPORT(CountPrintableAscii16Impl);
+HWY_EXPORT(EncodeHexLowerImpl);
 HWY_EXPORT(FillWithSkipMaskImpl);
 HWY_EXPORT(FirstNonAscii16Impl);
 HWY_EXPORT(FirstNonAscii8Impl);
@@ -1410,6 +1448,11 @@ size_t highway_first_non_ascii8(const uint8_t* HWY_RESTRICT input, size_t len)
 size_t highway_copy_ascii_prefix(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
 {
     return HWY_DYNAMIC_DISPATCH(CopyAsciiPrefixImpl)(src, len, dst);
+}
+
+void highway_encode_hex_lower(const uint8_t* HWY_RESTRICT input, size_t len, uint8_t* HWY_RESTRICT output)
+{
+    HWY_DYNAMIC_DISPATCH(EncodeHexLowerImpl)(input, len, output);
 }
 
 } // extern "C"

@@ -274,7 +274,7 @@ function getImageLabel(platform) {
  * @returns {string}
  */
 function getImageName(platform, options) {
-  const { os, distro } = platform;
+  const { os, distro, crossCompile } = platform;
   const { buildImages, publishImages, imageFilter } = options;
 
   const name = getImageKey(platform);
@@ -283,7 +283,12 @@ function getImageName(platform, options) {
     return `${name}-build-${getBuildNumber()}`;
   }
 
-  return `${name}-v${getBootstrapVersion(os)}`;
+  // Cross-compiled targets (and FreeBSD) build on a Linux host image (see
+  // getImageKey) — version it by the host's bootstrap script, not the
+  // target's. Windows-cross would otherwise pick up bootstrap.ps1's version
+  // and request a linux image tag that doesn't exist.
+  const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
+  return `${name}-v${getBootstrapVersion(hostOs)}`;
 }
 
 /**

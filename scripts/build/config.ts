@@ -780,7 +780,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // newer-LLVM bitcode rustc emits under -Clinker-plugin-lto is readable at
   // link time. Windows cross does the same with the `gcc-ld/lld-link`
   // sibling (COFF flavor) — see the wantRustLld swap below.
-  const crossLangLto = lto && !(windows && host.os === "windows") && !(arm64 && abi === "musl");
+  // EXPERIMENT (do not merge): windows ThinLTO with the Rust side OUT of the
+  // LTO graph — if the windows x64 test shards pass like this, the miscompile
+  // lives at the Rust<->C++ boundary (ABI/callconv class), not in the thin
+  // backends generally.
+  const crossLangLto = lto && !windows && !(arm64 && abi === "musl");
 
   // Cross-language LTO bitcode-version skew: `-Clinker-plugin-lto` makes
   // rustc emit raw LLVM bitcode into libbun_rust.a. LLVM bitcode is

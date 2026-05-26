@@ -112,6 +112,7 @@ function throwIfNullBytesInFileName(filename: string) {
 
 hideFromStack(validateLinkHeaderValue, validateInternalField);
 hideFromStack(validateString, validateFunction, validateBoolean, validateUndefined);
+hideFromStack(getValidatedPath, throwIfNullBytesInFileName);
 
 export default {
   /** (value, name) */

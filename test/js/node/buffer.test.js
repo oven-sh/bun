@@ -3399,7 +3399,7 @@ describe("Buffer.prototype.toString binary-to-text encodings", () => {
     withoutAggressiveGC(() => {
       const parent = fillPattern(Buffer.alloc(4096 + 16));
       for (const offset of [1, 3, 7, 9, 15]) {
-        const view = parent.subarray(offset, offset + 4096 - offset);
+        const view = parent.subarray(offset, offset + 4096);
         expect(view.toString("hex")).toBe(hexReference(view));
       }
       // Range arguments go through the same encoder.

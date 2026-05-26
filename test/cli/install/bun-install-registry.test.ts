@@ -3144,6 +3144,54 @@ describe("binaries", () => {
     expect(await exists(join(packageDir, "node_modules", "what-bin", "what-bin.js"))).toBeTrue();
   });
 
+  test("workspace package wins a contested bin name", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "uses-what-bin": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "z-workspace-claim", "package.json"),
+        JSON.stringify({
+          name: "z-workspace-claim",
+          version: "1.0.0",
+          bin: {
+            "what-bin": "./workspace.js",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "z-workspace-claim", "workspace.js"),
+        `#!/usr/bin/env node\nconsole.log("workspace")`,
+      ),
+    ]);
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("shadows");
+    expect(await exited).toBe(0);
+
+    expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(
+      join("..", "z-workspace-claim", "workspace.js"),
+    );
+    expect(await exists(join(packageDir, "node_modules", "what-bin", "what-bin.js"))).toBeTrue();
+  });
+
   test("warns when a dependency bin shadows a runtime executable", async () => {
     await Promise.all([
       write(
@@ -3228,6 +3276,56 @@ describe("binaries", () => {
     expect(await exited).toBe(0);
 
     expect(join(packageDir, "node_modules", ".bin", "npx")).toBeValidBin(join("..", "npm", "npx-cli.js"));
+  });
+
+  test("does not warn when corepack claims package manager bins", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "corepack": "./corepack-pkg",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "corepack-pkg", "package.json"),
+        JSON.stringify({
+          name: "corepack",
+          version: "1.0.0",
+          bin: {
+            "corepack": "./corepack.js",
+            "pnpm": "./pnpm.js",
+            "pnpx": "./pnpx.js",
+            "yarn": "./yarn.js",
+            "yarnpkg": "./yarnpkg.js",
+          },
+        }),
+      ),
+      write(join(packageDir, "corepack-pkg", "corepack.js"), `#!/usr/bin/env node\nconsole.log("corepack")`),
+      write(join(packageDir, "corepack-pkg", "pnpm.js"), `#!/usr/bin/env node\nconsole.log("pnpm")`),
+      write(join(packageDir, "corepack-pkg", "pnpx.js"), `#!/usr/bin/env node\nconsole.log("pnpx")`),
+      write(join(packageDir, "corepack-pkg", "yarn.js"), `#!/usr/bin/env node\nconsole.log("yarn")`),
+      write(join(packageDir, "corepack-pkg", "yarnpkg.js"), `#!/usr/bin/env node\nconsole.log("yarnpkg")`),
+    ]);
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("shadows");
+    expect(await exited).toBe(0);
+
+    expect(join(packageDir, "node_modules", ".bin", "yarn")).toBeValidBin(join("..", "corepack", "yarn.js"));
+    expect(join(packageDir, "node_modules", ".bin", "pnpm")).toBeValidBin(join("..", "corepack", "pnpm.js"));
   });
 });
 

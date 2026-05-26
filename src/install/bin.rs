@@ -733,7 +733,10 @@ impl PriorityQueueContext {
 
     fn is_direct_root_dependency(&self, id: DependencyID, dep: &Dependency) -> bool {
         self.root_dependencies.contains(id)
-            && (dep.behavior.is_prod() || dep.behavior.is_dev() || dep.behavior.is_optional())
+            && (dep.behavior.is_prod()
+                || dep.behavior.is_dev()
+                || dep.behavior.is_optional()
+                || dep.behavior.is_workspace())
     }
 }
 
@@ -771,7 +774,16 @@ pub(crate) fn normalized_bin_name(name: &[u8]) -> &[u8] {
     name
 }
 
-const RUNTIME_BIN_NAMES: [&[u8]; 7] = [b"node", b"bun", b"bunx", b"npm", b"npx", b"yarn", b"pnpm"];
+const RUNTIME_BIN_NAMES: [&[u8]; 8] = [
+    b"node",
+    b"bun",
+    b"bunx",
+    b"npm",
+    b"npx",
+    b"yarn",
+    b"pnpm",
+    b"corepack",
+];
 
 static WARNED_RUNTIME_BIN_NAMES: AtomicU8 = AtomicU8::new(0);
 

@@ -43,6 +43,9 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
                 add_newline: false,
                 flush: false,
                 quote_strings: true,
+                // Assertion diffs (toEqual etc.) keep full precision; only
+                // snapshot serialization opts into rounding.
+                float_significant_digits: 0,
             };
             // Zig: @as([*]const JSValue, @ptrCast(&received)), 1  → 1-element slice
             let _ = JestPrettyFormat::format(

@@ -3,7 +3,12 @@ import type { Dirent as DirentType, PathLike, Stats as StatsType } from "fs";
 const EventEmitter = require("node:events");
 const promises = require("node:fs/promises");
 const types = require("node:util/types");
-const { validateFunction, validateInteger } = require("internal/validators");
+const {
+  validateFunction,
+  validateInteger,
+  getValidatedPath,
+  throwIfNullBytesInFileName,
+} = require("internal/validators");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -600,12 +605,6 @@ defineCustomPromisifyArgs(readv, ["bytesRead", "buffers"]);
 defineCustomPromisifyArgs(write, ["bytesWritten", "buffer"]);
 defineCustomPromisifyArgs(writev, ["bytesWritten", "buffers"]);
 
-function getValidatedPath(p: any) {
-  if (p instanceof URL) return Bun.fileURLToPath(p as URL);
-  if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
-  if (p.startsWith("file:")) return Bun.fileURLToPath(p);
-  return require("node:path").resolve(p);
-}
 // The implementation (StatWatcher and friends) is lazily loaded from "internal/fs/watchfile"
 // the first time fs.watchFile or fs.unwatchFile is called.
 function watchFile(filename, options, listener) {
@@ -613,12 +612,6 @@ function watchFile(filename, options, listener) {
 }
 function unwatchFile(filename, listener) {
   return require("internal/fs/watchfile").unwatchFile(filename, listener);
-}
-
-function throwIfNullBytesInFileName(filename: string) {
-  if (filename.indexOf("\u0000") !== -1) {
-    throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", filename);
-  }
 }
 
 function createReadStream(path, options) {

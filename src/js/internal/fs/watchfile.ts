@@ -1,6 +1,7 @@
 // fs.watchFile and fs.unwatchFile are lazily loaded so that the StatWatcher
 // machinery is not set up until it is actually used.
 const EventEmitter = require("node:events");
+const { getValidatedPath, throwIfNullBytesInFileName } = require("internal/validators");
 
 // `fs` points to the return value of `node_fs_binding.zig`'s `createBinding` function.
 const { fs } = require("node:fs/promises").$data;
@@ -53,19 +54,6 @@ class StatWatcher extends EventEmitter {
 // great way to have multiple listeners per StatWatcher with the current implementation in
 // native code. The downside of this is that we need to do path validation on the JS side.
 const statWatchers = new Map();
-
-function getValidatedPath(p: any) {
-  if (p instanceof URL) return Bun.fileURLToPath(p as URL);
-  if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
-  if (p.startsWith("file:")) return Bun.fileURLToPath(p);
-  return require("node:path").resolve(p);
-}
-
-function throwIfNullBytesInFileName(filename: string) {
-  if (filename.indexOf("\u0000") !== -1) {
-    throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", filename);
-  }
-}
 
 function watchFile(filename, options, listener) {
   filename = getValidatedPath(filename);

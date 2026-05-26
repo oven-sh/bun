@@ -858,23 +858,16 @@ impl BlobExt for Blob {
     }
 
     fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob {
-        // PERF(port): was arena bulk-free + stack-fallback alloc — profile if it shows up on a hot path.
-
-        let mut hex_buf = [0u8; 70];
-        let boundary = {
+        // "----WebKitFormBoundary" (22 bytes) + 32 lowercase-hex chars of a fresh UUID.
+        const BOUNDARY_PREFIX: &[u8; 22] = b"----WebKitFormBoundary";
+        let mut boundary_buf = [0u8; BOUNDARY_PREFIX.len() + 32];
+        let boundary: &[u8] = {
             // SAFETY: bun_vm() never returns null for a Bun-owned global.
             let random = global_this.bun_vm().as_mut().rare_data().next_uuid().bytes;
-            use std::io::Write;
-            let mut cursor = &mut hex_buf[..];
+            boundary_buf[..BOUNDARY_PREFIX.len()].copy_from_slice(BOUNDARY_PREFIX);
             // Zig `{x}` on `[16]u8` emits 32 contiguous lowercase-hex chars.
-            // Rust's `{:x?}` on `[u8;16]` is Debug formatting (`[a1, b2, …]`),
-            // so write the prefix then encode bytes one at a time.
-            cursor.write_all(b"----WebKitFormBoundary").unwrap();
-            for b in random {
-                write!(&mut cursor, "{b:02x}").expect("infallible: in-memory write");
-            }
-            let written = 70 - cursor.len();
-            &hex_buf[..written]
+            bun_core::fmt::bytes_to_hex_lower(&random, &mut boundary_buf[BOUNDARY_PREFIX.len()..]);
+            &boundary_buf
         };
 
         let mut context = FormDataContext {
@@ -883,6 +876,9 @@ impl BlobExt for Blob {
             failed: false,
             global_this,
         };
+        // Size the node list up front: a file entry pushes at most 13 slices, a
+        // string entry 8, plus 3 for the closing boundary.
+        context.joiner.reserve(form_data.count() * 13 + 3);
 
         // PORT NOTE (layering): `bun_jsc::DOMFormData::for_each` yields the
         // lower-tier `bun_jsc::dom_form_data::FormDataEntry`, whose `blob`
@@ -945,11 +941,9 @@ impl BlobExt for Blob {
             for_each_thunk,
         );
         if context.failed {
-            // The joiner's Node structs are owned by the (former) arena, but each
-            // node's data carries its own owner allocator — heap for non-ASCII
-            // name/value slices and the NodeFS read_file result buffer. Drop the
-            // joiner (Drop runs StringJoiner::deinit) so every heap-owned slice
-            // already pushed is freed.
+            // Drop the joiner (Drop runs StringJoiner::deinit) so every
+            // heap-owned slice already pushed — escaped names, non-ASCII
+            // conversions, NodeFS read_file result buffers — is freed.
             drop(context.joiner);
             return Blob::init_empty(global_this);
         }
@@ -968,16 +962,10 @@ impl BlobExt for Blob {
         let blob = Blob::init_with_store(store, global_this);
         // Always allocate content_type with the default allocator so deinit() can
         // free it unconditionally.
-        let mut ct = Vec::new();
-        {
-            use std::io::Write;
-            write!(
-                &mut ct,
-                "multipart/form-data; boundary={}",
-                bstr::BStr::new(boundary)
-            )
-            .unwrap();
-        }
+        const CONTENT_TYPE_PREFIX: &[u8] = b"multipart/form-data; boundary=";
+        let mut ct = Vec::with_capacity(CONTENT_TYPE_PREFIX.len() + boundary.len());
+        ct.extend_from_slice(CONTENT_TYPE_PREFIX);
+        ct.extend_from_slice(boundary);
         blob.content_type
             .set(bun_core::heap::into_raw(ct.into_boxed_slice()));
         blob.content_type_allocated.set(true);
@@ -3933,13 +3921,14 @@ struct FormDataContext<'a> {
 
 /// WHATWG HTML "multipart/form-data encoding algorithm": percent-encode `"`,
 /// CR and LF in field names and filenames so they cannot terminate the
-/// quoted-string or inject part headers.
-fn escape_form_data_name(bytes: Vec<u8>) -> Box<[u8]> {
+/// quoted-string or inject part headers. Returns `None` when nothing needs
+/// escaping so the caller can keep using the original bytes without a copy.
+fn escape_form_data_name(bytes: &[u8]) -> Option<Box<[u8]>> {
     if !bytes.iter().any(|&b| matches!(b, b'"' | b'\r' | b'\n')) {
-        return bytes.into_boxed_slice();
+        return None;
     }
     let mut out = Vec::with_capacity(bytes.len() + 6);
-    for &b in &bytes {
+    for &b in bytes {
         match b {
             b'"' => out.extend_from_slice(b"%22"),
             b'\r' => out.extend_from_slice(b"%0D"),
@@ -3947,10 +3936,35 @@ fn escape_form_data_name(bytes: Vec<u8>) -> Box<[u8]> {
             _ => out.push(b),
         }
     }
-    out.into_boxed_slice()
+    Some(out.into_boxed_slice())
 }
 
 impl FormDataContext<'_> {
+    /// Append the UTF-8 view of a form-data string without copying it: the
+    /// borrowed case points into a WTF string owned by the `DOMFormData` being
+    /// serialized, which outlives `joiner.done()` in `from_dom_form_data`
+    /// (Zig: `joiner.push(slice, slice.allocator.get())`); an owned slice
+    /// (UTF-16 / non-ASCII Latin-1 conversion) transfers its allocation to the
+    /// joiner. When `escape` is set, `"`/CR/LF are percent-encoded into a copy.
+    fn push_string_slice(joiner: &mut StringJoiner, slice: ZigStringSlice, escape: bool) {
+        if escape {
+            if let Some(escaped) = escape_form_data_name(slice.slice()) {
+                joiner.push_owned(escaped);
+                return;
+            }
+        }
+        if matches!(slice, ZigStringSlice::Owned(_)) {
+            // `into_vec` moves the buffer out of an `Owned` slice without copying.
+            joiner.push_owned(slice.into_vec().into_boxed_slice());
+        } else if matches!(slice, ZigStringSlice::Static(..)) {
+            joiner.push_static(slice.slice());
+        } else {
+            // WTF-backed slices release their pin on drop — copy rather than
+            // borrow past it. (`ZigString::to_slice` never produces these.)
+            joiner.push_cloned(slice.slice());
+        }
+    }
+
     pub(crate) fn on_entry(&mut self, name: ZigString, entry: FormDataEntry<'_>) {
         if self.failed {
             return;
@@ -3966,22 +3980,20 @@ impl FormDataContext<'_> {
         joiner.push_static(b"\r\n");
 
         joiner.push_static(b"Content-Disposition: form-data; name=\"");
-        // PORT NOTE: Zig `joiner.push(slice, allocator?)` encoded ownership in
-        // the optional allocator. `StringJoiner::push_owned` is the Rust
-        // equivalent; `ZigStringSlice::into_vec` moves out the buffer if owned
-        // or copies if borrowed (matching Zig's `null`-allocator borrow case).
-        joiner.push_owned(escape_form_data_name(name.to_slice().into_vec()));
+        Self::push_string_slice(joiner, name.to_slice(), true);
 
         match entry {
             FormDataEntry::String(value) => {
                 joiner.push_static(b"\"\r\n\r\n");
-                joiner.push_owned(value.to_slice().into_vec().into_boxed_slice());
+                Self::push_string_slice(joiner, value.to_slice(), false);
             }
             FormDataEntry::File { blob, filename } => {
                 joiner.push_static(b"\"; filename=\"");
-                joiner.push_owned(escape_form_data_name(filename.to_slice().into_vec()));
+                Self::push_string_slice(joiner, filename.to_slice(), true);
                 joiner.push_static(b"\"\r\n");
 
+                // Borrowed from the blob, which the `DOMFormData` keeps alive
+                // past `joiner.done()` (Zig used `pushStatic` here too).
                 let blob_ct = blob.content_type_slice();
                 let content_type: &[u8] = if !blob_ct.is_empty()
                     && !blob_ct.iter().any(|&b| matches!(b, b'\r' | b'\n'))
@@ -3991,7 +4003,7 @@ impl FormDataContext<'_> {
                     b"application/octet-stream"
                 };
                 joiner.push_static(b"Content-Type: ");
-                joiner.push_cloned(content_type);
+                joiner.push_static(content_type);
                 joiner.push_static(b"\r\n\r\n");
 
                 if blob.store.get().is_some() {
@@ -4043,7 +4055,10 @@ impl FormDataContext<'_> {
                             }
                         }
                         store::Data::Bytes(_) => {
-                            joiner.push_cloned(blob.shared_view());
+                            // Borrowed: the blob's store is kept alive by the
+                            // `DOMFormData` entry until after `joiner.done()`
+                            // (Zig used `pushStatic` here too).
+                            joiner.push_static(blob.shared_view());
                         }
                     }
                 }

@@ -701,6 +701,8 @@ impl<'a> AnsiRenderer<'a> {
     // ========================================
 
     pub fn text(&mut self, text_type: TextType, content: &[u8]) {
+        let mut sanitized: Vec<u8> = Vec::new();
+        let content = sanitize_source_text(content, &mut sanitized);
         match text_type {
             TextType::NullChar => self.write_content(b"\xEF\xBF\xBD"),
             TextType::Br => self.write_content(b"\n"),
@@ -717,6 +719,8 @@ impl<'a> AnsiRenderer<'a> {
             TextType::Entity => {
                 let mut buf = [0u8; 8];
                 let decoded = helpers::decode_entity_to_utf8(content, &mut buf).unwrap_or(content);
+                let mut decoded_sanitized: Vec<u8> = Vec::new();
+                let decoded = sanitize_source_text(decoded, &mut decoded_sanitized);
                 self.write_content(decoded);
             }
             // Inline code spans are atomic — don't let writeWrapped split
@@ -2329,6 +2333,66 @@ fn visible_width(s: &[u8]) -> usize {
 /// `max_cols`. ANSI escapes are zero-width and always included.
 fn visible_index_at(s: &[u8], max_cols: usize) -> usize {
     strings::visible::width::exclude_ansi_colors::utf8_index_at_width(s, max_cols)
+}
+
+fn sanitize_source_text<'b>(bytes: &'b [u8], scratch: &'b mut Vec<u8>) -> &'b [u8] {
+    fn is_disallowed(c: u8) -> bool {
+        (c < 0x20 && c != b'\n' && c != b'\t') || c == 0x7f
+    }
+    fn is_utf8_c1(bytes: &[u8], i: usize) -> bool {
+        bytes[i] == 0xC2 && i + 1 < bytes.len() && (0x80..=0x9F).contains(&bytes[i + 1])
+    }
+    fn needs_strip(bytes: &[u8], i: usize) -> bool {
+        is_disallowed(bytes[i]) || is_utf8_c1(bytes, i)
+    }
+    if !(0..bytes.len()).any(|i| needs_strip(bytes, i)) {
+        return bytes;
+    }
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b {
+            i += 1;
+            if i < bytes.len() && bytes[i] == b'[' {
+                i += 1;
+                while i < bytes.len() && (bytes[i] < 0x40 || bytes[i] > 0x7e) {
+                    i += 1;
+                }
+                if i < bytes.len() {
+                    i += 1;
+                }
+            } else if i < bytes.len() && bytes[i] == b']' {
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == 0x07 {
+                        i += 1;
+                        break;
+                    }
+                    if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
+                        i += 2;
+                        break;
+                    }
+                    i += 1;
+                }
+            } else if i < bytes.len() {
+                i += 1;
+            }
+            continue;
+        }
+        if is_utf8_c1(bytes, i) {
+            i += 2;
+            continue;
+        }
+        if is_disallowed(bytes[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && !needs_strip(bytes, i) {
+            i += 1;
+        }
+        scratch.extend_from_slice(&bytes[start..i]);
+    }
+    scratch
 }
 
 fn is_js_lang(lang: &[u8]) -> bool {

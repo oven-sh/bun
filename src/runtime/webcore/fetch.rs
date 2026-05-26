@@ -424,6 +424,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut disable_timeout = false;
     let mut disable_keepalive = false;
     let mut disable_decompression = false;
+    let mut max_redirects: Option<u8> = None;
     let mut verbose: http::HTTPVerboseLevel = if vm
         .log_ref()
         .is_some_and(|l| l.level.at_least(bun_ast::Level::Debug))
@@ -665,6 +666,44 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         break 'extract_disable_decompression disable_decompression;
     };
+
+    if global_this.has_exception() {
+        return Ok(JSValue::ZERO);
+    }
+
+    // "maxRedirects: number"
+    'extract_max_redirects: {
+        let objects_to_try = [
+            options_object.unwrap_or(JSValue::ZERO),
+            request_init_object.unwrap_or(JSValue::ZERO),
+        ];
+
+        for obj in objects_to_try {
+            if !obj.is_empty() {
+                if let Some(value) = obj.get(global_this, "maxRedirects")? {
+                    if !value.is_undefined_or_null() {
+                        if !value.is_number() {
+                            return Err(global_this.throw_invalid_arguments(format_args!(
+                                "fetch: 'maxRedirects' must be a non-negative integer"
+                            )));
+                        }
+                        let n = value.as_number();
+                        if n.is_nan() || n < 0.0 || n.fract() != 0.0 {
+                            return Err(global_this.throw_invalid_arguments(format_args!(
+                                "fetch: 'maxRedirects' must be a non-negative integer"
+                            )));
+                        }
+                        max_redirects = Some(n.min(126.0) as u8);
+                        break 'extract_max_redirects;
+                    }
+                }
+
+                if global_this.has_exception() {
+                    return Ok(JSValue::ZERO);
+                }
+            }
+        }
+    }
 
     if global_this.has_exception() {
         return Ok(JSValue::ZERO);
@@ -1943,6 +1982,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         disable_keepalive,
         disable_timeout,
         disable_decompression,
+        max_redirects,
         reject_unauthorized,
         redirect_type,
         verbose,

@@ -1340,3 +1340,53 @@ describe("pipelined request header isolation", () => {
     expect(secondRequestReached).toBe(false);
   });
 });
+
+test("rejects Transfer-Encoding header with empty value", async () => {
+  // RFC 9112 requires rejecting a request whose Transfer-Encoding field names no
+  // valid transfer coding. Treating a present-but-empty Transfer-Encoding value as
+  // if the header were absent falls back to Content-Length framing, so the bytes
+  // after the declared body get parsed as a second pipelined request (CL.TE desync).
+  const seen: string[] = [];
+  await using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      seen.push(`${req.method} ${new URL(req.url).pathname}`);
+      await req.text();
+      return new Response("OK");
+    },
+  });
+
+  const client = net.connect(server.port, "127.0.0.1");
+
+  // Transfer-Encoding is present but its value is empty. If it were treated as
+  // absent, Content-Length would frame only the first 4 bytes ("ABCD") and the
+  // remainder would be handled as a second request to /admin.
+  const payload =
+    "POST / HTTP/1.1\r\n" +
+    "Host: localhost\r\n" +
+    "Transfer-Encoding: \r\n" +
+    "Content-Length: 4\r\n" +
+    "\r\n" +
+    "ABCD" +
+    "GET /admin HTTP/1.1\r\n" +
+    "Host: localhost\r\n" +
+    "\r\n";
+
+  await new Promise<void>((resolve, reject) => {
+    let responseData = "";
+    client.on("error", reject);
+    client.on("data", data => {
+      responseData += data.toString();
+    });
+    client.on("close", () => {
+      // The request must be rejected outright, not framed by Content-Length.
+      expect(responseData).toContain("HTTP/1.1 400");
+      expect(responseData).not.toContain("HTTP/1.1 200");
+      resolve();
+    });
+    client.write(payload);
+  });
+
+  // The trailing bytes must never be interpreted as a second request.
+  expect(seen).not.toContain("GET /admin");
+});

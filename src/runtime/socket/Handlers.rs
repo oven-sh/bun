@@ -559,6 +559,11 @@ impl SocketConfig {
             }
             result.hostname_or_unix = hostname.to_utf8();
             let slice = result.hostname_or_unix.slice();
+            if slice.contains(&0) {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "\"hostname\" must not contain null bytes"
+                )));
+            }
             result.port = Some(match generated.port {
                 Some(p) => p,
                 None => match bun_url::URL::parse(slice).get_port() {

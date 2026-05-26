@@ -397,10 +397,7 @@ impl Stringifier {
                         if let Some(trusted_name) =
                             trusted_dependencies.get(&(dep.name_hash as TruncatedPackageNameHash))
                         {
-                            // The `is_empty()` arm keeps hash-only entries from a
-                            // legacy bun.lockb (no name stored) when migrating to
-                            // bun.lock.
-                            if trusted_name.is_empty() || **trusted_name == *dep.name.slice(buf) {
+                            if **trusted_name == *dep.name.slice(buf) {
                                 found_trusted_dependencies.insert(dep.name_hash, dep.name);
                             }
                         }
@@ -2254,6 +2251,11 @@ pub fn parse_into_binary_lockfile(
                     }
                 }
             };
+
+            if !name_str.is_empty() && !dependency::is_safe_install_folder_name(name_str) {
+                log.add_error(Some(source), res_info.loc, b"Invalid package name");
+                return Err(ParseError::InvalidPackageResolution);
+            }
 
             let name_hash = StringBuilder::string_hash(name_str);
             let name = sbuf!(lockfile).append(name_str)?;

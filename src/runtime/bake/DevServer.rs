@@ -1552,7 +1552,7 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     } else {
         AnyResponse::TCP(res.cast::<bun_uws_sys::response::TCPResponse>())
     };
-    if !matches!(ID, DevHandlerId::Request) && !is_allowed_dev_host(dev, req) {
+    if !is_allowed_dev_host(dev, req) {
         return host_forbidden(resp);
     }
     match ID {
@@ -5329,6 +5329,10 @@ impl DevServer {
         req: &mut Request,
         resp: AnyResponse,
     ) -> Result<(), AllocError> {
+        if !is_allowed_dev_host(self, req) {
+            host_forbidden(resp);
+            return Ok(());
+        }
         let route_bundle_index = self
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))
             .map_err(|_| AllocError)?;
@@ -5416,7 +5420,11 @@ impl DevServer {
                     });
                 }
             },
-            client_script_generation: bun_core::fast_random() as u32,
+            client_script_generation: {
+                let mut buf = [0u8; 4];
+                bun_core::csprng(&mut buf);
+                u32::from_ne_bytes(buf)
+            },
             server_state: route_bundle::State::Unqueued,
             client_bundle: None,
             active_viewers: 0,

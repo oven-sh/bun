@@ -571,6 +571,9 @@ pub(crate) fn braces(
                 global.throw_pretty(format_args!("Unexpected token while expanding braces"))
             );
         }
+        Err(Braces::ParserError::TooManyBraces) => {
+            return Err(global.throw_pretty(format_args!("Too many braces in brace expansion")));
+        }
     }
 
     let mut out_strings: Vec<BunString> = Vec::with_capacity(expansion_count);

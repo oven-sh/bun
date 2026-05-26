@@ -29,7 +29,7 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
         const auto bytes = input.span8().data();
         if (IS_SLASH(bytes[0]))
             return true;
-        if (len < 2)
+        if (len < 3)
             return false;
         if (IS_LETTER(bytes[0]) && bytes[1] == ':' && IS_SLASH(bytes[2]))
             return true;
@@ -41,7 +41,7 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
         const auto bytes = input.span16().data();
         if (IS_SLASH(bytes[0]))
             return true;
-        if (len < 2)
+        if (len < 3)
             return false;
         if (IS_LETTER(bytes[0]) && bytes[1] == ':' && IS_SLASH(bytes[2]))
             return true;

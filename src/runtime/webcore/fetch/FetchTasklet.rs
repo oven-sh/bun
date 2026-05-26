@@ -803,6 +803,14 @@ impl FetchTasklet {
         let vm = self.javascript_vm;
         // vm is shutting down we cannot touch JS
         if vm.is_shutting_down() {
+            // The certificate will never be checked; release the parked
+            // HTTP-thread socket instead of leaving it occupying an active
+            // request slot until the idle timeout.
+            if self.result.certificate_info.take().is_some() {
+                if let Some(http_) = self.http.as_mut() {
+                    http::http_thread().schedule_shutdown(http_);
+                }
+            }
             self.mutex.unlock();
             if is_done {
                 // SAFETY: `self` is the live heap tasklet; we hold a ref.
@@ -904,6 +912,62 @@ impl FetchTasklet {
             cleanup(self);
             return r;
         }
+        // Run the user-supplied `checkServerIdentity` callback as soon as the
+        // certificate arrives. The HTTP thread parks the connection after the
+        // TLS handshake (`is_waiting_for_cert_check`) and does not transmit
+        // the request until this check passes, so this block must run BEFORE
+        // the metadata-less early return below — the parked connection's
+        // first progress update carries only the certificate (no metadata, no
+        // failure) and would otherwise be dropped, leaving the socket parked
+        // until the idle timeout.
+        if let Some(certificate_info) = self.result.certificate_info.take() {
+            // we receive some error
+            if self.reject_unauthorized && !self.check_server_identity(&certificate_info) {
+                bun_output::scoped_log!(FetchTasklet, "onProgressUpdate: aborted due certError");
+                drop(certificate_info);
+                // `check_server_identity` already set abort_reason / aborted /
+                // result.fail and scheduled the shutdown of the parked
+                // socket; all that is left is rejecting the promise.
+                let promise_value = self.promise.value_or_empty();
+                if promise_value.is_empty_or_undefined_or_null() {
+                    bun_output::scoped_log!(
+                        FetchTasklet,
+                        "onProgressUpdate: promise_value is null"
+                    );
+                    self.promise = jsc::JSPromiseStrong::empty();
+                    cleanup(self);
+                    return Ok(());
+                }
+                // we need to abort the request
+                let promise = promise_value.as_any_promise().unwrap();
+                let tracker = self.tracker;
+                let mut result = self.on_reject();
+
+                promise_value.ensure_still_alive();
+                let r = promise.reject_with_async_stack(&global_this, result.to_js(&global_this));
+                result.reset();
+
+                tracker.did_dispatch(&global_this);
+                self.promise = jsc::JSPromiseStrong::empty();
+                cleanup(self);
+                return r;
+            }
+            drop(certificate_info);
+            // checkServerIdentity passed: un-park the HTTP-thread connection
+            // so the request is finally written to the now-verified peer. If
+            // the connection already closed/failed the resume is a no-op
+            // (keyed through the abort tracker).
+            if let Some(http_) = self.http.as_mut() {
+                http::http_thread().schedule_cert_check_resume(http_);
+            }
+            // Fall through. The common case (certificate-only update) returns
+            // at the metadata-less early return below; the #27275 coalesced
+            // case — the connection failed after the handshake but before
+            // response headers arrived, so the certificate_info from the
+            // first progress update was merged into the later failure result
+            // — falls through to the reject logic with `result.fail` set.
+        }
+
         if self.metadata.is_none() && self.result.is_success() {
             cleanup(self);
             return Ok(());
@@ -923,39 +987,6 @@ impl FetchTasklet {
             self.promise = jsc::JSPromiseStrong::empty();
             cleanup(self);
             return Ok(());
-        }
-
-        if let Some(certificate_info) = self.result.certificate_info.take() {
-            // we receive some error
-            if self.reject_unauthorized && !self.check_server_identity(&certificate_info) {
-                bun_output::scoped_log!(FetchTasklet, "onProgressUpdate: aborted due certError");
-                drop(certificate_info);
-                // we need to abort the request
-                let promise = promise_value.as_any_promise().unwrap();
-                let tracker = self.tracker;
-                let mut result = self.on_reject();
-
-                promise_value.ensure_still_alive();
-                let r = promise.reject_with_async_stack(&global_this, result.to_js(&global_this));
-                result.reset();
-
-                tracker.did_dispatch(&global_this);
-                self.promise = jsc::JSPromiseStrong::empty();
-                cleanup(self);
-                return r;
-            }
-            drop(certificate_info);
-            // checkServerIdentity passed. Fall through to resolve/reject below.
-            //
-            // We can reach this point with `metadata == null` when the
-            // connection failed after the TLS handshake but before response
-            // headers arrived (e.g. an mTLS server closing the socket because
-            // the client didn't present a certificate) — the certificate_info
-            // from the first progress update is coalesced into the later
-            // failure result. The `metadata == null && isSuccess()` case is
-            // already handled by the early return above, so the fall-through
-            // here always has either metadata to resolve with or a failure to
-            // reject with.
         }
 
         // Intentionally diverges from Zig (paired with the microtask drain after
@@ -1177,6 +1208,11 @@ impl FetchTasklet {
                     return true;
                 }
             }
+        }
+        // Empty or unparseable certificate bytes: every false return must have
+        // scheduled the parked socket's shutdown, like the paths above.
+        if let Some(http_) = self.http.as_mut() {
+            http::http_thread().schedule_shutdown(http_);
         }
         self.result.fail = Some(err!("ERR_TLS_CERT_ALTNAME_INVALID"));
         false
@@ -1857,6 +1893,7 @@ impl FetchTasklet {
                 disable_timeout: Some(fetch_options.disable_timeout),
                 disable_keepalive: Some(fetch_options.disable_keepalive),
                 disable_decompression: Some(fetch_options.disable_decompression),
+                max_redirects: fetch_options.max_redirects,
                 reject_unauthorized: Some(fetch_options.reject_unauthorized),
                 verbose: Some(fetch_options.verbose),
                 tls_props: fetch_options.ssl_config,
@@ -2267,6 +2304,14 @@ impl FetchTasklet {
             // VM teardown: the JS-thread side will never drain this buffer (its
             // on_progress_update bails the same way), so free the body bytes now.
             task_ref.scheduled_response_buffer = MutableString::default();
+            // The certificate will never be checked; release the parked
+            // socket instead of leaving it occupying an active request slot
+            // until the idle timeout.
+            if task_ref.result.certificate_info.take().is_some() {
+                if let Some(http_) = task_ref.http.as_mut() {
+                    http::http_thread().schedule_shutdown(http_);
+                }
+            }
             // We won the `has_schedule_callback` CAS above but are not
             // enqueueing the on_progress_update task; undo the flag so a later
             // (final) callback can re-enter this branch instead of taking the
@@ -2350,6 +2395,7 @@ pub struct FetchOptions {
     pub disable_timeout: bool,
     pub disable_keepalive: bool,
     pub disable_decompression: bool,
+    pub max_redirects: Option<u8>,
     pub reject_unauthorized: bool,
     pub url: ZigURL<'static>,
     pub verbose: http::HTTPVerboseLevel,
@@ -2383,6 +2429,7 @@ impl Default for FetchOptions {
             disable_timeout: false,
             disable_keepalive: false,
             disable_decompression: false,
+            max_redirects: None,
             reject_unauthorized: true,
             url: ZigURL::default(),
             verbose: http::HTTPVerboseLevel::None,

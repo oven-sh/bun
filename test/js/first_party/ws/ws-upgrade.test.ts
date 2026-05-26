@@ -115,4 +115,39 @@ describe("ws client upgrade event", () => {
       wss.close();
     });
   }
+
+  // Node + ws emit `upgrade` and `open` from the same socket-data turn with no
+  // microtask checkpoint between them, so a microtask/nextTick queued inside the
+  // `upgrade` handler runs after the socket is OPEN.
+  it("does not drain microtasks between upgrade and open", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    wss.on("connection", () => {});
+
+    const { promise, resolve, reject } = Promise.withResolvers<{ microtask: number; nextTick: number }>();
+    const ws = new WebSocket("ws://localhost:" + wss.address().port);
+    const states: { microtask?: number; nextTick?: number } = {};
+    ws.on("upgrade", () => {
+      // These are scheduled while still CONNECTING but must observe OPEN,
+      // because `open` fires before the microtask/nextTick checkpoint.
+      queueMicrotask(() => {
+        states.microtask = ws.readyState;
+      });
+      process.nextTick(() => {
+        states.nextTick = ws.readyState;
+      });
+    });
+    ws.on("open", () => {
+      // By a later turn both callbacks have run.
+      setTimeout(() => resolve(states as { microtask: number; nextTick: number }), 0);
+    });
+    ws.on("error", reject);
+
+    const seen = await promise;
+    expect(seen.microtask).toBe(WebSocket.OPEN);
+    expect(seen.nextTick).toBe(WebSocket.OPEN);
+
+    ws.close();
+    await once(ws, "close");
+    wss.close();
+  });
 });

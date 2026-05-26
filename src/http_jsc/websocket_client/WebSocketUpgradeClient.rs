@@ -1592,6 +1592,27 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // C++ `body` param stays for a future `unexpected-response`, which would
         // carry a real HTTP body.)
         //
+        // Bracket the handshake dispatch AND the `did_connect`/
+        // `did_connect_with_tunnel` handoff below in one event-loop scope. Each
+        // of those FFI wrappers does its own `enter()/exit()`, and the uWS poll
+        // that drives `handle_data` runs at `entered_event_loop_count == 0`, so
+        // without this outer scope the `exit()` after the `upgrade` dispatch
+        // would hit count 1 and drain microtasks / `process.nextTick` *before*
+        // `open` fires. Node + `ws` emit `upgrade` and `open` from the same
+        // socket-data turn with no checkpoint between them; the outer scope
+        // makes the inner pairs nest (count stays ≥ 1, no drain) so queued
+        // microtasks run after `open`, matching node. Drops at function end,
+        // after `open` and the trailing derefs (which may free `this`; the
+        // guard holds only the VM-owned loop pointer, not `this`).
+        //
+        // SAFETY: `VirtualMachine::get().event_loop()` is the live VM-owned loop
+        // pointer, valid for the process lifetime.
+        let _event_loop_scope = unsafe {
+            bun_jsc::event_loop::EventLoop::enter_scope(
+                bun_jsc::virtual_machine::VirtualMachine::get().event_loop(),
+            )
+        };
+
         // SAFETY: short-lived read of `outgoing_websocket`.
         if let Some(ws) = unsafe { (*this).outgoing_websocket } {
             let mut raw_headers: Vec<HandshakeRawHeader> =

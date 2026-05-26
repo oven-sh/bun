@@ -2866,7 +2866,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                     tls_js,
                 )?;
             } else if tls_js.to_boolean() {
-                ssl_opts = Some(SSLConfig::default());
+                let mut default_cfg = SSLConfig::zero();
+                default_cfg.reject_unauthorized =
+                    VirtualMachine::get().get_tls_reject_unauthorized() as i32;
+                ssl_opts = Some(default_cfg);
             }
             let cfg = ssl_opts
                 .as_mut()
@@ -3896,7 +3899,12 @@ pub fn js_upgrade_duplex_to_tls(
         if !tls.is_boolean() {
             ssl_opts = SSLConfig::from_js(VirtualMachine::get().as_mut(), global, tls)?;
         } else if tls.to_boolean() {
-            ssl_opts = Some(SSLConfig::default());
+            let mut default_cfg = SSLConfig::zero();
+            if !is_server {
+                default_cfg.reject_unauthorized =
+                    VirtualMachine::get().get_tls_reject_unauthorized() as i32;
+            }
+            ssl_opts = Some(default_cfg);
         }
     }
     if owned_ctx.is_none() && ssl_opts.is_none() {

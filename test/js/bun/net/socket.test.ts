@@ -1143,6 +1143,116 @@ describe("Bun.connect TLS certificate verification", () => {
     expect(await echoed.promise).toBe("ping");
     await closed.promise;
   });
+
+  it("tls: true rejects an untrusted certificate by default", async () => {
+    using server = echoTLSServer();
+    const handshook = Promise.withResolvers<{ success: boolean; error: any; authorized: boolean }>();
+    const closed = Promise.withResolvers<void>();
+
+    await Bun.connect({
+      hostname: "localhost",
+      port: server.port,
+      tls: true,
+      socket: {
+        handshake(socket, success, authorizationError) {
+          handshook.resolve({ success, error: authorizationError, authorized: socket.authorized });
+        },
+        data() {},
+        close() {
+          closed.resolve();
+        },
+        error() {},
+      },
+    });
+
+    const result = await handshook.promise;
+    expect(result.success).toBe(false);
+    expect(result.authorized).toBe(false);
+    expect(result.error?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    await closed.promise;
+  });
+
+  it("upgradeTLS with tls: true rejects an untrusted certificate by default", async () => {
+    using server = echoTLSServer();
+    const handshook = Promise.withResolvers<{ success: boolean; error: any; authorized: boolean }>();
+    const closed = Promise.withResolvers<void>();
+
+    const socket = await Bun.connect({
+      hostname: "localhost",
+      port: server.port,
+      socket: {
+        data() {},
+        close() {},
+        error() {},
+      },
+    });
+
+    const [raw, upgraded] = socket.upgradeTLS({
+      tls: true,
+      socket: {
+        handshake(socket, success, authorizationError) {
+          handshook.resolve({ success, error: authorizationError, authorized: socket.authorized });
+        },
+        data() {},
+        close() {
+          closed.resolve();
+        },
+        error() {},
+      },
+    });
+    expect(raw).toBeDefined();
+    expect(upgraded).toBeDefined();
+
+    const result = await handshook.promise;
+    expect(result.success).toBe(false);
+    expect(result.authorized).toBe(false);
+    expect(result.error?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    await closed.promise;
+  });
+
+  it("upgradeTLS with rejectUnauthorized: false still connects but reports authorized=false", async () => {
+    using server = echoTLSServer();
+    const handshook = Promise.withResolvers<{ success: boolean; error: any; authorized: boolean }>();
+    const echoed = Promise.withResolvers<string>();
+    const closed = Promise.withResolvers<void>();
+
+    const socket = await Bun.connect({
+      hostname: "localhost",
+      port: server.port,
+      socket: {
+        data() {},
+        close() {},
+        error() {},
+      },
+    });
+
+    socket.upgradeTLS({
+      tls: { rejectUnauthorized: false },
+      socket: {
+        handshake(socket, success, authorizationError) {
+          handshook.resolve({ success, error: authorizationError, authorized: socket.authorized });
+          socket.write("ping");
+        },
+        data(socket, data) {
+          echoed.resolve(data.toString());
+          socket.end();
+        },
+        close() {
+          closed.resolve();
+        },
+        error(_socket, err) {
+          echoed.reject(err);
+        },
+      },
+    });
+
+    const result = await handshook.promise;
+    expect(result.success).toBe(true);
+    expect(result.authorized).toBe(false);
+    expect(result.error?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(await echoed.promise).toBe("ping");
+    await closed.promise;
+  });
 });
 
 // Bun.connect() on a Windows named pipe takes a dedicated early branch in

@@ -241,6 +241,21 @@ impl ExtractTarball {
         // `open_dir_at_windows_a` boundary, not here.
         let mut tmpname_buf = PathBuffer::uninit();
         let (name, basename) = self.name_and_basename();
+        if !self.resolution.tag.is_git()
+            && !bun_install::dependency::is_safe_install_folder_name(
+                &basename[0..basename.len().min(32)],
+            )
+        {
+            log.add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "Refusing to install package with invalid name \"{}\"",
+                    bun_fmt::s(name),
+                ),
+            );
+            return Err(bun_core::err!("InstallFailed"));
+        }
 
         let mut resolved: &'static [u8] = b"";
         let tmpname = FileSystem::tmpname(

@@ -370,7 +370,10 @@ describe("darwin rust linker: no forced -fuse-ld=lld (#30870)", () => {
 
     // Explicit --lto on darwin re-enables it (needs an lld-capable clang++,
     // same requirement as linux LTO).
-    const darwinLto = resolveConfig({ os: "darwin", arch: "aarch64", buildType: "Release", lto: true }, mockToolchain());
+    const darwinLto = resolveConfig(
+      { os: "darwin", arch: "aarch64", buildType: "Release", lto: true },
+      mockToolchain(),
+    );
     expect(darwinLto.crossLangLto).toBe(true);
     expect(rustForcesFuseLdLld(darwinLto)).toBe(true);
 

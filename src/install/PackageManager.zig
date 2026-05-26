@@ -1136,10 +1136,12 @@ const default_max_simultaneous_requests_for_bun_install_for_proxies = 64;
 
 /// A callback item that carries its parent context through the task queue.
 ///
-/// Callbacks initially enqueued from `enqueueDependencyWithMain` receive `null`
-/// as `parent_package_id` because dependency resolution with the correct parent
-/// context already occurred in the primary path (`doFlushDependencyQueue`).
-/// Callback re-processing is idempotent for already-resolved dependencies.
+/// Callbacks carry the `parent_package_id` of the package whose dependency tree
+/// triggered enqueue, so the override/resolution lookup can scope to the
+/// correct parent context. Callers in `processDependencyList`, manifest/git/github
+/// resolution, and `doFlushDependencyQueue` all pass the same
+/// `parent_package_id` they were themselves given. A `null` parent means the
+/// dependency was enqueued with no parent context (e.g. root-level).
 pub const TaskCallbackWithOwner = struct {
     parent_package_id: ?PackageID,
     context: TaskCallbackContext,

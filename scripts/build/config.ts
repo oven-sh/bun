@@ -766,21 +766,24 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     lto = false;
   }
 
-  // Cross-language LTO normally tracks `lto`. Gated off for aarch64-musl
-  // where LLVM's `globalopt` pass segfaults on the `bun_runtime` bitcode
-  // module during the merged link (CI build #53109), and for native Windows
-  // hosts — there `ld` is the host LLVM's lld-link and no rust-lld swap is
-  // wired up, so rustc's newer-LLVM bitcode would be unreadable at link
-  // time. Both halves still LTO independently when this is false — only the
-  // Rust↔C++ inlining is lost.
-  // Tracked in workarounds.ts ("globalopt-crash-aarch64-musl").
+  // Cross-language LTO normally tracks `lto`. Gated off only for native
+  // Windows hosts — there `ld` is the host LLVM's lld-link and no rust-lld
+  // swap is wired up, so rustc's newer-LLVM bitcode would be unreadable at
+  // link time. Both halves still LTO independently when this is false — only
+  // the Rust↔C++ inlining is lost.
+  // (aarch64-musl used to be gated too: LLVM's `globalopt` segfaulted on the
+  // per-crate `bun_runtime` bitcode module during the merged link, CI build
+  // #53109. That bitcode shape no longer exists — the Rust side is one fat,
+  // pre-merged module since the CARGO_PROFILE_RELEASE_LTO=fat switch — so
+  // the gate was lifted; see the deleted "globalopt-crash-aarch64-musl"
+  // workarounds.ts entry if it ever needs to come back.)
   // Darwin cross uses the same rust-lld swap as ELF: rustc's sysroot ships
   // `gcc-ld/ld64.lld` (rust-lld in the Mach-O flavor, built against rustc's
   // LLVM), which findRustLld() already resolves for darwin targets, so the
   // newer-LLVM bitcode rustc emits under -Clinker-plugin-lto is readable at
   // link time. Windows cross does the same with the `gcc-ld/lld-link`
   // sibling (COFF flavor) — see the wantRustLld swap below.
-  const crossLangLto = lto && !(windows && host.os === "windows") && !(arm64 && abi === "musl");
+  const crossLangLto = lto && !(windows && host.os === "windows");
 
   // Cross-language LTO bitcode-version skew: `-Clinker-plugin-lto` makes
   // rustc emit raw LLVM bitcode into libbun_rust.a. LLVM bitcode is

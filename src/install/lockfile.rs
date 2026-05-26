@@ -3336,14 +3336,19 @@ pub mod default_trusted_dependencies {
 impl Lockfile {
     pub fn has_trusted_dependency(
         &self,
-        _alias: &[u8],
+        alias: &[u8],
         pkg_name: &[u8],
         resolution: &Resolution,
     ) -> bool {
         if let Some(trusted_dependencies) = &self.trusted_dependencies {
-            let hash = SemverStringBuilder::string_hash(pkg_name) as u32;
+            let trusted_name = if resolution.tag == ResolutionTag::Npm {
+                pkg_name
+            } else {
+                alias
+            };
+            let hash = SemverStringBuilder::string_hash(trusted_name) as u32;
             return match trusted_dependencies.get(&hash) {
-                Some(name) => !name.is_empty() && **name == *pkg_name,
+                Some(name) => !name.is_empty() && **name == *trusted_name,
                 None => false,
             };
         }

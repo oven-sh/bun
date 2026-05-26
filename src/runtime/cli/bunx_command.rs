@@ -1258,22 +1258,6 @@ impl BunxCommand {
         // TODO(port): Zig used std.fs.cwd().makeOpenPath; map to bun_sys recursive mkdir + open.
         let bunx_install_dir = Fd::cwd().make_open_path(bunx_cache_dir)?;
 
-        {
-            let mut cache_root_buf = PathBuffer::uninit();
-            cache_root_buf[..bunx_cache_dir.len()].copy_from_slice(bunx_cache_dir);
-            cache_root_buf[bunx_cache_dir.len()] = 0;
-            if !Self::is_trusted_cache_root(
-                ZStr::from_buf(&cache_root_buf[..], bunx_cache_dir.len()),
-                uid,
-            ) {
-                Output::err_generic(
-                    "refusing to use bunx cache directory <b>{}<r> because it is not a directory owned by the current user. Remove it and try again.",
-                    format_args!("{}", BStr::new(bunx_cache_dir)),
-                );
-                Global::exit(1);
-            }
-        }
-
         'create_package_json: {
             // create package.json, but only if it doesn't exist
             let package_json = match bun_sys::File::create(

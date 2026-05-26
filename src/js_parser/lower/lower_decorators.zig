@@ -849,8 +849,13 @@ pub fn LowerDecorators(
                     if (prop.kind == .auto_accessor) {
                         // Base name keeps `_foo` for readability when the key is a
                         // string literal; `newSym` tacks on a unique suffix so the
-                        // same property name in another class doesn't collide.
-                        const accessor_base = if (prop.key.?.data == .e_string)
+                        // same property name in another class doesn't collide. Guard
+                        // on isIdentifier: a quoted key like `accessor "foo-bar"`
+                        // would produce `_foo-bar`, which is a valid base only for the
+                        // bundler (NumberRenamer sanitizes it) — the transpile path
+                        // (NoOpRenamer) prints original_name verbatim, so fall back to
+                        // `_accessor_storage` for non-identifier keys.
+                        const accessor_base = if (prop.key.?.data == .e_string and prop.key.?.data.e_string.isIdentifier(p.allocator))
                             std.fmt.allocPrint(p.allocator, "_{s}", .{prop.key.?.data.e_string.data}) catch unreachable
                         else
                             "_accessor_storage";
@@ -1000,9 +1005,11 @@ pub fn LowerDecorators(
                         dec_arg_count = 6;
                     }
                 } else if (k == 4) {
-                    // Decorated public auto-accessor → WeakMap
-                    const accessor_base = if (key_expr.data == .e_string)
-                        std.fmt.allocPrint(p.allocator, "_{s}", .{key_expr.data.e_string.data}) catch unreachable
+                    // Decorated public auto-accessor → WeakMap. See the
+                    // undecorated-accessor site above for why non-identifier
+                    // string keys fall back to `_accessor_storage`.
+                    const accessor_base = if (prop.key.?.data == .e_string and prop.key.?.data.e_string.isIdentifier(p.allocator))
+                        std.fmt.allocPrint(p.allocator, "_{s}", .{prop.key.?.data.e_string.data}) catch unreachable
                     else
                         "_accessor_storage";
                     const wm_ref = newSym(p, .other, accessor_base);

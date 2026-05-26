@@ -1058,5 +1058,25 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("1 2\n");
       expect(exitCode).toBe(0);
     });
+
+    // A quoted accessor key with non-identifier chars (`"foo-bar"`) must not
+    // leak into the helper variable name. The bundler's NumberRenamer
+    // sanitizes it, but the no-bundle/transpile path uses NoOpRenamer, which
+    // prints the name verbatim — so `_foo-bar` would emit
+    // `var _foo-bar = new WeakMap` and fail to parse. We fall back to
+    // `_accessor_storage` for non-identifier keys instead.
+    test("non-identifier string accessor key stays a valid identifier (no-bundle)", async () => {
+      using dir = tempDir("es-dec-nonident-key", {
+        // .js so it isn't gated by the TS accessor-key parser limitation.
+        "entry.js": `
+          class Foo { accessor "foo-bar" = 1; }
+          console.log(new Foo()["foo-bar"]);
+        `,
+      });
+
+      const { stdout, exitCode } = await runBundled(String(dir), ["--no-bundle"], "entry.js");
+      expect(stdout).toBe("1\n");
+      expect(exitCode).toBe(0);
+    });
   });
 });

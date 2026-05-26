@@ -1473,11 +1473,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if prop.kind == PropertyKind::AutoAccessor {
                     // Base name keeps `_foo` for readability when the key is a
                     // string literal; `new_sym` tacks on a unique suffix so the
-                    // same property name in another class doesn't collide.
+                    // same property name in another class doesn't collide. Guard on
+                    // is_identifier: a quoted key like `accessor "foo-bar"` would
+                    // produce `_foo-bar`, valid only for the bundler (NumberRenamer
+                    // sanitizes it) — the transpile path (NoOpRenamer) prints
+                    // original_name verbatim, so fall back to `_accessor_storage`.
                     let accessor_base: &'a [u8] = 'brk: {
                         if let Some(k) = prop.key {
-                            if let js_ast::ExprData::EString(s) = &k.data {
-                                break 'brk p.bump_name2(b"_", &s.data);
+                            if let Some(mut s) = k.data.e_string() {
+                                if s.is_identifier(p.arena) {
+                                    break 'brk p.bump_name2(b"_", &s.data);
+                                }
                             }
                         }
                         b"_accessor_storage"
@@ -1720,10 +1726,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     dec_arg_count = 6;
                 }
             } else if k == 4 {
-                // Decorated public auto-accessor → WeakMap
+                // Decorated public auto-accessor → WeakMap. See the undecorated
+                // accessor site above for why non-identifier string keys fall back
+                // to `_accessor_storage`.
                 let accessor_base: &'a [u8] = 'brk: {
-                    if let js_ast::ExprData::EString(s) = &key_expr.data {
-                        break 'brk p.bump_name2(b"_", &s.data);
+                    if let Some(mut s) = key_expr.data.e_string() {
+                        if s.is_identifier(p.arena) {
+                            break 'brk p.bump_name2(b"_", &s.data);
+                        }
                     }
                     b"_accessor_storage"
                 };

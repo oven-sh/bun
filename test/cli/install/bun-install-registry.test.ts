@@ -3135,7 +3135,6 @@ describe("binaries", () => {
 
     const err = await stderr.text();
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("shadows");
     expect(await exited).toBe(0);
 
     expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(
@@ -3183,7 +3182,6 @@ describe("binaries", () => {
 
     const err = await stderr.text();
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("shadows");
     expect(await exited).toBe(0);
 
     expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(

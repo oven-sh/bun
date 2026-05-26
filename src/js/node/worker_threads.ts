@@ -300,6 +300,10 @@ class Worker extends EventEmitter {
   }
 
   get resourceLimits() {
+    // Node returns {} once the worker has stopped (its getter returns {} when
+    // the native handle is null). #onExitPromise is set to the numeric exit
+    // code in #onClose, so a number here means the worker has exited.
+    if (typeof this.#onExitPromise === "number") return {};
     return this.#resourceLimits;
   }
 

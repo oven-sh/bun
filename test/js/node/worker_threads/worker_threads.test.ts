@@ -165,6 +165,18 @@ describe("resourceLimits", () => {
     await worker.terminate();
   });
 
+  test("worker.resourceLimits is an empty object once the worker has stopped", async () => {
+    const worker = new Worker(`setInterval(() => {}, 1000);`, {
+      eval: true,
+      resourceLimits: { maxOldGenerationSizeMb: 16 },
+    });
+    const exited = once(worker, "exit");
+    expect(worker.resourceLimits).toMatchObject({ maxOldGenerationSizeMb: 16 });
+    await worker.terminate();
+    await exited;
+    expect(worker.resourceLimits).toEqual({});
+  });
+
   test("worker.resourceLimits is a defaulted object when no resourceLimits is passed", async () => {
     const worker = new Worker(`setInterval(() => {}, 1000);`, { eval: true });
     expect(worker.resourceLimits).toEqual({

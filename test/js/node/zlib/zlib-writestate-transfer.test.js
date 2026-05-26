@@ -11,7 +11,7 @@ import { bunEnv, bunExe } from "harness";
 describe("_writeState buffer lifetime", () => {
   // Run in a subprocess because an unpinned build corrupts stream bookkeeping
   // (or faults) rather than throwing.
-  it.each([
+  it.concurrent.each([
     ["Inflate", "deflateSync", "createInflate"],
     ["BrotliDecompress", "brotliCompressSync", "createBrotliDecompress"],
     ["ZstdDecompress", "zstdCompressSync", "createZstdDecompress"],

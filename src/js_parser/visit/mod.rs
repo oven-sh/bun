@@ -902,8 +902,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let csb_stmts = csb.stmts.slice();
                     let mut list = BumpVec::with_capacity_in(csb_stmts.len(), self.arena);
                     list.extend_from_slice(csb_stmts);
+                    self.class_static_init_depth += 1;
                     self.visit_stmts(&mut list, StmtsKind::FnBody)
                         .expect("unreachable");
+                    self.class_static_init_depth -= 1;
                     csb.stmts = Vec::from_bump_vec(list);
                     self.pop_scope();
 
@@ -1012,6 +1014,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if let Some(val) = property.initializer {
                     // if (property.flags.is_static and )
+                    let is_static_accessor_init = property.kind == PropertyKind::AutoAccessor
+                        && property.flags.contains(flags::Property::IsStatic);
+                    if is_static_accessor_init {
+                        self.class_static_init_depth += 1;
+                    }
                     if let Some(name) = name_to_keep {
                         let was_anon = val.is_anonymous_named();
                         let prev_dcn2 = self.decorator_class_name;
@@ -1029,6 +1036,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         self.decorator_class_name = prev_dcn2;
                     } else {
                         self.visit_expr(property.initializer.as_mut().unwrap());
+                    }
+                    if is_static_accessor_init {
+                        self.class_static_init_depth -= 1;
                     }
                 }
 

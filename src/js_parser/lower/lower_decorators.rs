@@ -137,161 +137,6 @@ fn can_be_class_binding_name(name: &[u8]) -> bool {
         && !is_eval_or_arguments(name)
 }
 
-// ── Private-name usage scan ──────────────────────────────────────────────────
-// `lower_impl` moves every class static block out of the class body so it runs
-// after decoration. A reference to one of the class's own private names
-// (`#a in x`, `this.#a`, …) inside such a block would then appear outside the
-// class and be a syntax error, so the lowering needs to know up front whether
-// that can happen in order to force private lowering. Traversal mirrors
-// `rewrite_private_accesses_in_expr`/`_stmts`, which is what rewrites the
-// references afterwards.
-
-fn expr_references_private_name(expr: &Expr, names: &HashMap<u32, ()>) -> bool {
-    match &expr.data {
-        js_ast::ExprData::EPrivateIdentifier(pi) => names.contains_key(&pi.ref_.inner_index()),
-        js_ast::ExprData::EIndex(e) => {
-            expr_references_private_name(&e.target, names)
-                || expr_references_private_name(&e.index, names)
-        }
-        js_ast::ExprData::EBinary(e) => {
-            expr_references_private_name(&e.left, names)
-                || expr_references_private_name(&e.right, names)
-        }
-        js_ast::ExprData::ECall(e) => {
-            expr_references_private_name(&e.target, names)
-                || e.args
-                    .slice()
-                    .iter()
-                    .any(|arg| expr_references_private_name(arg, names))
-        }
-        js_ast::ExprData::ENew(e) => {
-            expr_references_private_name(&e.target, names)
-                || e.args
-                    .slice()
-                    .iter()
-                    .any(|arg| expr_references_private_name(arg, names))
-        }
-        js_ast::ExprData::EUnary(e) => expr_references_private_name(&e.value, names),
-        js_ast::ExprData::EDot(e) => expr_references_private_name(&e.target, names),
-        js_ast::ExprData::ESpread(e) => expr_references_private_name(&e.value, names),
-        js_ast::ExprData::EIf(e) => {
-            expr_references_private_name(&e.test_, names)
-                || expr_references_private_name(&e.yes, names)
-                || expr_references_private_name(&e.no, names)
-        }
-        js_ast::ExprData::EAwait(e) => expr_references_private_name(&e.value, names),
-        js_ast::ExprData::EYield(e) => e
-            .value
-            .is_some_and(|v| expr_references_private_name(&v, names)),
-        js_ast::ExprData::EArray(e) => e
-            .items
-            .slice()
-            .iter()
-            .any(|item| expr_references_private_name(item, names)),
-        js_ast::ExprData::EObject(e) => e.properties.slice().iter().any(|prop| {
-            prop.key
-                .is_some_and(|k| expr_references_private_name(&k, names))
-                || prop
-                    .value
-                    .is_some_and(|v| expr_references_private_name(&v, names))
-                || prop
-                    .initializer
-                    .is_some_and(|init| expr_references_private_name(&init, names))
-        }),
-        js_ast::ExprData::ETemplate(e) => {
-            e.tag
-                .is_some_and(|tag| expr_references_private_name(&tag, names))
-                || e.parts()
-                    .iter()
-                    .any(|part| expr_references_private_name(&part.value, names))
-        }
-        js_ast::ExprData::EFunction(e) => {
-            stmts_reference_private_name(e.func.body.stmts.slice(), names)
-        }
-        js_ast::ExprData::EArrow(e) => stmts_reference_private_name(e.body.stmts.slice(), names),
-        _ => false,
-    }
-}
-
-fn stmts_reference_private_name(stmts: &[Stmt], names: &HashMap<u32, ()>) -> bool {
-    stmts.iter().any(|stmt| match &stmt.data {
-        js_ast::StmtData::SExpr(data) => expr_references_private_name(&data.value, names),
-        js_ast::StmtData::SReturn(data) => data
-            .value
-            .is_some_and(|v| expr_references_private_name(&v, names)),
-        js_ast::StmtData::SThrow(data) => expr_references_private_name(&data.value, names),
-        js_ast::StmtData::SLocal(data) => data.decls.slice().iter().any(|decl| {
-            decl.value
-                .is_some_and(|v| expr_references_private_name(&v, names))
-        }),
-        js_ast::StmtData::SIf(data) => {
-            expr_references_private_name(&data.test_, names)
-                || stmts_reference_private_name(core::slice::from_ref(&data.yes), names)
-                || data.no.is_some_and(|no| {
-                    stmts_reference_private_name(core::slice::from_ref(&no), names)
-                })
-        }
-        js_ast::StmtData::SBlock(data) => stmts_reference_private_name(data.stmts.slice(), names),
-        js_ast::StmtData::SFor(data) => {
-            data.init.is_some_and(|init| {
-                stmts_reference_private_name(core::slice::from_ref(&init), names)
-            }) || data
-                .test_
-                .is_some_and(|t| expr_references_private_name(&t, names))
-                || data
-                    .update
-                    .is_some_and(|u| expr_references_private_name(&u, names))
-                || stmts_reference_private_name(core::slice::from_ref(&data.body), names)
-        }
-        js_ast::StmtData::SForIn(data) => {
-            expr_references_private_name(&data.value, names)
-                || stmts_reference_private_name(core::slice::from_ref(&data.body), names)
-        }
-        js_ast::StmtData::SForOf(data) => {
-            expr_references_private_name(&data.value, names)
-                || stmts_reference_private_name(core::slice::from_ref(&data.body), names)
-        }
-        js_ast::StmtData::SWhile(data) => {
-            expr_references_private_name(&data.test_, names)
-                || stmts_reference_private_name(core::slice::from_ref(&data.body), names)
-        }
-        js_ast::StmtData::SDoWhile(data) => {
-            expr_references_private_name(&data.test_, names)
-                || stmts_reference_private_name(core::slice::from_ref(&data.body), names)
-        }
-        js_ast::StmtData::SSwitch(data) => {
-            expr_references_private_name(&data.test_, names)
-                || data.cases.slice().iter().any(|case| {
-                    case.value
-                        .is_some_and(|v| expr_references_private_name(&v, names))
-                        || stmts_reference_private_name(case.body.slice(), names)
-                })
-        }
-        js_ast::StmtData::STry(data) => {
-            stmts_reference_private_name(data.body.slice(), names)
-                || data
-                    .catch_
-                    .as_ref()
-                    .is_some_and(|c| stmts_reference_private_name(c.body.slice(), names))
-                || data
-                    .finally
-                    .as_ref()
-                    .is_some_and(|f| stmts_reference_private_name(f.stmts.slice(), names))
-        }
-        js_ast::StmtData::SLabel(data) => {
-            stmts_reference_private_name(core::slice::from_ref(&data.stmt), names)
-        }
-        js_ast::StmtData::SWith(data) => {
-            expr_references_private_name(&data.value, names)
-                || stmts_reference_private_name(core::slice::from_ref(&data.body), names)
-        }
-        js_ast::StmtData::SFunction(data) => {
-            stmts_reference_private_name(data.func.body.stmts.slice(), names)
-        }
-        _ => false,
-    })
-}
-
 // ── impl P ───────────────────────────────────────────────────────────────────
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -1458,12 +1303,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             BumpVec::<js_ast::StoreRef<G::ClassStaticBlock>>::new_in(bump);
         let mut prefix_stmts = BumpVec::<Stmt>::new_in(bump);
         let mut private_lowered_map: PrivateLoweredMap = PrivateLoweredMap::default();
-        // Storage WeakMaps of private auto-accessors whose names are referenced
-        // from code that gets moved out of the class body. Unlike
-        // `private_lowered_map`, these members keep their declaration on the
-        // class, so this map is only applied to the moved code (extracted
-        // static blocks, suffix expressions, …) and never to code retained in
-        // the class body.
         let mut extracted_accessor_map: PrivateLoweredMap = PrivateLoweredMap::default();
         let mut accessor_storage_counter: usize = 0;
         let mut emitted_private_adds: HashMap<u32, ()> = HashMap::default();
@@ -1479,70 +1318,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if cprop.kind == PropertyKind::ClassStaticBlock {
                     continue;
                 }
+                let is_private_key = cprop.key.is_some()
+                    && matches!(
+                        cprop.key.unwrap().data,
+                        js_ast::ExprData::EPrivateIdentifier(_)
+                    );
                 if cprop.ts_decorators.len_u32() > 0 {
                     has_any_decorated = true;
-                    if cprop.key.is_some()
-                        && matches!(
-                            cprop.key.unwrap().data,
-                            js_ast::ExprData::EPrivateIdentifier(_)
-                        )
-                    {
+                    if is_private_key {
                         has_any_private = true;
                         lower_all_private = true;
                         break;
                     }
                 }
-                if cprop.key.is_some()
-                    && matches!(
-                        cprop.key.unwrap().data,
-                        js_ast::ExprData::EPrivateIdentifier(_)
-                    )
-                {
+                if is_private_key {
                     has_any_private = true;
+                    if let js_ast::ExprData::EPrivateIdentifier(pi) = &cprop.key.unwrap().data
+                        && p.static_init_private_refs
+                            .contains_key(&pi.ref_.inner_index())
+                    {
+                        lower_all_private = true;
+                    }
                 }
             }
             if !lower_all_private && has_any_private && has_any_decorated {
                 lower_all_private = true;
-            }
-
-            // Static blocks and static auto-accessor initializers are moved out
-            // of the class body below so they run after decoration. If they
-            // reference a private name declared on this class, the reference
-            // would end up outside the class and be a syntax error, so those
-            // privates must be lowered to runtime helper calls as well.
-            if !lower_all_private && has_any_private {
-                let mut declared_privates: HashMap<u32, ()> = HashMap::default();
-                for cprop in cprops.iter() {
-                    if cprop.kind == PropertyKind::ClassStaticBlock {
-                        continue;
-                    }
-                    if let Some(key) = cprop.key
-                        && let js_ast::ExprData::EPrivateIdentifier(pi) = &key.data
-                    {
-                        declared_privates.insert(pi.ref_.inner_index(), ());
-                    }
-                }
-                for cprop in cprops.iter() {
-                    let references_private = if cprop.kind == PropertyKind::ClassStaticBlock {
-                        cprop.class_static_block_ref().is_some_and(|sb| {
-                            stmts_reference_private_name(sb.stmts.slice(), &declared_privates)
-                        })
-                    } else if cprop.kind == PropertyKind::AutoAccessor
-                        && cprop.flags.contains(Flags::Property::IsStatic)
-                    {
-                        // Static auto-accessor initializers are emitted after the
-                        // class as `__privateAdd(Class, storage, <init>)`.
-                        cprop.initializer.is_some_and(|init| {
-                            expr_references_private_name(&init, &declared_privates)
-                        })
-                    } else {
-                        false
-                    };
-                    if references_private {
-                        lower_all_private = true;
-                        break;
-                    }
-                }
             }
         }
 
@@ -1670,15 +1470,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         name
                     };
                     let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, accessor_name);
-                    // Record the storage WeakMap for private auto-accessors so that
-                    // references to them inside code that gets moved out of the
-                    // class body (extracted static blocks, lowered private method
-                    // bodies, suffix expressions, …) can be rewritten into runtime
-                    // helper calls like `__privateIn`/`__privateGet`. The
-                    // getter/setter pair stays declared on the class, and this map
-                    // is never applied to retained class code, so native access —
-                    // including update and compound assignment, which the rewriter
-                    // does not handle — keeps working there.
                     if let Some(k) = prop.key
                         && let js_ast::ExprData::EPrivateIdentifier(pi) = &k.data
                     {
@@ -2118,6 +1909,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.rewrite_private_accesses_in_expr(ini, &private_lowered_map);
                 }
             }
+            p.rewrite_private_accesses_in_stmts(
+                &mut constructor_inject_stmts,
+                &private_lowered_map,
+            );
+            for sp in static_private_add_blocks.iter_mut() {
+                if let Some(sb) = sp.class_static_block_mut() {
+                    p.rewrite_private_accesses_in_stmts(sb.stmts.slice_mut(), &private_lowered_map);
+                }
+            }
+        }
+
+        for (k, v) in extracted_accessor_map.iter() {
+            private_lowered_map.insert(*k, *v);
+        }
+
+        if !private_lowered_map.is_empty() {
             for entry in static_init_entries.iter_mut() {
                 if let Some(ini) = &mut entry.prop.initializer {
                     p.rewrite_private_accesses_in_expr(ini, &private_lowered_map);
@@ -2140,58 +1947,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             for elem in instance_field_decorate.iter_mut() {
                 p.rewrite_private_accesses_in_expr(elem, &private_lowered_map);
             }
-            // Initializers of non-decorated private fields/accessors were moved
-            // into `__privateAdd(...)` calls in the constructor, in static
-            // `__privateAdd` blocks, or in the suffix (static auto-accessors),
-            // so their private references need rewriting as well.
-            p.rewrite_private_accesses_in_stmts(
-                &mut constructor_inject_stmts,
-                &private_lowered_map,
-            );
-            for sp in static_private_add_blocks.iter_mut() {
-                if let Some(sb) = sp.class_static_block_mut() {
-                    p.rewrite_private_accesses_in_stmts(sb.stmts.slice_mut(), &private_lowered_map);
-                }
-            }
             for elem in suffix_exprs.iter_mut() {
                 p.rewrite_private_accesses_in_expr(elem, &private_lowered_map);
             }
             p.rewrite_private_accesses_in_stmts(&mut pre_eval_stmts, &private_lowered_map);
             p.rewrite_private_accesses_in_stmts(&mut prefix_stmts, &private_lowered_map);
-        }
-
-        // Private auto-accessors referenced from moved code keep their
-        // declaration on the class, so only the code that ends up outside the
-        // class body needs their references rewritten; retained class code
-        // keeps native access.
-        if !extracted_accessor_map.is_empty() {
-            for entry in static_init_entries.iter_mut() {
-                if let Some(ini) = &mut entry.prop.initializer {
-                    p.rewrite_private_accesses_in_expr(ini, &extracted_accessor_map);
-                }
-            }
-            for sb_ptr in extracted_static_blocks.iter_mut() {
-                // `StoreRef::DerefMut` — arena-owned, safe under the StoreRef invariant.
-                let sb = &mut **sb_ptr;
-                p.rewrite_private_accesses_in_stmts(sb.stmts.slice_mut(), &extracted_accessor_map);
-            }
-            for elem in static_non_field_elements.iter_mut() {
-                p.rewrite_private_accesses_in_expr(elem, &extracted_accessor_map);
-            }
-            for elem in instance_non_field_elements.iter_mut() {
-                p.rewrite_private_accesses_in_expr(elem, &extracted_accessor_map);
-            }
-            for elem in static_field_decorate.iter_mut() {
-                p.rewrite_private_accesses_in_expr(elem, &extracted_accessor_map);
-            }
-            for elem in instance_field_decorate.iter_mut() {
-                p.rewrite_private_accesses_in_expr(elem, &extracted_accessor_map);
-            }
-            for elem in suffix_exprs.iter_mut() {
-                p.rewrite_private_accesses_in_expr(elem, &extracted_accessor_map);
-            }
-            p.rewrite_private_accesses_in_stmts(&mut pre_eval_stmts, &extracted_accessor_map);
-            p.rewrite_private_accesses_in_stmts(&mut prefix_stmts, &extracted_accessor_map);
         }
 
         // ── Phase 6: Emit suffix ─────────────────────────

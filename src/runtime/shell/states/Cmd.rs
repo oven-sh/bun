@@ -756,18 +756,9 @@ impl Cmd {
                         })
                     };
                     if flags.stdin() {
-                        let copied_value = crate::jsc::array_buffer::ArrayBuffer::create_buffer(
-                            global,
-                            buf.byte_slice(),
-                        )?;
-                        let copied = copied_value
-                            .as_array_buffer(global)
-                            .expect("create_buffer returns a Uint8Array");
-                        stdio[STDIN_NO] =
-                            Stdio::ArrayBuffer(crate::jsc::array_buffer::ArrayBufferStrong {
-                                array_buffer: copied,
-                                held: crate::jsc::StrongOptional::create(copied.value, global),
-                            });
+                        stdio[STDIN_NO] = Stdio::Blob(crate::webcore::blob::Any::from_owned_slice(
+                            buf.byte_slice().to_vec(),
+                        ));
                     }
                     if flags.duplicate_out() {
                         stdio[STDOUT_NO] = mk_out();

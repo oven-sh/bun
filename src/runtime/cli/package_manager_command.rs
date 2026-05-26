@@ -376,12 +376,37 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             if pm.options.positionals.len() > 1
                 && strings::eql_comptime(pm.options.positionals[1], b"rm")
             {
+                #[cfg(unix)]
+                // SAFETY: getuid(2) is always-successful with no preconditions.
+                let uid = unsafe { libc::getuid() };
+                #[cfg(not(unix))]
+                let uid = bun_sys::windows::user_unique_id();
+
                 let mut had_err = false;
 
                 let mut env_map = bun_dotenv::Map::init();
                 let mut process_env = bun_dotenv::Loader::init(&mut env_map);
                 process_env.load_process()?;
                 let cache_dir = fetch_cache_directory_path(&mut process_env, None);
+
+                let mut deleted: usize = 0;
+                let mut bunx_root: Option<Vec<u8>> = None;
+                if !cache_dir.is_node_modules {
+                    let mut root = cache_dir.path.clone();
+                    while root.last() == Some(&Path::SEP) {
+                        root.pop();
+                    }
+                    root.push(Path::SEP);
+                    write!(&mut root, ".bunx-{}", uid).expect("unreachable");
+                    if let Ok(bunx_dir) = Dir::open(&root) {
+                        let mut bunx_iter = bun_sys::iterate_dir(bunx_dir.fd());
+                        while let Ok(Some(_)) = bunx_iter.next() {
+                            deleted += 1;
+                        }
+                        bunx_root = Some(root);
+                    }
+                }
+
                 let mut rm_buf = PathBuffer::uninit();
                 let rm_dir = match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
                     Ok(d) => d,
@@ -401,6 +426,13 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     }
                 };
                 rm_dir.close();
+
+                if let Some(bunx_root) = &bunx_root {
+                    if let Err(err) = bun_sys::delete_tree_absolute(bunx_root) {
+                        Output::err(err, "Could not delete {s}", (bstr::BStr::new(bunx_root),));
+                        had_err = true;
+                    }
+                }
 
                 if let Err(err) = bun_sys::delete_tree_absolute(rm_path) {
                     Output::err(err, "Could not delete {s}", (bstr::BStr::new(rm_path),));
@@ -426,19 +458,8 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
 
                     // This is to match 'bunx_command.BunxCommand.exec's logic
                     let mut prefix: Vec<u8> = Vec::new();
-                    #[cfg(unix)]
-                    {
-                        // SAFETY: getuid(2) is always-successful with no preconditions.
-                        write!(&mut prefix, "bunx-{}-", unsafe { libc::getuid() })
-                            .expect("unreachable");
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        write!(&mut prefix, "bunx-{}-", bun_sys::windows::user_unique_id())
-                            .expect("unreachable");
-                    }
+                    write!(&mut prefix, "bunx-{}-", uid).expect("unreachable");
 
-                    let mut deleted: usize = 0;
                     loop {
                         let entry = match iter.next() {
                             Ok(Some(e)) => e,

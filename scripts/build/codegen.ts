@@ -780,6 +780,10 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     // a declared output so the cargo edge re-invokes when bundle-modules.ts /
     // generate-js2native.ts changes — the includer shim's mtime never moves.
     resolve(cfg.codegenDir, "generated_js2native.rs"),
+    // Rust sibling of ResolvedSourceTag.zig: include!()'d by the
+    // `resolved_source_tag` module in src/jsc/lib.rs. Declared for the same
+    // reason as generated_js2native.rs.
+    resolve(cfg.codegenDir, "generated_resolved_source_tag.rs"),
   ];
 
   n.build({

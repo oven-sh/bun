@@ -120,12 +120,15 @@ static int us_sni_ex_idx = -1;
 static int us_ctx_cache_ex_idx = -1;
 static int us_ssl_reneg_state_idx = -1;
 static int us_ssl_listener_ex_idx = -1;
-/* `us_ssl_ctx_add_ca_pem` (node:tls `SecureContext.addCACert`) flips this
- * slot to !NULL. The client branch of `us_internal_ssl_attach` reads it to
- * skip its `SSL_set0_verify_cert_store(ssl, shared_default_roots)` override
- * — once user CAs were appended post-construction, the CTX's own store
- * carries them, and overriding would make the added CAs invisible at
- * handshake time. The pointer IS the value (NULL/!NULL), so no free_func. */
+/* Set when a CTX carries user CAs: by `us_ssl_ctx_add_ca_pem` (node:tls
+ * `SecureContext.addCACert`) and by the construction-time `options.ca` /
+ * `ca_file_name` / `request_cert` branches of `us_ssl_ctx_build_raw`. The
+ * client-attach paths — `us_internal_ssl_attach` here and Rust's `SSLWrapper`
+ * (via `us_ctx_has_user_ca`) — read it to skip their per-SSL
+ * `SSL_set0_verify_cert_store(ssl, shared_default_roots)` override: when set,
+ * the CTX's own store already carries the user CAs, and overriding would make
+ * them invisible at handshake time. The pointer IS the value (NULL/!NULL),
+ * so no free_func. */
 static int us_ctx_user_ca_idx = -1;
 #ifdef _WIN32
 static INIT_ONCE us_ex_idx_once = INIT_ONCE_STATIC_INIT;

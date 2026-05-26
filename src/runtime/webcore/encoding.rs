@@ -572,7 +572,7 @@ pub(crate) unsafe fn write_u8<const ENCODING: u8>(
         Encoding::Hex => Ok(strings::decode_hex_to_bytes_truncate(to_slice, input_slice)),
 
         Encoding::Base64 | Encoding::Base64url => {
-            Ok(bun_base64::decode(to_slice, input_slice).count)
+            Ok(bun_base64::decode_lenient(to_slice, input_slice))
         }
     }
 }
@@ -811,10 +811,10 @@ pub(crate) unsafe fn construct_from_u8<const ENCODING: u8>(
                 return Vec::new();
             }
 
-            let outlen = bun_base64::decode_len(slice);
+            let outlen = bun_base64::decode_lenient_len(slice.len());
             let mut to = vec![0u8; outlen];
 
-            let wrote = bun_base64::decode(&mut to[..outlen], slice).count;
+            let wrote = bun_base64::decode_lenient(&mut to[..outlen], slice);
             if wrote == 0 {
                 return Vec::new();
             }

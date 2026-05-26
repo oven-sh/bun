@@ -788,6 +788,69 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(() => Buffer.from("", "buffer")).toThrow(/encoding/);
       });
 
+      // Like Node.js, the base64 and base64url decoders are lenient: both
+      // alphabets are accepted, whitespace and any other non-alphabet
+      // characters are ignored, and decoding stops at the first '='.
+      forEachBase64("lenient decoding skips non-alphabet characters", encoding => {
+        expect(Buffer.from("Zm9v\x80YmFy", encoding).toString("latin1")).toBe("foobar");
+        expect(Buffer.from("Zm9v*YmFy", encoding).toString("latin1")).toBe("foobar");
+        expect(Buffer.from("Zm9v\x00YmFy", encoding).toString("latin1")).toBe("foobar");
+        expect(Buffer.from("\xffZm9vYmFy\x03", encoding).toString("latin1")).toBe("foobar");
+        expect(Buffer.from(" Z m 9\tv\nY\rm F y ", encoding).toString("latin1")).toBe("foobar");
+        expect(Buffer.from(" \n\t ", encoding).length).toBe(0);
+        // UTF-16 (two-byte) strings behave the same way
+        expect(Buffer.from("Zm9v\u0100YmFy", encoding).toString("latin1")).toBe("foobar");
+        expect(Buffer.from("Zm9vYmFy\u3000", encoding).toString("latin1")).toBe("foobar");
+      });
+
+      forEachBase64("lenient decoding accepts both alphabets in the same input", encoding => {
+        expect(Array.from(Buffer.from("-_+/", encoding))).toStrictEqual([0xfb, 0xff, 0xbf]);
+        expect(Buffer.from("PDw/Pz8+Pg==", encoding).toString("latin1")).toBe("<<???>>");
+        expect(Buffer.from("PDw_Pz8-Pg", encoding).toString("latin1")).toBe("<<???>>");
+      });
+
+      forEachBase64("lenient decoding stops at the first '='", encoding => {
+        expect(Buffer.from("Zm9v=YmFy", encoding).toString("latin1")).toBe("foo");
+        expect(Buffer.from("=Zm9vYmFy", encoding).length).toBe(0);
+        expect(Buffer.from("YW55=======", encoding).toString("latin1")).toBe("any");
+        expect(Buffer.from("Zm9vYmFy=", encoding).toString("latin1")).toBe("foobar");
+        expect(Buffer.from("Zg=", encoding).toString("latin1")).toBe("f");
+        // a single leftover character contributes nothing
+        expect(Buffer.from("Zm9vYmFyA", encoding).toString("latin1")).toBe("foobar");
+      });
+
+      forEachBase64("lenient decoding of long inputs", encoding => {
+        const expected = Buffer.alloc(6 * 1024, "foobar").toString("latin1");
+        const b64 = Buffer.alloc(8 * 1024, "Zm9vYmFy").toString("latin1");
+        expect(Buffer.from(b64, encoding).toString("latin1")).toBe(expected);
+        expect(Buffer.from(b64.replace(/(.{64})/g, "$1\n"), encoding).toString("latin1")).toBe(expected);
+        expect(Buffer.from(b64.replace(/(.{64})/g, "$1\x85"), encoding).toString("latin1")).toBe(expected);
+      });
+
+      forEachBase64("write() only reports bytes actually written", encoding => {
+        {
+          const b = Buffer.alloc(3, 0xaa);
+          expect(b.write("Zm9vYmFy", 0, encoding)).toBe(3);
+          expect(b.toString("latin1")).toBe("foo");
+        }
+        {
+          const b = Buffer.alloc(8, 0xaa);
+          expect(b.write("Zm9vYmFy", 2, 3, encoding)).toBe(3);
+          expect(Array.from(b)).toStrictEqual([0xaa, 0xaa, 0x66, 0x6f, 0x6f, 0xaa, 0xaa, 0xaa]);
+        }
+        {
+          // '=' early in the string: nothing is decoded and nothing is written
+          const b = Buffer.alloc(8, 0xaa);
+          expect(b.write("Z=m9vYmFy", 0, 3, encoding)).toBe(0);
+          expect(Array.from(b)).toStrictEqual(Array(8).fill(0xaa));
+        }
+        {
+          const b = Buffer.alloc(4, 0xaa);
+          expect(b.write("QQ==QUJD", 0, encoding)).toBe(1);
+          expect(Array.from(b)).toStrictEqual([0x41, 0xaa, 0xaa, 0xaa]);
+        }
+      });
+
       it("creating buffers larger than pool size", () => {
         const l = Buffer.poolSize + 5;
         const s = "h".repeat(l);

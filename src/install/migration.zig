@@ -333,6 +333,14 @@ pub fn migrateNPMLockfile(
         if (pkg.get("resolved") == null) {
             const version_prop = pkg.get("version");
             const pkg_name = packageNameFromPath(pkg_path);
+            // Scoped packages without a `resolved` URL can't be migrated reliably:
+            // bun would synthesize an npm-compat /-/ tarball URL, but GitHub
+            // Packages 302-redirects that URL to npmjs.com with the scope
+            // stripped, leading to 404s. Bail out of migration so bun does a
+            // fresh metadata-driven resolve where dist.tarball is honoured.
+            if (version_prop != null and pkg_name.len > 0 and pkg_name[0] == '@') {
+                return error.InvalidNPMLockfile;
+            }
             if (version_prop != null and pkg_name.len > 0) {
                 // construct registry url
                 const registry = manager.scopeForPackageName(pkg_name);

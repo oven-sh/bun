@@ -6179,4 +6179,13 @@ describe.concurrent("bytes that are not valid UTF-8 are not read as U+FFFD", () 
     ]);
     expect(exitCode).toBe(1);
   });
+
+  test("keyfile without certfile is parsed", () => {
+    const ini = `
+//registry.npmjs.org/:keyfile=/path/to/key.pem
+`;
+    const result = loadNpmrc(ini);
+    expect(result.default_registry_certfile).toEqual("");
+    expect(result.default_registry_keyfile).toEqual("/path/to/key.pem");
+  });
 });

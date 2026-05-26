@@ -81,6 +81,7 @@ const {
   8: _markAsUncloneable,
   9: _setEntryEvaluatedHook,
   10: _isNodeWorker,
+  11: _resourceLimits,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
@@ -93,9 +94,26 @@ const {
   (value: unknown) => void,
   (hook: () => void) => void,
   boolean,
+  NodeResourceLimits | null,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
+type NodeResourceLimits = import("node:worker_threads").ResourceLimits;
+
+// Bun does not enforce worker resource limits (JSC has no V8-style per-context
+// heap cap), but `worker.resourceLimits` and the module-level `resourceLimits`
+// export inside a worker echo the limits passed to the constructor, filling in
+// the same defaults Node does, so the documented API shape matches.
+// `stackSizeMb` defaults to 4; the rest default to -1 when not a number.
+function applyResourceLimits(raw: NodeResourceLimits | null | undefined): Required<NodeResourceLimits> {
+  const read = (value: unknown, fallback: number): number => (typeof value === "number" ? value : fallback);
+  return {
+    maxYoungGenerationSizeMb: read(raw?.maxYoungGenerationSizeMb, -1),
+    maxOldGenerationSizeMb: read(raw?.maxOldGenerationSizeMb, -1),
+    codeRangeSizeMb: read(raw?.codeRangeSizeMb, -1),
+    stackSizeMb: read(raw?.stackSizeMb, 4),
+  };
+}
 
 // Used to ensure that Blobs created to hold the source code for `eval: true` Workers get cleaned up
 // after their Worker exits
@@ -317,7 +335,9 @@ Object.defineProperty(MessagePort.prototype, kInspectCustom, {
   configurable: true,
 });
 
-let resourceLimits = {};
+// On the main thread this is `{}` (matching Node). Inside a worker it reflects
+// the limits the parent passed to the constructor, with Node's defaults filled.
+let resourceLimits = isMainThread ? {} : applyResourceLimits(_resourceLimits);
 
 const BUN_WORKER_STDIO_KEY = "@@bunWorkerThreadsStdio";
 const BUN_WORKER_MESSAGING_KEY = "@@bunWorkerThreadsMessaging";
@@ -928,6 +948,7 @@ class Worker extends EventEmitter {
   #stderr;
   #stdoutAutoPipe = false;
   #stderrAutoPipe = false;
+  #resourceLimits: Required<NodeResourceLimits>;
 
   // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
@@ -944,6 +965,7 @@ class Worker extends EventEmitter {
     options ??= {};
 
     this.#name = normalizeWorkerName(options.name);
+    this.#resourceLimits = applyResourceLimits(options.resourceLimits);
 
     const builtinsGeneratorHatesEval = "ev" + "a" + "l"[0];
     if (options[builtinsGeneratorHatesEval]) {
@@ -1096,6 +1118,10 @@ class Worker extends EventEmitter {
 
   get threadName() {
     return this.#exited ? null : this.#name;
+  }
+
+  get resourceLimits() {
+    return this.#resourceLimits;
   }
 
   ref() {

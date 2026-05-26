@@ -384,9 +384,11 @@ describe("worker_threads", () => {
     // Wait for the worker to self-exit (its setTimeout fires process.exit(2)
     // after 10 ms) — a fixed sleep races with worker startup, which under
     // debug/ASAN can exceed 200 ms.
-    const [code] = await once(worker, "exit");
-    await worker.terminate();
-    expect(code).toBe(2);
+    const [exitCode] = await once(worker, "exit");
+    expect(exitCode).toBe(2);
+    // terminate() after the worker has already exited resolves to undefined,
+    // matching Node (it only yields a code when it stops a running worker).
+    expect(await worker.terminate()).toBeUndefined();
   });
 
   test.todo("worker terminating forcefully properly interrupts", async () => {

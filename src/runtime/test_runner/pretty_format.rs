@@ -148,9 +148,10 @@ pub struct FormatOptions {
     pub flush: bool,
     pub quote_strings: bool,
     /// When non-zero, non-integer doubles are rounded to this many significant
-    /// figures before serialization (à la `Number.prototype.toPrecision`) so
-    /// snapshot output stays stable across CPU architectures. 0 = use the
-    /// default shortest round-trip representation. Set from
+    /// figures before serialization — the same rounding as
+    /// `Number.prototype.toPrecision`, with trailing zeros trimmed — so snapshot
+    /// output stays stable across CPU architectures. 0 = use the default
+    /// shortest round-trip representation. Set from
     /// `[test] snapshotFloatPrecision` in bunfig; must be in 1..=100.
     pub float_significant_digits: u32,
 }
@@ -1429,9 +1430,13 @@ impl<'a> Formatter<'a> {
                     } else {
                         // Zig `"{d}"` preserves the sign bit on -0; WTF::dtoa does not.
                         let mut dtoa_buf = [0u8; 124];
-                        let dtoa = if self.float_significant_digits != 0 {
-                            // Snapshot opted into precision rounding (à la
-                            // `toPrecision`) so output is stable across CPUs.
+                        // Only non-integer doubles opt into precision rounding:
+                        // integer-valued doubles (e.g. 1e21, or integers beyond
+                        // the int32 range) must keep every digit rather than be
+                        // rounded into scientific notation.
+                        let dtoa = if self.float_significant_digits != 0 && num.fract() != 0.0 {
+                            // Stable across CPU architectures; uses `toPrecision`
+                            // rounding with trailing zeros trimmed.
                             bun_fmt::FormatDouble::to_fixed_precision_with_negative_zero(
                                 &mut dtoa_buf,
                                 num,

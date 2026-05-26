@@ -14,8 +14,10 @@ extern "C" [[ZIG_EXPORT(nothrow)]] size_t WTF__dtoa(char* buf_124_bytes, double 
     return WTF::numberToStringAndSize(number, buf).size();
 }
 
-/// Round `number` to `significantDigits` significant figures and format it,
-/// matching `Number.prototype.toPrecision`. Snapshot serialization uses this so
+/// Round `number` to `significantDigits` significant figures and format it.
+/// This uses the same rounding as `Number.prototype.toPrecision`, but trims
+/// trailing zeros (so `1.2` stays `"1.2"` rather than padding to `"1.20"`),
+/// which keeps snapshot output clean. Snapshot serialization uses this so
 /// floating-point results stay stable across CPU architectures (the same double
 /// can otherwise format with a differing final digit on different FPUs).
 /// `buf_124_bytes` must be 124 bytes; `significantDigits` must be in 1..=100.

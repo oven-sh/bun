@@ -43,6 +43,28 @@ describe("[test] snapshotFloatPrecision", () => {
     expect(value).toBe((435.64026096753474).toPrecision(13));
   });
 
+  test("trims trailing zeros (unlike toPrecision's padding)", async () => {
+    const { value, exitCode } = await generateSnapshot(15, "0.5");
+    expect(exitCode).toBe(0);
+    // toPrecision would pad to "0.500000000000000"; snapshots keep it clean.
+    expect((0.5).toPrecision(15)).toBe("0.500000000000000");
+    expect(value).toBe("0.5");
+  });
+
+  test("does not round integer-valued doubles", async () => {
+    // A large integer (beyond int32) is stored as a double; rounding it to 15
+    // significant figures would mangle it into scientific notation, so the
+    // precision setting must leave it identical to the default serialization.
+    const big = "123456789012345680";
+    const [withPrecision, withoutPrecision] = await Promise.all([
+      generateSnapshot(15, big),
+      generateSnapshot(null, big),
+    ]);
+    expect(withPrecision.exitCode).toBe(0);
+    expect(withoutPrecision.exitCode).toBe(0);
+    expect(withPrecision.value).toBe(withoutPrecision.value);
+  });
+
   test("is disabled by default (full-precision round-trip)", async () => {
     const { value, exitCode } = await generateSnapshot(null, "Math.sin(1)");
     expect(exitCode).toBe(0);

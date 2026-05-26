@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { expect, it } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -158,6 +158,85 @@ it(
     } finally {
       runner.stdin.end();
       runner.kill();
+    }
+  },
+  timeout,
+);
+
+// Terminal-mode variant of the same regression, driven through a PTY so
+// readline goes down the emitKeypressEvents/raw-mode path (the setup in the
+// original #15027 report). node:readline is cached in the
+// InternalModuleRegistry and is not re-evaluated on reload, so its
+// module-local keypress-decoder state persists on process.stdin; the reset
+// has to clear it so the fresh interface re-installs the data→keypress
+// bridge. Before the fix every line is echoed once per leaked interface;
+// with an incomplete reset (listeners stripped but decoder state kept) the
+// interface goes silent instead.
+it.skipIf(isWindows)(
+  "should keep terminal readline working across --hot reloads without duplicating input",
+  async () => {
+    using dir = tempDir("hot-stdin-pty", {
+      "index.js": /* js */ `
+        import readline from "node:readline";
+
+        globalThis.__reloadCount ??= 0;
+        globalThis.__reloadCount++;
+        const myLoad = globalThis.__reloadCount;
+
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+        rl.on("line", line => {
+          console.log(\`ECHO \${myLoad} \${line}\`);
+        });
+
+        console.log(\`READY \${myLoad} data=\${process.stdin.listenerCount("data")} keypress=\${process.stdin.listenerCount("keypress")} resize=\${process.stdout.listenerCount("resize")}\`);
+      `,
+    });
+    const fixture = join(String(dir), "index.js");
+    const driver = join(import.meta.dir, "hot-stdin-pty.py");
+    const python = Bun.which("python3") ?? Bun.which("python") ?? "python";
+
+    await using proc = spawn({
+      cmd: [python, driver, bunExe(), "--hot", "run", fixture],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    try {
+      // PTY echoes our keystrokes back mixed with program output; strip
+      // control sequences and keep the program's own ECHO/READY lines.
+      const lines = stdout
+        .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "")
+        .split(/\r?\n/)
+        .map(l => l.trim())
+        .filter(l => l.startsWith("ECHO ") || l.startsWith("READY "));
+
+      // Both loads came up with exactly one stdin data listener (the
+      // keypress bridge), one keypress listener, and one stdout resize
+      // listener — i.e. nothing was duplicated or lost after the reload.
+      const readyLines = lines.filter(l => l.startsWith("READY "));
+      expect(readyLines.length).toBeGreaterThanOrEqual(2);
+      for (const l of readyLines) {
+        expect(l).toMatch(/^READY \d+ data=1 keypress=1 resize=1$/);
+      }
+
+      // "hello" (before reload) and "world" (after reload) were each handled
+      // exactly once, and "world" by a post-reload interface.
+      const helloEchoes = lines.filter(l => /^ECHO \d+ hello$/.test(l));
+      expect(helloEchoes).toEqual(["ECHO 1 hello"]);
+      const worldEchoes = lines.filter(l => /^ECHO \d+ world$/.test(l));
+      expect(worldEchoes).toHaveLength(1);
+      const worldLoad = Number(/^ECHO (\d+) world$/.exec(worldEchoes[0])![1]);
+      expect(worldLoad).toBeGreaterThan(1);
+
+      expect(exitCode).toBe(0);
+    } catch (e) {
+      console.error("pty stdout:", JSON.stringify(stdout));
+      console.error("pty stderr:", stderr);
+      throw e;
     }
   },
   timeout,

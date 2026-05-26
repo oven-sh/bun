@@ -754,18 +754,25 @@ impl Cmd {
                             held: crate::jsc::StrongOptional::create(buf.value, global),
                         })
                     };
+                    let mk_out = || {
+                        let pinned = jsval.as_pinned_arraybuffer(global);
+                        Stdio::ArrayBuffer(crate::jsc::array_buffer::ArrayBufferStrong {
+                            array_buffer: pinned.unwrap_or(buf),
+                            held: crate::jsc::StrongOptional::create(buf.value, global),
+                        })
+                    };
                     if flags.stdin() {
                         stdio[STDIN_NO] = mk();
                     }
                     if flags.duplicate_out() {
-                        stdio[STDOUT_NO] = mk();
-                        stdio[STDERR_NO] = mk();
+                        stdio[STDOUT_NO] = mk_out();
+                        stdio[STDERR_NO] = mk_out();
                     } else {
                         if flags.stdout() {
-                            stdio[STDOUT_NO] = mk();
+                            stdio[STDOUT_NO] = mk_out();
                         }
                         if flags.stderr() {
-                            stdio[STDERR_NO] = mk();
+                            stdio[STDERR_NO] = mk_out();
                         }
                     }
                 } else if let Some(blob_ref) = jsval.as_class_ref::<crate::webcore::Blob>() {

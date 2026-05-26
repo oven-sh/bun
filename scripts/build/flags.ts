@@ -956,23 +956,20 @@ export const linkerFlags: Flag[] = [
       "/LTCG",
       "/OPT:REF",
       // SAFEICF (lld-specific) only folds functions whose address is never
-      // taken, so JSC ClassInfo native constructors — stored as pointers and
-      // compared for identity — stay distinct. /OPT:ICF (aggressive) folded
+      // taken (it honours .llvm_addrsig; objects without one — MSVC CRT
+      // import libs, the prebuilt ICU data — are treated conservatively), so
+      // JSC ClassInfo native constructors — stored as pointers and compared
+      // for identity — stay distinct. /OPT:ICF (aggressive) folded
       // callBigIntConstructor with constructBigInt → "not a constructor",
       // and broke expect.any(Constructor); see commit 218430c731. Mirrors
       // Linux `-Wl,-icf=safe`.
       //
-      // TEMPORARILY /OPT:NOICF instead of /OPT:SAFEICF: re-enabling
-      // `panic = "abort"` (Cargo.toml) exposes a Windows-only `Strong<Impl>*
-      // corrupted (0x1)` in the fs/promises writeFile async-iterable path
-      // (#53265+). Under abort's no-landing-pad codegen SAFEICF folds enough
-      // Rust+C++ bodies that PDB symbolication maps the crash to
-      // lol_html/ucnv_MBCS/JSBigInt — useless for finding the owning struct.
-      // `bun-profile.exe` and `bun.exe` share this link (strip-only diff), so
-      // NOICF can't be confined to the profile binary alone; once the
-      // corruption is root-caused via `llvm-symbolizer --relative-address`
-      // against the NOICF PDB, revert this to `/OPT:SAFEICF`.
-      "/OPT:NOICF",
+      // (This was temporarily /OPT:NOICF so PDB symbolication stayed
+      // unfolded while chasing the Windows-only `Strong<Impl>* corrupted
+      // (0x1)` crash in the fs/promises writeFile async-iterable path under
+      // `panic = "abort"` — flip it back locally if that investigation needs
+      // an unfolded PDB again.)
+      "/OPT:SAFEICF",
       // String-literal tail merging (lld-specific; MSVC link.exe has no
       // equivalent). Helps .rdata the same way --icf handles .rodata.cst on ELF.
       "/OPT:lldtailmerge",

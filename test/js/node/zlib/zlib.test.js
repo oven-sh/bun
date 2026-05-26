@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import * as fs from "node:fs";
 import { resolve } from "node:path";
@@ -734,5 +734,47 @@ describe("dictionary buffer lifetime", () => {
     await promise;
 
     expect(Buffer.concat(chunks).toString()).toBe(input.toString());
+  });
+});
+
+describe("_writeState buffer lifetime", () => {
+  // The native handle caches a raw pointer into `_writeState`'s backing store
+  // at init() and writes two u32s through it on every async-write completion.
+  // Detaching that backing store while a write is in flight must not leave the
+  // native side writing through a stale pointer — the buffer is pinned for the
+  // handle's lifetime so transfer() becomes a copy and the stream still
+  // produces correct output. Run in a subprocess because an unpinned build
+  // corrupts stream bookkeeping (or faults) rather than throwing.
+  it.each([
+    ["Inflate", "deflateSync", "createInflate"],
+    ["BrotliDecompress", "brotliCompressSync", "createBrotliDecompress"],
+    ["ZstdDecompress", "zstdCompressSync", "createZstdDecompress"],
+  ])("%s decompresses correctly when _writeState.buffer is transferred mid-write", async (_, compress, create) => {
+    const script = `
+      const z = require("zlib");
+      const raw = Buffer.alloc(65536, 0x41);
+      const d = z.${compress}(raw);
+      const s = z.${create}({ chunkSize: 65536 });
+      const out = [];
+      s.on("error", e => { console.log("err:" + e.message); process.exit(1); });
+      s.on("data", c => out.push(c));
+      s.on("end", () => {
+        const r = Buffer.concat(out);
+        if (r.length === 65536 && r.equals(raw)) console.log("OK");
+        else console.log("BAD len=" + r.length);
+      });
+      s.write(d);
+      s._writeState.buffer.transfer(0);
+      s.end();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
   });
 });

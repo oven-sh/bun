@@ -45,6 +45,7 @@ mod _impl {
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         pub stream: JsCell<Context>,
         pub write_result: Cell<Option<*mut u32>>,
+        pub pinned_write_state: Cell<JSValue>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
         pub write_in_progress: Cell<bool>,
@@ -98,6 +99,7 @@ mod _impl {
                 global_this: bun_ptr::BackRef::new(global),
                 stream: JsCell::new(stream),
                 write_result: Cell::new(None),
+                pinned_write_state: Cell::new(JSValue::ZERO),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
@@ -168,7 +170,6 @@ mod _impl {
                     )
                     .throw());
             }
-            let write_result = write_result_slice.as_mut_ptr();
             let write_callback =
                 validators::validate_function(global, "writeCallback", arguments.ptr[5])?;
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice() outlives
@@ -191,7 +192,16 @@ mod _impl {
                 Some(dictionary_buf.byte_slice())
             };
 
-            self.write_result.set(Some(write_result));
+            // Pin the `_writeState` backing store so `transfer()` can't free it
+            // under the raw pointer cached below (written through on every
+            // async-write completion by `flush_write_result`). Pinning a small
+            // FastTypedArray relocates its storage, so read the pointer *after*.
+            let Some(mut write_result_buf) = write_result_value.as_pinned_arraybuffer(global) else {
+                return Err(global.throw_out_of_memory());
+            };
+            self.pinned_write_state.set(write_result_value);
+            self.write_result
+                .set(Some(write_result_buf.as_u32().as_mut_ptr()));
             js::write_callback_set_cached(
                 this_value,
                 global,

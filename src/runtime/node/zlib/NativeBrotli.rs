@@ -88,6 +88,7 @@ mod _impl {
         /// Points into a JS `Uint32Array` (`this._writeState`). Kept alive because
         /// the JS object is tied to the native handle as `_handle[owner_symbol]`.
         pub write_result: Cell<Option<*mut u32>>,
+        pub pinned_write_state: Cell<JSValue>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         // TODO(port): Strong on m_ctx self-ref → JsRef per PORTING.md §JSC (Strong back-ref to own wrapper leaks)
         pub this_value: JsCell<StrongOptional>, // Strong.Optional — empty-initialised
@@ -146,6 +147,7 @@ mod _impl {
                 global_this: bun_ptr::BackRef::new(global_this),
                 stream: JsCell::new(stream),
                 write_result: Cell::new(None),
+                pinned_write_state: Cell::new(JSValue::ZERO),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
@@ -217,7 +219,6 @@ mod _impl {
                     )
                     .throw());
             }
-            let write_result = write_result_slice.as_mut_ptr();
             let write_callback =
                 validators::validate_function(global_this, "writeCallback", arguments.ptr[2])?;
 
@@ -240,7 +241,18 @@ mod _impl {
                 ));
             }
 
-            self.write_result.set(Some(write_result));
+            // Pin the `_writeState` backing store so `transfer()` can't free it
+            // under the raw pointer cached below (written through on every
+            // async-write completion by `flush_write_result`). Pinning a small
+            // FastTypedArray relocates its storage, so read the pointer *after*.
+            let Some(mut write_result_buf) =
+                write_result_value.as_pinned_arraybuffer(global_this)
+            else {
+                return Err(global_this.throw_out_of_memory());
+            };
+            self.pinned_write_state.set(write_result_value);
+            self.write_result
+                .set(Some(write_result_buf.as_u32().as_mut_ptr()));
 
             js::write_callback_set_cached(
                 this_value,

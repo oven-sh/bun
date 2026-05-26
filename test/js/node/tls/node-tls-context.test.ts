@@ -515,10 +515,10 @@ describe("tls.createSecureContext().context.addCACert", () => {
 
   it("accepts createSecureContext(null) (Node parity)", () => {
     // Node treats `undefined` / `null` as an empty dictionary. Bindgen's
-    // converter throws ERR_INVALID_ARG_TYPE on non-objects, so the Zig
-    // constructor/intern paths short-circuit on `isUndefinedOrNull` before
-    // reaching it. The sibling "is a function" test above covers the
-    // no-arg form; this one covers explicit `null`.
+    // converter throws ERR_INVALID_ARG_TYPE on non-objects, so the
+    // constructor/intern paths (Rust `SecureContext.rs`) short-circuit on
+    // `is_undefined_or_null()` before reaching it. The sibling "is a function"
+    // test above covers the no-arg form; this one covers explicit `null`.
     const ctx = tls.createSecureContext(null);
     expect(typeof ctx.context.addCACert).toBe("function");
   });

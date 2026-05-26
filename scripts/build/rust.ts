@@ -512,10 +512,11 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   if (!cfg.windows) rustflags.push(`-Clink-arg=-fuse-ld=lld`);
   if (cfg.crossLangLto) {
     // Cross-language LTO: emit LLVM bitcode (not machine code) into the .a
-    // so the final lld `-flto=thin` link sees through Rust↔C++ call edges.
-    // `linker-plugin-lto` supersedes Cargo's `[profile.release] lto="fat"`
-    // (cargo skips its own LTO pass and defers to the linker), so there's no
-    // double-LTO cost.
+    // so the final lld LTO link sees through Rust↔C++ call edges. The shape
+    // of that bitcode must match the platform's C++ LTO mode — thin
+    // (per-CGU, ThinLTO-summaried) on darwin, fat (pre-merged by rustc,
+    // summary-less) on ELF — selected via the CARGO_PROFILE_RELEASE_LTO
+    // override in the env block below.
     //
     // Bitcode-format compatibility: lld must be able to read rustc's bitcode.
     // LLVM bitcode is forward-compatible (newer reads older), so this works
@@ -537,13 +538,11 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     //     link.
     //   - linux (full LTO): -fwhole-program-vtables on ELF defaults the
     //     split ON for C++, so every C++ module (ours and the WebKit -lto
-    //     prebuilts) carries EnableSplitLTOUnit=1. The Rust ThinLTO
-    //     summaries must say 1 to match → -Zsplit-lto-unit.
-    //
-    // The CARGO_PROFILE_RELEASE_LTO override below keeps the per-CGU
-    // ThinLTO summaries that the consistency check (and cross-language
-    // importing) reads — `lto = "fat"` would pre-merge all crates into one
-    // summary-less blob.
+    //     prebuilts) carries EnableSplitLTOUnit=1. The Rust modules'
+    //     EnableSplitLTOUnit module flag must say 1 to match →
+    //     -Zsplit-lto-unit. (The flag is stamped per-CGU at module creation,
+    //     so it survives rustc's fat-LTO pre-merge — see the
+    //     CARGO_PROFILE_RELEASE_LTO note in the env block below.)
     //
     // (`-Clink-arg=-fuse-ld=lld` is pushed unconditionally above — under LTO
     // it doubles as making rustc's bitcode link go through the LTO-aware
@@ -617,14 +616,30 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     }
   }
   if (cfg.crossLangLto) {
-    // The workspace `[profile.release]` sets `lto = "fat"` so non-LTO release
-    // builds (where the rust .a is linked as native code) still get
-    // intra-Rust inlining. With `-Clinker-plugin-lto` that pre-merge is
-    // wasted work — the linker re-merges everything anyway — and it strips
-    // the per-module summary index lld needs for the EnableSplitLTOUnit
-    // consistency check (see the EnableSplitLTOUnit note above). Override to
-    // `off` so each crate's bitcode reaches lld with its summary intact.
-    env.CARGO_PROFILE_RELEASE_LTO = "off";
+    // The Rust bitcode's shape must match the platform's C++ LTO mode so both
+    // sides land in the same LTO partition at link time and can exchange
+    // function bodies. (The workspace `[profile.release] lto = "fat"` exists
+    // for non-LTO release builds, where the rust .a is linked as
+    // already-codegen'd machine code and still wants intra-Rust inlining.)
+    //
+    //   - darwin (ThinLTO link): `off`. Each crate's per-CGU bitcode keeps
+    //     its ThinLTO summary, so the whole link is one uniform ThinLTO
+    //     graph and cross-module importing works across Rust↔C++/JSC.
+    //     `fat` would pre-merge the crates into one summary-less blob the
+    //     thin link can't import from (and rustc's serial pre-merge is
+    //     wasted work — the linker schedules the backends itself).
+    //   - ELF (full-LTO link — see the -flto=full entry in flags.ts): `fat`.
+    //     rustc pre-merges every crate (including the prebuilt std's
+    //     embedded bitcode) into ONE summary-less regular-LTO module, which
+    //     lld then merges into the same regular-LTO partition as the C++
+    //     `-flto=full` objects — that merge is what gives Rust↔C++
+    //     cross-language inlining under full LTO. With `off`, the per-CGU
+    //     ThinLTO-summaried modules are processed as ThinLTO partitions
+    //     instead, which (a) never exchange function bodies with the C++
+    //     regular partition (no cross-language inlining at all), and
+    //     (b) go through the LLVM 22 ThinLTO backend pipeline that
+    //     miscompiles JSC on linux.
+    env.CARGO_PROFILE_RELEASE_LTO = cfg.darwin ? "off" : "fat";
   } else if (cfg.asan) {
     // release-asan has `cfg.lto` forced off (config.ts), but without this
     // override Cargo.toml's `[profile.release] lto = "fat"` still applies —

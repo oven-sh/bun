@@ -155,10 +155,11 @@ const buildPlatforms = [
   // and scripts/build/flags.ts), the same model as macOS above. There is no
   // native Windows build lane: the Windows fleet only runs tests, signing,
   // and baseline verification, against these artifacts (see testPlatforms),
-  // and these are the Windows artifacts the release ships. The x64
-  // (non-baseline) lane builds with ThinLTO + cross-language LTO (the
-  // ci-release default for windows x64 cross — see config.ts); baseline and
-  // arm64 have no -lto WebKit prebuilt and stay non-LTO.
+  // and these are the Windows artifacts the release ships. All three lanes
+  // build without LTO for now: the windows x64 cross toolchain supports
+  // ThinLTO + cross-language LTO (--lto=on), but LLVM's thin backends
+  // miscompile JSC on x86-64 at -O1+, so it is not the default — see the
+  // ltoDefault comment in scripts/build/config.ts.
   { os: "windows", arch: "x64", crossCompile: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   {
     os: "windows",

@@ -75,14 +75,21 @@ function resolveWindowsCross(partial: PartialConfig = {}, toolchain = mockToolch
 }
 
 describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)", () => {
-  test("ci release x64 cross builds default to ThinLTO with cross-language LTO", () => {
+  test("ci release x64 cross builds default to non-LTO; --lto=on opts into ThinLTO with cross-language LTO", () => {
     const cfg = resolveWindowsCross();
     expect(cfg.windows).toBe(true);
     expect(cfg.crossTarget).toBe("x86_64-pc-windows-msvc");
-    expect(cfg.lto).toBe(true);
+    // Not the default: LLVM's ThinLTO backends miscompile JSC on x86-64 at
+    // -O1+ (see the ltoDefault comment in config.ts).
+    expect(cfg.lto).toBe(false);
+    expect(cfg.crossLangLto).toBe(false);
+
+    // The toolchain support is still wired up behind --lto=on.
+    const opted = resolveWindowsCross({ lto: true });
+    expect(opted.lto).toBe(true);
     // Rust↔C++ inlining: rustc emits bitcode (-Clinker-plugin-lto) and the
     // final lld-link runs one ThinLTO graph across both halves.
-    expect(cfg.crossLangLto).toBe(true);
+    expect(opted.crossLangLto).toBe(true);
   });
 
   test("no -lto WebKit prebuilt exists for arm64 or baseline — LTO is forced off there", () => {

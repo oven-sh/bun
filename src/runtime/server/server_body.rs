@@ -2777,12 +2777,33 @@ where
         Ok(this_value)
     }
 
+    fn remote_address_is_loopback(resp: &mut uws_sys::NewAppResponse<SSL>) -> bool {
+        if let Some(address) = resp.get_remote_socket_info() {
+            // IPv4 loopback addresses
+            if address.ip.starts_with(b"127.") {
+                return true;
+            }
+            // IPv6 loopback addresses
+            if address.ip.starts_with(b"::ffff:127.")
+                || address.ip == b"::1"
+                || address.ip == b"0:0:0:0:0:0:0:1"
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn on_bun_info_request(
         &mut self,
         req: &mut uws::Request,
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
         jsc::mark_binding!();
+        if !Self::remote_address_is_loopback(resp) {
+            req.set_yield(true);
+            return;
+        }
         self.pending_requests += 1;
         req.set_yield(false);
         // PERF(port): was stack-fallback alloc
@@ -3418,18 +3439,8 @@ where
                 break 'brk false;
             }
 
-            if let Some(address) = resp.get_remote_socket_info() {
-                // IPv4 loopback addresses
-                if address.ip.starts_with(b"127.") {
-                    break 'brk true;
-                }
-                // IPv6 loopback addresses
-                if address.ip.starts_with(b"::ffff:127.")
-                    || address.ip == b"::1"
-                    || address.ip == b"0:0:0:0:0:0:0:1"
-                {
-                    break 'brk true;
-                }
+            if Self::remote_address_is_loopback(resp) {
+                break 'brk true;
             }
 
             false

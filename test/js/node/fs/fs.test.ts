@@ -1178,14 +1178,10 @@ it("readdirSync throws when given a file path with trailing slash", () => {
   }
 });
 
-// The error cleanup path previously called MarkedArrayBuffer.destroy() on
-// structs stored by-value inside the entries ArrayList, which passed interior
-// ArrayList pointers to the allocator (freeing entries.items.ptr for index 0 and
-// then freeing it again in entries.deinit()). A self-referential symlink makes
-// the recursive walk fail with ELOOP after entries have been collected, exercising
-// that cleanup path.
+// Like Node, a self-referential symlink is listed but not descended into; the
+// recursive walk completes instead of failing with ELOOP.
 it.skipIf(isWindows)(
-  "readdirSync({encoding: 'buffer', recursive: true}) frees entries safely when a subdir fails to open",
+  "readdirSync({encoding: 'buffer', recursive: true}) lists a symlink loop without throwing",
   async () => {
     using dir = tempDir("readdir-buffer-error", {
       "a.txt": "a",
@@ -1200,16 +1196,13 @@ it.skipIf(isWindows)(
         "-e",
         `
           const fs = require("fs");
-          let code;
+          const results = [];
           for (let i = 0; i < 2; i++) {
-            try {
-              fs.readdirSync(${JSON.stringify(String(dir))}, { encoding: "buffer", recursive: true });
-              throw new Error("expected readdirSync to throw");
-            } catch (e) {
-              code = e.code;
-            }
+            const entries = fs.readdirSync(${JSON.stringify(String(dir))}, { encoding: "buffer", recursive: true });
+            results.push(entries.map(e => Buffer.from(e).toString("utf8")).sort().join(","));
           }
-          console.log(code);
+          if (results[0] !== results[1]) throw new Error("expected identical results across calls");
+          console.log(results[0]);
         `,
       ],
       env: bunEnv,
@@ -1219,9 +1212,102 @@ it.skipIf(isWindows)(
 
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ELOOP", exitCode: 0 });
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "a.txt,b.txt,c.txt,loop", exitCode: 0 });
   },
 );
+
+it.skipIf(isWindows)("recursive readdir with symlinks matches Node", async () => {
+  using dir = tempDir("readdir-recursive-symlinks", {
+    "outside/secret.txt": "secret",
+    "outside/deep/deeper.txt": "x",
+    "root/file.txt": "a",
+    "root/realdir/inner.txt": "b",
+    "root/target-inside/inside.txt": "c",
+  });
+  const root = join(String(dir), "root");
+  symlinkSync(join("..", "outside"), join(root, "link-outside"));
+  symlinkSync("target-inside", join(root, "link-inside"));
+  symlinkSync("missing", join(root, "link-dangling"));
+  symlinkSync("link-self", join(root, "link-self"));
+
+  const descended = [
+    "file.txt",
+    "link-dangling",
+    "link-inside",
+    "link-inside/inside.txt",
+    "link-outside",
+    "link-outside/deep",
+    "link-outside/deep/deeper.txt",
+    "link-outside/secret.txt",
+    "link-self",
+    "realdir",
+    "realdir/inner.txt",
+    "target-inside",
+    "target-inside/inside.txt",
+  ];
+  const notDescended = [
+    "file.txt",
+    "link-dangling",
+    "link-inside",
+    "link-outside",
+    "link-self",
+    "realdir",
+    "realdir/inner.txt",
+    "target-inside",
+    "target-inside/inside.txt",
+  ];
+
+  const direntPaths = (dirents: Dirent[]) =>
+    dirents.map(d => relative(root, join((d as any).parentPath ?? (d as any).path, d.name))).sort();
+
+  const syncNames = (readdirSync(root, { recursive: true }) as string[]).sort();
+  expect(syncNames).toEqual(descended);
+
+  const syncDirents = readdirSync(root, { recursive: true, withFileTypes: true });
+  expect(direntPaths(syncDirents)).toEqual(descended);
+
+  const linkDirents = syncDirents.filter(d => d.name.startsWith("link-"));
+  expect(linkDirents.length).toBe(4);
+  for (const d of linkDirents) {
+    expect(d.isSymbolicLink()).toBe(true);
+    expect(d.isDirectory()).toBe(false);
+  }
+
+  const callbackReaddir = promisify(fs.readdir);
+  const callbackNames = ((await callbackReaddir(root, { recursive: true })) as string[]).sort();
+  expect(callbackNames).toEqual(descended);
+
+  const callbackDirents = (await callbackReaddir(root, { recursive: true, withFileTypes: true })) as Dirent[];
+  expect(direntPaths(callbackDirents)).toEqual(descended);
+
+  const promisesNames = ((await promises.readdir(root, { recursive: true })) as string[]).sort();
+  expect(promisesNames).toEqual(descended);
+
+  const promisesDirents = await promises.readdir(root, { recursive: true, withFileTypes: true });
+  expect(direntPaths(promisesDirents)).toEqual(notDescended);
+  for (const d of promisesDirents.filter(d => d.name.startsWith("link-"))) {
+    expect(d.isSymbolicLink()).toBe(true);
+    expect(d.isDirectory()).toBe(false);
+  }
+});
+
+it.skipIf(isWindows)("recursive readdir does not throw on a parent-directory symlink cycle", async () => {
+  using dir = tempDir("readdir-recursive-cycle", {
+    "root/file.txt": "a",
+  });
+  const root = join(String(dir), "root");
+  symlinkSync(".", join(root, "loop"));
+
+  const names = readdirSync(root, { recursive: true }) as string[];
+  expect(names).toContain("loop");
+  expect(names).toContain("file.txt");
+
+  const dirents = readdirSync(root, { recursive: true, withFileTypes: true });
+  expect(dirents.length).toBe(names.length);
+
+  const fromPromises = await promises.readdir(root, { recursive: true });
+  expect(fromPromises).toContain("loop");
+});
 
 describe("readSync", () => {
   const firstFourBytes = new Uint32Array(new TextEncoder().encode("File").buffer)[0];

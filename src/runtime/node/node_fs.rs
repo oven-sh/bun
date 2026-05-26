@@ -3609,6 +3609,7 @@ pub mod args {
         pub encoding: Encoding,
         pub with_file_types: bool,
         pub recursive: bool,
+        pub no_symlink_descent: bool,
     }
     fs_args_path_forwarders!(Readdir; path);
     impl Readdir {
@@ -3629,6 +3630,7 @@ pub mod args {
             let mut encoding = Encoding::Utf8;
             let mut with_file_types = false;
             let mut recursive = false;
+            let mut no_symlink_descent = false;
             if let Some(val) = arguments.next() {
                 arguments.eat();
                 match val.js_type() {
@@ -3650,11 +3652,18 @@ pub mod args {
                     }
                 }
             }
+            if let Some(val) = arguments.next() {
+                if val.is_boolean() {
+                    arguments.eat();
+                    no_symlink_descent = val.to_boolean() && with_file_types;
+                }
+            }
             Ok(Readdir {
                 path,
                 encoding,
                 with_file_types,
                 recursive,
+                no_symlink_descent,
             })
         }
     }
@@ -6655,9 +6664,10 @@ impl NodeFS {
                     match err.get_errno() {
                         // These things can happen and there's nothing we can do about it.
                         //
-                        // This is different than what Node does, at the time of writing.
-                        // Node doesn't gracefully handle errors like these. It fails the entire operation.
-                        E::ENOENT | E::ENOTDIR | E::EPERM => return Ok(()),
+                        // Node lists the entry but does not descend into it when the
+                        // child cannot be opened for reasons like these (including
+                        // symlink cycles), so skip it instead of failing the whole walk.
+                        E::ENOENT | E::ENOTDIR | E::EPERM | E::ELOOP => return Ok(()),
                         _ => {}
                     }
                     let joined = paths::resolve_path::join_z_buf::<paths::platform::Auto>(
@@ -6730,6 +6740,7 @@ impl NodeFS {
                     sys::FileKind::SymLink |
                     // we know for sure it's a directory
                     sys::FileKind::Directory => {
+                        if current.kind == sys::FileKind::SymLink && args.no_symlink_descent { break 'enqueue; }
                         // if the name is too long, we can't enqueue it regardless
                         // the operating system would just return ENAMETOOLONG
                         //
@@ -6748,7 +6759,9 @@ impl NodeFS {
                             Ok(st) => {
                                 let real_kind = sys::kind_from_mode(st.st_mode as Mode);
                                 effective_kind = real_kind;
-                                if matches!(real_kind, sys::FileKind::Directory | sys::FileKind::SymLink) {
+                                if real_kind == sys::FileKind::Directory
+                                    || (real_kind == sys::FileKind::SymLink && !args.no_symlink_descent)
+                                {
                                     async_task.enqueue(name_to_copy_z);
                                 }
                             }
@@ -6857,9 +6870,10 @@ impl NodeFS {
                     match err.get_errno() {
                         // These things can happen and there's nothing we can do about it.
                         //
-                        // This is different than what Node does, at the time of writing.
-                        // Node doesn't gracefully handle errors like these. It fails the entire operation.
-                        E::ENOENT | E::ENOTDIR | E::EPERM => continue,
+                        // Node lists the entry but does not descend into it when the
+                        // child cannot be opened for reasons like these (including
+                        // symlink cycles), so skip it instead of failing the whole walk.
+                        E::ENOENT | E::ENOTDIR | E::EPERM | E::ELOOP => continue,
                         _ => {
                             // TODO: propagate file path (removed previously because it leaked the path)
                             return Err(err);
@@ -6912,6 +6926,7 @@ impl NodeFS {
                         sys::FileKind::SymLink |
                         // we know for sure it's a directory
                         sys::FileKind::Directory => {
+                            if current.kind == sys::FileKind::SymLink && args.no_symlink_descent { break 'enqueue; }
                             if utf8_name.len() + 1 + name_to_copy.len() > paths::MAX_PATH_BYTES { break 'enqueue; }
                             // PORT NOTE: Zig `basename_allocator.dupeZ` — store with trailing NUL
                             // so the next iteration can hand it to `openat` as a `&ZStr`.
@@ -6928,7 +6943,9 @@ impl NodeFS {
                                 Ok(st) => {
                                     let real_kind = sys::kind_from_mode(st.st_mode as Mode);
                                     effective_kind = real_kind;
-                                    if matches!(real_kind, sys::FileKind::Directory | sys::FileKind::SymLink) {
+                                    if real_kind == sys::FileKind::Directory
+                                        || (real_kind == sys::FileKind::SymLink && !args.no_symlink_descent)
+                                    {
                                         let mut owned = Vec::with_capacity(name_to_copy.len() + 1);
                                         owned.extend_from_slice(name_to_copy);
                                         owned.push(0);

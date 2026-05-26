@@ -136,9 +136,10 @@ describe("ws client upgrade event", () => {
         states.nextTick = ws.readyState;
       });
     });
-    ws.on("open", () => {
-      // By a later turn both callbacks have run.
-      setTimeout(() => resolve(states as { microtask: number; nextTick: number }), 0);
+    ws.on("open", async () => {
+      // After a macrotask turn both the microtask and the nextTick have run.
+      await Bun.sleep(0);
+      resolve(states as { microtask: number; nextTick: number });
     });
     ws.on("error", reject);
 

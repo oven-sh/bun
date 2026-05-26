@@ -572,7 +572,12 @@ pub(crate) unsafe fn write_u8<const ENCODING: u8>(
         Encoding::Hex => Ok(strings::decode_hex_to_bytes_truncate(to_slice, input_slice)),
 
         Encoding::Base64 | Encoding::Base64url => {
-            Ok(bun_base64::decode_lenient(to_slice, input_slice))
+            let is_urlsafe = matches!(encoding_from_u8(ENCODING), Encoding::Base64url);
+            Ok(bun_base64::decode_lenient(
+                to_slice,
+                input_slice,
+                is_urlsafe,
+            ))
         }
     }
 }
@@ -809,14 +814,23 @@ pub(crate) unsafe fn construct_from_u8<const ENCODING: u8>(
                 return Vec::new();
             }
 
+            let is_urlsafe = matches!(encoding_from_u8(ENCODING), Encoding::Base64url);
             let outlen = bun_base64::decode_lenient_len(slice.len());
-            let mut to = vec![0u8; outlen];
-
-            let wrote = bun_base64::decode_lenient(&mut to[..outlen], slice);
+            // Decode into uninitialized spare capacity: the decoder only ever
+            // writes to the destination, and only the `wrote` bytes it
+            // initialized are committed below. This buffer becomes the
+            // Buffer's storage, so a zero-fill would be pure overhead for
+            // large inputs.
+            let mut to: Vec<u8> = Vec::new();
+            // SAFETY: the returned spare bytes are write-only until committed.
+            let dest = unsafe { bun_core::vec::reserve_spare_bytes(&mut to, outlen) };
+            let wrote = bun_base64::decode_lenient(&mut dest[..outlen], slice, is_urlsafe);
             if wrote == 0 {
                 return Vec::new();
             }
-            to.truncate(wrote);
+            // SAFETY: the decoder initialized the first `wrote` bytes
+            // (`wrote <= outlen <= capacity`).
+            unsafe { bun_core::vec::commit_spare(&mut to, wrote) };
             to
         }
     }

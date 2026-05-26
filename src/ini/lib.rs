@@ -11,6 +11,28 @@ use bun_ast::{Loc, Log, Source};
 
 type OOM<T> = Result<T, AllocError>;
 
+/// Resolve `value` (a certfile/keyfile path) relative to the `.npmrc` directory.
+/// If `value` is already absolute, return it unchanged.
+pub(crate) fn resolve_relative_npmrc_path(npmrc_path: &[u8], value: Box<[u8]>) -> Box<[u8]> {
+    if value.is_empty() {
+        return value;
+    }
+    // Absolute on POSIX starts with `/`; on Windows starts with a drive letter + colon
+    if value[0] == b'/' || (value.len() > 2 && value[1] == b':') {
+        return value;
+    }
+    match bun_core::dirname(npmrc_path) {
+        Some(dir) => {
+            let mut resolved = Vec::with_capacity(dir.len() + 1 + value.len());
+            resolved.extend_from_slice(dir);
+            resolved.push(b'/');
+            resolved.extend_from_slice(&value);
+            resolved.into_boxed_slice()
+        }
+        None => value,
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Options
 // ──────────────────────────────────────────────────────────────────────────
@@ -251,7 +273,7 @@ mod draft {
 
     use super::{
         ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, Options, is_quoted,
-        next_dot, should_skip_line,
+        next_dot, resolve_relative_npmrc_path, should_skip_line,
     };
 
     type OOM<T> = Result<T, AllocError>;
@@ -1733,12 +1755,12 @@ mod draft {
                         }
                         ConfigOpt::Certfile => {
                             if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                v.certfile = x;
+                                v.certfile = resolve_relative_npmrc_path(npmrc_path.as_bytes(), x);
                             }
                         }
                         ConfigOpt::Keyfile => {
                             if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                v.keyfile = x;
+                                v.keyfile = resolve_relative_npmrc_path(npmrc_path.as_bytes(), x);
                             }
                         }
                     }
@@ -1794,12 +1816,12 @@ mod draft {
                             }
                             ConfigOpt::Certfile => {
                                 if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                    v.certfile = x;
+                                    v.certfile = resolve_relative_npmrc_path(npmrc_path.as_bytes(), x);
                                 }
                             }
                             ConfigOpt::Keyfile => {
                                 if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                    v.keyfile = x;
+                                    v.keyfile = resolve_relative_npmrc_path(npmrc_path.as_bytes(), x);
                                 }
                             }
                         }

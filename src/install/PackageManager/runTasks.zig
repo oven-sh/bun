@@ -1099,7 +1099,7 @@ fn doFlushDependencyQueue(this: *PackageManager) void {
 
     while (dependency_queue.readItem()) |item| {
         var i: u32 = item.dependencies.off;
-        const end = item.dependencies.off +| item.dependencies.len;
+        const end = item.dependencies.off + item.dependencies.len;
         while (i < end) : (i += 1) {
             const dependency = lockfile.buffers.dependencies.items[i];
             this.enqueueDependencyWithMain(

@@ -59,6 +59,9 @@ pub const Installer = struct {
 
     pub fn onPackageExtracted(this: *Installer, task_id: install.Task.Id) void {
         if (this.manager.task_queue.fetchRemove(task_id)) |removed| {
+            var callbacks = removed.value;
+            defer callbacks.deinit(this.manager.allocator);
+
             const store = this.store;
 
             const node_pkg_ids = store.nodes.items(.pkg_id);
@@ -72,7 +75,7 @@ pub const Installer = struct {
             const pkg_name_hashes = pkgs.items(.name_hash);
             const pkg_resolutions = pkgs.items(.resolution);
 
-            for (removed.value.items.items) |install_ctx| {
+            for (callbacks.items.items) |install_ctx| {
                 const entry_id = install_ctx.context.isolated_package_install_context;
 
                 const node_id = entry_node_ids[entry_id.get()];

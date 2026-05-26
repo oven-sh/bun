@@ -505,7 +505,7 @@ pub fn parseOverrideValue(
 /// never in the scope. npm registry scopes never contain `@`.
 /// This allows version-qualified parent keys in npm overrides and Yarn
 /// resolutions to match the installed parent package by name alone.
-fn stripVersionSuffix(name: []const u8) []const u8 {
+pub fn stripVersionSuffix(name: []const u8) []const u8 {
     // For scoped packages: @scope/pkg -> no version to strip
     if (name.len > 0 and name[0] == '@') {
         const first_slash = strings.indexOfChar(name, '/') orelse return name;

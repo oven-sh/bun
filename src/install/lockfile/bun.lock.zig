@@ -2357,6 +2357,7 @@ const Resolution = Install.Resolution;
 const TruncatedPackageNameHash = Install.TruncatedPackageNameHash;
 const invalid_package_id = Install.invalid_package_id;
 
+const OverrideMap = bun.install.Lockfile.OverrideMap;
 const BinaryLockfile = bun.install.Lockfile;
 const DependencySlice = BinaryLockfile.DependencySlice;
 const LoadResult = BinaryLockfile.LoadResult;

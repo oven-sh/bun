@@ -68,11 +68,8 @@ describe("latin1 -> UTF-16 widening (Buffer.from)", () => {
         // string stays 8-bit and takes the widening path.
         const latin1 = Buffer.alloc(1000, 0xe9).toString("latin1"); // "é" * 1000
         const buf = Buffer.from(latin1, encoding);
-        expect(buf.length).toBe(2000);
-        for (let i = 0; i < 1000; i++) {
-          expect(buf[i * 2]).toBe(0xe9);
-          expect(buf[i * 2 + 1]).toBe(0x00);
-        }
+        // Every byte-pair widens 0xe9 -> [0xe9, 0x00].
+        expect(buf).toEqual(Buffer.from(Array.from({ length: 1000 }, () => [0xe9, 0x00]).flat()));
         expect(buf.toString("utf16le")).toBe(latin1);
       });
     });

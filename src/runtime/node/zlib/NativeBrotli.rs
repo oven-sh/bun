@@ -245,8 +245,7 @@ mod _impl {
             // under the raw pointer cached below (written through on every
             // async-write completion by `flush_write_result`). Pinning a small
             // FastTypedArray relocates its storage, so read the pointer *after*.
-            let Some(mut write_result_buf) =
-                write_result_value.as_pinned_arraybuffer(global_this)
+            let Some(mut write_result_buf) = write_result_value.as_pinned_arraybuffer(global_this)
             else {
                 return Err(global_this.throw_out_of_memory());
             };

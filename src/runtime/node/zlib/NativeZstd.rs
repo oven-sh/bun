@@ -181,7 +181,8 @@ mod _impl {
                 return Err(global.throw_out_of_memory());
             };
             self.pinned_write_state.set(write_state_value);
-            self.write_result.set(Some(write_state.as_u32().as_mut_ptr()));
+            self.write_result
+                .set(Some(write_state.as_u32().as_mut_ptr()));
 
             let write_js_callback =
                 validators::validate_function(global, "processCallback", process_callback_value)?;

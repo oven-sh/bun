@@ -867,7 +867,12 @@ test("scan handles a cwd with redundant trailing separators when following symli
 
   // Short-named symlink to a directory: after normalization the joined child
   // path is shorter than the raw cwd string passed to scan() below.
-  fs.symlinkSync("target", path.join(String(dir), "haystack", "L"), "dir");
+  try {
+    fs.symlinkSync("target", path.join(String(dir), "haystack", "L"), "dir");
+  } catch (err: any) {
+    if (err.code === "EPERM" || err.code === "EACCES") return;
+    throw err;
+  }
 
   // cwd with redundant trailing separators, passed through to scan() as-is.
   const rawCwd = path.join(String(dir), "haystack") + path.sep.repeat(4);

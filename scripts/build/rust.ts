@@ -29,6 +29,7 @@ import { dirname, join, resolve } from "node:path";
 import { bunExeName, type Config } from "./config.ts";
 import { assert } from "./error.ts";
 import type { Ninja } from "./ninja.ts";
+import { rustLtoFixCliPath } from "./rust-lto-fix-cli.ts";
 import { quote, quoteArgs } from "./shell.ts";
 import { streamPath } from "./stream.ts";
 
@@ -178,9 +179,21 @@ export function rustLibPath(cfg: Config): string {
 // ───────────────────────────────────────────────────────────────────────────
 
 export function registerRustRules(n: Ninja, cfg: Config): void {
-  if (cfg.cargo === undefined) return; // emitRust() asserts with a hint
   const hostWin = cfg.host.os === "windows";
   const q = (p: string) => quote(p, hostWin);
+
+  // Regular-LTO summary fix-up for the ELF cross-language LTO link (see
+  // rustLtoLinkInputs() below). Registered before the cargo gate: the
+  // link-only CI agents emit this edge too, and it needs rustc's
+  // llvm-tools, not cargo.
+  if (cfg.crossLangLto && !cfg.darwin) {
+    n.rule("rust_lto_fix", {
+      command: `${cfg.jsRuntime} ${q(rustLtoFixCliPath)} $in $out $llvm_bin $ar`,
+      description: "regular-LTO summary → $out",
+    });
+  }
+
+  if (cfg.cargo === undefined) return; // emitRust() asserts with a hint
   const stream = `${cfg.jsRuntime} ${q(streamPath)} rust`;
 
   // Cargo build for `bun_bin`. Runs from repo root (workspace `Cargo.toml`
@@ -536,13 +549,15 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     //     default is also 0 — pass nothing. Adding -Zsplit-lto-unit here
     //     would make the Rust modules the inconsistent ones and abort the
     //     link.
-    //   - linux (full LTO): -fwhole-program-vtables on ELF defaults the
-    //     split ON for C++, so every C++ module (ours and the WebKit -lto
-    //     prebuilts) carries EnableSplitLTOUnit=1. The Rust modules'
+    //   - linux (full LTO): the regular-LTO summary clang writes on ELF
+    //     always says EnableSplitLTOUnit=1, so every C++ module (ours and
+    //     the WebKit -lto prebuilts) carries 1. The Rust modules'
     //     EnableSplitLTOUnit module flag must say 1 to match →
-    //     -Zsplit-lto-unit. (The flag is stamped per-CGU at module creation,
-    //     so it survives rustc's fat-LTO pre-merge — see the
-    //     CARGO_PROFILE_RELEASE_LTO note in the env block below.)
+    //     -Zsplit-lto-unit. (The flag is stamped per-CGU at module
+    //     creation, survives rustc's fat-LTO pre-merge, and is what the
+    //     rust_lto_fix step's `opt --module-summary` copies into the
+    //     regular-LTO summary it bolts onto the merged module — see
+    //     rust-lto-fix-cli.ts.)
     //
     // (`-Clink-arg=-fuse-ld=lld` is pushed unconditionally above — under LTO
     // it doubles as making rustc's bitcode link go through the LTO-aware
@@ -633,7 +648,10 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     //     embedded bitcode) into ONE summary-less regular-LTO module, which
     //     lld then merges into the same regular-LTO partition as the C++
     //     `-flto=full` objects — that merge is what gives Rust↔C++
-    //     cross-language inlining under full LTO. With `off`, the per-CGU
+    //     cross-language inlining under full LTO. (The merged module first
+    //     gets a regular-LTO summary bolted on by the rust_lto_fix edge —
+    //     rustLtoLinkInputs() below — because lld's EnableSplitLTOUnit
+    //     consistency check requires one.) With `off`, the per-CGU
     //     ThinLTO-summaried modules are processed as ThinLTO partitions
     //     instead, which (a) never exchange function bodies with the C++
     //     regular partition (no cross-language inlining at all), and
@@ -787,6 +805,44 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   n.blank();
 
   return [lib];
+}
+
+/**
+ * Link inputs for the Rust side of the binary.
+ *
+ * On ELF cross-language LTO targets the fat Rust bitcode member can't go
+ * into the link as-is: it has no per-module summary, so lld reads it as
+ * EnableSplitLTOUnit=0 while every clang-produced full-LTO object (ours,
+ * the deps', the WebKit -lto prebuilts') says 1, and the link aborts with
+ * "inconsistent LTO Unit splitting". rustc has no way to emit a regular-LTO
+ * summary (clang hardcodes one in shouldEmitRegularLTOSummary()), so a
+ * build step rewrites the bitcode with rustc's own LLVM tools — see
+ * rust-lto-fix-cli.ts and the `rustc-no-regular-lto-summary` workaround
+ * entry.
+ *
+ * Returns [fixed bitcode .o, original .a]: the .o defines every Rust symbol
+ * (so the archive's bitcode member is never pulled), and the archive still
+ * supplies its native members (compiler_builtins). On every other config
+ * this is the identity function.
+ */
+export function rustLtoLinkInputs(n: Ninja, cfg: Config, rustObjects: string[]): string[] {
+  const rustLib = rustObjects[0];
+  if (!cfg.crossLangLto || cfg.darwin || rustLib === undefined) return rustObjects;
+  assert(
+    cfg.rustSysroot !== undefined && cfg.host.rustTriple !== undefined,
+    "ELF cross-language LTO needs rustc's sysroot to locate its LLVM tools (llvm-link/opt) for the regular-LTO summary fix-up, but rustc wasn't found",
+    { hint: "Install the pinned rust toolchain (rustup show active-toolchain), or build with --lto=off" },
+  );
+  const llvmBin = join(cfg.rustSysroot, "lib", "rustlib", cfg.host.rustTriple, "bin");
+  const out = resolve(cfg.buildDir, "bun_rust.lto.o");
+  n.build({
+    outputs: [out],
+    rule: "rust_lto_fix",
+    inputs: [rustLib],
+    implicitInputs: [rustLtoFixCliPath],
+    vars: { llvm_bin: llvmBin, ar: cfg.ar },
+  });
+  return [out, ...rustObjects];
 }
 
 /** `${buildDir}/${exe}.linker-map` — lld's `-Wl,-Map=` output (see flags.ts). */

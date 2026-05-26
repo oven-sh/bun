@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import path from "node:path";
@@ -350,7 +350,9 @@ test("Bun.file(path, {type}).text() does not leak the duped content_type", async
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   const { deltaMiB } = JSON.parse(stdout);
-  expect(deltaMiB).toBeLessThan(isASAN ? 400 : 40);
+  // Debug builds (bun-debug is ASAN + debug allocator) inflate RSS the same
+  // way the named bun-asan CI binary does.
+  expect(deltaMiB).toBeLessThan(isASAN || isDebug ? 400 : 40);
   expect(exitCode).toBe(0);
 });
 

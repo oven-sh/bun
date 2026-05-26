@@ -736,9 +736,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         server
             .vm()
             .jsc_vm()
-            .deprecated_report_extra_memory(core::mem::size_of::<
-                ServerRequestContext<SSL, DEBUG>,
-            >());
+            .deprecated_report_extra_memory(
+                core::mem::size_of::<ServerRequestContext<SSL, DEBUG>>(),
+            );
 
         // Allocate the pooled body slot (ref_count = 1).
         let body_hive = crate::webcore::body::hive_alloc(crate::webcore::body::Value::Null);

@@ -1002,5 +1002,61 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("B\nA\n");
       expect(exitCode).toBe(0);
     });
+
+    // Same root cause, cross-module surface: two modules each exporting a
+    // decorated class with the *same* name. The class binding itself gets
+    // renamed by the bundler (Foo / Foo2), but the synthesized
+    // `let _<ClassName>` alias used to bypass the renamer, so the merged
+    // bundle emitted `let _Foo` twice → a hard `SyntaxError: Identifier
+    // '_Foo' has already been declared` at load time, before any user code.
+    test("same-named decorated classes across modules don't collide", async () => {
+      using dir = tempDir("es-dec-cross-module", {
+        "a.ts": `
+          function dec(_t: any, _c: any) {}
+          export class AuditService { @dec accessor x = 1; }
+        `,
+        "b.ts": `
+          function dec(_t: any, _c: any) {}
+          export class AuditService { @dec accessor y = 2; }
+        `,
+        "entry.ts": `
+          import { AuditService as A } from "./a";
+          import { AuditService as B } from "./b";
+          console.log(new A().x, new B().y);
+        `,
+      });
+
+      const { stdout, exitCode } = await runBundled(String(dir), ["--target=browser", "--format=esm"], "entry.ts");
+      expect(stdout).toBe("1 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // Minified variant of the cross-module case — exercises MinifyRenamer
+    // rather than NumberRenamer on the merge path.
+    test("same-named decorated classes across modules don't collide (minified)", async () => {
+      using dir = tempDir("es-dec-cross-module-min", {
+        "a.ts": `
+          function dec(_t: any, _c: any) {}
+          export class AuditService { @dec accessor x = 1; }
+        `,
+        "b.ts": `
+          function dec(_t: any, _c: any) {}
+          export class AuditService { @dec accessor y = 2; }
+        `,
+        "entry.ts": `
+          import { AuditService as A } from "./a";
+          import { AuditService as B } from "./b";
+          console.log(new A().x, new B().y);
+        `,
+      });
+
+      const { stdout, exitCode } = await runBundled(
+        String(dir),
+        ["--target=browser", "--format=esm", "--minify"],
+        "entry.ts",
+      );
+      expect(stdout).toBe("1 2\n");
+      expect(exitCode).toBe(0);
+    });
   });
 });

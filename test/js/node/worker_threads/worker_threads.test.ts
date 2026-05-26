@@ -269,6 +269,20 @@ describe("resourceLimits", () => {
     await worker.terminate();
   });
 
+  test("worker.resourceLimits returns a fresh object each access (like Node)", async () => {
+    const worker = new Worker(`setInterval(() => {}, 1000);`, {
+      eval: true,
+      resourceLimits: { maxOldGenerationSizeMb: 16 },
+    });
+    const first = worker.resourceLimits;
+    // Node builds a fresh object from the native handle on every access, so the
+    // identity differs and mutating one read does not affect later reads.
+    expect(worker.resourceLimits).not.toBe(first);
+    first.maxOldGenerationSizeMb = 999;
+    expect(worker.resourceLimits.maxOldGenerationSizeMb).toBe(16);
+    await worker.terminate();
+  });
+
   test("worker.resourceLimits stays {} after a clean exit then terminate()", async () => {
     // A worker that exits cleanly gets exit code 0. terminate() must not treat
     // that falsy code as "not yet exited" — doing so would hang the returned

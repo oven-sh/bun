@@ -310,7 +310,10 @@ class Worker extends EventEmitter {
     // the native handle is null). #onExitPromise is set to the numeric exit
     // code in #onClose, so a number here means the worker has exited.
     if (typeof this.#onExitPromise === "number") return {};
-    return this.#resourceLimits;
+    // Return a fresh copy each access, like Node (its getter builds a new
+    // object from the native handle), so identity differs between reads and
+    // mutations to the returned object don't leak back into the worker.
+    return { ...this.#resourceLimits };
   }
 
   ref() {

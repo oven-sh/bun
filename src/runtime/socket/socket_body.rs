@@ -2857,6 +2857,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                     )?;
                 }
             }
+            if ssl_opts.is_none() {
+                let mut default_cfg = SSLConfig::zero();
+                default_cfg.reject_unauthorized =
+                    VirtualMachine::get().get_tls_reject_unauthorized() as i32;
+                ssl_opts = Some(default_cfg);
+            }
         } else if let Some(tls_js) = opts.get_truthy(global, "tls")? {
             if !tls_js.is_boolean() {
                 ssl_opts = SSLConfig::from_js(

@@ -4,6 +4,7 @@ import { createSocketPair } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
 import { closeSync } from "fs";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, getMaxFD, isWindows, tempDir, tls } from "harness";
+import { createSecureContext } from "node:tls";
 describe.concurrent("socket", () => {
   it("should throw when a socket from a file descriptor has a bad file descriptor", async () => {
     const open = jest.fn();
@@ -1200,6 +1201,44 @@ describe("Bun.connect TLS certificate verification", () => {
         error() {},
       },
     });
+    expect(raw).toBeDefined();
+    expect(upgraded).toBeDefined();
+
+    const result = await handshook.promise;
+    expect(result.success).toBe(false);
+    expect(result.authorized).toBe(false);
+    expect(result.error?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    await closed.promise;
+  });
+
+  it("upgradeTLS with a secureContext rejects an untrusted certificate by default", async () => {
+    using server = echoTLSServer();
+    const handshook = Promise.withResolvers<{ success: boolean; error: any; authorized: boolean }>();
+    const closed = Promise.withResolvers<void>();
+
+    const socket = await Bun.connect({
+      hostname: "localhost",
+      port: server.port,
+      socket: {
+        data() {},
+        close() {},
+        error() {},
+      },
+    });
+
+    const [raw, upgraded] = socket.upgradeTLS({
+      secureContext: createSecureContext({}).context,
+      socket: {
+        handshake(socket, success, authorizationError) {
+          handshook.resolve({ success, error: authorizationError, authorized: socket.authorized });
+        },
+        data() {},
+        close() {
+          closed.resolve();
+        },
+        error() {},
+      },
+    } as any);
     expect(raw).toBeDefined();
     expect(upgraded).toBeDefined();
 

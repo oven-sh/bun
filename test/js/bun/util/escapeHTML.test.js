@@ -103,6 +103,16 @@ describe("escapeHTML", () => {
     }
   });
 
+  it("escapes metacharacters adjacent to lone surrogates", () => {
+    expect(escapeHTML("\uD800<x")).toBe("\uD800&lt;x");
+    expect(escapeHTML("\uD800>x")).toBe("\uD800&gt;x");
+    expect(escapeHTML("\uD800<img src=x onerror=alert(1)\uD800>")).toBe(
+      "\uD800&lt;img src=x onerror=alert(1)\uD800&gt;",
+    );
+    expect(escapeHTML(("\uD800<" + "a".repeat(14)).repeat(8))).toBe(("\uD800&lt;" + "a".repeat(14)).repeat(8));
+    expect(escapeHTML("\uD800a😊<b")).toBe("\uD800a😊&lt;b");
+  });
+
   it("fuzz latin1", () => {
     for (let i = 0; i < 256; i++) {
       const initial = Buffer.alloc(i + 1, "a");

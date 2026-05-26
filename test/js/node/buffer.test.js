@@ -3345,7 +3345,10 @@ describe("Buffer.prototype.toString binary-to-text encodings", () => {
     for (; i + 2 < buf.length; i += 3) {
       const n = (buf[i] << 16) | (buf[i + 1] << 8) | buf[i + 2];
       parts.push(
-        B64_ALPHABET[(n >> 18) & 63] + B64_ALPHABET[(n >> 12) & 63] + B64_ALPHABET[(n >> 6) & 63] + B64_ALPHABET[n & 63],
+        B64_ALPHABET[(n >> 18) & 63] +
+          B64_ALPHABET[(n >> 12) & 63] +
+          B64_ALPHABET[(n >> 6) & 63] +
+          B64_ALPHABET[n & 63],
       );
     }
     const remaining = buf.length - i;

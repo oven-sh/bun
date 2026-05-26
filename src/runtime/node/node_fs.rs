@@ -6677,11 +6677,15 @@ impl NodeFS {
                         E::ENOENT | E::ENOTDIR | E::EPERM => return Ok(()),
                         _ => {}
                     }
-                    let joined = paths::resolve_path::join_z_buf::<paths::platform::Auto>(
-                        &mut buf[..],
-                        &[root_basename, basename.as_bytes()],
-                    );
-                    return Err(err.with_path(joined.as_bytes()));
+                    if root_basename.len() + 1 + basename.as_bytes().len() + 1
+                        < paths::MAX_PATH_BYTES
+                    {
+                        let joined = paths::resolve_path::join_z_buf::<paths::platform::Auto>(
+                            &mut buf[..],
+                            &[root_basename, basename.as_bytes()],
+                        );
+                        return Err(err.with_path(joined.as_bytes()));
+                    }
                 }
                 return Err(err.with_path(args.path.slice()));
             }
@@ -6704,7 +6708,10 @@ impl NodeFS {
             let current = match iterator.next() {
                 Err(err) => {
                     dirent_path_prev.deref();
-                    if !is_root {
+                    if !is_root
+                        && root_basename.len() + 1 + basename.as_bytes().len() + 1
+                            < paths::MAX_PATH_BYTES
+                    {
                         let joined = paths::resolve_path::join_z_buf::<paths::platform::Auto>(
                             &mut buf[..],
                             &[root_basename, basename.as_bytes()],
@@ -6722,6 +6729,11 @@ impl NodeFS {
             // detect "this subtask is the root". The Rust caller passes `is_root`
             // explicitly, which is the same predicate (root subtask's basename *is*
             // root_path).
+            if !is_root
+                && basename.as_bytes().len() + 1 + utf8_name.len() + 1 >= paths::MAX_PATH_BYTES
+            {
+                continue;
+            }
             let name_to_copy: &[u8] = if is_root {
                 utf8_name
             } else {
@@ -6909,6 +6921,11 @@ impl NodeFS {
                 let utf8_name = current.name.slice();
 
                 // name_to_copy: bare name at root, else `basename/utf8_name` joined into `buf`.
+                if !is_root
+                    && basename_bytes.len() + 1 + utf8_name.len() + 1 >= paths::MAX_PATH_BYTES
+                {
+                    continue;
+                }
                 let name_to_copy: &[u8] = if is_root {
                     utf8_name
                 } else {

@@ -360,7 +360,13 @@ class Worker extends EventEmitter {
     }
 
     const onExitPromise = this.#onExitPromise;
-    if (onExitPromise) {
+    // Use an explicit undefined check, not truthiness: #onExitPromise is the
+    // numeric exit code once the worker has exited, and exit code 0 is falsy.
+    // A truthiness check would fall through here for a clean exit, overwrite
+    // #onExitPromise with a fresh Promise that never resolves (the `close`
+    // listener already fired) and hang, and make resourceLimits revert from {}
+    // back to the populated object.
+    if (onExitPromise !== undefined) {
       return $isPromise(onExitPromise) ? onExitPromise : Promise.$resolve(onExitPromise);
     }
 

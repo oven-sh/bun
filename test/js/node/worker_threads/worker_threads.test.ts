@@ -268,6 +268,23 @@ describe("resourceLimits", () => {
     });
     await worker.terminate();
   });
+
+  test("worker.resourceLimits stays {} after a clean exit then terminate()", async () => {
+    // A worker that exits cleanly gets exit code 0. terminate() must not treat
+    // that falsy code as "not yet exited" — doing so would hang the returned
+    // promise and revert resourceLimits from {} to the populated object.
+    const worker = new Worker(`1 + 1;`, {
+      eval: true,
+      resourceLimits: { maxOldGenerationSizeMb: 16 },
+    });
+    const [code] = await once(worker, "exit");
+    expect(code).toBe(0);
+    expect(worker.resourceLimits).toEqual({});
+    // terminate() after a clean exit must resolve (not hang). If it hangs, the
+    // test times out and fails, which is the assertion we want here.
+    await worker.terminate();
+    expect(worker.resourceLimits).toEqual({});
+  });
 });
 
 test("threadId module and worker property is consistent", async () => {

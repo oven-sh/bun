@@ -122,7 +122,6 @@ const private_symbols = {
   kUnref,
   kFd,
   FileHandle: null as any,
-  fs,
 };
 
 const _readFile = fs.readFile.bind(fs);
@@ -217,7 +216,7 @@ const exports = {
   opendir,
 
   // "$data" is reuse of private symbol
-  // this is used to export the private symbols to 'fs.js' without making it public.
+  // this is used to export the private symbols to internal/fs/streams and node:http2 without making them public.
   $data: private_symbols,
 };
 export default exports;

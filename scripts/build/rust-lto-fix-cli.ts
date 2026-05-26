@@ -43,7 +43,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, openSync, readSync, closeSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { BuildError, assert } from "./error.ts";
 

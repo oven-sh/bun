@@ -9256,7 +9256,7 @@ it("does not extract a tarball for a dependency alias containing '..' path segme
     expect(await readdirSorted(join(zone, "a"))).toEqual(["b"]);
     expect(await readdirSorted(join(zone, "a", "b"))).toEqual(["c"]);
     // The unsafe alias is reported as an error and nothing is installed.
-    expect(err).toContain("error:");
+    expect(err).toContain("Refusing to install package with invalid name");
     expect(out).not.toContain("1 package installed");
     expect(exitCode).not.toBe(0);
   });
@@ -9310,6 +9310,46 @@ it("does not install transitive file: dependencies that point outside their pack
   expect(await exists(join(projectDir, "node_modules", "evil-folder-dep", "node_modules", "loot"))).toBe(false);
   // The dependency is reported as unresolvable instead of silently linking local files.
   expect(err).toContain("Could not find package.json");
+  expect(out).not.toContain("2 packages installed");
+  expect(exitCode).toBe(1);
+});
+
+it("does not install transitive file: dependencies with overlong folder targets", async () => {
+  const overlongTarget = "file:./" + Buffer.alloc(120000, "a").toString();
+  using dir = tempDir("transitive-file-dep-overlong", {
+    "project/package.json": JSON.stringify({
+      name: "my-app",
+      version: "1.0.0",
+      dependencies: {
+        "evil-folder-dep": "file:./evil-folder-dep",
+      },
+    }),
+    "project/evil-folder-dep/index.js": "module.exports = 1;",
+    "project/evil-folder-dep/package.json": JSON.stringify({
+      name: "evil-folder-dep",
+      version: "1.0.0",
+      dependencies: {
+        loot: overlongTarget,
+      },
+    }),
+  });
+  const projectDir = join(String(dir), "project");
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: projectDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  const out = await stdout.text();
+  const exitCode = await exited;
+
+  expect(await exists(join(projectDir, "node_modules", "loot"))).toBe(false);
+  expect(await exists(join(projectDir, "node_modules", "evil-folder-dep", "node_modules", "loot"))).toBe(false);
+  expect(err).toContain("unsafe folder path");
   expect(out).not.toContain("2 packages installed");
   expect(exitCode).toBe(1);
 });

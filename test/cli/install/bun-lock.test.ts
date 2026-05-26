@@ -808,6 +808,9 @@ it("escapes quotes and newlines in requested version literals when writing yarn.
   const err = await stderr.text();
   const exitCode = await exited;
 
+  expect(err).toContain("Saved yarn.lock");
+  expect(exitCode).toBe(0);
+
   const yarnLock = await file(join(packageDir, "yarn.lock")).text();
   const lines = yarnLock.split("\n");
 
@@ -819,7 +822,4 @@ it("escapes quotes and newlines in requested version literals when writing yarn.
 
   // No yarn.lock line is forged from the version literal's contents.
   expect(lines.filter(line => line.trimStart().startsWith('resolved "http://injected.example'))).toEqual([]);
-
-  expect(err).toContain("Saved yarn.lock");
-  expect(exitCode).toBe(0);
 });

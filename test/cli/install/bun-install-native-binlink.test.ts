@@ -388,7 +388,7 @@ test.skipIf(isWindows)(
     await using install = spawn({
       cmd: [bunExe(), "install"],
       cwd: root,
-      stdout: "pipe",
+      stdout: "ignore",
       stdin: "ignore",
       stderr: "pipe",
       env: bunEnv,

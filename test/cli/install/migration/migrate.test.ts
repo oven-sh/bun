@@ -275,12 +275,12 @@ test("package-lock.json migration requires integrity for tarball URLs outside th
   expect(err).not.toContain("migrated lockfile from package-lock.json");
   // The off-registry URL is never fetched.
   expect(tarballRequests).toBe(0);
+  expect(exitCode).toBe(0);
   // The install still succeeds by ignoring the lockfile and resolving lodash@4.17.21 from the registry.
   expect(await Bun.file(join(testDir, "node_modules", "lodash", "package.json")).json()).toHaveProperty(
     "version",
     "4.17.21",
   );
-  expect(exitCode).toBe(0);
 });
 
 test("package-lock.json migration rejects git committish values that are not a single path component", async () => {
@@ -326,10 +326,10 @@ test("package-lock.json migration rejects git committish values that are not a s
   // The migration is rejected instead of accepting a committish containing path separators and "..".
   expect(err).toContain("InvalidNPMLockfile");
   expect(err).not.toContain("migrated lockfile from package-lock.json");
+  expect(exitCode).toBe(0);
   // The install still succeeds by ignoring the lockfile and resolving jquery@3.7.1 from the registry.
   expect(await Bun.file(join(testDir, "node_modules", "jquery", "package.json")).json()).toHaveProperty(
     "version",
     "3.7.1",
   );
-  expect(exitCode).toBe(0);
 });

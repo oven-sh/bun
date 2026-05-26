@@ -16,6 +16,7 @@ use super::pending_connect::PendingConnect;
 use super::stream::Stream;
 use crate::HTTPClient;
 use crate::h3_client as H3;
+use crate::ssl_config::{SSLConfig, SharedPtr};
 
 use crate::h3_client::h3_client;
 
@@ -23,6 +24,7 @@ pub struct ClientContext {
     // FFI handle owned for process lifetime (never freed).
     qctx: NonNull<quic::Context>,
     sessions: Vec<*mut ClientSession>,
+    custom_contexts: Vec<(SharedPtr, NonNull<quic::Context>)>,
 }
 
 /// One instance per HTTP-thread loop. Stored as a process global only
@@ -40,15 +42,22 @@ static INSTANCE: bun_core::AtomicCell<Option<NonNull<ClientContext>>> =
 static LSQUIC_INIT_ONCE: std::sync::Once = std::sync::Once::new();
 
 impl ClientContext {
-    /// Mutable access to the lsquic client engine.
+    /// Mutable access to an lsquic client engine owned by this context.
     ///
-    /// INVARIANT: `qctx` is set once in `get_or_create` to a fresh
-    /// `us_quic_socket_context_t` and is never freed (process-lifetime, same as
-    /// this singleton). HTTP-thread only, so the `&mut` is the sole live borrow.
+    /// INVARIANT: every `NonNull<quic::Context>` held by `ClientContext`
+    /// (`qctx`, set once in `get_or_create`, and `custom_contexts` entries, set
+    /// once in `context_for`) points to a fresh `us_quic_socket_context_t` that
+    /// is never freed (process-lifetime, same as this singleton). HTTP-thread
+    /// only, so the `&mut` is the sole live borrow.
+    #[inline]
+    fn ctx_mut<'a>(qctx: NonNull<quic::Context>) -> &'a mut quic::Context {
+        // SAFETY: see INVARIANT above.
+        unsafe { &mut *qctx.as_ptr() }
+    }
+
     #[inline]
     fn qctx_mut(&mut self) -> &mut quic::Context {
-        // SAFETY: see INVARIANT above.
-        unsafe { &mut *self.qctx.as_ptr() }
+        Self::ctx_mut(self.qctx)
     }
 
     /// Non-null pointer to the leaked process-lifetime singleton, if created.
@@ -93,6 +102,7 @@ impl ClientContext {
         let self_ = bun_core::heap::alloc_nn(ClientContext {
             qctx,
             sessions: Vec::new(),
+            custom_contexts: Vec::new(),
         });
         // Route through the existing [`qctx_mut`] / [`as_mut`] accessors (one
         // centralised unsafe each) instead of an open-coded `qctx.as_mut()`.
@@ -106,12 +116,20 @@ impl ClientContext {
     /// Find or open a connection to `hostname:port` and queue `client` on it.
     pub fn connect(&mut self, client: &mut HTTPClient, hostname: &[u8], port: u16) -> bool {
         let reject = client.flags.reject_unauthorized;
+        // Same gate as HTTPThread::connect: only configs that need their own
+        // SSL context (ca / cert+key / serverName / …) leave the default
+        // context; rejectUnauthorized-only requests keep sharing it.
+        let tls_props = client
+            .tls_props
+            .clone()
+            .filter(|tls| tls.get().requires_custom_request_ctx);
+        let tls_props_ptr = SSLConfig::raw_ptr(tls_props.as_ref());
         for &s in self.sessions.iter() {
             // sessions vec holds live ClientSession pointers; removed via
             // unregister() before destroy — `session_mut` centralises that
             // backref upgrade.
             let s = session_mut(s);
-            if s.matches(hostname, port, reject) && s.has_headroom() {
+            if s.matches(hostname, port, reject, tls_props_ptr) && s.has_headroom() {
                 bun_core::scoped_log!(
                     h3_client,
                     "reuse session {}:{}",
@@ -123,6 +141,10 @@ impl ClientContext {
             }
         }
 
+        let Some(qctx) = self.context_for(tls_props.as_ref()) else {
+            return false;
+        };
+
         // Zig: `dupeZ` — owned NUL-terminated buffer. `dupeZ` copies bytes
         // verbatim (interior NUL allowed) then appends a sentinel; lsquic reads
         // it as a C string so an interior NUL truncates on the C side. Mirror
@@ -131,7 +153,12 @@ impl ClientContext {
         let mut host_buf = hostname.to_vec();
         host_buf.push(0);
         let host_z = std::ffi::CStr::from_bytes_until_nul(&host_buf).expect("nul appended above");
-        let session = ClientSession::new(hostname.to_vec(), port, reject);
+        let sni = tls_props
+            .as_ref()
+            .and_then(|tls| tls.get().server_name_cstr())
+            .filter(|s| !s.to_bytes().is_empty())
+            .unwrap_or(host_z);
+        let session = ClientSession::new(hostname.to_vec(), port, reject, tls_props.clone());
         let _ = H3::live_sessions.fetch_add(1, Ordering::Relaxed);
         // `session` was just allocated by ClientSession::new — `session_mut`
         // upgrades the fresh heap pointer (sole owner) for these set-up writes.
@@ -140,8 +167,7 @@ impl ClientContext {
         session_mut(session).enqueue(client);
 
         let result =
-            self.qctx_mut()
-                .connect(host_z, port, host_z, reject, session.cast::<c_void>());
+            Self::ctx_mut(qctx).connect(host_z, port, sni, reject, session.cast::<c_void>());
         match result {
             ConnectResult::Socket(qs) => {
                 session_mut(session).qsocket = NonNull::new(qs);
@@ -164,7 +190,7 @@ impl ClientContext {
                     bstr::BStr::new(hostname),
                     port,
                 );
-                let l = self.qctx_mut().r#loop();
+                let l = Self::ctx_mut(qctx).r#loop();
                 PendingConnect::register(session, pending, l.cast::<UwsLoop>());
             }
             ConnectResult::Err => {
@@ -180,6 +206,43 @@ impl ClientContext {
             }
         }
         true
+    }
+
+    /// `quic::Context` to open new connections for `config` on: the shared
+    /// default-trust context when `config` is `None`, otherwise a per-config
+    /// context built from the interned `SSLConfig` (created on first use and
+    /// kept for the process lifetime, mirroring `custom_ssl_context_map` on
+    /// the TCP path).
+    fn context_for(&mut self, config: Option<&SharedPtr>) -> Option<NonNull<quic::Context>> {
+        let Some(config) = config else {
+            return Some(self.qctx);
+        };
+        let cfg_ptr: *const SSLConfig = config.get();
+        if let Some((_, ctx)) = self
+            .custom_contexts
+            .iter()
+            .find(|(c, _)| core::ptr::eq::<SSLConfig>(c.get(), cfg_ptr))
+        {
+            return Some(*ctx);
+        }
+        let loop_ = self.qctx_mut().r#loop();
+        let opts = config.get().as_usockets_for_client_verification();
+        // SAFETY: `loop_` is the live HTTP-thread uws loop the default context
+        // was created on; the pointers inside `opts` borrow `config`, which
+        // outlives the call.
+        let ctx = unsafe {
+            quic::Context::create_client_with_options(
+                loop_,
+                &opts,
+                0,
+                core::mem::size_of::<*mut ClientSession>() as c_uint,
+                core::mem::size_of::<*mut Stream>() as c_uint,
+            )
+        };
+        let ctx = NonNull::new(ctx?)?;
+        callbacks::register(Self::ctx_mut(ctx));
+        self.custom_contexts.push((config.clone(), ctx));
+        Some(ctx)
     }
 
     pub fn unregister(&mut self, session: &mut ClientSession) {

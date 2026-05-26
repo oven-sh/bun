@@ -18,6 +18,7 @@ use super::stream::Stream;
 use crate::h3_client as H3;
 use crate::internal_state::HTTPStage;
 use crate::signals::Field as Signal;
+use crate::ssl_config::{SSLConfig, SharedPtr};
 use crate::{HTTPClient, HeaderResult, Protocol};
 
 use crate::h3_client::h3_client;
@@ -36,6 +37,7 @@ pub struct ClientSession {
     pub hostname: Vec<u8>,
     pub port: u16,
     pub reject_unauthorized: bool,
+    pub tls_props: Option<SharedPtr>,
     pub handshake_done: bool,
     pub closed: bool,
     pub registry_index: u32,
@@ -49,13 +51,19 @@ pub struct ClientSession {
 impl ClientSession {
     /// `bun.TrivialNew(@This())` — heap-allocate and return raw; pointer is
     /// stashed in the `quic.Socket` ext slot and the `ClientContext` registry.
-    pub fn new(hostname: Vec<u8>, port: u16, reject_unauthorized: bool) -> *mut ClientSession {
+    pub fn new(
+        hostname: Vec<u8>,
+        port: u16,
+        reject_unauthorized: bool,
+        tls_props: Option<SharedPtr>,
+    ) -> *mut ClientSession {
         bun_core::heap::into_raw(Box::new(ClientSession {
             ref_count: Cell::new(1),
             qsocket: None,
             hostname,
             port,
             reject_unauthorized,
+            tls_props,
             handshake_done: false,
             closed: false,
             registry_index: u32::MAX,
@@ -63,10 +71,17 @@ impl ClientSession {
         }))
     }
 
-    pub fn matches(&self, hostname: &[u8], port: u16, reject_unauthorized: bool) -> bool {
+    pub fn matches(
+        &self,
+        hostname: &[u8],
+        port: u16,
+        reject_unauthorized: bool,
+        tls_props: Option<*const SSLConfig>,
+    ) -> bool {
         !self.closed
             && self.port == port
             && self.reject_unauthorized == reject_unauthorized
+            && SSLConfig::raw_ptr(self.tls_props.as_ref()) == tls_props
             && strings::eql_long(&self.hostname, hostname, true)
     }
 

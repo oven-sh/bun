@@ -1110,20 +1110,10 @@ static enum ssl_verify_result_t us_quic_client_verify(SSL *ssl, uint8_t *out_ale
     return ssl_verify_ok;
 }
 
-us_quic_socket_context_t *us_create_quic_client_context(
-    struct us_loop_t *loop, unsigned int ext_size,
+static us_quic_socket_context_t *us_create_quic_client_context_with_ssl_ctx(
+    struct us_loop_t *loop, SSL_CTX *ssl, unsigned int ext_size,
     unsigned int conn_ext_size, unsigned int stream_ext_size)
 {
-    SSL_CTX *ssl = SSL_CTX_new(TLS_method());
-    if (!ssl) return NULL;
-    SSL_CTX_set_min_proto_version(ssl, TLS1_3_VERSION);
-    SSL_CTX_set_max_proto_version(ssl, TLS1_3_VERSION);
-    /* Same root store the H1/H2 client uses (bundled Mozilla roots + platform
-     * CAs + NODE_EXTRA_CA_CERTS); set_default_verify_paths alone doesn't find
-     * the system store on macOS/Windows. */
-    SSL_CTX_set_cert_store(ssl, us_get_default_ca_store());
-    SSL_CTX_set_custom_verify(ssl, SSL_VERIFY_PEER, us_quic_client_verify);
-
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *)
         calloc(1, sizeof(us_quic_socket_context_t) + ext_size);
     if (!ctx) { SSL_CTX_free(ssl); return NULL; }
@@ -1160,6 +1150,39 @@ us_quic_socket_context_t *us_create_quic_client_context(
     ctx->next = loop->data.quic_head;
     loop->data.quic_head = ctx;
     return ctx;
+}
+
+us_quic_socket_context_t *us_create_quic_client_context(
+    struct us_loop_t *loop, unsigned int ext_size,
+    unsigned int conn_ext_size, unsigned int stream_ext_size)
+{
+    SSL_CTX *ssl = SSL_CTX_new(TLS_method());
+    if (!ssl) return NULL;
+    SSL_CTX_set_min_proto_version(ssl, TLS1_3_VERSION);
+    SSL_CTX_set_max_proto_version(ssl, TLS1_3_VERSION);
+    /* Same root store the H1/H2 client uses (bundled Mozilla roots + platform
+     * CAs + NODE_EXTRA_CA_CERTS); set_default_verify_paths alone doesn't find
+     * the system store on macOS/Windows. */
+    SSL_CTX_set_cert_store(ssl, us_get_default_ca_store());
+    SSL_CTX_set_custom_verify(ssl, SSL_VERIFY_PEER, us_quic_client_verify);
+
+    return us_create_quic_client_context_with_ssl_ctx(loop, ssl, ext_size,
+        conn_ext_size, stream_ext_size);
+}
+
+us_quic_socket_context_t *us_create_quic_client_context_with_options(
+    struct us_loop_t *loop, struct us_bun_socket_context_options_t options,
+    unsigned int ext_size, unsigned int conn_ext_size, unsigned int stream_ext_size)
+{
+    enum create_bun_socket_error_t ssl_err = 0;
+    SSL_CTX *ssl = us_ssl_ctx_build_raw(options, &ssl_err);
+    if (!ssl) return NULL;
+    SSL_CTX_set_min_proto_version(ssl, TLS1_3_VERSION);
+    SSL_CTX_set_max_proto_version(ssl, TLS1_3_VERSION);
+    SSL_CTX_set_custom_verify(ssl, SSL_VERIFY_PEER, us_quic_client_verify);
+
+    return us_create_quic_client_context_with_ssl_ctx(loop, ssl, ext_size,
+        conn_ext_size, stream_ext_size);
 }
 
 static int us_quic_resolve(const char *host, int port, struct sockaddr_storage *out) {

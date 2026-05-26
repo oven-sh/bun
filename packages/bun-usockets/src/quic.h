@@ -76,6 +76,12 @@ us_quic_socket_context_t *us_create_quic_client_context(
     struct us_loop_t *loop, unsigned int ext_size,
     unsigned int conn_ext_size, unsigned int stream_ext_size);
 
+/* Client engine whose SSL_CTX is built from `options` (custom ca / client
+ * cert+key / ciphers), for requests carrying per-request TLS options. */
+us_quic_socket_context_t *us_create_quic_client_context_with_options(
+    struct us_loop_t *loop, struct us_bun_socket_context_options_t options,
+    unsigned int ext_size, unsigned int conn_ext_size, unsigned int stream_ext_size);
+
 struct us_quic_pending_connect_s;
 struct addrinfo_request;
 

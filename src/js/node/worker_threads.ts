@@ -367,7 +367,10 @@ class Worker extends EventEmitter {
     // listener already fired) and hang, and make resourceLimits revert from {}
     // back to the populated object.
     if (onExitPromise !== undefined) {
-      return $isPromise(onExitPromise) ? onExitPromise : Promise.$resolve(onExitPromise);
+      // If a terminate() is already in flight, return that Promise. Otherwise
+      // the worker has already exited (onExitPromise is its exit code); Node
+      // resolves terminate() to undefined in that case, not the exit code.
+      return $isPromise(onExitPromise) ? onExitPromise : Promise.$resolve(undefined);
     }
 
     const { resolve, promise } = Promise.withResolvers();

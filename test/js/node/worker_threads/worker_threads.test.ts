@@ -280,9 +280,9 @@ describe("resourceLimits", () => {
     const [code] = await once(worker, "exit");
     expect(code).toBe(0);
     expect(worker.resourceLimits).toEqual({});
-    // terminate() after a clean exit must resolve (not hang). If it hangs, the
-    // test times out and fails, which is the assertion we want here.
-    await worker.terminate();
+    // terminate() after the worker has already exited resolves to undefined
+    // (matching Node), and must not hang — if it hangs, the test times out.
+    expect(await worker.terminate()).toBeUndefined();
     expect(worker.resourceLimits).toEqual({});
   });
 });

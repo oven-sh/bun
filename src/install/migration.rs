@@ -1342,6 +1342,12 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                                 strings::last_index_of_char(str.slice, b'#')
                                                     .ok_or_else(|| err!("InvalidNPMLockfile"))?;
 
+                                            if !crate::repository::is_safe_resolved_tag(
+                                                &str.slice[hash_index + 1..],
+                                            ) {
+                                                return Err(err!("InvalidNPMLockfile"));
+                                            }
+
                                             let commit =
                                                 str.sub(&str.slice[hash_index + 1..]).value();
                                             Resolution::init(ResTagged::Git(Repository {
@@ -1363,6 +1369,12 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                             let hash_index =
                                                 strings::last_index_of_char(str.slice, b'#')
                                                     .ok_or_else(|| err!("InvalidNPMLockfile"))?;
+
+                                            if !crate::repository::is_safe_resolved_tag(
+                                                &str.slice[hash_index + 1..],
+                                            ) {
+                                                return Err(err!("InvalidNPMLockfile"));
+                                            }
 
                                             let commit =
                                                 str.sub(&str.slice[hash_index + 1..]).value();

@@ -244,6 +244,7 @@ impl ExtractTarball {
         let mut tmpname_buf = PathBuffer::uninit();
         let (name, basename) = self.name_and_basename();
         if !self.resolution.tag.is_git()
+            && self.resolution.tag != ResolutionTag::LocalTarball
             && !bun_install::dependency::is_safe_install_folder_name(
                 &basename[0..basename.len().min(32)],
             )

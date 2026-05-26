@@ -641,9 +641,11 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // (build scripts, proc-macros) — and on a native build, `--target` is the
     // host triple, so this env var sets *their* linker too.
     //
-    // Non-Windows: `cfg.cxx` (clang++) drives lld with the same flag dialect
-    // the C++ side uses. `-Clink-arg=-fuse-ld=lld` (pushed into rustflags
-    // below) selects lld for any rustc-driven cdylib link.
+    // Non-Windows: `cfg.cxx` (clang++) is the driver. On linux/freebsd/android
+    // the `-Clink-arg=-fuse-ld=lld` pushed into rustflags above selects lld for
+    // any rustc-driven cdylib link. On darwin that push is skipped (macOS uses
+    // ld64 by default — see the `-fuse-ld=lld` guard above), so the driver
+    // picks its default linker there unless `cfg.crossLangLto` re-adds the flag.
     //
     // Windows: rustc's `*-msvc` linker flavor passes `link.exe`-style args
     // directly (`/NOLOGO`, `/OUT:`, `/NATVIS:`, `/PDBALTPATH:`, …). `clang-cl`

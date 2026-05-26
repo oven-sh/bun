@@ -2,7 +2,8 @@
  * Generates the repo-root `.cargo/config.toml` at configure time.
  *
  * Why generated and not checked in: the linker for the Rust crates is
- * `clang++` driving `lld` — but the absolute path to that clang++ is
+ * `clang++` driving `lld` (driving ld64 on darwin — see below) — but the
+ * absolute path to that clang++ is
  * machine-specific (CI puts the LLVM toolchain at a versioned path like
  * `/opt/llvm-N/bin/clang++`; a contributor's box has it wherever rustup /
  * the system package manager dropped it). `tools.ts` already discovers the
@@ -10,10 +11,13 @@
  * lines from that discovered path rather than hardcoding one.
  *
  * For the `bun bd` / ninja build this file is purely advisory: `rust.ts`
- * passes `CARGO_TARGET_<TRIPLE>_LINKER = cfg.cxx` (plus `CC`/`CXX`/`AR`) and
- * `-Clink-arg=-fuse-ld=lld` directly on the cargo invocation's environment,
- * which override anything here. The file matters for a contributor running
- * `cargo build` / `cargo check` directly, and for rust-analyzer.
+ * passes `CARGO_TARGET_<TRIPLE>_LINKER = cfg.cxx` (plus `CC`/`CXX`/`AR`) and,
+ * on non-darwin targets, `-Clink-arg=-fuse-ld=lld` directly on the cargo
+ * invocation's environment, which override anything here. (Darwin omits that
+ * flag — macOS uses ld64 by default; see rust.ts. `.cargo/config.toml`
+ * likewise skips the `-fuse-ld=lld` rustflag on darwin, below.) The file
+ * matters for a contributor running `cargo build` / `cargo check` directly,
+ * and for rust-analyzer.
  *
  * `writeIfChanged` semantics (precedent: `depVersionsHeader.ts`) so a
  * reconfigure with an unchanged toolchain doesn't bump the file's mtime and

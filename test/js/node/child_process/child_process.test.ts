@@ -307,6 +307,86 @@ describe("spawn()", () => {
       expect(child.stdout).not.toBeNull();
       expect(child.stderr).not.toBeNull();
     });
+
+    // Regression: parent->child writes on the extra stdio[3] pipe were
+    // silently dropped on Windows. The Duplex returned `true` from write(),
+    // never invoked the write callback, and the bytes never reached the
+    // child. Reads (child->parent) worked.
+    it("stdio[3] is duplex: parent<->child round trips work", async () => {
+      const childScript = `
+        const fs = require("node:fs");
+        const writer = fs.createWriteStream("", { fd: 3 });
+        const reader = fs.createReadStream("", { fd: 3 });
+        let buffer = "";
+        reader.setEncoding("utf-8");
+        reader.on("data", chunk => {
+          buffer += chunk;
+          let idx;
+          while ((idx = buffer.indexOf("\\n")) !== -1) {
+            const line = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 1);
+            if (!line) continue;
+            if (line === "parent:hello") writer.write("child:hello-ack\\n");
+            else if (line === "parent:ping") writer.write("child:pong\\n");
+            else if (line === "parent:bye") process.exit(0);
+          }
+        });
+        writer.write("child:ready\\n");
+      `;
+
+      await using child = spawn(bunExe(), ["-e", childScript], {
+        stdio: ["ignore", "ignore", "ignore", "pipe"],
+        env: bunEnv,
+      });
+
+      const fd3 = child.stdio[3]!;
+      expect(fd3).not.toBeNull();
+
+      const writeCallbacksFired: string[] = [];
+      const linesReceived: string[] = [];
+      const { promise: done, resolve, reject } = Promise.withResolvers<void>();
+
+      let buffer = "";
+      fd3.on("data", (chunk: Buffer) => {
+        buffer += chunk.toString();
+        let idx: number;
+        while ((idx = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 1);
+          if (!line) continue;
+          linesReceived.push(line);
+
+          const reply =
+            line === "child:ready"
+              ? "parent:hello"
+              : line === "child:hello-ack"
+                ? "parent:ping"
+                : line === "child:pong"
+                  ? "parent:bye"
+                  : null;
+
+          if (reply) {
+            (fd3 as NodeJS.WritableStream).write(reply + "\n", err => {
+              if (err) reject(err);
+              else writeCallbacksFired.push(reply);
+            });
+          }
+        }
+      });
+      fd3.on("error", reject);
+      child.on("error", reject);
+      let exitCode: number | null = null;
+      child.on("exit", code => {
+        exitCode = code;
+        resolve();
+      });
+
+      await done;
+
+      expect(linesReceived).toEqual(["child:ready", "child:hello-ack", "child:pong"]);
+      expect(writeCallbacksFired).toEqual(["parent:hello", "parent:ping", "parent:bye"]);
+      expect(exitCode).toBe(0);
+    }, 10_000);
   });
 });
 

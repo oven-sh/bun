@@ -5,6 +5,48 @@ import v8 from "node:v8";
 
 describe("structuredClone with Blob and File", () => {
   describe("Blob structured clone", () => {
+    test("slices and re-slices serialize only their own byte windows", async () => {
+      const before = "BEFORE-WINDOW-0123456789";
+      const middle = "public-window-payload";
+      const after = "AFTER-WINDOW-9876543210";
+      const parent = new Blob([before + middle + after], { type: "application/octet-stream" });
+      const slice = parent.slice(before.length, before.length + middle.length);
+
+      // The serialized payload of the slice contains the slice's bytes and
+      // nothing from the rest of the parent buffer.
+      const wire = Buffer.from(serialize(slice));
+      expect(wire.includes(middle)).toBe(true);
+      expect(wire.includes(before)).toBe(false);
+      expect(wire.includes(after)).toBe(false);
+
+      const cloned = structuredClone(slice);
+      expect(cloned.size).toBe(middle.length);
+      expect(await cloned.text()).toBe(middle);
+
+      // A slice of a slice is bounded by the innermost window.
+      const inner = slice.slice(7); // "window-payload"
+      const innerWire = Buffer.from(serialize(inner));
+      expect(innerWire.includes("window-payload")).toBe(true);
+      expect(innerWire.includes("public-")).toBe(false);
+      expect(innerWire.includes(before)).toBe(false);
+      expect(innerWire.includes(after)).toBe(false);
+
+      const innerClone = deserialize(serialize(inner));
+      expect(innerClone.size).toBe("window-payload".length);
+      expect(await innerClone.text()).toBe("window-payload");
+
+      // Serializing must not change what the live source objects read as.
+      expect(slice.size).toBe(middle.length);
+      expect(await slice.text()).toBe(middle);
+      expect(inner.size).toBe("window-payload".length);
+      expect(await inner.text()).toBe("window-payload");
+
+      // The parent blob is unaffected and still round-trips in full.
+      const parentClone = structuredClone(parent);
+      expect(parentClone.size).toBe(parent.size);
+      expect(await parentClone.text()).toBe(before + middle + after);
+    });
+
     test("empty Blob", () => {
       const blob = new Blob([]);
       const cloned = structuredClone(blob);

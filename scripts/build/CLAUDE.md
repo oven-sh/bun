@@ -142,7 +142,7 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 1. `resolveToolchain()` — find clang/ar/lld/strip/cmake/cargo/bun/esbuild. Version-checked where it matters; paths stored on `Toolchain`.
 2. `resolveConfig(partial, toolchain)` — produce the flat `Config`. Detect host, derive all target booleans, compute paths, read package.json version + git sha.
 3. `validateBunConfig(cfg)` + `checkWorkarounds(cfg)` — fail early with clear errors.
-   - `generateCargoConfig(cfg)` — write the repo-root `.cargo/config.toml` (git-ignored) with the per-target `linker = ` from the discovered `cfg.cxx`. Advisory only for `bun bd` (the ninja cargo edge sets the linker via env); it's there for `cargo build`/`cargo check`/rust-analyzer run directly.
+   - `generateCargoConfig(cfg)` — write the repo-root `.cargo/config.toml` (git-ignored) with the per-target `linker = ` from the discovered `cfg.hostCxx`. Advisory only for `bun bd` (the ninja cargo edge sets the linker via env); it's there for `cargo build`/`cargo check`/rust-analyzer run directly.
 4. `globAllSources()` — one filesystem snapshot of all `.cpp`/`.c`/`.zig`/codegen-input globs.
 5. `new Ninja({buildDir})` + `registerAllRules(n, cfg)` — register every rule template.
 6. `emitGeneratorRule(n, cfg, partial)` — persist `configure.json`, emit `regen` rule so editing any build script triggers reconfigure.
@@ -188,7 +188,7 @@ Split CI modes: `rust-only` (lolhtml+codegen+cargo → libbun_rust.a), `cpp-only
 | `source.ts`                    | `Dependency` types, `resolveDep()`, fetch/configure/build emission                                    |
 | `codegen.ts`                   | Code generation steps, `emitCodegen()`, `CodegenOutputs`                                              |
 | `rust.ts`                      | `cargo build` step, `emitRust()`, `rustLibPath()`, cross-compile matrix                               |
-| `cargo-config.ts`              | Generates the git-ignored `.cargo/config.toml` (per-target `linker` from `cfg.cxx`)                   |
+| `cargo-config.ts`              | Generates the git-ignored `.cargo/config.toml` (per-target `linker` from `cfg.hostCxx`)               |
 | `bun.ts`                       | `emitBun()` — assembles deps+codegen+rust+compile+link                                                |
 | `shims.ts`                     | Platform/toolchain workaround dylibs, `emitShims()`                                                   |
 | `workarounds.ts`               | Self-obsoleting workaround registry, `checkWorkarounds()`                                             |
@@ -201,6 +201,7 @@ Split CI modes: `rust-only` (lolhtml+codegen+cargo → libbun_rust.a), `cpp-only
 | `fs.ts`                        | `writeIfChanged()`, `mkdirAll()`                                                                      |
 | `error.ts`                     | `BuildError` with hint/file/cause, `assert()`                                                         |
 | `download.ts`                  | `downloadWithRetry()`, archive extraction                                                             |
+| `winsysroot.ts`                | Windows MSVC CRT + SDK sysroot (xwin): validates, adds case aliases, CI fetch                         |
 | `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads                                                            |
 | `ci.ts`                        | CI integration — annotations, artifacts, log groups                                                   |
 | `clean.ts`                     | `bun run clean` preset-based cleanup                                                                  |

@@ -2825,11 +2825,13 @@ pub struct LineColumnTracker {
     contents_len: usize,
     path_ptr: usize,
     path_len: usize,
-    /// Scanner state after consuming every codepoint in `contents[..offset]`.
+    cursors: [ScanCursor; 4],
+}
+
+#[derive(Clone, Copy, Default)]
+struct ScanCursor {
     offset: usize,
     state: ErrorPositionState,
-    /// `scan_line_end` result for the line containing `offset`, if already
-    /// computed; invalidated whenever the scan crosses a line break.
     line_end: Option<usize>,
 }
 
@@ -2862,30 +2864,30 @@ impl LineColumnTracker {
             self.reset_for(source);
         }
 
-        // Serve out-of-order offsets (e.g. notes pointing at earlier ranges)
-        // and offsets inside a multi-byte codepoint with a one-off full scan,
-        // leaving the resumable state untouched: going backwards would lose
-        // forward progress, and resuming mid-codepoint would decode the tail
-        // bytes differently than a fresh scan does.
-        if offset < self.offset || (offset < contents.len() && contents[offset] & 0xC0 == 0x80) {
+        if offset < contents.len() && contents[offset] & 0xC0 == 0x80 {
             return source.init_error_position(offset_loc);
         }
 
-        if self.state.advance(contents, self.offset, offset) {
-            self.line_end = None;
-        }
-        self.offset = offset;
+        let Some(index) = self.cursors.iter().position(|c| c.offset <= offset) else {
+            return source.init_error_position(offset_loc);
+        };
+        let cursor = &mut self.cursors[index];
 
-        let line_end = match self.line_end {
+        if cursor.state.advance(contents, cursor.offset, offset) {
+            cursor.line_end = None;
+        }
+        cursor.offset = offset;
+
+        let line_end = match cursor.line_end {
             Some(line_end) => line_end,
             None => {
                 let line_end = scan_line_end(contents, offset);
-                self.line_end = Some(line_end);
+                cursor.line_end = Some(line_end);
                 line_end
             }
         };
 
-        self.state.to_error_position(line_end)
+        cursor.state.to_error_position(line_end)
     }
 }
 
@@ -3677,6 +3679,49 @@ mod line_column_tracker_tests {
         ];
         for contents in corpus {
             check_corpus_entry(contents);
+        }
+    }
+
+    #[test]
+    fn line_column_tracker_interleaved_diagnostic_streams_match_full_scan() {
+        let statement = b"try {} catch ([a,a,a,a,a,a,a,a,a,a,a,a, `]) {}\n";
+        let mut contents = Vec::new();
+        for _ in 0..12 {
+            contents.extend_from_slice(statement);
+        }
+        let source = Source::init_path_string(b"tracker-test.js" as &[u8], contents.as_slice());
+
+        let mut offsets = Vec::new();
+        for statement_index in 0..12usize {
+            let start = statement_index * statement.len();
+            let first_binding = start + 15;
+            offsets.push(start + statement.len() - 6);
+            for duplicate in 1..12usize {
+                offsets.push(first_binding);
+                offsets.push(first_binding + duplicate * 2);
+            }
+        }
+
+        let mut tracker = LineColumnTracker::default();
+        for offset in offsets {
+            let loc = usize2loc(offset);
+            let expected = source.init_error_position(loc);
+            let got = tracker.error_position(&source, loc);
+            assert_eq!(
+                (
+                    expected.line_start,
+                    expected.line_end,
+                    expected.line_count,
+                    expected.column_count
+                ),
+                (
+                    got.line_start,
+                    got.line_end,
+                    got.line_count,
+                    got.column_count
+                ),
+                "interleaved scan diverged at offset {offset}"
+            );
         }
     }
 

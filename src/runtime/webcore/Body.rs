@@ -848,12 +848,6 @@ impl Value {
             Value::Null => Ok(JSValue::NULL),
             Value::InternalBlob(_) | Value::Blob(_) | Value::WTFStringImpl(_) => {
                 // Zig: `defer blob.detach()` — must run on every exit incl. `?` paths.
-                // `use_()` hands back a stack-owned `Blob`; `Blob::detach()` only
-                // releases the store, so a heap-owned `content_type` (e.g. the
-                // `multipart/form-data; boundary=…` from `from_dom_form_data`)
-                // would leak. `deinit()` = detach + free_content_type and is a
-                // no-op on the heap-free path (`is_heap_allocated()` is false —
-                // asserted in `use_()`). Same gap exists in the Zig spec.
                 let blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
                 blob.resolve_size();
                 let blob_size = blob.size.get();
@@ -1137,12 +1131,6 @@ impl Value {
                     Action::GetText => match new {
                         Value::WTFStringImpl(_) | Value::InternalBlob(_) /* | Value::InlineBlob(_) */ => {
                             let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                            // `Any` has no Drop. `to_string_transfer` moves the bytes into
-                            // a JS string but leaves the heap-owned `content_type` (from
-                            // `from_dom_form_data`) behind in the `Any::Blob` variant —
-                            // detach() (idempotent) reclaims it. Same defer is already in
-                            // the GetJSON / GetFormData arms; the Zig spec omits it here
-                            // and leaks ~80B per FormData body under ASAN.
                             let result = promise.wrap(global, |g| blob.to_string_transfer(g));
                             blob.detach();
                             result?;
@@ -1895,10 +1883,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         let value = self.get_body_value();
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
-        // `Any` has no Drop. `to_string(Transfer)` moves the bytes into the JS
-        // string but leaves the heap-owned `content_type` (e.g. the
-        // `multipart/form-data; boundary=…` string from `from_dom_form_data`)
-        // behind in `Any::Blob` — `detach()` (idempotent) reclaims it.
         let result = JSPromise::wrap(global_object, |g| blob.to_string(g, Lifetime::Transfer));
         blob.detach();
         Ok(result?)

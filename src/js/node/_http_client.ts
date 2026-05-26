@@ -314,7 +314,8 @@ function ClientRequest(input, options, cb) {
         return [path, `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`];
       } else {
         let proxy: string | undefined;
-        const url = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${path}`;
+        const pathname = path.startsWith("/") ? path : "/" + path;
+        const url = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${pathname}`;
         // support agent proxy url/string for http/https
         try {
           // getters can throw

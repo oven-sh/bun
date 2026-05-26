@@ -1324,7 +1324,8 @@ impl<'a> Linker<'a> {
     fn chmod_on_ok(err: Option<Error>, abs_target: &ZStr) {
         // PORT NOTE: hoisted from `defer` block in create_symlink
         if err.is_none() {
-            let _ = sys::chmod(abs_target, 0o777 & !(UMASK.load(Ordering::Acquire) as Mode));
+            let mode = 0o777 & !(UMASK.load(Ordering::Acquire) as Mode);
+            let _ = sys::lchmod(abs_target, mode);
         }
     }
 

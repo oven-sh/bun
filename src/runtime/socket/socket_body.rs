@@ -1313,9 +1313,36 @@ impl<const SSL: bool> NewSocket<SSL> {
             success
         );
 
-        let authorized = success == 1;
+        let mut authorized = success == 1;
+        let mut hostname_mismatch = false;
 
-        this.update_flags(|f| f.set(Flags::AUTHORIZED, authorized));
+        if SSL && authorized && !handlers.mode.is_server() {
+            if let Some(ssl_ptr) = this.socket.get().ssl() {
+                let hostname: &[u8] = if let Some(server_name) = this.server_name.get() {
+                    &server_name[..]
+                } else if let Some(super::listener::UnixOrHost::Host { host, .. }) =
+                    this.connection.get()
+                {
+                    &host[..]
+                } else {
+                    b""
+                };
+                if !hostname.is_empty()
+                    && !bun_boringssl::check_server_identity(
+                        boringssl_sys::SSL::opaque_mut(ssl_ptr),
+                        hostname,
+                    )
+                {
+                    authorized = false;
+                    hostname_mismatch = true;
+                }
+            }
+        }
+
+        this.update_flags(|f| {
+            f.set(Flags::AUTHORIZED, authorized);
+            f.set(Flags::HOSTNAME_MISMATCH, hostname_mismatch);
+        });
 
         let mut callback = handlers.on_handshake;
         let mut is_open = false;
@@ -1695,6 +1722,19 @@ impl<const SSL: bool> NewSocket<SSL> {
         // is very usefull to have this feature depending on the user workflow
         let ssl_error = this.socket.get().get_verify_error();
         if ssl_error.error_no == 0 {
+            if this.flags.get().contains(Flags::HOSTNAME_MISMATCH) {
+                let mismatch = SystemError {
+                    errno: 0,
+                    code: BunString::clone_utf8(b"HOSTNAME_MISMATCH"),
+                    message: BunString::clone_utf8(b"Hostname mismatch"),
+                    path: BunString::EMPTY,
+                    syscall: BunString::EMPTY,
+                    hostname: BunString::EMPTY,
+                    fd: c_int::MIN,
+                    dest: BunString::EMPTY,
+                };
+                return Ok(mismatch.to_error_instance(global));
+            }
             return Ok(JSValue::NULL);
         }
 
@@ -3392,7 +3432,7 @@ bitflags::bitflags! {
         /// pre-handshake bytes / read the underlying TCP stream.
         const BYPASS_TLS           = 1 << 9;
         const OWNS_HANDLERS        = 1 << 10;
-        // bits 11..15 unused (Zig: `_: u6 = 0`)
+        const HOSTNAME_MISMATCH    = 1 << 11;
     }
 }
 

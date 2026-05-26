@@ -4286,6 +4286,10 @@ pub fn escape_8bit<const ADD_QUOTES: bool>(
                 continue 'outer;
             }
         }
+        if c == SPECIAL_JS_CHAR {
+            outbuf.extend_from_slice(&[SPECIAL_JS_CHAR, b'"', b'"']);
+            continue;
+        }
         outbuf.push(c);
     }
 
@@ -4330,6 +4334,11 @@ pub fn escape_utf16<const ADD_QUOTES: bool>(
                 outbuf.extend_from_slice(&[b'\\', char as u8]);
                 continue 'outer;
             }
+        }
+
+        if char == u32::from(SPECIAL_JS_CHAR) {
+            outbuf.extend_from_slice(&[SPECIAL_JS_CHAR, b'"', b'"']);
+            continue;
         }
 
         let len = bun_core::encode_wtf8_rune(&mut cp_buf, char);

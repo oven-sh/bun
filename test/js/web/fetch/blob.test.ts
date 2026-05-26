@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import path from "node:path";
@@ -323,6 +323,55 @@ test("dupe() preserves allocated content_type for Body clone", () => {
   const clonedType = cloned.headers.get("content-type");
   expect(originalType).toStartWith("multipart/form-data; boundary=");
   expect(clonedType).toBe(originalType);
+});
+
+test("Bun.file(path, {type}).text() does not leak the duped content_type", async () => {
+  using dir = tempDir("blob-text-content-type", {
+    "data.txt": "hello",
+  });
+  const script = `
+    const p = ${JSON.stringify(path.join(String(dir), "data.txt"))};
+    const type = "application/x-" + Buffer.alloc(64 * 1024, "a").toString();
+    const file = Bun.file(p, { type });
+    for (let i = 0; i < 100; i++) await file.text();
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 1024; i++) await file.text();
+    Bun.gc(true);
+    const after = process.memoryUsage.rss();
+    console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { deltaMiB } = JSON.parse(stdout);
+  expect(deltaMiB).toBeLessThan(isASAN ? 400 : 40);
+  expect(exitCode).toBe(0);
+});
+
+test("reading a file-backed Blob does not free the source's content type", async () => {
+  using dir = tempDir("blob-text-keeps-type", {
+    "data.txt": "hello",
+  });
+  const customType = "application/x-custom-type-not-in-registry-keepme";
+  const file = Bun.file(path.join(String(dir), "data.txt"), { type: customType });
+  expect(await file.text()).toBe("hello");
+  expect(await file.text()).toBe("hello");
+  expect(file.type).toBe(customType);
+});
+
+test("Bun.write preserves a custom content type on the destination", async () => {
+  using dir = tempDir("blob-write-keeps-type", {});
+  const customType = "application/x-custom-type-not-in-registry-write";
+  const dest = Bun.file(path.join(String(dir), "out.txt"), { type: customType });
+  await Bun.write(dest, "data");
+  expect(await dest.text()).toBe("data");
+  expect(dest.type).toBe(customType);
 });
 
 test("Blob part's bytes survive a later part freeing it during construction", async () => {

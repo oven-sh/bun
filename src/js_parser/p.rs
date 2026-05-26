@@ -338,16 +338,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub has_commonjs_export_names: bool,
 
     pub stack_check: bun_core::StackCheck,
-    /// Hard recursion cap for `parse_stmt`. Zig relies on `stack_check` alone,
-    /// but its `parseStmt` uses an `inline` switch that pulls every `t_*`
-    /// handler into one multi-KB frame, so 15k nested statements exhaust the
-    /// 18 MB Windows stack and trip `is_safe_to_recurse()`. Rust dispatches to
-    /// out-of-line `t_*` fns; the `parse_stmt`→`t_for` cycle is only a few
-    /// hundred bytes, so the 15k-level `lots-of-for-loop.js` fixture (~4 MB)
-    /// never trips the 256 KB threshold on Windows' 18 MB worker stack — parse
-    /// completes, then the (uncapped) visitor/printer recurse 15k times and
-    /// hard-overflow. Same `MAX_STMT_DEPTH` rationale as `interchange/json.rs`.
-    pub parse_stmt_depth: u32,
 
     pub reported_stack_overflow: core::cell::Cell<bool>,
 
@@ -3342,6 +3332,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn hoist_symbols(&mut self, mut scope: js_ast::StoreRef<js_ast::Scope>) {
+        // This runs before the visit pass, so it walks the scope tree at the full
+        // nesting depth the parser allowed; deep trees must error here instead of
+        // overflowing the stack.
+        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            self.report_stack_overflow(bun_ast::Loc::EMPTY);
+            return;
+        }
+
         // `StoreRef` is the arena back-pointer with safe `Deref`/`DerefMut` —
         // scope is arena-owned and valid for the parser 'a lifetime; the visit
         // pass is single-threaded so no aliasing `&mut` is outstanding. Read the
@@ -9244,7 +9242,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             named_exports: Default::default(),
             log,
             stack_check: bun_core::StackCheck::init(),
-            parse_stmt_depth: 0,
             reported_stack_overflow: core::cell::Cell::new(false),
             ts_infer_constraint_backtracks: Vec::new(),
             arena,

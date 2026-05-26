@@ -1923,6 +1923,46 @@ describe("should handle relative location in the redirect, issue#5635", () => {
   });
 });
 
+describe("maxRedirects", () => {
+  let server: Server;
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      async fetch(request: Request) {
+        const url = new URL(request.url);
+        if (url.pathname.startsWith("/hop/")) {
+          const hop = Number(url.pathname.slice("/hop/".length));
+          if (hop >= 4) {
+            return new Response("done");
+          }
+          return new Response(null, { status: 302, headers: { Location: `/hop/${hop + 1}` } });
+        }
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+  });
+  afterAll(() => {
+    server.stop(true);
+  });
+
+  it("rejects once the chain exceeds maxRedirects", async () => {
+    expect(fetch(`${server.url}hop/0`, { maxRedirects: 2 })).rejects.toThrow("redirected too many times");
+  });
+
+  it("follows the chain when maxRedirects is large enough", async () => {
+    const resp = await fetch(`${server.url}hop/0`, { maxRedirects: 4 });
+    expect(resp.status).toBe(200);
+    expect(await resp.text()).toBe("done");
+    expect(new URL(resp.url).pathname).toBe("/hop/4");
+  });
+
+  it("rejects invalid values", async () => {
+    expect(async () => await fetch(`${server.url}hop/0`, { maxRedirects: -1 })).toThrow();
+    expect(async () => await fetch(`${server.url}hop/0`, { maxRedirects: 1.5 })).toThrow();
+    expect(async () => await fetch(`${server.url}hop/0`, { maxRedirects: NaN })).toThrow();
+  });
+});
+
 it.concurrent("should allow very long redirect URLS", async () => {
   const Location = "/" + "B".repeat(7 * 1024);
   using server = Bun.serve({

@@ -199,6 +199,17 @@ impl CryptoHasher {
         }
     }
 
+    #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__isXof", no_catch)]
+    pub fn extern_is_xof(&self) -> bool {
+        match self {
+            CryptoHasher::Zig(inner) => matches!(
+                inner.get().algorithm,
+                evp::Algorithm::Shake128 | evp::Algorithm::Shake256
+            ),
+            _ => false,
+        }
+    }
+
     // ── JS host fns ────────────────────────────────────────────────────────
 
     /// `pub const digest = jsc.host_fn.wrapInstanceMethod(CryptoHasher, "digest_", false);`

@@ -897,22 +897,6 @@ impl String {
     // constructFromU8,U16}`) live in `bun_runtime`; defining the methods here
     // would invert the crate graph. See PORTING.md §Dep-cycle.
 
-    /// `bun.String.visibleWidth` — terminal column width of `self`, including
-    /// ANSI escape sequences as visible (string.zig). Dispatches on encoding
-    /// to [`strings::visible::width`].
-    pub fn visible_width(&self, ambiguous_as_wide: bool) -> usize {
-        use crate::string::strings::visible::width as w;
-        if self.is_utf16() {
-            return w::utf16(self.utf16(), ambiguous_as_wide);
-        }
-        if self.is_utf8() {
-            // SAFETY: tag is ZigString/StaticZigString and 8-bit; `slice()` is
-            // the UTF-8 byte view.
-            return w::utf8(self.as_zig().slice());
-        }
-        w::latin1(self.latin1())
-    }
-
     /// `bun.String.visibleWidthExcludeANSIColors` — terminal column width of
     /// `self`, treating ANSI escape sequences as zero-width (string.zig).
     /// Dispatches on encoding to [`strings::visible::width::exclude_ansi_colors`].

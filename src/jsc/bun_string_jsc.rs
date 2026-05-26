@@ -140,50 +140,6 @@ pub fn parse_date(this: &mut String, global_object: &JSGlobalObject) -> JsResult
     unsafe { crate::cpp::Bun__parseDate(global_object, this) }
 }
 
-#[bun_jsc::host_fn]
-pub fn js_get_string_width(
-    global_object: &JSGlobalObject,
-    call_frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let args = call_frame.arguments_as_array::<2>();
-    let argument = args[0];
-    let opts_val = args[1];
-
-    if argument.is_empty() || argument.is_undefined() {
-        return Ok(JSValue::js_number_from_int32(0));
-    }
-
-    let js_str = argument.to_js_string(global_object)?;
-    let view = js_str.view(global_object);
-
-    if view.is_empty() {
-        return Ok(JSValue::js_number_from_int32(0));
-    }
-
-    let str_ = String::init(view);
-
-    // Parse options: { countAnsiEscapeCodes?: bool, ambiguousIsNarrow?: bool }
-    let mut count_ansi: bool = false;
-    let mut ambiguous_is_narrow: bool = true;
-
-    if opts_val.is_object() {
-        if let Some(v) = opts_val.get_truthy(global_object, "countAnsiEscapeCodes")? {
-            count_ansi = v.to_boolean();
-        }
-        if let Some(v) = opts_val.get_truthy(global_object, "ambiguousIsNarrow")? {
-            ambiguous_is_narrow = v.to_boolean();
-        }
-    }
-
-    let width = if count_ansi {
-        str_.visible_width(!ambiguous_is_narrow)
-    } else {
-        str_.visible_width_exclude_ansi_colors(!ambiguous_is_narrow)
-    };
-
-    Ok(JSValue::js_number(width as f64))
-}
-
 // ── SliceWithUnderlyingString methods ───────────────────────────────────────
 pub(crate) fn slice_with_underlying_string_to_js(
     this: &mut SliceWithUnderlyingString,

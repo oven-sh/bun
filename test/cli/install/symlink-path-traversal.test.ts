@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it, setDefaultTimeout } from "bun:test";
-import { access, lstat, readdir, readlink, rm, writeFile } from "fs/promises";
+import { access, chmod, lstat, readdir, readlink, rm, stat, symlink, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
@@ -521,3 +521,167 @@ describe.concurrent.skipIf(isWindows)("symlink path traversal protection", () =>
     }
   });
 });
+
+it.skipIf(isWindows)(
+  "rejects symlink targets that climb through other symlinks from the same archive (.bun-tag write stays inside the package)",
+  async () => {
+    // A tarball can ship symlinks whose targets each normalize to a path
+    // inside the package (`l1 -> .`, `l2 -> l1/..`, `l3 -> l2/..`, ...).
+    // Lexically every hop is "safe", but the kernel resolves each link before
+    // applying `..`, so each hop climbs one directory until it clamps at `/`.
+    // A final `.bun-tag -> lN/<absolute path minus leading slash>` entry then
+    // makes the post-extraction `.bun-tag` marker write (O_CREAT|O_TRUNC) land
+    // on an arbitrary file. The extractor must reject symlink targets with a
+    // `..` component that follows a named component, and must not follow a
+    // pre-existing `.bun-tag` when writing the marker.
+    const victimPath = join(systemTmpDir, `bun-tag-victim-${Math.random().toString(36).slice(2, 10)}.txt`);
+    await writeFile(victimPath, "original-content");
+
+    const chainLength = 30;
+    const entries: Parameters<typeof createTarball>[0] = [
+      { name: "test-package/", type: "dir" },
+      {
+        name: "test-package/package.json",
+        type: "file",
+        content: JSON.stringify({ name: "test-package", version: "1.0.0" }),
+      },
+      { name: "test-package/l1", type: "symlink", linkname: "." },
+    ];
+    for (let i = 2; i <= chainLength; i++) {
+      // Normalizes to "" (inside the package), but resolves one directory
+      // above wherever l(i-1) resolves to.
+      entries.push({ name: `test-package/l${i}`, type: "symlink", linkname: `l${i - 1}/..` });
+    }
+    // After `chainLength` hops the chain is clamped at `/`, so this resolves to
+    // the absolute victim path while still normalizing to a path inside the
+    // package directory.
+    entries.push({
+      name: "test-package/.bun-tag",
+      type: "symlink",
+      linkname: `l${chainLength}/${victimPath.replace(/^\/+/, "")}`,
+    });
+    const tarball = createTarball(entries);
+
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname.includes("/tarball/") || url.pathname.endsWith(".tar.gz")) {
+          return new Response(tarball, { headers: { "Content-Type": "application/gzip" } });
+        }
+        if (url.pathname.includes("/repos/")) {
+          return Response.json({ default_branch: "main" });
+        }
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+
+    try {
+      using dir = tempDir("bun-tag-symlink-chain-test", {});
+      const installDir = String(dir);
+
+      await writeFile(
+        join(installDir, "package.json"),
+        JSON.stringify({
+          name: "test-app",
+          version: "1.0.0",
+          dependencies: { "test-package": "github:user/repo#main" },
+        }),
+      );
+
+      const proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: installDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...env,
+          GITHUB_API_URL: `http://localhost:${server.port}`,
+          BUN_INSTALL_CACHE_DIR: join(installDir, ".bun-cache"),
+        },
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // The file outside the extraction directory must be untouched: same
+      // content, not truncated, not replaced with the github tag string.
+      expect(await Bun.file(victimPath).text()).toBe("original-content");
+
+      // The legitimate package contents are still installed.
+      const pkgDir = join(installDir, "node_modules", "test-package");
+      await access(join(pkgDir, "package.json"));
+
+      if (exitCode !== 0) {
+        console.error("Install failed with exit code:", exitCode);
+        console.error("stdout:", stdout);
+        console.error("stderr:", stderr);
+      }
+      expect(exitCode).toBe(0);
+    } finally {
+      server.stop();
+      await rm(victimPath, { force: true });
+    }
+  },
+  60000,
+);
+
+it.skipIf(isWindows)(
+  "does not change permissions of a file reached through a symlinked bin target",
+  async () => {
+    // After creating `node_modules/.bin/<name>`, the installer chmods the bin
+    // target to make it executable. If the bin target inside the package is
+    // itself a symlink (git/file/workspace dependencies can ship one — the npm
+    // tarball extractor never materializes one), chmod follows it and changes
+    // the mode of whatever file it points at, including files outside
+    // node_modules. The chmod must be skipped when the bin target is a symlink.
+    using dir = tempDir("bin-target-symlink-test", {
+      // Pin the hoisted linker so the bin link lands at node_modules/.bin and
+      // the chmod runs against the package's own bin target.
+      "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+      "package.json": JSON.stringify({
+        name: "bin-target-symlink-app",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+      }),
+      "packages/dep/package.json": JSON.stringify({
+        name: "dep-with-symlinked-bin",
+        version: "1.0.0",
+        bin: { "dep-with-symlinked-bin": "./payload" },
+      }),
+      "victim.txt": "do not make me executable",
+    });
+    const installDir = String(dir);
+
+    const victimPath = join(installDir, "victim.txt");
+    await chmod(victimPath, 0o600);
+    // The bin target is a symlink whose destination is outside the package
+    // directory.
+    await symlink(join("..", "..", "victim.txt"), join(installDir, "packages", "dep", "payload"));
+
+    const proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: installDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The file the symlink points at keeps its original permissions; the
+    // installer must not chmod through a symlinked bin target.
+    expect((await stat(victimPath)).mode & 0o777).toBe(0o600);
+
+    // The bin link itself is still created.
+    const binLink = join(installDir, "node_modules", ".bin", "dep-with-symlinked-bin");
+    expect((await lstat(binLink)).isSymbolicLink()).toBe(true);
+
+    if (exitCode !== 0) {
+      console.error("Install failed with exit code:", exitCode);
+      console.error("stdout:", stdout);
+      console.error("stderr:", stderr);
+    }
+    expect(exitCode).toBe(0);
+  },
+  60000,
+);

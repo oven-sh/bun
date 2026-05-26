@@ -905,6 +905,13 @@ impl<'a> Linker<'a> {
             return;
         }
 
+        #[cfg(not(windows))]
+        {
+            if self.resolved_target_parent_escapes_package_dir(abs_target) {
+                return;
+            }
+        }
+
         if let Some(seen) = self.seen.as_deref_mut() {
             // PORT NOTE: StringHashMap::get_or_put boxes the key on insert; the
             // Zig wrote `entry.key_ptr.* = dupe(abs_dest)` which is implicit here.
@@ -1327,6 +1334,56 @@ impl<'a> Linker<'a> {
             let mode = 0o777 & !(UMASK.load(Ordering::Acquire) as Mode);
             let _ = sys::lchmod(abs_target, mode);
         }
+    }
+
+    #[cfg(not(windows))]
+    fn resolved_target_parent_escapes_package_dir(&self, abs_target: &ZStr) -> bool {
+        // SAFETY: `target_node_modules_path` is set at construction to either
+        // a caller-owned `AbsPath` or the same buffer as `node_modules_path`;
+        // both outlive `self` and are not mutated for the duration of this
+        // read (mirrors Zig's aliasing `*AbsPath`).
+        let dest_dir_without_trailing_slash =
+            strings::without_trailing_slash(unsafe { (*self.target_node_modules_path).slice() });
+        let package_name = self.target_package_name.slice();
+
+        let mut package_dir_buf = path::path_buffer_pool::get();
+        let buf = package_dir_buf.as_mut_slice();
+        if dest_dir_without_trailing_slash.len() + package_name.len() + 2 > buf.len() {
+            return true;
+        }
+        let mut off: usize = 0;
+        buf[off..off + dest_dir_without_trailing_slash.len()]
+            .copy_from_slice(dest_dir_without_trailing_slash);
+        off += dest_dir_without_trailing_slash.len();
+        buf[off] = SEP;
+        off += 1;
+        buf[off..off + package_name.len()].copy_from_slice(package_name);
+        off += package_name.len();
+        buf[off] = 0;
+        let package_dir = ZStr::from_buf(&buf[..], off);
+
+        let mut real_package_dir_buf = path::path_buffer_pool::get();
+        let real_package_dir = match sys::realpath(package_dir, &mut *real_package_dir_buf) {
+            Ok(resolved) => resolved,
+            Err(_) => return true,
+        };
+
+        let target_parent = resolve_path::dirname::<PlatformAuto>(abs_target.as_bytes());
+        if target_parent.is_empty() || target_parent.len() >= MAX_PATH_BYTES {
+            return true;
+        }
+        let mut target_parent_buf = path::path_buffer_pool::get();
+        let target_parent_z = resolve_path::z(target_parent, &mut *target_parent_buf);
+        let mut real_parent_buf = path::path_buffer_pool::get();
+        let real_parent = match sys::realpath(target_parent_z, &mut *real_parent_buf) {
+            Ok(resolved) => resolved,
+            Err(_) => return true,
+        };
+
+        matches!(
+            resolve_path::is_parent_or_equal(real_package_dir, real_parent),
+            resolve_path::ParentEqual::Unrelated
+        )
     }
 
     /// True when the native binlink optimization has redirected the link

@@ -1,4 +1,4 @@
-import { cc, CString, JSCallback, ptr, type FFIFunction, type Library } from "bun:ffi";
+import { cc, CString, FFIType, JSCallback, ptr, type FFIFunction, type Library } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { promises as fs } from "fs";
 import { bunEnv, bunExe, isArm64, isASAN, isWindows, tempDirWithFiles } from "harness";
@@ -134,7 +134,7 @@ describe("given a source file with syntax errors", () => {
   });
 });
 
-describe.skip("given a ping(cstr) function", () => {
+describe.skipIf(isASAN || isFFIUnavailable)("given a ping(cstr) function", () => {
   const library = makeValidCase(
     "ping",
     /* c */ `
@@ -150,30 +150,32 @@ describe.skip("given a ping(cstr) function", () => {
     },
   );
 
-  it("given a valid CString, returns the same pointer", () => {
+  it("given a valid CString, returns a CString with the same pointer", () => {
     const buf = Buffer.from("hello\0");
     const arr = new Uint8Array(buf);
     const cstr = new CString(ptr(arr));
 
-    expect(library.symbols.ping(cstr)).toBe(cstr);
+    const result = library.symbols.ping(cstr);
+    expect(result).toBeInstanceOf(CString);
+    expect(result.ptr).toBe(cstr.ptr);
+    expect(result.toString()).toBe("hello");
   });
 }); // </given a ping(cstr) function>
 
-// FIXME: bus error
-describe.skip("given a strlen(cstring) function", () => {
+describe.skipIf(isASAN || isFFIUnavailable)("given a strlen(cstring) function", () => {
   const library = makeValidCase(
-    "strlen",
+    "strlen_impl",
     /* c */ `
-      size_t strlen(char* str) {
+      unsigned long long strlen_impl(char* str) {
         char* s = str;
         while (*s) s++;
-        return s - str;
+        return (unsigned long long)(s - str);
       }
     `,
     {
-      strlen: {
+      strlen_impl: {
         args: ["cstring"],
-        returns: "usize",
+        returns: "uint64_t",
       },
     },
   );
@@ -183,14 +185,141 @@ describe.skip("given a strlen(cstring) function", () => {
     const arr = new Uint8Array(buf);
     const cstr = new CString(ptr(arr));
 
-    expect(library.symbols.strlen(cstr)).toBe(5);
+    expect(library.symbols.strlen_impl(cstr)).toBe(5n);
   });
 
   it("given a JSString, throws", () => {
     // @ts-expect-error
-    expect(() => library.symbols.strlen("hello")).toThrow(TypeError);
+    expect(() => library.symbols.strlen_impl("hello")).toThrow(TypeError);
   });
 }); // </given a strlen(cstring) function>
+
+// cc() previously read `options[key]` when wrapping symbols, but the symbol
+// spec for cc() lives at `options.symbols[key]`. The result: cstring returns
+// never became CString instances, and argument wrappers (integer clamps,
+// pointer auto-conversion) never installed.
+describe.skipIf(isASAN || isFFIUnavailable)("cc() wraps symbols correctly", () => {
+  const library = makeValidCase(
+    "hello",
+    /* c */ `
+      const char* hello() { return "world"; }
+    `,
+    {
+      hello: { args: [], returns: "cstring" },
+    },
+  );
+
+  it("a cstring return type yields a CString instance, not a raw number", () => {
+    const result = library.symbols.hello();
+    expect(result).toBeInstanceOf(CString);
+    expect(result.toString()).toBe("world");
+  });
+}); // </cc() wraps symbols correctly>
+
+// The int16_t arg wrapper used to clamp `>= 32768` to `32768`, then the C
+// trampoline cast that to int16_t and wrapped to -32768. The clamp must be
+// to INT16_MAX = 32767 so the cast is safe. (uint16_t is already clamped to
+// 0xffff at the matching site.)
+describe.skipIf(isASAN || isFFIUnavailable)("int16_t arg clamping", () => {
+  const library = makeValidCase(
+    "identity_int16",
+    /* c */ `
+      short identity_int16(short v) { return v; }
+    `,
+    {
+      identity_int16: { args: ["int16_t"], returns: "int16_t" },
+    },
+  );
+
+  it("clamps values above INT16_MAX to INT16_MAX (does not wrap to negative)", () => {
+    expect(library.symbols.identity_int16(32767)).toBe(32767);
+    // Previously: passed 32768 → C cast wrapped to -32768.
+    expect(library.symbols.identity_int16(32768)).toBe(32767);
+    expect(library.symbols.identity_int16(100000)).toBe(32767);
+  });
+
+  it("clamps values below INT16_MIN to INT16_MIN", () => {
+    expect(library.symbols.identity_int16(-32768)).toBe(-32768);
+    expect(library.symbols.identity_int16(-100000)).toBe(-32768);
+  });
+}); // </int16_t arg clamping>
+
+// The double arg wrapper used Math.abs() when converting a BigInt to double,
+// which silently flipped the sign of negative BigInts. It also threw a
+// TypeError ("Cannot mix BigInt and other types") for any BigInt with
+// |val| >= Number.MAX_VALUE, because the fallback path did `val + 0`.
+describe.skipIf(isASAN || isFFIUnavailable)("double arg accepts BigInt with correct sign", () => {
+  const library = makeValidCase(
+    "identity_double",
+    /* c */ `
+      double identity_double(double v) { return v; }
+    `,
+    {
+      identity_double: { args: ["double"], returns: "double" },
+    },
+  );
+
+  it("preserves the sign of negative BigInts", () => {
+    // Math.abs was the bug — would return 5 instead of -5.
+    expect(library.symbols.identity_double(-5n)).toBe(-5);
+    expect(library.symbols.identity_double(-1000n)).toBe(-1000);
+    expect(library.symbols.identity_double(5n)).toBe(5);
+    expect(library.symbols.identity_double(0n)).toBe(0);
+  });
+
+  it("converts BigInts above |Number.MAX_VALUE| to ±Infinity (does not throw)", () => {
+    const huge = 10n ** 309n;
+    // Previously: TypeError "Cannot mix BigInt and other types".
+    expect(library.symbols.identity_double(huge)).toBe(Infinity);
+    expect(library.symbols.identity_double(-huge)).toBe(-Infinity);
+  });
+}); // </double arg accepts BigInt with correct sign>
+
+// The int32 fast-path in INT64_TO_JSVALUE used `val <= MAX_INT32` where
+// MAX_INT32 is 2^31 (not INT32_MAX). So returning the value 2^31 from a
+// 64-bit C function would cast to int32_t and wrap to -2^31 in JS.
+describe.skipIf(isASAN || isFFIUnavailable)("int64_t return at the int32 boundary", () => {
+  const library = makeValidCase(
+    "give_2_to_31",
+    /* c */ `
+      long long give_2_to_31(void) { return 2147483648LL; }
+      long long give_neg_2_to_31(void) { return -2147483648LL; }
+    `,
+    {
+      give_2_to_31: { args: [], returns: "i64_fast" },
+      give_neg_2_to_31: { args: [], returns: "i64_fast" },
+    },
+  );
+
+  it("returns 2^31 as the positive Number 2147483648, not -2147483648", () => {
+    // Previously: 2147483648 cast to int32 → -2147483648.
+    expect(library.symbols.give_2_to_31()).toBe(2147483648);
+  });
+
+  it("returns -2^31 as -2147483648 (this case was always correct)", () => {
+    expect(library.symbols.give_neg_2_to_31()).toBe(-2147483648);
+  });
+}); // </int64_t return at the int32 boundary>
+
+// FFIType.buffer is exposed as the numeric constant 20 but the integer ABI
+// type bound check rejected anything > ABIType::NapiValue (19). Only the
+// string label "buffer" was accepted.
+describe.skipIf(isASAN || isFFIUnavailable)("FFIType.buffer numeric constant is accepted", () => {
+  const library = makeValidCase(
+    "first_byte",
+    /* c */ `
+      unsigned char first_byte(unsigned char* buf) { return buf[0]; }
+    `,
+    {
+      first_byte: { args: [FFIType.buffer], returns: "uint8_t" },
+    },
+  );
+
+  it("accepts FFIType.buffer (numeric constant 20) as an arg type", () => {
+    const arr = new Uint8Array([42, 1, 2, 3]);
+    expect(library.symbols.first_byte(arr)).toBe(42);
+  });
+}); // </FFIType.buffer numeric constant is accepted>
 
 // =============================================================================
 

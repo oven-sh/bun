@@ -81,7 +81,9 @@ delete ffi.closeCallback;
 
 class JSCallback {
   constructor(cb, options) {
-    const { ctx, ptr } = nativeCallback(options, cb);
+    const result = nativeCallback(options, cb);
+    if (Error.isError(result)) throw result;
+    const { ctx, ptr } = result;
     this.#ctx = ctx;
     this.ptr = ptr;
     this.#threadsafe = !!options?.threadsafe;
@@ -161,8 +163,7 @@ const ffiWrappers = new Array(21);
 var char = "val|0";
 ffiWrappers.fill(char);
 ffiWrappers[FFIType.uint8_t] = "val<0?0:val>=255?255:val|0";
-ffiWrappers[FFIType.int16_t] = "val<=-32768?-32768:val>=32768?32768:val|0";
-ffiWrappers[FFIType.uint16_t] = "val<=0?0:val>=65536?65536:val|0";
+ffiWrappers[FFIType.int16_t] = "val<=-32768?-32768:val>=32767?32767:val|0";
 ffiWrappers[FFIType.int32_t] = "val|0";
 // https://github.com/oven-sh/bun/issues/7007
 // This cast with `|0` looks incorrect as it converts 0xffffffff into -1, but this misinterpretation
@@ -185,29 +186,6 @@ ffiWrappers[FFIType.uint32_t] = "val<0?0:val>0xFFFFFFFF?-1:val|0";
 ffiWrappers[FFIType.i64_fast] = `{
   if (typeof val === "bigint") {
     if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(-Number.MAX_SAFE_INTEGER)) {
-      return Number(val).valueOf() || 0;
-    }
-
-    return val;
-  }
-
-  return !val ? 0 : +val || 0;
-}`;
-ffiWrappers[FFIType.i64_fast] = `{
-  if (typeof val === "bigint") {
-    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(-Number.MAX_SAFE_INTEGER)) {
-      return Number(val).valueOf() || 0;
-    }
-
-    return val;
-  }
-
-  return !val ? 0 : +val || 0;
-}`;
-
-ffiWrappers[FFIType.u64_fast] = `{
-  if (typeof val === "bigint") {
-    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= 0) {
       return Number(val).valueOf() || 0;
     }
 
@@ -257,9 +235,7 @@ ffiWrappers[FFIType.uint16_t] = `{
 
 ffiWrappers[FFIType.double] = `{
   if (typeof val === "bigint") {
-    if (val.valueOf() < BigInt(Number.MAX_VALUE)) {
-      return Math.abs(Number(val).valueOf()) + (0.00 - 0.00);
-    }
+    return Number(val) + (0.00 - 0.00);
   }
 
   if (!val) {
@@ -302,6 +278,10 @@ ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = `{
 
   if (val instanceof ArrayBuffer) {
     return __GlobalBunFFIPtrFunctionForWrapper(val);
+  }
+
+  if (typeof val.ptr === "number") {
+    return val.ptr;
   }
 
   if (typeof val === "string") {
@@ -497,12 +477,13 @@ function cc(options) {
   const result = ccFn(options);
   if (Error.isError(result)) throw result;
 
+  const symbols = options.symbols;
   for (let key in result.symbols) {
     var symbol = result.symbols[key];
-    if (options[key]?.args?.length || FFIType[options[key]?.returns as string] === FFIType.cstring) {
+    if (symbols[key]?.args?.length || FFIType[symbols[key]?.returns as string] === FFIType.cstring) {
       result.symbols[key] = FFIBuilder(
-        options[key].args ?? [],
-        options[key].returns ?? FFIType.void,
+        symbols[key].args ?? [],
+        symbols[key].returns ?? FFIType.void,
         symbol,
         // in stacktraces:
         // instead of

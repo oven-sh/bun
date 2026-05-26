@@ -729,10 +729,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: fully initialized by `create()`.
         let ctx_mut = unsafe { &mut *ctx };
 
-        // Zig parity (server.zig:2490): report the claimed context's size as
-        // extra memory so the GC keeps reclaiming per-request garbage (the JS
-        // `Request`/`Response` wrappers and the native allocations their
-        // finalizers release) under sustained load.
         server
             .vm()
             .jsc_vm()

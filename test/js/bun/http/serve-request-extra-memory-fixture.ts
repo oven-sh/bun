@@ -1,7 +1,3 @@
-// Fixture for serve-request-extra-memory.test.ts: a hello-world Bun.serve
-// whose /report endpoint returns this process's GC extra-memory accounting
-// (process.memoryUsage().external) so the parent test can verify that serving
-// requests reports the per-request native context memory to the GC.
 const server = Bun.serve({
   port: 0,
   fetch(req) {

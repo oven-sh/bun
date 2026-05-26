@@ -3068,9 +3068,6 @@ where
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { &mut *ctx_slot };
 
-        // Zig parity (server.zig:2490): report the claimed context's size as
-        // extra memory so the GC keeps reclaiming per-request garbage under
-        // sustained load.
         self.vm()
             .jsc_vm()
             .deprecated_report_extra_memory(core::mem::size_of::<Ctx>());

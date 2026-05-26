@@ -1006,6 +1006,52 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("decorated private method before a private auto-accessor referenced in static block", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(fn, ctx) {
+          return fn;
+        }
+        class Foo {
+          @dec #m() {
+            return 1;
+          }
+          accessor #x = 0;
+          static {
+            console.log(#x in new Foo());
+          }
+          callM() {
+            return this.#m();
+          }
+        }
+        console.log(new Foo().callM());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\n1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("lowered private method body referencing a private auto-accessor", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(fn, ctx) {
+          return fn;
+        }
+        class Foo {
+          @dec m() {}
+          accessor #x = 1;
+          #helper() {
+            return this.#x + 1;
+          }
+          use() {
+            return this.#helper();
+          }
+        }
+        console.log(new Foo().use());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("2\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("Bun.Transpiler output with private name in static block reparses", () => {
       // Fuzzer-found: "#a in _" used to be printed after the class body, which does not parse.
       const transpiler = new Bun.Transpiler({

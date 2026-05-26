@@ -1471,7 +1471,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Pre-scan: determine if all private members need lowering
         let mut lower_all_private = false;
-        let mut private_ref_in_extracted_code = false;
         {
             let mut has_any_private = false;
             let mut has_any_decorated = false;
@@ -1488,6 +1487,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             js_ast::ExprData::EPrivateIdentifier(_)
                         )
                     {
+                        has_any_private = true;
                         lower_all_private = true;
                         break;
                     }
@@ -1509,12 +1509,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // of the class body below so they run after decoration. If they
             // reference a private name declared on this class, the reference
             // would end up outside the class and be a syntax error, so those
-            // privates must be lowered to runtime helper calls as well. This
-            // runs even when privates are already being lowered because of a
-            // decorated member: private auto-accessors keep their declaration
-            // on the class and only get storage entries when extracted code
-            // actually references them.
-            if has_any_private {
+            // privates must be lowered to runtime helper calls as well.
+            if !lower_all_private && has_any_private {
                 let mut declared_privates: HashMap<u32, ()> = HashMap::default();
                 for cprop in cprops.iter() {
                     if cprop.kind == PropertyKind::ClassStaticBlock {
@@ -1544,7 +1540,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
                     if references_private {
                         lower_all_private = true;
-                        private_ref_in_extracted_code = true;
                         break;
                     }
                 }
@@ -1675,16 +1670,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         name
                     };
                     let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, accessor_name);
-                    // When code that is moved out of the class body references this
-                    // class's private names, record the storage WeakMap for private
-                    // auto-accessors too so that references like `#x in obj` inside
-                    // the extracted code can be rewritten into runtime helper calls.
-                    // The getter/setter pair stays declared on the class, so
-                    // references in retained class code are left alone (native
-                    // access keeps working there, including update and compound
-                    // assignment, which the rewriter does not handle).
-                    if private_ref_in_extracted_code
-                        && let Some(k) = prop.key
+                    // Record the storage WeakMap for private auto-accessors so that
+                    // references to them inside code that gets moved out of the
+                    // class body (extracted static blocks, lowered private method
+                    // bodies, suffix expressions, …) can be rewritten into runtime
+                    // helper calls like `__privateIn`/`__privateGet`. The
+                    // getter/setter pair stays declared on the class, and this map
+                    // is never applied to retained class code, so native access —
+                    // including update and compound assignment, which the rewriter
+                    // does not handle — keeps working there.
+                    if let Some(k) = prop.key
                         && let js_ast::ExprData::EPrivateIdentifier(pi) = &k.data
                     {
                         extracted_accessor_map

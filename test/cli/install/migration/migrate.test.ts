@@ -333,3 +333,62 @@ test("package-lock.json migration rejects git committish values that are not a s
     "3.7.1",
   );
 });
+
+test("package-lock.json migration keeps dependencies declared as arbitrary tarball URLs without integrity", async () => {
+  const tarball = await Bun.file(join(import.meta.dir, "..", "baz-0.0.3.tgz")).arrayBuffer();
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response(tarball);
+    },
+  });
+
+  const tarballUrl = `http://localhost:${server.port}/baz-0.0.3.tgz`;
+
+  const testDir = tempDirWithFiles("migrate-arbitrary-tarball-url", {
+    "package.json": JSON.stringify({
+      name: "arbitrary-tarball-url-test",
+      version: "1.0.0",
+      dependencies: {
+        "baz": tarballUrl,
+      },
+    }),
+    "package-lock.json": JSON.stringify({
+      name: "arbitrary-tarball-url-test",
+      version: "1.0.0",
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        "": {
+          name: "arbitrary-tarball-url-test",
+          version: "1.0.0",
+          dependencies: {
+            "baz": tarballUrl,
+          },
+        },
+        "node_modules/baz": {
+          version: "0.0.3",
+          resolved: tarballUrl,
+          license: "MIT",
+        },
+      },
+    }),
+  });
+
+  await using proc = Bun.spawn([bunExe(), "install"], {
+    env: bunEnv,
+    cwd: testDir,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(err).not.toContain("InvalidNPMLockfile");
+  expect(err).toContain("migrated lockfile from package-lock.json");
+  expect(await Bun.file(join(testDir, "node_modules", "baz", "package.json")).json()).toHaveProperty(
+    "version",
+    "0.0.3",
+  );
+  expect(fs.existsSync(join(testDir, "bun.lock"))).toBeTrue();
+  expect(exitCode).toBe(0);
+});

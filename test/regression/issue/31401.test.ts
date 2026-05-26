@@ -3,14 +3,7 @@ import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/31401
-//
-// An anonymous `export default function () {}` gets an auto-generated name
-// derived from the module filename (`<name>_default`). When the filename
-// starts with a digit (e.g. `1.ts`), the transpile / `bun run` path (which
-// does not run the renamer) emitted `function 1_default()` — an invalid
-// identifier that JSC's lexer rejected with
-// "No identifiers allowed directly after numeric literal".
-// The generated name must be sanitized up-front (→ `_1_default`).
+// A digit-named module (e.g. `1.ts`) with an anonymous default function must emit a valid identifier.
 describe.concurrent("issue 31401: anonymous default export from digit-named module", () => {
   test("run a digit-named module with an anonymous default function", async () => {
     using dir = tempDir("issue-31401-run", {

@@ -35,7 +35,7 @@ import { assert } from "./error.ts";
 import { bunIncludes, computeFlags, extraFlagsFor, linkDepends } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja } from "./ninja.ts";
-import { emitRust, linkerMapPath, rustLibPath } from "./rust.ts";
+import { emitRust, linkerMapPath, rustLibPath, rustLtoLinkInputs } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
 import { computeDepLibs, resolveDep, type ResolvedDep } from "./source.ts";
@@ -467,7 +467,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // is needed; if a member ever isn't, `rustLinkFlags()` in rust.ts is the
   // wrapping helper.
   const shims = emitShims(n, cfg);
-  const linkObjects = [...allObjects, ...rustObjects, ...windowsRes];
+  // rustLtoLinkInputs(): on ELF cross-language LTO targets the Rust bitcode
+  // is rewritten with a regular-LTO summary first (identity elsewhere).
+  const linkObjects = [...allObjects, ...rustLtoLinkInputs(n, cfg, rustObjects), ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
@@ -598,8 +600,10 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
 
   // libbun_rust.a from rust-only: same path emitRust writes to. Shared
   // helper so both sides of the CI split agree (cargo's
-  // `<target-dir>/<triple>/<profile>/` layout).
-  const rustObjects = [rustLibPath(cfg)];
+  // `<target-dir>/<triple>/<profile>/` layout). rustLtoLinkInputs(): on ELF
+  // cross-language LTO targets the downloaded archive's bitcode is rewritten
+  // with a regular-LTO summary on this (link) agent before the link.
+  const rustObjects = rustLtoLinkInputs(n, cfg, [rustLibPath(cfg)]);
 
   // Only need ldflags + stripflags (no cflags/cxxflags — no compile).
   const flags = computeFlags(cfg);

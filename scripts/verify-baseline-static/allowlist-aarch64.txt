@@ -5,13 +5,14 @@
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SVE/SVE2 targets. Gate: hwy::SupportedTargets via getauxval(AT_HWCAP).
-# (72 symbols)
+# (76 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_SVE2_12810MemMemImplEPKhmS2_m                                      [SVE]
 _ZN3bun10N_SVE2_12815CopyU16ToU8ImplEPKtmPh                                   [SVE]
 _ZN3bun10N_SVE2_12815IndexOfCharImplEPKhmh                                    [SVE]
 _ZN3bun10N_SVE2_12818FirstNonAscii8ImplEPKhm                                  [SVE]
 _ZN3bun10N_SVE2_12818IndexOfAnyCharImplEPKhmS2_m                              [SVE]
+_ZN3bun10N_SVE2_12819CopyAsciiPrefixImplEPKhmPh                               [SVE]
 _ZN3bun10N_SVE2_12819FirstNonAscii16ImplEPKtm                                 [SVE]
 _ZN3bun10N_SVE2_12820FillWithSkipMaskImplEPKhmPhS2_mb                         [SVE]
 _ZN3bun10N_SVE2_12821VisibleUTF16WidthImplEPKtmPm                             [SVE]
@@ -30,6 +31,7 @@ _ZN3bun5N_SVE15CopyU16ToU8ImplEPKtmPh                                         [S
 _ZN3bun5N_SVE15IndexOfCharImplEPKhmh                                          [SVE]
 _ZN3bun5N_SVE18FirstNonAscii8ImplEPKhm                                        [SVE]
 _ZN3bun5N_SVE18IndexOfAnyCharImplEPKhmS2_m                                    [SVE]
+_ZN3bun5N_SVE19CopyAsciiPrefixImplEPKhmPh                                     [SVE]
 _ZN3bun5N_SVE19FirstNonAscii16ImplEPKtm                                       [SVE]
 _ZN3bun5N_SVE20FillWithSkipMaskImplEPKhmPhS2_mb                               [SVE]
 _ZN3bun5N_SVE21VisibleUTF16WidthImplEPKtmPm                                   [SVE]
@@ -48,6 +50,7 @@ _ZN3bun6N_SVE215CopyU16ToU8ImplEPKtmPh                                        [S
 _ZN3bun6N_SVE215IndexOfCharImplEPKhmh                                         [SVE]
 _ZN3bun6N_SVE218FirstNonAscii8ImplEPKhm                                       [SVE]
 _ZN3bun6N_SVE218IndexOfAnyCharImplEPKhmS2_m                                   [SVE]
+_ZN3bun6N_SVE219CopyAsciiPrefixImplEPKhmPh                                    [SVE]
 _ZN3bun6N_SVE219FirstNonAscii16ImplEPKtm                                      [SVE]
 _ZN3bun6N_SVE220FillWithSkipMaskImplEPKhmPhS2_mb                              [SVE]
 _ZN3bun6N_SVE221VisibleUTF16WidthImplEPKtmPm                                  [SVE]
@@ -66,6 +69,7 @@ _ZN3bun9N_SVE_25615CopyU16ToU8ImplEPKtmPh                                     [S
 _ZN3bun9N_SVE_25615IndexOfCharImplEPKhmh                                      [SVE]
 _ZN3bun9N_SVE_25618FirstNonAscii8ImplEPKhm                                    [SVE]
 _ZN3bun9N_SVE_25618IndexOfAnyCharImplEPKhmS2_m                                [SVE]
+_ZN3bun9N_SVE_25619CopyAsciiPrefixImplEPKhmPh                                 [SVE]
 _ZN3bun9N_SVE_25619FirstNonAscii16ImplEPKtm                                   [SVE]
 _ZN3bun9N_SVE_25620FillWithSkipMaskImplEPKhmPhS2_mb                           [SVE]
 _ZN3bun9N_SVE_25621VisibleUTF16WidthImplEPKtmPm                               [SVE]

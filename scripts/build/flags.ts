@@ -484,11 +484,14 @@ export const globalFlags: Flag[] = [
     // importing disabled, ICF ruled out, and WPD ruled out. The same
     // bitcode through ld64.lld on darwin is fine. Full LTO uses a different
     // (regular-LTO) pass pipeline over one merged module and has shipped
-    // green for months. Costs: the link is serial (~14 min vs ~1.5 min) and
-    // there is no Rust<->C++ cross-language inlining (the Rust thin
-    // partition cannot import from the C++ regular partition). Revisit once
-    // the miscompiling pass is isolated — the repro is
-    // `bun -e 'require("axobject-query")'` failing in the DFG tier.
+    // green for months. Cost: the link is serial (~14 min vs ~1.5 min).
+    // Rust<->C++ cross-language inlining still happens: the Rust side emits
+    // one fat, summary-less bitcode module (CARGO_PROFILE_RELEASE_LTO=fat
+    // under -Clinker-plugin-lto — see rust.ts) that joins the same
+    // regular-LTO partition as the C++, so nothing goes through the
+    // miscompiling ThinLTO backends. Revisit ThinLTO once the bad pass is
+    // isolated — the repro is `bun -e 'require("axobject-query")'` failing
+    // in the DFG tier.
     flag: "-flto=full",
     when: c => c.unix && !c.darwin && c.lto,
     desc: "Full link-time optimization (linux: ThinLTO miscompiles JSC, see comment)",

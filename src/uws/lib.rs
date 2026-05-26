@@ -432,11 +432,19 @@ pub mod ssl_wrapper {
                             boring_sys::SSL_VERIFY_PEER,
                             Some(always_continue_verify),
                         );
-                        if let Some(roots) = NonNull::new(us_get_shared_default_ca_store()) {
-                            let _ = boring_sys::SSL_set0_verify_cert_store(
-                                ssl.as_ptr(),
-                                roots.as_ptr(),
-                            );
+                        // ...unless user CAs were installed on this CTX (by
+                        // `options.ca` at construction, or a later
+                        // `SecureContext.addCACert`). Overriding the per-SSL
+                        // trust store would discard those CAs at handshake
+                        // time. Same guard as `us_internal_ssl_attach`'s
+                        // client branch.
+                        if us_ctx_has_user_ca(ctx.as_ptr()) == 0 {
+                            if let Some(roots) = NonNull::new(us_get_shared_default_ca_store()) {
+                                let _ = boring_sys::SSL_set0_verify_cert_store(
+                                    ssl.as_ptr(),
+                                    roots.as_ptr(),
+                                );
+                            }
                         }
                     }
                 } else {
@@ -1148,6 +1156,13 @@ pub mod ssl_wrapper {
         /// CTX. Returns null if root loading fails (treated as "no roots").
         // safe: no args; idempotent lazy init reading a process global — no preconditions.
         safe fn us_get_shared_default_ca_store() -> *mut boring_sys::X509_STORE;
+        /// 1 if user CAs were installed on `ctx` (at construction via
+        /// `options.ca`/`ca_file_name`/`request_cert`, or by a later
+        /// `SecureContext.addCACert`). The client branch reads it to skip the
+        /// per-SSL trust-store override that would otherwise discard those CAs.
+        // safe: reads an ex_data slot on a live CTX; no preconditions beyond a valid ptr,
+        // which the caller holds via NonNull<SSL_CTX>.
+        safe fn us_ctx_has_user_ca(ctx: *mut boring_sys::SSL_CTX) -> core::ffi::c_int;
         /// Implemented in uSockets C; reads
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;

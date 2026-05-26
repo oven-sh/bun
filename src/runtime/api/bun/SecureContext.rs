@@ -52,6 +52,27 @@ pub(crate) fn js_live_count(_global: &JSGlobalObject, _callframe: &CallFrame) ->
     Ok(JSValue::js_number(c::us_ssl_ctx_live_count() as f64))
 }
 
+/// Exposed via `bun:internal-for-testing`. Takes a JS `SecureContext.context`
+/// and returns its BoringSSL `SSL_CTX_get_verify_mode` value — used by tests
+/// to assert `addCACert` doesn't flip mode-neutral contexts to
+/// `SSL_VERIFY_PEER`, which would make servers send CertificateRequest.
+#[bun_jsc::host_fn]
+pub(crate) fn js_verify_mode(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let args = callframe.arguments();
+    if args.is_empty() {
+        return Err(global.throw_not_enough_arguments("secureContextVerifyMode", 1, 0));
+    }
+    let Some(this) = SecureContext::from_js(args[0]) else {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "secureContextVerifyMode: expected a SecureContext"
+        )));
+    };
+    // SAFETY: `from_js` returns a live `m_ctx` pointer owned by the JS wrapper;
+    // `SSL_CTX_get_verify_mode` only reads it.
+    let mode = unsafe { boringssl::SSL_CTX_get_verify_mode((*this).ctx) };
+    Ok(JSValue::js_number(mode as f64))
+}
+
 impl SecureContext {
     // Note: no `#[bun_jsc::host_fn]` here — the `Free` shim it emits calls
     // a bare `constructor(...)` which cannot resolve inside an `impl`. The
@@ -67,9 +88,17 @@ impl SecureContext {
             JSValue::UNDEFINED
         };
 
-        // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
-        let vm = global.bun_vm().as_mut();
-        let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
+        // `tls.createSecureContext()` / `createSecureContext(null)` — Node
+        // treats both as an empty options bag (WebIDL: undefined → empty
+        // dictionary). Bindgen's converter throws ERR_INVALID_ARG_TYPE on
+        // non-objects, so skip it when the caller passed nothing.
+        let config = if opts.is_undefined_or_null() {
+            SSLConfig::zero()
+        } else {
+            // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
+            let vm = global.bun_vm().as_mut();
+            SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero)
+        };
         // `defer config.deinit()` — handled by Drop.
 
         SecureContext::create(global, &config)
@@ -93,9 +122,15 @@ impl SecureContext {
             JSValue::UNDEFINED
         };
 
-        // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
-        let vm = global.bun_vm().as_mut();
-        let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
+        // See `constructor`: `undefined`/`null` means an empty options bag
+        // (Node WebIDL), but bindgen throws on non-objects — skip it.
+        let config = if opts.is_undefined_or_null() {
+            SSLConfig::zero()
+        } else {
+            // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
+            let vm = global.bun_vm().as_mut();
+            SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero)
+        };
         // `defer config.deinit()` — handled by Drop.
 
         let ctx_opts = config.as_usockets();
@@ -186,6 +221,77 @@ impl SecureContext {
         self.ctx
     }
 
+    /// Node's `secureContext.context.addCACert(pem)` — append one-or-more PEM
+    /// X.509 certificates to this context's trust store. Accepts strings and
+    /// Buffers/TypedArrays/ArrayBuffers (Node is the same). Lenient: empty /
+    /// malformed input is silently ignored, duplicates are no-ops. Returns
+    /// `undefined`.
+    ///
+    /// Shared-CTX caveat: `intern()` memoises both the JS cell (per-global
+    /// `Bun__SecureContextCache`) and the native `SSL_CTX*` (per-VM
+    /// `SSLContextCache`) by config digest. Before mutating we drop ourselves
+    /// from both caches so a subsequent `createSecureContext(sameOptions)`
+    /// from the SAME global builds a FRESH context instead of handing back the
+    /// now-mutated one. Native `us_ssl_ctx_add_ca_pem` does NOT touch
+    /// verify_mode (flipping CTX VERIFY_PEER would make servers built from a
+    /// mode-neutral SecureContext send CertificateRequest); it appends to the
+    /// CTX's own store and flips the `us_ctx_user_ca` marker so the per-socket
+    /// client override preserves the user CAs.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn add_ca_cert(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let args = callframe.arguments();
+        if args.is_empty() {
+            // Node asserts here. Prefer a clean TypeError to a crash.
+            return Err(global.throw_not_enough_arguments("addCACert", 1, 0));
+        }
+        // StringOrBuffer covers string/Buffer/TypedArray/ArrayBuffer/DataView.
+        // Anything else is a no-op (Node silently accepts non-byte input).
+        let Some(sob) = crate::node::StringOrBuffer::from_js(global, args[0])? else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        let bytes = sob.slice();
+
+        // `us_ssl_ctx_add_ca_pem` short-circuits on empty input without
+        // touching the SSL_CTX, so nothing to invalidate. Bail BEFORE the
+        // cache eviction to preserve `createSecureContext(opts) ===
+        // createSecureContext(opts)` identity for the empty-bytes Node no-op.
+        if bytes.is_empty() {
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        // Detach from the per-VM native cache AND the per-global JS cache
+        // BEFORE mutating the SSL_CTX — both are keyed by the original config
+        // digest, and a mutated CTX no longer matches that digest's contract.
+        // SAFETY: `runtime_state()` is the boxed per-thread RuntimeState; the
+        // embedded `ssl_ctx_cache` has a stable address for the VM's lifetime
+        // and is only touched from the JS thread.
+        let state = crate::jsc_hooks::runtime_state();
+        debug_assert!(!state.is_null(), "RuntimeState not installed");
+        let cache = unsafe { &mut (*state).ssl_ctx_cache };
+        cache.invalidate(self.ctx, &self.digest);
+
+        // JS cache: only evict if WE are still the cell under this key. A prior
+        // addCACert already evicted us; a subsequent createSecureContext with
+        // the same digest may have installed a *different* cell. Mirror the
+        // `entry.ctx == ctx` guard in `SSLContextCache::invalidate`.
+        let key =
+            u64::from_le_bytes(self.digest[0..8].try_into().expect("infallible: size matches"));
+        if cpp::Bun__SecureContextCache__get(global, key) == callframe.this() {
+            cpp::Bun__SecureContextCache__remove(global, key);
+        }
+
+        // SAFETY: `self.ctx` is a valid SSL_CTX*; `bytes` is valid for this
+        // call. The C helper copies the PEM bytes it parses.
+        unsafe {
+            c::us_ssl_ctx_add_ca_pem(self.ctx, bytes.as_ptr().cast(), bytes.len());
+        }
+        Ok(JSValue::UNDEFINED)
+    }
+
     // Codegen's `host_fn_finalize` calls this via `|b| SecureContext::finalize(b)`
     // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
     // false positive on that contract.
@@ -216,5 +322,6 @@ mod cpp {
             key: u64,
             value: JSValue,
         );
+        pub(super) safe fn Bun__SecureContextCache__remove(global: &JSGlobalObject, key: u64);
     }
 }

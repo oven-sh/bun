@@ -189,6 +189,33 @@ impl SSLContextCache {
         Some(ctx)
     }
 
+    /// Drop `ctx` from the cache NOW (without freeing it). Used by
+    /// `SecureContext::add_ca_cert` after it mutates an SSL_CTX: the cache
+    /// memoises by input-config digest, so a mutated CTX is no longer the
+    /// canonical one for that digest and future `get_or_create` for the same
+    /// digest must build fresh. Clears `ex_data` so the later `SSL_CTX_free`
+    /// tombstone fires into a no-op instead of touching a destroyed Entry.
+    pub fn invalidate(&mut self, ctx: *mut boringssl::SSL_CTX, d: &Digest) {
+        let _guard = self.mutex.lock_guard();
+        if let Some(&entry) = self.map.get(d) {
+            // SAFETY: map values are live heap Entries; we hold the mutex.
+            if unsafe { (*entry).ctx } == ctx {
+                // SAFETY: ctx non-null (matched above); clearing the slot we set.
+                unsafe {
+                    boringssl::SSL_CTX_set_ex_data(
+                        ctx,
+                        c::us_ssl_ctx_cache_ex_idx(),
+                        ptr::null_mut(),
+                    )
+                };
+                self.map.swap_remove(d);
+                // SAFETY: entry was heap-allocated in get_or_create_digest and
+                // its ex_data back-pointer was just cleared above.
+                drop(unsafe { bun_core::heap::take(entry) });
+            }
+        }
+    }
+
     /// Reclaim tombstoned entries. Locked variant — callers hold `self.mutex`.
     fn compact_locked(&mut self) {
         let mut i: usize = 0;

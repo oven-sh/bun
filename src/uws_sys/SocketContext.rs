@@ -297,6 +297,7 @@ impl Sha256 {
 
 pub mod c {
     use super::*;
+    use core::ffi::c_int;
     unsafe extern "C" {
         pub(crate) fn us_ssl_ctx_from_options(
             options: BunSocketContextOptions,
@@ -304,5 +305,23 @@ pub mod c {
         ) -> *mut SSL_CTX;
         // safe: no args; reads a process-global counter — no preconditions.
         pub safe fn us_ssl_ctx_live_count() -> c_long;
+        /// Node's `SecureContext.addCACert` — appends one-or-more PEM X509s to
+        /// `ctx`'s trust store. On first call into a CTX without user CAs,
+        /// swaps in the default CA store (OS + baked-in roots) and flips an
+        /// ex_data marker so the per-socket client override preserves it. Does
+        /// NOT touch verify_mode (flipping CTX VERIFY_PEER would make servers
+        /// built from a mode-neutral SecureContext send CertificateRequest).
+        /// Returns the count of certs added; 0 is not an error.
+        pub fn us_ssl_ctx_add_ca_pem(
+            ctx: *mut SSL_CTX,
+            pem: *const c_char,
+            pem_len: usize,
+        ) -> c_int;
+        /// 1 if user CAs were installed on `ctx` (at construction via
+        /// `options.ca`/`ca_file_name`/`request_cert`, or by a later
+        /// `us_ssl_ctx_add_ca_pem`); 0 otherwise. Client-attach paths read
+        /// this to decide whether to override the per-SSL verify store with
+        /// the shared default roots.
+        pub fn us_ctx_has_user_ca(ctx: *mut SSL_CTX) -> c_int;
     }
 }

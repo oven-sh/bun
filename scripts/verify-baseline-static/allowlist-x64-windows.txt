@@ -503,7 +503,7 @@ bun::N_AVX3_DL::ContainsNewlineOrNonASCIIOrQuoteImpl                 [AVX, AVX51
 bun::N_AVX3_DL::CopyAsciiPrefixImpl                                  [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_DL::CopyU16ToU8Impl                                      [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
 bun::N_AVX3_DL::CountPrintableAscii16Impl                            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
-bun::N_AVX3_DL::EncodeHexLowerImpl                                   [AVX, AVX2, AVX512BW, AVX512F, AVX512_VBMI, GFNI]
+bun::N_AVX3_DL::EncodeHexLowerImpl                                   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, GFNI]
 bun::N_AVX3_DL::FillWithSkipMaskImpl                                 [AVX, AVX512DQ, AVX512F]
 bun::N_AVX3_DL::FirstNonAscii16Impl                                  [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_DL::FirstNonAscii8Impl                                   [AVX, AVX512BW]

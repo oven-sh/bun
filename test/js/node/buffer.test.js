@@ -1,6 +1,6 @@
 import { Buffer, SlowBuffer, isAscii, isUtf8, kMaxLength } from "buffer";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { gc, isASAN, isDebug, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, gc, isASAN, isDebug, withoutAggressiveGC } from "harness";
 import { createHash } from "node:crypto";
 import vm from "node:vm";
 
@@ -3449,12 +3449,21 @@ describe("Buffer.prototype.toString binary-to-text encodings", () => {
   // hex loop costs >=10x a plain latin1 copy of the same buffer (it did before
   // the SIMD kernel landed), while the vectorized encoder stays within ~2-3x
   // even though it writes twice as many bytes; 6x cleanly separates the two
-  // regimes with margin on both sides. Skipped on debug/ASAN builds, where the
-  // unoptimized/instrumented native kernels make timing ratios meaningless.
-  it.skipIf(isDebug || isASAN)("toString('hex') large-buffer throughput stays within 6x of a latin1 copy", () => {
-    withoutAggressiveGC(() => {
-      const buf = fillPattern(Buffer.alloc(110000));
-
+  // regimes with margin on both sides. The measurement runs in a fresh
+  // subprocess so this suite's heap size and GC activity cannot skew either
+  // side of the ratio. Skipped on debug/ASAN builds, where the unoptimized,
+  // instrumented native kernels make timing ratios meaningless.
+  it.skipIf(isDebug || isASAN)("toString('hex') large-buffer throughput stays within 6x of a latin1 copy", async () => {
+    const script = `
+      const buf = Buffer.alloc(110000);
+      let state = 0x9e3779b9 >>> 0;
+      for (let i = 0; i < buf.length; i++) {
+        state ^= state << 13;
+        state ^= state >>> 17;
+        state ^= state << 5;
+        state >>>= 0;
+        buf[i] = state & 0xff;
+      }
       const sample = fn => {
         Bun.gc(true);
         const start = Bun.nanoseconds();
@@ -3462,21 +3471,31 @@ describe("Buffer.prototype.toString binary-to-text encodings", () => {
         return Bun.nanoseconds() - start;
       };
       const median = times => times.slice().sort((a, b) => a - b)[Math.floor(times.length / 2)];
-
       for (let i = 0; i < 5; i++) {
         buf.toString("hex");
         buf.toString("latin1");
       }
-
       const hexTimes = [];
       const latin1Times = [];
       for (let i = 0; i < 13; i++) {
         latin1Times.push(sample(() => buf.toString("latin1")));
         hexTimes.push(sample(() => buf.toString("hex")));
       }
+      console.log(JSON.stringify({ hex: median(hexTimes), latin1: median(latin1Times) }));
+    `;
 
-      expect(median(hexTimes)).toBeLessThan(6 * median(latin1Times));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
     });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const { hex, latin1 } = JSON.parse(stdout.trim());
+    expect(hex).toBeLessThan(6 * latin1);
   });
 
   it("toString('base64') and toString('base64url') match the reference for small buffers", () => {

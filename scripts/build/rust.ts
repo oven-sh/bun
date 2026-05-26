@@ -552,6 +552,10 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     //     default is also 0 — pass nothing. Adding -Zsplit-lto-unit here
     //     would make the Rust modules the inconsistent ones and abort the
     //     link.
+    //   - windows cross (ThinLTO): same as darwin — clang-cl never gets
+    //     -fwhole-program-vtables (COFF associative-COMDAT abort) and
+    //     -fno-split-lto-unit is passed explicitly, so every C/C++ module is
+    //     0 and rustc's default 0 matches — pass nothing.
     //   - linux (full LTO): -fwhole-program-vtables on ELF defaults the
     //     split ON for C++, so every C++ module (ours and the WebKit -lto
     //     prebuilts) carries EnableSplitLTOUnit=1. The Rust ThinLTO
@@ -565,7 +569,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // (`-Clink-arg=-fuse-ld=lld` is pushed unconditionally above — under LTO
     // it doubles as making rustc's bitcode link go through the LTO-aware
     // linker our final link uses, not BFD `/usr/bin/ld`.)
-    if (!cfg.darwin) {
+    if (!cfg.darwin && !cfg.windows) {
       rustflags.push("-Zsplit-lto-unit");
     }
   }

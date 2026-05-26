@@ -494,11 +494,22 @@ export const globalFlags: Flag[] = [
     desc: "Full link-time optimization (linux: ThinLTO miscompiles JSC, see comment)",
   },
   {
-    flag: "-flto",
+    // Windows (cross) uses ThinLTO like darwin: clang-cl accepts -flto=thin
+    // directly (core option), the WebKit windows-amd64-lto prebuilt is
+    // ThinLTO-summaried bitcode, and rustc's -Clinker-plugin-lto bitcode is
+    // too, so lld-link runs one uniform ThinLTO graph with cross-language
+    // importing. lld-link does LTO automatically when it sees bitcode
+    // inputs — no link-side -flto spelling exists or is needed there.
+    flag: "-flto=thin",
     when: c => c.windows && c.lto,
-    desc: "Link-time optimization",
+    desc: "Thin link-time optimization (clang-cl)",
   },
   {
+    // Unix only (not windows): on COFF, whole-program vtable opt drops
+    // vtable symbols that associative COMDAT sections still name as their
+    // parent and the LTO codegen aborts ("Associative COMDAT symbol
+    // '??_7...' does not exist"). The WebKit windows-amd64-lto prebuilt is
+    // built without it for the same reason.
     flag: ["-fforce-emit-vtables", "-fwhole-program-vtables"],
     when: c => c.unix && c.lto,
     lang: "cxx",
@@ -517,11 +528,13 @@ export const globalFlags: Flag[] = [
     // (typeidCompatibleVTable entries) and whole-program devirtualization
     // runs in index-based mode via --lto-whole-program-visibility at link
     // time. 0 is also the default for rustc, for Apple targets, and for the
-    // WebKit macos -lto prebuilts, so this is the configuration that can't
-    // drift. Darwin only: linux uses full LTO (no per-module summaries, so
-    // the flag is meaningless there).
+    // WebKit macos/windows -lto prebuilts, so this is the configuration that
+    // can't drift. Windows: -fwhole-program-vtables is never passed there
+    // (see above) so 0 is already the default — kept explicit so the
+    // ThinLTO graph can't drift if that ever changes. Not linux: full LTO
+    // (no per-module summaries, so the flag is meaningless there).
     flag: "-fno-split-lto-unit",
-    when: c => c.darwin && c.lto,
+    when: c => (c.darwin || c.windows) && c.lto,
     desc: "Index-based WPD: keep type metadata in the ThinLTO summaries, no regular-LTO half",
   },
 

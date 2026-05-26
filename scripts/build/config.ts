@@ -694,6 +694,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // binaries). Same host-clang + --target/-isysroot model as Android/FreeBSD,
   // with ld64.lld doing the Mach-O link. See the cross block further down.
   const darwinCross = darwin && host.os !== "darwin";
+  // Windows target on a non-Windows host (clang-cl + lld-link + xwin
+  // sysroot). See the cross block further down.
+  const windowsCross = windows && host.os !== "windows";
 
   // Platform file conventions — MSVC style on Windows, Unix everywhere else.
   const exeSuffix = windows ? ".exe" : "";
@@ -741,35 +744,43 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // build:asan always set ENABLE_ASSERTIONS=ON for this reason.
   const assertions = partial.assertions ?? (debug || asan);
 
-  // LTO: default on for CI release non-asan non-assertions builds on Linux
-  // and on darwin cross-compiles. The -lto WebKit prebuilt for macOS only
-  // exists for the cross toolchain (Apple's ld on the native lanes was never
-  // set up to consume bitcode archives), so the native darwin lanes stay
-  // non-LTO.
-  const ltoDefault = release && (linux || darwinCross) && ci && !assertions && !asan;
+  // Resolved early because the LTO defaults below need it (the windows
+  // -baseline WebKit prebuilt has no -lto variant).
+  const baseline = partial.baseline ?? false;
+
+  // LTO: default on for CI release non-asan non-assertions builds on Linux,
+  // on darwin cross-compiles, and on windows x64 cross-compiles. The -lto
+  // WebKit prebuilts for macOS and Windows only exist for the cross
+  // toolchain (Apple's ld / MSVC link.exe on the native lanes were never set
+  // up to consume bitcode archives), so the native darwin and windows lanes
+  // stay non-LTO.
+  const ltoDefault =
+    release && (linux || darwinCross || (windowsCross && x64 && !baseline)) && ci && !assertions && !asan;
   let lto = partial.lto ?? ltoDefault;
   // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit).
   // Android: no LTO prebuilt WebKit exists; force off so the right tarball is fetched.
-  if ((asan && lto) || abi === "android") {
+  // Windows arm64 / baseline: same — oven-sh/WebKit ships no
+  // bun-webkit-windows-arm64-lto (LLVM's CodeView emitter aborts on ARM64
+  // NEON tuple registers during LTO codegen) and no -baseline-lto variant.
+  if ((asan && lto) || abi === "android" || (windows && (arm64 || baseline))) {
     lto = false;
   }
 
   // Cross-language LTO normally tracks `lto`. Gated off for aarch64-musl
   // where LLVM's `globalopt` pass segfaults on the `bun_runtime` bitcode
-  // module during the merged link (CI build #53109), and for Windows
-  // targets — the C++ side's `-flto` flags are unix-only, there's no -lto
-  // WebKit prebuilt for Windows, and the rust-lld swap below resolves the
-  // HOST-flavored ld.lld which can't stand in for lld-link (an explicit
-  // `--lto=on` would otherwise trip validateBunConfig's rust-lld check
-  // with a misleading error). Both halves still LTO independently when
-  // this is false — only the Rust↔C++ inlining is lost.
+  // module during the merged link (CI build #53109), and for native Windows
+  // hosts — there `ld` is the host LLVM's lld-link and no rust-lld swap is
+  // wired up, so rustc's newer-LLVM bitcode would be unreadable at link
+  // time. Both halves still LTO independently when this is false — only the
+  // Rust↔C++ inlining is lost.
   // Tracked in workarounds.ts ("globalopt-crash-aarch64-musl").
   // Darwin cross uses the same rust-lld swap as ELF: rustc's sysroot ships
   // `gcc-ld/ld64.lld` (rust-lld in the Mach-O flavor, built against rustc's
   // LLVM), which findRustLld() already resolves for darwin targets, so the
   // newer-LLVM bitcode rustc emits under -Clinker-plugin-lto is readable at
-  // link time.
-  const crossLangLto = lto && !windows && !(arm64 && abi === "musl");
+  // link time. Windows cross does the same with the `gcc-ld/lld-link`
+  // sibling (COFF flavor) — see the wantRustLld swap below.
+  const crossLangLto = lto && !(windows && host.os === "windows") && !(arm64 && abi === "musl");
 
   // Cross-language LTO bitcode-version skew: `-Clinker-plugin-lto` makes
   // rustc emit raw LLVM bitcode into libbun_rust.a. LLVM bitcode is
@@ -789,9 +800,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // Shared with the darwin-cross ld64 swap below: for darwin targets
   // findRustLld() resolves rustc's `gcc-ld/ld64.lld` (the Mach-O flavor of
   // the same rust-lld), so the swap composes with the cross toolchain.
-  // (No explicit windows guard needed: crossLangLto is already false for
-  // windows targets, and `ld` there is lld-link — the COFF driver — which
-  // the host-flavored rust-lld could not stand in for.)
   const wantRustLld =
     crossLangLto &&
     toolchain.rustLld !== undefined &&
@@ -799,7 +807,21 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     rustLlvmMajor !== undefined &&
     rustLlvmMajor > clangMajor;
   if (wantRustLld) {
-    ld = toolchain.rustLld!;
+    if (windows) {
+      // Windows cross: `ld` must stay a COFF driver. `toolchain.rustLld` is
+      // the flavor matching the *host* (gcc-ld/ld.lld on a Linux box);
+      // rustc's gcc-ld/ directory ships every flavor of the same rust-lld,
+      // so use the lld-link sibling. If rustc ever stops shipping it, fall
+      // back to the host LLVM's lld-link — validateBunConfig() then fails
+      // at configure time with the bitcode-version-skew message instead of
+      // an opaque "Invalid record" at link time.
+      const rustLldLink = join(dirname(toolchain.rustLld!), "lld-link");
+      if (existsSync(rustLldLink)) {
+        ld = rustLldLink;
+      }
+    } else {
+      ld = toolchain.rustLld!;
+    }
   }
 
   // PGO: paths resolved to absolute. generate/use are mutually exclusive.
@@ -812,7 +834,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // Logs: on by default in debug non-test
   const logs = partial.logs ?? debug;
 
-  const baseline = partial.baseline ?? false;
+  // (`baseline` is resolved earlier, next to the LTO defaults.)
   const canary = partial.canary ?? true;
   const canaryRevision = canary ? "1" : "0";
 
@@ -1125,7 +1147,16 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     cargoHome: toolchain.cargoHome,
     rustupHome: toolchain.rustupHome,
     rustToolchain: readRustToolchainChannel(cwd),
-    msvcLinker: toolchain.msvcLinker,
+    // Cargo-driven links (the bun_shim_impl.exe edge, any future target
+    // cdylib) must keep using a real lld-link/link.exe, not the gcc-ld/
+    // lld-link wrapper `ld` may have been swapped to above: rustc treats a
+    // linker living in its own sysroot's gcc-ld/ as the bundled rust-lld and
+    // prepends `-flavor link`, which the wrapper forwards into the COFF
+    // driver as bogus input args ("could not open 'link'"). Those links have
+    // no LLVM bitcode in them, so the host LLVM's lld-link is always
+    // sufficient — only the final clang-cl-driven bun.exe link needs the
+    // newer rust-lld (and reaches it via the link rule's /clang:-B).
+    msvcLinker: toolchain.msvcLinker ?? (windows && ld !== toolchain.ld ? toolchain.ld : undefined),
     rc: toolchain.rc,
     mt: toolchain.mt,
     nasm: toolchain.nasm,

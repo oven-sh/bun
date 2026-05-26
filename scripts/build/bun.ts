@@ -986,8 +986,8 @@ export function validateBunConfig(cfg: Config): void {
     const clangMajor = Number.parseInt(cfg.clangVersion.split(".")[0] ?? "", 10);
     if (Number.isFinite(rustMajor) && Number.isFinite(clangMajor) && rustMajor > clangMajor) {
       // `cfg.ld` must be one of rustc's bundled lld flavors. On ELF targets
-      // it's `cfg.rustLld` exactly; on darwin cross targets it's the
-      // ld64.lld sibling from the same gcc-ld/ directory.
+      // it's `cfg.rustLld` exactly; on darwin/windows cross targets it's the
+      // ld64.lld / lld-link sibling from the same gcc-ld/ directory.
       assert(
         cfg.rustLld !== undefined && (cfg.ld === cfg.rustLld || dirname(cfg.ld) === dirname(cfg.rustLld)),
         `Cross-language LTO is on and rustc's LLVM (${cfg.rustLlvmVersion}) is newer than clang's ` +

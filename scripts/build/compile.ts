@@ -153,6 +153,15 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // pure linker options (/STACK, /DEF, /OPT, /errorlimit, system libs)
   // that clang-cl's driver doesn't recognize.
   //
+  // /clang:-B<dir of cfg.ld> pins WHICH lld-link `-fuse-ld=lld` resolves:
+  // -B program-prefix dirs are searched before the driver's own InstalledDir
+  // and PATH. Normally that's the same host-LLVM lld-link the driver would
+  // pick anyway; under cross-language LTO resolveConfig() swaps cfg.ld to
+  // rustc's gcc-ld/lld-link (newer LLVM, able to read rustc's bitcode), and
+  // this is what makes the link actually use it — clang-cl has no working
+  // --ld-path= spelling, and `-fuse-ld=<abs path>` mangles the path with the
+  // target triple.
+  //
   // Darwin cross links append `&& macho-postlink $out ...` (the suffix is
   // empty everywhere else): ninja runs the whole command through `sh -c`,
   // so the fixup runs after the link succeeds and the declared output is
@@ -160,7 +169,7 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   const wrap = `${cfg.jsRuntime} ${q(streamPath)} link --console`;
   n.rule("link", {
     command: cfg.windows
-      ? `${wrap} ${cxx} /nologo -fuse-ld=lld @$out.rsp /Fe$out /link $ldflags`
+      ? `${wrap} ${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp /Fe$out /link $ldflags`
       : `${wrap} ${cxx} @$out.rsp $ldflags -o $out${machoPostlinkCommand(cfg)}`,
     description: "link $out",
     rspfile: "$out.rsp",

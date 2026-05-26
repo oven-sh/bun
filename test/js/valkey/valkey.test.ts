@@ -6996,55 +6996,51 @@ describe("Valkey incremental reply scanning", () => {
     socket.write("\r\n");
   }
 
-  test(
-    "long CRLF-terminated reply arriving in many small reads completes about as fast as a length-prefixed reply",
-    async () => {
-      const { server, port, sockets } = await createMockValkeyServer((commandIndex, socket) => {
-        if (commandIndex === 0) {
-          // HELLO handshake.
-          socket.write("+OK\r\n");
-          return;
-        }
-        // Command 1: bulk string ($<len>) — resuming the scan only needs a length
-        // check, so this measures the per-read baseline cost of the drip.
-        // Command 2: simple string (+...) — the terminating CRLF has to be searched
-        // for, so this only stays comparable if already-scanned bytes are skipped.
-        const framing = commandIndex === 1 ? `$${TOTAL_BYTES}\r\n` : "+";
-        dripReply(socket, framing).catch(() => {});
-      });
-
-      const client = new RedisClient(`redis://127.0.0.1:${port}`, {
-        autoReconnect: false,
-        connectionTimeout: 5_000,
-      });
-
-      try {
-        const bulkStart = performance.now();
-        const bulkReply = await client.send("GET", ["length-prefixed"]);
-        const bulkMs = performance.now() - bulkStart;
-
-        const statusStart = performance.now();
-        const statusReply = await client.send("GET", ["status-line"]);
-        const statusMs = performance.now() - statusStart;
-
-        // Both replies must arrive intact.
-        expect(typeof bulkReply).toBe("string");
-        expect((bulkReply as string).length).toBe(TOTAL_BYTES);
-        expect(typeof statusReply).toBe("string");
-        expect((statusReply as string).length).toBe(TOTAL_BYTES);
-        expect(statusReply).toBe(bulkReply);
-
-        // Both replies were delivered with the identical chunk count, chunk size
-        // and pacing, so their timings should be of the same order. If every
-        // socket read re-scans the whole accumulated partial line, the
-        // CRLF-terminated reply takes many times longer than the baseline.
-        expect(statusMs).toBeLessThan(bulkMs * 2 + 1_500);
-      } finally {
-        client.close();
-        for (const socket of sockets) socket.destroy();
-        server.close();
+  test("long CRLF-terminated reply arriving in many small reads completes about as fast as a length-prefixed reply", async () => {
+    const { server, port, sockets } = await createMockValkeyServer((commandIndex, socket) => {
+      if (commandIndex === 0) {
+        // HELLO handshake.
+        socket.write("+OK\r\n");
+        return;
       }
-    },
-    90_000,
-  );
+      // Command 1: bulk string ($<len>) — resuming the scan only needs a length
+      // check, so this measures the per-read baseline cost of the drip.
+      // Command 2: simple string (+...) — the terminating CRLF has to be searched
+      // for, so this only stays comparable if already-scanned bytes are skipped.
+      const framing = commandIndex === 1 ? `$${TOTAL_BYTES}\r\n` : "+";
+      dripReply(socket, framing).catch(() => {});
+    });
+
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, {
+      autoReconnect: false,
+      connectionTimeout: 5_000,
+    });
+
+    try {
+      const bulkStart = performance.now();
+      const bulkReply = await client.send("GET", ["length-prefixed"]);
+      const bulkMs = performance.now() - bulkStart;
+
+      const statusStart = performance.now();
+      const statusReply = await client.send("GET", ["status-line"]);
+      const statusMs = performance.now() - statusStart;
+
+      // Both replies must arrive intact.
+      expect(typeof bulkReply).toBe("string");
+      expect((bulkReply as string).length).toBe(TOTAL_BYTES);
+      expect(typeof statusReply).toBe("string");
+      expect((statusReply as string).length).toBe(TOTAL_BYTES);
+      expect(statusReply).toBe(bulkReply);
+
+      // Both replies were delivered with the identical chunk count, chunk size
+      // and pacing, so their timings should be of the same order. If every
+      // socket read re-scans the whole accumulated partial line, the
+      // CRLF-terminated reply takes many times longer than the baseline.
+      expect(statusMs).toBeLessThan(bulkMs * 2 + 1_500);
+    } finally {
+      client.close();
+      for (const socket of sockets) socket.destroy();
+      server.close();
+    }
+  }, 90_000);
 });

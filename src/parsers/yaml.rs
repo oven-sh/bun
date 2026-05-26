@@ -3399,9 +3399,7 @@ impl MappingProps {
         }
 
         match &value.data {
-            ast::ExprData::EObject(value_obj) => {
-                self.merge(value_obj.properties.slice(), budget)
-            }
+            ast::ExprData::EObject(value_obj) => self.merge(value_obj.properties.slice(), budget),
             ast::ExprData::EArray(value_arr) => {
                 for item in value_arr.items.slice() {
                     let item_obj = match &item.data {

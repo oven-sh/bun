@@ -1192,9 +1192,7 @@ impl Value {
                                     store.mime_type = mime_type.clone();
                                 }
                                 blob.content_type.set(match mime_type.value {
-                                    Cow::Owned(v) => {
-                                        bun_core::heap::into_raw(v.into_boxed_slice())
-                                    }
+                                    Cow::Owned(v) => bun_core::heap::into_raw(v.into_boxed_slice()),
                                     Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
                                 });
                                 blob.content_type_allocated.set(allocated);

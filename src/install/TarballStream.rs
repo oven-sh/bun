@@ -664,9 +664,7 @@ impl TarballStream {
         let tarball = &self.extract_task.request_extract().tarball;
         let (_, basename) = tarball.name_and_basename();
         if !tarball.resolution.tag.is_git()
-            && !crate::dependency::is_safe_install_folder_name(
-                &basename[0..basename.len().min(32)],
-            )
+            && !crate::dependency::is_safe_install_folder_name(&basename[0..basename.len().min(32)])
         {
             return Err(bun_core::err!("InstallFailed"));
         }

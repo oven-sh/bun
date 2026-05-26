@@ -2638,9 +2638,7 @@ it("fetch() with a fixed-size body drops a caller-supplied Transfer-Encoding hea
       .map(line => line.toLowerCase());
     // Exactly one framing header reaches the wire: the computed Content-Length.
     expect(headerLines.filter(line => line.startsWith("transfer-encoding:"))).toEqual([]);
-    expect(headerLines.filter(line => line.startsWith("content-length:"))).toEqual([
-      `content-length: ${bodyLength}`,
-    ]);
+    expect(headerLines.filter(line => line.startsWith("content-length:"))).toEqual([`content-length: ${bodyLength}`]);
     // The body is the raw bytes described by Content-Length, with no chunk framing added.
     expect(bodyParts.join("\r\n\r\n")).toBe(body);
   }

@@ -880,11 +880,9 @@ process.exit(0);
 // disarmed before the file stream starts; otherwise body bytes that arrive
 // while the file is still streaming are delivered to the body callback with
 // the wrong object behind the pointer.
-test(
-  "file response with a pending request body keeps serving when body bytes arrive mid-stream",
-  async () => {
-    using dir = tempDir("serve-file-late-body", {
-      "fixture.ts": `
+test("file response with a pending request body keeps serving when body bytes arrive mid-stream", async () => {
+  using dir = tempDir("serve-file-late-body", {
+    "fixture.ts": `
 import { connect } from "node:net";
 import { join } from "node:path";
 
@@ -943,20 +941,18 @@ console.log(await res.text());
 server.stop(true);
 process.exit(0);
 `,
-    });
+  });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout.trim()).toBe("file-response-started\nstill-serving");
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+  expect(stdout.trim()).toBe("file-response-started\nstill-serving");
+  expect(exitCode).toBe(0);
+}, 30_000);

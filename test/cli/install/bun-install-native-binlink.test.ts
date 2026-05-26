@@ -408,9 +408,7 @@ test.skipIf(isWindows)(
     // even though node_modules/<name> is a symlink into packages/.
     const containedBin = join(root, "node_modules", ".bin", "contained-cmd");
     expect(existsSync(containedBin)).toBeTrue();
-    expect(realpathSync(containedBin)).toBe(
-      realpathSync(join(root, "packages", "contained-bin-pkg", "bin", "run.js")),
-    );
+    expect(realpathSync(containedBin)).toBe(realpathSync(join(root, "packages", "contained-bin-pkg", "bin", "run.js")));
     expect(statSync(join(root, "packages", "contained-bin-pkg", "bin", "run.js")).mode & 0o111).not.toBe(0);
   },
 );

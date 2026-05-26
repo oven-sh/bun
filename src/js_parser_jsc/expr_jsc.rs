@@ -92,7 +92,11 @@ pub(crate) fn array_to_js(
     let _guard = array.protected();
     for (j, expr) in items.iter().enumerate() {
         array
-            .put_index(global, j as u32, data_to_js_with_check(&expr.data, global, stack_check)?)
+            .put_index(
+                global,
+                j as u32,
+                data_to_js_with_check(&expr.data, global, stack_check)?,
+            )
             .map_err(js_err)?;
     }
 
@@ -125,7 +129,11 @@ pub(crate) fn object_to_js(
             stack_check,
         )?;
         let value = data_to_js_with_check(
-            &prop.value.as_ref().expect("infallible: prop has value").data,
+            &prop
+                .value
+                .as_ref()
+                .expect("infallible: prop has value")
+                .data,
             global,
             stack_check,
         )?;

@@ -1725,7 +1725,10 @@ impl<'a> HTTPClient<'a> {
 
     fn has_tls_options_unsupported_by_h3(&self) -> bool {
         self.signals.get(signals::Field::CertErrors)
-            || self.tls_props.as_ref().is_some_and(|tls| tls.get().requires_custom_request_ctx)
+            || self
+                .tls_props
+                .as_ref()
+                .is_some_and(|tls| tls.get().requires_custom_request_ctx)
     }
 
     pub fn first_call<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {

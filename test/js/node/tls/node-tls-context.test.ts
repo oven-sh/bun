@@ -824,8 +824,8 @@ describe("tls.createSecureContext().context.addCACert", () => {
     expect(await promise).toBe(true);
   });
 
-  // `tls.connect({ socket: duplex })` routes through `SSLWrapper` in
-  // `src/runtime/socket/ssl_wrapper.zig` instead of `us_internal_ssl_attach`.
+  // `tls.connect({ socket: duplex })` routes through `SSLWrapper` (the Rust
+  // `ssl_wrapper` module in `src/uws/lib.rs`) instead of `us_internal_ssl_attach`.
   // That path had the same per-SSL `SSL_set0_verify_cert_store` override and
   // needs the same `us_ctx_has_user_ca` gate, or addCACert'd CAs are
   // discarded when TLS runs on top of a Duplex (Bun.TCPSocket-over-Duplex,

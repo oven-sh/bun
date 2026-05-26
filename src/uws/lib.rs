@@ -1160,9 +1160,10 @@ pub mod ssl_wrapper {
         /// `options.ca`/`ca_file_name`/`request_cert`, or by a later
         /// `SecureContext.addCACert`). The client branch reads it to skip the
         /// per-SSL trust-store override that would otherwise discard those CAs.
-        // safe: reads an ex_data slot on a live CTX; no preconditions beyond a valid ptr,
-        // which the caller holds via NonNull<SSL_CTX>.
-        safe fn us_ctx_has_user_ca(ctx: *mut boring_sys::SSL_CTX) -> core::ffi::c_int;
+        /// Reads an ex_data slot on `ctx`, so (like the other pointer-taking
+        /// externs in this block) the caller must pass a live, non-null
+        /// `SSL_CTX*` — the call site holds one via `NonNull<SSL_CTX>`.
+        fn us_ctx_has_user_ca(ctx: *mut boring_sys::SSL_CTX) -> core::ffi::c_int;
         /// Implemented in uSockets C; reads
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;

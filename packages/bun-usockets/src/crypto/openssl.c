@@ -477,9 +477,9 @@ int us_ssl_ctx_add_ca_pem(SSL_CTX *ctx, const char *pem, size_t pem_len) {
 }
 
 /* Exposed for the C client-attach path (`us_internal_ssl_attach`) and for
- * Zig's `SSLWrapper` (Duplex/UpgradedDuplex TLS) so both can skip their
- * per-SSL trust-store override when user CAs have been installed on the
- * CTX (either at construction or via addCACert). */
+ * Rust's `SSLWrapper` in `src/uws/lib.rs` (Duplex/UpgradedDuplex TLS) so both
+ * can skip their per-SSL trust-store override when user CAs have been
+ * installed on the CTX (either at construction or via addCACert). */
 int us_ctx_has_user_ca(SSL_CTX *ctx) {
   us_ex_idx_ensure();
   return SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_idx) != NULL;

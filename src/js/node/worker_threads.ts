@@ -39,16 +39,22 @@ type NodeResourceLimits = import("node:worker_threads").ResourceLimits;
 
 // Bun does not enforce worker resource limits (JSC has no V8-style per-context
 // heap cap), but `worker.resourceLimits` and the module-level `resourceLimits`
-// export inside a worker echo the limits passed to the constructor, filling in
-// the same defaults Node does, so the documented API shape matches.
-// `stackSizeMb` defaults to 4; the rest default to -1 when not a number.
+// export inside a worker reflect the limits passed to the constructor, applying
+// the same normalizations and defaults Node does so the documented API shape
+// matches. Node (lib/internal/worker.js + node_worker.cc):
+//   - maxYoungGenerationSizeMb / codeRangeSizeMb: echoed verbatim, else -1
+//   - maxOldGenerationSizeMb: clamped to Math.max(value, 2), else -1
+//   - stackSizeMb: echoed when positive, otherwise the 4 MB default
 function applyResourceLimits(raw: NodeResourceLimits | null | undefined): Required<NodeResourceLimits> {
   const read = (value: unknown, fallback: number): number => (typeof value === "number" ? value : fallback);
+  const maxOldValue = raw?.maxOldGenerationSizeMb;
+  const stack = read(raw?.stackSizeMb, 4);
   return {
     maxYoungGenerationSizeMb: read(raw?.maxYoungGenerationSizeMb, -1),
-    maxOldGenerationSizeMb: read(raw?.maxOldGenerationSizeMb, -1),
+    // A numeric maxOldGenerationSizeMb is clamped to >= 2; absent stays -1.
+    maxOldGenerationSizeMb: typeof maxOldValue === "number" ? Math.max(maxOldValue, 2) : -1,
     codeRangeSizeMb: read(raw?.codeRangeSizeMb, -1),
-    stackSizeMb: read(raw?.stackSizeMb, 4),
+    stackSizeMb: stack > 0 ? stack : 4,
   };
 }
 

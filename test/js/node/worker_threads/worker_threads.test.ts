@@ -252,6 +252,22 @@ describe("resourceLimits", () => {
     });
     await worker.terminate();
   });
+
+  test("worker.resourceLimits normalizes values like Node", async () => {
+    // Node clamps maxOldGenerationSizeMb to >= 2 and treats a non-positive
+    // stackSizeMb as the 4 MB default; maxYoung/codeRange are echoed verbatim.
+    const worker = new Worker(`setInterval(() => {}, 1000);`, {
+      eval: true,
+      resourceLimits: { maxOldGenerationSizeMb: 1, stackSizeMb: 0, maxYoungGenerationSizeMb: 0, codeRangeSizeMb: -2 },
+    });
+    expect(worker.resourceLimits).toEqual({
+      maxYoungGenerationSizeMb: 0,
+      maxOldGenerationSizeMb: 2,
+      codeRangeSizeMb: -2,
+      stackSizeMb: 4,
+    });
+    await worker.terminate();
+  });
 });
 
 test("threadId module and worker property is consistent", async () => {

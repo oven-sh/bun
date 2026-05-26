@@ -753,6 +753,85 @@ describe("ES Decorators", () => {
     });
   });
 
+  describe("private member calls in lowered classes", () => {
+    // When a class is lowered for standard decorators, `recv.#m(...)` becomes
+    // `__privateGet(recv, _m).call(recv, ...)`. The receiver must be evaluated
+    // exactly once: duplicating it re-runs side effects and makes the printed
+    // output grow exponentially for chains like `o.#m().#m().#m()`.
+    test("chained optional private calls do not explode the transpiled output size", () => {
+      const chain = "?.Foo.#m()".repeat(20);
+      const source = `class Foo {
+        static #x = -0;
+        static #m = function() {};
+        @decorator() est() {
+          return [o${chain}];
+        }
+      }`;
+
+      const transpiler = new Bun.Transpiler({ loader: "js", target: "bun" });
+      const output = transpiler.transformSync(source);
+
+      // Exponential duplication produced ~47 MB for a 20-call chain; the
+      // single-evaluation lowering stays in the kilobytes.
+      expect(output.length).toBeLessThan(50_000);
+      // The lowered output must still be valid syntax.
+      expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(output)).not.toThrow();
+    });
+
+    test("private method call receiver is evaluated exactly once", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        let receiverEvals = 0;
+        class Counter {
+          static #m = function (x) { return [this === Counter, x]; };
+          @dec test() {
+            return getCounter().#m(42);
+          }
+        }
+        function getCounter() { receiverEvals++; return Counter; }
+        console.log(JSON.stringify(new Counter().test()), receiverEvals);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[true,42] 1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("chained optional private method calls return the right value", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        class Chain {
+          #tag;
+          constructor(tag) { this.#tag = tag; }
+          #next() { return { Chain: new Chain(this.#tag + 1) }; }
+          @dec run(o) {
+            return o?.Chain.#next()?.Chain.#next()?.Chain.#next()?.Chain.tag();
+          }
+          tag() { return this.#tag; }
+        }
+        console.log(new Chain(0).run({ Chain: new Chain(10) }));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("13\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("private method calls through `this` and identifier receivers still work", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        class Fast {
+          #p(n) { return "p" + n; }
+          @dec viaThis() { return this.#p(1); }
+          @dec viaIdent(other) { return other.#p(2); }
+        }
+        const f = new Fast();
+        console.log(f.viaThis(), f.viaIdent(new Fast()));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("p1 p2\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("accessor with TypeScript annotations", () => {
     test("accessor with definite assignment assertion (!)", async () => {
       using dir = tempDir("es-dec-accessor-bang", {

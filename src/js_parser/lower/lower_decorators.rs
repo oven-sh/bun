@@ -756,7 +756,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let Some(info) = map.get(&pi.ref_.inner_index()).copied() {
                             let mut obj_expr = tgt_idx.target;
                             self.rewrite_private_accesses_in_expr(&mut obj_expr, map);
-                            let private_access = self.private_get_expr(obj_expr, &info, expr_loc);
+                            // `x.#m(...)` becomes `__privateGet(x, _m).call(x, ...)`, which
+                            // references the receiver twice. Only identifiers and `this` can
+                            // be repeated safely; any other receiver is captured in a
+                            // temporary so its side effects run once and nested private
+                            // calls don't duplicate the whole subtree (the duplication is
+                            // exponential in the length of a chain like `o.#m().#m().#m()`).
+                            let (get_obj, this_arg) = match &obj_expr.data {
+                                js_ast::ExprData::EIdentifier(id) => {
+                                    let obj_ref = id.ref_;
+                                    (obj_expr, self.use_ref(obj_ref, obj_expr.loc))
+                                }
+                                js_ast::ExprData::EThis(_) => {
+                                    (obj_expr, self.new_expr(E::This {}, obj_expr.loc))
+                                }
+                                _ => {
+                                    let tmp_ref = self.generate_temp_ref(Some(b"_obj"));
+                                    let write = self.assign_to(tmp_ref, obj_expr, expr_loc);
+                                    let read = self.use_ref(tmp_ref, expr_loc);
+                                    (write, read)
+                                }
+                            };
+                            let private_access = self.private_get_expr(get_obj, &info, expr_loc);
                             let call_target = self.new_expr(
                                 E::Dot {
                                     target: private_access,
@@ -769,7 +790,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let bump = self.arena;
                             let orig_args = e.args.slice_mut();
                             let mut new_args = BumpVec::with_capacity_in(1 + orig_args.len(), bump);
-                            new_args.push(obj_expr);
+                            new_args.push(this_arg);
                             for arg in orig_args.iter_mut() {
                                 self.rewrite_private_accesses_in_expr(arg, map);
                                 new_args.push(*arg);
@@ -1025,6 +1046,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) {
         let p = self;
         let bump = p.arena;
+
+        // Receiver-capture temporaries created by `rewrite_private_accesses_in_expr`
+        // land in `temp_refs_to_declare`; everything pushed past this point is
+        // declared in a `var` statement alongside the other lowering variables
+        // right before output assembly.
+        let temp_refs_before = p.temp_refs_to_declare.len();
 
         // ── Phase 1: Setup ───────────────────────────────
         let mut class_name_ref: Ref;
@@ -2352,6 +2379,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         class.properties = bun_ast::StoreSlice::new_mut(new_properties.into_bump_slice_mut());
         class.has_decorators = false;
         class.should_lower_standard_decorators = false;
+
+        // Declare receiver-capture temporaries generated while rewriting private
+        // member calls (`__privateGet(_obj = recv, ...).call(_obj, ...)`).
+        if p.temp_refs_to_declare.len() > temp_refs_before {
+            let mut capture_refs = BumpVec::<Ref>::new_in(bump);
+            for temp in p.temp_refs_to_declare[temp_refs_before..].iter() {
+                capture_refs.push(temp.r#ref);
+            }
+            p.temp_refs_to_declare.truncate(temp_refs_before);
+            let mut capture_decls = BumpVec::<G::Decl>::new_in(bump);
+            for capture_ref in capture_refs.iter() {
+                let binding = p.b(
+                    B::Identifier {
+                        r#ref: *capture_ref,
+                    },
+                    loc,
+                );
+                capture_decls.push(G::Decl {
+                    binding,
+                    value: None,
+                });
+            }
+            prefix_stmts.push(p.s(
+                S::Local {
+                    decls: DeclList::from_bump_vec(capture_decls),
+                    ..Default::default()
+                },
+                loc,
+            ));
+        }
 
         // ── Phase 8: Assemble output ─────────────────────
         if is_expr {

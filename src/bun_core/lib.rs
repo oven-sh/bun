@@ -1892,10 +1892,7 @@ pub(crate) mod strings_impl {
         simdutf::length::utf8::from::utf16::le(utf16)
     }
 
-    /// Port of `elementLengthLatin1IntoUTF8` — exact UTF-8 byte length of a
-    /// Latin-1 input (every byte ≥ 0x80 encodes as 2 bytes). simdutf-backed
-    /// like the Zig original; short inputs use a scalar count to skip the FFI
-    /// dispatch (same rationale as `is_all_ascii`).
+    /// Port of `elementLengthLatin1IntoUTF8`.
     pub fn element_length_latin1_into_utf8(latin1: &[u8]) -> usize {
         if latin1.len() <= 32 {
             return latin1.len() + latin1.iter().filter(|&&c| c >= 0x80).count();
@@ -1910,10 +1907,6 @@ pub(crate) mod strings_impl {
         if utf16.is_empty() || buf.is_empty() {
             return EncodeIntoResult::default();
         }
-        // A UTF-16 code unit expands to at most 3 UTF-8 bytes (a surrogate pair
-        // — two units — becomes four), so a buffer that can hold the worst case
-        // proves the simdutf fast path fits without paying for an exact length
-        // pass first (mirrors the Zig `out_len` selection).
         let worst_case = utf16.len().saturating_mul(3);
         let utf8_len = if worst_case <= buf.len() {
             worst_case
@@ -1923,12 +1916,6 @@ pub(crate) mod strings_impl {
         copy_utf16_into_utf8_with_utf8_len(buf, utf16, utf8_len)
     }
 
-    /// [`copy_utf16_into_utf8`] for callers that already know the UTF-8 output
-    /// length — or an upper bound on it — e.g. the exact size from
-    /// [`element_length_utf16_into_utf8`] used to allocate `buf`, so it is not
-    /// recomputed here. `utf8_len` must not understate the real output length:
-    /// the simdutf fast path uses `utf8_len <= buf.len()` as proof that the
-    /// whole conversion fits in `buf` before writing.
     pub fn copy_utf16_into_utf8_with_utf8_len(
         buf: &mut [u8],
         utf16: &[u16],
@@ -1981,20 +1968,10 @@ pub(crate) mod strings_impl {
         copy_latin1_into_utf8_stop_on_non_ascii::<false>(buf, latin1)
     }
 
-    /// Copy the longest all-ASCII prefix of `src` into `dst` (equal lengths) in
-    /// a single fused scan+copy pass. Returns the number of bytes copied — the
-    /// index of the first non-ASCII byte, or the full length when the run is
-    /// pure ASCII. Exactly that many bytes of `dst` are written.
-    ///
-    /// Short runs (rope leaves are often a dozen bytes) use a SWAR `u64` loop
-    /// so they skip the FFI/dynamic-dispatch overhead of the highway kernel;
-    /// longer runs go through `bun_highway::copy_ascii_prefix` (full-width
-    /// vectors, runtime CPU dispatch).
     #[inline]
     fn copy_ascii_prefix(dst: &mut [u8], src: &[u8]) -> usize {
         debug_assert_eq!(dst.len(), src.len());
 
-        // Below ~2 vectors the dispatch shim costs more than it saves.
         const HIGHWAY_MIN_LEN: usize = 64;
         if src.len() >= HIGHWAY_MIN_LEN {
             return bun_highway::copy_ascii_prefix(src, dst);
@@ -2006,8 +1983,6 @@ pub(crate) mod strings_impl {
             let word = u64::from_ne_bytes(s.try_into().expect("infallible: size matches"));
             let mask = word & HIGH_BITS;
             if mask != 0 {
-                // Bun targets little-endian hosts only, so byte `k` occupies
-                // bits `k*8..k*8+8` and `trailing_zeros / 8` is its index.
                 let ascii = (mask.trailing_zeros() / 8) as usize;
                 d[..ascii].copy_from_slice(&s[..ascii]);
                 return copied + ascii;
@@ -2025,12 +2000,7 @@ pub(crate) mod strings_impl {
         copied
     }
 
-    /// Port of `copyLatin1IntoUTF8StopOnNonASCII`. Streams Latin-1 into `buf_`
-    /// as UTF-8: ASCII runs are copied with a fused SIMD/SWAR scan+copy
-    /// ([`copy_ascii_prefix`], mirroring the Zig `@Vector(16,u8)` + SWAR
-    /// ladders), and each non-ASCII byte is expanded to its 2-byte UTF-8
-    /// sequence — or, when `STOP` is set, aborts with the `u32::MAX` sentinels
-    /// like the Zig original. Only `buf_[..written]` is written.
+    /// Port of `copyLatin1IntoUTF8StopOnNonASCII`.
     pub fn copy_latin1_into_utf8_stop_on_non_ascii<const STOP: bool>(
         buf_: &mut [u8],
         latin1_: &[u8],
@@ -2045,11 +2015,9 @@ pub(crate) mod strings_impl {
             written += copied;
             read += copied;
             if copied == n {
-                // Filled `buf_` or drained `latin1_`.
                 break;
             }
 
-            // `latin1_[read]` is non-ASCII.
             debug_assert!(latin1_[read] >= 0x80);
             if STOP {
                 return EncodeIntoResult {

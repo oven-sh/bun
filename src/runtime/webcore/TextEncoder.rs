@@ -22,12 +22,7 @@ pub(crate) unsafe extern "C" fn TextEncoder__encode8(
     // SAFETY: caller guarantees ptr[0..len] is valid Latin-1 data
     let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
 
-    // Encode straight into a JSC-owned Uint8Array sized exactly for the input:
-    // no intermediate stack/heap buffer and no second copy. JSC owning the
-    // memory keeps small arrays cheap for the GC and avoids external-buffer
-    // bookkeeping for large ones.
     if strings::first_non_ascii(slice).is_none() {
-        // ASCII fast path: the UTF-8 output is byte-for-byte the input.
         let Ok(uint8array) = create_uninitialized_uint8_array(global_this, slice.len()) else {
             return JSValue::ZERO;
         };
@@ -39,8 +34,6 @@ pub(crate) unsafe extern "C" fn TextEncoder__encode8(
         return uint8array;
     }
 
-    // Latin-1 bytes ≥ 0x80 expand to two UTF-8 bytes: size the array exactly
-    // and convert directly into it.
     let utf8_len = strings::element_length_latin1_into_utf8(slice);
     let Ok(uint8array) = create_uninitialized_uint8_array(global_this, utf8_len) else {
         return JSValue::ZERO;
@@ -68,10 +61,6 @@ fn replacement_char_uint8_array(global_this: &JSGlobalObject) -> JSValue {
 }
 
 fn encode16_impl(global_this: &JSGlobalObject, slice: &[u16]) -> JSValue {
-    // Small strings: convert into a stack buffer sized for the worst case
-    // (3 bytes per code unit), which lets copy_utf16_into_utf8 go straight to
-    // the simdutf conversion without an exact length pass, then copy the
-    // written bytes into a JSC-owned Uint8Array.
     const SMALL_BUF_LEN: usize = 192;
     if slice.len() <= SMALL_BUF_LEN / 3 {
         let mut buf = [0u8; SMALL_BUF_LEN];
@@ -94,18 +83,12 @@ fn encode16_impl(global_this: &JSGlobalObject, slice: &[u16]) -> JSValue {
         return uint8array;
     }
 
-    // Exact UTF-8 size of the input (valid surrogate pairs count as 4 bytes,
-    // everything else 1–3 bytes per code unit).
     let need = strings::element_length_utf16_into_utf8(slice);
 
     if need == 0 {
-        // Nothing to encode: preserve the historical behavior of returning a
-        // single U+FFFD replacement character.
         return replacement_char_uint8_array(global_this);
     }
 
-    // Encode straight into a JSC-owned Uint8Array of exactly `need` bytes —
-    // no intermediate heap buffer and no second copy.
     let Ok(uint8array) = create_uninitialized_uint8_array(global_this, need) else {
         return JSValue::ZERO;
     };
@@ -119,12 +102,7 @@ fn encode16_impl(global_this: &JSGlobalObject, slice: &[u16]) -> JSValue {
         return uint8array;
     }
 
-    // Unpaired surrogates: the U+FFFD-replaced output does not necessarily fit
-    // the exact-size buffer above, so redo the conversion through the
-    // allocating path (which replaces each unpaired surrogate with U+FFFD) and
-    // hand those bytes to JSC. The array allocated above is discarded.
     let bytes = strings::to_utf8_alloc_with_type(slice);
-    // PORT NOTE: ownership transfers to JSC via to_js_unchecked; leak the Vec.
     ArrayBuffer::from_bytes(bytes.leak(), JSType::Uint8Array)
         .to_js_unchecked(global_this)
         .unwrap_or(JSValue::ZERO)
@@ -262,11 +240,6 @@ pub(crate) extern "C" fn TextEncoder__encodeRopeString(
     rope_str: &JSString,
 ) -> JSValue {
     debug_assert!(rope_str.is_8bit());
-    // The rope is ASCII-only on this fast path, so the UTF-8 byte length equals
-    // the string length: allocate the JSC-owned Uint8Array up front and let the
-    // rope iterator write each segment directly into it (no stack buffer, no
-    // second copy). If a non-ASCII byte shows up we bail with `undefined` and
-    // the caller re-encodes through the resolved-string path.
     let length = rope_str.length();
     let array = match create_uninitialized_uint8_array(global_this, length) {
         Ok(v) => v,

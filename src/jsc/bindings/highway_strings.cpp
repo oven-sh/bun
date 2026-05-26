@@ -1140,12 +1140,6 @@ size_t FirstNonAscii8Impl(const uint8_t* HWY_RESTRICT input, size_t len)
     return len;
 }
 
-// Copy the leading all-ASCII run of `src` into `dst`, stopping at the first
-// byte greater than 0x7F. Returns the number of bytes copied (== the index of
-// the first non-ASCII byte, or `len` when the whole input is ASCII). Exactly
-// that many bytes of `dst` are written. This fuses the "find first non-ASCII"
-// scan with the copy so the Latin-1 → UTF-8 ASCII fast path (TextEncoder,
-// copyLatin1IntoUTF8) reads the input once instead of scan-then-memcpy.
 size_t CopyAsciiPrefixImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
 {
     D8 d;
@@ -1161,7 +1155,6 @@ size_t CopyAsciiPrefixImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t*
             const auto non_ascii = hn::Gt(chunk, vec_0x7F);
             const intptr_t pos = hn::FindFirstTrue(d, non_ascii);
             if (pos >= 0) {
-                // Copy only the ASCII prefix of this vector.
                 if (pos > 0) {
                     std::memcpy(dst + i, src + i, static_cast<size_t>(pos));
                 }
@@ -1170,9 +1163,6 @@ size_t CopyAsciiPrefixImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t*
             hn::StoreU(chunk, d, dst + i);
         }
 
-        // Tail: one overlapping vector covering the last N bytes. The overlap
-        // [len - N, i) was already copied and verified ASCII, so re-storing it
-        // is harmless and nothing is written past `dst + len`.
         if (i < len) {
             const size_t start = len - N;
             const auto chunk = hn::LoadU(d, src + start);
@@ -1182,8 +1172,6 @@ size_t CopyAsciiPrefixImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t*
                 hn::StoreU(chunk, d, dst + start);
                 return len;
             }
-            // The first non-ASCII byte is at or after `i` (everything before
-            // `i` was verified ASCII above).
             const size_t stop = start + static_cast<size_t>(pos);
             if (stop > i) {
                 std::memcpy(dst + i, src + i, stop - i);

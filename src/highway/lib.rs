@@ -241,10 +241,6 @@ pub fn copy_u16_to_u8(input: &[u16], output: &mut [u8]) {
     unsafe { highway_copy_u16_to_u8(input.as_ptr(), input.len(), output.as_mut_ptr()) }
 }
 
-/// Copy the leading all-ASCII run of `src` into `dst` in a single fused
-/// scan+copy pass, stopping at the first byte `>= 0x80`. Only the common
-/// prefix `min(src.len(), dst.len())` is considered. Returns the number of
-/// bytes copied — exactly that many bytes of `dst` are written.
 #[inline(always)]
 pub fn copy_ascii_prefix(src: &[u8], dst: &mut [u8]) -> usize {
     let len = src.len().min(dst.len());

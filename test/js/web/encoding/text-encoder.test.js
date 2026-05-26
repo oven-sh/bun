@@ -494,9 +494,6 @@ describe("TextEncoder", () => {
   });
 });
 
-// Pure-JS reference implementation of TextEncoder.encode (UTF-8 with lone
-// surrogates replaced by U+FFFD), used to cross-check the native SIMD/SWAR
-// fast paths without relying on any other native conversion routine.
 function utf8Reference(str) {
   const out = [];
   for (let i = 0; i < str.length; i++) {
@@ -529,8 +526,6 @@ function utf8Reference(str) {
 describe("TextEncoder latin1 ASCII fast path boundaries", () => {
   const encoder = new TextEncoder();
 
-  // Force the string out of JSC's rope representation so encode() takes the
-  // resolved-string path (TextEncoder__encode8).
   const flatten = s => {
     s.charCodeAt(0);
     return s;
@@ -553,8 +548,6 @@ describe("TextEncoder latin1 ASCII fast path boundaries", () => {
         const expected = utf8Reference(text);
         expect({ len, pos, bytes: Array.from(encoded) }).toEqual({ len, pos, bytes: Array.from(expected) });
 
-        // encodeInto() into an exactly-sized destination must produce the same
-        // bytes and report full consumption.
         const dest = new Uint8Array(expected.length);
         const result = encoder.encodeInto(text, dest);
         expect({ len, pos, read: result.read, written: result.written, bytes: Array.from(dest) }).toEqual({
@@ -578,14 +571,12 @@ describe("TextEncoder latin1 ASCII fast path boundaries", () => {
   });
 
   it("encodeInto should not write past `written` when the destination is too small", () => {
-    // 8 ASCII bytes, then a 2-byte character that no longer fits.
     const text = flatten("abcdefgh©xyz");
     const dest = new Uint8Array(16).fill(0xaa);
     const result = encoder.encodeInto(text, dest.subarray(0, 9));
     expect(result.read).toBe(8);
     expect(result.written).toBe(8);
     expect(Array.from(dest.subarray(0, 8))).toEqual(Array.from(utf8Reference("abcdefgh")));
-    // Everything past `written` is untouched.
     expect(Array.from(dest.subarray(8))).toEqual(new Array(8).fill(0xaa));
   });
 
@@ -604,8 +595,6 @@ describe("TextEncoder rope fast path", () => {
   const encoder = new TextEncoder();
 
   it("should encode ropes built from large ASCII segments", () => {
-    // Segments larger than one SIMD register so the rope iterator feeds long
-    // runs through the vectorized copy.
     let text = "";
     let expected = "";
     for (let i = 0; i < 16; i++) {
@@ -637,7 +626,7 @@ describe("TextEncoder rope fast path", () => {
   it("should encode a large repeated rope identically to its resolved copy", () => {
     const rope = "Hello World!".repeat(1024);
     const resolved = "Hello World!".repeat(1024);
-    resolved.charCodeAt(0); // resolve the rope
+    resolved.charCodeAt(0);
     const fromRope = encoder.encode(rope);
     const fromResolved = encoder.encode(resolved);
     expect(fromRope.length).toBe(12 * 1024);

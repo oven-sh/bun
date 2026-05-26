@@ -252,12 +252,15 @@ impl TextDecoder {
         }
     }
 
+    /// DOMJIT fast path for `decode(typedArray)` called with no options object.
+    /// A no-options decode is flushing per WHATWG Encoding, matching the slow
+    /// path in `decode()` when `stream` is absent.
     pub fn decode_without_type_checks(
         &self,
         global_this: &JSGlobalObject,
         uint8array: &mut JSUint8Array,
     ) -> JsResult<JSValue> {
-        self.decode_slice::<false>(global_this, uint8array.slice())
+        self.decode_slice::<true>(global_this, uint8array.slice())
     }
 
     fn decode_slice<const FLUSH: bool>(

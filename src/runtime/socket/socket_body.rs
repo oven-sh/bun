@@ -3913,6 +3913,12 @@ pub fn js_upgrade_duplex_to_tls(
             ssl_opts = Some(default_cfg);
         }
     }
+    if !is_server && owned_ctx.is_some() && ssl_opts.is_none() {
+        let mut default_cfg = SSLConfig::zero();
+        default_cfg.reject_unauthorized =
+            VirtualMachine::get().get_tls_reject_unauthorized() as i32;
+        ssl_opts = Some(default_cfg);
+    }
     if owned_ctx.is_none() && ssl_opts.is_none() {
         return Err(global.throw(format_args!("Expected \"tls\" option")));
     }

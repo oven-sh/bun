@@ -44,7 +44,7 @@ macro_rules! format_bytes {
 /// All workers are busy for at least this long before another is spawned.
 /// Overridable via BUN_TEST_PARALLEL_SCALE_MS for tests, where debug-build
 /// module load alone can exceed the production 5ms threshold.
-pub const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
+pub(crate) const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
 
 /// Owns the coordinator-side per-run worker temp directory path bytes;
 /// recursively removes it on drop. Mirrors the Zig
@@ -571,7 +571,7 @@ struct WorkerLoop<'a> {
 }
 
 impl<'a> WorkerLoop<'a> {
-    pub fn begin(&mut self) {
+    pub(crate) fn begin(&mut self) {
         // SAFETY: vm pointer is valid for the worker's lifetime.
         let vm = unsafe { &mut *self.vm };
         if !self.cmds.channel.adopt(vm, Fd::from_uv(3)) {

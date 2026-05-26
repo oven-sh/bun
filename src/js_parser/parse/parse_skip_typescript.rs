@@ -16,7 +16,7 @@ use bun_core::{self, Error, err};
 // PORT NOTE: Zig nested `Bitset` inside `SkipTypeOptions`; Rust hoists it to a module-level
 // alias. Re-export here so the parser-side type alias used in this file matches the
 // canonical definition in `TypeScript.rs`.
-pub type SkipTypeOptionsBitset = typescript::SkipTypeOptionsBitset;
+pub(crate) type SkipTypeOptionsBitset = typescript::SkipTypeOptionsBitset;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     #[inline]
@@ -59,6 +59,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn skip_type_script_binding(&mut self) -> Result<(), Error> {
         self.mark_type_script_only();
+        // Nested destructuring patterns in skipped type positions recurse through
+        // this function; bound it like `parse_binding` does.
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(err!("StackOverflow"));
+        }
         match self.lexer.token {
             T::TIdentifier | T::TThis => {
                 self.lexer.next()?;
@@ -235,6 +240,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         mut result: Option<&mut Metadata>,
     ) -> Result<(), Error> {
         self.mark_type_script_only();
+
+        // Deeply nested types ("[[[[...", "A<A<A<...", ...) recurse through this
+        // function, so bound it the same way `parse_expr_common` bounds expression
+        // recursion instead of overflowing the stack.
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(err!("StackOverflow"));
+        }
 
         loop {
             match self.lexer.token {
@@ -1417,10 +1429,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut backtrack = false;
         match func(self) {
             Ok(_) => {}
-            Err(e) => {
-                if e == err!("Backtrack") || self.lexer.did_panic {
-                    backtrack = true;
-                }
+            Err(_) => {
+                backtrack = true;
             }
         }
 
@@ -1447,10 +1457,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut backtrack = false;
         let result = match func(self) {
             Ok(r) => r,
-            Err(e) => {
-                if e == err!("Backtrack") || self.lexer.did_panic {
-                    backtrack = true;
-                }
+            Err(_) => {
+                backtrack = true;
                 SkipTypeParameterResult::DidNotSkipAnything
             }
         };
@@ -1461,37 +1469,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.lexer.is_log_disabled = old_log_disabled;
 
         result
-    }
-
-    #[inline]
-    fn lexer_backtracker_with_args_bool<F>(&mut self, func: F) -> bool
-    where
-        F: FnOnce(&mut Self) -> Result<bool, Error>,
-    {
-        // PORT NOTE: matches Zig `lexerBacktrackerWithArgs` — does NOT check `did_panic` on
-        // non-Backtrack errors (unlike `lexerBacktracker`).
-        self.mark_type_script_only();
-        let old_lexer = self.lexer.snapshot();
-        let old_log_disabled = self.lexer.is_log_disabled;
-        self.lexer.is_log_disabled = true;
-
-        let mut backtrack = false;
-        match func(self) {
-            Ok(_) => {}
-            Err(e) => {
-                if e == err!("Backtrack") {
-                    backtrack = true;
-                }
-            }
-        }
-
-        if backtrack {
-            self.lexer.restore(&old_lexer);
-        }
-        self.lexer.is_log_disabled = old_log_disabled;
-
-        // FnReturnType == anyerror!bool path: returns true on success, false on backtrack.
-        !backtrack
     }
 
     pub fn skip_type_script_type_parameters_then_open_paren_with_backtracking(
@@ -1583,9 +1560,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         flags: SkipTypeOptionsBitset,
     ) -> bool {
-        self.lexer_backtracker_with_args_bool(|p| {
+        // The outcome of this attempt depends only on the position of the `extends`
+        // token and on whether conditional types are allowed, so an attempt that
+        // already backtracked here can be skipped. Each backtracked constraint gets
+        // re-parsed by the caller as the `extends` clause of a conditional type,
+        // which repeats the attempts nested inside it; without the memo that's
+        // exponential for deeply nested `infer X extends` constraints inside
+        // template literal types (found by fuzzing).
+        //
+        // Token offsets fit in 31 bits (`Loc` is an `i32`), so the offset and the
+        // flag bit pack into a `u32`.
+        debug_assert!(self.lexer.start <= (u32::MAX >> 1) as usize);
+        let memo_key = ((self.lexer.start as u32) << 1)
+            | flags.contains(SkipTypeOptions::DisallowConditionalTypes) as u32;
+        if self
+            .ts_infer_constraint_backtracks
+            .binary_search(&memo_key)
+            .is_ok()
+        {
+            return false;
+        }
+
+        let skipped = self.lexer_backtracker_bool(|p| {
             p.skip_type_script_constraint_of_infer_type_with_backtracking(flags)
-        })
+        });
+        if !skipped {
+            // Re-search for the insertion point: attempts nested inside the one that
+            // just failed may have added entries of their own.
+            if let Err(insert_at) = self.ts_infer_constraint_backtracks.binary_search(&memo_key) {
+                self.ts_infer_constraint_backtracks
+                    .insert(insert_at, memo_key);
+            }
+        }
+        skipped
     }
 }
 

@@ -139,6 +139,30 @@ if (isDockerEnabled()) {
     });
 
     describe("Array helpers", () => {
+      test("sql.array rejects type names with parentheses outside numeric modifiers", async () => {
+        await using sql = postgres(options);
+
+        // The type name is interpolated verbatim into `$N::${type}[]`. Parentheses,
+        // commas and spaces are only legal as `(digits[,digits])` modifiers after an
+        // identifier; a value that closes the cast and appends further expression
+        // terms must be refused before it reaches the query text.
+        for (const type of [
+          "INT) OR PG_SLEEP(10) IS NOT NULL OR ID IN (1",
+          "INT) OR ARRAY_LENGTH(CAST(NULL AS INT",
+          "TEXT(1)) , (SELECT PG_SLEEP(10",
+          "INT(1,2,X)",
+        ]) {
+          expect(() => sql.array([1, 2], type)).toThrow(/valid PostgreSQL type name/);
+        }
+
+        // Legitimate parameterized and qualified type names are still accepted.
+        expect(() => sql.array([1.5], "NUMERIC(10,2)")).not.toThrow();
+        expect(() => sql.array([new Date()], "TIMESTAMP(3) WITH TIME ZONE")).not.toThrow();
+        expect(() => sql.array(["a"], "MYSCHEMA.MY_ENUM")).not.toThrow();
+        const [{ x }] = await sql`select ${sql.array(["hello", "world"], "CHARACTER VARYING(255)")} as x`;
+        expect(x).toEqual(["hello", "world"]);
+      });
+
       test("SQL helper should support sql.array", async () => {
         await using sql = postgres(options);
         const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
@@ -12381,6 +12405,31 @@ CREATE TABLE ${table_name} (
         });
       });
     }); // Close "Misc" describe
+    test("sql.begin rejects transaction option strings containing statement separators", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const marker = "inj_" + randomUUIDv7("hex").replaceAll("-", "");
+
+      // The transaction-mode string is interpolated into `BEGIN ${options}` and sent
+      // down the simple-query path, which accepts multiple semicolon-separated
+      // statements. Anything other than keyword lists must be refused up front.
+      const error = await sql
+        .begin(`; CREATE TABLE ${marker} (a int)`, async tx => {
+          await tx`select 1`;
+        })
+        .catch(e => e);
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toContain("Transaction options can only contain letters, spaces, and commas.");
+
+      // The statement embedded in the options string must not have executed.
+      const [{ found }] = await sql`SELECT to_regclass(${marker}) IS NOT NULL AS found`;
+      expect(found).toBe(false);
+
+      // Legitimate transaction modes still work.
+      const [{ x }] = await sql.begin("read only", async tx => await tx`select 1 as x`);
+      expect(x).toBe(1);
+      const [{ y }] = await sql.begin("isolation level serializable, read only", async tx => await tx`select 2 as y`);
+      expect(y).toBe(2);
+    });
     test("Handles empty integer array stored as {}", async () => {
       await using db = postgres(options);
       const tableName = `test_${randomUUIDv7("hex").replaceAll("-", "")}`;
@@ -12425,3 +12474,259 @@ CREATE TABLE ${table_name} (
     });
   }); // Close "PostgreSQL tests" describe
 } // Close if (isDockerEnabled())
+
+// A malicious or buggy Postgres server can send a text-format json[]/jsonb[]
+// DataRow whose array literal contains an unquoted element starting with 'f' or
+// 't' that is not exactly "false"/"true". The array parser must reject it;
+// previously it consumed no input and re-entered the element loop forever,
+// blocking the JS thread. The fixture runs in a subprocess so a regression
+// shows up as a killed child instead of a hung test file.
+test("text-format json[] with a malformed boolean literal returns an error instead of looping", async () => {
+  const fixtureDir = tempDirWithFiles("pg-json-array-bool-literal", {
+    "fixture.ts": `
+import { SQL } from "bun";
+import net from "node:net";
+
+function pkt(type, body) {
+  const header = Buffer.alloc(5);
+  header.write(type, 0);
+  header.writeInt32BE(body.length + 4, 1);
+  return Buffer.concat([header, body]);
+}
+const int16 = n => { const b = Buffer.alloc(2); b.writeInt16BE(n, 0); return b; };
+const int32 = n => { const b = Buffer.alloc(4); b.writeInt32BE(n, 0); return b; };
+const cstr = s => Buffer.concat([Buffer.from(s), Buffer.from([0])]);
+
+// Single column "x" of type json[] (oid 199), format 0 (text).
+const rowDescription = pkt("T", Buffer.concat([
+  int16(1),
+  cstr("x"), int32(0), int16(0), int32(199), int16(-1), int32(-1), int16(0),
+]));
+function dataRow(text) {
+  const value = Buffer.from(text);
+  return pkt("D", Buffer.concat([int16(1), int32(value.length), value]));
+}
+const authenticationOk = pkt("R", int32(0));
+const readyForQuery = pkt("Z", Buffer.from("I"));
+const commandComplete = pkt("C", cstr("SELECT 1"));
+
+async function run(arrayText) {
+  const server = net.createServer(socket => {
+    let startup = true;
+    socket.on("data", data => {
+      if (startup) {
+        startup = false;
+        socket.write(Buffer.concat([authenticationOk, readyForQuery]));
+        return;
+      }
+      if (data[0] !== 0x51 /* 'Q' */) return;
+      socket.write(Buffer.concat([rowDescription, dataRow(arrayText), commandComplete, readyForQuery]));
+    });
+    socket.on("error", () => {});
+  });
+  await new Promise(r => server.listen(0, "127.0.0.1", () => r()));
+  const port = server.address().port;
+  const sql = new SQL({
+    url: "postgres://u@127.0.0.1:" + port + "/db",
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+  try {
+    const rows = await sql\`select x\`.simple();
+    console.log("ROWS " + arrayText + " => " + JSON.stringify(rows[0] && rows[0].x));
+  } catch (e) {
+    console.log("REJECTED " + arrayText + " => " + (e.code || e.message));
+  } finally {
+    await sql.close().catch(() => {});
+    await new Promise(r => server.close(() => r()));
+  }
+}
+
+// Malformed boolean literals: must error, not spin forever.
+await run("{falsy}");
+await run("{truthy}");
+// Well-formed booleans in a json[] must still parse.
+await run("{false,true}");
+console.log("FIXTURE_DONE");
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    cwd: fixtureDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // Bounds the child if the array parser regresses into an unbounded loop.
+    timeout: 10_000,
+    killSignal: "SIGKILL",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split(/\r?\n/)
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+
+  expect(stdout).toContain("REJECTED {falsy} => ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT");
+  expect(stdout).toContain("REJECTED {truthy} => ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT");
+  expect(stdout).toContain("ROWS {false,true} => [false,true]");
+  expect(stdout).toContain("FIXTURE_DONE");
+  expect(filteredStderr).toBe("");
+  expect(exitCode).toBe(0);
+}, 30_000);
+
+// A simple-query response can contain several result sets. The first one here
+// has zero columns, which caches a zero-property row Structure when its
+// DataRow is materialized. The next RowDescription widens the field list to
+// three named columns; the cached structure must be invalidated so the second
+// result set's rows are built with the new column layout instead of writing
+// the new cells past the inline capacity of an empty object. Runs in a
+// subprocess because a regression corrupts the JS heap of the process that
+// parses the response.
+test("result set following a zero-column result set uses its own column layout", async () => {
+  const fixtureDir = tempDirWithFiles("pg-zero-column-then-wide", {
+    "fixture.ts": `
+import { SQL } from "bun";
+import net from "node:net";
+
+function pkt(type, body) {
+  const header = Buffer.alloc(5);
+  header.write(type, 0);
+  header.writeInt32BE(body.length + 4, 1);
+  return Buffer.concat([header, body]);
+}
+const int16 = n => { const b = Buffer.alloc(2); b.writeInt16BE(n, 0); return b; };
+const int32 = n => { const b = Buffer.alloc(4); b.writeInt32BE(n, 0); return b; };
+const cstr = s => Buffer.concat([Buffer.from(s), Buffer.from([0])]);
+
+function rowDescription(names) {
+  const fields = Buffer.concat(
+    names.map(name =>
+      Buffer.concat([cstr(name), int32(0), int16(0), int32(25), int16(-1), int32(-1), int16(0)]),
+    ),
+  );
+  return pkt("T", Buffer.concat([int16(names.length), fields]));
+}
+function dataRow(values) {
+  const cols = Buffer.concat(
+    values.map(v => {
+      const bytes = Buffer.from(v);
+      return Buffer.concat([int32(bytes.length), bytes]);
+    }),
+  );
+  return pkt("D", Buffer.concat([int16(values.length), cols]));
+}
+const authenticationOk = pkt("R", int32(0));
+const readyForQuery = pkt("Z", Buffer.from("I"));
+const commandComplete = tag => pkt("C", cstr(tag));
+
+const server = net.createServer(socket => {
+  let startup = true;
+  socket.on("data", data => {
+    if (startup) {
+      startup = false;
+      socket.write(Buffer.concat([authenticationOk, readyForQuery]));
+      return;
+    }
+    if (data[0] !== 0x51 /* 'Q' */) return;
+    // First result set: zero columns, one row. Second result set: three named
+    // columns, one row.
+    socket.write(
+      Buffer.concat([
+        rowDescription([]),
+        dataRow([]),
+        commandComplete("SELECT 1"),
+        rowDescription(["a", "b", "c"]),
+        dataRow(["1", "2", "3"]),
+        commandComplete("SELECT 1"),
+        readyForQuery,
+      ]),
+    );
+  });
+  socket.on("error", () => {});
+});
+await new Promise(r => server.listen(0, "127.0.0.1", () => r()));
+const port = server.address().port;
+
+const sql = new SQL({
+  url: "postgres://u@127.0.0.1:" + port + "/db",
+  max: 1,
+  idleTimeout: 5,
+  connectionTimeout: 5,
+});
+try {
+  const result = await sql\`select; select 1 as a, 2 as b, 3 as c\`.simple();
+  console.log("SECOND_RESULT_SET " + JSON.stringify(result[1]));
+  console.log("SECOND_RESULT_SET_KEYS " + Object.keys(result[1][0]).sort().join(","));
+} finally {
+  await sql.close().catch(() => {});
+  await new Promise(r => server.close(() => r()));
+}
+console.log("FIXTURE_DONE");
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    cwd: fixtureDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 10_000,
+    killSignal: "SIGKILL",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split(/\r?\n/)
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+
+  // The second result set must expose all three named columns with their
+  // values; reusing the zero-property structure from the first result set
+  // would yield a row object with no own properties.
+  expect(stdout).toContain('SECOND_RESULT_SET [{"a":"1","b":"2","c":"3"}]');
+  expect(stdout).toContain("SECOND_RESULT_SET_KEYS a,b,c");
+  expect(stdout).toContain("FIXTURE_DONE");
+  expect(filteredStderr).toBe("");
+  expect(exitCode).toBe(0);
+}, 30_000);
+
+// Connection options are serialized into the NUL-delimited Postgres
+// StartupMessage as `key\0value\0`. A key or value containing a NUL byte
+// would be parsed by the server as additional startup parameters (an injected
+// `user`, `options`, etc.), so it must be refused before any connection is
+// attempted. The username/password/database fields already get this check
+// natively; the pre-encoded options blob must get it too.
+test("rejects Postgres connection options containing null bytes", async () => {
+  const url = "postgres://bun_sql_test@127.0.0.1:5432/bun_sql_test";
+
+  // NUL inside an option value splits it into extra key/value pairs.
+  expect(() => new SQL(url, { max: 1, connection: { application_name: "x\0user\0postgres" } })).toThrow(
+    "must not contain null bytes",
+  );
+  // NUL inside an option key does the same.
+  expect(() => new SQL(url, { max: 1, connection: { ["application_name\0user"]: "postgres" } })).toThrow(
+    "must not contain null bytes",
+  );
+  // The same options arriving through the connection URL's query string.
+  expect(() => new SQL(url + "?application_name=x%00user%00postgres", { max: 1 })).toThrow(
+    "must not contain null bytes",
+  );
+
+  let err: any;
+  try {
+    new SQL(url, { max: 1, connection: { application_name: "x\0user\0postgres" } });
+  } catch (e) {
+    err = e;
+  }
+  expect(err?.code).toBe("ERR_INVALID_ARG_VALUE");
+
+  // A normal application_name is still accepted. Construction is lazy, so no
+  // server needs to be listening for this to succeed.
+  const ok = new SQL(url, { max: 1, connection: { application_name: "bun_sql_test_app" } });
+  expect(ok).toBeDefined();
+  await ok.close();
+});

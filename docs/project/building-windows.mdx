@@ -142,3 +142,54 @@ bun-debug test "C:\bun\test\js\bun\resolve\import-meta.test.js"
 ### failed to write output 'bun-debug.exe': permission denied
 
 you cannot overwrite `bun-debug.exe` if it is already open. you likely have a running instance, maybe in the vscode debugger?
+
+## Cross-compiling from Linux
+
+Windows binaries (both x64 and arm64) can also be built on a Linux host. The build uses the host LLVM's `clang-cl`, `lld-link`, `llvm-lib` and `llvm-rc` — which are part of every LLVM distribution — plus an "xwin splat" of the MSVC CRT/STL and Windows SDK for headers and import libraries.
+
+### Prerequisites
+
+1. The same LLVM version a native build uses (see `scripts/bootstrap.sh` `llvm_version_exact`), installed so that `clang-cl`, `lld-link`, `llvm-lib` and `llvm-rc` are available. On Debian/Ubuntu, `apt.llvm.org` packages provide all of them.
+2. `nasm` (only needed for Windows x64 — BoringSSL's x64 assembly is NASM syntax).
+3. Rust std for the Windows targets (`rust-toolchain.toml` lists them; `rustup target add x86_64-pc-windows-msvc aarch64-pc-windows-msvc` if missing).
+4. A Windows sysroot: an [xwin](https://github.com/Jake-Shadle/xwin) splat of the MSVC CRT, Windows SDK, and ATL laid out like a Visual Studio install. Note that downloading these components means accepting Microsoft's license terms for them.
+
+```bash
+cargo install xwin # or download a release binary
+xwin --accept-license --arch x86_64,aarch64 --include-atl splat \
+  --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs \
+  --output /opt/winsysroot
+# clang-cl/lld-link look up SDK paths as "Include"/"Lib"; the splat writes
+# them lowercase, so alias both spellings (needs the same privileges as the
+# splat — configure creates these itself when the directory is writable).
+ln -s include "/opt/winsysroot/Windows Kits/10/Include"
+ln -s lib "/opt/winsysroot/Windows Kits/10/Lib"
+```
+
+The build looks for the sysroot at `/opt/winsysroot` (or `/opt/xwin`) automatically; elsewhere, set `WINDOWS_SYSROOT=<path>` or pass `--winsysroot=<path>` (a user-writable path also lets configure manage the aliases for you). Configure validates the splat at the start of every cross build. CI agents bake the same splat into their images (`.buildkite/Dockerfile`, `scripts/bootstrap.sh`); when an agent doesn't have one, the build fetches it into its cache dir at configure time.
+
+### Building
+
+```bash
+# Debug builds
+bun run build --profile=windows-x64
+bun run build --profile=windows-arm64
+
+# Release builds
+bun run build --profile=windows-x64-release
+bun run build --profile=windows-arm64-release
+```
+
+Output lands in `build/debug-windows-x64/bun-debug.exe`, `build/release-windows-aarch64/bun-profile.exe` + `bun.exe`, etc. Equivalent raw flags: `bun run build --os=windows --arch=aarch64`.
+
+Cross-compiled executables are not run on the host (the `--revision` smoke test is skipped), so test them on a Windows machine or under Wine.
+
+### LTO
+
+x64 release cross builds support ThinLTO with cross-language (Rust↔C++) LTO, and CI's windows x64 cross lane builds with it by default. Locally it's opt-in:
+
+```bash
+bun run build --profile=windows-x64-release --lto=on
+```
+
+This compiles bun's C/C++ with `-flto=thin`, makes rustc emit LLVM bitcode (`-Clinker-plugin-lto`), pulls the `bun-webkit-windows-amd64-lto` ThinLTO prebuilt, and links everything with rustc's bundled `lld-link` (its LLVM is new enough to read both compilers' bitcode). There is no LTO for arm64 (no `-lto` WebKit prebuilt — LLVM's CodeView emitter can't handle ARM64 NEON tuple registers during LTO codegen) or for `--baseline`.

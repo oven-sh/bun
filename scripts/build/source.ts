@@ -628,9 +628,11 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
 
   // DirectBuild host tool: compile+link in one clang invocation with NO
   // cfg target/arch flags — the tool runs on the build host. cc()/link()
-  // would add --target which breaks cross-compiles.
+  // would add --target which breaks cross-compiles. cfg.hostCc (not cfg.cc):
+  // when cross-compiling for windows, cc is clang-cl and defaults to a
+  // *-windows-msvc triple — host tools must stay plain clang.
   n.rule("dep_host_cc", {
-    command: `${q(cfg.cc)} $flags -o $out $in`,
+    command: `${q(cfg.hostCc)} $flags -o $out $in`,
     description: "host-cc $out",
   });
 

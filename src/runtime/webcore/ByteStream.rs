@@ -64,8 +64,6 @@ impl Default for ByteStream {
 // `ByteStream: ReadableStreamSourceContext` (trait with `on_start`/`on_pull`/... methods).
 pub type Source = readable_stream::NewSource<ByteStream>;
 
-pub const TAG: readable_stream::Tag = readable_stream::Tag::Bytes;
-
 impl readable_stream::SourceContext for ByteStream {
     const NAME: &'static str = "Bytes";
     // setRefUnrefFn = null
@@ -116,14 +114,14 @@ impl ByteStream {
 
     /// Init-time reset (Zig: write into `undefined`). Runs before the JS
     /// wrapper exists, so `&mut self` is sound here (R-2 exemption).
-    pub fn setup(&mut self) {
+    pub(crate) fn setup(&mut self) {
         // Called immediately after `ByteStream::default()` construction (Zig
         // wrote into `undefined`); the old value owns nothing the new one
         // reuses, so dropping it is the intended reset.
         drop(core::mem::take(self));
     }
 
-    pub fn on_start(&self) -> streams::Start {
+    pub(crate) fn on_start(&self) -> streams::Start {
         if self.has_received_last_chunk.get() && self.buffer.get().is_empty() {
             return streams::Start::Empty;
         }
@@ -146,7 +144,7 @@ impl ByteStream {
         streams::Start::ChunkSize((512 * 1024 + page_size).min(self.high_water_mark.max(page_size)))
     }
 
-    pub fn value(&self) -> JSValue {
+    pub(crate) fn value(&self) -> JSValue {
         self.pending_value.with_mut(|pv| {
             let Some(result) = pv.get() else {
                 return JSValue::ZERO;
@@ -156,18 +154,14 @@ impl ByteStream {
         })
     }
 
-    pub fn is_cancelled(&self) -> bool {
-        self.parent_const().cancelled
-    }
-
-    pub fn unpipe_without_deref(&self) {
+    pub(crate) fn unpipe_without_deref(&self) {
         self.pipe.with_mut(|p| {
             p.ctx = None;
             p.on_pipe = None;
         });
     }
 
-    pub fn on_data(&self, stream: streams::Result) -> Result<(), bun_jsc::JsTerminated> {
+    pub(crate) fn on_data(&self, stream: streams::Result) -> Result<(), bun_jsc::JsTerminated> {
         // TODO(port): narrow error set — Zig `bun.JSTerminated!void`
         bun_jsc::mark_binding!();
         if self.done.get() {
@@ -282,9 +276,18 @@ impl ByteStream {
 
         if self.pending.get().state == streams::PendingState::Pending {
             debug_assert!(self.buffer.get().is_empty());
-            // SAFETY: pending_buffer is either dangling+len=0 or points into a live JS
-            // Uint8Array rooted by `pending_value`.
-            let pending_buf = unsafe { &mut *self.pending_buffer.get() };
+            // Re-derive the destination from the GC-rooted view instead of trusting the
+            // raw pointer captured at pull time: JS can detach or transfer the backing
+            // ArrayBuffer between the pull and the data arriving, leaving
+            // `pending_buffer` dangling. A detached view re-derives to an empty slice.
+            let global = self.parent_const().global_this();
+            let mut pending_view = self
+                .pending_value
+                .get()
+                .get()
+                .and_then(|view| view.as_array_buffer(global))
+                .unwrap_or_default();
+            let pending_buf = pending_view.slice_mut();
             let to_copy_len = chunk.len().min(pending_buf.len());
             let pending_buffer_len = pending_buf.len();
             debug_assert!(pending_buf.as_ptr() != chunk.as_ptr());
@@ -349,7 +352,7 @@ impl ByteStream {
         Ok(())
     }
 
-    pub fn append(
+    pub(crate) fn append(
         &self,
         stream: streams::Result,
         offset: usize,
@@ -406,13 +409,13 @@ impl ByteStream {
         Ok(())
     }
 
-    pub fn set_value(&self, view: JSValue) {
+    pub(crate) fn set_value(&self, view: JSValue) {
         bun_jsc::mark_binding!();
         let global = self.parent_const().global_this();
         self.pending_value.with_mut(|pv| pv.set(global, view));
     }
 
-    pub fn on_pull(&self, buffer: &mut [u8], view: JSValue) -> streams::Result {
+    pub(crate) fn on_pull(&self, buffer: &mut [u8], view: JSValue) -> streams::Result {
         bun_jsc::mark_binding!();
         debug_assert!(!buffer.is_empty());
         debug_assert!(self.buffer_action.get().is_none());
@@ -470,7 +473,7 @@ impl ByteStream {
         // backref). TODO(refactor): decide on `NonNull<streams::Pending>` vs index.
     }
 
-    pub fn on_cancel(&self) {
+    pub(crate) fn on_cancel(&self) {
         bun_jsc::mark_binding!();
         let view = self.value();
         if self.buffer.get().capacity() > 0 {
@@ -502,7 +505,7 @@ impl ByteStream {
         }
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         // ReadableStreamSource covers @sizeOf(ByteStream)
         self.buffer.get().capacity()
     }
@@ -515,7 +518,7 @@ impl ByteStream {
     /// `SourceContext::deinit_fn(&mut self)` after the ref-count hits zero), so
     /// no JS re-entry can alias `self`; and `parent().deinit()` needs unique
     /// `Box` provenance.
-    pub fn finalize(&mut self) {
+    pub(crate) fn finalize(&mut self) {
         bun_jsc::mark_binding!();
         if self.buffer.get().capacity() > 0 {
             self.buffer.with_mut(|b| {
@@ -552,14 +555,14 @@ impl ByteStream {
         // deallocate the storage backing `&mut self` (dangling UAF).
     }
 
-    pub fn drain(&self) -> Vec<u8> {
+    pub(crate) fn drain(&self) -> Vec<u8> {
         if !self.buffer.get().is_empty() {
             return Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()));
         }
         Vec::<u8>::default()
     }
 
-    pub fn to_any_blob(&self) -> Option<blob::Any> {
+    pub(crate) fn to_any_blob(&self) -> Option<blob::Any> {
         if self.has_received_last_chunk.get() {
             let buffer = self.buffer.replace(Vec::new());
             self.done.set(true);
@@ -577,7 +580,7 @@ impl ByteStream {
         None
     }
 
-    pub fn to_buffered_value(
+    pub(crate) fn to_buffered_value(
         &self,
         global_this: &JSGlobalObject,
         action: streams::BufferActionTag,

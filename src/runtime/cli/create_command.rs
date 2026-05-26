@@ -132,7 +132,7 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
 // We don't want to allocate memory each time
 // But we cannot print over an existing buffer or weird stuff will happen
 // so we keep two and switch between them
-pub struct ProgressBuf;
+pub(crate) struct ProgressBuf;
 
 impl ProgressBuf {
     // TODO(port): mutable global buffers — single-threaded CLI usage
@@ -141,7 +141,7 @@ impl ProgressBuf {
         static BUF_INDEX: Cell<usize> = const { Cell::new(0) };
     }
 
-    pub fn print(args: core::fmt::Arguments<'_>) -> Result<&'static [u8], bun_core::Error> {
+    pub(crate) fn print(args: core::fmt::Arguments<'_>) -> Result<&'static [u8], bun_core::Error> {
         // TODO(port): narrow error set
         Self::BUF_INDEX.with(|i| i.set(i.get() + 1));
         let idx = Self::BUF_INDEX.with(|i| i.get()) % 2;
@@ -158,7 +158,7 @@ impl ProgressBuf {
         })
     }
 
-    pub fn pretty(
+    pub(crate) fn pretty(
         _fmt: &'static str,
         args: core::fmt::Arguments<'_>,
     ) -> Result<&'static [u8], bun_core::Error> {
@@ -199,7 +199,7 @@ impl CreateOptions {
         PARAMS
     }
 
-    pub fn parse(_ctx: &Command::Context<'_>) -> Result<CreateOptions, bun_core::Error> {
+    pub(crate) fn parse(_ctx: &Command::Context<'_>) -> Result<CreateOptions, bun_core::Error> {
         // Zig: `Output.is_verbose = Output.isVerbose();` — Rust has no setter; the
         // `is_verbose()` accessor reads the env directly each call, so this is a no-op.
         let _ = Output::is_verbose();
@@ -257,11 +257,11 @@ const BUN_CREATE_DIR: &[u8] = b".bun-create";
 // PORTING.md §Global mutable state: single-thread CLI scratch buffer → RacyCell.
 static HOME_DIR_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 
-pub struct CreateCommand;
+pub(crate) struct CreateCommand;
 
 impl CreateCommand {
     #[cold]
-    pub fn exec(
+    pub(crate) fn exec(
         ctx: &Command::Context<'_>,
         example_tag: ExampleTag,
         template: &[u8],
@@ -1082,13 +1082,13 @@ impl CreateCommand {
                     // pub var dependencies_key     = js_ast.Expr{ .data = .{ .e_string = &dependencies_e_string },    .loc = logger.Loc.Empty };
 
                     // TODO(port): these wire up the static objects above; only feeds dead code
-                    pub fn wire() {
+                    pub(crate) fn wire() {
                         // InjectionPrefill.bun_macro_relay_object.properties = ...fromBorrowedSliceDangerous(bun_macro_relay_properties[0..]);
                         // InjectionPrefill.bun_macros_relay_object.properties = ...fromBorrowedSliceDangerous(&bun_macros_relay_object_properties);
                         // InjectionPrefill.bun_macros_relay_only_object.properties = ...fromBorrowedSliceDangerous(&bun_macros_relay_only_object_properties);
                     }
 
-                    pub fn npx_react_scripts_build() -> bun_ast::Expr {
+                    pub(crate) fn npx_react_scripts_build() -> bun_ast::Expr {
                         // TODO(port): build bun_ast::Expr { .e_string = "npx react-scripts build" }
                         bun_ast::Expr::init(
                             bun_ast::E::EString::init(b"npx react-scripts build"),
@@ -1656,7 +1656,9 @@ impl CreateCommand {
         Ok(())
     }
 
-    pub fn extract_info(ctx: &Command::Context<'_>) -> Result<ExtractedInfo, bun_core::Error> {
+    pub(crate) fn extract_info(
+        ctx: &Command::Context<'_>,
+    ) -> Result<ExtractedInfo, bun_core::Error> {
         let example_tag;
         // SAFETY: process-lifetime singleton; init returns *mut.
         let filesystem = unsafe { &*fs::FileSystem::init(None)? };
@@ -1831,7 +1833,7 @@ impl CreateCommand {
     }
 }
 
-pub struct ExtractedInfo {
+pub(crate) struct ExtractedInfo {
     pub example_tag: ExampleTag,
     pub template: &'static [u8], // TODO(port): lifetime — borrows from positionals/static buffer
 }
@@ -2055,11 +2057,6 @@ fn run_on_entry_point(
 // `Commands` was a Zig anonymous tuple of three single-element string arrays, used only to
 // drive `inline for` over its three fields in GitHandler.run. In Rust we just iterate the
 // three git command arrays directly (see GitHandler::run).
-
-pub struct DownloadedExample {
-    pub tarball_bytes: MutableString,
-    pub example: Example,
-}
 
 pub struct Example {
     pub name: &'static [u8],        // TODO(port): lifetime
@@ -2719,10 +2716,10 @@ impl Example {
     }
 }
 
-pub struct CreateListExamplesCommand;
+pub(crate) struct CreateListExamplesCommand;
 
 impl CreateListExamplesCommand {
-    pub fn exec(ctx: &Command::Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: &Command::Context) -> Result<(), bun_core::Error> {
         let filesystem = fs::FileSystem::init(None)?;
         let mut env_loader: DotEnv::Loader =
             { DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init())) };
@@ -2787,7 +2784,7 @@ static THREAD: bun_core::RacyCell<Option<std::thread::JoinHandle<()>>> =
     bun_core::RacyCell::new(None);
 
 impl GitHandler {
-    pub fn spawn(destination: &[u8], path: &[u8], verbose: bool) {
+    pub(crate) fn spawn(destination: &[u8], path: &[u8], verbose: bool) {
         SUCCESS.store(0, Ordering::Relaxed);
 
         // TODO(port): std.Thread.spawn — destination/path borrowed across thread; Zig relied on
@@ -2823,7 +2820,7 @@ impl GitHandler {
         Output::flush();
     }
 
-    pub fn wait() -> bool {
+    pub(crate) fn wait() -> bool {
         while SUCCESS.load(Ordering::Acquire) == 0 {
             let _ = Futex::wait(&SUCCESS, 0, Some(1000));
         }
@@ -2834,7 +2831,7 @@ impl GitHandler {
         outcome
     }
 
-    pub fn run<const VERBOSE: bool>(
+    pub(crate) fn run<const VERBOSE: bool>(
         destination: &[u8],
         path: &[u8],
     ) -> Result<bool, bun_core::Error> {

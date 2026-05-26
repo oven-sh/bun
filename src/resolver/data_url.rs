@@ -1,7 +1,7 @@
 use bun_core::strings;
 
 // https://github.com/Vexu/zuri/blob/master/src/zuri.zig#L61-L127
-pub struct PercentEncoding;
+pub(crate) struct PercentEncoding;
 
 /// possible errors for decode and encode
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,7 +16,7 @@ bun_core::named_error_set!(EncodeError);
 
 impl PercentEncoding {
     /// returns true if str starts with a valid path character or a percent encoded octet
-    pub fn is_pchar(str: &[u8]) -> bool {
+    pub(crate) fn is_pchar(str: &[u8]) -> bool {
         if cfg!(debug_assertions) {
             debug_assert!(!str.is_empty());
         }
@@ -46,13 +46,8 @@ impl PercentEncoding {
         }
     }
 
-    /// decode path if it is percent encoded, returns EncodeError if URL unsafe characters are present and not percent encoded
-    pub fn decode(path: &[u8]) -> Result<Option<Vec<u8>>, EncodeError> {
-        Self::_decode(path, true)
-    }
-
     /// Replaces percent encoded entities within `path` without throwing an error if other URL unsafe characters are present
-    pub fn decode_unstrict(path: &[u8]) -> Result<Option<Vec<u8>>, EncodeError> {
+    pub(crate) fn decode_unstrict(path: &[u8]) -> Result<Option<Vec<u8>>, EncodeError> {
         Self::_decode(path, false)
     }
 
@@ -267,7 +262,7 @@ impl<'a> DataURL<'a> {
 /// Abstraction over `Vec<u8>` and `CountingBuf` for `encode_string_as_percent_escaped_data_url`
 /// (Zig used `buf: anytype` calling `.appendSlice`/`.append`).
 // PERF(port): Zig anytype was infallible OOM-abort via Vec; trait methods are infallible here.
-pub trait DataUrlBuf {
+pub(crate) trait DataUrlBuf {
     fn append_slice(&mut self, slice: &[u8]);
     fn append(&mut self, c: u8);
 }

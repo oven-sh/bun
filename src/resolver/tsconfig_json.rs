@@ -123,12 +123,12 @@ impl JsonCache {
 // Probably like 5-10
 // Array iteration is faster and deterministically ordered in that case.
 // TODO(port): bun.StringArrayHashMap — confirm bun_collections key/value ownership for byte-slice keys
-pub type PathsMap = ArrayHashMap<Box<[u8]>, Vec<Box<[u8]>>>;
+pub(crate) type PathsMap = ArrayHashMap<Box<[u8]>, Vec<Box<[u8]>>>;
 
 // Zig: `fn FlagSet(comptime Type: type) type { return std.EnumSet(std.meta.FieldEnum(Type)); }`
 // Rust has no `FieldEnum` reflection; we hand-list the Pragma fields actually used below.
 #[derive(EnumSetType, Debug)]
-pub enum JsxField {
+pub(crate) enum JsxField {
     Factory,
     Fragment,
     ImportSource,
@@ -136,7 +136,7 @@ pub enum JsxField {
     Development,
 }
 
-pub type JsxFieldSet = EnumSet<JsxField>;
+pub(crate) type JsxFieldSet = EnumSet<JsxField>;
 
 pub struct TSConfigJSON {
     // TODO(port): lifetime — Zig never frees these string fields (resolver-lifetime arena);
@@ -192,7 +192,7 @@ impl Default for TSConfigJSON {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ImportsNotUsedAsValue {
+pub(crate) enum ImportsNotUsedAsValue {
     Preserve,
     Err,
     Remove,
@@ -200,7 +200,7 @@ pub enum ImportsNotUsedAsValue {
 }
 
 // Zig: `pub const List = bun.ComptimeStringMap(ImportsNotUsedAsValue, ...)`
-pub static IMPORTS_NOT_USED_AS_VALUE_LIST: phf::Map<&'static [u8], ImportsNotUsedAsValue> = phf::phf_map! {
+pub(crate) static IMPORTS_NOT_USED_AS_VALUE_LIST: phf::Map<&'static [u8], ImportsNotUsedAsValue> = phf::phf_map! {
     b"preserve" => ImportsNotUsedAsValue::Preserve,
     b"error" => ImportsNotUsedAsValue::Err,
     b"remove" => ImportsNotUsedAsValue::Remove,

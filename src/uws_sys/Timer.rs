@@ -115,10 +115,14 @@ impl Timer {
 unsafe extern "C" {
     // `Loop` is a sized `#[repr(C)]` mirror (not an opaque ZST) — keep raw `*mut`
     // so the FFI boundary does not annotate `noalias` over real loop fields.
-    pub fn us_create_timer(loop_: *mut Loop, fallthrough: i32, ext_size: c_uint) -> *mut Timer;
-    pub safe fn us_timer_ext(timer: &mut Timer) -> *mut *mut c_void;
-    pub fn us_timer_close(timer: *mut Timer, fallthrough: i32);
-    pub safe fn us_timer_set(
+    pub(crate) fn us_create_timer(
+        loop_: *mut Loop,
+        fallthrough: i32,
+        ext_size: c_uint,
+    ) -> *mut Timer;
+    pub(crate) safe fn us_timer_ext(timer: &mut Timer) -> *mut *mut c_void;
+    pub(crate) fn us_timer_close(timer: *mut Timer, fallthrough: i32);
+    pub(crate) safe fn us_timer_set(
         timer: &mut Timer,
         cb: Option<extern "C" fn(*mut Timer)>,
         ms: i32,

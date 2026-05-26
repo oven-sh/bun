@@ -19,7 +19,7 @@ use bun_wyhash::hash;
 
 use crate::Command;
 
-pub struct OutdatedCommand;
+pub(crate) struct OutdatedCommand;
 
 #[derive(Clone, Copy)]
 struct OutdatedInfo {
@@ -56,7 +56,7 @@ impl<'a> FilterType<'a> {
 }
 
 impl OutdatedCommand {
-    pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
         Output::prettyln(format_args!(
             "<r><b>bun outdated <r><d>v{}<r>",
             Global::package_json_version_with_sha,

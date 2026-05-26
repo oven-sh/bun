@@ -89,7 +89,7 @@ macro_rules! new_store {
             // payload is ever introduced.
             const _: () = assert!(LARGEST_ALIGN <= 16, "NewStore payload type with align>16; bump Block repr(align)");
             /// Zig: `pub const size = largest_size * count * 2;`
-            pub const BLOCK_SIZE: usize = LARGEST_SIZE * $count * 2;
+            pub(crate) const BLOCK_SIZE: usize = LARGEST_SIZE * $count * 2;
             #[repr(C, align(16))]
             pub struct Block {
                 buffer: [MaybeUninit<u8>; BLOCK_SIZE],
@@ -377,7 +377,7 @@ macro_rules! thread_local_ast_store {
             // next-lint profiles. All three are `Cell<ptr|bool>` (no destructor,
             // const init); matches Zig `threadlocal var`.
             #[thread_local]
-            pub static INSTANCE: Cell<*mut Backing> = Cell::new(::core::ptr::null_mut());
+            pub(crate) static INSTANCE: Cell<*mut Backing> = Cell::new(::core::ptr::null_mut());
             /// Back-reference to the `ASTMemoryAllocator` installed by the
             /// enclosing `ASTMemoryAllocatorScope` stack frame. Stored as
             /// `Option<BackRef>` (vs. raw `*mut`) so `append()` can read it via
@@ -385,11 +385,11 @@ macro_rules! thread_local_ast_store {
             /// copy) is upheld by `ASTMemoryAllocatorScope::{enter,exit}`, which
             /// always restores the previous value before its frame returns.
             #[thread_local]
-            pub static MEMORY_ALLOCATOR: Cell<
+            pub(crate) static MEMORY_ALLOCATOR: Cell<
                 Option<::bun_ptr::BackRef<$crate::ASTMemoryAllocator>>,
             > = Cell::new(None);
             #[thread_local]
-            pub static DISABLE_RESET: Cell<bool> = Cell::new(false);
+            pub(crate) static DISABLE_RESET: Cell<bool> = Cell::new(false);
 
             #[inline]
             fn instance() -> *mut Backing {
@@ -413,7 +413,7 @@ macro_rules! thread_local_ast_store {
                     .map_or(::core::ptr::null_mut(), ::bun_ptr::BackRef::as_ptr)
             }
             #[inline]
-            pub fn set_memory_allocator(p: *mut $crate::ASTMemoryAllocator) {
+            pub(crate) fn set_memory_allocator(p: *mut $crate::ASTMemoryAllocator) {
                 MEMORY_ALLOCATOR.set(::core::ptr::NonNull::new(p).map(::bun_ptr::BackRef::from));
             }
 
@@ -425,7 +425,7 @@ macro_rules! thread_local_ast_store {
             }
 
             /// create || reset
-            pub fn begin() {
+            pub(crate) fn begin() {
                 if !memory_allocator().is_null() {
                     return;
                 }
@@ -453,7 +453,7 @@ macro_rules! thread_local_ast_store {
             /// callers (transpiler, bundler) that want the Store to persist
             /// across multiple parse calls.
             #[inline]
-            pub fn set_disable_reset(b: bool) {
+            pub(crate) fn set_disable_reset(b: bool) {
                 DISABLE_RESET.set(b);
             }
             #[inline]
@@ -472,7 +472,7 @@ macro_rules! thread_local_ast_store {
             }
 
             #[inline]
-            pub fn assert() {
+            pub(crate) fn assert() {
                 if cfg!(debug_assertions) {
                     if instance().is_null() && memory_allocator().is_null() {
                         unreachable!("Store must be init'd");

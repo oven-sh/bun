@@ -8,6 +8,11 @@ pub struct PacketHeader {
 impl PacketHeader {
     pub const SIZE: usize = 4;
 
+    /// The header's length field is 24 bits. A single packet's payload must be
+    /// strictly smaller than this; a length of exactly 0xFFFFFF signals a
+    /// multi-packet continuation.
+    pub const MAX_PAYLOAD_LENGTH: usize = 0xFF_FF_FF;
+
     pub fn decode(bytes: &[u8]) -> Option<PacketHeader> {
         if bytes.len() < 4 {
             return None;

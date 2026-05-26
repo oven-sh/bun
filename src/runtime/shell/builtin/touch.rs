@@ -38,7 +38,7 @@ pub struct ExecState {
 }
 
 impl Touch {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let mut opts = Opts::default();
         let args_start = {
             let args = Builtin::of(interp, cmd).args_slice();
@@ -74,7 +74,7 @@ impl Touch {
         Self::next(interp, cmd)
     }
 
-    pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         enum Action {
             Done(ExitCode),
             Schedule(usize),
@@ -126,7 +126,7 @@ impl Touch {
         }
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         written: usize,
@@ -175,8 +175,6 @@ impl Touch {
         Self::next(interp, cmd).run(interp);
     }
 }
-
-pub type ShellTouchOutputTask = OutputTask<Touch>;
 
 impl OutputTaskVTable for Touch {
     fn write_err(

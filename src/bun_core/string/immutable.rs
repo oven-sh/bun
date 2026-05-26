@@ -27,10 +27,6 @@ pub mod exact_size_matcher;
 #[path = "immutable/escapeHTML.rs"]
 pub mod escape_html;
 pub use escape_html::{SCALAR_LENGTHS, html_escape_entity, xml_escape_entity};
-#[path = "immutable/grapheme.rs"]
-pub mod grapheme;
-#[path = "immutable/grapheme_tables.rs"]
-pub mod grapheme_tables;
 #[path = "immutable/unicode.rs"]
 mod unicode_draft;
 #[path = "immutable/visible.rs"]
@@ -52,173 +48,10 @@ pub use unicode_draft::{
     utf16_codepoint, utf16_codepoint_with_fffd, wtf8_sequence,
 };
 
-/// `bun.strings.visible` — terminal-visible-width helpers (East-Asian-width +
-/// grapheme-aware; SIMD paths demoted to scalar `ScalarVec` — see [`ENABLE_SIMD`]).
-pub use visible_impl::{
-    is_amgiguous_codepoint_type, is_full_width_codepoint_type, is_zero_width_codepoint_type,
-    visible, visible_codepoint_width, visible_codepoint_width_maybe_emoji,
-    visible_codepoint_width_type,
-};
-
-/// PORT NOTE: minimal scalar fallback that predates `visible_impl` —
-/// kept for diff parity with callers that imported `visible_fallback::*`.
-/// New code should use [`visible`] (the real impl).
-#[doc(hidden)]
-pub mod visible_fallback {
-    pub mod width {
-        pub mod exclude_ansi_colors {
-            use crate::string::immutable::wtf8_byte_sequence_length;
-
-            /// Skip a CSI/OSC escape starting at `input[0] == ESC`; returns
-            /// the byte length consumed (at least 1). Mirrors the parser in
-            /// `visible.zig:visibleLatin1WidthExcludeANSIColors`.
-            fn skip_ansi(input: &[u8]) -> usize {
-                debug_assert!(!input.is_empty() && input[0] == 0x1b);
-                if input.len() < 2 {
-                    return input.len();
-                }
-                match input[1] {
-                    b'[' => {
-                        // CSI: ESC '[' ... <0x40..=0x7E>
-                        let mut i = 2;
-                        while i < input.len() {
-                            if (0x40..=0x7E).contains(&input[i]) {
-                                return i + 1;
-                            }
-                            i += 1;
-                        }
-                        input.len()
-                    }
-                    b']' => {
-                        // OSC: ESC ']' ... (BEL | ST | ESC '\')
-                        let mut i = 2;
-                        while i < input.len() {
-                            match input[i] {
-                                0x07 | 0x9c => return i + 1,
-                                0x1b if i + 1 < input.len() && input[i + 1] == b'\\' => {
-                                    return i + 2;
-                                }
-                                _ => i += 1,
-                            }
-                        }
-                        input.len()
-                    }
-                    _ => 1,
-                }
-            }
-
-            /// Visible terminal width of a UTF-8 string, treating ANSI escape
-            /// sequences as zero-width.
-            ///
-            /// PORT NOTE: scalar fallback — counts 1 column per codepoint.
-            /// Full East-Asian-width / grapheme handling lives in
-            /// `visible_impl`; prefer `bun.strings.visible` for new code.
-            pub fn utf8(input: &[u8]) -> usize {
-                let mut w = 0usize;
-                let mut i = 0usize;
-                while i < input.len() {
-                    let b = input[i];
-                    if b == 0x1b {
-                        i += skip_ansi(&input[i..]);
-                        continue;
-                    }
-                    if b < 0x80 {
-                        // C0 controls are zero-width.
-                        if b >= 0x20 && b != 0x7f {
-                            w += 1;
-                        }
-                        i += 1;
-                    } else {
-                        let len = wtf8_byte_sequence_length(b).max(1) as usize;
-                        w += 1;
-                        i += len.min(input.len() - i);
-                    }
-                }
-                w
-            }
-
-            /// Byte index of the longest prefix of `input` whose visible
-            /// width is `<= max_width`. ANSI escapes are zero-width and
-            /// always included; never splits a multi-byte UTF-8 codepoint.
-            pub fn utf8_index_at_width(input: &[u8], max_width: usize) -> usize {
-                let mut w = 0usize;
-                let mut i = 0usize;
-                while i < input.len() {
-                    let b = input[i];
-                    if b == 0x1b {
-                        i += skip_ansi(&input[i..]);
-                        continue;
-                    }
-                    let (cw, len) = if b < 0x80 {
-                        (if b >= 0x20 && b != 0x7f { 1usize } else { 0 }, 1usize)
-                    } else {
-                        let l = wtf8_byte_sequence_length(b).max(1) as usize;
-                        (1, l.min(input.len() - i))
-                    };
-                    if w + cw > max_width {
-                        return i;
-                    }
-                    w += cw;
-                    i += len;
-                }
-                input.len()
-            }
-
-            pub fn latin1(input: &[u8]) -> usize {
-                utf8(input)
-            }
-
-            /// Visible terminal width of a UTF-16 string, treating ANSI
-            /// escape sequences as zero-width.
-            ///
-            /// PORT NOTE: scalar fallback — counts 1 column per codepoint
-            /// and ignores `ambiguous_as_wide`. Full East-Asian-width /
-            /// grapheme handling lives in `visible_impl`; prefer
-            /// `bun.strings.visible` for new code.
-            pub fn utf16(input: &[u16], ambiguous_as_wide: bool) -> usize {
-                let _ = ambiguous_as_wide;
-                let mut w = 0usize;
-                let mut i = 0usize;
-                while i < input.len() {
-                    let c = input[i];
-                    if c == 0x1b {
-                        // Re-use the byte-level ANSI parser by narrowing the
-                        // ASCII run; CSI/OSC sequences are 7-bit clean.
-                        let mut j = i;
-                        let mut buf = [0u8; 64];
-                        let take = (input.len() - i).min(buf.len());
-                        for k in 0..take {
-                            let u = input[i + k];
-                            buf[k] = if u < 0x80 { u as u8 } else { 0xff };
-                        }
-                        j += skip_ansi(&buf[..take]);
-                        i = j;
-                        continue;
-                    }
-                    if c < 0x80 {
-                        if c >= 0x20 && c != 0x7f {
-                            w += 1;
-                        }
-                        i += 1;
-                    } else if crate::strings::u16_is_lead(c)
-                        && input
-                            .get(i + 1)
-                            .copied()
-                            .is_some_and(crate::strings::u16_is_trail)
-                    {
-                        // Surrogate pair → one codepoint.
-                        w += 1;
-                        i += 2;
-                    } else {
-                        w += 1;
-                        i += 1;
-                    }
-                }
-                w
-            }
-        }
-    }
-}
+/// `bun.strings.visible` — terminal-visible-width helpers. The implementation
+/// lives in C++ (`src/jsc/bindings/stringWidth.cpp`); this module is the FFI
+/// surface for the remaining Rust callers.
+pub use visible_impl::visible;
 
 /// Minimal `unicode` surface needed by `immutable.rs` itself (CodepointIterator
 /// + WTF-8 decode). Full transcoding suite (to_utf8_*, convert_utf16_*) lives
@@ -2050,10 +1883,6 @@ pub fn index_of_any_pos_comptime(
         .map(|i| i + start_index)
 }
 
-pub fn index_of_char16_usize(slice: &[u16], char: u16) -> Option<usize> {
-    slice.iter().position(|&c| c == char)
-}
-
 pub fn index_of_not_char(slice: &[u8], char: u8) -> Option<u32> {
     if slice.is_empty() {
         return None;
@@ -2151,9 +1980,15 @@ pub fn encode_bytes_to_hex(destination: &mut [u8], source: &[u8]) -> usize {
 
     let to_read = to_write / 2;
 
-    // PERF(port): Zig had a @Vector(16,u8) interlace fast path. Scalar loop here;
-    // consider a portable_simd shuffle or LUT if hot.
-    crate::fmt::bytes_to_hex_lower(&source[..to_read], &mut destination[..to_read * 2])
+    // Runtime-dispatched SIMD kernel for bulk encodes (Buffer.toString("hex"));
+    // the scalar LUT loop wins below this size because of the dispatch overhead.
+    const HIGHWAY_MIN_LEN: usize = 64;
+    if to_read >= HIGHWAY_MIN_LEN {
+        highway::encode_hex_lower(&source[..to_read], &mut destination[..to_write]);
+        return to_write;
+    }
+
+    crate::fmt::bytes_to_hex_lower(&source[..to_read], &mut destination[..to_write])
 }
 
 /// Leave a single leading char
@@ -3220,6 +3055,12 @@ pub fn convert_utf8_to_utf16_in_buffer<'a>(buf: &'a mut [u16], input: &[u8]) -> 
     if input.is_empty() {
         return &mut buf[..0];
     }
+    assert!(
+        input.len() <= buf.len() || element_length_utf8_into_utf16(input) <= buf.len(),
+        "convert_utf8_to_utf16_in_buffer: buf too small (have {} u16 for {} input bytes)",
+        buf.len(),
+        input.len(),
+    );
     let r = simdutf::convert::utf8::to::utf16::with_errors::le(input, buf);
     if r.is_successful() {
         return &mut buf[..r.count];

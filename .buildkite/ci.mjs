@@ -47,6 +47,11 @@ import {
  * @property {Abi} [abi]
  * @property {boolean} [baseline]
  * @property {Profile} [profile]
+ * @property {boolean} [crossCompile]
+ *   Build on a Linux host for a foreign target OS (currently: darwin).
+ *   Agents/images resolve to the Linux build fleet; keys/labels/artifacts are
+ *   unaffected — these ARE the darwin lanes, there is no native macOS build.
+ *   FreeBSD/Android don't set this — they already imply a Linux host.
  */
 
 /**
@@ -94,6 +99,7 @@ function getTargetLabel(target) {
  * @property {Abi} [abi]
  * @property {boolean} [baseline]
  * @property {Profile} [profile]
+ * @property {boolean} [crossCompile]
  * @property {Distro} [distro]
  * @property {string} release
  * @property {Tier} [tier]
@@ -121,8 +127,13 @@ function getAzureVmSize(os, arch, tier = "build") {
  * @type {Platform[]}
  */
 const buildPlatforms = [
-  { os: "darwin", arch: "aarch64", release: "14" },
-  { os: "darwin", arch: "x64", release: "14" },
+  // macOS is cross-compiled from glibc amazonlinux (clang --target + the
+  // Apple SDK fetched by xmac + ld64.lld — see scripts/build/macos-sdk.ts and
+  // scripts/build/flags.ts). There is no native macOS build lane: the mac
+  // fleet only runs tests, against these artifacts (see testPlatforms), and
+  // these are the darwin artifacts the release ships.
+  { os: "darwin", arch: "aarch64", crossCompile: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
+  { os: "darwin", arch: "x64", crossCompile: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
@@ -153,6 +164,9 @@ const testPlatforms = [
   // whichever Intel box is free. Intel Macs can't run latest macOS and the
   // tier split bottlenecked the smaller pool, so x64 trades guaranteed
   // version coverage for throughput. The `release` field only labels the step.
+  // The darwin test suite runs on real macOS agents against the Linux-built
+  // artifacts from the `darwin-<arch>-build-bun` steps (the only darwin build
+  // lanes — see buildPlatforms).
   { os: "darwin", arch: "aarch64", release: "26", tier: "latest" },
   { os: "darwin", arch: "aarch64", release: "14", tier: "previous" },
   { os: "darwin", arch: "x64", release: "14", tier: "latest" },
@@ -206,11 +220,11 @@ function getPlatformLabel(platform) {
  * @returns {string}
  */
 function getImageKey(platform) {
-  const { os, arch, distro, release, features, abi } = platform;
-  // Cross-compiled targets (Android, FreeBSD) build from a Linux host image
-  // — bootstrap.sh installs the NDK / base.txz sysroot on it. No separate
-  // image is baked.
-  const hostOs = os === "freebsd" ? "linux" : os;
+  const { os, arch, distro, release, features, abi, crossCompile } = platform;
+  // Cross-compiled targets (Android, FreeBSD, macOS-cross) build from a Linux
+  // host image — bootstrap.sh installs the NDK / base.txz sysroot on it (the
+  // macOS SDK is fetched by the build itself). No separate image is baked.
+  const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
   const version = release.replace(/\./g, "");
   let key = `${hostOs}-${arch}-${version}`;
   if (distro) {
@@ -303,11 +317,11 @@ function getPriority() {
  * @returns {Agent}
  */
 function getEc2Agent(platform, options, ec2Options) {
-  const { os, arch, abi, distro, release } = platform;
+  const { os, arch, abi, distro, release, crossCompile } = platform;
   const { instanceType, cpuCount, threadsPerCore } = ec2Options;
   // Cross-compiled targets run on a Linux EC2 box; the agent tag must match
   // the host (`linux`), not the target.
-  const hostOs = os === "freebsd" ? "linux" : os;
+  const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
   return {
     os: hostOs,
     arch,
@@ -332,14 +346,8 @@ function getEc2Agent(platform, options, ec2Options) {
 function getCppAgent(platform, options) {
   const { os, arch } = platform;
 
-  if (os === "darwin") {
-    return {
-      queue: `build-${os}`,
-      os,
-      arch,
-    };
-  }
-
+  // Every build lane (including darwin, which is cross-compiled) runs on the
+  // EC2/Azure fleet — the mac fleet only runs tests.
   return getEc2Agent(platform, options, {
     instanceType: os === "windows" ? getAzureVmSize(os, arch) : arch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge",
   });
@@ -352,14 +360,6 @@ function getCppAgent(platform, options) {
  */
 function getLinkBunAgent(platform, options) {
   const { os, arch } = platform;
-
-  if (os === "darwin") {
-    return {
-      queue: `build-${os}`,
-      os,
-      arch,
-    };
-  }
 
   if (os === "windows") {
     return getEc2Agent(platform, options, {
@@ -409,20 +409,11 @@ function getRustAgent(platform, options) {
     });
   }
 
-  // Darwin: rustc cross-compiles fine but the dep graph's `cc` build
-  // scripts need an osxcross SDK + cctools `ar`. Runs natively on a
-  // mac agent until osxcross is in the linux image.
-  if (os === "darwin") {
-    return {
-      queue: `build-${os}`,
-      os,
-      arch,
-    };
-  }
-
-  // Linux (gnu/musl/android) and FreeBSD: cross-compile from one Linux
-  // aarch64 box. cargo build is wide (1 codegen unit per crate × ~80
-  // crates), so size for cores. ASAN doubles the IR — bigger box.
+  // Linux (gnu/musl/android), FreeBSD, and macOS: cross-compile from one
+  // Linux aarch64 box. `aarch64/x86_64-apple-darwin` are Tier 2 targets with
+  // prebuilt std and a staticlib needs no Mach-O link (see
+  // rustCanCrossFromLinux()). cargo build is wide (1 codegen unit per crate ×
+  // ~80 crates), so size for cores. ASAN doubles the IR — bigger box.
   return getEc2Agent(getRustPlatform(), options, {
     instanceType: platform.profile === "asan" ? "r8g.4xlarge" : "r8g.2xlarge",
   });
@@ -513,7 +504,7 @@ function getTestAgent(platform, options) {
  * @returns {string}
  */
 function getBuildArgs(target, options, mode) {
-  const { os, arch, abi, baseline, profile } = target;
+  const { os, arch, abi, baseline, profile, crossCompile } = target;
   const { canary } = options;
 
   const args = [`--profile=ci-${mode}`];
@@ -523,7 +514,11 @@ function getBuildArgs(target, options, mode) {
   // /etc/alpine-release) would report the build box's abi (Alpine→musl), not
   // the target's. darwin/windows rust-only run natively (see getRustAgent), so
   // host detection is correct there. cpp-only/link-only: native build.
-  if (mode === "rust-only" && os !== "darwin" && os !== "windows") {
+  if (crossCompile) {
+    // macOS-cross: every step (cpp/rust/link) runs on a Linux host, so the
+    // target os/arch are always explicit.
+    args.push(`--os=${os}`, `--arch=${arch}`);
+  } else if (mode === "rust-only" && os !== "darwin" && os !== "windows") {
     args.push(`--os=${os}`, `--arch=${arch}`);
     if (os === "linux") args.push(`--abi=${abi ?? "gnu"}`);
   } else if (abi === "musl") {
@@ -631,6 +626,57 @@ function getLinkBunStep(platform, options) {
     // link-only downloads artifacts from the sibling build-cpp and
     // build-rust steps (derived from BUILDKITE_STEP_KEY) before ninja runs.
     command: getBuildCommand(platform, options, "link-only"),
+  };
+}
+
+/**
+ * Cross-compiled Windows build (full compile + link on a Linux agent).
+ * Validates that bun.exe for the given arch can be built from Linux with
+ * clang-cl + lld-link + an xwin Windows sysroot — baked into newer agent
+ * images (.buildkite/Dockerfile), fetched at configure time on agents that
+ * don't have one (scripts/build/winsysroot.ts). The x64 lane additionally
+ * exercises the ThinLTO + cross-language LTO configuration (the ci-release
+ * default for windows x64 cross — see config.ts), which the native Windows
+ * lanes never had: clang-cl/rustc bitcode + the -lto WebKit prebuilt linked
+ * by rustc's lld-link. The produced binary is not consumed by tests or
+ * release — the native Windows lanes above stay authoritative — so the step
+ * is soft_fail until it has a green history.
+ *
+ * Runs on the same amazonlinux docker image the other Linux/cross builds
+ * use; `--buildkite=off` keeps the per-step artifact upload/download
+ * machinery (which assumes the cpp/rust/link split and native artifact
+ * names) out of the picture.
+ *
+ * @param {Arch} arch
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function getWindowsCrossBuildStep(arch, options) {
+  const hostPlatform = { os: "linux", arch, distro: "amazonlinux", release: "2023", features: ["docker"] };
+  return {
+    key: `windows-${arch}-cross-build`,
+    label: `${getBuildkiteEmoji("windows")} ${arch}-cross - build-bun`,
+    agents: getEc2Agent(hostPlatform, options, {
+      // Full build (deps + C++ + cargo + link) in one step — size for cores.
+      instanceType: arch === "aarch64" ? "r8g.4xlarge" : "r7i.4xlarge",
+    }),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    soft_fail: true,
+    timeout_in_minutes: 120,
+    command: [
+      // BoringSSL's win-x64 assembly is NASM syntax; newer images carry nasm
+      // (Dockerfile), best-effort install on older ones. Distro-aware: the
+      // agent may be the Ubuntu-based build container (apt) or an Amazon
+      // Linux host (dnf/yum). `|| true` keeps a missing package manager from
+      // failing the step — the build's own "nasm not found" error is clearer.
+      ...(arch === "x64"
+        ? [
+            "which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || sudo dnf install -y -q nasm || true",
+          ]
+        : []),
+      `node --experimental-strip-types scripts/build.ts --profile=ci-release --os=windows --arch=${arch} --buildkite=off`,
+    ],
   };
 }
 
@@ -1183,8 +1229,14 @@ function getOptionsStep() {
         required: false,
         multiple: true,
         default: [],
-        options: [...new Map(testPlatforms.map(platform => [getImageKey(platform), platform])).entries()].map(
-          ([key, platform]) => {
+        // One option per distinct image — the baseline/profile variants collapse
+        // into the first (plain) entry since profiles come from `build-profiles`.
+        // The option value must be that entry's *platform* key: it's what
+        // getPipelineOptions() resolves through testPlatformsMap, and the image
+        // key isn't a platform key.
+        options: testPlatforms
+          .filter((platform, index, array) => index === array.findIndex(p => getImageKey(p) === getImageKey(platform)))
+          .map(platform => {
             const { os, arch, abi, distro, release } = platform;
             let label = `${getEmoji(os)} ${arch}`;
             if (abi) {
@@ -1198,10 +1250,9 @@ function getOptionsStep() {
             }
             return {
               label,
-              value: key,
+              value: getPlatformKey(platform),
             };
-          },
-        ),
+          }),
       },
       {
         key: "test-files",
@@ -1428,6 +1479,28 @@ async function getPipeline(options = {}) {
         );
       }),
     );
+
+    // Windows cross-compile validation: full builds of bun.exe (x64 + arm64)
+    // from Linux agents. See getWindowsCrossBuildStep(). Honours the same
+    // platform filtering as the per-target groups above, so a manual build
+    // that narrows `build-platforms` to a non-windows subset doesn't spawn
+    // the cross lanes.
+    if (relevantBuildPlatforms.some(({ os }) => os === "windows")) {
+      const crossImageDependsOn = ["x64", "aarch64"]
+        .map(arch => getImageKey({ os: "linux", arch, distro: "amazonlinux", release: "2023", features: ["docker"] }))
+        .filter(imageKey => imagePlatforms.has(imageKey))
+        .map(imageKey => `${imageKey}-build-image`);
+      steps.push(
+        getStepWithDependsOn(
+          {
+            key: "windows-cross",
+            group: `${getBuildkiteEmoji("windows")} cross (linux)`,
+            steps: [getWindowsCrossBuildStep("x64", options), getWindowsCrossBuildStep("aarch64", options)],
+          },
+          ...crossImageDependsOn,
+        ),
+      );
+    }
   }
 
   if (!isMainBranch()) {
@@ -1443,6 +1516,7 @@ async function getPipeline(options = {}) {
     }
   }
 
+  // Binary-size tracking covers the artifacts that ship.
   const strippedPlatforms = buildPlatforms.filter(p => (p.profile ?? "release") === "release");
   if (!buildId && strippedPlatforms.length) {
     steps.push(getBinarySizeStep(strippedPlatforms, options, { recordOnly: isMainBranch() }));

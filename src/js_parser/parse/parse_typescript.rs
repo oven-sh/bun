@@ -391,12 +391,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // SAFETY: current_scope is an arena-owned Scope pointer valid for 'a.
             if p.current_scope().members.contains_key(name_text) {
                 // Add a "_" to make tests easier to read, since non-bundler tests don't
-                // run the renamer. For external-facing things the renamer will avoid
-                // collisions automatically so this isn't important for correctness.
-                // PERF(port): strings::cat heap-allocates; Zig allocated into p.arena.
-                // TODO(perf): route through bump arena.
-                let prefixed = strings::cat(b"_", name_text).expect("unreachable");
-                let prefixed: &'a [u8] = p.arena.alloc_slice_copy(&prefixed);
+                // run the renamer. Keep adding "_" until the argument does not collide
+                // with a symbol declared in the namespace body: paths that skip the
+                // renamer (runtime transpiler, Bun.Transpiler, `bun build --no-bundle`)
+                // print symbols by their original name, so a colliding argument would
+                // re-declare a block-scoped member:
+                //
+                //   namespace m { class m {} class _m {} }
+                //
+                // Candidates are built in the parse arena (Zig: `p.allocator`); the
+                // chosen one becomes the symbol's original name and is freed together
+                // with the rest of the AST arena.
+                let mut underscores: usize = 1;
+                let prefixed: &'a [u8] = loop {
+                    let candidate = p
+                        .arena
+                        .alloc_slice_fill_copy(underscores + name_text.len(), b'_');
+                    candidate[underscores..].copy_from_slice(name_text);
+                    if !p.current_scope().members.contains_key(candidate) {
+                        break candidate;
+                    }
+                    underscores += 1;
+                };
                 arg_ref = p
                     .new_symbol(SymbolKind::Hoisted, prefixed)
                     .expect("unreachable");

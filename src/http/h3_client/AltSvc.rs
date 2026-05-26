@@ -194,7 +194,7 @@ fn sweep_expired(now: i64) {
 /// Remember (or refresh / clear) the h3 alternative for `origin_host:origin_port`
 /// from a received `Alt-Svc` field-value. Runs on the HTTP thread inside
 /// `handleResponseMetadata`.
-pub fn record(origin_host: &[u8], origin_port: u16, field_value: &[u8]) {
+pub(crate) fn record(origin_host: &[u8], origin_port: u16, field_value: &[u8]) {
     let mut buf = [0u8; 256 + 8];
     if origin_host.len() > 256 {
         return;
@@ -241,7 +241,7 @@ pub fn record(origin_host: &[u8], origin_port: u16, field_value: &[u8]) {
 /// Look up a previously-advertised h3 alternative for `origin_host:origin_port`.
 /// Expired entries are dropped on access. Runs on the HTTP thread inside
 /// `start_()`.
-pub fn lookup(origin_host: &[u8], origin_port: u16) -> Option<u16> {
+pub(crate) fn lookup(origin_host: &[u8], origin_port: u16) -> Option<u16> {
     let mut buf = [0u8; 256 + 8];
     if origin_host.len() > 256 {
         return None;

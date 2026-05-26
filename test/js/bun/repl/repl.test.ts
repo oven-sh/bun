@@ -909,6 +909,32 @@ describe.concurrent("Bun REPL", () => {
       expect(stdout).toBe("string string\n");
       expect(exitCode).toBe(0);
     });
+
+    // https://github.com/oven-sh/bun/issues/31225
+    test("bare top-level `this` does not throw (issue #31225)", async () => {
+      // Before the fix this threw `ReferenceError: exports is not defined`
+      // because the parser rewrote top-level `this` to `exports`, and the REPL
+      // IIFE has no `exports` binding.
+      const { stdout, stderr, exitCode } = await runReplWith(["-e", "this"]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("top-level `this` evaluates to globalThis (issue #31225)", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith(["-e", "console.log(typeof this, this === globalThis)"]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("object true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("member access on top-level `this` hits the global (issue #31225)", async () => {
+      // `Math` lives on the global, so `this.Math` should be the same object.
+      const { stdout, stderr, exitCode } = await runReplWith(["-e", "console.log(this.Math === Math)"]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\n");
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

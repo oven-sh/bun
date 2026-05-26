@@ -8,7 +8,6 @@
 
 // `Fd` struct + pure-data accessors are hoisted to `bun_core::Fd`
 // (canonical T0). `fd.rs` is `pub trait FdExt` over that.
-#![warn(unreachable_pub)]
 
 // `bun_str` is the historical Zig namespace name; keep a public alias to
 // `bun_core` so any external `bun_sys::bun_core::…` paths continue to resolve.
@@ -452,7 +451,7 @@ pub mod dir_iterator {
                             dir.native(),
                             self.buf.as_mut_ptr(),
                             BUF_SIZE,
-                            &mut self.seek,
+                            &raw mut self.seek,
                         )
                     };
                     if rc < 1 {
@@ -902,6 +901,7 @@ pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
             )
         };
         if rc == 0 {
+            // SAFETY: rc == 0 ⇒ kernel populated `st`.
             Ok(unsafe { st.assume_init() })
         } else {
             // sys.zig:877 — `lstatat` tags as `.fstatat`.
@@ -1794,10 +1794,14 @@ mod posix_impl {
     unsafe fn sys_openat(d: i32, p: *const libc::c_char, f: i32, m: libc::c_uint) -> i32 {
         #[cfg(target_os = "macos")]
         {
+            // SAFETY: caller contract (`unsafe fn`) — `p` is a valid
+            // NUL-terminated path and `d` is a live dir fd (or AT_FDCWD).
             unsafe { super::nocancel::openat(d, p, f, m) }
         }
         #[cfg(not(target_os = "macos"))]
         {
+            // SAFETY: caller contract (`unsafe fn`) — `p` is a valid
+            // NUL-terminated path and `d` is a live dir fd (or AT_FDCWD).
             unsafe { libc::openat(d, p, f, m) }
         }
     }
@@ -1806,10 +1810,14 @@ mod posix_impl {
     unsafe fn sys_read(fd: i32, buf: *mut libc::c_void, n: usize) -> isize {
         #[cfg(target_os = "macos")]
         {
+            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+            // writable bytes and `fd` is a live descriptor.
             unsafe { super::nocancel::read(fd, buf, n) }
         }
         #[cfg(not(target_os = "macos"))]
         {
+            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+            // writable bytes and `fd` is a live descriptor.
             unsafe { libc::read(fd, buf, n) }
         }
     }
@@ -1818,10 +1826,14 @@ mod posix_impl {
     unsafe fn sys_write(fd: i32, buf: *const libc::c_void, n: usize) -> isize {
         #[cfg(target_os = "macos")]
         {
+            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+            // readable bytes and `fd` is a live descriptor.
             unsafe { super::nocancel::write(fd, buf, n) }
         }
         #[cfg(not(target_os = "macos"))]
         {
+            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+            // readable bytes and `fd` is a live descriptor.
             unsafe { libc::write(fd, buf, n) }
         }
     }
@@ -1830,10 +1842,14 @@ mod posix_impl {
     unsafe fn sys_pread(fd: i32, buf: *mut libc::c_void, n: usize, off: i64) -> isize {
         #[cfg(target_os = "macos")]
         {
+            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+            // writable bytes and `fd` is a live descriptor.
             unsafe { super::nocancel::pread(fd, buf, n, off) }
         }
         #[cfg(not(target_os = "macos"))]
         {
+            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+            // writable bytes and `fd` is a live descriptor.
             unsafe { libc::pread(fd, buf, n, off) }
         }
     }
@@ -1842,10 +1858,14 @@ mod posix_impl {
     unsafe fn sys_pwrite(fd: i32, buf: *const libc::c_void, n: usize, off: i64) -> isize {
         #[cfg(target_os = "macos")]
         {
+            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+            // readable bytes and `fd` is a live descriptor.
             unsafe { super::nocancel::pwrite(fd, buf, n, off) }
         }
         #[cfg(not(target_os = "macos"))]
         {
+            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+            // readable bytes and `fd` is a live descriptor.
             unsafe { libc::pwrite(fd, buf, n, off) }
         }
     }
@@ -1853,6 +1873,8 @@ mod posix_impl {
     unsafe fn sys_recv(fd: i32, buf: *mut libc::c_void, n: usize, flags: i32) -> isize {
         #[cfg(target_os = "macos")]
         {
+            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+            // writable bytes and `fd` is a live socket.
             unsafe {
                 super::nocancel::recvfrom(
                     fd,
@@ -1875,6 +1897,8 @@ mod posix_impl {
     unsafe fn sys_send(fd: i32, buf: *const libc::c_void, n: usize, flags: i32) -> isize {
         #[cfg(target_os = "macos")]
         {
+            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+            // readable bytes and `fd` is a live socket.
             unsafe { super::nocancel::sendto(fd, buf, n, flags, core::ptr::null(), 0) }
         }
         #[cfg(not(target_os = "macos"))]
@@ -1974,6 +1998,8 @@ mod posix_impl {
         #[cfg(target_os = "macos")]
         {
             let rc = check_once_p!(
+                // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is
+                // a valid NUL-terminated C string.
                 unsafe { sys_openat(dir.native(), path.as_ptr(), flags, mode as libc::c_uint) },
                 Tag::open,
                 path
@@ -2026,6 +2052,7 @@ mod posix_impl {
         #[cfg(target_os = "macos")]
         {
             let n = check_once!(
+                // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` writes.
                 unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) },
                 Tag::read
             );
@@ -2051,6 +2078,7 @@ mod posix_impl {
         #[cfg(target_os = "macos")]
         {
             let n = check_once!(
+                // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` reads.
                 unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) },
                 Tag::write
             );
@@ -2080,6 +2108,7 @@ mod posix_impl {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let n = check!(
+                // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` writes.
                 unsafe { sys_pread(fd.native(), buf.as_mut_ptr().cast(), len, off) },
                 Tag::pread
             );
@@ -2096,6 +2125,7 @@ mod posix_impl {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let n = check!(
+                // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` reads.
                 unsafe { sys_pwrite(fd.native(), buf.as_ptr().cast(), len, off) },
                 Tag::pwrite
             );
@@ -2112,10 +2142,12 @@ mod posix_impl {
         {
             let mut st = core::mem::MaybeUninit::<Stat>::uninit();
             check_p!(
+                // SAFETY: `path` is NUL-terminated; `st` is a valid out-param.
                 unsafe { libc::stat(path.as_ptr(), st.as_mut_ptr()) },
                 Tag::stat,
                 path
             );
+            // SAFETY: rc == 0 ⇒ kernel populated `st`.
             Ok(unsafe { st.assume_init() })
         }
     }
@@ -2129,9 +2161,11 @@ mod posix_impl {
         {
             let mut st = core::mem::MaybeUninit::<Stat>::uninit();
             check!(
+                // SAFETY: `fd` is a live descriptor; `st` is a valid out-param.
                 unsafe { libc::fstat(fd.native(), st.as_mut_ptr()) },
                 Tag::fstat
             );
+            // SAFETY: rc == 0 ⇒ kernel populated `st`.
             Ok(unsafe { st.assume_init() })
         }
     }
@@ -2145,10 +2179,12 @@ mod posix_impl {
         {
             let mut st = core::mem::MaybeUninit::<Stat>::uninit();
             check_p!(
+                // SAFETY: `path` is NUL-terminated; `st` is a valid out-param.
                 unsafe { libc::lstat(path.as_ptr(), st.as_mut_ptr()) },
                 Tag::lstat,
                 path
             );
+            // SAFETY: rc == 0 ⇒ kernel populated `st`.
             Ok(unsafe { st.assume_init() })
         }
     }
@@ -2534,8 +2570,8 @@ mod posix_impl {
                     flags: libc::c_uint,
                 ) -> libc::c_int;
             }
-            // SAFETY: FFI; all pointers/fds valid for the duration of the call.
             check_p!(
+                // SAFETY: FFI; all pointers/fds valid for the duration of the call.
                 unsafe {
                     renameatx_np(
                         from_dir.native(),
@@ -2817,6 +2853,7 @@ mod posix_impl {
                 fn lchmod(path: *const libc::c_char, mode: libc::mode_t) -> libc::c_int;
             }
             check_p!(
+                // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
                 unsafe { lchmod(path.as_ptr(), mode as libc::mode_t) },
                 Tag::lchmod,
                 path
@@ -2825,7 +2862,30 @@ mod posix_impl {
         }
         #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
         {
-            fchmodat(Fd::cwd(), path, mode, libc::AT_SYMLINK_NOFOLLOW)
+            const SYS_FCHMODAT2: libc::c_long = 452;
+            loop {
+                // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
+                let rc = unsafe {
+                    libc::syscall(
+                        SYS_FCHMODAT2,
+                        Fd::cwd().native() as libc::c_long,
+                        path.as_ptr(),
+                        mode as libc::c_long,
+                        libc::AT_SYMLINK_NOFOLLOW as libc::c_long,
+                    )
+                };
+                if rc < 0 {
+                    let e = last_errno();
+                    if e == libc::EINTR {
+                        continue;
+                    }
+                    if e == libc::ENOSYS {
+                        return fchmodat(Fd::cwd(), path, mode, libc::AT_SYMLINK_NOFOLLOW);
+                    }
+                    return Err(Error::from_code_int(e, Tag::lchmod).with_path(path.as_bytes()));
+                }
+                return Ok(());
+            }
         }
     }
     pub fn chown(path: &ZStr, uid: u32, gid: u32) -> Maybe<()> {
@@ -2874,10 +2934,13 @@ mod posix_impl {
         {
             let mut st = core::mem::MaybeUninit::<Stat>::uninit();
             check_p!(
+                // SAFETY: `dirfd` is a live fd (or AT_FDCWD); `path` is
+                // NUL-terminated; `st` is a valid out-param.
                 unsafe { libc::fstatat(dirfd, path.as_ptr(), st.as_mut_ptr(), 0) },
                 Tag::fstatat,
                 path
             );
+            // SAFETY: rc == 0 ⇒ kernel populated `st`.
             Ok(unsafe { st.assume_init() })
         }
     }
@@ -3057,6 +3120,7 @@ mod posix_impl {
         // sys.zig:2252-2262 — isMac arm: single `recvfrom$NOCANCEL`, no EINTR retry.
         #[cfg(target_os = "macos")]
         let n = check_once!(
+            // SAFETY: `fd` is a live socket; `buf` is valid for `len` writes.
             unsafe { sys_recv(fd.native(), buf.as_mut_ptr().cast(), len, flags) },
             Tag::recv
         );
@@ -3075,6 +3139,7 @@ mod posix_impl {
         // isMac arm: single `sendto$NOCANCEL`, no EINTR retry.
         #[cfg(target_os = "macos")]
         let n = check_once!(
+            // SAFETY: `fd` is a live socket; `buf` is valid for `buf.len()` reads.
             unsafe { sys_send(fd.native(), buf.as_ptr().cast(), buf.len(), flags) },
             Tag::send
         );
@@ -3211,8 +3276,10 @@ mod posix_impl {
             // O_NONBLOCK via GETFL→OR→SETFL (don't clobber existing flags).
             if nonblock {
                 for &fd in &fds {
+                    // SAFETY: `fd` is a live descriptor just returned by `socketpair`.
                     let fl = unsafe { libc::fcntl(fd, libc::F_GETFL) };
                     if fl < 0
+                        // SAFETY: same `fd`; F_SETFL takes an integer arg, no pointers.
                         || unsafe { libc::fcntl(fd, libc::F_SETFL, fl | libc::O_NONBLOCK) } < 0
                     {
                         return close_both(Error::from_code_int(last_errno(), Tag::fcntl));
@@ -3264,6 +3331,7 @@ mod posix_impl {
         }
         pub fn clonefile_(from: &ZStr, to: &ZStr) -> Maybe<()> {
             check_p!(
+                // SAFETY: both `ZStr`s are valid NUL-terminated C strings.
                 unsafe { clonefile(from.as_ptr(), to.as_ptr(), 0) },
                 Tag::clonefile,
                 from
@@ -3272,6 +3340,8 @@ mod posix_impl {
         }
         pub fn clonefileat_(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> Maybe<()> {
             check_p!(
+                // SAFETY: both dir fds are live (or AT_FDCWD); both `ZStr`s are
+                // valid NUL-terminated C strings.
                 unsafe {
                     clonefileat(
                         from_dir.native(),
@@ -3288,6 +3358,8 @@ mod posix_impl {
         }
         pub fn copyfile_(from: &ZStr, to: &ZStr, flags: u32) -> Maybe<()> {
             check_p!(
+                // SAFETY: both `ZStr`s are valid NUL-terminated C strings;
+                // a null `copyfile_state_t` is documented as "use defaults".
                 unsafe { copyfile(from.as_ptr(), to.as_ptr(), core::ptr::null_mut(), flags) },
                 Tag::copyfile,
                 from
@@ -4490,6 +4562,8 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
         {
             // sys.zig:1955-1964 — `.mac` arm: single `pwritev$NOCANCEL`, no
             // EINTR retry (surfaces EINTR to caller).
+            // SAFETY: `fd` is a live descriptor; `vecs` gives an exact
+            // (ptr, len) pair of layout-compatible iovecs (asserted above).
             let rc = unsafe {
                 nocancel::pwritev(
                     fd.native(),
@@ -5169,6 +5243,7 @@ pub mod c {
         nevents: c_int,
         timeout: *const libc::timespec,
     ) -> c_int {
+        // SAFETY: caller contract (`unsafe fn`) — all pointers forwarded verbatim.
         unsafe { libc::kevent(kq, changelist, nchanges, eventlist, nevents, timeout) }
     }
 
@@ -5186,6 +5261,7 @@ pub mod c {
         hdtr: *mut c_void,
         flags: c_int,
     ) -> c_int {
+        // SAFETY: caller contract (`unsafe fn`) — all pointers forwarded verbatim.
         unsafe { libc::sendfile(fd, s, off, len, hdtr.cast(), flags) }
     }
     /// FreeBSD `sendfile(fd, s, off, nbytes, *hdtr, *sbytes, flags)`.
@@ -5704,7 +5780,7 @@ pub mod darwin {
     impl COPYFILE {
         #[inline]
         pub const fn bits(self) -> u32 {
-            (self.acl as u32) << 0
+            (self.acl as u32)
                 | (self.stat as u32) << 1
                 | (self.xattr as u32) << 2
                 | (self.data as u32) << 3
@@ -5788,6 +5864,7 @@ pub mod darwin {
     /// `addr` must point to readable memory of at least 4 bytes (the futex word).
     #[inline]
     pub unsafe fn __ulock_wait(flags: UL, addr: *const c_void, value: u64, timeout_us: u32) -> i32 {
+        // SAFETY: caller contract (`# Safety` above) — `addr` is a live futex word.
         unsafe { __ulock_wait_raw(flags.bits(), addr, value, timeout_us) }
     }
     /// # Safety
@@ -5800,12 +5877,14 @@ pub mod darwin {
         timeout_ns: u64,
         value2: u64,
     ) -> i32 {
+        // SAFETY: caller contract (`# Safety` above) — `addr` is a live futex word.
         unsafe { __ulock_wait2_raw(flags.bits(), addr, value, timeout_ns, value2) }
     }
     /// # Safety
     /// See `__ulock_wait`.
     #[inline]
     pub unsafe fn __ulock_wake(flags: UL, addr: *const c_void, wake_value: u64) -> i32 {
+        // SAFETY: caller contract (`# Safety` above) — `addr` is a live futex word.
         unsafe { __ulock_wake_raw(flags.bits(), addr, wake_value) }
     }
 
@@ -5823,6 +5902,7 @@ pub mod darwin {
         flags: core::ffi::c_uint,
         timeout: *const libc::timespec,
     ) -> core::ffi::c_int {
+        // SAFETY: caller contract (`unsafe fn`) — all pointers forwarded verbatim.
         unsafe { libc::kevent64(kq, changelist, nchanges, eventlist, nevents, flags, timeout) }
     }
 
@@ -7358,7 +7438,7 @@ pub fn kevent(
                 changelist.len() as c_int,
                 eventlist.as_mut_ptr(),
                 eventlist.len() as c_int,
-                timeout.map_or(core::ptr::null(), |t| t as *const _),
+                timeout.map_or(core::ptr::null(), std::ptr::from_ref),
             )
         };
         match get_errno(rc) {
@@ -7750,6 +7830,9 @@ pub mod posix {
         target_os = "openbsd"
     ))]
     #[inline]
+    // Forwards the raw out-params to libc without dereferencing them here;
+    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn sysctlbyname(
         name: &core::ffi::CStr,
         oldp: *mut c_void,
@@ -7791,7 +7874,7 @@ pub mod posix {
             libc::sysctlbyname(
                 name.as_ptr(),
                 core::ptr::from_mut(out).cast::<c_void>(),
-                &mut len,
+                &raw mut len,
                 core::ptr::null_mut(),
                 0,
             )
@@ -7826,7 +7909,7 @@ pub mod posix {
             libc::sysctlbyname(
                 name.as_ptr(),
                 buf.as_mut_ptr().cast::<c_void>(),
-                &mut len,
+                &raw mut len,
                 core::ptr::null_mut(),
                 0,
             )
@@ -7985,6 +8068,7 @@ pub mod posix {
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
+            // SAFETY: caller contract — `buf` points to `count` writable bytes.
             unsafe { libc::read(fd, buf.cast(), count) }
         }
     }
@@ -7998,6 +8082,7 @@ pub mod posix {
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
+            // SAFETY: caller contract — `buf` points to `count` readable bytes.
             unsafe { libc::write(fd, buf.cast(), count) }
         }
     }

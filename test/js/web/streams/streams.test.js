@@ -1231,3 +1231,48 @@ it("handles exceptions during empty stream creation", () => {
     throw new Error("not stack overflow");
   }).toThrow("not stack overflow");
 });
+
+it("auto-allocated byte stream chunks are zero-filled before being exposed to the source", async () => {
+  const CHUNK_SIZE = 4096;
+
+  // Populate the allocator's free lists with same-sized blocks full of a
+  // non-zero pattern so a recycled, non-zeroed allocation would be visible.
+  for (let i = 0; i < 256; i++) {
+    new Uint8Array(CHUNK_SIZE).fill(0xaa);
+  }
+  Bun.gc(true);
+
+  let nonZeroIndex = -1;
+  const stream = new ReadableStream({
+    type: "bytes",
+    autoAllocateChunkSize: CHUNK_SIZE,
+    pull(controller) {
+      const request = controller.byobRequest;
+      if (!request) return;
+      const view = request.view;
+      // Per the Streams spec the auto-allocated chunk is `new
+      // ArrayBuffer(autoAllocateChunkSize)`, which is zero-filled. A source
+      // that under-writes and over-reports must hand the reader zeros, not
+      // recycled heap contents.
+      for (let i = 0; i < view.byteLength; i++) {
+        if (view[i] !== 0) {
+          nonZeroIndex = i;
+          break;
+        }
+      }
+      view[0] = 1;
+      request.respond(view.byteLength);
+    },
+  });
+
+  const reader = stream.getReader();
+  const { done, value } = await reader.read();
+  expect(done).toBe(false);
+  expect(nonZeroIndex).toBe(-1);
+  expect(value.byteLength).toBe(CHUNK_SIZE);
+  // The byte the source actually wrote survives...
+  expect(value[0]).toBe(1);
+  // ...and every byte it did not write is zero.
+  expect(value.subarray(1).every(b => b === 0)).toBe(true);
+  reader.cancel();
+});

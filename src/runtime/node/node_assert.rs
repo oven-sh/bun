@@ -18,7 +18,7 @@ use super::assert::myers_diff::{Diff, DiffKind, Line};
 /// ## Invariants
 /// If not met, this function will panic.
 /// - `actual` and `expected` are alive and have the same encoding.
-pub fn myers_diff(
+pub(crate) fn myers_diff(
     global: &JSGlobalObject,
     actual: &BunString,
     expected: &BunString,

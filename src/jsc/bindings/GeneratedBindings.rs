@@ -22,10 +22,10 @@ pub mod bindgen_test {
         fn jsRequiredAndOptionalArg(global: *mut JSGlobalObject, frame: *mut crate::CallFrame) -> JSValue;
     }
 
-    pub const JS_ADD: JSHostFn = jsAdd;
-    pub const JS_REQUIRED_AND_OPTIONAL_ARG: JSHostFn = jsRequiredAndOptionalArg;
+    pub(crate) const JS_ADD: JSHostFn = jsAdd;
+    pub(crate) const JS_REQUIRED_AND_OPTIONAL_ARG: JSHostFn = jsRequiredAndOptionalArg;
 
-    pub fn create_add_callback(global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn create_add_callback(global: &JSGlobalObject) -> JSValue {
         host_fn::new_runtime_function(
             global,
             Some(&zig_string::static_(b"add")),
@@ -36,7 +36,7 @@ pub mod bindgen_test {
         )
     }
 
-    pub fn create_required_and_optional_arg_callback(global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn create_required_and_optional_arg_callback(global: &JSGlobalObject) -> JSValue {
         host_fn::new_runtime_function(
             global,
             Some(&zig_string::static_(b"requiredAndOptionalArg")),

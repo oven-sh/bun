@@ -511,22 +511,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_codegen"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_core",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "phf 0.11.3",
- "scopeguard",
- "strum",
-]
-
-[[package]]
 name = "bun_collections"
 version = "0.0.0"
 dependencies = [
@@ -1306,24 +1290,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_libarchive_sys"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_alloc",
- "bun_core",
- "bun_opaque",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "phf 0.11.3",
- "scopeguard",
- "strum",
-]
-
-[[package]]
 name = "bun_libdeflate_sys"
 version = "0.0.0"
 dependencies = [
@@ -1399,42 +1365,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_meta"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "phf 0.11.3",
- "scopeguard",
- "strum",
-]
-
-[[package]]
 name = "bun_mimalloc_sys"
 version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
  "bun_opaque",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "phf 0.11.3",
- "scopeguard",
- "strum",
-]
-
-[[package]]
-name = "bun_node-fallbacks"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
  "const_format",
  "enum-map",
  "enumset",
@@ -1598,21 +1534,6 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_core",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "phf 0.11.3",
- "scopeguard",
- "strum",
-]
-
-[[package]]
-name = "bun_picohttp_sys"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
  "const_format",
  "enum-map",
  "enumset",
@@ -2273,24 +2194,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_unicode"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_collections",
- "bun_core",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "phf 0.11.3",
- "scopeguard",
- "strum",
- "thiserror",
-]
-
-[[package]]
 name = "bun_url"
 version = "0.0.0"
 dependencies = [
@@ -2301,24 +2204,6 @@ dependencies = [
  "bun_core",
  "bun_paths",
  "bun_wyhash",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "phf 0.11.3",
- "scopeguard",
- "strum",
-]
-
-[[package]]
-name = "bun_url_jsc"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_core",
- "bun_jsc",
- "bun_url",
  "const_format",
  "enum-map",
  "enumset",

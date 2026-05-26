@@ -230,7 +230,7 @@ fn shallow_clone_prop(p: &G::Property) -> G::Property {
     }
 }
 
-pub fn migrate_pnpm_lockfile<'a>(
+pub(crate) fn migrate_pnpm_lockfile<'a>(
     lockfile: &'a mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
@@ -1169,7 +1169,7 @@ fn invalid_pnpm_lockfile() -> MigratePnpmLockfileError {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum ParseAppendDependenciesError {
+pub(crate) enum ParseAppendDependenciesError {
     #[error("out of memory")]
     OutOfMemory,
     #[error("InvalidPnpmLockfile")]

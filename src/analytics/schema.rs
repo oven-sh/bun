@@ -26,7 +26,7 @@ use bun_core::Error;
 // PORT NOTE: peechy's two error cases (`EOF`, `InvalidValue`) are folded into
 // the crate-wide `bun_core::Error` so downstream `decode` signatures stay
 // `Result<_, bun_core::Error>` without an extra `From` hop.
-pub const EOF: Error = Error::TODO; // TODO(port): Error::from_name("EOF") once name→code table lands
+pub(crate) const EOF: Error = Error::TODO; // TODO(port): Error::from_name("EOF") once name→code table lands
 
 /// Primitive integers encodable in the peechy wire format (native-endian raw
 /// bytes). Zig handled this via `comptime T` + `std.mem.readIntSliceNative` /

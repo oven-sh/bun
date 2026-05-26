@@ -46,7 +46,7 @@ impl<'a> Default for Args<'a> {
 }
 
 impl<'a> Args<'a> {
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match self {
             Args::Slices(args) => args.len(),
             Args::Args(args) => args.len(),
@@ -126,7 +126,7 @@ pub struct Entry {
 // Zig: `pub const Queue = bun.LinearFifo(Entry, .Dynamic);` — inherent associated
 // types are unstable on stable Rust, so expose as a sibling module alias instead.
 pub mod entry {
-    pub type Queue = super::LinearFifo<super::Entry, super::DynamicBuffer<super::Entry>>;
+    pub(crate) type Queue = super::LinearFifo<super::Entry, super::DynamicBuffer<super::Entry>>;
 }
 
 impl Entry {
@@ -251,7 +251,7 @@ pub struct PromisePair {
 
 // Zig: `pub const Queue = bun.LinearFifo(PromisePair, .Dynamic);` — see `entry` note above.
 pub mod promise_pair {
-    pub type Queue =
+    pub(crate) type Queue =
         super::LinearFifo<super::PromisePair, super::DynamicBuffer<super::PromisePair>>;
 }
 

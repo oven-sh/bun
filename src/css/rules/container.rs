@@ -47,7 +47,7 @@ impl ContainerName {
 }
 
 pub use ContainerName as ContainerNameFns;
-pub type ContainerSizeFeature = QueryFeature<ContainerSizeFeatureId>;
+pub(crate) type ContainerSizeFeature = QueryFeature<ContainerSizeFeatureId>;
 
 #[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
 pub enum ContainerSizeFeatureId {
@@ -89,17 +89,6 @@ impl crate::media_query::FeatureIdTrait for ContainerSizeFeatureId {
 
     fn from_str(s: &[u8]) -> Option<Self> {
         <Self as css::EnumProperty>::from_ascii_case_insensitive(s)
-    }
-}
-
-impl ContainerSizeFeatureId {
-    pub fn to_css_with_prefix(
-        self,
-        prefix: &[u8],
-        dest: &mut Printer,
-    ) -> core::result::Result<(), PrintErr> {
-        dest.write_str(prefix)?;
-        self.to_css(dest)
     }
 }
 
@@ -187,14 +176,14 @@ impl QueryCondition for StyleQuery {
     fn needs_parens(&self, parent_operator: Option<Operator>, _targets: &css::Targets) -> bool {
         match self {
             StyleQuery::Not(_) => true,
-            StyleQuery::Operation { operator, .. } => Some(*operator) == parent_operator,
+            StyleQuery::Operation { operator, .. } => Some(*operator) != parent_operator,
             StyleQuery::Feature(_) => true,
         }
     }
 }
 
 impl StyleQuery {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` variant-walk. `Operator` is `Copy`;
         // `Property` routes through `dc::property` until the per-variant
         // `DeepClone` derives land in `properties_generated.rs`.
@@ -307,7 +296,7 @@ impl QueryCondition for ContainerCondition {
     fn needs_parens(&self, parent_operator: Option<Operator>, targets: &css::Targets) -> bool {
         match self {
             ContainerCondition::Not(_) => true,
-            ContainerCondition::Operation { operator, .. } => Some(*operator) == parent_operator,
+            ContainerCondition::Operation { operator, .. } => Some(*operator) != parent_operator,
             ContainerCondition::Feature(f) => f.needs_parens(parent_operator, targets),
             ContainerCondition::Style(_) => false,
         }
@@ -358,7 +347,7 @@ pub struct ContainerRule<R> {
 }
 
 impl<R> ContainerRule<R> {
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -383,7 +372,7 @@ impl<R> ContainerRule<R> {
 }
 
 impl<R> ContainerRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: css::generics::DeepClone<'bump>,
     {

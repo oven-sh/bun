@@ -790,11 +790,11 @@ pub enum AF {
 
 impl AF {
     #[inline]
-    pub fn int(self) -> inet::sa_family_t {
+    pub(crate) fn int(self) -> inet::sa_family_t {
         self as inet::sa_family_t
     }
 
-    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<AF> {
+    pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<AF> {
         if value.is_string() {
             // `defer fam_str.deref()` → OwnedString releases the +1 from BunString::from_js
             let fam_str = OwnedString::new(BunString::from_js(value, global)?);
@@ -853,7 +853,7 @@ impl AF {
         }
     }
 
-    pub fn upper(self) -> &'static ZStr {
+    pub(crate) fn upper(self) -> &'static ZStr {
         match self {
             AF::INET => bun_core::zstr!("IPv4"),
             AF::INET6 => bun_core::zstr!("IPv6"),
@@ -883,7 +883,7 @@ impl sockaddr {
 
     /// Raw `sa_family_t` from the shared prefix — valid for either variant.
     #[inline]
-    pub fn family_raw(&self) -> inet::sa_family_t {
+    pub(crate) fn family_raw(&self) -> inet::sa_family_t {
         // SAFETY: `family` is the first field of both `sockaddr_in` and
         // `sockaddr_in6` at the same offset/type; reading through `sin` is
         // well-defined regardless of which variant was written.
@@ -892,7 +892,7 @@ impl sockaddr {
 
     /// Raw network-byte-order port from the shared prefix — valid for either variant.
     #[inline]
-    pub fn port_raw(&self) -> inet::in_port_t {
+    pub(crate) fn port_raw(&self) -> inet::in_port_t {
         // SAFETY: `port` follows `family` in both `sockaddr_in` and
         // `sockaddr_in6` at the same offset/type.
         unsafe { self.sin.port }
@@ -900,7 +900,7 @@ impl sockaddr {
 
     /// Tag-checked borrow of the IPv4 payload.
     #[inline]
-    pub fn as_sin(&self) -> Option<&inet::sockaddr_in> {
+    pub(crate) fn as_sin(&self) -> Option<&inet::sockaddr_in> {
         if self.family_raw() as u16 == inet::AF_INET as u16 {
             // SAFETY: family == AF_INET ⇒ `sin` is the active variant.
             Some(unsafe { &self.sin })
@@ -911,7 +911,7 @@ impl sockaddr {
 
     /// Tag-checked borrow of the IPv6 payload.
     #[inline]
-    pub fn as_sin6(&self) -> Option<&inet::sockaddr_in6> {
+    pub(crate) fn as_sin6(&self) -> Option<&inet::sockaddr_in6> {
         if self.family_raw() as u16 == inet::AF_INET6 as u16 {
             // SAFETY: family == AF_INET6 ⇒ `sin6` is the active variant.
             Some(unsafe { &self.sin6 })
@@ -920,7 +920,7 @@ impl sockaddr {
         }
     }
 
-    pub const fn v4(port_: inet::in_port_t, addr: u32) -> sockaddr {
+    pub(crate) const fn v4(port_: inet::in_port_t, addr: u32) -> sockaddr {
         sockaddr {
             sin: inet::sockaddr_in {
                 family: inet::AF_INET as inet::sa_family_t,
@@ -931,7 +931,7 @@ impl sockaddr {
         }
     }
 
-    pub const fn v6(
+    pub(crate) const fn v6(
         port_: inet::in_port_t,
         addr: [u8; 16],
         // set to 0 if you don't care
@@ -951,7 +951,7 @@ impl sockaddr {
         }
     }
 
-    pub fn as_v4(&self) -> Option<u32> {
+    pub(crate) fn as_v4(&self) -> Option<u32> {
         if let Some(sin) = self.as_sin() {
             return Some(sin.addr);
         }
@@ -973,7 +973,7 @@ impl sockaddr {
         None
     }
 
-    pub fn family(&self) -> AF {
+    pub(crate) fn family(&self) -> AF {
         match self.family_raw() {
             v if v == inet::AF_INET as inet::sa_family_t => AF::INET,
             v if v == inet::AF_INET6 as inet::sa_family_t => AF::INET6,
@@ -981,7 +981,7 @@ impl sockaddr {
         }
     }
 
-    pub fn fmt<'a>(&self, buf: &'a mut [u8; inet::INET6_ADDRSTRLEN as usize]) -> &'a ZStr {
+    pub(crate) fn fmt<'a>(&self, buf: &'a mut [u8; inet::INET6_ADDRSTRLEN as usize]) -> &'a ZStr {
         let addr_src: *const c_void = match self.as_sin() {
             Some(sin) => core::ptr::from_ref(&sin.addr).cast::<c_void>(),
             None => {
@@ -1004,7 +1004,7 @@ impl sockaddr {
 
     // I'd bet money endianness is going to screw us here.
     // Zig name: `@"127.0.0.1"`
-    pub const LOOPBACK_V4: sockaddr = sockaddr {
+    pub(crate) const LOOPBACK_V4: sockaddr = sockaddr {
         sin: inet::sockaddr_in {
             family: inet::AF_INET as inet::sa_family_t,
             port: 0,
@@ -1015,7 +1015,7 @@ impl sockaddr {
     // TODO: check that `::` is all zeroes on all platforms. Should correspond
     // to `IN6ADDR_ANY_INIT`.
     // Zig name: `@"::"`
-    pub const ANY_V6: sockaddr = sockaddr {
+    pub(crate) const ANY_V6: sockaddr = sockaddr {
         sin6: inet::sockaddr_in6 {
             family: inet::AF_INET6 as inet::sa_family_t,
             port: 0,
@@ -1052,25 +1052,24 @@ pub mod inet {
     /// **network-order** `s_addr` value for 127.0.0.1. Spelled via
     /// `from_ne_bytes` so the wire bytes `[127,0,0,1]` are explicit (yields
     /// `0x0100_007f` on little-endian Windows, matching the header literal).
-    pub const IN4ADDR_LOOPBACK: u32 = u32::from_ne_bytes([127, 0, 0, 1]);
+    #[allow(dead_code)]
+    pub(crate) const IN4ADDR_LOOPBACK: u32 = u32::from_ne_bytes([127, 0, 0, 1]);
     /// `ws2ipdef.h`: `INET6_ADDRSTRLEN == 65` on Windows (vs 46 on POSIX).
     pub use bun_sys::posix::INET6_ADDRSTRLEN;
-    pub const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
+    pub(crate) const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
     pub use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
     pub use ws2::AF_INET;
     pub use ws2::AF_INET6;
-    pub type socklen_t = super::ares::ares_socklen_t;
+    pub(crate) type socklen_t = super::ares::ares_socklen_t;
 }
 
 #[cfg(not(windows))]
 pub mod inet {
     #![allow(non_camel_case_types)]
-    // PORT NOTE: `bun_sys::c` (translated-c-headers) does not yet expose these
-    // socket constants/types; mirror them locally from libc / POSIX values.
     pub const IN4ADDR_LOOPBACK: u32 = u32::from_ne_bytes([127, 0, 0, 1]);
     pub use bun_sys::posix::INET6_ADDRSTRLEN;
     // Make sure this is in line with IN6ADDR_ANY_INIT in `netinet/in.h` on all platforms.
-    pub const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
+    pub(crate) const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
     pub use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
     pub use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
     pub type socklen_t = super::ares::ares_socklen_t;

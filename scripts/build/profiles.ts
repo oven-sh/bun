@@ -92,6 +92,40 @@ export const profiles = {
     webkit: "prebuilt",
   },
 
+  /**
+   * Windows cross-compile from a non-Windows host: clang-cl + lld-link from
+   * the host LLVM plus an xwin-style Windows sysroot (see config.ts
+   * `winsysroot`). On a Windows host just use the regular debug/release
+   * profiles. Sanitizers are forced off in resolveConfig().
+   */
+  "windows-x64": {
+    buildType: "Debug",
+    os: "windows",
+    arch: "x64",
+    webkit: "prebuilt",
+  },
+
+  "windows-arm64": {
+    buildType: "Debug",
+    os: "windows",
+    arch: "aarch64",
+    webkit: "prebuilt",
+  },
+
+  "windows-x64-release": {
+    buildType: "Release",
+    os: "windows",
+    arch: "x64",
+    webkit: "prebuilt",
+  },
+
+  "windows-arm64-release": {
+    buildType: "Release",
+    os: "windows",
+    arch: "aarch64",
+    webkit: "prebuilt",
+  },
+
   /** Release build for local testing. No LTO (that's CI-only). */
   release: {
     buildType: "Release",
@@ -105,7 +139,7 @@ export const profiles = {
    * so PORT-vs-SYS comparisons measure what we'd actually ship — no PGO, no
    * symbol ordering, no special-case linker layout. lto=true selects the
    * `-lto` WebKit prebuilt (LLVM bitcode, re-codegen'd `-fno-pic` under
-   * `-flto=full -fwhole-program-vtables`) so cross-TU inlining runs; without
+   * `-flto=thin -fwhole-program-vtables`) so cross-TU inlining runs; without
    * it the non-LTO WebKit .a lands ~555 KB of C++ vtables in `.data.rel.ro`,
    * keeps `.eh_frame` (+962 KB), and outlines JSC slow-paths — the bench then
    * reports a ~6-8% time / ~1 MB RSS "regression" that is pure binary layout.

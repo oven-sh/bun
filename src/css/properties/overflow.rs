@@ -11,13 +11,13 @@ pub struct Overflow {
 }
 
 impl Overflow {
-    pub fn parse(input: &mut Parser) -> css::Result<Overflow> {
+    pub(crate) fn parse(input: &mut Parser) -> css::Result<Overflow> {
         let x = OverflowKeyword::parse(input)?;
         let y = input.try_parse(OverflowKeyword::parse).unwrap_or(x);
         Ok(Overflow { x, y })
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.x.to_css(dest)?;
         if self.y != self.x {
             dest.write_char(b' ')?;

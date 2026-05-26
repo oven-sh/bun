@@ -112,3 +112,49 @@ test("crypto.Sign should handle JWK EC keys with different encodings", () => {
     expect(signature.length).toBe(64);
   }
 });
+
+test("crypto.Verify with ieee-p1363 rejects signatures that are not in P1363 format", () => {
+  const jwkKey = {
+    kty: "EC",
+    crv: "P-256",
+    x: "UachlYxCg48kyuIpXA7RRci2bb99E7izkzDQfX1sc6U",
+    y: "umhCJJQF5niKkNIvna0egspwqEPc0XiuJ0vmpMOKdSg",
+    d: "g_AptXAXWjIrPcyXQWW16JZdSV65Np7DOQxTl-SNhDQ",
+  };
+  const publicJwk = { kty: jwkKey.kty, crv: jwkKey.crv, x: jwkKey.x, y: jwkKey.y };
+  const testData = "test data to verify";
+
+  // Produce a DER-encoded signature over the data (default dsaEncoding is 'der').
+  const derSigner = crypto.createSign("sha256");
+  derSigner.update(testData);
+  const derSignature = derSigner.sign({ key: jwkKey, format: "jwk" });
+  // A DER ECDSA signature for P-256 is a SEQUENCE wrapper, not the raw 64-byte r||s.
+  expect(derSignature.length).not.toBe(64);
+
+  // Sanity check: the DER signature verifies under the encoding it was produced in.
+  {
+    const verifier = crypto.createVerify("sha256");
+    verifier.update(testData);
+    expect(verifier.verify({ key: publicJwk, format: "jwk", dsaEncoding: "der" }, derSignature)).toBe(true);
+  }
+
+  // When the caller requests ieee-p1363, a signature that is not 2*n bytes of
+  // raw r||s must fail verification rather than being reinterpreted as DER.
+  {
+    const verifier = crypto.createVerify("sha256");
+    verifier.update(testData);
+    expect(verifier.verify({ key: publicJwk, format: "jwk", dsaEncoding: "ieee-p1363" }, derSignature)).toBe(false);
+  }
+
+  // The legitimate case still works: a real 64-byte P1363 signature verifies.
+  {
+    const p1363Signer = crypto.createSign("sha256");
+    p1363Signer.update(testData);
+    const p1363Signature = p1363Signer.sign({ key: jwkKey, format: "jwk", dsaEncoding: "ieee-p1363" });
+    expect(p1363Signature.length).toBe(64);
+
+    const verifier = crypto.createVerify("sha256");
+    verifier.update(testData);
+    expect(verifier.verify({ key: publicJwk, format: "jwk", dsaEncoding: "ieee-p1363" }, p1363Signature)).toBe(true);
+  }
+});

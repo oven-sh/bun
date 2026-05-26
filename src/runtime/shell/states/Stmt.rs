@@ -15,7 +15,7 @@ pub struct Stmt {
 }
 
 impl Stmt {
-    pub fn init(
+    pub(crate) fn init(
         interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: *const ast::Stmt,
@@ -39,7 +39,7 @@ impl Stmt {
         id
     }
 
-    pub fn start(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, this: NodeId) -> Yield {
         let me = interp.as_stmt(this);
         debug_assert!(me.idx == 0);
         debug_assert!(me.last_exit_code.is_none());
@@ -47,7 +47,7 @@ impl Stmt {
         Yield::Next(this)
     }
 
-    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
         let (idx, len, parent, last, shell) = {
             let me = interp.as_stmt(this);
             (
@@ -68,7 +68,7 @@ impl Stmt {
         y
     }
 
-    pub fn child_done(
+    pub(crate) fn child_done(
         interp: &Interpreter,
         this: NodeId,
         child: NodeId,
@@ -90,7 +90,7 @@ impl Stmt {
         Yield::Next(this)
     }
 
-    pub fn deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         let exec = interp.as_stmt_mut(this).currently_executing.take();
         if let Some(exec) = exec {
             interp.deinit_node(exec);

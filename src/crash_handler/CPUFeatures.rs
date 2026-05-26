@@ -7,7 +7,7 @@ unsafe extern "C" {
 }
 
 #[derive(Copy, Clone)]
-pub struct CPUFeatures {
+pub(crate) struct CPUFeatures {
     pub flags: Flags,
 }
 
@@ -89,18 +89,18 @@ impl fmt::Display for CPUFeatures {
 }
 
 impl CPUFeatures {
-    pub fn is_empty(self) -> bool {
+    pub(crate) fn is_empty(self) -> bool {
         self.flags.bits() == 0
     }
 
     #[cfg(target_arch = "x86_64")]
-    pub fn has_any_avx(self) -> bool {
+    pub(crate) fn has_any_avx(self) -> bool {
         self.flags.contains(Flags::AVX)
             || self.flags.contains(Flags::AVX2)
             || self.flags.contains(Flags::AVX512)
     }
 
-    pub fn get() -> CPUFeatures {
+    pub(crate) fn get() -> CPUFeatures {
         let raw = bun_cpu_features();
         let flags = Flags::from_bits_retain(raw);
         // sanity check: `none` bit clear and no padding bits set

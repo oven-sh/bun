@@ -35,7 +35,7 @@ pub use bun_http::ssl_config::{
 // PORT NOTE: cannot derive `thiserror::Error` because `JsError` is not
 // `std::error::Error`/`Display`. Manual `From<JsError>` instead.
 #[derive(Debug)]
-pub enum ReadFromBlobError {
+pub(crate) enum ReadFromBlobError {
     Js(JsError),
     NullStore,
     NotAFile,
@@ -247,15 +247,6 @@ pub fn from_js(
     <SSLConfig as SSLConfigFromJs>::from_js(vm, global, value)
 }
 
-#[inline]
-pub fn from_generated(
-    vm: &VirtualMachine,
-    global: &JSGlobalObject,
-    generated: &jsc::generated::SSLConfig,
-) -> JsResult<Option<SSLConfig>> {
-    <SSLConfig as SSLConfigFromJs>::from_generated(vm, global, generated)
-}
-
 // ── handlePath / handleFile helpers ──────────────────────────────────
 
 // PERF(port): was comptime monomorphization (comptime field: []const u8) —
@@ -406,7 +397,7 @@ fn handle_single_file(
 /// Returns null if parsing fails (an exception will be set on globalThis).
 /// The returned SSLConfig is heap-allocated and ownership is transferred to the caller.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__WebSocket__parseSSLConfig(
+pub(crate) extern "C" fn Bun__WebSocket__parseSSLConfig(
     global_this: &JSGlobalObject,
     tls_value: JSValue,
 ) -> Option<Box<bun_http::ssl_config::SSLConfig>> {
@@ -436,7 +427,7 @@ pub extern "C" fn Bun__WebSocket__parseSSLConfig(
 /// `Bun__WebSocket__parseSSLConfig` whose ownership the caller is transferring
 /// back (i.e. not already freed or handed to an upgrade client).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__WebSocket__freeSSLConfig(
+pub(crate) unsafe extern "C" fn Bun__WebSocket__freeSSLConfig(
     config: *mut bun_http::ssl_config::SSLConfig,
 ) {
     // SAFETY: caller upholds the `# Safety` contract above — `config` is null

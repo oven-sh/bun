@@ -29,7 +29,7 @@ pub enum BoxSizing {
 // comptime reflection over @tagName. Hand-written here (only two variants) so the inherent
 // `parse`/`to_css` participate in `impl_parse_tocss_via_inherent!` without a derive-coherence clash.
 impl BoxSizing {
-    pub fn parse(input: &mut css::Parser) -> css::Result<BoxSizing> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<BoxSizing> {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
         if bun_core::eql_case_insensitive_ascii(ident, b"content-box", true) {
@@ -41,16 +41,11 @@ impl BoxSizing {
         }
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         dest.write_str(match self {
             BoxSizing::ContentBox => "content-box",
             BoxSizing::BorderBox => "border-box",
         })
-    }
-
-    #[inline]
-    pub fn deep_clone(self, _bump: &Bump) -> Self {
-        self
     }
 }
 
@@ -88,7 +83,7 @@ macro_rules! size_ident_match {
 }
 
 impl Size {
-    pub fn parse(input: &mut css::Parser) -> css::Result<Size> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<Size> {
         let res = input.try_parse(|i: &mut css::Parser| -> css::Result<Size> {
             let ident = i.expect_ident()?;
             size_ident_match!(ident, {
@@ -121,7 +116,7 @@ impl Size {
         Ok(Size::LengthPercentage(lp))
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             Size::Auto => dest.write_str("auto"),
             Size::Contain => dest.write_str("contain"),
@@ -161,7 +156,7 @@ impl Size {
 // PORT NOTE: split out of `impl Size` above — these don't depend on
 // `parse`/`to_css` surface and are needed by `SizeHandler`.
 impl Size {
-    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         use css::compat::Feature as F;
         match self {
             Size::LengthPercentage(l) => l.is_compatible(browsers),
@@ -188,13 +183,13 @@ impl Size {
         }
     }
 
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         // TODO(port): css.implementDeepClone — comptime field-walk; `Size` carries
         // only `LengthPercentage`/`VendorPrefix` payloads, both `Clone`-via-derive.
         self.clone()
     }
 
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
+    pub(crate) fn eql(lhs: &Self, rhs: &Self) -> bool {
         // TODO(port): css.implementEql — comptime field-walk; #[derive(PartialEq)] above covers it.
         lhs == rhs
     }
@@ -224,7 +219,7 @@ pub enum MaxSize {
 }
 
 impl MaxSize {
-    pub fn parse(input: &mut css::Parser) -> css::Result<MaxSize> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<MaxSize> {
         let res = input.try_parse(|i: &mut css::Parser| -> css::Result<MaxSize> {
             let ident = i.expect_ident()?;
             size_ident_match!(ident, {
@@ -259,7 +254,7 @@ impl MaxSize {
         }
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             MaxSize::None => dest.write_str("none"),
             MaxSize::Contain => dest.write_str("contain"),
@@ -299,7 +294,7 @@ impl MaxSize {
 // PORT NOTE: split out of `impl MaxSize` above — these don't depend on
 // `parse`/`to_css` surface and are needed by `SizeHandler`.
 impl MaxSize {
-    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         use css::compat::Feature as F;
         match self {
             MaxSize::LengthPercentage(l) => l.is_compatible(browsers),
@@ -326,13 +321,13 @@ impl MaxSize {
         }
     }
 
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         // TODO(port): css.implementDeepClone — comptime field-walk; `MaxSize` carries
         // only `LengthPercentage`/`VendorPrefix` payloads, both `Clone`-via-derive.
         self.clone()
     }
 
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
+    pub(crate) fn eql(lhs: &Self, rhs: &Self) -> bool {
         lhs == rhs
     }
 }
@@ -347,7 +342,7 @@ pub struct AspectRatio {
 }
 
 impl AspectRatio {
-    pub fn parse(input: &mut css::Parser) -> css::Result<AspectRatio> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<AspectRatio> {
         let location = input.current_source_location();
         let mut auto = input.try_parse(|i| i.expect_ident_matching(b"auto"));
 
@@ -365,7 +360,7 @@ impl AspectRatio {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self.auto {
             dest.write_str("auto")?;
         }
@@ -379,12 +374,12 @@ impl AspectRatio {
         Ok(())
     }
 
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         // PORT NOTE: css.implementDeepClone — `Ratio` is two `f32`s; #[derive(Clone)] is exact.
         *self
     }
 
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
+    pub(crate) fn eql(lhs: &Self, rhs: &Self) -> bool {
         lhs == rhs
     }
 }
@@ -414,7 +409,7 @@ bitflags::bitflags! {
 }
 
 impl SizeProperty {
-    pub fn try_from_property_id_tag(property_id: PropertyIdTag) -> Option<SizeProperty> {
+    pub(crate) fn try_from_property_id_tag(property_id: PropertyIdTag) -> Option<SizeProperty> {
         // TODO(port): Zig used `inline for (std.meta.fields(@This()))` to compare each
         // bitfield name against PropertyIdTag's @tagName. Expanded explicitly here.
         match property_id {
@@ -614,7 +609,7 @@ macro_rules! flush_logical_helper {
 }
 
 impl SizeHandler {
-    pub fn handle_property(
+    pub(crate) fn handle_property(
         &mut self,
         property: &Property,
         dest: &mut DeclarationList,
@@ -830,7 +825,11 @@ impl SizeHandler {
         true
     }
 
-    pub fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+    pub(crate) fn flush(
+        &mut self,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
         if !self.has_any {
             return;
         }
@@ -958,7 +957,11 @@ impl SizeHandler {
         );
     }
 
-    pub fn finalize(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+    pub(crate) fn finalize(
+        &mut self,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
         self.flush(dest, context);
         self.flushed_properties = SizeProperty::empty();
     }

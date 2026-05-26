@@ -53,15 +53,15 @@ macro_rules! ctx_log {
 use bun_jsc::bun_string_jsc;
 
 // ─── Re-exports ──────────────────────────────────────────────────────────────
-pub use super::html_bundle::{self as html_bundle, HTMLBundle};
+pub(super) use super::html_bundle::{self as html_bundle, HTMLBundle};
 // TODO: rename to StaticBlobRoute? the html bundle is sometimes a static route
-pub use super::any_request_context::AnyRequestContext;
-pub use super::file_route::FileRoute;
-pub use super::node_http_response::NodeHTTPResponse;
-pub use super::request_context::{DeferDeinitFlag, RequestContext as NewRequestContext};
-pub use super::server_config::{self as server_config, ServerConfig};
-pub use super::server_web_socket::ServerWebSocket;
-pub use super::static_route::StaticRoute;
+pub(super) use super::any_request_context::AnyRequestContext;
+pub(super) use super::file_route::FileRoute;
+pub(super) use super::node_http_response::NodeHTTPResponse;
+pub(super) use super::request_context::{DeferDeinitFlag, RequestContext as NewRequestContext};
+pub(super) use super::server_config::{self as server_config, ServerConfig};
+pub(super) use super::server_web_socket::ServerWebSocket;
+pub(super) use super::static_route::StaticRoute;
 
 // ─── RequestCtx trait ────────────────────────────────────────────────────────
 // PORT NOTE: Zig's `NewRequestContext` exposes `Req`/`Resp`/`http3` as comptime
@@ -404,9 +404,9 @@ impl RespLike for uws_sys::h3::Response {
     }
 }
 
-pub type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
+pub(super) type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
     NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
-pub type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
+pub(super) type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
     NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, true>;
 
 // ─── BunInfo (moved from bun_core::Global) ───────────────────────────────────
@@ -506,7 +506,7 @@ pub mod BunInfo {
 // PORT NOTE: enum + `memory_cost`/`set_server`/`ref_`/`deref_` live in
 // `super` (mod.rs). The `impl` block below adds the JS-facing constructors
 // (`from_js`/`from_options`/…) on the same type — same crate, split by file.
-pub use super::AnyRoute;
+pub(super) use super::AnyRoute;
 
 impl AnyRoute {
     fn bundled_html_manifest_item_from_js(
@@ -1192,7 +1192,10 @@ impl Drop for ServePlugins {
 }
 
 #[bun_jsc::host_fn(export = "BunServe__onResolvePlugins")]
-pub fn on_resolve_impl(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(super) fn on_resolve_impl(
+    _global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
     ctx_log!("onResolve");
 
     let [plugins_result, plugins_js] = callframe.arguments_as_array::<2>();
@@ -1208,7 +1211,7 @@ pub fn on_resolve_impl(_global: &JSGlobalObject, callframe: &CallFrame) -> JsRes
 }
 
 #[bun_jsc::host_fn(export = "BunServe__onRejectPlugins")]
-pub fn on_reject_impl(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(super) fn on_reject_impl(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     ctx_log!("onReject");
 
     let [error_js, plugin_js] = callframe.arguments_as_array::<2>();
@@ -1264,7 +1267,7 @@ pub enum PluginsResult<'a> {
 // `ServerAllConnectionsClosedTask`, `AnyServer` and the four type aliases are
 // defined once in `super` (mod.rs). This file contributes additional inherent
 // methods on the same type — there is no separate Phase-A struct.
-pub use super::{
+pub(super) use super::{
     CreateJsRequest, DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer, NewServer,
     SavedRequest, ServerFlags, UserRoute,
 };
@@ -3065,8 +3068,9 @@ where
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { &mut *ctx_slot };
 
-        // Don't report extra GC memory here: ctx is a recycled pool slot,
-        // not a fresh heap allocation (see NewServer::on_request).
+        self.vm()
+            .jsc_vm()
+            .deprecated_report_extra_memory(core::mem::size_of::<Ctx>());
 
         // `vm.initRequestBodyValue(.{ .Null = {} })` — pooled body slot,
         // ref_count = 1.
@@ -3581,7 +3585,7 @@ pub enum AnyUserRouteList<'a> {
 
 // ─── Exported fns ────────────────────────────────────────────────────────────
 #[unsafe(no_mangle)]
-pub extern "C" fn Server__setIdleTimeout(
+pub(super) extern "C" fn Server__setIdleTimeout(
     server: JSValue,
     seconds: JSValue,
     global: &JSGlobalObject,
@@ -3596,7 +3600,7 @@ pub extern "C" fn Server__setIdleTimeout(
     }
 }
 
-pub fn server_set_idle_timeout_(
+pub(super) fn server_set_idle_timeout_(
     server: JSValue,
     seconds: JSValue,
     global: &JSGlobalObject,
@@ -3633,7 +3637,7 @@ pub fn server_set_idle_timeout_(
     Ok(())
 }
 
-pub fn server_set_on_client_error_(
+pub(super) fn server_set_on_client_error_(
     global: &JSGlobalObject,
     server: JSValue,
     callback: JSValue,
@@ -3696,7 +3700,7 @@ pub fn server_set_on_client_error_(
     Ok(JSValue::UNDEFINED)
 }
 
-pub fn server_set_app_flags_(
+pub(super) fn server_set_app_flags_(
     global: &JSGlobalObject,
     server: JSValue,
     require_host_header: bool,
@@ -3728,7 +3732,7 @@ pub fn server_set_app_flags_(
     Ok(JSValue::UNDEFINED)
 }
 
-pub fn server_set_max_http_header_size_(
+pub(super) fn server_set_max_http_header_size_(
     global: &JSGlobalObject,
     server: JSValue,
     max_header_size: u64,

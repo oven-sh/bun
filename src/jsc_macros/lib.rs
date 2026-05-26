@@ -406,7 +406,7 @@ pub fn codegen_cached_accessors(input: TokenStream) -> TokenStream {
             #[allow(non_camel_case_types, dead_code)]
             #[derive(Clone, Copy)]
             #[repr(u8)]
-            pub enum Gc { #( #variants, )* }
+            pub(crate) enum Gc { #( #variants, )* }
             #[allow(dead_code)]
             impl Gc {
                 #[inline] pub fn get(self, this_value: ::bun_jsc::JSValue) -> ::core::option::Option<::bun_jsc::JSValue> {

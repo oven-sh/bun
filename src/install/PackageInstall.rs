@@ -97,7 +97,7 @@ impl Method {
     /// Decode the `AtomicU8` repr back into a `Method`. Stored via
     /// `Method::* as u8` so the value is always a valid discriminant.
     #[inline]
-    pub const fn from_u8(n: u8) -> Self {
+    pub(crate) const fn from_u8(n: u8) -> Self {
         match n {
             0 => Method::Clonefile,
             1 => Method::ClonefileEachDir,
@@ -112,7 +112,7 @@ impl Method {
 
 type BackendSupport = enum_map::EnumMap<Method, bool>;
 
-pub static METHOD_MAP: phf::Map<&'static [u8], Method> = phf::phf_map! {
+pub(crate) static METHOD_MAP: phf::Map<&'static [u8], Method> = phf::phf_map! {
     b"clonefile" => Method::Clonefile,
     b"clonefile_each_dir" => Method::ClonefileEachDir,
     b"hardlink" => Method::Hardlink,
@@ -121,7 +121,8 @@ pub static METHOD_MAP: phf::Map<&'static [u8], Method> = phf::phf_map! {
 };
 
 impl Method {
-    pub fn macos() -> BackendSupport {
+    #[cfg(target_os = "macos")]
+    pub(crate) fn macos() -> BackendSupport {
         enum_map::EnumMap::from_fn(|k| match k {
             Method::Clonefile => true,
             Method::ClonefileEachDir => true,
@@ -131,7 +132,8 @@ impl Method {
         })
     }
 
-    pub fn linux() -> BackendSupport {
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    pub(crate) fn linux() -> BackendSupport {
         enum_map::EnumMap::from_fn(|k| match k {
             Method::Clonefile => false,
             Method::ClonefileEachDir => false,
@@ -141,7 +143,8 @@ impl Method {
         })
     }
 
-    pub fn windows() -> BackendSupport {
+    #[cfg(windows)]
+    pub(crate) fn windows() -> BackendSupport {
         enum_map::EnumMap::from_fn(|k| match k {
             Method::Clonefile => false,
             Method::ClonefileEachDir => false,
@@ -152,7 +155,7 @@ impl Method {
     }
 
     #[inline]
-    pub fn is_supported(self) -> bool {
+    pub(crate) fn is_supported(self) -> bool {
         #[cfg(target_os = "macos")]
         return Self::macos()[self];
         // PORT NOTE: Zig `Environment.isLinux` (os.tag == .linux) includes the Android ABI,
@@ -182,7 +185,7 @@ pub struct Failure {
 
 impl Failure {
     #[inline]
-    pub fn is_package_missing_from_cache(&self) -> bool {
+    pub(crate) fn is_package_missing_from_cache(&self) -> bool {
         (self.err == bun_core::err!("FileNotFound") || self.err == bun_core::err!("ENOENT"))
             && self.step == Step::OpeningCacheDir
     }
@@ -196,7 +199,7 @@ pub enum InstallResult {
 impl InstallResult {
     /// Init a Result with the 'fail' tag. use `.Success` for the 'success' tag.
     #[inline]
-    pub fn fail(
+    pub(crate) fn fail(
         err: bun_core::Error,
         step: Step,
         _trace: Option<&bun_crash_handler::StackTrace>,
@@ -212,7 +215,7 @@ impl InstallResult {
         }))
     }
 
-    pub fn is_fail(&self) -> bool {
+    pub(crate) fn is_fail(&self) -> bool {
         matches!(self, InstallResult::Failure(_))
     }
 }
@@ -250,7 +253,7 @@ impl Step {
 // once at startup. Stored as the `repr(u8)` discriminant so reads/writes are
 // lock-free atomics (S015: AtomicU8 instead of RacyCell — single-writer path
 // so `Relaxed` adds no contention).
-pub static SUPPORTED_METHOD: AtomicU8 = AtomicU8::new(if cfg!(target_os = "macos") {
+pub(crate) static SUPPORTED_METHOD: AtomicU8 = AtomicU8::new(if cfg!(target_os = "macos") {
     Method::Clonefile as u8
 } else {
     Method::Hardlink as u8
@@ -498,7 +501,7 @@ pub trait HasWorkPoolTask {
 // ───────────────────────────── HardLinkWindowsInstallTask ─────────────────────────────
 
 #[cfg(windows)]
-pub struct HardLinkWindowsInstallTask {
+pub(crate) struct HardLinkWindowsInstallTask {
     /// Layout: `[src .. , 0, dest .. , 0]`. `src` and `dest` are reconstructed
     /// on demand from `src_len` instead of storing self-referential pointers
     /// (which would be invalidated when this `Box<[u16]>` is moved into `Self`
@@ -518,7 +521,7 @@ impl HasWorkPoolTask for HardLinkWindowsInstallTask {
 }
 
 #[cfg(windows)]
-pub type HardLinkQueue = NewTaskQueue<HardLinkWindowsInstallTask>;
+pub(crate) type HardLinkQueue = NewTaskQueue<HardLinkWindowsInstallTask>;
 
 // PORTING.md §Global mutable state: written once on the main thread by
 // `init_queue()` before any worker `run_from_thread_pool` reads it; workers
@@ -529,7 +532,7 @@ static HARDLINK_QUEUE: bun_core::RacyCell<core::mem::MaybeUninit<HardLinkQueue>>
 
 #[cfg(windows)]
 impl HardLinkWindowsInstallTask {
-    pub fn init_queue() -> &'static HardLinkQueue {
+    pub(crate) fn init_queue() -> &'static HardLinkQueue {
         // SAFETY: called once per install batch on the install main thread before any
         // push(). Returns a shared ref so worker threads in run_from_thread_pool() may
         // safely alias it via HARDLINK_QUEUE.assume_init_ref(); all queue methods take
@@ -574,7 +577,11 @@ impl HardLinkWindowsInstallTask {
         }
     }
 
-    pub fn init(src: &[OSPathChar], dest: &[OSPathChar], basename: &[OSPathChar]) -> *mut Self {
+    pub(crate) fn init(
+        src: &[OSPathChar],
+        dest: &[OSPathChar],
+        basename: &[OSPathChar],
+    ) -> *mut Self {
         let allocation_size = src.len() + 1 + dest.len() + 1;
 
         let mut combined = vec![0u16; allocation_size].into_boxed_slice();
@@ -1147,7 +1154,7 @@ impl<'a> PackageInstall<'a> {
                 let slash = slash as usize;
                 self.destination_dir_subpath_buf[slash] = 0;
                 // SAFETY: NUL written above.
-                let subdir = ZStr::from_buf(&self.destination_dir_subpath_buf, slash);
+                let subdir = ZStr::from_buf(self.destination_dir_subpath_buf, slash);
                 let _ = sys::mkdirat(destination_dir, subdir, 0o755);
                 self.destination_dir_subpath_buf[slash] = SEP;
             }
@@ -2531,6 +2538,7 @@ impl<'a> PackageInstall<'a> {
                     }
                 }
             }
+            #[allow(unused_labels)]
             Method::Hardlink => 'outer: {
                 match self.install_with_hardlink(destination_dir) {
                     Ok(result) => return result,

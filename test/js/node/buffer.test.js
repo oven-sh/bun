@@ -1,6 +1,7 @@
 import { Buffer, SlowBuffer, isAscii, isUtf8, kMaxLength } from "buffer";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { gc } from "harness";
+import { bunEnv, bunExe, gc, isASAN, isDebug, withoutAggressiveGC } from "harness";
+import { createHash } from "node:crypto";
 import vm from "node:vm";
 
 const BufferModule = await import("buffer");
@@ -3321,5 +3322,191 @@ describe("Buffer.copyBytesFrom", () => {
     const view = new Uint16Array(ab, 8, 4); // bytes 8..15
     const buf = Buffer.copyBytesFrom(view);
     expect([...buf]).toEqual([8, 9, 10, 11, 12, 13, 14, 15]);
+  });
+});
+
+describe("Buffer.prototype.toString binary-to-text encodings", () => {
+  // Reference implementations (scalar, independent of Bun's native encoders) so
+  // the SIMD/bulk paths for hex and base64 are checked byte-for-byte, including
+  // vector-width boundaries and the scalar tail.
+  const HEX_PAIRS = Array.from({ length: 256 }, (_, b) => b.toString(16).padStart(2, "0"));
+  function hexReference(buf) {
+    const parts = new Array(buf.length);
+    for (let i = 0; i < buf.length; i++) {
+      parts[i] = HEX_PAIRS[buf[i]];
+    }
+    return parts.join("");
+  }
+
+  const B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  function base64Reference(buf) {
+    const parts = [];
+    let i = 0;
+    for (; i + 2 < buf.length; i += 3) {
+      const n = (buf[i] << 16) | (buf[i + 1] << 8) | buf[i + 2];
+      parts.push(
+        B64_ALPHABET[(n >> 18) & 63] +
+          B64_ALPHABET[(n >> 12) & 63] +
+          B64_ALPHABET[(n >> 6) & 63] +
+          B64_ALPHABET[n & 63],
+      );
+    }
+    const remaining = buf.length - i;
+    if (remaining === 1) {
+      const n = buf[i] << 16;
+      parts.push(B64_ALPHABET[(n >> 18) & 63] + B64_ALPHABET[(n >> 12) & 63] + "==");
+    } else if (remaining === 2) {
+      const n = (buf[i] << 16) | (buf[i + 1] << 8);
+      parts.push(B64_ALPHABET[(n >> 18) & 63] + B64_ALPHABET[(n >> 12) & 63] + B64_ALPHABET[(n >> 6) & 63] + "=");
+    }
+    return parts.join("");
+  }
+
+  function base64urlReference(buf) {
+    return base64Reference(buf).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+  }
+
+  // Deterministic bytes covering all 256 values with no short repeating period.
+  function fillPattern(buf, seed = 0x9e3779b9) {
+    let state = seed >>> 0;
+    for (let i = 0; i < buf.length; i++) {
+      // xorshift32
+      state ^= state << 13;
+      state ^= state >>> 17;
+      state ^= state << 5;
+      state >>>= 0;
+      buf[i] = state & 0xff;
+    }
+    return buf;
+  }
+
+  it("toString('hex') matches the reference at SIMD width boundaries", () => {
+    withoutAggressiveGC(() => {
+      // Cover every length around 8/16/32/64/128-byte chunk boundaries plus the
+      // threshold where the bulk kernel takes over from the scalar loop.
+      const sizes = [];
+      for (let size = 0; size <= 130; size++) sizes.push(size);
+      for (const boundary of [192, 256, 512, 1024]) sizes.push(boundary - 1, boundary, boundary + 1);
+
+      for (const size of sizes) {
+        const buf = fillPattern(Buffer.alloc(size), 0x12345678 + size);
+        expect(buf.toString("hex")).toBe(hexReference(buf));
+      }
+    });
+  });
+
+  it("toString('hex') on unaligned subarray views matches the reference", () => {
+    withoutAggressiveGC(() => {
+      const parent = fillPattern(Buffer.alloc(4096 + 16));
+      for (const offset of [1, 3, 7, 9, 15]) {
+        const view = parent.subarray(offset, offset + 4096);
+        expect(view.toString("hex")).toBe(hexReference(view));
+      }
+      // Range arguments go through the same encoder.
+      expect(parent.toString("hex", 5, 3000)).toBe(hexReference(parent.subarray(5, 3000)));
+    });
+  });
+
+  it("toString('hex'/'base64'/'base64url') is byte-exact for a large buffer", () => {
+    withoutAggressiveGC(() => {
+      // The whole-string SHA-256 digests below were cross-checked against
+      // Node.js and against the pure-JS reference encoders above for this
+      // exact deterministic buffer.
+      const buf = fillPattern(Buffer.alloc(110000));
+      const hex = buf.toString("hex");
+      const base64 = buf.toString("base64");
+      const base64url = buf.toString("base64url");
+
+      expect(hex.length).toBe(220000);
+      expect(base64.length).toBe(146668);
+      expect(base64url.length).toBe(146667);
+
+      // Head slices compared against the scalar reference give a readable diff
+      // if the bulk path breaks; 3000 bytes = 1000 complete base64 blocks.
+      expect(hex.slice(0, 2 * 3000)).toBe(hexReference(buf.subarray(0, 3000)));
+      expect(base64.slice(0, 4000)).toBe(base64Reference(buf.subarray(0, 3000)));
+      expect(base64url.slice(0, 4000)).toBe(base64urlReference(buf.subarray(0, 3000)));
+      expect(buf.hexSlice(0, 3000)).toBe(hexReference(buf.subarray(0, 3000)));
+
+      expect(createHash("sha256").update(hex).digest("hex")).toBe(
+        "8f48a2a797f617a898da5661349a9279c19107be7341ad6693ab46e627908d6e",
+      );
+      expect(createHash("sha256").update(base64).digest("hex")).toBe(
+        "13b33d6ad0580d09c649be335d52f11f85641beea65ccdac79974bf77b4d19ce",
+      );
+      expect(createHash("sha256").update(base64url).digest("hex")).toBe(
+        "85f9f3844442bfab913e2d15c015a9551b9f5ea958f1fa2cbb528538c0b25894",
+      );
+
+      // Round-trips decode back to the original bytes.
+      expect(Buffer.from(hex, "hex").equals(buf)).toBe(true);
+      expect(Buffer.from(base64, "base64").equals(buf)).toBe(true);
+      expect(Buffer.from(base64url, "base64url").equals(buf)).toBe(true);
+    });
+  });
+
+  // Throughput regression guard for the bulk hex encoder. A scalar per-byte
+  // hex loop costs >=10x a plain latin1 copy of the same buffer (it did before
+  // the SIMD kernel landed), while the vectorized encoder stays within ~2-3x
+  // even though it writes twice as many bytes; 6x cleanly separates the two
+  // regimes with margin on both sides. The measurement runs in a fresh
+  // subprocess so this suite's heap size and GC activity cannot skew either
+  // side of the ratio. Skipped on debug/ASAN builds, where the unoptimized,
+  // instrumented native kernels make timing ratios meaningless.
+  it.skipIf(isDebug || isASAN)("toString('hex') large-buffer throughput stays within 6x of a latin1 copy", async () => {
+    const script = `
+      const buf = Buffer.alloc(110000);
+      let state = 0x9e3779b9 >>> 0;
+      for (let i = 0; i < buf.length; i++) {
+        state ^= state << 13;
+        state ^= state >>> 17;
+        state ^= state << 5;
+        state >>>= 0;
+        buf[i] = state & 0xff;
+      }
+      const sample = fn => {
+        Bun.gc(true);
+        const start = Bun.nanoseconds();
+        fn();
+        return Bun.nanoseconds() - start;
+      };
+      const median = times => times.slice().sort((a, b) => a - b)[Math.floor(times.length / 2)];
+      for (let i = 0; i < 5; i++) {
+        buf.toString("hex");
+        buf.toString("latin1");
+      }
+      const hexTimes = [];
+      const latin1Times = [];
+      for (let i = 0; i < 13; i++) {
+        latin1Times.push(sample(() => buf.toString("latin1")));
+        hexTimes.push(sample(() => buf.toString("hex")));
+      }
+      console.log(JSON.stringify({ hex: median(hexTimes), latin1: median(latin1Times) }));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const { hex, latin1 } = JSON.parse(stdout.trim());
+    expect(hex).toBeLessThan(6 * latin1);
+  });
+
+  it("toString('base64') and toString('base64url') match the reference for small buffers", () => {
+    withoutAggressiveGC(() => {
+      // 0..66 covers every `length % 3` padding shape on both sides of the
+      // 64-byte boundary.
+      for (let size = 0; size <= 66; size++) {
+        const buf = fillPattern(Buffer.alloc(size), 0xabcdef01 + size);
+        expect(buf.toString("base64")).toBe(base64Reference(buf));
+        expect(buf.toString("base64url")).toBe(base64urlReference(buf));
+      }
+    });
   });
 });

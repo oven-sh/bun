@@ -53,7 +53,7 @@ impl FontWeight {
     // PORT NOTE: Zig `css.DeriveParse(@This()).parse` for a union(enum) with one
     // payload variant + 2 keyword variants tries the payload first, then matches
     // the remaining keywords against `expect_ident`.
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
+    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {
         if let Ok(v) = input.try_parse(AbsoluteFontWeight::parse) {
             return Ok(FontWeight::Absolute(v));
         }
@@ -66,7 +66,7 @@ impl FontWeight {
         }}
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             FontWeight::Absolute(a) => a.to_css(dest),
             FontWeight::Bolder => dest.write_str("bolder"),
@@ -75,11 +75,11 @@ impl FontWeight {
     }
 
     #[inline]
-    pub fn default() -> FontWeight {
+    pub(crate) fn default() -> FontWeight {
         FontWeight::Absolute(AbsoluteFontWeight::default())
     }
 
-    pub fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
+    pub(crate) fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             FontWeight::Absolute(a) => a.is_compatible(browsers),
             FontWeight::Bolder | FontWeight::Lighter => true,
@@ -107,7 +107,7 @@ pub enum AbsoluteFontWeight {
 impl AbsoluteFontWeight {
     // PORT NOTE: Zig `css.DeriveParse(@This()).parse` — payload (`CSSNumber`) first,
     // then keyword variants.
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
+    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {
         if let Ok(n) = input.try_parse(CSSNumberFns::parse) {
             return Ok(AbsoluteFontWeight::Weight(n));
         }
@@ -120,7 +120,7 @@ impl AbsoluteFontWeight {
         }}
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             AbsoluteFontWeight::Weight(weight) => CSSNumberFns::to_css(*weight, dest),
             AbsoluteFontWeight::Normal => {
@@ -130,7 +130,7 @@ impl AbsoluteFontWeight {
         }
     }
 
-    pub fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
+    pub(crate) fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             // Older browsers only supported 100, 200, 300, ...900 rather than arbitrary values.
             AbsoluteFontWeight::Weight(val) => {
@@ -145,7 +145,7 @@ impl AbsoluteFontWeight {
     }
 
     #[inline]
-    pub fn default() -> AbsoluteFontWeight {
+    pub(crate) fn default() -> AbsoluteFontWeight {
         AbsoluteFontWeight::Normal
     }
 
@@ -167,7 +167,7 @@ impl FontSize {
     // parse + to_css — provided by #[derive(css::Parse, css::ToCss)].
     // is_compatible KEPT (custom Rem branch).
 
-    pub fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
+    pub(crate) fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             FontSize::Length(l) => match l {
                 DimensionPercentage::Dimension(LengthValue::Rem(_)) => {
@@ -209,7 +209,7 @@ pub enum AbsoluteFontSize {
 }
 
 impl AbsoluteFontSize {
-    pub fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
+    pub(crate) fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             AbsoluteFontSize::XxxLarge => Feature::FontSizeXXXLarge.is_compatible(browsers),
             _ => true,
@@ -239,14 +239,14 @@ pub enum FontStretch {
 impl FontStretch {
     // PORT NOTE: Zig `css.DeriveParse(@This()).parse` — two payload variants
     // tried in declaration order.
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
+    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {
         if let Ok(kw) = input.try_parse(FontStretchKeyword::parse) {
             return Ok(FontStretch::Keyword(kw));
         }
         Percentage::parse(input).map(FontStretch::Percentage)
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> PrintResult<()> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> PrintResult<()> {
         if dest.minify {
             let percentage: Percentage = self.into_percentage();
             return percentage.to_css(dest);
@@ -258,14 +258,14 @@ impl FontStretch {
         }
     }
 
-    pub fn into_percentage(self) -> Percentage {
+    pub(crate) fn into_percentage(self) -> Percentage {
         match self {
             FontStretch::Percentage(val) => val,
             FontStretch::Keyword(kw) => kw.into_percentage(),
         }
     }
 
-    pub fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
+    pub(crate) fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             FontStretch::Percentage(_) => Feature::FontStretchPercentage.is_compatible(browsers),
             FontStretch::Keyword(_) => true,
@@ -276,7 +276,7 @@ impl FontStretch {
     // deepClone → derived Clone
 
     #[inline]
-    pub fn default() -> FontStretch {
+    pub(crate) fn default() -> FontStretch {
         FontStretch::Keyword(FontStretchKeyword::default())
     }
 }
@@ -309,11 +309,11 @@ pub enum FontStretchKeyword {
 
 impl FontStretchKeyword {
     #[inline]
-    pub fn default() -> FontStretchKeyword {
+    pub(crate) fn default() -> FontStretchKeyword {
         FontStretchKeyword::Normal
     }
 
-    pub fn into_percentage(self) -> Percentage {
+    pub(crate) fn into_percentage(self) -> Percentage {
         let val: f32 = match self {
             FontStretchKeyword::UltraCondensed => 0.5,
             FontStretchKeyword::ExtraCondensed => 0.625,
@@ -343,10 +343,10 @@ pub enum FontFamily {
 // TODO(port): Zig defined `pub fn HashMap(comptime V: type) type` wrapping std.ArrayHashMapUnmanaged
 // with a custom Wyhash hasher over the family-name bytes. Module-level alias (inherent assoc types are nightly-only).
 // blocked_on: ArrayHashMap key trait bounds for FontFamily
-pub type FontFamilyHashMap<V> = bun_collections::ArrayHashMap<FontFamily, V>;
+pub(crate) type FontFamilyHashMap<V> = bun_collections::ArrayHashMap<FontFamily, V>;
 
 impl FontFamily {
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
+    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {
         if let Ok(value) = input.try_parse(|p| p.expect_string().map(std::ptr::from_ref::<[u8]>)) {
             // arena-owned: parser slice lives for 'bump
             return Ok(FontFamily::FamilyName(value));
@@ -386,7 +386,7 @@ impl FontFamily {
         Ok(FontFamily::FamilyName(final_value))
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             FontFamily::Generic(val) => val.to_css(dest),
             FontFamily::FamilyName(val_ptr) => {
@@ -425,7 +425,7 @@ impl FontFamily {
         }
     }
 
-    pub fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
+    pub(crate) fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             FontFamily::Generic(g) => g.is_compatible(browsers),
             FontFamily::FamilyName(_) => true,
@@ -517,7 +517,7 @@ pub enum GenericFontFamily {
 }
 
 impl GenericFontFamily {
-    pub fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
+    pub(crate) fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             GenericFontFamily::SystemUi => Feature::FontFamilySystemUi.is_compatible(browsers),
             GenericFontFamily::UiSerif
@@ -541,11 +541,11 @@ pub enum FontStyle {
 }
 
 impl FontStyle {
-    pub fn default() -> FontStyle {
+    pub(crate) fn default() -> FontStyle {
         FontStyle::Normal
     }
 
-    pub fn parse(input: &mut css::Parser) -> CssResult<FontStyle> {
+    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<FontStyle> {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
         crate::match_ignore_ascii_case! { ident, {
@@ -561,7 +561,7 @@ impl FontStyle {
         }}
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> PrintResult<()> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             FontStyle::Normal => dest.write_str("normal"),
             FontStyle::Italic => dest.write_str("italic"),
@@ -576,7 +576,7 @@ impl FontStyle {
         }
     }
 
-    pub fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
+    pub(crate) fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             FontStyle::Oblique(angle) => {
                 if angle != FontStyle::default_oblique_angle() {
@@ -589,7 +589,7 @@ impl FontStyle {
         }
     }
 
-    pub fn default_oblique_angle() -> Angle {
+    pub(crate) fn default_oblique_angle() -> Angle {
         Angle::Deg(14.0)
     }
 
@@ -617,7 +617,7 @@ pub enum FontVariantCaps {
 }
 
 impl FontVariantCaps {
-    pub fn default() -> FontVariantCaps {
+    pub(crate) fn default() -> FontVariantCaps {
         FontVariantCaps::Normal
     }
 
@@ -625,7 +625,7 @@ impl FontVariantCaps {
         matches!(self, FontVariantCaps::Normal | FontVariantCaps::SmallCaps)
     }
 
-    pub fn parse_css2(input: &mut css::Parser) -> CssResult<FontVariantCaps> {
+    pub(crate) fn parse_css2(input: &mut css::Parser) -> CssResult<FontVariantCaps> {
         let value = FontVariantCaps::parse(input)?;
         if !value.is_css2() {
             return Err(input.new_custom_error(ParserError::invalid_value));
@@ -633,7 +633,7 @@ impl FontVariantCaps {
         Ok(value)
     }
 
-    pub fn is_compatible(self, _: &crate::targets::Browsers) -> bool {
+    pub(crate) fn is_compatible(self, _: &crate::targets::Browsers) -> bool {
         true
     }
 }
@@ -652,7 +652,7 @@ pub enum LineHeight {
 impl LineHeight {
     // PORT NOTE: Zig `css.DeriveParse(@This()).parse` — keyword variant first
     // (`normal`), then payload variants in declaration order.
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
+    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {
         if input
             .try_parse(|p| p.expect_ident_matching(b"normal"))
             .is_ok()
@@ -665,7 +665,7 @@ impl LineHeight {
         LengthPercentage::parse(input).map(LineHeight::Length)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             LineHeight::Normal => dest.write_str("normal"),
             LineHeight::Number(n) => CSSNumberFns::to_css(*n, dest),
@@ -673,7 +673,7 @@ impl LineHeight {
         }
     }
 
-    pub fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
+    pub(crate) fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             LineHeight::Length(l) => l.is_compatible(browsers),
             LineHeight::Normal | LineHeight::Number(_) => true,
@@ -683,7 +683,7 @@ impl LineHeight {
     // eql → derived PartialEq
     // deepClone → derived Clone
 
-    pub fn default() -> LineHeight {
+    pub(crate) fn default() -> LineHeight {
         LineHeight::Normal
     }
 }
@@ -714,22 +714,7 @@ pub struct Font {
 impl Font {
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.font, PropertyFieldMap);
 
-    // PORT NOTE: PropertyFieldMap was a comptime anon-struct mapping field names → PropertyIdTag,
-    // consumed by DefineShorthand reflection. Represented here as a const array.
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, crate::properties::PropertyIdTag)] = &[
-        ("family", crate::properties::PropertyIdTag::FontFamily),
-        ("size", crate::properties::PropertyIdTag::FontSize),
-        ("style", crate::properties::PropertyIdTag::FontStyle),
-        ("weight", crate::properties::PropertyIdTag::FontWeight),
-        ("stretch", crate::properties::PropertyIdTag::FontStretch),
-        ("line_height", crate::properties::PropertyIdTag::LineHeight),
-        (
-            "variant_caps",
-            crate::properties::PropertyIdTag::FontVariantCaps,
-        ),
-    ];
-
-    pub fn parse(input: &mut css::Parser) -> CssResult<Font> {
+    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Font> {
         let mut style: Option<FontStyle> = None;
         let mut weight: Option<FontWeight> = None;
         let mut stretch: Option<FontStretch> = None;
@@ -811,7 +796,7 @@ impl Font {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         if self.style != FontStyle::default() {
             self.style.to_css(dest)?;
             dest.write_char(b' ')?;
@@ -855,19 +840,9 @@ impl Font {
     // deepClone → css::implementDeepClone (generics blanket impl)
 }
 
-/// A value for the [vertical align](https://drafts.csswg.org/css2/#propdef-vertical-align) property.
-// TODO: there is a more extensive spec in CSS3 but it doesn't seem any browser implements it? https://www.w3.org/TR/css-inline-3/#transverse-alignment
-#[derive(Clone, PartialEq)]
-pub enum VerticalAlign {
-    /// A vertical align keyword.
-    Keyword(VerticalAlignKeyword),
-    /// An explicit length.
-    Length(LengthPercentage),
-}
-
 /// A keyword for the [vertical align](https://drafts.csswg.org/css2/#propdef-vertical-align) property.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub enum VerticalAlignKeyword {
+pub(crate) enum VerticalAlignKeyword {
     /// Align the baseline of the box with the baseline of the parent box.
     Baseline,
     /// Lower the baseline of the box to the proper position for subscripts of the parent's box.
@@ -888,7 +863,7 @@ pub enum VerticalAlignKeyword {
 
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy, PartialEq, Eq)]
-    pub struct FontProperty: u8 {
+    pub(crate) struct FontProperty: u8 {
         const FONT_FAMILY       = 1 << 0;
         const FONT_SIZE         = 1 << 1;
         const FONT_STYLE        = 1 << 2;
@@ -903,7 +878,7 @@ bitflags::bitflags! {
 impl FontProperty {
     const FONT: FontProperty = FontProperty::all();
 
-    pub fn try_from_property_id(
+    pub(crate) fn try_from_property_id(
         property_id: crate::properties::PropertyIdTag,
     ) -> Option<FontProperty> {
         // TODO(port): Zig used `inline for` over std.meta.fields + @field; expanded by hand
@@ -939,7 +914,7 @@ impl FontHandler {
     // blocked_on: generics::is_compatible/eql/deepClone blankets,
     // PropertyHandlerContext::arena(), DeclarationList::push,
     // Property::Font*/Unparsed payloads, FontFamilyHashMap.
-    pub fn handle_property(
+    pub(crate) fn handle_property(
         &mut self,
         property: &crate::properties::Property,
         dest: &mut crate::DeclarationList<'_>,
@@ -1019,7 +994,7 @@ impl FontHandler {
         true
     }
 
-    pub fn finalize(
+    pub(crate) fn finalize(
         &mut self,
         decls: &mut crate::DeclarationList<'_>,
         context: &mut crate::PropertyHandlerContext<'_>,

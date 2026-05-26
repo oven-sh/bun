@@ -467,7 +467,7 @@ impl hooks::AutoInstaller for PackageManager {
 //     `NonNull<Loader<'static>>`; the `'static` lifetime matches Zig's
 //     untracked `*DotEnv.Loader`.
 #[unsafe(no_mangle)]
-pub unsafe fn __bun_resolver_init_package_manager(
+pub(crate) unsafe fn __bun_resolver_init_package_manager(
     mut log: core::ptr::NonNull<bun_ast::Log>,
     install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,
     mut env: core::ptr::NonNull<bun_dotenv::Loader<'static>>,

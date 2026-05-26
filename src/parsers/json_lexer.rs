@@ -274,7 +274,7 @@ where
     /// are flattened back into a runtime `JSONOptions` here; the JSON token
     /// loop is small enough that the comptime specialisation buys nothing at
     /// this layer (the full JS lexer is where it mattered).
-    pub fn init(
+    pub(crate) fn init(
         log: &mut bun_ast::Log,
         source: &'a bun_ast::Source,
         bump: &'bump Bump,
@@ -289,7 +289,7 @@ where
     /// Zig: `initJSON` — identical body to `init` for the JSON lexer; kept as a
     /// separate entry point because `json.rs` calls it by name in the
     /// `MAYBE_AUTO_QUOTE` retry path.
-    pub fn init_json(
+    pub(crate) fn init_json(
         log: &mut bun_ast::Log,
         source: &'a bun_ast::Source,
         bump: &'bump Bump,
@@ -309,7 +309,7 @@ where
     }
 
     #[inline]
-    pub fn range(&self) -> bun_ast::Range {
+    pub(crate) fn range(&self) -> bun_ast::Range {
         bun_ast::Range {
             loc: bun_ast::usize2loc(self.start),
             len: (self.end - self.start) as i32,
@@ -403,7 +403,7 @@ where
     }
 
     #[cold]
-    pub fn unexpected(&mut self) -> LexResult {
+    pub(crate) fn unexpected(&mut self) -> LexResult {
         self.start = self.start.min(self.end);
         let r = self.range();
         if self.start == self.source.contents.len() {
@@ -564,7 +564,7 @@ where
     }
 
     /// Zig: `toEString`.
-    pub fn to_e_string(&mut self) -> LexResult<js_ast::E::String> {
+    pub(crate) fn to_e_string(&mut self) -> LexResult<js_ast::E::String> {
         match self.string_literal_raw_format {
             StringLiteralFormat::Ascii => {
                 Ok(js_ast::E::String::init(self.string_literal_raw_content))
@@ -589,7 +589,7 @@ where
     }
 
     /// Zig: `toUTF8EString`.
-    pub fn to_utf8_e_string(&mut self) -> LexResult<js_ast::E::String> {
+    pub(crate) fn to_utf8_e_string(&mut self) -> LexResult<js_ast::E::String> {
         let mut res = self.to_e_string()?;
         if res.is_utf16 {
             let utf8 = strings::to_utf8_alloc(res.slice16());
@@ -1050,7 +1050,7 @@ where
     /// Zig: `next()` with every `if (comptime is_json)` branch taken. Operators
     /// and JS-only punctuation hard-error; comments are gated on
     /// `opts.allow_comments`.
-    pub fn next(&mut self) -> LexResult {
+    pub(crate) fn next(&mut self) -> LexResult {
         self.has_newline_before = self.end == 0;
 
         loop {

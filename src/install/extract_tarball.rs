@@ -83,7 +83,7 @@ impl ExtractTarball {
     }
 }
 
-pub fn build_url(
+pub(crate) fn build_url(
     registry_: &[u8],
     full_name_: &StringOrTinyString,
     version: Version,
@@ -103,7 +103,7 @@ pub fn build_url(
 /// Generic URL builder. The Zig version threads `comptime PrinterContext`,
 /// `comptime ReturnType`, `comptime ErrorType` and a comptime `print` fn; in
 /// Rust the closure carries its own context and the generics collapse to `R, E`.
-pub fn build_url_with_printer<R, E>(
+pub(crate) fn build_url_with_printer<R, E>(
     registry_: &[u8],
     full_name_: &StringOrTinyString,
     version: Version,
@@ -182,7 +182,7 @@ thread_local! {
     }));
 }
 
-pub fn uses_streaming_extraction() -> bool {
+pub(crate) fn uses_streaming_extraction() -> bool {
     !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL
         .get()
         .unwrap_or(false)
@@ -417,11 +417,16 @@ impl ExtractTarball {
                     // meaningless in cases like this.
                     if !resolved.is_empty() {
                         // `std.fs.Dir.createFileZ(".bun-tag", .{ .truncate = true })` + write
-                        if sys::File::write_file(
+                        if sys::File::openat(
                             extract_destination.fd(),
                             ZStr::from_static(b".bun-tag\0"),
-                            resolved,
+                            sys::O::WRONLY
+                                | sys::O::CREAT
+                                | sys::O::TRUNC
+                                | if cfg!(windows) { 0 } else { sys::O::NOFOLLOW },
+                            0o664,
                         )
+                        .and_then(|f| f.write_all(resolved))
                         .is_err()
                         {
                             let _ = sys::unlinkat(
@@ -491,14 +496,27 @@ impl ExtractTarball {
             // PORT NOTE: reshaped for borrowck — Zig grabbed a raw `*TlBufs` from TLS;
             // here the entire body lives inside the thread_local borrow closure.
             let folder_name: &[u8] = match self.resolution.tag {
-                ResolutionTag::Npm => directories::cached_npm_package_folder_name_print(
-                    package_manager,
-                    &mut bufs.folder_name_buf,
-                    name,
-                    self.resolution.npm().version,
-                    None,
-                )
-                .as_bytes(),
+                ResolutionTag::Npm => {
+                    if !bun_install::dependency::is_safe_install_folder_name(name) {
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Refusing to install package with invalid name \"{}\"",
+                                bun_fmt::s(name),
+                            ),
+                        );
+                        return Err(bun_core::err!("InstallFailed"));
+                    }
+                    directories::cached_npm_package_folder_name_print(
+                        package_manager,
+                        &mut bufs.folder_name_buf,
+                        name,
+                        self.resolution.npm().version,
+                        None,
+                    )
+                    .as_bytes()
+                }
                 ResolutionTag::Github => directories::cached_github_folder_name_print(
                     &mut bufs.folder_name_buf,
                     resolved,

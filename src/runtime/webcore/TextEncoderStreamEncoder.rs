@@ -2,7 +2,7 @@ use core::cell::Cell;
 
 use bun_collections::VecExt as _;
 use bun_core::strings;
-use bun_jsc::{CallFrame, JSGlobalObject, JSString, JSUint8Array, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult};
 use bun_simdutf_sys::simdutf;
 
 bun_output::declare_scope!(TextEncoderStreamEncoder, visible);
@@ -19,7 +19,7 @@ impl TextEncoderStreamEncoder {
     // PORT NOTE: no `#[bun_jsc::host_fn]` here — that macro's free-fn arm emits
     // a bare `constructor(...)` which cannot resolve inside an `impl`. The
     // `#[bun_jsc::JsClass]` derive already emits the `<Self>::constructor` shim.
-    pub fn constructor(
+    pub(crate) fn constructor(
         _global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<Box<TextEncoderStreamEncoder>> {
@@ -27,7 +27,7 @@ impl TextEncoderStreamEncoder {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn encode(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn encode(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = frame.arguments_old::<1>();
         let arguments = arguments.slice();
         if arguments.is_empty() {
@@ -45,16 +45,6 @@ impl TextEncoderStreamEncoder {
         }
 
         Ok(self.encode_latin1(global, str.slice()))
-    }
-
-    pub fn encode_without_type_checks(&self, global: &JSGlobalObject, input: &JSString) -> JSValue {
-        let str = input.get_zig_string(global);
-
-        if str.is_16bit() {
-            return self.encode_utf16(global, str.utf16_slice_aligned());
-        }
-
-        self.encode_latin1(global, str.slice())
     }
 
     fn encode_latin1(&self, global: &JSGlobalObject, input: &[u8]) -> JSValue {
@@ -236,12 +226,8 @@ impl TextEncoderStreamEncoder {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn flush(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn flush(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         Ok(self.flush_body(global))
-    }
-
-    pub fn flush_without_type_checks(&self, global: &JSGlobalObject) -> JSValue {
-        self.flush_body(global)
     }
 
     fn flush_body(&self, global: &JSGlobalObject) -> JSValue {

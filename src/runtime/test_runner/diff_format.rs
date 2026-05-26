@@ -93,7 +93,7 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
 /// the `extern "C"` symbol resolves the same at link time regardless of which
 /// crate defines it.
 #[unsafe(no_mangle)]
-pub extern "C" fn zig__renderDiff(
+pub(crate) extern "C" fn zig__renderDiff(
     expected_ptr: *const core::ffi::c_char,
     expected_len: usize,
     received_ptr: *const core::ffi::c_char,

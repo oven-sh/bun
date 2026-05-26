@@ -11,7 +11,6 @@ use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task};
 use bun_io::KeepAlive;
 use bun_jsc::call_frame::ArgumentsSlice;
-use bun_jsc::event_loop::EventLoop;
 use bun_jsc::node::PathLike;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -545,8 +544,6 @@ pub struct StatWatcher {
     scheduler: RefPtr<StatWatcherScheduler>,
 }
 
-pub type Scheduler = StatWatcherScheduler;
-
 /// `jsc.Codegen.JSStatWatcher` — cached-value accessors generated from
 /// `.classes.ts`. The C++ symbols are emitted by `generate-classes.ts`; this
 /// module declares them locally so callers can write `js::listener_get_cached`
@@ -576,24 +573,28 @@ mod js {
     }
 
     #[inline]
-    pub fn listener_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+    pub(super) fn listener_set_cached(
+        this_value: JSValue,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) {
         StatWatcherPrototype__listenerSetCachedValue(this_value, global.as_mut_ptr(), value)
     }
     #[inline]
-    pub fn listener_get_cached(this_value: JSValue) -> Option<JSValue> {
+    pub(super) fn listener_get_cached(this_value: JSValue) -> Option<JSValue> {
         let v = StatWatcherPrototype__listenerGetCachedValue(this_value);
         if v.is_empty() { None } else { Some(v) }
     }
 
-    pub mod gc {
-        pub mod prev_stat {
+    pub(super) mod gc {
+        pub(crate) mod prev_stat {
             use super::super::*;
             #[inline]
-            pub fn set(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+            pub(crate) fn set(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
                 StatWatcherPrototype__prevStatSetCachedValue(this_value, global.as_mut_ptr(), value)
             }
             #[inline]
-            pub fn get(this_value: JSValue) -> Option<JSValue> {
+            pub(crate) fn get(this_value: JSValue) -> Option<JSValue> {
                 let v = StatWatcherPrototype__prevStatGetCachedValue(this_value);
                 if v.is_empty() { None } else { Some(v) }
             }
@@ -604,7 +605,7 @@ mod js {
 impl StatWatcher {
     /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global_this` back-pointer.
     #[inline]
-    pub fn global_this(&self) -> &JSGlobalObject {
+    pub(crate) fn global_this(&self) -> &JSGlobalObject {
         // `BackRef` invariant: global outlives every `StatWatcher` (JSC_BORROW).
         self.global_this.get()
     }
@@ -640,7 +641,7 @@ impl StatWatcher {
     // opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
-    pub fn ref_(this: *mut Self) {
+    pub(crate) fn ref_(this: *mut Self) {
         // SAFETY: per fn contract.
         unsafe { ThreadSafeRefCount::<Self>::ref_(this) };
     }
@@ -652,7 +653,7 @@ impl StatWatcher {
     // opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
-    pub fn deref(this: *mut Self) {
+    pub(crate) fn deref(this: *mut Self) {
         // SAFETY: per fn contract.
         unsafe { ThreadSafeRefCount::<Self>::deref(this) };
     }
@@ -672,15 +673,10 @@ impl StatWatcher {
         std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
-    pub fn event_loop(&self) -> *mut EventLoop {
-        // `ctx` is a `BackRef<VirtualMachine>` (JSC_BORROW); safe Deref.
-        self.ctx.event_loop()
-    }
-
     /// # Safety
     /// `task` must be a fresh heap-allocated `ConcurrentTask` not yet enqueued
     /// elsewhere; the queue takes ownership of it.
-    pub fn enqueue_task_concurrent(
+    pub(crate) fn enqueue_task_concurrent(
         &self,
         task: NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
     ) {
@@ -691,14 +687,14 @@ impl StatWatcher {
     ///
     /// This field is sometimes set from aonther thread, so we should copy by
     /// value instead of referencing by pointer.
-    pub fn get_last_stat(&self) -> PosixStat {
+    pub(crate) fn get_last_stat(&self) -> PosixStat {
         let value = self.last_stat.lock();
         *value
         // unlock on Drop of guard
     }
 
     /// Set the last stat.
-    pub fn set_last_stat(&self, stat: &PosixStat) {
+    pub(crate) fn set_last_stat(&self, stat: &PosixStat) {
         let mut value = self.last_stat.lock();
         *value = *stat;
         // unlock on Drop of guard
@@ -748,7 +744,11 @@ impl StatWatcher {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_ref(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_ref(
+        this: &Self,
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         if !this.closed.load(Ordering::Relaxed) && !this.persistent.get() {
             this.persistent.set(true);
             let el_ctx = this.ctx_el_ctx();
@@ -758,7 +758,7 @@ impl StatWatcher {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_unref(
+    pub(crate) fn do_unref(
         this: &Self,
         _global: &JSGlobalObject,
         _frame: &CallFrame,
@@ -772,7 +772,7 @@ impl StatWatcher {
     }
 
     /// Stops file watching but does not free the instance.
-    pub fn close(&self) {
+    pub(crate) fn close(&self) {
         if self.persistent.get() {
             self.persistent.set(false);
         }
@@ -783,7 +783,7 @@ impl StatWatcher {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_close(
+    pub(crate) fn do_close(
         this: &Self,
         _global: &JSGlobalObject,
         _frame: &CallFrame,
@@ -793,7 +793,7 @@ impl StatWatcher {
     }
 
     /// If the scheduler is not using this, free instantly, otherwise mark for being freed.
-    pub fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(self: Box<Self>) {
         log!("Finalize\n");
         // Refcounted: hand ownership back to the raw refcount FIRST so a panic
         // in the work below leaks instead of UAF-ing the scheduler's alias.
@@ -888,7 +888,7 @@ impl StatWatcher {
     }
 
     /// Called from any thread
-    pub fn restat(&self) {
+    pub(crate) fn restat(&self) {
         log!("recalling stat");
         let stat = restat_impl(&self.path);
         let res = match stat {
@@ -967,7 +967,7 @@ impl StatWatcher {
         Ok(())
     }
 
-    pub fn init(args: &Arguments) -> Result<*mut StatWatcher, bun_core::Error> {
+    pub(crate) fn init(args: &Arguments) -> Result<*mut StatWatcher, bun_core::Error> {
         log!("init");
 
         let mut buf = bun_paths::path_buffer_pool::get();
@@ -1156,7 +1156,7 @@ impl Arguments {
     }
 }
 
-pub struct InitialStatTask {
+pub(crate) struct InitialStatTask {
     // Zig: `watcher: *StatWatcher`. StatWatcher is intrusively ref-counted
     // (ThreadSafeRefCount m_ctx payload). We hold the strong ref via
     // `ref_()`/`deref()` and keep the raw `*mut`, mirroring Zig's
@@ -1170,7 +1170,7 @@ bun_threading::owned_task!(InitialStatTask, task);
 impl InitialStatTask {
     /// # Safety
     /// `watcher` must point to a live `StatWatcher`.
-    pub fn create_and_schedule(watcher: *mut StatWatcher) {
+    pub(crate) fn create_and_schedule(watcher: *mut StatWatcher) {
         // SAFETY: per fn contract; we bump its intrusive refcount, held across
         // the task lifetime (balanced by `deref()` in run_owned's closed path or
         // by the main-thread `initial_stat_*_on_main_thread` callbacks).

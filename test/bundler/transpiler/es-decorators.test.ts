@@ -557,6 +557,200 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("named\n");
       expect(exitCode).toBe(0);
     });
+
+    test("export default anonymous decorated class expression", async () => {
+      using dir = tempDir("es-dec-export-default-anon-expr", {
+        "entry.js": `
+          import Cls from "./mod.js";
+          console.log(Cls.name);
+          console.log(globalThis.decoratorContextName);
+        `,
+        "mod.js": `
+          function dec(cls, ctx) { globalThis.decoratorContextName = ctx.name; }
+          export default (@dec class {});
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("default\ndefault\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("export default anonymous class with class decorator", async () => {
+      using dir = tempDir("es-dec-export-default-anon-dec", {
+        "entry.js": `
+          import Cls from "./mod.js";
+          console.log(Cls.name);
+          console.log(globalThis.decoratorContextName);
+        `,
+        "mod.js": `
+          function dec(cls, ctx) { globalThis.decoratorContextName = ctx.name; }
+          export default @dec class {}
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("default\ndefault\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("export default anonymous class expression with method decorator", async () => {
+      using dir = tempDir("es-dec-export-default-anon-method", {
+        "entry.js": `
+          import Cls from "./mod.js";
+          const c = new Cls();
+          console.log(c.foo());
+        `,
+        "mod.js": `
+          function dec(fn, ctx) { console.log("decorated", ctx.name); return fn; }
+          export default (class {
+            @dec foo() { return 42; }
+          });
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("decorated foo\n42\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("export default anonymous class with auto-accessor and no decorators", async () => {
+      using dir = tempDir("es-dec-export-default-anon-accessor", {
+        "entry.js": `
+          import Cls from "./mod.js";
+          const c = new Cls();
+          console.log(c.op);
+          c.op = 42;
+          console.log(c.op);
+          const desc = Object.getOwnPropertyDescriptor(Cls.prototype, "op");
+          console.log(typeof desc.get, typeof desc.set);
+        `,
+        "mod.js": `
+          export default class {
+            accessor op;
+          }
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("undefined\n42\nfunction function\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("export default anonymous TypeScript class with auto-accessor and no decorators", async () => {
+      using dir = tempDir("es-dec-export-default-anon-accessor-ts", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+        "entry.ts": `
+          import Cls from "./mod.ts";
+          const c = new Cls();
+          c.op = "hello";
+          console.log(c.op);
+        `,
+        "mod.ts": `
+          export default class {
+            accessor op: string | undefined;
+          }
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("hello\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Bun.build bundles export default anonymous class with auto-accessor", async () => {
+      using dir = tempDir("es-dec-build-anon-accessor", {
+        "build.js": `
+          const result = await Bun.build({
+            entrypoints: ["./mod.ts"],
+            target: "bun",
+            minify: true,
+            sourcemap: "external",
+            throw: false,
+          });
+          console.log(result.success);
+        `,
+        "mod.ts": `
+          export default class {
+            accessor op;
+          }
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("true\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("anonymous class expressions with reserved-word inferred names", () => {
+    test("decorated anonymous class as value of a reserved-word object key", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(cls, ctx) { console.log("ctx.name:", ctx.name); }
+        const obj = { default: (@dec class {}) };
+        console.log(obj.default.name);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("ctx.name: default\ndefault\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Bun.Transpiler output for decorated anonymous default export reparses", () => {
+      const transpiler = new Bun.Transpiler({ loader: "ts", target: "node", deadCodeElimination: true });
+      const output = transpiler.transformSync("export default(@c class{})");
+      // "default" is a keyword, so it must not be printed as the class binding name
+      expect(output).not.toContain("class default");
+      // the lowered output must still be valid syntax
+      expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(output)).not.toThrow();
+    });
   });
 
   describe("accessor with TypeScript annotations", () => {

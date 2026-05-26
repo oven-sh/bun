@@ -951,6 +951,14 @@ impl JSValue {
             None
         }
     }
+    /// `as_array_buffer`, but pins the backing `JSC::ArrayBuffer` first so it
+    /// cannot be detached. The pin does not prevent collection.
+    pub fn as_pinned_arraybuffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
+        if !JSC__JSValue__pinArrayBuffer(self) {
+            return None;
+        }
+        self.as_array_buffer(global)
+    }
     /// Generic downcast (`as(comptime T)` in Zig). Dispatches via [`JsClass::from_js`].
     #[inline]
     pub fn as_<T: JsClass>(self) -> Option<*mut T> {
@@ -2087,6 +2095,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         out: &mut ArrayBuffer,
     ) -> bool;
+    safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> bool;
     safe fn JSC__JSValue__asPromise(this: JSValue) -> *mut JSPromise;
     safe fn JSC__JSValue__asInternalPromise(this: JSValue) -> *mut JSInternalPromise;
     safe fn Bun__attachAsyncStackFromPromise(
@@ -2186,7 +2195,7 @@ pub type ForEachCallback =
 /// Callback signature for [`JSValue::for_each_property`] /
 /// [`JSValue::for_each_property_non_indexed`]
 /// (Zig: `*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.c) void`).
-pub type ForEachPropertyCallback = extern "C" fn(
+pub(crate) type ForEachPropertyCallback = extern "C" fn(
     global: &JSGlobalObject,
     ctx: *mut c_void,
     key: *mut bun_core::ZigString,

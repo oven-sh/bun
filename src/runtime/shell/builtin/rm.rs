@@ -105,12 +105,12 @@ enum RmParseFlag {
 }
 
 impl Rm {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)
     }
 
     /// Spec: rm.zig `next`.
-    pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         loop {
             // PORT NOTE: reshaped for borrowck — read tag, drop borrow, act.
             enum Tag {
@@ -391,7 +391,7 @@ impl Rm {
     }
 
     /// Spec: rm.zig `onIOWriterChunk`.
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,
@@ -1074,7 +1074,11 @@ impl ShellRmTask {
             );
         }
 
-        let flags = bun_sys::O::DIRECTORY | bun_sys::O::RDONLY;
+        // The entry was classified as a directory before this open (readdir
+        // type, or unlinkat returning EISDIR/EPERM). NOFOLLOW keeps a symlink
+        // swapped in between classification and open from redirecting the
+        // recursive delete into an unrelated tree (same as Dir::delete_tree).
+        let flags = bun_sys::O::DIRECTORY | bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW;
         let fd = match shell_openat(dirfd, path, flags, 0) {
             Ok(fd) => fd,
             Err(e) => match e.get_errno() {

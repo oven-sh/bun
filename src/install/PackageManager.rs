@@ -41,7 +41,7 @@ pub struct LazyBool<F> {
     getter: F,
 }
 impl<F> LazyBool<F> {
-    pub const fn new(getter: F) -> Self {
+    pub(crate) const fn new(getter: F) -> Self {
         Self {
             value: core::cell::Cell::new(None),
             getter,
@@ -49,7 +49,7 @@ impl<F> LazyBool<F> {
     }
 }
 impl LazyBool<fn(&PackageManager) -> bool> {
-    pub fn get(&self, parent: &PackageManager) -> bool {
+    pub(crate) fn get(&self, parent: &PackageManager) -> bool {
         if let Some(v) = self.value.get() {
             return v;
         }
@@ -81,7 +81,7 @@ pub mod Command {
     /// process-global `*ContextData`. The static itself lives in tier-6
     /// (`cli.rs`); install only needs a pointer for the bundler hook in
     /// `update_package_json_and_install`. Registered once at startup by bun_cli.
-    pub static GLOBAL_CTX: core::sync::atomic::AtomicPtr<ContextData> =
+    pub(crate) static GLOBAL_CTX: core::sync::atomic::AtomicPtr<ContextData> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
     /// Returns the raw process-global `*mut ContextData` (Zig: `Command.get()
@@ -149,10 +149,10 @@ pub mod options {
 // `exec()` body remains in bun_cli (it depends on tier-6 ScanCommand /
 // PackCommand etc. and is the *consumer* of install, not a dependency).
 // ──────────────────────────────────────────────────────────────────────────
-pub struct PackageManagerCommand;
+pub(crate) struct PackageManagerCommand;
 
 impl PackageManagerCommand {
-    pub fn print_help() {
+    pub(crate) fn print_help() {
         // the output of --help uses the following syntax highlighting
         // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
         // use [foo] for multiple arguments or flags for foo.
@@ -310,8 +310,8 @@ pub use self::populate_manifest_cache::populate_manifest_cache;
 // Type aliases
 // ──────────────────────────────────────────────────────────────────────────
 
-pub type TaskCallbackList = Vec<TaskCallbackContext>;
-pub type TaskDependencyQueue =
+pub(crate) type TaskCallbackList = Vec<TaskCallbackContext>;
+pub(crate) type TaskDependencyQueue =
     HashMap<Task::Id, TaskCallbackList /* , IdentityContext<Task::Id>, 80 */>;
 
 type PreallocatedTaskStore = HiveArrayFallback<Task::Task<'static>, 64>;
@@ -321,8 +321,9 @@ type ResolveTaskQueue = UnboundedQueue<Task::Task<'static> /* , .next */>;
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
 /// Zig: `FolderResolution.Map` (resolvers/folder_resolver.zig) =
 /// `std.HashMap(u64, FolderResolution, IdentityContext(u64), 80)`.
-pub type FolderResolutionMap = HashMap<u64, FolderResolution /* , IdentityContext<u64>, 80 */>;
-pub type NpmAliasMap =
+pub(crate) type FolderResolutionMap =
+    HashMap<u64, FolderResolution /* , IdentityContext<u64>, 80 */>;
+pub(crate) type NpmAliasMap =
     HashMap<PackageNameHash, crate::dependency::Version /* , IdentityContext<u64>, 80 */>;
 
 type NetworkQueue = LinearFifo<*mut NetworkTask, StaticBuffer<*mut NetworkTask, 32>>;
@@ -331,8 +332,8 @@ type PatchTaskFifo = LinearFifo<*mut PatchTask, StaticBuffer<*mut PatchTask, 32>
 pub type PatchTaskQueue = UnboundedQueue<PatchTask /* , .next */>;
 pub type AsyncNetworkTaskQueue = UnboundedQueue<NetworkTask /* , .next */>;
 
-pub type SuccessFn = fn(&mut PackageManager, DependencyID, PackageID);
-pub type FailFn = fn(&mut PackageManager, &Dependency, PackageID, Error);
+pub(crate) type SuccessFn = fn(&mut PackageManager, DependencyID, PackageID);
+pub(crate) type FailFn = fn(&mut PackageManager, &Dependency, PackageID, Error);
 
 // Default to a maximum of 64 simultaneous HTTP requests for bun install if no proxy is specified
 // if a proxy IS specified, default to 64. We have different values because we might change this in the future.
@@ -660,7 +661,7 @@ pub use bun_install_types::resolver_hooks::WakeHandler;
 /// both the main thread and ThreadPool workers thereafter — `AtomicBool` with
 /// `Relaxed` is sufficient (no ordering against other state; the write
 /// happens-before any worker spawn).
-pub static VERBOSE_INSTALL: core::sync::atomic::AtomicBool =
+pub(crate) static VERBOSE_INSTALL: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 impl PackageManager {
@@ -785,7 +786,7 @@ thread_local! {
 }
 
 #[inline]
-pub fn cached_package_folder_name_buf() -> *mut PathBuffer {
+pub(crate) fn cached_package_folder_name_buf() -> *mut PathBuffer {
     // bun.ThreadlocalBuffers semantics: lazily heap-allocate, return raw ptr into
     // thread-local storage. Callers reborrow per-field; valid for the thread's lifetime.
     CACHED_PACKAGE_FOLDER_NAME_BUFS.with(|c| {
@@ -809,10 +810,10 @@ mod holder {
     // TODO(port): in-place init — reconcile with OnceLock<Box<PackageManager>>.
     // PORTING.md §Global mutable state: ptr written once on main thread, read
     // from worker threads → AtomicPtr (Release/Acquire pairs the publish).
-    pub static RAW_PTR: core::sync::atomic::AtomicPtr<PackageManager> =
+    pub(super) static RAW_PTR: core::sync::atomic::AtomicPtr<PackageManager> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-    pub static INITIALIZED: core::sync::atomic::AtomicBool =
+    pub(super) static INITIALIZED: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
     // Process-lifetime env storage for `init()`. `dot_env::Loader<'a>` borrows `&'a mut Map`,
@@ -825,21 +826,21 @@ mod holder {
     // to anchor the allocation). `AtomicCell<*mut T>` — payload is `Copy` and
     // pointer-sized, so `.store()` is a safe Release write (no `RacyCell`
     // raw-ptr deref needed).
-    pub static ENV_MAP: bun_core::AtomicCell<*mut dot_env::Map> =
+    pub(super) static ENV_MAP: bun_core::AtomicCell<*mut dot_env::Map> =
         bun_core::AtomicCell::new(core::ptr::null_mut());
-    pub static ENV_LOADER: bun_core::AtomicCell<*mut dot_env::Loader<'static>> =
+    pub(super) static ENV_LOADER: bun_core::AtomicCell<*mut dot_env::Loader<'static>> =
         bun_core::AtomicCell::new(core::ptr::null_mut());
 
     /// Process-lifetime storage for `http::http_thread::InitOpts.abs_ca_file_name`
     /// (Zig: `allocator.dupeZ` into a leaked singleton field). `OnceLock` per
     /// PORTING.md §Forbidden — never `Box::leak` to mint `&'static`.
-    pub static ABS_CA_FILE_NAME: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
+    pub(super) static ABS_CA_FILE_NAME: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
 
     /// Process-lifetime storage for `http::http_thread::InitOpts.ca` C-strings
     /// (Zig: `manager.allocator.dupeZ` per entry, never freed). The HTTP thread
     /// reads these asynchronously after `init()` returns, so they must outlive
     /// the local that builds them.
-    pub static CA: std::sync::OnceLock<Vec<bun_core::ZBox>> = std::sync::OnceLock::new();
+    pub(super) static CA: std::sync::OnceLock<Vec<bun_core::ZBox>> = std::sync::OnceLock::new();
 }
 
 // PORTING.md §Global mutable state: single-thread (main) scratch buffers →
@@ -1406,17 +1407,22 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
 // allocate / get singleton
 // ──────────────────────────────────────────────────────────────────────────
 
-pub fn allocate_package_manager() {
+pub(crate) fn allocate_package_manager() {
     // Zig: `bun.handleOom(bun.default_allocator.create(PackageManager))` — uninitialized
     // memory, abort-on-OOM. The init() functions below write the full struct via
     // `core::ptr::write` (no Drop on the uninit bytes).
     let ptr =
         bun_core::heap::into_raw(Box::<PackageManager>::new_uninit()).cast::<PackageManager>();
     holder::RAW_PTR.store(ptr, core::sync::atomic::Ordering::Release);
+    #[cfg(bun_asan)]
     bun_core::add_exit_callback(deinit_caches_at_exit);
 }
 
+#[cfg(bun_asan)]
 extern "C" fn deinit_caches_at_exit() {
+    if !bun_crash_handler::cli_state::is_main_thread() {
+        return;
+    }
     if !holder::INITIALIZED.load(core::sync::atomic::Ordering::Acquire) {
         return;
     }
@@ -2325,7 +2331,7 @@ pub fn init(
     Ok((unsafe { &mut *manager_ptr }, original_cwd_clone))
 }
 
-pub fn init_with_runtime(
+pub(crate) fn init_with_runtime(
     log: &mut bun_ast::Log,
     // Spec PackageManager.zig:983 `bun_install: ?*Api.BunInstall` — used read-only
     // (PackageManagerOptions.zig:load lines 224-380 only ever reads `config.*`).
@@ -2342,7 +2348,7 @@ pub fn init_with_runtime(
     get()
 }
 
-pub fn init_with_runtime_once(
+pub(crate) fn init_with_runtime_once(
     log: &mut bun_ast::Log,
     bun_install: Option<&Api::BunInstall>,
     cli: CommandLineArguments,

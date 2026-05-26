@@ -82,19 +82,21 @@ impl ConnectingSocket {
 // attribute). Declaring the shims with reference params and `safe fn` moves the
 // validity proof into the type signature.
 unsafe extern "C" {
-    pub safe fn us_connecting_socket_close(s: &mut ConnectingSocket);
-    pub safe fn us_connecting_socket_group(s: &mut ConnectingSocket) -> *mut SocketGroup;
-    pub safe fn us_connecting_socket_kind(s: &mut ConnectingSocket) -> u8;
-    pub safe fn us_connecting_socket_ext(s: &mut ConnectingSocket) -> *mut c_void;
-    pub safe fn us_connecting_socket_get_error(s: &mut ConnectingSocket) -> i32;
-    pub safe fn us_connecting_socket_get_native_handle(s: &mut ConnectingSocket) -> *mut c_void;
-    pub safe fn us_connecting_socket_is_closed(s: &mut ConnectingSocket) -> i32;
-    pub safe fn us_connecting_socket_is_shut_down(s: &mut ConnectingSocket) -> i32;
-    pub safe fn us_connecting_socket_long_timeout(s: &mut ConnectingSocket, seconds: c_uint);
-    pub safe fn us_connecting_socket_shutdown(s: &mut ConnectingSocket);
-    pub safe fn us_connecting_socket_shutdown_read(s: &mut ConnectingSocket);
-    pub safe fn us_connecting_socket_timeout(s: &mut ConnectingSocket, seconds: c_uint);
-    pub safe fn us_connecting_socket_get_loop(s: &mut ConnectingSocket) -> *mut Loop;
+    pub(crate) safe fn us_connecting_socket_close(s: &mut ConnectingSocket);
+    pub(crate) safe fn us_connecting_socket_group(s: &mut ConnectingSocket) -> *mut SocketGroup;
+    pub(crate) safe fn us_connecting_socket_kind(s: &mut ConnectingSocket) -> u8;
+    pub(crate) safe fn us_connecting_socket_ext(s: &mut ConnectingSocket) -> *mut c_void;
+    pub(crate) safe fn us_connecting_socket_get_error(s: &mut ConnectingSocket) -> i32;
+    pub(crate) safe fn us_connecting_socket_get_native_handle(
+        s: &mut ConnectingSocket,
+    ) -> *mut c_void;
+    pub(crate) safe fn us_connecting_socket_is_closed(s: &mut ConnectingSocket) -> i32;
+    pub(crate) safe fn us_connecting_socket_is_shut_down(s: &mut ConnectingSocket) -> i32;
+    pub(crate) safe fn us_connecting_socket_long_timeout(s: &mut ConnectingSocket, seconds: c_uint);
+    pub(crate) safe fn us_connecting_socket_shutdown(s: &mut ConnectingSocket);
+    pub(crate) safe fn us_connecting_socket_shutdown_read(s: &mut ConnectingSocket);
+    pub(crate) safe fn us_connecting_socket_timeout(s: &mut ConnectingSocket, seconds: c_uint);
+    pub(crate) safe fn us_connecting_socket_get_loop(s: &mut ConnectingSocket) -> *mut Loop;
 }
 
 // ported from: src/uws_sys/ConnectingSocket.zig

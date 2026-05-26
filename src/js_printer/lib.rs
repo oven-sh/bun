@@ -47,7 +47,7 @@ use js_ast::Ref;
 /// classifiers, all of which live in `bun_ast::lexer_tables`. Aliased so the
 /// `lexer::is_identifier(...)` spelling matches the Zig path.
 mod lexer {
-    pub use bun_ast::lexer_tables::*;
+    pub(crate) use bun_ast::lexer_tables::*;
 }
 use bun_ast::ImportRecordFlags;
 
@@ -1524,6 +1524,7 @@ pub enum ExprFlag {
     ForbidIn,
     HasNonOptionalChainParent,
     ExprResultIsUnused,
+    IsFollowedByOf,
 }
 
 pub type ExprFlagSet = enumset::EnumSet<ExprFlag>;
@@ -1546,6 +1547,10 @@ impl ExprFlag {
     pub fn expr_result_is_unused() -> ExprFlagSet {
         ExprFlag::ExprResultIsUnused.into()
     }
+    #[inline]
+    pub fn is_followed_by_of() -> ExprFlagSet {
+        ExprFlag::IsFollowedByOf.into()
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1562,7 +1567,7 @@ enum ImportVariant {
 
 impl ImportVariant {
     #[inline]
-    pub fn has_items(self) -> Self {
+    pub(crate) fn has_items(self) -> Self {
         match self {
             Self::ImportDefault => Self::ImportItemsAndDefault,
             Self::ImportStar => Self::ImportItemsAndStar,
@@ -1573,7 +1578,7 @@ impl ImportVariant {
 
     // We always check star first so don't need to be exhaustive here
     #[inline]
-    pub fn has_star(self) -> Self {
+    pub(crate) fn has_star(self) -> Self {
         match self {
             Self::PathOnly => Self::ImportStar,
             _ => self,
@@ -1582,7 +1587,7 @@ impl ImportVariant {
 
     // We check default after star
     #[inline]
-    pub fn has_default(self) -> Self {
+    pub(crate) fn has_default(self) -> Self {
         match self {
             Self::PathOnly => Self::ImportDefault,
             Self::ImportStar => Self::ImportStarAndImportDefault,
@@ -1590,7 +1595,7 @@ impl ImportVariant {
         }
     }
 
-    pub fn determine(record: &ImportRecord, s_import: &js_ast::S::Import) -> ImportVariant {
+    pub(crate) fn determine(record: &ImportRecord, s_import: &js_ast::S::Import) -> ImportVariant {
         let mut variant = ImportVariant::PathOnly;
 
         if record
@@ -1757,6 +1762,9 @@ pub mod __gated_printer {
         pub temporary_bindings: Vec<B::Property>,
 
         pub binary_expression_stack: Vec<BinaryExpressionVisitor<'a>>,
+
+        pub stack_check: bun_core::StackCheck,
+        pub stack_overflowed: bool,
 
         pub was_lazy_export: bool,
         // PORT NOTE: Zig used `if (!may_have_module_info) void else ?*ModuleInfo` — in Rust we always
@@ -2228,7 +2236,10 @@ pub mod __gated_printer {
 
         #[inline]
         pub fn print_space_before_identifier(&mut self) {
-            if self.writer.written() > 0
+            // `writer.written()` starts at -1, so `>= 0` means "at least one byte has
+            // been written". Using `> 0` here would skip the space when exactly one
+            // byte precedes a keyword (e.g. `x instanceof y` minified to `xinstanceof y`).
+            if self.writer.written() >= 0
                 && (lexer::is_identifier_continue(self.writer.prev_char() as i32)
                     || self.writer.written() == self.prev_reg_exp_end)
             {
@@ -3256,7 +3267,19 @@ pub mod __gated_printer {
             }
         }
 
+        pub fn check_stack_overflow(&self) -> Result<(), bun_core::Error> {
+            if self.stack_overflowed {
+                return Err(bun_core::err!("StackOverflow"));
+            }
+            Ok(())
+        }
+
         pub fn print_expr(&mut self, expr: Expr, level: Level, in_flags: ExprFlagSet) {
+            if !self.stack_check.is_safe_to_recurse() {
+                self.stack_overflowed = true;
+                return;
+            }
+
             let mut flags = in_flags;
 
             match &expr.data {
@@ -3800,6 +3823,8 @@ pub mod __gated_printer {
                         flags.remove(ExprFlag::HasNonOptionalChainParent);
                     }
 
+                    // The index target is not directly followed by `of`.
+                    flags.remove(ExprFlag::IsFollowedByOf);
                     self.print_expr(e.target, Level::Postfix, flags);
 
                     let is_optional_chain_start =
@@ -4237,7 +4262,12 @@ pub mod __gated_printer {
                 }
                 ExprData::EIdentifier(e) => {
                     let name = self.name_for_symbol(e.ref_);
-                    let wrap = self.writer.written() == self.for_of_init_start && name == b"let";
+                    // A for-of loop initializer must not start with the token "let" and
+                    // must not be the exact token sequence "async of" (e.g. the escaped
+                    // identifier in "for (\u0061sync of []) ;"), so wrap in parentheses.
+                    let wrap = self.writer.written() == self.for_of_init_start
+                        && (name == b"let"
+                            || (name == b"async" && flags.contains(ExprFlag::IsFollowedByOf)));
 
                     if wrap {
                         self.print(b"(");
@@ -4646,6 +4676,15 @@ pub mod __gated_printer {
             self.prev_reg_exp_end = self.writer.written();
         }
 
+        /// Whether a number used as a non-computed property name must be printed as a
+        /// computed property instead, because `print_number` would render it as
+        /// something that is not a valid property name (e.g. "-1", "1/0", "1 / 0").
+        pub fn number_property_key_must_be_computed(&self, value: f64) -> bool {
+            value.is_sign_negative()
+                || (value == f64::INFINITY
+                    && (self.options.minify_syntax || !self.options.has_run_symbol_renamer))
+        }
+
         pub fn print_property(&mut self, item_in: &G::Property) {
             // PORT NOTE: Zig took G.Property by value (Copy in Zig). Rust's
             // G::Property isn't `Copy`, so take a borrow and shallow-copy the
@@ -4770,6 +4809,16 @@ pub mod __gated_printer {
             }
 
             let key = item.key.expect("infallible: prop has key");
+
+            // Automatically print numbers that would cause a syntax error as computed properties
+            if !IS_JSON
+                && !item.flags.contains(js_ast::flags::Property::IsComputed)
+                && matches!(&key.data, ExprData::ENumber(e) if self.number_property_key_must_be_computed(e.value))
+            {
+                // "{ -1: 0 }" must be printed as "{ [-1]: 0 }"
+                // "{ 1/0: 0 }" must be printed as "{ [1/0]: 0 }"
+                set_flag(&mut item.flags, js_ast::flags::Property::IsComputed, true);
+            }
 
             if !IS_JSON && item.flags.contains(js_ast::flags::Property::IsComputed) {
                 self.print(b"[");
@@ -4949,6 +4998,11 @@ pub mod __gated_printer {
         }
 
         pub fn print_binding(&mut self, binding: Binding, tlm: TopLevelAndIsExport) {
+            if !self.stack_check.is_safe_to_recurse() {
+                self.stack_overflowed = true;
+                return;
+            }
+
             match &binding.data {
                 BindingData::BMissing(_) => {}
                 BindingData::BIdentifier(b) => {
@@ -5038,7 +5092,15 @@ pub mod __gated_printer {
                             if property.flags.contains(js_ast::flags::Property::IsSpread) {
                                 self.print(b"...");
                             } else {
-                                if property.flags.contains(js_ast::flags::Property::IsComputed) {
+                                // Automatically print numbers that would cause a syntax error as computed properties
+                                let key_must_be_computed = matches!(
+                                    &property.key.data,
+                                    ExprData::ENumber(e) if self.number_property_key_must_be_computed(e.value)
+                                );
+
+                                if property.flags.contains(js_ast::flags::Property::IsComputed)
+                                    || key_must_be_computed
+                                {
                                     self.print(b"[");
                                     self.print_expr(property.key, Level::Comma, ExprFlag::none());
                                     self.print(b"]:");
@@ -5173,6 +5235,11 @@ pub mod __gated_printer {
         }
 
         pub fn print_stmt(&mut self, stmt: Stmt, tlmtlo: TopLevel) -> Result<(), bun_core::Error> {
+            if !self.stack_check.is_safe_to_recurse() {
+                self.stack_overflowed = true;
+                return Ok(());
+            }
+
             let prev_stmt_tag = self.prev_stmt_tag;
             // Zig: `defer { p.prev_stmt_tag = std.meta.activeTag(stmt.data); }`
             // PORT NOTE: reshaped for borrowck — scopeguard would hold `&mut self.prev_stmt_tag`
@@ -5504,9 +5571,10 @@ pub mod __gated_printer {
                                     let mut did_print = false;
 
                                     if let Some(namespace) = &symbol.namespace_alias {
-                                        let import_record = self
-                                            .import_record(namespace.import_record_index as usize);
                                         if namespace.was_originally_property_access {
+                                            let import_record = self.import_record(
+                                                namespace.import_record_index as usize,
+                                            );
                                             self.print_identifier(name);
                                             self.print(b": () => ");
                                             self.print_namespace_alias(import_record, namespace);
@@ -5572,9 +5640,10 @@ pub mod __gated_printer {
                                     .map(BackRef::<Symbol>::new);
                                 if let Some(symbol) = symbol {
                                     if let Some(namespace) = &symbol.namespace_alias {
-                                        let import_record = self
-                                            .import_record(namespace.import_record_index as usize);
                                         if namespace.was_originally_property_access {
+                                            let import_record = self.import_record(
+                                                namespace.import_record_index as usize,
+                                            );
                                             self.print(b"var ");
                                             self.print_symbol(
                                                 item.name.ref_.expect("infallible: ref bound"),
@@ -5783,7 +5852,7 @@ pub mod __gated_printer {
                     self.print(b"for");
                     self.print_space();
                     self.print(b"(");
-                    self.print_for_loop_init(s.init);
+                    self.print_for_loop_init(s.init, ExprFlag::none());
                     self.print_space();
                     self.print_space_before_identifier();
                     self.print(b"in");
@@ -5803,7 +5872,7 @@ pub mod __gated_printer {
                     self.print_space();
                     self.print(b"(");
                     self.for_of_init_start = self.writer.written();
-                    self.print_for_loop_init(s.init);
+                    self.print_for_loop_init(s.init, ExprFlag::is_followed_by_of());
                     self.print_space();
                     self.print_space_before_identifier();
                     self.print(b"of");
@@ -5889,7 +5958,7 @@ pub mod __gated_printer {
                     self.print(b"(");
 
                     if let Some(init_) = &s.init {
-                        self.print_for_loop_init(*init_);
+                        self.print_for_loop_init(*init_, ExprFlag::none());
                     }
 
                     self.print(b";");
@@ -6576,13 +6645,13 @@ pub mod __gated_printer {
             self.print(b", enumerable: true, configurable: true})");
         }
 
-        pub fn print_for_loop_init(&mut self, init_st: Stmt) {
+        pub fn print_for_loop_init(&mut self, init_st: Stmt, extra_flags: ExprFlagSet) {
             match &init_st.data {
                 StmtData::SExpr(s) => {
                     self.print_expr(
                         s.value,
                         Level::Lowest,
-                        ExprFlag::ForbidIn | ExprFlag::ExprResultIsUnused,
+                        ExprFlag::ForbidIn | ExprFlag::ExprResultIsUnused | extra_flags,
                     );
                 }
                 StmtData::SLocal(s) => {
@@ -6627,6 +6696,13 @@ pub mod __gated_printer {
         }
 
         pub fn print_if(&mut self, s: &S::If, loc: bun_ast::Loc, tlmtlo: TopLevel) {
+            // `else if` chains recurse here directly without passing through
+            // `print_stmt`, so they need their own guard.
+            if !self.stack_check.is_safe_to_recurse() {
+                self.stack_overflowed = true;
+                return;
+            }
+
             self.print_space_before_identifier();
             self.add_source_mapping(loc);
             self.print(b"if");
@@ -7079,6 +7155,8 @@ pub mod __gated_printer {
                 symbol_counter: 0,
                 temporary_bindings: Vec::new(),
                 binary_expression_stack: Vec::new(),
+                stack_check: bun_core::StackCheck::init(),
+                stack_overflowed: false,
                 was_lazy_export: false,
                 module_info: None,
             };
@@ -8147,6 +8225,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
             printer.print_semicolon_if_needed();
         }
     }
+    printer.check_stack_overflow()?;
 
     let have_module_info = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO
         && printer.module_info.is_some();
@@ -8244,6 +8323,7 @@ pub fn print_json<W: WriterTrait>(
     printer.binary_expression_stack = Vec::new();
 
     printer.print_expr(expr, js_ast::op::Level::Lowest, ExprFlagSet::empty());
+    printer.check_stack_overflow()?;
     printer.writer.get_error()?;
     printer.writer.done()?;
 
@@ -8392,6 +8472,10 @@ pub fn print_with_writer_and_platform<
         }
     }
 
+    if let Err(err) = printer.check_stack_overflow() {
+        return PrintResult::Err(err);
+    }
+
     if let Err(err) = printer.writer.done() {
         // In bundle_v2, this is backed by an arena, but incremental uses
         // `dev.allocator` for this buffer, so it must be freed.
@@ -8472,6 +8556,7 @@ pub fn print_common_js<
             printer.print_semicolon_if_needed();
         }
     }
+    printer.check_stack_overflow()?;
 
     // Add a couple extra newlines at the end
     printer.writer.print_slice(b"\n\n");

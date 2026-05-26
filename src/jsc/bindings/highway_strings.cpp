@@ -599,6 +599,635 @@ remainder_check:
     return nullptr; // Not found
 }
 
+// Count of "visible" Latin-1 bytes for Bun.stringWidth (stringWidth.cpp):
+// everything except C0 controls (0x00-0x1F), DEL + C1 controls (0x7F-0x9F)
+// and soft hyphen (0xAD) occupies one terminal column.
+size_t VisibleLatin1WidthImpl(const uint8_t* HWY_RESTRICT input, size_t len)
+{
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_0x20 = hn::Set(d, uint8_t { 0x20 });
+    const auto vec_0x5E = hn::Set(d, uint8_t { 0x5E });
+    const auto vec_0x7F = hn::Set(d, uint8_t { 0x7F });
+    const auto vec_soft_hyphen = hn::Set(d, uint8_t { 0xAD });
+
+    size_t count = 0;
+    size_t i = 0;
+    const size_t simd_len = len - (len % N);
+    for (; i < simd_len; i += N) {
+        const auto chunk = hn::LoadU(d, input + i);
+
+        // ASCII fast path: a single range compare per chunk. If every byte is
+        // plain printable ASCII ([0x20, 0x7E]), the whole chunk is visible.
+        const auto not_plain_ascii = hn::Gt(hn::Sub(chunk, vec_0x20), vec_0x5E);
+        if (hn::AllFalse(d, not_plain_ascii)) {
+            count += N;
+            continue;
+        }
+
+        // Mixed chunk: visible = (c >= 0x20) && !(0x7F <= c <= 0x9F) && (c != 0xAD)
+        const auto ge_0x20 = hn::Ge(chunk, vec_0x20);
+        const auto in_c1_range = hn::Le(hn::Sub(chunk, vec_0x7F), vec_0x20); // 0x7F..0x9F
+        const auto is_soft_hyphen = hn::Eq(chunk, vec_soft_hyphen);
+        const auto visible = hn::AndNot(hn::Or(in_c1_range, is_soft_hyphen), ge_0x20);
+        count += hn::CountTrue(d, visible);
+    }
+
+    for (; i < len; ++i) {
+        const uint8_t c = input[i];
+        count += (c >= 0x20 && !(c >= 0x7F && c <= 0x9F) && c != 0xAD) ? 1 : 0;
+    }
+    return count;
+}
+
+// --- Visible Latin-1 width with ANSI escape sequences excluded -------------
+//
+// Used by Bun.stringWidth's default mode (stringWidth.cpp). Escape sequences
+// contribute nothing to the width:
+//   CSI  ESC [ <params> <final in [0x40,0x7E]>
+//   OSC  ESC ] <payload> (BEL | 0x9C | ESC \)
+//   bare ESC followed by anything else: only the ESC itself is dropped.
+//
+// The whole input is processed in a single pass: every vector chunk is
+// classified once into bitmasks (printable, ESC, CSI final byte, OSC
+// terminator) and escape regions are carved out of the printable mask with a
+// few scalar bit operations per escape. This keeps dense SGR input (an escape
+// every few bytes) from paying a separate scan per sequence, while chunks with
+// no escapes reduce to one popcount. Sequences may straddle chunk boundaries;
+// the state enum below carries "inside CSI/OSC" across chunks.
+
+enum class AnsiExcludeState : uint8_t {
+    None,
+    InCSI, // saw ESC [ — looking for the final byte in [0x40, 0x7E]
+    InOSC, // saw ESC ] — looking for BEL, 0x9C or ESC-backslash (ST)
+};
+
+// Zero-width Latin-1 bytes: C0 controls, DEL + C1 controls, soft hyphen.
+static HWY_INLINE bool IsVisibleLatin1Byte(uint8_t c)
+{
+    return c >= 0x20 && !(c >= 0x7F && c <= 0x9F) && c != 0xAD;
+}
+
+// Scalar per-byte version of the escape-aware width count. Handles short
+// inputs and chunk tails; continues from (and updates) the carried `state`.
+// Must match the vector path below byte for byte.
+static size_t VisibleLatin1WidthExcludeANSIScalar(const uint8_t* HWY_RESTRICT input, size_t len, size_t i, AnsiExcludeState& state)
+{
+    size_t count = 0;
+    while (i < len) {
+        const uint8_t c = input[i];
+        switch (state) {
+        case AnsiExcludeState::InCSI:
+            if (c >= 0x40 && c <= 0x7E)
+                state = AnsiExcludeState::None;
+            i += 1;
+            break;
+        case AnsiExcludeState::InOSC:
+            if (c == 0x07 || c == 0x9C) {
+                state = AnsiExcludeState::None;
+                i += 1;
+                break;
+            }
+            if (c == 0x1B && i + 1 < len && input[i + 1] == '\\') {
+                state = AnsiExcludeState::None;
+                i += 2;
+                break;
+            }
+            i += 1;
+            break;
+        case AnsiExcludeState::None:
+            if (c == 0x1B) {
+                if (i + 1 >= len) {
+                    // Trailing ESC: dropped.
+                    i += 1;
+                    break;
+                }
+                const uint8_t next = input[i + 1];
+                if (next == '[') {
+                    state = AnsiExcludeState::InCSI;
+                    i += 2;
+                    break;
+                }
+                if (next == ']') {
+                    state = AnsiExcludeState::InOSC;
+                    i += 2;
+                    break;
+                }
+                // ESC followed by anything else: only the ESC is dropped.
+                i += 1;
+                break;
+            }
+            count += IsVisibleLatin1Byte(c) ? 1 : 0;
+            i += 1;
+            break;
+        }
+    }
+    return count;
+}
+
+// Bits [0, k) set; tolerates k == 64.
+static HWY_INLINE uint64_t MaskBitsBelow(size_t k)
+{
+    return k >= 64 ? ~uint64_t { 0 } : ((uint64_t { 1 } << k) - 1);
+}
+
+size_t VisibleLatin1WidthExcludeANSIImpl(const uint8_t* HWY_RESTRICT input, size_t len)
+{
+    // Cap at 64 lanes so each chunk's classification fits in a uint64_t bitmask.
+    const hn::CappedTag<uint8_t, 64> d;
+    const size_t N = hn::Lanes(d);
+
+    AnsiExcludeState state = AnsiExcludeState::None;
+    size_t count = 0;
+    size_t i = 0;
+
+    // Tiny inputs: the scalar state machine beats any vector setup.
+    if (len < 16)
+        return VisibleLatin1WidthExcludeANSIScalar(input, len, 0, state);
+
+    const auto vec_esc = hn::Set(d, uint8_t { 0x1B });
+    const auto vec_0x20 = hn::Set(d, uint8_t { 0x20 });
+    const auto vec_0x7F = hn::Set(d, uint8_t { 0x7F });
+    const auto vec_soft_hyphen = hn::Set(d, uint8_t { 0xAD });
+
+    // visible = (c >= 0x20) && !(0x7F <= c <= 0x9F) && (c != 0xAD)
+    const auto classifyPrintable = [&](auto chunk) HWY_ATTR {
+        const auto ge_0x20 = hn::Ge(chunk, vec_0x20);
+        const auto in_c1_range = hn::Le(hn::Sub(chunk, vec_0x7F), vec_0x20); // 0x7F..0x9F
+        const auto is_soft_hyphen = hn::Eq(chunk, vec_soft_hyphen);
+        return hn::AndNot(hn::Or(in_c1_range, is_soft_hyphen), ge_0x20);
+    };
+
+    if (len >= N) {
+        const auto vec_0x40 = hn::Set(d, uint8_t { 0x40 });
+        const auto vec_0x3E = hn::Set(d, uint8_t { 0x3E }); // 0x7E - 0x40
+        const auto vec_bel = hn::Set(d, uint8_t { 0x07 });
+        const auto vec_c1_st = hn::Set(d, uint8_t { 0x9C });
+
+        const uint64_t laneMask = MaskBitsBelow(N);
+
+        // Extracts a mask as bits (bit k = lane k).
+        alignas(8) uint8_t maskBytes[8];
+        const auto maskToBits = [&](auto mask) HWY_ATTR -> uint64_t {
+            std::memset(maskBytes, 0, sizeof(maskBytes));
+            hn::StoreMaskBits(d, mask, maskBytes);
+            uint64_t bits;
+            std::memcpy(&bits, maskBytes, sizeof(bits));
+            return bits;
+        };
+
+        while (i + N <= len) {
+            const auto chunk = hn::LoadU(d, input + i);
+
+            const auto esc_m = hn::Eq(chunk, vec_esc);
+            const auto printable_m = classifyPrintable(chunk);
+
+            // Fast path: nothing escape-related in this chunk.
+            if (state == AnsiExcludeState::None && hn::AllFalse(d, esc_m)) {
+                count += hn::CountTrue(d, printable_m);
+                i += N;
+                continue;
+            }
+
+            const auto final_m = hn::Le(hn::Sub(chunk, vec_0x40), vec_0x3E); // 0x40..0x7E
+            const auto term_m = hn::Or(hn::Eq(chunk, vec_bel), hn::Eq(chunk, vec_c1_st));
+
+            const uint64_t esc = maskToBits(esc_m);
+            const uint64_t prn = maskToBits(printable_m);
+            const uint64_t fin = maskToBits(final_m);
+            const uint64_t term = maskToBits(term_m);
+
+            uint64_t zero = 0; // bits covered by escape sequences
+            size_t consumed = N; // may exceed N when a sequence straddles the chunk end
+            size_t pos = 0; // offset where escape processing resumes after carried state
+
+            // Finish a sequence carried over from the previous chunk.
+            if (state == AnsiExcludeState::InCSI) {
+                if (fin == 0) {
+                    i += N; // whole chunk is CSI parameters
+                    continue;
+                }
+                const size_t e = static_cast<size_t>(hwy::Num0BitsBelowLS1Bit_Nonzero64(fin));
+                zero |= MaskBitsBelow(e + 1);
+                pos = e + 1;
+                state = AnsiExcludeState::None;
+            } else if (state == AnsiExcludeState::InOSC) {
+                uint64_t cand = term | esc;
+                bool ended = false;
+                while (cand != 0) {
+                    const size_t t = static_cast<size_t>(hwy::Num0BitsBelowLS1Bit_Nonzero64(cand));
+                    if ((term >> t) & 1) {
+                        zero |= MaskBitsBelow(t + 1);
+                        pos = t + 1;
+                        ended = true;
+                        break;
+                    }
+                    // ESC inside the OSC payload: terminates only as ESC \.
+                    if (i + t + 1 < len && input[i + t + 1] == '\\') {
+                        if (t + 2 <= N) {
+                            zero |= MaskBitsBelow(t + 2);
+                            pos = t + 2;
+                        } else {
+                            zero |= laneMask;
+                            consumed = t + 2;
+                            pos = N;
+                        }
+                        ended = true;
+                        break;
+                    }
+                    cand &= cand - 1;
+                }
+                if (!ended) {
+                    i += N; // whole chunk is OSC payload
+                    continue;
+                }
+                state = AnsiExcludeState::None;
+            }
+
+            // Process escape sequences that start in this chunk.
+            uint64_t escRemaining = esc & ~MaskBitsBelow(pos);
+            while (escRemaining != 0) {
+                const size_t p = static_cast<size_t>(hwy::Num0BitsBelowLS1Bit_Nonzero64(escRemaining));
+                if (i + p + 1 >= len) {
+                    // Trailing ESC at the very end of the input: dropped.
+                    zero |= uint64_t { 1 } << p;
+                    escRemaining &= escRemaining - 1;
+                    continue;
+                }
+                const uint8_t next = input[i + p + 1];
+                if (next == '[') {
+                    const size_t searchFrom = p + 2;
+                    if (searchFrom >= N) {
+                        // Parameters start in the next chunk; consume the '[' too.
+                        zero |= laneMask & ~MaskBitsBelow(p);
+                        consumed = searchFrom;
+                        state = AnsiExcludeState::InCSI;
+                        break;
+                    }
+                    const uint64_t f = fin & ~MaskBitsBelow(searchFrom);
+                    if (f == 0) {
+                        zero |= laneMask & ~MaskBitsBelow(p);
+                        state = AnsiExcludeState::InCSI;
+                        break;
+                    }
+                    const size_t e = static_cast<size_t>(hwy::Num0BitsBelowLS1Bit_Nonzero64(f));
+                    zero |= MaskBitsBelow(e + 1) & ~MaskBitsBelow(p);
+                    escRemaining &= ~MaskBitsBelow(e + 1);
+                    continue;
+                }
+                if (next == ']') {
+                    const size_t searchFrom = p + 2;
+                    if (searchFrom >= N) {
+                        // Payload starts in the next chunk; consume the ']' too.
+                        zero |= laneMask & ~MaskBitsBelow(p);
+                        consumed = searchFrom;
+                        state = AnsiExcludeState::InOSC;
+                        break;
+                    }
+                    uint64_t cand = (term | esc) & ~MaskBitsBelow(searchFrom);
+                    bool ended = false;
+                    while (cand != 0) {
+                        const size_t t = static_cast<size_t>(hwy::Num0BitsBelowLS1Bit_Nonzero64(cand));
+                        if ((term >> t) & 1) {
+                            zero |= MaskBitsBelow(t + 1) & ~MaskBitsBelow(p);
+                            escRemaining &= ~MaskBitsBelow(t + 1);
+                            ended = true;
+                            break;
+                        }
+                        if (i + t + 1 < len && input[i + t + 1] == '\\') {
+                            if (t + 2 <= N) {
+                                zero |= MaskBitsBelow(t + 2) & ~MaskBitsBelow(p);
+                                escRemaining &= ~MaskBitsBelow(t + 2);
+                            } else {
+                                zero |= laneMask & ~MaskBitsBelow(p);
+                                consumed = t + 2;
+                                escRemaining = 0;
+                            }
+                            ended = true;
+                            break;
+                        }
+                        cand &= cand - 1;
+                    }
+                    if (!ended) {
+                        zero |= laneMask & ~MaskBitsBelow(p);
+                        state = AnsiExcludeState::InOSC;
+                        break;
+                    }
+                    continue;
+                }
+                // Bare ESC: only the ESC itself is zero-width.
+                zero |= uint64_t { 1 } << p;
+                escRemaining &= escRemaining - 1;
+            }
+
+            count += static_cast<size_t>(hwy::PopCount(prn & ~zero & laneMask));
+            i += consumed;
+        }
+    }
+
+    // Short inputs and the final partial chunk: one masked load. With no ESC
+    // byte (and no carried escape state) the printable count is the answer —
+    // lanes past the end load as zero, which is not printable. Otherwise fall
+    // back to the scalar state machine for the remaining < N bytes.
+    if (i < len) {
+        const auto chunk = hn::LoadN(d, input + i, len - i);
+        if (state == AnsiExcludeState::None && hn::AllFalse(d, hn::Eq(chunk, vec_esc))) {
+            count += hn::CountTrue(d, classifyPrintable(chunk));
+            return count;
+        }
+        count += VisibleLatin1WidthExcludeANSIScalar(input, len, i, state);
+    }
+    return count;
+}
+
+// --- Bulk UTF-16 visible width -------------------------------------------
+//
+// Used by Bun.stringWidth's UTF-16 path (stringWidth.cpp). Consumes leading
+// code units that are always their own grapheme cluster with a fixed width:
+// printable ASCII, most Latin-1/Latin-Extended/IPA, Greek and Cyrillic
+// letters (width 1, East-Asian-Ambiguous letters count as narrow), and the
+// main always-wide blocks (kana letters and marks, CJK Unified Ideographs and
+// Extension A, Hangul syllables, fullwidth forms; width 2). Anything else —
+// surrogates, combining marks, ZWJ/variation selectors, jamo, ESC, the long
+// tail — ends the run so the scalar grapheme-cluster loop can take over.
+//
+// Returns the number of units consumed and adds their total width to *width.
+// Only valid when ambiguous-width characters count as narrow (the default);
+// the caller skips this path for `ambiguousIsNarrow: false`.
+// stringWidth.test.ts verifies every codepoint in these ranges against the
+// scalar classifier.
+
+static HWY_INLINE bool ClassifyBulkUTF16Unit(uint16_t u, uint8_t& unitWidth)
+{
+    // Narrow: always width 1, always a standalone cluster.
+    if ((u >= 0x20 && u <= 0x7E)
+        || (u >= 0xA0 && u <= 0x2FF && u != 0xA9 && u != 0xAD && u != 0xAE)
+        || (u >= 0x370 && u <= 0x482)
+        || (u >= 0x48A && u <= 0x52F)) {
+        unitWidth = 1;
+        return true;
+    }
+    // Wide: always width 2; Hangul syllables (LV/LVT) always break between
+    // each other and everything else in this allowlist.
+    if ((u >= 0x3041 && u <= 0x3096)
+        || (u >= 0x309B && u <= 0x30FF)
+        || (u >= 0x3400 && u <= 0x4DBF)
+        || (u >= 0x4E00 && u <= 0x9FFF)
+        || (u >= 0xAC00 && u <= 0xD7A3)
+        || (u >= 0xFF01 && u <= 0xFF60)) {
+        unitWidth = 2;
+        return true;
+    }
+    return false;
+}
+
+size_t VisibleUTF16WidthImpl(const uint16_t* HWY_RESTRICT input, size_t len, size_t* HWY_RESTRICT width)
+{
+    const hn::ScalableTag<uint16_t> d;
+    const size_t N = hn::Lanes(d);
+
+    size_t w = 0;
+    size_t i = 0;
+
+    if (len >= N) {
+        // `v - lo <= hi - lo` (unsigned)  <=>  lo <= v <= hi.
+        const auto vec_ascii_lo = hn::Set(d, uint16_t { 0x20 });
+        const auto vec_ascii_span = hn::Set(d, uint16_t { 0x7E - 0x20 });
+        const auto vec_latin_lo = hn::Set(d, uint16_t { 0xA0 });
+        const auto vec_latin_span = hn::Set(d, uint16_t { 0x2FF - 0xA0 });
+        const auto vec_0xA9 = hn::Set(d, uint16_t { 0xA9 });
+        const auto vec_0xAD = hn::Set(d, uint16_t { 0xAD });
+        const auto vec_0xAE = hn::Set(d, uint16_t { 0xAE });
+        const auto vec_greek_lo = hn::Set(d, uint16_t { 0x370 });
+        const auto vec_greek_span = hn::Set(d, uint16_t { 0x482 - 0x370 });
+        const auto vec_cyrillic_lo = hn::Set(d, uint16_t { 0x48A });
+        const auto vec_cyrillic_span = hn::Set(d, uint16_t { 0x52F - 0x48A });
+        const auto vec_hiragana_lo = hn::Set(d, uint16_t { 0x3041 });
+        const auto vec_hiragana_span = hn::Set(d, uint16_t { 0x3096 - 0x3041 });
+        const auto vec_katakana_lo = hn::Set(d, uint16_t { 0x309B });
+        const auto vec_katakana_span = hn::Set(d, uint16_t { 0x30FF - 0x309B });
+        const auto vec_cjk_ext_lo = hn::Set(d, uint16_t { 0x3400 });
+        const auto vec_cjk_ext_span = hn::Set(d, uint16_t { 0x4DBF - 0x3400 });
+        const auto vec_cjk_lo = hn::Set(d, uint16_t { 0x4E00 });
+        const auto vec_cjk_span = hn::Set(d, uint16_t { 0x9FFF - 0x4E00 });
+        const auto vec_hangul_lo = hn::Set(d, uint16_t { 0xAC00 });
+        const auto vec_hangul_span = hn::Set(d, uint16_t { 0xD7A3 - 0xAC00 });
+        const auto vec_fullwidth_lo = hn::Set(d, uint16_t { 0xFF01 });
+        const auto vec_fullwidth_span = hn::Set(d, uint16_t { 0xFF60 - 0xFF01 });
+
+        while (i + N <= len) {
+            const auto v = hn::LoadU(d, input + i);
+
+            const auto is_ascii = hn::Le(hn::Sub(v, vec_ascii_lo), vec_ascii_span);
+            const auto latin1_extended = hn::AndNot(
+                hn::Or(hn::Eq(v, vec_0xA9), hn::Or(hn::Eq(v, vec_0xAD), hn::Eq(v, vec_0xAE))),
+                hn::Le(hn::Sub(v, vec_latin_lo), vec_latin_span));
+            const auto greek = hn::Le(hn::Sub(v, vec_greek_lo), vec_greek_span);
+            const auto cyrillic = hn::Le(hn::Sub(v, vec_cyrillic_lo), vec_cyrillic_span);
+            const auto narrow = hn::Or(hn::Or(is_ascii, latin1_extended), hn::Or(greek, cyrillic));
+
+            const auto hiragana = hn::Le(hn::Sub(v, vec_hiragana_lo), vec_hiragana_span);
+            const auto katakana = hn::Le(hn::Sub(v, vec_katakana_lo), vec_katakana_span);
+            const auto cjk_ext = hn::Le(hn::Sub(v, vec_cjk_ext_lo), vec_cjk_ext_span);
+            const auto cjk = hn::Le(hn::Sub(v, vec_cjk_lo), vec_cjk_span);
+            const auto hangul = hn::Le(hn::Sub(v, vec_hangul_lo), vec_hangul_span);
+            const auto fullwidth = hn::Le(hn::Sub(v, vec_fullwidth_lo), vec_fullwidth_span);
+            const auto wide = hn::Or(
+                hn::Or(hn::Or(hiragana, katakana), hn::Or(cjk_ext, cjk)),
+                hn::Or(hangul, fullwidth));
+
+            const auto ok = hn::Or(narrow, wide);
+            if (!hn::AllTrue(d, ok))
+                break; // the scalar loop below consumes the qualifying prefix
+
+            // narrow lanes contribute 1, wide lanes contribute 2.
+            w += N + hn::CountTrue(d, wide);
+            i += N;
+        }
+    }
+
+    // Scalar: short inputs, the final partial vector, and the qualifying
+    // prefix of a vector that contained a non-allowlisted unit.
+    for (; i < len; i++) {
+        uint8_t unitWidth;
+        if (!ClassifyBulkUTF16Unit(input[i], unitWidth))
+            break;
+        w += unitWidth;
+    }
+
+    *width += w;
+    return i;
+}
+
+// Count of UTF-16 code units in [0x20, 0x7E] (printable ASCII). Bulk-ASCII
+// helper for Bun.stringWidth's UTF-16 path (stringWidth.cpp).
+size_t CountPrintableAscii16Impl(const uint16_t* HWY_RESTRICT input, size_t len)
+{
+    const hn::ScalableTag<uint16_t> d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_0x20 = hn::Set(d, uint16_t { 0x20 });
+    const auto vec_0x5E = hn::Set(d, uint16_t { 0x5E });
+
+    size_t count = 0;
+    size_t i = 0;
+    const size_t simd_len = len - (len % N);
+    for (; i < simd_len; i += N) {
+        const auto chunk = hn::LoadU(d, input + i);
+        const auto printable = hn::Le(hn::Sub(chunk, vec_0x20), vec_0x5E);
+        count += hn::CountTrue(d, printable);
+    }
+
+    for (; i < len; ++i) {
+        const uint16_t c = input[i];
+        count += (c >= 0x20 && c < 0x7F) ? 1 : 0;
+    }
+    return count;
+}
+
+// Index of the first UTF-16 code unit greater than 0x7F, or len if none.
+size_t FirstNonAscii16Impl(const uint16_t* HWY_RESTRICT input, size_t len)
+{
+    const hn::ScalableTag<uint16_t> d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_0x7F = hn::Set(d, uint16_t { 0x7F });
+
+    size_t i = 0;
+    const size_t simd_len = len - (len % N);
+    for (; i < simd_len; i += N) {
+        const auto chunk = hn::LoadU(d, input + i);
+        const auto non_ascii = hn::Gt(chunk, vec_0x7F);
+        const intptr_t pos = hn::FindFirstTrue(d, non_ascii);
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    for (; i < len; ++i) {
+        if (input[i] > 0x7F) {
+            return i;
+        }
+    }
+    return len;
+}
+
+// Index of the first byte greater than 0x7F, or len if none.
+size_t FirstNonAscii8Impl(const uint8_t* HWY_RESTRICT input, size_t len)
+{
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_0x7F = hn::Set(d, uint8_t { 0x7F });
+
+    size_t i = 0;
+    const size_t simd_len = len - (len % N);
+    for (; i < simd_len; i += N) {
+        const auto chunk = hn::LoadU(d, input + i);
+        const auto non_ascii = hn::Gt(chunk, vec_0x7F);
+        const intptr_t pos = hn::FindFirstTrue(d, non_ascii);
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    for (; i < len; ++i) {
+        if (input[i] > 0x7F) {
+            return i;
+        }
+    }
+    return len;
+}
+
+size_t CopyAsciiPrefixImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
+{
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_0x7F = hn::Set(d, uint8_t { 0x7F });
+
+    size_t i = 0;
+    if (len >= N) {
+        const size_t simd_len = len - (len % N);
+        for (; i < simd_len; i += N) {
+            const auto chunk = hn::LoadU(d, src + i);
+            const auto non_ascii = hn::Gt(chunk, vec_0x7F);
+            const intptr_t pos = hn::FindFirstTrue(d, non_ascii);
+            if (pos >= 0) {
+                if (pos > 0) {
+                    std::memcpy(dst + i, src + i, static_cast<size_t>(pos));
+                }
+                return i + static_cast<size_t>(pos);
+            }
+            hn::StoreU(chunk, d, dst + i);
+        }
+
+        if (i < len) {
+            const size_t start = len - N;
+            const auto chunk = hn::LoadU(d, src + start);
+            const auto non_ascii = hn::Gt(chunk, vec_0x7F);
+            const intptr_t pos = hn::FindFirstTrue(d, non_ascii);
+            if (pos < 0) {
+                hn::StoreU(chunk, d, dst + start);
+                return len;
+            }
+            const size_t stop = start + static_cast<size_t>(pos);
+            if (stop > i) {
+                std::memcpy(dst + i, src + i, stop - i);
+            }
+            return stop;
+        }
+        return len;
+    }
+
+    for (; i < len; ++i) {
+        const uint8_t c = src[i];
+        if (c > 0x7F) {
+            return i;
+        }
+        dst[i] = c;
+    }
+    return len;
+}
+
+// Lowercase hex encode: writes 2 output bytes per input byte.
+// Per 16-byte block: split each byte into nibbles, map both nibble vectors
+// through the hex-digit table (TableLookupBytes), then interleave so the
+// high-nibble digit precedes the low-nibble digit of every byte.
+void EncodeHexLowerImpl(const uint8_t* HWY_RESTRICT input, size_t len, uint8_t* HWY_RESTRICT output)
+{
+    alignas(16) static constexpr uint8_t kHexDigits[16] = {
+        '0', '1', '2', '3', '4', '5', '6', '7',
+        '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'
+    };
+
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto table = hn::LoadDup128(d, kHexDigits);
+    const auto low_nibble_mask = hn::Set(d, uint8_t { 0x0F });
+
+    size_t i = 0;
+    if (len >= N) {
+        const size_t simd_len = len - (len % N);
+        for (; i < simd_len; i += N) {
+            const auto bytes = hn::LoadU(d, input + i);
+            const auto hi = hn::ShiftRight<4>(bytes);
+            const auto lo = hn::And(bytes, low_nibble_mask);
+            const auto hi_chars = hn::TableLookupBytes(table, hi);
+            const auto lo_chars = hn::TableLookupBytes(table, lo);
+            hn::StoreInterleaved2(hi_chars, lo_chars, d, output + i * 2);
+        }
+    }
+
+    for (; i < len; ++i) {
+        const uint8_t byte = input[i];
+        output[i * 2] = kHexDigits[byte >> 4];
+        output[i * 2 + 1] = kHexDigits[byte & 0x0F];
+    }
+}
+
 // Implementation for WebSocket mask application
 void FillWithSkipMaskImpl(const uint8_t* HWY_RESTRICT mask, size_t mask_len, uint8_t* HWY_RESTRICT output, const uint8_t* HWY_RESTRICT input, size_t length, bool skip_mask)
 {
@@ -656,8 +1285,13 @@ namespace bun {
 // Define the dispatch tables. The names here must exactly match
 // the *Impl function names defined within the HWY_NAMESPACE block above.
 HWY_EXPORT(ContainsNewlineOrNonASCIIOrQuoteImpl);
+HWY_EXPORT(CopyAsciiPrefixImpl);
 HWY_EXPORT(CopyU16ToU8Impl);
+HWY_EXPORT(CountPrintableAscii16Impl);
+HWY_EXPORT(EncodeHexLowerImpl);
 HWY_EXPORT(FillWithSkipMaskImpl);
+HWY_EXPORT(FirstNonAscii16Impl);
+HWY_EXPORT(FirstNonAscii8Impl);
 HWY_EXPORT(IndexOfAnyCharImpl);
 HWY_EXPORT(IndexOfCharImpl);
 HWY_EXPORT(IndexOfInterestingCharacterInStringLiteralImpl);
@@ -668,6 +1302,9 @@ HWY_EXPORT(IndexOfNewlineOrNonASCIIOrHashOrAtImpl);
 HWY_EXPORT(IndexOfSpaceOrNewlineOrNonASCIIImpl);
 HWY_EXPORT(MemMemImpl);
 HWY_EXPORT(ScanCharFrequencyImpl);
+HWY_EXPORT(VisibleLatin1WidthExcludeANSIImpl);
+HWY_EXPORT(VisibleLatin1WidthImpl);
+HWY_EXPORT(VisibleUTF16WidthImpl);
 // Define the C-callable wrappers that use HWY_DYNAMIC_DISPATCH.
 // These need to be defined *after* the HWY_EXPORT block and INSIDE namespace bun
 // so that HWY_DYNAMIC_DISPATCH(FuncImpl) correctly resolves to bun::N_*::FuncImpl.
@@ -776,6 +1413,46 @@ void highway_fill_with_skip_mask(
     bool skip_mask) // Whether to skip masking
 {
     HWY_DYNAMIC_DISPATCH(FillWithSkipMaskImpl)(mask, mask_len, output, input, length, skip_mask);
+}
+
+size_t highway_visible_latin1_width(const uint8_t* HWY_RESTRICT input, size_t len)
+{
+    return HWY_DYNAMIC_DISPATCH(VisibleLatin1WidthImpl)(input, len);
+}
+
+size_t highway_visible_latin1_width_exclude_ansi(const uint8_t* HWY_RESTRICT input, size_t len)
+{
+    return HWY_DYNAMIC_DISPATCH(VisibleLatin1WidthExcludeANSIImpl)(input, len);
+}
+
+size_t highway_visible_utf16_width(const uint16_t* HWY_RESTRICT input, size_t len, size_t* HWY_RESTRICT width)
+{
+    return HWY_DYNAMIC_DISPATCH(VisibleUTF16WidthImpl)(input, len, width);
+}
+
+size_t highway_count_printable_ascii16(const uint16_t* HWY_RESTRICT input, size_t len)
+{
+    return HWY_DYNAMIC_DISPATCH(CountPrintableAscii16Impl)(input, len);
+}
+
+size_t highway_first_non_ascii16(const uint16_t* HWY_RESTRICT input, size_t len)
+{
+    return HWY_DYNAMIC_DISPATCH(FirstNonAscii16Impl)(input, len);
+}
+
+size_t highway_first_non_ascii8(const uint8_t* HWY_RESTRICT input, size_t len)
+{
+    return HWY_DYNAMIC_DISPATCH(FirstNonAscii8Impl)(input, len);
+}
+
+size_t highway_copy_ascii_prefix(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
+{
+    return HWY_DYNAMIC_DISPATCH(CopyAsciiPrefixImpl)(src, len, dst);
+}
+
+void highway_encode_hex_lower(const uint8_t* HWY_RESTRICT input, size_t len, uint8_t* HWY_RESTRICT output)
+{
+    HWY_DYNAMIC_DISPATCH(EncodeHexLowerImpl)(input, len, output);
 }
 
 } // extern "C"

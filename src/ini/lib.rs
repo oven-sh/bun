@@ -4,7 +4,6 @@
 // schema (`BunInstall`/`NpmRegistry`) are gated behind `// TODO(port):`
 // markers pointing at the missing lower-tier symbol.
 // ──────────────────────────────────────────────────────────────────────────
-#![warn(unreachable_pub)]
 use core::fmt;
 
 use bun_alloc::AllocError;
@@ -77,7 +76,7 @@ pub enum IniOption<T> {
 }
 
 impl<T> IniOption<T> {
-    pub fn get(self) -> Option<T> {
+    pub(crate) fn get(self) -> Option<T> {
         match self {
             IniOption::Some(v) => Some(v),
             IniOption::None => None,

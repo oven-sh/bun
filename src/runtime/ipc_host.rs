@@ -28,7 +28,7 @@ unsafe extern "C" {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum FromEnum {
+pub(crate) enum FromEnum {
     SubprocessExited,
     Subprocess,
     Process,
@@ -71,7 +71,7 @@ fn do_send_err(
     Err(global_object.throw_value(ex))
 }
 
-pub fn do_send(
+pub(crate) fn do_send(
     ipc: Option<&mut SendQueue>,
     global_object: &JSGlobalObject,
     call_frame: &CallFrame,
@@ -221,7 +221,7 @@ pub fn emit_handle_ipc_message(
 // link-time `#[no_mangle]` symbol, so the defining crate does not matter to
 // the C++ caller.
 #[bun_jsc::host_fn(export = "Bun__Process__send")]
-pub fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
     // mutable); `get_ipc_instance` writes `self.ipc` on first call.
     let vm = global.bun_vm().as_mut();

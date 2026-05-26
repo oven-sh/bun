@@ -29,7 +29,7 @@ pub use super::backend_coregraphics as system_backend;
 pub use super::backend_wic as system_backend;
 
 /// `true` on platforms where `system_backend` is present.
-pub const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
+pub(crate) const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 
 /// Process-global selector exposed as `Bun.Image.backend`.
 ///
@@ -57,7 +57,7 @@ pub enum Backend {
     Bun = 1,
 }
 // PORT NOTE: `Backend.Map = bun.ComptimeEnumMap(Backend)` → phf map keyed by lowercase variant name.
-pub static BACKEND_MAP: phf::Map<&'static [u8], Backend> = phf::phf_map! {
+pub(crate) static BACKEND_MAP: phf::Map<&'static [u8], Backend> = phf::phf_map! {
     b"system" => Backend::System,
     b"bun" => Backend::Bun,
 };
@@ -74,7 +74,7 @@ impl bun_jsc::FromJsEnum for Backend {
 
 // PORT NOTE: Zig `pub var backend` is read from WorkPool threads + written from JS;
 // "torn read of a 1-byte enum is fine" → relaxed atomic is the safe-Rust spelling.
-pub static BACKEND: core::sync::atomic::AtomicU8 =
+pub(crate) static BACKEND: core::sync::atomic::AtomicU8 =
     core::sync::atomic::AtomicU8::new(if HAS_SYSTEM_BACKEND {
         Backend::System as u8
     } else {
@@ -114,7 +114,7 @@ pub enum Format {
 }
 
 impl Format {
-    pub fn sniff(bytes: &[u8]) -> Option<Format> {
+    pub(crate) fn sniff(bytes: &[u8]) -> Option<Format> {
         if bytes.len() >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF {
             return Some(Format::Jpeg);
         }
@@ -171,7 +171,7 @@ impl Format {
     /// Best-effort extension → format for `.write(path)`'s default. Only the
     /// final dotted segment is considered; case-insensitive. Returns `None`
     /// when there's no extension or it's not one we recognise.
-    pub fn from_extension(path: &[u8]) -> Option<Format> {
+    pub(crate) fn from_extension(path: &[u8]) -> Option<Format> {
         let dot = path.iter().rposition(|&b| b == b'.')?;
         let mut buf = [0u8; 5];
         let src = &path[dot + 1..];
@@ -183,7 +183,7 @@ impl Format {
         EXT_MAP.get(&buf[..n]).copied()
     }
 
-    pub fn mime(self) -> &'static bun_core::ZStr {
+    pub(crate) fn mime(self) -> &'static bun_core::ZStr {
         match self {
             Format::Jpeg => bun_core::zstr!("image/jpeg"),
             Format::Png => bun_core::zstr!("image/png"),
@@ -251,7 +251,7 @@ bun_core::oom_from_alloc!(Error);
 
 /// Sharp's default: 0x3FFF * 0x3FFF ≈ 268 MP. A single RGBA8 frame at this
 /// cap is ~1 GiB, which is already past where you'd want to be.
-pub const DEFAULT_MAX_PIXELS: u64 = 0x3FFF * 0x3FFF;
+pub(crate) const DEFAULT_MAX_PIXELS: u64 = 0x3FFF * 0x3FFF;
 
 /// Hint from the pipeline about the eventual output size. JPEG can do M/8
 /// IDCT scaling for free, so when we know the resize target up front we
@@ -327,7 +327,7 @@ fn decode_via_system(_bytes: &[u8], _max_pixels: u64) -> Result<Option<Decoded>,
 }
 
 #[inline]
-pub fn guard(w: u32, h: u32, max_pixels: u64) -> Result<(), Error> {
+pub(crate) fn guard(w: u32, h: u32, max_pixels: u64) -> Result<(), Error> {
     // u64 mul cannot overflow from two u32 factors.
     if (w as u64) * (h as u64) > max_pixels {
         return Err(Error::TooManyPixels);
@@ -335,7 +335,7 @@ pub fn guard(w: u32, h: u32, max_pixels: u64) -> Result<(), Error> {
     Ok(())
 }
 
-pub struct Probe {
+pub(crate) struct Probe {
     pub format: Format,
     pub width: u32,
     pub height: u32,
@@ -345,7 +345,7 @@ pub struct Probe {
 /// a 1920×1080 PNG just to read the IHDR is ~70× slower than Sharp; this reads
 /// the few bytes each format needs and stops. Still subject to `max_pixels` so
 /// metadata() and bytes() agree on what's "too big".
-pub fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
+pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
     let fmt = Format::sniff(bytes).ok_or(Error::UnknownFormat)?;
     let w: u32;
     let h: u32;
@@ -518,7 +518,8 @@ macro_rules! encoded_wrap_free {
 }
 
 impl Encoded {
-    pub fn from_owned(bytes: Vec<u8>) -> Encoded {
+    #[allow(dead_code)]
+    pub(crate) fn from_owned(bytes: Vec<u8>) -> Encoded {
         let mut bytes = core::mem::ManuallyDrop::new(bytes);
         // SAFETY: Vec data ptr is non-null; len is valid.
         let slice = unsafe {
@@ -536,7 +537,12 @@ impl Encoded {
     }
 }
 
-pub fn encode(rgba: &[u8], width: u32, height: u32, opts: EncodeOptions) -> Result<Encoded, Error> {
+pub(crate) fn encode(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    opts: EncodeOptions,
+) -> Result<Encoded, Error> {
     // SAFETY: `EncodeOptions.icc_profile` is borrowed from the caller for the
     // duration of this call (raw-ptr stand-in for a lifetime param).
     let icc: Option<&[u8]> = opts.icc_profile.map(|p| unsafe { p.as_ref() });
@@ -607,7 +613,7 @@ pub enum Filter {
 /// `JSValue.toEnum` lookup table. Hand-listed (not `ComptimeEnumMap`) so
 /// Sharp's `'linear'` alias can map to `.bilinear`; the auto-generated
 /// error message still lists only the canonical tags.
-pub static FILTER_MAP: phf::Map<&'static [u8], Filter> = phf::phf_map! {
+pub(crate) static FILTER_MAP: phf::Map<&'static [u8], Filter> = phf::phf_map! {
     b"box" => Filter::Box,
     b"bilinear" => Filter::Bilinear,
     b"linear" => Filter::Bilinear,
@@ -647,12 +653,19 @@ unsafe extern "C" {
 /// In-place brightness/saturation. brightness multiplies V (so 1.0 is
 /// identity); saturation linearly interpolates each channel toward the pixel's
 /// luma (0 = greyscale, 1 = identity, >1 = boost).
-pub fn modulate(rgba: &mut [u8], brightness: f32, saturation: f32) {
+pub(crate) fn modulate(rgba: &mut [u8], brightness: f32, saturation: f32) {
     // SAFETY: ptr+len from a valid slice; C++ kernel writes within bounds.
     unsafe { bun_image_modulate_rgba8(rgba.as_mut_ptr(), rgba.len(), brightness, saturation) }
 }
 
-pub fn resize(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32, f: Filter) -> Result<Vec<u8>, Error> {
+pub(crate) fn resize(
+    src: &[u8],
+    sw: u32,
+    sh: u32,
+    dw: u32,
+    dh: u32,
+    f: Filter,
+) -> Result<Vec<u8>, Error> {
     // Zig: `if (@hasDecl(b, "scale"))` — only `backend_coregraphics` provides
     // scale/rotate/flip (vImage); WIC has decode/encode only.
     #[cfg(target_os = "macos")]
@@ -703,7 +716,7 @@ pub fn resize(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32, f: Filter) -> Resu
     Ok(block)
 }
 
-pub fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded, Error> {
+pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded, Error> {
     let (dw, dh): (u32, u32) = if degrees == 90 || degrees == 270 {
         (h, w)
     } else {
@@ -743,7 +756,7 @@ pub fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded, Error
     })
 }
 
-pub fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u8>, Error> {
+pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u8>, Error> {
     #[cfg(target_os = "macos")]
     if use_system() {
         match system_backend::BackendError::split(system_backend::flip(src, w, h, horizontal)) {

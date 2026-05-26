@@ -573,7 +573,7 @@ impl WindowReader {
 
 /// One decoded-window prefix. See `FindCache` for the multi-slot wrapper that
 /// callers actually hold.
-pub struct FindCacheSlot {
+pub(crate) struct FindCacheSlot {
     data: *const u8,
     sync_idx: u32,
     decoded_count: u8,

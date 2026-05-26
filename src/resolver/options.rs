@@ -65,7 +65,7 @@ pub struct Conditions {
 /// `Copy`, and the actual slice is resolved on demand via
 /// [`BundleOptions::ext_order_slice`] / [`Resolver::extension_order`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum ExtOrder {
+pub(crate) enum ExtOrder {
     /// `opts.extension_order.default.default`
     #[default]
     DefaultDefault,
@@ -174,18 +174,18 @@ pub mod bundle_options {
         // Mirrors `bun_bundler::options::bundle_options_defaults::EXTENSION_ORDER`
         // / `MODULE_EXTENSION_ORDER` — duplicated so `Default for BundleOptions`
         // below is self-contained (resolver sits below bundler in the dep graph).
-        pub const EXTENSION_ORDER: &[&[u8]] = &[
+        pub(crate) const EXTENSION_ORDER: &[&[u8]] = &[
             b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts", b".json",
         ];
-        pub const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
+        pub(crate) const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
             b".tsx", b".jsx", b".mts", b".ts", b".mjs", b".js", b".cts", b".cjs", b".json",
         ];
         /// Mirrors `bun_bundler::options::bundle_options_defaults::node_modules`.
         pub mod node_modules {
-            pub const EXTENSION_ORDER: &[&[u8]] = &[
+            pub(crate) const EXTENSION_ORDER: &[&[u8]] = &[
                 b".jsx", b".cjs", b".js", b".mjs", b".mts", b".tsx", b".ts", b".cts", b".json",
             ];
-            pub const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
+            pub(crate) const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
                 b".mjs", b".jsx", b".js", b".mts", b".tsx", b".ts", b".cjs", b".cts", b".json",
             ];
         }
@@ -316,7 +316,7 @@ impl BundleOptions {
 // `opts.main_fields` against `DEFAULT_MAIN_FIELDS.get(opts.target)` to detect whether the
 // user explicitly set a main-fields list. The previous `&[]` stub made that check always
 // false, silently disabling the module-vs-main dual-resolution path.
-pub struct TargetMainFields;
+pub(crate) struct TargetMainFields;
 
 // Note that this means if a package specifies "module" and "main", the ES6
 // module will not be selected. This means tree shaking will not work when
@@ -344,7 +344,7 @@ static DEFAULT_MAIN_FIELDS_BROWSER: &[&[u8]] = &[b"browser", b"module", b"jsnext
 static DEFAULT_MAIN_FIELDS_BUN: &[&[u8]] = &[b"module", b"main", b"jsnext:main"];
 
 impl TargetMainFields {
-    pub fn get(&self, t: Target) -> &'static [&'static [u8]] {
+    pub(crate) fn get(&self, t: Target) -> &'static [&'static [u8]] {
         match t {
             Target::Node => DEFAULT_MAIN_FIELDS_NODE,
             Target::Browser => DEFAULT_MAIN_FIELDS_BROWSER,
@@ -354,4 +354,4 @@ impl TargetMainFields {
         }
     }
 }
-pub const DEFAULT_MAIN_FIELDS: TargetMainFields = TargetMainFields;
+pub(crate) const DEFAULT_MAIN_FIELDS: TargetMainFields = TargetMainFields;

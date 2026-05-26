@@ -1,3 +1,4 @@
+import { expect, test } from "bun:test";
 import { bunEnv, bunRun, joinP, tempDirWithFiles } from "harness";
 
 test("cloneable and transferable equals", () => {
@@ -119,4 +120,43 @@ if (cluster.isPrimary) {
 `,
   });
   bunRun(joinP(dir, "index.ts"), bunEnv, true);
+});
+
+test("non-cluster parent ignores cluster-internal IPC messages from a forked child", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "parent.ts": `
+const { fork } = require("node:child_process");
+const path = require("node:path");
+
+// Plain child_process.fork — this process never touches node:cluster's
+// primary API, so no cluster message handler is registered for the child.
+const child = fork(path.join(__dirname, "child.ts"), [], {
+  env: { ...process.env, NODE_UNIQUE_ID: "1" },
+});
+
+child.on("message", msg => {
+  if (msg === "regular message") {
+    console.log("P received regular message");
+    child.kill();
+    process.exit(0);
+  }
+});
+
+child.on("exit", (code, signal) => {
+  // The child must stay alive until the parent has seen the regular message.
+  console.error("child exited early", code, signal);
+  process.exit(1);
+});
+`,
+    "child.ts": `
+// With NODE_UNIQUE_ID set, loading node:cluster makes this process behave as a
+// cluster worker: it immediately writes a cluster-internal {act:"online"} IPC
+// frame to its parent, even though the parent never registered node:cluster's
+// primary callback. The parent must drop that frame instead of crashing.
+require("node:cluster");
+process.send("regular message");
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "parent.ts"), bunEnv);
+  expect(stdout).toContain("P received regular message");
 });

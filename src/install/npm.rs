@@ -283,9 +283,6 @@ pub mod registry {
     pub const DEFAULT_URL: &str = bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL;
     pub static DEFAULT_URL_HASH: std::sync::LazyLock<u64> =
         std::sync::LazyLock::new(bun_install_types::NodeLinker::npm::Registry::default_url_hash);
-    pub fn default_url_hash() -> u64 {
-        *DEFAULT_URL_HASH
-    }
 
     // Zig: `ObjectPool(MutableString, MutableString.init2048, true, 8)`.
     // `MutableString: ObjectPoolType` (init = init2048) is provided in
@@ -521,13 +518,13 @@ pub mod registry {
     // TODO(port): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
     pub type Map = HashMap<u64, Scope>;
 
-    pub enum PackageVersionResponse {
+    pub(crate) enum PackageVersionResponse {
         Cached(PackageManifest),
         Fresh(PackageManifest),
         NotFound,
     }
 
-    pub fn get_package_metadata(
+    pub(crate) fn get_package_metadata(
         scope: &Scope,
         response: picohttp::Response,
         body: &[u8],
@@ -597,7 +594,7 @@ pub struct DistTagMap {
     pub versions: VersionSlice,
 }
 
-pub type PackageVersionList = ExternalSlice<PackageVersion>;
+pub(crate) type PackageVersionList = ExternalSlice<PackageVersion>;
 
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
@@ -607,7 +604,11 @@ pub struct ExternVersionMap {
 }
 
 impl ExternVersionMap {
-    pub fn find_key_index(self, buf: &[Semver::Version], find: Semver::Version) -> Option<u32> {
+    pub(crate) fn find_key_index(
+        self,
+        buf: &[Semver::Version],
+        find: Semver::Version,
+    ) -> Option<u32> {
         for (i, key) in self.keys.get(buf).iter().enumerate() {
             if key.eql(find) {
                 return Some(i as u32);
@@ -631,7 +632,7 @@ pub use bun_install_types::resolver_hooks::{
 
 /// Port of `Negatable(T).fromJson` (src/install/npm.zig). Lives here (not in
 /// `bun_install_types`) because `bun_ast::Expr` is not reachable from that crate.
-pub fn negatable_from_json<T: NegatableEnum>(expr: &JSON::Expr) -> Result<T, AllocError> {
+pub(crate) fn negatable_from_json<T: NegatableEnum>(expr: &JSON::Expr) -> Result<T, AllocError> {
     let mut this = T::NONE.negatable();
     if let JSON::ExprData::EArray(a) = &expr.data {
         for item in a.items.slice() {
@@ -748,13 +749,13 @@ impl Default for PackageVersion {
 }
 
 impl PackageVersion {
-    pub fn all_dependencies_bundled(&self) -> bool {
+    pub(crate) fn all_dependencies_bundled(&self) -> bool {
         self.bundled_dependencies.is_invalid()
     }
 
     /// Port of Zig's `@field(package_version, group.field)` reflection used by
     /// `Package.fromNPM` to walk dependency groups by name.
-    pub fn dep_group(&self, field: &[u8]) -> ExternalStringMap {
+    pub(crate) fn dep_group(&self, field: &[u8]) -> ExternalStringMap {
         match field {
             b"dependencies" => self.dependencies,
             b"dev_dependencies" => self.dev_dependencies,
@@ -1078,6 +1079,7 @@ pub mod package_manifest {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             let mut is_using_o_tmpfile = false;
 
+            #[allow(unused_labels)]
             let file: File = 'brk: {
                 let flags = bun_sys::O::WRONLY;
                 #[cfg(unix)]
@@ -1237,7 +1239,7 @@ pub mod package_manifest {
                 Batch as PoolBatch, Node as PoolNode, Task as PoolTask,
             };
 
-            pub struct SaveTask<'a> {
+            pub(crate) struct SaveTask<'a> {
                 manifest: PackageManifest,
                 scope: &'a registry::Scope,
                 tmpdir: Fd,
@@ -1249,7 +1251,7 @@ pub mod package_manifest {
             bun_threading::intrusive_work_task!(['a] SaveTask<'a>, task);
 
             impl<'a> SaveTask<'a> {
-                pub fn new(init: SaveTask<'a>) -> Box<SaveTask<'a>> {
+                pub(crate) fn new(init: SaveTask<'a>) -> Box<SaveTask<'a>> {
                     Box::new(init)
                 }
 
@@ -1261,7 +1263,7 @@ pub mod package_manifest {
                 // discharged locally (matches `HardLinkWindowsInstallTask::
                 // run_from_thread_pool` in PackageInstall.rs). Safe `fn`
                 // coerces to the `unsafe fn(*mut Task)` field type.
-                pub fn run(task: *mut PoolTask) {
+                pub(crate) fn run(task: *mut PoolTask) {
                     use bun_threading::IntrusiveWorkTask as _;
                     let _tracer = bun_core::perf::trace("PackageManifest.Serializer.save");
 

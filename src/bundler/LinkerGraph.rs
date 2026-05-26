@@ -170,7 +170,7 @@ impl Default for LinkerGraph<'_> {
 // thin forwarders for call sites that don't have a split in hand.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub fn runtime_function(named_exports: &[bundled_ast::NamedExports], name: &[u8]) -> Ref {
+pub(crate) fn runtime_function(named_exports: &[bundled_ast::NamedExports], name: &[u8]) -> Ref {
     named_exports[Index::RUNTIME.get() as usize]
         .get(name)
         .expect("runtime function must be a named export of the runtime module")
@@ -209,7 +209,7 @@ pub fn generate_new_symbol(
     ref_
 }
 
-pub fn top_level_symbol_to_parts<'a>(
+pub(crate) fn top_level_symbol_to_parts<'a>(
     top_level_symbol_to_parts_overlay: &'a [TopLevelSymbolToParts],
     top_level_symbols_to_parts: &'a [bundled_ast::TopLevelSymbolToParts],
     id: u32,
@@ -224,7 +224,7 @@ pub fn top_level_symbol_to_parts<'a>(
     &[]
 }
 
-pub fn add_part_to_file(
+pub(crate) fn add_part_to_file(
     parts: &mut [part::List<'_>],
     top_level_symbol_to_parts_overlay: &mut [TopLevelSymbolToParts],
     top_level_symbols_to_parts: &[bundled_ast::TopLevelSymbolToParts],
@@ -811,7 +811,7 @@ impl<'a> LinkerGraph<'a> {
         }
 
         impl<'a> State<'a> {
-            pub fn visit_all(&mut self) {
+            pub(crate) fn visit_all(&mut self) {
                 for i in 0..self.import_records.len() {
                     self.visit(i);
                 }
@@ -930,7 +930,7 @@ impl Default for File {
     }
 }
 
-pub type FileList = MultiArrayList<File>;
+pub(crate) type FileList = MultiArrayList<File>;
 
 bun_collections::multi_array_columns! {
     pub trait FileColumns for File {

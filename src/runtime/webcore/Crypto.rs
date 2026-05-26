@@ -179,7 +179,10 @@ fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
 // The #[bun_jsc::host_fn] attribute macro emits the `extern "C"` shim with the
 // correct calling convention and `#[unsafe(no_mangle)]` under the exported name.
 #[bun_jsc::host_fn(export = "Bun__randomUUIDv7")]
-pub fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn bun_random_uuid_v7(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
     let arguments = callframe.arguments_undef::<2>();
 
     let mut encoding_value: JSValue = JSValue::UNDEFINED;
@@ -258,7 +261,10 @@ pub fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
 
 // Zig: `comptime { @export(&jsc.toJSHostFn(Bun__randomUUIDv5_), .{ .name = "Bun__randomUUIDv5" }) }`
 #[bun_jsc::host_fn(export = "Bun__randomUUIDv5")]
-pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn bun_random_uuid_v5(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
     let arguments = callframe.arguments_undef::<3>();
 
     if arguments.len == 0 || arguments.ptr[0].is_undefined_or_null() {
@@ -389,7 +395,7 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn CryptoObject__create(global: &JSGlobalObject) -> JSValue {
+pub(crate) extern "C" fn CryptoObject__create(global: &JSGlobalObject) -> JSValue {
     bun_jsc::mark_binding!();
 
     // PORTING.md: allocator.create(T) → Box::new. Box::new aborts on OOM, so the

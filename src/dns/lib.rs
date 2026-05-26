@@ -15,23 +15,25 @@ use bun_wyhash::Wyhash11 as Wyhash;
 // the body of this crate stays cfg-free.
 #[cfg(not(windows))]
 mod sock {
-    pub use libc::{
-        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, addrinfo,
-        freeaddrinfo, sockaddr_un,
+    // `addrinfo`/`freeaddrinfo` are re-exported from the crate root below;
+    // the rest are crate-internal.
+    pub(crate) use libc::{
+        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, sockaddr_un,
     };
+    pub use libc::{addrinfo, freeaddrinfo};
 }
 #[cfg(windows)]
 mod sock {
-    pub use bun_windows_sys::ws2_32::{
-        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, addrinfo,
-        freeaddrinfo,
+    pub(crate) use bun_windows_sys::ws2_32::{
+        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM,
     };
+    pub use bun_windows_sys::ws2_32::{addrinfo, freeaddrinfo};
     // Windows SDK ships <afunix.h> (SOCKADDR_UN) since win10_rs4 but neither
     // windows-sys nor bun_windows_sys export it. Mirror the on-the-wire layout
     // here so address_to_string stays cfg-free below — matches Zig std's
     // `std.os.windows.ws2_32.sockaddr_un { family: u16, path: [108]u8 }`.
     #[repr(C)]
-    pub struct sockaddr_un {
+    pub(crate) struct sockaddr_un {
         pub sun_family: u16,
         pub sun_path: [u8; 108],
     }
@@ -460,7 +462,7 @@ pub enum Order {
     Ipv6first = 6,
 }
 
-pub static ORDER_MAP: phf::Map<&'static [u8], Order> = phf::phf_map! {
+pub(crate) static ORDER_MAP: phf::Map<&'static [u8], Order> = phf::phf_map! {
     b"verbatim"  => Order::Verbatim,
     b"ipv4first" => Order::Ipv4first,
     b"ipv6first" => Order::Ipv6first,

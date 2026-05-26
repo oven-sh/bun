@@ -90,7 +90,7 @@ export const workarounds: Workaround[] = [
     description:
       "rust-lld's link-stage LTO segfaults in the `globalopt` pass on the bun_runtime " +
       "bitcode module on aarch64-unknown-linux-musl. Disable cross-language LTO for " +
-      "that target only — both halves still LTO independently (C++ via -flto=full, " +
+      "that target only — both halves still LTO independently (C++ via -flto=thin, " +
       'Rust via [profile.release] lto = "fat"); only Rust↔C++ inlining is lost.',
     // Only exercised on the lane the crash hits.
     applies: cfg => cfg.lto && cfg.arm64 && cfg.abi === "musl",
@@ -106,6 +106,30 @@ export const workarounds: Workaround[] = [
       `Delete the \`!(aarch64 && abi === "musl")\` clause from the \`crossLangLto\` ` +
       `derivation in resolveConfig() (config.ts), and this entry. The \`crossLangLto\` ` +
       `field itself can stay (collapses to \`= lto\` when no per-target gates remain).`,
+  },
+  {
+    id: "rustc-no-regular-lto-summary",
+    issue:
+      "https://github.com/rust-lang/rust/issues/ (none filed yet — rustc has no equivalent of clang's shouldEmitRegularLTOSummary())",
+    description:
+      'Under -Clinker-plugin-lto + lto = "fat", rustc emits the merged bitcode module without a ' +
+      "per-module summary, so lld reads it as EnableSplitLTOUnit=0 while every clang full-LTO " +
+      "object (ours and the WebKit -lto prebuilts) hardcodes 1 — the ELF release link aborts " +
+      'with "inconsistent LTO Unit splitting". rust-lto-fix-cli.ts re-emits the Rust bitcode ' +
+      "with a regular-LTO summary using rustc's own llvm-tools (rustLtoLinkInputs() in rust.ts).",
+    applies: cfg => cfg.crossLangLto && !cfg.darwin,
+    expectedToBeFixed: cfg => {
+      // Re-evaluate when the pinned rustc moves to its next LLVM major:
+      // either rustc grew a way to emit regular-LTO summaries (delete the
+      // fix-up), or linux moved to ThinLTO (it's moot), or neither — bump
+      // the threshold and keep it.
+      const RECHECK_AT_RUST_LLVM = "23.0.0";
+      return cfg.rustLlvmVersion !== undefined && satisfiesRange(cfg.rustLlvmVersion, `>=${RECHECK_AT_RUST_LLVM}`);
+    },
+    cleanup:
+      `Delete scripts/build/rust-lto-fix-cli.ts, the rust_lto_fix rule and rustLtoLinkInputs() in ` +
+      `rust.ts, unwrap its two call sites in bun.ts, drop "llvm-tools" from rust-toolchain.toml's ` +
+      `components, and delete this entry.`,
   },
   {
     id: "rust-lld-for-crosslang-lto",
@@ -126,6 +150,58 @@ export const workarounds: Workaround[] = [
       `Delete the rust-lld swap block in resolveConfig() (config.ts), findRustLld() and its call ` +
       `in resolveLlvmToolchain() (tools.ts), the rustLld/rustLlvmVersion fields on Toolchain/Config, ` +
       `and this entry.`,
+  },
+  {
+    id: "darwin-cross-cpu-model",
+    issue: "https://github.com/llvm/llvm-project/tree/main/compiler-rt/lib/builtins/cpu_model",
+    description:
+      "macOS x64 cross-links from Linux have no libclang_rt.osx.a, and the SDK's libSystem " +
+      "reexport (libcompiler_rt.tbd) doesn't provide the __builtin_cpu_supports globals " +
+      "(___cpu_model / ___cpu_indicator_init / ___cpu_features2). A vendored copy of " +
+      "compiler-rt's cpu_model/x86.c is compiled into the cross link instead.",
+    // Only exercised on x64 darwin cross links (arm64 never references these).
+    applies: cfg => cfg.darwin && cfg.crossTarget !== undefined && cfg.x64 && cfg.osxSysroot !== undefined,
+    expectedToBeFixed: cfg => {
+      // Obsolete if the SDK starts exporting the symbol from the libSystem
+      // umbrella (then the shim would be a duplicate definition waiting to
+      // happen). Checked against the .tbd text — cheap and version-agnostic.
+      const tbd = join(cfg.osxSysroot!, "usr", "lib", "system", "libcompiler_rt.tbd");
+      try {
+        return readFileSync(tbd, "utf8").includes("___cpu_model");
+      } catch {
+        return false;
+      }
+    },
+    cleanup:
+      `Delete scripts/build/shims/cpu_model/, needsDarwinCpuModelShim() and its blocks in ` +
+      `scripts/build/shims.ts, and this entry.`,
+  },
+  {
+    id: "darwin-cross-stack-size",
+    issue:
+      "https://github.com/llvm/llvm-project/blob/main/lld/MachO/Driver.cpp (OPT_stack_size in unimplemented warnings)",
+    description:
+      "ld64.lld parses `-stack_size` but doesn't implement it (\"is not yet implemented. Stay " +
+      'tuned..."), so darwin cross links keep the 8 MB default main-thread stack instead of the ' +
+      "18 MB JSC needs. shims/macho-postlink.c patches LC_MAIN.stacksize after the link instead.",
+    applies: cfg => cfg.darwin && cfg.crossTarget !== undefined,
+    expectedToBeFixed: cfg => {
+      // Not implemented as of LLVM 21 (lld/MachO/Driver.cpp keeps
+      // OPT_stack_size in the "unimplemented, warn and ignore" list).
+      // Re-test when the toolchain moves to LLVM 23: link a darwin cross
+      // build and check whether `ld64.lld ... -stack_size 0x1200000` still
+      // prints "is not yet implemented". If it does, bump this threshold.
+      // (A configure-time probe that spawned ld64.lld was tried first and
+      // reverted: the rust/cpp split steps configure on machines whose
+      // ld64.lld doesn't behave like the link machine's, and a probe that
+      // misfires there fails the whole lane.)
+      const FIXED_IN_LLVM = "23.0.0";
+      return cfg.clangVersion !== undefined && satisfiesRange(cfg.clangVersion, `>=${FIXED_IN_LLVM}`);
+    },
+    cleanup:
+      `Drop the --stack-size argument from machoPostlinkCommand() in scripts/build/shims.ts and ` +
+      `this entry. Keep macho-postlink.c itself — it still owns the entitlements embedding and ` +
+      `the post-edit re-sign.`,
   },
   {
     id: "rust-lld-musl-crt-zlib",

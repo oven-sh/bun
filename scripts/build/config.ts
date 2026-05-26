@@ -9,10 +9,11 @@
 import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { NODEJS_ABI_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
+import { resolveMacosSdkPath } from "./macos-sdk.ts";
 import { clangTargetArch } from "./tools.ts";
 import { cyan, dim, green } from "./tty.ts";
 
@@ -115,9 +116,9 @@ export interface Config {
   lto: boolean;
   /**
    * Cross-language LTO: rustc emits LLVM bitcode (`-Clinker-plugin-lto`) into
-   * `libbun_rust.a` so the final lld `-flto=full` link sees through Rust↔C++
+   * `libbun_rust.a` so the final lld `-flto=thin` link sees through Rust↔C++
    * call edges. When false but `lto` is true, both halves still LTO
-   * independently (C++ via `-flto=full`, Rust via `[profile.release] lto =
+   * independently (C++ via `-flto=thin`, Rust via `[profile.release] lto =
    * "fat"`); only the cross-language inlining is lost.
    *
    * Normally tracks `lto`. Exists as a separate field so per-target toolchain
@@ -176,12 +177,34 @@ export interface Config {
   // ─── Toolchain (resolved absolute paths) ───
   cc: string;
   cxx: string;
+  /**
+   * Compiler for build-time host tools (dep_host_cc codegen helpers).
+   * Same as `cc` except when cross-compiling for windows from a unix host,
+   * where `cc` is clang-cl (emits COFF) and host tools need plain clang.
+   */
+  hostCc: string;
+  /**
+   * C++ driver for host-side links (cargo's host-triple linker in
+   * `.cargo/config.toml` — build scripts, proc-macros). Same as `cxx`
+   * except when cross-compiling for windows from a unix host.
+   */
+  hostCxx: string;
   /** Parsed X.Y.Z from clang --version. Captured once at resolve time. */
   clangVersion: string | undefined;
+  /**
+   * `clang -print-resource-dir` — builtin headers live at `<dir>/include`.
+   * Used by darwin cross-compiles, which rebuild the C++ include search path
+   * explicitly. undefined on Windows (nothing consumes it there).
+   */
+  clangResourceDir: string | undefined;
   ar: string;
   /** llvm-ranlib. undefined on windows (llvm-lib indexes itself). */
   ranlib: string | undefined;
-  /** ld.lld on linux, lld-link on windows. May be empty on darwin (clang invokes ld). */
+  /**
+   * ld.lld on linux, lld-link on windows, ld64.lld when cross-compiling for
+   * darwin from a non-darwin host. May be empty on native darwin (clang
+   * invokes the system linker).
+   */
   ld: string;
   /**
    * rustc's bundled lld (see `Toolchain.rustLld`). When set and rustc's LLVM
@@ -201,7 +224,7 @@ export interface Config {
    */
   rustSysroot: string | undefined;
   strip: string;
-  /** darwin-only. */
+  /** Set when the target is darwin. Undefined on non-darwin targets. */
   dsymutil: string | undefined;
   /** Self-host bun for codegen (bun install, bun build). */
   bun: string;
@@ -243,16 +266,29 @@ export interface Config {
   // ─── macOS SDK (darwin only, undefined elsewhere) ───
   /** e.g. "13.0". Passed to deps as -DCMAKE_OSX_DEPLOYMENT_TARGET. */
   osxDeploymentTarget: string | undefined;
-  /** SDK path from `xcrun --show-sdk-path`. Passed to deps as -DCMAKE_OSX_SYSROOT. */
+  /**
+   * SDK path. Native darwin: from `xcrun --show-sdk-path`. Darwin
+   * cross-compile from a non-darwin host: an extracted MacOSX*.sdk (see
+   * macos-sdk.ts). Passed to deps as -DCMAKE_OSX_SYSROOT / `-isysroot`.
+   */
   osxSysroot: string | undefined;
 
   // ─── Cross-compilation (set when host != target for C++) ───
-  // Generic so future targets (e.g. cross-compiling to macOS from Linux)
-  // go through the same plumbing. Currently populated only for Android.
+  // Generic plumbing shared by every cross target (Android, FreeBSD,
+  // macOS-from-Linux, and Windows-from-unix).
   /** clang `--target=` triple, e.g. "aarch64-unknown-linux-android28". undefined = native. */
   crossTarget: string | undefined;
   /** clang `--sysroot=` path. For Android: `<ndk>/toolchains/llvm/prebuilt/<host>/sysroot`. */
   sysroot: string | undefined;
+  /**
+   * Windows cross-compile only: root of an xwin-style splat of the MSVC
+   * CRT/STL + Windows SDK laid out like a Visual Studio install
+   * (`VC/Tools/MSVC/<ver>`, `Windows Kits/10`). Passed to clang-cl as
+   * `/winsysroot` and to lld-link as `/winsysroot:` — the cross equivalent
+   * of the INCLUDE/LIB env a VS dev shell provides on a Windows host.
+   * undefined on native Windows builds (VS dev shell supplies the SDK).
+   */
+  winsysroot: string | undefined;
   /** Android NDK root. undefined when abi != "android". */
   androidNdk: string | undefined;
   /** Android API level (the N in `__ANDROID_API__=N`). undefined when abi != "android". */
@@ -314,6 +350,21 @@ export interface PartialConfig {
   freebsdSysroot?: string;
   /** FreeBSD release version (default: FREEBSD_VERSION_DEFAULT). Only used when os=freebsd. */
   freebsdVersion?: string;
+  /**
+   * macOS SDK path (a MacOSX*.sdk directory). Only used when cross-compiling
+   * for darwin from a non-darwin host; native darwin builds use xcrun.
+   * Default: $MACOS_SDK_PATH, a well-known /opt install, or an auto-download
+   * into the cache dir — see macos-sdk.ts.
+   */
+  macosSdk?: string;
+  /**
+   * macOS deployment target (`-mmacosx-version-min`). Only used when
+   * cross-compiling for darwin from a non-darwin host (native darwin derives
+   * it from the installed SDK / CI floor). Default: MIN_OSX_DEPLOYMENT_TARGET.
+   */
+  osxDeploymentTarget?: string;
+  /** Windows sysroot (xwin splat, VS layout). Only used when cross-compiling for os=windows. */
+  winsysroot?: string;
   // Version pins (defaults in versions.ts).
   nodejsVersion?: string;
   nodejsAbiVersion?: string;
@@ -328,14 +379,30 @@ export interface Toolchain {
   cc: string;
   cxx: string;
   /**
+   * Host compiler / C++ driver for build-time host tools and host-side
+   * cargo links. Only set when they differ from `cc`/`cxx` (windows
+   * cross-compile from a unix host, where cc/cxx are clang-cl);
+   * resolveConfig() falls back to `cc`/`cxx` otherwise.
+   */
+  hostCc: string | undefined;
+  hostCxx: string | undefined;
+  /**
    * Parsed clang --version (X.Y.Z). Captured during toolchain resolution
    * so downstream checks (workarounds.ts) don't re-spawn. undefined if
    * version parsing failed — shouldn't happen since we version-gate cc.
    */
   clangVersion: string | undefined;
+  /** `clang -print-resource-dir`. undefined on Windows. */
+  clangResourceDir: string | undefined;
   ar: string;
   ranlib: string | undefined;
   ld: string;
+  /**
+   * lld's Mach-O port (`ld64.lld`), resolved on non-darwin unix hosts.
+   * Swapped in as `cfg.ld` when the target is darwin and the host isn't —
+   * there's no Apple `ld` to drive, and ld.lld only emits ELF.
+   */
+  ld64Lld: string | undefined;
   /**
    * rustc's bundled lld (`<sysroot>/lib/rustlib/<host>/bin/gcc-ld/ld.lld` on
    * unix, `.../bin/rust-lld.exe` on Windows). Used as `ld` for cross-language
@@ -352,6 +419,11 @@ export interface Toolchain {
   /** `host:` line from `rustc -vV` — stamped onto `Host.rustTriple` at resolveConfig. */
   rustHostTriple: string | undefined;
   strip: string;
+  /**
+   * llvm-strip. On Linux hosts GNU strip is the default (`strip` above) but
+   * can't read Mach-O, so darwin cross-compiles swap this in as `cfg.strip`.
+   */
+  llvmStrip: string | undefined;
   dsymutil: string | undefined;
   bun: string;
   jsRuntime: string;
@@ -470,6 +542,26 @@ export function detectFreebsdSysroot(arch: Arch): string | undefined {
 }
 
 /**
+ * Locate a Windows sysroot (xwin splat of the MSVC CRT/STL + Windows SDK in
+ * Visual Studio layout). Checks the env var then well-known install paths.
+ * The splat contains both x64 and arm64 CRT/SDK libs, so unlike FreeBSD
+ * there's no per-arch variant. Returns undefined if none found.
+ */
+export function detectWindowsSysroot(): string | undefined {
+  // Case-tolerant: a real VS/SDK copy uses "Include", an xwin splat in
+  // winsysroot-style mode writes "include" (winsysroot.ts adds the
+  // title-case alias the LLVM toolchain needs at configure time).
+  const looksValid = (p: string) =>
+    existsSync(join(p, "Windows Kits", "10", "Include")) || existsSync(join(p, "Windows Kits", "10", "include"));
+  const env = process.env.WINDOWS_SYSROOT;
+  if (env && looksValid(env)) return env;
+  for (const p of ["/opt/winsysroot", "/opt/xwin"]) {
+    if (looksValid(p)) return p;
+  }
+  return undefined;
+}
+
+/**
  * Locate the Android NDK. Checks the conventional env vars in priority
  * order, then a couple of well-known install paths. Returns undefined if
  * none found — caller decides whether to error.
@@ -581,11 +673,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
 
   // ─── Target platform ───
   const os = partial.os ?? host.os;
-  // Windows: process.arch can be wrong under emulation (x64 bun on arm64
-  // hardware). Ask the compiler what it targets — CMake does the same in
-  // project() to set CMAKE_SYSTEM_PROCESSOR. The found clang's default
-  // target is what we actually build for.
-  const compilerArch = os === "windows" ? clangTargetArch(toolchain.cc) : undefined;
+  // Windows hosts: process.arch can be wrong under emulation (x64 bun on
+  // arm64 hardware). Ask the compiler what it targets — CMake does the same
+  // in project() to set CMAKE_SYSTEM_PROCESSOR. The found clang's default
+  // target is what we actually build for. Cross-compiles from a unix host
+  // skip this (the host clang-cl's default arch is just the host's).
+  const compilerArch = os === "windows" && host.os === "windows" ? clangTargetArch(toolchain.cc) : undefined;
   const arch = partial.arch ?? compilerArch ?? host.arch;
   const abi: Abi | undefined = os === "linux" ? (partial.abi ?? detectLinuxAbi()) : undefined;
 
@@ -597,6 +690,13 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const kqueue = darwin || freebsd;
   const x64 = arch === "x64";
   const arm64 = arch === "aarch64";
+  // Darwin target on a non-darwin host (Linux CI box building macOS
+  // binaries). Same host-clang + --target/-isysroot model as Android/FreeBSD,
+  // with ld64.lld doing the Mach-O link. See the cross block further down.
+  const darwinCross = darwin && host.os !== "darwin";
+  // Windows target on a non-Windows host (clang-cl + lld-link + xwin
+  // sysroot). See the cross block further down.
+  const windowsCross = windows && host.os !== "windows";
 
   // Platform file conventions — MSVC style on Windows, Unix everywhere else.
   const exeSuffix = windows ? ".exe" : "";
@@ -628,7 +728,14 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // shipping alongside the binary; UBSan likewise. Not worth the matrix.
   // FreeBSD: force off. Cross-compiled — we'd need to ship FreeBSD's
   // libclang_rt.asan, and there's no -asan WebKit prebuilt for it.
-  const asan = abi === "android" || freebsd ? false : (partial.asan ?? asanDefault);
+  // Darwin cross: force off. The Linux LLVM toolchain doesn't ship the
+  // darwin ASAN/UBSan runtime dylibs (libclang_rt.*_osx_dynamic.dylib).
+  // Windows cross: force off. The host clang doesn't ship the windows
+  // clang_rt.asan runtime libs, so the link would fail.
+  const asan =
+    abi === "android" || freebsd || darwinCross || (windows && host.os !== "windows")
+      ? false
+      : (partial.asan ?? asanDefault);
 
   // Assertions: default on in debug OR asan. ASAN coupling is ABI-critical:
   // the -asan WebKit prebuilt is built with ASSERT_ENABLED=1, which gates
@@ -637,21 +744,43 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // build:asan always set ENABLE_ASSERTIONS=ON for this reason.
   const assertions = partial.assertions ?? (debug || asan);
 
-  // LTO: default on only for CI release linux non-asan non-assertions
-  const ltoDefault = release && linux && ci && !assertions && !asan;
+  // Resolved early because the LTO defaults below need it (the windows
+  // -baseline WebKit prebuilt has no -lto variant).
+  const baseline = partial.baseline ?? false;
+
+  // LTO: default on for CI release non-asan non-assertions builds on Linux,
+  // on darwin cross-compiles, and on windows x64 cross-compiles. The -lto
+  // WebKit prebuilts for macOS and Windows only exist for the cross
+  // toolchain (Apple's ld / MSVC link.exe on the native lanes were never set
+  // up to consume bitcode archives), so the native darwin and windows lanes
+  // stay non-LTO.
+  const ltoDefault =
+    release && (linux || darwinCross || (windowsCross && x64 && !baseline)) && ci && !assertions && !asan;
   let lto = partial.lto ?? ltoDefault;
   // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit).
   // Android: no LTO prebuilt WebKit exists; force off so the right tarball is fetched.
-  if ((asan && lto) || abi === "android") {
+  // Windows arm64 / baseline: same — oven-sh/WebKit ships no
+  // bun-webkit-windows-arm64-lto (LLVM's CodeView emitter aborts on ARM64
+  // NEON tuple registers during LTO codegen) and no -baseline-lto variant.
+  if ((asan && lto) || abi === "android" || (windows && (arm64 || baseline))) {
     lto = false;
   }
 
   // Cross-language LTO normally tracks `lto`. Gated off for aarch64-musl
   // where LLVM's `globalopt` pass segfaults on the `bun_runtime` bitcode
-  // module during the merged link (CI build #53109). Both halves still LTO
-  // independently when this is false — only the Rust↔C++ inlining is lost.
+  // module during the merged link (CI build #53109), and for native Windows
+  // hosts — there `ld` is the host LLVM's lld-link and no rust-lld swap is
+  // wired up, so rustc's newer-LLVM bitcode would be unreadable at link
+  // time. Both halves still LTO independently when this is false — only the
+  // Rust↔C++ inlining is lost.
   // Tracked in workarounds.ts ("globalopt-crash-aarch64-musl").
-  const crossLangLto = lto && !(arm64 && abi === "musl");
+  // Darwin cross uses the same rust-lld swap as ELF: rustc's sysroot ships
+  // `gcc-ld/ld64.lld` (rust-lld in the Mach-O flavor, built against rustc's
+  // LLVM), which findRustLld() already resolves for darwin targets, so the
+  // newer-LLVM bitcode rustc emits under -Clinker-plugin-lto is readable at
+  // link time. Windows cross does the same with the `gcc-ld/lld-link`
+  // sibling (COFF flavor) — see the wantRustLld swap below.
+  const crossLangLto = lto && !(windows && host.os === "windows") && !(arm64 && abi === "musl");
 
   // Cross-language LTO bitcode-version skew: `-Clinker-plugin-lto` makes
   // rustc emit raw LLVM bitcode into libbun_rust.a. LLVM bitcode is
@@ -668,14 +797,31 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   let ld = toolchain.ld;
   const clangMajor = majorOf(toolchain.clangVersion);
   const rustLlvmMajor = majorOf(toolchain.rustLlvmVersion);
-  if (
+  // Shared with the darwin-cross ld64 swap below: for darwin targets
+  // findRustLld() resolves rustc's `gcc-ld/ld64.lld` (the Mach-O flavor of
+  // the same rust-lld), so the swap composes with the cross toolchain.
+  const wantRustLld =
     crossLangLto &&
     toolchain.rustLld !== undefined &&
     clangMajor !== undefined &&
     rustLlvmMajor !== undefined &&
-    rustLlvmMajor > clangMajor
-  ) {
-    ld = toolchain.rustLld;
+    rustLlvmMajor > clangMajor;
+  if (wantRustLld) {
+    if (windows) {
+      // Windows cross: `ld` must stay a COFF driver. `toolchain.rustLld` is
+      // the flavor matching the *host* (gcc-ld/ld.lld on a Linux box);
+      // rustc's gcc-ld/ directory ships every flavor of the same rust-lld,
+      // so use the lld-link sibling. If rustc ever stops shipping it, fall
+      // back to the host LLVM's lld-link — validateBunConfig() then fails
+      // at configure time with the bitcode-version-skew message instead of
+      // an opaque "Invalid record" at link time.
+      const rustLldLink = join(dirname(toolchain.rustLld!), "lld-link");
+      if (existsSync(rustLldLink)) {
+        ld = rustLldLink;
+      }
+    } else {
+      ld = toolchain.rustLld!;
+    }
   }
 
   // PGO: paths resolved to absolute. generate/use are mutually exclusive.
@@ -688,7 +834,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // Logs: on by default in debug non-test
   const logs = partial.logs ?? debug;
 
-  const baseline = partial.baseline ?? false;
+  // (`baseline` is resolved earlier, next to the LTO defaults.)
   const canary = partial.canary ?? true;
   const canaryRevision = canary ? "1" : "0";
 
@@ -710,7 +856,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
 
   // ─── Paths ───
   const cwd = findRepoRoot();
-  const defaultBuildDirName = computeBuildDirName({ debug, release, asan, assertions });
+  // Windows cross-compiles get their own default build dir — the native
+  // build of the same profile (build/debug, build/release) already holds
+  // host-target objects at the same obj/ paths, and mixing COFF into an ELF
+  // build dir (or vice versa) forces a full rebuild each time you switch.
+  const crossWindowsSuffix = windows && host.os !== "windows" ? `-windows-${arch}` : "";
+  const defaultBuildDirName = computeBuildDirName({ debug, release, asan, assertions }) + crossWindowsSuffix;
   const buildDir =
     partial.buildDir !== undefined
       ? isAbsolute(partial.buildDir)
@@ -810,6 +961,46 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     }
   }
 
+  // ─── Cross-compilation (Windows) ───
+  // Same pattern as Android/FreeBSD, with the MSVC spin: the host LLVM's
+  // clang-cl/lld-link/llvm-lib/llvm-rc are used (tools.ts picks them by
+  // target), and the "sysroot" is an xwin splat of the MSVC CRT/STL +
+  // Windows SDK in Visual Studio layout, passed via /winsysroot instead of
+  // --sysroot. Building ON Windows needs none of this — the VS dev shell
+  // provides INCLUDE/LIB.
+  let winsysroot: string | undefined;
+  if (windows && host.os !== "windows") {
+    winsysroot =
+      partial.winsysroot !== undefined
+        ? isAbsolute(partial.winsysroot)
+          ? partial.winsysroot
+          : resolve(cwd, partial.winsysroot)
+        : detectWindowsSysroot();
+    if (winsysroot === undefined) {
+      if (ci || buildkite) {
+        // CI always fetches its own sysroot into the per-build cache (see
+        // winsysroot.ts `ensureWindowsSysroot`, called from configure.ts
+        // before the graph is emitted) instead of relying on agent image
+        // provisioning.
+        winsysroot = resolve(cacheDir, "winsysroot");
+      } else {
+        throw new BuildError("--os=windows requires a Windows sysroot (MSVC CRT + Windows SDK) when cross-compiling", {
+          hint:
+            "Set WINDOWS_SYSROOT or pass --winsysroot=<path>. Create one with xwin (https://github.com/Jake-Shadle/xwin):\n" +
+            "  cargo install xwin  (or download a release binary)\n" +
+            "  xwin --accept-license --arch x86_64,aarch64 --include-atl splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output /opt/winsysroot",
+        });
+      }
+    }
+    if (partial.webkit === "local") {
+      throw new BuildError("Cross-compiling for Windows requires the prebuilt WebKit (webkit=local needs msbuild)", {
+        hint: "Drop --webkit=local or build on a Windows host.",
+      });
+    }
+    const llvmArch = arch === "x64" ? "x86_64" : "aarch64";
+    crossTarget = `${llvmArch}-pc-windows-msvc`;
+  }
+
   // ─── Versioning ───
   const pkgJsonPath = resolve(cwd, "package.json");
   const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as { version: string };
@@ -824,12 +1015,66 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
 
   // ─── macOS SDK ───
   // Must be passed to nested cmake builds or they'll pick the wrong SDK.
-  // Requires BOTH host and target to be darwin — xcode only exists on
-  // macOS, and cross-compiling C++/deps to darwin isn't supported.
+  // Native darwin: ask xcode-select/xcrun. Cross-compiling from a non-darwin
+  // host: an extracted MacOSX*.sdk — explicit path, well-known install, or
+  // auto-downloaded into the cache dir (see macos-sdk.ts / ensureMacosSdk()).
   let osxDeploymentTarget: string | undefined;
   let osxSysroot: string | undefined;
   if (darwin && host.os === "darwin") {
     ({ osxDeploymentTarget, osxSysroot } = detectMacosSdk(ci));
+    if (partial.osxDeploymentTarget !== undefined) osxDeploymentTarget = partial.osxDeploymentTarget;
+  }
+
+  // ─── Cross-compilation (macOS from a non-darwin host) ───
+  // Host clang + `--target=<arch>-apple-macosx` + `-isysroot <SDK>`, linked
+  // with lld's Mach-O port (ld64.lld) and post-processed with llvm-strip /
+  // dsymutil — all of which ship in the same LLVM install we already require.
+  // The deployment target defaults to the CI floor (the SDK itself can be
+  // newer; only `-mmacosx-version-min` decides what the binary runs on).
+  let ld64StripSwap: { ld: string; strip: string } | undefined;
+  if (darwinCross) {
+    crossTarget = `${arm64 ? "arm64" : "x86_64"}-apple-macosx`;
+    osxDeploymentTarget = partial.osxDeploymentTarget ?? MIN_OSX_DEPLOYMENT_TARGET;
+    // rust-only mode never compiles C/C++ or links, so it doesn't need the
+    // SDK — skip resolution to keep the shared CI rust box from downloading
+    // a ~730 MB sysroot it never reads.
+    if ((partial.mode ?? "full") !== "rust-only") {
+      osxSysroot = resolveMacosSdkPath(partial.macosSdk, cacheDir, cwd);
+      if (toolchain.ld64Lld === undefined) {
+        throw new BuildError("Cross-compiling for macOS requires ld64.lld (lld's Mach-O port)", {
+          hint: "Install lld for the same LLVM version as clang: apt install lld-21 (or equivalent).",
+        });
+      }
+      if (toolchain.llvmStrip === undefined) {
+        throw new BuildError("Cross-compiling for macOS requires llvm-strip (GNU strip can't read Mach-O)", {
+          hint: "Install llvm for the same version as clang: apt install llvm-21 (or equivalent).",
+        });
+      }
+      if (toolchain.clangResourceDir === undefined) {
+        throw new BuildError("Cross-compiling for macOS requires clang's resource directory", {
+          hint: "`clang -print-resource-dir` failed — is the discovered clang runnable?",
+        });
+      }
+      if (toolchain.dsymutil === undefined) {
+        throw new BuildError("Cross-compiling for macOS requires LLVM dsymutil", {
+          hint: "Install llvm for the same version as clang: apt install llvm-21 (or equivalent).",
+        });
+      }
+      // The Mach-O flavor of whichever lld the rest of the config picked.
+      // `toolchain.rustLld` is the flavor matching the *host* (gcc-ld/ld.lld
+      // on a Linux box); rustc's gcc-ld/ directory ships every flavor of the
+      // same rust-lld, so when the cross-language-LTO bitcode skew applies
+      // (see wantRustLld above) the Mach-O link uses the ld64.lld sibling.
+      // Falls back to clang's ld64.lld if rustc ever stops shipping it — the
+      // configure-time assert in validateBunConfig catches the resulting
+      // bitcode-version mismatch with a clear message.
+      const rustLd64Lld =
+        wantRustLld && toolchain.rustLld !== undefined ? join(dirname(toolchain.rustLld), "ld64.lld") : undefined;
+      ld64StripSwap = {
+        ld: rustLd64Lld !== undefined && existsSync(rustLd64Lld) ? rustLd64Lld : toolchain.ld64Lld,
+        strip: toolchain.llvmStrip,
+      };
+    }
   }
 
   return {
@@ -881,14 +1126,17 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     vendorDir,
     cc: toolchain.cc,
     cxx: toolchain.cxx,
+    hostCc: toolchain.hostCc ?? toolchain.cc,
+    hostCxx: toolchain.hostCxx ?? toolchain.cxx,
     clangVersion: toolchain.clangVersion,
+    clangResourceDir: toolchain.clangResourceDir,
     ar: toolchain.ar,
     ranlib: toolchain.ranlib,
-    ld,
+    ld: ld64StripSwap?.ld ?? ld,
     rustLld: toolchain.rustLld,
     rustLlvmVersion: toolchain.rustLlvmVersion,
     rustSysroot: toolchain.rustSysroot,
-    strip: toolchain.strip,
+    strip: ld64StripSwap?.strip ?? toolchain.strip,
     dsymutil: toolchain.dsymutil,
     bun: toolchain.bun,
     jsRuntime: toolchain.jsRuntime,
@@ -899,7 +1147,16 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     cargoHome: toolchain.cargoHome,
     rustupHome: toolchain.rustupHome,
     rustToolchain: readRustToolchainChannel(cwd),
-    msvcLinker: toolchain.msvcLinker,
+    // Cargo-driven links (the bun_shim_impl.exe edge, any future target
+    // cdylib) must keep using a real lld-link/link.exe, not the gcc-ld/
+    // lld-link wrapper `ld` may have been swapped to above: rustc treats a
+    // linker living in its own sysroot's gcc-ld/ as the bundled rust-lld and
+    // prepends `-flavor link`, which the wrapper forwards into the COFF
+    // driver as bogus input args ("could not open 'link'"). Those links have
+    // no LLVM bitcode in them, so the host LLVM's lld-link is always
+    // sufficient — only the final clang-cl-driven bun.exe link needs the
+    // newer rust-lld (and reaches it via the link rule's /clang:-B).
+    msvcLinker: toolchain.msvcLinker ?? (windows && ld !== toolchain.ld ? toolchain.ld : undefined),
     rc: toolchain.rc,
     mt: toolchain.mt,
     nasm: toolchain.nasm,
@@ -907,6 +1164,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     osxSysroot,
     crossTarget,
     sysroot,
+    winsysroot,
     androidNdk,
     androidApiLevel,
     androidNdkRuntimeDir,

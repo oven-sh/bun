@@ -21,6 +21,7 @@
 #include "libusockets.h"
 #include <string.h>
 #include <stdatomic.h>
+#include <time.h>
 
 /* These are in sni_tree.cpp */
 void *sni_new();
@@ -516,8 +517,10 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   ssl_ctx_drop_passphrase(ssl_context);
 
   if (options.ca_file_name) {
-    SSL_CTX_set_cert_store(ssl_context, us_get_default_ca_store());
-
+    /* An explicit CA replaces the default trust store (Node.js semantics):
+     * chains must validate exclusively against the supplied CAs. The SSL_CTX
+     * already owns a fresh, empty X509_STORE from SSL_CTX_new(), so
+     * SSL_CTX_load_verify_locations below populates only the user's CAs. */
     STACK_OF(X509_NAME) *ca_list = SSL_load_client_CA_file(options.ca_file_name);
     if (ca_list == NULL) {
       *err = CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
@@ -536,12 +539,11 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
         us_verify_callback);
 
   } else if (options.ca && options.ca_count > 0) {
-    X509_STORE *cert_store = NULL;
+    /* As above: user CAs only, into the SSL_CTX's own initially-empty store —
+     * otherwise a server doing mTLS with `ca: [internalCA]` would also accept
+     * any client certificate that chains to a public root. */
+    X509_STORE *cert_store = SSL_CTX_get_cert_store(ssl_context);
     for (unsigned int i = 0; i < options.ca_count; i++) {
-      if (cert_store == NULL) {
-        cert_store = us_get_default_ca_store();
-        SSL_CTX_set_cert_store(ssl_context, cert_store);
-      }
       if (!add_ca_cert_to_ctx_store(ssl_context, options.ca[i], cert_store)) {
         *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA;
         ssl_ctx_build_fail(ssl_context);
@@ -799,7 +801,36 @@ static inline int ssl_gone(struct us_socket_t *s) {
 }
 
 static int ssl_renegotiate(struct us_socket_t *s) {
+  /* Server-forced renegotiation (HelloRequest -> SSL_ERROR_WANT_RENEGOTIATE).
+   * Enforce the per-context policy (default 3 per 600s, Node's
+   * CLIENT_RENEG_LIMIT/CLIENT_RENEG_WINDOW) before re-entering a full
+   * handshake — otherwise a malicious server can pin a core with
+   * back-to-back renegotiations. limit == 0 disables renegotiation; window
+   * == 0 means the per-connection counter never resets. Returning 0 makes
+   * the caller treat this as SSL_ERROR_SSL and close the connection. */
+  uint32_t limit, window;
+  us_reneg_policy(s_ssl(s), &limit, &window);
+  struct us_ssl_reneg_state_t *st = us_reneg_state(s_ssl(s));
   s->ssl_handshake_state = HANDSHAKE_RENEGOTIATION_PENDING;
+  if (!st) {
+    ssl_trigger_handshake(s, 0);
+    return 0;
+  }
+  /* Wall-clock time can step backwards (NTP, manual adjustment); the
+   * unsigned subtraction below would underflow and reset the window every
+   * time. Only treat the window as elapsed when time has moved forward. */
+  uint64_t now_ms = (uint64_t)time(NULL) * 1000;
+  if (st->count == 0 ||
+      (window && now_ms >= st->window_start_ms &&
+       now_ms - st->window_start_ms >= (uint64_t)window * 1000)) {
+    st->window_start_ms = now_ms;
+    st->count = 0;
+  }
+  if (st->count >= limit) {
+    ssl_trigger_handshake(s, 0);
+    return 0;
+  }
+  st->count++;
   if (!SSL_renegotiate(s_ssl(s))) {
     ssl_trigger_handshake(s, 0);
     return 0;

@@ -116,7 +116,7 @@ thread_local! {
 /// Callers dereference per-field under `// SAFETY:` blocks, mirroring the
 /// raw-ptr-per-field style already used for `vm`/`el` in `auto_tick`.
 #[inline]
-pub fn runtime_state() -> *mut RuntimeState {
+pub(crate) fn runtime_state() -> *mut RuntimeState {
     RUNTIME_STATE.with(Cell::get)
 }
 
@@ -132,7 +132,7 @@ pub fn runtime_state() -> *mut RuntimeState {
 /// per-field under `// SAFETY:` without forming an aliased `&mut All` while
 /// `&mut self` is live (raw-ptr-per-field re-entry pattern, see `auto_tick`).
 #[inline]
-pub fn timer_all() -> *mut timer::All {
+pub(crate) fn timer_all() -> *mut timer::All {
     let state = runtime_state();
     if state.is_null() {
         return ptr::null_mut();
@@ -149,7 +149,7 @@ pub fn timer_all() -> *mut timer::All {
 /// borrow is sound; callers must not hold it across a JS re-entry that could
 /// itself call this (every use is single-expression).
 #[inline]
-pub fn timer_all_mut() -> &'static mut timer::All {
+pub(crate) fn timer_all_mut() -> &'static mut timer::All {
     let state = runtime_state();
     debug_assert!(!state.is_null(), "RuntimeState not installed");
     // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
@@ -161,7 +161,7 @@ pub fn timer_all_mut() -> &'static mut timer::All {
 /// re-enter [`crate::dns_jsc::global_resolver`] while a `&Resolver` derived
 /// from this cell is live, so a `&mut` accessor would alias.
 #[inline]
-pub fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>> {
+pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>> {
     let state = runtime_state();
     debug_assert!(
         !state.is_null(),
@@ -183,7 +183,7 @@ pub fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_jsc::Gl
 /// `vm` must point at a live `VirtualMachine` whose `runtime_state` was set by
 /// `init_runtime_state`.
 #[inline]
-pub unsafe fn runtime_state_of(vm: *mut VirtualMachine) -> *mut RuntimeState {
+pub(crate) unsafe fn runtime_state_of(vm: *mut VirtualMachine) -> *mut RuntimeState {
     // PORT NOTE: raw-place read (no `&VirtualMachine` formed) — this is the
     // one accessor that may run off the VM's JS thread, which could be inside
     // a `&mut self.transpiler` borrow there; a shared `&*vm` here would alias
@@ -204,7 +204,7 @@ pub unsafe fn runtime_state_of(vm: *mut VirtualMachine) -> *mut RuntimeState {
 ///
 /// # Safety
 /// `vm` must be the live per-thread VM; called only from the JS thread.
-pub unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun_uws::SslCtx {
+pub(crate) unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun_uws::SslCtx {
     // SAFETY: per fn contract; `rare_data()` lazy-inits the box.
     let rare = unsafe { (*vm).rare_data() };
     if rare.default_client_ssl_ctx.is_none() {
@@ -1306,7 +1306,7 @@ unsafe fn bake_per_thread_source_map(
 /// if not running under a `Bake::GlobalObject` (caller falls back to disk read),
 /// otherwise the bundled `.map` JSON for `source_filename` (or `b""` if absent).
 #[unsafe(no_mangle)]
-pub static __BUN_BAKE_EXTERNAL_SOURCEMAP: fn(source_filename: &[u8]) -> Option<*const [u8]> =
+pub(crate) static __BUN_BAKE_EXTERNAL_SOURCEMAP: fn(source_filename: &[u8]) -> Option<*const [u8]> =
     bake_external_sourcemap;
 
 fn bake_external_sourcemap(source_filename: &[u8]) -> Option<*const [u8]> {
@@ -1439,12 +1439,7 @@ mod vm_loader_ctx {
                 core::slice::from_raw_parts(v.as_ptr(), v.len())
             },
             blob_deinit(b) => {
-                // `b` was produced by `resolve_blob` (heap::into_raw of a
-                // `dupe_with_content_type` clone). `Blob`'s drop glue does not
-                // free `content_type` (raw `*const [u8]`), so the
-                // ObjectURLRegistry resolve path stranded that allocation.
                 // SAFETY: `b` is the live boxed `Blob`; sole owner.
-                unsafe { (*b.cast::<Blob>()).free_content_type() };
                 drop(bun_core::heap::take(b.cast::<Blob>()))
             },
         }
@@ -1453,7 +1448,7 @@ mod vm_loader_ctx {
 
 /// The static `RuntimeHooks` instance handed to `bun_jsc`.
 #[unsafe(no_mangle)]
-pub static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
+pub(crate) static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     init_runtime_state,
     deinit_runtime_state,
     generate_entry_point,
@@ -2757,7 +2752,7 @@ fn transpile_source_code_inner(
                     use bun_jsc::runtime_transpiler_cache::{
                         Entry as CacheEntry, ModuleType as CacheModuleType, OutputCode,
                     };
-                    // SAFETY: `entry_ptr` was produced by `heap::leak(Box<CacheEntry>)`
+                    // SAFETY: `entry_ptr` was produced by `heap::into_raw(Box<CacheEntry>)`
                     // in `JSC_PARSER_CACHE_VTABLE.get`; sole owner.
                     let mut entry: Box<CacheEntry> =
                         unsafe { bun_core::heap::take(entry_ptr.cast::<CacheEntry>()) };
@@ -5164,7 +5159,7 @@ unsafe fn resolve_hook(
 
 /// The static `LoaderHooks` instance handed to `bun_jsc`.
 #[unsafe(no_mangle)]
-pub static __BUN_LOADER_HOOKS: LoaderHooks = LoaderHooks {
+pub(crate) static __BUN_LOADER_HOOKS: LoaderHooks = LoaderHooks {
     transpile_source_code,
     fetch_builtin_module,
     get_hardcoded_module: get_hardcoded_module_hook,
@@ -5187,7 +5182,7 @@ pub static __BUN_LOADER_HOOKS: LoaderHooks = LoaderHooks {
 /// `VirtualMachine.get()` / `MiniEventLoop.global` directly. Declared
 /// `extern "Rust"` in `bun_io::posix_event_loop`; link-time resolved.
 #[unsafe(no_mangle)]
-pub fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoopCtx {
+pub(crate) fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoopCtx {
     match kind {
         // SAFETY: `get_mut_ptr()` is the live per-thread VM singleton.
         bun_io::AllocatorType::Js => unsafe {
@@ -5245,7 +5240,7 @@ pub fn parse_http_date(value: &[u8]) -> Option<u64> {
 /// Declared `extern "Rust"` in `bun_event_loop::MiniEventLoop`; link-time
 /// resolved.
 #[unsafe(no_mangle)]
-pub fn __bun_js_vm_get() -> *mut () {
+pub(crate) fn __bun_js_vm_get() -> *mut () {
     bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()
 }
 
@@ -5256,7 +5251,11 @@ pub fn __bun_js_vm_get() -> *mut () {
 /// Declared `extern "Rust"` in `bun_event_loop::MiniEventLoop`; link-time
 /// resolved.
 #[unsafe(no_mangle)]
-pub fn __bun_stdio_blob_store_new(fd: bun_sys::Fd, is_atty: bool, mode: bun_sys::Mode) -> *mut () {
+pub(crate) fn __bun_stdio_blob_store_new(
+    fd: bun_sys::Fd,
+    is_atty: bool,
+    mode: bun_sys::Mode,
+) -> *mut () {
     use bun_jsc::node_path::PathOrFileDescriptor;
     use bun_jsc::webcore_types::store::{Data, File, Store};
     let store: Box<Store> = Store::new(Store {
@@ -5276,7 +5275,7 @@ pub fn __bun_stdio_blob_store_new(fd: bun_sys::Fd, is_atty: bool, mode: bun_sys:
 /// Releases both refs from [`__bun_stdio_blob_store_new`]'s `+2` (one owner ref + one
 /// dead immortality sentinel). Live retained `StoreRef`s keep their own `+1`, so safe.
 #[unsafe(no_mangle)]
-pub fn __bun_stdio_blob_store_deinit(ptr: *mut ()) {
+pub(crate) fn __bun_stdio_blob_store_deinit(ptr: *mut ()) {
     use bun_jsc::webcore_types::store::Store;
     let Some(this) = core::ptr::NonNull::new(ptr.cast::<Store>()) else {
         return;

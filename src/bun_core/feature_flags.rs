@@ -4,17 +4,11 @@
 use crate::env;
 use crate::feature_flag;
 
-/// Enable breaking changes for the next major release of Bun
-// TODO: Make this a CLI flag / runtime var so that we can verify disabled code paths can compile
-pub const BREAKING_CHANGES_1_4: bool = false;
-
 /// Store and reuse file descriptors during module resolution
 /// This was a ~5% performance improvement
 pub const STORE_FILE_DESCRIPTORS: bool = !env::IS_BROWSER;
 
 pub const TRACING: bool = true;
-
-pub const CSS_SUPPORTS_FENCE: bool = true;
 
 pub const ENABLE_ENTRY_CACHE: bool = true;
 
@@ -25,8 +19,6 @@ pub const WATCH_DIRECTORIES: bool = true;
 
 // This feature flag exists so when you have defines inside package.json, you can use single quotes in nested strings.
 pub const ALLOW_JSON_SINGLE_QUOTES: bool = true;
-
-pub const IS_MACRO_ENABLED: bool = !env::IS_WASM && !env::IS_WASI;
 
 pub const DISABLE_COMPRESSION_IN_HTTP_CLIENT: bool = false;
 
@@ -49,7 +41,7 @@ pub const HARDCODE_LOCALHOST_TO_127_0_0_1: bool = false;
 /// https://github.com/oven-sh/bun/issues/10733
 pub const SUPPORT_JSXS_IN_JSX_TRANSFORM: bool = true;
 
-pub const USE_SIMDUTF: bool = env::IS_NATIVE;
+pub(crate) const USE_SIMDUTF: bool = env::IS_NATIVE;
 
 pub const INLINE_PROPERTIES_IN_TRANSPILER: bool = true;
 
@@ -100,11 +92,7 @@ pub const UNWRAP_COMMONJS_TO_ESM: bool = true;
 /// https://github.com/source-map/source-map-rfc/pull/20
 pub const SOURCE_MAP_DEBUG_ID: bool = true;
 
-pub const EXPORT_STAR_REDIRECT: bool = false;
-
 pub const STREAMING_FILE_UPLOADS_FOR_HTTP_CLIENT: bool = true;
-
-pub const CONCURRENT_TRANSPILER: bool = true;
 
 // https://github.com/oven-sh/bun/issues/5426#issuecomment-1813865316
 pub const DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES: bool = true;
@@ -122,7 +110,7 @@ pub const WINDOWS_BUNX_FAST_PATH: bool = true;
 // TODO: fix Windows-only test failures in fetch-preconnect.test.ts
 pub const IS_FETCH_PRECONNECT_SUPPORTED: bool = env::IS_POSIX;
 
-pub const LIBDEFLATE_SUPPORTED: bool = env::IS_NATIVE;
+pub(crate) const LIBDEFLATE_SUPPORTED: bool = env::IS_NATIVE;
 
 // Mostly exists as a way to turn it off later, if necessary.
 pub fn is_libdeflate_enabled() -> bool {

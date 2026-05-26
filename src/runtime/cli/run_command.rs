@@ -68,11 +68,11 @@ fn runner_arena() -> &'static bun_alloc::Arena {
 // the shell escaper cannot silently diverge.
 use bun_shell_parser::{escape_8bit, needs_escape_utf8_ascii_latin1};
 
-pub struct NpmArgs;
+pub(crate) struct NpmArgs;
 impl NpmArgs {
     // https://github.com/npm/rfcs/blob/main/implemented/0021-reduce-lifecycle-script-environment.md#detailed-explanation
-    pub const PACKAGE_NAME: &'static [u8] = b"npm_package_name";
-    pub const PACKAGE_VERSION: &'static [u8] = b"npm_package_version";
+    pub(crate) const PACKAGE_NAME: &'static [u8] = b"npm_package_name";
+    pub(crate) const PACKAGE_VERSION: &'static [u8] = b"npm_package_version";
 }
 
 /// Runtime knobs `Command::start` passes through; mirrors the Zig
@@ -2193,6 +2193,7 @@ impl RunCommand {
                 bun_core::handle_error_return_trace(&err);
 
                 // an error occurred before the process was spawned
+                #[allow(unused_labels)]
                 'print_error: {
                     if !silent {
                         #[cfg(unix)]
@@ -3935,7 +3936,6 @@ impl RunCommand {
 
 bun_core::declare_scope!(BUNX_FAST_PATH_LOG, visible);
 
-/// Uninhabited namespace holder; all members are associated items.
 pub enum BunXFastPath {}
 
 #[cfg(windows)]
@@ -3943,11 +3943,11 @@ mod bunx_fast_path_buffers {
     use super::*;
     // PORTING.md §Global mutable state: Windows-only single-thread CLI scratch
     // buffers (bunx fast-path runs once on the main thread) → RacyCell.
-    pub static DIRECT_LAUNCH_BUFFER: bun_core::RacyCell<WPathBuffer> =
+    pub(super) static DIRECT_LAUNCH_BUFFER: bun_core::RacyCell<WPathBuffer> =
         bun_core::RacyCell::new(WPathBuffer::ZEROED);
     // Zig spec (run_command.zig:2014): `var environment_buffer: bun.WPathBuffer`
     // — same `[PATH_MAX_WIDE]u16` shape as the launch buffer.
-    pub static ENVIRONMENT_BUFFER: bun_core::RacyCell<WPathBuffer> =
+    pub(super) static ENVIRONMENT_BUFFER: bun_core::RacyCell<WPathBuffer> =
         bun_core::RacyCell::new(WPathBuffer::ZEROED);
 }
 

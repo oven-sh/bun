@@ -9,15 +9,15 @@ pub struct FileRange {
 }
 
 impl FileRange {
-    pub fn len(self) -> u32 {
+    pub(crate) fn len(self) -> u32 {
         self.hi - self.lo
     }
 
-    pub fn is_empty(self) -> bool {
+    pub(crate) fn is_empty(self) -> bool {
         self.lo >= self.hi
     }
 
-    pub fn pop_front(&mut self) -> Option<u32> {
+    pub(crate) fn pop_front(&mut self) -> Option<u32> {
         if self.is_empty() {
             return None;
         }
@@ -31,7 +31,7 @@ impl FileRange {
     /// pop_front, so both workers keep directory locality. For len()==1 the
     /// single file goes to the thief (owner is either already inflight or was
     /// never spawned).
-    pub fn steal_back_half(&mut self) -> Option<FileRange> {
+    pub(crate) fn steal_back_half(&mut self) -> Option<FileRange> {
         if self.is_empty() {
             return None;
         }

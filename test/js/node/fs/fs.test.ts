@@ -4057,3 +4057,192 @@ describe.skipIf(isWindows)("readFileSync on a FIFO larger than the stat size", (
     expect(exitCode).toBe(0);
   });
 });
+
+it("fs.read keeps filling the caller's view when its ArrayBuffer is transferred while the read is pending", async () => {
+  using dir = tempDir("fs-read-transfer", {
+    "data.bin": Buffer.alloc(65536, 0x61).toString(),
+  });
+
+  // The async read snapshots the destination buffer before handing it to the
+  // work pool. Transferring the backing ArrayBuffer immediately afterwards
+  // must not leave the in-flight read writing into storage the caller's view
+  // no longer owns: the view must still be attached and contain the file's
+  // bytes once the read completes.
+  const script = `
+    const fs = require("node:fs");
+    const path = require("node:path");
+    (async () => {
+      const fd = fs.openSync(path.join(process.cwd(), "data.bin"), "r");
+      const ab = new ArrayBuffer(65536);
+      const view = new Uint8Array(ab);
+      const pending = new Promise((resolve, reject) => {
+        fs.read(fd, view, 0, 65536, 0, (err, bytesRead) => (err ? reject(err) : resolve(bytesRead)));
+      });
+      // Attempt to detach the destination's backing store before the async
+      // read completes. Refusing the detach by throwing is also acceptable.
+      let transferred;
+      try {
+        transferred = ab.transfer();
+      } catch {}
+      const bytesRead = await pending;
+      fs.closeSync(fd);
+      console.log(
+        JSON.stringify({
+          bytesRead,
+          viewByteLength: view.byteLength,
+          first: view[0] ?? null,
+          last: view[65535] ?? null,
+        }),
+      );
+    })().catch(err => {
+      console.error(err);
+      process.exit(1);
+    });
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    bytesRead: 65536,
+    viewByteLength: 65536,
+    first: 0x61,
+    last: 0x61,
+  });
+  expect(exitCode).toBe(0);
+});
+
+it("writevSync does not write bytes from a buffer detached by an index getter during argument conversion", () => {
+  using dir = tempDir("fs-writev-detach", {});
+  const file = join(String(dir), "out.bin");
+
+  // Legitimate case: a plain array of views writes every byte.
+  let fd = openSync(file, "w");
+  expect(writevSync(fd, [Buffer.from("AAAA"), Buffer.from("BBBB")])).toBe(8);
+  closeSync(fd);
+  expect(readFileSync(file, "latin1")).toBe("AAAABBBB");
+
+  // An accessor on index 1 detaches element 0's ArrayBuffer while the
+  // argument array is still being converted. Every element is read before any
+  // data pointer is captured, so the detached element contributes zero bytes
+  // instead of a dangling pointer.
+  const first = new Uint8Array(new ArrayBuffer(16)).fill(0x41);
+  const second = new Uint8Array(8).fill(0x42);
+  const buffers: Uint8Array[] = [first];
+  Object.defineProperty(buffers, 1, {
+    enumerable: true,
+    configurable: true,
+    get() {
+      first.buffer.transfer();
+      return second;
+    },
+  });
+  expect(buffers.length).toBe(2);
+
+  fd = openSync(file, "w");
+  try {
+    expect(writevSync(fd, buffers)).toBe(8);
+  } finally {
+    closeSync(fd);
+  }
+  expect(first.buffer.detached).toBe(true);
+  expect(readFileSync(file, "latin1")).toBe("BBBBBBBB");
+});
+
+it("fs.writev keeps buffers attached while the write is in flight", async () => {
+  using dir = tempDir("fs-writev-pin", {});
+  const file = join(String(dir), "out.bin");
+  const fd = openSync(file, "w");
+  const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x43);
+  const { promise, resolve, reject } = Promise.withResolvers();
+  try {
+    fs.writev(fd, [buf], 0, (err, written) => (err ? reject(err) : resolve(written)));
+
+    // The native write runs on the thread pool; the backing store cannot be
+    // detached out from under it.
+    buf.buffer.transfer();
+    expect(buf.buffer.detached).toBe(false);
+
+    expect(await promise).toBe(8);
+
+    // Released once the write completes.
+    buf.buffer.transfer();
+    expect(buf.buffer.detached).toBe(true);
+
+    // A rejected call must not leave the buffers held either.
+    const other = new Uint8Array(new ArrayBuffer(8));
+    expect(() => fs.writev(fd, [other], "not a position" as any, () => {})).toThrow();
+    other.buffer.transfer();
+    expect(other.buffer.detached).toBe(true);
+  } finally {
+    closeSync(fd);
+  }
+  expect(readFileSync(file, "latin1")).toBe("CCCCCCCC");
+});
+
+it("fs.write keeps the source buffer attached while the write is in flight", async () => {
+  using dir = tempDir("fs-write-pin", {});
+  const file = join(String(dir), "out.bin");
+  const fd = openSync(file, "w");
+  const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x44);
+  const { promise, resolve, reject } = Promise.withResolvers();
+  try {
+    fs.write(fd, buf, 0, buf.byteLength, 0, (err, written) => (err ? reject(err) : resolve(written)));
+
+    // The native write runs on the thread pool and reads the source bytes
+    // through a raw pointer; the backing store must not be detachable out
+    // from under it while the write is pending.
+    buf.buffer.transfer();
+    expect(buf.buffer.detached).toBe(false);
+
+    expect(await promise).toBe(8);
+
+    // Released once the write completes.
+    buf.buffer.transfer();
+    expect(buf.buffer.detached).toBe(true);
+  } finally {
+    closeSync(fd);
+  }
+  expect(readFileSync(file, "latin1")).toBe("DDDDDDDD");
+});
+
+it.if(isPosix)("realpathSync reports ENAMETOOLONG when cwd plus the path exceeds the system path limit", async () => {
+  using dir = tempDir("fs-realpath-too-long", {});
+
+  // The relative path argument is within the per-argument limit, but joining
+  // it onto the (non-root) cwd overflows the internal fixed-size path buffer.
+  // Both realpath variants must surface this as a clean ENAMETOOLONG error
+  // instead of aborting the process.
+  const script = `
+    const fs = require("node:fs");
+    const longPath = "a".repeat(4090);
+    for (const impl of [fs.realpathSync, fs.realpathSync.native]) {
+      try {
+        impl(longPath);
+        console.log("resolved");
+      } catch (err) {
+        console.log(err.code);
+      }
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n")).toEqual(["ENAMETOOLONG", "ENAMETOOLONG"]);
+  expect(exitCode).toBe(0);
+});

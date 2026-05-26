@@ -24,7 +24,7 @@ pub use bun_sha_hmac::evp::Algorithm;
 
 /// Higher-tier helpers on the lowered `Algorithm` enum (orphan rules prevent an
 /// inherent `impl` on a foreign type, so callers `use evp::AlgorithmExt as _;`).
-pub trait AlgorithmExt: Copy + Sized {
+pub(crate) trait AlgorithmExt: Copy + Sized {
     /// NUL-terminated tag name, equivalent to Zig's `@tagName(algorithm)` (which
     /// yields `[:0]const u8`). Needed for `EVP_get_digestbyname` which reads a
     /// C string.
@@ -102,7 +102,7 @@ const ALL: [Algorithm; 19] = [
 
 /// Zig `JSValue.toEnumFromMap`'s comptime `one_of` literal for `EVP.Algorithm` —
 /// `enumFieldNames` joined as `"'a', 'b', … 'y' or 'z'"` (declaration order).
-pub const ALGORITHM_ONE_OF: &str = "'blake2b256', 'blake2b512', 'blake2s256', 'md4', 'md5', \
+pub(crate) const ALGORITHM_ONE_OF: &str = "'blake2b256', 'blake2b512', 'blake2s256', 'md4', 'md5', \
 'ripemd160', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512', 'sha512-224', 'sha512-256', \
 'sha3-224', 'sha3-256', 'sha3-384', 'sha3-512', 'shake128' or 'shake256'";
 
@@ -114,7 +114,7 @@ pub const ALGORITHM_ONE_OF: &str = "'blake2b256', 'blake2b512', 'blake2s256', 'm
 /// densest buckets (len 6 / len 10) get an extra first-byte gate so common
 /// inputs (`"sha256"`, `"sha512"`) hit ≤5 short compares instead of phf's
 /// SipHash + index probe. Semantics are identical to `MAP.get(k).copied()`.
-pub fn lookup(bytes: &[u8]) -> Option<Algorithm> {
+pub(crate) fn lookup(bytes: &[u8]) -> Option<Algorithm> {
     match bytes.len() {
         3 => match bytes {
             b"md4" => Some(Algorithm::Md4),
@@ -194,7 +194,7 @@ pub fn lookup(bytes: &[u8]) -> Option<Algorithm> {
 /// ASCII-case-insensitive `lookup`. All keys are already lower-case, so
 /// lower the probe into a stack buffer and forward to the hand-rolled
 /// length-switch `lookup()`.
-pub fn lookup_ignore_case(bytes: &[u8]) -> Option<Algorithm> {
+pub(crate) fn lookup_ignore_case(bytes: &[u8]) -> Option<Algorithm> {
     strings::with_ascii_lowercase(bytes, lookup).flatten()
 }
 
@@ -374,7 +374,7 @@ impl Drop for EVP {
     }
 }
 
-pub type Digest = [u8; boringssl::EVP_MAX_MD_SIZE as usize];
+pub(crate) type Digest = [u8; boringssl::EVP_MAX_MD_SIZE as usize];
 
 // PORT NOTE: Zig nests `PBKDF2`/`pbkdf2` inside the `EVP` struct; the
 // `crypto::EVP` re-export (module alias) lets `crypto::EVP::pbkdf2` resolve

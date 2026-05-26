@@ -708,7 +708,7 @@ pub struct PriorityQueueContext {
 }
 
 impl PriorityQueueContext {
-    pub fn less_than(&self, a: DependencyID, b: DependencyID) -> core::cmp::Ordering {
+    pub(crate) fn less_than(&self, a: DependencyID, b: DependencyID) -> core::cmp::Ordering {
         // `dependencies` / `string_buf` point at
         // `lockfile.buffers.{dependencies,string_bytes}`, which are kept alive
         // for the entire install (the `PackageInstaller` that owns this queue
@@ -732,14 +732,14 @@ impl bun_collections::PriorityCompare<DependencyID> for PriorityQueueContext {
 
 // Port of `std.PriorityQueue(DependencyID, PriorityQueueContext, lessThan)`.
 // Min-heap keyed by `PriorityQueueContext::less_than` (string-order of dep names).
-pub type PriorityQueue = bun_collections::PriorityQueue<DependencyID, PriorityQueueContext>;
+pub(crate) type PriorityQueue = bun_collections::PriorityQueue<DependencyID, PriorityQueueContext>;
 
 // PORT NOTE: Zig's `Bin.PriorityQueue.Context` is an inherent associated type;
 // `inherent_associated_types` is unstable, so callers use `Bin::PriorityQueueContext`.
 pub type Context = PriorityQueueContext;
 
 // https://github.com/npm/npm-normalize-package-bin/blob/574e6d7cd21b2f3dee28a216ec2053c2551f7af9/lib/index.js#L38
-pub fn normalized_bin_name(name: &[u8]) -> &[u8] {
+pub(crate) fn normalized_bin_name(name: &[u8]) -> &[u8] {
     let name = match name
         .iter()
         .rposition(|&b| b == b'/' || b == b'\\' || b == b':')
@@ -762,7 +762,7 @@ pub fn normalized_bin_name(name: &[u8]) -> &[u8] {
 /// verbatim from package.json, so without this check a malicious package could
 /// point a bin link at (and chmod) an arbitrary file on disk (the bug class
 /// npm fixed as CVE-2019-16775).
-pub fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
+pub(crate) fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
     if path::is_absolute(target) {
         return true;
     }
@@ -835,7 +835,7 @@ pub struct Linker<'a> {
     pub skipped_due_to_missing_bin: bool,
 }
 
-pub static UMASK: AtomicU32 = AtomicU32::new(0);
+pub(crate) static UMASK: AtomicU32 = AtomicU32::new(0);
 static HAS_SET_UMASK: AtomicBool = AtomicBool::new(false);
 
 impl<'a> Linker<'a> {
@@ -1324,7 +1324,8 @@ impl<'a> Linker<'a> {
     fn chmod_on_ok(err: Option<Error>, abs_target: &ZStr) {
         // PORT NOTE: hoisted from `defer` block in create_symlink
         if err.is_none() {
-            let _ = sys::chmod(abs_target, 0o777 & !(UMASK.load(Ordering::Acquire) as Mode));
+            let mode = 0o777 & !(UMASK.load(Ordering::Acquire) as Mode);
+            let _ = sys::lchmod(abs_target, mode);
         }
     }
 

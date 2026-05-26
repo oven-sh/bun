@@ -56,13 +56,6 @@ pub use bun_install_types::resolver_hooks::{
     DependencyVersionValue as Value, NpmInfo, TagInfo, TarballInfo, URI,
 };
 
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum URITag {
-    Local,
-    Remote,
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Dependency
 // ──────────────────────────────────────────────────────────────────────────
@@ -340,7 +333,7 @@ impl<'a> StringBuilderLike for crate::lockfile_real::StringBuilder<'a> {
 // External serialization
 // ──────────────────────────────────────────────────────────────────────────
 
-pub type External = [u8; SIZE];
+pub(crate) type External = [u8; SIZE];
 
 const SIZE: usize = core::mem::size_of::<VersionExternal>()
     + core::mem::size_of::<PackageNameHash>()
@@ -354,7 +347,7 @@ pub struct Context<'a> {
     pub package_manager: Option<&'a mut PackageManager>,
 }
 
-pub fn to_dependency(this: External, ctx: &mut Context<'_>) -> Dependency {
+pub(crate) fn to_dependency(this: External, ctx: &mut Context<'_>) -> Dependency {
     let name = String {
         bytes: this[0..8].try_into().expect("infallible: size matches"),
     };
@@ -374,7 +367,7 @@ pub fn to_dependency(this: External, ctx: &mut Context<'_>) -> Dependency {
     }
 }
 
-pub fn to_external(this: &Dependency) -> External {
+pub(crate) fn to_external(this: &Dependency) -> External {
     let mut bytes: External = [0u8; SIZE];
     bytes[0..8].copy_from_slice(&this.name.bytes);
     bytes[8..16].copy_from_slice(&this.name_hash.to_ne_bytes());
@@ -388,7 +381,7 @@ pub fn to_external(this: &Dependency) -> External {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[inline]
-pub fn is_scp_like_path(dependency: &[u8]) -> bool {
+pub(crate) fn is_scp_like_path(dependency: &[u8]) -> bool {
     // Shortest valid expression: h:p
     if dependency.len() < 3 {
         return false;
@@ -435,7 +428,7 @@ pub fn is_scp_like_path(dependency: &[u8]) -> bool {
 ///
 /// This also checks for a github url that ends with ".tar.gz"
 #[inline]
-pub fn is_github_tarball_path(dependency: &[u8]) -> bool {
+pub(crate) fn is_github_tarball_path(dependency: &[u8]) -> bool {
     if is_tarball(dependency) {
         return true;
     }
@@ -457,13 +450,13 @@ pub fn is_github_tarball_path(dependency: &[u8]) -> bool {
 // This won't work for query string params, but I'll let someone file an issue
 // before I add that.
 #[inline]
-pub fn is_tarball(dependency: &[u8]) -> bool {
+pub(crate) fn is_tarball(dependency: &[u8]) -> bool {
     dependency.ends_with(b".tgz") || dependency.ends_with(b".tar.gz")
 }
 
 /// the input is assumed to be either a remote or local tarball
 #[inline]
-pub fn is_remote_tarball(dependency: &[u8]) -> bool {
+pub(crate) fn is_remote_tarball(dependency: &[u8]) -> bool {
     dependency.starts_with(b"https://") || dependency.starts_with(b"http://")
 }
 
@@ -481,7 +474,7 @@ pub mod tarball {
     pub use super::{TarballInfo, URI as Uri};
 }
 
-pub fn split_version_and_maybe_name(str: &[u8]) -> (&[u8], Option<&[u8]>) {
+pub(crate) fn split_version_and_maybe_name(str: &[u8]) -> (&[u8], Option<&[u8]>) {
     if let Some(at_index) = strings::index_of_char(str, b'@') {
         let at_index = at_index as usize;
         if at_index != 0 {
@@ -500,7 +493,7 @@ pub fn split_version_and_maybe_name(str: &[u8]) -> (&[u8], Option<&[u8]>) {
 }
 
 /// Turns `foo@1.1.1` into `foo`, `1.1.1`, or `@foo/bar@1.1.1` into `@foo/bar`, `1.1.1`, or `foo` into `foo`, `null`.
-pub fn split_name_and_maybe_version(str: &[u8]) -> (&[u8], Option<&[u8]>) {
+pub(crate) fn split_name_and_maybe_version(str: &[u8]) -> (&[u8], Option<&[u8]>) {
     if let Some(at_index) = strings::index_of_char(str, b'@') {
         let at_index = at_index as usize;
         if at_index != 0 {
@@ -538,12 +531,12 @@ pub fn split_name_and_version_or_latest(str: &[u8]) -> (&[u8], &[u8]) {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum SplitNameError {
+pub(crate) enum SplitNameError {
     #[error("MissingVersion")]
     MissingVersion,
 }
 
-pub fn split_name_and_version(str: &[u8]) -> Result<(&[u8], &[u8]), SplitNameError> {
+pub(crate) fn split_name_and_version(str: &[u8]) -> Result<(&[u8], &[u8]), SplitNameError> {
     let (name, version) = split_name_and_maybe_version(str);
     Ok((name, version.ok_or(SplitNameError::MissingVersion)?))
 }
@@ -584,6 +577,28 @@ pub fn is_scoped_package_name(name: &[u8]) -> Result<bool, PackageNameError> {
     Err(PackageNameError::InvalidPackageName)
 }
 
+/// A dependency name/alias becomes a directory under `node_modules/`. Names
+/// come from untrusted `package.json` / manifest keys, so reject anything that
+/// could resolve outside that directory. `@scope/name` stays valid.
+pub fn is_safe_install_folder_name(name: &[u8]) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+
+    for component in name.split(|&c| c == b'/') {
+        if component.is_empty() || component == b"." || component == b".." {
+            return false;
+        }
+        for &c in component {
+            if c == b'\\' || c == b':' || c == 0 {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
 /// assumes version is valid
 pub fn without_build_tag(version: &[u8]) -> &[u8] {
     if let Some(plus) = strings::index_of_char(version, b'+') {
@@ -597,7 +612,7 @@ pub fn without_build_tag(version: &[u8]) -> &[u8] {
 // Version
 // ──────────────────────────────────────────────────────────────────────────
 
-pub type VersionExternal = [u8; 9];
+pub(crate) type VersionExternal = [u8; 9];
 
 pub trait VersionExt {
     fn zeroed() -> Version;
@@ -1189,6 +1204,7 @@ impl ValueExt for Value {
 // Free functions: parse
 // ──────────────────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 pub fn is_windows_abs_path_with_leading_slashes(dep: &[u8]) -> Option<&[u8]> {
     let mut i: usize = 0;
     if dep.len() > 2 && dep[i] == b'/' {

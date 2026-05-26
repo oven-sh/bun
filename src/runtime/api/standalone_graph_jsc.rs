@@ -17,7 +17,7 @@ use crate::webcore::blob::store::{Bytes, Data, Store, StoreRef};
 use bun_standalone_graph::{File, StandaloneModuleGraph};
 
 /// Extension trait wiring JSC-dependent methods onto `standalone_graph::File`.
-pub trait FileJsc {
+pub(crate) trait FileJsc {
     fn file_blob(&mut self, global: &JSGlobalObject) -> &mut Blob;
 }
 

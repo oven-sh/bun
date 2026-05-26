@@ -4,7 +4,6 @@
 
 use core::cmp::Ordering;
 use core::fmt;
-use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
@@ -29,7 +28,6 @@ use bun_sys::{self as sys, Fd, File};
 
 use crate::config_version::ConfigVersion;
 use crate::migration;
-use crate::package_install::Summary as PackageInstallSummary;
 use crate::package_manager::WorkspaceFilter;
 use crate::package_manager_real::{
     Options as PackageManagerOptions, options::LogLevel, populate_manifest_cache,
@@ -99,28 +97,33 @@ type SemverStringBuilder = bun_semver::semver_string::Builder;
 // Type aliases / collection types
 // ────────────────────────────────────────────────────────────────────────────
 
-pub type PackageIDSlice = ExternalSlice<PackageID>;
+pub(crate) type PackageIDSlice = ExternalSlice<PackageID>;
 pub type DependencySlice = ExternalSlice<Dependency>;
-pub type DependencyIDSlice = ExternalSlice<DependencyID>;
+pub(crate) type DependencyIDSlice = ExternalSlice<DependencyID>;
 
-pub type PackageIDList = Vec<PackageID>;
-pub type DependencyList = Vec<Dependency>;
-pub type DependencyIDList = Vec<DependencyID>;
+pub(crate) type PackageIDList = Vec<PackageID>;
+pub(crate) type DependencyList = Vec<Dependency>;
+pub(crate) type DependencyIDList = Vec<DependencyID>;
 
-pub type StringBuffer = Vec<u8>;
-pub type ExternalStringBuffer = Vec<ExternalString>;
+pub(crate) type StringBuffer = Vec<u8>;
+pub(crate) type ExternalStringBuffer = Vec<ExternalString>;
 
-pub type NameHashMap = ArrayHashMap<PackageNameHash, SemverString, ArrayIdentityContextU64>;
-pub type TrustedDependenciesSet = ArrayHashMap<TruncatedPackageNameHash, (), ArrayIdentityContext>;
-pub type VersionHashMap = ArrayHashMap<PackageNameHash, Semver::Version, ArrayIdentityContextU64>;
-pub type PatchedDependenciesMap =
+pub(crate) type NameHashMap = ArrayHashMap<PackageNameHash, SemverString, ArrayIdentityContextU64>;
+/// Value is the exact byte string the key hash was computed from; lookups must
+/// compare it since truncated hashes can collide. An empty value is the legacy
+/// `bun.lockb` sentinel ("name unknown, hash-only match").
+pub(crate) type TrustedDependenciesSet =
+    ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>, ArrayIdentityContext>;
+pub(crate) type VersionHashMap =
+    ArrayHashMap<PackageNameHash, Semver::Version, ArrayIdentityContextU64>;
+pub(crate) type PatchedDependenciesMap =
     ArrayHashMap<PackageNameAndVersionHash, PatchedDep, ArrayIdentityContextU64>;
 
-pub type StringPool = bun_semver::string::StringPool;
+pub(crate) type StringPool = bun_semver::string::StringPool;
 // Zig: `String.Builder.StringPool` — `bun_semver::semver_string::StringPool`.
 
-pub type MetaHash = [u8; 32]; // Sha512T256.digest_length
-pub const ZERO_HASH: MetaHash = [0u8; 32];
+pub(crate) type MetaHash = [u8; 32]; // Sha512T256.digest_length
+pub(crate) const ZERO_HASH: MetaHash = [0u8; 32];
 
 /// Result of `maybe_clone_filtering_root_packages`: either the input lockfile was
 /// returned unchanged (borrowed), or a freshly-allocated cleaned lockfile is returned
@@ -131,16 +134,6 @@ pub enum Cleaned<'a> {
     Same(&'a mut Lockfile),
     /// A new lockfile was allocated by `clean`; caller owns it.
     New(Box<Lockfile>),
-}
-
-impl<'a> Cleaned<'a> {
-    #[inline]
-    pub fn as_mut(&mut self) -> &mut Lockfile {
-        match self {
-            Cleaned::Same(l) => l,
-            Cleaned::New(l) => l,
-        }
-    }
 }
 
 // TODO(port): std.io.FixedBufferStream([]u8) — replace with cursor over &mut [u8]
@@ -169,8 +162,6 @@ impl<'a> PositionalStream for Serializer::StreamType<'a> {
         Serializer::StreamType::pwrite(self, data, index)
     }
 }
-
-pub const DEFAULT_FILENAME: &str = "bun.lockb";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Lockfile struct
@@ -232,18 +223,18 @@ pub struct Lockfile {
 }
 
 /// Zig: `Lockfile.Package.List` — `MultiArrayList(Package)`.
-pub type PackageList = self::package::List<u64>;
+pub(crate) type PackageList = self::package::List<u64>;
 
 // ────────────────────────────────────────────────────────────────────────────
 // DepSorter
 // ────────────────────────────────────────────────────────────────────────────
 
-pub struct DepSorter<'a> {
+pub(crate) struct DepSorter<'a> {
     pub lockfile: &'a Lockfile,
 }
 
 impl<'a> DepSorter<'a> {
-    pub fn is_less_than(&self, l: DependencyID, r: DependencyID) -> bool {
+    pub(crate) fn is_less_than(&self, l: DependencyID, r: DependencyID) -> bool {
         let deps_buf = self.lockfile.buffers.dependencies.as_slice();
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
 
@@ -485,12 +476,6 @@ impl<'a> LoadResult<'a> {
 // ────────────────────────────────────────────────────────────────────────────
 // InstallResult
 // ────────────────────────────────────────────────────────────────────────────
-
-pub struct InstallResult {
-    pub lockfile: Option<NonNull<Lockfile>>,
-    // TODO(port): lifetime — no construction sites found in src/install/
-    pub summary: PackageInstallSummary,
-}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Lockfile impl — load / clone / hoist / etc.
@@ -1510,7 +1495,7 @@ pub struct PendingResolution {
     pub parent: PackageID,
 }
 
-pub type PendingResolutions = Vec<PendingResolution>;
+pub(crate) type PendingResolutions = Vec<PendingResolution>;
 
 // ────────────────────────────────────────────────────────────────────────────
 // fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration
@@ -2517,12 +2502,12 @@ pub struct Scratch {
     pub dependency_list_queue: DependencyQueue,
 }
 
-pub type DuplicateCheckerMap =
+pub(crate) type DuplicateCheckerMap =
     BunHashMap<PackageNameHash, bun_ast::Loc, IdentityContext<PackageNameHash>>;
-pub type DependencyQueue = LinearFifo<DependencySlice, DynamicBuffer<DependencySlice>>;
+pub(crate) type DependencyQueue = LinearFifo<DependencySlice, DynamicBuffer<DependencySlice>>;
 
 impl Scratch {
-    pub fn init() -> Scratch {
+    pub(crate) fn init() -> Scratch {
         Scratch {
             dependency_list_queue: DependencyQueue::init(),
             duplicate_checker_map: DuplicateCheckerMap::default(),
@@ -2852,14 +2837,14 @@ impl FormatVersion {
 // EqlSorter
 // ────────────────────────────────────────────────────────────────────────────
 
-pub struct EqlSorter<'a> {
+pub(crate) struct EqlSorter<'a> {
     pub string_buf: &'a [u8],
     pub pkg_names: &'a [SemverString],
 }
 
 /// Basically placement id
 #[derive(Clone, Copy)]
-pub struct PathToId {
+pub(crate) struct PathToId {
     pub pkg_id: PackageID,
     /// Borrows a `Box<[u8]>` parked in `tree_paths` for the duration of
     /// `Lockfile::eql` — `RawSlice` carries the outlives-holder invariant.
@@ -2867,7 +2852,7 @@ pub struct PathToId {
 }
 
 impl<'a> EqlSorter<'a> {
-    pub fn order(&self, l: PathToId, r: PathToId) -> Ordering {
+    pub(crate) fn order(&self, l: PathToId, r: PathToId) -> Ordering {
         let l_path = l.tree_path.slice();
         let r_path = r.tree_path.slice();
         // they exist in the same tree, name can't be the same so string compare.
@@ -3290,7 +3275,7 @@ pub mod default_trusted_dependencies {
 
     const SLOTS: usize = static_slots(MAX_DEFAULT_TRUSTED_DEPENDENCIES);
 
-    pub struct TrustedDepHashCtx;
+    pub(crate) struct TrustedDepHashCtx;
     impl HashContext<&'static [u8]> for TrustedDepHashCtx {
         #[inline]
         fn ctx_hash(s: &&'static [u8]) -> u64 {
@@ -3323,13 +3308,13 @@ pub mod default_trusted_dependencies {
     });
 
     /// Iterate populated entries (Zig: `default_trusted_dependencies.entries`).
-    pub fn entries() -> impl Iterator<Item = &'static Entry<&'static [u8], ()>> {
+    pub(crate) fn entries() -> impl Iterator<Item = &'static Entry<&'static [u8], ()>> {
         MAP.entries.iter().filter(|e| !e.is_empty())
     }
 
     /// Zig: `default_trusted_dependencies.hasWithHash`.
     #[inline]
-    pub fn has_with_hash(hash: u64) -> bool {
+    pub(crate) fn has_with_hash(hash: u64) -> bool {
         MAP.has_with_hash(hash)
     }
 
@@ -3337,7 +3322,7 @@ pub mod default_trusted_dependencies {
     ///
     /// Open-coded `hasContext` so the lookup key can borrow with any lifetime,
     /// not just `'static`.
-    pub fn has(name: &[u8]) -> bool {
+    pub(crate) fn has(name: &[u8]) -> bool {
         let hash = (SemverStringBuilder::string_hash(name) as u32) as u64;
         for entry in &MAP.entries[(hash >> MAP.shift) as usize..] {
             if entry.hash >= hash {
@@ -3351,20 +3336,50 @@ pub mod default_trusted_dependencies {
 impl Lockfile {
     pub fn has_trusted_dependency(
         &self,
-        alias: &[u8],
+        _alias: &[u8],
         pkg_name: &[u8],
         resolution: &Resolution,
     ) -> bool {
         if let Some(trusted_dependencies) = &self.trusted_dependencies {
-            let hash = SemverStringBuilder::string_hash(alias) as u32;
-            return trusted_dependencies.contains(&hash);
+            let hash = SemverStringBuilder::string_hash(pkg_name) as u32;
+            return match trusted_dependencies.get(&hash) {
+                Some(name) => !name.is_empty() && **name == *pkg_name,
+                None => false,
+            };
         }
 
         // Only allow default trusted dependencies for npm packages. Check the
         // resolved package's real name, not the dependency alias, so an
         // `npm:`-aliased package can't inherit trust from a default-trusted
         // name.
-        resolution.tag == ResolutionTag::Npm && default_trusted_dependencies::has(pkg_name)
+        if resolution.tag != ResolutionTag::Npm || !default_trusted_dependencies::has(pkg_name) {
+            return false;
+        }
+
+        let buf = self.buffers.string_bytes.as_slice();
+        let npm = resolution.npm();
+        let url = npm.url.slice(buf);
+        if url.is_empty() {
+            return true;
+        }
+        let registry = PackageManager::get()
+            .scope_for_package_name(pkg_name)
+            .url
+            .href();
+        let Ok(canonical_url) = crate::extract_tarball::build_url_with_printer(
+            registry,
+            &strings::StringOrTinyString::init(pkg_name),
+            npm.version,
+            buf,
+            |args| -> Result<Vec<u8>, std::io::Error> {
+                let mut out: Vec<u8> = Vec::new();
+                out.write_fmt(args)?;
+                Ok(out)
+            },
+        ) else {
+            return false;
+        };
+        url == canonical_url.as_slice()
     }
 }
 

@@ -1,6 +1,5 @@
 use crate::css_parser::{CssResult as Result, Parser, PrintErr, Printer};
-use crate::targets::Browsers;
-use crate::values::protocol::{IsCompatible, Parse, ToCss};
+use crate::values::protocol::{Parse, ToCss};
 use bun_alloc::Arena;
 
 /// A generic value that represents a value with two components, e.g. a border radius.
@@ -31,7 +30,7 @@ where
         T::parse(input)
     }
 
-    pub fn parse(input: &mut Parser) -> Result<Size2D<T>>
+    pub(crate) fn parse(input: &mut Parser) -> Result<Size2D<T>>
     where
         T: Parse,
     {
@@ -45,7 +44,7 @@ where
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>
     where
         T: ToCss,
     {
@@ -57,7 +56,7 @@ where
         Ok(())
     }
 
-    pub fn val_to_css(val: &T, dest: &mut Printer) -> core::result::Result<(), PrintErr>
+    pub(crate) fn val_to_css(val: &T, dest: &mut Printer) -> core::result::Result<(), PrintErr>
     where
         T: ToCss,
     {
@@ -65,14 +64,7 @@ where
         val.to_css(dest)
     }
 
-    pub fn is_compatible(&self, browsers: &Browsers) -> bool
-    where
-        T: IsCompatible,
-    {
-        self.a.is_compatible(browsers) && self.b.is_compatible(browsers)
-    }
-
-    pub fn deep_clone(&self, _bump: &Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &Arena) -> Self {
         // TODO(port): css::implement_deep_clone is @typeInfo-based reflection in Zig;
         // replace with #[derive(DeepClone)] or arena-aware deep_clone.
         // For now `T: Clone` covers it (Box payloads deep-clone via their Clone impls).
@@ -83,13 +75,13 @@ where
     }
 
     #[inline]
-    pub fn val_eql(lhs: &T, rhs: &T) -> bool {
+    pub(crate) fn val_eql(lhs: &T, rhs: &T) -> bool {
         // PORT NOTE: f32 → `lhs.* == rhs.*`, else → `lhs.eql(rhs)` — unified under PartialEq.
         lhs == rhs
     }
 
     #[inline]
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
+    pub(crate) fn eql(lhs: &Self, rhs: &Self) -> bool {
         // PORT NOTE: preserved verbatim from Zig — compares lhs.a against rhs.b only
         // (not a/a && b/b). Suspect upstream bug, but ported faithfully.
         lhs.a == rhs.b

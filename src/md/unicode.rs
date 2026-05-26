@@ -1,7 +1,7 @@
 // PORT NOTE: Zig `u21` (codepoint) → `u32`; Zig `u2` (count) → `u8`.
 // Rust has no arbitrary-bit-width integers; the next natural width is used.
 
-pub struct FoldInfo {
+pub(crate) struct FoldInfo {
     pub codepoints: [u32; 3],
     pub n_codepoints: u8,
 }
@@ -309,7 +309,7 @@ static FOLD_MAP_3_DATA: &[u32] = &[
 /// Returns the original codepoint wrapped in a FoldInfo if no folding is needed.
 ///
 /// This is a direct port of md4c's `md_get_unicode_fold_info`.
-pub fn case_fold(codepoint: u32) -> FoldInfo {
+pub(crate) fn case_fold(codepoint: u32) -> FoldInfo {
     // Fast path for ASCII characters.
     if codepoint <= 0x7f {
         if codepoint >= b'A' as u32 && codepoint <= b'Z' as u32 {

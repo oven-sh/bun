@@ -1544,3 +1544,232 @@ it("internal SQL helpers reject out-of-range database handles", async () => {
     exitCode: 0,
   });
 });
+
+// Property getters on a bindings object run arbitrary JS in the middle of the
+// bind loop. A getter for a later parameter must not be able to (1) change the
+// bytes sqlite stores for an earlier blob parameter by mutating/detaching its
+// ArrayBuffer after it was bound, or (2) keep the bind/step loop running on a
+// statement it just finalized. Run in a subprocess because the unsafe variant
+// of (2) operates on a freed sqlite3_stmt.
+it("binds blob parameters by copy and rejects statements finalized while binding", async () => {
+  const src = `
+    const { Database } = require("bun:sqlite");
+    const out = {};
+
+    // 1. The getter for $b mutates and detaches the buffer that was already
+    //    bound for $a. The stored blob must be the bytes as they were at bind
+    //    time, not whatever the buffer's memory holds when the query runs.
+    {
+      const db = new Database(":memory:");
+      db.run("CREATE TABLE t (a BLOB, b INT)");
+      const ab = new ArrayBuffer(256);
+      const u8 = new Uint8Array(ab);
+      u8.fill(0xab);
+      db.run("INSERT INTO t VALUES ($a, $b)", {
+        get $a() {
+          return u8;
+        },
+        get $b() {
+          u8.fill(0xee);
+          ab.transfer();
+          return 1;
+        },
+      });
+      const row = db.query("SELECT a, b FROM t").get();
+      out.blobLength = row.a.length;
+      out.blobIsOriginal = row.a.every(byte => byte === 0xab);
+      out.b = row.b;
+      db.close();
+    }
+
+    // 2. A getter that finalizes the statement whose parameters are being
+    //    bound must result in an error, not continued use of the statement.
+    {
+      const db = new Database(":memory:");
+      const q = db.query("SELECT $x AS x");
+      let message = "did not throw";
+      try {
+        q.get({
+          get $x() {
+            q.finalize();
+            return 1;
+          },
+        });
+      } catch (e) {
+        message = e.message;
+      }
+      out.finalizeDuringBind = message;
+      out.dbStillWorks = db.query("SELECT 123 AS y").get().y;
+      db.close();
+    }
+
+    // 3. Plain blob binding still round-trips.
+    {
+      const db = new Database(":memory:");
+      db.run("CREATE TABLE t (a BLOB)");
+      db.run("INSERT INTO t VALUES ($a)", { $a: new Uint8Array([1, 2, 3]) });
+      out.plainBlob = Array.from(db.query("SELECT a FROM t").get().a);
+      db.close();
+    }
+
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(
+    JSON.stringify({
+      blobLength: 256,
+      blobIsOriginal: true,
+      b: 1,
+      finalizeDuringBind: "Statement has finalized",
+      dbStillWorks: 123,
+      plainBlob: [1, 2, 3],
+    }),
+  );
+  expect(exitCode).toBe(0);
+});
+
+// Pushing a result row into the output array can re-enter JavaScript when an
+// indexed accessor is installed on Array.prototype. If that JS finalizes the
+// statement being iterated, the row-collection loop must stop with an error
+// instead of stepping the freed sqlite3_stmt. Run in a subprocess because the
+// unsafe variant operates on freed memory and because installing an indexed
+// accessor on Array.prototype affects every array in the process.
+it("all() reports an error when a result-row push finalizes the statement", async () => {
+  const src = `
+    const { Database } = require("bun:sqlite");
+    const out = {};
+
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE t (a INTEGER)");
+    db.run("INSERT INTO t VALUES (1), (2), (3)");
+
+    const stmt = db.query("SELECT a FROM t ORDER BY a ASC");
+    Object.defineProperty(Array.prototype, 0, {
+      configurable: true,
+      get() {
+        return undefined;
+      },
+      set(_row) {
+        stmt.finalize();
+      },
+    });
+
+    let message = "did not throw";
+    try {
+      stmt.all();
+    } catch (e) {
+      message = e.message;
+    }
+    out.finalizeDuringAll = message;
+
+    // Remove the accessor; result collection must still work afterwards.
+    delete Array.prototype[0];
+    out.rows = db.query("SELECT a FROM t ORDER BY a DESC").all();
+    db.close();
+
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(
+    JSON.stringify({
+      finalizeDuringAll: "Statement has finalized",
+      rows: [{ a: 3 }, { a: 2 }, { a: 1 }],
+    }),
+  );
+  expect(exitCode).toBe(0);
+});
+
+// Binding an ArrayStorage-backed sparse array whose public length exceeds the
+// number of slots in its backing vector must not read JSValues from beyond the
+// vector. Holes fall back to the slow indexed lookup and bind as NULL. Run in
+// a subprocess because the unsafe variant reads out-of-bounds heap memory.
+it("binds sparse array holes as NULL instead of reading past the backing store", async () => {
+  const src = `
+    const { Database } = require("bun:sqlite");
+    const out = {};
+    const db = new Database(":memory:");
+
+    // defineProperty with non-default attributes followed by growing .length
+    // forces the array into ArrayStorage with a public length (3) larger than
+    // the number of elements actually stored in the butterfly vector.
+    const params = [];
+    Object.defineProperty(params, 0, {
+      value: 1,
+      configurable: true,
+      enumerable: true,
+      writable: false,
+    });
+    params.length = 3;
+
+    out.sparse = db.query("SELECT ?1 AS a, ?2 AS b, ?3 AS c").get(params);
+
+    // A plain dense array still binds positionally.
+    out.dense = db.query("SELECT ?1 AS a, ?2 AS b, ?3 AS c").get([4, 5, 6]);
+    db.close();
+
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(
+    JSON.stringify({
+      sparse: { a: 1, b: null, c: null },
+      dense: { a: 4, b: 5, c: 6 },
+    }),
+  );
+  expect(exitCode).toBe(0);
+});
+
+// Several SQLITE_FCNTL_* opcodes (VFSNAME, MMAP_SIZE, FILE_POINTER, ...) write
+// a full pointer or int64 through the result argument, so the result buffer
+// must be at least 8 bytes. A 1-byte Uint8Array used to be passed through
+// as-is and overflowed.
+it("fileControl rejects result TypedArrays smaller than 8 bytes", () => {
+  const dir = tempDirWithFiles("sqlite-fcntl-bounds", { "empty.txt": "" });
+  const db = new Database(path.join(dir, "my.db"));
+
+  expect(() => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, new Uint8Array(1))).toThrow(
+    "TypedArray must be at least 8 bytes",
+  );
+  expect(() => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, new Uint8Array(7))).toThrow(
+    "TypedArray must be at least 8 bytes",
+  );
+
+  // 8-byte buffers and plain numbers still work.
+  expect(db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, new Uint8Array(8))).toBe(0);
+  expect(db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0)).toBe(0);
+  // Pointer-returning opcodes get an 8-byte output slot even when JS passes a
+  // plain number for the result argument.
+  expect(db.fileControl(constants.SQLITE_FCNTL_VFSNAME, 0)).toBe(0);
+
+  db.close();
+});

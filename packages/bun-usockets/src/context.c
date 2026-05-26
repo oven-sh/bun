@@ -154,11 +154,11 @@ unsigned short us_socket_group_timestamp(struct us_socket_group_t *group) {
     return group->timestamp;
 }
 
-struct us_loop_t *us_socket_group_loop(struct us_socket_group_t *group) {
+__attribute__((always_inline)) struct us_loop_t *us_socket_group_loop(struct us_socket_group_t *group) {
     return group->loop;
 }
 
-void *us_socket_group_ext(struct us_socket_group_t *group) {
+__attribute__((always_inline)) void *us_socket_group_ext(struct us_socket_group_t *group) {
     return group->ext;
 }
 
@@ -428,7 +428,7 @@ void us_listen_socket_close(struct us_listen_socket_t *ls) {
     /* We cannot immediately free a listen socket as we can be inside an accept loop */
 }
 
-void *us_listen_socket_ext(struct us_listen_socket_t *ls) {
+__attribute__((always_inline)) void *us_listen_socket_ext(struct us_listen_socket_t *ls) {
     return ls + 1;
 }
 

@@ -29,7 +29,7 @@ pub use crate::ThreadPool;
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::parse_task::ParseTask;
 
-pub struct ServerComponentParseTask {
+pub(crate) struct ServerComponentParseTask {
     pub task: ThreadPoolTask,
     pub data: Data,
     // BACKREF (LIFETIMES.tsv) — Zig `*BundleV2` is mutable; written through in `on_complete`.
@@ -200,12 +200,6 @@ fn task_callback(
         content_hash_for_additional_file: 0,
         package_name: bun_ast::StoreStr::EMPTY,
     })
-}
-
-impl ServerComponentParseTask {
-    /// Expose the thread-pool callback so callers can construct
-    /// `ThreadPoolLib::Task { callback: Self::TASK_CALLBACK }`.
-    pub const TASK_CALLBACK: fn(*mut ThreadPoolTask) = task_callback_wrap;
 }
 
 impl Default for ServerComponentParseTask {

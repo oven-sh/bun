@@ -4,7 +4,6 @@
 //! functions become inherent methods on it.
 
 #![warn(unused_must_use)]
-#![warn(unreachable_pub)]
 #[path = "AsyncHTTP.rs"]
 pub mod async_http;
 #[path = "CertificateInfo.rs"]
@@ -1467,7 +1466,13 @@ impl<'a> HTTPClient<'a> {
 
                     // check if we need to report the error (probably to `checkServerIdentity` was informed from JS side)
                     // this is the slow path
-                    if self.signals.get(signals::Field::CertErrors) {
+                    //
+                    // The JS callback only applies to the *target's* certificate
+                    // (Node semantics). For the HTTPS proxy's own handshake, use
+                    // the native SAN check — a pinning callback written for the
+                    // target would reject the proxy's certificate.
+                    let is_proxy_certificate = allow_proxy_url && self.http_proxy.is_some();
+                    if !is_proxy_certificate && self.signals.get(signals::Field::CertErrors) {
                         // clone the relevant data
                         // SAFETY: x509 is a live *mut X509 borrowed from cert_chain; null out-ptr requests size-only
                         let cert_size =
@@ -1485,6 +1490,14 @@ impl<'a> HTTPClient<'a> {
                             hostname: Box::<[u8]>::from(hostname),
                             cert_error,
                         });
+
+                        // Park the connection until the JS-side
+                        // `checkServerIdentity` callback approves this
+                        // certificate (gates `on_writable`/`on_data`; see the
+                        // flag's doc comment). The JS thread resumes via
+                        // `HTTPThread::schedule_cert_check_resume` on success,
+                        // or schedules a shutdown on failure.
+                        self.state.flags.is_waiting_for_cert_check = true;
 
                         // we inform the user that the cert is invalid
                         let ctx = self.get_ssl_ctx::<IS_SSL>();
@@ -1634,6 +1647,12 @@ impl<'a> HTTPClient<'a> {
     /// `BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT` env var, or
     /// `protocol: "http2"` on the fetch options.
     pub fn can_offer_h2(&self) -> bool {
+        // The h2 session transmits from `attach()` without consulting the
+        // `is_waiting_for_cert_check` park gate, so requests with a JS
+        // `checkServerIdentity` callback stay on HTTP/1.1.
+        if self.signals.get(signals::Field::CertErrors) {
+            return false;
+        }
         if self.flags.force_http1 {
             return false;
         }
@@ -1675,6 +1694,11 @@ impl<'a> HTTPClient<'a> {
     /// specific protocol). When true, `start_()` consults `H3.AltSvc.lookup`
     /// before opening TCP.
     pub fn can_try_h3_alt_svc(&self) -> bool {
+        // The h3 client never routes through `check_server_identity`, so a JS
+        // `checkServerIdentity` callback could never run; stay on TCP.
+        if self.signals.get(signals::Field::CertErrors) {
+            return false;
+        }
         if self.flags.force_http1 || self.flags.force_http2 {
             return false;
         }
@@ -2308,6 +2332,11 @@ impl<'a> HTTPClient<'a> {
         } else if self.state.request_stage == RequestStage::Done
             && self.is_keep_alive_possible()
             && !socket.is_closed_or_has_error()
+            // A direct TLS socket verified against a Host-header override
+            // (get_tls_hostname) must not be pooled here: this.url has already
+            // been repointed at the redirect destination, so proxy_auth_hash()
+            // can no longer compute the correct pool key. Close it instead.
+            && (!IS_SSL || self.http_proxy.is_some() || self.hostname.is_none())
         {
             // request_stage == .done: a 303 to a streaming POST can arrive before
             // the chunked upload's terminating 0\r\n\r\n is written. Pooling that
@@ -2335,6 +2364,13 @@ impl<'a> HTTPClient<'a> {
         // connected_url was the last borrower of the previous hop's URL buffer
         // (handleResponseMetadata already repointed this.url at the new one).
         self.prev_redirect = Vec::new();
+
+        // Deferred until after the pool/close decision above — see
+        // `InternalStateFlags::clear_hostname_on_redirect`.
+        if self.state.flags.clear_hostname_on_redirect {
+            self.state.flags.clear_hostname_on_redirect = false;
+            self.hostname = None;
+        }
 
         // TODO: should this check be before decrementing the redirect count?
         // the current logic will allow one less redirect than requested
@@ -2441,7 +2477,23 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
+        // `can_offer_h2` refuses to advertise h2 when a JS `checkServerIdentity`
+        // callback is set, so `protocol: "http2"` + callback would handshake and
+        // then fail in `first_call` anyway. Fail up front instead.
+        if self.flags.force_http2 && self.signals.get(signals::Field::CertErrors) {
+            self.fail(err!(HTTP2Unsupported));
+            self.complete_connecting_process();
+            return;
+        }
+
         if self.flags.force_http3 {
+            // h3 never routes through `check_server_identity`; refuse the
+            // combination instead of silently skipping the JS callback.
+            if self.signals.get(signals::Field::CertErrors) {
+                self.fail(err!(HTTP3Unsupported));
+                self.complete_connecting_process();
+                return;
+            }
             if !IS_SSL {
                 self.fail(err!(HTTP3Unsupported));
                 self.complete_connecting_process();
@@ -2768,6 +2820,13 @@ impl<'a> HTTPClient<'a> {
             proxy.on_writable::<IS_SSL>(socket);
         }
 
+        // Parked until the JS `checkServerIdentity` callback approves the peer
+        // certificate: write no HTTP data. Kept below the tunnel flush so the
+        // handshake's final flight still reaches the wire while parked.
+        if self.state.flags.is_waiting_for_cert_check {
+            return;
+        }
+
         match self.state.request_stage {
             RequestStage::Pending | RequestStage::Headers | RequestStage::Opened => {
                 bun_core::scoped_log!(fetch, "sendInitialRequestPayload");
@@ -3005,6 +3064,19 @@ impl<'a> HTTPClient<'a> {
             }
             _ => {}
         }
+    }
+
+    /// The JS-side `checkServerIdentity` callback approved the peer
+    /// certificate: clear the park flag and write the request that
+    /// `on_writable` has been holding back since the handshake completed.
+    pub fn resume_after_cert_check<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+        if !self.state.flags.is_waiting_for_cert_check {
+            // Never parked, or already resumed/reset by a redirect or failure.
+            return;
+        }
+        bun_core::scoped_log!(fetch, "resumeAfterCertCheck");
+        self.state.flags.is_waiting_for_cert_check = false;
+        self.on_writable::<true, IS_SSL>(socket);
     }
 
     pub fn close_and_fail<const IS_SSL: bool>(
@@ -3279,6 +3351,16 @@ impl<'a> HTTPClient<'a> {
             // if we have a tunnel we dont care about the other stages, we will just tunnel the data
             self.set_timeout(&socket);
             self.proxy_tunnel_mut().unwrap().receive(incoming_data);
+            return;
+        }
+
+        // While parked waiting for the JS `checkServerIdentity` verdict, no
+        // request has been written, so any data is unexpected. Must stay below
+        // the proxy_tunnel dispatch above: a tunneled target's raw inner-TLS
+        // records must keep reaching the SSLWrapper while parked.
+        if self.state.flags.is_waiting_for_cert_check {
+            self.state.pending_response = None;
+            self.close_and_fail::<IS_SSL>(err!(UnexpectedData), socket);
             return;
         }
 
@@ -3626,7 +3708,11 @@ impl<'a> HTTPClient<'a> {
                     } else {
                         0
                     },
-                    if had_tunnel {
+                    if had_tunnel || (IS_SSL && self.http_proxy.is_none()) {
+                        // Direct TLS: the handshake verified the peer against
+                        // the Host-header override (get_tls_hostname), so the
+                        // override hash must be part of the pool key. Matches
+                        // the lookup in HTTPContext::connect.
                         self.proxy_auth_hash()
                     } else {
                         0
@@ -3752,6 +3838,15 @@ impl<'a> HTTPClient<'a> {
     fn do_redirect_multiplexed(&mut self) {
         debug_assert!(self.flags.protocol != Protocol::Http1_1);
         bun_core::scoped_log!(fetch, "doRedirectMultiplexed");
+        // See `do_redirect`: the cross-origin redirect must drop the
+        // per-request Host override before the follow-up connection derives
+        // its SNI / certificate-verification hostname. The h2/h3 path never
+        // reaches `do_redirect`'s consume-and-clear, so mirror it here before
+        // `state.reset()` discards the flag.
+        if self.state.flags.clear_hostname_on_redirect {
+            self.state.flags.clear_hostname_on_redirect = false;
+            self.hostname = None;
+        }
         if matches!(self.state.original_request_body, HTTPRequestBody::Stream(_)) {
             self.flags.is_streaming_request_body = false;
         }
@@ -4240,10 +4335,35 @@ impl<'a> HTTPClient<'a> {
         for (header_i, header) in response.headers.list.iter().enumerate() {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
+                    // RFC 9110 section 9.3.6: a client MUST ignore
+                    // Content-Length in a successful response to CONNECT —
+                    // the connection becomes an opaque tunnel and is never
+                    // pooled, so the framing-desync concern below does not
+                    // apply.
+                    if self.flags.proxy_tunneling
+                        && self.proxy_tunnel.is_none()
+                        && response.status_code == 200
+                    {
+                        continue;
+                    }
                     // byte-level parse — header.value() is network bytes, not &str
-                    let content_length =
-                        bun_core::parse_unsigned::<usize>(header.value(), 10).unwrap_or(0);
+                    //
+                    // RFC 9112 section 6.3: an invalid or conflicting
+                    // Content-Length is an unrecoverable framing error —
+                    // falling back to 0 would release a desynchronized socket
+                    // into the keep-alive pool.
+                    let Ok(content_length) = bun_core::parse_unsigned::<usize>(header.value(), 10)
+                    else {
+                        return Err(err!(InvalidContentLength));
+                    };
                     if self.method.has_body() {
+                        if self
+                            .state
+                            .content_length
+                            .is_some_and(|prev| prev != content_length)
+                        {
+                            return Err(err!(InvalidContentLength));
+                        }
                         self.state.content_length = Some(content_length);
                     } else {
                         // ignore body size for HEAD requests
@@ -4273,6 +4393,15 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"Transfer-Encoding") => {
+                    // RFC 9110 section 9.3.6: as with Content-Length above, a
+                    // client MUST ignore Transfer-Encoding in a successful
+                    // response to CONNECT.
+                    if self.flags.proxy_tunneling
+                        && self.proxy_tunnel.is_none()
+                        && response.status_code == 200
+                    {
+                        continue;
+                    }
                     if header.value() == b"gzip" {
                         if !self.flags.disable_decompression {
                             self.state.transfer_encoding = Encoding::Gzip;
@@ -4383,6 +4512,12 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
+        // RFC 9110 §9.3.6: a non-200 response to CONNECT means the tunnel was
+        // not established. Surface the proxy's response to the caller, but
+        // never follow a Location header from it — a malicious proxy could
+        // otherwise redirect the request (body and custom headers included)
+        // to an attacker-chosen plaintext origin.
+        let mut is_proxy_connect_failure = false;
         if self.flags.proxy_tunneling && self.proxy_tunnel.is_none() {
             if response.status_code == 200 {
                 // signal to continue the proxing
@@ -4392,6 +4527,7 @@ impl<'a> HTTPClient<'a> {
             // proxy denied connection so return proxy result (407, 403 etc)
             self.flags.proxy_tunneling = false;
             self.flags.disable_keepalive = true;
+            is_proxy_connect_failure = true;
         }
 
         let status_code = response.status_code;
@@ -4404,7 +4540,8 @@ impl<'a> HTTPClient<'a> {
         // if is no redirect or if is redirect == "manual" just proceed
         let is_redirect = status_code >= 300 && status_code <= 399;
         if is_redirect {
-            if self.redirect_type == FetchRedirect::Follow
+            if !is_proxy_connect_failure
+                && self.redirect_type == FetchRedirect::Follow
                 && !location.is_empty()
                 && self.remaining_redirect_count > 0
             {
@@ -4643,6 +4780,13 @@ impl<'a> HTTPClient<'a> {
                             }
                         }
 
+                        // Cross-origin redirect: re-derive SNI / cert
+                        // verification / Host from the redirect target. See
+                        // `InternalStateFlags::clear_hostname_on_redirect`.
+                        if !is_same_origin {
+                            self.state.flags.clear_hostname_on_redirect = true;
+                        }
+
                         // https://fetch.spec.whatwg.org/#concept-http-redirect-fetch
                         // If request's current URL's origin is not same origin with
                         // locationURL's origin, then for each headerName of CORS
@@ -4655,7 +4799,7 @@ impl<'a> HTTPClient<'a> {
                             }
                             // PORT NOTE: was a `const` table in Zig; LazyLock hashes
                             // aren't const, so build at runtime.
-                            let headers_to_remove: [H; 3] = [
+                            let headers_to_remove: [H; 4] = [
                                 H {
                                     name: b"Authorization",
                                     hash: *AUTHORIZATION_HEADER_HASH,
@@ -4667,6 +4811,13 @@ impl<'a> HTTPClient<'a> {
                                 H {
                                     name: b"Cookie",
                                     hash: *COOKIE_HEADER_HASH,
+                                },
+                                // A user-supplied Host header names the previous
+                                // origin; keeping it would also suppress the
+                                // default Host header derived from the new URL.
+                                H {
+                                    name: HOST_HEADER_NAME,
+                                    hash: hash_header_const(HOST_HEADER_NAME),
                                 },
                             ];
                             for to_remove in headers_to_remove.iter() {
@@ -4690,7 +4841,7 @@ impl<'a> HTTPClient<'a> {
                     }
                     _ => {}
                 }
-            } else if self.redirect_type == FetchRedirect::Error {
+            } else if !is_proxy_connect_failure && self.redirect_type == FetchRedirect::Error {
                 // error out if redirect is not allowed
                 return Err(err!(UnexpectedRedirect));
             }

@@ -72,7 +72,7 @@ fn sys_system_error_to_js(err: &bun_sys::SystemError, global: &JSGlobalObject) -
 /// `Terminal.CreateResult` — local mirror that flattens `IntrusiveRc<Terminal>`
 /// to a `BackRef<Terminal>` used by `Subprocess.terminal`, so the scopeguard /
 /// field-assignment paths share one pointer type with `existing_terminal`.
-pub struct TerminalCreateResult {
+pub(crate) struct TerminalCreateResult {
     /// BACKREF — the `IntrusiveRc<Terminal>` pointer leaked via `into_raw()`
     /// when this struct was populated; the +1 ref is held until
     /// `Subprocess::finalize` (or the spawn-error scopeguard's
@@ -85,7 +85,7 @@ impl TerminalCreateResult {
     /// Shared borrow of the held `Terminal` (BackRef invariant: +1-ref'd
     /// IntrusiveRc, live while this struct is held).
     #[inline]
-    pub fn term(&self) -> &Terminal {
+    pub(crate) fn term(&self) -> &Terminal {
         self.terminal.get()
     }
 }
@@ -344,7 +344,7 @@ pub fn spawn_sync(
     spawn_maybe_sync::<true>(global_this, args, secondary_args_value)
 }
 
-pub fn spawn_maybe_sync<const IS_SYNC: bool>(
+pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     global_this: &JSGlobalObject,
     args_: JSValue,
     secondary_args_value: Option<JSValue>,
@@ -1986,7 +1986,7 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
 /// into `envp` (and, for `PATH=`, sliced into `*path`). The Zig original used a
 /// bump arena freed at the end of `spawnMaybeSync`; the caller's `Vec<ZBox>`
 /// plays the same role and is dropped after `spawn_process` returns.
-pub fn append_envp_from_js(
+pub(crate) fn append_envp_from_js(
     global_this: &JSGlobalObject,
     object: &JSObject,
     envp: &mut Vec<CStrPtr>,

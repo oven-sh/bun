@@ -45,6 +45,7 @@ pub fn valkey_error_to_js(
         RedisError::ConnectionTimeout => JscError::REDIS_CONNECTION_TIMEOUT,
         RedisError::IdleTimeout => JscError::REDIS_IDLE_TIMEOUT,
         RedisError::NestingDepthExceeded => JscError::REDIS_INVALID_RESPONSE,
+        RedisError::LineTooLong => JscError::REDIS_INVALID_RESPONSE,
         RedisError::JSError => return global.take_exception(JsError::Thrown),
         RedisError::OutOfMemory => {
             let _ = global.throw_out_of_memory();

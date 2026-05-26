@@ -670,6 +670,14 @@ impl FileReader {
             // PORT NOTE: reshaped for borrowck — Zig `defer { clear; run() }` becomes a
             // labeled block computing `ret`, then cleanup + run + return.
             let ret: bool = 'pending: {
+                let global = self.parent_global();
+                let mut pending_array_buffer = self
+                    .pending_value
+                    .get()
+                    .get()
+                    .and_then(|view| view.as_array_buffer(&global))
+                    .unwrap_or_default();
+                let pending_buf = pending_array_buffer.slice_mut();
                 if buf.is_empty() {
                     if self.buffered.get().is_empty() {
                         self.buffered.set(Vec::new()); // clearAndFree
@@ -680,9 +688,8 @@ impl FileReader {
                     // PORT NOTE: nested `defer buffer.clearAndFree` folded into the arms.
                     let buffer = self.buffered.replace(Vec::new());
                     if !buffer.is_empty() {
-                        if self.pending_view.get().len() >= buffer.len() {
-                            self.pending_view
-                                .with_mut(|v| v[0..buffer.len()].copy_from_slice(&buffer));
+                        if pending_buf.len() >= buffer.len() {
+                            pending_buf[0..buffer.len()].copy_from_slice(&buffer);
                             self.pending.with_mut(|p| {
                                 p.result = streams::Result::IntoArrayAndDone(streams::IntoArray {
                                     value: self.pending_value.get().get().unwrap_or(JSValue::ZERO),
@@ -704,9 +711,8 @@ impl FileReader {
 
                 let was_done = self.reader().is_done();
 
-                if self.pending_view.get().len() >= buf.len() {
-                    self.pending_view
-                        .with_mut(|v| v[0..buf.len()].copy_from_slice(buf));
+                if pending_buf.len() >= buf.len() {
+                    pending_buf[0..buf.len()].copy_from_slice(buf);
                     // SAFETY: see `reader_buffer` decl.
                     unsafe { (*reader_buffer).clear() };
                     self.buffered.with_mut(|b| b.clear());

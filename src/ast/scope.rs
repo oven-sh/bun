@@ -1,5 +1,5 @@
 use bun_alloc::{AstAlloc, AstVec};
-use bun_collections::{ArrayHashMap, StringHashMap, VecExt};
+use bun_collections::{StringHashMap, VecExt};
 
 use crate::StrictModeKind;
 use crate::base::Ref;
@@ -14,7 +14,7 @@ use crate::ts::TSNamespaceScope;
 /// lived in the parser arena; the original Rust port placed both on the
 /// global heap, and since `Scope` itself sits in an arena slot whose `Drop`
 /// never runs, every member map leaked.
-pub type MemberHashMap = StringHashMap<Member, AstAlloc>;
+pub(crate) type MemberHashMap = StringHashMap<Member, AstAlloc>;
 
 // PORT NOTE: Zig `Scope` is a value type — `Ast.module_scope` / `BundledAst.module_scope`
 // hold it by value and `toAST` / `init` bitwise-copy it (`this.module_scope`). Vec no
@@ -89,8 +89,6 @@ impl Default for Scope {
         Self::EMPTY
     }
 }
-
-pub type NestedScopeMap = ArrayHashMap<u32, Vec<StoreRef<Scope>>>;
 
 impl Scope {
     // Must agree with `StringHashMap`'s `BuildHasher` (`bun_wyhash::BuildHasher`,
@@ -301,14 +299,6 @@ pub enum Kind {
     FunctionArgs,
     FunctionBody,
     ClassStaticInit,
-}
-
-impl Kind {
-    // TODO(port): std.json.Stringify protocol — confirm Rust-side json writer trait.
-    pub fn json_stringify(self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
-        // Zig: writer.write(@tagName(self)) — std.json writer wraps strings in quotes.
-        write!(writer, "\"{}\"", <&'static str>::from(self))
-    }
 }
 
 // ported from: src/js_parser/ast/Scope.zig

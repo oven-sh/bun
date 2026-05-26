@@ -266,7 +266,6 @@ pub struct LexerSnapshot<'a> {
     pub current: usize,
     pub start: usize,
     pub end: usize,
-    pub did_panic: bool,
     pub approximate_newline_count: usize,
     pub previous_backslash_quote_in_jsx: Range,
     pub token: T,
@@ -347,7 +346,6 @@ pub struct LexerType<
     pub current: usize,
     pub start: usize,
     pub end: usize,
-    pub did_panic: bool,
     pub approximate_newline_count: usize,
     pub previous_backslash_quote_in_jsx: Range,
     pub token: T,
@@ -529,7 +527,6 @@ lexer_impl_header! {
             current: self.current,
             start: self.start,
             end: self.end,
-            did_panic: self.did_panic,
             approximate_newline_count: self.approximate_newline_count,
             previous_backslash_quote_in_jsx: self.previous_backslash_quote_in_jsx,
             token: self.token,
@@ -570,7 +567,6 @@ lexer_impl_header! {
         self.current = original.current;
         self.start = original.start;
         self.end = original.end;
-        self.did_panic = original.did_panic;
         self.approximate_newline_count = original.approximate_newline_count;
         self.previous_backslash_quote_in_jsx = original.previous_backslash_quote_in_jsx;
         self.token = original.token;
@@ -2284,7 +2280,6 @@ lexer_impl_header! {
             }
         };
 
-        self.did_panic = true;
         self.add_range_error(
             self.range(),
             format_args!("Unexpected {}", bstr::BStr::new(found)),
@@ -2716,7 +2711,6 @@ lexer_impl_header! {
             current: 0,
             start: 0,
             end: 0,
-            did_panic: false,
             approximate_newline_count: 0,
             previous_backslash_quote_in_jsx: Range::NONE,
             token: T::TEndOfFile,

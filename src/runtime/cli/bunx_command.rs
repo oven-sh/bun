@@ -31,7 +31,7 @@ use crate::api::bun::process::sync as proc_sync;
 
 bun_output::declare_scope!(bunx, visible);
 
-pub struct BunxCommand;
+pub(crate) struct BunxCommand;
 
 /// bunx-specific options parsed from argv.
 //
@@ -212,7 +212,7 @@ impl Options {
 // so no explicit `Drop` impl is needed.
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GetBinNameError {
+pub(crate) enum GetBinNameError {
     #[error("NoBinFound")]
     NoBinFound,
     #[error("NeedToInstall")]
@@ -229,7 +229,7 @@ impl BunxCommand {
     /// occupies `v[..v.len()-1]` (matches Zig `[:0]const u8` from `allocSentinel`).
     // TODO(port): return owned `bun_core::ZString` / `Box<ZStr>` once that type exists,
     // instead of a Vec<u8> with a trailing-NUL convention.
-    pub fn add_create_prefix(input: &[u8]) -> Result<Vec<u8>, AllocError> {
+    pub(crate) fn add_create_prefix(input: &[u8]) -> Result<Vec<u8>, AllocError> {
         const PREFIX_LENGTH: usize = b"create-".len();
 
         if input.is_empty() {
@@ -586,12 +586,33 @@ impl BunxCommand {
         true
     }
 
+    #[cfg(unix)]
+    fn is_trusted_cache_root(cache_root: &ZStr, uid: libc::uid_t) -> bool {
+        match bun_sys::lstat(cache_root) {
+            Ok(st) => {
+                (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
+                    && st.st_uid == uid
+                    && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+            }
+            Err(_) => true,
+        }
+    }
+
+    #[cfg(not(unix))]
+    #[inline(always)]
+    fn is_trusted_cache_root(_cache_root: &ZStr, _uid: u32) -> bool {
+        true
+    }
+
     fn exit_with_usage() -> ! {
         crate::cli::command::tag_print_help(Command::Tag::BunxCommand, false);
         Global::exit(1);
     }
 
-    pub fn exec(ctx: &mut ContextData, argv: &[&'static ZStr]) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(
+        ctx: &mut ContextData,
+        argv: &[&'static ZStr],
+    ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         // Don't log stuff
         ctx.debug.silent = true;
@@ -928,6 +949,22 @@ impl BunxCommand {
             // SAFETY: `written` bytes were just initialized above
             unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
         };
+
+        {
+            let mut cache_root_buf = PathBuffer::uninit();
+            cache_root_buf[..bunx_cache_dir.len()].copy_from_slice(bunx_cache_dir);
+            cache_root_buf[bunx_cache_dir.len()] = 0;
+            if !Self::is_trusted_cache_root(
+                ZStr::from_buf(&cache_root_buf[..], bunx_cache_dir.len()),
+                uid,
+            ) {
+                Output::err_generic(
+                    "refusing to use bunx cache directory <b>{}<r> because it is not a directory owned by the current user. Remove it and try again.",
+                    format_args!("{}", BStr::new(bunx_cache_dir)),
+                );
+                Global::exit(1);
+            }
+        }
 
         let passthrough: &[Box<[u8]>] = opts.passthrough_list.as_slice();
 

@@ -4,7 +4,7 @@ use super::Expect;
 use super::get_signature;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_be_instance_of(
+pub(crate) fn to_be_instance_of(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,

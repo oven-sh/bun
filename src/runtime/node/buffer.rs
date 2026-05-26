@@ -1,4 +1,4 @@
-pub struct BufferVectorized;
+pub(crate) struct BufferVectorized;
 
 mod _impl {
     use super::*;
@@ -14,7 +14,7 @@ mod _impl {
         /// `str` must point to a valid `ZigString` and `buf_ptr` must point to a writable
         /// buffer of at least `fill_length` bytes.
         #[unsafe(export_name = "Bun__Buffer_fill")]
-        pub unsafe extern "C" fn fill(
+        pub(crate) unsafe extern "C" fn fill(
             str: *const ZigString,
             buf_ptr: *mut u8,
             fill_length: usize,

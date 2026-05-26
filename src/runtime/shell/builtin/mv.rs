@@ -46,13 +46,13 @@ pub enum MvState {
 }
 
 /// Spec: mv.zig `Opts.ParseError` — mv uses its own simpler parser.
-pub enum MvParseError {
+pub(crate) enum MvParseError {
     IllegalOption(&'static [u8]),
     ShowUsage,
 }
 
 impl Mv {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)
     }
 
@@ -75,7 +75,7 @@ impl Mv {
     }
 
     /// Spec: mv.zig `next`.
-    pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         // PORT NOTE: reshaped for borrowck — read tag, drop borrow, act.
         enum Tag {
             Idle,
@@ -280,7 +280,7 @@ impl Mv {
         }
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,
@@ -300,7 +300,7 @@ impl Mv {
     }
 
     /// Spec: mv.zig `checkTargetTaskDone`.
-    pub fn check_target_task_done(interp: &Interpreter, cmd: NodeId) {
+    pub(crate) fn check_target_task_done(interp: &Interpreter, cmd: NodeId) {
         if let MvState::CheckTarget(t) = &mut Self::state_mut(interp, cmd).state {
             t.done = true;
         }
@@ -308,7 +308,7 @@ impl Mv {
     }
 
     /// Spec: mv.zig `batchedMoveTaskDone`.
-    pub fn batched_move_task_done(interp: &Interpreter, cmd: NodeId, task_idx: usize) {
+    pub(crate) fn batched_move_task_done(interp: &Interpreter, cmd: NodeId, task_idx: usize) {
         let (all_done, had_err) = {
             let MvState::Executing {
                 task_count,
@@ -438,7 +438,7 @@ pub struct ShellMvCheckTargetTask {
 
 impl ShellMvCheckTargetTask {
     /// Spec: mv.zig `ShellMvCheckTargetTask.runFromThreadPool`.
-    pub fn run_from_thread_pool(this: &mut ShellMvCheckTargetTask) {
+    pub(crate) fn run_from_thread_pool(this: &mut ShellMvCheckTargetTask) {
         let flags = bun_sys::O::RDONLY | bun_sys::O::DIRECTORY;
         this.result = Some(match shell_openat(this.cwd, &this.target, flags, 0) {
             Ok(fd) => Ok(Some(fd)),
@@ -471,10 +471,10 @@ pub struct ShellMvBatchedTask {
 }
 
 impl ShellMvBatchedTask {
-    pub const BATCH_SIZE: usize = 5;
+    pub(crate) const BATCH_SIZE: usize = 5;
 
     /// Spec: mv.zig `ShellMvBatchedTask.runFromThreadPool`.
-    pub fn run_from_thread_pool(this: &mut ShellMvBatchedTask) {
+    pub(crate) fn run_from_thread_pool(this: &mut ShellMvBatchedTask) {
         // Moving multiple entries into a directory.
         if this.sources.len() > 1 {
             return this.move_multiple_into_dir();

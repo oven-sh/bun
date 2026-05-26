@@ -33,15 +33,4 @@ pub fn from_js<V: Copy>(
     Ok(map.get(utf8.slice()).copied())
 }
 
-pub fn from_js_case_insensitive<V: Copy>(
-    map: &phf::Map<&'static [u8], V>,
-    global_this: &JSGlobalObject,
-    input: JSValue,
-) -> JsResult<Option<V>> {
-    // `defer str.deref()` — `OwnedString` releases the +1 ref on Drop.
-    let str = OwnedString::new(BunString::from_js(input, global_this)?);
-    debug_assert!(str.tag() != Tag::Dead);
-    Ok(str.in_map_case_insensitive(map))
-}
-
 // ported from: src/jsc/comptime_string_map_jsc.zig

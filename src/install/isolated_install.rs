@@ -142,7 +142,7 @@ impl<'a> std::io::Write for WyhashWriter<'a> {
 /// anonymous-struct call shape `{ .onExtract = onPackageExtracted, .onResolve = {},
 /// .onPackageManifestError = {}, .onPackageDownloadError = onPackageDownloadError,
 /// .progress_bar = false, .manifests_only = false }` with `Ctx == *Store.Installer`.
-pub struct StoreRunTasksCallbacks<'a>(core::marker::PhantomData<&'a mut ()>);
+pub(crate) struct StoreRunTasksCallbacks<'a>(core::marker::PhantomData<&'a mut ()>);
 
 impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
     type Ctx = store::Installer<'a>;
@@ -181,7 +181,7 @@ struct Wait<'a, 'b> {
 }
 
 impl<'a, 'b> Wait<'a, 'b> {
-    pub fn is_done(&mut self) -> bool {
+    pub(crate) fn is_done(&mut self) -> bool {
         // `Installer.manager` is a BACKREF raw pointer; `manager_mut()`
         // materializes the unique `&mut PackageManager` for this main-thread
         // tick without aliasing `&mut Installer`.
@@ -222,7 +222,7 @@ impl<'a, 'b> Wait<'a, 'b> {
 }
 
 /// Runs on main thread
-pub fn install_isolated_packages(
+pub(crate) fn install_isolated_packages(
     manager: &mut PackageManager,
     command_ctx: Command::Context,
     install_root_dependencies: bool,
@@ -1275,13 +1275,6 @@ pub fn install_isolated_packages(
                                         break 'eligible false;
                                     }
                                 }
-                                // `run_preinstall()` authorizes scripts by the
-                                // dependency *alias* name, so an aliased install
-                                // like `foo: npm:bar@1` is trusted if `foo` is in
-                                // trustedDependencies even though the package name
-                                // is `bar`. Mirror that here so the alias case
-                                // can't slip past the eligibility check.
-                                //
                                 // Intentionally *not* gated on `do.run_scripts`
                                 // (a later install without `--ignore-scripts`
                                 // would run the postinstall through the project
@@ -1310,7 +1303,8 @@ pub fn install_isolated_packages(
                                     pkg_names[pkg_id as usize].slice(string_buf),
                                     pkg_res,
                                 ) || trusted_from_update
-                                    .contains(&(dep_name_hash as crate::TruncatedPackageNameHash))
+                                    .get(&(dep_name_hash as crate::TruncatedPackageNameHash))
+                                    .is_some_and(|n| **n == *dep_name)
                                 {
                                     break 'eligible false;
                                 }
@@ -2144,6 +2138,34 @@ pub fn install_isolated_packages(
             let pkg_name = pkg_names[pkg_id as usize];
             let pkg_name_hash = pkg_name_hashes[pkg_id as usize];
             let pkg_res: Resolution = pkg_resolutions[pkg_id as usize];
+
+            // Validate the package name and every dependency alias as
+            // `node_modules/<name>` components before any filesystem work.
+            {
+                let mut unsafe_folder_name: Option<&[u8]> = None;
+                let name = pkg_name.slice(string_buf);
+                if !name.is_empty() && !crate::dependency::is_safe_install_folder_name(name) {
+                    unsafe_folder_name = Some(name);
+                } else {
+                    for dep in entry_dependencies[entry_id.get() as usize].slice() {
+                        let dep_name = lockfile_ro.buffers.dependencies[dep.dep_id as usize]
+                            .name
+                            .slice(string_buf);
+                        if !crate::dependency::is_safe_install_folder_name(dep_name) {
+                            unsafe_folder_name = Some(dep_name);
+                            break;
+                        }
+                    }
+                }
+                if let Some(name) = unsafe_folder_name {
+                    Output::err_generic(
+                        "\"{}\" is not a valid install folder name",
+                        (BStr::new(name),),
+                    );
+                    Output::flush();
+                    Global::exit(1);
+                }
+            }
 
             match pkg_res.tag {
                 ResolutionTag::Root => {

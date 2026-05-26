@@ -830,6 +830,9 @@ pub fn ParseStmt(
                     switch (res.stmt_or_expr) {
                         .stmt => |stmt| {
                             bad_let_range = null;
+                            // Keep the "let"/"using" declarations visible to the for-in/for-of
+                            // checks below ("forbidInitializers"), like the "var"/"const" cases.
+                            decls = .fromOwnedSlice(res.decls);
                             init_ = stmt;
                         },
                         .expr => |expr| {

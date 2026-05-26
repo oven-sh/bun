@@ -47,12 +47,12 @@ pub struct AlignContentContentPosition {
 }
 
 impl AlignContentContentPosition {
-    pub fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
         let overflow = input.try_parse(OverflowPosition::parse).ok();
         let value = ContentPosition::parse(input)?;
         Ok(Self { overflow, value })
     }
-    pub fn to_inner(&self) -> ContentPositionInner {
+    pub(crate) fn to_inner(&self) -> ContentPositionInner {
         ContentPositionInner {
             overflow: self.overflow,
             value: self.value,
@@ -75,7 +75,7 @@ pub enum BaselinePosition {
 }
 
 impl BaselinePosition {
-    pub fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
 
@@ -93,7 +93,7 @@ impl BaselinePosition {
         }}
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             BaselinePosition::First => dest.write_str("baseline"),
             BaselinePosition::Last => dest.write_str("last baseline"),
@@ -135,7 +135,7 @@ pub struct JustifyContentContentPosition {
 }
 
 impl JustifyContentContentPosition {
-    pub fn to_inner(&self) -> ContentPositionInner {
+    pub(crate) fn to_inner(&self) -> ContentPositionInner {
         ContentPositionInner {
             overflow: self.overflow,
             value: self.value,
@@ -144,7 +144,7 @@ impl JustifyContentContentPosition {
 }
 
 impl JustifyContent {
-    pub fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"normal"))
             .is_ok()
@@ -176,7 +176,7 @@ impl JustifyContent {
         }}
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             JustifyContent::Normal => dest.write_str("normal"),
             JustifyContent::ContentDistribution(value) => value.to_css(dest),
@@ -237,14 +237,14 @@ pub struct AlignSelfSelfPosition {
 }
 
 impl AlignSelfSelfPosition {
-    pub fn to_inner(&self) -> SelfPositionInner {
+    pub(crate) fn to_inner(&self) -> SelfPositionInner {
         SelfPositionInner {
             overflow: self.overflow,
             value: self.value,
         }
     }
 
-    pub fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
         let overflow = input.try_parse(OverflowPosition::parse).ok();
         let self_position = SelfPosition::parse(input)?;
         Ok(Self {
@@ -292,7 +292,7 @@ pub struct JustifySelfSelfPosition {
 }
 
 impl JustifySelfSelfPosition {
-    pub fn to_inner(&self) -> SelfPositionInner {
+    pub(crate) fn to_inner(&self) -> SelfPositionInner {
         SelfPositionInner {
             overflow: self.overflow,
             value: self.value,
@@ -301,7 +301,7 @@ impl JustifySelfSelfPosition {
 }
 
 impl JustifySelf {
-    pub fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"auto"))
             .is_ok()
@@ -344,7 +344,7 @@ impl JustifySelf {
         }}
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             JustifySelf::Auto => dest.write_str("auto"),
             JustifySelf::Normal => dest.write_str("normal"),
@@ -405,14 +405,14 @@ pub struct AlignItemsSelfPosition {
 }
 
 impl AlignItemsSelfPosition {
-    pub fn to_inner(&self) -> SelfPositionInner {
+    pub(crate) fn to_inner(&self) -> SelfPositionInner {
         SelfPositionInner {
             overflow: self.overflow,
             value: self.value,
         }
     }
 
-    pub fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
         let overflow = input.try_parse(OverflowPosition::parse).ok();
         let self_position = SelfPosition::parse(input)?;
         Ok(Self {
@@ -460,7 +460,7 @@ pub struct JustifyItemsSelfPosition {
 }
 
 impl JustifyItemsSelfPosition {
-    pub fn to_inner(&self) -> SelfPositionInner {
+    pub(crate) fn to_inner(&self) -> SelfPositionInner {
         SelfPositionInner {
             overflow: self.overflow,
             value: self.value,
@@ -469,7 +469,7 @@ impl JustifyItemsSelfPosition {
 }
 
 impl JustifyItems {
-    pub fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"normal"))
             .is_ok()
@@ -510,7 +510,7 @@ impl JustifyItems {
         }}
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             JustifyItems::Normal => dest.write_str("normal"),
             JustifyItems::Stretch => dest.write_str("stretch"),
@@ -557,7 +557,7 @@ pub enum LegacyJustify {
 }
 
 impl LegacyJustify {
-    pub fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
 
@@ -588,7 +588,7 @@ impl LegacyJustify {
         }}
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         dest.write_str("legacy ")?;
         match self {
             LegacyJustify::Left => dest.write_str("left"),
@@ -627,7 +627,7 @@ impl Gap {
     // TODO(port): PropertyFieldMap was a comptime struct mapping fields → CSS property names
     // (.row = "row-gap", .column = "column-gap"); could encode as derive attrs.
 
-    pub fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
         let row = GapValue::parse(input)?;
         let column = input
             .try_parse(GapValue::parse)
@@ -635,7 +635,7 @@ impl Gap {
         Ok(Self { row, column })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.row.to_css(dest)?;
         if self.column != self.row {
             dest.write_str(" ")?;
@@ -662,7 +662,7 @@ impl PlaceItems {
     // TODO(port): PropertyFieldMap (.align = "align-items", .justify = "justify-items")
     // TODO(port): VendorPrefixMap (.align = true)
 
-    pub fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
         let align = AlignItems::parse(input)?;
         let justify = match input.try_parse(JustifyItems::parse) {
             Ok(v) => v,
@@ -682,7 +682,7 @@ impl PlaceItems {
         Ok(Self { align, justify })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.align.to_css(dest)?;
         let is_equal = match &self.justify {
             JustifyItems::Normal => self.align == AlignItems::Normal,
@@ -727,7 +727,7 @@ impl PlaceSelf {
     // TODO(port): PropertyFieldMap (.align = "align-self", .justify = "justify-self")
     // TODO(port): VendorPrefixMap (.align = true)
 
-    pub fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
         let align = AlignSelf::parse(input)?;
         let justify = match input.try_parse(JustifySelf::parse) {
             Ok(v) => v,
@@ -746,7 +746,7 @@ impl PlaceSelf {
         Ok(Self { align, justify })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.align.to_css(dest)?;
         let is_equal = match &self.justify {
             JustifySelf::Auto => true,
@@ -822,7 +822,7 @@ impl PlaceContent {
     // TODO(port): PropertyFieldMap (.align = PropertyIdTag::AlignContent, .justify = PropertyIdTag::JustifyContent)
     // TODO(port): VendorPrefixMap (.align = true, .justify = true)
 
-    pub fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
         let align = AlignContent::parse(input)?;
         let justify = match JustifyContent::parse(input) {
             Ok(v) => v,
@@ -849,7 +849,7 @@ impl PlaceContent {
         Ok(Self { align, justify })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.align.to_css(dest)?;
         let is_equal = match &self.justify {
             JustifyContent::Normal => 'brk: {
@@ -946,7 +946,7 @@ pub enum ContentPosition {
 // ──────────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct SelfPositionInner {
+pub(crate) struct SelfPositionInner {
     /// An overflow alignment mode.
     pub overflow: Option<OverflowPosition>,
     /// A self position keyword.
@@ -954,7 +954,7 @@ pub struct SelfPositionInner {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct ContentPositionInner {
+pub(crate) struct ContentPositionInner {
     /// An overflow alignment mode.
     pub overflow: Option<OverflowPosition>,
     /// A content position keyword.
@@ -1211,7 +1211,7 @@ impl PlaceItems {
 }
 
 impl AlignHandler {
-    pub fn handle_property(
+    pub(crate) fn handle_property(
         &mut self,
         property: &Property,
         dest: &mut DeclarationList<'_>,
@@ -1354,7 +1354,7 @@ impl AlignHandler {
         true
     }
 
-    pub fn finalize(
+    pub(crate) fn finalize(
         &mut self,
         dest: &mut DeclarationList<'_>,
         context: &mut PropertyHandlerContext<'_>,

@@ -249,9 +249,9 @@ pub struct AllOrderResult {
 }
 
 impl AllOrderResult {
-    pub const EMPTY: AllOrderResult = AllOrderResult { start: 0, end: 0 };
+    pub(crate) const EMPTY: AllOrderResult = AllOrderResult { start: 0, end: 0 };
 
-    pub fn set_failure_skip_to(&self, this: &mut Order) {
+    pub(crate) fn set_failure_skip_to(&self, this: &mut Order) {
         if self.start == 0 && self.end == 0 {
             return;
         }
@@ -334,7 +334,7 @@ struct EntryList {
 }
 
 impl EntryList {
-    pub fn prepend(&mut self, current: *mut ExecutionEntry) {
+    pub(crate) fn prepend(&mut self, current: *mut ExecutionEntry) {
         // SAFETY: `current` points to a live ExecutionEntry owned by the test scheduler.
         unsafe { (*current).next = self.first };
         self.first = Some(current);
@@ -343,7 +343,7 @@ impl EntryList {
         }
     }
 
-    pub fn append(&mut self, current: *mut ExecutionEntry) {
+    pub(crate) fn append(&mut self, current: *mut ExecutionEntry) {
         // SAFETY: `current` points to a live ExecutionEntry owned by the test scheduler.
         let cur = unsafe { &mut *current };
         if bun_core::Environment::CI_ASSERT && cur.added_in_phase != AddedInPhase::Preload {

@@ -2,7 +2,6 @@
 #![warn(unused_must_use)]
 //! Per-OS APIs that don't fit in `bun_sys` (signposts, splice/preadv2 wrappers).
 
-#![warn(unreachable_pub)]
 // Zig's `Environment.isLinux` is `os.tag == .linux`, which is true on Android
 // (Zig models Android as `os = linux, abi = android`); Rust splits them, so
 // list both so the `#[no_mangle]` C exports (`sys_epoll_pwait2`, …) reach the

@@ -47,19 +47,6 @@ pub fn z<'a>(input: &[u8], output: &'a mut PathBuffer) -> &'a ZStr {
     ZStr::from_buf(output, input.len())
 }
 
-/// The given string contains separators that match the platform's path separator style.
-pub fn has_platform_path_separators(input_path: &[u8]) -> bool {
-    #[cfg(windows)]
-    {
-        // Windows accepts both forward and backward slashes as path separators
-        strings::index_of_any(input_path, b"\\/").is_some()
-    }
-    #[cfg(not(windows))]
-    {
-        strings::index_of_char(input_path, b'/').is_some()
-    }
-}
-
 type IsSeparatorFunc = fn(char: u8) -> bool;
 // TODO(port): IsSeparatorFuncT/LastSeparatorFunctionT take `comptime T: type` —
 // represented here as generic-over-PathChar fn pointers; Rust cannot express
@@ -102,7 +89,7 @@ pub fn is_parent_or_equal(parent_: &[u8], child: &[u8]) -> ParentEqual {
     ParentEqual::Unrelated
 }
 
-pub fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
+pub(crate) fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
     input: &[&'a [u8]],
 ) -> Option<&'a [u8]> {
     // TODO(port): return lifetime — borrows from `input` strings; caller must ensure outlives
@@ -218,7 +205,7 @@ fn nql_at_index_case_insensitive_dyn(string_count: usize, index: usize, input: &
 // TODO: is it faster to determine longest_common_separator in the while loop
 // or as an extra step at the end?
 // only boether to check if this function appears in benchmarking
-pub fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a [u8] {
+pub(crate) fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a [u8] {
     let is_path_separator = P::P.get_separator_func();
 
     let nql_at_index_fn: fn(usize, usize, &[&[u8]]) -> bool = match P::P {
@@ -341,14 +328,6 @@ pub fn get_if_exists_longest_common_path<'a>(input: &[&'a [u8]]) -> Option<&'a [
     get_if_exists_longest_common_path_generic::<platform::Loose>(input)
 }
 
-pub fn longest_common_path_windows<'a>(input: &[&'a [u8]]) -> &'a [u8] {
-    longest_common_path_generic::<platform::Windows>(input)
-}
-
-pub fn longest_common_path_posix<'a>(input: &[&'a [u8]]) -> &'a [u8] {
-    longest_common_path_generic::<platform::Posix>(input)
-}
-
 // PORT NOTE: bun.ThreadlocalBuffers(struct {...}) heap-allocates on first use and
 // stores only a pointer in TLS. Represented as three independent lazily-boxed
 // thread-locals so that `relative_platform_buf` can hold disjoint `&mut` to
@@ -402,7 +381,7 @@ pub fn relative_to_common_path_buf() -> *mut PathBuffer {
 /// Find a relative path from a common path
 // Loosely based on Node.js' implementation of path.relative
 // https://github.com/nodejs/node/blob/9a7cbe25de88d87429a69050a1a1971234558d97/lib/path.js#L1250-L1259
-pub fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
+pub(crate) fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
     common_path_: &[u8],
     normalized_from_: &[u8],
     normalized_to_: &'a [u8],
@@ -664,11 +643,6 @@ pub fn relative(from: &[u8], to: &[u8]) -> &'static [u8] {
     relative_platform::<platform::Auto, false>(from, to)
 }
 
-pub fn relative_z(from: &[u8], to: &[u8]) -> &'static ZStr {
-    // SAFETY: thread-local scratch; single live borrow per thread.
-    relative_buf_z(RELATIVE_TO_COMMON_PATH_BUF.with(lazy_path_buf), from, to)
-}
-
 pub fn relative_buf_z<'a>(buf: &'a mut [u8], from: &[u8], to: &[u8]) -> &'a ZStr {
     let rel = relative_platform_buf::<platform::Auto, true>(buf, from, to);
     let len = rel.len();
@@ -781,7 +755,7 @@ pub fn windows_volume_name_len(path: &[u8]) -> (usize, usize) {
     windows_volume_name_len_t::<u8>(path)
 }
 
-pub fn windows_volume_name_len_t<T: PathChar>(path: &[T]) -> (usize, usize) {
+pub(crate) fn windows_volume_name_len_t<T: PathChar>(path: &[T]) -> (usize, usize) {
     if path.len() < 2 {
         return (0, 0);
     }
@@ -816,10 +790,6 @@ pub fn windows_volume_name_len_t<T: PathChar>(path: &[T]) -> (usize, usize) {
     (0, 0)
 }
 
-pub fn windows_volume_name(path: &[u8]) -> &[u8] {
-    &path[0..windows_volume_name_len(path).0]
-}
-
 pub fn windows_filesystem_root(path: &[u8]) -> &[u8] {
     windows_filesystem_root_t::<u8>(path)
 }
@@ -846,7 +816,7 @@ pub fn has_any_illegal_chars(maybe_path: &[u8]) -> bool {
     strings::index_of_any(maybe_path_, b"<>:\"|?*").is_some()
 }
 
-pub fn starts_with_disk_discriminator(maybe_path: &[u8]) -> bool {
+pub(crate) fn starts_with_disk_discriminator(maybe_path: &[u8]) -> bool {
     if !cfg!(windows) {
         return false;
     }
@@ -866,7 +836,7 @@ pub fn starts_with_disk_discriminator(maybe_path: &[u8]) -> bool {
 }
 
 // path.relative lets you do relative across different share drives
-pub fn windows_filesystem_root_t<T: PathChar>(path: &[T]) -> &[T] {
+pub(crate) fn windows_filesystem_root_t<T: PathChar>(path: &[T]) -> &[T] {
     if path.is_empty() {
         return &path[..0];
     }
@@ -917,8 +887,6 @@ pub fn windows_filesystem_root_t<T: PathChar>(path: &[T]) -> &[T] {
     &path[0..0]
 }
 
-// This function is based on Go's filepath.Clean function
-// https://cs.opensource.google/go/go/+/refs/tags/go1.17.6:src/path/filepath/path.go;l=89
 pub fn normalize_string_generic<
     'a,
     const ALLOW_ABOVE_ROOT: bool,
@@ -959,7 +927,6 @@ pub fn normalize_string_generic_t<
     )
 }
 
-/// Zig: `pub fn NormalizeOptions(comptime T: type) type { return struct { ... } }`
 /// Ported as a plain options struct; the `comptime options:` callsite becomes
 /// individual const-generic bools below (separator and is_separator stay
 /// runtime since Rust const generics cannot carry fn pointers / non-integral T).
@@ -1382,19 +1349,6 @@ pub fn normalize_string<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(str: &[u8]) 
     PARSER_BUFFER.with(|b| normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, tl_buf_mut(b)))
 }
 
-pub fn normalize_string_z<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(
-    str: &[u8],
-) -> &'static mut ZStr {
-    PARSER_BUFFER.with(|b| {
-        let buf = tl_buf_mut(b);
-        let normalized = normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, buf);
-        let len = normalized.len();
-        buf[len] = 0;
-        // SAFETY: buf[len] == 0 written above
-        unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), len) }
-    })
-}
-
 pub fn normalize_buf<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a mut [u8] {
     normalize_buf_t::<u8, P>(str, buf)
 }
@@ -1446,7 +1400,7 @@ pub fn normalize_string_buf<
     normalize_string_buf_t::<u8, ALLOW_ABOVE_ROOT, P, PRESERVE_TRAILING_SLASH>(str, buf)
 }
 
-pub fn normalize_string_buf_t<
+pub(crate) fn normalize_string_buf_t<
     'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
@@ -1468,23 +1422,6 @@ pub fn normalize_string_buf_t<
             normalize_string_loose_buf_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf)
         }
     }
-}
-
-pub fn normalize_string_alloc<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(
-    str: &[u8],
-) -> Result<Box<[u8]>, bun_alloc::AllocError> {
-    Ok(Box::<[u8]>::from(
-        &*normalize_string::<ALLOW_ABOVE_ROOT, P>(str),
-    ))
-}
-
-pub fn join_abs2<P: PlatformT>(
-    cwd: &[u8],
-    part: impl AsRef<[u8]>,
-    part2: impl AsRef<[u8]>,
-) -> &[u8] {
-    let parts: [&[u8]; 2] = [part.as_ref(), part2.as_ref()];
-    join_abs_string::<P>(cwd, &parts)
 }
 
 pub fn join_abs<'a, P: PlatformT>(cwd: &'a [u8], part: &[u8]) -> &'a [u8] {
@@ -1512,7 +1449,7 @@ pub fn join_abs_string_z<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'
 }
 
 thread_local! {
-    pub static JOIN_BUF: UnsafeCell<[u8; 4096]> = const { UnsafeCell::new([0u8; 4096]) };
+    pub(crate) static JOIN_BUF: UnsafeCell<[u8; 4096]> = const { UnsafeCell::new([0u8; 4096]) };
 }
 
 pub fn join<P: PlatformT>(parts: &[&[u8]]) -> &'static [u8] {
@@ -1544,12 +1481,6 @@ pub fn join_string_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> 
     join_string_buf_t::<u8, P>(buf, parts)
 }
 
-pub fn join_string_buf_w<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u8]]) -> &'a [u16] {
-    // TODO(port): Zig `parts: anytype` allowed mixed u8/u16 elements; we accept
-    // &[&[u8]] and transcode below to match the common callsite.
-    join_string_buf_t::<u16, P>(buf, parts)
-}
-
 /// `joinStringBufW` overload for u16 parts (no transcode). Covers the
 /// `T == u16 && Elem == u16` arm of Zig's `joinStringBufT` `anytype` dispatch.
 pub fn join_string_buf_w_same<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u16]]) -> &'a [u16] {
@@ -1559,7 +1490,7 @@ pub fn join_string_buf_w_same<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u
 /// Same-width `joinStringBufT`: parts already match `T`, so no UTF-8→16 transcode.
 /// PORT NOTE: split out of `join_string_buf_t` because Rust can't monomorphize on
 /// `parts: anytype` element types like Zig — callers pick the overload.
-pub fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
+pub(crate) fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
     buf: &'a mut [T],
     parts: &[&[T]],
 ) -> &'a [T] {
@@ -1640,7 +1571,7 @@ pub fn join_string_buf_z<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -
     unsafe { ZStr::from_raw(buf_base.add(start_offset), len) }
 }
 
-pub fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(
+pub(crate) fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(
     buf: &'a mut [T],
     parts: &[&[u8]],
 ) -> &'a [T] {
@@ -1774,48 +1705,6 @@ pub fn join_abs_string_buf_z<'a, P: PlatformT>(
     let r = _join_abs_string_buf::<true, P>(cwd, buf, parts);
     // SAFETY: IS_SENTINEL=true wrote NUL at r.len()
     unsafe { ZStr::from_raw(r.as_ptr(), r.len()) }
-}
-
-pub fn join_abs_string_buf_znt<'a, P: PlatformT>(
-    cwd: &'a [u8],
-    buf: &'a mut [u8],
-    parts: &[&[u8]],
-) -> &'a ZStr {
-    // `Platform::AUTO == Platform::Windows` on the windows host, so listing it
-    // alongside `Windows` would be a duplicate arm; on non-windows hosts the
-    // whole branch is dead via `cfg!(windows)`.
-    if (matches!(P::P, Platform::Loose | Platform::Windows)) && cfg!(windows) {
-        let r = _join_abs_string_buf::<true, platform::Nt>(cwd, buf, parts);
-        // SAFETY: NUL written at r.len()
-        return unsafe { ZStr::from_raw(r.as_ptr(), r.len()) };
-    }
-
-    let r = _join_abs_string_buf::<true, P>(cwd, buf, parts);
-    // SAFETY: NUL written at r.len()
-    unsafe { ZStr::from_raw(r.as_ptr(), r.len()) }
-}
-
-pub fn join_abs_string_buf_z_trailing_slash<'a, P: PlatformT>(
-    cwd: &'a [u8],
-    buf: &'a mut [u8],
-    parts: &[&[u8]],
-) -> &'a ZStr {
-    // PORT NOTE: capture last byte of `out` before dropping the borrow so we
-    // compare the actual result, not whatever happens to be in buf[out_len-1]
-    // (matters if a fast-path ever returns a non-buf[0]-anchored slice).
-    let (out_len, out_last) = {
-        let out = _join_abs_string_buf::<true, P>(cwd, buf, parts);
-        (out.len(), out.last().copied())
-    };
-    if out_len + 2 < buf.len() && out_len > 0 && out_last != Some(P::P.separator()) {
-        buf[out_len] = P::P.separator();
-        buf[out_len + 1] = 0;
-        // SAFETY: NUL written at out_len + 1
-        return ZStr::from_buf(&buf[..], out_len + 1);
-    }
-
-    // SAFETY: NUL written at out_len by _join_abs_string_buf::<true, _>
-    ZStr::from_buf(&buf[..], out_len)
 }
 
 // TODO(port): Zig used `comptime ReturnType: type` to vary `[:0]const u8` vs
@@ -2068,54 +1957,32 @@ pub fn is_sep_win32(c: u8) -> bool {
     is_sep_win32_t::<u8>(c)
 }
 
-pub fn last_index_of_separator_windows(slice: &[u8]) -> Option<usize> {
+pub(crate) fn last_index_of_separator_windows(slice: &[u8]) -> Option<usize> {
     last_index_of_separator_windows_t::<u8>(slice)
 }
 
-pub fn last_index_of_separator_windows_t<T: PathChar>(slice: &[T]) -> Option<usize> {
+pub(crate) fn last_index_of_separator_windows_t<T: PathChar>(slice: &[T]) -> Option<usize> {
     // std.mem.lastIndexOfAny(T, slice, "\\/")
     slice.iter().rposition(|&c| is_sep_any_t::<T>(c))
 }
 
-pub fn last_index_of_separator_posix(slice: &[u8]) -> Option<usize> {
+pub(crate) fn last_index_of_separator_posix(slice: &[u8]) -> Option<usize> {
     last_index_of_separator_posix_t::<u8>(slice)
 }
 
-pub fn last_index_of_separator_posix_t<T: PathChar>(slice: &[T]) -> Option<usize> {
+pub(crate) fn last_index_of_separator_posix_t<T: PathChar>(slice: &[T]) -> Option<usize> {
     slice.iter().rposition(|&c| c == T::from_u8(SEP_POSIX))
 }
 
-pub fn last_index_of_non_separator_posix(slice: &[u8]) -> Option<u32> {
-    let mut i: usize = slice.len();
-    while i != 0 {
-        if slice[i] != SEP_POSIX {
-            return Some(u32::try_from(i).expect("int cast"));
-        }
-        i -= 1;
-    }
-    None
-}
-
-pub fn last_index_of_separator_loose(slice: &[u8]) -> Option<usize> {
+pub(crate) fn last_index_of_separator_loose(slice: &[u8]) -> Option<usize> {
     last_index_of_separator_loose_t::<u8>(slice)
 }
 
-pub fn last_index_of_separator_loose_t<T: PathChar>(slice: &[T]) -> Option<usize> {
+pub(crate) fn last_index_of_separator_loose_t<T: PathChar>(slice: &[T]) -> Option<usize> {
     last_index_of_sep_t::<T>(slice)
 }
 
-pub fn normalize_string_loose_buf<
-    'a,
-    const ALLOW_ABOVE_ROOT: bool,
-    const PRESERVE_TRAILING_SLASH: bool,
->(
-    str: &[u8],
-    buf: &'a mut [u8],
-) -> &'a mut [u8] {
-    normalize_string_loose_buf_t::<u8, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf)
-}
-
-pub fn normalize_string_loose_buf_t<
+pub(crate) fn normalize_string_loose_buf_t<
     'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
@@ -2132,18 +1999,7 @@ pub fn normalize_string_loose_buf_t<
     )
 }
 
-pub fn normalize_string_windows<
-    'a,
-    const ALLOW_ABOVE_ROOT: bool,
-    const PRESERVE_TRAILING_SLASH: bool,
->(
-    str: &[u8],
-    buf: &'a mut [u8],
-) -> &'a mut [u8] {
-    normalize_string_windows_t::<u8, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf)
-}
-
-pub fn normalize_string_windows_t<
+pub(crate) fn normalize_string_windows_t<
     'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
@@ -2160,11 +2016,7 @@ pub fn normalize_string_windows_t<
     )
 }
 
-pub fn normalize_string_node<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a mut [u8] {
-    normalize_string_node_t::<u8, P>(str, buf)
-}
-
-pub fn normalize_string_node_t<'a, T: PathChar, P: PlatformT>(
+pub(crate) fn normalize_string_node_t<'a, T: PathChar, P: PlatformT>(
     str: &[T],
     buf: &'a mut [T],
 ) -> &'a mut [T] {
@@ -2268,11 +2120,11 @@ pub fn basename(path: &[u8]) -> &[u8] {
     &path[start_index + 1..end_index]
 }
 
-pub fn last_index_of_sep(path: &[u8]) -> Option<usize> {
+pub(crate) fn last_index_of_sep(path: &[u8]) -> Option<usize> {
     last_index_of_sep_t::<u8>(path)
 }
 
-pub fn last_index_of_sep_t<T: PathChar>(path: &[T]) -> Option<usize> {
+pub(crate) fn last_index_of_sep_t<T: PathChar>(path: &[T]) -> Option<usize> {
     #[cfg(not(windows))]
     {
         return strings::last_index_of_char_t::<T>(path, T::from_u8(b'/'));
@@ -2281,64 +2133,6 @@ pub fn last_index_of_sep_t<T: PathChar>(path: &[T]) -> Option<usize> {
     {
         path.iter().rposition(|&c| is_sep_any_t::<T>(c))
     }
-}
-
-pub fn next_dirname(path_: &[u8]) -> Option<&[u8]> {
-    let path = path_;
-    let mut root_prefix: &[u8] = b"";
-    if path.len() > 3 {
-        // disk designator
-        if path[1] == b':' && is_sep_any(path[2]) {
-            root_prefix = &path[0..3];
-        }
-
-        // TODO: unc path
-    }
-
-    if path.is_empty() {
-        return if !root_prefix.is_empty() {
-            Some(root_prefix)
-        } else {
-            None
-        };
-    }
-
-    let mut end_index: usize = path.len() - 1;
-    while is_sep_any(path[end_index]) {
-        if end_index == 0 {
-            return if !root_prefix.is_empty() {
-                Some(root_prefix)
-            } else {
-                None
-            };
-        }
-        end_index -= 1;
-    }
-
-    while !is_sep_any(path[end_index]) {
-        if end_index == 0 {
-            return if !root_prefix.is_empty() {
-                Some(root_prefix)
-            } else {
-                None
-            };
-        }
-        end_index -= 1;
-    }
-
-    if end_index == 0 && is_sep_any(path[0]) {
-        return Some(&path[0..1]);
-    }
-
-    if end_index == 0 {
-        return if !root_prefix.is_empty() {
-            Some(root_prefix)
-        } else {
-            None
-        };
-    }
-
-    Some(&path[0..end_index + 1])
 }
 
 /// The use case of this is when you do

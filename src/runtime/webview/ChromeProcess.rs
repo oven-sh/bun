@@ -66,7 +66,7 @@ static INSTANCE: core::sync::atomic::AtomicPtr<ChromeProcess> =
 /// The C++ side doesn't touch JS state; EVFILT_PROC → Bun__Chrome__died →
 /// rejectAllAndMarkDead handles promise rejection on the next loop tick.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Chrome__kill() {
+pub(crate) extern "C" fn Bun__Chrome__kill() {
     // SAFETY: JS-thread-only global; see INSTANCE decl.
     unsafe {
         if let Some(i) = INSTANCE
@@ -98,7 +98,7 @@ pub extern "C" fn Bun__Chrome__kill() {
 /// NUL-terminated string. `extra_argv` must be null or point to
 /// `extra_argv_len` valid NUL-terminated string pointers.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__Chrome__ensure(
+pub(crate) unsafe extern "C" fn Bun__Chrome__ensure(
     global: &JSGlobalObject,
     user_data_dir: *const c_char,     // ?[*:0]const u8
     path: *const c_char,              // ?[*:0]const u8
@@ -708,7 +708,7 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
 /// # Safety
 /// `out_buf` must point to at least `out_cap` writable bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__Chrome__autoDetect(out_buf: *mut u8, out_cap: usize) -> usize {
+pub(crate) unsafe extern "C" fn Bun__Chrome__autoDetect(out_buf: *mut u8, out_cap: usize) -> usize {
     let mut buf: Vec<u8> = Vec::new();
     if read_dev_tools_active_port(&mut buf).is_some() {
         if buf.len() > out_cap {

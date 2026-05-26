@@ -186,20 +186,6 @@ impl<'a> Ast<'a> {
         }
     }
 
-    // Zig: `std.json.stringify(self.parts, opts, stream)` where
-    // `opts = .{ .whitespace = .{ .separator = true } }`. In the Rust port the
-    // `crate::JsonWriter` trait stands in for the configured
-    // `std.json.WriteStream` (separator/whitespace are properties of the
-    // writer impl, not passed per-call), so the body collapses to a single
-    // `write` of the parts slice — the writer emits the JSON array,
-    // dispatching to `Part::json_stringify` per element (same shape as
-    // `Part::json_stringify` writing `self.stmts`). No live callers.
-    pub fn to_json<W: crate::JsonWriter>(&self, stream: &mut W) -> Result<(), bun_core::Error> {
-        // PORT NOTE: `whitespace.separator = true` is the caller's
-        // responsibility when constructing the `JsonWriter` impl.
-        stream.write(self.parts.as_slice())
-    }
-
     // Zig `deinit` only freed `parts`, `symbols`, `import_records` via `bun.default_allocator`,
     // and was guarded by "Do not call this if it wasn't globally allocated!".
     // In Rust those fields own their storage and free on Drop; no explicit body needed.

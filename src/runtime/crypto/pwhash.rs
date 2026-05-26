@@ -38,7 +38,6 @@ pub enum Encoding {
     Crypt,
 }
 
-/// `std.crypto.pwhash.Error` collapses into `bun_core::Error` (NonZeroU16 tag);
 /// callers compare against `bun_core::err!("PasswordVerificationFailed")` etc.
 pub type PwhashError = Error;
 
@@ -96,7 +95,7 @@ pub mod argon2 {
 
     /// `std.crypto.pwhash.argon2.HashOptions` (allocator field dropped).
     #[derive(Copy, Clone)]
-    pub struct HashOptions {
+    pub(crate) struct HashOptions {
         pub params: Params,
         pub mode: Mode,
         pub encoding: Encoding,
@@ -104,7 +103,7 @@ pub mod argon2 {
 
     /// `std.crypto.pwhash.argon2.VerifyOptions` (allocator field dropped).
     #[derive(Copy, Clone, Default)]
-    pub struct VerifyOptions;
+    pub(crate) struct VerifyOptions;
 
     fn map_err(e: &vendor::Error) -> Error {
         use vendor::Error as E;
@@ -135,7 +134,7 @@ pub mod argon2 {
 
     /// `std.crypto.pwhash.argon2.strHash` — writes the PHC-encoded hash into
     /// `out` and returns the populated subslice.
-    pub fn str_hash<'a>(
+    pub(crate) fn str_hash<'a>(
         password: &[u8],
         options: HashOptions,
         out: &'a mut [u8],
@@ -177,7 +176,7 @@ pub mod argon2 {
     }
 
     /// `std.crypto.pwhash.argon2.strVerify`.
-    pub fn str_verify(
+    pub(crate) fn str_verify(
         encoded_hash: &[u8],
         password: &[u8],
         _options: VerifyOptions,
@@ -239,7 +238,7 @@ pub mod bcrypt {
     use ::bcrypt as vendor;
 
     /// `std.crypto.pwhash.bcrypt.hash_length`
-    pub const HASH_LENGTH: usize = 60;
+    pub(crate) const HASH_LENGTH: usize = 60;
     /// Zig `salt_length` / `dk_length` (vendor/zig/lib/std/crypto/bcrypt.zig).
     const SALT_LENGTH: usize = 16;
     const DK_LENGTH: usize = 23;
@@ -254,14 +253,14 @@ pub mod bcrypt {
 
     /// `std.crypto.pwhash.bcrypt.HashOptions` (allocator field dropped).
     #[derive(Copy, Clone)]
-    pub struct HashOptions {
+    pub(crate) struct HashOptions {
         pub params: Params,
         pub encoding: Encoding,
     }
 
     /// `std.crypto.pwhash.bcrypt.VerifyOptions` (allocator field dropped).
     #[derive(Copy, Clone)]
-    pub struct VerifyOptions {
+    pub(crate) struct VerifyOptions {
         pub silently_truncate_password: bool,
     }
 
@@ -278,7 +277,7 @@ pub mod bcrypt {
 
     /// `std.crypto.pwhash.bcrypt.strHash` — writes the crypt-encoded hash into
     /// `out` and returns the populated subslice.
-    pub fn str_hash<'a>(
+    pub(crate) fn str_hash<'a>(
         password: &[u8],
         options: HashOptions,
         out: &'a mut [u8],
@@ -325,7 +324,7 @@ pub mod bcrypt {
     }
 
     /// `std.crypto.pwhash.bcrypt.strVerify`.
-    pub fn str_verify(
+    pub(crate) fn str_verify(
         encoded_hash: &[u8],
         password: &[u8],
         options: VerifyOptions,

@@ -1,5 +1,6 @@
 import { YAML, file } from "bun";
 import { describe, expect, test } from "bun:test";
+import { isASAN, isDebug } from "harness";
 import { join } from "path";
 
 describe("Bun.YAML", () => {
@@ -1054,20 +1055,180 @@ folded: >
           expect(YAML.parse("[? a\n: b]\n")).toEqual([{ a: "b" }]);
         });
 
-        test("flow mapping with explicit ? (no indent constraint)", () => {
-          // Locks in current behavior. Spec result per [142]/[143] is {a:"b"}
-          // (matches js-yaml, PyYAML, ruamel.yaml); the [object Object] is a
-          // pre-existing flow-? quirk (routes through parse_block_mapping).
-          // Update to {a:"b"} when flow-? is fixed.
-          expect(YAML.parse("{? a\n  : b}\n")).toEqual({ "[object Object]": null });
+        test("flow mapping with explicit ?", () => {
+          // [142]/[143] flow `?` is just an indicator; the entry is a normal
+          // implicit pair (or e-node : e-node when nothing follows).
+          expect(YAML.parse("{? a\n  : b}\n")).toEqual({ a: "b" });
+          expect(YAML.parse("{? a}\n")).toEqual({ a: null });
+          expect(YAML.parse("{?}\n")).toEqual({ null: null });
+          expect(YAML.parse("{?, x}\n")).toEqual({ null: null, x: null });
+          expect(YAML.parse("{? a: b, ? c: d}\n")).toEqual({ a: "b", c: "d" });
         });
 
-        test.todo("flow mapping with bare ? (DFF7 cluster)", () => {
-          // Was an error before this PR; now produces wrong nested-map result.
-          // Reference parsers split: eemeli/js-yaml return {a:null}; PyYAML/
-          // ruamel error. Should be {a:null}; needs flow-? to bypass
-          // parse_block_mapping. Currently {"[object Object]":null}.
-          expect(YAML.parse("{? a}\n")).toEqual({ a: null });
+        test("flow mapping with bare : (e-node key)", () => {
+          // [147] e-node key followed by `:`
+          expect(YAML.parse("{: x}\n")).toEqual({ null: "x" });
+          expect(YAML.parse("{a: 1, : 2}\n")).toEqual({ a: 1, null: 2 });
+          expect(YAML.parse("{? : x}\n")).toEqual({ null: "x" });
+        });
+
+        test("JSON-adjacent : after JSON-style key", () => {
+          // [149] a `:` may follow a quoted scalar / `]` / `}` with no
+          // separation in flow context. Plain scalars do not qualify.
+          expect(YAML.parse('["a":b]\n')).toEqual([{ a: "b" }]);
+          expect(YAML.parse("['a':b]\n")).toEqual([{ a: "b" }]);
+          expect(YAML.parse("[{a: 1}:b]\n")).toEqual([{ "[object Object]": "b" }]);
+          expect(YAML.parse("[[1, 2]:b]\n")).toEqual([{ "1,2": "b" }]);
+          // plain scalar — `:` is part of the scalar
+          expect(YAML.parse("[a:b]\n")).toEqual(["a:b"]);
+        });
+
+        test("JSON-adjacent : in flow mapping", () => {
+          expect(YAML.parse('{"a":b}\n')).toEqual({ a: "b" });
+          expect(YAML.parse("{{a: 1}:b}\n")).toEqual({ "[object Object]": "b" });
+        });
+
+        test("e-node value after : in flow-seq pair", () => {
+          // [149] adjacent value may be e-node
+          expect(YAML.parse('["a":]\n')).toEqual([{ a: null }]);
+          expect(YAML.parse('["a":,"b":]\n')).toEqual([{ a: null }, { b: null }]);
+          expect(YAML.parse("[a: ]\n")).toEqual([{ a: null }]);
+          expect(YAML.parse("[[x]:]\n")).toEqual([{ x: null }]);
+        });
+
+        test("? with e-node key in flow sequence", () => {
+          // [143] ns-flow-map-explicit-entry ::= … | (e-node e-node)
+          expect(YAML.parse("[? ]\n")).toEqual([{ null: null }]);
+          expect(YAML.parse("[?,]\n")).toEqual([{ null: null }]);
+          expect(YAML.parse("[? , ? ]\n")).toEqual([{ null: null }, { null: null }]);
+          expect(YAML.parse("[? : x]\n")).toEqual([{ null: "x" }]);
+          expect(YAML.parse("[\n?\n]\n")).toEqual([{ null: null }]);
+        });
+
+        test("? with JSON-adjacent key in flow sequence", () => {
+          // [150] flow-seq `?` key parse is in flow-key context, so the
+          // post-JSON-node `:` lookahead recognizes adjacency.
+          expect(YAML.parse('[? "a":1]\n')).toEqual([{ a: 1 }]);
+          expect(YAML.parse("[? [x]:1]\n")).toEqual([{ x: 1 }]);
+          expect(YAML.parse("[? {a:1}:2]\n")).toEqual([{ "[object Object]": 2 }]);
+        });
+
+        test("rejects ? in non-pair flow positions", () => {
+          // [148] flow-map value is ns-flow-node; [143] explicit key is
+          // ns-flow-map-implicit-entry — neither admits another `?`.
+          expect(() => YAML.parse("{a: ?}\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("{? ?}\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("[? ? a]\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("{a: ? : b}\n")).toThrow("Unexpected token");
+        });
+
+        test(":-prefixed plain scalar after ?", () => {
+          // [126] `:` followed by ns-plain-safe is ns-plain-first; the post-`?`
+          // scan stays in flow-in so this is a plain-scalar key, not a separator.
+          expect(YAML.parse("[? :b]\n")).toEqual([{ ":b": null }]);
+          expect(YAML.parse("{? :b}\n")).toEqual({ ":b": null });
+          expect(YAML.parse("[? :b: c]\n")).toEqual([{ ":b": "c" }]);
+        });
+
+        test("rejects nested : in flow-seq explicit-entry value", () => {
+          // [147] the value is ns-flow-node, not a pair.
+          expect(() => YAML.parse("[?\n  a: b: c]\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("[? a:\n  b: c]\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("[? a: b: c]\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("[? [1]: [2]: 3]\n")).toThrow("Unexpected token");
+        });
+
+        test("e-node pair value is gated to pair-allowed positions", () => {
+          // The [149] e-node arm in parse_block_mapping must not fire when
+          // reached via a flow-map value (where ns-flow-pair is not allowed).
+          expect(() => YAML.parse('{a: "b":,c: d}\n')).toThrow("Unexpected token");
+          expect(() => YAML.parse("{a: [1]:,c: d}\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse('{x: "a":,b}\n')).toThrow("Unexpected token");
+        });
+
+        test("plain scalar in flow-in terminates at : followed by flow indicator", () => {
+          // [130] `:` is ns-plain-char only when followed by ns-plain-safe(c);
+          // in flow context that excludes c-flow-indicator.
+          expect(() => YAML.parse("{a: b:,c: d}\n")).toThrow("Unexpected token");
+        });
+      });
+
+      // Pre-existing flow-context over-accepts surfaced by adversarial review.
+      // Each `test.todo` asserts the spec result (per ≥3/4 reference parsers);
+      // the comment documents what Bun currently produces.
+      describe("known flow over-accepts (pre-existing)", () => {
+        test.todo("flow-map requires `,` between entries", () => {
+          // [140] ns-s-flow-map-entries — entry must be followed by `,` or `}`.
+          // Currently: {"a":"b",":1":null}
+          expect(() => YAML.parse('{a: "b":1}\n')).toThrow();
+          // Currently: {"a":{"1 b":2}}
+          expect(() => YAML.parse("{a: 1 b: 2}\n")).toThrow();
+        });
+
+        test.todo(":-prefixed plain scalar after `? &x` / `? !!str` (anchor/tag re-scan in FlowKey)", () => {
+          // The first scan after `?` is in flow-in (so `:b` is ns-plain-first),
+          // but when an anchor/tag intervenes the property arm re-scans inside
+          // the key parse_node's FlowKey wrap, mis-tokenizing `:b` as a
+          // separator. Anchor/tag-on-empty cluster.
+          expect(YAML.parse("[? &x :b]\n")).toEqual([{ ":b": null }]);
+          expect(YAML.parse("{? !!str :b}\n")).toEqual({ ":b": null });
+        });
+
+        test.todo("flow-map value is ns-flow-node, not a pair", () => {
+          // [147] c-ns-flow-map-separate-value — value is ns-flow-node only.
+          // Currently: {"a":{"b":"c"}}
+          expect(() => YAML.parse("{a: b: c}\n")).toThrow();
+          expect(() => YAML.parse("{? a: b: c}\n")).toThrow();
+        });
+
+        test.todo("flow-seq pair value on next line at column ≤ key indent", () => {
+          // [149]/[80] s-separate(n,FLOW-IN) = s-separate-lines, so a newline
+          // before the value at any indentation is valid. Currently rejects:
+          // parse_block_mapping's block-semantics e-node check (line!=, indent<=)
+          // fires when reached via the implicit-pair path in flow context.
+          expect(YAML.parse('["a":\nb]\n')).toEqual([{ a: "b" }]);
+          expect(YAML.parse("[a: \nb]\n")).toEqual([{ a: "b" }]);
+        });
+
+        test.todo("multiline JSON-style key check ordering", () => {
+          // [148] c-ns-flow-map-json-key-entry uses s-separate which spans
+          // lines; either accept all JSON-style multiline keys (eemeli) or
+          // reject all (js-yaml/PyYAML/ruamel). Currently inconsistent: quoted
+          // accepts ({"a":1}), flow-seq/map rejects.
+          expect(YAML.parse("{[1]\n:2}\n")).toEqual({ 1: 2 });
+          expect(YAML.parse("{{k:1}\n:2}\n")).toEqual({ "[object Object]": 2 });
+        });
+
+        test.todo("tab before block construct after `?`/`:` (Y79Y/008 family)", () => {
+          // [185] s-l+block-indented requires s-indent (spaces only) before a
+          // same-line compact construct. Currently `?\ta: b` accepts as
+          // {"a":"b"} (compact mapping reached via tab); refs error.
+          expect(() => YAML.parse("?\ta: b\n")).toThrow();
+          expect(() => YAML.parse("? a\n:\t? b\n")).toThrow();
+          expect(() => YAML.parse("?\t: x\n")).toThrow();
+        });
+
+        test.todo("`---` inside a plain scalar (issue #25660)", () => {
+          // [128] ns-plain-char admits `-`; a `---` not at column 0 (or not
+          // followed by /[ \t\r\n]|$/) is content, not c-directives-end.
+          // Currently splits into [{"name":"some-text"},{"description":"x"}].
+          expect(YAML.parse("name: some-text---\ndescription: x\n")).toEqual({
+            name: "some-text---",
+            description: "x",
+          });
+        });
+
+        test("JSON-adjacent does not apply in flow-map value position", () => {
+          // [147] flow-map value is ns-flow-node, not ns-flow-pair. These are
+          // pre-existing over-accepts on main (refs error); preserved as-is.
+          expect(YAML.parse('{a: "b":c}\n')).toEqual({ a: "b", ":c": null });
+          expect(YAML.parse("{x: [a]:b}\n")).toEqual({ x: ["a"], ":b": null });
+        });
+
+        test("leading/double comma in flow sequence still errors", () => {
+          // [138] ns-s-flow-seq-entries — entry must precede `,`
+          expect(() => YAML.parse("[ , a]\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("[a, , b]\n")).toThrow("Unexpected token");
         });
       });
 
@@ -1959,7 +2120,9 @@ config:
         },
       };
 
-      for (let i = 0; i < 10000; i++) {
+      // Debug/ASAN builds are much slower; keep this stress test within the default test timeout.
+      const iterations = isDebug || isASAN ? 1000 : 10000;
+      for (let i = 0; i < iterations; i++) {
         expect(YAML.stringify(config)).toBeString();
       }
     });
@@ -2042,6 +2205,94 @@ config:
         expect(parsed.a).not.toBe(parsed.c);
         expect(parsed.a.type).toBe("first");
         expect(parsed.c.type).toBe("second");
+      });
+
+      test("anchors named after keys with special characters re-parse", () => {
+        const specialKeys = [
+          "\\u{10FFFF}a", // literal backslash-u-braces text, not a codepoint
+          "{",
+          "}",
+          "[",
+          "]",
+          ",",
+          "{a}",
+          "key[0]",
+          "a,b",
+          "a\\b",
+          "a b",
+          "a\tb",
+          "a\nb",
+          " ",
+          "key:with#chars",
+          "🙂emoji",
+        ];
+
+        for (const key of specialKeys) {
+          const shared = [1, 2];
+          const obj = { [key]: shared, other: shared };
+
+          for (const space of [undefined, 2]) {
+            const yaml = YAML.stringify(obj, null, space);
+            const parsed = YAML.parse(yaml);
+            expect(parsed).toEqual({ [key]: [1, 2], other: [1, 2] });
+            expect(parsed[key]).toBe(parsed.other);
+          }
+        }
+      });
+
+      test("falls back to generated anchor names for unsafe keys", () => {
+        const shared = [1, 2];
+        expect(YAML.stringify({ "a[b]": shared, other: shared })).toBe('{"a[b]": &value0 [1,2],other: *value0}');
+      });
+
+      test("generated anchor names cannot collide with keys named like them", () => {
+        const cases: Array<{ obj: Record<string, unknown>; expected: Record<string, unknown> }> = [];
+
+        {
+          // literal "value0" key vs generated name for an unsafe key
+          const a = [1];
+          const b = [2];
+          cases.push({
+            obj: { value0: a, "[k]": b, x: a, y: b },
+            expected: { value0: [1], "[k]": [2], x: [1], y: [2] },
+          });
+        }
+        {
+          // literal "value0" key vs generated name for an empty key
+          const a = [1];
+          const b = [2];
+          cases.push({
+            obj: { "": a, value0: b, x: a, y: b },
+            expected: { "": [1], value0: [2], x: [1], y: [2] },
+          });
+        }
+        {
+          // literal "item0" key vs array item anchor names
+          const a = [1];
+          const b = [2];
+          cases.push({
+            obj: { item0: a, list: [b, b], x: a },
+            expected: { item0: [1], list: [[2], [2]], x: [1] },
+          });
+        }
+
+        for (const { obj, expected } of cases) {
+          for (const space of [undefined, 2]) {
+            const parsed = YAML.parse(YAML.stringify(obj, null, space));
+            expect(parsed).toEqual(expected);
+          }
+        }
+      });
+
+      test("round-trips parsed documents whose aliased keys contain flow indicators", () => {
+        const doc = "\\u{10FFFF}a: &x [1, 2]\nb: *x";
+        const value = YAML.parse(doc);
+        expect(value).toEqual({ "\\u{10FFFF}a": [1, 2], b: [1, 2] });
+
+        const yaml = YAML.stringify(value);
+        const reparsed = YAML.parse(yaml);
+        expect(reparsed).toEqual(value);
+        expect(reparsed["\\u{10FFFF}a"]).toBe(reparsed.b);
       });
     });
 
@@ -3486,3 +3737,32 @@ refs:
     });
   });
 });
+
+test("merging the same large anchor many times completes quickly", () => {
+  // `<<: [*a, *a, ...]` adds no new data after the first merge, but
+  // deduplicating each repeated alias must not rescan the entire property
+  // list per merged key — that makes a ~25 KB document take minutes.
+  const keyCount = 1200;
+  const aliasCount = 3000;
+
+  const lines: string[] = ["a: &a"];
+  for (let i = 0; i < keyCount; i++) {
+    lines.push(`  k${i}: ${i}`);
+  }
+  lines.push("b:");
+  lines.push(`  <<: [${new Array(aliasCount).fill("*a").join(", ")}]`);
+  const input = lines.join("\n");
+
+  const start = performance.now();
+  const parsed = YAML.parse(input) as { a: Record<string, number>; b: Record<string, number> };
+  const elapsed = performance.now() - start;
+
+  // Merge semantics are preserved: `b` receives every key of `a` exactly once.
+  expect(Object.keys(parsed.a)).toHaveLength(keyCount);
+  expect(parsed.b).toEqual(parsed.a);
+  expect(parsed.b.k0).toBe(0);
+  expect(parsed.b[`k${keyCount - 1}`]).toBe(keyCount - 1);
+
+  // Repeated alias merges must be near-linear in the document size.
+  expect(elapsed).toBeLessThan(isDebug || isASAN ? 15_000 : 4_000);
+}, 30_000);

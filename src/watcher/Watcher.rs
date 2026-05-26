@@ -87,7 +87,7 @@ impl AnyResolveWatcher {
 // TODO: some platform-specific behavior is implemented in
 // this file instead of the platform-specific file.
 // ideally, the constants above can be inlined
-pub type Platform = platform::Platform;
+pub(crate) type Platform = platform::Platform;
 
 /// `?[:0]u8` — name of a changed file inside a watched directory, borrowed
 /// from the platform's event buffer (inotify event names / kqueue udata).
@@ -1001,8 +1001,6 @@ pub struct WatchEvent {
     pub name_len: u8,
 }
 
-pub type Sorter = ();
-
 impl WatchEvent {
     pub fn names<'b>(self, buf: &'b [ChangedFilePath]) -> &'b [ChangedFilePath] {
         if self.name_len == 0 {
@@ -1041,7 +1039,7 @@ impl Op {
 }
 
 /// Lowercase Zig-field-name mapping for `Op` (matches `std.meta.fields(Op)` output).
-pub const OP_NAMES: &[(Op, &str)] = &[
+pub(crate) const OP_NAMES: &[(Op, &str)] = &[
     (Op::DELETE, "delete"),
     (Op::METADATA, "metadata"),
     (Op::RENAME, "rename"),

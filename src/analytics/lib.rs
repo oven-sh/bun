@@ -1,4 +1,3 @@
-#![warn(unreachable_pub)]
 use core::fmt;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::OnceLock;
@@ -39,20 +38,12 @@ impl TriState {
 
 // Zig: `pub var enabled: enum { yes, no, unknown } = .unknown;`
 static ENABLED: AtomicU8 = AtomicU8::new(TriState::Unknown as u8);
-// Zig: `pub var is_ci: enum { yes, no, unknown } = .unknown;`
-static IS_CI: AtomicU8 = AtomicU8::new(TriState::Unknown as u8);
 
-pub fn enabled() -> TriState {
+pub(crate) fn enabled() -> TriState {
     TriState::from_u8(ENABLED.load(Ordering::Relaxed))
 }
 pub fn set_enabled(v: TriState) {
     ENABLED.store(v as u8, Ordering::Relaxed);
-}
-pub fn is_ci() -> TriState {
-    TriState::from_u8(IS_CI.load(Ordering::Relaxed))
-}
-pub fn set_is_ci(v: TriState) {
-    IS_CI.store(v as u8, Ordering::Relaxed);
 }
 
 pub fn is_enabled() -> bool {
@@ -106,7 +97,7 @@ pub mod features {
     // `BUILTIN_MODULES.lock().insert(<&'static str>::from(hardcoded))`.
     // PERF(port): Zig used a packed `EnumSet` (bitset); BTreeSet is O(log n)
     // insert — fine for ≤~80 entries written once each at module-load time.
-    pub static BUILTIN_MODULES: bun_core::Mutex<std::collections::BTreeSet<&'static str>> =
+    pub(crate) static BUILTIN_MODULES: bun_core::Mutex<std::collections::BTreeSet<&'static str>> =
         bun_core::Mutex::new(std::collections::BTreeSet::new());
     // PORT NOTE: Zig used a plain mutable global; wrapped in a Mutex here
     // because the set is not a single atomic word.
@@ -317,7 +308,7 @@ pub use features::{
 /// Zig: `pub fn validateFeatureName(name: []const u8) void` (comptime-only).
 /// In Rust this is enforced at the macro definition site; kept as a `const fn`
 /// for documentation / debug assertions.
-pub const fn validate_feature_name(name: &[u8]) -> bool {
+pub(crate) const fn validate_feature_name(name: &[u8]) -> bool {
     if name.len() > 64 {
         return false;
     }
@@ -399,7 +390,7 @@ pub mod generate_header {
                     libc::sysctlbyname(
                         c"kern.osproductversion".as_ptr(),
                         name.as_mut_ptr().cast(),
-                        &mut len,
+                        &raw mut len,
                         core::ptr::null_mut(),
                         0,
                     )
@@ -486,7 +477,7 @@ pub mod generate_header {
         }
 
         #[unsafe(no_mangle)]
-        pub extern "C" fn Bun__doesMacOSVersionSupportSendRecvMsgX() -> i32 {
+        pub(crate) extern "C" fn Bun__doesMacOSVersionSupportSendRecvMsgX() -> i32 {
             #[cfg(not(target_os = "macos"))]
             {
                 // this should not be used on non-mac platforms.
@@ -526,7 +517,7 @@ pub mod generate_header {
         }
 
         #[unsafe(no_mangle)]
-        pub extern "C" fn Bun__isEpollPwait2SupportedOnLinuxKernel() -> i32 {
+        pub(crate) extern "C" fn Bun__isEpollPwait2SupportedOnLinuxKernel() -> i32 {
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
             {
                 0

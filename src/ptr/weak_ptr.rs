@@ -82,7 +82,6 @@ pub struct WeakPtr<T: HasWeakPtrData> {
     raw_ptr: Option<NonNull<T>>,
 }
 
-// Zig's `WeakPtr.Data` — inherent assoc types unstable; expose at module level.
 pub type Data = WeakPtrData;
 
 impl<T: HasWeakPtrData> WeakPtr<T> {

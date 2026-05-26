@@ -471,6 +471,12 @@ pub mod ntdll {
 
     #[link(name = "ntdll")]
     unsafe extern "system" {
+        pub fn RtlCaptureStackBackTrace(
+            FramesToSkip: u32,
+            FramesToCapture: u32,
+            BackTrace: *mut *mut c_void,
+            BackTraceHash: *mut u32,
+        ) -> u16;
         pub fn NtCreateFile(
             FileHandle: *mut HANDLE,
             DesiredAccess: ACCESS_MASK,
@@ -579,10 +585,28 @@ pub mod advapi32 {}
 pub mod kernel32 {
     use super::*;
 
+    #[repr(C)]
+    pub struct MEMORY_BASIC_INFORMATION {
+        pub BaseAddress: LPVOID,
+        pub AllocationBase: LPVOID,
+        pub AllocationProtect: u32,
+        pub PartitionId: u16,
+        pub RegionSize: usize,
+        pub State: u32,
+        pub Protect: u32,
+        pub Type: u32,
+    }
+    pub const MEM_FREE: u32 = 0x10000;
+
     #[link(name = "kernel32")]
     unsafe extern "system" {
         /// No preconditions; reads thread-local Win32 error slot.
         pub safe fn GetLastError() -> DWORD;
+        pub fn VirtualQuery(
+            lpAddress: LPCVOID,
+            lpBuffer: *mut MEMORY_BASIC_INFORMATION,
+            dwLength: usize,
+        ) -> usize;
         /// No preconditions; terminates the process (cf. `std::process::exit`).
         pub safe fn ExitProcess(exit_code: u32) -> !;
         /// No preconditions; returns the cached console/std handle (or
@@ -1606,7 +1630,11 @@ pub fn peb() -> *const PEB {
     // SAFETY: `x18` holds the TEB on Windows-arm64 by ABI; TEB+0x60 is the PEB
     // pointer field. Both are valid for the calling thread's lifetime.
     unsafe {
-        *(teb().cast::<u8>().add(0x60) as *const *const PEB)
+        *teb()
+            .cast::<u8>()
+            .add(0x60)
+            .cast::<core::ffi::c_void>()
+            .cast::<*const PEB>()
     }
 }
 

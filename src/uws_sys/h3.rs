@@ -582,54 +582,101 @@ impl Default for ListenConfig {
 mod c {
     use super::*;
 
-    pub type Handler = Option<unsafe extern "C" fn(*mut Response, *mut Request, *mut c_void)>;
-    pub type ListenHandler = Option<unsafe extern "C" fn(*mut ListenSocket, *mut c_void)>;
-    pub type HeaderCb = unsafe extern "C" fn(*const u8, usize, *const u8, usize, *mut c_void);
+    pub(super) type Handler =
+        Option<unsafe extern "C" fn(*mut Response, *mut Request, *mut c_void)>;
+    pub(super) type ListenHandler = Option<unsafe extern "C" fn(*mut ListenSocket, *mut c_void)>;
+    pub(super) type HeaderCb =
+        unsafe extern "C" fn(*const u8, usize, *const u8, usize, *mut c_void);
 
     // Opaque handles in this module are `#[repr(C)]` with `UnsafeCell<[u8; 0]>`,
     // so `&T`/`&mut T` are ABI-identical to a non-null pointer. Shims whose
     // only pointer arg is the opaque handle (plus value types) are `safe fn`.
     // Shims with (ptr,len), nullable raw, *mut c_void ctx stay unsafe.
     unsafe extern "C" {
-        pub fn uws_h3_create_app(opts: BunSocketContextOptions, idle_timeout_s: u32) -> *mut App;
-        pub fn uws_h3_app_destroy(app: *mut App);
-        pub safe fn uws_h3_app_close(app: &mut App);
-        pub safe fn uws_h3_app_clear_routes(app: &mut App);
-        pub fn uws_h3_app_add_server_name(
+        pub(super) fn uws_h3_create_app(
+            opts: BunSocketContextOptions,
+            idle_timeout_s: u32,
+        ) -> *mut App;
+        pub(super) fn uws_h3_app_destroy(app: *mut App);
+        pub(super) safe fn uws_h3_app_close(app: &mut App);
+        pub(super) safe fn uws_h3_app_clear_routes(app: &mut App);
+        pub(super) fn uws_h3_app_add_server_name(
             app: *mut App,
             hostname: *const c_char,
             opts: BunSocketContextOptions,
         ) -> bool;
-        pub safe fn uws_h3_res_write_continue(res: &mut Response);
-        pub fn uws_h3_app_get(app: *mut App, p: *const u8, n: usize, h: Handler, ud: *mut c_void);
-        pub fn uws_h3_app_post(app: *mut App, p: *const u8, n: usize, h: Handler, ud: *mut c_void);
-        pub fn uws_h3_app_put(app: *mut App, p: *const u8, n: usize, h: Handler, ud: *mut c_void);
-        pub fn uws_h3_app_delete(
+        pub(super) safe fn uws_h3_res_write_continue(res: &mut Response);
+        pub(super) fn uws_h3_app_get(
             app: *mut App,
             p: *const u8,
             n: usize,
             h: Handler,
             ud: *mut c_void,
         );
-        pub fn uws_h3_app_patch(app: *mut App, p: *const u8, n: usize, h: Handler, ud: *mut c_void);
-        pub fn uws_h3_app_head(app: *mut App, p: *const u8, n: usize, h: Handler, ud: *mut c_void);
-        pub fn uws_h3_app_options(
+        pub(super) fn uws_h3_app_post(
             app: *mut App,
             p: *const u8,
             n: usize,
             h: Handler,
             ud: *mut c_void,
         );
-        pub fn uws_h3_app_connect(
+        pub(super) fn uws_h3_app_put(
             app: *mut App,
             p: *const u8,
             n: usize,
             h: Handler,
             ud: *mut c_void,
         );
-        pub fn uws_h3_app_trace(app: *mut App, p: *const u8, n: usize, h: Handler, ud: *mut c_void);
-        pub fn uws_h3_app_any(app: *mut App, p: *const u8, n: usize, h: Handler, ud: *mut c_void);
-        pub fn uws_h3_app_listen_with_config(
+        pub(super) fn uws_h3_app_delete(
+            app: *mut App,
+            p: *const u8,
+            n: usize,
+            h: Handler,
+            ud: *mut c_void,
+        );
+        pub(super) fn uws_h3_app_patch(
+            app: *mut App,
+            p: *const u8,
+            n: usize,
+            h: Handler,
+            ud: *mut c_void,
+        );
+        pub(super) fn uws_h3_app_head(
+            app: *mut App,
+            p: *const u8,
+            n: usize,
+            h: Handler,
+            ud: *mut c_void,
+        );
+        pub(super) fn uws_h3_app_options(
+            app: *mut App,
+            p: *const u8,
+            n: usize,
+            h: Handler,
+            ud: *mut c_void,
+        );
+        pub(super) fn uws_h3_app_connect(
+            app: *mut App,
+            p: *const u8,
+            n: usize,
+            h: Handler,
+            ud: *mut c_void,
+        );
+        pub(super) fn uws_h3_app_trace(
+            app: *mut App,
+            p: *const u8,
+            n: usize,
+            h: Handler,
+            ud: *mut c_void,
+        );
+        pub(super) fn uws_h3_app_any(
+            app: *mut App,
+            p: *const u8,
+            n: usize,
+            h: Handler,
+            ud: *mut c_void,
+        );
+        pub(super) fn uws_h3_app_listen_with_config(
             app: *mut App,
             host: *const c_char,
             port: u16,
@@ -637,69 +684,74 @@ mod c {
             h: ListenHandler,
             ud: *mut c_void,
         );
-        pub safe fn uws_h3_listen_socket_port(ls: &mut ListenSocket) -> i32;
-        pub fn uws_h3_listen_socket_local_address(
+        pub(super) safe fn uws_h3_listen_socket_port(ls: &mut ListenSocket) -> i32;
+        pub(super) fn uws_h3_listen_socket_local_address(
             ls: *mut ListenSocket,
             buf: *mut u8,
             len: c_int,
         ) -> c_int;
-        pub safe fn uws_h3_listen_socket_close(ls: &mut ListenSocket);
+        pub(super) safe fn uws_h3_listen_socket_close(ls: &mut ListenSocket);
 
-        pub safe fn uws_h3_res_state(res: &mut Response) -> State;
-        pub fn uws_h3_res_end(res: *mut Response, p: *const u8, n: usize, close: bool);
-        pub safe fn uws_h3_res_end_stream(res: &mut Response, close: bool);
-        pub safe fn uws_h3_res_force_close(res: &mut Response);
-        pub fn uws_h3_res_try_end(
+        pub(super) safe fn uws_h3_res_state(res: &mut Response) -> State;
+        pub(super) fn uws_h3_res_end(res: *mut Response, p: *const u8, n: usize, close: bool);
+        pub(super) safe fn uws_h3_res_end_stream(res: &mut Response, close: bool);
+        pub(super) safe fn uws_h3_res_force_close(res: &mut Response);
+        pub(super) fn uws_h3_res_try_end(
             res: *mut Response,
             p: *const u8,
             n: usize,
             total: usize,
             close: bool,
         ) -> bool;
-        pub safe fn uws_h3_res_end_without_body(res: &mut Response, close: bool);
-        pub safe fn uws_h3_res_pause(res: &mut Response);
-        pub safe fn uws_h3_res_resume(res: &mut Response);
-        pub fn uws_h3_res_write_status(res: *mut Response, p: *const u8, n: usize);
-        pub fn uws_h3_res_write_header(
+        pub(super) safe fn uws_h3_res_end_without_body(res: &mut Response, close: bool);
+        pub(super) safe fn uws_h3_res_pause(res: &mut Response);
+        pub(super) safe fn uws_h3_res_resume(res: &mut Response);
+        pub(super) fn uws_h3_res_write_status(res: *mut Response, p: *const u8, n: usize);
+        pub(super) fn uws_h3_res_write_header(
             res: *mut Response,
             kp: *const u8,
             kn: usize,
             vp: *const u8,
             vn: usize,
         );
-        pub fn uws_h3_res_write_header_int(res: *mut Response, kp: *const u8, kn: usize, v: u64);
-        pub safe fn uws_h3_res_mark_wrote_content_length_header(res: &mut Response);
-        pub safe fn uws_h3_res_write_mark(res: &mut Response);
-        pub safe fn uws_h3_res_flush_headers(res: &mut Response, immediate: bool);
-        pub fn uws_h3_res_write(res: *mut Response, p: *const u8, len: *mut usize) -> bool;
-        pub safe fn uws_h3_res_get_write_offset(res: &mut Response) -> u64;
-        pub safe fn uws_h3_res_override_write_offset(res: &mut Response, off: u64);
-        pub safe fn uws_h3_res_has_responded(res: &mut Response) -> bool;
-        pub safe fn uws_h3_res_get_buffered_amount(res: &mut Response) -> u64;
-        pub safe fn uws_h3_res_reset_timeout(res: &mut Response);
-        pub safe fn uws_h3_res_timeout(res: &mut Response, seconds: u8);
-        pub safe fn uws_h3_res_end_sendfile(res: &mut Response, off: u64, close: bool);
-        pub safe fn uws_h3_res_get_socket_data(res: &mut Response) -> *mut c_void;
+        pub(super) fn uws_h3_res_write_header_int(
+            res: *mut Response,
+            kp: *const u8,
+            kn: usize,
+            v: u64,
+        );
+        pub(super) safe fn uws_h3_res_mark_wrote_content_length_header(res: &mut Response);
+        pub(super) safe fn uws_h3_res_write_mark(res: &mut Response);
+        pub(super) safe fn uws_h3_res_flush_headers(res: &mut Response, immediate: bool);
+        pub(super) fn uws_h3_res_write(res: *mut Response, p: *const u8, len: *mut usize) -> bool;
+        pub(super) safe fn uws_h3_res_get_write_offset(res: &mut Response) -> u64;
+        pub(super) safe fn uws_h3_res_override_write_offset(res: &mut Response, off: u64);
+        pub(super) safe fn uws_h3_res_has_responded(res: &mut Response) -> bool;
+        pub(super) safe fn uws_h3_res_get_buffered_amount(res: &mut Response) -> u64;
+        pub(super) safe fn uws_h3_res_reset_timeout(res: &mut Response);
+        pub(super) safe fn uws_h3_res_timeout(res: &mut Response, seconds: u8);
+        pub(super) safe fn uws_h3_res_end_sendfile(res: &mut Response, off: u64, close: bool);
+        pub(super) safe fn uws_h3_res_get_socket_data(res: &mut Response) -> *mut c_void;
         // safe: `&mut Response` is ABI-identical to a non-null `*mut`;
         // `cb`/`ud` are stored opaquely (never dereferenced by the C++ shim
         // itself) — no preconditions on this call. Mirrors `uws_res_on_*`.
-        pub safe fn uws_h3_res_on_writable(
+        pub(super) safe fn uws_h3_res_on_writable(
             res: &mut Response,
             cb: Option<unsafe extern "C" fn(*mut Response, u64, *mut c_void) -> bool>,
             ud: *mut c_void,
         );
-        pub safe fn uws_h3_res_clear_on_writable(res: &mut Response);
-        pub safe fn uws_h3_res_on_aborted(
+        pub(super) safe fn uws_h3_res_clear_on_writable(res: &mut Response);
+        pub(super) safe fn uws_h3_res_on_aborted(
             res: &mut Response,
             cb: Option<unsafe extern "C" fn(*mut Response, *mut c_void)>,
             ud: *mut c_void,
         );
-        pub safe fn uws_h3_res_on_timeout(
+        pub(super) safe fn uws_h3_res_on_timeout(
             res: &mut Response,
             cb: Option<unsafe extern "C" fn(*mut Response, *mut c_void)>,
             ud: *mut c_void,
         );
-        pub safe fn uws_h3_res_on_data(
+        pub(super) safe fn uws_h3_res_on_data(
             res: &mut Response,
             cb: Option<unsafe extern "C" fn(*mut Response, *const u8, usize, bool, *mut c_void)>,
             ud: *mut c_void,
@@ -707,40 +759,40 @@ mod c {
         // safe: cork is synchronous — `ud` is passed straight back to `cb`
         // without being dereferenced by the C++ shim itself, so the call has
         // no preconditions beyond the live opaque handle.
-        pub safe fn uws_h3_res_cork(
+        pub(super) safe fn uws_h3_res_cork(
             res: &mut Response,
             ud: *mut c_void,
             cb: unsafe extern "C" fn(*mut c_void),
         );
         // Out-params are `&mut` (non-null, valid for write); the C shim only
         // stores into them and returns a length — no read-through precondition.
-        pub safe fn uws_h3_res_get_remote_address_info(
+        pub(super) safe fn uws_h3_res_get_remote_address_info(
             res: &mut Response,
             ip: &mut *const u8,
             port: &mut i32,
             is_ipv6: &mut bool,
         ) -> usize;
 
-        pub safe fn uws_h3_req_get_yield(req: &mut Request) -> bool;
-        pub safe fn uws_h3_req_set_yield(req: &mut Request, y: bool);
+        pub(super) safe fn uws_h3_req_get_yield(req: &mut Request) -> bool;
+        pub(super) safe fn uws_h3_req_set_yield(req: &mut Request, y: bool);
         // Out-param `out` is `&mut *const u8` (non-null, valid for write); the C
         // shim only stores a pointer into request-owned storage and returns its
         // length — no read-through precondition, so `safe fn`.
-        pub safe fn uws_h3_req_get_url(req: &mut Request, out: &mut *const u8) -> usize;
-        pub safe fn uws_h3_req_get_method(req: &mut Request, out: &mut *const u8) -> usize;
-        pub fn uws_h3_req_get_header(
+        pub(super) safe fn uws_h3_req_get_url(req: &mut Request, out: &mut *const u8) -> usize;
+        pub(super) safe fn uws_h3_req_get_method(req: &mut Request, out: &mut *const u8) -> usize;
+        pub(super) fn uws_h3_req_get_header(
             req: *mut Request,
             name: *const u8,
             len: usize,
             out: *mut *const u8,
         ) -> usize;
-        pub fn uws_h3_req_get_query(
+        pub(super) fn uws_h3_req_get_query(
             req: *mut Request,
             name: *const u8,
             len: usize,
             out: *mut *const u8,
         ) -> usize;
-        pub safe fn uws_h3_req_get_parameter(
+        pub(super) safe fn uws_h3_req_get_parameter(
             req: &mut Request,
             idx: u16,
             out: &mut *const u8,
@@ -748,7 +800,11 @@ mod c {
         // safe: synchronous header iteration — `ud` is forwarded opaquely to
         // `cb` without being dereferenced by the C++ shim itself; `cb` is a
         // by-value fn pointer. No preconditions beyond the live opaque handle.
-        pub safe fn uws_h3_req_for_each_header(req: &mut Request, cb: HeaderCb, ud: *mut c_void);
+        pub(super) safe fn uws_h3_req_for_each_header(
+            req: &mut Request,
+            cb: HeaderCb,
+            ud: *mut c_void,
+        );
     }
 }
 

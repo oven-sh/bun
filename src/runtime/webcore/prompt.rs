@@ -237,7 +237,7 @@ pub mod prompt {
 
     /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-prompt
     #[bun_jsc::host_fn(export = "WebCore__prompt")]
-    pub fn call(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn call(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = frame.arguments_old::<3>();
         let arguments = arguments.slice();
         // PERF(port): was stack-fallback (2048 bytes) — profile if it shows up on a hot path.

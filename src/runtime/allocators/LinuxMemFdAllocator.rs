@@ -56,8 +56,6 @@ impl LinuxMemFdAllocator {
     }
 }
 
-pub type Ref = bun_ptr::IntrusiveArc<LinuxMemFdAllocator>;
-
 #[cfg(any(target_os = "linux", target_os = "android"))]
 static MEMFD_COUNTER: AtomicUsize = AtomicUsize::new(0);
 

@@ -27,7 +27,7 @@ impl Resolution {
     // css.implementHash / css.implementEql — provided by
     // `#[derive(CssHash, CssEql)]` above (f32-payload enum).
 
-    pub fn parse(input: &mut Parser) -> Result<Resolution> {
+    pub(crate) fn parse(input: &mut Parser) -> Result<Resolution> {
         // TODO: calc?
         let location = input.current_source_location();
         let tok = input.next()?.clone();
@@ -44,7 +44,7 @@ impl Resolution {
         Err(location.new_unexpected_token_error(tok))
     }
 
-    pub fn try_from_token(token: &Token) -> Maybe<Resolution, ()> {
+    pub(crate) fn try_from_token(token: &Token) -> Maybe<Resolution, ()> {
         match token {
             Token::Dimension(dim) => {
                 let value = dim.num.value;
@@ -60,7 +60,7 @@ impl Resolution {
         }
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         let (value, unit): (CSSNumber, &'static [u8]) = match self {
             Resolution::Dpi(dpi) => (dpi, b"dpi".as_slice()),
             Resolution::Dpcm(dpcm) => (dpcm, b"dpcm".as_slice()),
@@ -79,7 +79,7 @@ impl Resolution {
         css::serializer::serialize_dimension(value, unit, dest)
     }
 
-    pub fn add_f32(self, other: f32) -> Resolution {
+    pub(crate) fn add_f32(self, other: f32) -> Resolution {
         match self {
             Resolution::Dpi(dpi) => Resolution::Dpi(dpi + other),
             Resolution::Dpcm(dpcm) => Resolution::Dpcm(dpcm + other),

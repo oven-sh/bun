@@ -255,10 +255,6 @@ pub mod options {
     /// Re-export of the canonical def in `crate::bake_types` (bundle_v2.rs).
     pub use crate::bake_types::Side;
 
-    /// Name used by `resolver/package_json.rs::load_define_defaults` —
-    /// alias of the canonical `options_impl::EnvEntry` brought in via the glob.
-    pub type EnvDefault = EnvEntry;
-
     /// Legacy `options::Framework` (referenced by `resolver/package_json.zig`'s
     /// `FrameworkRouterPair`). The full struct is `bun.bake.Framework` which
     /// lives in a higher-tier crate; minimal real struct lives in `bake_types`.

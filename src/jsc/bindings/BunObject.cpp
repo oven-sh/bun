@@ -83,6 +83,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv5);
 namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionBunStripANSI);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionBunWrapAnsi);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionBunStringWidth);
 }
 
 using namespace JSC;
@@ -1041,7 +1042,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     stderr                                         BunObject_lazyPropCb_wrap_stderr                                    DontDelete|PropertyCallback
     stdin                                          BunObject_lazyPropCb_wrap_stdin                                     DontDelete|PropertyCallback
     stdout                                         BunObject_lazyPropCb_wrap_stdout                                    DontDelete|PropertyCallback
-    stringWidth                                    BunObject_callback_stringWidth                                      DontDelete|Function 2
+    stringWidth                                    jsFunctionBunStringWidth                                            DontDelete|Function 2
     stripANSI                                      jsFunctionBunStripANSI                                              DontDelete|Function 1
     wrapAnsi                                       jsFunctionBunWrapAnsi                                               DontDelete|Function 3
     Terminal                                       BunObject_lazyPropCb_wrap_Terminal                                  DontDelete|PropertyCallback

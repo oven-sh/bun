@@ -13,7 +13,7 @@ pub enum BuildTarget {
     Wasi,
 }
 
-pub const BUILD_TARGET: BuildTarget = {
+pub(crate) const BUILD_TARGET: BuildTarget = {
     if cfg!(target_family = "wasm") {
         BuildTarget::Wasm
     } else {
@@ -21,39 +21,32 @@ pub const BUILD_TARGET: BuildTarget = {
     }
 };
 
-pub const IS_WASM: bool = matches!(BUILD_TARGET, BuildTarget::Wasm);
+pub(crate) const IS_WASM: bool = matches!(BUILD_TARGET, BuildTarget::Wasm);
 pub const IS_NATIVE: bool = matches!(BUILD_TARGET, BuildTarget::Native);
-pub const IS_WASI: bool = matches!(BUILD_TARGET, BuildTarget::Wasi);
-pub const IS_MAC: bool = IS_NATIVE && cfg!(target_os = "macos");
-pub const IS_BROWSER: bool = !IS_WASI && IS_WASM;
+pub(crate) const IS_WASI: bool = matches!(BUILD_TARGET, BuildTarget::Wasi);
+pub(crate) const IS_MAC: bool = IS_NATIVE && cfg!(target_os = "macos");
+pub(crate) const IS_BROWSER: bool = !IS_WASI && IS_WASM;
 pub const IS_WINDOWS: bool = cfg!(windows);
-pub const IS_POSIX: bool = !IS_WINDOWS && !IS_WASM;
+pub(crate) const IS_POSIX: bool = !IS_WINDOWS && !IS_WASM;
 pub const IS_DEBUG: bool = cfg!(debug_assertions);
-pub const IS_TEST: bool = cfg!(test);
+pub(crate) const IS_TEST: bool = cfg!(test);
 // Zig's `Environment.isLinux` is `builtin.target.os.tag == .linux`, which is
 // TRUE on Android (Zig models Android as `os.tag == .linux, abi == .android`).
 // Rust splits them into two `target_os` values, so this const has to OR them
 // to keep the Zig semantics — otherwise `OS` (below) panics at const-eval on
 // the `*-linux-android` cross targets and Linux-only code paths are skipped.
 pub const IS_LINUX: bool = cfg!(any(target_os = "linux", target_os = "android"));
-pub const IS_FREEBSD: bool = cfg!(target_os = "freebsd");
+pub(crate) const IS_FREEBSD: bool = cfg!(target_os = "freebsd");
 /// kqueue-based event loop (macOS + FreeBSD share most of this path).
 pub const IS_KQUEUE: bool = IS_MAC || IS_FREEBSD;
-pub const IS_AARCH64: bool = cfg!(target_arch = "aarch64");
-pub const IS_X86: bool = cfg!(any(target_arch = "x86", target_arch = "x86_64"));
-pub const IS_X64: bool = cfg!(target_arch = "x86_64");
+pub(crate) const IS_AARCH64: bool = cfg!(target_arch = "aarch64");
+pub(crate) const IS_X64: bool = cfg!(target_arch = "x86_64");
 pub const IS_MUSL: bool = cfg!(target_env = "musl");
 pub const IS_ANDROID: bool = cfg!(target_os = "android");
-pub const IS_GLIBC: bool = IS_LINUX && cfg!(target_env = "gnu");
 pub const ALLOW_ASSERT: bool = IS_DEBUG || IS_TEST || build_options::RELEASE_SAFE;
 pub const CI_ASSERT: bool =
     IS_DEBUG || IS_TEST || ENABLE_ASAN || (build_options::RELEASE_SAFE && IS_CANARY);
 pub const SHOW_CRASH_TRACE: bool = IS_DEBUG || IS_TEST || ENABLE_ASAN;
-/// Zig gated `@export` blocks behind `output_mode == .Obj` so the
-/// `zig translate-c` and codegen pipelines could compile a stripped-down
-/// crate. The Rust build is always a single staticlib that exports the C++
-/// surface, so this is a constant `true`.
-pub const EXPORT_CPP_APIS: bool = true;
 
 pub const REPORTED_NODEJS_VERSION: &str = build_options::REPORTED_NODEJS_VERSION;
 pub const BASELINE: bool = build_options::BASELINE;
@@ -72,7 +65,7 @@ pub const GIT_SHA_SHORTER: &str = if !build_options::SHA.is_empty() {
     ""
 };
 pub const IS_CANARY: bool = build_options::IS_CANARY;
-pub const CANARY_REVISION: &str = if IS_CANARY {
+pub(crate) const CANARY_REVISION: &str = if IS_CANARY {
     build_options::CANARY_REVISION
 } else {
     ""
@@ -83,14 +76,13 @@ pub const ENABLE_LOGS: bool = build_options::ENABLE_LOGS;
 pub const ENABLE_ASAN: bool = build_options::ENABLE_ASAN;
 pub const ENABLE_FUZZILLI: bool = build_options::ENABLE_FUZZILLI;
 pub const ENABLE_TINYCC: bool = build_options::ENABLE_TINYCC;
-pub const CODEGEN_PATH: &[u8] = build_options::CODEGEN_PATH;
 
 // TYPE_ONLY: bun_semver::Version moves to bun_core (move-in pass).
 pub const VERSION: crate::Version = build_options::VERSION;
 pub const VERSION_STRING: &str =
     const_format::formatcp!("{}.{}.{}", VERSION.major, VERSION.minor, VERSION.patch);
 #[allow(non_upper_case_globals)]
-pub const version_string: &str = VERSION_STRING;
+pub(crate) const version_string: &str = VERSION_STRING;
 
 #[inline(always)]
 pub fn only_mac() {

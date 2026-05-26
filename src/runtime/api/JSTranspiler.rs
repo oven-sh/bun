@@ -668,7 +668,7 @@ impl Config {
 // threadlocal var transform_buffer_loaded: bool = false;
 
 // This is going to be hard to not leak
-pub struct TransformTask<'a> {
+pub(crate) struct TransformTask<'a> {
     /// Created with `is_async=true` (JS-backed buffer protected); the
     /// [`bun_jsc::ThreadSafe`] guard unprotects on drop.
     pub input_code: bun_jsc::ThreadSafe<StringOrBuffer>,
@@ -691,10 +691,8 @@ pub struct TransformTask<'a> {
     pub replace_exports: bun_ast::runtime::ReplaceableExportMap,
 }
 
-pub type AsyncTransformTask<'a> =
+pub(crate) type AsyncTransformTask<'a> =
     jsc::concurrent_promise_task::ConcurrentPromiseTask<'a, TransformTask<'a>>;
-// Zig: `AsyncTransformTask.EventLoopTask` — same wrapper type at this tier.
-pub type AsyncTransformEventLoopTask<'a> = AsyncTransformTask<'a>;
 
 impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
     const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncTransformTask;
@@ -709,7 +707,7 @@ impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for Transfor
 impl<'a> TransformTask<'a> {
     // `pub const new = bun.TrivialNew(@This())` → Box::new
 
-    pub fn create(
+    pub(crate) fn create(
         transpiler: &'a JSTranspiler,
         input_code: bun_jsc::ThreadSafe<StringOrBuffer>,
         global: &'a JSGlobalObject,
@@ -763,7 +761,7 @@ impl<'a> TransformTask<'a> {
         AsyncTransformTask::create_on_js_thread(global, transform_task)
     }
 
-    pub fn run(&mut self) {
+    pub(crate) fn run(&mut self) {
         let name = self.loader.stdin_name();
 
         // PERF(port): was MimallocArena bulk-free — profile if hot.
@@ -880,7 +878,7 @@ impl<'a> TransformTask<'a> {
         }
     }
 
-    pub fn then(&mut self, promise: &mut JSPromise) -> Result<(), bun_jsc::JsTerminated> {
+    pub(crate) fn then(&mut self, promise: &mut JSPromise) -> Result<(), bun_jsc::JsTerminated> {
         // defer this.deinit() — handled by caller / Drop on Box<TransformTask>
         // TODO(port): Zig `defer this.deinit()` here destroys self at end of `then`. In Rust,
         // ConcurrentPromiseTask should own the Box and drop it after `then` returns.
@@ -1456,6 +1454,13 @@ impl JSTranspiler {
                 "string or Uint8Array",
             ));
         };
+        let mut code = code;
+        if let StringOrBuffer::Buffer(buffer) = &code {
+            let bytes = buffer.slice().to_vec();
+            global.vm().report_extra_memory(bytes.len());
+            buffer.buffer.value.unprotect();
+            code = StringOrBuffer::EncodedSlice(bun_core::ZigStringSlice::init_owned(bytes));
+        }
         // `errdefer code.deinitAndUnprotect()` — `from_js_with_encoding_maybe_async`
         // (is_async=true) already protected; adopt into a `ThreadSafe` so any
         // early-return drop unprotects. `TransformTask::create` takes the guard.

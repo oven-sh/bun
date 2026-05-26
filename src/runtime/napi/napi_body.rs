@@ -187,7 +187,7 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for NapiEnv {
 }
 
 // TODO(port): bun.ptr.ExternalShared(NapiEnv) — intrusive externally-refcounted handle.
-pub type NapiEnvRef = bun_ptr::ExternalShared<NapiEnv>;
+pub(super) type NapiEnvRef = bun_ptr::ExternalShared<NapiEnv>;
 
 #[cold]
 fn env_is_null() -> napi_status {
@@ -199,14 +199,14 @@ fn env_is_null() -> napi_status {
 /// This is nullable because native modules may pass null pointers for the NAPI environment, which
 /// is an error that our NAPI functions need to handle (by returning napi_invalid_arg). To specify
 /// a Rust API that uses a never-null napi_env, use `&NapiEnv`.
-pub type napi_env = *mut NapiEnv;
+pub(super) type napi_env = *mut NapiEnv;
 
 bun_opaque::opaque_ffi! {
     /// Contents are not used by any Rust code
     pub struct Ref;
 }
 
-pub type napi_ref = *mut Ref;
+pub(super) type napi_ref = *mut Ref;
 
 // ──────────────────────────────────────────────────────────────────────────
 // NapiHandleScope
@@ -224,8 +224,9 @@ bun_opaque::opaque_ffi! {
 // well since which side it fires on depends on module traversal order.
 #[allow(clashing_extern_declarations)]
 unsafe extern "C" {
-    pub fn NapiHandleScope__open(env: *mut NapiEnv, escapable: bool) -> *mut NapiHandleScope;
-    pub fn NapiHandleScope__close(env: *mut NapiEnv, current: *mut NapiHandleScope);
+    pub(super) fn NapiHandleScope__open(env: *mut NapiEnv, escapable: bool)
+    -> *mut NapiHandleScope;
+    pub(super) fn NapiHandleScope__close(env: *mut NapiEnv, current: *mut NapiHandleScope);
     fn NapiHandleScope__append(env: *mut NapiEnv, value: usize);
     fn NapiHandleScope__escape(handle_scope: *mut NapiHandleScope, value: usize) -> bool;
 }
@@ -245,14 +246,14 @@ impl From<EscapeError> for bun_core::Error {
 impl NapiHandleScope {
     /// Create a new handle scope in the given environment, or return null if creating one now is
     /// unsafe (i.e. inside a finalizer)
-    pub fn open(env: &NapiEnv, escapable: bool) -> *mut NapiHandleScope {
+    pub(super) fn open(env: &NapiEnv, escapable: bool) -> *mut NapiHandleScope {
         // SAFETY: env is valid; C++ mutates env's scope stack (interior mutability).
         unsafe { NapiHandleScope__open(env.as_mut_ptr(), escapable) }
     }
 
     /// Closes the given handle scope, releasing all values inside it, if it is safe to do so.
     /// Asserts that self is the current handle scope in env.
-    pub fn close(self_: *mut NapiHandleScope, env: &NapiEnv) {
+    pub(super) fn close(self_: *mut NapiHandleScope, env: &NapiEnv) {
         // SAFETY: NapiHandleScope__close handles null `current`.
         unsafe { NapiHandleScope__close(env.as_mut_ptr(), self_) }
     }
@@ -260,7 +261,7 @@ impl NapiHandleScope {
     /// Place a value in the handle scope. Must be done while returning any JS value into NAPI
     /// callbacks, as the value must remain alive as long as the handle scope is active, even if the
     /// native module doesn't keep it visible on the stack.
-    pub fn append(env: &NapiEnv, value: JSValue) {
+    pub(super) fn append(env: &NapiEnv, value: JSValue) {
         // SAFETY: env is valid; C++ appends to the current scope (interior mutability).
         unsafe { NapiHandleScope__append(env.as_mut_ptr(), value.encoded()) }
     }
@@ -268,7 +269,7 @@ impl NapiHandleScope {
     /// Move a value from the current handle scope (which must be escapable) to the reserved escape
     /// slot in the parent handle scope, allowing that value to outlive the current handle scope.
     /// Returns an error if escape() has already been called on this handle scope.
-    pub fn escape(&self, value: JSValue) -> Result<(), EscapeError> {
+    pub(super) fn escape(&self, value: JSValue) -> Result<(), EscapeError> {
         // SAFETY: self is a valid handle scope; C++ writes the escape slot
         // (interior mutability via `as_mut_ptr`).
         if !unsafe { NapiHandleScope__escape(self.as_mut_ptr(), value.encoded()) } {
@@ -281,7 +282,7 @@ impl NapiHandleScope {
 /// RAII guard for [`NapiHandleScope::open`] / [`NapiHandleScope::close`].
 /// The Rust spelling of Zig's `var hs = NapiHandleScope.open(env, false);
 /// defer if (hs) |s| NapiHandleScope.close(s, env);`.
-pub struct NapiHandleScopeGuard<'a> {
+pub(super) struct NapiHandleScopeGuard<'a> {
     scope: *mut NapiHandleScope,
     env: &'a NapiEnv,
 }
@@ -291,7 +292,7 @@ impl NapiHandleScope {
     /// it on `Drop`. If opening returns null (inside a finalizer), the guard's
     /// `Drop` is a no-op.
     #[must_use]
-    pub fn open_scoped(env: &NapiEnv) -> NapiHandleScopeGuard<'_> {
+    pub(super) fn open_scoped(env: &NapiEnv) -> NapiHandleScopeGuard<'_> {
         NapiHandleScopeGuard {
             scope: Self::open(env, false),
             env,
@@ -307,10 +308,10 @@ impl Drop for NapiHandleScopeGuard<'_> {
     }
 }
 
-pub type napi_handle_scope = *mut NapiHandleScope;
-pub type napi_escapable_handle_scope = *mut NapiHandleScope;
-pub type napi_callback_info = *mut CallFrame;
-pub type napi_deferred = *mut JSPromiseStrong;
+pub(super) type napi_handle_scope = *mut NapiHandleScope;
+pub(super) type napi_escapable_handle_scope = *mut NapiHandleScope;
+pub(super) type napi_callback_info = *mut CallFrame;
+pub(super) type napi_deferred = *mut JSPromiseStrong;
 
 // ──────────────────────────────────────────────────────────────────────────
 // napi_value
@@ -339,15 +340,15 @@ impl napi_value {
 }
 
 type char16_t = u16;
-pub type napi_property_attributes = c_uint;
+pub(super) type napi_property_attributes = c_uint;
 
 // Only used as `*mut napi_valuetype` out-param written by C++; Rust never
 // constructs or matches variants.
-pub type napi_valuetype = u32;
+pub(super) type napi_valuetype = u32;
 
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum napi_typedarray_type {
+pub(super) enum napi_typedarray_type {
     int8_array = 0,
     uint8_array = 1,
     uint8_clamped_array = 2,
@@ -362,7 +363,7 @@ pub enum napi_typedarray_type {
 }
 
 impl napi_typedarray_type {
-    pub fn from_js_type(this: jsc::JSType) -> Option<napi_typedarray_type> {
+    pub(super) fn from_js_type(this: jsc::JSType) -> Option<napi_typedarray_type> {
         // PORT NOTE: jsc::JSType is a newtype struct with associated consts (not an enum),
         // so glob-import is unavailable; match on the qualified const paths instead.
         Some(match this {
@@ -412,16 +413,16 @@ pub enum NapiStatus {
 /// This is not an `enum` so that the enum values cannot be trivially returned from NAPI functions,
 /// as that would skip storing the last error code. You should wrap return values in a call to
 /// NapiEnv::set_last_error.
-pub type napi_status = c_uint;
+pub(super) type napi_status = c_uint;
 
-pub type napi_callback = Option<extern "C" fn(napi_env, napi_callback_info) -> napi_value>;
+pub(super) type napi_callback = Option<extern "C" fn(napi_env, napi_callback_info) -> napi_value>;
 
 /// expects `napi_env`, `callback_data`, `context`
-pub type NapiFinalizeFunction = extern "C" fn(napi_env, *mut c_void, *mut c_void);
-pub type napi_finalize = Option<NapiFinalizeFunction>;
+pub(super) type NapiFinalizeFunction = extern "C" fn(napi_env, *mut c_void, *mut c_void);
+pub(super) type napi_finalize = Option<NapiFinalizeFunction>;
 
 #[repr(C)]
-pub struct napi_property_descriptor {
+pub(super) struct napi_property_descriptor {
     pub utf8name: *const c_char,
     pub name: napi_value,
     pub method: napi_callback,
@@ -433,7 +434,7 @@ pub struct napi_property_descriptor {
 }
 
 #[repr(C)]
-pub struct napi_extended_error_info {
+pub(super) struct napi_extended_error_info {
     pub error_message: *const c_char,
     pub engine_reserved: *mut c_void,
     pub engine_error_code: u32,
@@ -445,7 +446,7 @@ type napi_key_filter = c_uint;
 type napi_key_conversion = c_uint;
 
 #[repr(C)]
-pub struct napi_type_tag {
+pub(super) struct napi_type_tag {
     lower: u64,
     upper: u64,
 }
@@ -504,14 +505,17 @@ pub(crate) fn write_out<T>(p: *mut T, v: T) {
 
 // TODO(port): move to napi_sys
 unsafe extern "C" {
-    pub fn napi_get_last_error_info(
+    pub(super) fn napi_get_last_error_info(
         env: napi_env,
         result: *mut *const napi_extended_error_info,
     ) -> napi_status;
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_get_undefined(env_: napi_env, result_: *mut napi_value) -> napi_status {
+pub(super) extern "C" fn napi_get_undefined(
+    env_: napi_env,
+    result_: *mut napi_value,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_undefined");
     let env = get_env!(env_);
     env.check_gc();
@@ -521,7 +525,7 @@ pub extern "C" fn napi_get_undefined(env_: napi_env, result_: *mut napi_value) -
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_get_null(env_: napi_env, result_: *mut napi_value) -> napi_status {
+pub(super) extern "C" fn napi_get_null(env_: napi_env, result_: *mut napi_value) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_null");
     let env = get_env!(env_);
     env.check_gc();
@@ -531,11 +535,11 @@ pub extern "C" fn napi_get_null(env_: napi_env, result_: *mut napi_value) -> nap
 }
 
 unsafe extern "C" {
-    pub fn napi_get_global(env: napi_env, result: *mut napi_value) -> napi_status;
+    pub(super) fn napi_get_global(env: napi_env, result: *mut napi_value) -> napi_status;
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_get_boolean(
+pub(super) extern "C" fn napi_get_boolean(
     env_: napi_env,
     value: bool,
     result_: *mut napi_value,
@@ -549,7 +553,10 @@ pub extern "C" fn napi_get_boolean(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_create_array(env_: napi_env, result_: *mut napi_value) -> napi_status {
+pub(super) extern "C" fn napi_create_array(
+    env_: napi_env,
+    result_: *mut napi_value,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_array");
     let env = get_env!(env_);
     env.check_gc();
@@ -563,7 +570,7 @@ pub extern "C" fn napi_create_array(env_: napi_env, result_: *mut napi_value) ->
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_create_array_with_length(
+pub(super) extern "C" fn napi_create_array_with_length(
     env_: napi_env,
     length: usize,
     result_: *mut napi_value,
@@ -590,11 +597,15 @@ pub extern "C" fn napi_create_array_with_length(
 }
 
 unsafe extern "C" {
-    pub fn napi_create_double(env: napi_env, value: f64, result: *mut napi_value) -> napi_status;
+    pub(super) fn napi_create_double(
+        env: napi_env,
+        value: f64,
+        result: *mut napi_value,
+    ) -> napi_status;
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_create_int32(
+pub(super) extern "C" fn napi_create_int32(
     env_: napi_env,
     value: i32,
     result_: *mut napi_value,
@@ -608,7 +619,7 @@ pub extern "C" fn napi_create_int32(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_create_uint32(
+pub(super) extern "C" fn napi_create_uint32(
     env_: napi_env,
     value: u32,
     result_: *mut napi_value,
@@ -622,7 +633,7 @@ pub extern "C" fn napi_create_uint32(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_create_int64(
+pub(super) extern "C" fn napi_create_int64(
     env_: napi_env,
     value: i64,
     result_: *mut napi_value,
@@ -636,7 +647,7 @@ pub extern "C" fn napi_create_int64(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_create_string_latin1(
+pub(super) extern "C" fn napi_create_string_latin1(
     env_: napi_env,
     str_: *const u8,
     length: usize,
@@ -693,7 +704,7 @@ pub extern "C" fn napi_create_string_latin1(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_create_string_utf8(
+pub(super) extern "C" fn napi_create_string_utf8(
     env_: napi_env,
     str_: *const u8,
     length: usize,
@@ -734,7 +745,7 @@ pub extern "C" fn napi_create_string_utf8(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_create_string_utf16(
+pub(super) extern "C" fn napi_create_string_utf16(
     env_: napi_env,
     str_: *const char16_t,
     length: usize,
@@ -795,42 +806,60 @@ pub extern "C" fn napi_create_string_utf16(
 
 // TODO(port): move to napi_sys
 unsafe extern "C" {
-    pub fn napi_create_symbol(
+    pub(super) fn napi_create_symbol(
         env: napi_env,
         description: napi_value,
         result: *mut napi_value,
     ) -> napi_status;
-    pub fn napi_create_error(
+    pub(super) fn napi_create_error(
         env: napi_env,
         code: napi_value,
         msg: napi_value,
         result: *mut napi_value,
     ) -> napi_status;
-    pub fn napi_create_type_error(
+    pub(super) fn napi_create_type_error(
         env: napi_env,
         code: napi_value,
         msg: napi_value,
         result: *mut napi_value,
     ) -> napi_status;
-    pub fn napi_create_range_error(
+    pub(super) fn napi_create_range_error(
         env: napi_env,
         code: napi_value,
         msg: napi_value,
         result: *mut napi_value,
     ) -> napi_status;
-    pub fn napi_typeof(
+    pub(super) fn napi_typeof(
         env: napi_env,
         value: napi_value,
         result: *mut napi_valuetype,
     ) -> napi_status;
-    pub fn napi_get_value_double(env: napi_env, value: napi_value, result: *mut f64)
-    -> napi_status;
-    pub fn napi_get_value_int32(env: napi_env, value: napi_value, result: *mut i32) -> napi_status;
-    pub fn napi_get_value_uint32(env: napi_env, value: napi_value, result: *mut u32)
-    -> napi_status;
-    pub fn napi_get_value_int64(env: napi_env, value: napi_value, result: *mut i64) -> napi_status;
-    pub fn napi_get_value_bool(env: napi_env, value: napi_value, result: *mut bool) -> napi_status;
-    pub fn napi_get_value_string_latin1(
+    pub(super) fn napi_get_value_double(
+        env: napi_env,
+        value: napi_value,
+        result: *mut f64,
+    ) -> napi_status;
+    pub(super) fn napi_get_value_int32(
+        env: napi_env,
+        value: napi_value,
+        result: *mut i32,
+    ) -> napi_status;
+    pub(super) fn napi_get_value_uint32(
+        env: napi_env,
+        value: napi_value,
+        result: *mut u32,
+    ) -> napi_status;
+    pub(super) fn napi_get_value_int64(
+        env: napi_env,
+        value: napi_value,
+        result: *mut i64,
+    ) -> napi_status;
+    pub(super) fn napi_get_value_bool(
+        env: napi_env,
+        value: napi_value,
+        result: *mut bool,
+    ) -> napi_status;
+    pub(super) fn napi_get_value_string_latin1(
         env: napi_env,
         value: napi_value,
         buf_ptr: *mut c_char,
@@ -845,31 +874,31 @@ unsafe extern "C" {
     /// If buf is NULL, this method returns the length of the string (in bytes)
     /// via the result parameter.
     /// The result argument is optional unless buf is NULL.
-    pub fn napi_get_value_string_utf8(
+    pub(super) fn napi_get_value_string_utf8(
         env: napi_env,
         value: napi_value,
         buf_ptr: *mut u8,
         bufsize: usize,
         result_ptr: *mut usize,
     ) -> napi_status;
-    pub fn napi_get_value_string_utf16(
+    pub(super) fn napi_get_value_string_utf16(
         env: napi_env,
         value: napi_value,
         buf_ptr: *mut char16_t,
         bufsize: usize,
         result_ptr: *mut usize,
     ) -> napi_status;
-    pub fn napi_coerce_to_bool(
+    pub(super) fn napi_coerce_to_bool(
         env: napi_env,
         value: napi_value,
         result: *mut napi_value,
     ) -> napi_status;
-    pub fn napi_coerce_to_number(
+    pub(super) fn napi_coerce_to_number(
         env: napi_env,
         value: napi_value,
         result: *mut napi_value,
     ) -> napi_status;
-    pub fn napi_coerce_to_object(
+    pub(super) fn napi_coerce_to_object(
         env: napi_env,
         value: napi_value,
         result: *mut napi_value,
@@ -877,7 +906,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_get_prototype(
+pub(super) extern "C" fn napi_get_prototype(
     env_: napi_env,
     object_: napi_value,
     result_: *mut napi_value,
@@ -911,31 +940,31 @@ pub extern "C" fn napi_get_prototype(
 // }
 
 unsafe extern "C" {
-    pub fn napi_set_element(
+    pub(super) fn napi_set_element(
         env: napi_env,
         object: napi_value,
         index: c_uint,
         value: napi_value,
     ) -> napi_status;
-    pub fn napi_has_element(
+    pub(super) fn napi_has_element(
         env: napi_env,
         object: napi_value,
         index: c_uint,
         result: *mut bool,
     ) -> napi_status;
-    pub fn napi_get_element(
+    pub(super) fn napi_get_element(
         env: napi_env,
         object: napi_value,
         index: u32,
         result: *mut napi_value,
     ) -> napi_status;
-    pub fn napi_delete_element(
+    pub(super) fn napi_delete_element(
         env: napi_env,
         object: napi_value,
         index: u32,
         result: *mut bool,
     ) -> napi_status;
-    pub fn napi_define_properties(
+    pub(super) fn napi_define_properties(
         env: napi_env,
         object: napi_value,
         property_count: usize,
@@ -944,7 +973,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_is_array(
+pub(super) extern "C" fn napi_is_array(
     env_: napi_env,
     value_: napi_value,
     result_: *mut bool,
@@ -959,7 +988,7 @@ pub extern "C" fn napi_is_array(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_get_array_length(
+pub(super) extern "C" fn napi_get_array_length(
     env_: napi_env,
     value_: napi_value,
     result_: *mut u32,
@@ -981,7 +1010,7 @@ pub extern "C" fn napi_get_array_length(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_strict_equals(
+pub(super) extern "C" fn napi_strict_equals(
     env_: napi_env,
     lhs_: napi_value,
     rhs_: napi_value,
@@ -999,7 +1028,7 @@ pub extern "C" fn napi_strict_equals(
 }
 
 unsafe extern "C" {
-    pub fn napi_call_function(
+    pub(super) fn napi_call_function(
         env: napi_env,
         recv: napi_value,
         func: napi_value,
@@ -1007,20 +1036,20 @@ unsafe extern "C" {
         argv: *const napi_value,
         result: *mut napi_value,
     ) -> napi_status;
-    pub fn napi_new_instance(
+    pub(super) fn napi_new_instance(
         env: napi_env,
         constructor: napi_value,
         argc: usize,
         argv: *const napi_value,
         result: *mut napi_value,
     ) -> napi_status;
-    pub fn napi_instanceof(
+    pub(super) fn napi_instanceof(
         env: napi_env,
         object: napi_value,
         constructor: napi_value,
         result: *mut bool,
     ) -> napi_status;
-    pub fn napi_get_cb_info(
+    pub(super) fn napi_get_cb_info(
         env: napi_env,
         cbinfo: napi_callback_info,
         argc: *mut usize,
@@ -1028,12 +1057,12 @@ unsafe extern "C" {
         this_arg: *mut napi_value,
         data: *mut *mut c_void,
     ) -> napi_status;
-    pub fn napi_get_new_target(
+    pub(super) fn napi_get_new_target(
         env: napi_env,
         cbinfo: napi_callback_info,
         result: *mut napi_value,
     ) -> napi_status;
-    pub fn napi_define_class(
+    pub(super) fn napi_define_class(
         env: napi_env,
         utf8name: *const c_char,
         length: usize,
@@ -1043,7 +1072,7 @@ unsafe extern "C" {
         properties: *const napi_property_descriptor,
         result: *mut napi_value,
     ) -> napi_status;
-    pub fn napi_wrap(
+    pub(super) fn napi_wrap(
         env: napi_env,
         js_object: napi_value,
         native_object: *mut c_void,
@@ -1051,39 +1080,47 @@ unsafe extern "C" {
         finalize_hint: *mut c_void,
         result: *mut napi_ref,
     ) -> napi_status;
-    pub fn napi_unwrap(
+    pub(super) fn napi_unwrap(
         env: napi_env,
         js_object: napi_value,
         result: *mut *mut c_void,
     ) -> napi_status;
-    pub fn napi_remove_wrap(
+    pub(super) fn napi_remove_wrap(
         env: napi_env,
         js_object: napi_value,
         result: *mut *mut c_void,
     ) -> napi_status;
-    pub fn napi_create_object(env: napi_env, result: *mut napi_value) -> napi_status;
-    pub fn napi_create_external(
+    pub(super) fn napi_create_object(env: napi_env, result: *mut napi_value) -> napi_status;
+    pub(super) fn napi_create_external(
         env: napi_env,
         data: *mut c_void,
         finalize_cb: napi_finalize,
         finalize_hint: *mut c_void,
         result: *mut napi_value,
     ) -> napi_status;
-    pub fn napi_get_value_external(
+    pub(super) fn napi_get_value_external(
         env: napi_env,
         value: napi_value,
         result: *mut *mut c_void,
     ) -> napi_status;
-    pub fn napi_create_reference(
+    pub(super) fn napi_create_reference(
         env: napi_env,
         value: napi_value,
         initial_refcount: u32,
         result: *mut napi_ref,
     ) -> napi_status;
-    pub fn napi_delete_reference(env: napi_env, ref_: napi_ref) -> napi_status;
-    pub fn napi_reference_ref(env: napi_env, ref_: napi_ref, result: *mut u32) -> napi_status;
-    pub fn napi_reference_unref(env: napi_env, ref_: napi_ref, result: *mut u32) -> napi_status;
-    pub fn napi_get_reference_value(
+    pub(super) fn napi_delete_reference(env: napi_env, ref_: napi_ref) -> napi_status;
+    pub(super) fn napi_reference_ref(
+        env: napi_env,
+        ref_: napi_ref,
+        result: *mut u32,
+    ) -> napi_status;
+    pub(super) fn napi_reference_unref(
+        env: napi_env,
+        ref_: napi_ref,
+        result: *mut u32,
+    ) -> napi_status;
+    pub(super) fn napi_get_reference_value(
         env: napi_env,
         ref_: napi_ref,
         result: *mut napi_value,
@@ -1091,7 +1128,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_open_handle_scope(
+pub(super) extern "C" fn napi_open_handle_scope(
     env_: napi_env,
     result_: *mut napi_handle_scope,
 ) -> napi_status {
@@ -1104,7 +1141,7 @@ pub extern "C" fn napi_open_handle_scope(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_close_handle_scope(
+pub(super) extern "C" fn napi_close_handle_scope(
     env_: napi_env,
     handle_scope: napi_handle_scope,
 ) -> napi_status {
@@ -1119,7 +1156,7 @@ pub extern "C" fn napi_close_handle_scope(
 
 // we don't support async contexts
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_async_init(
+pub(super) extern "C" fn napi_async_init(
     env_: napi_env,
     _async_resource: napi_value,
     _async_resource_name: napi_value,
@@ -1136,7 +1173,10 @@ pub extern "C" fn napi_async_init(
 
 // we don't support async contexts
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_async_destroy(env_: napi_env, _async_ctx: *mut c_void) -> napi_status {
+pub(super) extern "C" fn napi_async_destroy(
+    env_: napi_env,
+    _async_ctx: *mut c_void,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_async_destroy");
     let env = get_env!(env_);
     env.ok()
@@ -1144,7 +1184,7 @@ pub extern "C" fn napi_async_destroy(env_: napi_env, _async_ctx: *mut c_void) ->
 
 // this is just a regular function call
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_make_callback(
+pub(super) extern "C" fn napi_make_callback(
     env_: napi_env,
     _async_ctx: *mut c_void,
     recv_: napi_value,
@@ -1195,7 +1235,7 @@ pub extern "C" fn napi_make_callback(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_open_escapable_handle_scope(
+pub(super) extern "C" fn napi_open_escapable_handle_scope(
     env_: napi_env,
     result_: *mut napi_escapable_handle_scope,
 ) -> napi_status {
@@ -1208,7 +1248,7 @@ pub extern "C" fn napi_open_escapable_handle_scope(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_close_escapable_handle_scope(
+pub(super) extern "C" fn napi_close_escapable_handle_scope(
     env_: napi_env,
     scope: napi_escapable_handle_scope,
 ) -> napi_status {
@@ -1222,7 +1262,7 @@ pub extern "C" fn napi_close_escapable_handle_scope(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_escape_handle(
+pub(super) extern "C" fn napi_escape_handle(
     env_: napi_env,
     scope_: napi_escapable_handle_scope,
     escapee: napi_value,
@@ -1244,12 +1284,12 @@ pub extern "C" fn napi_escape_handle(
 }
 
 unsafe extern "C" {
-    pub fn napi_type_tag_object(
+    pub(super) fn napi_type_tag_object(
         env: napi_env,
         value: napi_value,
         tag: *const napi_type_tag,
     ) -> napi_status;
-    pub fn napi_check_object_type_tag(
+    pub(super) fn napi_check_object_type_tag(
         env: napi_env,
         value: napi_value,
         tag: *const napi_type_tag,
@@ -1259,7 +1299,7 @@ unsafe extern "C" {
 
 // do nothing for both of these
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_open_callback_scope(
+pub(super) extern "C" fn napi_open_callback_scope(
     _env: napi_env,
     _resource: napi_value,
     _context: *mut c_void,
@@ -1270,20 +1310,27 @@ pub extern "C" fn napi_open_callback_scope(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_close_callback_scope(_env: napi_env, _scope: *mut c_void) -> napi_status {
+pub(super) extern "C" fn napi_close_callback_scope(
+    _env: napi_env,
+    _scope: *mut c_void,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_close_callback_scope");
     NapiStatus::ok as napi_status
 }
 
 unsafe extern "C" {
-    pub fn napi_throw(env: napi_env, error: napi_value) -> napi_status;
-    pub fn napi_throw_error(env: napi_env, code: *const c_char, msg: *const c_char) -> napi_status;
-    pub fn napi_throw_type_error(
+    pub(super) fn napi_throw(env: napi_env, error: napi_value) -> napi_status;
+    pub(super) fn napi_throw_error(
         env: napi_env,
         code: *const c_char,
         msg: *const c_char,
     ) -> napi_status;
-    pub fn napi_throw_range_error(
+    pub(super) fn napi_throw_type_error(
+        env: napi_env,
+        code: *const c_char,
+        msg: *const c_char,
+    ) -> napi_status;
+    pub(super) fn napi_throw_range_error(
         env: napi_env,
         code: *const c_char,
         msg: *const c_char,
@@ -1291,7 +1338,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_is_error(
+pub(super) extern "C" fn napi_is_error(
     env_: napi_env,
     value_: napi_value,
     result: *mut bool,
@@ -1306,13 +1353,15 @@ pub extern "C" fn napi_is_error(
 }
 
 unsafe extern "C" {
-    pub fn napi_is_exception_pending(env: napi_env, result: *mut bool) -> napi_status;
-    pub fn napi_get_and_clear_last_exception(env: napi_env, result: *mut napi_value)
-    -> napi_status;
+    pub(super) fn napi_is_exception_pending(env: napi_env, result: *mut bool) -> napi_status;
+    pub(super) fn napi_get_and_clear_last_exception(
+        env: napi_env,
+        result: *mut napi_value,
+    ) -> napi_status;
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_is_arraybuffer(
+pub(super) extern "C" fn napi_is_arraybuffer(
     env_: napi_env,
     value_: napi_value,
     result_: *mut bool,
@@ -1328,13 +1377,13 @@ pub extern "C" fn napi_is_arraybuffer(
 
 unsafe extern "C" {
     // TODO(port): Zig signature has `data: [*]const u8`; N-API spec says `void**` out-param — verify which is the source of truth.
-    pub fn napi_create_arraybuffer(
+    pub(super) fn napi_create_arraybuffer(
         env: napi_env,
         byte_length: usize,
         data: *mut *mut c_void,
         result: *mut napi_value,
     ) -> napi_status;
-    pub fn napi_create_external_arraybuffer(
+    pub(super) fn napi_create_external_arraybuffer(
         env: napi_env,
         external_data: *mut c_void,
         byte_length: usize,
@@ -1345,7 +1394,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_get_arraybuffer_info(
+pub(super) extern "C" fn napi_get_arraybuffer_info(
     env_: napi_env,
     arraybuffer_: napi_value,
     data: *mut *mut u8,
@@ -1368,11 +1417,15 @@ pub extern "C" fn napi_get_arraybuffer_info(
 }
 
 unsafe extern "C" {
-    pub fn napi_is_typedarray(env: napi_env, value: napi_value, result: *mut bool) -> napi_status;
+    pub(super) fn napi_is_typedarray(
+        env: napi_env,
+        value: napi_value,
+        result: *mut bool,
+    ) -> napi_status;
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_get_typedarray_info(
+pub(super) extern "C" fn napi_get_typedarray_info(
     env_: napi_env,
     typedarray_: napi_value,
     maybe_type: *mut napi_typedarray_type,
@@ -1431,7 +1484,7 @@ pub extern "C" fn napi_get_typedarray_info(
 }
 
 unsafe extern "C" {
-    pub fn napi_create_dataview(
+    pub(super) fn napi_create_dataview(
         env: napi_env,
         length: usize,
         arraybuffer: napi_value,
@@ -1441,7 +1494,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_is_dataview(
+pub(super) extern "C" fn napi_is_dataview(
     env_: napi_env,
     value_: napi_value,
     result_: *mut bool,
@@ -1456,7 +1509,7 @@ pub extern "C" fn napi_is_dataview(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_get_dataview_info(
+pub(super) extern "C" fn napi_get_dataview_info(
     env_: napi_env,
     dataview_: napi_value,
     maybe_bytelength: *mut usize,
@@ -1495,7 +1548,7 @@ pub extern "C" fn napi_get_dataview_info(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_get_version(env_: napi_env, result_: *mut u32) -> napi_status {
+pub(super) extern "C" fn napi_get_version(env_: napi_env, result_: *mut u32) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_version");
     let env = get_env!(env_);
     let result = get_out!(env, result_);
@@ -1505,7 +1558,7 @@ pub extern "C" fn napi_get_version(env_: napi_env, result_: *mut u32) -> napi_st
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_create_promise(
+pub(super) extern "C" fn napi_create_promise(
     env_: napi_env,
     deferred_: *mut napi_deferred,
     promise_: *mut napi_value,
@@ -1524,7 +1577,7 @@ pub extern "C" fn napi_create_promise(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_resolve_deferred(
+pub(super) extern "C" fn napi_resolve_deferred(
     env_: napi_env,
     deferred: napi_deferred,
     resolution_: napi_value,
@@ -1543,7 +1596,7 @@ pub extern "C" fn napi_resolve_deferred(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_reject_deferred(
+pub(super) extern "C" fn napi_reject_deferred(
     env_: napi_env,
     deferred: napi_deferred,
     rejection_: napi_value,
@@ -1561,7 +1614,7 @@ pub extern "C" fn napi_reject_deferred(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_is_promise(
+pub(super) extern "C" fn napi_is_promise(
     env_: napi_env,
     value_: napi_value,
     is_promise_: *mut bool,
@@ -1581,12 +1634,12 @@ pub extern "C" fn napi_is_promise(
 }
 
 unsafe extern "C" {
-    pub fn napi_run_script(
+    pub(super) fn napi_run_script(
         env: napi_env,
         script: napi_value,
         result: *mut napi_value,
     ) -> napi_status;
-    pub fn napi_adjust_external_memory(
+    pub(super) fn napi_adjust_external_memory(
         env: napi_env,
         change_in_bytes: i64,
         adjusted_value: *mut i64,
@@ -1594,7 +1647,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_create_date(
+pub(super) extern "C" fn napi_create_date(
     env_: napi_env,
     time: f64,
     result_: *mut napi_value,
@@ -1614,7 +1667,7 @@ pub extern "C" fn napi_create_date(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_is_date(
+pub(super) extern "C" fn napi_is_date(
     env_: napi_env,
     value_: napi_value,
     is_date_: *mut bool,
@@ -1629,8 +1682,12 @@ pub extern "C" fn napi_is_date(
 }
 
 unsafe extern "C" {
-    pub fn napi_get_date_value(env: napi_env, value: napi_value, result: *mut f64) -> napi_status;
-    pub fn napi_add_finalizer(
+    pub(super) fn napi_get_date_value(
+        env: napi_env,
+        value: napi_value,
+        result: *mut f64,
+    ) -> napi_status;
+    pub(super) fn napi_add_finalizer(
         env: napi_env,
         js_object: napi_value,
         native_object: *mut c_void,
@@ -1638,43 +1695,43 @@ unsafe extern "C" {
         finalize_hint: *mut c_void,
         result: napi_ref,
     ) -> napi_status;
-    pub fn napi_create_bigint_int64(
+    pub(super) fn napi_create_bigint_int64(
         env: napi_env,
         value: i64,
         result: *mut napi_value,
     ) -> napi_status;
-    pub fn napi_create_bigint_uint64(
+    pub(super) fn napi_create_bigint_uint64(
         env: napi_env,
         value: u64,
         result: *mut napi_value,
     ) -> napi_status;
-    pub fn napi_create_bigint_words(
+    pub(super) fn napi_create_bigint_words(
         env: napi_env,
         sign_bit: c_int,
         word_count: usize,
         words: *const u64,
         result: *mut napi_value,
     ) -> napi_status;
-    pub fn napi_get_value_bigint_int64(
+    pub(super) fn napi_get_value_bigint_int64(
         env: napi_env,
         value: napi_value,
         result: *mut i64,
         lossless: *mut bool,
     ) -> napi_status;
-    pub fn napi_get_value_bigint_uint64(
+    pub(super) fn napi_get_value_bigint_uint64(
         env: napi_env,
         value: napi_value,
         result: *mut u64,
         lossless: *mut bool,
     ) -> napi_status;
-    pub fn napi_get_value_bigint_words(
+    pub(super) fn napi_get_value_bigint_words(
         env: napi_env,
         value: napi_value,
         sign_bit: *mut c_int,
         word_count: *mut usize,
         words: *mut u64,
     ) -> napi_status;
-    pub fn napi_get_all_property_names(
+    pub(super) fn napi_get_all_property_names(
         env: napi_env,
         object: napi_value,
         key_mode: napi_key_collection_mode,
@@ -1682,15 +1739,15 @@ unsafe extern "C" {
         key_conversion: napi_key_conversion,
         result: *mut napi_value,
     ) -> napi_status;
-    pub fn napi_set_instance_data(
+    pub(super) fn napi_set_instance_data(
         env: napi_env,
         data: *mut c_void,
         finalize_cb: napi_finalize,
         finalize_hint: *mut c_void,
     ) -> napi_status;
-    pub fn napi_get_instance_data(env: napi_env, data: *mut *mut c_void) -> napi_status;
-    pub fn napi_detach_arraybuffer(env: napi_env, arraybuffer: napi_value) -> napi_status;
-    pub fn napi_is_detached_arraybuffer(
+    pub(super) fn napi_get_instance_data(env: napi_env, data: *mut *mut c_void) -> napi_status;
+    pub(super) fn napi_detach_arraybuffer(env: napi_env, arraybuffer: napi_value) -> napi_status;
+    pub(super) fn napi_is_detached_arraybuffer(
         env: napi_env,
         value: napi_value,
         result: *mut bool,
@@ -1703,7 +1760,7 @@ unsafe extern "C" {
 
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum AsyncWorkStatus {
+pub(super) enum AsyncWorkStatus {
     Pending = 0,
     Started = 1,
     Completed = 2,
@@ -1864,7 +1921,7 @@ impl napi_async_work {
     }
 }
 
-pub type napi_threadsafe_function = *mut ThreadSafeFunction;
+pub(super) type napi_threadsafe_function = *mut ThreadSafeFunction;
 
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1873,15 +1930,15 @@ pub enum napi_threadsafe_function_release_mode {
     abort = 1,
 }
 
-pub const NAPI_TSFN_BLOCKING: c_uint = 1;
-pub type napi_threadsafe_function_call_mode = c_uint;
-pub type napi_async_execute_callback = extern "C" fn(napi_env, *mut c_void);
-pub type napi_async_complete_callback = extern "C" fn(napi_env, napi_status, *mut c_void);
-pub type napi_threadsafe_function_call_js =
+pub(super) const NAPI_TSFN_BLOCKING: c_uint = 1;
+pub(super) type napi_threadsafe_function_call_mode = c_uint;
+pub(super) type napi_async_execute_callback = extern "C" fn(napi_env, *mut c_void);
+pub(super) type napi_async_complete_callback = extern "C" fn(napi_env, napi_status, *mut c_void);
+pub(super) type napi_threadsafe_function_call_js =
     extern "C" fn(napi_env, napi_value, *mut c_void, *mut c_void);
 
 #[repr(C)]
-pub struct napi_node_version {
+pub(super) struct napi_node_version {
     pub major: u32,
     pub minor: u32,
     pub patch: u32,
@@ -1913,7 +1970,7 @@ const fn parse_semver_component(s: &str, idx: usize) -> u32 {
     n
 }
 
-pub static NAPI_NODE_VERSION_GLOBAL: napi_node_version = napi_node_version {
+pub(super) static NAPI_NODE_VERSION_GLOBAL: napi_node_version = napi_node_version {
     major: parse_semver_component(bun_core::Environment::REPORTED_NODEJS_VERSION, 0),
     minor: parse_semver_component(bun_core::Environment::REPORTED_NODEJS_VERSION, 1),
     patch: parse_semver_component(bun_core::Environment::REPORTED_NODEJS_VERSION, 2),
@@ -1921,8 +1978,8 @@ pub static NAPI_NODE_VERSION_GLOBAL: napi_node_version = napi_node_version {
 };
 
 bun_opaque::opaque_ffi! { pub struct struct_napi_async_cleanup_hook_handle__; }
-pub type napi_async_cleanup_hook_handle = *mut struct_napi_async_cleanup_hook_handle__;
-pub type napi_async_cleanup_hook =
+pub(super) type napi_async_cleanup_hook_handle = *mut struct_napi_async_cleanup_hook_handle__;
+pub(super) type napi_async_cleanup_hook =
     Option<extern "C" fn(napi_async_cleanup_hook_handle, *mut c_void)>;
 
 fn napi_span(ptr: *const u8, len: usize) -> &'static [u8] {
@@ -1942,7 +1999,7 @@ fn napi_span(ptr: *const u8, len: usize) -> &'static [u8] {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_fatal_error(
+pub(super) extern "C" fn napi_fatal_error(
     location_ptr: *const u8,
     location_len: usize,
     message_ptr: *const u8,
@@ -1968,13 +2025,13 @@ pub extern "C" fn napi_fatal_error(
 }
 
 unsafe extern "C" {
-    pub fn napi_create_buffer(
+    pub(super) fn napi_create_buffer(
         env: napi_env,
         length: usize,
         data: *mut *mut c_void,
         result: *mut napi_value,
     ) -> napi_status;
-    pub fn napi_create_external_buffer(
+    pub(super) fn napi_create_external_buffer(
         env: napi_env,
         length: usize,
         data: *mut c_void,
@@ -1985,7 +2042,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_create_buffer_copy(
+pub(super) extern "C" fn napi_create_buffer_copy(
     env_: napi_env,
     length: usize,
     data: *const u8,
@@ -2025,7 +2082,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_get_buffer_info(
+pub(super) extern "C" fn napi_get_buffer_info(
     env_: napi_env,
     value_: napi_value,
     data: *mut *mut u8,
@@ -2083,7 +2140,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_create_async_work(
+pub(super) extern "C" fn napi_create_async_work(
     env_: napi_env,
     _async_resource: napi_value,
     _async_resource_name: *const c_char,
@@ -2104,7 +2161,7 @@ pub extern "C" fn napi_create_async_work(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_delete_async_work(
+pub(super) extern "C" fn napi_delete_async_work(
     env_: napi_env,
     work_: *mut napi_async_work,
 ) -> napi_status {
@@ -2122,7 +2179,7 @@ pub extern "C" fn napi_delete_async_work(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_queue_async_work(
+pub(super) extern "C" fn napi_queue_async_work(
     env_: napi_env,
     work_: *mut napi_async_work,
 ) -> napi_status {
@@ -2140,7 +2197,7 @@ pub extern "C" fn napi_queue_async_work(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_cancel_async_work(
+pub(super) extern "C" fn napi_cancel_async_work(
     env_: napi_env,
     work_: *mut napi_async_work,
 ) -> napi_status {
@@ -2161,7 +2218,7 @@ pub extern "C" fn napi_cancel_async_work(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_get_node_version(
+pub(super) extern "C" fn napi_get_node_version(
     env_: napi_env,
     version_: *mut *const napi_node_version,
 ) -> napi_status {
@@ -2178,7 +2235,7 @@ type napi_event_loop = *mut bun_sys::windows::libuv::Loop;
 type napi_event_loop = *mut EventLoop;
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_get_uv_event_loop(
+pub(super) extern "C" fn napi_get_uv_event_loop(
     env_: napi_env,
     loop_: *mut napi_event_loop,
 ) -> napi_status {
@@ -2204,19 +2261,19 @@ pub extern "C" fn napi_get_uv_event_loop(
 }
 
 unsafe extern "C" {
-    pub fn napi_fatal_exception(env: napi_env, err: napi_value) -> napi_status;
-    pub fn napi_add_async_cleanup_hook(
+    pub(super) fn napi_fatal_exception(env: napi_env, err: napi_value) -> napi_status;
+    pub(super) fn napi_add_async_cleanup_hook(
         env: napi_env,
         function: napi_async_cleanup_hook,
         data: *mut c_void,
         handle_out: *mut napi_async_cleanup_hook_handle,
     ) -> napi_status;
-    pub fn napi_add_env_cleanup_hook(
+    pub(super) fn napi_add_env_cleanup_hook(
         env: napi_env,
         function: Option<extern "C" fn(*mut c_void)>,
         data: *mut c_void,
     ) -> napi_status;
-    pub fn napi_create_typedarray(
+    pub(super) fn napi_create_typedarray(
         env: napi_env,
         type_: napi_typedarray_type,
         length: usize,
@@ -2224,8 +2281,10 @@ unsafe extern "C" {
         byte_offset: usize,
         result: *mut napi_value,
     ) -> napi_status;
-    pub fn napi_remove_async_cleanup_hook(handle: napi_async_cleanup_hook_handle) -> napi_status;
-    pub fn napi_remove_env_cleanup_hook(
+    pub(super) fn napi_remove_async_cleanup_hook(
+        handle: napi_async_cleanup_hook_handle,
+    ) -> napi_status;
+    pub(super) fn napi_remove_env_cleanup_hook(
         env: napi_env,
         function: Option<extern "C" fn(*mut c_void)>,
         data: *mut c_void,
@@ -2241,7 +2300,7 @@ extern "C" fn napi_internal_register_cleanup_callback(data: *mut c_void) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_internal_register_cleanup_zig(env_: napi_env) {
+pub(super) extern "C" fn napi_internal_register_cleanup_zig(env_: napi_env) {
     // SAFETY: caller guarantees env_ is non-null (Zig used `.?`).
     let env = unsafe { &*env_ };
     env.to_js().bun_vm().as_mut().rare_data().push_cleanup_hook(
@@ -2252,7 +2311,7 @@ pub extern "C" fn napi_internal_register_cleanup_zig(env_: napi_env) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_internal_suppress_crash_on_abort_if_desired() {
+pub(super) extern "C" fn napi_internal_suppress_crash_on_abort_if_desired() {
     if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT
         .get()
         .unwrap_or(false)
@@ -2321,7 +2380,7 @@ impl Finalizer {
 /// immediate task queue instead of run immediately. This lets finalizers perform allocations,
 /// which they couldn't if they ran immediately while the garbage collector is still running.
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_internal_enqueue_finalizer(
+pub(super) extern "C" fn napi_internal_enqueue_finalizer(
     env: napi_env,
     fun: napi_finalize,
     data: *mut c_void,
@@ -2404,7 +2463,7 @@ enum ClosingState {
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum DispatchState {
+pub(super) enum DispatchState {
     Idle,
     Running,
     Pending,
@@ -2750,7 +2809,7 @@ impl ThreadSafeFunction {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_create_threadsafe_function(
+pub(super) extern "C" fn napi_create_threadsafe_function(
     env_: napi_env,
     func_: napi_value,
     _async_resource: napi_value,
@@ -2827,7 +2886,7 @@ pub extern "C" fn napi_create_threadsafe_function(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_get_threadsafe_function_context(
+pub(super) extern "C" fn napi_get_threadsafe_function_context(
     func: napi_threadsafe_function,
     result: *mut *mut c_void,
 ) -> napi_status {
@@ -2838,7 +2897,7 @@ pub extern "C" fn napi_get_threadsafe_function_context(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_call_threadsafe_function(
+pub(super) extern "C" fn napi_call_threadsafe_function(
     func: napi_threadsafe_function,
     data: *mut c_void,
     is_blocking: napi_threadsafe_function_call_mode,
@@ -2849,14 +2908,16 @@ pub extern "C" fn napi_call_threadsafe_function(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_acquire_threadsafe_function(func: napi_threadsafe_function) -> napi_status {
+pub(super) extern "C" fn napi_acquire_threadsafe_function(
+    func: napi_threadsafe_function,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_acquire_threadsafe_function");
     // SAFETY: func is non-null per N-API contract.
     unsafe { &mut *func }.acquire()
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_release_threadsafe_function(
+pub(super) extern "C" fn napi_release_threadsafe_function(
     func: napi_threadsafe_function,
     mode: napi_threadsafe_function_release_mode,
 ) -> napi_status {
@@ -2866,7 +2927,7 @@ pub extern "C" fn napi_release_threadsafe_function(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_unref_threadsafe_function(
+pub(super) extern "C" fn napi_unref_threadsafe_function(
     env_: napi_env,
     func: napi_threadsafe_function,
 ) -> napi_status {
@@ -2883,7 +2944,7 @@ pub extern "C" fn napi_unref_threadsafe_function(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_ref_threadsafe_function(
+pub(super) extern "C" fn napi_ref_threadsafe_function(
     env_: napi_env,
     func: napi_threadsafe_function,
 ) -> napi_status {
@@ -2916,92 +2977,95 @@ mod v8_api {
     use core::ffi::c_void;
     // TODO(port): move to napi_sys
     unsafe extern "C" {
-        pub fn _ZN2v87Isolate10GetCurrentEv() -> *mut c_void;
-        pub fn _ZN2v87Isolate13TryGetCurrentEv() -> *mut c_void;
-        pub fn _ZN2v87Isolate17GetCurrentContextEv() -> *mut c_void;
-        pub fn _ZN4node25AddEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() -> *mut c_void;
-        pub fn _ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() -> *mut c_void;
-        pub fn _ZN2v86Number3NewEPNS_7IsolateEd() -> *mut c_void;
-        pub fn _ZNK2v86Number5ValueEv() -> *mut c_void;
-        pub fn _ZN2v86String11NewFromUtf8EPNS_7IsolateEPKcNS_13NewStringTypeEi() -> *mut c_void;
-        pub fn _ZNK2v86String9WriteUtf8EPNS_7IsolateEPciPii() -> *mut c_void;
-        pub fn _ZN2v812api_internal12ToLocalEmptyEv() -> *mut c_void;
-        pub fn _ZNK2v86String6LengthEv() -> *mut c_void;
-        pub fn _ZN2v88External3NewEPNS_7IsolateEPv() -> *mut c_void;
-        pub fn _ZNK2v88External5ValueEv() -> *mut c_void;
-        pub fn _ZN2v86Object3NewEPNS_7IsolateE() -> *mut c_void;
-        pub fn _ZN2v86Object3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_() -> *mut c_void;
-        pub fn _ZN2v86Object3SetENS_5LocalINS_7ContextEEEjNS1_INS_5ValueEEE() -> *mut c_void;
-        pub fn _ZN2v86Object16SetInternalFieldEiNS_5LocalINS_4DataEEE() -> *mut c_void;
-        pub fn _ZN2v86Object20SlowGetInternalFieldEi() -> *mut c_void;
-        pub fn _ZN2v86Object3GetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE() -> *mut c_void;
-        pub fn _ZN2v86Object3GetENS_5LocalINS_7ContextEEEj() -> *mut c_void;
-        pub fn _ZN2v811HandleScope12CreateHandleEPNS_8internal7IsolateEm() -> *mut c_void;
-        pub fn _ZN2v811HandleScopeC1EPNS_7IsolateE() -> *mut c_void;
-        pub fn _ZN2v811HandleScopeD1Ev() -> *mut c_void;
-        pub fn _ZN2v811HandleScopeD2Ev() -> *mut c_void;
-        pub fn _ZN2v816FunctionTemplate11GetFunctionENS_5LocalINS_7ContextEEE() -> *mut c_void;
-        pub fn _ZN2v816FunctionTemplate3NewEPNS_7IsolateEPFvRKNS_20FunctionCallbackInfoINS_5ValueEEEENS_5LocalIS4_EENSA_INS_9SignatureEEEiNS_19ConstructorBehaviorENS_14SideEffectTypeEPKNS_9CFunctionEttt()
+        pub(super) fn _ZN2v87Isolate10GetCurrentEv() -> *mut c_void;
+        pub(super) fn _ZN2v87Isolate13TryGetCurrentEv() -> *mut c_void;
+        pub(super) fn _ZN2v87Isolate17GetCurrentContextEv() -> *mut c_void;
+        pub(super) fn _ZN4node25AddEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() -> *mut c_void;
+        pub(super) fn _ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() -> *mut c_void;
+        pub(super) fn _ZN2v86Number3NewEPNS_7IsolateEd() -> *mut c_void;
+        pub(super) fn _ZNK2v86Number5ValueEv() -> *mut c_void;
+        pub(super) fn _ZN2v86String11NewFromUtf8EPNS_7IsolateEPKcNS_13NewStringTypeEi()
         -> *mut c_void;
-        pub fn _ZN2v814ObjectTemplate11NewInstanceENS_5LocalINS_7ContextEEE() -> *mut c_void;
-        pub fn _ZN2v814ObjectTemplate21SetInternalFieldCountEi() -> *mut c_void;
-        pub fn _ZNK2v814ObjectTemplate18InternalFieldCountEv() -> *mut c_void;
-        pub fn _ZN2v814ObjectTemplate3NewEPNS_7IsolateENS_5LocalINS_16FunctionTemplateEEE()
+        pub(super) fn _ZNK2v86String9WriteUtf8EPNS_7IsolateEPciPii() -> *mut c_void;
+        pub(super) fn _ZN2v812api_internal12ToLocalEmptyEv() -> *mut c_void;
+        pub(super) fn _ZNK2v86String6LengthEv() -> *mut c_void;
+        pub(super) fn _ZN2v88External3NewEPNS_7IsolateEPv() -> *mut c_void;
+        pub(super) fn _ZNK2v88External5ValueEv() -> *mut c_void;
+        pub(super) fn _ZN2v86Object3NewEPNS_7IsolateE() -> *mut c_void;
+        pub(super) fn _ZN2v86Object3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_() -> *mut c_void;
+        pub(super) fn _ZN2v86Object3SetENS_5LocalINS_7ContextEEEjNS1_INS_5ValueEEE() -> *mut c_void;
+        pub(super) fn _ZN2v86Object16SetInternalFieldEiNS_5LocalINS_4DataEEE() -> *mut c_void;
+        pub(super) fn _ZN2v86Object20SlowGetInternalFieldEi() -> *mut c_void;
+        pub(super) fn _ZN2v86Object3GetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE() -> *mut c_void;
+        pub(super) fn _ZN2v86Object3GetENS_5LocalINS_7ContextEEEj() -> *mut c_void;
+        pub(super) fn _ZN2v811HandleScope12CreateHandleEPNS_8internal7IsolateEm() -> *mut c_void;
+        pub(super) fn _ZN2v811HandleScopeC1EPNS_7IsolateE() -> *mut c_void;
+        pub(super) fn _ZN2v811HandleScopeD1Ev() -> *mut c_void;
+        pub(super) fn _ZN2v811HandleScopeD2Ev() -> *mut c_void;
+        pub(super) fn _ZN2v816FunctionTemplate11GetFunctionENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZN2v816FunctionTemplate3NewEPNS_7IsolateEPFvRKNS_20FunctionCallbackInfoINS_5ValueEEEENS_5LocalIS4_EENSA_INS_9SignatureEEEiNS_19ConstructorBehaviorENS_14SideEffectTypeEPKNS_9CFunctionEttt()
         -> *mut c_void;
-        pub fn _ZN2v824EscapableHandleScopeBase10EscapeSlotEPm() -> *mut c_void;
-        pub fn _ZN2v824EscapableHandleScopeBaseC2EPNS_7IsolateE() -> *mut c_void;
-        pub fn _ZN2v88internal35IsolateFromNeverReadOnlySpaceObjectEm() -> *mut c_void;
-        pub fn _ZN2v85Array3NewEPNS_7IsolateEPNS_5LocalINS_5ValueEEEm() -> *mut c_void;
-        pub fn _ZNK2v85Array6LengthEv() -> *mut c_void;
-        pub fn _ZN2v85Array3NewEPNS_7IsolateEi() -> *mut c_void;
-        pub fn _ZN2v85Array7IterateENS_5LocalINS_7ContextEEEPFNS0_14CallbackResultEjNS1_INS_5ValueEEEPvES7_()
+        pub(super) fn _ZN2v814ObjectTemplate11NewInstanceENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZN2v814ObjectTemplate21SetInternalFieldCountEi() -> *mut c_void;
+        pub(super) fn _ZNK2v814ObjectTemplate18InternalFieldCountEv() -> *mut c_void;
+        pub(super) fn _ZN2v814ObjectTemplate3NewEPNS_7IsolateENS_5LocalINS_16FunctionTemplateEEE()
         -> *mut c_void;
-        pub fn _ZN2v85Array9CheckCastEPNS_5ValueE() -> *mut c_void;
-        pub fn _ZN2v88Function7SetNameENS_5LocalINS_6StringEEE() -> *mut c_void;
-        pub fn _ZNK2v85Value9IsBooleanEv() -> *mut c_void;
-        pub fn _ZNK2v87Boolean5ValueEv() -> *mut c_void;
-        pub fn _ZNK2v85Value10FullIsTrueEv() -> *mut c_void;
-        pub fn _ZNK2v85Value11FullIsFalseEv() -> *mut c_void;
-        pub fn _ZN2v820EscapableHandleScopeC1EPNS_7IsolateE() -> *mut c_void;
-        pub fn _ZN2v820EscapableHandleScopeC2EPNS_7IsolateE() -> *mut c_void;
-        pub fn _ZN2v820EscapableHandleScopeD1Ev() -> *mut c_void;
-        pub fn _ZN2v820EscapableHandleScopeD2Ev() -> *mut c_void;
-        pub fn _ZNK2v85Value8IsObjectEv() -> *mut c_void;
-        pub fn _ZNK2v85Value8IsNumberEv() -> *mut c_void;
-        pub fn _ZNK2v85Value8IsUint32Ev() -> *mut c_void;
-        pub fn _ZNK2v85Value11Uint32ValueENS_5LocalINS_7ContextEEE() -> *mut c_void;
-        pub fn _ZNK2v85Value11IsUndefinedEv() -> *mut c_void;
-        pub fn _ZNK2v85Value6IsNullEv() -> *mut c_void;
-        pub fn _ZNK2v85Value17IsNullOrUndefinedEv() -> *mut c_void;
-        pub fn _ZNK2v85Value6IsTrueEv() -> *mut c_void;
-        pub fn _ZNK2v85Value7IsFalseEv() -> *mut c_void;
-        pub fn _ZNK2v85Value8IsStringEv() -> *mut c_void;
-        pub fn _ZNK2v85Value12StrictEqualsENS_5LocalIS0_EE() -> *mut c_void;
-        pub fn _ZN2v87Boolean3NewEPNS_7IsolateEb() -> *mut c_void;
-        pub fn _ZN2v86Object16GetInternalFieldEi() -> *mut c_void;
-        pub fn _ZN2v87Context10GetIsolateEv() -> *mut c_void;
-        pub fn _ZN2v86String14NewFromOneByteEPNS_7IsolateEPKhNS_13NewStringTypeEi() -> *mut c_void;
-        pub fn _ZNK2v86String10Utf8LengthEPNS_7IsolateE() -> *mut c_void;
-        pub fn _ZNK2v86String10IsExternalEv() -> *mut c_void;
-        pub fn _ZNK2v86String17IsExternalOneByteEv() -> *mut c_void;
-        pub fn _ZNK2v86String17IsExternalTwoByteEv() -> *mut c_void;
-        pub fn _ZNK2v86String9IsOneByteEv() -> *mut c_void;
-        pub fn _ZNK2v86String19ContainsOnlyOneByteEv() -> *mut c_void;
-        pub fn _ZN2v812api_internal18GlobalizeReferenceEPNS_8internal7IsolateEm() -> *mut c_void;
-        pub fn _ZN2v812api_internal13DisposeGlobalEPm() -> *mut c_void;
-        pub fn _ZN2v812api_internal23GetFunctionTemplateDataEPNS_7IsolateENS_5LocalINS_4DataEEE()
+        pub(super) fn _ZN2v824EscapableHandleScopeBase10EscapeSlotEPm() -> *mut c_void;
+        pub(super) fn _ZN2v824EscapableHandleScopeBaseC2EPNS_7IsolateE() -> *mut c_void;
+        pub(super) fn _ZN2v88internal35IsolateFromNeverReadOnlySpaceObjectEm() -> *mut c_void;
+        pub(super) fn _ZN2v85Array3NewEPNS_7IsolateEPNS_5LocalINS_5ValueEEEm() -> *mut c_void;
+        pub(super) fn _ZNK2v85Array6LengthEv() -> *mut c_void;
+        pub(super) fn _ZN2v85Array3NewEPNS_7IsolateEi() -> *mut c_void;
+        pub(super) fn _ZN2v85Array7IterateENS_5LocalINS_7ContextEEEPFNS0_14CallbackResultEjNS1_INS_5ValueEEEPvES7_()
         -> *mut c_void;
-        pub fn _ZNK2v88Function7GetNameEv() -> *mut c_void;
-        pub fn _ZNK2v85Value10IsFunctionEv() -> *mut c_void;
-        pub fn _ZNK2v85Value5IsMapEv() -> *mut c_void;
-        pub fn _ZNK2v85Value7IsArrayEv() -> *mut c_void;
-        pub fn _ZNK2v85Value7IsInt32Ev() -> *mut c_void;
-        pub fn _ZNK2v85Value8IsBigIntEv() -> *mut c_void;
-        pub fn _ZN2v812api_internal17FromJustIsNothingEv() -> *mut c_void;
+        pub(super) fn _ZN2v85Array9CheckCastEPNS_5ValueE() -> *mut c_void;
+        pub(super) fn _ZN2v88Function7SetNameENS_5LocalINS_6StringEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value9IsBooleanEv() -> *mut c_void;
+        pub(super) fn _ZNK2v87Boolean5ValueEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value10FullIsTrueEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value11FullIsFalseEv() -> *mut c_void;
+        pub(super) fn _ZN2v820EscapableHandleScopeC1EPNS_7IsolateE() -> *mut c_void;
+        pub(super) fn _ZN2v820EscapableHandleScopeC2EPNS_7IsolateE() -> *mut c_void;
+        pub(super) fn _ZN2v820EscapableHandleScopeD1Ev() -> *mut c_void;
+        pub(super) fn _ZN2v820EscapableHandleScopeD2Ev() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value8IsObjectEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value8IsNumberEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value8IsUint32Ev() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value11Uint32ValueENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value11IsUndefinedEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value6IsNullEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value17IsNullOrUndefinedEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value6IsTrueEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value7IsFalseEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value8IsStringEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value12StrictEqualsENS_5LocalIS0_EE() -> *mut c_void;
+        pub(super) fn _ZN2v87Boolean3NewEPNS_7IsolateEb() -> *mut c_void;
+        pub(super) fn _ZN2v86Object16GetInternalFieldEi() -> *mut c_void;
+        pub(super) fn _ZN2v87Context10GetIsolateEv() -> *mut c_void;
+        pub(super) fn _ZN2v86String14NewFromOneByteEPNS_7IsolateEPKhNS_13NewStringTypeEi()
+        -> *mut c_void;
+        pub(super) fn _ZNK2v86String10Utf8LengthEPNS_7IsolateE() -> *mut c_void;
+        pub(super) fn _ZNK2v86String10IsExternalEv() -> *mut c_void;
+        pub(super) fn _ZNK2v86String17IsExternalOneByteEv() -> *mut c_void;
+        pub(super) fn _ZNK2v86String17IsExternalTwoByteEv() -> *mut c_void;
+        pub(super) fn _ZNK2v86String9IsOneByteEv() -> *mut c_void;
+        pub(super) fn _ZNK2v86String19ContainsOnlyOneByteEv() -> *mut c_void;
+        pub(super) fn _ZN2v812api_internal18GlobalizeReferenceEPNS_8internal7IsolateEm()
+        -> *mut c_void;
+        pub(super) fn _ZN2v812api_internal13DisposeGlobalEPm() -> *mut c_void;
+        pub(super) fn _ZN2v812api_internal23GetFunctionTemplateDataEPNS_7IsolateENS_5LocalINS_4DataEEE()
+        -> *mut c_void;
+        pub(super) fn _ZNK2v88Function7GetNameEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value10IsFunctionEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value5IsMapEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value7IsArrayEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value7IsInt32Ev() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value8IsBigIntEv() -> *mut c_void;
+        pub(super) fn _ZN2v812api_internal17FromJustIsNothingEv() -> *mut c_void;
         // NOTE: return type omitted to match the `uv_functions_to_export` declarations
         // below (avoids `clashing_extern_declarations`); only the symbol address is used.
-        pub fn uv_os_getpid();
-        pub fn uv_os_getppid();
+        pub(super) fn uv_os_getpid();
+        pub(super) fn uv_os_getppid();
     }
 }
 
@@ -3021,157 +3085,157 @@ mod v8_api {
     #[rustfmt::skip]
     unsafe extern "C" {
         #[link_name = "?TryGetCurrent@Isolate@v8@@SAPEAV12@XZ"]
-        pub fn v8_Isolate_TryGetCurrent() -> *mut c_void;
+        pub(super) fn v8_Isolate_TryGetCurrent() -> *mut c_void;
         #[link_name = "?GetCurrent@Isolate@v8@@SAPEAV12@XZ"]
-        pub fn v8_Isolate_GetCurrent() -> *mut c_void;
+        pub(super) fn v8_Isolate_GetCurrent() -> *mut c_void;
         #[link_name = "?GetCurrentContext@Isolate@v8@@QEAA?AV?$Local@VContext@v8@@@2@XZ"]
-        pub fn v8_Isolate_GetCurrentContext() -> *mut c_void;
+        pub(super) fn v8_Isolate_GetCurrentContext() -> *mut c_void;
         #[link_name = "?AddEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z"]
-        pub fn node_AddEnvironmentCleanupHook() -> *mut c_void;
+        pub(super) fn node_AddEnvironmentCleanupHook() -> *mut c_void;
         #[link_name = "?RemoveEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z"]
-        pub fn node_RemoveEnvironmentCleanupHook() -> *mut c_void;
+        pub(super) fn node_RemoveEnvironmentCleanupHook() -> *mut c_void;
         #[link_name = "?New@Number@v8@@SA?AV?$Local@VNumber@v8@@@2@PEAVIsolate@2@N@Z"]
-        pub fn v8_Number_New() -> *mut c_void;
+        pub(super) fn v8_Number_New() -> *mut c_void;
         #[link_name = "?Value@Number@v8@@QEBANXZ"]
-        pub fn v8_Number_Value() -> *mut c_void;
+        pub(super) fn v8_Number_Value() -> *mut c_void;
         #[link_name = "?NewFromUtf8@String@v8@@SA?AV?$MaybeLocal@VString@v8@@@2@PEAVIsolate@2@PEBDW4NewStringType@2@H@Z"]
-        pub fn v8_String_NewFromUtf8() -> *mut c_void;
+        pub(super) fn v8_String_NewFromUtf8() -> *mut c_void;
         #[link_name = "?WriteUtf8@String@v8@@QEBAHPEAVIsolate@2@PEADHPEAHH@Z"]
-        pub fn v8_String_WriteUtf8() -> *mut c_void;
+        pub(super) fn v8_String_WriteUtf8() -> *mut c_void;
         #[link_name = "?ToLocalEmpty@api_internal@v8@@YAXXZ"]
-        pub fn v8_api_internal_ToLocalEmpty() -> *mut c_void;
+        pub(super) fn v8_api_internal_ToLocalEmpty() -> *mut c_void;
         #[link_name = "?Length@String@v8@@QEBAHXZ"]
-        pub fn v8_String_Length() -> *mut c_void;
+        pub(super) fn v8_String_Length() -> *mut c_void;
         #[link_name = "?New@External@v8@@SA?AV?$Local@VExternal@v8@@@2@PEAVIsolate@2@PEAX@Z"]
-        pub fn v8_External_New() -> *mut c_void;
+        pub(super) fn v8_External_New() -> *mut c_void;
         #[link_name = "?Value@External@v8@@QEBAPEAXXZ"]
-        pub fn v8_External_Value() -> *mut c_void;
+        pub(super) fn v8_External_Value() -> *mut c_void;
         #[link_name = "?New@Object@v8@@SA?AV?$Local@VObject@v8@@@2@PEAVIsolate@2@@Z"]
-        pub fn v8_Object_New() -> *mut c_void;
+        pub(super) fn v8_Object_New() -> *mut c_void;
         #[link_name = "?Set@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@1@Z"]
-        pub fn v8_Object_Set_key() -> *mut c_void;
+        pub(super) fn v8_Object_Set_key() -> *mut c_void;
         #[link_name = "?Set@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@IV?$Local@VValue@v8@@@2@@Z"]
-        pub fn v8_Object_Set_index() -> *mut c_void;
+        pub(super) fn v8_Object_Set_index() -> *mut c_void;
         #[link_name = "?SetInternalField@Object@v8@@QEAAXHV?$Local@VData@v8@@@2@@Z"]
-        pub fn v8_Object_SetInternalField() -> *mut c_void;
+        pub(super) fn v8_Object_SetInternalField() -> *mut c_void;
         #[link_name = "?SlowGetInternalField@Object@v8@@AEAA?AV?$Local@VData@v8@@@2@H@Z"]
-        pub fn v8_Object_SlowGetInternalField() -> *mut c_void;
+        pub(super) fn v8_Object_SlowGetInternalField() -> *mut c_void;
         #[link_name = "?Get@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@I@Z"]
-        pub fn v8_Object_Get_index() -> *mut c_void;
+        pub(super) fn v8_Object_Get_index() -> *mut c_void;
         #[link_name = "?Get@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@@Z"]
-        pub fn v8_Object_Get_key() -> *mut c_void;
+        pub(super) fn v8_Object_Get_key() -> *mut c_void;
         #[link_name = "?CreateHandle@HandleScope@v8@@KAPEA_KPEAVIsolate@internal@2@_K@Z"]
-        pub fn v8_HandleScope_CreateHandle() -> *mut c_void;
+        pub(super) fn v8_HandleScope_CreateHandle() -> *mut c_void;
         #[link_name = "??0HandleScope@v8@@QEAA@PEAVIsolate@1@@Z"]
-        pub fn v8_HandleScope_ctor() -> *mut c_void;
+        pub(super) fn v8_HandleScope_ctor() -> *mut c_void;
         #[link_name = "??1HandleScope@v8@@QEAA@XZ"]
-        pub fn v8_HandleScope_dtor() -> *mut c_void;
+        pub(super) fn v8_HandleScope_dtor() -> *mut c_void;
         #[link_name = "?GetFunction@FunctionTemplate@v8@@QEAA?AV?$MaybeLocal@VFunction@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
-        pub fn v8_FunctionTemplate_GetFunction() -> *mut c_void;
+        pub(super) fn v8_FunctionTemplate_GetFunction() -> *mut c_void;
         #[link_name = "?New@FunctionTemplate@v8@@SA?AV?$Local@VFunctionTemplate@v8@@@2@PEAVIsolate@2@P6AXAEBV?$FunctionCallbackInfo@VValue@v8@@@2@@ZV?$Local@VValue@v8@@@2@V?$Local@VSignature@v8@@@2@HW4ConstructorBehavior@2@W4SideEffectType@2@PEBVCFunction@2@GGG@Z"]
-        pub fn v8_FunctionTemplate_New() -> *mut c_void;
+        pub(super) fn v8_FunctionTemplate_New() -> *mut c_void;
         #[link_name = "?NewInstance@ObjectTemplate@v8@@QEAA?AV?$MaybeLocal@VObject@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
-        pub fn v8_ObjectTemplate_NewInstance() -> *mut c_void;
+        pub(super) fn v8_ObjectTemplate_NewInstance() -> *mut c_void;
         #[link_name = "?SetInternalFieldCount@ObjectTemplate@v8@@QEAAXH@Z"]
-        pub fn v8_ObjectTemplate_SetInternalFieldCount() -> *mut c_void;
+        pub(super) fn v8_ObjectTemplate_SetInternalFieldCount() -> *mut c_void;
         #[link_name = "?InternalFieldCount@ObjectTemplate@v8@@QEBAHXZ"]
-        pub fn v8_ObjectTemplate_InternalFieldCount() -> *mut c_void;
+        pub(super) fn v8_ObjectTemplate_InternalFieldCount() -> *mut c_void;
         #[link_name = "?New@ObjectTemplate@v8@@SA?AV?$Local@VObjectTemplate@v8@@@2@PEAVIsolate@2@V?$Local@VFunctionTemplate@v8@@@2@@Z"]
-        pub fn v8_ObjectTemplate_New() -> *mut c_void;
+        pub(super) fn v8_ObjectTemplate_New() -> *mut c_void;
         #[link_name = "?EscapeSlot@EscapableHandleScopeBase@v8@@IEAAPEA_KPEA_K@Z"]
-        pub fn v8_EscapableHandleScopeBase_EscapeSlot() -> *mut c_void;
+        pub(super) fn v8_EscapableHandleScopeBase_EscapeSlot() -> *mut c_void;
         #[link_name = "??0EscapableHandleScopeBase@v8@@QEAA@PEAVIsolate@1@@Z"]
-        pub fn v8_EscapableHandleScopeBase_ctor() -> *mut c_void;
+        pub(super) fn v8_EscapableHandleScopeBase_ctor() -> *mut c_void;
         #[link_name = "?IsolateFromNeverReadOnlySpaceObject@internal@v8@@YAPEAVIsolate@12@_K@Z"]
-        pub fn v8_internal_IsolateFromNeverReadOnlySpaceObject() -> *mut c_void;
+        pub(super) fn v8_internal_IsolateFromNeverReadOnlySpaceObject() -> *mut c_void;
         #[link_name = "?New@Array@v8@@SA?AV?$Local@VArray@v8@@@2@PEAVIsolate@2@PEAV?$Local@VValue@v8@@@2@_K@Z"]
-        pub fn v8_Array_New_elements() -> *mut c_void;
+        pub(super) fn v8_Array_New_elements() -> *mut c_void;
         #[link_name = "?Length@Array@v8@@QEBAIXZ"]
-        pub fn v8_Array_Length() -> *mut c_void;
+        pub(super) fn v8_Array_Length() -> *mut c_void;
         #[link_name = "?New@Array@v8@@SA?AV?$Local@VArray@v8@@@2@PEAVIsolate@2@H@Z"]
-        pub fn v8_Array_New_len() -> *mut c_void;
+        pub(super) fn v8_Array_New_len() -> *mut c_void;
         #[link_name = "?New@Array@v8@@SA?AV?$MaybeLocal@VArray@v8@@@2@V?$Local@VContext@v8@@@2@_KV?$function@$$A6A?AV?$MaybeLocal@VValue@v8@@@v8@@XZ@std@@@Z"]
-        pub fn v8_Array_New_fn() -> *mut c_void;
+        pub(super) fn v8_Array_New_fn() -> *mut c_void;
         #[link_name = "?Iterate@Array@v8@@QEAA?AV?$Maybe@X@2@V?$Local@VContext@v8@@@2@P6A?AW4CallbackResult@12@IV?$Local@VValue@v8@@@2@PEAX@Z2@Z"]
-        pub fn v8_Array_Iterate() -> *mut c_void;
+        pub(super) fn v8_Array_Iterate() -> *mut c_void;
         #[link_name = "?CheckCast@Array@v8@@CAXPEAVValue@2@@Z"]
-        pub fn v8_Array_CheckCast() -> *mut c_void;
+        pub(super) fn v8_Array_CheckCast() -> *mut c_void;
         #[link_name = "?SetName@Function@v8@@QEAAXV?$Local@VString@v8@@@2@@Z"]
-        pub fn v8_Function_SetName() -> *mut c_void;
+        pub(super) fn v8_Function_SetName() -> *mut c_void;
         #[link_name = "?IsBoolean@Value@v8@@QEBA_NXZ"]
-        pub fn v8_Value_IsBoolean() -> *mut c_void;
+        pub(super) fn v8_Value_IsBoolean() -> *mut c_void;
         #[link_name = "?Value@Boolean@v8@@QEBA_NXZ"]
-        pub fn v8_Boolean_Value() -> *mut c_void;
+        pub(super) fn v8_Boolean_Value() -> *mut c_void;
         #[link_name = "?FullIsTrue@Value@v8@@AEBA_NXZ"]
-        pub fn v8_Value_FullIsTrue() -> *mut c_void;
+        pub(super) fn v8_Value_FullIsTrue() -> *mut c_void;
         #[link_name = "?FullIsFalse@Value@v8@@AEBA_NXZ"]
-        pub fn v8_Value_FullIsFalse() -> *mut c_void;
+        pub(super) fn v8_Value_FullIsFalse() -> *mut c_void;
         #[link_name = "??1EscapableHandleScope@v8@@QEAA@XZ"]
-        pub fn v8_EscapableHandleScope_dtor() -> *mut c_void;
+        pub(super) fn v8_EscapableHandleScope_dtor() -> *mut c_void;
         #[link_name = "??0EscapableHandleScope@v8@@QEAA@PEAVIsolate@1@@Z"]
-        pub fn v8_EscapableHandleScope_ctor() -> *mut c_void;
+        pub(super) fn v8_EscapableHandleScope_ctor() -> *mut c_void;
         #[link_name = "?IsObject@Value@v8@@QEBA_NXZ"]
-        pub fn v8_Value_IsObject() -> *mut c_void;
+        pub(super) fn v8_Value_IsObject() -> *mut c_void;
         #[link_name = "?IsNumber@Value@v8@@QEBA_NXZ"]
-        pub fn v8_Value_IsNumber() -> *mut c_void;
+        pub(super) fn v8_Value_IsNumber() -> *mut c_void;
         #[link_name = "?IsUint32@Value@v8@@QEBA_NXZ"]
-        pub fn v8_Value_IsUint32() -> *mut c_void;
+        pub(super) fn v8_Value_IsUint32() -> *mut c_void;
         #[link_name = "?Uint32Value@Value@v8@@QEBA?AV?$Maybe@I@2@V?$Local@VContext@v8@@@2@@Z"]
-        pub fn v8_Value_Uint32Value() -> *mut c_void;
+        pub(super) fn v8_Value_Uint32Value() -> *mut c_void;
         #[link_name = "?IsUndefined@Value@v8@@QEBA_NXZ"]
-        pub fn v8_Value_IsUndefined() -> *mut c_void;
+        pub(super) fn v8_Value_IsUndefined() -> *mut c_void;
         #[link_name = "?IsNull@Value@v8@@QEBA_NXZ"]
-        pub fn v8_Value_IsNull() -> *mut c_void;
+        pub(super) fn v8_Value_IsNull() -> *mut c_void;
         #[link_name = "?IsNullOrUndefined@Value@v8@@QEBA_NXZ"]
-        pub fn v8_Value_IsNullOrUndefined() -> *mut c_void;
+        pub(super) fn v8_Value_IsNullOrUndefined() -> *mut c_void;
         #[link_name = "?IsTrue@Value@v8@@QEBA_NXZ"]
-        pub fn v8_Value_IsTrue() -> *mut c_void;
+        pub(super) fn v8_Value_IsTrue() -> *mut c_void;
         #[link_name = "?IsFalse@Value@v8@@QEBA_NXZ"]
-        pub fn v8_Value_IsFalse() -> *mut c_void;
+        pub(super) fn v8_Value_IsFalse() -> *mut c_void;
         #[link_name = "?IsString@Value@v8@@QEBA_NXZ"]
-        pub fn v8_Value_IsString() -> *mut c_void;
+        pub(super) fn v8_Value_IsString() -> *mut c_void;
         #[link_name = "?StrictEquals@Value@v8@@QEBA_NV?$Local@VValue@v8@@@2@@Z"]
-        pub fn v8_Value_StrictEquals() -> *mut c_void;
+        pub(super) fn v8_Value_StrictEquals() -> *mut c_void;
         #[link_name = "?New@Boolean@v8@@SA?AV?$Local@VBoolean@v8@@@2@PEAVIsolate@2@_N@Z"]
-        pub fn v8_Boolean_New() -> *mut c_void;
+        pub(super) fn v8_Boolean_New() -> *mut c_void;
         #[link_name = "?GetInternalField@Object@v8@@QEAA?AV?$Local@VData@v8@@@2@H@Z"]
-        pub fn v8_Object_GetInternalField() -> *mut c_void;
+        pub(super) fn v8_Object_GetInternalField() -> *mut c_void;
         #[link_name = "?GetIsolate@Context@v8@@QEAAPEAVIsolate@2@XZ"]
-        pub fn v8_Context_GetIsolate() -> *mut c_void;
+        pub(super) fn v8_Context_GetIsolate() -> *mut c_void;
         #[link_name = "?NewFromOneByte@String@v8@@SA?AV?$MaybeLocal@VString@v8@@@2@PEAVIsolate@2@PEBEW4NewStringType@2@H@Z"]
-        pub fn v8_String_NewFromOneByte() -> *mut c_void;
+        pub(super) fn v8_String_NewFromOneByte() -> *mut c_void;
         #[link_name = "?IsExternal@String@v8@@QEBA_NXZ"]
-        pub fn v8_String_IsExternal() -> *mut c_void;
+        pub(super) fn v8_String_IsExternal() -> *mut c_void;
         #[link_name = "?IsExternalOneByte@String@v8@@QEBA_NXZ"]
-        pub fn v8_String_IsExternalOneByte() -> *mut c_void;
+        pub(super) fn v8_String_IsExternalOneByte() -> *mut c_void;
         #[link_name = "?IsExternalTwoByte@String@v8@@QEBA_NXZ"]
-        pub fn v8_String_IsExternalTwoByte() -> *mut c_void;
+        pub(super) fn v8_String_IsExternalTwoByte() -> *mut c_void;
         #[link_name = "?IsOneByte@String@v8@@QEBA_NXZ"]
-        pub fn v8_String_IsOneByte() -> *mut c_void;
+        pub(super) fn v8_String_IsOneByte() -> *mut c_void;
         #[link_name = "?Utf8Length@String@v8@@QEBAHPEAVIsolate@2@@Z"]
-        pub fn v8_String_Utf8Length() -> *mut c_void;
+        pub(super) fn v8_String_Utf8Length() -> *mut c_void;
         #[link_name = "?ContainsOnlyOneByte@String@v8@@QEBA_NXZ"]
-        pub fn v8_String_ContainsOnlyOneByte() -> *mut c_void;
+        pub(super) fn v8_String_ContainsOnlyOneByte() -> *mut c_void;
         #[link_name = "?GlobalizeReference@api_internal@v8@@YAPEA_KPEAVIsolate@internal@2@_K@Z"]
-        pub fn v8_api_internal_GlobalizeReference() -> *mut c_void;
+        pub(super) fn v8_api_internal_GlobalizeReference() -> *mut c_void;
         #[link_name = "?DisposeGlobal@api_internal@v8@@YAXPEA_K@Z"]
-        pub fn v8_api_internal_DisposeGlobal() -> *mut c_void;
+        pub(super) fn v8_api_internal_DisposeGlobal() -> *mut c_void;
         #[link_name = "?GetFunctionTemplateData@api_internal@v8@@YA?AV?$Local@VValue@v8@@@2@PEAVIsolate@2@V?$Local@VData@v8@@@2@@Z"]
-        pub fn v8_api_internal_GetFunctionTemplateData() -> *mut c_void;
+        pub(super) fn v8_api_internal_GetFunctionTemplateData() -> *mut c_void;
         #[link_name = "?GetName@Function@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ"]
-        pub fn v8_Function_GetName() -> *mut c_void;
+        pub(super) fn v8_Function_GetName() -> *mut c_void;
         #[link_name = "?IsFunction@Value@v8@@QEBA_NXZ"]
-        pub fn v8_Value_IsFunction() -> *mut c_void;
+        pub(super) fn v8_Value_IsFunction() -> *mut c_void;
         #[link_name = "?IsMap@Value@v8@@QEBA_NXZ"]
-        pub fn v8_Value_IsMap() -> *mut c_void;
+        pub(super) fn v8_Value_IsMap() -> *mut c_void;
         #[link_name = "?IsArray@Value@v8@@QEBA_NXZ"]
-        pub fn v8_Value_IsArray() -> *mut c_void;
+        pub(super) fn v8_Value_IsArray() -> *mut c_void;
         #[link_name = "?IsInt32@Value@v8@@QEBA_NXZ"]
-        pub fn v8_Value_IsInt32() -> *mut c_void;
+        pub(super) fn v8_Value_IsInt32() -> *mut c_void;
         #[link_name = "?IsBigInt@Value@v8@@QEBA_NXZ"]
-        pub fn v8_Value_IsBigInt() -> *mut c_void;
+        pub(super) fn v8_Value_IsBigInt() -> *mut c_void;
         #[link_name = "?FromJustIsNothing@api_internal@v8@@YAXXZ"]
-        pub fn v8_api_internal_FromJustIsNothing() -> *mut c_void;
+        pub(super) fn v8_api_internal_FromJustIsNothing() -> *mut c_void;
     }
 }
 
@@ -3183,7 +3247,7 @@ mod posix_platform_specific_v8_apis {}
 mod posix_platform_specific_v8_apis {
     use core::ffi::c_void;
     unsafe extern "C" {
-        pub fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt6__ndk18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE()
+        pub(super) fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt6__ndk18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE()
         -> *mut c_void;
     }
 }
@@ -3192,7 +3256,7 @@ mod posix_platform_specific_v8_apis {
     use core::ffi::c_void;
     // FreeBSD's base libc++ uses the same `std::__1::` inline namespace as Apple's.
     unsafe extern "C" {
-        pub fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt3__18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE()
+        pub(super) fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt3__18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE()
         -> *mut c_void;
     }
 }
@@ -3205,7 +3269,7 @@ mod posix_platform_specific_v8_apis {
 mod posix_platform_specific_v8_apis {
     use core::ffi::c_void;
     unsafe extern "C" {
-        pub fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmSt8functionIFNS_10MaybeLocalINS_5ValueEEEvEE()
+        pub(super) fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmSt8functionIFNS_10MaybeLocalINS_5ValueEEEvEE()
         -> *mut c_void;
     }
 }
@@ -3218,322 +3282,322 @@ mod posix_platform_specific_v8_apis {
 mod uv_functions_to_export {
     // TODO(port): move to napi_sys
     unsafe extern "C" {
-        pub fn uv_accept();
-        pub fn uv_async_init();
-        pub fn uv_async_send();
-        pub fn uv_available_parallelism();
-        pub fn uv_backend_fd();
-        pub fn uv_backend_timeout();
-        pub fn uv_barrier_destroy();
-        pub fn uv_barrier_init();
-        pub fn uv_barrier_wait();
-        pub fn uv_buf_init();
-        pub fn uv_cancel();
-        pub fn uv_chdir();
-        pub fn uv_check_init();
-        pub fn uv_check_start();
-        pub fn uv_check_stop();
-        pub fn uv_clock_gettime();
-        pub fn uv_close();
-        pub fn uv_cond_broadcast();
-        pub fn uv_cond_destroy();
-        pub fn uv_cond_init();
-        pub fn uv_cond_signal();
-        pub fn uv_cond_timedwait();
-        pub fn uv_cond_wait();
-        pub fn uv_cpu_info();
-        pub fn uv_cpumask_size();
-        pub fn uv_cwd();
-        pub fn uv_default_loop();
-        pub fn uv_disable_stdio_inheritance();
-        pub fn uv_dlclose();
-        pub fn uv_dlerror();
-        pub fn uv_dlopen();
-        pub fn uv_dlsym();
-        pub fn uv_err_name();
-        pub fn uv_err_name_r();
-        pub fn uv_exepath();
-        pub fn uv_fileno();
-        pub fn uv_free_cpu_info();
-        pub fn uv_free_interface_addresses();
-        pub fn uv_freeaddrinfo();
-        pub fn uv_fs_access();
-        pub fn uv_fs_chmod();
-        pub fn uv_fs_chown();
-        pub fn uv_fs_close();
-        pub fn uv_fs_closedir();
-        pub fn uv_fs_copyfile();
-        pub fn uv_fs_event_getpath();
-        pub fn uv_fs_event_init();
-        pub fn uv_fs_event_start();
-        pub fn uv_fs_event_stop();
-        pub fn uv_fs_fchmod();
-        pub fn uv_fs_fchown();
-        pub fn uv_fs_fdatasync();
-        pub fn uv_fs_fstat();
-        pub fn uv_fs_fsync();
-        pub fn uv_fs_ftruncate();
-        pub fn uv_fs_futime();
-        pub fn uv_fs_get_path();
-        pub fn uv_fs_get_ptr();
-        pub fn uv_fs_get_result();
-        pub fn uv_fs_get_statbuf();
-        pub fn uv_fs_get_system_error();
-        pub fn uv_fs_get_type();
-        pub fn uv_fs_lchown();
-        pub fn uv_fs_link();
-        pub fn uv_fs_lstat();
-        pub fn uv_fs_lutime();
-        pub fn uv_fs_mkdir();
-        pub fn uv_fs_mkdtemp();
-        pub fn uv_fs_mkstemp();
-        pub fn uv_fs_open();
-        pub fn uv_fs_opendir();
-        pub fn uv_fs_poll_getpath();
-        pub fn uv_fs_poll_init();
-        pub fn uv_fs_poll_start();
-        pub fn uv_fs_poll_stop();
-        pub fn uv_fs_read();
-        pub fn uv_fs_readdir();
-        pub fn uv_fs_readlink();
-        pub fn uv_fs_realpath();
-        pub fn uv_fs_rename();
-        pub fn uv_fs_req_cleanup();
-        pub fn uv_fs_rmdir();
-        pub fn uv_fs_scandir();
-        pub fn uv_fs_scandir_next();
-        pub fn uv_fs_sendfile();
-        pub fn uv_fs_stat();
-        pub fn uv_fs_statfs();
-        pub fn uv_fs_symlink();
-        pub fn uv_fs_unlink();
-        pub fn uv_fs_utime();
-        pub fn uv_fs_write();
-        pub fn uv_get_available_memory();
-        pub fn uv_get_constrained_memory();
-        pub fn uv_get_free_memory();
-        pub fn uv_get_osfhandle();
-        pub fn uv_get_process_title();
-        pub fn uv_get_total_memory();
-        pub fn uv_getaddrinfo();
-        pub fn uv_getnameinfo();
-        pub fn uv_getrusage();
-        pub fn uv_getrusage_thread();
-        pub fn uv_gettimeofday();
-        pub fn uv_guess_handle();
-        pub fn uv_handle_get_data();
-        pub fn uv_handle_get_loop();
-        pub fn uv_handle_get_type();
-        pub fn uv_handle_set_data();
-        pub fn uv_handle_size();
-        pub fn uv_handle_type_name();
-        pub fn uv_has_ref();
-        pub fn uv_hrtime();
-        pub fn uv_idle_init();
-        pub fn uv_idle_start();
-        pub fn uv_idle_stop();
-        pub fn uv_if_indextoiid();
-        pub fn uv_if_indextoname();
-        pub fn uv_inet_ntop();
-        pub fn uv_inet_pton();
-        pub fn uv_interface_addresses();
-        pub fn uv_ip_name();
-        pub fn uv_ip4_addr();
-        pub fn uv_ip4_name();
-        pub fn uv_ip6_addr();
-        pub fn uv_ip6_name();
-        pub fn uv_is_active();
-        pub fn uv_is_closing();
-        pub fn uv_is_readable();
-        pub fn uv_is_writable();
-        pub fn uv_key_create();
-        pub fn uv_key_delete();
-        pub fn uv_key_get();
-        pub fn uv_key_set();
-        pub fn uv_kill();
-        pub fn uv_library_shutdown();
-        pub fn uv_listen();
-        pub fn uv_loadavg();
-        pub fn uv_loop_alive();
-        pub fn uv_loop_close();
-        pub fn uv_loop_configure();
-        pub fn uv_loop_delete();
-        pub fn uv_loop_fork();
-        pub fn uv_loop_get_data();
-        pub fn uv_loop_init();
-        pub fn uv_loop_new();
-        pub fn uv_loop_set_data();
-        pub fn uv_loop_size();
-        pub fn uv_metrics_idle_time();
-        pub fn uv_metrics_info();
-        pub fn uv_mutex_destroy();
-        pub fn uv_mutex_init();
-        pub fn uv_mutex_init_recursive();
-        pub fn uv_mutex_lock();
-        pub fn uv_mutex_trylock();
-        pub fn uv_mutex_unlock();
-        pub fn uv_now();
-        pub fn uv_once();
-        pub fn uv_open_osfhandle();
-        pub fn uv_os_environ();
-        pub fn uv_os_free_environ();
-        pub fn uv_os_free_group();
-        pub fn uv_os_free_passwd();
-        pub fn uv_os_get_group();
-        pub fn uv_os_get_passwd();
-        pub fn uv_os_get_passwd2();
-        pub fn uv_os_getenv();
-        pub fn uv_os_gethostname();
-        pub fn uv_os_getpid();
-        pub fn uv_os_getppid();
-        pub fn uv_os_getpriority();
-        pub fn uv_os_homedir();
-        pub fn uv_os_setenv();
-        pub fn uv_os_setpriority();
-        pub fn uv_os_tmpdir();
-        pub fn uv_os_uname();
-        pub fn uv_os_unsetenv();
-        pub fn uv_pipe();
-        pub fn uv_pipe_bind();
-        pub fn uv_pipe_bind2();
-        pub fn uv_pipe_chmod();
-        pub fn uv_pipe_connect();
-        pub fn uv_pipe_connect2();
-        pub fn uv_pipe_getpeername();
-        pub fn uv_pipe_getsockname();
-        pub fn uv_pipe_init();
-        pub fn uv_pipe_open();
-        pub fn uv_pipe_pending_count();
-        pub fn uv_pipe_pending_instances();
-        pub fn uv_pipe_pending_type();
-        pub fn uv_poll_init();
-        pub fn uv_poll_init_socket();
-        pub fn uv_poll_start();
-        pub fn uv_poll_stop();
-        pub fn uv_prepare_init();
-        pub fn uv_prepare_start();
-        pub fn uv_prepare_stop();
-        pub fn uv_print_active_handles();
-        pub fn uv_print_all_handles();
-        pub fn uv_process_get_pid();
-        pub fn uv_process_kill();
-        pub fn uv_queue_work();
-        pub fn uv_random();
-        pub fn uv_read_start();
-        pub fn uv_read_stop();
-        pub fn uv_recv_buffer_size();
-        pub fn uv_ref();
-        pub fn uv_replace_allocator();
-        pub fn uv_req_get_data();
-        pub fn uv_req_get_type();
-        pub fn uv_req_set_data();
-        pub fn uv_req_size();
-        pub fn uv_req_type_name();
-        pub fn uv_resident_set_memory();
-        pub fn uv_run();
-        pub fn uv_rwlock_destroy();
-        pub fn uv_rwlock_init();
-        pub fn uv_rwlock_rdlock();
-        pub fn uv_rwlock_rdunlock();
-        pub fn uv_rwlock_tryrdlock();
-        pub fn uv_rwlock_trywrlock();
-        pub fn uv_rwlock_wrlock();
-        pub fn uv_rwlock_wrunlock();
-        pub fn uv_sem_destroy();
-        pub fn uv_sem_init();
-        pub fn uv_sem_post();
-        pub fn uv_sem_trywait();
-        pub fn uv_sem_wait();
-        pub fn uv_send_buffer_size();
-        pub fn uv_set_process_title();
-        pub fn uv_setup_args();
-        pub fn uv_shutdown();
-        pub fn uv_signal_init();
-        pub fn uv_signal_start();
-        pub fn uv_signal_start_oneshot();
-        pub fn uv_signal_stop();
-        pub fn uv_sleep();
-        pub fn uv_socketpair();
-        pub fn uv_spawn();
-        pub fn uv_stop();
-        pub fn uv_stream_get_write_queue_size();
-        pub fn uv_stream_set_blocking();
-        pub fn uv_strerror();
-        pub fn uv_strerror_r();
-        pub fn uv_tcp_bind();
-        pub fn uv_tcp_close_reset();
-        pub fn uv_tcp_connect();
-        pub fn uv_tcp_getpeername();
-        pub fn uv_tcp_getsockname();
-        pub fn uv_tcp_init();
-        pub fn uv_tcp_init_ex();
-        pub fn uv_tcp_keepalive();
-        pub fn uv_tcp_nodelay();
-        pub fn uv_tcp_open();
-        pub fn uv_tcp_simultaneous_accepts();
-        pub fn uv_thread_create();
-        pub fn uv_thread_create_ex();
-        pub fn uv_thread_detach();
-        pub fn uv_thread_equal();
-        pub fn uv_thread_getaffinity();
-        pub fn uv_thread_getcpu();
-        pub fn uv_thread_getname();
-        pub fn uv_thread_getpriority();
-        pub fn uv_thread_join();
-        pub fn uv_thread_self();
-        pub fn uv_thread_setaffinity();
-        pub fn uv_thread_setname();
-        pub fn uv_thread_setpriority();
-        pub fn uv_timer_again();
-        pub fn uv_timer_get_due_in();
-        pub fn uv_timer_get_repeat();
-        pub fn uv_timer_init();
-        pub fn uv_timer_set_repeat();
-        pub fn uv_timer_start();
-        pub fn uv_timer_stop();
-        pub fn uv_translate_sys_error();
-        pub fn uv_try_write();
-        pub fn uv_try_write2();
-        pub fn uv_tty_get_vterm_state();
-        pub fn uv_tty_get_winsize();
-        pub fn uv_tty_init();
-        pub fn uv_tty_reset_mode();
-        pub fn uv_tty_set_mode();
-        pub fn uv_tty_set_vterm_state();
-        pub fn uv_udp_bind();
-        pub fn uv_udp_connect();
-        pub fn uv_udp_get_send_queue_count();
-        pub fn uv_udp_get_send_queue_size();
-        pub fn uv_udp_getpeername();
-        pub fn uv_udp_getsockname();
-        pub fn uv_udp_init();
-        pub fn uv_udp_init_ex();
-        pub fn uv_udp_open();
-        pub fn uv_udp_recv_start();
-        pub fn uv_udp_recv_stop();
-        pub fn uv_udp_send();
-        pub fn uv_udp_set_broadcast();
-        pub fn uv_udp_set_membership();
-        pub fn uv_udp_set_multicast_interface();
-        pub fn uv_udp_set_multicast_loop();
-        pub fn uv_udp_set_multicast_ttl();
-        pub fn uv_udp_set_source_membership();
-        pub fn uv_udp_set_ttl();
-        pub fn uv_udp_try_send();
-        pub fn uv_udp_try_send2();
-        pub fn uv_udp_using_recvmmsg();
-        pub fn uv_unref();
-        pub fn uv_update_time();
-        pub fn uv_uptime();
-        pub fn uv_utf16_length_as_wtf8();
-        pub fn uv_utf16_to_wtf8();
-        pub fn uv_version();
-        pub fn uv_version_string();
-        pub fn uv_walk();
-        pub fn uv_write();
-        pub fn uv_write2();
-        pub fn uv_wtf8_length_as_utf16();
-        pub fn uv_wtf8_to_utf16();
+        pub(super) fn uv_accept();
+        pub(super) fn uv_async_init();
+        pub(super) fn uv_async_send();
+        pub(super) fn uv_available_parallelism();
+        pub(super) fn uv_backend_fd();
+        pub(super) fn uv_backend_timeout();
+        pub(super) fn uv_barrier_destroy();
+        pub(super) fn uv_barrier_init();
+        pub(super) fn uv_barrier_wait();
+        pub(super) fn uv_buf_init();
+        pub(super) fn uv_cancel();
+        pub(super) fn uv_chdir();
+        pub(super) fn uv_check_init();
+        pub(super) fn uv_check_start();
+        pub(super) fn uv_check_stop();
+        pub(super) fn uv_clock_gettime();
+        pub(super) fn uv_close();
+        pub(super) fn uv_cond_broadcast();
+        pub(super) fn uv_cond_destroy();
+        pub(super) fn uv_cond_init();
+        pub(super) fn uv_cond_signal();
+        pub(super) fn uv_cond_timedwait();
+        pub(super) fn uv_cond_wait();
+        pub(super) fn uv_cpu_info();
+        pub(super) fn uv_cpumask_size();
+        pub(super) fn uv_cwd();
+        pub(super) fn uv_default_loop();
+        pub(super) fn uv_disable_stdio_inheritance();
+        pub(super) fn uv_dlclose();
+        pub(super) fn uv_dlerror();
+        pub(super) fn uv_dlopen();
+        pub(super) fn uv_dlsym();
+        pub(super) fn uv_err_name();
+        pub(super) fn uv_err_name_r();
+        pub(super) fn uv_exepath();
+        pub(super) fn uv_fileno();
+        pub(super) fn uv_free_cpu_info();
+        pub(super) fn uv_free_interface_addresses();
+        pub(super) fn uv_freeaddrinfo();
+        pub(super) fn uv_fs_access();
+        pub(super) fn uv_fs_chmod();
+        pub(super) fn uv_fs_chown();
+        pub(super) fn uv_fs_close();
+        pub(super) fn uv_fs_closedir();
+        pub(super) fn uv_fs_copyfile();
+        pub(super) fn uv_fs_event_getpath();
+        pub(super) fn uv_fs_event_init();
+        pub(super) fn uv_fs_event_start();
+        pub(super) fn uv_fs_event_stop();
+        pub(super) fn uv_fs_fchmod();
+        pub(super) fn uv_fs_fchown();
+        pub(super) fn uv_fs_fdatasync();
+        pub(super) fn uv_fs_fstat();
+        pub(super) fn uv_fs_fsync();
+        pub(super) fn uv_fs_ftruncate();
+        pub(super) fn uv_fs_futime();
+        pub(super) fn uv_fs_get_path();
+        pub(super) fn uv_fs_get_ptr();
+        pub(super) fn uv_fs_get_result();
+        pub(super) fn uv_fs_get_statbuf();
+        pub(super) fn uv_fs_get_system_error();
+        pub(super) fn uv_fs_get_type();
+        pub(super) fn uv_fs_lchown();
+        pub(super) fn uv_fs_link();
+        pub(super) fn uv_fs_lstat();
+        pub(super) fn uv_fs_lutime();
+        pub(super) fn uv_fs_mkdir();
+        pub(super) fn uv_fs_mkdtemp();
+        pub(super) fn uv_fs_mkstemp();
+        pub(super) fn uv_fs_open();
+        pub(super) fn uv_fs_opendir();
+        pub(super) fn uv_fs_poll_getpath();
+        pub(super) fn uv_fs_poll_init();
+        pub(super) fn uv_fs_poll_start();
+        pub(super) fn uv_fs_poll_stop();
+        pub(super) fn uv_fs_read();
+        pub(super) fn uv_fs_readdir();
+        pub(super) fn uv_fs_readlink();
+        pub(super) fn uv_fs_realpath();
+        pub(super) fn uv_fs_rename();
+        pub(super) fn uv_fs_req_cleanup();
+        pub(super) fn uv_fs_rmdir();
+        pub(super) fn uv_fs_scandir();
+        pub(super) fn uv_fs_scandir_next();
+        pub(super) fn uv_fs_sendfile();
+        pub(super) fn uv_fs_stat();
+        pub(super) fn uv_fs_statfs();
+        pub(super) fn uv_fs_symlink();
+        pub(super) fn uv_fs_unlink();
+        pub(super) fn uv_fs_utime();
+        pub(super) fn uv_fs_write();
+        pub(super) fn uv_get_available_memory();
+        pub(super) fn uv_get_constrained_memory();
+        pub(super) fn uv_get_free_memory();
+        pub(super) fn uv_get_osfhandle();
+        pub(super) fn uv_get_process_title();
+        pub(super) fn uv_get_total_memory();
+        pub(super) fn uv_getaddrinfo();
+        pub(super) fn uv_getnameinfo();
+        pub(super) fn uv_getrusage();
+        pub(super) fn uv_getrusage_thread();
+        pub(super) fn uv_gettimeofday();
+        pub(super) fn uv_guess_handle();
+        pub(super) fn uv_handle_get_data();
+        pub(super) fn uv_handle_get_loop();
+        pub(super) fn uv_handle_get_type();
+        pub(super) fn uv_handle_set_data();
+        pub(super) fn uv_handle_size();
+        pub(super) fn uv_handle_type_name();
+        pub(super) fn uv_has_ref();
+        pub(super) fn uv_hrtime();
+        pub(super) fn uv_idle_init();
+        pub(super) fn uv_idle_start();
+        pub(super) fn uv_idle_stop();
+        pub(super) fn uv_if_indextoiid();
+        pub(super) fn uv_if_indextoname();
+        pub(super) fn uv_inet_ntop();
+        pub(super) fn uv_inet_pton();
+        pub(super) fn uv_interface_addresses();
+        pub(super) fn uv_ip_name();
+        pub(super) fn uv_ip4_addr();
+        pub(super) fn uv_ip4_name();
+        pub(super) fn uv_ip6_addr();
+        pub(super) fn uv_ip6_name();
+        pub(super) fn uv_is_active();
+        pub(super) fn uv_is_closing();
+        pub(super) fn uv_is_readable();
+        pub(super) fn uv_is_writable();
+        pub(super) fn uv_key_create();
+        pub(super) fn uv_key_delete();
+        pub(super) fn uv_key_get();
+        pub(super) fn uv_key_set();
+        pub(super) fn uv_kill();
+        pub(super) fn uv_library_shutdown();
+        pub(super) fn uv_listen();
+        pub(super) fn uv_loadavg();
+        pub(super) fn uv_loop_alive();
+        pub(super) fn uv_loop_close();
+        pub(super) fn uv_loop_configure();
+        pub(super) fn uv_loop_delete();
+        pub(super) fn uv_loop_fork();
+        pub(super) fn uv_loop_get_data();
+        pub(super) fn uv_loop_init();
+        pub(super) fn uv_loop_new();
+        pub(super) fn uv_loop_set_data();
+        pub(super) fn uv_loop_size();
+        pub(super) fn uv_metrics_idle_time();
+        pub(super) fn uv_metrics_info();
+        pub(super) fn uv_mutex_destroy();
+        pub(super) fn uv_mutex_init();
+        pub(super) fn uv_mutex_init_recursive();
+        pub(super) fn uv_mutex_lock();
+        pub(super) fn uv_mutex_trylock();
+        pub(super) fn uv_mutex_unlock();
+        pub(super) fn uv_now();
+        pub(super) fn uv_once();
+        pub(super) fn uv_open_osfhandle();
+        pub(super) fn uv_os_environ();
+        pub(super) fn uv_os_free_environ();
+        pub(super) fn uv_os_free_group();
+        pub(super) fn uv_os_free_passwd();
+        pub(super) fn uv_os_get_group();
+        pub(super) fn uv_os_get_passwd();
+        pub(super) fn uv_os_get_passwd2();
+        pub(super) fn uv_os_getenv();
+        pub(super) fn uv_os_gethostname();
+        pub(super) fn uv_os_getpid();
+        pub(super) fn uv_os_getppid();
+        pub(super) fn uv_os_getpriority();
+        pub(super) fn uv_os_homedir();
+        pub(super) fn uv_os_setenv();
+        pub(super) fn uv_os_setpriority();
+        pub(super) fn uv_os_tmpdir();
+        pub(super) fn uv_os_uname();
+        pub(super) fn uv_os_unsetenv();
+        pub(super) fn uv_pipe();
+        pub(super) fn uv_pipe_bind();
+        pub(super) fn uv_pipe_bind2();
+        pub(super) fn uv_pipe_chmod();
+        pub(super) fn uv_pipe_connect();
+        pub(super) fn uv_pipe_connect2();
+        pub(super) fn uv_pipe_getpeername();
+        pub(super) fn uv_pipe_getsockname();
+        pub(super) fn uv_pipe_init();
+        pub(super) fn uv_pipe_open();
+        pub(super) fn uv_pipe_pending_count();
+        pub(super) fn uv_pipe_pending_instances();
+        pub(super) fn uv_pipe_pending_type();
+        pub(super) fn uv_poll_init();
+        pub(super) fn uv_poll_init_socket();
+        pub(super) fn uv_poll_start();
+        pub(super) fn uv_poll_stop();
+        pub(super) fn uv_prepare_init();
+        pub(super) fn uv_prepare_start();
+        pub(super) fn uv_prepare_stop();
+        pub(super) fn uv_print_active_handles();
+        pub(super) fn uv_print_all_handles();
+        pub(super) fn uv_process_get_pid();
+        pub(super) fn uv_process_kill();
+        pub(super) fn uv_queue_work();
+        pub(super) fn uv_random();
+        pub(super) fn uv_read_start();
+        pub(super) fn uv_read_stop();
+        pub(super) fn uv_recv_buffer_size();
+        pub(super) fn uv_ref();
+        pub(super) fn uv_replace_allocator();
+        pub(super) fn uv_req_get_data();
+        pub(super) fn uv_req_get_type();
+        pub(super) fn uv_req_set_data();
+        pub(super) fn uv_req_size();
+        pub(super) fn uv_req_type_name();
+        pub(super) fn uv_resident_set_memory();
+        pub(super) fn uv_run();
+        pub(super) fn uv_rwlock_destroy();
+        pub(super) fn uv_rwlock_init();
+        pub(super) fn uv_rwlock_rdlock();
+        pub(super) fn uv_rwlock_rdunlock();
+        pub(super) fn uv_rwlock_tryrdlock();
+        pub(super) fn uv_rwlock_trywrlock();
+        pub(super) fn uv_rwlock_wrlock();
+        pub(super) fn uv_rwlock_wrunlock();
+        pub(super) fn uv_sem_destroy();
+        pub(super) fn uv_sem_init();
+        pub(super) fn uv_sem_post();
+        pub(super) fn uv_sem_trywait();
+        pub(super) fn uv_sem_wait();
+        pub(super) fn uv_send_buffer_size();
+        pub(super) fn uv_set_process_title();
+        pub(super) fn uv_setup_args();
+        pub(super) fn uv_shutdown();
+        pub(super) fn uv_signal_init();
+        pub(super) fn uv_signal_start();
+        pub(super) fn uv_signal_start_oneshot();
+        pub(super) fn uv_signal_stop();
+        pub(super) fn uv_sleep();
+        pub(super) fn uv_socketpair();
+        pub(super) fn uv_spawn();
+        pub(super) fn uv_stop();
+        pub(super) fn uv_stream_get_write_queue_size();
+        pub(super) fn uv_stream_set_blocking();
+        pub(super) fn uv_strerror();
+        pub(super) fn uv_strerror_r();
+        pub(super) fn uv_tcp_bind();
+        pub(super) fn uv_tcp_close_reset();
+        pub(super) fn uv_tcp_connect();
+        pub(super) fn uv_tcp_getpeername();
+        pub(super) fn uv_tcp_getsockname();
+        pub(super) fn uv_tcp_init();
+        pub(super) fn uv_tcp_init_ex();
+        pub(super) fn uv_tcp_keepalive();
+        pub(super) fn uv_tcp_nodelay();
+        pub(super) fn uv_tcp_open();
+        pub(super) fn uv_tcp_simultaneous_accepts();
+        pub(super) fn uv_thread_create();
+        pub(super) fn uv_thread_create_ex();
+        pub(super) fn uv_thread_detach();
+        pub(super) fn uv_thread_equal();
+        pub(super) fn uv_thread_getaffinity();
+        pub(super) fn uv_thread_getcpu();
+        pub(super) fn uv_thread_getname();
+        pub(super) fn uv_thread_getpriority();
+        pub(super) fn uv_thread_join();
+        pub(super) fn uv_thread_self();
+        pub(super) fn uv_thread_setaffinity();
+        pub(super) fn uv_thread_setname();
+        pub(super) fn uv_thread_setpriority();
+        pub(super) fn uv_timer_again();
+        pub(super) fn uv_timer_get_due_in();
+        pub(super) fn uv_timer_get_repeat();
+        pub(super) fn uv_timer_init();
+        pub(super) fn uv_timer_set_repeat();
+        pub(super) fn uv_timer_start();
+        pub(super) fn uv_timer_stop();
+        pub(super) fn uv_translate_sys_error();
+        pub(super) fn uv_try_write();
+        pub(super) fn uv_try_write2();
+        pub(super) fn uv_tty_get_vterm_state();
+        pub(super) fn uv_tty_get_winsize();
+        pub(super) fn uv_tty_init();
+        pub(super) fn uv_tty_reset_mode();
+        pub(super) fn uv_tty_set_mode();
+        pub(super) fn uv_tty_set_vterm_state();
+        pub(super) fn uv_udp_bind();
+        pub(super) fn uv_udp_connect();
+        pub(super) fn uv_udp_get_send_queue_count();
+        pub(super) fn uv_udp_get_send_queue_size();
+        pub(super) fn uv_udp_getpeername();
+        pub(super) fn uv_udp_getsockname();
+        pub(super) fn uv_udp_init();
+        pub(super) fn uv_udp_init_ex();
+        pub(super) fn uv_udp_open();
+        pub(super) fn uv_udp_recv_start();
+        pub(super) fn uv_udp_recv_stop();
+        pub(super) fn uv_udp_send();
+        pub(super) fn uv_udp_set_broadcast();
+        pub(super) fn uv_udp_set_membership();
+        pub(super) fn uv_udp_set_multicast_interface();
+        pub(super) fn uv_udp_set_multicast_loop();
+        pub(super) fn uv_udp_set_multicast_ttl();
+        pub(super) fn uv_udp_set_source_membership();
+        pub(super) fn uv_udp_set_ttl();
+        pub(super) fn uv_udp_try_send();
+        pub(super) fn uv_udp_try_send2();
+        pub(super) fn uv_udp_using_recvmmsg();
+        pub(super) fn uv_unref();
+        pub(super) fn uv_update_time();
+        pub(super) fn uv_uptime();
+        pub(super) fn uv_utf16_length_as_wtf8();
+        pub(super) fn uv_utf16_to_wtf8();
+        pub(super) fn uv_version();
+        pub(super) fn uv_version_string();
+        pub(super) fn uv_walk();
+        pub(super) fn uv_write();
+        pub(super) fn uv_write2();
+        pub(super) fn uv_wtf8_length_as_utf16();
+        pub(super) fn uv_wtf8_to_utf16();
     }
 }
 #[cfg(not(unix))]

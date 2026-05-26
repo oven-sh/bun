@@ -17,7 +17,6 @@
 //! `TaggedPtrUnion`). This crate hosts the intrusive/FFI-crossing variants.
 
 // Cow/CowSlice → std (PORTING.md says these ARE std::borrow::Cow)
-#![warn(unreachable_pub)]
 pub use std::borrow::Cow;
 pub type CowSlice<'a, T> = Cow<'a, [T]>;
 pub type CowSliceZ<'a> = Cow<'a, core::ffi::CStr>;
@@ -37,8 +36,6 @@ pub mod shared;
 pub type Owned<T> = Box<T>;
 pub type OwnedIn<T> = Box<T>;
 pub type DynamicOwned<T> = Box<T>;
-pub type Shared<T> = std::rc::Rc<T>;
-pub type AtomicShared<T> = std::sync::Arc<T>;
 
 // FFI-crossing externally-ref-counted pointer (e.g., WTFStringImpl). Canonical
 // impl moved down to `bun_core::external_shared` (cycle-break for the

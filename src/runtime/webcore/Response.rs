@@ -59,45 +59,42 @@ impl HeadersRef {
     /// `ptr` must be a valid `WebCore::FetchHeaders*` and the caller must
     /// transfer ownership of one ref.
     #[inline]
-    pub unsafe fn adopt(ptr: NonNull<FetchHeaders>) -> Self {
+    pub(crate) unsafe fn adopt(ptr: NonNull<FetchHeaders>) -> Self {
         Self(ptr)
     }
 
-    /// Relinquish ownership without decrementing the ref. Inverse of `adopt`.
     #[inline]
-    pub fn into_raw(self) -> NonNull<FetchHeaders> {
-        core::mem::ManuallyDrop::new(self).0
-    }
-
-    #[inline]
-    pub fn as_ptr(&self) -> *mut FetchHeaders {
+    pub(crate) fn as_ptr(&self) -> *mut FetchHeaders {
         self.0.as_ptr()
     }
 
     /// `FetchHeaders.createEmpty()` — fresh C++ allocation, refcount 1.
     #[inline]
-    pub fn create_empty() -> Self {
+    pub(crate) fn create_empty() -> Self {
         // SAFETY: C++ allocates a new FetchHeaders with refcount 1; never null.
         unsafe { Self::adopt(FetchHeaders::create_empty()) }
     }
 
     /// `FetchHeaders.createFromUWS(req)` — fresh C++ allocation, refcount 1.
     #[inline]
-    pub fn create_from_uws(uws_request: *mut core::ffi::c_void) -> Self {
+    pub(crate) fn create_from_uws(uws_request: *mut core::ffi::c_void) -> Self {
         // SAFETY: C++ allocates a new FetchHeaders with refcount 1; never null.
         unsafe { Self::adopt(FetchHeaders::create_from_uws(uws_request)) }
     }
 
     /// `FetchHeaders.createFromJS(global, value)` — may throw, may return null.
     #[inline]
-    pub fn create_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
+    pub(crate) fn create_from_js(
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Option<Self>> {
         // SAFETY: C++ returns a +1 ref or null.
         Ok(FetchHeaders::create_from_js(global, value)?.map(|p| unsafe { Self::adopt(p) }))
     }
 
     /// `FetchHeaders.cloneThis(global)` — deep copy on the C++ side.
     #[inline]
-    pub fn clone_this(&self, global: &JSGlobalObject) -> JsResult<Option<Self>> {
+    pub(crate) fn clone_this(&self, global: &JSGlobalObject) -> JsResult<Option<Self>> {
         // SAFETY: C++ returns a +1 ref or null.
         Ok(bun_opaque::opaque_deref_mut(self.0.as_ptr())
             .clone_this(global)?
@@ -228,7 +225,7 @@ impl bun_ptr::weak_ptr::HasWeakPtrData for Response {
         unsafe { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
     }
 }
-pub type WeakRef = bun_ptr::WeakPtr<Response>;
+pub(crate) type WeakRef = bun_ptr::WeakPtr<Response>;
 
 // Wire the codegen'd cached `body`/`stream` JS slot accessors + weak `js_ref`
 // so the [`BodyMixin`] twin defaults can run generically (Zig:
@@ -498,7 +495,7 @@ mod _jsc_host_fns {
 
     #[unsafe(export_name = "jsFunctionRequestOrResponseHasBodyValue")]
     #[bun_jsc::host_call]
-    pub fn js_function_request_or_response_has_body_value(
+    pub(super) fn js_function_request_or_response_has_body_value(
         _global: *mut JSGlobalObject,
         callframe: &CallFrame,
     ) -> JSValue {
@@ -519,7 +516,7 @@ mod _jsc_host_fns {
 
     #[unsafe(export_name = "jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer")]
     #[bun_jsc::host_call]
-    pub fn js_function_get_complete_request_or_response_body_value_as_array_buffer(
+    pub(super) fn js_function_get_complete_request_or_response_body_value_as_array_buffer(
         global_object: *mut JSGlobalObject,
         callframe: *mut CallFrame,
     ) -> JSValue {
@@ -583,8 +580,6 @@ impl Response {
         self.init.get().status_code
     }
 }
-
-pub struct Props {}
 
 // ─── un-gated getters & header helpers ──────────────────────────────────────
 impl Response {
@@ -850,7 +845,9 @@ impl Response {
     /// `ptr` must point to a live `Response` allocation (e.g. freshly boxed via
     /// [`Response::clone`]); ownership of the +1 ref transfers to the returned
     /// JS wrapper.
-    pub(crate) fn make_maybe_pooled(global_object: &JSGlobalObject, ptr: *mut Response) -> JSValue {
+    // Safety contract is documented above; callers pass freshly-boxed pointers.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn make_maybe_pooled(global_object: &JSGlobalObject, ptr: *mut Response) -> JSValue {
         // SAFETY: caller contract — `ptr` is live and uniquely owned.
         unsafe { (*ptr).to_js(global_object) }
     }

@@ -20,7 +20,7 @@ unsafe extern "C" {
     fn Bun__SecretsJobOptions__deinit(ctx: *mut SecretsJobOptions);
 }
 
-pub struct SecretsCtx {
+pub(crate) struct SecretsCtx {
     ctx: *mut SecretsJobOptions,
     promise: Strong,
 }
@@ -61,11 +61,11 @@ impl Drop for SecretsCtx {
     }
 }
 
-pub type SecretsJob = AnyTaskJob<SecretsCtx>;
+pub(crate) type SecretsJob = AnyTaskJob<SecretsCtx>;
 
 // Helper function for C++ to call with opaque pointer
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Secrets__scheduleJob(
+pub(crate) extern "C" fn Bun__Secrets__scheduleJob(
     global: &JSGlobalObject,
     options: *mut SecretsJobOptions,
     promise: JSValue,

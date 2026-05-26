@@ -138,13 +138,13 @@ pub struct SourceLineIterator<'a> {
     pub i: i32,
 }
 
-pub struct SourceLine {
+pub(crate) struct SourceLine {
     pub line: i32,
     pub text: ZigStringSlice,
 }
 
 impl<'a> SourceLineIterator<'a> {
-    pub fn get_length(&mut self) -> usize {
+    pub(crate) fn get_length(&mut self) -> usize {
         let mut count: usize = 0;
         let n = usize::try_from(self.i + 1).expect("int cast");
         // SAFETY: source_lines_ptr points to a caller-owned buffer of at least
@@ -157,7 +157,7 @@ impl<'a> SourceLineIterator<'a> {
         count
     }
 
-    pub fn until_last(&mut self) -> Option<SourceLine> {
+    pub(crate) fn until_last(&mut self) -> Option<SourceLine> {
         if self.i < 1 {
             return None;
         }
@@ -165,7 +165,7 @@ impl<'a> SourceLineIterator<'a> {
     }
 
     #[allow(clippy::should_implement_trait)]
-    pub fn next(&mut self) -> Option<SourceLine> {
+    pub(crate) fn next(&mut self) -> Option<SourceLine> {
         if self.i < 0 {
             return None;
         }

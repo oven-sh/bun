@@ -51,7 +51,7 @@ static INSTANCE: core::sync::atomic::AtomicPtr<HostProcess> =
 /// WebContent/GPU/Network helpers are XPC-connected to the child — when the
 /// child dies they get connection-invalidated and exit.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__WebViewHost__kill() {
+pub(crate) extern "C" fn Bun__WebViewHost__kill() {
     // SAFETY: single-threaded access (JS thread only).
     unsafe {
         if let Some(i) = INSTANCE
@@ -73,7 +73,7 @@ pub extern "C" fn Bun__WebViewHost__kill() {
 /// owns it; re-returning a fd usockets may have already closed would be a
 /// use-after-close. Rust only owns process lifetime (watch + kill).
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__WebViewHost__ensure(
+pub(crate) extern "C" fn Bun__WebViewHost__ensure(
     global: &JSGlobalObject,
     stdout_inherit: bool,
     stderr_inherit: bool,
@@ -95,7 +95,7 @@ pub extern "C" fn Bun__WebViewHost__ensure(
         // `bun_vm()` returns `&'static VirtualMachine`; `spawn` takes the raw
         // `*mut` because it threads through C ABI / event-loop dispatch.
         let fd = match spawn(
-            global.bun_vm() as *const _ as *mut _,
+            std::ptr::from_ref(global.bun_vm()).cast_mut(),
             stdout_inherit,
             stderr_inherit,
         ) {

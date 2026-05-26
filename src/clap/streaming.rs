@@ -10,7 +10,7 @@ use crate::args::ArgIter;
 pub static WARN_ON_UNRECOGNIZED_FLAG: AtomicBool = AtomicBool::new(false);
 
 /// The result returned from StreamingClap.next
-pub struct Arg<'p, 'a, Id> {
+pub(crate) struct Arg<'p, 'a, Id> {
     pub param: &'p clap::Param<Id>,
     pub value: Option<&'a [u8]>,
 }
@@ -28,7 +28,7 @@ pub enum State<'a> {
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, PartialEq, Eq)]
-pub enum ArgError {
+pub(crate) enum ArgError {
     #[error("DoesntTakeValue")]
     DoesntTakeValue,
     #[error("MissingValue")]
@@ -73,7 +73,7 @@ where
     ArgIterator: ArgIter<'a>,
 {
     /// Get the next Arg that matches a Param.
-    pub fn next(&mut self) -> Result<Option<Arg<'p, 'a, Id>>, ArgError> {
+    pub(crate) fn next(&mut self) -> Result<Option<Arg<'p, 'a, Id>>, ArgError> {
         match self.state {
             State::Normal => self.normal(),
             State::Chaining(state) => self.chainging(state),

@@ -65,7 +65,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     key_range.loc,
                                     b"\"key\" prop ignored. Must be a string, number or symbol.",
                                 );
-                                i += 1; // defer i += 1
                                 continue;
                             }
 

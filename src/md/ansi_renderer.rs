@@ -608,8 +608,16 @@ impl<'a> AnsiRenderer<'a> {
             SpanType::Img => {
                 self.image_depth += 1;
                 if self.image_depth == 1 {
-                    self.image_src = Some(Box::<[u8]>::from(detail.href));
-                    self.image_title = Some(Box::<[u8]>::from(detail.title));
+                    let mut src_scratch: Vec<u8> = Vec::new();
+                    self.image_src = Some(Box::<[u8]>::from(sanitize_source_text(
+                        detail.href,
+                        &mut src_scratch,
+                    )));
+                    let mut title_scratch: Vec<u8> = Vec::new();
+                    self.image_title = Some(Box::<[u8]>::from(sanitize_source_text(
+                        detail.title,
+                        &mut title_scratch,
+                    )));
                     self.image_alt.clear();
                 }
             }
@@ -1444,8 +1452,9 @@ impl<'a> AnsiRenderer<'a> {
             self.out.write(ansi_b::DIM);
         }
         self.write_indent();
+        let mut badge_scratch: Vec<u8> = Vec::new();
         let badge: &[u8] = if !self.code_lang.is_empty() {
-            self.code_lang
+            sanitize_source_text(self.code_lang, &mut badge_scratch)
         } else {
             b""
         };
@@ -2441,7 +2450,8 @@ fn resolve_href(detail: &SpanDetail) -> Result<Box<[u8]>, bun_alloc::AllocError>
     if detail.autolink_www {
         buf.extend_from_slice(b"http://");
     }
-    buf.extend_from_slice(detail.href);
+    let mut scratch: Vec<u8> = Vec::new();
+    buf.extend_from_slice(sanitize_source_text(detail.href, &mut scratch));
     Ok(buf.into_boxed_slice())
 }
 

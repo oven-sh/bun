@@ -158,6 +158,23 @@ function binaryResultSet(startSeq: number): Buffer {
   return Buffer.concat(packets);
 }
 
+// Text-protocol (COM_QUERY) result set for the same row: every value is a
+// length-encoded ASCII string.
+function textResultSet(startSeq: number): Buffer {
+  const packets: Buffer[] = [];
+  let seq = startSeq;
+  packets.push(packet(seq++, Buffer.from([columns.length])));
+  for (const c of columns) packets.push(packet(seq++, c));
+  packets.push(
+    packet(
+      seq++,
+      Buffer.concat([lenencStr("1"), lenencStr("2024"), lenencStr("12345"), lenencStr("42"), lenencStr("2001")]),
+    ),
+  );
+  packets.push(packet(seq++, Buffer.from([0xfe, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00])));
+  return Buffer.concat(packets);
+}
+
 function startMockServer() {
   const server = net.createServer(socket => {
     let buffered = Buffer.alloc(0);
@@ -183,7 +200,7 @@ function startMockServer() {
         } else if (cmd === 0x17 /* COM_STMT_EXECUTE */) {
           socket.write(binaryResultSet(seq + 1));
         } else if (cmd === 0x03 /* COM_QUERY */) {
-          socket.write(okPacket(seq + 1));
+          socket.write(textResultSet(seq + 1));
         } else if (cmd === 0x19 /* COM_STMT_CLOSE */) {
           // no response expected
         } else {
@@ -211,6 +228,22 @@ test("YEAR before other columns is read as 2 bytes (binary protocol)", async () 
     expect(rawRow[1]).toEqual(new Uint8Array([0xe8, 0x07])); // 2024
     expect(rawRow[2]).toEqual(new Uint8Array([0x39, 0x30, 0x00, 0x00])); // 12345
     expect(rawRow[4]).toEqual(new Uint8Array([0xd1, 0x07])); // 2001
+  } finally {
+    await new Promise<void>(r => server.close(() => r()));
+  }
+});
+
+test("YEAR is returned as a number via the text protocol (.simple())", async () => {
+  const server = startMockServer();
+  await once(server, "listening");
+  const { port } = server.address() as net.AddressInfo;
+  try {
+    await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
+
+    // COM_QUERY uses the text protocol; YEAR must decode to the same JS number
+    // as the prepared/binary path instead of falling through to the string arm.
+    const [row] = await sql`SELECT id, yr, followup, control, yr_last FROM t`.simple();
+    expect(row).toEqual({ id: 1, yr: 2024, followup: 12345, control: 42, yr_last: 2001 });
   } finally {
     await new Promise<void>(r => server.close(() => r()));
   }

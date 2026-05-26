@@ -397,23 +397,23 @@ test("buffered extract: damaged-block retry resets header state (upstream semant
 // -------------------------------------------------------------------
 // Buffered extract: the gzip stream inside a registry tarball is fully
 // controlled by whoever published the package, so its decompressed
-// size must be bounded. A ~1-3 MB download that inflates to 1.25 GiB
+// size must be bounded. A ~1-3 MB download that inflates to 2.25 GiB
 // has to surface a clean per-package decompression error instead of
 // growing the decompression buffer without limit and installing a
 // multi-gigabyte file.
 // -------------------------------------------------------------------
 test("buffered extract rejects a registry tarball whose decompressed size exceeds the limit", async () => {
-  // 1.25 GiB of zeros: comfortably above the 1 GiB decompression cap,
+  // 2.25 GiB of zeros: comfortably above the 2 GiB decompression cap,
   // a multiple of 512 so the tar entry needs no trailing pad block,
   // and its gzip ISIZE footer is far above the 64 MB libdeflate
   // preallocation cutoff so the streaming zlib reader is what runs.
-  const PAYLOAD_SIZE = 1280 * 1024 * 1024;
+  const PAYLOAD_SIZE = 2304 * 1024 * 1024;
   const ZERO_CHUNK = Buffer.alloc(64 * 1024 * 1024);
 
   const pkgJson = Buffer.from(JSON.stringify({ name: "oversized-pkg", version: "1.0.0" }) + "\n");
 
   // Stream the tar through gzip so the test process never holds the
-  // 1.25 GiB uncompressed archive in memory; only the small compressed
+  // 2.25 GiB uncompressed archive in memory; only the small compressed
   // tarball is kept around.
   const gzip = createGzip({ level: 9 });
   const compressed: Buffer[] = [];

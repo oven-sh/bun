@@ -25,7 +25,7 @@ use bun_sys::FdDirExt;
 // TODO(port): narrow error set
 type Error = bun_core::Error;
 
-const MAX_DECOMPRESSED_TARBALL_SIZE: usize = 1024 * 1024 * 1024;
+const MAX_DECOMPRESSED_TARBALL_SIZE: usize = 2 * 1024 * 1024 * 1024;
 
 pub struct ExtractTarball {
     pub name: StringOrTinyString,

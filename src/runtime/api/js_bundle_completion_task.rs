@@ -506,7 +506,6 @@ impl JSBundleCompletionTask {
                         ),
                         dirfd: root_dir.fd,
                         signal: None,
-                        pinned: false,
                     };
                     match NodeFS::write_file_with_path_buffer(&mut pathbuf, &write_args) {
                         Err(err) => {

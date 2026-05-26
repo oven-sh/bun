@@ -324,6 +324,19 @@ export function getStdinStream(
     // once the keypress handler that translated ^C is gone Ctrl+C would be
     // dead if the new load doesn't re-enter raw mode itself.
     if (stream.isRaw) stream.setRawMode?.(false);
+    // node:readline is cached in the InternalModuleRegistry and is NOT
+    // re-evaluated on reload, so its module-local KEYPRESS_DECODER /
+    // ESCAPE_DECODER symbols keep pointing at properties left on this
+    // stream. emitKeypressEvents() early-returns when it sees them, so it
+    // would never reinstall the 'data' → 'keypress' bridge we remove below
+    // and terminal-mode readline would go silent after a reload. Delete
+    // them so the next createInterface() wires keypress events up again.
+    for (const sym of Object.getOwnPropertySymbols(stream)) {
+      const description = sym.description;
+      if (description === "keypress-decoder" || description === "escape-decoder") {
+        delete stream[sym];
+      }
+    }
     stream.unpipe();
     for (const fn of stream.listeners("data")) stream.removeListener("data", fn);
     originalPause.$call(stream);

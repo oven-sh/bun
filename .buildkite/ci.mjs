@@ -48,10 +48,11 @@ import {
  * @property {boolean} [baseline]
  * @property {Profile} [profile]
  * @property {boolean} [crossCompile]
- *   Build on a Linux host for a foreign target OS (currently: darwin).
- *   Agents/images resolve to the Linux build fleet; keys/labels/artifacts are
- *   unaffected — these ARE the darwin lanes, there is no native macOS build.
- *   FreeBSD/Android don't set this — they already imply a Linux host.
+ *   Build on a Linux host for a foreign target OS (currently: darwin and
+ *   windows). Agents/images resolve to the Linux build fleet; keys/labels/
+ *   artifacts are unaffected — these ARE the darwin/windows build lanes,
+ *   there is no native macOS or Windows build. FreeBSD/Android don't set
+ *   this — they already imply a Linux host.
  */
 
 /**
@@ -149,9 +150,26 @@ const buildPlatforms = [
   // same model as Android. Target os/arch are explicit.
   { os: "freebsd", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "freebsd", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "windows", arch: "x64", release: "2019" },
-  { os: "windows", arch: "x64", baseline: true, release: "2019" },
-  { os: "windows", arch: "aarch64", release: "11" },
+  // Windows is cross-compiled from glibc amazonlinux (clang-cl --target +
+  // the xwin MSVC/SDK sysroot + lld-link — see scripts/build/winsysroot.ts
+  // and scripts/build/flags.ts), the same model as macOS above. There is no
+  // native Windows build lane: the Windows fleet only runs tests, signing,
+  // and baseline verification, against these artifacts (see testPlatforms),
+  // and these are the Windows artifacts the release ships. The x64
+  // (non-baseline) lane builds with ThinLTO + cross-language LTO (the
+  // ci-release default for windows x64 cross — see config.ts); baseline and
+  // arm64 have no -lto WebKit prebuilt and stay non-LTO.
+  { os: "windows", arch: "x64", crossCompile: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
+  {
+    os: "windows",
+    arch: "x64",
+    baseline: true,
+    crossCompile: true,
+    distro: "amazonlinux",
+    release: "2023",
+    features: ["docker"],
+  },
+  { os: "windows", arch: "aarch64", crossCompile: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
 ];
 
 /**
@@ -344,12 +362,13 @@ function getEc2Agent(platform, options, ec2Options) {
  * @returns {string}
  */
 function getCppAgent(platform, options) {
-  const { os, arch } = platform;
+  const { arch } = platform;
 
-  // Every build lane (including darwin, which is cross-compiled) runs on the
-  // EC2/Azure fleet — the mac fleet only runs tests.
+  // Every build lane runs on the Linux EC2 fleet — darwin and windows are
+  // cross-compiled (the mac/windows fleets only run tests, signing, and
+  // baseline verification).
   return getEc2Agent(platform, options, {
-    instanceType: os === "windows" ? getAzureVmSize(os, arch) : arch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge",
+    instanceType: arch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge",
   });
 }
 
@@ -359,13 +378,7 @@ function getCppAgent(platform, options) {
  * @returns {string}
  */
 function getLinkBunAgent(platform, options) {
-  const { os, arch } = platform;
-
-  if (os === "windows") {
-    return getEc2Agent(platform, options, {
-      instanceType: getAzureVmSize(os, arch),
-    });
-  }
+  const { arch } = platform;
 
   return getEc2Agent(platform, options, {
     // Full LTO with libbun_rust.a as bitcode peaks >31 GiB on aarch64; xlarge OOMs.
@@ -396,16 +409,16 @@ function getRustPlatform() {
  * @returns {Agent}
  */
 function getRustAgent(platform, options) {
-  const { os, arch } = platform;
+  const { os } = platform;
 
-  // Windows: cargo's `*-pc-windows-msvc` target needs the MSVC SDK
-  // (link.exe is not invoked for a staticlib, but `cc`-crate build
-  // scripts and rustc's own `lib.exe` archiver need it). Runs natively
-  // on a Windows agent — `cargo-xwin` would let this share the linux
-  // box but isn't wired into the image yet.
+  // Windows: cargo's `*-pc-windows-msvc` build needs the xwin MSVC/SDK
+  // sysroot and clang-cl env that configure sets up on the amazonlinux
+  // image (cc-crate build scripts compile target C with it), so the rust
+  // step runs on the same image/fleet as the windows cpp/link steps rather
+  // than the shared alpine rust box. cargo build is wide — size for cores.
   if (os === "windows") {
     return getEc2Agent(platform, options, {
-      instanceType: getAzureVmSize(os, arch),
+      instanceType: platform.arch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge",
     });
   }
 
@@ -512,11 +525,10 @@ function getBuildArgs(target, options, mode) {
   // rust-only cross-compiles (linux host → linux/freebsd targets); os/arch/abi
   // must all be explicit — host detection (detectLinuxAbi checks
   // /etc/alpine-release) would report the build box's abi (Alpine→musl), not
-  // the target's. darwin/windows rust-only run natively (see getRustAgent), so
-  // host detection is correct there. cpp-only/link-only: native build.
+  // the target's. cpp-only/link-only: native build.
   if (crossCompile) {
-    // macOS-cross: every step (cpp/rust/link) runs on a Linux host, so the
-    // target os/arch are always explicit.
+    // macOS/Windows cross: every step (cpp/rust/link) runs on a Linux host,
+    // so the target os/arch are always explicit.
     args.push(`--os=${os}`, `--arch=${arch}`);
   } else if (mode === "rust-only" && os !== "darwin" && os !== "windows") {
     args.push(`--os=${os}`, `--arch=${arch}`);
@@ -559,11 +571,7 @@ function getBuildCommand(target, options, mode) {
   // is wrong. PATH on the agent has node via bootstrap.sh.
   // --experimental-strip-types for Node 24's .ts support (unflagged in
   // 25+; drop once CI bumps past the ABI-141 blocker).
-  //
-  // Windows ARM64 node v24 intermittently fastfails (0xC0000409) in
-  // fetch-cli.ts; run build.ts under bun there instead.
-  const runtime = target.os === "windows" && target.arch === "aarch64" ? "bun" : "node --experimental-strip-types";
-  return `${runtime} scripts/build.ts ${getBuildArgs(target, options, mode)}`;
+  return `node --experimental-strip-types scripts/build.ts ${getBuildArgs(target, options, mode)}`;
 }
 
 /**
@@ -572,6 +580,17 @@ function getBuildCommand(target, options, mode) {
  * @returns {Step}
  */
 function getBuildCppStep(platform, options) {
+  const { os, arch } = platform;
+  // BoringSSL's win-x64 assembly is NASM syntax. The agent images bake nasm
+  // (.buildkite/Dockerfile); best-effort install covers older images, and
+  // `|| true` keeps a missing package manager from failing the step — the
+  // build's own "nasm not found" error is clearer.
+  const nasmSetup =
+    os === "windows" && arch === "x64"
+      ? [
+          "which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || sudo dnf install -y -q nasm || true",
+        ]
+      : [];
   return {
     key: `${getTargetKey(platform)}-build-cpp`,
     label: `${getTargetLabel(platform)} - build-cpp`,
@@ -581,7 +600,7 @@ function getBuildCppStep(platform, options) {
     // cpp-only builds deps + bun's C++ in one ninja graph (ninja pulls
     // everything the archive transitively needs). The old two-command
     // split (--target bun, --target dependencies) was a cmake artifact.
-    command: getBuildCommand(platform, options, "cpp-only"),
+    command: [...nasmSetup, getBuildCommand(platform, options, "cpp-only")],
   };
 }
 
@@ -626,57 +645,6 @@ function getLinkBunStep(platform, options) {
     // link-only downloads artifacts from the sibling build-cpp and
     // build-rust steps (derived from BUILDKITE_STEP_KEY) before ninja runs.
     command: getBuildCommand(platform, options, "link-only"),
-  };
-}
-
-/**
- * Cross-compiled Windows build (full compile + link on a Linux agent).
- * Validates that bun.exe for the given arch can be built from Linux with
- * clang-cl + lld-link + an xwin Windows sysroot — baked into newer agent
- * images (.buildkite/Dockerfile), fetched at configure time on agents that
- * don't have one (scripts/build/winsysroot.ts). The x64 lane additionally
- * exercises the ThinLTO + cross-language LTO configuration (the ci-release
- * default for windows x64 cross — see config.ts), which the native Windows
- * lanes never had: clang-cl/rustc bitcode + the -lto WebKit prebuilt linked
- * by rustc's lld-link. The produced binary is not consumed by tests or
- * release — the native Windows lanes above stay authoritative — so the step
- * is soft_fail until it has a green history.
- *
- * Runs on the same amazonlinux docker image the other Linux/cross builds
- * use; `--buildkite=off` keeps the per-step artifact upload/download
- * machinery (which assumes the cpp/rust/link split and native artifact
- * names) out of the picture.
- *
- * @param {Arch} arch
- * @param {PipelineOptions} options
- * @returns {Step}
- */
-function getWindowsCrossBuildStep(arch, options) {
-  const hostPlatform = { os: "linux", arch, distro: "amazonlinux", release: "2023", features: ["docker"] };
-  return {
-    key: `windows-${arch}-cross-build`,
-    label: `${getBuildkiteEmoji("windows")} ${arch}-cross - build-bun`,
-    agents: getEc2Agent(hostPlatform, options, {
-      // Full build (deps + C++ + cargo + link) in one step — size for cores.
-      instanceType: arch === "aarch64" ? "r8g.4xlarge" : "r7i.4xlarge",
-    }),
-    retry: getRetry(),
-    cancel_on_build_failing: isMergeQueue(),
-    soft_fail: true,
-    timeout_in_minutes: 120,
-    command: [
-      // BoringSSL's win-x64 assembly is NASM syntax; newer images carry nasm
-      // (Dockerfile), best-effort install on older ones. Distro-aware: the
-      // agent may be the Ubuntu-based build container (apt) or an Amazon
-      // Linux host (dnf/yum). `|| true` keeps a missing package manager from
-      // failing the step — the build's own "nasm not found" error is clearer.
-      ...(arch === "x64"
-        ? [
-            "which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || sudo dnf install -y -q nasm || true",
-          ]
-        : []),
-      `node --experimental-strip-types scripts/build.ts --profile=ci-release --os=windows --arch=${arch} --buildkite=off`,
-    ],
   };
 }
 
@@ -780,11 +748,21 @@ function getVerifyBaselineStep(platform, options) {
           `chmod +x ${profileDir}/${profileExe}`,
         ];
 
+  // Windows: the emulator phase runs bun-profile.exe under Intel SDE, so the
+  // step needs a real Windows machine even though the artifact is built on
+  // Linux. Everything else verifies on the same Linux fleet that linked it.
+  const agents =
+    os === "windows"
+      ? getEc2Agent({ os: "windows", arch: platform.arch, release: "2019" }, options, {
+          instanceType: getAzureVmSize("windows", platform.arch),
+        })
+      : getLinkBunAgent(platform, options);
+
   return {
     key: `${targetKey}-verify-baseline`,
     label: `${getTargetLabel(platform)} - verify-baseline`,
     depends_on: [`${targetKey}-build-bun`],
-    agents: getLinkBunAgent(platform, options),
+    agents,
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     timeout_in_minutes: hasWebKitChanges(options) ? 30 : 10,
@@ -917,14 +895,14 @@ function getWindowsSignStep(windowsPlatforms, options) {
     buildSteps.push(stepKey, stepKey);
   }
 
-  // Run on an x64 build agent — smctl doesn't work on ARM64
-  const signPlatform = windowsPlatforms.find(p => p.arch === "x64" && !p.baseline) ?? windowsPlatforms[0];
-
+  // Signing runs on a real Windows x64 machine (smctl; doesn't work on
+  // ARM64) — the build platforms themselves are cross-compiled on Linux, so
+  // the agent descriptor here is explicitly a native Windows box.
   return {
     key: "windows-sign",
     label: `${getBuildkiteEmoji("windows")} sign`,
     depends_on: windowsPlatforms.map(p => `${getTargetKey(p)}-build-bun`),
-    agents: getEc2Agent(signPlatform, options, {
+    agents: getEc2Agent({ os: "windows", arch: "x64", release: "2019" }, options, {
       instanceType: getAzureVmSize("windows", "x64", "test"),
     }),
     retry: getRetry(),
@@ -1479,28 +1457,6 @@ async function getPipeline(options = {}) {
         );
       }),
     );
-
-    // Windows cross-compile validation: full builds of bun.exe (x64 + arm64)
-    // from Linux agents. See getWindowsCrossBuildStep(). Honours the same
-    // platform filtering as the per-target groups above, so a manual build
-    // that narrows `build-platforms` to a non-windows subset doesn't spawn
-    // the cross lanes.
-    if (relevantBuildPlatforms.some(({ os }) => os === "windows")) {
-      const crossImageDependsOn = ["x64", "aarch64"]
-        .map(arch => getImageKey({ os: "linux", arch, distro: "amazonlinux", release: "2023", features: ["docker"] }))
-        .filter(imageKey => imagePlatforms.has(imageKey))
-        .map(imageKey => `${imageKey}-build-image`);
-      steps.push(
-        getStepWithDependsOn(
-          {
-            key: "windows-cross",
-            group: `${getBuildkiteEmoji("windows")} cross (linux)`,
-            steps: [getWindowsCrossBuildStep("x64", options), getWindowsCrossBuildStep("aarch64", options)],
-          },
-          ...crossImageDependsOn,
-        ),
-      );
-    }
   }
 
   if (!isMainBranch()) {

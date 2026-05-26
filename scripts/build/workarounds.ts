@@ -108,6 +108,30 @@ export const workarounds: Workaround[] = [
       `field itself can stay (collapses to \`= lto\` when no per-target gates remain).`,
   },
   {
+    id: "rustc-no-regular-lto-summary",
+    issue:
+      "https://github.com/rust-lang/rust/issues/ (none filed yet — rustc has no equivalent of clang's shouldEmitRegularLTOSummary())",
+    description:
+      'Under -Clinker-plugin-lto + lto = "fat", rustc emits the merged bitcode module without a ' +
+      "per-module summary, so lld reads it as EnableSplitLTOUnit=0 while every clang full-LTO " +
+      "object (ours and the WebKit -lto prebuilts) hardcodes 1 — the ELF release link aborts " +
+      'with "inconsistent LTO Unit splitting". rust-lto-fix-cli.ts re-emits the Rust bitcode ' +
+      "with a regular-LTO summary using rustc's own llvm-tools (rustLtoLinkInputs() in rust.ts).",
+    applies: cfg => cfg.crossLangLto && !cfg.darwin,
+    expectedToBeFixed: cfg => {
+      // Re-evaluate when the pinned rustc moves to its next LLVM major:
+      // either rustc grew a way to emit regular-LTO summaries (delete the
+      // fix-up), or linux moved to ThinLTO (it's moot), or neither — bump
+      // the threshold and keep it.
+      const RECHECK_AT_RUST_LLVM = "23.0.0";
+      return cfg.rustLlvmVersion !== undefined && satisfiesRange(cfg.rustLlvmVersion, `>=${RECHECK_AT_RUST_LLVM}`);
+    },
+    cleanup:
+      `Delete scripts/build/rust-lto-fix-cli.ts, the rust_lto_fix rule and rustLtoLinkInputs() in ` +
+      `rust.ts, unwrap its two call sites in bun.ts, drop "llvm-tools" from rust-toolchain.toml's ` +
+      `components, and delete this entry.`,
+  },
+  {
     id: "rust-lld-for-crosslang-lto",
     issue: "https://rustc-dev-guide.rust-lang.org/backend/updating-llvm.html",
     description:

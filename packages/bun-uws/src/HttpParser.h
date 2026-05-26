@@ -295,7 +295,10 @@ namespace uWS
                         return te;
                     }
 
-                    te.has = lastTokenLen > 0;
+                    /* Present even when the value names no transfer coding: treating
+                     * an empty/whitespace-only field as absent would fall back to
+                     * Content-Length framing (request smuggling; RFC 9112 6.3). */
+                    te.has = true;
 
                     // Check if the last token is "chunked"
                     if (lastTokenLen == 7 && strncasecmp(value.data() + lastTokenStart, "chunked", 7) == 0) [[likely]] {

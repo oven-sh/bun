@@ -38,6 +38,13 @@ async function createProxyServer(is_tls: boolean) {
           // Pipe data between client and server
           clientSocket.pipe(serverSocket);
           serverSocket.pipe(clientSocket);
+
+          // `pipe` only tears the upstream down on a clean 'end' from the
+          // client. An abortive client teardown surfaces as 'error'/'close'
+          // with no 'end' (notably on Windows), which would leave the target
+          // holding a half-open connection forever. Propagate it; `end()`
+          // still flushes any data already piped toward the target.
+          clientSocket.on("close", () => serverSocket.end());
         });
         serverSocket.on("error", () => {
           clientSocket.end();
@@ -584,6 +591,92 @@ test("HTTPS proxy tunnel keep-alive does not share tunnel across different crede
     for (const s of upstreamSockets) s.destroy();
     proxy.close();
     await once(proxy, "close");
+  }
+});
+
+test("HTTPS target through proxy with passing checkServerIdentity round-trips", async () => {
+  // The CONNECT tunnel parks after the inner TLS handshake until the JS
+  // checkServerIdentity callback approves the target's certificate. While
+  // parked, raw inner-TLS records (e.g. TLS 1.3 NewSessionTicket) keep
+  // arriving on the outer socket and must keep flowing into the SSL state
+  // machine, otherwise the handshake never completes and this hangs.
+  const verified: string[] = [];
+  const response = await fetch(httpsServer.url, {
+    method: "POST",
+    proxy: httpProxyServer.url,
+    body: "tunneled body",
+    keepalive: false,
+    tls: {
+      ca: tlsCert.cert,
+      checkServerIdentity(hostname: string) {
+        verified.push(hostname);
+        return undefined;
+      },
+    },
+  });
+  expect(response.status).toBe(200);
+  expect(await response.text()).toBe("tunneled body");
+  expect(verified).toEqual(["localhost"]);
+});
+
+test("HTTPS target through proxy with rejecting checkServerIdentity transmits nothing to the target", async () => {
+  // Raw TLS target so we can observe exactly which decrypted bytes (if any)
+  // reach it before the pinning callback rejects the certificate.
+  const receivedPerConnection: Buffer[][] = [];
+  let rawConnections = 0;
+  const { promise: firstConnectionClosed, resolve: onFirstConnectionClosed } = Promise.withResolvers<void>();
+  const target = tls.createServer({ key: tlsCert.key, cert: tlsCert.cert }, socket => {
+    const chunks: Buffer[] = [];
+    receivedPerConnection.push(chunks);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("error", () => {});
+  });
+  // Track teardown on the raw TCP connection rather than the TLS socket: the
+  // client tears the tunnel down as soon as checkServerIdentity rejects, so
+  // the target may never finish its side of the inner handshake and the
+  // secureConnection callback above may never fire.
+  target.on("connection", rawSocket => {
+    rawConnections++;
+    rawSocket.on("close", onFirstConnectionClosed);
+    rawSocket.on("error", () => {});
+  });
+  target.listen(0);
+  await once(target, "listening");
+  const targetPort = (target.address() as net.AddressInfo).port;
+
+  try {
+    let err: unknown;
+    try {
+      await fetch(`https://localhost:${targetPort}/`, {
+        method: "POST",
+        proxy: httpProxyServer.url,
+        body: "secret tunneled body",
+        headers: { Authorization: "Bearer super-secret-token" },
+        keepalive: false,
+        tls: {
+          ca: tlsCert.cert,
+          checkServerIdentity() {
+            return new Error("pinned");
+          },
+        },
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe("pinned");
+
+    // The tunnel must be torn down without the request line, the
+    // Authorization header, or the body ever reaching the target.
+    await firstConnectionClosed;
+    expect(rawConnections).toBe(1);
+    const decryptedBytesSeenByTarget = receivedPerConnection.reduce(
+      (sum, chunks) => sum + Buffer.concat(chunks).byteLength,
+      0,
+    );
+    expect(decryptedBytesSeenByTarget).toBe(0);
+  } finally {
+    target.close();
   }
 });
 

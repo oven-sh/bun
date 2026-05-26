@@ -1285,6 +1285,10 @@ impl Display for FormatValidIdentifier<'_> {
             needs_gap = false;
             if start_i > 0 {
                 write_bytes(f, &self.name[..start_i])?;
+            } else {
+                // the first letter can be a non-identifier start
+                // https://github.com/oven-sh/bun/issues/2946
+                f.write_str("_")?;
             }
             let slice = &self.name[start_i..];
             iterator = crate::CodepointIterator::init(slice);

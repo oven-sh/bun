@@ -49,6 +49,10 @@ unsafe extern "C" {
     );
 
     fn highway_copy_u16_to_u8(input: *const u16, count: usize, output: *mut u8);
+
+    fn highway_copy_ascii_prefix(src: *const u8, len: usize, dst: *mut u8) -> usize;
+
+    fn highway_encode_hex_lower(input: *const u8, len: usize, output: *mut u8);
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -237,6 +241,44 @@ pub fn copy_u16_to_u8(input: &[u16], output: &mut [u8]) {
     // SAFETY: input.ptr/len readable, output.ptr writable for at least input.len() bytes
     // (caller contract matches Zig: output.len >= input.len()).
     unsafe { highway_copy_u16_to_u8(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+}
+
+#[inline(always)]
+pub fn copy_ascii_prefix(src: &[u8], dst: &mut [u8]) -> usize {
+    let len = src.len().min(dst.len());
+    if len == 0 {
+        return 0;
+    }
+
+    // SAFETY: `src` is readable and `dst` writable for at least `len` bytes;
+    // the kernel reads and writes at most `len` bytes of each.
+    let copied = unsafe { highway_copy_ascii_prefix(src.as_ptr(), len, dst.as_mut_ptr()) };
+
+    debug_assert!(copied <= len);
+    debug_assert!(copied == len || src[copied] >= 0x80);
+
+    copied
+}
+
+/// Lowercase hex encode: writes exactly `2 * src.len()` bytes to `dst`.
+#[inline(always)]
+pub fn encode_hex_lower(src: &[u8], dst: &mut [u8]) {
+    // Runtime check (not just debug): this is a safe wrapper around an FFI
+    // write, so a too-small `dst` must panic instead of corrupting memory.
+    assert!(
+        dst.len() / 2 >= src.len(),
+        "encode_hex_lower: destination too small ({} bytes for {} source bytes)",
+        dst.len(),
+        src.len()
+    );
+    if src.is_empty() {
+        return;
+    }
+
+    // SAFETY: `src` is readable for `src.len()` bytes and `dst` is writable
+    // for `2 * src.len()` bytes (asserted above); the kernel writes exactly
+    // that many bytes and the slices cannot overlap (`&`/`&mut`).
+    unsafe { highway_encode_hex_lower(src.as_ptr(), src.len(), dst.as_mut_ptr()) }
 }
 
 /// Apply a WebSocket mask to data using SIMD acceleration

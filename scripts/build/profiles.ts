@@ -92,6 +92,40 @@ export const profiles = {
     webkit: "prebuilt",
   },
 
+  /**
+   * Windows cross-compile from a non-Windows host: clang-cl + lld-link from
+   * the host LLVM plus an xwin-style Windows sysroot (see config.ts
+   * `winsysroot`). On a Windows host just use the regular debug/release
+   * profiles. Sanitizers are forced off in resolveConfig().
+   */
+  "windows-x64": {
+    buildType: "Debug",
+    os: "windows",
+    arch: "x64",
+    webkit: "prebuilt",
+  },
+
+  "windows-arm64": {
+    buildType: "Debug",
+    os: "windows",
+    arch: "aarch64",
+    webkit: "prebuilt",
+  },
+
+  "windows-x64-release": {
+    buildType: "Release",
+    os: "windows",
+    arch: "x64",
+    webkit: "prebuilt",
+  },
+
+  "windows-arm64-release": {
+    buildType: "Release",
+    os: "windows",
+    arch: "aarch64",
+    webkit: "prebuilt",
+  },
+
   /** Release build for local testing. No LTO (that's CI-only). */
   release: {
     buildType: "Release",

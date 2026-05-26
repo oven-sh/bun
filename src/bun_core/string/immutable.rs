@@ -1980,9 +1980,15 @@ pub fn encode_bytes_to_hex(destination: &mut [u8], source: &[u8]) -> usize {
 
     let to_read = to_write / 2;
 
-    // PERF(port): Zig had a @Vector(16,u8) interlace fast path. Scalar loop here;
-    // consider a portable_simd shuffle or LUT if hot.
-    crate::fmt::bytes_to_hex_lower(&source[..to_read], &mut destination[..to_read * 2])
+    // Runtime-dispatched SIMD kernel for bulk encodes (Buffer.toString("hex"));
+    // the scalar LUT loop wins below this size because of the dispatch overhead.
+    const HIGHWAY_MIN_LEN: usize = 64;
+    if to_read >= HIGHWAY_MIN_LEN {
+        highway::encode_hex_lower(&source[..to_read], &mut destination[..to_write]);
+        return to_write;
+    }
+
+    crate::fmt::bytes_to_hex_lower(&source[..to_read], &mut destination[..to_write])
 }
 
 /// Leave a single leading char
@@ -3049,6 +3055,12 @@ pub fn convert_utf8_to_utf16_in_buffer<'a>(buf: &'a mut [u16], input: &[u8]) -> 
     if input.is_empty() {
         return &mut buf[..0];
     }
+    assert!(
+        input.len() <= buf.len() || element_length_utf8_into_utf16(input) <= buf.len(),
+        "convert_utf8_to_utf16_in_buffer: buf too small (have {} u16 for {} input bytes)",
+        buf.len(),
+        input.len(),
+    );
     let r = simdutf::convert::utf8::to::utf16::with_errors::le(input, buf);
     if r.is_successful() {
         return &mut buf[..r.count];

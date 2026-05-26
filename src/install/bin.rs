@@ -779,7 +779,7 @@ fn warn_on_runtime_bin_shadow(package_name: &[u8], bin_name: &[u8]) {
     let Some(index) = RUNTIME_BIN_NAMES.iter().position(|name| *name == bin_name) else {
         return;
     };
-    if RUNTIME_BIN_NAMES.iter().any(|name| *name == package_name) {
+    if RUNTIME_BIN_NAMES.contains(&package_name) {
         return;
     }
     let bit = 1u8 << index;

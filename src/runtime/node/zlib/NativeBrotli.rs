@@ -86,9 +86,8 @@ mod _impl {
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         pub stream: JsCell<Context>,
         /// Points into a JS `Uint32Array` (`this._writeState`). Kept alive because
-        /// the JS object is tied to the native handle as `_handle[owner_symbol]`.
+        /// `init()` stores the view in the wrapper's GC-visited `writeState` slot.
         pub write_result: Cell<Option<*mut u32>>,
-        pub pinned_write_state: Cell<JSValue>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         // TODO(port): Strong on m_ctx self-ref → JsRef per PORTING.md §JSC (Strong back-ref to own wrapper leaks)
         pub this_value: JsCell<StrongOptional>, // Strong.Optional — empty-initialised
@@ -147,7 +146,6 @@ mod _impl {
                 global_this: bun_ptr::BackRef::new(global_this),
                 stream: JsCell::new(stream),
                 write_result: Cell::new(None),
-                pinned_write_state: Cell::new(JSValue::ZERO),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
@@ -245,11 +243,14 @@ mod _impl {
             // under the raw pointer cached below (written through on every
             // async-write completion by `flush_write_result`). Pinning a small
             // FastTypedArray relocates its storage, so read the pointer *after*.
+            // The GC-visited `writeState` slot (zlib.classes.ts `values:`) keeps
+            // the view alive for the wrapper's lifetime — the pin only blocks
+            // detach, not collection — so the cached pointer can never dangle.
             let Some(mut write_result_buf) = write_result_value.as_pinned_arraybuffer(global_this)
             else {
                 return Err(global_this.throw_out_of_memory());
             };
-            self.pinned_write_state.set(write_result_value);
+            js::write_state_set_cached(this_value, global_this, write_result_value);
             self.write_result
                 .set(Some(write_result_buf.as_u32().as_mut_ptr()));
 

@@ -250,9 +250,6 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     fn pending_close(&self) -> &Cell<bool>;
     fn pending_reset(&self) -> &Cell<bool>;
     fn closed(&self) -> &Cell<bool>;
-    /// The `_writeState` `Uint32Array` pinned in `init()` so `transfer()` can't
-    /// free the backing store under the cached `write_result` pointer.
-    fn pinned_write_state(&self) -> &Cell<JSValue>;
 
     /// Recover `*mut Self` from the embedded `WorkPoolTask`.
     /// SAFETY: caller guarantees `task` points at the `task` field of a live `Self`.
@@ -755,10 +752,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this.closed().set(true);
         this.this_value().with_mut(|v| v.deinit());
         this.stream().with_mut(|s| s.close());
-        let pinned = this.pinned_write_state().replace(JSValue::ZERO);
-        if !pinned.is_empty() {
-            pinned.unpin_array_buffer();
-        }
     }
 
     pub(crate) fn set_on_error(
@@ -1008,7 +1001,7 @@ macro_rules! __impl_compression_stream {
         /// `generate-classes.ts` for the `values:` list in `zlib.classes.ts`.
         #[allow(unused)]
         pub(crate) mod js {
-            ::bun_jsc::codegen_cached_accessors!($type_name; writeCallback, errorCallback, dictionary, pendingInput, pendingOutput);
+            ::bun_jsc::codegen_cached_accessors!($type_name; writeCallback, errorCallback, dictionary, pendingInput, pendingOutput, writeState);
         }
 
         impl $crate::node::node_zlib_binding::CompressionContext for $ctx {
@@ -1034,7 +1027,6 @@ macro_rules! __impl_compression_stream {
             #[inline] fn pending_close(&self) -> &::core::cell::Cell<bool> { &self.pending_close }
             #[inline] fn pending_reset(&self) -> &::core::cell::Cell<bool> { &self.pending_reset }
             #[inline] fn closed(&self) -> &::core::cell::Cell<bool> { &self.closed }
-            #[inline] fn pinned_write_state(&self) -> &::core::cell::Cell<::bun_jsc::JSValue> { &self.pinned_write_state }
 
             #[inline]
             unsafe fn from_task(task: *mut ::bun_jsc::WorkPoolTask) -> *mut Self {

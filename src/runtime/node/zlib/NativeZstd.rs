@@ -44,7 +44,6 @@ mod _impl {
         pub stream: JsCell<Context>,
         // LIFETIMES.tsv: BORROW_PARAM → Option<*mut u32> (points into JS Uint32Array backing store)
         pub write_result: Cell<Option<*mut u32>>,
-        pub pinned_write_state: Cell<JSValue>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
         pub write_in_progress: Cell<bool>,
@@ -103,7 +102,6 @@ mod _impl {
                 global_this: bun_ptr::BackRef::new(global),
                 stream: JsCell::new(stream),
                 write_result: Cell::new(None),
-                pinned_write_state: Cell::new(JSValue::ZERO),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
@@ -173,17 +171,6 @@ mod _impl {
                     )
                     .throw());
             }
-            // Pin the `_writeState` backing store so `transfer()` can't free it
-            // under the raw pointer cached below (written through on every
-            // async-write completion by `flush_write_result`). Pinning a small
-            // FastTypedArray relocates its storage, so read the pointer *after*.
-            let Some(mut write_state) = write_state_value.as_pinned_arraybuffer(global) else {
-                return Err(global.throw_out_of_memory());
-            };
-            self.pinned_write_state.set(write_state_value);
-            self.write_result
-                .set(Some(write_state.as_u32().as_mut_ptr()));
-
             let write_js_callback =
                 validators::validate_function(global, "processCallback", process_callback_value)?;
             // js.writeCallbackSetCached — codegen'd cached-property setter on the C++ wrapper.
@@ -202,6 +189,22 @@ mod _impl {
                     false,
                 )?);
             }
+
+            // Pin the `_writeState` backing store so `transfer()` can't free it
+            // under the raw pointer cached below (written through on every
+            // async-write completion by `flush_write_result`). Pinning a small
+            // FastTypedArray relocates its storage, so read the pointer *after*.
+            // The GC-visited `writeState` slot (zlib.classes.ts `values:`) keeps
+            // the view alive for the wrapper's lifetime — the pin only blocks
+            // detach, not collection — so the cached pointer can never dangle.
+            // Placed after the argument validators (mirroring NativeZlib and
+            // NativeBrotli) so their error paths leave nothing pinned.
+            let Some(mut write_state) = write_state_value.as_pinned_arraybuffer(global) else {
+                return Err(global.throw_out_of_memory());
+            };
+            js::write_state_set_cached(this_value, global, write_state_value);
+            self.write_result
+                .set(Some(write_state.as_u32().as_mut_ptr()));
 
             let err = self.stream.with_mut(|s| s.init(pledged_src_size));
             if err.is_error() {

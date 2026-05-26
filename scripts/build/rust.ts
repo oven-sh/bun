@@ -564,6 +564,19 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // linker our final link uses, not BFD `/usr/bin/ld`.)
     if (!cfg.darwin) {
       rustflags.push("-Zsplit-lto-unit");
+
+      // Rust functions default to carrying the `uwtable(async)` attribute.
+      // When the LTO inliner inlines such a callee into one of our C++
+      // callers (compiled without unwind tables), the caller inherits the
+      // attribute — so cross-language inlining sprays full .eh_frame FDEs
+      // across thousands of C++ functions (~+1.8 MB on the linux links;
+      // the musl release binary keeps .eh_frame so it pays it in full).
+      // We build with panic=abort and always keep frame pointers, and the
+      // glibc release binary already ships without .eh_frame entirely, so
+      // the tables are pure dead weight here — turn them off for the Rust
+      // side of the merged module. (The prebuilt std bitcode keeps its own
+      // uwtable attrs; this only stops our crates from spreading them.)
+      rustflags.push("-Cforce-unwind-tables=no");
     }
   }
 

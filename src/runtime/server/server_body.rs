@@ -2777,23 +2777,6 @@ where
         Ok(this_value)
     }
 
-    fn remote_address_is_loopback(resp: &mut uws_sys::NewAppResponse<SSL>) -> bool {
-        if let Some(address) = resp.get_remote_socket_info() {
-            // IPv4 loopback addresses
-            if address.ip.starts_with(b"127.") {
-                return true;
-            }
-            // IPv6 loopback addresses
-            if address.ip.starts_with(b"::ffff:127.")
-                || address.ip == b"::1"
-                || address.ip == b"0:0:0:0:0:0:0:1"
-            {
-                return true;
-            }
-        }
-        false
-    }
-
     pub fn on_bun_info_request(
         &mut self,
         req: &mut uws::Request,
@@ -2801,7 +2784,9 @@ where
     ) {
         jsc::mark_binding!();
         if !matches!(self.config.address, server_config::Address::Unix(_))
-            && !Self::remote_address_is_loopback(resp)
+            && !resp
+                .get_remote_socket_info()
+                .is_some_and(|address| address.is_loopback())
         {
             req.set_yield(true);
             return;
@@ -3441,7 +3426,10 @@ where
                 break 'brk false;
             }
 
-            if Self::remote_address_is_loopback(resp) {
+            if resp
+                .get_remote_socket_info()
+                .is_some_and(|address| address.is_loopback())
+            {
                 break 'brk true;
             }
 

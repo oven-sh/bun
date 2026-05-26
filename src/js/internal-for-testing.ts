@@ -313,13 +313,3 @@ export const fetchH3Internals = {
 export const fileSinkInternals = {
   liveCount: $newZigFunction("runtime/webcore/FileSink.zig", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
 };
-
-// Sentinel for test/internal/cargo-config-darwin.test.ts (see #30870).
-// The real fix lives in scripts/build/{cargo-config,rust}.ts — build-script
-// files that the harness's fail-before stash (`src/ packages/`) doesn't
-// cover. Importing this symbol lets the regression test observe the
-// unstashed state: with this file present the test asserts the darwin
-// `.cargo/config.toml` section is lld-free; with src/ stashed the symbol
-// is absent and the test aborts early, giving the mechanical gate its
-// fail-before signal.
-export const cargoConfigDarwinRegressionMarker: true = true;

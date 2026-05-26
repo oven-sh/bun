@@ -393,15 +393,15 @@ pub fn installWithManager(
                         const dependencies_len = manager.lockfile.buffers.dependencies.items.len;
 
                         // Build a temporary DependencyID -> PackageID map (the "owner map")
-                        // so that when we re-enqueue dependencies whose overrides changed,
-                        // we can pass the correct parent context for scoped override lookup.
+                        // to recover the parent context for already-materialized DependencyIDs
+                        // being re-enqueued for re-resolution. When the re-enqueued dependency
+                        // resolves, its children flow through the normal enqueue path
+                        // (doFlushDependencyQueue -> enqueueDependencyWithMain) with the correct
+                        // parent context threaded through, so transitive dependencies do receive
+                        // scoped override context during this pass.
+                        //
                         // Only populated when scoped overrides exist — when none do, we skip
                         // the allocation and simply pass null as parent context.
-                        //
-                        // Note: this map only carries context for direct children of each
-                        // package. Transitive dependencies within the re-resolved package
-                        // receive no override context during this re-resolution pass (their
-                        // scoped overrides were already applied on the first resolution pass).
                         const owner_map = owner_map: {
                             if (manager.lockfile.overrides.scoped.count() == 0)
                                 break :owner_map null;

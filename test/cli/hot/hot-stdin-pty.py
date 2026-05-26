@@ -54,8 +54,13 @@ def wait_for(pattern, timeout=10):
     return rx.search(buffer) is not None
 
 
-def timeout_handler(signum, frame):
-    print("PYTHON: timeout", flush=True)
+def terminate_handler(signum, frame):
+    # The hand-rolled fork above does not give the child a controlling TTY,
+    # so closing the PTY master won't SIGHUP it. If we're torn down early
+    # (test-runner timeout sends SIGTERM, Ctrl+C sends SIGINT, or our own
+    # SIGALRM fires), kill the `bun --hot` child explicitly so it doesn't
+    # outlive the test.
+    print("PYTHON: terminated by signal %d" % signum, flush=True)
     try:
         os.kill(pid, 9)
     except Exception:
@@ -63,7 +68,9 @@ def timeout_handler(signum, frame):
     sys.exit(1)
 
 
-signal.signal(signal.SIGALRM, timeout_handler)
+signal.signal(signal.SIGALRM, terminate_handler)
+signal.signal(signal.SIGTERM, terminate_handler)
+signal.signal(signal.SIGINT, terminate_handler)
 signal.alarm(30)
 
 ok = wait_for(r"READY 1 ")

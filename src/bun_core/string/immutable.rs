@@ -1911,14 +1911,39 @@ pub enum DecodeHexError {
     InvalidByteSequence,
 }
 
-pub fn decode_hex_to_bytes<Char: Copy + Into<u32>>(
+/// Source character types accepted by the hex decoder: `u8` (Latin-1) and
+/// `u16` (UTF-16). The associated function routes full pairs through the
+/// matching Highway kernel while `_decode_hex_to_bytes` keeps the generic
+/// scalar path for short inputs.
+pub trait HexChar: Copy + Into<u32> {
+    /// Decode up to `min(src.len() / 2, dst.len())` hex pairs with SIMD,
+    /// stopping at the first pair containing a non-hex character.
+    /// Returns the number of bytes written.
+    fn decode_hex_highway(src: &[Self], dst: &mut [u8]) -> usize;
+}
+
+impl HexChar for u8 {
+    #[inline(always)]
+    fn decode_hex_highway(src: &[Self], dst: &mut [u8]) -> usize {
+        highway::decode_hex(src, dst)
+    }
+}
+
+impl HexChar for u16 {
+    #[inline(always)]
+    fn decode_hex_highway(src: &[Self], dst: &mut [u8]) -> usize {
+        highway::decode_hex_u16(src, dst)
+    }
+}
+
+pub fn decode_hex_to_bytes<Char: HexChar>(
     destination: &mut [u8],
     source: &[Char],
 ) -> Result<usize, DecodeHexError> {
     _decode_hex_to_bytes::<Char, false>(destination, source)
 }
 
-pub fn decode_hex_to_bytes_truncate<Char: Copy + Into<u32>>(
+pub fn decode_hex_to_bytes_truncate<Char: HexChar>(
     destination: &mut [u8],
     source: &[Char],
 ) -> usize {
@@ -1926,10 +1951,33 @@ pub fn decode_hex_to_bytes_truncate<Char: Copy + Into<u32>>(
 }
 
 #[inline]
-fn _decode_hex_to_bytes<Char: Copy + Into<u32>, const TRUNCATE: bool>(
+fn _decode_hex_to_bytes<Char: HexChar, const TRUNCATE: bool>(
     destination: &mut [u8],
     source: &[Char],
 ) -> Result<usize, DecodeHexError> {
+    // Highway fast path: decode whole pairs in bulk, stopping at the first
+    // invalid pair — the same semantics as the scalar loop below. Short inputs
+    // stay scalar; the dynamically-dispatched FFI call isn't worth it for a
+    // handful of pairs.
+    const HIGHWAY_MIN_PAIRS: usize = 16;
+    let pairs = destination.len().min(source.len() / 2);
+    if pairs >= HIGHWAY_MIN_PAIRS {
+        let written = Char::decode_hex_highway(&source[..pairs * 2], &mut destination[..pairs]);
+        if written < pairs {
+            // Stopped at an invalid character.
+            if TRUNCATE {
+                return Ok(written);
+            }
+            return Err(DecodeHexError::InvalidByteSequence);
+        }
+        if !TRUNCATE && destination.len() > pairs && source.len() > pairs * 2 {
+            // Destination space left over with a trailing lone hex digit
+            // (mirrors the `!remain.is_empty() && !input.is_empty()` check below).
+            return Err(DecodeHexError::InvalidByteSequence);
+        }
+        return Ok(pairs);
+    }
+
     let dest_len = destination.len();
     let mut remain = &mut destination[..];
     let mut input = source;

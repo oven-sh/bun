@@ -368,6 +368,25 @@ SIMDUTFResult simdutf__base64_decode_from_binary16(const char16_t* input, size_t
     return { .error = res.error, .count = res.count };
 }
 
+// Lenient base64 decoding for Node.js Buffer semantics ("base64" and
+// "base64url"): both the standard and URL-safe alphabets are accepted,
+// whitespace and any other non-alphabet characters are skipped, and decoding
+// stops at the first '='. This is simdutf's base64_default_or_url_accept_garbage
+// mode combined with loose handling of the final chunk.
+SIMDUTFResult simdutf__base64_decode_from_binary_lenient(const char* input, size_t length, char* output, size_t outlen_)
+{
+    size_t outlen = outlen_;
+    auto res = simdutf::base64_to_binary_safe(input, length, output, outlen,
+        simdutf::base64_default_or_url_accept_garbage,
+        simdutf::last_chunk_handling_options::loose);
+
+    if (res.error == simdutf::error_code::SUCCESS) {
+        return { .error = 0, .count = outlen };
+    }
+
+    return { .error = res.error, .count = res.count };
+}
+
 size_t simdutf__utf16_length_from_latin1(const char* input, size_t length)
 {
     UNUSED_PARAM(input);

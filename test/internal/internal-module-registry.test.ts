@@ -52,15 +52,20 @@ describe("internal module registry codegen", () => {
     // The `name -> (1 << 9) | id` table must come from codegen
     // (`${BUN_CODEGEN_DIR}/ResolvedSourceTag.rs`); a hand-written copy in src/
     // silently drifts whenever a file is added to or removed from src/js.
-    // Boolean checks keep the failure output short (these files are huge).
+    // Boolean checks keep the failure output short (these files are huge), and
+    // the patterns tolerate formatting-only changes (whitespace, quote style).
     const libRs = fs.readFileSync(path.join(repoRoot, "src/jsc/lib.rs"), "utf8");
-    expect(libRs.includes('include!(concat!(env!("BUN_CODEGEN_DIR"), "/ResolvedSourceTag.rs"))')).toBe(true);
+    expect(
+      /include!\s*\(\s*concat!\s*\(\s*env!\s*\(\s*"BUN_CODEGEN_DIR"\s*\)\s*,\s*"\/ResolvedSourceTag\.rs"\s*\)\s*\)/.test(
+        libRs,
+      ),
+    ).toBe(true);
     const hardcodedTagEntries = libRs.match(/=> ResolvedSourceTag\(\d+\)/g) ?? [];
     expect(hardcodedTagEntries.length).toBe(0);
 
     const bundleModules = fs.readFileSync(path.join(repoRoot, "src/codegen/bundle-modules.ts"), "utf8");
-    expect(bundleModules.includes('"ResolvedSourceTag.zig"')).toBe(true);
-    expect(bundleModules.includes('"ResolvedSourceTag.rs"')).toBe(true);
+    expect(/["']ResolvedSourceTag\.zig["']/.test(bundleModules)).toBe(true);
+    expect(/["']ResolvedSourceTag\.rs["']/.test(bundleModules)).toBe(true);
   });
 
   test("builtin modules served through the registry load correctly", () => {

@@ -1478,6 +1478,20 @@ async function getPipeline(options = {}) {
     }
   }
 
+  // TEMPORARY (do not merge): windows-aarch64 crash diagnostic — runs the
+  // cross-compiled bun.exe through a small invocation matrix on a real ARM64
+  // box and dumps the WER faulting-module events, to localize the
+  // STATUS_HEAP_CORRUPTION seen on the test shards.
+  steps.push({
+    key: "win-arm64-diag",
+    label: ":mag: windows aarch64 crash diagnostic",
+    depends_on: ["windows-aarch64-build-bun"],
+    agents: getTestAgent({ os: "windows", arch: "aarch64", release: "11" }, options),
+    command: "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/win-arm64-diag.ps1",
+    timeout_in_minutes: 20,
+    soft_fail: true,
+  });
+
   // Binary-size tracking covers the artifacts that ship.
   const strippedPlatforms = buildPlatforms.filter(p => (p.profile ?? "release") === "release");
   if (!buildId && strippedPlatforms.length) {

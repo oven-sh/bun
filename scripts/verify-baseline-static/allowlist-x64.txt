@@ -459,11 +459,12 @@ ctiMasmProbeTrampolineAVX  [AVX]
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SIMD. Gate: HWY_DYNAMIC_DISPATCH via hwy::SupportedTargets.
-# (114 symbols)
+# (120 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_AVX3_SPR10MemMemImplEPKhmS2_m                                       [AVX, AVX512BW, AVX512F, BMI1]
 _ZN3bun10N_AVX3_SPR15CopyU16ToU8ImplEPKtmPh                                    [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
 _ZN3bun10N_AVX3_SPR15IndexOfCharImplEPKhmh                                     [AVX, AVX512BW, BMI2]
+_ZN3bun10N_AVX3_SPR18EncodeHexLowerImplEPKhmPh                                 [AVX, AVX2, AVX512BW, AVX512F, AVX512_VBMI, GFNI]
 _ZN3bun10N_AVX3_SPR18FirstNonAscii8ImplEPKhm                                   [AVX, AVX512BW]
 _ZN3bun10N_AVX3_SPR18IndexOfAnyCharImplEPKhmS2_m                               [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_FP16]
 _ZN3bun10N_AVX3_SPR19CopyAsciiPrefixImplEPKhmPh                                [AVX, AVX512BW, AVX512F]
@@ -483,6 +484,7 @@ _ZN3bun10N_AVX3_SPR49IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh   [
 _ZN3bun11N_AVX3_ZEN410MemMemImplEPKhmS2_m                                      [AVX, AVX512BW, AVX512F, BMI1]
 _ZN3bun11N_AVX3_ZEN415CopyU16ToU8ImplEPKtmPh                                   [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
 _ZN3bun11N_AVX3_ZEN415IndexOfCharImplEPKhmh                                    [AVX, AVX512BW, BMI2]
+_ZN3bun11N_AVX3_ZEN418EncodeHexLowerImplEPKhmPh                                [AVX, AVX2, AVX512BW, AVX512F, AVX512_VBMI, GFNI]
 _ZN3bun11N_AVX3_ZEN418FirstNonAscii8ImplEPKhm                                  [AVX, AVX512BW]
 _ZN3bun11N_AVX3_ZEN418IndexOfAnyCharImplEPKhmS2_m                              [AVX, AVX512BW, AVX512F, AVX512VL]
 _ZN3bun11N_AVX3_ZEN419CopyAsciiPrefixImplEPKhmPh                               [AVX, AVX512BW, AVX512F]
@@ -502,6 +504,7 @@ _ZN3bun11N_AVX3_ZEN449IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh  [
 _ZN3bun6N_AVX210MemMemImplEPKhmS2_m                                            [AVX, AVX2]
 _ZN3bun6N_AVX215CopyU16ToU8ImplEPKtmPh                                         [AVX, AVX2]
 _ZN3bun6N_AVX215IndexOfCharImplEPKhmh                                          [AVX, AVX2]
+_ZN3bun6N_AVX218EncodeHexLowerImplEPKhmPh                                      [AVX, AVX2]
 _ZN3bun6N_AVX218FirstNonAscii8ImplEPKhm                                        [AVX, AVX2]
 _ZN3bun6N_AVX218IndexOfAnyCharImplEPKhmS2_m                                    [AVX, AVX2]
 _ZN3bun6N_AVX219CopyAsciiPrefixImplEPKhmPh                                     [AVX, AVX2]
@@ -521,6 +524,7 @@ _ZN3bun6N_AVX249IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh        [
 _ZN3bun6N_AVX310MemMemImplEPKhmS2_m                                            [AVX, AVX512BW, AVX512F, BMI1]
 _ZN3bun6N_AVX315CopyU16ToU8ImplEPKtmPh                                         [AVX, AVX512BW, AVX512F, AVX512VL]
 _ZN3bun6N_AVX315IndexOfCharImplEPKhmh                                          [AVX, AVX512BW, BMI2]
+_ZN3bun6N_AVX318EncodeHexLowerImplEPKhmPh                                      [AVX, AVX2, AVX512BW, AVX512F]
 _ZN3bun6N_AVX318FirstNonAscii8ImplEPKhm                                        [AVX, AVX512BW]
 _ZN3bun6N_AVX318IndexOfAnyCharImplEPKhmS2_m                                    [AVX, AVX512BW, AVX512F, AVX512VL]
 _ZN3bun6N_AVX319CopyAsciiPrefixImplEPKhmPh                                     [AVX, AVX512BW, AVX512F]
@@ -540,6 +544,7 @@ _ZN3bun6N_AVX349IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh        [
 _ZN3bun9N_AVX10_210MemMemImplEPKhmS2_m                                         [AVX, AVX512BW, AVX512F, BMI1]
 _ZN3bun9N_AVX10_215CopyU16ToU8ImplEPKtmPh                                      [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
 _ZN3bun9N_AVX10_215IndexOfCharImplEPKhmh                                       [AVX, AVX512BW, BMI2]
+_ZN3bun9N_AVX10_218EncodeHexLowerImplEPKhmPh                                   [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, GFNI]
 _ZN3bun9N_AVX10_218FirstNonAscii8ImplEPKhm                                     [AVX, AVX512BW]
 _ZN3bun9N_AVX10_218IndexOfAnyCharImplEPKhmS2_m                                 [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_FP16]
 _ZN3bun9N_AVX10_219CopyAsciiPrefixImplEPKhmPh                                  [AVX, AVX512BW, AVX512F, AVX512VL]
@@ -559,6 +564,7 @@ _ZN3bun9N_AVX10_249IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh     [
 _ZN3bun9N_AVX3_DL10MemMemImplEPKhmS2_m                                         [AVX, AVX512BW, AVX512F, BMI1]
 _ZN3bun9N_AVX3_DL15CopyU16ToU8ImplEPKtmPh                                      [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
 _ZN3bun9N_AVX3_DL15IndexOfCharImplEPKhmh                                       [AVX, AVX512BW, BMI2]
+_ZN3bun9N_AVX3_DL18EncodeHexLowerImplEPKhmPh                                   [AVX, AVX2, AVX512BW, AVX512F, AVX512_VBMI, GFNI]
 _ZN3bun9N_AVX3_DL18FirstNonAscii8ImplEPKhm                                     [AVX, AVX512BW]
 _ZN3bun9N_AVX3_DL18IndexOfAnyCharImplEPKhmS2_m                                 [AVX, AVX512BW, AVX512F, AVX512VL]
 _ZN3bun9N_AVX3_DL19CopyAsciiPrefixImplEPKhmPh                                  [AVX, AVX512BW, AVX512F]

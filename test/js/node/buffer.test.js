@@ -798,9 +798,38 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(Buffer.from("\xffZm9vYmFy\x03", encoding).toString("latin1")).toBe("foobar");
         expect(Buffer.from(" Z m 9\tv\nY\rm F y ", encoding).toString("latin1")).toBe("foobar");
         expect(Buffer.from(" \n\t ", encoding).length).toBe(0);
-        // UTF-16 (two-byte) strings behave the same way
+        // two-byte strings: code units whose low byte is not in the alphabet are skipped too
         expect(Buffer.from("Zm9v\u0100YmFy", encoding).toString("latin1")).toBe("foobar");
         expect(Buffer.from("Zm9vYmFy\u3000", encoding).toString("latin1")).toBe("foobar");
+      });
+
+      // Like Node.js, two-byte (UTF-16) strings are decoded from the low byte
+      // of each code unit: a unit like U+013D acts like '=', U+1234 acts like
+      // '4', and units whose low byte is not in the alphabet are skipped.
+      forEachBase64("two-byte strings decode from the low byte of each code unit", encoding => {
+        // \uD83D (first unit of 😀) narrows to 0x3D ('='), which stops decoding
+        expect(Buffer.from("QUJD\u{1F600}REVG", encoding).toString("latin1")).toBe("ABC");
+        expect(Buffer.from("\u{1F600}QUJDREVG", encoding).length).toBe(0);
+        expect(Buffer.from("QUJD\uD83D", encoding).toString("latin1")).toBe("ABC");
+        expect(Buffer.from("\u013DZm9v", encoding).length).toBe(0);
+        expect(Buffer.from("Zm9vYmFy\u013D", encoding).toString("latin1")).toBe("foobar");
+
+        // U+1234 narrows to 0x34 ('4'), U+0441 narrows to 0x41 ('A'): they contribute data
+        expect(Array.from(Buffer.from("\u1234QUJDREVG", encoding))).toStrictEqual([0xe1, 0x05, 0x09, 0x0d, 0x11, 0x15]);
+        expect(Buffer.from("Zm9v\u0441YmFy", encoding)).toStrictEqual(Buffer.from("Zm9vAYmFy", encoding));
+
+        // write() and fill() narrow the same way
+        {
+          const b = Buffer.alloc(8, 0xaa);
+          expect(b.write("QUJD\u{1F600}REVG", 0, encoding)).toBe(3);
+          expect(b.toString("hex")).toBe("414243aaaaaaaaaa");
+        }
+        {
+          const b = Buffer.alloc(1, 0xaa);
+          expect(b.write("YWJj\u3000", 0, encoding)).toBe(1);
+          expect(b.toString("hex")).toBe("61");
+        }
+        expect(Buffer.alloc(6, "QUJD\u{1F600}REVG", encoding).toString("latin1")).toBe("ABCABC");
       });
 
       forEachBase64("lenient decoding accepts both alphabets in the same input", encoding => {

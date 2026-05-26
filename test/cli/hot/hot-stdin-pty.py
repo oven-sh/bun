@@ -83,9 +83,9 @@ with open(fixture) as f:
 with open(fixture, "w") as f:
     f.write(source)
 
+# READY 2 is printed after createInterface() has synchronously re-wired the
+# data→keypress bridge, so it is safe to type immediately once it appears.
 ok = wait_for(r"READY 2 ") and ok
-# Give the fresh interface a beat to finish wiring up.
-time.sleep(0.3)
 os.write(master_fd, b"world\r")
 # Wait for any ECHO of "world" (from whichever load) or time out.
 wait_for(r"ECHO \d+ world", timeout=5)

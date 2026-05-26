@@ -303,10 +303,10 @@ class BunWebSocket extends EventEmitter {
     }
     let ws = (this.#ws = new WebSocket(url, wsOptions));
     ws.binaryType = "nodebuffer";
-    // The native 'handshake' listener is registered lazily (from #onOrOnce
-    // when the user subscribes to 'upgrade') so callers that only listen to
-    // 'open'/'message'/'close' never exercise the native handshake-dispatch
-    // path.
+    // The native 'handshake' listener is registered lazily (from
+    // #armNativeBridge when the user subscribes to 'upgrade') so callers that
+    // only listen to 'open'/'message'/'close' never exercise the native
+    // handshake-dispatch path.
 
     return ws;
   }

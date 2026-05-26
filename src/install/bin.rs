@@ -796,6 +796,12 @@ pub(crate) fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
     false
 }
 
+fn bin_target_has_dot_components(target: &[u8]) -> bool {
+    target
+        .split(|&b| b == b'/' || b == b'\\')
+        .any(|component| component == b"." || component == b"..")
+}
+
 pub struct Linker<'a> {
     pub bin: Bin,
 
@@ -884,7 +890,13 @@ impl<'a> Linker<'a> {
         }
     }
 
-    fn link_bin_or_create_shim(&mut self, abs_target: &ZStr, abs_dest: &ZStr, global: bool) {
+    fn link_bin_or_create_shim(
+        &mut self,
+        abs_target: &ZStr,
+        abs_dest: &ZStr,
+        global: bool,
+        target_has_dot_components: bool,
+    ) {
         debug_assert!(path::is_absolute(abs_target.as_bytes()));
         debug_assert!(path::is_absolute(abs_dest.as_bytes()));
         debug_assert!(abs_target.as_bytes()[abs_target.as_bytes().len() - 1] != SEP);
@@ -905,8 +917,8 @@ impl<'a> Linker<'a> {
             return;
         }
 
-        #[cfg(not(windows))]
-        {
+        if target_has_dot_components {
+            #[cfg(not(windows))]
             if self.resolved_target_parent_escapes_package_dir(abs_target) {
                 return;
             }
@@ -1362,6 +1374,14 @@ impl<'a> Linker<'a> {
         buf[off] = 0;
         let package_dir = ZStr::from_buf(&buf[..], off);
 
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            if let Some(escapes) = Self::target_escapes_beneath_package_dir(package_dir, abs_target)
+            {
+                return escapes;
+            }
+        }
+
         let mut real_package_dir_buf = path::path_buffer_pool::get();
         let real_package_dir = match sys::realpath(package_dir, &mut *real_package_dir_buf) {
             Ok(resolved) => resolved,
@@ -1384,6 +1404,43 @@ impl<'a> Linker<'a> {
             resolve_path::is_parent_or_equal(real_package_dir, real_parent),
             resolve_path::ParentEqual::Unrelated
         )
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn target_escapes_beneath_package_dir(package_dir: &ZStr, abs_target: &ZStr) -> Option<bool> {
+        let package_dir_bytes = package_dir.as_bytes();
+        let abs_target_bytes = abs_target.as_bytes();
+        if abs_target_bytes.len() <= package_dir_bytes.len() + 1
+            || !strings::starts_with(abs_target_bytes, package_dir_bytes)
+            || abs_target_bytes[package_dir_bytes.len()] != SEP
+        {
+            return None;
+        }
+        let rel = &abs_target_bytes[package_dir_bytes.len() + 1..];
+        if rel.len() >= MAX_PATH_BYTES {
+            return None;
+        }
+        let package_dir_fd = match sys::open_dir_absolute(package_dir_bytes) {
+            Ok(fd) => fd,
+            Err(_) => return Some(true),
+        };
+        let mut rel_buf = path::path_buffer_pool::get();
+        let rel_z = resolve_path::z(rel, &mut *rel_buf);
+        let opened = sys::openat2_beneath(package_dir_fd, rel_z, sys::O::PATH | sys::O::CLOEXEC, 0);
+        let _ = sys::close(package_dir_fd);
+        match opened {
+            Ok(fd) => {
+                let _ = sys::close(fd);
+                Some(false)
+            }
+            Err(err) => match err.get_errno() {
+                sys::Errno::ENOSYS
+                | sys::Errno::EPERM
+                | sys::Errno::EAGAIN
+                | sys::Errno::EINVAL => None,
+                _ => Some(true),
+            },
+        }
     }
 
     /// True when the native binlink optimization has redirected the link
@@ -1536,6 +1593,7 @@ impl<'a> Linker<'a> {
                     if target.is_empty() || bin_target_escapes_package_dir(target) {
                         return;
                     }
+                    let target_has_dot_components = bin_target_has_dot_components(target);
 
                     let unscoped_package_name =
                         Dependency::unscoped_package_name(self.package_name.slice());
@@ -1571,7 +1629,12 @@ impl<'a> Linker<'a> {
                     // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see PORT NOTE.
                     let abs_dest = ZStr::from_raw(abs_dest_buf_ptr, abs_dest_len);
 
-                    self.link_bin_or_create_shim(abs_target, abs_dest, global);
+                    self.link_bin_or_create_shim(
+                        abs_target,
+                        abs_dest,
+                        global,
+                        target_has_dot_components,
+                    );
                 }
                 Tag::NamedFile => {
                     let named = self.bin.value.named_file;
@@ -1584,6 +1647,7 @@ impl<'a> Linker<'a> {
                     {
                         return;
                     }
+                    let target_has_dot_components = bin_target_has_dot_components(target);
                     if normalized_name.len() >= self.abs_dest_buf.len().saturating_sub(dest_off) {
                         self.err = Some(bun_core::err!("NameTooLong"));
                         return;
@@ -1610,7 +1674,12 @@ impl<'a> Linker<'a> {
                     // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see PORT NOTE.
                     let abs_dest = ZStr::from_raw(abs_dest_buf_ptr, abs_dest_len);
 
-                    self.link_bin_or_create_shim(abs_target, abs_dest, global);
+                    self.link_bin_or_create_shim(
+                        abs_target,
+                        abs_dest,
+                        global,
+                        target_has_dot_components,
+                    );
                 }
                 Tag::Map => {
                     let map = self.bin.value.map;
@@ -1631,6 +1700,7 @@ impl<'a> Linker<'a> {
                             i += 2;
                             continue;
                         }
+                        let target_has_dot_components = bin_target_has_dot_components(bin_target);
                         if normalized_bin_dest.len()
                             >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
                         {
@@ -1659,7 +1729,12 @@ impl<'a> Linker<'a> {
                         // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see PORT NOTE.
                         let abs_dest = ZStr::from_raw(abs_dest_buf_ptr, abs_dest_len);
 
-                        self.link_bin_or_create_shim(abs_target, abs_dest, global);
+                        self.link_bin_or_create_shim(
+                            abs_target,
+                            abs_dest,
+                            global,
+                            target_has_dot_components,
+                        );
 
                         i += 2;
                     }
@@ -1670,6 +1745,7 @@ impl<'a> Linker<'a> {
                     if target.is_empty() || bin_target_escapes_package_dir(target) {
                         return;
                     }
+                    let target_has_dot_components = bin_target_has_dot_components(target);
 
                     // for normalizing `target`
                     let abs_target_dir: &ZStr = {
@@ -1736,7 +1812,12 @@ impl<'a> Linker<'a> {
                                 // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see PORT NOTE.
                                 let abs_dest = ZStr::from_raw(abs_dest_buf_ptr, abs_dest_len);
 
-                                self.link_bin_or_create_shim(abs_target, abs_dest, global);
+                                self.link_bin_or_create_shim(
+                                    abs_target,
+                                    abs_dest,
+                                    global,
+                                    target_has_dot_components,
+                                );
                             }
                             _ => {}
                         }

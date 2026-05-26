@@ -368,7 +368,7 @@ test.skipIf(isWindows)(
       "packages/resolved-escape-pkg/package.json": JSON.stringify({
         name: "resolved-escape-pkg",
         version: "1.0.0",
-        bin: { "escape-cmd": "payload/secret.txt" },
+        bin: { "escape-cmd": "./payload/secret.txt" },
       }),
       "packages/contained-bin-pkg/package.json": JSON.stringify({
         name: "contained-bin-pkg",

@@ -263,7 +263,14 @@ pub fn copy_ascii_prefix(src: &[u8], dst: &mut [u8]) -> usize {
 /// Lowercase hex encode: writes exactly `2 * src.len()` bytes to `dst`.
 #[inline(always)]
 pub fn encode_hex_lower(src: &[u8], dst: &mut [u8]) {
-    debug_assert!(dst.len() >= src.len() * 2);
+    // Runtime check (not just debug): this is a safe wrapper around an FFI
+    // write, so a too-small `dst` must panic instead of corrupting memory.
+    assert!(
+        dst.len() / 2 >= src.len(),
+        "encode_hex_lower: destination too small ({} bytes for {} source bytes)",
+        dst.len(),
+        src.len()
+    );
     if src.is_empty() {
         return;
     }

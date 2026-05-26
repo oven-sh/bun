@@ -123,7 +123,11 @@ pub enum HardcodedModule {
     IsomorphicFetch,
     #[strum(serialize = "node-fetch")]
     NodeFetch,
-    #[strum(serialize = "@vercel/fetch")]
+    /// Resolved from the `@vercel/fetch` specifier (see `MAP` / the alias
+    /// tables below). The strum name is the InternalModuleRegistry name
+    /// (`src/js/thirdparty/vercel_fetch.js`), mirroring the Zig tag name, so
+    /// `ResolvedSourceTag::from_name` finds it in the generated table.
+    #[strum(serialize = "vercel_fetch")]
     VercelFetch,
     #[strum(serialize = "utf-8-validate")]
     Utf8Validate,

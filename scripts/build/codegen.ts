@@ -773,6 +773,10 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "InternalModuleRegistry+numberOfModules.h"),
     resolve(cfg.codegenDir, "NativeModuleImpl.h"),
     resolve(cfg.codegenDir, "ResolvedSourceTag.zig"),
+    // Rust sibling of ResolvedSourceTag.zig: include!()'d by src/jsc/lib.rs
+    // (bun_jsc::resolved_source_tag). Declared so the cargo edge orders after
+    // this rule and re-runs when the module registry changes.
+    resolve(cfg.codegenDir, "ResolvedSourceTag.rs"),
     resolve(cfg.codegenDir, "SyntheticModuleType.h"),
     resolve(cfg.codegenDir, "GeneratedJS2Native.h"),
     js2nativeZig,

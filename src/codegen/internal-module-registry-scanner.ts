@@ -1,6 +1,30 @@
 import fs from "fs";
 import path from "path";
-import { readdirRecursive, resolveSyncOrNull } from "./helpers";
+import { cap, readdirRecursive, resolveSyncOrNull } from "./helpers";
+
+export function idToEnumName(id: string) {
+  return id
+    .replace(/\.[mc]?[tj]s$/, "")
+    .replace(/[^a-zA-Z0-9]+/g, " ")
+    .split(" ")
+    .map(x => (["jsc", "ffi", "vm", "tls", "os", "ws", "fs", "dns"].includes(x) ? x.toUpperCase() : cap(x)))
+    .join("");
+}
+
+export function idToPublicSpecifierOrEnumName(id: string) {
+  if (id === "internal-for-testing.ts") return "bun:internal-for-testing"; // not in the `bun/` folder because it's added conditionally
+  id = id.replace(/\.[mc]?[tj]s$/, "");
+  if (id.startsWith("node/")) {
+    return "node:" + id.slice(5).replaceAll(".", "/");
+  } else if (id.startsWith("bun/")) {
+    return "bun:" + id.slice(4).replaceAll(".", "/");
+  } else if (id.startsWith("internal/")) {
+    return "internal:" + id.slice(9).replaceAll(".", "/");
+  } else if (id.startsWith("thirdparty/")) {
+    return id.slice(11).replaceAll(".", "/");
+  }
+  return idToEnumName(id);
+}
 
 export function createInternalModuleRegistry(basedir: string) {
   const moduleList = ["bun", "node", "thirdparty", "internal"]

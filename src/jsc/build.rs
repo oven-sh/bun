@@ -4,12 +4,13 @@
     clippy::disallowed_types,
     clippy::disallowed_macros
 )]
-//! Set BUN_CODEGEN_DIR for `include!(concat!(env!("BUN_CODEGEN_DIR"), "/cpp.rs"))`.
+//! Set BUN_CODEGEN_DIR for the codegen outputs this crate `include!`s:
+//! `cpp.rs` (from `src/codegen/cppbind.ts`) and `ResolvedSourceTag.rs`
+//! (from `src/codegen/bundle-modules.ts`).
 //!
-//! The codegen output lives at `<repo>/build/<profile>/codegen/` and is produced by
-//! `src/codegen/cppbind.ts` (run as part of `bun bd`). This build script just
-//! resolves and exports the path; it does NOT run the generator (that would
-//! create a Bun→cargo→Bun bootstrap loop).
+//! The codegen output lives at `<repo>/build/<profile>/codegen/` and is produced
+//! as part of `bun bd`. This build script just resolves and exports the path; it
+//! does NOT run the generators (that would create a Bun→cargo→Bun bootstrap loop).
 //!
 //! Mirrors `src/runtime/build.rs` so `cargo check -p bun_jsc` (and `--workspace`)
 //! works without a manually-exported `BUN_CODEGEN_DIR`.
@@ -39,7 +40,19 @@ fn main() {
         );
     }
 
+    let resolved_source_tag_rs = codegen_dir.join("ResolvedSourceTag.rs");
+    if !resolved_source_tag_rs.exists() {
+        panic!(
+            "ResolvedSourceTag.rs not found at {} — run `bun bd` (bundle-modules codegen) first",
+            resolved_source_tag_rs.display()
+        );
+    }
+
     println!("cargo:rustc-env=BUN_CODEGEN_DIR={}", codegen_dir.display());
     println!("cargo:rerun-if-changed={}", cpp_rs.display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        resolved_source_tag_rs.display()
+    );
     println!("cargo:rerun-if-env-changed=BUN_CODEGEN_DIR");
 }

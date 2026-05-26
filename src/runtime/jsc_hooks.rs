@@ -3403,10 +3403,10 @@ export default db;
 /// (the embedded JS modules from `src/js/`). No source text — C++ dispatches
 /// on `.tag` alone.
 ///
-/// PORT NOTE: `name` is the canonical specifier string (e.g. `b"node:fs"`).
-/// Zig threads `ResolvedSource.Tag.@"node:fs"` (a generated `u32` enum); the
-/// Rust side carries the string and resolves to the numeric tag via
-/// `Tag::from_name` (PHF over the codegen table in `bun_jsc::resolved_source_tag`).
+/// PORT NOTE: `name` is the registry name of the builtin (e.g. `b"node:fs"`,
+/// Zig's `@tagName(ResolvedSource.Tag.@"node:fs")` of the generated `u32`
+/// enum); the Rust side carries the string and resolves to the numeric tag via
+/// `Tag::from_name` (PHF over the generated table in `bun_jsc::resolved_source_tag`).
 #[inline]
 fn js_synthetic_module(name: &'static [u8], specifier: &bun_core::String) -> OwnedResolvedSource {
     use bun_jsc::resolved_source::Tag;

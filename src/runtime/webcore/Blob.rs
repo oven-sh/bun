@@ -2696,16 +2696,18 @@ impl BlobExt for Blob {
         if bom == Some(strings::BOM::Utf16Le) {
             let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
             // Mirrors Zig `bun.reinterpretSlice(u16, buf)`: drop a trailing odd byte
-            // (`@divTrunc`) so `bytemuck::cast_slice` cannot panic on slop.
+            // (`@divTrunc`).
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
             //
             // ZIG PARITY: this branch intentionally does NOT `self.detach()` for
             // `Lifetime::Transfer` — `Blob.zig` `toStringWithBytes` (UTF-16LE arm)
             // returns without detaching, unlike `toJSONWithBytes`. Any change to
             // that asymmetry belongs upstream in the Zig source, not here.
-            let buf = &buf[..buf.len() & !1];
-            let out =
-                OwnedString::new(BunString::clone_utf16(bytemuck::cast_slice::<u8, u16>(buf)));
+            let units: Vec<u16> = buf
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect();
+            let out = OwnedString::new(BunString::clone_utf16(&units));
             return out.to_js(global);
         }
 
@@ -2921,11 +2923,13 @@ impl BlobExt for Blob {
 
         if bom == Some(strings::BOM::Utf16Le) {
             // Mirrors Zig `bun.reinterpretSlice(u16, buf)`: drop a trailing odd byte
-            // (`@divTrunc`) so `bytemuck::cast_slice` cannot panic on slop.
+            // (`@divTrunc`).
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
-            let buf = &buf[..buf.len() & !1];
-            let mut out =
-                OwnedString::new(BunString::clone_utf16(bytemuck::cast_slice::<u8, u16>(buf)));
+            let units: Vec<u16> = buf
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect();
+            let mut out = OwnedString::new(BunString::clone_utf16(&units));
             // PORT NOTE: Zig used `defer { free; detach }`. Reshaped to compute the
             // result first, then perform the deferred work explicitly — capturing
             // `&mut self` in a scopeguard closure conflicts with later uses below.

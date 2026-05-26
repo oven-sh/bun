@@ -4125,6 +4125,9 @@ fn read_slice<B: AsRef<[u8]>>(
     reader: &mut bun_io::FixedBufferStream<B>,
     len: usize,
 ) -> Result<Vec<u8>, bun_core::Error> {
+    if len > reader.buffer.as_ref().len().saturating_sub(reader.pos) {
+        return Err(bun_core::err!("TooSmall"));
+    }
     let mut slice = vec![0u8; len];
     reader
         .read_exact(&mut slice)

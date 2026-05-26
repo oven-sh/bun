@@ -280,8 +280,8 @@ impl BunxCommand {
     const NANOSECONDS_CACHE_VALID: i128 = (Self::SECONDS_CACHE_VALID as i128) * 1_000_000_000;
 
     /// `bin` keys (and the `name` fallback) in package.json are command
-    /// names, not paths. The bunx cache lives in a world-writable temp dir,
-    /// so a crafted package.json there could yield a key like
+    /// names, not paths. The bunx cache can fall back to a world-writable
+    /// temp dir, so a crafted package.json there could yield a key like
     /// `../../../../tmp/x` or `/tmp/x`; `bun_which::which` resolves
     /// slash-containing names against the cwd, escaping `node_modules/.bin`
     /// and skipping the cache-ownership check before execution. Reject
@@ -547,8 +547,11 @@ impl BunxCommand {
     /// Refuse to execute a binary resolved from inside the bunx cache unless
     /// it is owned by the current user.
     ///
-    /// The bunx cache lives under the world-writable temp dir at a predictable
-    /// path. Another local user could pre-create that path. Bun's bin linker
+    /// On POSIX the bunx cache normally lives in a per-user 0700 directory
+    /// under the install cache, but it falls back to the world-writable temp
+    /// dir at a predictable path when no install cache can be resolved.
+    /// Another local user could pre-create that fallback path, so the check
+    /// runs unconditionally as defense-in-depth. Bun's bin linker
     /// creates `.bin/<name>` entries as *symlinks* on Unix
     /// (`Linker::create_symlink`), so a regular-file-only check would mark every
     /// legitimate cache hit as untrusted and reinstall on every invocation.
@@ -1237,7 +1240,7 @@ impl BunxCommand {
                                     // resolves the package's *real* bin name (which may
                                     // differ from the package name), so it is just as
                                     // reachable for a binary planted by another local user
-                                    // in the world-writable bunx cache.
+                                    // when the cache falls back to the temp dir.
                                     if strings::has_prefix(out, bunx_cache_dir)
                                         && !Self::is_trusted_cached_binary(destination, uid)
                                     {
@@ -1503,9 +1506,10 @@ impl BunxCommand {
         ) {
             let out: &[u8] = destination.as_bytes();
             // The install we just ran should have created this symlink as the
-            // current user, but the cache lives in a world-writable temp dir; an
-            // attacker can race the install and plant a uid-mismatched entry.
-            // Bail out to the generic error rather than execute it.
+            // current user, but the cache may fall back to a world-writable
+            // temp dir; an attacker can race the install and plant a
+            // uid-mismatched entry. Bail out to the generic error rather than
+            // execute it.
             if Self::is_trusted_cached_binary(destination, uid) {
                 let stored = fs.dirname_store.append_slice(out)?;
                 Run::run_binary(

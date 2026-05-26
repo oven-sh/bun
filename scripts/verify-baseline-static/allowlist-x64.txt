@@ -459,7 +459,7 @@ ctiMasmProbeTrampolineAVX  [AVX]
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SIMD. Gate: HWY_DYNAMIC_DISPATCH via hwy::SupportedTargets.
-# (132 symbols)
+# (138 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_AVX3_SPR10MemMemImplEPKhmS2_m                                       [AVX, AVX512BW, AVX512F, BMI1]
 _ZN3bun10N_AVX3_SPR14DecodeHex8ImplEPKhPhm                                     [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, GFNI]
@@ -482,6 +482,7 @@ _ZN3bun10N_AVX3_SPR36ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                 [
 _ZN3bun10N_AVX3_SPR38IndexOfNewlineOrNonASCIIOrHashOrAtImplEPKhm               [AVX, AVX512BW, AVX512F]
 _ZN3bun10N_AVX3_SPR46IndexOfInterestingCharacterInStringLiteralImplEPKhmh      [AVX, AVX512BW, AVX512F]
 _ZN3bun10N_AVX3_SPR46IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh      [AVX, AVX512BW, AVX512F]
+_ZN3bun10N_AVX3_SPR49IndexOfInterestingCharacterInMultilineCommentImplEPKhm    [AVX, AVX512BW, AVX512F]
 _ZN3bun10N_AVX3_SPR49IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh   [AVX, AVX512BW, AVX512F]
 _ZN3bun11N_AVX3_ZEN410MemMemImplEPKhmS2_m                                      [AVX, AVX512BW, AVX512F, BMI1]
 _ZN3bun11N_AVX3_ZEN414DecodeHex8ImplEPKhPhm                                    [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, GFNI]
@@ -504,6 +505,7 @@ _ZN3bun11N_AVX3_ZEN436ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                [
 _ZN3bun11N_AVX3_ZEN438IndexOfNewlineOrNonASCIIOrHashOrAtImplEPKhm              [AVX, AVX512BW, AVX512F]
 _ZN3bun11N_AVX3_ZEN446IndexOfInterestingCharacterInStringLiteralImplEPKhmh     [AVX, AVX512BW, AVX512F]
 _ZN3bun11N_AVX3_ZEN446IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh     [AVX, AVX512BW, AVX512F]
+_ZN3bun11N_AVX3_ZEN449IndexOfInterestingCharacterInMultilineCommentImplEPKhm   [AVX, AVX512BW, AVX512F]
 _ZN3bun11N_AVX3_ZEN449IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh  [AVX, AVX512BW, AVX512F]
 _ZN3bun6N_AVX210MemMemImplEPKhmS2_m                                            [AVX, AVX2]
 _ZN3bun6N_AVX214DecodeHex8ImplEPKhPhm                                          [AVX, AVX2]
@@ -526,6 +528,7 @@ _ZN3bun6N_AVX236ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                      [
 _ZN3bun6N_AVX238IndexOfNewlineOrNonASCIIOrHashOrAtImplEPKhm                    [AVX, AVX2]
 _ZN3bun6N_AVX246IndexOfInterestingCharacterInStringLiteralImplEPKhmh           [AVX, AVX2]
 _ZN3bun6N_AVX246IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh           [AVX, AVX2]
+_ZN3bun6N_AVX249IndexOfInterestingCharacterInMultilineCommentImplEPKhm         [AVX, AVX2]
 _ZN3bun6N_AVX249IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh        [AVX, AVX2]
 _ZN3bun6N_AVX310MemMemImplEPKhmS2_m                                            [AVX, AVX512BW, AVX512F, BMI1]
 _ZN3bun6N_AVX314DecodeHex8ImplEPKhPhm                                          [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
@@ -548,6 +551,7 @@ _ZN3bun6N_AVX336ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                      [
 _ZN3bun6N_AVX338IndexOfNewlineOrNonASCIIOrHashOrAtImplEPKhm                    [AVX, AVX512BW, AVX512F]
 _ZN3bun6N_AVX346IndexOfInterestingCharacterInStringLiteralImplEPKhmh           [AVX, AVX512BW, AVX512F]
 _ZN3bun6N_AVX346IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh           [AVX, AVX512BW, AVX512F]
+_ZN3bun6N_AVX349IndexOfInterestingCharacterInMultilineCommentImplEPKhm         [AVX, AVX512BW, AVX512F]
 _ZN3bun6N_AVX349IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh        [AVX, AVX512BW, AVX512F]
 _ZN3bun9N_AVX10_210MemMemImplEPKhmS2_m                                         [AVX, AVX512BW, AVX512F, BMI1]
 _ZN3bun9N_AVX10_214DecodeHex8ImplEPKhPhm                                       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, GFNI]
@@ -570,6 +574,7 @@ _ZN3bun9N_AVX10_236ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                   [
 _ZN3bun9N_AVX10_238IndexOfNewlineOrNonASCIIOrHashOrAtImplEPKhm                 [AVX, AVX512BW, AVX512F]
 _ZN3bun9N_AVX10_246IndexOfInterestingCharacterInStringLiteralImplEPKhmh        [AVX, AVX512BW, AVX512F]
 _ZN3bun9N_AVX10_246IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh        [AVX, AVX512BW, AVX512F]
+_ZN3bun9N_AVX10_249IndexOfInterestingCharacterInMultilineCommentImplEPKhm      [AVX, AVX512BW, AVX512F]
 _ZN3bun9N_AVX10_249IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh     [AVX, AVX512BW, AVX512F]
 _ZN3bun9N_AVX3_DL10MemMemImplEPKhmS2_m                                         [AVX, AVX512BW, AVX512F, BMI1]
 _ZN3bun9N_AVX3_DL14DecodeHex8ImplEPKhPhm                                       [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, GFNI]
@@ -592,6 +597,7 @@ _ZN3bun9N_AVX3_DL36ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                   [
 _ZN3bun9N_AVX3_DL38IndexOfNewlineOrNonASCIIOrHashOrAtImplEPKhm                 [AVX, AVX512BW, AVX512F]
 _ZN3bun9N_AVX3_DL46IndexOfInterestingCharacterInStringLiteralImplEPKhmh        [AVX, AVX512BW, AVX512F]
 _ZN3bun9N_AVX3_DL46IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh        [AVX, AVX512BW, AVX512F]
+_ZN3bun9N_AVX3_DL49IndexOfInterestingCharacterInMultilineCommentImplEPKhm      [AVX, AVX512BW, AVX512F]
 _ZN3bun9N_AVX3_DL49IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh     [AVX, AVX512BW, AVX512F]
 
 

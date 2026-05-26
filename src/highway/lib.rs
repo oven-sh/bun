@@ -12,6 +12,11 @@ unsafe extern "C" {
         quote: u8,
     ) -> usize;
 
+    fn highway_index_of_interesting_character_in_multiline_comment(
+        text: *const u8,
+        text_len: usize,
+    ) -> usize;
+
     fn highway_index_of_newline_or_non_ascii(haystack: *const u8, haystack_len: usize) -> usize;
 
     fn highway_index_of_newline_or_non_ascii_or_hash_or_at(
@@ -120,6 +125,41 @@ pub fn index_of_interesting_character_in_string_literal(
 
     if result == slice.len() {
         return None;
+    }
+
+    Some(result)
+}
+
+/// Useful for scanning the body of `/* ... */` block comments.
+/// Scans for:
+/// - `*` (potential `*/` terminator)
+/// - `\n`, `\r`
+/// - Non-ASCII characters (so the caller decodes U+2028/U+2029 and other
+///   multi-byte sequences one code point at a time)
+#[inline(always)]
+pub fn index_of_interesting_character_in_multiline_comment(slice: &[u8]) -> Option<usize> {
+    if slice.is_empty() {
+        return None;
+    }
+
+    // SAFETY: slice.ptr/len are a valid readable range.
+    let result = unsafe {
+        highway_index_of_interesting_character_in_multiline_comment(slice.as_ptr(), slice.len())
+    };
+
+    if result == slice.len() {
+        return None;
+    }
+
+    if cfg!(debug_assertions) {
+        let haystack_char = slice[result];
+        if !(haystack_char > 127
+            || haystack_char == b'*'
+            || haystack_char == b'\r'
+            || haystack_char == b'\n')
+        {
+            panic!("Invalid character found in indexOfInterestingCharacterInMultilineComment");
+        }
     }
 
     Some(result)

@@ -27,6 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
    software-properties-common apt-transport-https \
    ca-certificates gnupg lsb-release unzip xz-utils \
    libxml2-dev ruby ruby-dev bison gawk perl make golang ccache qemu-user-static \
+   nasm \
    && add-apt-repository ppa:ubuntu-toolchain-r/test \
    && apt-get update \
    && apt-get install -y gcc-13 g++-13 libgcc-13-dev libstdc++-13-dev \
@@ -127,6 +128,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && rustup default nightly \
     && rustup target add aarch64-linux-android x86_64-linux-android \
     && rustup target add x86_64-unknown-freebsd \
+    && rustup target add x86_64-pc-windows-msvc aarch64-pc-windows-msvc \
     && rustup component add rust-src
 
 # Android NDK — sysroot/libc++/compiler-rt for --abi=android cross-compile.
@@ -171,6 +173,30 @@ RUN FBSD_ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "am
     && tar -C /opt/freebsd-sysroot --no-same-owner -xJf /tmp/base.txz ./usr/include ./usr/lib ./lib \
     && rm /tmp/base.txz
 ENV FREEBSD_SYSROOT=/opt/freebsd-sysroot
+
+# Windows sysroot — xwin splat of the MSVC CRT/STL + Windows SDK + ATL (VS
+# layout) for --os=windows cross-compile; clang-cl/lld-link consume it via
+# /winsysroot (see scripts/build/config.ts `winsysroot`). Both target arches
+# in one splat; --include-debug-libs so /MTd debug links work; --include-atl
+# for <atlstr.h> (rescle.cpp).
+# --accept-license accepts the Microsoft license terms for the SDK/CRT
+# components, same as the Windows CI images do when installing VS Build Tools.
+# If the image predates this layer, configure falls back to fetching the same
+# splat at build time (scripts/build/winsysroot.ts — keep XWIN_VERSION in sync).
+# The Include/Lib aliases exist because clang-cl/lld-link compose SDK paths
+# in title case while the winsysroot-style splat writes lowercase.
+ARG XWIN_VERSION="0.6.7"
+RUN XWIN_ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "aarch64"; else echo "x86_64"; fi) \
+    && curl -fsSL "https://github.com/Jake-Shadle/xwin/releases/download/${XWIN_VERSION}/xwin-${XWIN_VERSION}-${XWIN_ARCH}-unknown-linux-musl.tar.gz" \
+       -o /tmp/xwin.tar.gz \
+    && tar -xzf /tmp/xwin.tar.gz -C /tmp \
+    && /tmp/xwin-${XWIN_VERSION}-${XWIN_ARCH}-unknown-linux-musl/xwin --accept-license --arch x86_64,aarch64 --include-atl --cache-dir /tmp/xwin-cache \
+       splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output /opt/winsysroot \
+       > /dev/null \
+    && ln -s include "/opt/winsysroot/Windows Kits/10/Include" \
+    && ln -s lib "/opt/winsysroot/Windows Kits/10/Lib" \
+    && rm -rf /tmp/xwin.tar.gz /tmp/xwin-${XWIN_VERSION}-${XWIN_ARCH}-unknown-linux-musl /tmp/xwin-cache
+ENV WINDOWS_SYSROOT=/opt/winsysroot
 
 RUN ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     echo "Downloading buildkite" && \

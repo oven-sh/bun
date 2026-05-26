@@ -287,6 +287,50 @@ size_t IndexOfInterestingCharacterInStringLiteralImpl(const uint8_t* HWY_RESTRIC
     return text_len;
 }
 
+// Scans the body of a `/* ... */` block comment for the next byte the lexer
+// must inspect one code point at a time: `*` (potential `*/` terminator),
+// `\r` / `\n` (newline tracking for ASI), or any non-ASCII byte (so U+2028 /
+// U+2029 and other multi-byte sequences are decoded by the scalar path).
+size_t IndexOfInterestingCharacterInMultilineCommentImpl(const uint8_t* HWY_RESTRICT text, size_t text_len)
+{
+    ASSERT(text_len > 0);
+
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_star = hn::Set(d, '*');
+    const auto vec_carriage = hn::Set(d, '\r');
+    const auto vec_newline = hn::Set(d, '\n');
+    const auto vec_max_ascii = hn::Set(d, uint8_t { 127 });
+
+    size_t i = 0;
+    const size_t simd_text_len = text_len - (text_len % N);
+    for (; i < simd_text_len; i += N) {
+        const auto vec = hn::LoadU(d, text + i);
+
+        const auto mask_star = hn::Eq(vec, vec_star);
+        const auto mask_carriage = hn::Eq(vec, vec_carriage);
+        const auto mask_newline = hn::Eq(vec, vec_newline);
+        const auto mask_non_ascii = hn::Gt(vec, vec_max_ascii);
+
+        const auto found_mask = hn::Or(hn::Or(mask_star, mask_non_ascii), hn::Or(mask_carriage, mask_newline));
+
+        const intptr_t pos = hn::FindFirstTrue(d, found_mask);
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    for (; i < text_len; ++i) {
+        const uint8_t char_ = text[i];
+        if (char_ == '*' || char_ == '\r' || char_ == '\n' || char_ > 127) {
+            return i;
+        }
+    }
+
+    return text_len;
+}
+
 size_t IndexOfNewlineOrNonASCIIOrHashOrAtImpl(const uint8_t* HWY_RESTRICT start_ptr, size_t search_len)
 {
     ASSERT(search_len > 0);
@@ -1433,6 +1477,7 @@ HWY_EXPORT(FirstNonAscii16Impl);
 HWY_EXPORT(FirstNonAscii8Impl);
 HWY_EXPORT(IndexOfAnyCharImpl);
 HWY_EXPORT(IndexOfCharImpl);
+HWY_EXPORT(IndexOfInterestingCharacterInMultilineCommentImpl);
 HWY_EXPORT(IndexOfInterestingCharacterInStringLiteralImpl);
 HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplBacktick);
 HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplQuote);
@@ -1512,6 +1557,11 @@ size_t highway_index_of_char(const uint8_t* HWY_RESTRICT haystack, size_t haysta
 size_t highway_index_of_interesting_character_in_string_literal(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t quote)
 {
     return HWY_DYNAMIC_DISPATCH(IndexOfInterestingCharacterInStringLiteralImpl)(text, text_len, quote);
+}
+
+size_t highway_index_of_interesting_character_in_multiline_comment(const uint8_t* HWY_RESTRICT text, size_t text_len)
+{
+    return HWY_DYNAMIC_DISPATCH(IndexOfInterestingCharacterInMultilineCommentImpl)(text, text_len);
 }
 
 size_t highway_index_of_newline_or_non_ascii(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len)

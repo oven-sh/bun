@@ -120,15 +120,19 @@ static int us_sni_ex_idx = -1;
 static int us_ctx_cache_ex_idx = -1;
 static int us_ssl_reneg_state_idx = -1;
 static int us_ssl_listener_ex_idx = -1;
-/* Set when a CTX carries user CAs: by `us_ssl_ctx_add_ca_pem` (node:tls
- * `SecureContext.addCACert`) and by the construction-time `options.ca` /
- * `ca_file_name` / `request_cert` branches of `us_ssl_ctx_build_raw`. The
- * client-attach paths — `us_internal_ssl_attach` here and Rust's `SSLWrapper`
- * (via `us_ctx_has_user_ca`) — read it to skip their per-SSL
+/* Set when a CTX carries an explicitly-managed trust store that the
+ * client-attach paths must not override. Producers and what each installs:
+ *   - `us_ssl_ctx_add_ca_pem` (node:tls `SecureContext.addCACert`): default
+ *     roots + the appended user CAs;
+ *   - `options.ca` / `ca_file_name` branches of `us_ssl_ctx_build_raw`: the
+ *     user CAs only (explicit `ca` replaces the default store, Node.js
+ *     semantics);
+ *   - `request_cert` branch of `us_ssl_ctx_build_raw`: default roots only.
+ * The client-attach paths — `us_internal_ssl_attach` here and Rust's
+ * `SSLWrapper` (via `us_ctx_has_user_ca`) — read it to skip their per-SSL
  * `SSL_set0_verify_cert_store(ssl, shared_default_roots)` override: when set,
- * the CTX's own store already carries the user CAs, and overriding would make
- * them invisible at handshake time. The pointer IS the value (NULL/!NULL),
- * so no free_func. */
+ * the CTX's own store is authoritative and overriding would make it invisible
+ * at handshake time. The pointer IS the value (NULL/!NULL), so no free_func. */
 static int us_ctx_user_ca_idx = -1;
 #ifdef _WIN32
 static INIT_ONCE us_ex_idx_once = INIT_ONCE_STATIC_INIT;
@@ -418,10 +422,11 @@ int us_ssl_ctx_add_ca_pem(SSL_CTX *ctx, const char *pem, size_t pem_len) {
   void *marked = SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_idx);
   X509_STORE *store;
   if (marked) {
-    /* CTX already carries default roots + user CAs — set by a prior
-     * `addCACert` or by the `options.ca` / `ca_file_name` / `request_cert`
-     * branches of `us_ssl_ctx_build_raw`. Append to that store instead of
-     * swapping in a fresh one, which would drop the existing CAs. */
+    /* CTX already carries an explicitly-managed trust store — default roots +
+     * user CAs from a prior `addCACert`, user CAs only from the `options.ca` /
+     * `ca_file_name` branches of `us_ssl_ctx_build_raw`, or default roots only
+     * from its `request_cert` branch. Append to that store instead of swapping
+     * in a fresh one, which would drop whatever it already holds. */
     store = SSL_CTX_get_cert_store(ctx);
   } else {
     /* First user-CA installation on this CTX: swap in the default_ca_store

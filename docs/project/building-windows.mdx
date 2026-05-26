@@ -183,3 +183,13 @@ bun run build --profile=windows-arm64-release
 Output lands in `build/debug-windows-x64/bun-debug.exe`, `build/release-windows-aarch64/bun-profile.exe` + `bun.exe`, etc. Equivalent raw flags: `bun run build --os=windows --arch=aarch64`.
 
 Cross-compiled executables are not run on the host (the `--revision` smoke test is skipped), so test them on a Windows machine or under Wine.
+
+### LTO
+
+x64 release cross builds support ThinLTO with cross-language (Rust↔C++) LTO, and CI's windows x64 cross lane builds with it by default. Locally it's opt-in:
+
+```bash
+bun run build --profile=windows-x64-release --lto=on
+```
+
+This compiles bun's C/C++ with `-flto=thin`, makes rustc emit LLVM bitcode (`-Clinker-plugin-lto`), pulls the `bun-webkit-windows-amd64-lto` ThinLTO prebuilt, and links everything with rustc's bundled `lld-link` (its LLVM is new enough to read both compilers' bitcode). There is no LTO for arm64 (no `-lto` WebKit prebuilt — LLVM's CodeView emitter can't handle ARM64 NEON tuple registers during LTO codegen) or for `--baseline`.

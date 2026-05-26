@@ -634,9 +634,13 @@ function getLinkBunStep(platform, options) {
  * Validates that bun.exe for the given arch can be built from Linux with
  * clang-cl + lld-link + an xwin Windows sysroot — baked into newer agent
  * images (.buildkite/Dockerfile), fetched at configure time on agents that
- * don't have one (scripts/build/winsysroot.ts). The produced binary is not
- * consumed by tests or release — the native Windows lanes above stay
- * authoritative — so the step is soft_fail until it has a green history.
+ * don't have one (scripts/build/winsysroot.ts). The x64 lane additionally
+ * exercises the ThinLTO + cross-language LTO configuration (the ci-release
+ * default for windows x64 cross — see config.ts), which the native Windows
+ * lanes never had: clang-cl/rustc bitcode + the -lto WebKit prebuilt linked
+ * by rustc's lld-link. The produced binary is not consumed by tests or
+ * release — the native Windows lanes above stay authoritative — so the step
+ * is soft_fail until it has a green history.
  *
  * Runs on the same amazonlinux docker image the other Linux/cross builds
  * use; `--buildkite=off` keeps the per-step artifact upload/download

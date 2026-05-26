@@ -25,11 +25,11 @@ extern "C" void Bun__SecureContextCache__set(Zig::GlobalObject* global, uint64_t
     if (obj) slot->set(key, obj);
 }
 
-// Called from Zig when a SecureContext mutates its SSL_CTX (e.g. addCACert):
-// the cache should no longer hand back the mutated cell for fresh
-// `createSecureContext(sameOptions)` calls, so drop the key. WeakGCMap takes
-// no position on whether the cell is still reachable — the original handle
-// keeps it alive via its JS ref.
+// Called from Rust (`SecureContext::add_ca_cert`) when a SecureContext mutates
+// its SSL_CTX (e.g. addCACert): the cache should no longer hand back the
+// mutated cell for fresh `createSecureContext(sameOptions)` calls, so drop the
+// key. WeakGCMap takes no position on whether the cell is still reachable — the
+// original handle keeps it alive via its JS ref.
 extern "C" void Bun__SecureContextCache__remove(Zig::GlobalObject* global, uint64_t key)
 {
     auto& slot = global->m_secureContextCache;

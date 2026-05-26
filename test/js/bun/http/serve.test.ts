@@ -1,7 +1,19 @@
 import { file, gc, Serve, serve, Server } from "bun";
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, dumpStats, isBroken, isIntelMacOS, isIPv4, isIPv6, isPosix, tls, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  dumpStats,
+  isBroken,
+  isIntelMacOS,
+  isIPv4,
+  isIPv6,
+  isPosix,
+  tempDir,
+  tls,
+  tmpdirSync,
+} from "harness";
 import { join, resolve } from "path";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
@@ -2330,7 +2342,8 @@ it("only serves /bun:info to loopback clients in development mode", async () => 
 });
 
 it.if(isPosix)("serves /bun:info over a unix socket in development mode", async () => {
-  const unix = join(tmpdirSync(), "bun-info.sock");
+  using dir = tempDir("info", {});
+  const unix = join(String(dir), "bun-info.sock");
   using server = Bun.serve({
     unix,
     development: true,

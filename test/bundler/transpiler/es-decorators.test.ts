@@ -1030,6 +1030,56 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("class declared inside another class's static block keeps native private fields", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Outer {
+          accessor a = 1;
+          static {
+            class Inner {
+              accessor b = 1;
+              #y = 0;
+              inc() {
+                return this.#y++;
+              }
+            }
+            const i = new Inner();
+            i.inc();
+            console.log(i.inc(), new Outer().a);
+          }
+        }
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("nested class static block referencing an outer private does not lower the outer class", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Outer {
+          accessor a = 1;
+          #o = 0;
+          bump() {
+            return this.#o++;
+          }
+          makeInner() {
+            return class {
+              accessor b = 2;
+              static {
+                console.log(#o in new Outer(), #o in {});
+              }
+            };
+          }
+        }
+        const o = new Outer();
+        o.bump();
+        console.log(o.bump());
+        o.makeInner();
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1\ntrue false\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("lowered private method body referencing a private auto-accessor", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         function dec(fn, ctx) {

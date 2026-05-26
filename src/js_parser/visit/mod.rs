@@ -807,6 +807,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             "only_scan_imports_and_do_not_visit must not run this."
         );
 
+        let old_static_init_depth = self.class_static_init_depth;
+        let old_static_init_private_refs = core::mem::take(&mut self.static_init_private_refs);
+        self.class_static_init_depth = 0;
+
         self.visit_ts_decorators(&mut class.ts_decorators);
 
         if let Some(name) = class.class_name {
@@ -1211,6 +1215,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // class name scope
         self.pop_scope();
+
+        let class_static_init_private_refs = core::mem::take(&mut self.static_init_private_refs);
+        self.static_init_private_refs = old_static_init_private_refs;
+        self.class_static_init_depth = old_static_init_depth;
+        if !class_static_init_private_refs.is_empty() {
+            for property in class.properties.slice() {
+                if let Some(key) = property.key
+                    && let ExprData::EPrivateIdentifier(pi) = &key.data
+                    && class_static_init_private_refs.contains_key(&pi.ref_.inner_index())
+                {
+                    self.static_init_private_refs
+                        .insert(pi.ref_.inner_index(), ());
+                }
+            }
+        }
 
         shadow_ref.get()
     }

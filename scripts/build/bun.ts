@@ -468,7 +468,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // wrapping helper.
   const shims = emitShims(n, cfg);
   const linkObjects = [...allObjects, ...rustObjects, ...windowsRes];
-  const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg), ...shims.ldflags];
+  const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
     flags: ldflags,
@@ -614,7 +614,7 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
 
   const shims = emitShims(n, cfg);
   const linkObjects = [archive, ...rustObjects, ...windowsRes];
-  const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg), ...shims.ldflags];
+  const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
     flags: ldflags,
@@ -797,13 +797,18 @@ function emitDsymutil(n: Ninja, cfg: Config, inputExe: string, exeName: string):
  * The .rc file provides:
  *   - Icon (bun.ico)
  *   - VS_VERSION_INFO resource (ProductName, FileVersion, CompanyName, ...)
+ *   - The application manifest (longPathAware + SegmentHeap) as an
+ *     RT_MANIFEST resource. Embedding it here instead of via the linker's
+ *     /MANIFEST:EMBED keeps the link independent of the linker's manifest
+ *     tooling: lld-link only handles /MANIFEST:EMBED itself when built with
+ *     libxml2 and otherwise shells out to mt.exe — rustc's bundled lld-link
+ *     (used for the cross-language-LTO links) has neither, and mt.exe does
+ *     not exist on non-Windows hosts. The resource route produces the same
+ *     RT_MANIFEST id-1 resource with any linker.
  *
  * This resource section is what rescle's ResourceUpdater modifies when
  * `bun build --compile --windows-title ...` runs. Without it, the copied
  * bun.exe has no VersionInfo to update and rescle silently does nothing.
- *
- * The manifest (longPathAware + SegmentHeap) is embedded at link time via
- * /MANIFESTINPUT — see manifestLinkFlags().
  */
 function emitWindowsResources(n: Ninja, cfg: Config): string {
   assert(cfg.windows, "emitWindowsResources is windows-only");
@@ -816,6 +821,7 @@ function emitWindowsResources(n: Ninja, cfg: Config): string {
   // substituted content hasn't changed.
   const rcTemplate = resolve(cfg.cwd, "src/windows-app-info.rc");
   const ico = resolve(cfg.cwd, "src/bun.ico");
+  const manifest = resolve(cfg.cwd, "src/bun.exe.manifest");
   const rcIn = readFileSync(rcTemplate, "utf8");
   const [major = "0", minor = "0", patch = "0"] = cfg.version.split(".");
   const versionWithTag = cfg.canary ? `${cfg.version}-canary.${cfg.canaryRevision}` : cfg.version;
@@ -826,7 +832,8 @@ function emitWindowsResources(n: Ninja, cfg: Config): string {
     .replace(/@Bun_VERSION_MINOR@/g, minor)
     .replace(/@Bun_VERSION_PATCH@/g, patch)
     .replace(/@Bun_VERSION_WITH_TAG@/g, versionWithTag)
-    .replace(/@BUN_ICO_PATH@/g, slash(ico));
+    .replace(/@BUN_ICO_PATH@/g, slash(ico))
+    .replace(/@BUN_MANIFEST_PATH@/g, slash(manifest));
   const rcFile = resolve(cfg.buildDir, "windows-app-info.rc");
   writeIfChanged(rcFile, rcOut);
 
@@ -860,10 +867,10 @@ function emitWindowsResources(n: Ninja, cfg: Config): string {
     outputs: [resFile],
     rule: "rc",
     inputs: [rcFile],
-    // .ico is embedded by rc at compile time — rebuild if it changes.
-    // The template is NOT tracked here: it's substituted at configure
-    // time, so template edits need a reconfigure (happens rarely).
-    implicitInputs: [ico],
+    // .ico and the manifest are embedded by rc at compile time — rebuild if
+    // they change. The template is NOT tracked here: it's substituted at
+    // configure time, so template edits need a reconfigure (happens rarely).
+    implicitInputs: [ico, manifest],
     vars: { rcflags: rcFlags.join(" ") },
   });
 
@@ -901,24 +908,13 @@ function windowsSysrootIncludeDirs(winsysroot: string): string[] {
 }
 
 /**
- * Linker flags to embed bun.exe.manifest into the executable.
- * The manifest enables longPathAware (paths > MAX_PATH) and SegmentHeap
- * (Windows 10+ low-fragmentation heap).
- */
-function manifestLinkFlags(cfg: Config): string[] {
-  if (!cfg.windows) return [];
-  const manifest = resolve(cfg.cwd, "src/bun.exe.manifest");
-  return [`/MANIFEST:EMBED`, `/MANIFESTINPUT:${manifest}`];
-}
-
-/**
  * Files the linker reads via ldflags that ninja should track for relinking
- * (symbol lists, linker script, manifest). CMake's LINK_DEPENDS equivalent.
+ * (symbol lists, linker script). CMake's LINK_DEPENDS equivalent.
+ * (The Windows manifest is no longer a link input — it's embedded by the
+ * resource compiler; see emitWindowsResources.)
  */
 function linkImplicitInputs(cfg: Config): string[] {
-  const files = linkDepends(cfg);
-  if (cfg.windows) files.push(resolve(cfg.cwd, "src/bun.exe.manifest"));
-  return files;
+  return linkDepends(cfg);
 }
 
 // ───────────────────────────────────────────────────────────────────────────

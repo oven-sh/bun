@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 test("utf16-le buffer", () => {
   const twoByteString = new Array(16)
@@ -31,4 +31,50 @@ d000d100d200d300d400d500d600d700d800d900da00db00dc00dd00de00df00
 e000e100e200e300e400e500e600e700e800e900ea00eb00ec00ed00ee00ef00
 f000f100f200f300f400f500f600f700f800f900fa00fb00fc00fd00fe00ff00`,
   );
+});
+
+// Buffer.from(latin1String, "utf16le" | "ucs2") widens each Latin-1 byte to
+// one little-endian UTF-16 code unit. A JS string stays Latin-1-backed (8-bit)
+// when every code point is <= U+00FF, so these inputs exercise the byte-pair
+// widening loop in Bun__encoding__constructFromLatin1.
+describe("latin1 -> UTF-16 widening (Buffer.from)", () => {
+  for (const encoding of ["utf16le", "utf-16le", "ucs2", "ucs-2"] as const) {
+    describe(encoding, () => {
+      test("empty string produces an empty buffer", () => {
+        expect(Buffer.from("", encoding)).toEqual(Buffer.alloc(0));
+      });
+
+      test("single byte widens to one little-endian code unit", () => {
+        // 'A' (0x41) -> 0x41 0x00
+        expect([...Buffer.from("A", encoding)]).toEqual([0x41, 0x00]);
+      });
+
+      test("high bytes (0x80-0xFF) zero-extend, not sign-extend", () => {
+        // \u00ff stays 8-bit; must become ff 00, not ff ff.
+        expect([...Buffer.from("\x80\xff", encoding)]).toEqual([0x80, 0x00, 0xff, 0x00]);
+      });
+
+      test("every Latin-1 byte 0x00-0xFF widens correctly", () => {
+        const all = Array.from({ length: 256 }, (_, i) => String.fromCharCode(i)).join("");
+        const buf = Buffer.from(all, encoding);
+        expect(buf.length).toBe(512);
+        const expected = Buffer.alloc(512);
+        for (let i = 0; i < 256; i++) expected[i * 2] = i; // low byte = i, high byte = 0
+        expect(buf).toEqual(expected);
+      });
+
+      test("long input widens every chunk (round-trips back to the source)", () => {
+        // Long enough to span many byte-pairs; all code points <= 0xFF so the
+        // string stays 8-bit and takes the widening path.
+        const latin1 = Buffer.alloc(1000, 0xe9).toString("latin1"); // "é" * 1000
+        const buf = Buffer.from(latin1, encoding);
+        expect(buf.length).toBe(2000);
+        for (let i = 0; i < 1000; i++) {
+          expect(buf[i * 2]).toBe(0xe9);
+          expect(buf[i * 2 + 1]).toBe(0x00);
+        }
+        expect(buf.toString("utf16le")).toBe(latin1);
+      });
+    });
+  }
 });

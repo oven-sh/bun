@@ -82,6 +82,28 @@ describe("structuredClone with Blob and File", () => {
       expect(cloned.level1.level2.level3.blob.size).toBe(blob.size);
       expect(cloned.level1.level2.level3.blob.type).toBe(blob.type);
     });
+
+    test("sliced Blob transmits only the sliced bytes", async () => {
+      const blob = new Blob(["header-PAYLOAD-trailer"]);
+      const slice = blob.slice(7, 14);
+
+      const wire = Buffer.from(serialize(slice));
+      expect(wire.includes("PAYLOAD")).toBe(true);
+      expect(wire.includes("header-")).toBe(false);
+      expect(wire.includes("-trailer")).toBe(false);
+
+      // Serializing must not mutate the live slice.
+      expect(slice.size).toBe(7);
+      expect(await slice.text()).toBe("PAYLOAD");
+
+      const cloned = structuredClone(slice);
+      expect(cloned.size).toBe(7);
+      expect(await cloned.text()).toBe("PAYLOAD");
+
+      const roundTripped = deserialize(serialize(slice));
+      expect(roundTripped.size).toBe(7);
+      expect(await roundTripped.text()).toBe("PAYLOAD");
+    });
   });
 
   describe("File structured clone", () => {
@@ -309,12 +331,13 @@ describe("structuredClone with Blob and File", () => {
     // child process so that the pre-fix crash surfaces as an ordinary test
     // failure instead of killing the test runner.
 
-    // Locate the offset field once. Do it by serializing a sliced blob with a
-    // sentinel offset and comparing against a zero-offset payload; keeps the
-    // test robust against wire-format header changes.
+    // Locate the offset field once. Memory-backed blobs always serialize a
+    // zero offset (the payload already is the slice), so plant a sentinel
+    // offset with a sliced file-backed blob and compare against a zero-offset
+    // payload; keeps the test robust against wire-format header changes.
     const marker = 0xa5;
     const baseline = new Uint8Array(serialize(new Blob([Buffer.alloc(4, marker)])));
-    const sentinel = new Uint8Array(serialize(new Blob([Buffer.alloc(8, marker)]).slice(4)));
+    const sentinel = new Uint8Array(serialize(Bun.file(import.meta.path).slice(4)));
     let offsetFieldIndex = -1;
     for (let i = 0; i + 8 <= sentinel.length; i++) {
       if (

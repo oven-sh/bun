@@ -945,6 +945,14 @@ export const linkerFlags: Flag[] = [
     desc: "Windows cross-compile: MSVC CRT + Windows SDK library search root (xwin splat)",
   },
   {
+    // EXPERIMENT (do not merge): run the ThinLTO backends at -O0 to test
+    // whether the windows x64 JS misbehaviour comes from the thin-backend
+    // O1+ pipeline (as it did on linux x86-64) or from something else.
+    flag: "/opt:lldlto=0",
+    when: c => c.windows && c.lto,
+    desc: "EXPERIMENT: ThinLTO backend opt level 0",
+  },
+  {
     flag: ["/STACK:0x1200000,0x200000", "/errorlimit:0"],
     when: c => c.windows,
     desc: "18MB stack reserve (JSC uses deep recursion), no error limit",

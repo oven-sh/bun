@@ -68,6 +68,15 @@ pub struct InternalStateFlags {
     /// pool/close decision — that decision needs `hostname` still set to know
     /// the handshake was verified against an override.
     pub clear_hostname_on_redirect: bool,
+    /// Set when the TLS handshake completed but the user-supplied JS
+    /// `checkServerIdentity` callback has not yet approved the peer
+    /// certificate. While set, `on_writable` must not write any HTTP
+    /// application data to the socket and `on_data` must treat incoming
+    /// application data as unexpected. Cleared by
+    /// `HTTPClient::resume_after_cert_check` once the JS thread reports the
+    /// check passed (and implicitly by `InternalState::reset()` on every
+    /// redirect hop / failure, so each hop re-parks independently).
+    pub is_waiting_for_cert_check: bool,
 }
 
 impl InternalStateFlags {
@@ -81,6 +90,7 @@ impl InternalStateFlags {
             is_libdeflate_fast_path_disabled: false,
             resend_request_body_on_redirect: false,
             clear_hostname_on_redirect: false,
+            is_waiting_for_cert_check: false,
         }
     }
 }

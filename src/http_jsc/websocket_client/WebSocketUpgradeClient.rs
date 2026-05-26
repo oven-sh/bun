@@ -1604,14 +1604,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // microtasks run after `open`, matching node. Drops at function end,
         // after `open` and the trailing derefs (which may free `this`; the
         // guard holds only the VM-owned loop pointer, not `this`).
-        //
-        // SAFETY: `VirtualMachine::get().event_loop()` is the live VM-owned loop
-        // pointer, valid for the process lifetime.
-        let _event_loop_scope = unsafe {
-            bun_jsc::event_loop::EventLoop::enter_scope(
-                bun_jsc::virtual_machine::VirtualMachine::get().event_loop(),
-            )
-        };
+        let _event_loop_scope = bun_jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope();
 
         // SAFETY: short-lived read of `outgoing_websocket`.
         if let Some(ws) = unsafe { (*this).outgoing_websocket } {

@@ -1,4 +1,5 @@
-import { bunEnv, bunExe } from "harness";
+import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -20,6 +21,12 @@ import wt, {
   Worker,
   workerData,
 } from "worker_threads";
+
+// Several tests spawn a fresh bun subprocess (sometimes one that itself spawns
+// nested workers), which is much slower to start up under the debug/ASAN build
+// and can exceed the 5s default timeout. Give the whole file more headroom
+// there; it doesn't affect the fast in-process tests.
+if (isDebug || isASAN) setDefaultTimeout(60_000);
 
 test("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {

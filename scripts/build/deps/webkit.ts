@@ -4,12 +4,12 @@
  * From https://github.com/oven-sh/WebKit releases.
  */
 // TEMPORARY: preview build of oven-sh/WebKit#239 (Windows artifacts
-// cross-compiled on Linux + the new bun-webkit-windows-amd64-lto ThinLTO
-// variant). Same code as main cf8fb22b plus the Windows-only workflow
-// changes — every non-Windows artifact is built from the identical
-// configuration. Swap to the oven-sh/WebKit main commit once #239 merges,
-// before this PR lands.
-export const WEBKIT_VERSION = "autobuild-preview-pr-239-245e88fc";
+// cross-compiled on Linux, the new bun-webkit-windows-amd64-lto ThinLTO
+// variant, and the filtered + per-item-zstd ICU data table). Same code as
+// main cf8fb22b plus the Windows-only workflow changes — every non-Windows
+// artifact is built from the identical configuration. Swap to the
+// oven-sh/WebKit main commit once #239 merges, before this PR lands.
+export const WEBKIT_VERSION = "autobuild-preview-pr-239-bca1d74d";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

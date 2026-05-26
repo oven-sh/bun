@@ -3,8 +3,8 @@
 const EventEmitter = require("node:events");
 const { getValidatedPath, throwIfNullBytesInFileName } = require("internal/validators");
 
-// `fs` points to the return value of `node_fs_binding.zig`'s `createBinding` function.
-const { fs } = require("node:fs/promises").$data;
+// The native `node:fs` binding, shared via `internal/fs/binding`.
+const fs = require("internal/fs/binding");
 
 /** Implemented in `node_fs_stat_watcher.zig` */
 interface StatWatcherHandle {

@@ -14,9 +14,8 @@ const kEmptyObject = Object.freeze(Object.create(null));
 
 const isDate = types.isDate;
 
-// Private exports
-// `fs` points to the return value of `node_fs_binding.zig`'s `createBinding` function.
-const { fs } = promises.$data;
+// The native `node:fs` binding, shared via `internal/fs/binding`.
+const fs = require("internal/fs/binding");
 
 const constants = $processBindingConstants.fs;
 var _lazyGlob;

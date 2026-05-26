@@ -25,6 +25,8 @@ use bun_sys::FdDirExt;
 // TODO(port): narrow error set
 type Error = bun_core::Error;
 
+const MAX_DECOMPRESSED_TARBALL_SIZE: usize = 1024 * 1024 * 1024;
+
 pub struct ExtractTarball {
     pub name: StringOrTinyString,
     pub resolution: Resolution,
@@ -359,6 +361,7 @@ impl ExtractTarball {
                 zlib_pool.list.clear();
                 let mut zlib_entry =
                     Zlib::ZlibReaderArrayList::init(tgz_bytes, &mut zlib_pool.list)?;
+                zlib_entry.max_output_size = MAX_DECOMPRESSED_TARBALL_SIZE;
                 if let Err(err) = zlib_entry.read_all(true) {
                     log.add_error_fmt(
                         None,

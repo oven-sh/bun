@@ -102,7 +102,8 @@ impl RendererImpl for ImageUrlCollector {
         // detail.href is a slice into the parser's reusable buffer, which
         // is freed when renderWithRenderer returns (p.deinit). Dupe it so
         // callers can safely read collector.urls after rendering finishes.
-        let owned = Box::<[u8]>::from(detail.href);
+        let mut scratch: Vec<u8> = Vec::new();
+        let owned = Box::<[u8]>::from(sanitize_source_text(detail.href, &mut scratch));
         self.urls.push(owned);
         Ok(())
     }

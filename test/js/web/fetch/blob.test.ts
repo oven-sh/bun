@@ -486,11 +486,13 @@ test("Blob.json()/.text() on odd-length/odd-aligned UTF-16LE+BOM does not abort"
     const evenJson = Buffer.concat([Buffer.from([0xFF, 0xFE]), Buffer.from(JSON.stringify({ a: 1 }), "utf16le")]);
     // Odd address: pad 1 byte then .slice(1) so the view starts at base+1.
     const misaligned = Buffer.concat([Buffer.from([0x00, 0xFF, 0xFE]), Buffer.from("hi", "utf16le")]);
+    const misalignedJson = Buffer.concat([Buffer.from([0x00, 0xFF, 0xFE]), Buffer.from(JSON.stringify({ a: 1 }), "utf16le")]);
     const j = await new Blob([oddJson]).json();
     const t = await new Blob([oddText]).text();
     const e = await new Blob([evenJson]).json();
     const m = await new Blob([misaligned]).slice(1).text();
-    process.stdout.write(JSON.stringify(j) + "|" + JSON.stringify(t) + "|" + JSON.stringify(e) + "|" + JSON.stringify(m));
+    const mj = await new Blob([misalignedJson]).slice(1).json();
+    process.stdout.write(JSON.stringify(j) + "|" + JSON.stringify(t) + "|" + JSON.stringify(e) + "|" + JSON.stringify(m) + "|" + JSON.stringify(mj));
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", src],
@@ -500,6 +502,6 @@ test("Blob.json()/.text() on odd-length/odd-aligned UTF-16LE+BOM does not abort"
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout).toBe(`{"a":1}|"hi"|{"a":1}|"hi"`);
+  expect(stdout).toBe(`{"a":1}|"hi"|{"a":1}|"hi"|{"a":1}`);
   expect(exitCode).toBe(0);
 });

@@ -150,4 +150,29 @@ describe("ws client upgrade event", () => {
     await once(ws, "close");
     wss.close();
   });
+
+  // Consequence of the ordering above: a `process.nextTick(() => ws.send(...))`
+  // scheduled from the `upgrade` handler runs after `open`, so the socket is
+  // OPEN and the send is delivered (rather than hitting InvalidStateError while
+  // still CONNECTING).
+  it("delivers a send scheduled from the upgrade handler", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    wss.on("connection", server => {
+      server.on("message", data => resolve(data.toString()));
+    });
+
+    const ws = new WebSocket("ws://localhost:" + wss.address().port);
+    ws.on("upgrade", () => {
+      process.nextTick(() => ws.send("from-upgrade"));
+    });
+    ws.on("error", reject);
+
+    const received = await promise;
+    expect(received).toBe("from-upgrade");
+
+    ws.close();
+    await once(ws, "close");
+    wss.close();
+  });
 });

@@ -667,6 +667,10 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     JSValue workerData = jsNull();
     JSValue threadId = jsNumber(0);
     JSMap* environmentData = nullptr;
+    // On the main thread this stays null, so the module-level `resourceLimits`
+    // export is `{}` (matching Node). Inside a worker it carries the limits the
+    // parent passed to the constructor; worker_threads.ts fills Node's defaults.
+    JSValue resourceLimits = jsNull();
 
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
         auto& options = worker->options();
@@ -699,6 +703,19 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 
         // Main thread starts at 1
         threadId = jsNumber(worker->clientIdentifier() - 1);
+
+        const auto& limits = options.resourceLimits;
+        JSObject* limitsObject = constructEmptyObject(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (limits.maxYoungGenerationSizeMb)
+            limitsObject->putDirect(vm, Identifier::fromString(vm, "maxYoungGenerationSizeMb"_s), jsNumber(*limits.maxYoungGenerationSizeMb));
+        if (limits.maxOldGenerationSizeMb)
+            limitsObject->putDirect(vm, Identifier::fromString(vm, "maxOldGenerationSizeMb"_s), jsNumber(*limits.maxOldGenerationSizeMb));
+        if (limits.codeRangeSizeMb)
+            limitsObject->putDirect(vm, Identifier::fromString(vm, "codeRangeSizeMb"_s), jsNumber(*limits.codeRangeSizeMb));
+        if (limits.stackSizeMb)
+            limitsObject->putDirect(vm, Identifier::fromString(vm, "stackSizeMb"_s), jsNumber(*limits.stackSizeMb));
+        resourceLimits = limitsObject;
     }
     if (!environmentData) {
         environmentData = JSMap::create(vm, globalObject->mapStructure());
@@ -707,12 +724,13 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     ASSERT(environmentData);
     globalObject->setNodeWorkerEnvironmentData(environmentData);
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 4);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 5);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
     array->putDirectIndex(globalObject, 2, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 3, environmentData);
+    array->putDirectIndex(globalObject, 4, resourceLimits);
     return array;
 }
 

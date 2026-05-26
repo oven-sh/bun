@@ -7,6 +7,18 @@
 
 namespace WebCore {
 
+// Node's `resourceLimits` worker option. Bun does not enforce these limits
+// (JSC has no V8-style per-context heap cap), but they are surfaced through
+// `worker.resourceLimits` and the module-level `resourceLimits` export inside
+// the worker so the documented API shape matches Node. Each field is nullopt
+// when the user did not pass it; worker_threads.ts fills in Node's defaults.
+struct WorkerResourceLimits {
+    std::optional<double> maxYoungGenerationSizeMb;
+    std::optional<double> maxOldGenerationSizeMb;
+    std::optional<double> codeRangeSizeMb;
+    std::optional<double> stackSizeMb;
+};
+
 struct WorkerOptions {
     enum class Kind : uint8_t {
         // Created by the global Worker constructor
@@ -34,6 +46,7 @@ struct WorkerOptions {
     Vector<String> argv;
     // If nullopt, inherit execArgv from the parent thread
     std::optional<Vector<String>> execArgv;
+    WorkerResourceLimits resourceLimits;
 };
 
 } // namespace WebCore

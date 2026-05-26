@@ -278,8 +278,11 @@ impl SecureContext {
         // addCACert already evicted us; a subsequent createSecureContext with
         // the same digest may have installed a *different* cell. Mirror the
         // `entry.ctx == ctx` guard in `SSLContextCache::invalidate`.
-        let key =
-            u64::from_le_bytes(self.digest[0..8].try_into().expect("infallible: size matches"));
+        let key = u64::from_le_bytes(
+            self.digest[0..8]
+                .try_into()
+                .expect("infallible: size matches"),
+        );
         if cpp::Bun__SecureContextCache__get(global, key) == callframe.this() {
             cpp::Bun__SecureContextCache__remove(global, key);
         }

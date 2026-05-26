@@ -1717,7 +1717,15 @@ impl<'a> HTTPClient<'a> {
         ) {
             return false;
         }
+        if self.has_tls_options_unsupported_by_h3() {
+            return false;
+        }
         h3_alt_svc_enabled()
+    }
+
+    fn has_tls_options_unsupported_by_h3(&self) -> bool {
+        self.signals.get(signals::Field::CertErrors)
+            || self.tls_props.as_ref().is_some_and(|tls| tls.get().requires_custom_request_ctx)
     }
 
     pub fn first_call<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
@@ -2503,6 +2511,11 @@ impl<'a> HTTPClient<'a> {
                 return;
             }
             if self.http_proxy.is_some() || self.unix_socket_path.slice().len() > 0 {
+                self.fail(err!(HTTP3Unsupported));
+                self.complete_connecting_process();
+                return;
+            }
+            if self.has_tls_options_unsupported_by_h3() {
                 self.fail(err!(HTTP3Unsupported));
                 self.complete_connecting_process();
                 return;

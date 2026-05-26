@@ -3135,12 +3135,12 @@ describe("binaries", () => {
 
     const err = await stderr.text();
     expect(err).not.toContain("error:");
-    expect(await exited).toBe(0);
 
     expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(
       join("..", "z-direct-claim", "direct.js"),
     );
     expect(await exists(join(packageDir, "node_modules", "what-bin", "what-bin.js"))).toBeTrue();
+    expect(await exited).toBe(0);
   });
 
   test("workspace package wins a contested bin name", async () => {
@@ -3182,12 +3182,12 @@ describe("binaries", () => {
 
     const err = await stderr.text();
     expect(err).not.toContain("error:");
-    expect(await exited).toBe(0);
 
     expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(
       join("..", "z-workspace-claim", "workspace.js"),
     );
     expect(await exists(join(packageDir, "node_modules", "what-bin", "what-bin.js"))).toBeTrue();
+    expect(await exited).toBe(0);
   });
 });
 

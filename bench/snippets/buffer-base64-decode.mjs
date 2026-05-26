@@ -47,7 +47,7 @@ bench("Buffer.from 64 KiB base64 with 1% garbage bytes", () => {
   Buffer.from(b64_64K_garbage, "base64");
 });
 
-bench("Buffer.from 684-char base64url (512 bytes)", () => {
+bench(`Buffer.from ${b64url_512.length}-char base64url (512 bytes)`, () => {
   Buffer.from(b64url_512, "base64url");
 });
 

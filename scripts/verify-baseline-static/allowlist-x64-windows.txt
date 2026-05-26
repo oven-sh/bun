@@ -712,6 +712,15 @@ __std_reverse_trivially_swappable_8                                             
 `anonymous namespace'::__std_minmax_impl<3,`anonymous namespace'::_Minmax_traits_8_avx,1>                 [AVX, AVX2]
 `anonymous namespace'::__std_minmax_disp<1,`anonymous namespace'::_Minmax_traits_8,0>                     [AVX512F, AVX512VL]
 `anonymous namespace'::__std_minmax_impl<1,`anonymous namespace'::_Minmax_traits_8_avx,0>                 [AVX, AVX2, AVX512F, AVX512VL]
+# Same functions by their exported flat names: which spelling the PDB records
+# depends on the toolchain (the cross-compiled clang-cl PDB resolves the
+# exported symbol, the native one the inner template) — allowlist both forms.
+__std_find_trivial_1                                                                                       [AVX, AVX2]
+__std_find_trivial_2                                                                                       [AVX, AVX2]
+__std_find_trivial_4                                                                                       [AVX, AVX2]
+__std_find_trivial_8                                                                                       [AVX, AVX2, LZCNT]
+__std_min_8u                                                                                               [AVX, AVX2, AVX512F, AVX512VL]
+__std_minmax_8i                                                                                            [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------
@@ -722,6 +731,10 @@ __remainder_piby2_fma3      [AVX, FMA]
 __remainder_piby2_fma3_bdl  [AVX, FMA]
 _handle_nan_fma             [AVX]
 _handle_nanf_fma            [AVX]
+# `pow` itself (not just pow_fma): the UCRT's generic entry tail-calls into
+# the FMA3 path behind the same __use_fma3_lib/__isa_available check; the
+# cross-compiled link attributes those blocks to `pow` in the PDB.
+pow                         [AVX, FMA]
 acos_fma                    [AVX, FMA]
 acosf_fma                   [AVX, FMA]
 asin_fma                    [AVX, FMA]
@@ -798,6 +811,11 @@ inflate_fast_avx2           [AVX, AVX2, BMI2]
 longest_match_avx2          [AVX, AVX2, BMI2]
 longest_match_slow_avx2     [AVX, AVX2, BMI2]
 slide_hash_avx2             [AVX, AVX2, BMI2]
+# Static helpers from chunkset_tpl.h / compare256: only called from the
+# functable-dispatched *_avx2/*_avx512 kernels above, but the cross-compiled
+# PDB gives them their own records instead of folding them into the callers.
+GET_CHUNK_MAG               [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
+gen_half_mask               [BMI2]
 # has_avx512_common (F+DQ+BW+VL+BMI2)
 adler32_avx512              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
 adler32_fold_copy_avx512    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]

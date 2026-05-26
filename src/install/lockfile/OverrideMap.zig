@@ -187,7 +187,26 @@ pub fn parseCount(
             return;
 
         for (resolutions.expr.data.e_object.properties.slice()) |entry| {
-            builder.count(entry.key.?.asString(lockfile.allocator).?);
+            const k = entry.key.?.asString(lockfile.allocator).?;
+            builder.count(k);
+            // Detect scoped "parent/child" keys — the parent is additionally
+            // appended to the builder in parseFromResolutions (via
+            // builder.append(String, pc.parent)).
+            if (strings.indexOfChar(k, '/')) |first_slash| {
+                var parent_end: ?usize = null;
+                if (k.len > 0 and k[0] == '@') {
+                    if (first_slash < k.len - 1) {
+                        if (strings.indexOfChar(k[first_slash + 1 ..], '/')) |rel| {
+                            parent_end = first_slash + 1 + rel;
+                        }
+                    }
+                } else {
+                    parent_end = first_slash;
+                }
+                if (parent_end) |end| {
+                    builder.count(k[0..end]);
+                }
+            }
             builder.count(entry.value.?.asString(lockfile.allocator) orelse continue);
         }
     }

@@ -3,15 +3,6 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 
-use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
-
-// Zig `bun.bit_set.StaticBitSet(256)` resolves to `ArrayBitSet(usize, 256)`
-// (size > @bitSizeOf(usize)). Stable Rust cannot branch a type on a const
-// generic, so per bit_set.rs guidance we pick `ArrayBitSet` directly. The
-// inline scanner in inlines.rs depends on `is_set()` being real — a no-op
-// stub here makes every byte fall through the fast path and disables all
-// inline-span recognition (emphasis, links, code, entities, breaks).
-pub type MarkCharMap = ArrayBitSet<256, { num_masks_for(256) }>;
 use bun_core::StackCheck;
 
 use super::helpers;
@@ -26,6 +17,38 @@ use crate::RenderOptions; // Zig: `root.RenderOptions` (root.zig → crate lib.r
 // aliases, so they live at module scope as `parser::EmphDelim` etc.
 pub use super::inlines::{EmphDelim, HtmlScanMemo, MAX_EMPH_MATCHES};
 pub use super::ref_defs::RefDef;
+
+// Zig used `bun.bit_set.StaticBitSet(256)`. The Rust port keeps a byte-per-char
+// table instead of a bitset: the inline scanner skips runs of non-mark bytes
+// eight at a time by OR-ing table entries (helpers::next_marked_byte), which a
+// bitset cannot do without per-byte shift/mask work. The inline scanner in
+// inlines.rs depends on `is_set()` being real — a no-op stub here makes every
+// byte fall through the fast path and disables all inline-span recognition
+// (emphasis, links, code, entities, breaks).
+pub struct MarkCharMap {
+    table: [u8; 256],
+}
+
+impl MarkCharMap {
+    pub fn init_empty() -> MarkCharMap {
+        MarkCharMap { table: [0; 256] }
+    }
+
+    #[inline]
+    pub fn set(&mut self, idx: usize) {
+        self.table[idx] = 1;
+    }
+
+    #[inline]
+    pub fn is_set(&self, idx: usize) -> bool {
+        self.table[idx] != 0
+    }
+
+    #[inline]
+    pub fn table(&self) -> &[u8; 256] {
+        &self.table
+    }
+}
 
 /// Parser context holding all state during parsing.
 // PORT NOTE: `text` is a caller-owned borrow for the parser's lifetime.
@@ -177,6 +200,14 @@ impl<'a> Parser<'a> {
 
     fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Parser<'a> {
         let size: OFF = OFF::try_from(text.len()).expect("int cast");
+        // block_bytes holds one BlockHeader per block plus one VerbatimLine per
+        // line, which works out to a fraction of the source size for typical
+        // documents. Reserving up front avoids growth-reallocations on the hot
+        // path; the cap keeps the speculative allocation bounded.
+        let mut block_bytes = Vec::new();
+        let _ = block_bytes.try_reserve((text.len() / 2 + 128).min(4 * 1024 * 1024));
+        let mut current_block_lines = Vec::new();
+        let _ = current_block_lines.try_reserve(16);
         let mut p = Parser {
             text,
             size,
@@ -193,14 +224,14 @@ impl<'a> Parser<'a> {
             mark_char_map: MarkCharMap::init_empty(),
             marks: Vec::new(),
             containers: Vec::new(),
-            block_bytes: Vec::new(),
+            block_bytes,
             buffer: Vec::new(),
             emph_delims: Vec::new(),
             bracket_pairs: Vec::new(),
             html_scan_memo: Cell::new(HtmlScanMemo::EMPTY),
             n_containers: 0,
             current_block: None,
-            current_block_lines: Vec::new(),
+            current_block_lines,
             opener_stacks: [(); NUM_OPENER_STACKS].map(|_| OpenerStack::default()),
             unresolved_link_head: -1,
             unresolved_link_tail: -1,
@@ -330,7 +361,7 @@ pub fn render_to_html(
     text: &[u8],
     flags: Flags,
     render_opts: RenderOptions,
-) -> Result<Box<[u8]>, ParserError> {
+) -> Result<Vec<u8>, ParserError> {
     // Skip UTF-8 BOM
     let input = helpers::skip_utf8_bom(text);
 
@@ -349,7 +380,7 @@ pub fn render_to_html(
     }
     drop(parser);
 
-    Ok(html_renderer.to_owned_slice()?)
+    Ok(html_renderer.take_output()?)
 }
 
 /// Parse and render using a custom renderer. The caller provides its own

@@ -597,9 +597,7 @@ impl Parser<'_> {
         }
 
         // Scan for end of line
-        while off < self.size && !helpers::is_newline(self.text[off as usize]) {
-            off += 1;
-        }
+        off = OFF::try_from(helpers::find_line_end(self.text, off as usize)).expect("int cast");
 
         line.end = off;
 

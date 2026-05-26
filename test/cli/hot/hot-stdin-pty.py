@@ -42,11 +42,15 @@ def wait_for(pattern, timeout=10):
             try:
                 data = os.read(master_fd, 4096)
             except OSError:
+                # Linux raises EIO once the child side of the PTY is closed.
                 break
-            if data:
-                buffer += data
-                sys.stdout.buffer.write(data)
-                sys.stdout.buffer.flush()
+            if not data:
+                # macOS/BSD report EOF as an empty read instead; bail out so
+                # we don't spin on a closed fd until the deadline.
+                break
+            buffer += data
+            sys.stdout.buffer.write(data)
+            sys.stdout.buffer.flush()
     return rx.search(buffer) is not None
 
 

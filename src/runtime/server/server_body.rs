@@ -2800,7 +2800,9 @@ where
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
         jsc::mark_binding!();
-        if !Self::remote_address_is_loopback(resp) {
+        if !matches!(self.config.address, server_config::Address::Unix(_))
+            && !Self::remote_address_is_loopback(resp)
+        {
             req.set_yield(true);
             return;
         }

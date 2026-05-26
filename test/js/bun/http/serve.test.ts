@@ -2328,3 +2328,19 @@ it("only serves /bun:info to loopback clients in development mode", async () => 
   expect(externalText).not.toContain("bun_version");
   expect(externalRes.status).toBe(200);
 });
+
+it.if(isPosix)("serves /bun:info over a unix socket in development mode", async () => {
+  const unix = join(tmpdirSync(), "bun-info.sock");
+  using server = Bun.serve({
+    unix,
+    development: true,
+    fetch() {
+      return new Response("handled by fetch");
+    },
+  });
+
+  const res = await fetch("http://localhost/bun:info", { unix });
+  const text = await res.text();
+  expect(text).toContain("bun_version");
+  expect(res.status).toBe(200);
+});

@@ -2165,6 +2165,9 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name()) => {
+                    if !self.flags.is_streaming_request_body {
+                        continue;
+                    }
                     // We don't want to override chunked encoding header if it was set by the user
                     if will_append {
                         add_transfer_encoding = false;

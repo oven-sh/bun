@@ -910,6 +910,31 @@ const chunked_encoded_header = picohttp.Header{ .name = "Transfer-Encoding", .va
 const connection_header = picohttp.Header{ .name = "Connection", .value = "keep-alive" };
 const accept_header = picohttp.Header{ .name = "Accept", .value = "*/*" };
 
+const ConnectionDirective = enum {
+    none,
+    keep_alive,
+    close,
+};
+
+fn connectionDirective(value: []const u8) ConnectionDirective {
+    var saw_keep_alive = false;
+    var tokens = std.mem.splitScalar(u8, value, ',');
+
+    while (tokens.next()) |raw_token| {
+        const token = std.mem.trim(u8, raw_token, " \t");
+
+        if (std.ascii.eqlIgnoreCase(token, "close")) {
+            return .close;
+        }
+
+        if (std.ascii.eqlIgnoreCase(token, "keep-alive")) {
+            saw_keep_alive = true;
+        }
+    }
+
+    return if (saw_keep_alive) .keep_alive else .none;
+}
+
 const accept_encoding_no_compression = "identity";
 const accept_encoding_compression = "gzip, deflate, br, zstd";
 const accept_encoding_header_compression = picohttp.Header{ .name = "Accept-Encoding", .value = accept_encoding_compression };
@@ -977,10 +1002,16 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
                 if (will_append) {
                     override_connection_header = true;
                     const connection_value = this.headerStr(header_values[i]);
-                    if (std.ascii.eqlIgnoreCase(connection_value, "close")) {
-                        this.flags.disable_keepalive = true;
-                    } else if (std.ascii.eqlIgnoreCase(connection_value, "keep-alive")) {
-                        this.flags.disable_keepalive = false;
+                    switch (connectionDirective(connection_value)) {
+                        .close => {
+                            this.flags.disable_keepalive = true;
+                        },
+                        .keep_alive => {
+                            if (!this.flags.disable_keepalive) {
+                                this.flags.disable_keepalive = false;
+                            }
+                        },
+                        .none => {},
                     }
                 }
             },
@@ -2906,11 +2937,18 @@ pub fn handleResponseMetadata(
             },
             hashHeaderConst("Connection") => {
                 if (response.status_code >= 200 and response.status_code <= 299) {
-                    // HTTP headers are case-insensitive (RFC 7230)
-                    if (std.ascii.eqlIgnoreCase(header.value, "close")) {
-                        this.state.flags.allow_keepalive = false;
-                    } else if (std.ascii.eqlIgnoreCase(header.value, "keep-alive")) {
-                        this.state.flags.allow_keepalive = true;
+                    // Connection is a comma-separated token list; `close`
+                    // must win over `keep-alive` if both are present.
+                    switch (connectionDirective(header.value)) {
+                        .close => {
+                            this.state.flags.allow_keepalive = false;
+                        },
+                        .keep_alive => {
+                            if (this.state.flags.allow_keepalive) {
+                                this.state.flags.allow_keepalive = true;
+                            }
+                        },
+                        .none => {},
                     }
                 }
             },

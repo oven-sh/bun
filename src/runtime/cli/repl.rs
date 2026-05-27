@@ -287,7 +287,7 @@ impl History {
             content.push(b'\n');
         }
 
-        let file = match sys::open_a(path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o644) {
+        let file = match sys::open_a(path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o600) {
             sys::Result::Ok(fd) => sys::File::from_fd(fd),
             sys::Result::Err(_) => return,
         };

@@ -1443,7 +1443,12 @@ pub fn open_entry_parent_nofollow(
         return Ok((None, leaf));
     }
 
-    match File::openat(root_fd, parent, O::RDONLY | O::DIRECTORY | O::NOFOLLOW_ANY, 0) {
+    match File::openat(
+        root_fd,
+        parent,
+        O::RDONLY | O::DIRECTORY | O::NOFOLLOW_ANY,
+        0,
+    ) {
         Ok(dir) => return Ok((Some(dir), leaf)),
         Err(e) => match e.get_errno() {
             // A symlink in the path, or a path component is not a directory
@@ -1485,9 +1490,7 @@ pub fn open_entry_parent_nofollow(
             Ok(next) => cur = Some(next),
             Err(e) => {
                 return match e.get_errno() {
-                    E::ELOOP | E::ENOTDIR | E::EMLINK => {
-                        Err(NofollowParentError::TraversesSymlink)
-                    }
+                    E::ELOOP | E::ENOTDIR | E::EMLINK => Err(NofollowParentError::TraversesSymlink),
                     _ => Err(NofollowParentError::Io(e)),
                 };
             }
@@ -2033,7 +2036,10 @@ impl Archiver {
                                             if options.log {
                                                 Output::warn(format_args!(
                                                     "Skipping entry that traverses a previously extracted symlink: {}\n",
-                                                    bun_core::fmt::fmt_os_path(path_slice, Default::default()),
+                                                    bun_core::fmt::fmt_os_path(
+                                                        path_slice,
+                                                        Default::default()
+                                                    ),
                                                 ));
                                             }
                                             continue;
@@ -2044,24 +2050,30 @@ impl Archiver {
                                     None
                                 };
                                 #[cfg(not(target_os = "macos"))]
-                                let nofollow_parent: Option<(Option<bun_sys::File>, &[u8])> = None;
+                                let nofollow_parent: Option<(
+                                    Option<bun_sys::File>,
+                                    &[u8],
+                                )> = None;
 
-                                let (mkdir_dirfd, mkdir_path_z): (Fd, &ZStr) = match &nofollow_parent
-                                {
-                                    Some((parent, leaf)) => (
-                                        parent.as_ref().map(|f| f.fd()).unwrap_or(dir_fd),
-                                        // SAFETY: `leaf` is a suffix of `path_slice`, which is
-                                        // NUL-terminated in `normalized_buf`.
-                                        unsafe { ZStr::from_raw(leaf.as_ptr(), leaf.len()) },
-                                    ),
-                                    None => (
-                                        dir_fd,
-                                        // SAFETY: normalized_buf[path_slice.len()] == 0 (written above).
-                                        unsafe {
-                                            ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
-                                        },
-                                    ),
-                                };
+                                let (mkdir_dirfd, mkdir_path_z): (Fd, &ZStr) =
+                                    match &nofollow_parent {
+                                        Some((parent, leaf)) => (
+                                            parent.as_ref().map(|f| f.fd()).unwrap_or(dir_fd),
+                                            // SAFETY: `leaf` is a suffix of `path_slice`, which is
+                                            // NUL-terminated in `normalized_buf`.
+                                            unsafe { ZStr::from_raw(leaf.as_ptr(), leaf.len()) },
+                                        ),
+                                        None => (
+                                            dir_fd,
+                                            // SAFETY: normalized_buf[path_slice.len()] == 0 (written above).
+                                            unsafe {
+                                                ZStr::from_raw(
+                                                    path_slice.as_ptr(),
+                                                    path_slice.len(),
+                                                )
+                                            },
+                                        ),
+                                    };
                                 match bun_sys::mkdirat_z(
                                     mkdir_dirfd,
                                     mkdir_path_z,
@@ -2127,7 +2139,10 @@ impl Archiver {
                                             if options.log {
                                                 Output::warn(format_args!(
                                                     "Skipping entry that traverses a previously extracted symlink: {}\n",
-                                                    bun_core::fmt::fmt_os_path(path_slice, Default::default()),
+                                                    bun_core::fmt::fmt_os_path(
+                                                        path_slice,
+                                                        Default::default()
+                                                    ),
                                                 ));
                                             }
                                             continue;
@@ -2138,7 +2153,10 @@ impl Archiver {
                                     None
                                 };
                                 #[cfg(not(target_os = "macos"))]
-                                let nofollow_parent: Option<(Option<bun_sys::File>, &[u8])> = None;
+                                let nofollow_parent: Option<(
+                                    Option<bun_sys::File>,
+                                    &[u8],
+                                )> = None;
 
                                 let (link_dirfd, link_path_z): (Fd, &ZStr) = match &nofollow_parent
                                 {

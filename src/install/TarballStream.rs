@@ -1409,8 +1409,7 @@ fn make_directory(
                     let mkdir_dirfd = parent.as_ref().map(|f| f.fd()).unwrap_or(dest_fd);
                     // SAFETY: `leaf` is a suffix of `path_slice`, which is
                     // NUL-terminated (the caller wrote `norm_buf[norm_len] = 0`).
-                    let leaf_z =
-                        unsafe { bun_core::ZStr::from_raw(leaf.as_ptr(), leaf.len()) };
+                    let leaf_z = unsafe { bun_core::ZStr::from_raw(leaf.as_ptr(), leaf.len()) };
                     let _ = bun_sys::mkdirat_z(
                         mkdir_dirfd,
                         leaf_z,

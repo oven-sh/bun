@@ -653,6 +653,17 @@ fn is_malformed_field_value(value: &[u8]) -> bool {
     value.iter().any(|&c| c == 0 || c == b'\r' || c == b'\n')
 }
 
+#[inline]
+fn is_forbidden_connection_specific_header(name: &[u8], value: &[u8]) -> bool {
+    if name == b"te" {
+        return !value.eq_ignore_ascii_case(b"trailers");
+    }
+    matches!(
+        name,
+        b"connection" | b"keep-alive" | b"proxy-connection" | b"transfer-encoding" | b"upgrade"
+    )
+}
+
 const SINGLE_VALUE_HEADERS_LEN: usize = 40;
 
 /// Returns a stable index in `0..SINGLE_VALUE_HEADERS_LEN` for headers that
@@ -3317,6 +3328,8 @@ impl H2FrameParser {
 
         let mut sensitive_headers: JSValue = JSValue::UNDEFINED;
         let mut malformed = false;
+        let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
+        let mut seen_regular_header = false;
 
         // Stream-level limit violations seen mid-decode. The loop must consume
         // the whole block regardless: the HPACK dynamic table is
@@ -3374,10 +3387,28 @@ impl H2FrameParser {
                 continue;
             }
 
+            let is_pseudo_header = header.name.first() == Some(&b':');
+            if is_pseudo_header {
+                if seen_regular_header {
+                    malformed = true;
+                }
+            } else {
+                seen_regular_header = true;
+            }
+            if is_pseudo_header || header.name == b"content-length" {
+                if let Some(idx) = single_value_headers_index_of(header.name) {
+                    if single_value_headers[idx] {
+                        malformed = true;
+                    }
+                    single_value_headers[idx] = true;
+                }
+            }
+
             if malformed
                 || is_malformed_field_name(header.name)
                 || is_malformed_field_value(header.value)
-                || (header.name.first() == Some(&b':')
+                || is_forbidden_connection_specific_header(header.name, header.value)
+                || (is_pseudo_header
                     && !if self.is_server.get() {
                         is_valid_request_pseudo_header(header.name)
                     } else {

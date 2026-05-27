@@ -106,6 +106,17 @@ async function attempt(name, fn) {
 '@
 $dnsScript | Out-File -Encoding ascii dns-diag.js
 Invoke-Case -Name "dns-diag" -CaseEnv @{} -CaseArgs @("dns-diag.js")
+# A/B: run the exact same dns-diag.js with the NATIVE windows-aarch64 binary
+# (build 58422, another PR's artifact) on this same machine, same network.
+try {
+  buildkite-agent artifact download "bun-windows-aarch64.zip" native-dl --build 019e6ac2-5df8-4663-9741-cfa30b33fdb0
+  Expand-Archive -Force native-dl\bun-windows-aarch64.zip -DestinationPath native-bin
+  $nativeBun = (Resolve-Path "native-bin\bun-windows-aarch64\bun.exe").Path
+  Write-Host "--- case: dns-diag-NATIVE ($nativeBun)"
+  & $nativeBun dns-diag.js 2>&1 | Out-String | Write-Host
+  Write-Host "exit(dns-diag-NATIVE): $LASTEXITCODE"
+} catch { Write-Host "native A/B failed: $($_.Exception.Message)" }
+
 Write-Host "--- ipconfig /all (DNS servers as Windows sees them)"
 ipconfig /all | Select-String -Pattern "DNS Servers|IPv4 Address|Description" | Out-String | Write-Host
 Write-Host "--- nslookup example.com (system resolver control)"

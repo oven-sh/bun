@@ -597,6 +597,39 @@ describe("bun", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A CLI `--elide-lines` must still win over `[run] elide-lines` in bunfig,
+  // matching the `--config=` precedence. Here bunfig says 0 (no elision) but the
+  // flag says 10, so elision must still happen.
+  test("--elide-lines flag overrides auto-discovered bunfig [run] elide-lines", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        dep0: {
+          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
+          "package.json": JSON.stringify({ name: "dep0", scripts: { script: `${bunExe()} run index.js` } }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      "bunfig.toml": "[run]\nelide-lines = 0\n",
+    });
+
+    const { exitCode, stderr, stdout } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", "10", "script"],
+      env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stdoutval = stdout.toString();
+    // On Windows piped stdout is not a terminal so elision never runs; skip the
+    // TTY-only assertion there (see the sibling tests above).
+    if (process.platform !== "win32") {
+      expect(stdoutval).toMatch(/\[10 lines elided\]/);
+    }
+    expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){10}/);
+    expect(exitCode).toBe(0);
+  });
+
   test("--elide-lines is a no-op (not an error) when stdout is not a terminal", () => {
     const dir = tempDirWithFiles("testworkspace", {
       packages: {

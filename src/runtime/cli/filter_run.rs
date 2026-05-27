@@ -690,12 +690,20 @@ pub(crate) fn run_scripts_with_filter(
     // so `[run]` settings (e.g. `elide-lines`) from a bunfig found by auto-discovery
     // are honored, matching plain `bun run` and `--config=`.
     if !ctx.debug.loaded_bunfig {
+        // A CLI `--elide-lines=N` must win over `[run] elide-lines`. For `--config=`,
+        // `Arguments::parse` re-applies the CLI flag after the config load
+        // (Arguments.rs:1380); this fallback runs after `parse` returns, so snapshot
+        // the CLI value and restore it if it was set, preserving that precedence.
+        let cli_elide_lines = ctx.bundler_options.elide_lines;
         let _ = crate::cli::arguments::load_config_path(
             crate::cli::command::Tag::RunCommand,
             true,
             bun_core::zstr!("bunfig.toml"),
             &mut *ctx,
         );
+        if cli_elide_lines.is_some() {
+            ctx.bundler_options.elide_lines = cli_elide_lines;
+        }
     }
 
     // Own the slice — `ctx` is reborrowed `&mut` for

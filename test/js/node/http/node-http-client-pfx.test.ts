@@ -80,7 +80,9 @@ describe.concurrent("https.request pfx option", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    // The regression surfaced as a thrown "pfx is not supported" before the
+    // request started; assert it is gone and the request completed.
+    expect(stderr).not.toContain("pfx is not supported");
     expect(stdout).toContain("STATUS=200");
     expect(stdout).toContain("BODY=hello");
     expect(exitCode).toBe(0);

@@ -627,7 +627,16 @@ impl DateTime {
         let minute = ts.div_euclid(60);
         let second = ts.rem_euclid(60);
 
-        let date = gregorian_date(i32::try_from(days).expect("int cast"));
+        // A numeric timestamp (the `is_number()` path in `from_js`) can carry a
+        // day count past `i32::MAX` without saturating `i64`. Route that cast
+        // through the same out-of-range error instead of panicking — the year
+        // check below rejects every in-`i32` value that still overflows `u16`.
+        let days = i32::try_from(days).map_err(|_| {
+            js_error_to_mysql(global_object.throw_invalid_arguments(format_args!(
+                "Date is out of range for a MySQL DATETIME",
+            )))
+        })?;
+        let date = gregorian_date(days);
         let year = u16::try_from(date.year).map_err(|_| {
             js_error_to_mysql(global_object.throw_invalid_arguments(format_args!(
                 "Date year {} is out of range for a MySQL DATETIME (0..=65535)",

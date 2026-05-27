@@ -41,12 +41,51 @@ async function runBindErrorHang(sql: SQL) {
   expect((await sql`SELECT 1 AS ok`)[0].ok).toBe(1);
 }
 
+// `Signature::generate` and `bind` each iterate the user's param array, so an
+// index getter can hand a `Date` to the first pass (making the column a
+// DATETIME) and a number to the second. A huge number yields a day count past
+// `i32::MAX`; the encoder's `i32::try_from(days)` used to `.expect()`-panic
+// (process abort) on that value instead of rejecting.
+async function runGetterMutationAbort(sql: SQL) {
+  // Prime the prepared-statement cache with a DATETIME signature.
+  await sql.unsafe("select ? as d", [new Date(0)]);
+
+  let reads = 0;
+  const values: unknown[] = [new Date("2020-01-01T00:00:00.000Z")];
+  Object.defineProperty(values, "0", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      reads++;
+      // First pass (signature): a Date -> column bound as DATETIME.
+      // Later pass (bind): a number whose day count overflows i32.
+      return reads <= 1 ? new Date("2020-01-01T00:00:00.000Z") : 1e20;
+    },
+  });
+
+  const result = await sql.unsafe("select ? as d", values).then(
+    rows => ({ ok: true, rows }),
+    (err: any) => ({ ok: false, code: err?.code, message: String(err?.message ?? err) }),
+  );
+  expect(result).toMatchObject({ ok: false, code: "ERR_INVALID_ARG_TYPE" });
+  expect(reads).toBeGreaterThanOrEqual(2);
+
+  // The connection must still be usable after the rejected bind.
+  expect((await sql.unsafe("select ? as x", [2]))[0].x).toBe(2);
+}
+
 if (isDockerEnabled()) {
   describeWithContainer("mysql", { image: "mysql_plain" }, container => {
+    const getUrl = () => `mysql://root@${container.host}:${container.port}/bun_sql_test`;
     test("a bind error on a statement's first use rejects instead of hanging", async () => {
       await container.ready;
-      await using sql = new SQL({ url: `mysql://root@${container.host}:${container.port}/bun_sql_test`, max: 1 });
+      await using sql = new SQL({ url: getUrl(), max: 1 });
       await runBindErrorHang(sql);
+    });
+    test("an out-of-range DATETIME from an array-index getter rejects instead of aborting", async () => {
+      await container.ready;
+      await using sql = new SQL({ url: getUrl(), max: 1 });
+      await runGetterMutationAbort(sql);
     });
   });
 } else {
@@ -55,21 +94,33 @@ if (isDockerEnabled()) {
   // there; the docker-gated branch above provides the CI coverage.
   const url = process.env.MYSQL_URL || "mysql://bun@127.0.0.1:3306/bun_sql_test";
 
+  // Returns a connected SQL client, or null if no MySQL is reachable (and
+  // MYSQL_URL was not explicitly provided, in which case it's a soft skip).
+  async function connectOrSkip(sql: SQL, label: string): Promise<boolean> {
+    try {
+      await sql`SELECT 1`;
+      return true;
+    } catch (e) {
+      if (process.env.MYSQL_URL) {
+        // MYSQL_URL was explicitly provided; failing to connect is a real
+        // error, not an environment without MySQL.
+        throw new Error(`${label}: MYSQL_URL was provided but the server is unreachable: ${e}`);
+      }
+      console.warn(`${label}: no MySQL reachable at ${url}; skipping assertions`);
+      return false;
+    }
+  }
+
   describe("mysql (local)", () => {
     test("a bind error on a statement's first use rejects instead of hanging", async () => {
       await using sql = new SQL({ url, max: 1 });
-      try {
-        await sql`SELECT 1`;
-      } catch (e) {
-        if (process.env.MYSQL_URL) {
-          // MYSQL_URL was explicitly provided; failing to connect is a real
-          // error, not an environment without MySQL.
-          throw new Error(`sql-mysql-bind-error-hang: MYSQL_URL was provided but the server is unreachable: ${e}`);
-        }
-        console.warn(`sql-mysql-bind-error-hang: no MySQL reachable at ${url}; skipping assertions`);
-        return;
-      }
+      if (!(await connectOrSkip(sql, "sql-mysql-bind-error-hang"))) return;
       await runBindErrorHang(sql);
+    });
+    test("an out-of-range DATETIME from an array-index getter rejects instead of aborting", async () => {
+      await using sql = new SQL({ url, max: 1 });
+      if (!(await connectOrSkip(sql, "sql-mysql-bind-error-hang"))) return;
+      await runGetterMutationAbort(sql);
     });
   });
 }

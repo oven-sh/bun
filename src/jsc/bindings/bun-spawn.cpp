@@ -38,7 +38,7 @@ static inline int getMaxFd(int start, int end)
 #else
     int maxfd = 1024;
 #endif
-    if (maxfd < 0 || maxfd > 65536) maxfd = 1024;
+    if (maxfd < 0 || maxfd > 65536) maxfd = 65536;
     // Respect the end parameter if it's a valid bound (not INT_MAX sentinel)
     if (end >= start && end < INT_MAX) {
         maxfd = std::min(maxfd, end + 1); // +1 because end is inclusive

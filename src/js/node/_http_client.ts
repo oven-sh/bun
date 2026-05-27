@@ -6,6 +6,7 @@ const {
   validateInteger,
   validateBoolean,
   validateString,
+  validatePort,
 } = require("internal/validators");
 
 // Internal fetch that allows body on GET/HEAD/OPTIONS for Node.js compatibility
@@ -727,6 +728,10 @@ function ClientRequest(input, options, cb) {
 
   const defaultPort = options.defaultPort || this[kAgent].defaultPort;
   const port = (this[kPort] = options.port || defaultPort || 80);
+  if (typeof port !== "number" && typeof port !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("options.port", ["number", "string"], port);
+  }
+  validatePort(port);
   this[kUseDefaultPort] = this[kPort] === defaultPort;
   const host =
     (this[kHost] =

@@ -4213,6 +4213,27 @@ it("fs.write keeps the source buffer attached while the write is in flight", asy
   expect(readFileSync(file, "latin1")).toBe("DDDDDDDD");
 });
 
+it("fs.promises.writeFile keeps the source buffer attached while the write is in flight", async () => {
+  using dir = tempDir("fs-writefile-pin", {});
+  const file = join(String(dir), "out.bin");
+  const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x45);
+  const pending = fs.promises.writeFile(file, buf);
+
+  // The native write runs on the thread pool and reads the source bytes
+  // through a raw pointer; the backing store must not be detachable out
+  // from under it while the write is pending.
+  buf.buffer.transfer();
+  expect(buf.buffer.detached).toBe(false);
+
+  await pending;
+
+  // Released once the write completes.
+  buf.buffer.transfer();
+  expect(buf.buffer.detached).toBe(true);
+
+  expect(readFileSync(file, "latin1")).toBe("EEEEEEEE");
+});
+
 it.if(isPosix)("realpathSync reports ENAMETOOLONG when cwd plus the path exceeds the system path limit", async () => {
   using dir = tempDir("fs-realpath-too-long", {});
 
@@ -4245,4 +4266,26 @@ it.if(isPosix)("realpathSync reports ENAMETOOLONG when cwd plus the path exceeds
   expect(stderr).toBe("");
   expect(stdout.trim().split("\n")).toEqual(["ENAMETOOLONG", "ENAMETOOLONG"]);
   expect(exitCode).toBe(0);
+});
+
+it("fs.writeFile (callback) keeps the source buffer attached while the write is in flight", async () => {
+  using dir = tempDir("fs-writefile-cb-pin", {});
+  const file = join(String(dir), "out.bin");
+  const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x46);
+  const { promise, resolve, reject } = Promise.withResolvers();
+  fs.writeFile(file, buf, err => (err ? reject(err) : resolve(null)));
+
+  // The native write runs on the thread pool and reads the source bytes
+  // through a raw pointer; the backing store must not be detachable out
+  // from under it while the write is pending.
+  buf.buffer.transfer();
+  expect(buf.buffer.detached).toBe(false);
+
+  await promise;
+
+  // Released once the write completes.
+  buf.buffer.transfer();
+  expect(buf.buffer.detached).toBe(true);
+
+  expect(readFileSync(file, "latin1")).toBe("FFFFFFFF");
 });

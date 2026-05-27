@@ -2783,6 +2783,14 @@ where
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
         jsc::mark_binding!();
+        if !matches!(self.config.address, server_config::Address::Unix(_))
+            && !resp
+                .get_remote_socket_info()
+                .is_some_and(|address| address.is_loopback())
+        {
+            req.set_yield(true);
+            return;
+        }
         self.pending_requests += 1;
         req.set_yield(false);
         // PERF(port): was stack-fallback alloc
@@ -3418,18 +3426,11 @@ where
                 break 'brk false;
             }
 
-            if let Some(address) = resp.get_remote_socket_info() {
-                // IPv4 loopback addresses
-                if address.ip.starts_with(b"127.") {
-                    break 'brk true;
-                }
-                // IPv6 loopback addresses
-                if address.ip.starts_with(b"::ffff:127.")
-                    || address.ip == b"::1"
-                    || address.ip == b"0:0:0:0:0:0:0:1"
-                {
-                    break 'brk true;
-                }
+            if resp
+                .get_remote_socket_info()
+                .is_some_and(|address| address.is_loopback())
+            {
+                break 'brk true;
             }
 
             false

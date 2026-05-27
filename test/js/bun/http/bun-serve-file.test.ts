@@ -871,3 +871,88 @@ process.exit(0);
   },
   30_000,
 );
+
+// A request that declares a body arms the request-body (onData) callback on
+// the uWS response before the fetch handler runs. uWS keeps a single shared
+// userdata slot per response, so when the handler returns a file response
+// without reading the body, FileResponseStream's own callback registrations
+// repoint that slot at the stream object. The body callback must therefore be
+// disarmed before the file stream starts; otherwise body bytes that arrive
+// while the file is still streaming are delivered to the body callback with
+// the wrong object behind the pointer.
+test("file response with a pending request body keeps serving when body bytes arrive mid-stream", async () => {
+  using dir = tempDir("serve-file-late-body", {
+    "fixture.ts": `
+import { connect } from "node:net";
+import { join } from "node:path";
+
+// Large enough that the response cannot be fully absorbed by kernel socket
+// buffers, so the file is still streaming when the late body bytes arrive.
+const filePath = join(import.meta.dir, "big.bin");
+await Bun.write(filePath, Buffer.alloc(32 * 1024 * 1024, 97));
+
+const server = Bun.serve({
+  port: 0,
+  fetch(req) {
+    if (new URL(req.url).pathname === "/alive") {
+      return new Response("still-serving");
+    }
+    // Never reads req.body: the request-body callback stays armed when the
+    // file response starts.
+    return new Response(Bun.file(filePath));
+  },
+});
+
+const socket = connect({ port: server.port, host: "127.0.0.1" });
+socket.setNoDelay(true);
+socket.on("error", () => {});
+await new Promise(resolve => socket.once("connect", resolve));
+
+const done = Promise.withResolvers();
+let sentBody = false;
+let tail = "";
+socket.on("data", chunk => {
+  tail = (tail + chunk.toString("latin1")).slice(-4096);
+  if (!sentBody) {
+    // First response bytes: the handler has returned and the file response
+    // stream has started. Now deliver the withheld request body, plus a
+    // pipelined request so the connection produces an observable outcome
+    // (either the server closes it, or it eventually answers the GET).
+    sentBody = true;
+    console.log("file-response-started");
+    socket.write(Buffer.alloc(65536, 0x41));
+    socket.write("GET /alive HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n");
+  } else if (tail.includes("still-serving")) {
+    done.resolve("pipelined-response");
+  }
+});
+socket.on("close", () => done.resolve("closed"));
+
+// Headers only: declare a 64 KiB body but withhold it until the file response
+// has started.
+socket.write("POST /upload HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nContent-Length: 65536\\r\\n\\r\\n");
+
+await done.promise;
+socket.destroy();
+
+// The server must still answer fresh requests after consuming the late body bytes.
+const res = await fetch("http://127.0.0.1:" + server.port + "/alive");
+console.log(await res.text());
+server.stop(true);
+process.exit(0);
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("file-response-started\nstill-serving");
+  expect(exitCode).toBe(0);
+}, 30_000);

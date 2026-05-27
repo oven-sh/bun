@@ -2021,6 +2021,12 @@ mod posix_impl {
             Ok(Fd::from_native(rc))
         }
     }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub fn openat2_beneath(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+        let dir = dir.as_fd();
+        super::linux_syscall::openat2_beneath(dir, path, flags, mode)
+            .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
+    }
     pub fn close(fd: Fd) -> Maybe<()> {
         // fd.zig:266 — call close ONCE; never retry on EINTR (Linux may have already
         // released the fd, retrying would close someone else's). Only EBADF surfaces.

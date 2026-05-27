@@ -1731,9 +1731,10 @@ impl Drop for BufferedOutput {
             BufferedOutput::Bytelist(_b) => {
                 // Vec<u8> drops its own storage.
             }
-            BufferedOutput::ArrayBuffer { buf: _buf, .. } => {
-                // FIXME: SHOULD THIS BE HERE?
-                // ArrayBuffer.Strong drops itself.
+            BufferedOutput::ArrayBuffer { buf, .. } => {
+                if !buf.array_buffer.value.is_empty() {
+                    buf.array_buffer.unpin();
+                }
             }
         }
     }

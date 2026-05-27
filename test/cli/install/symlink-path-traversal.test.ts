@@ -635,11 +635,13 @@ it.skipIf(!isMacOS)(
       }
       expect(escapedPaths).toEqual([]);
 
+      // Assert the clean exit before touching the filesystem so a non-zero
+      // exit surfaces here instead of as an opaque ENOENT from `access` below.
+      expect(exitCode).toBe(0);
+
       // The legitimate package contents are still installed.
       const pkgDir = join(installDir, "node_modules", "test-package");
       await access(join(pkgDir, "package.json"));
-
-      expect(exitCode).toBe(0);
     } finally {
       server.stop();
       // Belt-and-braces cleanup of anything that escaped above the test root.

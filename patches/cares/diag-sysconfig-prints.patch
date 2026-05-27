@@ -1,0 +1,49 @@
+--- a/src/lib/ares_sysconfig_win.c
++++ b/src/lib/ares_sysconfig_win.c
+@@ -26,6 +26,8 @@
+  */
+ 
+ #include "ares_private.h"
++/* Bun DIAGNOSTIC build: stderr prints to localize Windows DNS discovery. */
++#include <stdio.h>
+ 
+ #ifdef HAVE_SYS_PARAM_H
+ #  include <sys/param.h>
+@@ -363,7 +365,10 @@ static ares_bool_t get_DNS_Windows(char **outptr)
+     goto done;
+   }
+ 
++  fprintf(stderr, "[cares-diag] GetAdaptersAddresses res=%lu\n", res);
++
+   for (ipaaEntry = ipaa; ipaaEntry; ipaaEntry = ipaaEntry->Next) {
++    fprintf(stderr, "[cares-diag] adapter oper=%d firstdns=%p\n", (int)ipaaEntry->OperStatus, (void *)ipaaEntry->FirstDnsServerAddress);
+     if (ipaaEntry->OperStatus != IfOperStatusUp) {
+       continue;
+     }
+@@ -515,9 +520,11 @@ done:
+   }
+ 
+   if (!*outptr) {
++    fprintf(stderr, "[cares-diag] get_DNS_Windows: NO servers (collected=%u)\n", (unsigned)addressesIndex);
+     return ARES_FALSE;
+   }
+ 
++  fprintf(stderr, "[cares-diag] get_DNS_Windows: servers=%s\n", *outptr);
+   return ARES_TRUE;
+ }
+ 
+@@ -627,11 +634,14 @@ ares_status_t ares_init_sysconfig_windows(const ares_channel_t *channel,
+ 
+   if (get_DNS_Windows(&line)) {
+     status = ares_sconfig_append_fromstr(channel, &sysconfig->sconfig, line,
+                                          ARES_TRUE);
++    fprintf(stderr, "[cares-diag] append_fromstr status=%d line=%s\n", (int)status, line ? line : "(null)");
+     ares_free(line);
+     if (status != ARES_SUCCESS) {
+       goto done;
+     }
++  } else {
++    fprintf(stderr, "[cares-diag] get_DNS_Windows returned FALSE\n");
+   }
+ 
+   if (get_SuffixList_Windows(&line)) {

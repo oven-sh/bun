@@ -56,6 +56,8 @@ export const cares: Dependency = {
     kind: "github-archive",
     repo: "c-ares/c-ares",
     commit: CARES_COMMIT,
+    // DIAGNOSTIC (do not merge): stderr prints localizing Windows DNS-server discovery.
+    patches: ["patches/cares/diag-sysconfig-prints.patch"],
   }),
 
   build: cfg => ({

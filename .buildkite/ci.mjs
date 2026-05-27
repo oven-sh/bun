@@ -1485,10 +1485,8 @@ async function getPipeline(options = {}) {
   steps.push({
     key: "win-arm64-diag",
     label: ":mag: windows aarch64 crash diagnostic",
-    // No depends_on: the artifact is pulled from a pinned earlier build so
-    // this step starts immediately instead of waiting ~40 min for a rebuild.
+    depends_on: ["windows-aarch64-build-bun"],
     agents: getTestAgent({ os: "windows", arch: "aarch64", release: "11" }, options),
-    env: { DIAG_ARTIFACT_BUILD: "019e68a9-29d6-4392-9450-e27f5d5adc6f" },
     command: "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/win-arm64-diag.ps1",
     timeout_in_minutes: 30,
     soft_fail: true,

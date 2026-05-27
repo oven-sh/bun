@@ -155,9 +155,35 @@ if (isDockerEnabled()) {
           await sql`INSERT INTO ${sql(t)} VALUES (${0}, ${new Date(0)})`;
           const farFuture = new Date("+070000-01-01T00:00:00.000Z");
           expect(farFuture.getUTCFullYear()).toBe(70000);
-          await expect(sql`INSERT INTO ${sql(t)} VALUES (${1}, ${farFuture})`).rejects.toThrow(
-            /year 70000 is out of range/i,
-          );
+          // A Bun SQL query is a single-consumption thenable; await it inside a
+          // wrapper promise rather than handing the query object to
+          // `expect().rejects` (which `.then()`s it twice and would hang).
+          await expect(
+            (async () => {
+              await sql`INSERT INTO ${sql(t)} VALUES (${1}, ${farFuture})`;
+            })(),
+          ).rejects.toThrow(/year 70000 is out of range/i);
+        });
+        test("a bind error on the first use of a statement rejects instead of hanging", async () => {
+          // When the out-of-range Date is bound to a statement that hasn't been
+          // prepared yet, the error surfaces on the prepare-then-execute path
+          // through the request queue's `on_error` rather than synchronously.
+          // `run()`'s error guard used to mark the query failed before that
+          // reject ran, so `reject_with_js_value`'s "already failed" guard
+          // dropped the rejection and the promise hung forever. No priming
+          // query here: this is the statement's first execution.
+          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 10 });
+          using sql = await db.reserve();
+          const t = "hang_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT PRIMARY KEY, dt DATETIME)`;
+          const farFuture = new Date("+070000-01-01T00:00:00.000Z");
+          await expect(
+            (async () => {
+              await sql`INSERT INTO ${sql(t)} VALUES (${1}, ${farFuture})`;
+            })(),
+          ).rejects.toThrow(/year 70000 is out of range/i);
+          // The connection is still usable after the rejected bind.
+          expect((await sql`SELECT 1 AS ok`)[0].ok).toBe(1);
         });
         describe("should work with more than the max inline capacity", () => {
           for (let size of [50, 60, 62, 64, 70, 100]) {

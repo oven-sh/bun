@@ -768,7 +768,7 @@ use core::ffi::c_uint;
 
 use bstr::BStr;
 use bun_boringssl as boringssl;
-use bun_collections::ArrayHashMap;
+use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::StringBuilder;
 use bun_core::{FeatureFlags, Global, Output, err};
 use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, immutable as strings};
@@ -3185,7 +3185,7 @@ impl<'a> HTTPClient<'a> {
             // if less than 16 it will always be a ShortRead
             if to_read!().len() < 16 {
                 bun_core::scoped_log!(fetch, "handleShortRead");
-                self.handle_short_read::<IS_SSL>(incoming_data, socket, needs_move);
+                self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
                 return;
             }
 
@@ -3208,7 +3208,7 @@ impl<'a> HTTPClient<'a> {
                         self.close_and_fail::<IS_SSL>(err!(ResponseHeadersTooLarge), socket);
                         return;
                     }
-                    self.handle_short_read::<IS_SSL>(incoming_data, socket, needs_move);
+                    self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
                     return;
                 }
                 Err(e) => {
@@ -3250,6 +3250,13 @@ impl<'a> HTTPClient<'a> {
                 bun_core::scoped_log!(fetch, "information headers");
 
                 self.state.pending_response = None;
+                if !needs_move {
+                    let remaining = to_read!().len();
+                    let buffer = &mut self.state.response_message_buffer.list;
+                    let consumed = buffer.len().saturating_sub(remaining);
+                    buffer.drain_front(consumed);
+                    to_read = bun_ptr::RawSlice::new(buffer.as_slice());
+                }
                 if to_read!().is_empty() {
                     // we only received 1XX responses, we wanna wait for the next status code
                     return;

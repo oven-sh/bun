@@ -691,9 +691,8 @@ describe("https.request agent TLS options inheritance", () => {
       await new Promise<void>(resolve => closed.close(() => resolve()));
 
       const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
-      const req = http.request(
-        { hostname: "127.0.0.1", port, path: "/", method: "GET", timeout: 5000 },
-        () => reject(new Error("Expected request to fail")),
+      const req = http.request({ hostname: "127.0.0.1", port, path: "/", method: "GET", timeout: 5000 }, () =>
+        reject(new Error("Expected request to fail")),
       );
       req.on("error", resolve);
       req.end();

@@ -311,7 +311,10 @@ function ClientRequest(input, options, cb) {
         host = `[${host}]`;
       }
 
-      if (path.startsWith("http://") || path.startsWith("https://")) {
+      if (path.startsWith("http://")) {
+        if (!this.hasHeader("Host")) {
+          this.setHeader("Host", `${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`);
+        }
         return [path, `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`];
       } else {
         let proxy: string | undefined;

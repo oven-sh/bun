@@ -3198,59 +3198,66 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 // made `has_trusted_dependency` fall through to the default list, silently
 // re-trusting packages like `bcrypt` / `electron` / `esbuild`.
 test.concurrent("trustedDependencies: [] survives a lockfile round-trip", async () => {
-  // Use a `file:` dep so the test is self-contained (no registry needed).
-  // The bug we're guarding against is in the lockfile writer/reader, not in
-  // npm-specific install logic — the writer handles `trusted_dependencies`
-  // identically regardless of how deps were resolved.
-  using dir = tempDir("trusted-deps-empty-roundtrip", {
-    "local-dep/package.json": JSON.stringify({ name: "local-dep", version: "1.0.0" }),
-    "package.json": JSON.stringify({
-      name: "roundtrip",
-      version: "1.0.0",
-      trustedDependencies: [],
-      dependencies: { "local-dep": "file:./local-dep" },
-    }),
-  });
-
-  const env = { ...baseEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
-
-  // First install writes the lockfile. The critical assertion is that the
-  // empty array survives — without the fix, the key would be dropped.
-  {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
+  // No registry needed (`file:` dep), so we skip setupTest(), but we still
+  // gate on the file-level concurrency semaphore like every other test.
+  await acquireSlot();
+  try {
+    // Use a `file:` dep so the test is self-contained (no registry needed).
+    // The bug we're guarding against is in the lockfile writer/reader, not in
+    // npm-specific install logic — the writer handles `trusted_dependencies`
+    // identically regardless of how deps were resolved.
+    using dir = tempDir("trusted-deps-empty-roundtrip", {
+      "local-dep/package.json": JSON.stringify({ name: "local-dep", version: "1.0.0" }),
+      "package.json": JSON.stringify({
+        name: "roundtrip",
+        version: "1.0.0",
+        trustedDependencies: [],
+        dependencies: { "local-dep": "file:./local-dep" },
+      }),
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("error:");
-    expect(stdout).toContain("1 package installed");
-    expect(exitCode).toBe(0);
-  }
 
-  expect(await file(join(String(dir), "bun.lock")).text()).toContain('"trustedDependencies": []');
+    const env = { ...baseEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
 
-  // Round-trip: reading the lockfile back must yield `Some(empty_set)` and
-  // not `None`. We can't inspect that directly from userspace, but a second
-  // install must succeed and the lockfile must still have the empty array
-  // (proving reader + writer are symmetric).
-  await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
-  {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("error:");
-    expect(stdout).toContain("1 package installed");
-    expect(exitCode).toBe(0);
+    // First install writes the lockfile. The critical assertion is that the
+    // empty array survives — without the fix, the key would be dropped.
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+    }
+
+    expect(await file(join(String(dir), "bun.lock")).text()).toContain('"trustedDependencies": []');
+
+    // Round-trip: reading the lockfile back must yield `Some(empty_set)` and
+    // not `None`. We can't inspect that directly from userspace, but a second
+    // install must succeed and the lockfile must still have the empty array
+    // (proving reader + writer are symmetric).
+    await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+    }
+    expect(await file(join(String(dir), "bun.lock")).text()).toContain('"trustedDependencies": []');
+  } finally {
+    releaseSlot();
   }
-  expect(await file(join(String(dir), "bun.lock")).text()).toContain('"trustedDependencies": []');
 });
 
 // Follow-up to the above: on an existing project that never had
@@ -3261,62 +3268,69 @@ test.concurrent("trustedDependencies: [] survives a lockfile round-trip", async 
 // stayed on disk without the empty array. `bun pm untrusted` (which reads
 // only the lockfile) then silently fell back to the default allow list.
 test.concurrent("trustedDependencies: [] added to an existing project triggers a lockfile save", async () => {
-  using dir = tempDir("trusted-deps-added-later", {
-    "local-dep/package.json": JSON.stringify({ name: "local-dep", version: "1.0.0" }),
-    "package.json": JSON.stringify({
-      name: "added-later",
-      version: "1.0.0",
-      dependencies: { "local-dep": "file:./local-dep" },
-    }),
-  });
-
-  const env = { ...baseEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
-
-  // Baseline install: no `trustedDependencies` key. Lockfile is written
-  // without the key.
-  {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
+  // No registry needed (`file:` dep), so we skip setupTest(), but we still
+  // gate on the file-level concurrency semaphore like every other test.
+  await acquireSlot();
+  try {
+    using dir = tempDir("trusted-deps-added-later", {
+      "local-dep/package.json": JSON.stringify({ name: "local-dep", version: "1.0.0" }),
+      "package.json": JSON.stringify({
+        name: "added-later",
+        version: "1.0.0",
+        dependencies: { "local-dep": "file:./local-dep" },
+      }),
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("error:");
-    expect(stdout).toContain("1 package installed");
-    expect(exitCode).toBe(0);
+
+    const env = { ...baseEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
+
+    // Baseline install: no `trustedDependencies` key. Lockfile is written
+    // without the key.
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+    }
+    expect(await file(join(String(dir), "bun.lock")).text()).not.toContain('"trustedDependencies"');
+
+    // Add `"trustedDependencies": []` — no dep changes. Without the fix the
+    // diff summary records zero adds/removes, `had_any_diffs` stays false,
+    // `should_save_lockfile` is false, and the `[]` never reaches disk.
+    await Bun.write(
+      join(String(dir), "package.json"),
+      JSON.stringify({
+        name: "added-later",
+        version: "1.0.0",
+        trustedDependencies: [],
+        dependencies: { "local-dep": "file:./local-dep" },
+      }),
+    );
+
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(stdout).not.toContain("error");
+      expect(exitCode).toBe(0);
+    }
+
+    expect(await file(join(String(dir), "bun.lock")).text()).toContain('"trustedDependencies": []');
+  } finally {
+    releaseSlot();
   }
-  expect(await file(join(String(dir), "bun.lock")).text()).not.toContain('"trustedDependencies"');
-
-  // Add `"trustedDependencies": []` — no dep changes. Without the fix the
-  // diff summary records zero adds/removes, `had_any_diffs` stays false,
-  // `should_save_lockfile` is false, and the `[]` never reaches disk.
-  await Bun.write(
-    join(String(dir), "package.json"),
-    JSON.stringify({
-      name: "added-later",
-      version: "1.0.0",
-      trustedDependencies: [],
-      dependencies: { "local-dep": "file:./local-dep" },
-    }),
-  );
-
-  {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("error:");
-    expect(stdout).not.toContain("error");
-    expect(exitCode).toBe(0);
-  }
-
-  expect(await file(join(String(dir), "bun.lock")).text()).toContain('"trustedDependencies": []');
 });
 
 // End-to-end version of the round-trip test above, exercising the actual
@@ -3420,7 +3434,7 @@ test.concurrent("removing trustedDependencies drops the key from the lockfile", 
   );
 
   {
-    const { stderr, exited } = spawn({
+    const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
       stdout: "pipe",
@@ -3430,6 +3444,9 @@ test.concurrent("removing trustedDependencies drops the key from the lockfile", 
     });
     const err = await stderr.text();
     expect(err).not.toContain("error:");
+    const out = await stdout.text();
+    expect(out).toContain("+ electron@1.0.0");
+    expect(out).toContain("Blocked 1 postinstall");
     expect(await exited).toBe(0);
   }
   expect(await file(join(packageDir, "bun.lock")).text()).toContain('"trustedDependencies": []');
@@ -3449,7 +3466,7 @@ test.concurrent("removing trustedDependencies drops the key from the lockfile", 
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
   {
-    const { stderr, exited } = spawn({
+    const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
       stdout: "pipe",
@@ -3459,6 +3476,11 @@ test.concurrent("removing trustedDependencies drops the key from the lockfile", 
     });
     const err = await stderr.text();
     expect(err).not.toContain("error:");
+    const out = await stdout.text();
+    expect(out).toContain("+ electron@1.0.0");
+    // Key removed → default allow list re-applies, so electron's preinstall
+    // runs and nothing is blocked.
+    expect(out).not.toContain("Blocked");
     expect(await exited).toBe(0);
   }
 

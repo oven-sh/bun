@@ -48,16 +48,15 @@ export const isBroken = isCI;
 // Detect ASAN from the runtime, not the binary name. CI's release ASAN lane
 // produces `bun-asan`, but a plain `bun bd` debug build is *also* ASAN-
 // instrumented while named `bun-debug` — so the name check alone is wrong for
-// local runs. `lsanDoLeakCheck` is gated on the same ASAN_ENABLED compile flag
-// as the instrumentation itself (returns a number when ASAN is on, `undefined`
-// when off), so it's correct for both. Fall back to the name check if the
-// internal binding is ever unavailable.
+// local runs. `isASANEnabled` is a side-effect-free `#if ASAN_ENABLED` probe,
+// so it's correct for both. Fall back to the name check if the internal
+// binding is ever unavailable (e.g. an older comparison binary).
 export const isASAN = detectASAN();
 
 function detectASAN(): boolean {
   try {
-    const { lsanDoLeakCheck } = require("bun:internal-for-testing");
-    if (typeof lsanDoLeakCheck() === "number") return true;
+    const { isASANEnabled } = require("bun:internal-for-testing");
+    if (typeof isASANEnabled === "function") return isASANEnabled();
   } catch {}
   return basename(process.execPath).includes("bun-asan");
 }

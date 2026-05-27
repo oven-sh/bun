@@ -1646,21 +1646,21 @@ impl Stream {
             return FlushState::NoAction;
         }
         // try to flush one frame
-        let Some(frame) = self.data_frame_queue.peek_front() else {
+        let Some(front) = self.data_frame_queue.peek_front() else {
             return FlushState::NoAction;
         };
-        // PORT NOTE: reshaped for borrowck — `frame` aliases self.data_frame_queue;
-        // capture pointers and rely on stable Vec backing within this scope.
-        let frame: *mut PendingFrame = frame;
-        // SAFETY: frame is a stable element of self.data_frame_queue's Vec backing store; not moved while this borrow lives (no push/pop until after use)
-        let frame = unsafe { &mut *frame };
+        let frame_len = front.len;
+        let frame_remaining = front.slice().len();
 
-        let mut is_flow_control_limited = false;
+        let mut owned_frame: Option<PendingFrame> = None;
         let no_backpressure: bool = 'brk: {
             let mut writer = client.to_writer();
 
-            if frame.len == 0 {
+            if frame_len == 0 {
                 // flush a zero payload frame
+                let Some(frame) = self.data_frame_queue.dequeue() else {
+                    return FlushState::NoAction;
+                };
                 let data_header = FrameHeader {
                     type_: FrameType::HTTP_FRAME_DATA as u8,
                     flags: if frame.end_stream && !self.wait_for_trailers {
@@ -1671,14 +1671,10 @@ impl Stream {
                     stream_identifier: self.id,
                     length: 0,
                 };
+                owned_frame = Some(frame);
                 break 'brk data_header.write(&mut writer);
             } else {
-                // Inline `frame.slice()` so the borrow is on `frame.buffer`
-                // alone — `frame.offset` / `frame.end_stream` stay disjoint
-                // and can be mutated/read below while the slice is live.
-                let frame_slice: &[u8] = &frame.buffer[frame.offset as usize..frame.len as usize];
-                let max_size = frame_slice
-                    .len()
+                let max_size = frame_remaining
                     .min(
                         (self
                             .remote_window_size
@@ -1697,7 +1693,7 @@ impl Stream {
                     bun_output::scoped_log!(
                         H2FrameParser,
                         "dataFrame flow control limited {} {} {} {} {} {}",
-                        frame_slice.len(),
+                        frame_remaining,
                         self.remote_window_size,
                         self.remote_used_window_size,
                         client.remote_window_size.get(),
@@ -1713,11 +1709,13 @@ impl Stream {
                         FlushState::NoAction
                     };
                 }
-                if max_size < frame_slice.len() {
-                    is_flow_control_limited = true;
+                if max_size < frame_remaining {
                     // we need to break the frame into smaller chunks
+                    let Some(frame) = self.data_frame_queue.peek_front() else {
+                        return FlushState::NoAction;
+                    };
+                    let able_to_send = frame.slice()[0..max_size].to_vec();
                     frame.offset += u32::try_from(max_size).expect("int cast");
-                    let able_to_send = &frame_slice[0..max_size];
                     client
                         .queued_data_size
                         .set(client.queued_data_size.get() - able_to_send.len() as u64);
@@ -1769,10 +1767,15 @@ impl Stream {
                             writer.write_all(&buffer[0..payload_size]).is_ok()
                         });
                     } else {
-                        break 'brk writer.write_all(able_to_send).is_ok();
+                        break 'brk writer.write_all(&able_to_send).is_ok();
                     }
                 } else {
                     // flush with some payload
+                    owned_frame = self.data_frame_queue.dequeue();
+                    let Some(frame) = owned_frame.as_ref() else {
+                        return FlushState::NoAction;
+                    };
+                    let frame_slice: &[u8] = frame.slice();
                     client
                         .queued_data_size
                         .set(client.queued_data_size.get() - frame_slice.len() as u64);
@@ -1833,10 +1836,9 @@ impl Stream {
             }
         };
 
-        // defer block from Zig (only when !is_flow_control_limited)
-        if !is_flow_control_limited {
+        // defer block from Zig (only when the full frame was flushed)
+        if let Some(_frame) = owned_frame {
             // only call the callback + free the frame if we write to the socket the full frame
-            let mut _frame = self.data_frame_queue.dequeue().unwrap();
             client
                 .outbound_queue_size
                 .set(client.outbound_queue_size.get() - 1);

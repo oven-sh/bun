@@ -217,3 +217,49 @@ test("npm lockfile migration skips extraneous packages that also declare inBundl
   expect(await Bun.file(join(testDir, "node_modules", "pkg0", "package.json")).json()).toEqual({ name: "pkg0" });
   expect(fs.existsSync(join(testDir, "bun.lock"))).toBeTrue();
 });
+
+test("npm lockfile migration bails when resolved:null entry is on a non-default registry", async () => {
+  // For `resolved: null` entries the migration synthesises a tarball URL from
+  // `<registry>/<name>/-/<unscoped>-<ver>.tgz`. That path is npm's own and
+  // doesn't match registries with a different tarball layout (GitHub Packages
+  // serves at `/download/<scope>/<pkg>/<ver>/<sha>`, for example). If we
+  // synthesised regardless, the install would either 404 (best case) or
+  // silently drop the affected entries when the dep-walk falls through to a
+  // local-folder resolution. The migration must instead refuse and let the
+  // outer install fall back to a fresh resolve, which queries the registry's
+  // package metadata for the correct URL.
+  const testDir = tempDirWithFiles("npm-resolved-null-altreg", {
+    "package.json": JSON.stringify({
+      name: "pkg",
+      dependencies: { "@altreg/dep": "1.0.0" },
+    }),
+    "bunfig.toml": `[install.scopes]\n"@altreg" = { url = "https://npm.pkg.github.com/" }\n`,
+    "package-lock.json": JSON.stringify({
+      name: "pkg",
+      version: "0.0.0",
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        "": {
+          name: "pkg",
+          version: "0.0.0",
+          dependencies: { "@altreg/dep": "1.0.0" },
+        },
+        "node_modules/@altreg/dep": {
+          version: "1.0.0",
+        },
+      },
+    }),
+  });
+
+  const { stderr } = Bun.spawnSync({
+    cmd: [bunExe(), "install"],
+    env: bunEnv,
+    cwd: testDir,
+    stdout: "ignore",
+  });
+
+  const err = stderr.toString();
+  expect(err).toContain("failed to migrate lockfile");
+  expect(err).toContain("Ignoring lockfile");
+});

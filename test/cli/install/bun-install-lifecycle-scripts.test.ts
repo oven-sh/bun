@@ -3319,6 +3319,154 @@ test.concurrent("trustedDependencies: [] added to an existing project triggers a
   expect(await file(join(String(dir), "bun.lock")).text()).toContain('"trustedDependencies": []');
 });
 
+// End-to-end version of the round-trip test above, exercising the actual
+// security property: `electron` is on Bun's built-in default allow list and
+// its registry fixture has a `preinstall` script that writes `preinstall.txt`.
+// With `trustedDependencies: []` the postinstall must stay blocked on *every*
+// install. On `main` the text lockfile dropped the empty array (electron
+// didn't match the empty set, so the writer emitted no key), so reloading
+// yielded `trusted_dependencies = None`, the default allow list re-applied,
+// and electron's preinstall ran on the reinstall. The `file:` tests above
+// can't catch this: `file:` deps carry a non-Npm tag, and the default-list
+// fallback only applies to Npm-tag packages, so they're "not trusted" under
+// both `Some(empty)` and `None`.
+test.concurrent("trustedDependencies: [] keeps a default-trusted package blocked across reinstall", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.2.3",
+      trustedDependencies: [],
+      dependencies: {
+        electron: "1.0.0",
+      },
+    }),
+  );
+
+  // First install: electron is default-trusted, but `trustedDependencies: []`
+  // opts out of the default list, so its preinstall must be blocked.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    const out = await stdout.text();
+    expect(out).toContain("+ electron@1.0.0");
+    expect(out).toContain("Blocked 1 postinstall");
+    expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+  }
+
+  // The empty array must be persisted in the text lockfile, otherwise the
+  // reload below sees `None` and falls back to the default allow list.
+  expect(await file(join(packageDir, "bun.lock")).text()).toContain('"trustedDependencies": []');
+  expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
+
+  // Reinstall from the persisted lockfile. This is where `main` regresses:
+  // the dropped key makes the defaults re-apply and electron's preinstall
+  // runs. With the fix, `[]` round-trips and the postinstall stays blocked.
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    const out = await stdout.text();
+    expect(out).toContain("Blocked 1 postinstall");
+    expect(await exited).toBe(0);
+  }
+
+  expect(await file(join(packageDir, "bun.lock")).text()).toContain('"trustedDependencies": []');
+  expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
+});
+
+// Bonus transition from the review: deleting the `trustedDependencies` key
+// from package.json (`Some → None`) must drop it from the text lockfile too,
+// so a reload correctly returns to the default allow list. Start from `[]`
+// (which blocks electron), then remove the key and confirm electron becomes
+// trusted again and the lockfile no longer carries the array.
+test.concurrent("removing trustedDependencies drops the key from the lockfile", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.2.3",
+      trustedDependencies: [],
+      dependencies: {
+        electron: "1.0.0",
+      },
+    }),
+  );
+
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+  }
+  expect(await file(join(packageDir, "bun.lock")).text()).toContain('"trustedDependencies": []');
+  expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
+
+  // Remove the key entirely → back to the default allow list.
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.2.3",
+      dependencies: {
+        electron: "1.0.0",
+      },
+    }),
+  );
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+  }
+
+  const lockAfter = await file(join(packageDir, "bun.lock")).text();
+  expect(lockAfter).not.toContain("trustedDependencies");
+  expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
+});
+
 test.concurrent("ignore-scripts is read from npmrc", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;

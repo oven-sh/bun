@@ -32,23 +32,23 @@ describe("[test] snapshotFloatPrecision", () => {
     // Math.sin(1) = 0.8414709848078965 (16 sig figs); rounding to 15 drops the
     // architecture-sensitive final digit.
     const { value, exitCode } = await generateSnapshot(15, "Math.sin(1)");
-    expect(exitCode).toBe(0);
     expect(value).toBe((0.8414709848078965).toPrecision(15));
     expect(value).not.toBe("0.8414709848078965");
+    expect(exitCode).toBe(0);
   });
 
   test("rounds large-magnitude doubles by significant figures (not decimal places)", async () => {
     const { value, exitCode } = await generateSnapshot(13, "435.64026096753474");
-    expect(exitCode).toBe(0);
     expect(value).toBe((435.64026096753474).toPrecision(13));
+    expect(exitCode).toBe(0);
   });
 
   test("trims trailing zeros (unlike toPrecision's padding)", async () => {
     const { value, exitCode } = await generateSnapshot(15, "0.5");
-    expect(exitCode).toBe(0);
     // toPrecision would pad to "0.500000000000000"; snapshots keep it clean.
     expect((0.5).toPrecision(15)).toBe("0.500000000000000");
     expect(value).toBe("0.5");
+    expect(exitCode).toBe(0);
   });
 
   test("does not round integer-valued doubles", async () => {
@@ -60,15 +60,15 @@ describe("[test] snapshotFloatPrecision", () => {
       generateSnapshot(15, big),
       generateSnapshot(null, big),
     ]);
+    expect(withPrecision.value).toBe(withoutPrecision.value);
     expect(withPrecision.exitCode).toBe(0);
     expect(withoutPrecision.exitCode).toBe(0);
-    expect(withPrecision.value).toBe(withoutPrecision.value);
   });
 
   test("is disabled by default (full-precision round-trip)", async () => {
     const { value, exitCode } = await generateSnapshot(null, "Math.sin(1)");
-    expect(exitCode).toBe(0);
     expect(value).toBe("0.8414709848078965");
+    expect(exitCode).toBe(0);
   });
 
   test("rejects an out-of-range precision in bunfig", async () => {

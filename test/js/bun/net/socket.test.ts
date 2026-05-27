@@ -1013,6 +1013,7 @@ describe("Bun.connect TLS certificate verification", () => {
     using server = echoTLSServer();
     const handshook = Promise.withResolvers<{ success: boolean; error: any; authorized: boolean }>();
     const closed = Promise.withResolvers<void>();
+    let errorCalled = false;
 
     await Bun.connect({
       hostname: "localhost",
@@ -1026,7 +1027,9 @@ describe("Bun.connect TLS certificate verification", () => {
         close() {
           closed.resolve();
         },
-        error() {},
+        error() {
+          errorCalled = true;
+        },
       },
     });
 
@@ -1036,6 +1039,7 @@ describe("Bun.connect TLS certificate verification", () => {
     expect(result.error?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
     // The connection is terminated natively; the test never calls end().
     await closed.promise;
+    expect(errorCalled).toBe(false);
   });
 
   it("rejects an untrusted certificate when rejectUnauthorized is true (no handshake callback)", async () => {
@@ -1043,6 +1047,7 @@ describe("Bun.connect TLS certificate verification", () => {
     const errored = Promise.withResolvers<any>();
     const closed = Promise.withResolvers<void>();
     let openCalled = false;
+    const events: string[] = [];
 
     await Bun.connect({
       hostname: "localhost",
@@ -1054,9 +1059,11 @@ describe("Bun.connect TLS certificate verification", () => {
         },
         data() {},
         error(_socket, err) {
+          events.push("error");
           errored.resolve(err);
         },
         close() {
+          events.push("close");
           closed.resolve();
         },
       },
@@ -1066,6 +1073,7 @@ describe("Bun.connect TLS certificate verification", () => {
     expect(err?.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
     expect(openCalled).toBe(false);
     await closed.promise;
+    expect(events).toEqual(["error", "close"]);
   });
 
   it("rejectUnauthorized: false still connects but reports authorized=false", async () => {

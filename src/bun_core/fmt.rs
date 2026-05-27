@@ -1949,7 +1949,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                     i += 2;
 
                                     while i < text.len() && text[i] != b'}' {
-                                        if text[i] == b'\\' {
+                                        if i + 1 < text.len() && text[i] == b'\\' {
                                             i += 1;
                                         }
                                         i += 1;

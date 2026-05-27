@@ -4655,3 +4655,90 @@ describe("parse error flood", () => {
     expect(exitCode).toBe(0);
   }, 90_000);
 });
+
+describe("multi-line comment scanning", () => {
+  // The lexer's block-comment scanner switches to a SIMD skip
+  // (bun_highway::index_of_interesting_character_in_multiline_comment) when at
+  // least 512 bytes of input remain, so cover sizes on both sides of that
+  // threshold and around vector-width boundaries, plus every byte class the
+  // skip has to stop at ('*', '\r', '\n', non-ASCII).
+  const transpiler = new Bun.Transpiler({ loader: "js" });
+  const xPad = Buffer.alloc(8193, "x").toString();
+  const pad600 = xPad.slice(0, 600);
+
+  const expectParseError = (code, message) => {
+    try {
+      transpiler.transformSync(code);
+    } catch (er) {
+      let err = er;
+      if (er instanceof AggregateError) {
+        err = er.errors[0];
+      }
+      expect(err.message).toBe(message);
+      return;
+    }
+    throw new Error("Expected parse error for code\n\t" + code);
+  };
+
+  it("strips block comments of every size around the SIMD threshold", () => {
+    const sizes = [];
+    for (let size = 480; size <= 576; size++) sizes.push(size);
+    sizes.push(1000, 4095, 4096, 4097, 8193);
+    for (const size of sizes) {
+      const out = transpiler.transformSync(`/*${xPad.slice(0, size)}*/ pass();`);
+      expect({ size, out }).toEqual({ size, out: "pass();\n" });
+    }
+  });
+
+  it("handles a lone '*' at every offset inside a large comment", () => {
+    const aPad = Buffer.alloc(80, "a").toString();
+    const bPad = Buffer.alloc(700, "b").toString();
+    for (let offset = 0; offset < 80; offset++) {
+      const body = aPad.slice(0, offset) + "*" + bPad.slice(0, 700 - offset);
+      const out = transpiler.transformSync(`/*${body}*/ pass();`);
+      expect({ offset, out }).toEqual({ offset, out: "pass();\n" });
+    }
+  });
+
+  it("handles comments made entirely of '*'", () => {
+    const stars = Buffer.alloc(600, "*").toString();
+    expect(transpiler.transformSync(`/*${stars}*/ pass();`)).toBe("pass();\n");
+    expect(transpiler.transformSync(`/*${stars}/ pass();`)).toBe("pass();\n");
+  });
+
+  it("treats newlines inside a large block comment as line terminators (ASI)", () => {
+    for (const newline of ["\n", "\r", "\r\n", "\u2028", "\u2029"]) {
+      const out = transpiler.transformSync(`function f() { return /*${pad600}${newline}${pad600}*/ 1 }`);
+      expect({ newline, out }).toEqual({ newline, out: "function f() {\n  return;\n}\n" });
+    }
+    // control: no newline anywhere inside the comment, so no ASI
+    expect(transpiler.transformSync(`function f() { return /*${pad600}${pad600}*/ 1 }`)).toBe(
+      "function f() {\n  return 1;\n}\n",
+    );
+  });
+
+  it("scans large comments containing non-ASCII text", () => {
+    expect(transpiler.transformSync(`/*${"é".repeat(400)}*/ pass();`)).toBe("pass();\n");
+    expect(transpiler.transformSync(`/*${"🦊".repeat(200)}*/ pass();`)).toBe("pass();\n");
+    expect(transpiler.transformSync(`/* ${pad600} 日本語のコメント ${pad600} */ pass();`)).toBe("pass();\n");
+  });
+
+  it("does not corrupt code around a large comment", () => {
+    const dashes = Buffer.alloc(700, "-").toString();
+    const out = transpiler.transformSync(`const a = "before";/*${dashes}*/const b = "after"; console.log(a, b);`);
+    expect(out).toBe('const a = "before";\nconst b = "after";\nconsole.log(a, b);\n');
+  });
+
+  it("handles a large comment that ends exactly at EOF", () => {
+    expect(transpiler.transformSync(`pass(); /*${pad600}*/`)).toBe("pass();\n");
+    expect(transpiler.transformSync(`pass(); /*${pad600}**/`)).toBe("pass();\n");
+  });
+
+  it("reports unterminated large block comments", () => {
+    const message = 'Expected "*/" to terminate multi-line comment';
+    expectParseError(`/*${pad600}`, message);
+    expectParseError(`/*${pad600}*`, message);
+    expectParseError(`/*${Buffer.alloc(600, "*").toString()}`, message);
+    expectParseError(`/*${pad600}🦊`, message);
+  });
+});

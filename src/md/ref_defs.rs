@@ -103,12 +103,8 @@ impl Parser<'_> {
         if normalized.is_empty() {
             return None; // whitespace-only labels are invalid
         }
-        for rd in self.ref_defs.iter() {
-            if rd.label[..] == normalized[..] {
-                return Some(rd);
-            }
-        }
-        None
+        let idx = self.ref_def_labels.map.get_index(&normalized)?;
+        self.ref_defs.get(idx)
     }
 
     /// Try to parse a link reference definition from merged paragraph text at position `pos`.

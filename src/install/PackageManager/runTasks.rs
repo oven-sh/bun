@@ -1821,18 +1821,22 @@ pub fn alloc_github_url(this: &PackageManager, repository: &Repository) -> Vec<u
     out
 }
 
-/// The github **git** clone URL (`https://github.com/<owner>/<repo>.git`), as
-/// opposed to [`alloc_github_url`] which builds the api.github.com *tarball*
-/// URL. Used by the tarball→clone fallback (#19618): cloning goes to github.com
-/// proper so `git`'s credential handling applies (matching npm's GitFetcher),
-/// which is why `GITHUB_API_URL` is intentionally not consulted here.
 pub fn alloc_github_git_clone_url(this: &PackageManager, repository: &Repository) -> Vec<u8> {
+    let mut github_server_url: &[u8] = b"https://github.com";
+    if let Some(url) = this.env().get(b"GITHUB_SERVER_URL") {
+        if !url.is_empty() {
+            github_server_url = url;
+        }
+    }
+
     let owner = this.lockfile.str(&repository.owner);
     let repo = this.lockfile.str(&repository.repo);
+
     let mut out = Vec::new();
     write!(
         &mut out,
-        "https://github.com/{}/{}.git",
+        "{}/{}/{}.git",
+        bstr::BStr::new(strings::without_trailing_slash(github_server_url)),
         bstr::BStr::new(owner),
         bstr::BStr::new(repo),
     )

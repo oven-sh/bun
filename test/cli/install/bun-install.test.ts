@@ -66,14 +66,14 @@ async function withContext(
 // Helper function to mock a private repository. Works by creating the repo locally and
 // using a binstub to rewrite arguments to git. Requires passing the returned env to bun.
 const mockGitClone = async (ctx, { privateRepository, repositoryUrl }) => {
-  const gitPath = Bun.which("git") ?? "usr/bin/git";
+  const gitPath = Bun.which("git") ?? "/usr/bin/git";
 
   // create a mock private repository fixture
 
   const packageVersion = "9.9.9";
 
   const privateRepositorityFixturePath = join(ctx.package_dir, privateRepository);
-  mkdir(privateRepositorityFixturePath);
+  await mkdir(privateRepositorityFixturePath);
 
   await writeFile(
     join(privateRepositorityFixturePath, "package.json"),
@@ -99,7 +99,7 @@ const mockGitClone = async (ctx, { privateRepository, repositoryUrl }) => {
   // before passing to actual git
 
   const binariesPath = join(ctx.package_dir, "bin");
-  mkdir(binariesPath);
+  await mkdir(binariesPath);
 
   const gitBinstubPath = join(binariesPath, "git");
 
@@ -8952,8 +8952,6 @@ describe.concurrent("bun-install", () => {
           env,
         });
 
-        expect(await exited).toBe(0);
-
         // Resolving dependencies
         // Resolved, downloaded and extracted [3]
         // Saved lockfile
@@ -8975,6 +8973,8 @@ describe.concurrent("bun-install", () => {
           "",
           "1 package installed",
         ]);
+
+        expect(await exited).toBe(0);
 
         expect(await readdirSorted(join(ctx.package_dir, "node_modules", "privateGitPackage"))).toContain(
           "package.json",

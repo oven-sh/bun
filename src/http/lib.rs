@@ -2260,7 +2260,9 @@ impl<'a> HTTPClient<'a> {
                     picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, value);
                 header_count += 1;
             }
-        } else if let Some(content_length) = original_content_length {
+        } else if let Some(content_length) = original_content_length
+            && matches!(bun_core::parse_unsigned::<usize>(content_length, 10), Ok(0))
+        {
             request_headers_buf[header_count] =
                 picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, content_length);
             header_count += 1;

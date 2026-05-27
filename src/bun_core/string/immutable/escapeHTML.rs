@@ -87,28 +87,22 @@ fn scalar_append(buf: *mut u8, ch: u8) -> usize {
     scalar_append_string(buf, html_escape_entity(ch).unwrap())
 }
 
-#[inline(always)]
-fn scalar_push<const LEN: usize>(chars: &[u8; LEN]) -> Escaped<u8> {
-    // PERF(port): Zig used `inline while` to fully unroll this sum at comptime
-    // for each LEN in 3..=32 — profile if it shows up on a hot path.
+fn scalar_push(chars: &[u8]) -> Escaped<u8> {
     let mut total: usize = 0;
-    let mut i = 0;
-    while i < LEN {
-        total += SCALAR_LENGTHS[chars[i] as usize] as usize;
-        i += 1;
+    for &c in chars {
+        total += SCALAR_LENGTHS[c as usize] as usize;
     }
 
-    if total == LEN {
+    if total == chars.len() {
         return Escaped::Original;
     }
 
     let mut output = vec![0u8; total].into_boxed_slice();
     let mut head = output.as_mut_ptr();
-    // PERF(port): Zig used `inline for (comptime bun.range(0, len))` — profile if hot.
-    for i in 0..LEN {
+    for &c in chars {
         // SAFETY: `total` was computed from SCALAR_LENGTHS so `head` never
         // overruns `output`.
-        head = unsafe { head.add(scalar_append(head, chars[i])) };
+        head = unsafe { head.add(scalar_append(head, c)) };
     }
 
     Escaped::Allocated(output)
@@ -156,155 +150,8 @@ pub fn escape_html_for_latin1_input(latin1: &[u8]) -> Result<Escaped<u8>, AllocE
         }
 
         // The simd implementation is slower for inputs less than 32 bytes.
-        3 => {
-            return Ok(scalar_push::<3>(
-                latin1[0..3].try_into().expect("infallible: size matches"),
-            ));
-        }
-        4 => {
-            return Ok(scalar_push::<4>(
-                latin1[0..4].try_into().expect("infallible: size matches"),
-            ));
-        }
-        5 => {
-            return Ok(scalar_push::<5>(
-                latin1[0..5].try_into().expect("infallible: size matches"),
-            ));
-        }
-        6 => {
-            return Ok(scalar_push::<6>(
-                latin1[0..6].try_into().expect("infallible: size matches"),
-            ));
-        }
-        7 => {
-            return Ok(scalar_push::<7>(
-                latin1[0..7].try_into().expect("infallible: size matches"),
-            ));
-        }
-        8 => {
-            return Ok(scalar_push::<8>(
-                latin1[0..8].try_into().expect("infallible: size matches"),
-            ));
-        }
-        9 => {
-            return Ok(scalar_push::<9>(
-                latin1[0..9].try_into().expect("infallible: size matches"),
-            ));
-        }
-        10 => {
-            return Ok(scalar_push::<10>(
-                latin1[0..10].try_into().expect("infallible: size matches"),
-            ));
-        }
-        11 => {
-            return Ok(scalar_push::<11>(
-                latin1[0..11].try_into().expect("infallible: size matches"),
-            ));
-        }
-        12 => {
-            return Ok(scalar_push::<12>(
-                latin1[0..12].try_into().expect("infallible: size matches"),
-            ));
-        }
-        13 => {
-            return Ok(scalar_push::<13>(
-                latin1[0..13].try_into().expect("infallible: size matches"),
-            ));
-        }
-        14 => {
-            return Ok(scalar_push::<14>(
-                latin1[0..14].try_into().expect("infallible: size matches"),
-            ));
-        }
-        15 => {
-            return Ok(scalar_push::<15>(
-                latin1[0..15].try_into().expect("infallible: size matches"),
-            ));
-        }
-        16 => {
-            return Ok(scalar_push::<16>(
-                latin1[0..16].try_into().expect("infallible: size matches"),
-            ));
-        }
-        17 => {
-            return Ok(scalar_push::<17>(
-                latin1[0..17].try_into().expect("infallible: size matches"),
-            ));
-        }
-        18 => {
-            return Ok(scalar_push::<18>(
-                latin1[0..18].try_into().expect("infallible: size matches"),
-            ));
-        }
-        19 => {
-            return Ok(scalar_push::<19>(
-                latin1[0..19].try_into().expect("infallible: size matches"),
-            ));
-        }
-        20 => {
-            return Ok(scalar_push::<20>(
-                latin1[0..20].try_into().expect("infallible: size matches"),
-            ));
-        }
-        21 => {
-            return Ok(scalar_push::<21>(
-                latin1[0..21].try_into().expect("infallible: size matches"),
-            ));
-        }
-        22 => {
-            return Ok(scalar_push::<22>(
-                latin1[0..22].try_into().expect("infallible: size matches"),
-            ));
-        }
-        23 => {
-            return Ok(scalar_push::<23>(
-                latin1[0..23].try_into().expect("infallible: size matches"),
-            ));
-        }
-        24 => {
-            return Ok(scalar_push::<24>(
-                latin1[0..24].try_into().expect("infallible: size matches"),
-            ));
-        }
-        25 => {
-            return Ok(scalar_push::<25>(
-                latin1[0..25].try_into().expect("infallible: size matches"),
-            ));
-        }
-        26 => {
-            return Ok(scalar_push::<26>(
-                latin1[0..26].try_into().expect("infallible: size matches"),
-            ));
-        }
-        27 => {
-            return Ok(scalar_push::<27>(
-                latin1[0..27].try_into().expect("infallible: size matches"),
-            ));
-        }
-        28 => {
-            return Ok(scalar_push::<28>(
-                latin1[0..28].try_into().expect("infallible: size matches"),
-            ));
-        }
-        29 => {
-            return Ok(scalar_push::<29>(
-                latin1[0..29].try_into().expect("infallible: size matches"),
-            ));
-        }
-        30 => {
-            return Ok(scalar_push::<30>(
-                latin1[0..30].try_into().expect("infallible: size matches"),
-            ));
-        }
-        31 => {
-            return Ok(scalar_push::<31>(
-                latin1[0..31].try_into().expect("infallible: size matches"),
-            ));
-        }
-        32 => {
-            return Ok(scalar_push::<32>(
-                latin1[0..32].try_into().expect("infallible: size matches"),
-            ));
+        3..=32 => {
+            return Ok(scalar_push(latin1));
         }
 
         _ => {

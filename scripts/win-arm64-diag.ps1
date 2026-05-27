@@ -78,92 +78,38 @@ function Clean-NodeModules {
   Remove-Item -Recurse -Force (Join-Path $repoRoot "node_modules") -ErrorAction SilentlyContinue
 }
 
-# Output-mode matrix: the test runner (which reproduces the crash 100%) pipes
-# bun's stdout/stderr; redirecting to a file (diag v4) made the crash vanish.
-# Distinguish "output written to a pipe" from everything else, and whether
-# silencing the install output (--silent) avoids it.
-function Invoke-PipedCase {
-  param([string]$Name, [string[]]$CaseArgs, [string]$Cwd, [switch]$Truncate)
-  Write-Host "--- case: $Name (piped)"
-  try {
-    if ($Cwd) { Push-Location $Cwd }
-    if ($Truncate) {
-      & $bun @CaseArgs 2>&1 | Select-Object -First 40 | Out-String | Write-Host
-    } else {
-      & $bun @CaseArgs 2>&1 | Out-Null
-    }
-    $code = $LASTEXITCODE
-    if ($Cwd) { Pop-Location }
-  } catch { Write-Host "exception: $($_.Exception.Message)"; $code = -1; Pop-Location -ErrorAction SilentlyContinue }
-  $hex = "0x{0:X8}" -f ($code -band 0xFFFFFFFF)
-  Write-Host "exit($Name): $code ($hex)"
+# DNS discrimination: the cross arm64 binary's c-ares queries fail with
+# ECONNREFUSED on this fleet while the native binary passes. Determine whether
+# server DISCOVERY is broken (getServers empty/localhost; explicit setServers
+# works) or the QUERY PATH itself is broken (even explicit servers fail).
+$dnsScript = @'
+const dns = require("node:dns");
+const dnsp = dns.promises;
+async function attempt(name, fn) {
+  try { const r = await fn(); console.log(`OK   ${name}:`, JSON.stringify(r).slice(0, 200)); }
+  catch (e) { console.log(`FAIL ${name}: ${e.code || e.errno || ""} ${e.message}`); }
 }
-
-# Crash dump capture with procdump (ARM64 native build). Try two sources.
-$procdump = Join-Path (Get-Location) "procdump64a.exe"
-foreach ($url in @("https://live.sysinternals.com/procdump64a.exe", "https://download.sysinternals.com/files/Procdump.zip")) {
-  try {
-    if ($url.EndsWith(".zip")) {
-      Invoke-WebRequest -Uri $url -OutFile procdump.zip -UseBasicParsing
-      Expand-Archive -Force procdump.zip -DestinationPath procdump-extracted
-      Copy-Item procdump-extracted\procdump64a.exe $procdump -Force
-    } else {
-      Invoke-WebRequest -Uri $url -OutFile $procdump -UseBasicParsing
-    }
-    Write-Host "--- WER service state: $((Get-Service WerSvc -ErrorAction SilentlyContinue).Status)"
-try { Set-Service WerSvc -StartupType Manual -ErrorAction SilentlyContinue; Start-Service WerSvc -ErrorAction SilentlyContinue } catch {}
-try { reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting" /v Disabled /t REG_DWORD /d 0 /f | Out-Null } catch {}
-
-# Force a COLD install cache every run (the crash needs the cold-install
-# concurrency); pipe + cold reproduces, warm does not.
-function New-ColdCacheEnv {
-  $dir = Join-Path $env:TEMP ("bun-cache-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
-  New-Item -ItemType Directory -Force -Path $dir | Out-Null
-  return $dir
-}
-
-Clean-NodeModules
-$env:BUN_INSTALL_CACHE_DIR = New-ColdCacheEnv
-Invoke-PipedCase -Name "install-pipe-cold-1"  -CaseArgs @("install") -Cwd $repoRoot
-Clean-NodeModules
-$env:BUN_INSTALL_CACHE_DIR = New-ColdCacheEnv
-Invoke-PipedCase -Name "install-pipe-cold-2"  -CaseArgs @("install") -Cwd $repoRoot
-Clean-NodeModules
-$env:BUN_INSTALL_CACHE_DIR = New-ColdCacheEnv
-Invoke-PipedCase -Name "install-pipe-cold-silent" -CaseArgs @("install", "--silent") -Cwd $repoRoot
-Clean-NodeModules
-$env:BUN_INSTALL_CACHE_DIR = New-ColdCacheEnv
-Invoke-Case      -Name "install-file-cold"    -CaseEnv @{} -CaseArgs @("install") -Cwd $repoRoot
-Remove-Item Env:BUN_INSTALL_CACHE_DIR -ErrorAction SilentlyContinue
-
-# procdump-wrapped cold piped install (the reproducing configuration): the
-# child inherits procdump's stdout which is the PowerShell pipe, so output
-# still goes to a pipe while procdump watches for first-chance/unhandled
-# exceptions and writes a full dump.
-if (Test-Path $procdump) {
-  try {
-    Clean-NodeModules
-    $env:BUN_INSTALL_CACHE_DIR = New-ColdCacheEnv
-    Push-Location $repoRoot
-    & $procdump -accepteula -ma -e 1 -g -x $dumpDir $bun install 2>&1 | Out-Null
-    Write-Host "procdump(cold piped install) exit: $LASTEXITCODE"
-    Pop-Location
-    Remove-Item Env:BUN_INSTALL_CACHE_DIR -ErrorAction SilentlyContinue
-  } catch { Write-Host "procdump capture failed: $($_.Exception.Message)"; Pop-Location -ErrorAction SilentlyContinue }
-}
-
-if (Test-Path $procdump) { Write-Host "procdump ready from $url ($((Get-Item $procdump).Length) bytes)"; break }
-  } catch { Write-Host "procdump fetch from $url failed: $($_.Exception.Message)" }
-}
-if (Test-Path $procdump) {
-  try {
-    Clean-NodeModules
-    Push-Location $repoRoot
-    & $procdump -accepteula -ma -e 1 -x $dumpDir $bun install 2>&1 | Select-Object -Last 50 | Out-String | Write-Host
-    Write-Host "procdump run exit: $LASTEXITCODE"
-    Pop-Location
-  } catch { Write-Host "procdump capture failed: $($_.Exception.Message)"; Pop-Location -ErrorAction SilentlyContinue }
-}
+(async () => {
+  console.log("getServers():", JSON.stringify(dns.getServers()));
+  await attempt("lookup example.com (system)", () => dnsp.lookup("example.com"));
+  await attempt("lookup example.com (c-ares backend)", () => dnsp.lookup("example.com", { backend: "c-ares" }));
+  await attempt("resolve4 example.com (discovered servers)", () => dnsp.resolve4("example.com"));
+  await attempt("resolveSrv _mongodb._tcp.cluster0.h2p0g.mongodb.net", () => dnsp.resolveSrv("_mongodb._tcp.cluster0.h2p0g.mongodb.net"));
+  await attempt("lookupService 1.1.1.1:53", () => dnsp.lookupService("1.1.1.1", 53));
+  dns.setServers(["1.1.1.1"]);
+  console.log("after setServers(1.1.1.1):", JSON.stringify(dns.getServers()));
+  await attempt("resolve4 example.com (explicit 1.1.1.1)", () => dnsp.resolve4("example.com"));
+  await attempt("resolveSrv mongodb (explicit 1.1.1.1)", () => dnsp.resolveSrv("_mongodb._tcp.cluster0.h2p0g.mongodb.net"));
+  dns.setServers(["168.63.129.16"]);
+  await attempt("resolve4 example.com (azure 168.63.129.16)", () => dnsp.resolve4("example.com"));
+})();
+'@
+$dnsScript | Out-File -Encoding ascii dns-diag.js
+Invoke-Case -Name "dns-diag" -CaseEnv @{} -CaseArgs @("dns-diag.js")
+Write-Host "--- ipconfig /all (DNS servers as Windows sees them)"
+ipconfig /all | Select-String -Pattern "DNS Servers|IPv4 Address|Description" | Out-String | Write-Host
+Write-Host "--- nslookup example.com (system resolver control)"
+nslookup example.com 2>&1 | Out-String | Write-Host
 
 Write-Host "--- Application event log (last hour, error/WER events)"
 try {

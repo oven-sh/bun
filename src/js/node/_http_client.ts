@@ -328,7 +328,7 @@ function ClientRequest(input, options, cb) {
       }
     };
 
-    const go = (url, proxy, softFail = false) => {
+    const go = (url, proxy, attemptedAddress = host, attemptedPort = this[kPort], softFail = false) => {
       const tls =
         protocol === "https:" && this[kTls] ? { ...this[kTls], serverName: this[kTls].servername } : undefined;
 
@@ -492,9 +492,10 @@ function ClientRequest(input, options, cb) {
               // including the errno/syscall/address/port fields. When a proxy
               // is in use the refused connection is to the proxy, so report the
               // proxy's host/port (as Node's agent does); otherwise report the
-              // request target.
-              let address = host;
-              let failedPort = this[kPort];
+              // attempted endpoint (the resolved address for the custom-lookup
+              // path, else the request target).
+              let address = attemptedAddress;
+              let failedPort = attemptedPort;
               if (proxy) {
                 try {
                   const proxyUrl = new URL(proxy);
@@ -541,7 +542,7 @@ function ClientRequest(input, options, cb) {
     if (isIP(host) || !options.lookup) {
       // Don't need to bother with lookup if it's already an IP address or no lookup function is provided.
       const [url, proxy] = getURL(host);
-      go(url, proxy, false);
+      go(url, proxy, host, this[kPort], false);
       return true;
     }
 
@@ -591,8 +592,9 @@ function ClientRequest(input, options, cb) {
             return;
           }
 
-          const [url, proxy] = getURL(candidates.shift().address);
-          go(url, proxy, candidates.length > 0).catch(iterate);
+          const candidate = candidates.shift();
+          const [url, proxy] = getURL(candidate.address);
+          go(url, proxy, candidate.address, this[kPort], candidates.length > 0).catch(iterate);
         };
 
         iterate();

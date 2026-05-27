@@ -1162,7 +1162,10 @@ describe("node:http connection errors", () => {
     req.end();
 
     const error = await promise;
+    // uv's negative errno for a refused connection (identical in Bun and Node).
+    const { UV_ECONNREFUSED } = process.binding("uv");
     expect(error.code).toBe("ECONNREFUSED");
+    expect(error.errno).toBe(UV_ECONNREFUSED);
     expect(error.syscall).toBe("connect");
     expect(error.address).toBe("127.0.0.1");
     expect(error.port).toBe(port);

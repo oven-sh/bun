@@ -19,6 +19,9 @@ import { dirname, join } from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+// uv's negative errno for a refused connection (identical in Bun and Node).
+const { UV_ECONNREFUSED } = process.binding("uv");
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Self-signed certificate with SANs for localhost and 127.0.0.1
@@ -668,6 +671,9 @@ describe("https.request agent TLS options inheritance", () => {
       const error = await promise;
       if (error.code !== "ECONNREFUSED") {
         throw new Error(`Expected code ECONNREFUSED, got ${error.code} (${error.message})`);
+      }
+      if (error.errno !== UV_ECONNREFUSED) {
+        throw new Error(`Expected errno ${UV_ECONNREFUSED}, got ${error.errno}`);
       }
       if (error.syscall !== "connect") {
         throw new Error(`Expected syscall connect, got ${error.syscall}`);

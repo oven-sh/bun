@@ -721,7 +721,11 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryDelete, (JSC::JSGlobalObject * globa
         return JSValue::encode(jsBoolean(false));
     auto key = JSC::Identifier::fromString(vm, asString(keyValue)->value(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsBoolean(globalObject->moduleLoader()->removeEntry(key)));
+    auto* moduleLoader = globalObject->moduleLoader();
+    // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
+    // under cellLock(); take the same lock so the removal can't race it.
+    WTF::Locker locker { moduleLoader->cellLock() };
+    return JSValue::encode(jsBoolean(moduleLoader->removeEntry(key)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
@@ -800,8 +804,10 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         // outer import() is mid-load, or the module is EvaluatingAsync from a
         // prior import), removing it would force a second evaluation and a
         // second namespace object once that outer load completes.
-        if (!entryExistedBefore)
+        if (!entryExistedBefore) {
+            WTF::Locker locker { loader->cellLock() };
             loader->removeEntry(key);
+        }
         return throwVMTypeError(globalObject, scope, makeString("require() async module \""_s, keyString, "\" is unsupported. use \"await import()\" instead."_s));
     }
     }
@@ -1762,7 +1768,11 @@ JSC_DEFINE_HOST_FUNCTION(jsBunPokePromiseAsHandled, (JSGlobalObject*, CallFrame*
 extern "C" JSC::EncodedJSValue Bun__Jest__createTestModuleObject(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue Bun__Jest__testModuleObject(Zig::GlobalObject* globalObject)
 {
-    return JSValue::encode(globalObject->lazyTestModuleObject());
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSObject* object = globalObject->lazyTestModuleObject();
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(object);
 }
 
 extern "C" napi_env ZigGlobalObject__makeNapiEnvForFFI(Zig::GlobalObject* globalObject)
@@ -1992,7 +2002,14 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::JSGlobalObject* globalObject = init.owner;
 
             JSValue result = JSValue::decode(Bun__Jest__createTestModuleObject(globalObject));
-            init.set(result.toObject(globalObject));
+            JSObject* object = result.isEmpty() ? nullptr : result.getObject();
+            if (!object) [[unlikely]] {
+                // Creation failed and left an exception pending; cache a plain
+                // object so the LazyProperty stays valid instead of crashing on
+                // an empty JSValue.
+                object = JSC::constructEmptyObject(globalObject);
+            }
+            init.set(object);
         });
 
     m_testMatcherUtilsObject.initLater(
@@ -3313,7 +3330,11 @@ void GlobalObject::reload()
 {
     auto& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    this->moduleLoader()->clearAll();
+    {
+        auto* moduleLoader = this->moduleLoader();
+        WTF::Locker locker { moduleLoader->cellLock() };
+        moduleLoader->clearAll();
+    }
     this->requireMap()->clear(this);
     RETURN_IF_EXCEPTION(scope, );
 
@@ -3435,8 +3456,10 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     JSModuleLoader*,
     JSString* moduleNameValue,
     RefPtr<JSC::ScriptFetchParameters> parameters,
-    const SourceOrigin& sourceOrigin)
+    const SourceOrigin& sourceOrigin,
+    bool deferred)
 {
+    UNUSED_PARAM(deferred);
     auto* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
 
     VM& vm = JSC::getVM(globalObject);
@@ -3934,7 +3957,11 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
         // ExternalStringImpl deallocators never run and LSan reports the
         // backing buffers as leaked. Mirrors WebWorker__teardownJSCVM.
         auto scope = DECLARE_THROW_SCOPE(vm);
-        globalObject->moduleLoader()->clearAll();
+        {
+            auto* moduleLoader = globalObject->moduleLoader();
+            WTF::Locker locker { moduleLoader->cellLock() };
+            moduleLoader->clearAll();
+        }
         globalObject->requireMap()->clear(globalObject);
         scope.exception(); // mirror WebWorker__teardownJSCVM — leave any pending exception in place
     }

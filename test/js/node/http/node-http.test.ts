@@ -1786,3 +1786,253 @@ describe("HTTP Server Security Tests - Advanced", () => {
     expect(text).toBe("Hello World");
   });
 });
+
+it("native server socket handle accessors return undefined for non-socket receivers", async () => {
+  // The custom getters/setters on the native server-socket prototype must verify the
+  // receiver type. Reflect.get(proto, name, {}) invokes the native accessor with an
+  // arbitrary object as `this`; it must return undefined instead of reading native
+  // fields out of the foreign object's storage.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const http = require("node:http");
+        const server = http.createServer((req, res) => {
+          let failure;
+          try {
+            const socket = req.socket;
+            const handleSym = Object.getOwnPropertySymbols(socket).find(s => s.description === "handle");
+            const handle = handleSym && socket[handleSym];
+            if (!handle || typeof handle.write !== "function") {
+              throw new Error("could not locate the native socket handle");
+            }
+            const proto = Object.getPrototypeOf(handle);
+            const getters = [
+              "closed",
+              "bytesWritten",
+              "secureEstablished",
+              "response",
+              "duplex",
+              "remoteAddress",
+              "localAddress",
+              "onclose",
+              "ondrain",
+              "ondata",
+            ];
+            for (const name of getters) {
+              // Plain object with populated inline properties as the receiver.
+              const fake = { a: 1.1, b: 2.2, c: 3.3, d: 4.4, e: 5.5, f: 6.6 };
+              const viaReflect = Reflect.get(proto, name, fake);
+              if (viaReflect !== undefined) {
+                throw new Error(name + " getter returned a value for a plain-object receiver: " + String(viaReflect));
+              }
+              // The prototype object itself is also not a socket handle.
+              const viaProto = proto[name];
+              if (viaProto !== undefined) {
+                throw new Error(name + " getter returned a value for the prototype receiver: " + String(viaProto));
+              }
+            }
+            for (const name of ["duplex", "onclose", "ondrain", "ondata"]) {
+              // Setters must not write through a non-socket receiver.
+              Reflect.set(proto, name, function () {}, { a: 1.1, b: 2.2, c: 3.3 });
+            }
+            // The real handle still works through the same accessors.
+            if (typeof handle.closed !== "boolean") throw new Error("handle.closed is not a boolean");
+            if (typeof handle.bytesWritten !== "number") throw new Error("handle.bytesWritten is not a number");
+          } catch (err) {
+            failure = err;
+          }
+          if (failure) {
+            console.error(failure && (failure.stack || failure.message || failure));
+            res.end("FAIL");
+          } else {
+            console.log("OK");
+            res.end("PASS");
+          }
+          server.close();
+        });
+        server.listen(0, "127.0.0.1", () => {
+          fetch("http://127.0.0.1:" + server.address().port + "/").then(r => r.text());
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("OK");
+  expect(exitCode).toBe(0);
+}, 15_000);
+
+it("socket handle write keeps buffered data intact when encoding coercion re-enters write", async () => {
+  // Argument conversion for the native socket write can run arbitrary JS (an encoding
+  // object's toString). If that JS calls write() again on the same socket, both the
+  // re-entrant write's data and the outer write's data must survive; nothing may be
+  // dropped or written through a stale buffer.
+  //
+  // The raw handle.write()/streamBuffer path only has its drain machinery wired up for
+  // CONNECT-tunneled sockets (uWS HttpContext::onWritable gates onSocketDrain on
+  // isConnectRequest), so the scenario must be driven from a "connect" handler — on a
+  // plain GET the buffered bytes would never flush and the fixture would hang.
+  const MB = 1024 * 1024;
+  const expectedTotal = 8 * MB + 4 * MB + 4 * MB;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const http = require("node:http");
+        const net = require("node:net");
+        const MB = 1024 * 1024;
+        const A = Buffer.alloc(8 * MB, 0x61);
+        const B = Buffer.alloc(4 * MB, 0x62);
+        const C = Buffer.alloc(4 * MB, 0x63);
+        const server = http.createServer();
+        server.on("connect", (req, socket) => {
+          const handleSym = Object.getOwnPropertySymbols(socket).find(s => s.description === "handle");
+          const handle = handleSym && socket[handleSym];
+          if (!handle || typeof handle.write !== "function") {
+            console.error("could not locate the native socket handle");
+            process.exit(1);
+          }
+          // The CONNECT path already wired handle.ondrain (kEnableStreaming), so the native
+          // writable handler will flush the stream buffer as the client reads.
+          // The client cannot read while this handler runs synchronously on the same thread,
+          // so most of this 8 MB lands in the native stream buffer.
+          handle.write(A);
+          // The encoding object's toString() re-enters write() on the same socket while the
+          // outer call is still converting its arguments.
+          handle.write(B, {
+            toString() {
+              handle.write(C);
+              return "utf8";
+            },
+          });
+          handle.end();
+        });
+        server.listen(0, "127.0.0.1", () => {
+          let received = 0;
+          let aCount = 0, bCount = 0, cCount = 0;
+          const client = net.connect(server.address().port, "127.0.0.1", () => {
+            client.write("CONNECT example.com:443 HTTP/1.1\\r\\nHost: example.com:443\\r\\n\\r\\n");
+          });
+          client.on("data", chunk => {
+            received += chunk.length;
+            for (let i = 0; i < chunk.length; i++) {
+              const b = chunk[i];
+              if (b === 0x61) aCount++;
+              else if (b === 0x62) bCount++;
+              else if (b === 0x63) cCount++;
+            }
+          });
+          client.on("end", () => {
+            console.log("received=" + received + " a=" + aCount + " b=" + bCount + " c=" + cCount);
+            process.exit(0);
+          });
+          client.on("error", err => {
+            console.error(err);
+            process.exit(1);
+          });
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("received=" + expectedTotal + " a=" + 8 * MB + " b=" + 4 * MB + " c=" + 4 * MB);
+  expect(exitCode).toBe(0);
+}, 30_000);
+
+it("client request path that does not begin with a slash stays on the configured host", async () => {
+  // `options.path` must only ever influence the path/query of the outgoing
+  // request. Bun builds the destination as a WHATWG URL, so a path that does
+  // not start with "/" (e.g. "@other-host:port/") would otherwise be parsed as
+  // a continuation of the authority, turning the configured host into userinfo
+  // and connecting to a different server.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const http = require("node:http");
+
+        // The server the request is configured to reach.
+        const intended = http.createServer((req, res) => {
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end("intended " + req.url);
+        });
+
+        // A second server that must never receive the request.
+        let decoyRequests = 0;
+        const decoy = http.createServer((req, res) => {
+          decoyRequests++;
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end("decoy");
+        });
+
+        function get(options) {
+          return new Promise((resolve, reject) => {
+            const req = http.request(options, res => {
+              let data = "";
+              res.setEncoding("utf8");
+              res.on("data", chunk => (data += chunk));
+              res.on("end", () => resolve(data));
+            });
+            req.on("error", reject);
+            req.end();
+          });
+        }
+
+        intended.listen(0, "127.0.0.1", () => {
+          decoy.listen(0, "127.0.0.1", async () => {
+            const intendedPort = intended.address().port;
+            const decoyPort = decoy.address().port;
+            try {
+              // A path of "@host:port/" must stay on the configured host and be
+              // sent as the request path.
+              const answered = await get({
+                host: "127.0.0.1",
+                port: intendedPort,
+                path: "@127.0.0.1:" + decoyPort + "/",
+              });
+              if (!answered.startsWith("intended ")) {
+                throw new Error("request was answered by the wrong server: " + answered);
+              }
+              if (!answered.includes("@127.0.0.1:" + decoyPort)) {
+                throw new Error("request path was not preserved: " + answered);
+              }
+              // An ordinary path still reaches the configured host unchanged.
+              const ok = await get({ host: "127.0.0.1", port: intendedPort, path: "/hello?world" });
+              if (ok !== "intended /hello?world") {
+                throw new Error("ordinary path broke: " + ok);
+              }
+              if (decoyRequests !== 0) {
+                throw new Error("the other server received " + decoyRequests + " request(s)");
+              }
+              console.log("OK");
+            } catch (err) {
+              console.error(err && (err.stack || err.message || err));
+              process.exitCode = 1;
+            } finally {
+              intended.close();
+              decoy.close();
+            }
+          });
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("OK");
+  expect(exitCode).toBe(0);
+}, 15_000);

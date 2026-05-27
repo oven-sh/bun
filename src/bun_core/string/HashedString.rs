@@ -43,7 +43,9 @@ impl HashedString {
     }
 
     pub fn eql_bytes(&self, other: &[u8]) -> bool {
-        (self.len as usize) == other.len() && (hash(other) as u32) == self.hash
+        (self.len as usize) == other.len()
+            && (hash(other) as u32) == self.hash
+            && self.str() == other
     }
 
     pub fn str(&self) -> &[u8] {

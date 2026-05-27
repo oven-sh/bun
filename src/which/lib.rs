@@ -1,4 +1,4 @@
-#![warn(unused_must_use, unreachable_pub)]
+#![warn(unused_must_use)]
 use bstr::BStr;
 #[cfg(windows)]
 use bun_core::{WStr, w};
@@ -247,6 +247,16 @@ fn search_bin_in_path<'a>(
         let _ = path_buf;
         path
     };
+    let tail_units = if check_windows_extensions { 5 } else { 1 };
+    if segment.len() + 1 + bin.len() + tail_units > buf.len()
+        && bun_core::strings::element_length_utf8_into_utf16(segment)
+            + 1
+            + bun_core::strings::element_length_utf8_into_utf16(bin)
+            + tail_units
+            > buf.len()
+    {
+        return None;
+    }
     let segment_utf16 = bun_core::strings::convert_utf8_to_utf16_in_buffer(
         &mut buf[..],
         bun_core::strings::without_trailing_slash(segment),

@@ -51,7 +51,7 @@ fn json_get_string_cloned<'b>(
 use crate::Command;
 use crate::cli::pack_command::{self as pack};
 
-pub struct ReadmeInfo {
+pub(crate) struct ReadmeInfo {
     pub filename: Vec<u8>,
     pub contents: Vec<u8>,
 }
@@ -89,7 +89,7 @@ use crate::run_command::RunCommand as Run;
 type SHA1Digest = [u8; sha::SHA1::DIGEST];
 type SHA512Digest = [u8; sha::SHA512::DIGEST];
 
-pub struct PublishCommand;
+pub(crate) struct PublishCommand;
 
 // TODO(port): Zig used `if (directory_publish) ?[]const u8 else void` for the script fields
 // and `if (directory_publish) *DotEnv.Loader else void` for script_env. Rust const generics
@@ -139,7 +139,7 @@ bun_core::oom_from_alloc!(FromTarballError);
 
 // TODO(port): Zig defined this as a nested type alias on the Context struct;
 // inherent associated types are unstable (rust#8995) so hoist to module scope.
-pub type FromWorkspaceError = pack::PackError<true>;
+pub(crate) type FromWorkspaceError = pack::PackError<true>;
 
 impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
     /// Retrieve information for publishing from a tarball path, `bun publish path/to/tarball.tgz`
@@ -540,7 +540,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 }
 
 impl PublishCommand {
-    pub fn exec(ctx: Command::Context) -> Result<(), Error> {
+    pub(crate) fn exec(ctx: Command::Context) -> Result<(), Error> {
         // TODO(port): narrow error set
         Output::prettyln(format_args!(
             "<r><b>bun publish <r><d>v{}<r>",
@@ -884,7 +884,7 @@ impl PublishCommand {
         false
     }
 
-    pub fn publish<const DIRECTORY_PUBLISH: bool>(
+    pub(crate) fn publish<const DIRECTORY_PUBLISH: bool>(
         ctx: &Context<'_, DIRECTORY_PUBLISH>,
     ) -> Result<(), PublishError> {
         let registry = ctx.manager.scope_for_package_name(&ctx.package_name);
@@ -1417,7 +1417,7 @@ impl PublishCommand {
         }
     }
 
-    pub fn normalized_package(
+    pub(crate) fn normalized_package(
         manager: &mut PackageManager,
         package_name: &[u8],
         package_version: &[u8],
@@ -1602,7 +1602,7 @@ impl PublishCommand {
     /// Searches `abs_workspace_path` for a README, matching `npm publish`. Returns
     /// the first match from `readdir` (same ordering npm's glob walks, in practice),
     /// or `None` if none is present.
-    pub fn find_workspace_readme(abs_workspace_path: &[u8]) -> Option<ReadmeInfo> {
+    pub(crate) fn find_workspace_readme(abs_workspace_path: &[u8]) -> Option<ReadmeInfo> {
         let workspace_dir = bun_sys::open_dir_absolute(abs_workspace_path).ok()?;
         let _close = scopeguard::guard(workspace_dir, |d| {
             let _ = d.close();
@@ -2127,7 +2127,7 @@ impl PublishCommand {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum PublishError {
+pub(crate) enum PublishError {
     #[error("OutOfMemory")]
     OutOfMemory,
     #[error("NeedAuth")]
@@ -2136,7 +2136,7 @@ pub enum PublishError {
 bun_core::oom_from_alloc!(PublishError);
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum GetOTPError {
+pub(crate) enum GetOTPError {
     #[error("OutOfMemory")]
     OutOfMemory,
 }

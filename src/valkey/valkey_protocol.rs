@@ -32,6 +32,7 @@ pub enum RedisError {
     ConnectionTimeout,
     IdleTimeout,
     NestingDepthExceeded,
+    LineTooLong,
 }
 
 bun_core::impl_tag_error!(RedisError);
@@ -55,7 +56,7 @@ impl From<bun_core::Error> for RedisError {
 /// RESP protocol types
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum RESPType {
+pub(crate) enum RESPType {
     // RESP2 types
     SimpleString = b'+',
     Error = b'-',
@@ -77,7 +78,7 @@ pub enum RESPType {
 }
 
 impl RESPType {
-    pub fn from_byte(byte: u8) -> Option<RESPType> {
+    pub(crate) fn from_byte(byte: u8) -> Option<RESPType> {
         match byte {
             x if x == RESPType::SimpleString as u8 => Some(RESPType::SimpleString),
             x if x == RESPType::Error as u8 => Some(RESPType::Error),
@@ -249,12 +250,16 @@ impl<'a> ValkeyReader<'a> {
 
     pub fn read_until_crlf(&mut self) -> Result<&'a [u8], RedisError> {
         let buffer = &self.buffer[self.pos..];
-        for (i, &byte) in buffer.iter().enumerate() {
+        let limit = buffer.len().min(Self::MAX_LINE_LEN + 1);
+        for (i, &byte) in buffer[..limit].iter().enumerate() {
             if byte == b'\r' && buffer.len() > i + 1 && buffer[i + 1] == b'\n' {
                 let result = &buffer[0..i];
                 self.pos += i + 2;
                 return Ok(result);
             }
+        }
+        if buffer.len() > Self::MAX_LINE_LEN + 1 {
+            return Err(RedisError::LineTooLong);
         }
 
         Err(RedisError::InvalidResponse)
@@ -337,6 +342,8 @@ impl<'a> ValkeyReader<'a> {
     /// machine stops buffering instead of growing the read buffer toward an
     /// attacker-chosen size.
     const MAX_BULK_LEN: i64 = 512 * 1024 * 1024;
+
+    const MAX_LINE_LEN: usize = 512 * 1024;
 
     /// Caps an aggregate's `Vec::with_capacity` so the total bytes reserved
     /// across the whole parse — every nesting level combined — never exceed

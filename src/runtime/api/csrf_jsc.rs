@@ -75,7 +75,7 @@ fn get_optional_int_u64(
 /// JS binding function for generating CSRF tokens
 /// First argument is secret (required), second is options (optional)
 #[bun_jsc::host_fn]
-pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_analytics::features::csrf_generate.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
     // We should have at least one argument (secret)
@@ -100,6 +100,7 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     let mut expires_in: u64 = csrf::DEFAULT_EXPIRATION_MS;
     let mut encoding: csrf::TokenFormat = csrf::TokenFormat::Base64Url;
     let mut algorithm: EvpAlgorithm = csrf::DEFAULT_ALGORITHM;
+    let mut session_id: Option<ZigStringSlice> = None;
 
     // Check if we have options object
     if args.len() > 1 && args[1].is_object() {
@@ -108,6 +109,16 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
         // Extract expiresIn (optional)
         if let Some(expires_in_js) = get_optional_int_u64(options_value, global, "expiresIn")? {
             expires_in = expires_in_js;
+        }
+
+        // Extract sessionId (optional)
+        if let Some(session_id_slice) = get_optional_slice(options_value, global, b"sessionId")? {
+            if session_id_slice.slice().is_empty() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "sessionId must be a non-empty string"
+                )));
+            }
+            session_id = Some(session_id_slice);
         }
 
         // Extract encoding (optional)
@@ -174,6 +185,7 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
                 // on the JS thread so the VM singleton is exclusively reachable here.
                 None => global.bun_vm().as_mut().rare_data().default_csrf_secret(),
             },
+            session_id: session_id.as_ref().map(|s| s.slice()).unwrap_or(b""),
             expires_in_ms: expires_in,
             encoding,
             algorithm,
@@ -206,7 +218,7 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 /// JS binding function for verifying CSRF tokens
 /// First argument is token (required), second is options (optional)
 #[bun_jsc::host_fn]
-pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_analytics::features::csrf_verify.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     // We should have at least one argument (token)
     let args = frame.arguments();
@@ -233,6 +245,7 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
     // `defer if (secret) |s| s.deinit();` — handled by Drop
     let mut max_age: u64 = csrf::DEFAULT_EXPIRATION_MS;
     let mut encoding: csrf::TokenFormat = csrf::TokenFormat::Base64Url;
+    let mut session_id: Option<ZigStringSlice> = None;
 
     let mut algorithm: EvpAlgorithm = csrf::DEFAULT_ALGORITHM;
 
@@ -247,6 +260,16 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                     .throw_invalid_arguments(format_args!("Secret must be a non-empty string")));
             }
             secret = Some(secret_slice);
+        }
+
+        // Extract sessionId (optional)
+        if let Some(session_id_slice) = get_optional_slice(options_value, global, b"sessionId")? {
+            if session_id_slice.slice().is_empty() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "sessionId must be a non-empty string"
+                )));
+            }
+            session_id = Some(session_id_slice);
         }
 
         // Extract maxAge (optional)
@@ -313,6 +336,7 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
             // on the JS thread so the VM singleton is exclusively reachable here.
             None => global.bun_vm().as_mut().rare_data().default_csrf_secret(),
         },
+        session_id: session_id.as_ref().map(|s| s.slice()).unwrap_or(b""),
         max_age_ms: max_age,
         encoding,
         algorithm,

@@ -604,12 +604,27 @@ pub mod ast {
 
 const MAX_NESTED_BRACES: usize = 10;
 
+const MAX_BRACE_GROUPS: usize = 256;
+
+fn check_brace_group_count(tokens: &[Token]) -> Result<(), ParserError> {
+    let opens = tokens
+        .iter()
+        .filter(|t| matches!(t, Token::Open(_)))
+        .count();
+    if opens > MAX_BRACE_GROUPS {
+        return Err(ParserError::TooManyBraces);
+    }
+    Ok(())
+}
+
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ParserError {
     #[error("OutOfMemory")]
     OutOfMemory,
     #[error("UnexpectedToken")]
     UnexpectedToken,
+    #[error("TooManyBraces")]
+    TooManyBraces,
 }
 
 bun_core::oom_from_alloc!(ParserError);
@@ -619,11 +634,12 @@ impl From<ParserError> for bun_core::Error {
         match e {
             ParserError::OutOfMemory => bun_core::err!("OutOfMemory"),
             ParserError::UnexpectedToken => bun_core::err!("UnexpectedToken"),
+            ParserError::TooManyBraces => bun_core::err!("TooManyBraces"),
         }
     }
 }
 
-pub type ExpandError = ParserError;
+pub(crate) type ExpandError = ParserError;
 
 /// `out` is preallocated by using the result from `calculateExpandedAmount`
 pub fn expand(
@@ -632,6 +648,7 @@ pub fn expand(
     out: &mut [Vec<u8>],
     contains_nested: bool,
 ) -> Result<(), ExpandError> {
+    check_brace_group_count(tokens)?;
     let mut out_key_counter: u16 = 1;
     if !contains_nested {
         let expansions_table = build_expansion_table_alloc(tokens)?;
@@ -890,6 +907,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse(&mut self) -> Result<ast::Group, ParserError> {
+        check_brace_group_count(self.tokens)?;
         // PERF(port): was stack-fallback alloc (@sizeOf(AST.Atom)) — profile if hot.
         let mut nodes: BumpVec<'a, ast::Atom> = BumpVec::new_in(self.bump);
         while !self.r#match(TokenTag::Eof) {
@@ -1150,7 +1168,7 @@ pub struct LexerOutput {
     pub contains_nested: bool,
 }
 
-pub type BraceLexerError = AllocError;
+pub(crate) type BraceLexerError = AllocError;
 
 pub struct NewLexer<const ENCODING: Encoding> {
     chars: Chars<ENCODING>,

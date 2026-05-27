@@ -5,7 +5,6 @@
 // below; higher-level extraction logic (`Archiver`, `BufferReadStream`) sits
 // on top and uses `bun_sys` for I/O.
 // ──────────────────────────────────────────────────────────────────────────
-#![warn(unreachable_pub)]
 use core::ffi::{c_int, c_void};
 use core::ptr;
 
@@ -1324,6 +1323,19 @@ fn is_symlink_target_safe(
         return false;
     }
 
+    let mut seen_named_component = false;
+    for component in link_target_bytes.split(|c| *c == b'/') {
+        match component {
+            b"" | b"." => {}
+            b".." => {
+                if seen_named_component {
+                    return false;
+                }
+            }
+            _ => seen_named_component = true,
+        }
+    }
+
     // Get the directory containing the symlink
     let symlink_dir = bun_paths::dirname_simple(symlink_path);
 
@@ -1798,6 +1810,16 @@ impl Archiver {
                     // SAFETY: `remaining` is a tail slice of `pathname_z`, which is NUL-terminated
                     // at its original `.len()`; therefore `remaining[remaining.len()] == 0`.
                     let pathname: &[OSPathChar] = remaining;
+
+                    if pathname.len() >= normalized_buf.len() {
+                        if options.log {
+                            Output::warn(format_args!(
+                                "Skipping entry with a path longer than the maximum path length: {}\n",
+                                bun_core::fmt::fmt_os_path(pathname, Default::default()),
+                            ));
+                        }
+                        continue;
+                    }
 
                     let normalized = bun_paths::resolve_path::normalize_buf_t::<
                         OSPathChar,

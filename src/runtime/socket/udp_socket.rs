@@ -189,6 +189,7 @@ extern "C" fn on_data(
         let slice = buf.get_payload(i);
 
         let span = hostname.unwrap();
+        #[allow(unused_labels)]
         let mut hostname_string = if let Some(id) = scope_id {
             'blk: {
                 #[cfg(not(windows))]
@@ -293,7 +294,7 @@ impl Default for UDPSocketConfig {
 }
 
 impl UDPSocketConfig {
-    pub fn from_js(
+    pub(crate) fn from_js(
         global_this: &JSGlobalObject,
         options: JSValue,
         this_value: JSValue,

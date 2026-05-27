@@ -10,7 +10,7 @@ use bun_sys;
 
 use crate::command::Context;
 
-pub struct ExecCommand;
+pub(crate) struct ExecCommand;
 
 /// Process-lifetime arena for the exec command's `Transpiler`. Zig passed
 /// `ctx.allocator` (== `bun.default_allocator`); the Rust port threads an
@@ -35,7 +35,7 @@ fn exec_arena() -> &'static bun_alloc::Arena {
 
 impl ExecCommand {
     // TODO(port): narrow error set
-    pub fn exec(ctx: Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: Context) -> Result<(), bun_core::Error> {
         // PORT NOTE: reshaped for borrowck — clone the positional so `ctx`
         // can be reborrowed `&mut` for `init_and_run_from_source` below.
         let script: Box<[u8]> = ctx.positionals[1].clone();

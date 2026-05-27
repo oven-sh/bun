@@ -16,7 +16,6 @@
 // `bun_windows_sys::FILE_OPEN`); see the `TODO(port)` marker in
 // `WindowsWatcher.rs`. A host build never compiles the non-native backends.
 
-#![warn(unreachable_pub)]
 // Android: same kernel inotify ABI as glibc/musl Linux.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[path = "INotifyWatcher.rs"]

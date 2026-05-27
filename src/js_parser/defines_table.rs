@@ -232,7 +232,7 @@ mod identifiers {
     };
 
     // Step 2. Swap in certain literal values because those can be constant folded
-    pub fn undefined() -> &'static defines::IdentifierDefine {
+    pub(super) fn undefined() -> &'static defines::IdentifierDefine {
         static CELL: OnceLock<SyncDefineData> = OnceLock::new();
         &CELL
             .get_or_init(|| {
@@ -244,7 +244,7 @@ mod identifiers {
             })
             .0
     }
-    pub fn nan() -> &'static defines::IdentifierDefine {
+    pub(super) fn nan() -> &'static defines::IdentifierDefine {
         static CELL: OnceLock<SyncDefineData> = OnceLock::new();
         &CELL
             .get_or_init(|| {
@@ -255,7 +255,7 @@ mod identifiers {
             })
             .0
     }
-    pub fn infinity() -> &'static defines::IdentifierDefine {
+    pub(super) fn infinity() -> &'static defines::IdentifierDefine {
         static CELL: OnceLock<SyncDefineData> = OnceLock::new();
         &CELL
             .get_or_init(|| {
@@ -269,7 +269,7 @@ mod identifiers {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum PureGlobalIdentifierValue {
+pub(crate) enum PureGlobalIdentifierValue {
     NaN,
     Infinity,
     /// Zig: `@"strict undefined"`
@@ -278,7 +278,7 @@ pub enum PureGlobalIdentifierValue {
 }
 
 impl PureGlobalIdentifierValue {
-    pub fn value(self) -> &'static defines::IdentifierDefine {
+    pub(crate) fn value(self) -> &'static defines::IdentifierDefine {
         match self {
             PureGlobalIdentifierValue::NaN => identifiers::nan(),
             PureGlobalIdentifierValue::Infinity => identifiers::infinity(),

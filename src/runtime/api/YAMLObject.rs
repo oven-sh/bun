@@ -11,7 +11,7 @@ use bun_jsc::{
 };
 use bun_parsers::yaml::{YAML, YamlParseError};
 
-pub fn create(global_this: &JSGlobalObject) -> JSValue {
+pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
     jsc::create_host_function_object(
         global_this,
         &[
@@ -22,7 +22,7 @@ pub fn create(global_this: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
     let [value, replacer, space_value] = call_frame.arguments_as_array::<3>();
 
     value.ensure_still_alive();
@@ -60,7 +60,7 @@ pub fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JS
     stringifier.builder.to_string(global)
 }
 
-pub struct Stringifier {
+pub(crate) struct Stringifier {
     stack_check: StackCheck,
     builder: wtf::StringBuilder,
     indent: usize,
@@ -72,7 +72,7 @@ pub struct Stringifier {
     space: Space,
 }
 
-pub enum Space {
+pub(crate) enum Space {
     Minified,
     Number(u32),
     /// +1 WTF ref owned for the lifetime of the `Stringifier` (Zig:
@@ -81,7 +81,7 @@ pub enum Space {
 }
 
 impl Space {
-    pub fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
+    pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
         let space = space_value.unwrap_boxed_primitive(global)?;
         if space.is_number() {
             // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
@@ -106,14 +106,7 @@ impl Space {
     }
 }
 
-#[repr(u8)]
-pub enum AnchorOrigin {
-    Root,
-    ArrayItem,
-    PropValue,
-}
-
-pub struct AnchorAlias {
+pub(crate) struct AnchorAlias {
     anchored: bool,
     used: bool,
     name: AnchorAliasName,
@@ -134,7 +127,7 @@ impl Default for AnchorAlias {
 }
 
 impl AnchorAlias {
-    pub fn init(origin: ValueOrigin) -> AnchorAlias {
+    pub(crate) fn init(origin: ValueOrigin) -> AnchorAlias {
         AnchorAlias {
             anchored: false,
             used: false,
@@ -150,7 +143,7 @@ impl AnchorAlias {
     }
 }
 
-pub enum AnchorAliasName {
+pub(crate) enum AnchorAliasName {
     // only one root anchor is possible
     Root,
     ArrayItem(usize),
@@ -162,14 +155,14 @@ pub enum AnchorAliasName {
 }
 
 #[derive(Clone, Copy)]
-pub enum ValueOrigin {
+pub(crate) enum ValueOrigin {
     Root,
     ArrayItem,
     PropValue(BunString),
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum StringifyError {
+pub(crate) enum StringifyError {
     #[error("OutOfMemory")]
     OutOfMemory,
     #[error("JSError")]
@@ -193,7 +186,7 @@ impl From<JsError> for StringifyError {
 bun_core::oom_from_alloc!(StringifyError);
 
 impl Stringifier {
-    pub fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
+    pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
         let mut prop_names: StringHashMap<usize> = StringHashMap::default();
         // always rename anchors named "root" to avoid collision with
         // root anchor/alias
@@ -213,7 +206,7 @@ impl Stringifier {
     // deinit: all fields have Drop (`space: Space::Str` holds an
     // `OwnedString`); no explicit impl needed.
 
-    pub fn find_anchors_and_aliases(
+    pub(crate) fn find_anchors_and_aliases(
         &mut self,
         global: &JSGlobalObject,
         value: JSValue,
@@ -270,7 +263,14 @@ impl Stringifier {
                     self.array_item_counter += 1;
                 }
                 AnchorAliasName::PropValue { prop_name, counter } => {
-                    let name_entry = self.prop_names.get_or_put(prop_name.byte_slice())?;
+                    // Unsafe names use generated `value<counter>` anchors, keyed on
+                    // "value" so the counter is shared with literal "value" properties.
+                    let key: &[u8] = if can_use_prop_name_as_anchor(prop_name) {
+                        prop_name.byte_slice()
+                    } else {
+                        b"value"
+                    };
+                    let name_entry = self.prop_names.get_or_put(key)?;
                     if name_entry.found_existing {
                         *name_entry.value_ptr += 1;
                     } else {
@@ -318,7 +318,7 @@ impl Stringifier {
         Ok(())
     }
 
-    pub fn stringify(
+    pub(crate) fn stringify(
         &mut self,
         global: &JSGlobalObject,
         value: JSValue,
@@ -408,7 +408,7 @@ impl Stringifier {
                     self.builder.append_usize(*counter);
                 }
                 AnchorAliasName::PropValue { prop_name, counter } => {
-                    if prop_name.length() == 0 {
+                    if !can_use_prop_name_as_anchor(prop_name) {
                         self.builder.append_latin1(b"value");
                         self.builder.append_usize(*counter);
                     } else {
@@ -672,6 +672,56 @@ impl Stringifier {
 /// Does this object property value need a newline? True for arrays and objects.
 fn prop_value_needs_newline(value: JSValue) -> bool {
     !value.is_number() && !value.is_boolean() && !value.is_null() && !value.is_string()
+}
+
+/// Can this property name be emitted verbatim as an anchor/alias name?
+/// Anchor names can't be quoted or escaped, so only unambiguously safe characters
+/// are reused; anything else falls back to a generated `value<counter>` name.
+fn can_use_prop_name_as_anchor(str: &BunString) -> bool {
+    if str.is_empty() {
+        return false;
+    }
+
+    for i in 0..str.length() {
+        match str.char_at(i) {
+            0x30..=0x39 /* '0'..='9' */
+            | 0x41..=0x5a /* 'A'..='Z' */
+            | 0x61..=0x7a /* 'a'..='z' */
+            | 0x2d /* '-' */
+            | 0x2e /* '.' */
+            | 0x5f /* '_' */ => {}
+            _ => return false,
+        }
+    }
+
+    !matches_generated_anchor_name(str)
+}
+
+/// `value0`, `item12`, `root1`, ... — names that could duplicate a generated anchor name.
+fn matches_generated_anchor_name(str: &BunString) -> bool {
+    const PREFIXES: [&[u8]; 3] = [b"value", b"item", b"root"];
+
+    'next_prefix: for prefix in PREFIXES {
+        if str.length() <= prefix.len() {
+            continue;
+        }
+
+        for (i, &byte) in prefix.iter().enumerate() {
+            if str.char_at(i) != u16::from(byte) {
+                continue 'next_prefix;
+            }
+        }
+
+        for i in prefix.len()..str.length() {
+            if !matches!(str.char_at(i), 0x30..=0x39 /* '0'..='9' */) {
+                continue 'next_prefix;
+            }
+        }
+
+        return true;
+    }
+
+    false
 }
 
 fn string_needs_quotes(str: &BunString) -> bool {
@@ -1025,7 +1075,7 @@ pub fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValu
     )
 }
 
-pub struct ParserCtx<'a> {
+pub(crate) struct ParserCtx<'a> {
     seen_objects: HashMap<*const c_void, JSValue>,
     stack_check: StackCheck,
 
@@ -1036,7 +1086,7 @@ pub struct ParserCtx<'a> {
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum ToJsError {
+pub(crate) enum ToJsError {
     #[error("OutOfMemory")]
     OutOfMemory,
     #[error("JSError")]
@@ -1100,7 +1150,7 @@ impl<'a> ParserCtx<'a> {
         };
     }
 
-    pub fn to_js(
+    pub(crate) fn to_js(
         &mut self,
         args: &mut MarkedArgumentBuffer,
         expr: Expr,

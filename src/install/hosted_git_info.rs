@@ -453,11 +453,11 @@ pub enum WellDefinedProtocol {
 /// Sized to hold the longest protocol name plus one character for the colon.
 // PORT NOTE: hoisted from `impl WellDefinedProtocol` — inherent associated types
 // are unstable (E0658).
-pub type StringWithColonBuffer = [u8; WellDefinedProtocol::MAX_PROTOCOL_LENGTH + 1];
+pub(crate) type StringWithColonBuffer = [u8; WellDefinedProtocol::MAX_PROTOCOL_LENGTH + 1];
 
 impl WellDefinedProtocol {
     /// Mapping from protocol string (without colon) to WellDefinedProtocol.
-    pub const STRINGS: phf::Map<&'static [u8], WellDefinedProtocol> = phf::phf_map! {
+    pub(crate) const STRINGS: phf::Map<&'static [u8], WellDefinedProtocol> = phf::phf_map! {
         b"bitbucket" => WellDefinedProtocol::Bitbucket,
         b"gist" => WellDefinedProtocol::Gist,
         b"git+file" => WellDefinedProtocol::GitPlusFile,
@@ -498,7 +498,7 @@ impl WellDefinedProtocol {
 
     /// Look up a protocol from a string that includes the trailing colon (e.g., "https:").
     /// This method strips the colon before looking up in the strings map.
-    pub fn from_string_with_colon(protocol_with_colon: &[u8]) -> Option<Self> {
+    pub(crate) fn from_string_with_colon(protocol_with_colon: &[u8]) -> Option<Self> {
         if protocol_with_colon.is_empty() {
             None
         } else {
@@ -511,12 +511,12 @@ impl WellDefinedProtocol {
     /// Maximum length of any protocol string in the strings map (computed at compile time).
     // PORT NOTE: Zig computed this with a comptime loop over `strings.kvs`. The
     // longest keys ("git+https", "git+rsync", "sourcehut", "bitbucket") are 9 bytes.
-    pub const MAX_PROTOCOL_LENGTH: usize = 9;
+    pub(crate) const MAX_PROTOCOL_LENGTH: usize = 9;
 
     /// Get the protocol string with colon (e.g., "https:") for a given protocol enum.
     /// Takes a buffer pointer to hold the result.
     /// Returns a slice into that buffer containing the protocol string with colon.
-    pub fn to_string_with_colon(self, buf: &mut StringWithColonBuffer) -> &[u8] {
+    pub(crate) fn to_string_with_colon(self, buf: &mut StringWithColonBuffer) -> &[u8] {
         // Look up the protocol string (without colon) from the map
         let protocol_str = self.protocol_str();
 
@@ -592,7 +592,7 @@ impl WellDefinedProtocol {
 /// Test whether the given node-package-arg string is a GitHub shorthand.
 ///
 /// This mirrors the implementation of hosted-git-info, though it is significantly faster.
-pub fn is_github_shorthand(npa_str: &[u8]) -> bool {
+pub(crate) fn is_github_shorthand(npa_str: &[u8]) -> bool {
     // The implementation in hosted-git-info is a multi-pass algorithm. We've opted to implement a
     // single-pass algorithm for better performance.
     //
@@ -671,7 +671,7 @@ pub enum UrlProtocol<'a> {
 
 impl<'a> UrlProtocol<'a> {
     /// Deduces the default representation for this protocol.
-    pub fn default_representation(self) -> Representation {
+    pub(crate) fn default_representation(self) -> Representation {
         match self {
             UrlProtocol::WellFormed(p) => p.default_representation(),
             _ => Representation::Sshurl, // Unknown/custom protocols default to sshurl
@@ -681,18 +681,18 @@ impl<'a> UrlProtocol<'a> {
 
 // PORT NOTE: `url: union(enum) { managed: {buf, allocator}, unmanaged: []const u8 }`
 // → enum with `Managed(Box<[u8]>)` / `Unmanaged(&'a [u8])`. Allocator dropped.
-pub enum UrlProtocolPairUrl<'a> {
+pub(crate) enum UrlProtocolPairUrl<'a> {
     Managed(Box<[u8]>),
     Unmanaged(&'a [u8]),
 }
 
-pub struct UrlProtocolPair<'a> {
+pub(crate) struct UrlProtocolPair<'a> {
     pub url: UrlProtocolPairUrl<'a>,
     pub protocol: UrlProtocol<'a>,
 }
 
 impl<'a> UrlProtocolPair<'a> {
-    pub fn url_slice(&self) -> &[u8] {
+    pub(crate) fn url_slice(&self) -> &[u8] {
         match &self.url {
             UrlProtocolPairUrl::Managed(s) => s,
             UrlProtocolPairUrl::Unmanaged(s) => s,
@@ -874,7 +874,7 @@ fn normalize_protocol(npa_str: &[u8]) -> UrlProtocolPair<'_> {
 /// Attempt to correct an scp-style URL into a proper URL, parsable with jsc.URL.
 ///
 /// This function assumes that the input is an scp-style URL.
-pub fn correct_url<'a>(
+pub(crate) fn correct_url<'a>(
     url_proto_pair: &UrlProtocolPair<'a>,
 ) -> Result<UrlProtocolPair<'a>, AllocError> {
     let at_idx: isize = if let Some(idx) =
@@ -1109,7 +1109,7 @@ pub mod formatters {
             committish: Option<&[u8]>,
         ) -> Result<Vec<u8>, AllocError>;
 
-        pub fn default(
+        pub(crate) fn default(
             self_: HostProvider,
             user: Option<&[u8]>,
             project: &[u8],
@@ -1133,7 +1133,7 @@ pub mod formatters {
             Ok(v)
         }
 
-        pub fn gist(
+        pub(crate) fn gist(
             self_: HostProvider,
             _user: Option<&[u8]>,
             project: &[u8],
@@ -1167,7 +1167,7 @@ pub mod formatters {
             committish: Option<&[u8]>,
         ) -> Result<Vec<u8>, AllocError>;
 
-        pub fn default(
+        pub(crate) fn default(
             self_: HostProvider,
             user: Option<&[u8]>,
             project: &[u8],
@@ -1191,7 +1191,7 @@ pub mod formatters {
             Ok(v)
         }
 
-        pub fn gist(
+        pub(crate) fn gist(
             self_: HostProvider,
             _user: Option<&[u8]>,
             project: &[u8],
@@ -1226,7 +1226,7 @@ pub mod formatters {
             committish: Option<&[u8]>,
         ) -> Result<Vec<u8>, AllocError>;
 
-        pub fn default(
+        pub(crate) fn default(
             self_: HostProvider,
             auth: Option<&[u8]>,
             user: Option<&[u8]>,
@@ -1256,7 +1256,7 @@ pub mod formatters {
             Ok(v)
         }
 
-        pub fn gist(
+        pub(crate) fn gist(
             self_: HostProvider,
             _auth: Option<&[u8]>,
             _user: Option<&[u8]>,
@@ -1279,7 +1279,7 @@ pub mod formatters {
             Ok(v)
         }
 
-        pub fn sourcehut(
+        pub(crate) fn sourcehut(
             self_: HostProvider,
             _auth: Option<&[u8]>,
             user: Option<&[u8]>,
@@ -1317,7 +1317,7 @@ pub mod formatters {
             committish: Option<&[u8]>,
         ) -> Result<Vec<u8>, AllocError>;
 
-        pub fn default(
+        pub(crate) fn default(
             self_: HostProvider,
             user: Option<&[u8]>,
             project: &[u8],
@@ -1342,7 +1342,7 @@ pub mod formatters {
             Ok(v)
         }
 
-        pub fn gist(
+        pub(crate) fn gist(
             self_: HostProvider,
             _user: Option<&[u8]>,
             project: &[u8],
@@ -1371,7 +1371,7 @@ pub mod formatters {
 
         pub type Type = fn(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError>;
 
-        pub fn github(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+        pub(crate) fn github(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
@@ -1440,7 +1440,7 @@ pub mod formatters {
             }))
         }
 
-        pub fn bitbucket(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+        pub(crate) fn bitbucket(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
@@ -1498,7 +1498,7 @@ pub mod formatters {
             }))
         }
 
-        pub fn gitlab(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+        pub(crate) fn gitlab(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
@@ -1552,7 +1552,7 @@ pub mod formatters {
             }))
         }
 
-        pub fn gist(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+        pub(crate) fn gist(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
@@ -1637,7 +1637,7 @@ pub mod formatters {
             }))
         }
 
-        pub fn sourcehut(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+        pub(crate) fn sourcehut(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
@@ -1740,9 +1740,9 @@ pub mod formatters {
             ) -> Result<Vec<u8>, AllocError>,
         >;
 
-        pub const DEFAULT: Type = None;
+        pub(crate) const DEFAULT: Type = None;
 
-        pub fn github(
+        pub(crate) fn github(
             self_: HostProvider,
             auth: Option<&[u8]>,
             user: Option<&[u8]>,
@@ -1772,7 +1772,7 @@ pub mod formatters {
             Ok(v)
         }
 
-        pub fn gist(
+        pub(crate) fn gist(
             self_: HostProvider,
             _auth: Option<&[u8]>,
             _user: Option<&[u8]>,

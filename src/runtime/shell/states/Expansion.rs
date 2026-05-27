@@ -31,12 +31,13 @@ pub struct Expansion {
     /// boundary is hit (IFS split / glob result), it is flushed into `out`
     /// via `push_current_out`. Spec: Expansion.zig `current_out`.
     pub current_out: Vec<u8>,
-    /// Byte offsets in `current_out` written by literal `BraceBegin`/`Comma`/
-    /// `BraceEnd` atoms. Only these positions may act as brace-expansion
-    /// metacharacters in `do_brace_expand`; `{`/`,`/`}` bytes from any other
-    /// source (JS interpolation, quoted text, `$var`, command substitution)
-    /// are data and must not change the expansion structure.
-    pub brace_meta_offsets: Vec<u32>,
+    /// Byte offsets in `current_out` written by literal metacharacter atoms
+    /// (`Asterisk`/`DoubleAsterisk`/`BraceBegin`/`Comma`/`BraceEnd`). Only
+    /// these positions may act as pattern syntax in `do_brace_expand` or
+    /// `transition_to_glob_state`; metacharacter bytes from any other source
+    /// (JS interpolation, quoted text, `$var`, command substitution) are data
+    /// and must not change the expansion structure or broaden the glob.
+    pub meta_offsets: Vec<u32>,
     pub child_script: Option<NodeId>,
     /// Whether the in-flight command substitution was `"$(...)"` (no IFS
     /// splitting on its result). Only meaningful while `state == CmdSubst`.
@@ -110,7 +111,7 @@ impl Expansion {
             word_idx: 0,
             out: ExpansionOut::default(),
             current_out: Vec::new(),
-            brace_meta_offsets: Vec::new(),
+            meta_offsets: Vec::new(),
             child_script: None,
             cmd_subst_quoted: false,
             has_quoted_empty: false,
@@ -186,7 +187,7 @@ impl Expansion {
                     shell,
                     simple,
                     &mut me.current_out,
-                    &mut me.brace_meta_offsets,
+                    &mut me.meta_offsets,
                     &mut me.has_quoted_empty,
                     true,
                     event_loop,
@@ -248,11 +249,11 @@ impl Expansion {
                 // The first two arms prepend; shift the recorded brace
                 // metacharacter offsets so they keep pointing at the same
                 // bytes. The `extend_from_slice` arm only runs when
-                // `current_out` (and therefore `brace_meta_offsets`) is
+                // `current_out` (and therefore `meta_offsets`) is
                 // empty, so the shift is a no-op there.
                 let prepended = (me.current_out.len() - len_before) as u32;
                 if prepended != 0 {
-                    for off in &mut me.brace_meta_offsets {
+                    for off in &mut me.meta_offsets {
                         *off += prepended;
                     }
                 }
@@ -284,17 +285,17 @@ impl Expansion {
     /// `expand_simple_no_io`) and push each variant as a separate argv word.
     fn do_brace_expand(me: &mut Expansion) {
         use bun_shell_parser::braces;
-        // Only the `{`/`,`/`}` bytes recorded in `brace_meta_offsets` (written
+        // Only the `{`/`,`/`}` bytes recorded in `meta_offsets` (written
         // by literal BraceBegin/Comma/BraceEnd atoms) are brace-expansion
         // metacharacters. Bytes from Text/Var/cmd-subst expansion — notably JS
         // `${...}` interpolations — are data: backslash-escape them so the
         // brace lexer cannot be steered into emitting extra argv words.
+        // (`meta_offsets` also records literal `*`/`**` positions for the glob
+        // path; those are inert here since `*` is not in the escape set.)
         let mut escaped: Vec<u8> = Vec::with_capacity(me.current_out.len());
         let mut next_meta = 0usize;
         for (i, &b) in me.current_out.iter().enumerate() {
-            if next_meta < me.brace_meta_offsets.len()
-                && me.brace_meta_offsets[next_meta] as usize == i
-            {
+            if next_meta < me.meta_offsets.len() && me.meta_offsets[next_meta] as usize == i {
                 next_meta += 1;
             } else if matches!(b, b'{' | b'}' | b',' | b'\\') {
                 escaped.push(b'\\');
@@ -328,6 +329,11 @@ impl Expansion {
             &mut expanded[..],
             lexer_output.contains_nested,
         ) {
+            if matches!(e, braces::ParserError::TooManyBraces) {
+                let msg = "too many braces in brace expansion".to_string();
+                me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
+                return;
+            }
             // Spec: error.UnexpectedToken → panic. Mirror it.
             panic!("unexpected error from Braces.expand: {e:?}");
         }
@@ -357,6 +363,66 @@ impl Expansion {
         }
     }
 
+    /// Build the pattern handed to the glob walker from `current_out`,
+    /// neutralizing every glob metacharacter byte that was *not* written by a
+    /// literal metacharacter atom (those positions are recorded in
+    /// `meta_offsets`). Metacharacters arriving via JS `${...}` interpolation,
+    /// `$var`, command substitution, or quoted text are data and must not be
+    /// able to broaden the match. Mirrors `do_brace_expand`'s escaping loop,
+    /// but the glob matcher has no general backslash-escape that survives
+    /// `build_pattern_components` on every platform, so each byte is wrapped
+    /// in a single-character class (`[c]`) — or a one-branch brace group for
+    /// a component-leading `!` — which the matcher provably treats as that
+    /// literal character.
+    /// `current_out` itself is not mutated: the no-match error message and the
+    /// assignment-position literal fallback keep using the original word.
+    fn neutralize_glob_metachars(current_out: &[u8], meta_offsets: &[u32]) -> Vec<u8> {
+        let mut pattern: Vec<u8> = Vec::with_capacity(current_out.len());
+        let mut next_meta = 0usize;
+        for (i, &b) in current_out.iter().enumerate() {
+            if next_meta < meta_offsets.len() && meta_offsets[next_meta] as usize == i {
+                next_meta += 1;
+                pattern.push(b);
+                continue;
+            }
+            match b {
+                // `[c]` is a single-character class containing only `c`.
+                b'*' | b'?' | b'[' | b']' | b'{' | b'}' | b',' => {
+                    pattern.extend_from_slice(&[b'[', b, b']']);
+                }
+                // `[!]`/`[^]` would be a negated class, so `!` cannot use the
+                // class wrapper. Only a `!` at the start of a path component
+                // (the same split `build_pattern_components` performs) can act
+                // as pattern syntax — the matcher's negation loop — so wrap
+                // that one in a one-branch brace group whose sole branch is
+                // the literal `!`. Every other `!` already matches literally
+                // and is emitted bare: wrapping each one costs a brace-stack
+                // slot per byte, and a run of more than 10 interpolated `!`
+                // would overflow the matcher's bounded brace stack and turn
+                // the whole word into a spurious no-match.
+                b'!' => {
+                    let starts_component = pattern
+                        .last()
+                        .is_none_or(|&prev| bun_core::path_sep::is_sep_native(prev));
+                    if starts_component {
+                        pattern.extend_from_slice(b"{!}");
+                    } else {
+                        pattern.push(b'!');
+                    }
+                }
+                // `[\\]` is a class containing an escaped `\`; the 3-byte
+                // `[\]` would mis-parse as a class containing an escaped `]`.
+                #[cfg(not(windows))]
+                b'\\' => pattern.extend_from_slice(b"[\\\\]"),
+                // On Windows `\` is a native path separator (same pass-through
+                // policy as `/`); wrapping it would let the component splitter
+                // cut the synthesized brackets apart.
+                _ => pattern.push(b),
+            }
+        }
+        pattern
+    }
+
     /// Spec: Expansion.zig `transitionToGlobState`. Kick off an off-thread
     /// glob walk for the assembled pattern in `current_out`.
     fn transition_to_glob_state(interp: &Interpreter, this: NodeId) -> Yield {
@@ -366,7 +432,7 @@ impl Expansion {
         {
             let me = interp.as_expansion_mut(this);
             me.state = ExpansionState::Glob;
-            pattern = me.current_out.clone();
+            pattern = Self::neutralize_glob_metachars(&me.current_out, &me.meta_offsets);
             cwd = me.base.shell().cwd().to_vec();
         }
         let walker = match bun_glob::BunGlobWalkerZ::init_with_cwd(
@@ -396,7 +462,7 @@ impl Expansion {
         shell: &ShellExecEnv,
         atom: &ast::SimpleAtom,
         out: &mut Vec<u8>,
-        brace_meta_offsets: &mut Vec<u32>,
+        meta_offsets: &mut Vec<u32>,
         has_quoted_empty: &mut bool,
         expand_tilde: bool,
         event_loop: EventLoopHandle,
@@ -429,18 +495,27 @@ impl Expansion {
                 // SAFETY: `command_ctx` is the live VM ctx; `vm_args_utf8` borrows it.
                 Interpreter::append_var_argv(out, *int, event_loop, command_ctx, vm_args_utf8);
             }
-            ast::SimpleAtom::Asterisk => out.push(b'*'),
-            ast::SimpleAtom::DoubleAsterisk => out.extend_from_slice(b"**"),
+            ast::SimpleAtom::Asterisk => {
+                meta_offsets.push(out.len() as u32);
+                out.push(b'*');
+            }
+            ast::SimpleAtom::DoubleAsterisk => {
+                // Both bytes must be recorded or `neutralize_glob_metachars`
+                // would wrap the second `*`, breaking `**`.
+                meta_offsets.push(out.len() as u32);
+                meta_offsets.push(out.len() as u32 + 1);
+                out.extend_from_slice(b"**");
+            }
             ast::SimpleAtom::BraceBegin => {
-                brace_meta_offsets.push(out.len() as u32);
+                meta_offsets.push(out.len() as u32);
                 out.push(b'{');
             }
             ast::SimpleAtom::BraceEnd => {
-                brace_meta_offsets.push(out.len() as u32);
+                meta_offsets.push(out.len() as u32);
                 out.push(b'}');
             }
             ast::SimpleAtom::Comma => {
-                brace_meta_offsets.push(out.len() as u32);
+                meta_offsets.push(out.len() as u32);
                 out.push(b',');
             }
             ast::SimpleAtom::Tilde => {
@@ -466,7 +541,7 @@ impl Expansion {
             me.out.bounds.push(me.out.buf.len() as u32);
         }
         me.out.buf.append(&mut me.current_out);
-        me.brace_meta_offsets.clear();
+        me.meta_offsets.clear();
     }
 
     /// Spec: Expansion.zig `postSubshellExpansion` + `convertNewlinesToSpaces`.
@@ -579,18 +654,17 @@ impl Expansion {
     ) {
         use crate::shell::dispatch_tasks::ShellGlobErr;
         log!("Expansion {} onGlobWalkDone", this);
-        if let Some(err) = err {
-            let shell_err = match err {
-                ShellGlobErr::Syscall(e) => ShellErr::new_sys(&e),
-                ShellGlobErr::Unknown(e) => ShellErr::Custom(e.to_string().into_bytes().into()),
-            };
-            interp.throw(shell_err);
-            interp.as_expansion_mut(this).state = ExpansionState::Done;
-            Yield::Next(this).run(interp);
-            return;
-        }
+        let walk_err = match err {
+            Some(ShellGlobErr::Syscall(e))
+                if matches!(e.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) =>
+            {
+                log!("Expansion {} glob walk failed: {}", this, e);
+                None
+            }
+            other => other,
+        };
 
-        if result.is_empty() {
+        if result.is_empty() || walk_err.is_some() {
             // Spec lines 559-578: in variable assignments a no-match glob
             // expands to the literal pattern; otherwise it's an error.
             let parent = interp.as_expansion(this).base.parent;
@@ -606,6 +680,12 @@ impl Expansion {
             if in_assign {
                 Self::push_current_out(me);
                 me.state = ExpansionState::Done;
+            } else if let Some(err) = walk_err {
+                let shell_err = match err {
+                    ShellGlobErr::Syscall(e) => ShellErr::new_sys(&e),
+                    ShellGlobErr::Unknown(e) => ShellErr::Custom(e.to_string().into_bytes().into()),
+                };
+                me.state = ExpansionState::Err(Box::new(shell_err));
             } else {
                 let msg = format!("no matches found: {}", bstr::BStr::new(&me.current_out));
                 me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));

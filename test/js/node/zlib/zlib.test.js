@@ -634,3 +634,105 @@ describe("zlib.zstd", () => {
     expect(all.length).toBeGreaterThanOrEqual(7);
   }, 15_000);
 });
+
+describe("async write buffer lifetime", () => {
+  it("keeps the input and output buffers attached while a native write is in flight", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    const deflate = zlib.createDeflate();
+    try {
+      const handle = deflate._handle;
+
+      const input = new Uint8Array(new ArrayBuffer(64));
+      input.fill(97);
+      const out = new Uint8Array(new ArrayBuffer(1024));
+
+      // Mirror the bookkeeping processChunk() performs before calling
+      // handle.write(), so the native write callback can complete normally.
+      handle.buffer = input;
+      handle.cb = resolve;
+      handle.availOutBefore = out.byteLength;
+      handle.availInBefore = input.byteLength;
+      handle.inOff = 0;
+      handle.flushFlag = zlib.constants.Z_FINISH;
+
+      handle.write(
+        zlib.constants.Z_FINISH, // flush
+        input, // in
+        0, // in_off
+        input.byteLength, // in_len
+        out, // out
+        0, // out_off
+        out.byteLength, // out_len
+      );
+
+      // The native worker thread reads `input` and writes compressed bytes into
+      // `out` through raw pointers until the write completes. Transferring
+      // either ArrayBuffer must not detach the backing store out from under
+      // the worker -- both buffers must stay attached and full-length.
+      out.buffer.transfer();
+      input.buffer.transfer();
+      expect(out.buffer.detached).toBe(false);
+      expect(out.byteLength).toBe(1024);
+      expect(input.buffer.detached).toBe(false);
+      expect(input.byteLength).toBe(64);
+
+      await promise;
+
+      // Once the write completes the buffers are released and can be
+      // transferred again.
+      out.buffer.transfer();
+      input.buffer.transfer();
+      expect(out.buffer.detached).toBe(true);
+      expect(input.buffer.detached).toBe(true);
+    } finally {
+      deflate.close();
+    }
+  });
+});
+
+describe("dictionary buffer lifetime", () => {
+  it("decompresses correctly when the dictionary's ArrayBuffer is detached after stream creation", async () => {
+    const dictText = "hello hello hello world world world ";
+    const input = Buffer.from(dictText.repeat(16));
+
+    // Each call returns a dictionary backed by its own non-pooled ArrayBuffer
+    // so it can be transferred independently.
+    const makeDict = () => {
+      const dict = new Uint8Array(new ArrayBuffer(dictText.length));
+      dict.set(Buffer.from(dictText));
+      return dict;
+    };
+
+    // Produce a zlib stream whose header demands this dictionary (FDICT set),
+    // so inflate must re-read the dictionary bytes mid-stream (Z_NEED_DICT).
+    const compressed = zlib.deflateSync(input, { dictionary: makeDict() });
+
+    // Sanity: an intact dictionary round-trips.
+    expect(zlib.inflateSync(compressed, { dictionary: makeDict() }).equals(input)).toBe(true);
+
+    // Create the inflater, then detach the dictionary's backing store. The
+    // native handle only consumes the dictionary later, when inflate reports
+    // Z_NEED_DICT on the worker thread, so it must keep its own copy of the
+    // bytes rather than a pointer into the (now freed) JS allocation.
+    const dict = makeDict();
+    const inflater = zlib.createInflate({ dictionary: dict });
+    dict.buffer.transfer(0);
+    expect(dict.buffer.detached).toBe(true);
+
+    // Churn the heap so a stale pointer would observe different bytes.
+    let garbage = [];
+    for (let i = 0; i < 256; i++) garbage.push(new Uint8Array(dictText.length).fill(0xaa));
+    Bun.gc(true);
+    garbage = [];
+
+    const chunks = [];
+    const { promise, resolve, reject } = Promise.withResolvers();
+    inflater.on("data", c => chunks.push(c));
+    inflater.on("end", resolve);
+    inflater.on("error", reject);
+    inflater.end(compressed);
+    await promise;
+
+    expect(Buffer.concat(chunks).toString()).toBe(input.toString());
+  });
+});

@@ -593,7 +593,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     RETURN_IF_EXCEPTION(scope, {});
 
     if (notContextified) {
-        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, zigGlobalObject->NodeVMSpecialSandboxStructure(), targetContext);
+        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, targetContext);
         RETURN_IF_EXCEPTION(scope, {});
         targetContext->setSpecialSandbox(specialSandbox);
         RELEASE_AND_RETURN(scope, runInContext(targetContext, script, targetContext->specialSandbox(), callFrame->argument(1)));

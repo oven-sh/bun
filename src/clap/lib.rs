@@ -1,5 +1,4 @@
 #![warn(unused_must_use)]
-#![warn(unreachable_pub)]
 use core::fmt;
 use core::fmt::Write as _;
 

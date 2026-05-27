@@ -1,11 +1,11 @@
 use crate::helpers;
 use crate::inlines::EmphDelim;
 
-pub fn is_list_bullet(c: u8) -> bool {
+pub(crate) fn is_list_bullet(c: u8) -> bool {
     c == b'-' || c == b'+' || c == b'*'
 }
 
-pub fn is_list_item_mark(c: u8) -> bool {
+pub(crate) fn is_list_item_mark(c: u8) -> bool {
     c == b'-' || c == b'+' || c == b'*' || c == b'.' || c == b')'
 }
 
@@ -15,11 +15,15 @@ pub struct Autolink {
     pub end: usize,
 }
 
-pub type AutolinkResult = Option<Autolink>;
+pub(crate) type AutolinkResult = Option<Autolink>;
 
 /// Check that emphasis chars at autolink boundaries are actually resolved delimiters.
 /// Called when the relaxed (allow_emph) pass found an autolink but the strict pass didn't.
-pub fn is_emph_boundary_resolved(content: &[u8], al: Autolink, resolved: &[EmphDelim]) -> bool {
+pub(crate) fn is_emph_boundary_resolved(
+    content: &[u8],
+    al: Autolink,
+    resolved: &[EmphDelim],
+) -> bool {
     // Check left boundary: if it's an emphasis char, it must be a resolved delimiter
     if al.beg > 0 {
         let prev = content[al.beg - 1];
@@ -68,13 +72,13 @@ pub fn is_emph_boundary_resolved(content: &[u8], al: Autolink, resolved: &[EmphD
 }
 
 #[derive(Copy, Clone)]
-pub struct ScanResult {
+pub(crate) struct ScanResult {
     pub end: usize,
     pub ok: bool,
 }
 
 /// Scan a URL component (host, path, query, or fragment) following md4c's URL_MAP.
-pub fn scan_url_component(
+pub(crate) fn scan_url_component(
     content: &[u8],
     start: usize,
     start_char: u8,
@@ -145,7 +149,7 @@ pub fn scan_url_component(
     ScanResult { end: pos, ok: true }
 }
 
-pub fn is_in_set(c: u8, set: &[u8]) -> bool {
+pub(crate) fn is_in_set(c: u8, set: &[u8]) -> bool {
     for &s in set {
         if c == s {
             return true;
@@ -156,7 +160,7 @@ pub fn is_in_set(c: u8, set: &[u8]) -> bool {
 
 /// Check left boundary for permissive autolinks.
 /// When `allow_emph` is true, emphasis delimiters (*_~) are also valid boundaries.
-pub fn check_left_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
+pub(crate) fn check_left_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
     if pos == 0 {
         return true;
     }
@@ -170,7 +174,7 @@ pub fn check_left_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool
 
 /// Check right boundary for permissive autolinks.
 /// When `allow_emph` is true, emphasis delimiters (*_~) are also valid boundaries.
-pub fn check_right_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
+pub(crate) fn check_right_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
     if pos >= content.len() {
         return true;
     }
@@ -190,7 +194,11 @@ struct Scheme {
 
 /// Detect permissive autolinks at the given position in content.
 /// `pos` is the position of the trigger character ('@', ':', or '.').
-pub fn find_permissive_autolink(content: &[u8], pos: usize, allow_emph: bool) -> AutolinkResult {
+pub(crate) fn find_permissive_autolink(
+    content: &[u8],
+    pos: usize,
+    allow_emph: bool,
+) -> AutolinkResult {
     if pos >= content.len() {
         return None;
     }
@@ -370,22 +378,19 @@ fn post_process_autolink_end(content: &[u8], beg: usize, end_in: usize) -> usize
 
     // Trim trailing unbalanced `)`: count all ( and ) in the URL.
     // If closing > opening, remove trailing ) until balanced.
-    while end > beg && content[end - 1] == b')' {
-        let mut open: i32 = 0;
-        let mut close: i32 = 0;
-        for &ch in &content[beg..end] {
-            if ch == b'(' {
-                open += 1;
-            }
-            if ch == b')' {
-                close += 1;
-            }
+    let mut open: i32 = 0;
+    let mut close: i32 = 0;
+    for &ch in &content[beg..end] {
+        if ch == b'(' {
+            open += 1;
         }
-        if close > open {
-            end -= 1;
-        } else {
-            break;
+        if ch == b')' {
+            close += 1;
         }
+    }
+    while end > beg && content[end - 1] == b')' && close > open {
+        end -= 1;
+        close -= 1;
     }
 
     end

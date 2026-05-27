@@ -228,7 +228,7 @@ const DEPENDENCY_KEYS: [DependencyGroup; 4] = [
     DependencyGroup::OPTIONAL,
 ];
 
-pub fn migrate_npm_lockfile<'a>(
+pub(crate) fn migrate_npm_lockfile<'a>(
     this: &'a mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
@@ -381,22 +381,21 @@ pub fn migrate_npm_lockfile<'a>(
             );
             continue;
         }
-        if let Some(x) = pkg.get(b"inBundle") {
-            if matches!(x.data, ExprData::EBoolean(b) if b.value) {
-                id_map.put_assume_capacity(
-                    pkg_path,
-                    IdMapValue {
-                        old_json_index: i as u32,
-                        new_package_id: PACKAGE_ID_IS_BUNDLED,
-                    },
-                );
-                continue;
-            }
+        // Counterpart of `is_skipped_pkg`: same per-flag truthiness, but
+        // bundled packages still get an id_map entry so dependency linking
+        // can recognize them.
+        if pkg_flag_is_true(pkg, b"inBundle") {
+            id_map.put_assume_capacity(
+                pkg_path,
+                IdMapValue {
+                    old_json_index: i as u32,
+                    new_package_id: PACKAGE_ID_IS_BUNDLED,
+                },
+            );
+            continue;
         }
-        if let Some(x) = pkg.get(b"extraneous") {
-            if matches!(x.data, ExprData::EBoolean(b) if b.value) {
-                continue;
-            }
+        if pkg_flag_is_true(pkg, b"extraneous") {
+            continue;
         }
 
         id_map.put_assume_capacity(
@@ -605,12 +604,7 @@ pub fn migrate_npm_lockfile<'a>(
             continue;
         }
 
-        if pkg
-            .get(b"inBundle")
-            .or_else(|| pkg.get(b"extraneous"))
-            .map(|x| matches!(x.data, ExprData::EBoolean(b) if b.value))
-            .unwrap_or(false)
-        {
+        if is_skipped_pkg(pkg) {
             continue;
         }
 
@@ -919,13 +913,7 @@ pub fn migrate_npm_lockfile<'a>(
         // PORT NOTE: `StoreRef::get` shadows `E::Object::get`; deref-coerce.
         let pkg: &E::Object = pkg;
 
-        if pkg.get(b"link").is_some()
-            || pkg
-                .get(b"inBundle")
-                .or_else(|| pkg.get(b"extraneous"))
-                .map(|x| matches!(x.data, ExprData::EBoolean(b) if b.value))
-                .unwrap_or(false)
-        {
+        if pkg.get(b"link").is_some() || is_skipped_pkg(pkg) {
             continue;
         }
 
@@ -1575,6 +1563,19 @@ pub fn migrate_npm_lockfile<'a>(
         serializer_result: Default::default(),
         format: LockfileFormat::Binary,
     }))
+}
+
+fn pkg_flag_is_true(pkg: &E::Object, key: &[u8]) -> bool {
+    pkg.get(key)
+        .map(|x| matches!(x.data, ExprData::EBoolean(b) if b.value))
+        .unwrap_or(false)
+}
+
+/// Skip predicate shared by the package counting, building, and linking
+/// passes — all three must agree, otherwise the later passes append more
+/// packages than the counting pass reserved.
+fn is_skipped_pkg(pkg: &E::Object) -> bool {
+    pkg_flag_is_true(pkg, b"inBundle") || pkg_flag_is_true(pkg, b"extraneous")
 }
 
 fn package_name_from_path(pkg_path: &[u8]) -> &[u8] {

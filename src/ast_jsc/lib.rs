@@ -4,13 +4,10 @@
 
 use std::borrow::Cow;
 
-use bun_ast::{Data, Level, Location, Log, Metadata, Msg};
+use bun_ast::{Data, Location, Log, Metadata, Msg};
 use bun_core::ZigString;
 
-use bun_jsc::{
-    self as jsc, BuildMessage, JSGlobalObject, JSValue, JsResult, ResolveMessage,
-    comptime_string_map_jsc,
-};
+use bun_jsc::{self as jsc, BuildMessage, JSGlobalObject, JSValue, JsResult, ResolveMessage};
 
 pub fn msg_from_js(global_object: &JSGlobalObject, file: Vec<u8>, err: JSValue) -> JsResult<Msg> {
     let mut zig_exception_holder = jsc::zig_exception::Holder::init();
@@ -40,28 +37,11 @@ pub fn msg_from_js(global_object: &JSGlobalObject, file: Vec<u8>, err: JSValue) 
     })
 }
 
-pub fn msg_to_js(this: Msg, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+pub(crate) fn msg_to_js(this: Msg, global_object: &JSGlobalObject) -> JsResult<JSValue> {
     match this.metadata {
         Metadata::Build => BuildMessage::create(global_object, this),
         Metadata::Resolve(_) => ResolveMessage::create(global_object, &this, b""),
     }
-}
-
-pub fn level_from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Option<Level>> {
-    if value.is_empty() || value.is_undefined() {
-        return Ok(None);
-    }
-
-    if !value.is_string() {
-        return Err(
-            global_this.throw_invalid_arguments(format_args!("Expected logLevel to be a string"))
-        );
-    }
-
-    // Zig: `Log.Level.Map.fromJS` — ComptimeStringMap JSC-aware lookup.
-    // Rust: `Level::MAP` is the `phf::Map`; the `.fromJS` helper lives in
-    // `bun_jsc::comptime_string_map_jsc`.
-    comptime_string_map_jsc::from_js(&Level::MAP, global_this, value)
 }
 
 pub fn log_to_js(this: &Log, global: &JSGlobalObject, message: &[u8]) -> JsResult<JSValue> {

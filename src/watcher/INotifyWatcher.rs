@@ -36,7 +36,7 @@ struct ReadPtr {
     len: u32,
 }
 
-pub type Platform = INotifyWatcher;
+pub(crate) type Platform = INotifyWatcher;
 
 pub struct INotifyWatcher {
     pub fd: Fd,
@@ -74,7 +74,7 @@ impl Default for INotifyWatcher {
     }
 }
 
-pub type EventListIndex = c_int;
+pub(crate) type EventListIndex = c_int;
 
 #[repr(C)]
 pub struct Event {
@@ -129,7 +129,7 @@ impl Event {
 }
 
 impl INotifyWatcher {
-    pub fn watch_path(&mut self, pathname: &ZStr) -> bun_sys::Result<EventListIndex> {
+    pub(crate) fn watch_path(&mut self, pathname: &ZStr) -> bun_sys::Result<EventListIndex> {
         use bun_sys::linux::IN;
         debug_assert!(self.loaded);
         let old_count = self.watch_count.fetch_add(1, Ordering::Release);
@@ -154,7 +154,7 @@ impl INotifyWatcher {
         result
     }
 
-    pub fn watch_dir(&mut self, pathname: &ZStr) -> bun_sys::Result<EventListIndex> {
+    pub(crate) fn watch_dir(&mut self, pathname: &ZStr) -> bun_sys::Result<EventListIndex> {
         use bun_sys::linux::IN;
         debug_assert!(self.loaded);
         let old_count = self.watch_count.fetch_add(1, Ordering::Release);
@@ -185,7 +185,8 @@ impl INotifyWatcher {
         result
     }
 
-    pub fn unwatch(&mut self, wd: EventListIndex) {
+    #[allow(dead_code)]
+    pub(crate) fn unwatch(&mut self, wd: EventListIndex) {
         debug_assert!(self.loaded);
         let _ = self.watch_count.fetch_sub(1, Ordering::Release);
         let _ = bun_sys::linux::inotify_rm_watch(self.fd.native(), wd);
@@ -193,7 +194,7 @@ impl INotifyWatcher {
 
     // PORT NOTE: kept as in-place &mut self init (not `-> Result<Self, _>`) because
     // INotifyWatcher is embedded as `Watcher.platform` with field defaults already set.
-    pub fn init(&mut self, _root: &[u8]) -> Result<(), bun_core::Error> {
+    pub(crate) fn init(&mut self, _root: &[u8]) -> Result<(), bun_core::Error> {
         use bun_sys::linux::IN;
         debug_assert!(!self.loaded);
         self.loaded = true;
@@ -215,7 +216,7 @@ impl INotifyWatcher {
         Ok(())
     }
 
-    pub fn read(&mut self) -> bun_sys::Result<&[*const Event]> {
+    pub(crate) fn read(&mut self) -> bun_sys::Result<&[*const Event]> {
         debug_assert!(self.loaded);
         // This is what replit does as of Jaunary 2023.
         // 1) CREATE .http.ts.3491171321~
@@ -371,7 +372,7 @@ impl INotifyWatcher {
         Ok(&self.eventlist_ptrs[..count as usize])
     }
 
-    pub fn stop(&mut self) {
+    pub(crate) fn stop(&mut self) {
         bun_core::scoped_log!(watcher, "{} stop", self.fd);
         if self.fd != Fd::INVALID {
             let _ = bun_sys::close(self.fd);
@@ -381,7 +382,7 @@ impl INotifyWatcher {
 }
 
 /// Repeatedly called by the main watcher until the watcher is terminated.
-pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
+pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     use crate::watcher_impl::WatchItemColumns;
     let _flush = Output::flush_guard();
 
@@ -561,7 +562,7 @@ fn process_inotify_event_batch(
     Ok(())
 }
 
-pub fn watch_event_from_inotify_event(event: &Event, index: WatchItemIndex) -> WatchEvent {
+pub(crate) fn watch_event_from_inotify_event(event: &Event, index: WatchItemIndex) -> WatchEvent {
     use bun_sys::linux::IN;
     let mut op = Op::empty();
     if (event.mask & IN::DELETE_SELF) > 0 || (event.mask & IN::DELETE) > 0 {

@@ -1285,6 +1285,10 @@ impl Display for FormatValidIdentifier<'_> {
             needs_gap = false;
             if start_i > 0 {
                 write_bytes(f, &self.name[..start_i])?;
+            } else {
+                // the first letter can be a non-identifier start
+                // https://github.com/oven-sh/bun/issues/2946
+                f.write_str("_")?;
             }
             let slice = &self.name[start_i..];
             iterator = crate::CodepointIterator::init(slice);
@@ -1945,7 +1949,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                     i += 2;
 
                                     while i < text.len() && text[i] != b'}' {
-                                        if text[i] == b'\\' {
+                                        if i + 1 < text.len() && text[i] == b'\\' {
                                             i += 1;
                                         }
                                         i += 1;

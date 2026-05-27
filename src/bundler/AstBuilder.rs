@@ -62,21 +62,7 @@ pub struct AstBuilder<'a, 'bump> {
 // and a `parser_features` decl so `ImportScanner.scan` could duck-type over both
 // the real parser and `AstBuilder`. In Rust this becomes a trait that both impl.
 // TODO(port): define `ImportScannerHost` trait in `bun_js_parser` and impl it here.
-pub mod parser_features {
-    pub const TYPESCRIPT: bool = false;
-}
-
 impl<'a, 'bump> AstBuilder<'a, 'bump> {
-    // stub for ImportScanner duck typing — Zig: `comptime options: js_parser.Parser.Options = .{ .jsx = .{}, .bundle = true }`
-    // TODO(port): expose as trait assoc const once `ImportScannerHost` exists
-    pub fn options(&self) -> js_parser::parse::parse_entry::Options<'static> {
-        js_parser::parse::parse_entry::Options {
-            jsx: Default::default(),
-            bundle: true,
-            ..Default::default()
-        }
-    }
-
     // stub for ImportScanner duck typing — Zig: `comptime import_items_for_namespace: struct { fn get(_, _) ?Map { return null; } }`
     pub fn import_items_for_namespace_get(
         &self,

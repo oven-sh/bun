@@ -447,6 +447,7 @@ fn parse_array(
                                     slice = try_slice(slice, 5);
                                     continue;
                                 }
+                                return Err(AnyPostgresError::UnsupportedArrayFormat);
                             } else {
                                 array.push(SQLDataCell {
                                     tag: Tag::Bool,
@@ -472,6 +473,7 @@ fn parse_array(
                                     slice = try_slice(slice, 4);
                                     continue;
                                 }
+                                return Err(AnyPostgresError::UnsupportedArrayFormat);
                             } else {
                                 array.push(SQLDataCell {
                                     tag: Tag::Bool,
@@ -852,7 +854,7 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
     })
 }
 
-pub fn from_bytes(
+pub(crate) fn from_bytes(
     binary: bool,
     bigint: bool,
     oid: types::Tag,
@@ -1242,7 +1244,7 @@ enum PGNummericString<'a> {
 }
 
 impl<'a> PGNummericString<'a> {
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         match self {
             PGNummericString::Static(value) => value,
             PGNummericString::Dynamic(value) => value,
@@ -1449,7 +1451,7 @@ pub fn parse_binary_float4(bytes: &[u8]) -> Result<f32, AnyPostgresError> {
     Ok(f32::from_bits(parse_binary_int4(bytes)? as u32))
 }
 
-pub struct Putter<'a> {
+pub(crate) struct Putter<'a> {
     pub list: &'a mut [SQLDataCell],
     pub fields: &'a [protocol::FieldDescription],
     pub binary: bool,
@@ -1459,24 +1461,7 @@ pub struct Putter<'a> {
 }
 
 impl<'a> Putter<'a> {
-    /// Mirrors Zig field defaults: `binary = false`, `bigint = false`, `count = 0`.
-    /// (Cannot `impl Default` — `list`/`fields`/`global_object` are borrows with no default.)
-    pub fn new(
-        list: &'a mut [SQLDataCell],
-        fields: &'a [protocol::FieldDescription],
-        global_object: &'a JSGlobalObject,
-    ) -> Self {
-        Self {
-            list,
-            fields,
-            binary: false,
-            bigint: false,
-            count: 0,
-            global_object,
-        }
-    }
-
-    pub fn to_js(
+    pub(crate) fn to_js(
         &mut self,
         global_object: &JSGlobalObject,
         array: JSValue,
@@ -1582,11 +1567,15 @@ impl<'a> Putter<'a> {
         Ok(true)
     }
 
-    pub fn put_raw(&mut self, index: u32, optional_bytes: Option<&mut Data>) -> Result<bool> {
+    pub(crate) fn put_raw(
+        &mut self,
+        index: u32,
+        optional_bytes: Option<&mut Data>,
+    ) -> Result<bool> {
         self.put_impl::<true>(index, optional_bytes)
     }
 
-    pub fn put(&mut self, index: u32, optional_bytes: Option<&mut Data>) -> Result<bool> {
+    pub(crate) fn put(&mut self, index: u32, optional_bytes: Option<&mut Data>) -> Result<bool> {
         self.put_impl::<false>(index, optional_bytes)
     }
 }

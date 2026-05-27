@@ -12,11 +12,11 @@ use crate::api::bun::process::sync;
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
-pub const OPENER: &[u8] = b"/usr/bin/open";
+pub(super) const OPENER: &[u8] = b"/usr/bin/open";
 #[cfg(windows)]
-pub const OPENER: &[u8] = b"start";
+pub(super) const OPENER: &[u8] = b"start";
 #[cfg(not(any(target_os = "macos", windows)))]
-pub const OPENER: &[u8] = b"xdg-open";
+pub(super) const OPENER: &[u8] = b"xdg-open";
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -320,7 +320,7 @@ impl Editor {
     }
 }
 
-pub const DEFAULT_PREFERENCE_LIST: [Editor; 8] = [
+pub(super) const DEFAULT_PREFERENCE_LIST: [Editor; 8] = [
     Editor::Vscode,
     Editor::Sublime,
     Editor::Atom,
@@ -332,7 +332,7 @@ pub const DEFAULT_PREFERENCE_LIST: [Editor; 8] = [
 ];
 
 // PORT NOTE: was `pub const bin_name: std.EnumMap(Editor, string)` built in a comptime block.
-pub static BIN_NAME: std::sync::LazyLock<enum_map::EnumMap<Editor, Option<&'static [u8]>>> =
+pub(super) static BIN_NAME: std::sync::LazyLock<enum_map::EnumMap<Editor, Option<&'static [u8]>>> =
     std::sync::LazyLock::new(|| {
         enum_map::EnumMap::from_fn(|k| match k {
             Editor::Sublime => Some(&b"subl"[..]),
@@ -352,7 +352,7 @@ pub static BIN_NAME: std::sync::LazyLock<enum_map::EnumMap<Editor, Option<&'stat
 // PORT NOTE: was `pub const bin_path: std.EnumMap(Editor, []const [:0]const u8)`.
 // TODO(port): EnumMap — kept as match-fn because entries are `#[cfg(target_os)]`-gated
 // and `enum_map!{}` cannot host per-arm `#[cfg]` attrs cleanly.
-pub fn bin_path(editor: Editor) -> Option<&'static [&'static ZStr]> {
+pub(super) fn bin_path(editor: Editor) -> Option<&'static [&'static ZStr]> {
     #[cfg(target_os = "macos")]
     {
         // `const { &[...] }` forces const-promotion so the array lives in
@@ -398,7 +398,7 @@ pub fn bin_path(editor: Editor) -> Option<&'static [&'static ZStr]> {
 // PORT NOTE: `buf` stores (ptr, len) pairs because entries point into `file_path_buf`
 // (self-referential) as well as caller-provided/static slices. Reconstructed as slices
 // in `auto_close`.
-pub struct SpawnedEditorContext {
+pub(super) struct SpawnedEditorContext {
     pub file_path_buf: [u8; 1024 + MAX_PATH_BYTES],
     pub buf: [(*const u8, usize); 10],
     pub argc: usize,

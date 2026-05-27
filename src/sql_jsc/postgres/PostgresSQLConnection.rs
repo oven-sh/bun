@@ -1064,7 +1064,7 @@ impl PostgresSQLConnection {
 // `#[unsafe(no_mangle)]` shim named `PostgresSQLConnection__createInstance`.
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
-    pub unsafe fn PostgresSQLConnection__createInstance(
+    pub(crate) unsafe fn PostgresSQLConnection__createInstance(
         // `&T` is ABI-identical to `*const T` and JSC guarantees non-null,
         // live `JSGlobalObject`/`CallFrame` for every host-fn invocation, so
         // the reference type discharges the deref precondition at the boundary
@@ -1079,7 +1079,7 @@ bun_jsc::jsc_host_abi! {
     }
 }
 
-pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     // `bun_vm()` → `&'static VirtualMachine` (per-thread singleton); `as_mut()`
     // is the canonical safe escape hatch (one audited unsafe in bun_jsc) for
     // `&mut self` helpers like `ssl_ctx_cache()` / `postgres_socket_group()`.
@@ -1636,6 +1636,10 @@ impl PostgresSQLConnection {
     /// pair (16 callers in `clean_up_requests` / `advance`).
     #[inline]
     fn discard_request(&self, request: *mut PostgresSQLQuery) {
+        if self.requests.get().readable_length() == 0 || self.requests.get().peek_item(0) != request
+        {
+            return;
+        }
         // SAFETY: `request` was obtained via `self.requests.get().peek_item(_)`
         // (queue invariant: every stored pointer is a live, heap-allocated
         // `PostgresSQLQuery` with refcount ≥ 1 held by the queue itself); this
@@ -1750,31 +1754,31 @@ impl Reader {
         self.connection.read_buffer.get()
     }
 
-    pub fn mark_message_start(&mut self) {
+    pub(crate) fn mark_message_start(&mut self) {
         let head = self.read_buffer().head;
         self.connection.last_message_start.set(head);
     }
 
-    pub fn ensure_length(self, count: usize) -> bool {
+    pub(crate) fn ensure_length(self, count: usize) -> bool {
         self.ensure_capacity(count)
     }
 
-    pub fn peek(&self) -> &[u8] {
+    pub(crate) fn peek(&self) -> &[u8] {
         self.read_buffer().remaining()
     }
 
-    pub fn skip(&mut self, count: usize) {
+    pub(crate) fn skip(&mut self, count: usize) {
         self.connection.read_buffer.with_mut(|buf| {
             buf.head = (buf.head + (count as u32)).min(buf.byte_list.len() as u32);
         });
     }
 
-    pub fn ensure_capacity(self, count: usize) -> bool {
+    pub(crate) fn ensure_capacity(self, count: usize) -> bool {
         let buf = self.read_buffer();
         (buf.head as usize) + count <= buf.byte_list.len()
     }
 
-    pub fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
+    pub(crate) fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
         let remaining = self.read_buffer().remaining();
         if remaining.len() < count {
             return Err(AnyPostgresError::ShortRead);
@@ -1787,7 +1791,7 @@ impl Reader {
         Ok(Data::Temporary(slice))
     }
 
-    pub fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
+    pub(crate) fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
         let remain = self.read_buffer().remaining();
 
         if let Some(zero) = strings::index_of_char(remain, 0) {
@@ -2649,14 +2653,11 @@ impl PostgresSQLConnection {
                 // ReadyForQuery. Free any previous fields before overwriting and
                 // invalidate state derived from them so the next DataRow builds
                 // the correct structure instead of reusing a stale cached one.
-                if !statement.fields.is_empty() {
-                    // PORT NOTE: Vec<FieldDescription> drop runs each field's Drop.
-                    statement.fields = Vec::new();
-                    statement.cached_structure = Default::default();
-                    statement.needs_duplicate_check = true;
-                    statement.fields_flags = Default::default();
-                }
+                // PORT NOTE: Vec<FieldDescription> drop runs each field's Drop.
                 statement.fields = description.fields.into_vec();
+                statement.cached_structure = Default::default();
+                statement.needs_duplicate_check = true;
+                statement.fields_flags = Default::default();
             }
             MessageType::Authentication => {
                 let auth =

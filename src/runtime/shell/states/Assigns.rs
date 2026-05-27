@@ -37,7 +37,7 @@ pub enum AssignsState {
 }
 
 impl Assigns {
-    pub fn init(
+    pub(crate) fn init(
         interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: &[ast::Assign],
@@ -55,11 +55,11 @@ impl Assigns {
         }))
     }
 
-    pub fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
         Yield::Next(this)
     }
 
-    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
         loop {
             let (shell, node) = {
                 let me = interp.as_assigns(this);
@@ -99,7 +99,7 @@ impl Assigns {
         }
     }
 
-    pub fn child_done(
+    pub(crate) fn child_done(
         interp: &Interpreter,
         this: NodeId,
         child: NodeId,
@@ -156,7 +156,7 @@ impl Assigns {
         Yield::Next(this)
     }
 
-    pub fn deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Assigns {} deinit", this);
         interp.as_assigns_mut(this).base.end_scope();
     }

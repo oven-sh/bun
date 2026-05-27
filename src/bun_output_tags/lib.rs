@@ -18,21 +18,21 @@ pub mod ansi {
     pub const RESET: &str = "\x1b[0m";
     pub const BOLD: &str = "\x1b[1m";
     pub const DIM: &str = "\x1b[2m";
-    pub const ITALIC: &str = "\x1b[3m";
-    pub const UNDERLINE: &str = "\x1b[4m";
+    pub(crate) const ITALIC: &str = "\x1b[3m";
+    pub(crate) const UNDERLINE: &str = "\x1b[4m";
     pub const INVERT: &str = "\x1b[7m";
     pub const STRIKETHROUGH: &str = "\x1b[9m";
-    pub const BLACK: &str = "\x1b[30m";
+    pub(crate) const BLACK: &str = "\x1b[30m";
     pub const RED: &str = "\x1b[31m";
     pub const GREEN: &str = "\x1b[32m";
     pub const YELLOW: &str = "\x1b[33m";
     pub const BLUE: &str = "\x1b[34m";
     pub const MAGENTA: &str = "\x1b[35m";
     pub const CYAN: &str = "\x1b[36m";
-    pub const WHITE: &str = "\x1b[37m";
+    pub(crate) const WHITE: &str = "\x1b[37m";
     pub const BRIGHT_WHITE: &str = "\x1b[97m";
-    pub const BG_RED: &str = "\x1b[41m";
-    pub const BG_GREEN: &str = "\x1b[42m";
+    pub(crate) const BG_RED: &str = "\x1b[41m";
+    pub(crate) const BG_GREEN: &str = "\x1b[42m";
 }
 
 /// Byte-slice views of [`ansi`] for callers that write into `&[u8]` buffers
@@ -63,7 +63,7 @@ pub mod ansi_b {
 
 /// `(tag, ansi_escape)` pairs. 14 entries — linear scan in [`color_for`] is
 /// intentional; this is only hit on `<tag>` markers in diagnostic-output paths.
-pub const COLOR_TABLE: &[(&str, &str)] = &[
+pub(crate) const COLOR_TABLE: &[(&str, &str)] = &[
     ("b", ansi::BOLD),
     ("d", ansi::DIM),
     ("i", ansi::ITALIC),

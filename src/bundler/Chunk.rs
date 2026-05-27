@@ -334,21 +334,21 @@ impl Chunk {
 }
 
 #[derive(Clone, Copy, Default)]
-pub struct Order {
+pub(crate) struct Order {
     pub source_index: IndexInt,
     pub distance: u32,
     pub tie_breaker: u32,
 }
 
 impl Order {
-    pub fn less_than(_ctx: Order, a: Order, b: Order) -> bool {
+    pub(crate) fn less_than(_ctx: Order, a: Order, b: Order) -> bool {
         (a.distance < b.distance) || (a.distance == b.distance && a.tie_breaker < b.tie_breaker)
     }
 
     /// Sort so files closest to an entry point come first. If two files are
     /// equidistant to an entry point, then break the tie by sorting on the
     /// stable source index derived from the DFS over all entry points.
-    pub fn sort(a: &mut [Order]) {
+    pub(crate) fn sort(a: &mut [Order]) {
         // std.sort.pdq → unstable sort
         a.sort_unstable_by(|a, b| {
             if Order::less_than(Order::default(), *a, *b) {
@@ -404,7 +404,7 @@ pub struct OutputPieces {
 
 impl OutputPieces {
     #[inline]
-    pub fn new(pieces: Vec<OutputPiece>, buffer: Box<[u8]>) -> Self {
+    pub(crate) fn new(pieces: Vec<OutputPiece>, buffer: Box<[u8]>) -> Self {
         OutputPieces {
             pieces,
             _buffer: buffer,
@@ -412,18 +412,13 @@ impl OutputPieces {
     }
 
     #[inline]
-    pub fn slice(&self) -> &[OutputPiece] {
+    pub(crate) fn slice(&self) -> &[OutputPiece] {
         &self.pieces
     }
 
     #[inline]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.pieces.len()
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.pieces.is_empty()
     }
 }
 
@@ -1087,7 +1082,7 @@ impl IntermediateOutput {
 /// `RawSlice` (encapsulates the unsafe re-borrow) — the per-chunk piece count
 /// is bounded by the number of unique-key boundaries, so the extra word per
 /// piece is negligible against the safety win.
-pub struct OutputPiece {
+pub(crate) struct OutputPiece {
     /// Borrows `OutputPieces::_buffer`; `RawSlice` invariant (backing outlives
     /// holder) is upheld by `OutputPieces` keeping the box alongside `pieces`.
     data: bun_ptr::RawSlice<u8>,
@@ -1095,11 +1090,11 @@ pub struct OutputPiece {
 }
 
 impl OutputPiece {
-    pub fn data(&self) -> &[u8] {
+    pub(crate) fn data(&self) -> &[u8] {
         self.data.slice()
     }
 
-    pub fn init(data_slice: &[u8], query: Query) -> OutputPiece {
+    pub(crate) fn init(data_slice: &[u8], query: Query) -> OutputPiece {
         OutputPiece {
             data: bun_ptr::RawSlice::new(data_slice),
             query,
@@ -1161,7 +1156,7 @@ impl QueryKind {
     /// Single-ASCII-letter tag used in the [`UniqueKey`] wire format.
     /// `None` has no on-the-wire encoding.
     #[inline]
-    pub const fn letter(self) -> u8 {
+    pub(crate) const fn letter(self) -> u8 {
         match self {
             QueryKind::Asset => b'A',
             QueryKind::Chunk => b'C',
@@ -1173,7 +1168,7 @@ impl QueryKind {
 
     /// Inverse of [`letter`]; used by the output-piece scanner.
     #[inline]
-    pub const fn from_letter(b: u8) -> Option<Self> {
+    pub(crate) const fn from_letter(b: u8) -> Option<Self> {
         match b {
             b'A' => Some(QueryKind::Asset),
             b'C' => Some(QueryKind::Chunk),
@@ -1185,9 +1180,9 @@ impl QueryKind {
 }
 
 /// Length of the lowercase-hex `unique_key` prefix (16 nibbles of a `u64`).
-pub const UNIQUE_KEY_PREFIX_LEN: usize = 16;
+pub(crate) const UNIQUE_KEY_PREFIX_LEN: usize = 16;
 /// Total byte length of a [`UniqueKey`] on the wire: `hex16 + KIND + idx08`.
-pub const UNIQUE_KEY_LEN: usize = UNIQUE_KEY_PREFIX_LEN + 1 + 8;
+pub(crate) const UNIQUE_KEY_LEN: usize = UNIQUE_KEY_PREFIX_LEN + 1 + 8;
 
 /// 25-byte unique-key wire format `{hex16(prefix)}{KIND}{index:08}` shared by
 /// every emitter (ParseTask file/napi/sqlite loaders, server-component
@@ -1195,7 +1190,7 @@ pub const UNIQUE_KEY_LEN: usize = UNIQUE_KEY_PREFIX_LEN + 1 + 8;
 /// scanner (`LinkerContext::break_output_into_pieces`). Mirrors Zig
 /// `"{f}{LETTER}{d:0>8}"` with `bun.fmt.hexIntLower` byte-for-byte.
 #[derive(Clone, Copy)]
-pub struct UniqueKey {
+pub(crate) struct UniqueKey {
     pub prefix: u64,
     pub kind: QueryKind,
     pub index: u32,
@@ -1214,8 +1209,6 @@ impl fmt::Display for UniqueKey {
     }
 }
 
-pub type OutputPieceIndex = Query;
-
 /// packed struct(u64) { source_index: u32, entry_point_id: u30, is_entry_point: bool, is_html: bool }
 #[repr(transparent)]
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -1223,7 +1216,7 @@ pub struct EntryPoint(u64);
 
 /// so `EntryPoint` can be a u64
 // TODO(port): Rust has no native u30 — using u32 with mask. Zig: `pub const ID = u30;`
-pub type EntryPointId = u32;
+pub(crate) type EntryPointId = u32;
 
 impl EntryPoint {
     const ENTRY_POINT_ID_MASK: u64 = (1 << 30) - 1;
@@ -1391,7 +1384,7 @@ pub enum Layers {
 
 impl Layers {
     #[inline]
-    pub fn inner(&self) -> &Vec<bun_css::LayerName> {
+    pub(crate) fn inner(&self) -> &Vec<bun_css::LayerName> {
         match self {
             Layers::Borrowed(p) => p.get(),
             Layers::Owned(b) => b,
@@ -1408,20 +1401,20 @@ impl Layers {
     /// (see TODO(port) above re: `'bump`); `BackRef` encapsulates that
     /// invariant so `inner()`/`to_owned()` deref sites are safe.
     #[inline]
-    pub fn borrow(p: core::ptr::NonNull<Vec<bun_css::LayerName>>) -> Self {
+    pub(crate) fn borrow(p: core::ptr::NonNull<Vec<bun_css::LayerName>>) -> Self {
         Layers::Borrowed(bun_ptr::BackRef::from(p))
     }
 
     /// Zig: `bun.ptr.Cow.replace` — drop owned (arena-backed, so no-op) and
     /// install a fresh owned value.
     #[inline]
-    pub fn replace(&mut self, new: Vec<bun_css::LayerName>) {
+    pub(crate) fn replace(&mut self, new: Vec<bun_css::LayerName>) {
         *self = Layers::Owned(new);
     }
 
     /// Zig: `bun.ptr.Cow.toOwned` — if borrowed, deep-clone into an owned
     /// list and return `&mut` to it; if already owned, return as-is.
-    pub fn to_owned(&mut self) -> &mut Vec<bun_css::LayerName> {
+    pub(crate) fn to_owned(&mut self) -> &mut Vec<bun_css::LayerName> {
         if let Layers::Borrowed(p) = *self {
             *self = Layers::Owned(p.deep_clone_with(|l| l.clone()));
         }
@@ -1434,7 +1427,7 @@ impl Layers {
 
 impl CssImportOrder {
     // TODO(port): hasher: anytype — Zig hasher protocol has .update([]const u8)
-    pub fn hash<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
+    pub(crate) fn hash<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
         // TODO: conditions, condition_import_records
 
         // Zig: bun.writeAnyToHasher(hasher, std.meta.activeTag(this.kind)) — feeds the small-int
@@ -1471,12 +1464,17 @@ impl CssImportOrder {
         }
     }
 
-    pub fn fmt<'a, 'ctx>(&'a self, ctx: &'a LinkerContext<'ctx>) -> CssImportOrderDebug<'a, 'ctx> {
+    #[allow(dead_code)]
+    pub(crate) fn fmt<'a, 'ctx>(
+        &'a self,
+        ctx: &'a LinkerContext<'ctx>,
+    ) -> CssImportOrderDebug<'a, 'ctx> {
         CssImportOrderDebug { inner: self, ctx }
     }
 }
 
-pub struct CssImportOrderDebug<'a, 'ctx> {
+#[allow(dead_code)]
+pub(crate) struct CssImportOrderDebug<'a, 'ctx> {
     inner: &'a CssImportOrder,
     // PORT NOTE: split lifetimes — `LinkerContext<'ctx>` is invariant over `'ctx`,
     // so coupling the borrow lifetime to the struct param (`&'a LinkerContext<'a>`)
@@ -1522,7 +1520,8 @@ impl<'a, 'ctx> fmt::Display for CssImportOrderDebug<'a, 'ctx> {
     }
 }
 
-pub type ImportsFromOtherChunks = ArrayHashMap<IndexInt, crate::cross_chunk_import::ItemList>;
+pub(crate) type ImportsFromOtherChunks =
+    ArrayHashMap<IndexInt, crate::cross_chunk_import::ItemList>;
 // TODO(port): CrossChunkImport.Item.List — assuming exported as ItemList from cross_chunk_import module
 // `Chunk` is bump-arena-allocated (no Drop on free); boxing the large arm
 // would leak. The CSS/JS chunk size diff is acceptable.

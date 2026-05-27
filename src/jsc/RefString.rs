@@ -12,7 +12,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_core::WTFStringImpl;
 use bun_jsc::StringJsc as _; // extension trait providing `.to_js()` on `bun_core::String`
 
-pub type Hash = u32;
+pub(crate) type Hash = u32;
 
 /// `std.HashMap(Hash, *RefString, bun.IdentityContext(Hash), 80)`
 // `bun.IdentityContext` is an identity hasher (key is already a hash). The `80`

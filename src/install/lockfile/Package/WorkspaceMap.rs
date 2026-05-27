@@ -16,7 +16,7 @@ use crate::package_manager::workspace_package_json_cache::{
 
 bun_output::declare_scope!(Lockfile, hidden);
 
-pub struct WorkspaceMap {
+pub(crate) struct WorkspaceMap {
     map: Map,
 }
 
@@ -30,30 +30,30 @@ pub struct Entry {
 }
 
 impl WorkspaceMap {
-    pub fn init() -> WorkspaceMap {
+    pub(crate) fn init() -> WorkspaceMap {
         WorkspaceMap {
             map: Map::default(),
         }
     }
 
-    pub fn keys(&self) -> &[Box<[u8]>] {
+    pub(crate) fn keys(&self) -> &[Box<[u8]>] {
         self.map.keys()
     }
 
-    pub fn values(&self) -> &[Entry] {
+    pub(crate) fn values(&self) -> &[Entry] {
         self.map.values()
     }
 
-    pub fn count(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         self.map.count()
     }
 
     #[inline]
-    pub fn get(&self, key: &[u8]) -> Option<&Entry> {
+    pub(crate) fn get(&self, key: &[u8]) -> Option<&Entry> {
         self.map.get(key)
     }
 
-    pub fn insert(&mut self, key: &[u8], value: Entry) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn insert(&mut self, key: &[u8], value: Entry) -> Result<(), bun_alloc::AllocError> {
         // Zig has a debug-only `bun.sys.exists(key)` check here, but `key` is
         // relative to the workspace root while `exists` resolves against process
         // cwd — false positive whenever the two differ (e.g. `bun unlink` from a
@@ -70,12 +70,6 @@ impl WorkspaceMap {
             name_loc: value.name_loc,
         };
         Ok(())
-    }
-
-    pub fn sort(&mut self, mut sort_ctx: impl FnMut(usize, usize) -> bool) {
-        // ArrayHashMap::sort hands us key/value slices; this wrapper exposes the
-        // Zig-shaped (a_idx, b_idx) -> bool surface.
-        self.map.sort(|_keys, _values, a, b| sort_ctx(a, b));
     }
 }
 
@@ -134,7 +128,7 @@ fn process_workspace_name(
 }
 
 impl WorkspaceMap {
-    pub fn process_names_array(
+    pub(crate) fn process_names_array(
         &mut self,
         json_cache: &mut WorkspacePackageJSONCache,
         log: &mut bun_ast::Log,

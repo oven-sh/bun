@@ -327,7 +327,7 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_co
     Err(bun_core::err!("No global directory found"))
 }
 
-pub fn open_global_bin_dir(
+pub(crate) fn open_global_bin_dir(
     opts_: Option<&Api::BunInstall>,
 ) -> Result<bun_sys::Fd, bun_core::Error> {
     use bun_paths::{platform, resolve_path::join_abs_string_buf};

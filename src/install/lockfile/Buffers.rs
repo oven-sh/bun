@@ -84,7 +84,7 @@ mod sizes {
     /// alignment of the slice descriptor (a `(*T, usize)` fat pointer) — i.e. `@alignOf(usize)`,
     /// not `@alignOf(Tree)`. This 8-byte boundary is load-bearing for on-disk parity AND for
     /// `read_array::<ExternalString>` (which has a `u64` field) to produce an aligned `&[T]`.
-    pub const ALIGN_TYPE_0: usize = align_of::<usize>();
+    pub(super) const ALIGN_TYPE_0: usize = align_of::<usize>();
     const _: () = assert!(ALIGN_TYPE_0 == align_of::<&[Tree]>());
 
     // `sizes.bytes` was never read in the Zig; omitted.
@@ -444,7 +444,7 @@ impl Buffers {
     }
 }
 
-pub fn load(
+pub(crate) fn load(
     stream: &mut Stream,
     log: &mut bun_ast::Log,
     pm_: Option<&mut PackageManager>,

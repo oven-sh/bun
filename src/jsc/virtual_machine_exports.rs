@@ -210,7 +210,7 @@ pub fn on_did_append_plugin(jsc_vm: &mut VirtualMachine, global: &JSGlobalObject
 
 #[cfg(windows)]
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__ZigGlobalObject__uvLoop(jsc_vm: &mut VirtualMachine) -> *mut c_void {
+pub(crate) extern "C" fn Bun__ZigGlobalObject__uvLoop(jsc_vm: &mut VirtualMachine) -> *mut c_void {
     jsc_vm.uv_loop().cast()
 }
 

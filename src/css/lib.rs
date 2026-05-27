@@ -98,7 +98,7 @@ pub use css_parser::{
 // namespace). `Str` is the arena-borrowed `[]const u8` slice alias; here
 // it's `*const [u8]` (matches `error.rs` / `values::ident` field shape) and
 // becomes `&'bump [u8]` once the arena lifetime is plumbed.
-pub type Str = *const [u8];
+pub(crate) type Str = *const [u8];
 
 /// Dereference an arena-owned [`Str`] into a slice borrow.
 ///
@@ -113,7 +113,7 @@ pub type Str = *const [u8];
 /// `p` must be a non-null fat pointer into the parser's source text or bump
 /// arena, and that backing storage must outlive the returned reference.
 #[inline(always)]
-pub unsafe fn arena_str(p: Str) -> &'static [u8] {
+pub(crate) unsafe fn arena_str(p: Str) -> &'static [u8] {
     // SAFETY: caller contract (documented above) guarantees `p` is a non-null,
     // well-aligned fat pointer into the parser's immutable source/bump arena,
     // whose backing storage outlives the returned reference.
@@ -188,8 +188,6 @@ pub mod values_stub {
 }
 
 // ─── stub re-exports referenced cross-crate ────────────────────────────────
-// TODO(port): replace stub with `rules::custom_media::CustomMediaRule`.
-pub type CustomMedia = ();
 
 /// Hoisted from `css_parser.rs` (gated). Single-variant error type returned by
 /// every `to_css` path; the *kind* lives in `Printer.error_kind` (PrinterError)
@@ -215,7 +213,7 @@ impl core::error::Error for PrintErr {}
 /// path. Distinct from `css_parser::PrintResult<T> = Maybe<T, PrinterError>`,
 /// which carries the rich `Err<PrinterErrorKind>` — this is just the bubbled
 /// signal (the *kind* lives in `Printer.error_kind`).
-pub type PrintResult<T = ()> = core::result::Result<T, PrintErr>;
+pub(crate) type PrintResult<T = ()> = core::result::Result<T, PrintErr>;
 
 pub use dependencies::Dependency;
 

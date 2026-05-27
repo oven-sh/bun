@@ -4,13 +4,12 @@
 
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
-#![warn(unreachable_pub)]
 use core::mem;
 
 use bun_collections::bit_set::ArrayBitSet;
 use bun_core::{PathString, strings};
 use bun_core::{ZBox, ZStr};
-use bun_paths::{self as paths, PathBuffer, platform};
+use bun_paths::{self as paths, PathBuffer};
 use bun_sys::{self as sys, Fd, FdExt};
 
 bun_core::declare_scope!(Patch, visible);
@@ -50,6 +49,7 @@ pub struct PatchFile<'a> {
 
 // Zig `deinit` only freed owned fields → Drop is automatic.
 
+#[cfg_attr(unix, allow(dead_code))]
 struct ApplyState {
     pathbuf: PathBuffer,
     // TODO(port): lifetime — `patch_dir_abs_path` is a self-referential slice
@@ -66,6 +66,7 @@ impl ApplyState {
         }
     }
 
+    #[cfg_attr(unix, allow(dead_code))]
     fn patch_dir_abs_path(&mut self, fd: Fd) -> sys::Result<&ZStr> {
         if let Some(len) = self.patch_dir_abs_path {
             // pathbuf[len] == 0 was written below on a previous call.
@@ -116,16 +117,8 @@ impl<'a> PatchFile<'a> {
 
                     let todir = paths::dirname_simple(to_path.as_bytes());
                     if !todir.is_empty() {
-                        let abs_patch_dir = match state.patch_dir_abs_path(patch_dir) {
-                            sys::Result::Ok(p) => p,
-                            sys::Result::Err(e) => return Some(e.without_path()),
-                        };
-                        let path_to_make = paths::resolve_path::join_z::<platform::Auto>(&[
-                            abs_patch_dir.as_bytes(),
-                            todir,
-                        ]);
                         if let sys::Result::Err(e) =
-                            sys::mkdir_recursive_at_mode(Fd::cwd(), path_to_make.as_bytes(), 0o755)
+                            sys::mkdir_recursive_at_mode(patch_dir, todir, 0o755)
                         {
                             return Some(e.without_path());
                         }
@@ -245,10 +238,11 @@ impl<'a> PatchFile<'a> {
                             sys::Result::Err(e) => return Some(e.without_path()),
                         };
                         let mut buf = PathBuffer::uninit();
-                        let joined_absfilepath = paths::resolve_path::join_z_buf::<platform::Auto>(
-                            &mut buf[..],
-                            &[absfilepath.as_bytes(), filepath.as_bytes()],
-                        );
+                        let joined_absfilepath =
+                            paths::resolve_path::join_z_buf::<paths::platform::Auto>(
+                                &mut buf[..],
+                                &[absfilepath.as_bytes(), filepath.as_bytes()],
+                            );
                         let fd = match sys::open(&joined_absfilepath, sys::O::RDWR, 0) {
                             sys::Result::Err(e) => return Some(e.without_path()),
                             sys::Result::Ok(f) => f,
@@ -286,7 +280,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
         #[cfg(not(unix))]
         let r = {
             let p = match state.patch_dir_abs_path(patch_dir) {
-                sys::Result::Ok(p) => paths::resolve_path::join_z::<platform::Auto>(&[
+                sys::Result::Ok(p) => paths::resolve_path::join_z::<paths::platform::Auto>(&[
                     p.as_bytes(),
                     file_path.as_bytes(),
                 ]),
@@ -432,7 +426,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
         patch_dir,
         &file_path,
         sys::O::CREAT | sys::O::WRONLY | sys::O::TRUNC,
-        sys::Mode::try_from(stat.st_mode).expect("int cast"),
+        stat.st_mode as sys::Mode,
     ) {
         sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
         sys::Result::Ok(fd) => fd,
@@ -597,7 +591,7 @@ impl Header {
 // Zig `Hunk.deinit` only freed owned fields → Drop is automatic.
 
 impl<'a> Hunk<'a> {
-    pub fn verify_integrity(&self) -> bool {
+    pub(crate) fn verify_integrity(&self) -> bool {
         let mut original_length: usize = 0;
         let mut patched_length: usize = 0;
 
@@ -633,11 +627,11 @@ pub enum FileMode {
 }
 
 impl FileMode {
-    pub fn to_bun_mode(self) -> sys::Mode {
+    pub(crate) fn to_bun_mode(self) -> sys::Mode {
         sys::Mode::try_from(self as u32).expect("int cast")
     }
 
-    pub fn from_u32(mode: u32) -> Option<FileMode> {
+    pub(crate) fn from_u32(mode: u32) -> Option<FileMode> {
         match mode {
             0o644 => Some(FileMode::NonExecutable),
             0o755 => Some(FileMode::Executable),
@@ -688,7 +682,7 @@ pub struct FileCreation<'a> {
 // Zig `deinit` freed hunk + bun.destroy(this) → Drop on Box<FileCreation> handles both.
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum PatchFilePartKind {
+pub(crate) enum PatchFilePartKind {
     FilePatch,
     FileDeletion,
     FileCreation,
@@ -1283,11 +1277,18 @@ impl<'a> PatchLinesParser<'a> {
                         self.current_file_patch.before_hash = Some(hashes.0);
                         self.current_file_patch.after_hash = Some(hashes.1);
                     } else if line.starts_with(b"--- ") {
-                        self.current_file_patch.from_path =
-                            Some(strings::trim(&line[b"--- a/".len()..], WHITESPACE));
+                        // The line may be shorter than "--- a/" (e.g. a bare "--- ");
+                        // treat the missing path as empty like the JS implementation's
+                        // `line.slice("--- a/".length)`.
+                        self.current_file_patch.from_path = Some(strings::trim(
+                            line.get(b"--- a/".len()..).unwrap_or_default(),
+                            WHITESPACE,
+                        ));
                     } else if line.starts_with(b"+++ ") {
-                        self.current_file_patch.to_path =
-                            Some(strings::trim(&line[b"+++ b/".len()..], WHITESPACE));
+                        self.current_file_patch.to_path = Some(strings::trim(
+                            line.get(b"+++ b/".len()..).unwrap_or_default(),
+                            WHITESPACE,
+                        ));
                     }
                 }
                 ParserState::ParsingHunks => {

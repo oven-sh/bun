@@ -191,13 +191,54 @@ mod _impl {
             // this does not get gc'd because it is stored in the JS object's
             // `this._writeState`. and the JS object is tied to the native handle
             // as `_handle[owner_symbol]`.
-            let write_result = arguments.ptr[1]
-                .as_array_buffer(global_this)
-                .unwrap()
-                .as_u32()
-                .as_mut_ptr();
+            // `flush_write_result` writes two u32s through this pointer, so the
+            // caller-supplied array must hold at least 2 elements.
+            let write_result_value = arguments.ptr[1];
+            let Some(mut write_result_buf) = write_result_value.as_array_buffer(global_this) else {
+                return Err(global_this.throw_invalid_argument_type_value(
+                    "writeResult",
+                    "Uint32Array",
+                    write_result_value,
+                ));
+            };
+            if write_result_buf.typed_array_type != bun_jsc::JSType::Uint32Array {
+                return Err(global_this.throw_invalid_argument_type_value(
+                    "writeResult",
+                    "Uint32Array",
+                    write_result_value,
+                ));
+            }
+            let write_result_slice = write_result_buf.as_u32();
+            if write_result_slice.len() < 2 {
+                return Err(global_this
+                    .err(
+                        ErrorCode::INVALID_ARG_VALUE,
+                        format_args!("writeResult must be a Uint32Array with at least 2 elements"),
+                    )
+                    .throw());
+            }
+            let write_result = write_result_slice.as_mut_ptr();
             let write_callback =
                 validators::validate_function(global_this, "writeCallback", arguments.ptr[2])?;
+
+            // Validate `params` before any native state is initialized so the
+            // error path needs no cleanup. `as_u32` reinterprets the view's
+            // bytes, so the element type must actually be Uint32Array.
+            let params_value = arguments.ptr[0];
+            let Some(mut params_buf) = params_value.as_array_buffer(global_this) else {
+                return Err(global_this.throw_invalid_argument_type_value(
+                    "params",
+                    "Uint32Array",
+                    params_value,
+                ));
+            };
+            if params_buf.typed_array_type != bun_jsc::JSType::Uint32Array {
+                return Err(global_this.throw_invalid_argument_type_value(
+                    "params",
+                    "Uint32Array",
+                    params_value,
+                ));
+            }
 
             self.write_result.set(Some(write_result));
 
@@ -213,7 +254,6 @@ mod _impl {
                 return Ok(JSValue::FALSE);
             }
 
-            let mut params_buf = arguments.ptr[0].as_array_buffer(global_this).unwrap();
             let params_ = params_buf.as_u32();
 
             for (i, &d) in params_.iter().enumerate() {

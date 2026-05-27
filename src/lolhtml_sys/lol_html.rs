@@ -154,7 +154,7 @@ impl HTMLRewriter {
 
 bun_opaque::opaque_ffi! { pub struct HTMLRewriterBuilder; }
 
-pub type OutputSinkFn = unsafe extern "C" fn(*const u8, usize, *mut c_void);
+pub(crate) type OutputSinkFn = unsafe extern "C" fn(*const u8, usize, *mut c_void);
 
 unsafe extern "C" {
     fn lol_html_rewriter_builder_new() -> *mut HTMLRewriterBuilder;
@@ -876,7 +876,7 @@ pub struct HTMLString {
 
 unsafe extern "C" {
     fn lol_html_str_free(str: HTMLString);
-    pub fn lol_html_take_last_error(...) -> HTMLString;
+    pub(crate) fn lol_html_take_last_error(...) -> HTMLString;
 }
 
 impl HTMLString {
@@ -1172,14 +1172,17 @@ pub enum Directive {
 }
 
 #[allow(non_camel_case_types)]
-pub type lol_html_comment_handler_t = unsafe extern "C" fn(*mut Comment, *mut c_void) -> Directive;
+pub(crate) type lol_html_comment_handler_t =
+    unsafe extern "C" fn(*mut Comment, *mut c_void) -> Directive;
 #[allow(non_camel_case_types)]
-pub type lol_html_text_handler_handler_t =
+pub(crate) type lol_html_text_handler_handler_t =
     unsafe extern "C" fn(*mut TextChunk, *mut c_void) -> Directive;
 #[allow(non_camel_case_types)]
-pub type lol_html_element_handler_t = unsafe extern "C" fn(*mut Element, *mut c_void) -> Directive;
+pub(crate) type lol_html_element_handler_t =
+    unsafe extern "C" fn(*mut Element, *mut c_void) -> Directive;
 #[allow(non_camel_case_types)]
-pub type lol_html_doc_end_handler_t = unsafe extern "C" fn(*mut DocEnd, *mut c_void) -> Directive;
+pub(crate) type lol_html_doc_end_handler_t =
+    unsafe extern "C" fn(*mut DocEnd, *mut c_void) -> Directive;
 #[allow(non_camel_case_types)]
 pub type lol_html_end_tag_handler_t = unsafe extern "C" fn(*mut EndTag, *mut c_void) -> Directive;
 
@@ -1212,7 +1215,7 @@ impl DocEnd {
 
 // ─── Directive handler trampolines ────────────────────────────────────────
 
-pub type DirectiveFunctionType<Container> =
+pub(crate) type DirectiveFunctionType<Container> =
     unsafe extern "C" fn(*mut Container, *mut c_void) -> Directive;
 
 // Zig: fn DirectiveFunctionTypeForHandler(comptime Container, comptime UserDataType) type
@@ -1221,9 +1224,6 @@ pub type DirectiveFunctionType<Container> =
 pub trait DirectiveCallback<Container> {
     fn call(&mut self, container: &mut Container) -> bool;
 }
-
-// Zig: fn DocTypeHandlerCallback(comptime UserDataType) type — unused alias, kept for parity
-pub type DocTypeHandlerCallback<U> = fn(&mut DocType, &mut U) -> bool;
 
 // Zig: pub fn DirectiveHandler(comptime Container, comptime UserDataType, comptime Callback) DirectiveFunctionType(Container)
 // Rust: monomorphized extern "C" trampoline per <Container, UserDataType>.
@@ -1259,8 +1259,6 @@ unsafe extern "C" {
     safe fn lol_html_doctype_is_removed(doctype: &DocType) -> bool;
     safe fn lol_html_doctype_source_location_bytes(doctype: &DocType) -> SourceLocationBytes;
 }
-
-pub type DocTypeCallback = unsafe extern "C" fn(*mut DocType, *mut c_void) -> Directive;
 
 impl DocType {
     pub fn get_name(&self) -> HTMLString {

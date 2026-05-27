@@ -341,12 +341,12 @@ pub const OTHER: MimeType = MimeType::init_comptime(b"application/octet-stream",
 pub const CSS: MimeType = MimeType::init_comptime(b"text/css;charset=utf-8", Category::Css);
 pub const JAVASCRIPT: MimeType =
     MimeType::init_comptime(b"text/javascript;charset=utf-8", Category::Javascript);
-pub const ICO: MimeType = MimeType::init_comptime(b"image/vnd.microsoft.icon", Category::Image);
+pub(crate) const ICO: MimeType =
+    MimeType::init_comptime(b"image/vnd.microsoft.icon", Category::Image);
 pub const HTML: MimeType = MimeType::init_comptime(b"text/html;charset=utf-8", Category::Html);
 // we transpile json to javascript so that it is importable without import assertions.
 pub const JSON: MimeType =
     MimeType::init_comptime(b"application/json;charset=utf-8", Category::Json);
-pub const TRANSPILED_JSON: MimeType = JAVASCRIPT;
 pub const TEXT: MimeType = MimeType::init_comptime(b"text/plain;charset=utf-8", Category::Html);
 pub const WASM: MimeType = MimeType::init_comptime(b"application/wasm", Category::Wasm);
 
@@ -543,7 +543,7 @@ pub fn by_name(name: &[u8]) -> MimeType {
 // PORT NOTE: phf_map! rejects duplicate keys at compile time. The Zig source
 // contained duplicate entries for "tsx", "yaml", "yml" (Zig ComptimeStringMap
 // silently kept the first occurrence) — later duplicates dropped below.
-pub static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
+pub(crate) static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"123" => t!("application/vnd.lotus-1-2-3"),
     b"1km" => t!("application/vnd.1000minds.decision-model+xml"),
     b"3dml" => t!("text/vnd.in3d.3dml"),

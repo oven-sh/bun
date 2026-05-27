@@ -405,8 +405,11 @@ pub trait DeriveValueType {
 
 // ───────────────────────── core parse helpers ─────────────────────────
 
+/// Skips to the end of the current block. Returns `true` if the matching
+/// closing token was found, `false` if the end of input was reached first
+/// (the block is unclosed).
 #[cold]
-fn consume_until_end_of_block(block_type: BlockType, tokenizer: &mut Tokenizer) {
+fn consume_until_end_of_block(block_type: BlockType, tokenizer: &mut Tokenizer) -> bool {
     // PERF(port): was SmallList<BlockType, 16> + appendAssumeCapacity — Vec is
     // fine for the cold path.
     let mut stack: Vec<BlockType> = Vec::with_capacity(16);
@@ -417,7 +420,7 @@ fn consume_until_end_of_block(block_type: BlockType, tokenizer: &mut Tokenizer) 
             if *stack.last().unwrap() == b {
                 let _ = stack.pop();
                 if stack.is_empty() {
-                    return;
+                    return true;
                 }
             }
         }
@@ -425,6 +428,7 @@ fn consume_until_end_of_block(block_type: BlockType, tokenizer: &mut Tokenizer) 
             stack.push(bt);
         }
     }
+    false
 }
 
 fn parse_at_rule<P: AtRuleParser>(
@@ -636,6 +640,25 @@ pub fn parse_until_after<T, C>(
 
 const MAX_NESTING_DEPTH: u32 = 512;
 
+/// Records that the block whose content starts at `start_position` failed to
+/// parse and turned out to be unclosed: the end of input was reached without
+/// ever finding its closing token. See `ParserInput::unclosed_block_at_eof`.
+#[cold]
+fn record_unclosed_block_at_eof(parser: &mut Parser, start_position: usize) {
+    debug_assert!(parser.input.tokenizer.is_eof());
+    let eof_state = parser.input.tokenizer.state();
+    let entry = parser
+        .input
+        .unclosed_block_at_eof
+        .get_or_insert(UnclosedBlockAtEof {
+            start_position,
+            eof_state,
+        });
+    if start_position < entry.start_position {
+        entry.start_position = start_position;
+    }
+}
+
 fn parse_nested_block<T>(
     parser: &mut Parser,
     parsefn: impl FnOnce(&mut Parser) -> CssResult<T>,
@@ -648,11 +671,29 @@ fn parse_nested_block<T>(
         )
     });
 
+    let start_position = parser.input.tokenizer.get_position();
+    // If a block at or before this position already failed to parse and was
+    // found to be unclosed at the end of input, this block lies inside that
+    // truncated suffix and extends to the end of input as well. Re-parsing it
+    // can only fail again, so skip straight to the end of input. Without this,
+    // backtracking callers (e.g. `Calc::parse` followed by `V::parse`, or the
+    // token-list color fallbacks) re-parse the unclosed suffix once per
+    // alternative per nesting level, which is exponential in the nesting depth.
+    if let Some(unclosed) = parser.input.unclosed_block_at_eof {
+        if start_position >= unclosed.start_position {
+            parser.input.tokenizer.reset(&unclosed.eof_state);
+            return Err(parser.new_error(BasicParseErrorKind::end_of_input));
+        }
+    }
+
     parser.input.nesting_depth += 1;
     if parser.input.nesting_depth > MAX_NESTING_DEPTH {
         parser.input.nesting_depth -= 1;
         let err = parser.new_custom_error(ParserError::maximum_nesting_depth);
-        consume_until_end_of_block(block_type, &mut parser.input.tokenizer);
+        let found_close = consume_until_end_of_block(block_type, &mut parser.input.tokenizer);
+        if !found_close {
+            record_unclosed_block_at_eof(parser, start_position);
+        }
         return Err(err);
     }
 
@@ -672,7 +713,10 @@ fn parse_nested_block<T>(
         consume_until_end_of_block(block_type2, &mut parser.input.tokenizer);
     }
     parser.stop_before = saved_stop_before;
-    consume_until_end_of_block(block_type, &mut parser.input.tokenizer);
+    let found_close = consume_until_end_of_block(block_type, &mut parser.input.tokenizer);
+    if result.is_err() && !found_close {
+        record_unclosed_block_at_eof(parser, start_position);
+    }
     parser.input.nesting_depth -= 1;
     result
 }
@@ -2618,10 +2662,32 @@ mod stylesheet_impl {
                 css_modules: self.options.css_modules.is_some(),
                 extra,
                 err: None,
+                selector_expansion_multiplier: 1,
+                selector_expansion_total: 0,
             };
 
             if self.rules.minify(&mut minify_ctx, false).is_err() {
-                panic!("TODO: Handle");
+                // Rule-level minify signals failure with the unit `MinifyErr`
+                // and records the diagnostic out-of-band on the context.
+                debug_assert!(minify_ctx.err.is_some());
+                let e = minify_ctx.err.take().unwrap_or_else(|| MinifyError {
+                    kind: MinifyErrorKind::unknown,
+                    loc: crate::Location::default(),
+                });
+                let filename: &[u8] = self
+                    .sources
+                    .get(e.loc.source_index as usize)
+                    .map(|source| &**source)
+                    .unwrap_or(self.options.filename);
+                let minify_error = Err {
+                    kind: e.kind,
+                    loc: Some(ErrorLocation {
+                        filename,
+                        line: e.loc.line,
+                        column: e.loc.column,
+                    }),
+                };
+                return Err(minify_error);
             }
 
             Ok(())
@@ -4213,6 +4279,25 @@ pub struct ParserInput<'a> {
     pub tokenizer: Tokenizer<'a>,
     pub cached_token: Option<CachedToken>,
     pub nesting_depth: u32,
+    /// Set once a nested block fails to parse and the end of input is reached
+    /// without ever finding its closing token, i.e. the stylesheet is
+    /// truncated somewhere inside that block. Everything from
+    /// `start_position` to the end of input is inside the unclosed block, so
+    /// re-parsing any block in that range can only fail the same way again.
+    /// `parse_nested_block` uses this to fail such attempts immediately
+    /// instead of re-scanning (and re-recursing through) the truncated
+    /// suffix once per backtracking alternative per nesting level.
+    unclosed_block_at_eof: Option<UnclosedBlockAtEof>,
+}
+
+/// See `ParserInput::unclosed_block_at_eof`.
+#[derive(Copy, Clone)]
+struct UnclosedBlockAtEof {
+    /// Position of the first token inside the earliest known unclosed block.
+    start_position: usize,
+    /// Tokenizer state at the end of input, captured when the unclosed block
+    /// was discovered.
+    eof_state: ParserState,
 }
 
 impl<'a> ParserInput<'a> {
@@ -4229,6 +4314,7 @@ impl<'a> ParserInput<'a> {
             tokenizer: Tokenizer::init_with_arena(code, arena),
             cached_token: None,
             nesting_depth: 0,
+            unclosed_block_at_eof: None,
         }
     }
 }
@@ -6774,6 +6860,15 @@ pub fn fract(val: f32) -> f32 {
 
 pub fn f32_length_with_5_digits(n_input: f32) -> usize {
     let mut n = (n_input * 100000.0).round();
+
+    // Huge values (>= ~3.4e33) overflow to infinity when scaled, and infinity
+    // never drops below 1.0 no matter how many times it is divided by 10, so
+    // the loop below would spin forever. Treat non-finite values as longer
+    // than any finite representation.
+    if !n.is_finite() {
+        return usize::MAX;
+    }
+
     let mut count: usize = 0;
     let mut i: usize = 0;
 

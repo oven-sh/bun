@@ -5,7 +5,7 @@ use super::DiffFormatter;
 use super::Expect;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_have_property(
+pub(crate) fn to_have_property(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,

@@ -22,7 +22,7 @@ pub use bun_sql::mysql::protocol::ResultSetHeader as Header;
 
 bun_core::declare_scope!(MySQLResultSet, visible);
 
-pub struct Row<'a> {
+pub(crate) struct Row<'a> {
     pub values: Box<[SQLDataCell]>,
     // `columns` is borrowed from the connection's column-definition buffer; see deinit note below.
     pub columns: &'a [ColumnDefinition41],
@@ -33,7 +33,7 @@ pub struct Row<'a> {
 }
 
 impl<'a> Row<'a> {
-    pub fn to_js(
+    pub(crate) fn to_js(
         &mut self,
         global_object: &JSGlobalObject,
         array: JSValue,
@@ -65,7 +65,7 @@ impl<'a> Row<'a> {
         )
     }
 
-    pub fn decode_internal<Context: ReaderContext>(
+    pub(crate) fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
     ) -> Result<(), AnyMySQLError> {
@@ -312,7 +312,11 @@ impl<'a> Row<'a> {
         for (index, value) in cells.iter_mut().enumerate() {
             if let Some(result) = decode_length_int(reader.peek()) {
                 let column = &self.columns[index];
-                if result.value == 0xfb {
+                // The NULL marker is the single literal byte 0xfb. A 251-byte
+                // value is length-encoded as `0xfc 0xfb 0x00` and also decodes
+                // to value 251, so the marker must be distinguished by its
+                // 1-byte encoding or row decoding desynchronizes.
+                if result.bytes_read == 1 && result.value == 0xfb {
                     // NULL value
                     reader.skip(result.bytes_read);
                     // this dont matter if is raw because we will sent as null too like in postgres
@@ -422,7 +426,7 @@ impl<'a> Row<'a> {
     }
 
     // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
-    pub fn decode<Context: ReaderContext>(
+    pub(crate) fn decode<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
     ) -> Result<(), AnyMySQLError> {

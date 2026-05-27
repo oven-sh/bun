@@ -2,7 +2,7 @@ import { $ } from "bun";
 import { patchInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import fs from "fs/promises";
-import { tempDirWithFiles as __tempDirWithFiles } from "harness";
+import { tempDirWithFiles as __tempDirWithFiles, bunEnv, bunExe } from "harness";
 import { join as __join } from "node:path";
 const { parse, apply, makeDiff } = patchInternals;
 
@@ -200,6 +200,38 @@ describe("apply", () => {
       expect(
         await $`if ls -d ${join(afolder, "hey.txt")}; then echo oops; else echo okay!; fi;`.cwd(tempdir).text(),
       ).toBe("okay!\n");
+    });
+
+    test("to a destination dir longer than the path buffer throws instead of crashing", async () => {
+      const tempdir = tempDirWithFiles("patch-test", { "from.txt": "hello!" });
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { patchInternals } from "bun:internal-for-testing";
+           const hugeDir = Buffer.alloc(8000, "a").toString();
+           const patchfile = "rename from from.txt\\nrename to " + hugeDir + "/to.txt\\n";
+           try {
+             patchInternals.apply(patchfile, ${JSON.stringify(tempdir)});
+             console.log("no-error");
+           } catch (e) {
+             console.log("caught: " + e.code);
+           }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      if (process.platform !== "win32") {
+        expect(stdout.trim()).toBe("caught: ENAMETOOLONG");
+      } else {
+        expect(stdout.trim()).toStartWith("caught:");
+      }
+      expect(exitCode).toBe(0);
     });
 
     test("folders", async () => {
@@ -474,6 +506,37 @@ describe("apply", () => {
   describe("No newline at end of file", () => {
     // TODO: simple, multiline, multiple hunks
   });
+
+  // Each of these hits an error path in `parse_apply_args`. The native code must
+  // surface the failure as a catchable JS exception; it used to return a normal
+  // value while the exception was still pending, which aborts debug/ASAN builds
+  // with "Unexpected exception observed" (releaseAssertNoException).
+  test("invalid arguments throw a catchable error", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { patchInternals } from "bun:internal-for-testing";
+         try { patchInternals.apply("@@"); console.log("no-error"); } catch (e) { console.log("invalid-patchfile: " + e.message); }
+         try { patchInternals.apply(); console.log("no-error"); } catch (e) { console.log("missing-argument: " + e.message); }
+         try { patchInternals.apply("@@", "bun-patch-test-nonexistent-dir"); console.log("no-error"); } catch (e) { console.log("bad-dir: " + e.code); }
+         try { patchInternals.apply({ toString() { throw new Error("coerce-fail"); } }, process.cwd()); console.log("no-error"); } catch (e) { console.log("bad-patchfile-arg: " + e.message); }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim().split("\n")).toEqual([
+      "invalid-patchfile: bad_header_line failed to parse patchfile",
+      "missing-argument: apply: expected at least 1 argument, got 0",
+      "bad-dir: ENOENT",
+      "bad-patchfile-arg: coerce-fail",
+    ]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("parse", () => {
@@ -735,6 +798,51 @@ describe("parse", () => {
                               "  }",
                             ],
                           },
+                          "no_newline_at_end_of_file": false,
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+              "before_hash": null,
+              "after_hash": null,
+            },
+          },
+        ],
+      },
+    });
+  });
+
+  // A `---`/`+++` header line can be shorter than "--- a/"/"+++ b/" (no path after the marker).
+  // This used to crash the parser with an out-of-bounds slice.
+  test("does not crash on truncated ---/+++ header lines", () => {
+    for (const truncated of ["+++ ", "--- ", "--- a", "+++ b"]) {
+      expect(removeCapacity(JSON.parse(parse(truncated)))).toEqual({ "parts": { "items": [] } });
+    }
+
+    // a truncated header line falls back to the paths from the `diff --git` line
+    const truncatedHeaderPatch = `diff --git a/banana.ts b/banana.ts\n--- \n+++ \n@@ -1,1 +1,1 @@\n-a\n+b\n`;
+    expect(removeCapacity(JSON.parse(parse(truncatedHeaderPatch)))).toEqual({
+      "parts": {
+        "items": [
+          {
+            "file_patch": {
+              "path": "banana.ts",
+              "hunks": {
+                "items": [
+                  {
+                    "header": { "original": { "start": 1, "len": 1 }, "patched": { "start": 1, "len": 1 } },
+                    "parts": {
+                      "items": [
+                        {
+                          "type": "deletion",
+                          "lines": { "items": ["a"] },
+                          "no_newline_at_end_of_file": false,
+                        },
+                        {
+                          "type": "insertion",
+                          "lines": { "items": ["b"] },
                           "no_newline_at_end_of_file": false,
                         },
                       ],

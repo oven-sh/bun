@@ -133,6 +133,13 @@ pub struct Printer<'a> {
     pub minify: bool,
     pub targets: Targets,
     pub vendor_prefix: css::VendorPrefix,
+    /// True while nested rules are being re-serialized for a non-final vendor
+    /// prefix pass of an ancestor style rule (when nesting is compiled away).
+    /// Nested style rules that carry their own vendor prefixes override
+    /// `vendor_prefix`, so their output is identical in every ancestor pass;
+    /// they are skipped while this is set and emitted once in the final pass,
+    /// keeping the output linear in nesting depth instead of exponential.
+    pub skip_prefixed_nested_rules: bool,
     pub in_calc: bool,
     pub css_module: Option<css::CssModule<'a>>,
     pub dependencies: Option<BumpVec<'a, css::Dependency>>,
@@ -144,6 +151,13 @@ pub struct Printer<'a> {
     // TODO(port): lifetime — ctx is set to a stack-local during with_context() and restored
     // after; `&'a StyleContext<'a>` will not borrow-check there. May need raw `*const StyleContext`.
     pub ctx: Option<&'a css::StyleContext<'a>>,
+    /// Number of parent-selector substitutions performed for `&` while
+    /// serializing the current rule prelude with compiled nesting (targets
+    /// without CSS nesting support). Reset per prelude (in
+    /// `StyleRule::to_css_base` and `ScopeRule::to_css`) and bounded in
+    /// `serialize::serialize_nesting` so deeply nested rules with multiple
+    /// `&` references per level cannot expand exponentially.
+    pub nesting_expansions: u32,
     pub scratchbuf: BumpVec<'a, u8>,
     pub error_kind: Option<css::PrinterError>,
     pub import_info: Option<ImportInfo<'a>>,
@@ -157,7 +171,7 @@ pub struct Printer<'a> {
 
 #[cfg(debug_assertions)]
 thread_local! {
-    pub static IN_DEBUG_FMT: Cell<bool> = const { Cell::new(false) };
+    pub(crate) static IN_DEBUG_FMT: Cell<bool> = const { Cell::new(false) };
 }
 
 impl<'a> Printer<'a> {
@@ -307,9 +321,11 @@ impl<'a> Printer<'a> {
             line: 0,
             col: 0,
             vendor_prefix: css::VendorPrefix::default(),
+            skip_prefixed_nested_rules: false,
             in_calc: false,
             css_module: None,
             ctx: None,
+            nesting_expansions: 0,
             error_kind: None,
         }
     }

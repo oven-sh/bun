@@ -86,10 +86,10 @@ bun_output::declare_scope!(bun_shim_impl, hidden);
 mod nt {
     use super::*;
 
-    pub type Status = NTSTATUS;
+    pub(super) type Status = NTSTATUS;
 
     /// https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile
-    pub use w::ntdll::NtCreateFile;
+    pub(super) use w::ntdll::NtCreateFile;
 
     // SAFETY: ntdll syscalls; signatures match WDK headers. Declared locally as
     // `safe fn` (vs. re-exporting the `unsafe fn` from `w::ntdll`) because
@@ -102,10 +102,10 @@ mod nt {
     #[link(name = "ntdll")]
     unsafe extern "system" {
         /// undocumented
-        pub safe fn RtlExitUserProcess(ExitStatus: u32) -> !;
+        pub(super) safe fn RtlExitUserProcess(ExitStatus: u32) -> !;
 
         /// https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntclose
-        pub safe fn NtClose(Handle: HANDLE) -> Status;
+        pub(super) safe fn NtClose(Handle: HANDLE) -> Status;
     }
 
     // TODO(port): move to <install>_sys (or bun_sys::windows::ntdll)
@@ -115,7 +115,7 @@ mod nt {
     unsafe extern "system" {
         /// https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntreadfile
         #[link_name = "NtReadFile"]
-        pub fn NtReadFile(
+        pub(super) fn NtReadFile(
             FileHandle: HANDLE, // [in]
             // PORT NOTE: Zig `?w.HANDLE` is pointer-sized via null-niche. Rust
             // `Option<*mut c_void>` is NOT (raw pointers can already be null →
@@ -133,7 +133,7 @@ mod nt {
 
         /// https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntwritefile
         #[link_name = "NtWriteFile"]
-        pub fn NtWriteFile(
+        pub(super) fn NtWriteFile(
             FileHandle: HANDLE,                  // [in]
             Event: HANDLE, // [in, optional] (see NtReadFile note re: Option<HANDLE>)
             ApcRoutine: *mut c_void, // [in, optional]
@@ -151,9 +151,9 @@ mod nt {
 mod k32 {
     use super::*;
 
-    pub use w::kernel32::CreateProcessW;
+    pub(super) use w::kernel32::CreateProcessW;
     /// https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror
-    pub use w::kernel32::GetLastError;
+    pub(super) use w::kernel32::GetLastError;
 
     // SAFETY: kernel32 externs; signatures match SDK. Declared locally as
     // `safe fn` (vs. re-exporting `unsafe fn` from `w::kernel32`) because
@@ -166,16 +166,16 @@ mod k32 {
     #[link(name = "kernel32")]
     unsafe extern "system" {
         /// https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject
-        pub safe fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
+        pub(super) safe fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
 
         /// https://learn.microsoft.com/en-us/windows/console/setconsolemode
-        pub safe fn SetConsoleMode(hConsoleHandle: HANDLE, dwMode: DWORD) -> BOOL;
+        pub(super) safe fn SetConsoleMode(hConsoleHandle: HANDLE, dwMode: DWORD) -> BOOL;
 
         /// https://learn.microsoft.com/en-us/windows/console/getconsolemode
-        pub safe fn GetConsoleMode(hConsoleHandle: HANDLE, lpMode: &mut DWORD) -> BOOL;
+        pub(super) safe fn GetConsoleMode(hConsoleHandle: HANDLE, lpMode: &mut DWORD) -> BOOL;
 
         /// https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getexitcodeprocess
-        pub safe fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: &mut DWORD) -> BOOL;
+        pub(super) safe fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: &mut DWORD) -> BOOL;
     }
 }
 
@@ -223,6 +223,7 @@ pub enum FailReason {
     NoDirname,
     CouldNotOpenShim,
     CouldNotReadShim,
+    #[allow(dead_code)]
     InvalidShimDataSize,
     ShimNotFound,
     CreateProcessFailed,
@@ -238,7 +239,7 @@ pub enum FailReason {
 }
 
 impl FailReason {
-    pub const fn get_format_template(self) -> &'static str {
+    pub(crate) const fn get_format_template(self) -> &'static str {
         match self {
             FailReason::NoDirname => "could not find node_modules path",
 
@@ -269,7 +270,7 @@ impl FailReason {
     }
 
     #[inline]
-    pub fn write(self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
+    pub(crate) fn write(self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(writer, "{self}")
     }
 }
@@ -430,10 +431,10 @@ const NT_OBJECT_PREFIX: [u16; 4] = ['\\' as u16, '?' as u16, '?' as u16, '\\' as
 
 // This is used for CreateProcessW's lpCommandLine
 // "The maximum length of this string is 32,767 characters, including the Unicode terminating null character."
-pub const BUF2_U16_LEN: usize = 32767 + 1;
+pub(crate) const BUF2_U16_LEN: usize = 32767 + 1;
 
 #[derive(Clone, Copy, PartialEq, Eq, ConstParamTy)]
-pub enum LauncherMode {
+pub(crate) enum LauncherMode {
     Launch,
     ReadWithoutLaunch,
 }
@@ -1598,7 +1599,8 @@ impl FromBunRunContext {
     /// View `base_path[0..base_path_len]` as a slice. Centralises the (ptr, len)
     /// → slice reconstruction so callers don't open-code `from_raw_parts`.
     #[inline]
-    pub fn base_path_slice(&self) -> &[u16] {
+    #[allow(dead_code)]
+    pub(crate) fn base_path_slice(&self) -> &[u16] {
         // SAFETY: caller of `try_startup_from_bun_js` (run_command.rs) sets
         // `base_path`/`base_path_len` from a live `[u16]` buffer it owns for
         // the duration of the call. Borrow tied to `&self`.
@@ -1651,6 +1653,7 @@ impl BunCtx for &FromBunRunContext {
 /// this returns void, to which the caller should still try invoking the exe directly. This
 /// is to handle version mismatches where bun.exe's decoder is too new than the .bunx file.
 #[cfg(not(feature = "shim_standalone"))]
+#[allow(dead_code)]
 pub fn try_startup_from_bun_js(context: FromBunRunContext) {
     debug_assert!(!context.base_path_slice().starts_with(&NT_OBJECT_PREFIX));
     const _: () = assert!(!IS_STANDALONE);
@@ -1680,13 +1683,13 @@ pub struct FromBunShellContext {
     pub buf: *mut FromBunShellContextBuf,
 }
 
-pub type FromBunShellContextBuf = [u16; BUF2_U16_LEN];
+pub(crate) type FromBunShellContextBuf = [u16; BUF2_U16_LEN];
 
 impl FromBunShellContext {
     /// View `base_path[0..base_path_len]` as a slice. Centralises the (ptr, len)
     /// → slice reconstruction so callers don't open-code `from_raw_parts`.
     #[inline]
-    pub fn base_path_slice(&self) -> &[u16] {
+    pub(crate) fn base_path_slice(&self) -> &[u16] {
         // SAFETY: caller of `read_without_launch` sets `base_path`/`base_path_len`
         // from a live `[u16]` buffer it owns for the duration of the call.
         // Borrow tied to `&self`.
@@ -1726,7 +1729,9 @@ impl BunCtx for &FromBunShellContext {
 // negligible here and gives us safe matching.
 pub enum ReadWithoutLaunchResult {
     /// enum which has a predefined custom formatter
+    #[allow(dead_code)]
     Err(FailReason),
+    #[allow(dead_code)]
     CommandLine(*const u16, usize),
 }
 
@@ -1751,7 +1756,7 @@ pub fn read_without_launch(context: FromBunShellContext) -> ReadWithoutLaunchRes
 /// Main function for `bun_shim_impl.exe`
 #[cfg(feature = "shim_standalone")]
 #[inline]
-pub fn main() -> ! {
+pub(crate) fn main() -> ! {
     const _: () = assert!(IS_STANDALONE);
     // TODO(port): `comptime assert(builtin.single_threaded)` / `!link_libc` / `!link_libcpp` —
     // these are build-config assertions; enforce in the standalone crate's Cargo.toml/build.rs.

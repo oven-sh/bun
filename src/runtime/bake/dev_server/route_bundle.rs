@@ -9,12 +9,12 @@ use crate::server::{StaticRoute, html_bundle::HTMLBundleRoute};
 
 /// `bun.GenericIndex(u30, RouteBundle)`.
 pub enum RouteBundleMarker {}
-pub type Index = bun_core::GenericIndex<u32, RouteBundleMarker>;
+pub(crate) type Index = bun_core::GenericIndex<u32, RouteBundleMarker>;
 /// `Index.Optional` — packed sentinel in Zig; `Option` here (non-FFI).
-pub type IndexOptional = Option<Index>;
+pub(crate) type IndexOptional = Option<Index>;
 
 /// `bun.GenericIndex(u32, u8)` — byte offset into `bundled_html_text`.
-pub type ByteOffset = bun_core::GenericIndex<u32, u8>;
+pub(crate) type ByteOffset = bun_core::GenericIndex<u32, u8>;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum State {
@@ -33,9 +33,6 @@ pub struct Framework {
     pub cached_css_file_array: jsc::StrongOptional,
     pub evaluate_failure: Option<SerializedFailure>,
 }
-
-/// Zig name alias (`RouteBundle.HTML`) — callers use the all-caps form.
-pub type HTML = Html;
 
 pub struct Html {
     /// SHARED (LIFETIMES.tsv): DevServer increments the route's intrusive
@@ -62,26 +59,20 @@ pub enum Data {
 
 impl Data {
     /// Zig: `data.framework` payload accessor (asserts active tag).
-    pub fn framework(&self) -> &Framework {
-        match self {
-            Data::Framework(f) => f,
-            Data::Html(_) => unreachable!("expected .framework"),
-        }
-    }
-    pub fn framework_mut(&mut self) -> &mut Framework {
+    pub(crate) fn framework(&self) -> &Framework {
         match self {
             Data::Framework(f) => f,
             Data::Html(_) => unreachable!("expected .framework"),
         }
     }
     /// Zig: `data.html` payload accessor (asserts active tag).
-    pub fn html(&self) -> &Html {
+    pub(crate) fn html(&self) -> &Html {
         match self {
             Data::Html(h) => h,
             Data::Framework(_) => unreachable!("expected .html"),
         }
     }
-    pub fn html_mut(&mut self) -> &mut Html {
+    pub(crate) fn html_mut(&mut self) -> &mut Html {
         match self {
             Data::Html(h) => h,
             Data::Framework(_) => unreachable!("expected .html"),
@@ -123,7 +114,7 @@ impl RouteBundle {
 }
 
 #[derive(Clone, Copy)]
-pub enum UnresolvedIndex {
+pub(crate) enum UnresolvedIndex {
     Framework(framework_router::RouteIndex),
     /// BACKREF (Zig `*HTMLBundle.Route`): `getOrPutRouteBundle` writes
     /// `dev_server_id` back through this pointer and `.initRef(html)` takes

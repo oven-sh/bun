@@ -35,7 +35,7 @@ pub struct CurrentFile {
 }
 
 impl CurrentFile {
-    pub fn set(
+    pub(crate) fn set(
         &mut self,
         title: &[u8],
         prefix: &[u8],
@@ -95,7 +95,7 @@ impl CurrentFile {
         Output::flush();
     }
 
-    pub fn print_if_needed(&mut self) {
+    pub(crate) fn print_if_needed(&mut self) {
         if self.has_printed_filename {
             return;
         }
@@ -191,9 +191,6 @@ impl<'a> TestRunner<'a> {
         bun_test::vm_timer().remove(&raw mut active_file.timer);
     }
 
-    pub fn has_test_filter(&self) -> bool {
-        self.filter_regex.is_some()
-    }
 
     pub fn should_file_run_concurrently(&self, file_id: FileId) -> bool {
         // Check if global concurrent flag is set
@@ -262,7 +259,7 @@ pub struct Summary {
 }
 
 impl Summary {
-    pub fn did_label_filter_out_all_tests(&self) -> bool {
+    pub(crate) fn did_label_filter_out_all_tests(&self) -> bool {
         self.skipped_because_label > 0
             && (self.pass + self.skip + self.todo + self.fail + self.expectations) == 0
     }
@@ -286,8 +283,8 @@ impl Default for File {
     }
 }
 
-pub type FileList = MultiArrayList<File>;
-pub type FileId = u32;
+pub(crate) type FileList = MultiArrayList<File>;
+pub(crate) type FileId = u32;
 
 bun_collections::multi_array_columns! {
     pub trait FileColumns for File {
@@ -296,7 +293,7 @@ bun_collections::multi_array_columns! {
     }
 }
 // PORT NOTE: Zig used ArrayIdentityContext; u32 keys hash as identity in bun_collections.
-pub type FileMap = ArrayHashMap<u32, u32>;
+pub(crate) type FileMap = ArrayHashMap<u32, u32>;
 
 #[allow(non_snake_case)]
 pub mod Jest {
@@ -306,10 +303,10 @@ pub mod Jest {
     // PORTING.md §Global mutable state: JS-VM-thread-only singleton; RacyCell
     // over `Option<NonNull<_>>` so direct `.read()` projections in
     // `snapshot.rs` etc. keep their shape.
-    pub static RUNNER: bun_core::RacyCell<Option<NonNull<TestRunner<'static>>>> =
+    pub(crate) static RUNNER: bun_core::RacyCell<Option<NonNull<TestRunner<'static>>>> =
         bun_core::RacyCell::new(None);
 
-    pub fn runner() -> Option<&'static mut TestRunner<'static>> {
+    pub(crate) fn runner() -> Option<&'static mut TestRunner<'static>> {
         // SAFETY: single-threaded JS VM; matches Zig's unguarded global access.
         unsafe { RUNNER.read().map(|p| &mut *p.as_ptr()) }
     }
@@ -318,13 +315,13 @@ pub mod Jest {
     /// an exclusive `&mut TestRunner` because a sub-borrow of it (e.g.
     /// `&BunTestRoot`, `&mut BunTest`) is already live — see
     /// `BunTestRoot::on_before_print` / `BunTest::enter_file`.
-    pub fn runner_ptr() -> Option<NonNull<TestRunner<'static>>> {
+    pub(crate) fn runner_ptr() -> Option<NonNull<TestRunner<'static>>> {
         // SAFETY: single-threaded JS VM; matches Zig's unguarded global access.
         unsafe { RUNNER.read() }
     }
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__Jest__createTestModuleObject(
+    pub(crate) extern "C" fn Bun__Jest__createTestModuleObject(
         global_object: &JSGlobalObject,
     ) -> JSValue {
         match create_test_module(global_object) {
@@ -333,7 +330,7 @@ pub mod Jest {
         }
     }
 
-    pub fn create_test_module(global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn create_test_module(global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let module = JSValue::create_empty_object(global_object, 23);
 
         let test_scope_functions = create_bound(
@@ -365,16 +362,13 @@ pub mod Jest {
         )?;
         module.put(global_object, b"describe", describe_scope_functions);
 
-        let xdescribe_scope_functions = match create_bound(
+        let xdescribe_scope_functions = create_bound(
             global_object,
             ScopeKind::Describe,
             JSValue::ZERO,
             BaseScopeCfg { self_mode: ScopeMode::Skip, ..Default::default() },
             scope_strings::XDESCRIBE(),
-        ) {
-            Ok(v) => v,
-            Err(_) => return Ok(JSValue::ZERO),
-        };
+        )?;
         module.put(global_object, b"xdescribe", xdescribe_scope_functions);
 
         // `#[bun_jsc::host_fn]` emits a `__jsc_host_{name}` shim with the raw
@@ -461,20 +455,20 @@ pub mod Jest {
 
     // TODO(port): move to <area>_sys
     unsafe extern "C" {
-        pub safe fn Bun__Jest__testModuleObject(global: &JSGlobalObject) -> JSValue;
+        pub(crate) safe fn Bun__Jest__testModuleObject(global: &JSGlobalObject) -> JSValue;
     }
     bun_jsc::jsc_abi_extern! {
-        pub fn JSMock__jsMockFn(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
-        pub fn JSMock__jsModuleMock(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
-        pub fn JSMock__jsNow(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
-        pub fn JSMock__jsSetSystemTime(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
-        pub fn JSMock__jsRestoreAllMocks(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
-        pub fn JSMock__jsClearAllMocks(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
-        pub fn JSMock__jsSpyOn(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
+        pub(crate) fn JSMock__jsMockFn(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
+        pub(crate) fn JSMock__jsModuleMock(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
+        pub(crate) fn JSMock__jsNow(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
+        pub(crate) fn JSMock__jsSetSystemTime(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
+        pub(crate) fn JSMock__jsRestoreAllMocks(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
+        pub(crate) fn JSMock__jsClearAllMocks(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
+        pub(crate) fn JSMock__jsSpyOn(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
     }
 
     #[bun_jsc::host_fn]
-    pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let vm = global_object.bun_vm();
 
         if vm.is_in_preload || runner().is_none() {
@@ -497,7 +491,7 @@ pub mod Jest {
             }
         }
 
-        Ok(Bun__Jest__testModuleObject(global_object))
+        jsc::from_js_host_call(global_object, || Bun__Jest__testModuleObject(global_object))
     }
 
     #[bun_jsc::host_fn]
@@ -525,7 +519,7 @@ pub mod Jest {
 pub mod on_unhandled_rejection {
     use super::*;
 
-    pub fn on_unhandled_rejection(
+    pub(crate) fn on_unhandled_rejection(
         jsc_vm: &mut VirtualMachine,
         global_object: &JSGlobalObject,
         rejection: JSValue,
@@ -598,7 +592,7 @@ fn consume_arg(
 }
 
 /// Generate test label by positionally injecting parameters with printf formatting
-pub fn format_label(
+pub(crate) fn format_label(
     global_this: &JSGlobalObject,
     label: &[u8],
     function_args: &[JSValue],
@@ -758,7 +752,7 @@ pub fn format_label(
     Ok(list.into_boxed_slice())
 }
 
-pub fn capture_test_line_number(callframe: &CallFrame, global_this: &JSGlobalObject) -> u32 {
+pub(crate) fn capture_test_line_number(callframe: &CallFrame, global_this: &JSGlobalObject) -> u32 {
     if let Some(runner) = Jest::runner() {
         if runner.test_options.reporters.junit {
             // TODO(port): move to <area>_sys
@@ -775,14 +769,5 @@ pub fn capture_test_line_number(callframe: &CallFrame, global_this: &JSGlobalObj
     0
 }
 
-pub fn error_in_ci(global_object: &JSGlobalObject, message: &[u8]) -> JsResult<()> {
-    if crate::cli::ci_info::is_ci() {
-        return Err(global_object.throw(format_args!(
-            "{}\nTo override, set the environment variable CI=false.",
-            bstr::BStr::new(message)
-        )));
-    }
-    Ok(())
-}
 
 // ported from: src/test_runner/jest.zig

@@ -132,11 +132,11 @@ pub enum DevelopmentOption {
 }
 
 impl DevelopmentOption {
-    pub fn is_hmr_enabled(self) -> bool {
+    pub(crate) fn is_hmr_enabled(self) -> bool {
         self == DevelopmentOption::Development
     }
 
-    pub fn is_development(self) -> bool {
+    pub(crate) fn is_development(self) -> bool {
         self == DevelopmentOption::Development || self == DevelopmentOption::DevelopmentWithoutHmr
     }
 }
@@ -201,16 +201,8 @@ pub struct StaticRouteEntry {
 }
 
 impl StaticRouteEntry {
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         self.path.len() + self.route.memory_cost()
-    }
-
-    /// Zig `isLessThan` — strict-weak ordering for `std.mem.sort`
-    /// (descending by path). Kept for API parity with the spec; the Rust
-    /// `sort_by` callsite uses `strings::order` directly so it can return
-    /// `Ordering::Equal` (Rust 1.81+ panics on a comparator that never does).
-    pub fn is_less_than(_: (), this: &StaticRouteEntry, other: &StaticRouteEntry) -> bool {
-        strings::cmp_strings_desc((), &this.path, &other.path)
     }
 }
 
@@ -349,7 +341,7 @@ impl ServerConfig {
 // dereferencing it here; not_unsafe_ptr_arg_deref is a false positive on
 // opaque-token forwarding.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn apply_static_route<const SSL: bool, T>(
+pub(crate) fn apply_static_route<const SSL: bool, T>(
     server: AnyServer,
     app: &mut uws::NewApp<SSL>,
     entry: *mut T,
@@ -428,7 +420,7 @@ pub fn apply_static_route<const SSL: bool, T>(
 // dereferencing it here; not_unsafe_ptr_arg_deref is a false positive on
 // opaque-token forwarding.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn apply_static_route_h3<T>(
+pub(crate) fn apply_static_route_h3<T>(
     server: AnyServer,
     app: &mut uws::h3::App,
     entry: *mut T,
@@ -486,7 +478,7 @@ pub fn apply_static_route_h3<T>(
 /// Receivers are raw `*mut Self` because the route is registered as the uWS
 /// userdata pointer and the inherent impls (`StaticRoute::on_request` etc.) need
 /// `*mut` to mutate state and stash `self` into onAborted callbacks.
-pub trait StaticRouteLike<const SSL: bool>: 'static {
+pub(crate) trait StaticRouteLike<const SSL: bool>: 'static {
     /// SAFETY: `this` is a live route pointer for the lifetime of the app.
     unsafe fn set_server(this: *mut Self, server: AnyServer);
     /// SAFETY: `this` is a live route pointer; `req`/`resp` carry FFI handles

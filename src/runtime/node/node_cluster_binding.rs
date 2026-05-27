@@ -23,7 +23,7 @@ bun_output::declare_scope!(IPC, visible);
 // lives in the type signature.
 unsafe extern "C" {
     pub safe fn Bun__Process__queueNextTick1(global: &JSGlobalObject, f: JSValue, arg: JSValue);
-    pub safe fn Process__emitErrorEvent(global: &JSGlobalObject, value: JSValue);
+    pub(crate) safe fn Process__emitErrorEvent(global: &JSGlobalObject, value: JSValue);
 }
 
 // TODO(port): `pub var` mutable global with !Sync fields (Strong). Only ever accessed on the
@@ -32,7 +32,7 @@ unsafe extern "C" {
 // access via `child_singleton()`.
 // PORTING.md §Global mutable state: JS-thread-only singleton with `!Sync`
 // fields (`Strong`). RacyCell — single-thread access is the contract.
-pub static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>> =
+pub(crate) static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>> =
     bun_core::RacyCell::new(None);
 
 /// `&mut` to the (lazily-initialized) JS-thread singleton.
@@ -52,7 +52,7 @@ fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
 }
 
 #[bun_jsc::host_fn]
-pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(IPC, "sendHelperChild");
 
     let arguments = frame.arguments_old::<3>().ptr;
@@ -141,7 +141,10 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 }
 
 #[bun_jsc::host_fn]
-pub fn on_internal_message_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn on_internal_message_child(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     bun_output::scoped_log!(IPC, "onInternalMessageChild");
     let arguments = frame.arguments_old::<2>().ptr;
     let singleton = child_singleton();
@@ -152,14 +155,17 @@ pub fn on_internal_message_child(global: &JSGlobalObject, frame: &CallFrame) -> 
     Ok(JSValue::UNDEFINED)
 }
 
-pub fn handle_internal_message_child(global: &JSGlobalObject, message: JSValue) -> JsResult<()> {
+pub(crate) fn handle_internal_message_child(
+    global: &JSGlobalObject,
+    message: JSValue,
+) -> JsResult<()> {
     bun_output::scoped_log!(IPC, "handleInternalMessageChild");
 
     child_singleton().dispatch(message, global)
 }
 
 #[bun_jsc::host_fn]
-pub fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(IPC, "sendHelperPrimary");
 
     let arguments = frame.arguments_old::<4>().ptr;
@@ -217,7 +223,7 @@ pub fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 }
 
 #[bun_jsc::host_fn]
-pub fn on_internal_message_primary(
+pub(crate) fn on_internal_message_primary(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -233,7 +239,7 @@ pub fn on_internal_message_primary(
     Ok(JSValue::UNDEFINED)
 }
 
-pub fn handle_internal_message_primary(
+pub(crate) fn handle_internal_message_primary(
     global: &JSGlobalObject,
     subprocess: &Subprocess<'_>,
     message: JSValue,
@@ -241,6 +247,10 @@ pub fn handle_internal_message_primary(
     let Some(ipc_data) = subprocess.ipc() else {
         return Ok(());
     };
+
+    if !ipc_data.internal_msg_queue.is_ready() {
+        return Ok(());
+    }
 
     let event_loop = global.bun_vm().event_loop_mut();
 
@@ -291,7 +301,7 @@ pub fn handle_internal_message_primary(
 //
 
 #[bun_jsc::host_fn]
-pub fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let arguments = frame.arguments_old::<1>().ptr;
 
     if arguments.len() == 0 {
@@ -329,7 +339,7 @@ pub fn unref_channel_unless_overridden(global: &JSGlobalObject) {
 }
 
 #[bun_jsc::host_fn]
-pub fn channel_ignore_one_disconnect_event_listener(
+pub(crate) fn channel_ignore_one_disconnect_event_listener(
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {

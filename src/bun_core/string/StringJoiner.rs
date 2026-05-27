@@ -82,6 +82,12 @@ pub struct Watcher {
 }
 
 impl StringJoiner {
+    /// Pre-allocate room for `additional` more pushed slices, so a join with a
+    /// known piece count does a single nodes allocation instead of log₂N grows.
+    pub fn reserve(&mut self, additional: usize) {
+        self.nodes.reserve(additional);
+    }
+
     /// `data` is expected to live until `.done` is called
     pub fn push_static(&mut self, data: &[u8]) {
         self.push(data);

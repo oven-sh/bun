@@ -787,7 +787,7 @@ impl FilePoll {
                         // registration, it becomes errno
                         0,
                         KEVENT_FLAG_ERROR_EVENTS,
-                        &TIMEOUT,
+                        &raw const TIMEOUT,
                     )
                 };
                 if sys::get_errno(rc) == sys::E::EINTR {
@@ -1092,7 +1092,7 @@ impl FilePoll {
                     changelist.as_mut_ptr(),
                     nchanges,
                     KEVENT_FLAG_ERROR_EVENTS,
-                    &TIMEOUT,
+                    &raw const TIMEOUT,
                 )
             };
 
@@ -1237,8 +1237,7 @@ pub enum Flags {
 }
 
 pub type FlagsSet = enumset::EnumSet<Flags>;
-// TODO(port): Zig `Flags.Struct = std.enums.EnumFieldStruct(Flags, bool, false)` — used as a
-// builder for Set.init(). In Rust, callers should construct `FlagsSet` directly via `|`.
+#[allow(dead_code)]
 pub type FlagsStruct = FlagsSet;
 
 impl Flags {
@@ -1300,7 +1299,8 @@ impl Flags {
     }
 }
 
-pub struct FlagsFormatter(pub FlagsSet);
+#[allow(dead_code)]
+pub(crate) struct FlagsFormatter(pub FlagsSet);
 
 impl fmt::Display for FlagsFormatter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1440,40 +1440,47 @@ impl Store {
 // on a tuple). Since the union has exactly one variant, wrap the raw
 // `TaggedPtr` directly with the same tag scheme (`1024 - index`).
 #[derive(Copy, Clone)]
-pub struct Pollable {
+#[allow(dead_code)]
+pub(crate) struct Pollable {
     repr: bun_collections::TaggedPointer,
 }
 
 impl Pollable {
     /// Tag value for `FilePoll` (index 0 in the Zig type tuple → `1024 - 0`).
-    pub const FILE_POLL_TAG: u16 = 1024;
+    #[allow(dead_code)]
+    pub(crate) const FILE_POLL_TAG: u16 = 1024;
 
     #[inline]
-    pub fn init(ptr: *const crate::FilePoll) -> Self {
+    #[allow(dead_code)]
+    pub(crate) fn init(ptr: *const crate::FilePoll) -> Self {
         Self {
             repr: bun_collections::TaggedPointer::init(ptr, Self::FILE_POLL_TAG),
         }
     }
 
     #[inline]
-    pub fn from(val: *mut c_void) -> Self {
+    #[allow(dead_code)]
+    pub(crate) fn from(val: *mut c_void) -> Self {
         Self {
             repr: bun_collections::TaggedPointer::from(val),
         }
     }
 
     #[inline]
-    pub fn tag(self) -> u16 {
+    #[allow(dead_code)]
+    pub(crate) fn tag(self) -> u16 {
         self.repr.data()
     }
 
     #[inline]
-    pub fn as_file_poll(self) -> *mut crate::FilePoll {
+    #[allow(dead_code)]
+    pub(crate) fn as_file_poll(self) -> *mut crate::FilePoll {
         self.repr.get::<crate::FilePoll>()
     }
 
     #[inline]
-    pub fn ptr(self) -> *mut c_void {
+    #[allow(dead_code)]
+    pub(crate) fn ptr(self) -> *mut c_void {
         self.repr.to()
     }
 }
@@ -1491,7 +1498,7 @@ impl Pollable {
 /// # Safety
 /// uWS C callback: `loop_` is the live per-thread `us_loop_t`; `tagged_pointer`
 /// was registered via `Pollable::init` in `register_with_fd`.
-pub unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
+pub(crate) unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
     loop_: *mut Loop,
     tagged_pointer: *mut c_void,
 ) {
@@ -1552,7 +1559,6 @@ pub use crate::closer::Closer;
 #[cfg(target_os = "macos")]
 pub use crate::waker::KEventWaker;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-pub use crate::waker::LinuxWaker;
 pub use crate::waker::Waker;
 
 // ported from: src/aio/posix_event_loop.zig

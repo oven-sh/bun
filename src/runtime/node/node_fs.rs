@@ -150,18 +150,20 @@ fn to_sys_time_like(t: super::time_like::TimeLike) -> sys::TimeLike {
 // inside a same-named module, so re-export the free constructors here under the
 // module name the call sites expect.
 mod ConcurrentTask {
-    pub use bun_event_loop::ConcurrentTask::ConcurrentTask;
+    pub(super) use bun_event_loop::ConcurrentTask::ConcurrentTask;
     use core::ptr::NonNull;
     #[inline]
-    pub fn create(task: bun_jsc::Task) -> NonNull<ConcurrentTask> {
+    pub(super) fn create(task: bun_jsc::Task) -> NonNull<ConcurrentTask> {
         ConcurrentTask::create(task)
     }
     #[inline]
-    pub fn create_from<T: bun_event_loop::Taskable>(task: *mut T) -> NonNull<ConcurrentTask> {
+    pub(super) fn create_from<T: bun_event_loop::Taskable>(
+        task: *mut T,
+    ) -> NonNull<ConcurrentTask> {
         ConcurrentTask::create_from(task)
     }
     #[inline]
-    pub fn from_callback<T>(
+    pub(super) fn from_callback<T>(
         ptr: *mut T,
         cb: fn(*mut T) -> bun_event_loop::JsResult<()>,
     ) -> NonNull<ConcurrentTask> {
@@ -202,17 +204,17 @@ pub use super::types::PathOrFileDescriptor;
 /// Local alias for the many `node::foo` call sites below — keeps the diff
 /// against `node_fs.zig` readable while routing to `super::*`.
 mod node {
-    pub use super::super::statfs::StatFS;
-    pub use super::super::time_like::from_js as time_like_from_js;
-    pub use super::super::types::SliceWithUnderlyingString;
-    pub use super::super::{gid_t, uid_t};
+    pub(super) use super::super::statfs::StatFS;
+    pub(super) use super::super::time_like::from_js as time_like_from_js;
+    pub(super) use super::super::types::SliceWithUnderlyingString;
+    pub(super) use super::super::{gid_t, uid_t};
 
     /// `node::mode_from_js` — forwards to the real impl in
     /// `super::types::mode_from_js` (now un-gated). Kept as a thin alias so
     /// the dozens of call sites in `args::*::from_js` keep spelling
     /// `node::mode_from_js` like the .zig source.
     #[inline]
-    pub fn mode_from_js(
+    pub(super) fn mode_from_js(
         ctx: &bun_jsc::JSGlobalObject,
         value: bun_jsc::JSValue,
     ) -> bun_jsc::JsResult<Option<bun_sys::Mode>> {
@@ -1429,7 +1431,7 @@ mod _async_tasks {
     // port flattens builtins under `crate::shell::builtins::*`. The
     // `cp_on_copy`/`cp_on_finish` hooks are inherent methods on that type
     // (cp.rs), called directly below — no trait indirection.
-    type ShellCpTask = crate::shell::builtins::cp::ShellCpTask;
+    pub(crate) type ShellCpTask = crate::shell::builtins::cp::ShellCpTask;
 
     pub struct NewAsyncCpTask<const IS_SHELL: bool> {
         pub promise: JSPromiseStrong,
@@ -2290,7 +2292,7 @@ mod _async_tasks {
         }
     }
 
-    pub struct ReaddirSubtask {
+    pub(super) struct ReaddirSubtask {
         pub readdir_task: bun_ptr::ParentRef<AsyncReaddirRecursiveTask>,
         pub basename: PathString,
         pub task: WorkPoolTask,
@@ -2885,6 +2887,7 @@ pub mod args {
     impl Unprotect for FdVectorIo {
         #[inline]
         fn unprotect(&mut self) {
+            self.buffers.release();
             self.buffers.value.unprotect();
             // Zig: `self.buffers.buffers.deinit()` — `Vec` frees on drop.
         }
@@ -2896,11 +2899,14 @@ pub mod args {
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let fd = FD::from_js_required(ctx, arguments)?;
-            let buffers = VectorArrayBuffer::from_js(
+            let mut buffers = VectorArrayBuffer::from_js(
                 ctx,
                 arguments.protect_eat_next().ok_or_else(|| {
                     ctx.throw_invalid_arguments(format_args!("Expected an ArrayBufferView[]"))
                 })?,
+                // The iovec pointers outlive this call on the async path; root
+                // each element and pin its backing store until completion.
+                arguments.will_be_async,
             )?;
             let mut position: Option<u64> = None;
             if let Some(pos_value) = arguments.next_eat() {
@@ -2908,6 +2914,9 @@ pub mod args {
                     if pos_value.is_number() {
                         position = Some(pos_value.to_int64() as u64);
                     } else {
+                        // `buffers` never reaches the Unprotect hook on this
+                        // path; drop its element roots and pins here.
+                        buffers.release();
                         return Err(
                             ctx.throw_invalid_arguments(format_args!("position must be a number"))
                         );
@@ -3034,23 +3043,18 @@ pub mod args {
         }
     }
 
-    /// Zig: `fn wrapTo(comptime T: type, in: i64) T` where `T` is unsigned.
     /// Only ever instantiated with `uid_t`/`gid_t` — `u32` on POSIX, `u8` on
     /// Windows (libuv's `uv_uid_t`/`uv_gid_t` are `unsigned char`). Hard-code
     /// the per-platform wrap rather than pulling `num_traits`.
     #[cfg(not(windows))]
     #[inline]
     fn wrap_to<T: From<u32>>(in_: i64) -> T {
-        // Zig spec (node_fs.zig:1586): `@intCast(@mod(in, std.math.maxInt(T)))`
-        // — modulus is `u32::MAX` (2^32 - 1), **not** 2^32. So `-1 → 4294967294`
-        // and `4294967295 → 0`. Match the spec exactly.
-        T::from(in_.rem_euclid(u32::MAX as i64) as u32)
+        T::from(in_ as u32)
     }
     #[cfg(windows)]
     #[inline]
     fn wrap_to<T: From<u8>>(in_: i64) -> T {
-        // Same `@mod(in, maxInt(T))` semantics with `T = u8`.
-        T::from(in_.rem_euclid(u8::MAX as i64) as u8)
+        T::from(in_ as u8)
     }
 
     pub type LChown = Chown;
@@ -3782,6 +3786,7 @@ pub mod args {
         pub length: u64,
         pub position: Option<ReadPosition>,
         pub encoding: Encoding,
+        pub pinned: bool,
     }
     impl Default for Write {
         fn default() -> Self {
@@ -3792,12 +3797,18 @@ pub mod args {
                 length: u64::MAX,
                 position: None,
                 encoding: Encoding::Buffer,
+                pinned: false,
             }
         }
     }
     impl Unprotect for Write {
         #[inline]
         fn unprotect(&mut self) {
+            if self.pinned {
+                if let Some(buffer) = self.buffer.buffer() {
+                    buffer.buffer.unpin();
+                }
+            }
             self.buffer.unprotect();
         }
     }
@@ -3917,6 +3928,15 @@ pub mod args {
                     }
                 }
             }
+            if arguments.will_be_async && matches!(args.buffer, StringOrBuffer::Buffer(_)) {
+                if let Some(pinned) = bv.as_pinned_arraybuffer(ctx) {
+                    args.buffer = StringOrBuffer::Buffer(Buffer {
+                        buffer: pinned,
+                        owns_buffer: false,
+                    });
+                    args.pinned = true;
+                }
+            }
             Ok(args)
         }
     }
@@ -3927,6 +3947,9 @@ pub mod args {
         pub offset: u64,
         pub length: u64,
         pub position: Option<ReadPosition>,
+        /// True when `from_js` pinned `buffer` for the async path; balanced in
+        /// `unprotect()` (the JS-thread release hook).
+        pub pinned: bool,
     }
     impl Read {
         pub fn to_thread_safe(&self) {
@@ -3936,6 +3959,9 @@ pub mod args {
     impl Unprotect for Read {
         #[inline]
         fn unprotect(&mut self) {
+            if self.pinned {
+                self.buffer.buffer.unpin();
+            }
             self.buffer.buffer.value.unprotect();
         }
     }
@@ -3993,6 +4019,7 @@ pub mod args {
                     length: 0,
                     offset: 0,
                     position: None,
+                    pinned: false,
                 });
             }
 
@@ -4105,12 +4132,28 @@ pub mod args {
                 None
             };
 
+            let (buffer, pinned) = if arguments.will_be_async {
+                match buffer_value.as_pinned_arraybuffer(ctx) {
+                    Some(pinned) => (
+                        Buffer {
+                            buffer: pinned,
+                            owns_buffer: false,
+                        },
+                        true,
+                    ),
+                    None => (buffer, false),
+                }
+            } else {
+                (buffer, false)
+            };
+
             Ok(Read {
                 fd,
                 buffer,
                 offset,
                 length,
                 position,
+                pinned,
             })
         }
     }
@@ -5955,7 +5998,7 @@ impl NodeFS {
                                     // `parent` aliases `working_mem` (== sync_error_buf). Copy it
                                     // out to a temp before re-deriving `&mut PathBuffer` so we
                                     // never hold `&mut buf` and `&buf[..]` simultaneously.
-                                    let stripped = without_nt_prefix((&parent[..]));
+                                    let stripped = without_nt_prefix(&parent[..]);
                                     let n = stripped.len();
                                     let mut tmp = paths::os_path_buffer_pool::get();
                                     tmp[..n].copy_from_slice(stripped);
@@ -7677,7 +7720,16 @@ impl NodeFS {
             // SAFETY: instance() returns the leaked singleton; INSTANCE_LOADED checked above.
             let fs = FileSystem::get();
             let parts = [fs.top_level_dir, path_slice];
-            let path_len = fs.abs_buf(&parts, &mut inbuf[..]).len();
+            let inbuf_len = inbuf.len();
+            let Some(joined) = fs.abs_buf_checked(&parts, &mut inbuf[..inbuf_len - 1]) else {
+                return Err(sys::Error {
+                    errno: E::ENAMETOOLONG as _,
+                    syscall: sys::Tag::realpath,
+                    path: args.path.slice().into(),
+                    ..Default::default()
+                });
+            };
+            let path_len = joined.len();
             inbuf[path_len] = 0;
             let path = ZStr::from_buf(&inbuf[..], path_len);
 
@@ -8636,10 +8688,7 @@ impl NodeFS {
                     flags |= sys::O::EXCL;
                 }
 
-                let dest_fd = match Self::_cp_open_dest_with_mkdir(self, dest, flags) {
-                    Ok(fd) => fd,
-                    Err(e) => return Err(e),
-                };
+                let dest_fd = Self::_cp_open_dest_with_mkdir(self, dest, flags)?;
                 let _close_dest =
                     scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
                         let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);

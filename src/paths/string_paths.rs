@@ -160,17 +160,9 @@ pub fn to_nt_path16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
     wstr_in_buf(wbuf, total)
 }
 
-pub fn add_nt_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
+pub(crate) fn add_nt_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
     let plen = windows::NT_OBJECT_PREFIX.len();
     wbuf[..plen].copy_from_slice(&windows::NT_OBJECT_PREFIX);
-    wbuf[plen..plen + utf16.len()].copy_from_slice(utf16);
-    wbuf[utf16.len() + plen] = 0;
-    wstr_in_buf(wbuf, utf16.len() + plen)
-}
-
-pub fn add_long_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
-    let plen = windows::LONG_PATH_PREFIX.len();
-    wbuf[..plen].copy_from_slice(&windows::LONG_PATH_PREFIX);
     wbuf[plen..plen + utf16.len()].copy_from_slice(utf16);
     wbuf[utf16.len() + plen] = 0;
     wstr_in_buf(wbuf, utf16.len() + plen)
@@ -225,7 +217,7 @@ pub fn to_w_path_normalized<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     to_w_path(wbuf, path_to_use)
 }
 
-pub fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
+pub(crate) fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
     // PORT NOTE: reshaped for borrowck — Zig wrote into wbuf and then re-sliced wbuf;
     // here we capture the length and re-derive the mutable slice.
     let len = {
@@ -245,20 +237,12 @@ pub fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr
     wstr_in_buf(wbuf, len)
 }
 
-pub fn to_path_normalized<'a>(buf: &'a mut [u8], utf8: &[u8]) -> &'a ZStr {
-    let mut renormalized = crate::path_buffer_pool::get();
-
-    let mut path_to_use = normalize_slashes_only(&mut renormalized[..], utf8, b'\\');
-
-    // is there a trailing slash? Let's remove it before converting to UTF-16
-    if path_to_use.len() > 3 && resolve_path::is_sep_any(path_to_use[path_to_use.len() - 1]) {
-        path_to_use = &path_to_use[..path_to_use.len() - 1];
-    }
-
-    to_path(buf, path_to_use)
-}
-
-pub fn normalize_slashes_only_t<'a, T: Ch, const DESIRED_SLASH: u8, const ALWAYS_COPY: bool>(
+pub(crate) fn normalize_slashes_only_t<
+    'a,
+    T: Ch,
+    const DESIRED_SLASH: u8,
+    const ALWAYS_COPY: bool,
+>(
     buf: &'a mut [T],
     path: &'a [T],
 ) -> &'a [T] {
@@ -312,10 +296,6 @@ pub fn to_w_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     to_w_path_maybe_dir::<false>(wbuf, utf8)
 }
 
-pub fn to_path<'a>(buf: &'a mut [u8], utf8: &[u8]) -> &'a mut ZStr {
-    to_path_maybe_dir::<false>(buf, utf8)
-}
-
 pub fn to_w_dir_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     to_w_path_maybe_dir::<true>(wbuf, utf8)
 }
@@ -341,7 +321,7 @@ pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     to_w_path(wbuf, path)
 }
 
-pub fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
+pub(crate) fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
     wbuf: &'a mut [u16],
     utf8: &[u8],
 ) -> &'a WStr {
@@ -369,23 +349,6 @@ pub fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
     wbuf[count] = 0;
 
     wstr_in_buf(wbuf, count)
-}
-
-pub fn to_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
-    buf: &'a mut [u8],
-    utf8: &[u8],
-) -> &'a mut ZStr {
-    debug_assert!(!buf.is_empty());
-
-    let mut len = utf8.len();
-    buf[..len].copy_from_slice(&utf8[..len]);
-
-    if ADD_TRAILING_LASH && len > 0 && buf[len - 1] != b'\\' {
-        buf[len] = b'\\';
-        len += 1;
-    }
-    buf[len] = 0;
-    ZStr::from_buf_mut(buf, len)
 }
 
 pub fn clone_normalizing_separators(input: &[u8]) -> Vec<u8> {
@@ -426,6 +389,7 @@ pub fn path_contains_node_modules_folder(path: &[u8]) -> bool {
 pub use crate::is_sep_any as char_is_any_slash;
 
 #[inline(always)]
+#[allow(dead_code)]
 pub fn starts_with_windows_drive_letter(s: &[u8]) -> bool {
     starts_with_windows_drive_letter_t(s)
 }

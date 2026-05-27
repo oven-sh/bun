@@ -3,49 +3,43 @@ use super::types::{OFF, TextType};
 
 /// Check if a byte is ASCII whitespace (space, tab, LF, CR, FF, VT).
 #[inline]
-pub fn is_whitespace(c: u8) -> bool {
+pub(crate) fn is_whitespace(c: u8) -> bool {
     matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0C | 0x0B)
 }
 
 /// Check if a byte is a blank character (space or tab).
 #[inline]
-pub fn is_blank(c: u8) -> bool {
+pub(crate) fn is_blank(c: u8) -> bool {
     c == b' ' || c == b'\t'
 }
 
 /// Check if a byte is a newline (CR or LF).
 #[inline]
-pub fn is_newline(c: u8) -> bool {
+pub(crate) fn is_newline(c: u8) -> bool {
     c == b'\n' || c == b'\r'
-}
-
-/// Check if a byte is a newline or NUL (used for end-of-line detection).
-#[inline]
-pub fn is_newline_or_nul(c: u8) -> bool {
-    c == b'\n' || c == b'\r' || c == 0
 }
 
 /// Check if byte is ASCII alphanumeric.
 #[inline]
-pub fn is_alpha_num(c: u8) -> bool {
+pub(crate) fn is_alpha_num(c: u8) -> bool {
     c.is_ascii_alphanumeric()
 }
 
 /// Check if byte is ASCII alpha.
 #[inline]
-pub fn is_alpha(c: u8) -> bool {
+pub(crate) fn is_alpha(c: u8) -> bool {
     c.is_ascii_alphabetic()
 }
 
 /// Check if byte is ASCII digit.
 #[inline]
-pub fn is_digit(c: u8) -> bool {
+pub(crate) fn is_digit(c: u8) -> bool {
     c.is_ascii_digit()
 }
 
 /// Check if a Unicode codepoint is whitespace per CommonMark spec.
 /// This includes ASCII whitespace + Unicode Zs category.
-pub fn is_unicode_whitespace(codepoint: u32) -> bool {
+pub(crate) fn is_unicode_whitespace(codepoint: u32) -> bool {
     if codepoint < 128 {
         return is_whitespace(codepoint as u8);
     }
@@ -53,7 +47,7 @@ pub fn is_unicode_whitespace(codepoint: u32) -> bool {
 }
 
 /// Check if a Unicode codepoint is punctuation per CommonMark spec.
-pub fn is_unicode_punctuation(codepoint: u32) -> bool {
+pub(crate) fn is_unicode_punctuation(codepoint: u32) -> bool {
     if codepoint < 128 {
         return is_ascii_punctuation(u8::try_from(codepoint).expect("int cast"));
     }
@@ -63,7 +57,7 @@ pub fn is_unicode_punctuation(codepoint: u32) -> bool {
 
 /// Check if byte is ASCII punctuation per CommonMark spec.
 #[inline]
-pub fn is_ascii_punctuation(c: u8) -> bool {
+pub(crate) fn is_ascii_punctuation(c: u8) -> bool {
     matches!(
         c,
         b'!' | b'"'
@@ -114,29 +108,14 @@ fn is_unicode_punctuation_extended(codepoint: u32) -> bool {
     false
 }
 
-/// Check if a character at a given offset matches any character in the set.
-#[inline]
-pub fn is_any_of(text: &[u8], off: OFF, chars: &[u8]) -> bool {
-    if (off as usize) >= text.len() {
-        return false;
-    }
-    let c = text[off as usize];
-    for &ch in chars {
-        if c == ch {
-            return true;
-        }
-    }
-    false
-}
-
-pub struct LineIndentation {
+pub(crate) struct LineIndentation {
     pub indent: u32,
     pub off: OFF,
 }
 
 /// Get the indentation of a line starting from `off`, counting spaces and tabs.
 /// Returns the indent width and advances `off` past the whitespace.
-pub fn line_indentation(text: &[u8], total_indent: u32, off_start: OFF) -> LineIndentation {
+pub(crate) fn line_indentation(text: &[u8], total_indent: u32, off_start: OFF) -> LineIndentation {
     let mut off = off_start;
     let mut indent: u32 = 0;
     while (off as usize) < text.len() && is_blank(text[off as usize]) {
@@ -228,12 +207,12 @@ pub fn decode_utf8_backward(text: &[u8], off: usize) -> Utf8DecodeResult {
 }
 
 /// Encode a Unicode codepoint as UTF-8.
-pub fn encode_utf8(codepoint: u32, buf: &mut [u8; 4]) -> u8 {
+pub(crate) fn encode_utf8(codepoint: u32, buf: &mut [u8; 4]) -> u8 {
     bun_core::strings::encode_wtf8_rune(buf, codepoint) as u8
 }
 
 /// Skip UTF-8 BOM if present at the start of the text.
-pub fn skip_utf8_bom(text: &[u8]) -> &[u8] {
+pub(crate) fn skip_utf8_bom(text: &[u8]) -> &[u8] {
     if text.len() >= 3 && text[0] == 0xEF && text[1] == 0xBB && text[2] == 0xBF {
         return &text[3..];
     }
@@ -245,7 +224,7 @@ pub use bun_core::strings::eql_case_insensitive_ascii_check_length as ascii_case
 
 /// Find an HTML entity starting at `start` (which must point to '&').
 /// Returns the end position (one past the ';') or null if no valid entity found.
-pub fn find_entity(content: &[u8], start: usize) -> Option<usize> {
+pub(crate) fn find_entity(content: &[u8], start: usize) -> Option<usize> {
     if start + 2 >= content.len() {
         return None;
     }

@@ -2118,7 +2118,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 struct Options;
 
 impl Options {
-    pub fn from_js(
+    pub(crate) fn from_js(
         global_object: &JSGlobalObject,
         options_obj: JSValue,
     ) -> JsResult<valkey::Options> {

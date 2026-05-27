@@ -28,7 +28,7 @@ pub use bun_sys_jsc::FdJsc;
 /// `bun_runtime`-tier required-argument helper layered on `FdJsc`. Collapses
 /// the `next_eat → from_js_validated → ok_or_else(throw_invalid_fd_error)`
 /// boilerplate repeated 12× across `node_fs.rs::args::*::from_js`.
-pub trait FdArgExt: FdJsc {
+pub(crate) trait FdArgExt: FdJsc {
     #[inline]
     fn from_js_required(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
         let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
@@ -68,9 +68,6 @@ impl Drop for BlobOrStringOrBuffer {
     fn drop(&mut self) {
         match self {
             Self::Blob(blob) => {
-                // `.blob` is a raw bitwise copy of a live JS Blob — it does NOT own
-                // content_type/name. Only release the store reference.
-                // `StoreRef::drop` (via `Option::take`) calls `Store::deref()`.
                 let _ = blob.store.with_mut(|s| s.take());
             }
             Self::StringOrBuffer(_) => {
@@ -1022,7 +1019,7 @@ pub trait PathLikeExt {
 }
 
 /// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathOrFileDescriptor`.
-pub trait PathOrFdExt {
+pub(crate) trait PathOrFdExt {
     fn from_js(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
@@ -1413,49 +1410,127 @@ pub struct VectorArrayBuffer {
     // Stored in a stack-local during writev; never heap-allocated.
     pub value: JSValue,
     pub buffers: Vec<PlatformIoVec>,
+    /// The collected elements, in order. Rooted (and their backing stores
+    /// pinned) for the lifetime of an async operation; see [`Self::release`].
+    pub views: Vec<JSValue>,
+    pinned: bool,
 }
 
 impl VectorArrayBuffer {
     pub fn to_js(&self, _: &JSGlobalObject) -> JSValue {
         self.value
     }
+
+    /// Release the per-element roots and pins taken by `from_js(.., pin: true)`.
+    /// Must run on the JS thread, exactly once, after the I/O completes.
+    pub fn release(&mut self) {
+        if !self.pinned {
+            return;
+        }
+        self.pinned = false;
+        for view in self.views.drain(..) {
+            view.unpin_array_buffer();
+            view.unprotect();
+        }
+    }
+}
+
+unsafe extern "C" {
+    fn Bun__JSArray__collectBufferSpans(
+        global_object: &JSGlobalObject,
+        value: JSValue,
+        pin_buffers: bool,
+        ctx: *mut std::ffi::c_void,
+        append: unsafe extern "C" fn(
+            ctx: *mut std::ffi::c_void,
+            element: JSValue,
+            data: *mut u8,
+            byte_len: usize,
+        ),
+    ) -> i32;
+}
+
+unsafe extern "C" fn append_buffer_span(
+    ctx: *mut std::ffi::c_void,
+    element: JSValue,
+    data: *mut u8,
+    byte_len: usize,
+) {
+    // SAFETY: `ctx` is the `&mut VectorArrayBuffer` passed to
+    // `Bun__JSArray__collectBufferSpans` by `from_js` below, alive for the
+    // duration of the call.
+    let out = unsafe { &mut *ctx.cast::<VectorArrayBuffer>() };
+    let slice: &mut [u8] = if data.is_null() || byte_len == 0 {
+        &mut []
+    } else {
+        // SAFETY: `data..data + byte_len` is the byte range of `element`'s
+        // backing store, valid and unaliased for the duration of the callback.
+        unsafe { std::slice::from_raw_parts_mut(data, byte_len) }
+    };
+    out.buffers.push(bun_sys::platform_iovec_create(slice));
+    out.views.push(element);
 }
 
 impl VectorArrayBuffer {
-    pub fn from_js(global_object: &JSGlobalObject, val: JSValue) -> JsResult<VectorArrayBuffer> {
-        if !val.js_type().is_array_like() {
-            return Err(
-                global_object.throw_invalid_arguments(format_args!("Expected ArrayBufferView[]"))
-            );
-        }
-
-        let mut bufferlist: Vec<PlatformIoVec> = Vec::new();
-        let mut i: usize = 0;
-        let len = val.get_length(global_object)? as usize;
-        bufferlist.reserve_exact(len);
-
-        while i < len {
-            let element = val.get_index(global_object, i as u32)?;
-
-            if !element.is_cell() {
-                return Err(global_object
-                    .throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")));
-            }
-
-            let Some(mut array_buffer) = element.as_array_buffer(global_object) else {
-                return Err(global_object
-                    .throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")));
-            };
-
-            let buf = array_buffer.byte_slice_mut();
-            bufferlist.push(bun_sys::platform_iovec_create(buf));
-            i += 1;
-        }
-
-        Ok(VectorArrayBuffer {
+    /// Collect an array of ArrayBufferViews into iovecs. Every element is read
+    /// before any raw pointer is taken, so user code run by an indexed read (a
+    /// getter, a proxy trap) cannot free a backing store that has already been
+    /// captured.
+    ///
+    /// `pin` is required when the spans outlive this call (async I/O): each
+    /// element is rooted and its backing store is pinned against detach until
+    /// [`Self::release`] runs.
+    pub fn from_js(
+        global_object: &JSGlobalObject,
+        val: JSValue,
+        pin: bool,
+    ) -> JsResult<VectorArrayBuffer> {
+        let mut out = VectorArrayBuffer {
             value: val,
-            buffers: bufferlist,
-        })
+            buffers: Vec::new(),
+            views: Vec::new(),
+            pinned: false,
+        };
+        bun_jsc::validation_scope!(scope, global_object);
+        // SAFETY: `out` outlives the call; the callback only dereferences the
+        // ctx pointer it is handed.
+        let status = unsafe {
+            Bun__JSArray__collectBufferSpans(
+                global_object,
+                val,
+                pin,
+                (&raw mut out).cast(),
+                append_buffer_span,
+            )
+        };
+        scope.assert_exception_presence_matches(status == -1);
+        if pin {
+            // The C++ side already pinned each backing store; root the views
+            // themselves so a getter-returned element that is not reachable
+            // from `value` survives until completion. Set `pinned` even on
+            // failure so `release()` balances the elements collected before
+            // the error.
+            out.pinned = true;
+            for view in &out.views {
+                view.protect();
+            }
+        }
+        match status {
+            0 => Ok(out),
+            -1 => {
+                out.release();
+                Err(jsc::JsError::Thrown)
+            }
+            2 => {
+                out.release();
+                Err(global_object.throw_out_of_memory())
+            }
+            _ => {
+                out.release();
+                Err(global_object
+                    .throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")))
+            }
+        }
     }
 }
 
@@ -1905,13 +1980,6 @@ impl PathOrBlob {
             ));
         };
         if let Some(blob) = arg.as_class_ref::<Blob>() {
-            // Zig: `blob.*` — a raw bitwise copy with no ref bumps that callers
-            // never `deinit()`. `borrowed_view()` is the sound Rust spelling: it
-            // clones the `StoreRef`/`name` (whose `Drop`s balance the +1) and
-            // aliases `content_type`; `dupe()` would leak the boxed
-            // `content_type` copy. `as_class_ref` is the safe shared-borrow
-            // downcast — the JS wrapper roots the payload while `arg` is on the
-            // stack.
             return Ok(PathOrBlob::Blob(Box::new(blob.borrowed_view())));
         }
         Err(ctx.throw_invalid_argument_type_value(

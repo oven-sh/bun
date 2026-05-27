@@ -2,9 +2,6 @@
 //! `src/string/` free of `JSValue`/`JSGlobalObject`/`CallFrame` types — the
 //! original methods are aliased to the free fns here.
 
-use core::fmt;
-use std::io::Write as _;
-
 use bun_core::{SliceWithUnderlyingString, String, Tag, ZigStringSlice, strings};
 
 use crate::zig_string::{self, ZigString};
@@ -46,13 +43,13 @@ pub fn to_error_instance(this: &String, global_object: &JSGlobalObject) -> JSVal
     result
 }
 
-pub fn to_type_error_instance(this: &String, global_object: &JSGlobalObject) -> JSValue {
+pub(crate) fn to_type_error_instance(this: &String, global_object: &JSGlobalObject) -> JSValue {
     let result = JSC__createTypeError(global_object, this);
     this.deref();
     result
 }
 
-pub fn to_range_error_instance(this: &String, global_object: &JSGlobalObject) -> JSValue {
+pub(crate) fn to_range_error_instance(this: &String, global_object: &JSGlobalObject) -> JSValue {
     let result = JSC__createRangeError(global_object, this);
     this.deref();
     result
@@ -138,78 +135,20 @@ pub fn create_utf8_for_js(global_object: &JSGlobalObject, utf8_slice: &[u8]) -> 
 }
 
 #[track_caller]
-pub fn create_format_for_js(
-    global_object: &JSGlobalObject,
-    args: fmt::Arguments<'_>,
-) -> JsResult<JSValue> {
-    // PORT NOTE: Zig took `comptime fmt: [:0]const u8, args: anytype`; callers now
-    // pass `format_args!("...", ...)` directly.
-    let mut builder: Vec<u8> = Vec::new();
-    builder.write_fmt(args).expect("Vec<u8> write cannot fail");
-    let (ptr, len) = (builder.as_ptr(), builder.len());
-    // SAFETY: FFI call into JSC; ptr/len from a live Vec<u8>, global_object borrowed for call duration.
-    unsafe { crate::cpp::BunString__createUTF8ForJS(global_object, ptr.cast(), len) }
-}
-
-#[track_caller]
 pub fn parse_date(this: &mut String, global_object: &JSGlobalObject) -> JsResult<f64> {
     // SAFETY: `this` is a live `&mut String`; cppbind wrapper opens its own scope.
     unsafe { crate::cpp::Bun__parseDate(global_object, this) }
 }
 
-#[bun_jsc::host_fn]
-pub fn js_get_string_width(
-    global_object: &JSGlobalObject,
-    call_frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let args = call_frame.arguments_as_array::<2>();
-    let argument = args[0];
-    let opts_val = args[1];
-
-    if argument.is_empty() || argument.is_undefined() {
-        return Ok(JSValue::js_number_from_int32(0));
-    }
-
-    let js_str = argument.to_js_string(global_object)?;
-    let view = js_str.view(global_object);
-
-    if view.is_empty() {
-        return Ok(JSValue::js_number_from_int32(0));
-    }
-
-    let str_ = String::init(view);
-
-    // Parse options: { countAnsiEscapeCodes?: bool, ambiguousIsNarrow?: bool }
-    let mut count_ansi: bool = false;
-    let mut ambiguous_is_narrow: bool = true;
-
-    if opts_val.is_object() {
-        if let Some(v) = opts_val.get_truthy(global_object, "countAnsiEscapeCodes")? {
-            count_ansi = v.to_boolean();
-        }
-        if let Some(v) = opts_val.get_truthy(global_object, "ambiguousIsNarrow")? {
-            ambiguous_is_narrow = v.to_boolean();
-        }
-    }
-
-    let width = if count_ansi {
-        str_.visible_width(!ambiguous_is_narrow)
-    } else {
-        str_.visible_width_exclude_ansi_colors(!ambiguous_is_narrow)
-    };
-
-    Ok(JSValue::js_number(width as f64))
-}
-
 // ── SliceWithUnderlyingString methods ───────────────────────────────────────
-pub fn slice_with_underlying_string_to_js(
+pub(crate) fn slice_with_underlying_string_to_js(
     this: &mut SliceWithUnderlyingString,
     global_object: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     slice_with_underlying_string_to_js_with_options(this, global_object, false)
 }
 
-pub fn slice_with_underlying_string_transfer_to_js(
+pub(crate) fn slice_with_underlying_string_transfer_to_js(
     this: &mut SliceWithUnderlyingString,
     global_object: &JSGlobalObject,
 ) -> JsResult<JSValue> {

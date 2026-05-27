@@ -46,11 +46,11 @@ use bun_http::{Method, MimeType};
 use bun_safety::ThreadLock;
 use bun_watcher::Watcher;
 
-pub use crate::bake::dev_server::DirectoryWatchStore;
-pub use crate::bake::dev_server::HmrSocket;
+pub(super) use crate::bake::dev_server::DirectoryWatchStore;
+pub(super) use crate::bake::dev_server::HmrSocket;
 use crate::bake::dev_server::ResponseLike;
-pub use crate::bake::dev_server::assets::Assets;
-pub use crate::bake::dev_server::error_report_request_body::ErrorReportRequest;
+pub(super) use crate::bake::dev_server::assets::Assets;
+pub(super) use crate::bake::dev_server::error_report_request_body::ErrorReportRequest;
 
 // ── local extension shims for upstream-crate methods missing in Rust port ──
 // LAYERING: `bake::Framework::{init_transpiler, resolve}` are now inherent
@@ -74,9 +74,9 @@ impl LogToJsAggregateErrorExt for Log {
         bun_ast_jsc::log_to_js_aggregate_error(self, global, msg)
     }
 }
-pub use crate::bake::dev_server::HotReloadEvent;
-pub use crate::bake::dev_server::incremental_graph::IncrementalGraph;
-pub use crate::bake::dev_server::memory_cost_body::MemoryCost;
+pub(super) use crate::bake::dev_server::HotReloadEvent;
+pub(super) use crate::bake::dev_server::incremental_graph::IncrementalGraph;
+pub(super) use crate::bake::dev_server::memory_cost_body::MemoryCost;
 
 impl DevServer {
     /// `DevServer.memoryCost` — sums the per-category breakdown from
@@ -156,10 +156,10 @@ impl DevServer {
         unsafe { self.ssr_transpiler.assume_init_mut() }
     }
 }
-pub use crate::bake::dev_server::WatcherAtomics;
-pub use crate::bake::dev_server::route_bundle::RouteBundle;
-pub use crate::bake::dev_server::serialized_failure::SerializedFailure;
-pub use crate::bake::dev_server::source_map_store::SourceMapStore;
+pub(super) use crate::bake::dev_server::WatcherAtomics;
+pub(super) use crate::bake::dev_server::route_bundle::RouteBundle;
+pub(super) use crate::bake::dev_server::serialized_failure::SerializedFailure;
+pub(super) use crate::bake::dev_server::source_map_store::SourceMapStore;
 
 bun_output::declare_scope!(DevServer, visible);
 bun_output::declare_scope!(IncrementalGraph, visible);
@@ -458,9 +458,9 @@ pub struct DevServer {
 
 bun_event_loop::impl_timer_owner!(DevServer; from_timer_ptr => memory_visualizer_timer);
 
-pub const INTERNAL_PREFIX: &str = "/_bun";
+pub(super) const INTERNAL_PREFIX: &str = "/_bun";
 /// Assets which are routed to the `Assets` storage.
-pub const ASSET_PREFIX: &str = const_format::concatcp!(INTERNAL_PREFIX, "/asset");
+pub(super) const ASSET_PREFIX: &str = const_format::concatcp!(INTERNAL_PREFIX, "/asset");
 /// Client scripts are available at `/_bun/client/{name}-{rbi}{generation}.js`
 /// where:
 /// - `name` is the display name of the route, such as "index" or
@@ -470,7 +470,7 @@ pub const ASSET_PREFIX: &str = const_format::concatcp!(INTERNAL_PREFIX, "/asset"
 ///                re-randomized whenever `client_bundle` is invalidated.
 ///
 /// Example: `/_bun/client/index-00000000f209a20e.js`
-pub const CLIENT_PREFIX: &str = const_format::concatcp!(INTERNAL_PREFIX, "/client");
+pub(super) const CLIENT_PREFIX: &str = const_format::concatcp!(INTERNAL_PREFIX, "/client");
 
 #[derive(Default)]
 pub struct DeferredPromise {
@@ -1401,7 +1401,7 @@ impl DevServer {
 /// pointer as a const generic, so use a `ConstParamTy` enum instead and
 /// `match` inside the trampoline (the optimizer folds the constant `match`).
 #[derive(Copy, Clone, Eq, PartialEq, ::core::marker::ConstParamTy)]
-pub enum DevHandlerId {
+pub(super) enum DevHandlerId {
     JsRequest,
     AssetRequest,
     SrcRequest,
@@ -1552,7 +1552,7 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     } else {
         AnyResponse::TCP(res.cast::<bun_uws_sys::response::TCPResponse>())
     };
-    if !matches!(ID, DevHandlerId::Request) && !is_allowed_dev_host(dev, req) {
+    if !is_allowed_dev_host(dev, req) {
         return host_forbidden(resp);
     }
     match ID {
@@ -1840,7 +1840,7 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     unsafe { StaticRoute::on(asset, resp) };
 }
 
-pub use bun_core::fmt::parse_hex_to_int;
+pub(super) use bun_core::fmt::parse_hex_to_int;
 
 fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     if req.header(b"open-in-editor").is_none() {
@@ -2209,7 +2209,7 @@ enum ReqOrSaved {
 }
 
 impl ReqOrSaved {
-    pub fn method(&self) -> Method {
+    pub(crate) fn method(&self) -> Method {
         match self {
             ReqOrSaved::Req(req) => {
                 // SAFETY: `req` is a uWS `Request*` valid for the handler callback's duration.
@@ -3053,7 +3053,7 @@ impl DevServer {
     }
 }
 
-pub enum DevResponse<'a> {
+pub(super) enum DevResponse<'a> {
     Http(AnyResponse),
     Promise(PromiseResponse<'a>),
 }
@@ -3115,7 +3115,7 @@ use deferred_request::{DlogeferredRequest, Handler, PromiseResponse};
 // LAYERING: `SavedRequestUnion` was a local mirror because `server_body`'s
 // copy was unnameable; the canonical enum now lives in `crate::server` so
 // `AnyServer::on_saved_request` can name it across the seam.
-pub use crate::server::SavedRequestUnion;
+pub(super) use crate::server::SavedRequestUnion;
 
 impl DeferredRequest {
     pub const MAX_PREALLOCATED: usize = deferred_request::MAX_PREALLOCATED;
@@ -3864,7 +3864,7 @@ impl<'a> HotUpdateContext<'a> {
 
 /// Called at the end of BundleV2 to index bundle contents into the `IncrementalGraph`s
 /// This function does not recover DevServer state if it fails (allocation failure)
-pub fn finalize_bundle(
+pub(super) fn finalize_bundle(
     dev: &mut DevServer,
     bv2: &mut BundleV2,
     result: &mut bundler::bundle_v2::DevServerOutput,
@@ -5228,7 +5228,7 @@ impl DevServer {
 }
 
 // TODO(port): helper enum for `optional_id: anytype` in append_opaque_entry_point
-pub enum OpaqueFileIdOrOptional {
+pub(super) enum OpaqueFileIdOrOptional {
     Id(OpaqueFileId),
     Optional(framework_router::OpaqueFileIdOptional),
 }
@@ -5329,6 +5329,10 @@ impl DevServer {
         req: &mut Request,
         resp: AnyResponse,
     ) -> Result<(), AllocError> {
+        if !is_allowed_dev_host(self, req) {
+            host_forbidden(resp);
+            return Ok(());
+        }
         let route_bundle_index = self
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))
             .map_err(|_| AllocError)?;
@@ -5416,7 +5420,11 @@ impl DevServer {
                     });
                 }
             },
-            client_script_generation: bun_core::fast_random() as u32,
+            client_script_generation: {
+                let mut buf = [0u8; 4];
+                bun_core::csprng(&mut buf);
+                u32::from_ne_bytes(buf)
+            },
             server_state: route_bundle::State::Unqueued,
             client_bundle: None,
             active_viewers: 0,
@@ -5596,19 +5604,19 @@ impl DevServer {
 // PORT NOTE: FileKind/ChunkKind/TraceImportGoal/IncrementalResult/GraphTraceState
 // are defined once in `crate::bake::dev_server` and re-exported here so the
 // Phase-A draft body and the keystone struct module agree on identity.
-pub use crate::bake::dev_server::FileKind;
+pub(super) use crate::bake::dev_server::FileKind;
 
-pub use crate::bake::dev_server::IncrementalResult;
+pub(super) use crate::bake::dev_server::IncrementalResult;
 
 /// Used during an incremental update to determine what "HMR roots"
 /// are affected. Re-exported from the keystone `dev_server` module so that
 /// `HotUpdateContext.gts` and `IncrementalGraph::trace_dependencies` agree on
 /// a single type (the body-local duplicate caused E0308).
-pub use crate::bake::dev_server::GraphTraceState;
+pub(super) use crate::bake::dev_server::GraphTraceState;
 
 // GraphTraceState::deinit → Drop on DynamicBitSet (allocator param dropped)
 
-pub use crate::bake::dev_server::TraceImportGoal;
+pub(super) use crate::bake::dev_server::TraceImportGoal;
 
 impl DevServer {
     /// `extra_client_bits` is specified if it is possible that the client graph may
@@ -5629,7 +5637,7 @@ impl DevServer {
 
 // PORT NOTE: canonical `ChunkKind` lives in `crate::bake::dev_server`; the
 // body module re-exports it so both modules name the same type.
-pub use crate::bake::dev_server::ChunkKind;
+pub(super) use crate::bake::dev_server::ChunkKind;
 
 // For debugging, it is helpful to be able to see bundles.
 #[cfg(feature = "bake_debugging_features")]
@@ -5929,7 +5937,7 @@ impl DevServer {
 
 // PORT NOTE: MessageId/IncomingMessageId/ConsoleLogKind/HmrTopic are defined
 // once in `crate::bake::dev_server` and re-exported here.
-pub use crate::bake::dev_server::{HmrTopic, MessageId};
+pub(super) use crate::bake::dev_server::{HmrTopic, MessageId};
 
 bitflags::bitflags! {
     // TODO(port): Zig generated `Bits` via @Type from HmrTopic enum fields.
@@ -5967,7 +5975,7 @@ impl DevServer {
 mod c {
     use super::*;
 
-    pub fn bake_load_server_hmr_patch(
+    pub(super) fn bake_load_server_hmr_patch(
         global: &JSGlobalObject,
         code: BunString,
     ) -> JsResult<JSValue> {
@@ -5977,7 +5985,7 @@ mod c {
         jsc::from_js_host_call(global, || BakeLoadServerHmrPatch(global, code))
     }
 
-    pub fn bake_load_server_hmr_patch_with_source_map(
+    pub(super) fn bake_load_server_hmr_patch_with_source_map(
         global: &JSGlobalObject,
         code: BunString,
         source_map_json_ptr: *const u8,
@@ -6009,7 +6017,7 @@ mod c {
         })
     }
 
-    pub fn bake_load_initial_server_code(
+    pub(super) fn bake_load_initial_server_code(
         global: &JSGlobalObject,
         code: BunString,
         separate_ssr_graph: bool,
@@ -6749,7 +6757,7 @@ impl TestingBatch {
 /// using the dev server test harness.
 static DEV_SERVER_DEINIT_COUNT_FOR_TESTING: ::core::sync::atomic::AtomicUsize =
     ::core::sync::atomic::AtomicUsize::new(0);
-pub fn get_deinit_count_for_testing() -> usize {
+pub(crate) fn get_deinit_count_for_testing() -> usize {
     DEV_SERVER_DEINIT_COUNT_FOR_TESTING.load(::core::sync::atomic::Ordering::Relaxed)
 }
 
@@ -7036,7 +7044,7 @@ bun_jsc::jsc_abi_extern! {
     ) -> JSValue;
 }
 
-pub fn create_dev_server_framework_request_args_object(
+pub(super) fn create_dev_server_framework_request_args_object(
     global: &JSGlobalObject,
     router_type_main: JSValue,
     route_modules: JSValue,
@@ -7057,7 +7065,7 @@ pub fn create_dev_server_framework_request_args_object(
 }
 
 #[bun_jsc::host_fn(export = "Bake__getNewRouteParamsJSFunctionImpl")]
-pub fn bake_get_new_route_params_js_function_impl(
+pub(super) fn bake_get_new_route_params_js_function_impl(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JSValue {

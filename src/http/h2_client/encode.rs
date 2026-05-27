@@ -305,7 +305,7 @@ pub fn write_data_windowed(
 
 /// Push as much of `stream`'s request body as the send windows allow.
 /// Buffers into `write_buffer`; caller flushes.
-pub fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: usize) {
+pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: usize) {
     if stream.local_closed() || stream.awaiting_continue || stream.fatal_error.is_some() {
         return;
     }
@@ -363,7 +363,7 @@ pub fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: us
     }
 }
 
-pub fn drain_send_bodies(session: &mut ClientSession) {
+pub(crate) fn drain_send_bodies(session: &mut ClientSession) {
     // Round-robin: each pass gives every uploader at most one
     // remote_max_frame_size slice before the next stream gets a turn, so
     // the lowest-index stream can't monopolise conn_send_window.
@@ -393,7 +393,7 @@ pub fn drain_send_bodies(session: &mut ClientSession) {
     }
 }
 
-pub fn encode_header(
+pub(crate) fn encode_header(
     session: &mut ClientSession,
     encoded: &mut Vec<u8>,
     name: &[u8],
@@ -420,7 +420,7 @@ pub fn encode_header(
 /// RFC 7541 §6.3 Dynamic Table Size Update: `001` prefix, 5-bit-prefix
 /// integer. Must be the first opcode in a header block. Caller guarantees
 /// at least 6 bytes of capacity (max for a u32).
-pub fn encode_hpack_table_size_update(encoded: &mut Vec<u8>, value: u32) {
+pub(crate) fn encode_hpack_table_size_update(encoded: &mut Vec<u8>, value: u32) {
     if value < 31 {
         // PERF(port): was assume_capacity
         encoded.push(0x20 | u8::try_from(value).expect("int cast"));

@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, readdirSorted, tempDir, tmpdirSync } from "harness";
 import { chmodSync, copyFileSync, existsSync, readdirSync, statSync, symlinkSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
@@ -1380,7 +1380,8 @@ it.concurrent.skipIf(isWindows || process.getuid?.() === 0)(
   async () => {
     const { x_dir, env } = setup();
     const uid = process.getuid!();
-    const readOnlyParent = tmpdirSync();
+    using readOnlyParentDir = tempDir("bunx-readonly-parent", {});
+    const readOnlyParent = String(readOnlyParentDir);
     chmodSync(readOnlyParent, 0o500);
     env.BUN_INSTALL_CACHE_DIR = join(readOnlyParent, "cache");
 
@@ -1409,8 +1410,10 @@ it.concurrent.skipIf(isWindows)(
   async () => {
     const { x_dir, env } = setup();
     const uid = process.getuid!();
-    const bunInstallDir = tmpdirSync();
-    const bunfigCacheDir = tmpdirSync();
+    using bunInstallTempDir = tempDir("bunx-install-dir", {});
+    using bunfigCacheTempDir = tempDir("bunx-bunfig-cache-dir", {});
+    const bunInstallDir = String(bunInstallTempDir);
+    const bunfigCacheDir = String(bunfigCacheTempDir);
     delete env.BUN_INSTALL_CACHE_DIR;
     env.BUN_INSTALL = bunInstallDir;
     await writeFile(join(x_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));

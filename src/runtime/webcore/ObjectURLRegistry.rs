@@ -42,9 +42,37 @@ const _: fn() = || {
 impl Entry {
     pub fn init(blob: &Blob) -> Box<Entry> {
         Box::new(Entry {
-            blob: blob.dupe_with_content_type(true),
+            blob: dupe_for_cross_thread(blob),
         })
     }
+}
+
+/// Build a copy of `blob` that shares no mutable state with it (or with any
+/// other thread's blobs): the backing store is replaced with a
+/// `Store::deep_dupe` snapshot, a non-heap-owned `content_type` is copied so
+/// it cannot outlive the source store, and the `name` string is migrated to a
+/// thread-safe (isolated) impl. Used for both directions of the registry
+/// boundary — storing a registered blob and resolving one back out — so the
+/// registry's own `Entry` blob is only ever touched under the registry mutex
+/// and resolved blobs are private to the resolving thread.
+fn dupe_for_cross_thread(blob: &Blob) -> Blob {
+    let copy = blob.dupe_with_content_type(true);
+    if let Some(store) = blob.store() {
+        copy.store.set(Some(store.deep_dupe()));
+    }
+    if !copy.content_type_allocated.get() {
+        let content_type = copy.content_type_slice();
+        if !content_type.is_empty() {
+            let owned = content_type.to_vec().into_boxed_slice();
+            copy.content_type
+                .set(bun_core::heap::into_raw(owned).cast_const());
+            copy.content_type_allocated.set(true);
+        }
+    }
+    let mut name = blob.name.get().dupe_ref();
+    name.to_thread_safe();
+    copy.name.set(name);
+    copy
 }
 
 impl Drop for Entry {
@@ -72,8 +100,7 @@ impl ObjectURLRegistry {
     pub fn resolve_and_dupe(&self, pathname: &[u8]) -> Option<Blob> {
         let uuid = uuid_from_pathname(pathname)?;
         let map = self.map.lock();
-        map.get(&uuid.bytes)
-            .map(|e| e.blob.dupe_with_content_type(true))
+        map.get(&uuid.bytes).map(|e| dupe_for_cross_thread(&e.blob))
     }
 
     pub fn resolve_and_dupe_to_js(

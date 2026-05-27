@@ -34,6 +34,28 @@ test("buffer.resolveObjectURL empty blob", async () => {
   expect(await blob.text()).toBe("");
 });
 
+test("buffer.resolveObjectURL returns blobs isolated from later mutations", async () => {
+  const file = new File(["hello"], "original.txt", { type: "text/plain" });
+  const id = URL.createObjectURL(file);
+
+  const first = resolveObjectURL(id)! as unknown as File;
+  expect(first.name).toBe("original.txt");
+  expect(first.type).toStartWith("text/plain");
+  expect(await first.text()).toBe("hello");
+
+  // Constructing new Files from the resolved blob or the original blob
+  // renames *their* backing stores; the registry's copy must not change.
+  new File([first], "renamed-from-resolved.txt");
+  new File([file], "renamed-from-original.txt");
+
+  const second = resolveObjectURL(id)! as unknown as File;
+  expect(second.name).toBe("original.txt");
+  expect(second.type).toBe(first.type);
+  expect(await second.text()).toBe("hello");
+
+  URL.revokeObjectURL(id);
+});
+
 test("buffer.resolveObjectURL args", async () => {
   expect(resolveObjectURL()).toBeUndefined();
   expect(resolveObjectURL(1)).toBeUndefined();

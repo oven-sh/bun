@@ -691,7 +691,11 @@ impl DateTime {
             // wire). Reject it instead of storing a bogus timestamp.
             check_finite_ms(total_ms, global_object)?;
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
-            let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
+            // `ms` is the sub-second millisecond residual, so it is always in
+            // `[0, 1000)`. Clamp it so a float-saturated `ts` can't push the
+            // cast to a huge value and overflow `ms * 1000` (a debug abort)
+            // before `from_unix_timestamp`'s own range check rejects `ts`.
+            let ms: u32 = ((total_ms - (ts as f64 * 1000.0)) as u32).min(999);
             return DateTime::from_unix_timestamp(ts, ms * 1000, global_object);
         }
 
@@ -699,7 +703,7 @@ impl DateTime {
             let total_ms = value.as_number();
             check_finite_ms(total_ms, global_object)?;
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
-            let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
+            let ms: u32 = ((total_ms - (ts as f64 * 1000.0)) as u32).min(999);
             return DateTime::from_unix_timestamp(ts, ms * 1000, global_object);
         }
 
@@ -742,14 +746,16 @@ impl Time {
             let total_ms = value.get_unix_timestamp();
             check_finite_ms(total_ms, global_object)?;
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
-            let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
+            // Clamp the sub-second residual to its valid `[0, 1000)` range so
+            // `ms * 1000` can't overflow on a float-saturated `ts`.
+            let ms: u32 = ((total_ms - (ts as f64 * 1000.0)) as u32).min(999);
             Self::check_range(ts, global_object)?;
             Ok(Time::from_unix_timestamp(ts, ms * 1000))
         } else if value.is_number() {
             let total_ms = value.as_number();
             check_finite_ms(total_ms, global_object)?;
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
-            let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
+            let ms: u32 = ((total_ms - (ts as f64 * 1000.0)) as u32).min(999);
             Self::check_range(ts, global_object)?;
             Ok(Time::from_unix_timestamp(ts, ms * 1000))
         } else {

@@ -67,27 +67,33 @@ async function runGetterMutationAbort(sql: SQL) {
   // Prime the prepared-statement cache with a DATETIME signature.
   await sql.unsafe("select ? as d", [new Date(0)]);
 
-  let reads = 0;
-  const values: unknown[] = [new Date("2020-01-01T00:00:00.000Z")];
-  Object.defineProperty(values, "0", {
-    enumerable: true,
-    configurable: true,
-    get() {
-      reads++;
-      // First pass (signature): a Date -> column bound as DATETIME.
-      // Later pass (bind): a number whose day count overflows i32.
-      return reads <= 1 ? new Date("2020-01-01T00:00:00.000Z") : 1e20;
-    },
-  });
+  // 1e20 overflows the day count (i32::try_from(days)); 1e22 additionally
+  // saturates `ts` to i64::MAX so the sub-second residual cast saturates too,
+  // which used to overflow `ms * 1000` and abort a debug build before the day
+  // guard ran. Both must surface a catchable error.
+  for (const huge of [1e20, 1e22]) {
+    let reads = 0;
+    const values: unknown[] = [new Date("2020-01-01T00:00:00.000Z")];
+    Object.defineProperty(values, "0", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        reads++;
+        // First pass (signature): a Date -> column bound as DATETIME.
+        // Later pass (bind): a number whose day count overflows i32.
+        return reads <= 1 ? new Date("2020-01-01T00:00:00.000Z") : huge;
+      },
+    });
 
-  const result = await sql.unsafe("select ? as d", values).then(
-    rows => ({ ok: true, rows }),
-    (err: any) => ({ ok: false, code: err?.code, message: String(err?.message ?? err) }),
-  );
-  expect(result).toMatchObject({ ok: false, code: "ERR_INVALID_ARG_TYPE" });
-  expect(reads).toBeGreaterThanOrEqual(2);
+    const result = await sql.unsafe("select ? as d", values).then(
+      rows => ({ ok: true, rows }),
+      (err: any) => ({ ok: false, code: err?.code, message: String(err?.message ?? err) }),
+    );
+    expect(result).toMatchObject({ ok: false, code: "ERR_INVALID_ARG_TYPE" });
+    expect(reads).toBeGreaterThanOrEqual(2);
+  }
 
-  // The connection must still be usable after the rejected bind.
+  // The connection must still be usable after the rejected binds.
   expect((await sql.unsafe("select ? as x", [2]))[0].x).toBe(2);
 }
 

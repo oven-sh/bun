@@ -496,7 +496,7 @@ function ClientRequest(input, options, cb) {
               // path, else the request target).
               let address = attemptedAddress;
               // Node reports the port as a number.
-              let failedPort = Number(attemptedPort);
+              let failedPort: number | undefined = Number(attemptedPort);
               if (proxy) {
                 try {
                   const proxyUrl = new URL(proxy);
@@ -508,6 +508,11 @@ function ClientRequest(input, options, cb) {
                       : proxyUrl.hostname;
                   failedPort = proxyUrl.port ? Number(proxyUrl.port) : proxyUrl.protocol === "https:" ? 443 : 80;
                 } catch {}
+              } else if (socketPath) {
+                // A unix-socket request was refused — report the socket path
+                // (no port), not the synthetic TCP host/port, as Node does.
+                address = socketPath;
+                failedPort = undefined;
               }
               err = new ExceptionWithHostPort(UV_ECONNREFUSED, "connect", address, failedPort);
             } else if (err.code === "InvalidContentLength") {

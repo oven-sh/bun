@@ -99,19 +99,6 @@ function Invoke-PipedCase {
   Write-Host "exit($Name): $code ($hex)"
 }
 
-Clean-NodeModules
-Invoke-PipedCase -Name "install-pipe-consumed-1"  -CaseArgs @("install") -Cwd $repoRoot
-Clean-NodeModules
-Invoke-PipedCase -Name "install-pipe-consumed-2"  -CaseArgs @("install") -Cwd $repoRoot
-Clean-NodeModules
-Invoke-PipedCase -Name "install-pipe-truncated"   -CaseArgs @("install") -Cwd $repoRoot -Truncate
-Clean-NodeModules
-Invoke-PipedCase -Name "install-pipe-silent"      -CaseArgs @("install", "--silent") -Cwd $repoRoot
-Clean-NodeModules
-Invoke-Case      -Name "install-file-redirect"    -CaseEnv @{} -CaseArgs @("install") -Cwd $repoRoot
-Clean-NodeModules
-Invoke-PipedCase -Name "install-pipe-no-scripts"  -CaseArgs @("install", "--ignore-scripts") -Cwd $repoRoot
-
 # Crash dump capture with procdump (ARM64 native build). Try two sources.
 $procdump = Join-Path (Get-Location) "procdump64a.exe"
 foreach ($url in @("https://live.sysinternals.com/procdump64a.exe", "https://download.sysinternals.com/files/Procdump.zip")) {
@@ -123,7 +110,49 @@ foreach ($url in @("https://live.sysinternals.com/procdump64a.exe", "https://dow
     } else {
       Invoke-WebRequest -Uri $url -OutFile $procdump -UseBasicParsing
     }
-    if (Test-Path $procdump) { Write-Host "procdump ready from $url ($((Get-Item $procdump).Length) bytes)"; break }
+    Write-Host "--- WER service state: $((Get-Service WerSvc -ErrorAction SilentlyContinue).Status)"
+try { Set-Service WerSvc -StartupType Manual -ErrorAction SilentlyContinue; Start-Service WerSvc -ErrorAction SilentlyContinue } catch {}
+try { reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting" /v Disabled /t REG_DWORD /d 0 /f | Out-Null } catch {}
+
+# Force a COLD install cache every run (the crash needs the cold-install
+# concurrency); pipe + cold reproduces, warm does not.
+function New-ColdCacheEnv {
+  $dir = Join-Path $env:TEMP ("bun-cache-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  return $dir
+}
+
+Clean-NodeModules
+$env:BUN_INSTALL_CACHE_DIR = New-ColdCacheEnv
+Invoke-PipedCase -Name "install-pipe-cold-1"  -CaseArgs @("install") -Cwd $repoRoot
+Clean-NodeModules
+$env:BUN_INSTALL_CACHE_DIR = New-ColdCacheEnv
+Invoke-PipedCase -Name "install-pipe-cold-2"  -CaseArgs @("install") -Cwd $repoRoot
+Clean-NodeModules
+$env:BUN_INSTALL_CACHE_DIR = New-ColdCacheEnv
+Invoke-PipedCase -Name "install-pipe-cold-silent" -CaseArgs @("install", "--silent") -Cwd $repoRoot
+Clean-NodeModules
+$env:BUN_INSTALL_CACHE_DIR = New-ColdCacheEnv
+Invoke-Case      -Name "install-file-cold"    -CaseEnv @{} -CaseArgs @("install") -Cwd $repoRoot
+Remove-Item Env:BUN_INSTALL_CACHE_DIR -ErrorAction SilentlyContinue
+
+# procdump-wrapped cold piped install (the reproducing configuration): the
+# child inherits procdump's stdout which is the PowerShell pipe, so output
+# still goes to a pipe while procdump watches for first-chance/unhandled
+# exceptions and writes a full dump.
+if (Test-Path $procdump) {
+  try {
+    Clean-NodeModules
+    $env:BUN_INSTALL_CACHE_DIR = New-ColdCacheEnv
+    Push-Location $repoRoot
+    & $procdump -accepteula -ma -e 1 -g -x $dumpDir $bun install 2>&1 | Out-Null
+    Write-Host "procdump(cold piped install) exit: $LASTEXITCODE"
+    Pop-Location
+    Remove-Item Env:BUN_INSTALL_CACHE_DIR -ErrorAction SilentlyContinue
+  } catch { Write-Host "procdump capture failed: $($_.Exception.Message)"; Pop-Location -ErrorAction SilentlyContinue }
+}
+
+if (Test-Path $procdump) { Write-Host "procdump ready from $url ($((Get-Item $procdump).Length) bytes)"; break }
   } catch { Write-Host "procdump fetch from $url failed: $($_.Exception.Message)" }
 }
 if (Test-Path $procdump) {

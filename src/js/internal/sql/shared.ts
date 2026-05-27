@@ -852,16 +852,16 @@ function parseOptions(
     }
   }
 
+  if (tls && sslMode === SSLMode.disable) {
+    sslMode = $isObject(tls) && tls.rejectUnauthorized === false ? SSLMode.require : SSLMode.verify_full;
+  }
+
   if (sslMode !== SSLMode.disable && !tls?.serverName) {
     if (hostname) {
       tls = { ...tls, serverName: hostname };
     } else if (tls) {
       tls = true;
     }
-  }
-
-  if (tls && sslMode === SSLMode.disable) {
-    sslMode = SSLMode.prefer;
   }
 
   port = Number(port);

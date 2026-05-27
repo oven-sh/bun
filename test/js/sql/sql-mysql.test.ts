@@ -67,7 +67,7 @@ if (isDockerEnabled()) {
           allowPublicKeyRetrieval: true,
           tls:
             image.name === "MySQL with TLS"
-              ? Bun.file(path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem"))
+              ? { ca: Bun.file(path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem")) }
               : undefined,
         });
 

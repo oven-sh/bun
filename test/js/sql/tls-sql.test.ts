@@ -58,7 +58,10 @@ if (!isDockerEnabled()) {
         describe(`prepared: ${prepare}`, () => {
           const getOptions = (): Bun.SQL.Options => ({
             url: `postgres://postgres@${container.host}:${container.port}/bun_sql_test`,
-            tls: true,
+            tls: {
+              ca: Bun.file(path.join(import.meta.dir, "docker-tls", "server.crt")),
+              serverName: "localhost",
+            },
             adapter: "postgres",
             max: 1,
             bigint: true,

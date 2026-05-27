@@ -248,6 +248,57 @@ describe("node:http Agent socket accounting", () => {
     }
   });
 
+  test("a queued request with an already-aborted signal is never dispatched", async () => {
+    const agent = new http.Agent({ maxSockets: 1 });
+
+    let hits = 0;
+    const { promise: firstHit, resolve: onFirstHit } = Promise.withResolvers<void>();
+    const responses: Array<() => void> = [];
+    const server = http.createServer((req, res) => {
+      hits++;
+      if (hits === 1) onFirstHit();
+      responses.push(() => res.end("ok"));
+    });
+    server.listen(0);
+    try {
+      await once(server, "listening");
+      const port = (server.address() as AddressInfo).port;
+      const name = agent.getName({ port });
+
+      // r1 takes the only slot.
+      const r1 = http.get({ port, agent }, res => res.resume());
+      r1.on("error", () => {});
+      await firstHit;
+
+      // r2's signal is ALREADY aborted when the request is created. A plain
+      // addEventListener('abort') listener never fires for an already-aborted
+      // signal, so the request would stay queued and get dispatched once r1's
+      // slot frees. The pre-aborted case must be handled explicitly.
+      const ac = new AbortController();
+      ac.abort();
+      const r2 = http.get({ port, agent, signal: ac.signal }, () => {});
+      r2.on("error", () => {});
+      const r2Closed = once(r2, "close");
+
+      await r2Closed;
+      expect(r2.destroyed).toBe(true);
+      expect(name in agent.requests).toBe(false);
+
+      // Free r1's slot. If r2 were still queued it would now be dispatched.
+      responses.shift()!();
+      await once(r1, "close");
+      await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+
+      // Only r1 ever reached the server.
+      expect(hits).toBe(1);
+      expect(agent.totalSocketCount).toBe(0);
+      expect(name in agent.sockets).toBe(false);
+    } finally {
+      agent.destroy();
+      server.close();
+    }
+  });
+
   test("destroying a queued request emits 'close' and removes it from agent.requests", async () => {
     const agent = new http.Agent({ maxSockets: 1 });
 

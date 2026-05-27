@@ -833,6 +833,7 @@ function ClientRequest(input, options, cb) {
 
   const signal = options.signal;
   if (signal) {
+    this[kSignal] = signal;
     // Mirror req.abort(): emit 'abort', cancel the in-flight fetch via the
     // AbortController, and destroy() the request. destroy() also drops a
     // still-queued request (one waiting behind maxSockets, whose
@@ -842,18 +843,23 @@ function ClientRequest(input, options, cb) {
     // here because its `this.aborted` guard is already satisfied by the
     // signal (the `aborted` getter reads kSignal.aborted), so guard on the
     // internal abortedSymbol to stay idempotent with req.abort().
-    signal.addEventListener(
-      "abort",
-      () => {
-        if (this[abortedSymbol]) return;
-        this[abortedSymbol] = true;
-        process.nextTick(emitAbortNextTick, this);
-        this[kAbortController]?.abort?.();
-        this.destroy();
-      },
-      { once: true },
-    );
-    this[kSignal] = signal;
+    const onSignalAbort = () => {
+      if (this[abortedSymbol]) return;
+      this[abortedSymbol] = true;
+      process.nextTick(emitAbortNextTick, this);
+      this[kAbortController]?.abort?.();
+      this.destroy();
+    };
+    // addEventListener('abort') never fires for an already-aborted signal, so
+    // handle that case explicitly (matching Node's addAbortSignal). Defer to a
+    // tick so the request is first registered with the agent below — destroy()
+    // then splices it out of agent.requests instead of running before it's
+    // queued.
+    if (signal.aborted) {
+      process.nextTick(onSignalAbort);
+    } else {
+      signal.addEventListener("abort", onSignalAbort, { once: true });
+    }
   }
   let method = options.method;
   const methodIsString = typeof method === "string";

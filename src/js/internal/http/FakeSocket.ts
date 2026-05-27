@@ -124,9 +124,12 @@ var FakeSocket = class Socket extends Duplex {
 
   _write(_chunk, _encoding, _callback) {}
 
-  destroy() {
-    this._httpMessage?.destroy?.();
-    return super.destroy();
+  destroy(err?: Error) {
+    // Forward the caller's error so socket.destroy(err) surfaces it on the
+    // request (matching Node's socketErrorListener → req.emit('error', err)),
+    // instead of the synthetic "socket hang up".
+    this._httpMessage?.destroy?.(err);
+    return super.destroy(err);
   }
 };
 

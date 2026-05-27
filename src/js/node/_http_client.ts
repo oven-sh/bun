@@ -41,6 +41,8 @@ const {
   kReusedSocket,
   kOptions,
   kTimeoutTimer,
+  kTimedOut,
+  kErrored,
   kEmitState,
   ClientRequestEmitState,
   kSignal,
@@ -71,6 +73,7 @@ const StringPrototypeToUpperCase = String.prototype.toUpperCase;
 
 function emitErrorEventNT(self, err) {
   if (self.destroyed) return;
+  self[kErrored] = true;
   if (self.listenerCount("error") > 0) {
     self.emit("error", err);
   }
@@ -98,6 +101,11 @@ function ClientRequest(input, options, cb) {
   };
 
   let writeCount = 0;
+
+  // When destroy(err) is called with an explicit error, remember it so the
+  // socket-close handler can surface it on the request (Node emits the caller's
+  // error rather than a synthetic "socket hang up" in that case).
+  let destroyError: Error | undefined;
   let resolveNextChunk: ((end: boolean) => void) | undefined = _end => {};
 
   // Node sends headers + first chunk immediately on the first write(). We
@@ -214,6 +222,7 @@ function ClientRequest(input, options, cb) {
   this.destroy = function (err?: Error) {
     if (this.destroyed) return this;
     this.destroyed = true;
+    if (err) destroyError = err;
 
     const res = this.res;
 
@@ -231,6 +240,18 @@ function ClientRequest(input, options, cb) {
     // If request is destroyed we abort the current response
     this[kAbortController]?.abort?.();
     this.socket.destroy(err);
+
+    // If the request was dispatched (or is mid-dispatch) the AbortController's
+    // abort above routes through onAbort()/socketCloseListener(), which emits
+    // the caller's error (destroyError) or a synthetic "socket hang up" before
+    // 'close'. If destroy(err) is called before the request is ever dispatched
+    // there is no controller to trigger that path; still surface the caller's
+    // explicit error (Writable.destroy semantics) on the next tick.
+    if (err && !this[kAbortController] && !res && !this._closed && !this[kErrored]) {
+      this._closed = true;
+      this[kErrored] = true;
+      process.nextTick(emitCloseErrorNT, this, err);
+    }
 
     return this;
   };
@@ -251,18 +272,49 @@ function ClientRequest(input, options, cb) {
       }
       if (!this._closed) {
         this._closed = true;
-        callCloseCallback(this);
-        this.emit("close");
-        this.socket?.emit?.("close");
+        // destroy(err) surfaces the caller's error on the request even after
+        // the response has arrived (Writable.destroy semantics). Defer it like
+        // the no-response branch so the order is error-before-close and a
+        // handler attached right after destroy(err) still sees it.
+        if (destroyError && !this[kErrored]) {
+          this[kErrored] = true;
+          process.nextTick(emitCloseErrorNT, this, destroyError);
+        } else {
+          callCloseCallback(this);
+          this.emit("close");
+          this.socket?.emit?.("close");
+        }
       }
       if (!res.aborted && res.readable) {
         res.push(null);
       }
     } else if (!this._closed) {
       this._closed = true;
-      callCloseCallback(this);
-      this.emit("close");
-      this.socket?.emit?.("close");
+      // The socket closed before any response headers arrived. Node surfaces an
+      // error on the request before 'close' in two cases:
+      //   - destroy(err) was called: the caller's error is always delivered,
+      //     regardless of how far the request got (Writable.destroy semantics).
+      //   - otherwise a synthetic "socket hang up" (ECONNRESET), but only if the
+      //     request had actually been dispatched (the 'socket' event fired) and
+      //     was torn down by abort()/destroy()/socket.destroy(). A request
+      //     aborted before it was ever sent, cancelled by a timeout, cancelled
+      //     via its AbortSignal, or already given a real error (e.g.
+      //     ECONNREFUSED) does not get this synthetic error.
+      const wasDispatched = (this[kEmitState] & (1 << ClientRequestEmitState.socket)) !== 0;
+      const synthetic = wasDispatched && !this[kTimedOut] && !this[kSignal]?.aborted;
+      if (!this[kErrored] && (destroyError || synthetic)) {
+        this[kErrored] = true;
+        const err = destroyError ?? new ConnResetException("socket hang up");
+        // Node delivers this on the socket's 'close' event, i.e. on a later
+        // tick than the synchronous abort()/destroy() call. Defer so the error
+        // lands after 'abort' and before 'close' (and so a handler attached
+        // right after destroy(err) still sees it), matching Node's ordering.
+        process.nextTick(emitCloseErrorNT, this, err);
+      } else {
+        callCloseCallback(this);
+        this.emit("close");
+        this.socket?.emit?.("close");
+      }
     }
   };
 
@@ -507,6 +559,7 @@ function ClientRequest(input, options, cb) {
 
             if (!!$debug) globalReportError(err);
 
+            this[kErrored] = true;
             try {
               this.emit("error", err);
             } catch (_err) {
@@ -534,8 +587,14 @@ function ClientRequest(input, options, cb) {
 
     try {
       options.lookup(host, { all: true }, (err, results) => {
+        // The lookup may resolve after the request was torn down (abort()/
+        // destroy()/timeout). In that case socketCloseListener has already
+        // surfaced the error, so don't emit a second one from the stale
+        // callback — Node cancels the pending lookup and only reports one error.
+        if (this.destroyed) return;
         if (err) {
           if (!!$debug) globalReportError(err);
+          this[kErrored] = true;
           process.nextTick((self, err) => self.emit("error", err), this, err);
           return;
         }
@@ -543,11 +602,15 @@ function ClientRequest(input, options, cb) {
         let candidates = results.sort((a, b) => b.family - a.family); // prefer IPv6
 
         const fail = (message, name, code, syscall) => {
+          // If an error was already surfaced (e.g. the final go() attempt
+          // rejected and its own .catch emitted), don't emit a second one.
+          if (this[kErrored]) return;
           const error = new Error(message);
           error.name = name;
           error.code = code;
           error.syscall = syscall;
           if (!!$debug) globalReportError(error);
+          this[kErrored] = true;
           process.nextTick((self, err) => self.emit("error", err), this, error);
         };
 
@@ -572,6 +635,10 @@ function ClientRequest(input, options, cb) {
         // The last address is required to work, and if it fails we'll throw an error.
 
         const iterate = () => {
+          // go() rejects with an AbortError when the request is torn down while
+          // connecting, and the final candidate's own .catch already emits its
+          // mapped error. In either case don't re-enter or emit a second error.
+          if (this.destroyed || this[kErrored]) return;
           if (candidates.length === 0) {
             // If we get to this point, it means that none of the addresses could be connected to.
             fail(`connect ECONNREFUSED ${host}:${port}`, "Error", "ECONNREFUSED", "connect");
@@ -588,6 +655,7 @@ function ClientRequest(input, options, cb) {
       return true;
     } catch (err) {
       if (!!$debug) globalReportError(err);
+      this[kErrored] = true;
       process.nextTick((self, err) => self.emit("error", err), this, err);
       return false;
     }
@@ -620,6 +688,7 @@ function ClientRequest(input, options, cb) {
       };
     } catch (err) {
       if (!!$debug) globalReportError(err);
+      this[kErrored] = true;
       this.emit("error", err);
     } finally {
       process.nextTick(emitFinishAndDeferredCloseNT);
@@ -1010,7 +1079,18 @@ const ClientRequestPrototype = {
     } else {
       this[kTimeoutTimer] = setTimeout(() => {
         this[kTimeoutTimer] = undefined;
-        this[kAbortController]?.abort();
+        // A timeout cancels the in-flight request, but unlike an explicit
+        // abort it is not a socket error, so the socket-close handler must
+        // not surface a "socket hang up" on the request (matches Node, which
+        // only emits 'timeout' here and leaves error handling to the user).
+        // Only mark kTimedOut when there is actually a request to cancel: if the
+        // timer fires before the request is dispatched (no AbortController yet),
+        // nothing is cancelled and the flag must not suppress a later abort's
+        // "socket hang up".
+        if (this[kAbortController]) {
+          this[kTimedOut] = true;
+          this[kAbortController].abort();
+        }
         this.emit("timeout");
       }, msecs).unref();
 
@@ -1094,6 +1174,23 @@ function emitContinueAndSocketNT(self) {
 
 function emitAbortNextTick(self) {
   self.emit("abort");
+}
+
+// Emits the "socket closed before response" error followed by 'close', in that
+// order, on a later tick. Kept at module scope so it doesn't close over
+// ClientRequest locals and keep them alive for the request's lifetime.
+function emitCloseErrorNT(self, err) {
+  // Swallow a throw from an unhandled 'error' the same way the fetch rejection
+  // path does (see the startFetch .catch handler): an aborted request with no
+  // 'error' listener should emit 'close' without crashing the process.
+  try {
+    self.emit("error", err);
+  } catch (_err) {
+    void _err;
+  }
+  callCloseCallback(self);
+  self.emit("close");
+  self.socket?.emit?.("close");
 }
 
 const kResTimeoutTimer = Symbol("kResTimeoutTimer");

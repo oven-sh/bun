@@ -991,6 +991,116 @@ it("TLS client: flush() after end() does not double-teardown before deferred onC
   expect(exitCode).toBe(0);
 }, 30_000); // debug subprocess startup + ASAN symbolication on failure is slow
 
+it("writing to an established TLS socket from another TLS client's open() does not divert either connection", async () => {
+  // Proxy-style flow: an inbound TLS connection is already established, then an
+  // outbound TLS client is opened and its open() callback synchronously writes a
+  // status frame back to the inbound socket. The outbound socket's handshake must
+  // still be sent to *its own* upstream server (so it completes and the proxy can
+  // report "upstream-ready"), and the inbound client's TLS stream must only ever
+  // carry the proxy's application data — never bytes belonging to the outbound
+  // connection. Previously the per-loop SSL output target was not re-pointed after
+  // the open() dispatch, so the outbound handshake bytes landed in the inbound
+  // client's stream, corrupting its session and stalling the outbound connection.
+  const { promise: clientResult, resolve: resolveClientResult } = Promise.withResolvers<{
+    outcome: string;
+    received: string;
+  }>();
+
+  let clientReceived = "";
+
+  // Upstream TLS server the proxy connects out to.
+  const upstream = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls,
+    socket: {
+      open() {},
+      data() {},
+      close() {},
+      error() {},
+    },
+  });
+
+  let outbound: Socket | undefined;
+  let inboundRequest = "";
+
+  // Proxy: TLS server that, when the inbound client asks, opens an outbound TLS
+  // connection and writes to the inbound socket from the outbound open() callback.
+  const proxy = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls,
+    socket: {
+      open() {},
+      async data(inbound, chunk) {
+        inboundRequest += chunk.toString();
+        if (!inboundRequest.includes("CONNECT\n") || outbound) return;
+        outbound = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: upstream.port,
+          tls: { ...tls, rejectUnauthorized: false },
+          socket: {
+            open() {
+              // Writes to the already-established inbound TLS socket while the
+              // outbound socket's own handshake has not been flushed to the wire yet.
+              inbound.write("hello-from-proxy\n");
+            },
+            handshake(_socket, success) {
+              inbound.write(success ? "upstream-ready\n" : "upstream-handshake-failed\n");
+            },
+            data() {},
+            close() {},
+            error() {},
+          },
+        });
+      },
+      close() {},
+      error() {},
+    },
+  });
+
+  let client: Socket | undefined;
+  try {
+    // Inbound client talking TLS to the proxy.
+    client = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: proxy.port,
+      tls: { ...tls, rejectUnauthorized: false },
+      socket: {
+        open() {},
+        handshake(socket) {
+          socket.write("CONNECT\n");
+        },
+        data(_socket, chunk) {
+          clientReceived += chunk.toString();
+          if (clientReceived.includes("upstream-ready\n") || clientReceived.includes("upstream-handshake-failed\n")) {
+            resolveClientResult({ outcome: "ok", received: clientReceived });
+          }
+        },
+        close() {
+          resolveClientResult({ outcome: "closed", received: clientReceived });
+        },
+        error(_socket, err) {
+          resolveClientResult({ outcome: `error: ${err}`, received: clientReceived });
+        },
+      },
+    });
+
+    // The inbound client's TLS session stays intact (no error/close) and sees
+    // exactly the proxy's two status frames, and the outbound handshake reached
+    // its own upstream server — otherwise "upstream-ready" is never produced.
+    expect(await clientResult).toEqual({
+      outcome: "ok",
+      received: "hello-from-proxy\nupstream-ready\n",
+    });
+  } finally {
+    client?.end();
+    outbound?.end();
+    proxy.stop(true);
+    upstream.stop(true);
+  }
+}, 30_000);
+
 // Bun.connect() on a Windows named pipe takes a dedicated early branch in
 // Listener.connectInner that heap-allocates a standalone Handlers block. That
 // block's `.mode` must be `.client` so Handlers.markInactive() destroys it on

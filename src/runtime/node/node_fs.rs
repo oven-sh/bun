@@ -3581,6 +3581,7 @@ pub mod args {
                 prefix: PathLike::Buffer(Buffer {
                     buffer: bun_jsc::ArrayBuffer::EMPTY,
                     owns_buffer: false,
+                    pinned: false,
                 }),
                 encoding: Encoding::Utf8,
             }
@@ -3786,7 +3787,6 @@ pub mod args {
         pub length: u64,
         pub position: Option<ReadPosition>,
         pub encoding: Encoding,
-        pub pinned: bool,
     }
     impl Default for Write {
         fn default() -> Self {
@@ -3797,18 +3797,12 @@ pub mod args {
                 length: u64::MAX,
                 position: None,
                 encoding: Encoding::Buffer,
-                pinned: false,
             }
         }
     }
     impl Unprotect for Write {
         #[inline]
         fn unprotect(&mut self) {
-            if self.pinned {
-                if let Some(buffer) = self.buffer.buffer() {
-                    buffer.buffer.unpin();
-                }
-            }
             self.buffer.unprotect();
         }
     }
@@ -3933,8 +3927,8 @@ pub mod args {
                     args.buffer = StringOrBuffer::Buffer(Buffer {
                         buffer: pinned,
                         owns_buffer: false,
+                        pinned: true,
                     });
-                    args.pinned = true;
                 }
             }
             Ok(args)
@@ -4138,6 +4132,7 @@ pub mod args {
                         Buffer {
                             buffer: pinned,
                             owns_buffer: false,
+                            pinned: true,
                         },
                         true,
                     ),
@@ -4284,7 +4279,6 @@ pub mod args {
     impl WriteFile {
         pub fn to_thread_safe(&mut self) {
             self.file.to_thread_safe();
-            self.data.to_thread_safe();
         }
     }
     impl Unprotect for WriteFile {
@@ -4362,8 +4356,7 @@ pub mod args {
             // String objects not allowed (typeof new String("hi") === "object")
             // https://github.com/nodejs/node/blob/6f946c95b9da75c70e868637de8161bc8d048379/lib/internal/fs/utils.js#L916
             let allow_string_object = false;
-            // the pattern in node_fs.zig is to call toThreadSafe after Arguments.*.fromJS
-            let is_async = false;
+            let is_async = arguments.will_be_async;
             let data = StringOrBuffer::from_js_with_encoding_maybe_async(ctx, data_value, encoding, is_async, allow_string_object)?
                 .ok_or_else(|| validators::throw_err_invalid_arg_type_with_message(ctx, format_args!("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView")))?;
             let abort_signal = scopeguard::ScopeGuard::into_inner(abort_signal);
@@ -6660,11 +6653,15 @@ impl NodeFS {
                         E::ENOENT | E::ENOTDIR | E::EPERM => return Ok(()),
                         _ => {}
                     }
-                    let joined = paths::resolve_path::join_z_buf::<paths::platform::Auto>(
-                        &mut buf[..],
-                        &[root_basename, basename.as_bytes()],
-                    );
-                    return Err(err.with_path(joined.as_bytes()));
+                    if root_basename.len() + 1 + basename.as_bytes().len() + 1
+                        < paths::MAX_PATH_BYTES
+                    {
+                        let joined = paths::resolve_path::join_z_buf::<paths::platform::Auto>(
+                            &mut buf[..],
+                            &[root_basename, basename.as_bytes()],
+                        );
+                        return Err(err.with_path(joined.as_bytes()));
+                    }
                 }
                 return Err(err.with_path(args.path.slice()));
             }
@@ -6687,7 +6684,10 @@ impl NodeFS {
             let current = match iterator.next() {
                 Err(err) => {
                     dirent_path_prev.deref();
-                    if !is_root {
+                    if !is_root
+                        && root_basename.len() + 1 + basename.as_bytes().len() + 1
+                            < paths::MAX_PATH_BYTES
+                    {
                         let joined = paths::resolve_path::join_z_buf::<paths::platform::Auto>(
                             &mut buf[..],
                             &[root_basename, basename.as_bytes()],
@@ -6705,6 +6705,11 @@ impl NodeFS {
             // detect "this subtask is the root". The Rust caller passes `is_root`
             // explicitly, which is the same predicate (root subtask's basename *is*
             // root_path).
+            if !is_root
+                && basename.as_bytes().len() + 1 + utf8_name.len() + 1 >= paths::MAX_PATH_BYTES
+            {
+                continue;
+            }
             let name_to_copy: &[u8] = if is_root {
                 utf8_name
             } else {
@@ -6892,6 +6897,11 @@ impl NodeFS {
                 let utf8_name = current.name.slice();
 
                 // name_to_copy: bare name at root, else `basename/utf8_name` joined into `buf`.
+                if !is_root
+                    && basename_bytes.len() + 1 + utf8_name.len() + 1 >= paths::MAX_PATH_BYTES
+                {
+                    continue;
+                }
                 let name_to_copy: &[u8] = if is_root {
                     utf8_name
                 } else {
@@ -7251,6 +7261,7 @@ impl NodeFS {
                                     bun_jsc::MarkedArrayBuffer {
                                         buffer,
                                         owns_buffer: false,
+                                        pinned: false,
                                     },
                                 )),
                                 // This case shouldn't really happen.

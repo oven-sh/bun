@@ -706,6 +706,33 @@ if (isDockerEnabled()) {
       const sql = postgres(options);
       afterAll(() => sql.close());
 
+      // Mixed named + integer-aliased columns past JSFinalObject's inline capacity
+      // take the un-cached structure path where property names come from a raw
+      // column-identifier array; the names cursor must skip integer-aliased entries
+      // so every named column keeps a real column name.
+      test("keeps property names aligned for mixed named and integer-aliased columns past the inline capacity", async () => {
+        const namedCount = 65;
+        const columns = [`1000 as "2"`, ...Array.from({ length: namedCount }, (_, i) => `${i + 1} as a${i + 1}`)];
+        const result = await sql.unsafe(`select ${columns.join(", ")}`);
+        expect(result).toHaveLength(1);
+        const row = result[0];
+
+        // Sanity check: ensure iterating through the properties doesn't crash.
+        Bun.inspect(result);
+
+        // Exactly the selected column names appear as keys: the numeric alias plus
+        // a1..a65 — no missing trailing column and no extra/empty property names.
+        const expectedKeys = ["2", ...Array.from({ length: namedCount }, (_, i) => `a${i + 1}`)].sort();
+        expect(Object.keys(row).sort()).toEqual(expectedKeys);
+
+        // The integer-aliased column keeps its value under its numeric key.
+        expect(row["2"]).toBe(1000);
+
+        // Every selected value shows up exactly once across the row's properties.
+        const expectedValues = [1000, ...Array.from({ length: namedCount }, (_, i) => i + 1)].sort((a, b) => a - b);
+        expect(Object.values(row).sort((a, b) => a - b)).toEqual(expectedValues);
+      });
+
       for (let size of [50, 60, 62, 64, 70, 100]) {
         for (let duplicated of [true, false]) {
           test(`${size} ${duplicated ? "+ duplicated" : "unique"} fields`, async () => {

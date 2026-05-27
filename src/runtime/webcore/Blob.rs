@@ -83,7 +83,7 @@ pub extern "C" fn blob_store_array_buffer_deallocator(_bytes: *mut c_void, ctx: 
 /// string. Stricter than `is_all_ascii`: also rejects control characters such
 /// as CR/LF, which would otherwise be stored in `content_type` and written
 /// verbatim into outgoing HTTP headers.
-fn is_valid_blob_type(slice: &[u8]) -> bool {
+pub(crate) fn is_valid_blob_type(slice: &[u8]) -> bool {
     slice.iter().all(|&c| matches!(c, 0x20..=0x7E))
 }
 
@@ -724,8 +724,18 @@ impl BlobExt for Blob {
         &self,
         writer: &mut W,
     ) -> Result<(), bun_core::Error> {
+        let is_memory_backed = if let Some(store) = self.store.get() {
+            matches!(store.data, store::Data::Bytes(_))
+        } else {
+            false
+        };
+
         writer.write_int_le::<u8>(SERIALIZATION_VERSION)?;
-        writer.write_int_le::<u64>(self.offset.get())?;
+        writer.write_int_le::<u64>(if is_memory_backed {
+            0
+        } else {
+            self.offset.get()
+        })?;
 
         let ct = self.content_type_slice();
         writer.write_int_le::<u32>(ct.len() as u32)?;
@@ -744,9 +754,19 @@ impl BlobExt for Blob {
 
         writer.write_int_le::<u8>(store_tag as u8)?;
 
-        self.resolve_size();
         if let Some(store) = self.store.get() {
-            store.serialize(writer)?;
+            if let store::Data::Bytes(bytes) = &store.data {
+                let view = self.shared_view();
+                writer.write_int_le::<u32>(view.len() as u32)?;
+                writer.write_all(view)?;
+
+                let stored_name = bytes.stored_name.slice();
+                writer.write_int_le::<u32>(stored_name.len() as u32)?;
+                writer.write_all(stored_name)?;
+            } else {
+                self.resolve_size();
+                store.serialize(writer)?;
+            }
         }
 
         writer.write_int_le::<u8>(self.is_jsdom_file.get() as u8)?;
@@ -2696,7 +2716,7 @@ impl BlobExt for Blob {
         if bom == Some(strings::BOM::Utf16Le) {
             let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
             // Mirrors Zig `bun.reinterpretSlice(u16, buf)`: drop a trailing odd byte
-            // (`@divTrunc`) so `bytemuck::cast_slice` cannot panic on slop.
+            // (`@divTrunc`).
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
             //
             // ZIG PARITY: this branch intentionally does NOT `self.detach()` for
@@ -2704,8 +2724,18 @@ impl BlobExt for Blob {
             // returns without detaching, unlike `toJSONWithBytes`. Any change to
             // that asymmetry belongs upstream in the Zig source, not here.
             let buf = &buf[..buf.len() & !1];
-            let out =
-                OwnedString::new(BunString::clone_utf16(bytemuck::cast_slice::<u8, u16>(buf)));
+            let out = match bytemuck::try_cast_slice::<u8, u16>(buf) {
+                Ok(units) => OwnedString::new(BunString::clone_utf16(units)),
+                Err(_) => {
+                    let units: Vec<u16> = buf
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|pair| u16::from_le_bytes(*pair))
+                        .collect();
+                    OwnedString::new(BunString::clone_utf16(&units))
+                }
+            };
             return out.to_js(global);
         }
 
@@ -2921,11 +2951,21 @@ impl BlobExt for Blob {
 
         if bom == Some(strings::BOM::Utf16Le) {
             // Mirrors Zig `bun.reinterpretSlice(u16, buf)`: drop a trailing odd byte
-            // (`@divTrunc`) so `bytemuck::cast_slice` cannot panic on slop.
+            // (`@divTrunc`).
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
             let buf = &buf[..buf.len() & !1];
-            let mut out =
-                OwnedString::new(BunString::clone_utf16(bytemuck::cast_slice::<u8, u16>(buf)));
+            let mut out = match bytemuck::try_cast_slice::<u8, u16>(buf) {
+                Ok(units) => OwnedString::new(BunString::clone_utf16(units)),
+                Err(_) => {
+                    let units: Vec<u16> = buf
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|pair| u16::from_le_bytes(*pair))
+                        .collect();
+                    OwnedString::new(BunString::clone_utf16(&units))
+                }
+            };
             // PORT NOTE: Zig used `defer { free; detach }`. Reshaped to compute the
             // result first, then perform the deferred work explicitly — capturing
             // `&mut self` in a scopeguard closure conflicts with later uses below.
@@ -4121,6 +4161,9 @@ fn read_slice<B: AsRef<[u8]>>(
     reader: &mut bun_io::FixedBufferStream<B>,
     len: usize,
 ) -> Result<Vec<u8>, bun_core::Error> {
+    if len > reader.buffer.as_ref().len().saturating_sub(reader.pos) {
+        return Err(bun_core::err!("TooSmall"));
+    }
     let mut slice = vec![0u8; len];
     reader
         .read_exact(&mut slice)

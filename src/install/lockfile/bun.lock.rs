@@ -71,7 +71,7 @@ fn string_array_hash_context(buf: &[u8]) -> bun_semver::string::ArrayHashContext
 /// (sans trailing slash) must be an exact prefix and the byte after it must be
 /// a path separator, so `https://registry.example.com.evil.com/x.tgz` does not
 /// count as being under a `https://registry.example.com` registry.
-fn url_is_under_registry(url: &[u8], registry: &[u8]) -> bool {
+pub(crate) fn url_is_under_registry(url: &[u8], registry: &[u8]) -> bool {
     let registry = strings::without_trailing_slash(registry);
     strings::has_prefix(url, registry)
         && (url.len() == registry.len() || url[registry.len()] == b'/')
@@ -819,7 +819,7 @@ impl Stringifier {
                             write!(
                                 writer,
                                 "\"{}\", ",
-                                bstr::BStr::new(
+                                bun_core::fmt::format_json_string_utf8(
                                     if url_is_under_registry(
                                         url_slice,
                                         Npm::Registry::DEFAULT_URL.as_bytes(),
@@ -827,7 +827,8 @@ impl Stringifier {
                                         b"" as &[u8]
                                     } else {
                                         url_slice
-                                    }
+                                    },
+                                    bun_core::fmt::JSONFormatterUTF8Options { quote: false }
                                 ),
                             )?;
 
@@ -864,12 +865,20 @@ impl Stringifier {
                             } else {
                                 "github:"
                             };
+                            {
+                                use std::io::Write;
+                                write!(&mut temp_buf, "{}", repo.fmt(prefix, buf)).ok();
+                            }
                             write!(
                                 writer,
                                 "[\"{}@{}\", ",
                                 pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                repo.fmt(prefix, buf),
+                                bun_core::fmt::format_json_string_utf8(
+                                    temp_buf.as_slice(),
+                                    bun_core::fmt::JSONFormatterUTF8Options { quote: false }
+                                ),
                             )?;
+                            temp_buf.clear();
 
                             Self::write_package_info_object(
                                 writer,

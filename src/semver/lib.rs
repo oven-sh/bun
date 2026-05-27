@@ -1076,7 +1076,12 @@ pub mod semver_string {
             let start = self.len;
             let cap = self.cap;
             let string_entry = self.string_pool.get_or_put(hash).expect("unreachable");
-            if !string_entry.found_existing {
+            if string_entry.found_existing {
+                let allocated = &self.ptr.as_ref().unwrap()[0..cap];
+                if !strings::eql(string_entry.value_ptr.slice(allocated), slice_) {
+                    return self.append_without_pool::<T>(slice_, hash);
+                }
+            } else {
                 {
                     let dst = &mut self.ptr.as_mut().unwrap()[start..cap];
                     dst[..slice_.len()].copy_from_slice(slice_);

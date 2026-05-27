@@ -1342,6 +1342,12 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                                 strings::last_index_of_char(str.slice, b'#')
                                                     .ok_or_else(|| err!("InvalidNPMLockfile"))?;
 
+                                            if !crate::repository::is_safe_resolved_tag(
+                                                &str.slice[hash_index + 1..],
+                                            ) {
+                                                return Err(err!("InvalidNPMLockfile"));
+                                            }
+
                                             let commit =
                                                 str.sub(&str.slice[hash_index + 1..]).value();
                                             Resolution::init(ResTagged::Git(Repository {
@@ -1364,6 +1370,12 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                                 strings::last_index_of_char(str.slice, b'#')
                                                     .ok_or_else(|| err!("InvalidNPMLockfile"))?;
 
+                                            if !crate::repository::is_safe_resolved_tag(
+                                                &str.slice[hash_index + 1..],
+                                            ) {
+                                                return Err(err!("InvalidNPMLockfile"));
+                                            }
+
                                             let commit =
                                                 str.sub(&str.slice[hash_index + 1..]).value();
                                             Resolution::init(ResTagged::Git(Repository {
@@ -1380,6 +1392,30 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                     "-> {}",
                                     res.fmt_for_debug(this.buffers.string_bytes.as_slice())
                                 );
+
+                                if res.tag == resolution::Tag::Npm {
+                                    let buf = this.buffers.string_bytes.as_slice();
+                                    let url = res.npm().url.slice(buf);
+                                    let configured_registry = manager
+                                        .scope_for_package_name(
+                                            this.packages.items_name()[id as usize].slice(buf),
+                                        )
+                                        .url
+                                        .href();
+                                    if !lockfile::bun_lock::url_is_under_registry(
+                                        url,
+                                        configured_registry,
+                                    ) && !lockfile::bun_lock::url_is_under_registry(
+                                        url,
+                                        Npm::Registry::DEFAULT_URL.as_bytes(),
+                                    ) && !this.packages.items_meta()[id as usize]
+                                        .integrity
+                                        .tag
+                                        .is_supported()
+                                    {
+                                        return Err(err!("InvalidNPMLockfile"));
+                                    }
+                                }
 
                                 // id < pkg_count; columns re-borrowed disjointly.
                                 this.packages.items_resolution_mut()[id as usize] = res;

@@ -8920,7 +8920,9 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  describe("private git repositories", () => {
+  // skip test on windows to avoid writing separate windows-specific shim for `mockGitClone`.
+  // behavior is OS-agnostic so doesn't need platform-specific testing.
+  describe.skipIf(isWindows)("private git repositories", () => {
     it("falls back to git clone when the tarball 4xxs", async () => {
       const privateRepository = `private-${Math.random().toString(36).slice(2)}`;
       const repositoryUrl = `https://github.com/${privateRepository}/repo.git`;

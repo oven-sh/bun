@@ -1830,6 +1830,9 @@ pub fn alloc_github_git_clone_url(this: &PackageManager, repository: &Repository
     }
 
     let owner = this.lockfile.str(&repository.owner);
+    // Unlike `alloc_github_url`, we don't need to guard against an empty repo, since we validate
+    // against that upstream in `hosted_git_info`. Honestly unclear if  `alloc_github_url` needs it
+    // either. The change history that introduced the guard is about the trailing slash issue.
     let repo = this.lockfile.str(&repository.repo);
 
     let mut out = Vec::new();

@@ -1107,7 +1107,7 @@ describe("status code text", () => {
       await runTest(
         {
           fetch(req) {
-            return new Response("hey", { status: +code });
+            return new Response([204, 205, 304].includes(+code) ? null : "hey", { status: +code });
           },
         },
         async server => {

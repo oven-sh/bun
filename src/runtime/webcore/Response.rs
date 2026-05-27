@@ -1061,6 +1061,14 @@ impl Response {
             }
         }
 
+        if !matches!(response.body.get().value.get(), BodyValue::Empty)
+            && matches!(response.init.get().status_code, 101 | 103 | 204 | 205 | 304)
+        {
+            return Err(global_this.throw_type_error(format_args!(
+                "Failed to execute 'json' on 'Response': Response with null body status cannot have body",
+            )));
+        }
+
         let headers_ref = response.get_or_create_headers(global_this)?;
         let json_mime = bun_http_types::MimeType::JSON;
         headers_ref.put_default(
@@ -1282,6 +1290,14 @@ impl Response {
 
         if global_this.has_exception() {
             return Err(bun_jsc::JsError::Thrown);
+        }
+
+        if !arguments[0].is_undefined_or_null()
+            && matches!(init.status_code, 101 | 103 | 204 | 205 | 304)
+        {
+            return Err(global_this.throw_type_error(format_args!(
+                "Failed to construct 'Response': Response with null body status cannot have body",
+            )));
         }
 
         let body: Body = 'brk: {

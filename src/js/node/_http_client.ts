@@ -14,7 +14,7 @@ const { urlToHttpOptions } = require("internal/url");
 const { throwOnInvalidTLSArray } = require("internal/tls");
 const { validateHeaderName } = require("node:_http_common");
 const { getTimerDuration } = require("internal/timers");
-const { ConnResetException, ExceptionWithHostPort } = require("internal/shared");
+const { ConnResetException } = require("internal/shared");
 const { UV_ECONNREFUSED } = process.binding("uv");
 const {
   kBodyChunks,
@@ -514,7 +514,19 @@ function ClientRequest(input, options, cb) {
                 address = socketPath;
                 failedPort = undefined;
               }
-              err = new ExceptionWithHostPort(UV_ECONNREFUSED, "connect", address, failedPort);
+              // Build the error with the exact Node shape. We set `code` and the
+              // message explicitly rather than letting ExceptionWithHostPort
+              // derive them from the errno via getSystemErrorName: on Windows the
+              // uv errno table used by getSystemErrorName differs from
+              // process.binding("uv"), so deriving would yield "Unknown system
+              // error". The numeric errno is still reported for parity.
+              const details = failedPort && failedPort > 0 ? ` ${address}:${failedPort}` : address ? ` ${address}` : "";
+              err = new Error(`connect ECONNREFUSED${details}`);
+              err.errno = UV_ECONNREFUSED;
+              err.code = "ECONNREFUSED";
+              err.syscall = "connect";
+              err.address = address;
+              if (failedPort) err.port = failedPort;
             } else if (err.code === "InvalidContentLength") {
               // The native client refuses to deliver a response with a
               // malformed or conflicting Content-Length. Node surfaces this

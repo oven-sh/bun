@@ -346,12 +346,7 @@ void us_loop_run(struct us_loop_t *loop) {
 
 extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm);
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {
-    if (loop->num_polls == 0)
-        return;
-
-    loop->data.tick_depth++;
-
+static void us_loop_run_bun_tick_inner(struct us_loop_t *loop, const struct timespec* timeout) {
     struct us_internal_callback_t *timer_callback = (struct us_internal_callback_t*)loop->data.sweep_timer;
 
     // Only integrate the loop if we haven't already.
@@ -408,6 +403,57 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     /* Emit post callback */
     us_internal_loop_post(loop);
+}
+
+/* ready_polls/num_ready_polls/current_ready_poll are a single buffer shared by
+ * every dispatch pass on this loop. A poll callback can re-enter
+ * us_loop_run_bun_tick (a JS handler that synchronously waits on a promise the
+ * event loop itself must drive re-enters via autoTick), and the
+ * epoll_pwait2/kevent64 in the inner body overwrites that buffer while the outer
+ * us_internal_dispatch_ready_polls is still mid-iteration over it. Without a
+ * snapshot the outer loop resumes against the nested tick's poll array and
+ * index, silently dropping its remaining events. Snapshot the outer iteration
+ * state onto the stack and restore it after the nested tick so each tick
+ * dispatches its own poll set. Kept out of the common (non-nested) path so the
+ * hot event-loop frame doesn't carry the buffer; __attribute__((noinline)) keeps
+ * it off the caller's frame. Only the live [0..num_ready_polls) slice is copied
+ * (num_ready_polls is the kernel fill count, <= LIBUS_MAX_READY_POLLS); the
+ * element type differs per backend (epoll_event vs kevent64_s), so mirror
+ * loop->ready_polls exactly. A socket the nested tick closed stays on
+ * closed_head until the outermost loop_post, so its restored entry is still
+ * valid memory — us_internal_dispatch_ready_poll skips it via us_socket_is_closed. */
+static __attribute__((noinline)) void us_loop_run_bun_tick_nested(struct us_loop_t *loop, const struct timespec* timeout) {
+    const int saved_num_ready_polls = loop->num_ready_polls;
+    const int saved_current_ready_poll = loop->current_ready_poll;
+    __typeof__(loop->ready_polls[0]) saved_ready_polls[LIBUS_MAX_READY_POLLS];
+    if (saved_num_ready_polls > 0) {
+        memcpy(saved_ready_polls, loop->ready_polls, (size_t)saved_num_ready_polls * sizeof(loop->ready_polls[0]));
+    }
+
+    us_loop_run_bun_tick_inner(loop, timeout);
+
+    if (saved_num_ready_polls > 0) {
+        memcpy(loop->ready_polls, saved_ready_polls, (size_t)saved_num_ready_polls * sizeof(loop->ready_polls[0]));
+    }
+    loop->num_ready_polls = saved_num_ready_polls;
+    loop->current_ready_poll = saved_current_ready_poll;
+}
+
+void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {
+    if (loop->num_polls == 0)
+        return;
+
+    loop->data.tick_depth++;
+
+    /* tick_depth > 1 means an outer dispatch frame is live and its shared
+     * ready_polls iteration state must survive this nested tick; the outermost
+     * tick has nothing to save, so it runs the body directly. */
+    if (loop->data.tick_depth > 1) {
+        us_loop_run_bun_tick_nested(loop, timeout);
+    } else {
+        us_loop_run_bun_tick_inner(loop, timeout);
+    }
+
     loop->data.tick_depth--;
 }
 

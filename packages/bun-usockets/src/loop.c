@@ -462,6 +462,19 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             if(s && s->flags.adopted && s->prev) {
                 s = s->prev;
             }
+            /* A socket closed earlier in this same tick (its fd shut, ext
+             * destructed, now sitting on loop->data.closed_head awaiting free at
+             * loop_post) can still be referenced by a stale ready_polls entry:
+             * us_internal_loop_update_pending_ready_polls only scrubs entries at
+             * indices >= current_ready_poll, and a nested us_loop_run_bun_tick
+             * restores the outer tick's ready_polls snapshot — so an entry for a
+             * socket the nested tick closed survives into the outer dispatch.
+             * Dispatching it would read the destructed ext (e.g. a dangling
+             * onAborted in uWS HttpContext::onClose) and crash. The socket is
+             * unlinked and pending free, so there is nothing to do for it. */
+            if (us_socket_is_closed(s)) {
+                return;
+            }
             /* The group can change after calling a callback but the loop is always the same */
             struct us_loop_t* loop = s->group->loop;
             if (events & LIBUS_SOCKET_WRITABLE && !error) {

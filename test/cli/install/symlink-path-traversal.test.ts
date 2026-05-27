@@ -664,6 +664,96 @@ it.skipIf(!isMacOS)(
   60000,
 );
 
+it.skipIf(!isMacOS)(
+  "extracts a directory entry that follows a created symlink (macOS nofollow parent must handle the trailing slash)",
+  async () => {
+    // Regression: once any symlink has been created, macOS opens each later
+    // dir/symlink entry's parent with O_NOFOLLOW_ANY and creates the leaf
+    // relative to that fd. Tar directory entries carry a trailing `/`
+    // (`git archive` emits `pkg/src/`) which normalization preserves, so the
+    // parent/leaf split of `"subdir/"` must not yield an empty leaf — otherwise
+    // the guarded `mkdirat(parent_fd, "")` returns ENOENT and aborts the whole
+    // install. This ordering (a safe symlink followed by a plain subdirectory)
+    // is common in real GitHub tarballs and is NOT covered by the NFC/NFD test
+    // above, whose post-symlink dirs all hit the aliased-symlink skip path.
+    const tarball = createTarball([
+      { name: "test-package/", type: "dir" },
+      {
+        name: "test-package/package.json",
+        type: "file",
+        content: JSON.stringify({ name: "test-package", version: "1.0.0" }),
+      },
+      // A safe self-referential symlink, created first so created_symlinks is
+      // non-empty for every entry that follows.
+      { name: "test-package/self", type: "symlink", linkname: "." },
+      // Directory entries (trailing slash) that must still be created through
+      // the nofollow-parent path. `nested/` exercises the multi-component walk.
+      { name: "test-package/subdir/", type: "dir" },
+      { name: "test-package/subdir/file.txt", type: "file", content: "inside-subdir" },
+      { name: "test-package/nested/deep/", type: "dir" },
+      { name: "test-package/nested/deep/leaf.txt", type: "file", content: "inside-nested" },
+    ]);
+
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname.includes("/tarball/") || url.pathname.endsWith(".tar.gz")) {
+          return new Response(tarball, { headers: { "Content-Type": "application/gzip" } });
+        }
+        if (url.pathname.includes("/repos/")) {
+          return Response.json({ default_branch: "main" });
+        }
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+
+    try {
+      using dir = tempDir("symlink-then-dir", {});
+      const installDir = String(dir);
+
+      await writeFile(
+        join(installDir, "package.json"),
+        JSON.stringify({
+          name: "test-app",
+          version: "1.0.0",
+          dependencies: { "test-package": "github:user/repo#main" },
+        }),
+      );
+      await writeFile(join(installDir, "bunfig.toml"), `[install]\ncache = false\n`);
+
+      const proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: installDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...env, GITHUB_API_URL: `http://localhost:${server.port}` },
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // Without the fix, the `subdir/` entry aborts extraction with ENOENT and
+      // the install fails; surface stdout/stderr for diagnosis before asserting.
+      if (exitCode !== 0) {
+        console.error("Install failed with exit code:", exitCode);
+        console.error("stdout:", stdout);
+        console.error("stderr:", stderr);
+      }
+      expect(exitCode).toBe(0);
+
+      // The directory entries that followed the symlink must have been created
+      // and their files written through them.
+      const pkgDir = join(installDir, "node_modules", "test-package");
+      await access(join(pkgDir, "package.json"));
+      await access(join(pkgDir, "subdir", "file.txt"));
+      await access(join(pkgDir, "nested", "deep", "leaf.txt"));
+    } finally {
+      server.stop();
+    }
+  },
+  60000,
+);
+
 it.skipIf(isWindows)(
   "rejects symlink targets that climb through other symlinks from the same archive (.bun-tag write stays inside the package)",
   async () => {

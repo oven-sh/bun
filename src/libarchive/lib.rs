@@ -1423,24 +1423,69 @@ pub enum NofollowParentError {
 /// parent directory with `O_NOFOLLOW_ANY` and issuing the leaf-creating call
 /// against that fd.
 ///
-/// Returns `(None, path)` for a single-component `path` (no parent directory to
-/// traverse, so `root_fd` is already the right place). Otherwise returns the
-/// owned parent-directory `File` (closed on drop) and the leaf component, which
-/// remains a NUL-terminated suffix of `path`.
+/// Trailing slashes are stripped from `path` first (tar directory entries carry
+/// one, e.g. `src/`, and `normalize_buf_t` preserves it). The leaf component is
+/// returned NUL-terminated in an owned [`PathBuffer`] (the guard's second tuple
+/// field) with its length as the third field, so the caller can pass it to
+/// `mkdirat`/`symlinkat` directly — the leaf can't alias a NUL-terminated suffix
+/// of `path` once the trailing slash is removed. The first field is the
+/// parent-directory `File` (closed on drop), or `None` when `path` is a single
+/// component and `root_fd` is already the right place.
 #[cfg(target_os = "macos")]
 pub fn open_entry_parent_nofollow(
     root_fd: Fd,
     path: &[u8],
-) -> Result<(Option<bun_sys::File>, &[u8]), NofollowParentError> {
+) -> Result<
+    (
+        Option<bun_sys::File>,
+        bun_paths::path_buffer_pool::Guard,
+        usize,
+    ),
+    NofollowParentError,
+> {
     use bun_sys::{E, File, O};
 
+    // Copy the leaf into an owned, NUL-terminated buffer up front so its
+    // lifetime is independent of `path` (a stripped view) and the component
+    // walk below (which reuses a separate buffer). Pool buffers can carry stale
+    // bytes, so always write the NUL — even for the empty-leaf branch — to keep
+    // `ZStr::from_buf`'s `buf[len] == 0` invariant.
+    let mut leaf_buf = bun_paths::path_buffer_pool::get();
+    let copy_leaf = |leaf: &[u8],
+                     leaf_buf: &mut bun_paths::path_buffer_pool::Guard|
+     -> Result<usize, NofollowParentError> {
+        if leaf.len() + 1 > leaf_buf.len() {
+            return Err(NofollowParentError::Io(bun_sys::Error::new(
+                E::ENAMETOOLONG,
+                bun_sys::Tag::open,
+            )));
+        }
+        leaf_buf[..leaf.len()].copy_from_slice(leaf);
+        leaf_buf[leaf.len()] = 0;
+        Ok(leaf.len())
+    };
+
+    // Tar directory entries end in `/` (`normalize_buf_t` preserves it), so
+    // `dirname(src/)` must not be `src` with an empty leaf — strip it first.
+    let path = match path.iter().rposition(|&c| c != b'/') {
+        Some(i) => &path[..=i],
+        // All slashes (or empty) — nothing to create (unreachable in practice:
+        // the extraction loop skips empty / `.` normalized paths).
+        None => {
+            let leaf_len = copy_leaf(b"", &mut leaf_buf)?;
+            return Ok((None, leaf_buf, leaf_len));
+        }
+    };
+
     let Some(last_sep) = path.iter().rposition(|&c| c == b'/') else {
-        return Ok((None, path));
+        let leaf_len = copy_leaf(path, &mut leaf_buf)?;
+        return Ok((None, leaf_buf, leaf_len));
     };
     let parent = &path[..last_sep];
     let leaf = &path[last_sep + 1..];
+    let leaf_len = copy_leaf(leaf, &mut leaf_buf)?;
     if parent.is_empty() {
-        return Ok((None, leaf));
+        return Ok((None, leaf_buf, leaf_len));
     }
 
     match File::openat(
@@ -1449,7 +1494,7 @@ pub fn open_entry_parent_nofollow(
         O::RDONLY | O::DIRECTORY | O::NOFOLLOW_ANY,
         0,
     ) {
-        Ok(dir) => return Ok((Some(dir), leaf)),
+        Ok(dir) => return Ok((Some(dir), leaf_buf, leaf_len)),
         Err(e) => match e.get_errno() {
             // A symlink in the path, or a path component is not a directory
             // (which on Darwin can only happen here when a component is a
@@ -1496,7 +1541,7 @@ pub fn open_entry_parent_nofollow(
             }
         }
     }
-    Ok((cur, leaf))
+    Ok((cur, leaf_buf, leaf_len))
 }
 
 /// Port of `bun.MakePath.makePath(u16, dir, sub_path)` (bun.zig:2481) — the
@@ -2052,16 +2097,17 @@ impl Archiver {
                                 #[cfg(not(target_os = "macos"))]
                                 let nofollow_parent: Option<(
                                     Option<bun_sys::File>,
-                                    &[u8],
+                                    bun_paths::path_buffer_pool::Guard,
+                                    usize,
                                 )> = None;
 
                                 let (mkdir_dirfd, mkdir_path_z): (Fd, &ZStr) =
                                     match &nofollow_parent {
-                                        Some((parent, leaf)) => (
+                                        Some((parent, leaf_buf, leaf_len)) => (
                                             parent.as_ref().map(|f| f.fd()).unwrap_or(dir_fd),
-                                            // SAFETY: `leaf` is a suffix of `path_slice`, which is
-                                            // NUL-terminated in `normalized_buf`.
-                                            unsafe { ZStr::from_raw(leaf.as_ptr(), leaf.len()) },
+                                            // The helper returns the leaf NUL-terminated in
+                                            // `leaf_buf` (trailing slash stripped).
+                                            ZStr::from_buf(&leaf_buf[..], *leaf_len),
                                         ),
                                         None => (
                                             dir_fd,
@@ -2155,16 +2201,17 @@ impl Archiver {
                                 #[cfg(not(target_os = "macos"))]
                                 let nofollow_parent: Option<(
                                     Option<bun_sys::File>,
-                                    &[u8],
+                                    bun_paths::path_buffer_pool::Guard,
+                                    usize,
                                 )> = None;
 
                                 let (link_dirfd, link_path_z): (Fd, &ZStr) = match &nofollow_parent
                                 {
-                                    Some((parent, leaf)) => (
+                                    Some((parent, leaf_buf, leaf_len)) => (
                                         parent.as_ref().map(|f| f.fd()).unwrap_or(dir_fd),
-                                        // SAFETY: `leaf` is a suffix of `path_slice`, which is
-                                        // NUL-terminated in `normalized_buf`.
-                                        unsafe { ZStr::from_raw(leaf.as_ptr(), leaf.len()) },
+                                        // The helper returns the leaf NUL-terminated in
+                                        // `leaf_buf` (trailing slash stripped).
+                                        ZStr::from_buf(&leaf_buf[..], *leaf_len),
                                     ),
                                     None => (
                                         dir_fd,

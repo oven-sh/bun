@@ -1405,11 +1405,11 @@ fn make_directory(
         #[cfg(target_os = "macos")]
         if nofollow {
             match bun_libarchive::open_entry_parent_nofollow(dest_fd, path_slice) {
-                Ok((parent, leaf)) => {
+                Ok((parent, leaf_buf, leaf_len)) => {
                     let mkdir_dirfd = parent.as_ref().map(|f| f.fd()).unwrap_or(dest_fd);
-                    // SAFETY: `leaf` is a suffix of `path_slice`, which is
-                    // NUL-terminated (the caller wrote `norm_buf[norm_len] = 0`).
-                    let leaf_z = unsafe { bun_core::ZStr::from_raw(leaf.as_ptr(), leaf.len()) };
+                    // The helper returns the leaf NUL-terminated in `leaf_buf`
+                    // (trailing slash stripped).
+                    let leaf_z = bun_core::ZStr::from_buf(&leaf_buf[..], leaf_len);
                     let _ = bun_sys::mkdirat_z(
                         mkdir_dirfd,
                         leaf_z,
@@ -1507,11 +1507,11 @@ fn make_symlink(
     #[cfg(target_os = "macos")]
     if nofollow {
         return match bun_libarchive::open_entry_parent_nofollow(dest_fd, path_slice) {
-            Ok((parent, leaf)) => {
+            Ok((parent, leaf_buf, leaf_len)) => {
                 let link_dirfd = parent.as_ref().map(|f| f.fd()).unwrap_or(dest_fd);
-                // SAFETY: `leaf` is a suffix of `path_slice`, which is
-                // NUL-terminated (the caller wrote `norm_buf[norm_len] = 0`).
-                let leaf_z = unsafe { bun_core::ZStr::from_raw(leaf.as_ptr(), leaf.len()) };
+                // The helper returns the leaf NUL-terminated in `leaf_buf`
+                // (trailing slash stripped).
+                let leaf_z = bun_core::ZStr::from_buf(&leaf_buf[..], leaf_len);
                 bun_sys::symlinkat(target, link_dirfd, leaf_z).is_ok()
             }
             Err(bun_libarchive::NofollowParentError::TraversesSymlink) => false,

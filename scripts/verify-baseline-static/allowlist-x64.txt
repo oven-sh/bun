@@ -459,7 +459,7 @@ ctiMasmProbeTrampolineAVX  [AVX]
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SIMD. Gate: HWY_DYNAMIC_DISPATCH via hwy::SupportedTargets.
-# (150 symbols)
+# (162 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_AVX3_SPR10MemMemImplEPKhmS2_m                                       [AVX, AVX512BW, AVX512F, BMI1]
 _ZN3bun10N_AVX3_SPR14DecodeHex8ImplEPKhPhm                                     [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, GFNI]
@@ -474,6 +474,8 @@ _ZN3bun10N_AVX3_SPR19FirstNonAscii16ImplEPKtm                                  [
 _ZN3bun10N_AVX3_SPR20FillWithSkipMaskImplEPKhmPhS2_mb                          [AVX, AVX512DQ, AVX512F]
 _ZN3bun10N_AVX3_SPR21VisibleUTF16WidthImplEPKtmPm                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun10N_AVX3_SPR22VisibleLatin1WidthImplEPKhm                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun10N_AVX3_SPR23HtmlEscapeExtraLen8ImplEPKhm                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun10N_AVX3_SPR24HtmlEscapeExtraLen16ImplEPKtm                             [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun10N_AVX3_SPR25CountPrintableAscii16ImplEPKtm                            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun10N_AVX3_SPR26IndexOfHTMLEscapeChar8ImplEPKhm                           [AVX, AVX512BW, AVX512F]
 _ZN3bun10N_AVX3_SPR27IndexOfHTMLEscapeChar16ImplEPKtm                          [AVX, AVX512BW, AVX512F]
@@ -499,6 +501,8 @@ _ZN3bun11N_AVX3_ZEN419FirstNonAscii16ImplEPKtm                                 [
 _ZN3bun11N_AVX3_ZEN420FillWithSkipMaskImplEPKhmPhS2_mb                         [AVX, AVX512DQ, AVX512F]
 _ZN3bun11N_AVX3_ZEN421VisibleUTF16WidthImplEPKtmPm                             [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun11N_AVX3_ZEN422VisibleLatin1WidthImplEPKhm                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun11N_AVX3_ZEN423HtmlEscapeExtraLen8ImplEPKhm                             [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun11N_AVX3_ZEN424HtmlEscapeExtraLen16ImplEPKtm                            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun11N_AVX3_ZEN425CountPrintableAscii16ImplEPKtm                           [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun11N_AVX3_ZEN426IndexOfHTMLEscapeChar8ImplEPKhm                          [AVX, AVX512BW, AVX512F]
 _ZN3bun11N_AVX3_ZEN427IndexOfHTMLEscapeChar16ImplEPKtm                         [AVX, AVX512BW, AVX512F]
@@ -524,6 +528,8 @@ _ZN3bun6N_AVX219FirstNonAscii16ImplEPKtm                                       [
 _ZN3bun6N_AVX220FillWithSkipMaskImplEPKhmPhS2_mb                               [AVX]
 _ZN3bun6N_AVX221VisibleUTF16WidthImplEPKtmPm                                   [AVX, AVX2, BMI1, BMI2]
 _ZN3bun6N_AVX222VisibleLatin1WidthImplEPKhm                                    [AVX, AVX2]
+_ZN3bun6N_AVX223HtmlEscapeExtraLen8ImplEPKhm                                   [AVX, AVX2]
+_ZN3bun6N_AVX224HtmlEscapeExtraLen16ImplEPKtm                                  [AVX, AVX2]
 _ZN3bun6N_AVX225CountPrintableAscii16ImplEPKtm                                 [AVX, AVX2]
 _ZN3bun6N_AVX226IndexOfHTMLEscapeChar8ImplEPKhm                                [AVX, AVX2]
 _ZN3bun6N_AVX227IndexOfHTMLEscapeChar16ImplEPKtm                               [AVX, AVX2, BMI2]
@@ -549,6 +555,8 @@ _ZN3bun6N_AVX319FirstNonAscii16ImplEPKtm                                       [
 _ZN3bun6N_AVX320FillWithSkipMaskImplEPKhmPhS2_mb                               [AVX, AVX512DQ, AVX512F]
 _ZN3bun6N_AVX321VisibleUTF16WidthImplEPKtmPm                                   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun6N_AVX322VisibleLatin1WidthImplEPKhm                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun6N_AVX323HtmlEscapeExtraLen8ImplEPKhm                                   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun6N_AVX324HtmlEscapeExtraLen16ImplEPKtm                                  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun6N_AVX325CountPrintableAscii16ImplEPKtm                                 [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun6N_AVX326IndexOfHTMLEscapeChar8ImplEPKhm                                [AVX, AVX512BW, AVX512F]
 _ZN3bun6N_AVX327IndexOfHTMLEscapeChar16ImplEPKtm                               [AVX, AVX512BW, AVX512F]
@@ -574,6 +582,8 @@ _ZN3bun9N_AVX10_219FirstNonAscii16ImplEPKtm                                    [
 _ZN3bun9N_AVX10_220FillWithSkipMaskImplEPKhmPhS2_mb                            [AVX, AVX512DQ, AVX512F]
 _ZN3bun9N_AVX10_221VisibleUTF16WidthImplEPKtmPm                                [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun9N_AVX10_222VisibleLatin1WidthImplEPKhm                                 [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun9N_AVX10_223HtmlEscapeExtraLen8ImplEPKhm                                [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun9N_AVX10_224HtmlEscapeExtraLen16ImplEPKtm                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun9N_AVX10_225CountPrintableAscii16ImplEPKtm                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun9N_AVX10_226IndexOfHTMLEscapeChar8ImplEPKhm                             [AVX, AVX512BW, AVX512F]
 _ZN3bun9N_AVX10_227IndexOfHTMLEscapeChar16ImplEPKtm                            [AVX, AVX512BW, AVX512F]
@@ -599,6 +609,8 @@ _ZN3bun9N_AVX3_DL19FirstNonAscii16ImplEPKtm                                    [
 _ZN3bun9N_AVX3_DL20FillWithSkipMaskImplEPKhmPhS2_mb                            [AVX, AVX512DQ, AVX512F]
 _ZN3bun9N_AVX3_DL21VisibleUTF16WidthImplEPKtmPm                                [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun9N_AVX3_DL22VisibleLatin1WidthImplEPKhm                                 [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun9N_AVX3_DL23HtmlEscapeExtraLen8ImplEPKhm                                [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun9N_AVX3_DL24HtmlEscapeExtraLen16ImplEPKtm                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun9N_AVX3_DL25CountPrintableAscii16ImplEPKtm                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun9N_AVX3_DL26IndexOfHTMLEscapeChar8ImplEPKhm                             [AVX, AVX512BW, AVX512F]
 _ZN3bun9N_AVX3_DL27IndexOfHTMLEscapeChar16ImplEPKtm                            [AVX, AVX512BW, AVX512F]

@@ -437,6 +437,29 @@ pub(crate) fn migrate_npm_lockfile<'a>(
             {
                 // construct registry url
                 let href: &[u8] = manager.scope_for_package_name(pkg_name).url.href();
+                // GitHub Packages doesn't recognise the npm-compat
+                // `<registry>/<scope>/<pkg>/-/<unscoped>-<ver>.tgz` URL
+                // synthesised below — GHP serves tarballs at
+                // `/download/<scope>/<pkg>/<ver>/<sha>` (per each
+                // package's own `dist.tarball` metadata), so the
+                // npm-compat request 302-redirects to upstream npmjs
+                // with the scope dropped from the path. The private
+                // package doesn't exist on npmjs, so the install
+                // fails with 404.
+                //
+                // This is the npm-lock analogue of #28959 (pnpm-lock);
+                // npm-lock has no `tarball` field separate from
+                // `resolved`, so we can't mirror #28961's fix. Instead
+                // refuse migration when the case is hit and let bun's
+                // outer flow fall back to a fresh metadata-driven
+                // resolve, which uses GHP's correct dist.tarball URL.
+                if pkg_name[0] == b'@'
+                    && href
+                        .windows(b"npm.pkg.github.com".len())
+                        .any(|w| w == b"npm.pkg.github.com")
+                {
+                    return Err(err!("InvalidNPMLockfile"));
+                }
                 let mut count: usize = 0;
                 count += href.len() + pkg_name.len() + b"/-/".len();
                 if pkg_name[0] == b'@' {

@@ -685,6 +685,19 @@ pub(crate) fn run_scripts_with_filter(
     ctx: Command::Context,
 ) -> Result<core::convert::Infallible, bun_core::Error> {
     // Never returns normally; Result<Infallible, _> keeps `?` support.
+    // `bun run` dispatches to the filter runner before `RunCommand::exec_with_cfg`,
+    // so the auto-discovery fallback there never runs for `--filter`. Mirror it here
+    // so `[run]` settings (e.g. `elide-lines`) from a bunfig found by auto-discovery
+    // are honored, matching plain `bun run` and `--config=`.
+    if !ctx.debug.loaded_bunfig {
+        let _ = crate::cli::arguments::load_config_path(
+            crate::cli::command::Tag::RunCommand,
+            true,
+            bun_core::zstr!("bunfig.toml"),
+            &mut *ctx,
+        );
+    }
+
     // Own the slice — `ctx` is reborrowed `&mut` for
     // `configure_env_for_run` below while `script_name` is still live.
     let script_name_owned: Box<[u8]> = if ctx.positionals.len() > 1 {

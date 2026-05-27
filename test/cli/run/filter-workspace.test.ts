@@ -560,6 +560,43 @@ describe("bun", () => {
     });
   });
 
+  // Regression test for https://github.com/oven-sh/bun/issues/31479
+  // `bun run --filter` must honor `[run] elide-lines` from an auto-discovered
+  // `bunfig.toml` (no `--config`, no `--elide-lines` flag), the same way plain
+  // `bun run` and `--config=` already do. Before the fix, the filter runner was
+  // dispatched before the bunfig auto-discovery fallback and ignored the config.
+  test("honors auto-discovered bunfig [run] elide-lines with --filter", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        dep0: {
+          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
+          "package.json": JSON.stringify({ name: "dep0", scripts: { script: `${bunExe()} run index.js` } }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      // elide-lines = 0 disables elision; only auto-discovered (no --config).
+      "bunfig.toml": "[run]\nelide-lines = 0\n",
+    });
+
+    // No --elide-lines on the CLI: the value must come from bunfig alone.
+    const { exitCode, stderr, stdout } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "./packages/dep0", "script"],
+      env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stdoutval = stdout.toString();
+    // On Windows piped stdout is not a terminal, so elision never runs; the
+    // 20-line match still validates the script output was produced.
+    if (process.platform !== "win32") {
+      expect(stdoutval).not.toMatch(/lines elided/);
+    }
+    expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
+    expect(exitCode).toBe(0);
+  });
+
   test("--elide-lines is a no-op (not an error) when stdout is not a terminal", () => {
     const dir = tempDirWithFiles("testworkspace", {
       packages: {

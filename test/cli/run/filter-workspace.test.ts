@@ -630,6 +630,40 @@ describe("bun", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The auto-discovered bunfig also sets `ctx.debug.run_in_bun` from `[run] bun`,
+  // which the --filter path reads to install the node->bun PATH shim. A CLI `--bun`
+  // must still win over `[run] bun = false` (same precedence as --elide-lines above).
+  // When the shim is active, a script's `node` resolves to bun, so
+  // `process.versions.bun` is set.
+  test("--bun flag overrides auto-discovered bunfig [run] bun = false", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        dep0: {
+          "package.json": JSON.stringify({
+            name: "dep0",
+            scripts: { whichnode: `node -e "console.log('bunver=' + (process.versions.bun || 'none'))"` },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      "bunfig.toml": "[run]\nbun = false\n",
+    });
+
+    const { exitCode, stderr, stdout } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "--bun", "run", "--filter", "./packages/dep0", "whichnode"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stdoutval = stdout.toString();
+    // `--bun` won over `[run] bun = false`: the node shim ran bun.
+    expect(stdoutval).toContain(`bunver=${Bun.version}`);
+    expect(stdoutval).not.toContain("bunver=none");
+    expect(exitCode).toBe(0);
+  });
+
   test("--elide-lines is a no-op (not an error) when stdout is not a terminal", () => {
     const dir = tempDirWithFiles("testworkspace", {
       packages: {

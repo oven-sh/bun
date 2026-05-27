@@ -398,6 +398,40 @@ pub(crate) fn migrate_npm_lockfile<'a>(
             continue;
         }
 
+        // Scoped packages without a `resolved` URL whose scope resolves to
+        // GitHub Packages: skip the lockfile entry entirely so the dep walk
+        // at the bottom of this function falls through to its existing
+        // "could not find package, treat like it doesn't exist" branch.
+        //
+        // Background: the synthesis path below builds the npm-compat URL
+        // `<registry>/<scope>/<pkg>/-/<unscoped>-<ver>.tgz`. GHP doesn't
+        // serve tarballs at that URL — it 302-redirects to upstream npmjs
+        // with the scope dropped from the path, where the private package
+        // doesn't exist (404). Without the package's SHA we can't synthesize
+        // a working GHP URL (`/download/<scope>/<pkg>/<ver>/<sha>`) here, so
+        // we drop the entry and let bun's runtime metadata-driven resolve
+        // (the same path a fresh `bun install` uses) populate it correctly.
+        //
+        // This is the npm-lock analogue of #28959 (pnpm-lock); #28961's
+        // approach of preserving `resolution.tarball` doesn't translate
+        // because npm-lock has no tarball field separate from `resolved`.
+        // Only the affected entries are dropped — the rest of the lockfile
+        // remains pinned exactly as before.
+        if pkg.get(b"resolved").is_none() {
+            let pkg_name = package_name_from_path(pkg_path);
+            if !pkg_name.is_empty()
+                && pkg_name[0] == b'@'
+                && manager
+                    .scope_for_package_name(pkg_name)
+                    .url
+                    .href()
+                    .windows(b"npm.pkg.github.com".len())
+                    .any(|w| w == b"npm.pkg.github.com")
+            {
+                continue;
+            }
+        }
+
         id_map.put_assume_capacity(
             pkg_path,
             IdMapValue {

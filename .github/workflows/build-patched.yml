@@ -1,0 +1,77 @@
+name: Build patched bun (linux-x64)
+
+on:
+  push:
+    branches:
+      - claude/npm-lock-ghp-skip
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install gcc-13 + libstdc++-13-dev (bun CI parity)
+        run: |
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          sudo apt-get update -qq
+          sudo apt-get install -y gcc-13 g++-13 libstdc++-13-dev
+
+      - name: Install cmake 3.30.5
+        run: |
+          wget -q -O /tmp/cmake.sh https://github.com/Kitware/CMake/releases/download/v3.30.5/cmake-3.30.5-linux-x86_64.sh
+          sudo sh /tmp/cmake.sh --skip-license --prefix=/usr/local
+
+      - name: Install LLVM 21
+        run: |
+          wget -q https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21 all
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: bun install
+        run: bun install --frozen-lockfile
+
+      - name: Build debug
+        run: bun ./scripts/build.ts --profile=debug
+
+      - name: Build release
+        run: bun ./scripts/build.ts --profile=release
+
+      - name: Stage outputs
+        id: stage
+        run: |
+          mkdir -p out
+          BUN_DEBUG=$(find build -name bun-debug -type f -executable | head -1)
+          BUN_REL=$(find build/release -maxdepth 2 -name bun -type f -executable -not -path '*/CMakeFiles/*' | head -1)
+          [ -n "$BUN_DEBUG" ] && cp "$BUN_DEBUG" out/bun-debug
+          [ -n "$BUN_REL" ] && cp "$BUN_REL" out/bun
+          ls -lh out/
+          [ -f out/bun ] && sha256sum out/bun | tee out/bun.sha256
+
+      - name: Upload bun-debug
+        if: hashFiles('out/bun-debug') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-debug-linux-x64
+          path: out/bun-debug
+          retention-days: 14
+
+      - name: Upload bun release
+        if: hashFiles('out/bun') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-linux-x64
+          path: |
+            out/bun
+            out/bun.sha256
+          retention-days: 30

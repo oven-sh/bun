@@ -688,6 +688,37 @@ describe("https.request agent TLS options inheritance", () => {
         throw new Error(`Expected message "connect ECONNREFUSED 127.0.0.1:${proxyPort}", got "${error.message}"`);
       }
     });
+
+    test("HttpsProxyAgent with an IPv6 proxy reports the unbracketed address", async () => {
+      // Bind then release an IPv6 loopback port so connecting to it is refused.
+      const closed = net.createServer();
+      const proxyPort = await new Promise<number>(resolve => {
+        closed.listen(0, "::1", () => resolve((closed.address() as AddressInfo).port));
+      });
+      await new Promise<void>(resolve => closed.close(() => resolve()));
+
+      const agent = new HttpsProxyAgent(`http://[::1]:${proxyPort}`);
+
+      const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
+      const req = https.request(
+        { hostname: "127.0.0.1", port: 443, path: "/", method: "GET", agent, timeout: 5000 },
+        () => reject(new Error("Expected request to fail")),
+      );
+      req.on("error", resolve);
+      req.end();
+
+      const error = await promise;
+      if (error.code !== "ECONNREFUSED") {
+        throw new Error(`Expected code ECONNREFUSED, got ${error.code} (${error.message})`);
+      }
+      // URL.hostname keeps brackets for IPv6; Node's error.address is the bare IP.
+      if (error.address !== "::1") {
+        throw new Error(`Expected address ::1 (unbracketed), got ${error.address}`);
+      }
+      if (error.message !== `connect ECONNREFUSED ::1:${proxyPort}`) {
+        throw new Error(`Expected message "connect ECONNREFUSED ::1:${proxyPort}", got "${error.message}"`);
+      }
+    });
   });
 });
 

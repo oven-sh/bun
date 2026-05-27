@@ -495,11 +495,17 @@ function ClientRequest(input, options, cb) {
               // attempted endpoint (the resolved address for the custom-lookup
               // path, else the request target).
               let address = attemptedAddress;
-              let failedPort = attemptedPort;
+              // Node reports the port as a number.
+              let failedPort = Number(attemptedPort);
               if (proxy) {
                 try {
                   const proxyUrl = new URL(proxy);
-                  address = proxyUrl.hostname;
+                  // URL.hostname keeps brackets around IPv6 literals; Node's
+                  // error.address is the bare IP.
+                  address =
+                    proxyUrl.hostname.startsWith("[") && proxyUrl.hostname.endsWith("]")
+                      ? proxyUrl.hostname.slice(1, -1)
+                      : proxyUrl.hostname;
                   failedPort = proxyUrl.port ? Number(proxyUrl.port) : proxyUrl.protocol === "https:" ? 443 : 80;
                 } catch {}
               }

@@ -3,15 +3,19 @@ import type { Dirent as DirentType, PathLike, Stats as StatsType } from "fs";
 const EventEmitter = require("node:events");
 const promises = require("node:fs/promises");
 const types = require("node:util/types");
-const { validateFunction, validateInteger } = require("internal/validators");
+const {
+  validateFunction,
+  validateInteger,
+  getValidatedPath,
+  throwIfNullBytesInFileName,
+} = require("internal/validators");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
 const isDate = types.isDate;
 
-// Private exports
-// `fs` points to the return value of `node_fs_binding.zig`'s `createBinding` function.
-const { fs } = promises.$data;
+// The native `node:fs` binding, shared via `internal/fs/binding`.
+const fs = require("internal/fs/binding");
 
 const constants = $processBindingConstants.fs;
 var _lazyGlob;
@@ -110,52 +114,8 @@ class FSWatcher extends EventEmitter {
   start() {}
 }
 
-/** Implemented in `node_fs_stat_watcher.zig` */
-interface StatWatcherHandle {
-  ref();
-  unref();
-  close();
-}
-
 function openAsBlob(path, options) {
   return Promise.$resolve(Bun.file(path, options));
-}
-
-function emitStop(self: StatWatcher) {
-  self.emit("stop");
-}
-
-class StatWatcher extends EventEmitter {
-  _handle: StatWatcherHandle | null;
-
-  constructor(path, options) {
-    super();
-    this._handle = fs.watchFile(path, options, this.#onChange.bind(this));
-  }
-
-  #onChange(curr, prev) {
-    this.emit("change", curr, prev);
-  }
-
-  // https://github.com/nodejs/node/blob/9f51c55a47702dc6a0ca3569853dd7ba022bf7bb/lib/internal/fs/watchers.js#L259-L263
-  start() {}
-
-  stop() {
-    if (!this._handle) return;
-
-    process.nextTick(emitStop, this);
-
-    this._handle.close();
-    this._handle = null;
-  }
-
-  ref() {
-    this._handle?.ref();
-  }
-
-  unref() {
-    this._handle?.unref();
-  }
 }
 
 var access = function access(path, mode, callback) {
@@ -644,58 +604,13 @@ defineCustomPromisifyArgs(readv, ["bytesRead", "buffers"]);
 defineCustomPromisifyArgs(write, ["bytesWritten", "buffer"]);
 defineCustomPromisifyArgs(writev, ["bytesWritten", "buffers"]);
 
-// TODO: move this entire thing into native code.
-// the reason it's not done right now is because there isnt a great way to have multiple
-// listeners per StatWatcher with the current implementation in native code. the downside
-// of this means we need to do path validation in the js side of things
-const statWatchers = new Map();
-function getValidatedPath(p: any) {
-  if (p instanceof URL) return Bun.fileURLToPath(p as URL);
-  if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
-  if (p.startsWith("file:")) return Bun.fileURLToPath(p);
-  return require("node:path").resolve(p);
-}
+// The implementation (StatWatcher and friends) is lazily loaded from "internal/fs/watchfile"
+// the first time fs.watchFile or fs.unwatchFile is called.
 function watchFile(filename, options, listener) {
-  filename = getValidatedPath(filename);
-
-  if (typeof options === "function") {
-    listener = options;
-    options = {};
-  }
-
-  if (typeof listener !== "function") {
-    throw $ERR_INVALID_ARG_TYPE("listener", "function", listener);
-  }
-
-  var stat = statWatchers.get(filename);
-  if (!stat) {
-    stat = new StatWatcher(filename, options);
-    statWatchers.set(filename, stat);
-  }
-  stat.addListener("change", listener);
-  return stat;
+  return require("internal/fs/watchfile").watchFile(filename, options, listener);
 }
 function unwatchFile(filename, listener) {
-  filename = getValidatedPath(filename);
-
-  var stat = statWatchers.get(filename);
-  if (!stat) return throwIfNullBytesInFileName(filename);
-  if (listener) {
-    stat.removeListener("change", listener);
-    if (stat.listenerCount("change") !== 0) {
-      return;
-    }
-  } else {
-    stat.removeAllListeners("change");
-  }
-  stat.stop();
-  statWatchers.delete(filename);
-}
-
-function throwIfNullBytesInFileName(filename: string) {
-  if (filename.indexOf("\u0000") !== -1) {
-    throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", filename);
-  }
+  return require("internal/fs/watchfile").unwatchFile(filename, listener);
 }
 
 function createReadStream(path, options) {

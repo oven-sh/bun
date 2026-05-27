@@ -94,8 +94,10 @@ if (isDockerEnabled()) {
   // there; the docker-gated branch above provides the CI coverage.
   const url = process.env.MYSQL_URL || "mysql://bun@127.0.0.1:3306/bun_sql_test";
 
-  // Returns a connected SQL client, or null if no MySQL is reachable (and
-  // MYSQL_URL was not explicitly provided, in which case it's a soft skip).
+  // Probes the connection with a trivial query. Returns true when the server
+  // is reachable. Returns false (after a warning) for a soft skip when no MySQL
+  // is reachable and MYSQL_URL was not explicitly provided; throws if MYSQL_URL
+  // was provided but the server is unreachable.
   async function connectOrSkip(sql: SQL, label: string): Promise<boolean> {
     try {
       await sql`SELECT 1`;

@@ -41,6 +41,23 @@ async function runBindErrorHang(sql: SQL) {
   expect((await sql`SELECT 1 AS ok`)[0].ok).toBe(1);
 }
 
+// An Invalid Date (`new Date(NaN)`) is still a `Date`, so it binds as a
+// DATETIME. Its timestamp is NaN, which the float->int cast would launder into
+// 0 and silently store as 1970-01-01. It must be rejected instead.
+async function runInvalidDateReject(sql: SQL) {
+  for (const invalid of [new Date("not a date"), new Date(NaN), new Date(Infinity)]) {
+    expect(Number.isNaN(invalid.getTime())).toBe(true);
+    await expect(
+      (async () => {
+        await sql`SELECT ${invalid} AS dt`;
+      })(),
+    ).rejects.toThrow(/invalid date/i);
+  }
+
+  // The connection must stay usable after the rejected binds.
+  expect((await sql`SELECT 1 AS ok`)[0].ok).toBe(1);
+}
+
 // `Signature::generate` and `bind` each iterate the user's param array, so an
 // index getter can hand a `Date` to the first pass (making the column a
 // DATETIME) and a number to the second. A huge number yields a day count past
@@ -87,6 +104,11 @@ if (isDockerEnabled()) {
       await using sql = new SQL({ url: getUrl(), max: 1 });
       await runGetterMutationAbort(sql);
     });
+    test("an Invalid Date bound as DATETIME is rejected, not stored as 1970-01-01", async () => {
+      await container.ready;
+      await using sql = new SQL({ url: getUrl(), max: 1 });
+      await runInvalidDateReject(sql);
+    });
   });
 } else {
   // No docker daemon (e.g. local/sandboxed environments). If a MySQL server is
@@ -123,6 +145,11 @@ if (isDockerEnabled()) {
       await using sql = new SQL({ url, max: 1 });
       if (!(await connectOrSkip(sql, "sql-mysql-bind-error-hang"))) return;
       await runGetterMutationAbort(sql);
+    });
+    test("an Invalid Date bound as DATETIME is rejected, not stored as 1970-01-01", async () => {
+      await using sql = new SQL({ url, max: 1 });
+      if (!(await connectOrSkip(sql, "sql-mysql-bind-error-hang"))) return;
+      await runInvalidDateReject(sql);
     });
   });
 }

@@ -482,6 +482,19 @@ impl Value {
     }
 }
 
+/// Rejects a non-finite millisecond timestamp (`NaN`/±Inf) before it reaches
+/// the float->int casts that would silently turn it into 0. An Invalid Date
+/// (`new Date(NaN)`) is still a `Date`, so it would otherwise be bound as a
+/// plausible-looking `1970-01-01 00:00:00` instead of surfacing the error.
+fn check_finite_ms(total_ms: f64, global_object: &JSGlobalObject) -> Result<(), any_mysql_error::Error> {
+    if !total_ms.is_finite() {
+        return Err(js_error_to_mysql(global_object.throw_invalid_arguments(
+            format_args!("Invalid Date cannot be bound as a MySQL DATE/DATETIME/TIME value"),
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Default, Clone, Copy)]
 pub struct DateTime {
     pub year: u16,
@@ -670,6 +683,10 @@ impl DateTime {
         if value.is_date() {
             // this is actually ms not seconds
             let total_ms = value.get_unix_timestamp();
+            // An Invalid Date (`new Date(NaN)`) carries NaN; the float->int
+            // casts below would silently launder it into 0 (1970-01-01 on the
+            // wire). Reject it instead of storing a bogus timestamp.
+            check_finite_ms(total_ms, global_object)?;
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
             let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
             return DateTime::from_unix_timestamp(ts, ms * 1000, global_object);
@@ -677,6 +694,7 @@ impl DateTime {
 
         if value.is_number() {
             let total_ms = value.as_number();
+            check_finite_ms(total_ms, global_object)?;
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
             let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
             return DateTime::from_unix_timestamp(ts, ms * 1000, global_object);
@@ -719,12 +737,14 @@ impl Time {
         // TODO(port): narrow error set
         if value.is_date() {
             let total_ms = value.get_unix_timestamp();
+            check_finite_ms(total_ms, global_object)?;
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
             let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
             Self::check_range(ts, global_object)?;
             Ok(Time::from_unix_timestamp(ts, ms * 1000))
         } else if value.is_number() {
             let total_ms = value.as_number();
+            check_finite_ms(total_ms, global_object)?;
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
             let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
             Self::check_range(ts, global_object)?;

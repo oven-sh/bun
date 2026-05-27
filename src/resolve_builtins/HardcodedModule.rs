@@ -15,6 +15,8 @@ pub enum HardcodedModule {
     BunApp,
     #[strum(serialize = "bun:ffi")]
     BunFfi,
+    #[strum(serialize = "bun:guard")]
+    BunGuard,
     #[strum(serialize = "bun:jsc")]
     BunJsc,
     #[strum(serialize = "bun:main")]
@@ -187,6 +189,7 @@ impl HardcodedModule {
         b"bun" => HardcodedModule::Bun,
         b"bun:app" => HardcodedModule::BunApp,
         b"bun:ffi" => HardcodedModule::BunFfi,
+        b"bun:guard" => HardcodedModule::BunGuard,
         b"bun:jsc" => HardcodedModule::BunJsc,
         b"bun:main" => HardcodedModule::BunMain,
         b"bun:test" => HardcodedModule::BunTest,
@@ -681,6 +684,7 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     entry!("bun:test"),
     entry!("bun:app"),
     entry!("bun:ffi"),
+    entry!("bun:guard"),
     entry!("bun:jsc"),
     entry!("bun:main"),
     entry!("bun:sqlite"),

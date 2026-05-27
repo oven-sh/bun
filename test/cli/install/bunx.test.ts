@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
-import { chmodSync, copyFileSync, readdirSync, statSync, symlinkSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, readdirSync, statSync, symlinkSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
@@ -1372,5 +1372,93 @@ it.concurrent.skipIf(isWindows)(
     expect(out.split(/\r?\n/)).toEqual(["uglify-js 3.14.1", ""]);
     expect(exitCode).toBe(0);
     expect(statSync(join(env.TMPDIR, `bunx-${uid}-uglify-js@3.14.1`, "node_modules", ".bin")).isDirectory()).toBe(true);
+  },
+);
+
+it.concurrent.skipIf(isWindows || process.getuid?.() === 0)(
+  "falls back to the temp directory when the per-user install cache directory cannot be created",
+  async () => {
+    const { x_dir, env } = setup();
+    const uid = process.getuid!();
+    const readOnlyParent = tmpdirSync();
+    chmodSync(readOnlyParent, 0o500);
+    env.BUN_INSTALL_CACHE_DIR = join(readOnlyParent, "cache");
+
+    const subprocess = spawn({
+      cmd: [bunExe(), "x", "uglify-js@3.14.1", "-v"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([
+      subprocess.stderr.text(),
+      subprocess.stdout.text(),
+      subprocess.exited,
+    ]);
+    expect(err).not.toContain("error:");
+    expect(out.split(/\r?\n/)).toEqual(["uglify-js 3.14.1", ""]);
+    expect(exitCode).toBe(0);
+    expect(statSync(join(env.TMPDIR, `bunx-${uid}-uglify-js@3.14.1`, "node_modules", ".bin")).isDirectory()).toBe(true);
+  },
+);
+
+it.concurrent.skipIf(isWindows)(
+  "bun pm cache rm clears the bunx cache when bunfig.toml sets a different install cache dir",
+  async () => {
+    const { x_dir, env } = setup();
+    const uid = process.getuid!();
+    const bunInstallDir = tmpdirSync();
+    const bunfigCacheDir = tmpdirSync();
+    delete env.BUN_INSTALL_CACHE_DIR;
+    env.BUN_INSTALL = bunInstallDir;
+    await writeFile(join(x_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+    await writeFile(join(x_dir, "bunfig.toml"), `[install.cache]\ndir = ${JSON.stringify(bunfigCacheDir)}\n`);
+
+    {
+      const subprocess = spawn({
+        cmd: [bunExe(), "x", "uglify-js@3.14.1", "-v"],
+        cwd: x_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([
+        subprocess.stderr.text(),
+        subprocess.stdout.text(),
+        subprocess.exited,
+      ]);
+      expect(err).not.toContain("error:");
+      expect(out.split(/\r?\n/)).toEqual(["uglify-js 3.14.1", ""]);
+      expect(exitCode).toBe(0);
+    }
+
+    const userCacheRoot = join(bunInstallDir, "install", "cache", `.bunx-${uid}`);
+    expect(statSync(join(userCacheRoot, "uglify-js@3.14.1", "node_modules", ".bin")).isDirectory()).toBe(true);
+
+    {
+      const subprocess = spawn({
+        cmd: [bunExe(), "pm", "cache", "rm"],
+        cwd: x_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([
+        subprocess.stderr.text(),
+        subprocess.stdout.text(),
+        subprocess.exited,
+      ]);
+      expect(err).toBe("");
+      expect(out).toContain("Cleared 'bun install' cache");
+      expect(out).toContain("Cleared 1 cached 'bunx' packages");
+      expect(exitCode).toBe(0);
+    }
+
+    expect(existsSync(userCacheRoot)).toBe(false);
+    expect(existsSync(bunfigCacheDir)).toBe(false);
   },
 );

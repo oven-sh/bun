@@ -882,7 +882,8 @@ impl BunxCommand {
         //   <install cache>/.bunx-<uid>/<package_fmt>/node_modules/.bin/<bin>
         //
         // On Windows, and on POSIX when no install cache directory can be
-        // resolved, the cache stays in the temp directory:
+        // resolved or the per-user directory cannot be created, the cache
+        // stays in the temp directory:
         //
         //   <temp_dir>/bunx-<uid>-<package_fmt>/node_modules/.bin/<bin>
         //
@@ -914,7 +915,22 @@ impl BunxCommand {
                 while root.last() == Some(&(bun_paths::SEP as u8)) {
                     root.pop();
                 }
-                Some(root)
+                let mut bunx_root = Vec::new();
+                write!(
+                    &mut bunx_root,
+                    "{cache}{sep}.bunx-{uid}",
+                    cache = BStr::new(&root),
+                    sep = bun_paths::SEP as char,
+                    uid = uid,
+                )
+                .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                if Fd::cwd().make_path(&root).is_ok()
+                    && bun_sys::mkdir_recursive_at_mode(Fd::cwd(), &bunx_root, 0o700).is_ok()
+                {
+                    Some(root)
+                } else {
+                    None
+                }
             }
         };
         #[cfg(not(unix))]

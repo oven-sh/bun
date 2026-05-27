@@ -1073,7 +1073,10 @@ impl Listener {
                         if let Some(prev_handlers) = prev.handlers.get() {
                             // SAFETY: prev_handlers was heap-allocated; shared
                             // reborrow is scoped to this expression.
-                            if unsafe { (*prev_handlers.as_ptr()).active_connections.get() } == 0 {
+                            if prev.flags.get().contains(SocketFlags::OWNS_HANDLERS)
+                                && unsafe { (*prev_handlers.as_ptr()).active_connections.get() }
+                                    == 0
+                            {
                                 // SAFETY: prev_handlers was heap-allocated and unreferenced.
                                 unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
                             }
@@ -1170,7 +1173,10 @@ impl Listener {
                         if let Some(prev_handlers) = prev.handlers.get() {
                             // SAFETY: prev_handlers was heap-allocated; shared
                             // reborrow is scoped to this expression.
-                            if unsafe { (*prev_handlers.as_ptr()).active_connections.get() } == 0 {
+                            if prev.flags.get().contains(SocketFlags::OWNS_HANDLERS)
+                                && unsafe { (*prev_handlers.as_ptr()).active_connections.get() }
+                                    == 0
+                            {
                                 // SAFETY: prev_handlers was heap-allocated and unreferenced.
                                 unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
                             }
@@ -1424,7 +1430,9 @@ fn connect_finish<const IS_SSL: bool>(
             // once the in-flight callback unwinds; freeing here would be a UAF.
             // SAFETY: prev_handlers was heap-allocated; shared reborrow is
             // scoped to this expression.
-            if unsafe { (*prev_handlers.as_ptr()).active_connections.get() } == 0 {
+            if prev.flags.get().contains(SocketFlags::OWNS_HANDLERS)
+                && unsafe { (*prev_handlers.as_ptr()).active_connections.get() } == 0
+            {
                 // SAFETY: prev_handlers was heap-allocated and unreferenced.
                 unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
             }

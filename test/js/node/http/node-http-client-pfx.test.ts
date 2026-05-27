@@ -45,10 +45,12 @@ describe.concurrent("https.request pfx option", () => {
             res.writeHead(200);
             res.end("hello");
           });
-          server.listen(0, () => {
+          // Bind and connect over 127.0.0.1 (not "localhost") so the client
+          // never races ::1 vs 127.0.0.1, which can stall on Windows CI.
+          server.listen(0, "127.0.0.1", () => {
             const req = https.request({
               port: server.address().port,
-              host: "localhost",
+              host: "127.0.0.1",
               method: "GET",
               rejectUnauthorized: false,
               servername: "agent1",
@@ -85,6 +87,7 @@ describe.concurrent("https.request pfx option", () => {
     expect(stderr).not.toContain("pfx is not supported");
     expect(stdout).toContain("STATUS=200");
     expect(stdout).toContain("BODY=hello");
+    if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -98,7 +101,7 @@ describe.concurrent("https.request pfx option", () => {
         `
           const https = require("https");
           try {
-            https.request({ host: "localhost", port: 443, pfx: Buffer.from("x") });
+            https.request({ host: "127.0.0.1", port: 443, pfx: Buffer.from("x") });
             console.log("NO_THROW");
           } catch (err) {
             console.log("THREW=" + err.message);

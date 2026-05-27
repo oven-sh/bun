@@ -15,12 +15,22 @@ import http from "node:http";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
+import os from "node:os";
 import { dirname, join } from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 // uv's negative errno for a refused connection (identical in Bun and Node).
 const { UV_ECONNREFUSED } = process.binding("uv");
+
+// Some CI hosts (and containers) have no IPv6 loopback; binding to ::1 there
+// emits EADDRNOTAVAIL instead of succeeding. Detect an internal (loopback)
+// IPv6 interface. Computed inline rather than via harness.isIPv6() because this
+// file must also run under `node --test`. Match on family (not address): the
+// loopback's address is not always rendered as "::1".
+const hasIPv6Loopback = Object.values(os.networkInterfaces())
+  .flat()
+  .some(iface => iface != null && iface.internal && (iface.family === "IPv6" || (iface.family as number) === 6));
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -690,9 +700,12 @@ describe("https.request agent TLS options inheritance", () => {
     });
 
     test("HttpsProxyAgent with an IPv6 proxy reports the unbracketed address", async () => {
+      if (!hasIPv6Loopback) return; // no IPv6 loopback on this host — nothing to bind
+
       // Bind then release an IPv6 loopback port so connecting to it is refused.
       const closed = net.createServer();
-      const proxyPort = await new Promise<number>(resolve => {
+      const proxyPort = await new Promise<number>((resolve, reject) => {
+        closed.once("error", reject);
         closed.listen(0, "::1", () => resolve((closed.address() as AddressInfo).port));
       });
       await new Promise<void>(resolve => closed.close(() => resolve()));

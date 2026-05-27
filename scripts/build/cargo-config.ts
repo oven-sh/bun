@@ -6,8 +6,8 @@
  * machine-specific (CI puts the LLVM toolchain at a versioned path like
  * `/opt/llvm-N/bin/clang++`; a contributor's box has it wherever rustup /
  * the system package manager dropped it). `tools.ts` already discovers the
- * real toolchain (`cfg.cxx`), so we write the per-target `linker = ` lines
- * from that discovered path rather than hardcoding one.
+ * real toolchain (`cfg.hostCxx`), so we write the per-target `linker = `
+ * lines from that discovered path rather than hardcoding one.
  *
  * For the `bun bd` / ninja build this file is purely advisory: `rust.ts`
  * passes `CARGO_TARGET_<TRIPLE>_LINKER = cfg.cxx` (plus `CC`/`CXX`/`AR`) and
@@ -36,21 +36,24 @@ function tripleOs(triple: string): "linux" | "darwin" | "windows" | "freebsd" {
 
 /**
  * Linker for `triple`. When the triple's OS matches the host OS we know the
- * discovered `cfg.cxx` can drive the link (a linux clang++ links every linux
- * arch's staticlib; macOS clang is multi-arch) — use the absolute path so a
- * versioned/non-PATH toolchain still works. For a foreign OS we don't have a
- * verified cross-linker path; `cargo check` never links and the ninja build
- * sets the linker via env anyway, so fall back to the conventional driver
- * name and let PATH resolve it if someone actually cross-links.
+ * discovered host clang++ can drive the link (a linux clang++ links every
+ * linux arch's staticlib; macOS clang is multi-arch) — use the absolute path
+ * so a versioned/non-PATH toolchain still works. For a foreign OS we don't
+ * have a verified cross-linker path; `cargo check` never links and the ninja
+ * build sets the linker via env anyway, so fall back to the conventional
+ * driver name and let PATH resolve it if someone actually cross-links.
  */
 function linkerFor(triple: string, cfg: Config): string {
   // android needs the NDK sysroot/runtimes; musl needs a different libc/sysroot.
-  // The host's gnu clang++ (`cfg.cxx`) isn't a valid driver for either even on a
-  // linux host, so fall back to the conventional driver name (PATH-resolved) —
+  // The host's gnu clang++ isn't a valid driver for either even on a linux
+  // host, so fall back to the conventional driver name (PATH-resolved) —
   // matches the foreign-OS case below. `cargo check` never links, and the ninja
   // build sets the linker via `CARGO_TARGET_<T>_LINKER` env anyway.
   if (triple.includes("android") || triple.includes("musl")) return "clang++";
-  return tripleOs(triple) === cfg.host.os ? cfg.cxx : "clang++";
+  // cfg.hostCxx, not cfg.cxx: this entry covers HOST artifacts (build
+  // scripts, proc-macros) even during ninja builds, and when cross-compiling
+  // for windows cfg.cxx is clang-cl — not a valid posix link driver.
+  return tripleOs(triple) === cfg.host.os ? cfg.hostCxx : "clang++";
 }
 
 /**
@@ -72,8 +75,8 @@ export function generateCargoConfig(cfg: Config): string {
     "# pulled in by `bun_bin/build.rs` is built with clang and assumes lld",
     "# semantics, and libstdc++ is linked statically via the driver — neither",
     "# of which the default `cc` link handles cleanly. Paths come from the",
-    "# toolchain `scripts/build/tools.ts` discovered (`cfg.cxx`), so this file",
-    "# is correct on whatever machine ran configure.",
+    "# toolchain `scripts/build/tools.ts` discovered (`cfg.hostCxx`), so this",
+    "# file is correct on whatever machine ran configure.",
   ];
 
   for (const triple of allRustTargets) {

@@ -1,13 +1,26 @@
 import { file, gc, Serve, serve, Server } from "bun";
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, dumpStats, isBroken, isIntelMacOS, isIPv4, isIPv6, isPosix, tls, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  dumpStats,
+  isBroken,
+  isIntelMacOS,
+  isIPv4,
+  isIPv6,
+  isPosix,
+  tempDir,
+  tls,
+  tmpdirSync,
+} from "harness";
 import { join, resolve } from "path";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
 import net from "node:net";
+import { networkInterfaces } from "node:os";
 import { tmpdir } from "os";
 
 let renderToReadableStream: any = null;
@@ -2293,4 +2306,54 @@ server.listen(0, "127.0.0.1", () => {
   // already torn the connection down. It must never reach the request listener.
   expect(stdout.trim()).toBe('{"seen":["/first","/after"],"after":200}');
   expect(exitCode).toBe(0);
+});
+
+it("only serves /bun:info to loopback clients in development mode", async () => {
+  using server = Bun.serve({
+    port: 0,
+    hostname: "0.0.0.0",
+    development: true,
+    fetch() {
+      return new Response("handled by fetch");
+    },
+  });
+
+  // Loopback clients still get the runtime info JSON from the development route.
+  const loopbackRes = await fetch(`http://127.0.0.1:${server.port}/bun:info`);
+  const loopbackText = await loopbackRes.text();
+  expect(loopbackText).toContain("bun_version");
+  expect(loopbackRes.status).toBe(200);
+
+  // Connections arriving from a non-loopback interface must not be answered by the
+  // /bun:info route; the request falls through to the user's fetch handler instead.
+  const externalAddress = Object.values(networkInterfaces())
+    .flat()
+    .find(iface => iface && iface.family === "IPv4" && !iface.internal)?.address;
+  if (!externalAddress) {
+    // Machine has no non-loopback IPv4 interface; only the loopback case can be exercised here.
+    return;
+  }
+
+  const externalRes = await fetch(`http://${externalAddress}:${server.port}/bun:info`);
+  const externalText = await externalRes.text();
+  expect(externalText).toBe("handled by fetch");
+  expect(externalText).not.toContain("bun_version");
+  expect(externalRes.status).toBe(200);
+});
+
+it.if(isPosix)("serves /bun:info over a unix socket in development mode", async () => {
+  using dir = tempDir("info", {});
+  const unix = join(String(dir), "bun-info.sock");
+  using server = Bun.serve({
+    unix,
+    development: true,
+    fetch() {
+      return new Response("handled by fetch");
+    },
+  });
+
+  const res = await fetch("http://localhost/bun:info", { unix });
+  const text = await res.text();
+  expect(text).toContain("bun_version");
+  expect(res.status).toBe(200);
 });

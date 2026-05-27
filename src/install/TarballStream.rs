@@ -154,6 +154,7 @@ pub struct TarballStream {
     bytes_received: usize,
     entry_count: u32,
     fail: Option<bun_core::Error>,
+    invalid_name: bool,
 
     /// Thread-pool task that runs `drain`. Re-enqueued whenever new data
     /// arrives and no drain is currently in flight.
@@ -249,6 +250,7 @@ impl TarballStream {
             bytes_received: 0,
             entry_count: 0,
             fail: None,
+            invalid_name: false,
             drain_task: thread_pool::Task {
                 node: thread_pool::Node::default(),
                 callback: drain_callback,
@@ -663,6 +665,13 @@ impl TarballStream {
         // Tag::Extract` for streaming tarballs).
         let tarball = &self.extract_task.request_extract().tarball;
         let (_, basename) = tarball.name_and_basename();
+        if !tarball.resolution.tag.is_git()
+            && tarball.resolution.tag != ResolutionTag::LocalTarball
+            && !crate::dependency::is_safe_install_folder_name(&basename[0..basename.len().min(32)])
+        {
+            self.invalid_name = true;
+            return Err(bun_core::err!("InstallFailed"));
+        }
         let mut buf = PathBuffer::uninit();
         let tmpname = FileSystem::tmpname(
             &basename[0..basename.len().min(32)],
@@ -1052,15 +1061,26 @@ impl TarballStream {
             };
 
             if let Some(err) = self.fail {
-                (*task).log.add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "{} extracting tarball for \"{}\"",
-                        err.name(),
-                        bstr::BStr::new(tarball.name.slice()),
-                    ),
-                );
+                if self.invalid_name {
+                    (*task).log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Refusing to install package with invalid name \"{}\"",
+                            bun_fmt::s(tarball.name_and_basename().0),
+                        ),
+                    );
+                } else {
+                    (*task).log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "{} extracting tarball for \"{}\"",
+                            err.name(),
+                            bstr::BStr::new(tarball.name.slice()),
+                        ),
+                    );
+                }
                 (*task).err = Some(err);
                 (*task).status = TaskStatus::Fail;
                 return;

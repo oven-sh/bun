@@ -903,6 +903,7 @@ pub struct MarkedArrayBuffer {
     // In Rust the global allocator is implicit; we keep a bool flag so `destroy` knows
     // whether to mi_free the backing storage.
     pub owns_buffer: bool,
+    pub pinned: bool,
 }
 
 // TODO(port): Zig `ArrayBuffer.Stream = std.io.FixedBufferStream([]u8)`.
@@ -920,6 +921,7 @@ impl MarkedArrayBuffer {
     pub fn from_typed_array(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
             owns_buffer: false,
+            pinned: false,
             buffer: ArrayBuffer::from_typed_array(ctx, value),
         }
     }
@@ -927,6 +929,7 @@ impl MarkedArrayBuffer {
     pub fn from_array_buffer(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
             owns_buffer: false,
+            pinned: false,
             buffer: ArrayBuffer::from_array_buffer(ctx, value),
         }
     }
@@ -948,6 +951,16 @@ impl MarkedArrayBuffer {
         Some(MarkedArrayBuffer {
             buffer: array_buffer,
             owns_buffer: false,
+            pinned: false,
+        })
+    }
+
+    pub fn from_js_pinned(global: &JSGlobalObject, value: JSValue) -> Option<MarkedArrayBuffer> {
+        let buffer = value.as_pinned_arraybuffer(global)?;
+        Some(MarkedArrayBuffer {
+            buffer,
+            owns_buffer: false,
+            pinned: true,
         })
     }
 
@@ -955,11 +968,13 @@ impl MarkedArrayBuffer {
         MarkedArrayBuffer {
             buffer: ArrayBuffer::from_bytes(bytes, typed_array_type),
             owns_buffer: true,
+            pinned: false,
         }
     }
 
     pub const EMPTY: MarkedArrayBuffer = MarkedArrayBuffer {
         owns_buffer: false,
+        pinned: false,
         buffer: ArrayBuffer::EMPTY,
     };
 

@@ -1008,7 +1008,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                                     i += 2;
 
                                     while (i < text.len and text[i] != '}') {
-                                        if (text[i] == '\\') {
+                                        if (i + 1 < text.len and text[i] == '\\') {
                                             i += 1;
                                         }
                                         i += 1;

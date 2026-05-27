@@ -25,6 +25,8 @@ use bun_sys::FdDirExt;
 // TODO(port): narrow error set
 type Error = bun_core::Error;
 
+const MAX_DECOMPRESSED_TARBALL_SIZE: usize = 2 * 1024 * 1024 * 1024;
+
 pub struct ExtractTarball {
     pub name: StringOrTinyString,
     pub resolution: Resolution,
@@ -241,6 +243,22 @@ impl ExtractTarball {
         // `open_dir_at_windows_a` boundary, not here.
         let mut tmpname_buf = PathBuffer::uninit();
         let (name, basename) = self.name_and_basename();
+        if !self.resolution.tag.is_git()
+            && self.resolution.tag != ResolutionTag::LocalTarball
+            && !bun_install::dependency::is_safe_install_folder_name(
+                &basename[0..basename.len().min(32)],
+            )
+        {
+            log.add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "Refusing to install package with invalid name \"{}\"",
+                    bun_fmt::s(name),
+                ),
+            );
+            return Err(bun_core::err!("InstallFailed"));
+        }
 
         let mut resolved: &'static [u8] = b"";
         let tmpname = FileSystem::tmpname(
@@ -344,6 +362,7 @@ impl ExtractTarball {
                 zlib_pool.list.clear();
                 let mut zlib_entry =
                     Zlib::ZlibReaderArrayList::init(tgz_bytes, &mut zlib_pool.list)?;
+                zlib_entry.max_output_size = MAX_DECOMPRESSED_TARBALL_SIZE;
                 if let Err(err) = zlib_entry.read_all(true) {
                     log.add_error_fmt(
                         None,

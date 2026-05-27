@@ -974,6 +974,7 @@ struct us_socket_t *us_internal_ssl_on_open(struct us_socket_t *s, int is_client
   struct us_socket_t *result = us_dispatch_open(s, is_client, ip, ip_length);
   if (!result || ssl_gone(result)) return result;
   /* Kick the handshake immediately — some peers stall waiting for ClientHello. */
+  ssl_set_loop_data(result);
   ssl_update_handshake(result);
   return result;
 }

@@ -1832,6 +1832,15 @@ where
         self.flags.set_has_abort_handler(true);
         self.flags.set_has_marked_pending(true);
 
+        if self.flags.is_waiting_for_request_body() {
+            self.flags.set_is_waiting_for_request_body(false);
+            resp.clear_on_data();
+        }
+        if self.flags.has_timeout_handler() {
+            resp.clear_timeout();
+            self.flags.set_has_timeout_handler(false);
+        }
+
         // SAFETY: BACKREF
         let server = self.server();
         FileResponseStream::start(&file_response_stream::StartOptions {

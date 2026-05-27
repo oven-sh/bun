@@ -13,6 +13,8 @@ if ($env:DIAG_ARTIFACT_BUILD) {
 }
 Expand-Archive -Force bun-windows-aarch64.zip -DestinationPath diag-bin
 $bun = (Resolve-Path "diag-bin\bun-windows-aarch64\bun.exe").Path
+$logDir = Join-Path (Get-Location) "diag-logs"
+New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 Write-Host "bun.exe: $bun"
 Get-Item $bun | Format-List Name, Length, VersionInfo | Out-String | Write-Host
 
@@ -24,8 +26,12 @@ function Invoke-Case {
   foreach ($k in $CaseEnv.Keys) { Set-Item -Path "Env:$k" -Value $CaseEnv[$k] }
   try {
     if ($Cwd) { Push-Location $Cwd }
-    & $bun @CaseArgs 2>&1 | Select-Object -First 60 | Out-String | Write-Host
+    $caseLog = Join-Path $logDir ("$Name.log")
+    # Redirect natively to a file (no PowerShell error-record munging, no
+    # truncation); print the tail afterwards.
+    cmd /c "`"$bun`" $($CaseArgs -join ' ') > `"$caseLog`" 2>&1"
     $code = $LASTEXITCODE
+    if (Test-Path $caseLog) { Get-Content $caseLog -Tail 30 | Out-String | Write-Host }
     if ($Cwd) { Pop-Location }
   } catch {
     Write-Host "exception: $_"
@@ -73,34 +79,48 @@ function Clean-NodeModules {
 }
 
 Clean-NodeModules
-Invoke-Case -Name "install-root-verbose"      -CaseEnv @{}                                                   -CaseArgs @("install", "--verbose") -Cwd $repoRoot
+Invoke-Case -Name "install-root-default-1"     -CaseEnv @{}                              -CaseArgs @("install") -Cwd $repoRoot
 Clean-NodeModules
-Invoke-Case -Name "install-root-no-scripts"   -CaseEnv @{}                                                   -CaseArgs @("install", "--ignore-scripts") -Cwd $repoRoot
+Invoke-Case -Name "install-root-default-2"     -CaseEnv @{}                              -CaseArgs @("install") -Cwd $repoRoot
 Clean-NodeModules
-Invoke-Case -Name "install-root-copyfile"     -CaseEnv @{}                                                   -CaseArgs @("install", "--backend=copyfile") -Cwd $repoRoot
+Invoke-Case -Name "install-root-serial-scripts" -CaseEnv @{}                             -CaseArgs @("install", "--concurrent-scripts=1") -Cwd $repoRoot
 Clean-NodeModules
-Invoke-Case -Name "install-root-serial"       -CaseEnv @{}                                                   -CaseArgs @("install", "--network-concurrency=1") -Cwd $repoRoot
-Clean-NodeModules
-Invoke-Case -Name "install-root-mimalloc"     -CaseEnv @{ MIMALLOC_SHOW_ERRORS = "1"; MIMALLOC_VERBOSE = "1" } -CaseArgs @("install") -Cwd $repoRoot
+Invoke-Case -Name "install-root-no-scripts"    -CaseEnv @{}                              -CaseArgs @("install", "--ignore-scripts") -Cwd $repoRoot
 
-# Multi-package add into a clean dir (no workspace, no lifecycle scripts)
-New-Item -ItemType Directory -Force -Path diag-add | Out-Null
-'{"name":"diag-add","version":"1.0.0"}' | Out-File -Encoding ascii diag-add\package.json
-Invoke-Case -Name "add-real-packages"         -CaseEnv @{}                                                   -CaseArgs @("add", "typescript", "react", "esbuild", "lodash") -Cwd "diag-add"
+# Crash dump capture with procdump (ARM64 native build). Try two sources.
+$procdump = Join-Path (Get-Location) "procdump64a.exe"
+foreach ($url in @("https://live.sysinternals.com/procdump64a.exe", "https://download.sysinternals.com/files/Procdump.zip")) {
+  try {
+    if ($url.EndsWith(".zip")) {
+      Invoke-WebRequest -Uri $url -OutFile procdump.zip -UseBasicParsing
+      Expand-Archive -Force procdump.zip -DestinationPath procdump-extracted
+      Copy-Item procdump-extracted\procdump64a.exe $procdump -Force
+    } else {
+      Invoke-WebRequest -Uri $url -OutFile $procdump -UseBasicParsing
+    }
+    if (Test-Path $procdump) { Write-Host "procdump ready from $url ($((Get-Item $procdump).Length) bytes)"; break }
+  } catch { Write-Host "procdump fetch from $url failed: $($_.Exception.Message)" }
+}
+if (Test-Path $procdump) {
+  try {
+    Clean-NodeModules
+    Push-Location $repoRoot
+    & $procdump -accepteula -ma -e 1 -x $dumpDir $bun install 2>&1 | Select-Object -Last 50 | Out-String | Write-Host
+    Write-Host "procdump run exit: $LASTEXITCODE"
+    Pop-Location
+  } catch { Write-Host "procdump capture failed: $($_.Exception.Message)"; Pop-Location -ErrorAction SilentlyContinue }
+}
 
-# Try to capture a crash dump with procdump (native ARM64 build) around the crashing case
+Write-Host "--- Application event log (last hour, error/WER events)"
 try {
-  Invoke-WebRequest -Uri "https://live.sysinternals.com/procdump64a.exe" -OutFile procdump64a.exe -UseBasicParsing
-  Write-Host "procdump64a downloaded: $((Get-Item procdump64a.exe).Length) bytes"
-  Clean-NodeModules
-  Push-Location $repoRoot
-  & "$PWD\..\procdump64a.exe" -accepteula -ma -e 1 -x (Join-Path (Split-Path $bun -Parent) "..\..\diag-dumps") $bun install 2>&1 | Select-Object -Last 40 | Out-String | Write-Host
-  Pop-Location
-} catch { Write-Host "procdump capture failed: $_" }
+  Get-WinEvent -FilterHashtable @{ LogName = "Application"; StartTime = (Get-Date).AddHours(-1) } -MaxEvents 200 -ErrorAction SilentlyContinue |
+    Where-Object { $_.Id -in 1000, 1001, 1002 -or $_.LevelDisplayName -eq "Error" } |
+    Select-Object -First 12 |
+    ForEach-Object { Write-Host "==== [$($_.Id)] $($_.TimeCreated)"; Write-Host $_.Message }
+} catch { Write-Host "Get-WinEvent failed: $_" }
 
-# A trivial bun test run
-'import { test, expect } from "bun:test"; test("ok", () => { expect(1 + 1).toBe(2); });' | Out-File -Encoding ascii diag-install\trivial.test.ts
-Invoke-Case -Name "bun-test-trivial"    -CaseEnv @{}                                                   -CaseArgs @("test", "trivial.test.ts") -Cwd "diag-install"
+# Upload the per-case logs
+try { Push-Location $logDir; buildkite-agent artifact upload "*.log"; Pop-Location } catch { Write-Host "log upload failed: $_" }
 
 Write-Host "--- crash dumps collected"
 try {

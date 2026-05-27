@@ -117,6 +117,7 @@ static JSValue processBindingNativesReturnUndefined(VM& vm, JSObject* bindingObj
     internal/fs/cp                              processBindingNativesGetter     PropertyCallback
     internal/fs/glob                            processBindingNativesGetter     PropertyCallback
     internal/fs/streams                         processBindingNativesGetter     PropertyCallback
+    internal/fs/watch                           processBindingNativesGetter     PropertyCallback
     internal/fs/watchfile                       processBindingNativesGetter     PropertyCallback
     internal/html                               processBindingNativesGetter     PropertyCallback
     internal/http                               processBindingNativesGetter     PropertyCallback

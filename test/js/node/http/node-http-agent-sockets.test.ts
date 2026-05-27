@@ -191,6 +191,63 @@ describe("node:http Agent socket accounting", () => {
     }
   });
 
+  test("aborting a queued request's signal removes it from the queue and never dispatches it", async () => {
+    const agent = new http.Agent({ maxSockets: 1 });
+
+    let hits = 0;
+    const { promise: firstHit, resolve: onFirstHit } = Promise.withResolvers<void>();
+    const responses: Array<() => void> = [];
+    const server = http.createServer((req, res) => {
+      hits++;
+      if (hits === 1) onFirstHit();
+      // Hold the response so the first request keeps the only slot until we
+      // release it; the second request stays queued.
+      responses.push(() => res.end("ok"));
+    });
+    server.listen(0);
+    try {
+      await once(server, "listening");
+      const port = (server.address() as AddressInfo).port;
+      const name = agent.getName({ port });
+
+      // r1 takes the only slot.
+      const r1 = http.get({ port, agent }, res => res.resume());
+      r1.on("error", () => {});
+
+      // r2 is queued behind maxSockets: no socket slot, no AbortController yet.
+      const ac = new AbortController();
+      const r2 = http.get({ port, agent, signal: ac.signal }, () => {});
+      r2.on("error", () => {});
+      const r2Closed = once(r2, "close");
+
+      await firstHit;
+      expect(agent.requests[name]!.length).toBe(1);
+
+      // Aborting the queued request's signal must destroy it and drop it from
+      // the queue — not leave it to be dispatched when r1's slot frees. The
+      // AbortController is still null here, so aborting it alone would be a
+      // no-op.
+      ac.abort();
+      await r2Closed;
+      expect(r2.destroyed).toBe(true);
+      expect(name in agent.requests).toBe(false);
+
+      // Free r1's slot. If r2 were still queued it would now be dispatched,
+      // pushing hits to 2.
+      responses.shift()!();
+      await once(r1, "close");
+      await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+
+      // Only r1 ever reached the server.
+      expect(hits).toBe(1);
+      expect(agent.totalSocketCount).toBe(0);
+      expect(name in agent.sockets).toBe(false);
+    } finally {
+      agent.destroy();
+      server.close();
+    }
+  });
+
   test("destroying a queued request emits 'close' and removes it from agent.requests", async () => {
     const agent = new http.Agent({ maxSockets: 1 });
 

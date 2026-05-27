@@ -833,11 +833,23 @@ function ClientRequest(input, options, cb) {
 
   const signal = options.signal;
   if (signal) {
-    //We still want to control abort function and timeout so signal call our AbortController
+    // Mirror req.abort(): emit 'abort', cancel the in-flight fetch via the
+    // AbortController, and destroy() the request. destroy() also drops a
+    // still-queued request (one waiting behind maxSockets, whose
+    // AbortController hasn't been created yet) from agent.requests so it is
+    // never dispatched once a slot frees. Aborting only the AbortController
+    // would be a no-op for that queued window. We can't call this.abort()
+    // here because its `this.aborted` guard is already satisfied by the
+    // signal (the `aborted` getter reads kSignal.aborted), so guard on the
+    // internal abortedSymbol to stay idempotent with req.abort().
     signal.addEventListener(
       "abort",
       () => {
-        this[kAbortController]?.abort();
+        if (this[abortedSymbol]) return;
+        this[abortedSymbol] = true;
+        process.nextTick(emitAbortNextTick, this);
+        this[kAbortController]?.abort?.();
+        this.destroy();
       },
       { once: true },
     );

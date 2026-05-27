@@ -4054,6 +4054,11 @@ impl<'a> HTTPClient<'a> {
     ) -> Result<bool, bun_core::Error> {
         debug_assert!(self.state.transfer_encoding == Encoding::Identity);
         let content_length = self.state.content_length;
+        if let Some(len) = content_length
+            && incoming_data.len() > len.saturating_sub(self.state.total_body_received)
+        {
+            self.state.flags.allow_keepalive = false;
+        }
         // is it exactly as much as we need?
         if is_only_buffer
             && let Some(len) = content_length

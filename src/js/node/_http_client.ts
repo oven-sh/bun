@@ -100,6 +100,12 @@ function ClientRequest(input, options, cb) {
   let writeCount = 0;
   let resolveNextChunk: ((end: boolean) => void) | undefined = _end => {};
 
+  // Detaches the options.signal 'abort' listener once the request is done, so
+  // a long-lived shared signal (e.g. AbortSignal.timeout for a batch) neither
+  // retains completed requests nor fires a spurious abort on them. Reassigned
+  // in the signal block below; a no-op when there is no signal.
+  let removeSignalAbortListener = () => {};
+
   // Node sends headers + first chunk immediately on the first write(). We
   // defer by a tick so that `write(chunk); end();` in the same tick still
   // takes the non-duplex fast path via send(). If end() hasn't been called by
@@ -282,6 +288,7 @@ function ClientRequest(input, options, cb) {
 
   const socketCloseListener = () => {
     this.destroyed = true;
+    removeSignalAbortListener();
 
     const res = this.res;
     if (res) {
@@ -742,6 +749,7 @@ function ClientRequest(input, options, cb) {
 
   const maybeEmitClose = () => {
     maybeEmitPrefinish();
+    removeSignalAbortListener();
 
     if (!this._closed) {
       process.nextTick(emitCloseNTAndComplete, this);
@@ -844,7 +852,11 @@ function ClientRequest(input, options, cb) {
     // signal (the `aborted` getter reads kSignal.aborted), so guard on the
     // internal abortedSymbol to stay idempotent with req.abort().
     const onSignalAbort = () => {
-      if (this[abortedSymbol]) return;
+      // A shared signal (e.g. AbortSignal.timeout for a batch) may fire after
+      // this request already finished — don't re-emit 'abort' or destroy() a
+      // completed request. Node avoids this by removing the listener on stream
+      // finish; we do both (remove below, guard here).
+      if (this[abortedSymbol] || this._closed || this?.res?.complete) return;
       this[abortedSymbol] = true;
       process.nextTick(emitAbortNextTick, this);
       this[kAbortController]?.abort?.();
@@ -859,6 +871,7 @@ function ClientRequest(input, options, cb) {
       process.nextTick(onSignalAbort);
     } else {
       signal.addEventListener("abort", onSignalAbort, { once: true });
+      removeSignalAbortListener = () => signal.removeEventListener("abort", onSignalAbort);
     }
   }
   let method = options.method;

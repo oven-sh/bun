@@ -446,6 +446,42 @@ describe("node:http Agent socket accounting", () => {
     }
   });
 
+  test("a shared signal aborted after a request completes does not re-abort it", async () => {
+    const agent = new http.Agent({ maxSockets: 2 });
+    const server = http.createServer((req, res) => res.end("ok"));
+    server.listen(0);
+    try {
+      await once(server, "listening");
+      const port = (server.address() as AddressInfo).port;
+
+      // One signal shared across a batch (e.g. AbortSignal.timeout). The
+      // request finishes well before the signal fires.
+      const ac = new AbortController();
+
+      let aborted = false;
+      const req = http.get({ port, agent, signal: ac.signal }, res => res.resume());
+      req.on("error", () => {});
+      req.on("abort", () => {
+        aborted = true;
+      });
+      await once(req, "close");
+
+      expect(req.complete).toBe(true);
+      expect(req.destroyed).toBe(false);
+
+      // Firing the shared signal now must be a no-op for the already-completed
+      // request: no 'abort' event, no post-completion destroy().
+      ac.abort();
+      await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+
+      expect(aborted).toBe(false);
+      expect(req.destroyed).toBe(false);
+    } finally {
+      agent.destroy();
+      server.close();
+    }
+  });
+
   test("agent.destroy() destroys every tracked socket", async () => {
     // FakeSocket.destroy() → req.destroy() → onAbort → releaseAgentSocket
     // splices the live agent.sockets[name] array synchronously; iterating

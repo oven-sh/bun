@@ -1141,6 +1141,35 @@ describe("node:http", () => {
   });
 });
 
+describe("node:http connection errors", () => {
+  // https://github.com/oven-sh/bun/issues/31474
+  // A refused connection must surface the full Node.js error shape
+  // (errno/syscall/address/port and a `connect ECONNREFUSED <host>:<port>`
+  // message), not a bare `Error: ECONNREFUSED`.
+  it("request to a refused port reports a Node-shaped ECONNREFUSED", async () => {
+    // Bind then release a port so connecting to it is refused.
+    const probe = new Server();
+    const port = await new Promise<number>(resolve => {
+      probe.listen(0, "127.0.0.1", () => resolve((probe.address() as AddressInfo).port));
+    });
+    await new Promise<void>(resolve => probe.close(() => resolve()));
+
+    const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
+    const req = request({ hostname: "127.0.0.1", port, path: "/", method: "GET", timeout: 5000 }, () =>
+      reject(new Error("Expected request to fail")),
+    );
+    req.on("error", resolve);
+    req.end();
+
+    const error = await promise;
+    expect(error.code).toBe("ECONNREFUSED");
+    expect(error.syscall).toBe("connect");
+    expect(error.address).toBe("127.0.0.1");
+    expect(error.port).toBe(port);
+    expect(error.message).toBe(`connect ECONNREFUSED 127.0.0.1:${port}`);
+  });
+});
+
 describe("node https server", async () => {
   const httpsOptions = {
     key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "cert.key")),

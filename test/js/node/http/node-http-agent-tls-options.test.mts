@@ -682,38 +682,6 @@ describe("https.request agent TLS options inheritance", () => {
         throw new Error(`Expected message "connect ECONNREFUSED 127.0.0.1:${proxyPort}", got "${error.message}"`);
       }
     });
-
-    test("direct request to a refused port reports ECONNREFUSED with host/port", async () => {
-      const closed = net.createServer();
-      const port = await new Promise<number>(resolve => {
-        closed.listen(0, "127.0.0.1", () => resolve((closed.address() as AddressInfo).port));
-      });
-      await new Promise<void>(resolve => closed.close(() => resolve()));
-
-      const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
-      const req = http.request({ hostname: "127.0.0.1", port, path: "/", method: "GET", timeout: 5000 }, () =>
-        reject(new Error("Expected request to fail")),
-      );
-      req.on("error", resolve);
-      req.end();
-
-      const error = await promise;
-      if (error.code !== "ECONNREFUSED") {
-        throw new Error(`Expected code ECONNREFUSED, got ${error.code} (${error.message})`);
-      }
-      if (error.syscall !== "connect") {
-        throw new Error(`Expected syscall connect, got ${error.syscall}`);
-      }
-      if (error.address !== "127.0.0.1") {
-        throw new Error(`Expected address 127.0.0.1, got ${error.address}`);
-      }
-      if (error.port !== port) {
-        throw new Error(`Expected port ${port}, got ${error.port}`);
-      }
-      if (error.message !== `connect ECONNREFUSED 127.0.0.1:${port}`) {
-        throw new Error(`Expected message "connect ECONNREFUSED 127.0.0.1:${port}", got "${error.message}"`);
-      }
-    });
   });
 });
 

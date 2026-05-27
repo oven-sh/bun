@@ -29,11 +29,9 @@ pub struct HPACK {
     self_: *mut c_void,
 }
 
-pub struct DecodeResult {
-    // TODO(port): lifetime — name/value point into an FFI thread_local shared buffer,
-    // valid only until the next decode/encode call. Consider `DecodeResult<'a>`.
-    pub name: &'static [u8],
-    pub value: &'static [u8],
+pub struct DecodeResult<'a> {
+    pub name: &'a [u8],
+    pub value: &'a [u8],
     pub never_index: bool,
     pub well_know: u16,
     /// offset of the next header position in src
@@ -69,8 +67,8 @@ impl HPACK {
         // TODO(port): wrap in an owning newtype with Drop instead of returning a raw *mut HPACK
     }
 
-    /// DecodeResult name and value uses a thread_local shared buffer and should be copy/cloned before the next decode/encode call
-    pub fn decode(&mut self, src: &[u8]) -> Result<DecodeResult, HpackError> {
+    /// DecodeResult name and value borrow this handle's decode buffer and stay valid until the next decode/encode call on it
+    pub fn decode<'a>(&'a mut self, src: &[u8]) -> Result<DecodeResult<'a>, HpackError> {
         let mut header = lshpack_header::default();
         // SAFETY: genuine FFI — only the `(src.as_ptr(), src.len())` pair carries
         // an obligation here (in-bounds read), discharged by `src: &[u8]`. The
@@ -85,9 +83,10 @@ impl HPACK {
         }
 
         // SAFETY: lshpack_wrapper_decode writes name/value as offsets into the
-        // thread_local `shared_header_buffer` (set via lsxpack_header_prepare_decode),
-        // so both pointers are provably non-null after a successful decode. Use bare
-        // `from_raw_parts` to avoid a dead null-branch on the per-HTTP/2-header path.
+        // wrapper-owned staging buffer (set via lsxpack_header_prepare_decode),
+        // so both pointers are provably non-null after a successful decode and
+        // stay valid for the `&'a mut self` borrow returned to the caller. Use
+        // bare `from_raw_parts` to avoid a dead null-branch on the per-HTTP/2-header path.
         let (name, value) = unsafe {
             (
                 core::slice::from_raw_parts(header.name, header.name_len),

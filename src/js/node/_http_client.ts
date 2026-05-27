@@ -608,21 +608,17 @@ function ClientRequest(input, options, cb) {
         // an error to the user, we'll just skip to the next address.
         // The last address is required to work, and if it fails we'll throw an error.
 
+        // `candidates` is non-empty here (checked above) and is only drained by
+        // iterate() itself, one address per call.
         const iterate = () => {
-          if (candidates.length === 0) {
-            // If we get to this point, it means that none of the addresses could be connected to.
-            fail(`connect ECONNREFUSED ${host}:${port}`, "Error", "ECONNREFUSED", "connect");
-            return;
-          }
-
           const candidate = candidates.shift();
           const [url, proxy] = getURL(candidate.address);
           const softFail = candidates.length > 0;
           const attempt = go(url, proxy, candidate.address, this[kPort], softFail);
           // Only advance to the next address while we're soft-failing. On the
-          // last candidate (softFail === false) go() owns the error emission,
-          // so re-running iterate() here would emit a second, non-Node-shaped
-          // 'error' via fail().
+          // last candidate (softFail === false) go() owns the error emission, so
+          // iterate() is never re-entered and the array never empties underneath
+          // us.
           if (softFail) attempt.catch(iterate);
         };
 
@@ -771,7 +767,7 @@ function ClientRequest(input, options, cb) {
   }
 
   const defaultPort = options.defaultPort || this[kAgent].defaultPort;
-  const port = (this[kPort] = options.port || defaultPort || 80);
+  this[kPort] = options.port || defaultPort || 80;
   this[kUseDefaultPort] = this[kPort] === defaultPort;
   const host =
     (this[kHost] =

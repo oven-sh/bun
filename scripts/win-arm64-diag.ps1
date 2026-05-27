@@ -6,7 +6,11 @@ $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 
 Write-Host "--- Downloading windows-aarch64 artifact"
-buildkite-agent artifact download "bun-windows-aarch64.zip" . --step "windows-aarch64-build-bun"
+if ($env:DIAG_ARTIFACT_BUILD) {
+  buildkite-agent artifact download "bun-windows-aarch64.zip" . --build $env:DIAG_ARTIFACT_BUILD
+} else {
+  buildkite-agent artifact download "bun-windows-aarch64.zip" . --step "windows-aarch64-build-bun"
+}
 Expand-Archive -Force bun-windows-aarch64.zip -DestinationPath diag-bin
 $bun = (Resolve-Path "diag-bin\bun-windows-aarch64\bun.exe").Path
 Write-Host "bun.exe: $bun"
@@ -58,14 +62,41 @@ try {
   Write-Host "WER LocalDumps enabled -> $dumpDir"
 } catch { Write-Host "WER LocalDumps setup failed: $_" }
 
-# The cases that actually crashed on the test shards: installing the repo's
-# package.json files (the runner does this before running tests).
+# The case that crashes (diag v2): `bun install` on the repo root package.json
+# (exit 0xC0000374). Bisect which part of the install does it.
 $repoRoot = $env:BUILDKITE_BUILD_CHECKOUT_PATH
 if (-not $repoRoot) { $repoRoot = (Get-Location).Path }
 Write-Host "repo root: $repoRoot"
-Invoke-Case -Name "install-repo-root"   -CaseEnv @{}                                                   -CaseArgs @("install") -Cwd $repoRoot
-Invoke-Case -Name "install-repo-test"   -CaseEnv @{}                                                   -CaseArgs @("install") -Cwd (Join-Path $repoRoot "test")
-Invoke-Case -Name "install-repo-test-2" -CaseEnv @{ MIMALLOC_SHOW_ERRORS = "1"; MIMALLOC_VERBOSE = "1" } -CaseArgs @("install") -Cwd (Join-Path $repoRoot "test")
+
+function Clean-NodeModules {
+  Remove-Item -Recurse -Force (Join-Path $repoRoot "node_modules") -ErrorAction SilentlyContinue
+}
+
+Clean-NodeModules
+Invoke-Case -Name "install-root-verbose"      -CaseEnv @{}                                                   -CaseArgs @("install", "--verbose") -Cwd $repoRoot
+Clean-NodeModules
+Invoke-Case -Name "install-root-no-scripts"   -CaseEnv @{}                                                   -CaseArgs @("install", "--ignore-scripts") -Cwd $repoRoot
+Clean-NodeModules
+Invoke-Case -Name "install-root-copyfile"     -CaseEnv @{}                                                   -CaseArgs @("install", "--backend=copyfile") -Cwd $repoRoot
+Clean-NodeModules
+Invoke-Case -Name "install-root-serial"       -CaseEnv @{}                                                   -CaseArgs @("install", "--network-concurrency=1") -Cwd $repoRoot
+Clean-NodeModules
+Invoke-Case -Name "install-root-mimalloc"     -CaseEnv @{ MIMALLOC_SHOW_ERRORS = "1"; MIMALLOC_VERBOSE = "1" } -CaseArgs @("install") -Cwd $repoRoot
+
+# Multi-package add into a clean dir (no workspace, no lifecycle scripts)
+New-Item -ItemType Directory -Force -Path diag-add | Out-Null
+'{"name":"diag-add","version":"1.0.0"}' | Out-File -Encoding ascii diag-add\package.json
+Invoke-Case -Name "add-real-packages"         -CaseEnv @{}                                                   -CaseArgs @("add", "typescript", "react", "esbuild", "lodash") -Cwd "diag-add"
+
+# Try to capture a crash dump with procdump (native ARM64 build) around the crashing case
+try {
+  Invoke-WebRequest -Uri "https://live.sysinternals.com/procdump64a.exe" -OutFile procdump64a.exe -UseBasicParsing
+  Write-Host "procdump64a downloaded: $((Get-Item procdump64a.exe).Length) bytes"
+  Clean-NodeModules
+  Push-Location $repoRoot
+  & "$PWD\..\procdump64a.exe" -accepteula -ma -e 1 -x (Join-Path (Split-Path $bun -Parent) "..\..\diag-dumps") $bun install 2>&1 | Select-Object -Last 40 | Out-String | Write-Host
+  Pop-Location
+} catch { Write-Host "procdump capture failed: $_" }
 
 # A trivial bun test run
 'import { test, expect } from "bun:test"; test("ok", () => { expect(1 + 1).toBe(2); });' | Out-File -Encoding ascii diag-install\trivial.test.ts
@@ -73,8 +104,14 @@ Invoke-Case -Name "bun-test-trivial"    -CaseEnv @{}                            
 
 Write-Host "--- crash dumps collected"
 try {
-  Get-ChildItem -Path $dumpDir -Filter *.dmp -ErrorAction SilentlyContinue | ForEach-Object {
-    Write-Host "dump: $($_.FullName) ($($_.Length) bytes)"
+  $dumpLocations = @($dumpDir, (Join-Path (Get-Location) "diag-dumps"), "$env:LOCALAPPDATA\CrashDumps", "C:\Windows\System32\config\systemprofile\AppData\Local\CrashDumps")
+  foreach ($loc in $dumpLocations) {
+    if (Test-Path $loc) {
+      Get-ChildItem -Path $loc -Filter *.dmp -ErrorAction SilentlyContinue | ForEach-Object {
+        Write-Host "dump: $($_.FullName) ($($_.Length) bytes)"
+        Copy-Item $_.FullName -Destination $dumpDir -ErrorAction SilentlyContinue
+      }
+    }
   }
   if (Test-Path $dumpDir) {
     Push-Location $dumpDir

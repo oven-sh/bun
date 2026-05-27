@@ -19,10 +19,10 @@ pub use self::unicode::{
 pub use unicode_draft::CodePointZero;
 
 // Sub-modules (peer files under `src/string/immutable/`).
-#[path = "immutable/exact_size_matcher.rs"]
-pub mod exact_size_matcher;
 #[path = "immutable/escapeHTML.rs"]
 pub mod escape_html;
+#[path = "immutable/exact_size_matcher.rs"]
+pub mod exact_size_matcher;
 pub use escape_html::{html_escape_entity, xml_escape_entity};
 #[path = "immutable/unicode.rs"]
 mod unicode_draft;

@@ -459,7 +459,7 @@ ctiMasmProbeTrampolineAVX  [AVX]
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SIMD. Gate: HWY_DYNAMIC_DISPATCH via hwy::SupportedTargets.
-# (148 symbols)
+# (150 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_AVX3_SPR10MemMemImplEPKhmS2_m                                       [AVX, AVX512BW, AVX512F, BMI1]
 _ZN3bun10N_AVX3_SPR14DecodeHex8ImplEPKhPhm                                     [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, GFNI]
@@ -575,6 +575,8 @@ _ZN3bun9N_AVX10_220FillWithSkipMaskImplEPKhmPhS2_mb                            [
 _ZN3bun9N_AVX10_221VisibleUTF16WidthImplEPKtmPm                                [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun9N_AVX10_222VisibleLatin1WidthImplEPKhm                                 [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun9N_AVX10_225CountPrintableAscii16ImplEPKtm                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun9N_AVX10_226IndexOfHTMLEscapeChar8ImplEPKhm                             [AVX, AVX512BW, AVX512F]
+_ZN3bun9N_AVX10_227IndexOfHTMLEscapeChar16ImplEPKtm                            [AVX, AVX512BW, AVX512F]
 _ZN3bun9N_AVX10_228IndexOfNewlineOrNonASCIIImplEPKhm                           [AVX, AVX512BW, AVX512F]
 _ZN3bun9N_AVX10_233VisibleLatin1WidthExcludeANSIImplEPKhm                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun9N_AVX10_235IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                    [AVX, AVX512BW, AVX512F]

@@ -1752,8 +1752,6 @@ size_t highway_html_escape_extra_len16(const uint16_t* HWY_RESTRICT text, size_t
     return HWY_DYNAMIC_DISPATCH(HtmlEscapeExtraLen16Impl)(text, text_len);
 }
 
-
-
 size_t highway_index_of_interesting_character_in_string_literal(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t quote)
 {
     return HWY_DYNAMIC_DISPATCH(IndexOfInterestingCharacterInStringLiteralImpl)(text, text_len, quote);

@@ -65,19 +65,39 @@ static ALWAYS_INLINE size_t writeEntity(CharacterType* out, CharacterType c)
 {
     switch (c) {
     case '&':
-        out[0] = '&'; out[1] = 'a'; out[2] = 'm'; out[3] = 'p'; out[4] = ';';
+        out[0] = '&';
+        out[1] = 'a';
+        out[2] = 'm';
+        out[3] = 'p';
+        out[4] = ';';
         return 5;
     case '<':
-        out[0] = '&'; out[1] = 'l'; out[2] = 't'; out[3] = ';';
+        out[0] = '&';
+        out[1] = 'l';
+        out[2] = 't';
+        out[3] = ';';
         return 4;
     case '>':
-        out[0] = '&'; out[1] = 'g'; out[2] = 't'; out[3] = ';';
+        out[0] = '&';
+        out[1] = 'g';
+        out[2] = 't';
+        out[3] = ';';
         return 4;
     case '"':
-        out[0] = '&'; out[1] = 'q'; out[2] = 'u'; out[3] = 'o'; out[4] = 't'; out[5] = ';';
+        out[0] = '&';
+        out[1] = 'q';
+        out[2] = 'u';
+        out[3] = 'o';
+        out[4] = 't';
+        out[5] = ';';
         return 6;
     default: // '\''
-        out[0] = '&'; out[1] = '#'; out[2] = 'x'; out[3] = '2'; out[4] = '7'; out[5] = ';';
+        out[0] = '&';
+        out[1] = '#';
+        out[2] = 'x';
+        out[3] = '2';
+        out[4] = '7';
+        out[5] = ';';
         return 6;
     }
 }

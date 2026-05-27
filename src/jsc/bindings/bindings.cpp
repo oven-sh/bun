@@ -3459,7 +3459,10 @@ JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateError(JSC::JSGlobalObjec
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    WTF::String message = Zig::toString(*arg3);
+    // toStringCopy, not toString: the AggregateError (and its message string)
+    // outlives this call, while an untagged ZigString message would alias the
+    // caller's buffer without owning it. See Zig::getErrorInstance.
+    WTF::String message = Zig::toStringCopy(*arg3);
     JSC::JSValue cause = JSC::jsUndefined();
     JSC::JSArray* array = nullptr;
     {

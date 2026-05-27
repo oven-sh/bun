@@ -58,10 +58,11 @@ const agentTlsValueKeys = ["ca", "cert", "key", "passphrase"];
 
 /**
  * A file/identity value SSLConfig.fromJS can parse: string | ArrayBuffer | Blob,
- * or an array of those. Node/`ws` also accept the `key`/`cert` array-of-objects
- * form (`[{ pem, passphrase }]`) for per-key passphrases, but the native parser
- * has no arm for it and throws. Skip that shape so it stays a no-op (as it was
- * before top-level TLS options were forwarded) instead of becoming a throw.
+ * or an array of those. Node/`ws` also accept the `key`/`cert` object form
+ * (`{ pem, passphrase }`, bare or in an array) for per-key passphrases, but the
+ * native parser has no arm for a plain object and throws. Skip those shapes so
+ * they stay a no-op (as they were before top-level TLS options were forwarded)
+ * instead of becoming a throw.
  * @param {unknown} value
  * @returns {boolean}
  */
@@ -69,19 +70,24 @@ function isForwardableFileValue(value) {
   if (!value) return false;
   if (Array.isArray(value)) {
     for (const element of value) {
-      // A string/ArrayBuffer/TypedArray/Blob element is representable; a plain
-      // `{ pem, passphrase }` object is not, so don't forward such an array.
-      if (
-        $isObject(element) &&
-        !ArrayBuffer.isView(element) &&
-        !(element instanceof Blob) &&
-        !(element instanceof ArrayBuffer)
-      ) {
-        return false;
-      }
+      if (!isRepresentableFileElement(element)) return false;
     }
+    return true;
   }
-  return true;
+  // A bare value must be one of the same representable shapes; a plain
+  // `{ pem, passphrase }` object (or a KeyObject) has no SSLConfig arm, so skip
+  // it like its array-wrapped form rather than forwarding it into a throw.
+  return isRepresentableFileElement(value);
+}
+
+/**
+ * Whether a single file/identity value is a shape SSLConfig.fromJS accepts:
+ * string, ArrayBuffer, TypedArray/DataView, or Blob. A plain object is not.
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function isRepresentableFileElement(value) {
+  return !$isObject(value) || ArrayBuffer.isView(value) || value instanceof Blob || value instanceof ArrayBuffer;
 }
 
 /**

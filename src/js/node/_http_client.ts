@@ -14,7 +14,8 @@ const { urlToHttpOptions } = require("internal/url");
 const { throwOnInvalidTLSArray } = require("internal/tls");
 const { validateHeaderName } = require("node:_http_common");
 const { getTimerDuration } = require("internal/timers");
-const { ConnResetException } = require("internal/shared");
+const { ConnResetException, ExceptionWithHostPort } = require("internal/shared");
+const { UV_ECONNREFUSED } = process.binding("uv");
 const {
   kBodyChunks,
   abortedSymbol,
@@ -487,8 +488,21 @@ function ClientRequest(input, options, cb) {
         this[kFetchRequest]
           .catch(err => {
             if (err.code === "ConnectionRefused") {
-              err = new Error("ECONNREFUSED");
-              err.code = "ECONNREFUSED";
+              // Match Node's `connect ECONNREFUSED <address>:<port>` shape,
+              // including the errno/syscall/address/port fields. When a proxy
+              // is in use the refused connection is to the proxy, so report the
+              // proxy's host/port (as Node's agent does); otherwise report the
+              // request target.
+              let address = host;
+              let failedPort = this[kPort];
+              if (proxy) {
+                try {
+                  const proxyUrl = new URL(proxy);
+                  address = proxyUrl.hostname;
+                  failedPort = proxyUrl.port ? Number(proxyUrl.port) : proxyUrl.protocol === "https:" ? 443 : 80;
+                } catch {}
+              }
+              err = new ExceptionWithHostPort(UV_ECONNREFUSED, "connect", address, failedPort);
             } else if (err.code === "InvalidContentLength") {
               // The native client refuses to deliver a response with a
               // malformed or conflicting Content-Length. Node surfaces this

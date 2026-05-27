@@ -632,6 +632,90 @@ describe("https.request agent TLS options inheritance", () => {
       }
     });
   });
+
+  describe("connection error handling", () => {
+    // https://github.com/oven-sh/bun/issues/31474
+    // When the proxy cannot be reached, the ClientRequest 'error' must carry
+    // the full Node.js shape (syscall/address/port and a
+    // `connect ECONNREFUSED <host>:<port>` message) rather than a bare
+    // `Error: ECONNREFUSED`. For a proxy agent the refused connection is to the
+    // proxy, so the address/port must be the proxy's.
+    test("HttpsProxyAgent with an unreachable proxy reports ECONNREFUSED for the proxy host", async () => {
+      // Bind then immediately release a port so connecting to it is refused.
+      const closed = net.createServer();
+      const proxyPort = await new Promise<number>(resolve => {
+        closed.listen(0, "127.0.0.1", () => resolve((closed.address() as AddressInfo).port));
+      });
+      await new Promise<void>(resolve => closed.close(() => resolve()));
+
+      const agent = new HttpsProxyAgent(`http://127.0.0.1:${proxyPort}`);
+
+      const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
+      const req = https.request(
+        {
+          hostname: "127.0.0.1",
+          port: 443,
+          path: "/",
+          method: "GET",
+          agent,
+          timeout: 5000,
+        },
+        () => reject(new Error("Expected request to fail")),
+      );
+      req.on("error", resolve);
+      req.end();
+
+      const error = await promise;
+      if (error.code !== "ECONNREFUSED") {
+        throw new Error(`Expected code ECONNREFUSED, got ${error.code} (${error.message})`);
+      }
+      if (error.syscall !== "connect") {
+        throw new Error(`Expected syscall connect, got ${error.syscall}`);
+      }
+      if (error.address !== "127.0.0.1") {
+        throw new Error(`Expected address 127.0.0.1 (the proxy), got ${error.address}`);
+      }
+      if (error.port !== proxyPort) {
+        throw new Error(`Expected port ${proxyPort} (the proxy), got ${error.port}`);
+      }
+      if (error.message !== `connect ECONNREFUSED 127.0.0.1:${proxyPort}`) {
+        throw new Error(`Expected message "connect ECONNREFUSED 127.0.0.1:${proxyPort}", got "${error.message}"`);
+      }
+    });
+
+    test("direct request to a refused port reports ECONNREFUSED with host/port", async () => {
+      const closed = net.createServer();
+      const port = await new Promise<number>(resolve => {
+        closed.listen(0, "127.0.0.1", () => resolve((closed.address() as AddressInfo).port));
+      });
+      await new Promise<void>(resolve => closed.close(() => resolve()));
+
+      const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
+      const req = http.request(
+        { hostname: "127.0.0.1", port, path: "/", method: "GET", timeout: 5000 },
+        () => reject(new Error("Expected request to fail")),
+      );
+      req.on("error", resolve);
+      req.end();
+
+      const error = await promise;
+      if (error.code !== "ECONNREFUSED") {
+        throw new Error(`Expected code ECONNREFUSED, got ${error.code} (${error.message})`);
+      }
+      if (error.syscall !== "connect") {
+        throw new Error(`Expected syscall connect, got ${error.syscall}`);
+      }
+      if (error.address !== "127.0.0.1") {
+        throw new Error(`Expected address 127.0.0.1, got ${error.address}`);
+      }
+      if (error.port !== port) {
+        throw new Error(`Expected port ${port}, got ${error.port}`);
+      }
+      if (error.message !== `connect ECONNREFUSED 127.0.0.1:${port}`) {
+        throw new Error(`Expected message "connect ECONNREFUSED 127.0.0.1:${port}", got "${error.message}"`);
+      }
+    });
+  });
 });
 
 describe("http.request agent options", () => {

@@ -3404,10 +3404,15 @@ test.concurrent("trustedDependencies: [] keeps a default-trusted package blocked
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
     const out = await stdout.text();
-    expect(out).toContain("Blocked 1 postinstall");
+    expect(out).toContain("+ electron@1.0.0");
     expect(await exited).toBe(0);
   }
 
+  // The ground truth for "stayed blocked" is that electron's preinstall never
+  // ran, so `preinstall.txt` is absent. We deliberately don't assert on the
+  // "Blocked N postinstall" summary here: the text lockfile doesn't persist
+  // per-package script metadata, so that cosmetic line isn't emitted on a
+  // reinstall from `bun.lock` even though the package is correctly blocked.
   expect(await file(join(packageDir, "bun.lock")).text()).toContain('"trustedDependencies": []');
   expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
 });

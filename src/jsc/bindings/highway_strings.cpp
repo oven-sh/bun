@@ -133,6 +133,87 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
     return text_len;
 }
 
+// Index of the first byte that HTML-escapes: one of " & ' < >.
+// Returns text_len if none are present.
+size_t IndexOfHTMLEscapeChar8Impl(const uint8_t* HWY_RESTRICT text, size_t text_len)
+{
+    if (text_len == 0) return 0;
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_quot = hn::Set(d, uint8_t { '"' });
+    const auto vec_amp = hn::Set(d, uint8_t { '&' });
+    const auto vec_apos = hn::Set(d, uint8_t { '\'' });
+    const auto vec_lt = hn::Set(d, uint8_t { '<' });
+    const auto vec_gt = hn::Set(d, uint8_t { '>' });
+
+    size_t i = 0;
+    const size_t simd_text_len = text_len - (text_len % N);
+    for (; i < simd_text_len; i += N) {
+        const auto text_vec = hn::LoadU(d, text + i);
+        const auto found_mask = hn::Or(
+            hn::Or(hn::Eq(text_vec, vec_quot), hn::Eq(text_vec, vec_amp)),
+            hn::Or(hn::Eq(text_vec, vec_apos), hn::Or(hn::Eq(text_vec, vec_lt), hn::Eq(text_vec, vec_gt))));
+
+        const intptr_t pos = hn::FindFirstTrue(d, found_mask);
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    for (; i < text_len; ++i) {
+        const uint8_t c = text[i];
+        if (c == '"' || c == '&' || c == '\'' || c == '<' || c == '>') {
+            return i;
+        }
+    }
+
+    return text_len;
+}
+
+// Index of the first UTF-16 code unit that needs special handling: one of the
+// HTML metacharacters " & ' < >, or any code unit > 0x7F (so the scalar path
+// can decode surrogate pairs / replace lone surrogates). Returns text_len if
+// every code unit is plain ASCII with no metacharacter.
+size_t IndexOfHTMLEscapeOrNonASCII16Impl(const uint16_t* HWY_RESTRICT text, size_t text_len)
+{
+    if (text_len == 0) return 0;
+    using D16 = hn::ScalableTag<uint16_t>;
+    D16 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_quot = hn::Set(d, uint16_t { '"' });
+    const auto vec_amp = hn::Set(d, uint16_t { '&' });
+    const auto vec_apos = hn::Set(d, uint16_t { '\'' });
+    const auto vec_lt = hn::Set(d, uint16_t { '<' });
+    const auto vec_gt = hn::Set(d, uint16_t { '>' });
+    const auto vec_ascii_max = hn::Set(d, uint16_t { 0x7F });
+
+    size_t i = 0;
+    const size_t simd_text_len = text_len - (text_len % N);
+    for (; i < simd_text_len; i += N) {
+        const auto text_vec = hn::LoadU(d, text + i);
+        const auto metachar_mask = hn::Or(
+            hn::Or(hn::Eq(text_vec, vec_quot), hn::Eq(text_vec, vec_amp)),
+            hn::Or(hn::Eq(text_vec, vec_apos), hn::Or(hn::Eq(text_vec, vec_lt), hn::Eq(text_vec, vec_gt))));
+        const auto found_mask = hn::Or(metachar_mask, hn::Gt(text_vec, vec_ascii_max));
+
+        const intptr_t pos = hn::FindFirstTrue(d, found_mask);
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    for (; i < text_len; ++i) {
+        const uint16_t c = text[i];
+        if (c > 0x7F || c == '"' || c == '&' || c == '\'' || c == '<' || c == '>') {
+            return i;
+        }
+    }
+
+    return text_len;
+}
+
 void CopyU16ToU8Impl(const uint16_t* HWY_RESTRICT input, size_t count,
     uint8_t* HWY_RESTRICT output)
 {
@@ -1477,6 +1558,8 @@ HWY_EXPORT(FirstNonAscii16Impl);
 HWY_EXPORT(FirstNonAscii8Impl);
 HWY_EXPORT(IndexOfAnyCharImpl);
 HWY_EXPORT(IndexOfCharImpl);
+HWY_EXPORT(IndexOfHTMLEscapeChar8Impl);
+HWY_EXPORT(IndexOfHTMLEscapeOrNonASCII16Impl);
 HWY_EXPORT(IndexOfInterestingCharacterInMultilineCommentImpl);
 HWY_EXPORT(IndexOfInterestingCharacterInStringLiteralImpl);
 HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplBacktick);
@@ -1552,6 +1635,16 @@ size_t highway_index_of_char(const uint8_t* HWY_RESTRICT haystack, size_t haysta
     uint8_t needle)
 {
     return HWY_DYNAMIC_DISPATCH(IndexOfCharImpl)(haystack, haystack_len, needle);
+}
+
+size_t highway_index_of_html_escape_char8(const uint8_t* HWY_RESTRICT text, size_t text_len)
+{
+    return HWY_DYNAMIC_DISPATCH(IndexOfHTMLEscapeChar8Impl)(text, text_len);
+}
+
+size_t highway_index_of_html_escape_or_non_ascii16(const uint16_t* HWY_RESTRICT text, size_t text_len)
+{
+    return HWY_DYNAMIC_DISPATCH(IndexOfHTMLEscapeOrNonASCII16Impl)(text, text_len);
 }
 
 size_t highway_index_of_interesting_character_in_string_literal(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t quote)

@@ -55,3 +55,35 @@ it("reports error.port as a number even when options.port is a string", async ()
   expect(typeof error.port).toBe("number");
   expect(error.message).toBe(`connect ECONNREFUSED 127.0.0.1:${port}`);
 });
+
+it("emits a single Node-shaped 'error' on the custom-lookup path", async () => {
+  const port = await refusedPort();
+
+  const errors: NodeJS.ErrnoException[] = [];
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const req = http.request({
+    host: "refused.invalid",
+    port,
+    path: "/",
+    method: "GET",
+    timeout: 5000,
+    // A custom lookup routes through the iterate()/happy-eyeballs path. When
+    // the (only, last) candidate is refused, exactly one 'error' must fire.
+    lookup: (_host, _opts, cb) => cb(null, [{ address: "127.0.0.1", family: 4 }] as any),
+  });
+  req.on("error", err => {
+    errors.push(err);
+    // Give any erroneous second emission a chance to arrive before resolving.
+    setImmediate(resolve);
+  });
+  req.end();
+
+  await promise;
+  expect(errors.length).toBe(1);
+  const error = errors[0];
+  expect(error.code).toBe("ECONNREFUSED");
+  expect(error.syscall).toBe("connect");
+  expect(error.address).toBe("127.0.0.1");
+  expect(error.port).toBe(port);
+  expect(error.message).toBe(`connect ECONNREFUSED 127.0.0.1:${port}`);
+});

@@ -617,7 +617,13 @@ function ClientRequest(input, options, cb) {
 
           const candidate = candidates.shift();
           const [url, proxy] = getURL(candidate.address);
-          go(url, proxy, candidate.address, this[kPort], candidates.length > 0).catch(iterate);
+          const softFail = candidates.length > 0;
+          const attempt = go(url, proxy, candidate.address, this[kPort], softFail);
+          // Only advance to the next address while we're soft-failing. On the
+          // last candidate (softFail === false) go() owns the error emission,
+          // so re-running iterate() here would emit a second, non-Node-shaped
+          // 'error' via fail().
+          if (softFail) attempt.catch(iterate);
         };
 
         iterate();

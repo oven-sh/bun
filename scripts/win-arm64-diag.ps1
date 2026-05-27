@@ -78,14 +78,39 @@ function Clean-NodeModules {
   Remove-Item -Recurse -Force (Join-Path $repoRoot "node_modules") -ErrorAction SilentlyContinue
 }
 
+# Output-mode matrix: the test runner (which reproduces the crash 100%) pipes
+# bun's stdout/stderr; redirecting to a file (diag v4) made the crash vanish.
+# Distinguish "output written to a pipe" from everything else, and whether
+# silencing the install output (--silent) avoids it.
+function Invoke-PipedCase {
+  param([string]$Name, [string[]]$CaseArgs, [string]$Cwd, [switch]$Truncate)
+  Write-Host "--- case: $Name (piped)"
+  try {
+    if ($Cwd) { Push-Location $Cwd }
+    if ($Truncate) {
+      & $bun @CaseArgs 2>&1 | Select-Object -First 40 | Out-String | Write-Host
+    } else {
+      & $bun @CaseArgs 2>&1 | Out-Null
+    }
+    $code = $LASTEXITCODE
+    if ($Cwd) { Pop-Location }
+  } catch { Write-Host "exception: $($_.Exception.Message)"; $code = -1; Pop-Location -ErrorAction SilentlyContinue }
+  $hex = "0x{0:X8}" -f ($code -band 0xFFFFFFFF)
+  Write-Host "exit($Name): $code ($hex)"
+}
+
 Clean-NodeModules
-Invoke-Case -Name "install-root-default-1"     -CaseEnv @{}                              -CaseArgs @("install") -Cwd $repoRoot
+Invoke-PipedCase -Name "install-pipe-consumed-1"  -CaseArgs @("install") -Cwd $repoRoot
 Clean-NodeModules
-Invoke-Case -Name "install-root-default-2"     -CaseEnv @{}                              -CaseArgs @("install") -Cwd $repoRoot
+Invoke-PipedCase -Name "install-pipe-consumed-2"  -CaseArgs @("install") -Cwd $repoRoot
 Clean-NodeModules
-Invoke-Case -Name "install-root-serial-scripts" -CaseEnv @{}                             -CaseArgs @("install", "--concurrent-scripts=1") -Cwd $repoRoot
+Invoke-PipedCase -Name "install-pipe-truncated"   -CaseArgs @("install") -Cwd $repoRoot -Truncate
 Clean-NodeModules
-Invoke-Case -Name "install-root-no-scripts"    -CaseEnv @{}                              -CaseArgs @("install", "--ignore-scripts") -Cwd $repoRoot
+Invoke-PipedCase -Name "install-pipe-silent"      -CaseArgs @("install", "--silent") -Cwd $repoRoot
+Clean-NodeModules
+Invoke-Case      -Name "install-file-redirect"    -CaseEnv @{} -CaseArgs @("install") -Cwd $repoRoot
+Clean-NodeModules
+Invoke-PipedCase -Name "install-pipe-no-scripts"  -CaseArgs @("install", "--ignore-scripts") -Cwd $repoRoot
 
 # Crash dump capture with procdump (ARM64 native build). Try two sources.
 $procdump = Join-Path (Get-Location) "procdump64a.exe"

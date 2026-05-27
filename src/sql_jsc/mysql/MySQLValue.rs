@@ -486,7 +486,10 @@ impl Value {
 /// the float->int casts that would silently turn it into 0. An Invalid Date
 /// (`new Date(NaN)`) is still a `Date`, so it would otherwise be bound as a
 /// plausible-looking `1970-01-01 00:00:00` instead of surfacing the error.
-fn check_finite_ms(total_ms: f64, global_object: &JSGlobalObject) -> Result<(), any_mysql_error::Error> {
+fn check_finite_ms(
+    total_ms: f64,
+    global_object: &JSGlobalObject,
+) -> Result<(), any_mysql_error::Error> {
     if !total_ms.is_finite() {
         return Err(js_error_to_mysql(global_object.throw_invalid_arguments(
             format_args!("Invalid Date cannot be bound as a MySQL DATE/DATETIME/TIME value"),

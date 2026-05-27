@@ -3716,3 +3716,91 @@ test.concurrent("binary lockfile trusted dependency entries require an exact nam
   expect(await exists(join(packageDir, "node_modules", colliderName, "postinstall-ran.txt"))).toBeTrue();
   expect(await exited).toBe(0);
 });
+
+test.concurrent(
+  "lifecycle script trust for file: dependencies is keyed on the dependency alias, not the package's self-declared name",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+
+    // The user vets and trusts the names they wrote in `dependencies` /
+    // `trustedDependencies`. A folder/tarball/git dependency installed under a
+    // different alias must not inherit lifecycle-script trust just because the
+    // package.json inside the dependency declares the trusted name for itself.
+    const payloadDir = join(packageDir, "payload");
+    await mkdir(payloadDir, { recursive: true });
+    await writeFile(
+      join(payloadDir, "package.json"),
+      JSON.stringify({
+        name: "my-native-addon",
+        version: "1.0.0",
+        scripts: {
+          postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall-ran.txt', 'ran')"`,
+        },
+      }),
+    );
+
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "unrelated-alias": "file:./payload",
+        },
+        trustedDependencies: ["my-native-addon"],
+      }),
+    );
+
+    let { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    let err = await stderr.text();
+    let out = await stdout.text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("Blocked 1 postinstall");
+    expect(await exists(join(packageDir, "node_modules", "unrelated-alias", "package.json"))).toBeTrue();
+    expect(await exists(join(packageDir, "node_modules", "unrelated-alias", "postinstall-ran.txt"))).toBeFalse();
+    expect(await exists(join(packageDir, "node_modules", "my-native-addon", "postinstall-ran.txt"))).toBeFalse();
+    expect(await exited).toBe(0);
+
+    // The same folder dependency declared under the alias the user actually
+    // listed in trustedDependencies still runs its lifecycle scripts.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "bun.lock"), { force: true });
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "my-native-addon": "file:./payload",
+        },
+        trustedDependencies: ["my-native-addon"],
+      }),
+    );
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await stderr.text();
+    out = await stdout.text();
+    expect(err).not.toContain("error:");
+    expect(out).not.toContain("Blocked");
+    expect(await exists(join(packageDir, "node_modules", "my-native-addon", "postinstall-ran.txt"))).toBeTrue();
+    expect(await exited).toBe(0);
+  },
+);

@@ -33,26 +33,15 @@ impl Cd {
 
         if args.len() == 1 {
             let first_arg = Builtin::of(interp, cmd).arg_bytes(0);
-            match first_arg.first() {
-                Some(b'-') => {
-                    let prev = Builtin::shell(interp, cmd).prev_cwd().to_vec();
-                    if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_prev_cwd() {
-                        return Self::handle_change_cwd_err(interp, cmd, &err, &prev);
-                    }
+            if first_arg == b"-" {
+                let prev = Builtin::shell(interp, cmd).prev_cwd().to_vec();
+                if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_prev_cwd() {
+                    return Self::handle_change_cwd_err(interp, cmd, &err, &prev);
                 }
-                Some(b'~') => {
-                    let homedir = Builtin::shell(interp, cmd).get_homedir();
-                    let target = homedir.slice().to_vec();
-                    homedir.deref();
-                    if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_cwd(&target) {
-                        return Self::handle_change_cwd_err(interp, cmd, &err, &target);
-                    }
-                }
-                _ => {
-                    let target = first_arg.to_vec();
-                    if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_cwd(&target) {
-                        return Self::handle_change_cwd_err(interp, cmd, &err, &target);
-                    }
+            } else {
+                let target = first_arg.to_vec();
+                if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_cwd(&target) {
+                    return Self::handle_change_cwd_err(interp, cmd, &err, &target);
                 }
             }
         }

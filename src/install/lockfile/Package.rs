@@ -1839,13 +1839,24 @@ impl Package<u64> {
         match dependency_version.tag {
             dependency::version::Tag::Folder => {
                 let folder = *dependency_version.folder();
-                let relative = resolve_path::relative(
+                let mut folder_buf = PathBuffer::uninit();
+                let Some(joined) = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
                     FileSystem::instance().top_level_dir(),
-                    resolve_path::join_abs_string::<path::platform::Auto>(
-                        FileSystem::instance().top_level_dir(),
-                        &[source.path.name().dir, folder.slice(buf)],
-                    ),
-                );
+                    &mut folder_buf.0,
+                    &[source.path.name().dir, folder.slice(buf)],
+                ) else {
+                    log.add_error_fmt(
+                        source,
+                        value_loc,
+                        format_args!(
+                            "Dependency \"{}\" has an unsafe folder path",
+                            bstr::BStr::new(external_alias.slice(buf)),
+                        ),
+                    );
+                    return Err(bun_core::err!("InstallFailed"));
+                };
+                let relative =
+                    resolve_path::relative(FileSystem::instance().top_level_dir(), joined);
                 // if relative is empty, we are linking the package to itself
                 dependency_version.value.folder = string_builder
                     .append::<String>(if relative.is_empty() { b"." } else { relative });

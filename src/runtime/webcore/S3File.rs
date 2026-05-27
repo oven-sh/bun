@@ -404,7 +404,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
                     if file_type.is_string() {
                         let str = file_type.to_slice(global)?;
                         let slice = str.slice();
-                        if !strings::is_all_ascii(slice) {
+                        if !blob::is_valid_blob_type(slice) {
                             break 'inner;
                         }
                         blob.content_type_was_set.set(true);
@@ -471,7 +471,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
                     if file_type.is_string() {
                         let str = file_type.to_slice(global)?;
                         let slice = str.slice();
-                        if !strings::is_all_ascii(slice) {
+                        if !blob::is_valid_blob_type(slice) {
                             break 'inner;
                         }
                         blob.content_type_was_set.set(true);

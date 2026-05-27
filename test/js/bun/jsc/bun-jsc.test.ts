@@ -305,3 +305,53 @@ it("deserialize rejects a typed array whose backing store is not an array buffer
   expect(stdout).toBe("rejected\ntrue 1,2,3,4\ntrue 513,1027\n");
   expect(exitCode).toBe(0);
 });
+
+it("serialize rejects a CryptoKey created with extractable set to false", async () => {
+  // bun:jsc serialize() (and node:v8 serialize(), which wraps it) hands the raw
+  // structured-clone buffer to the caller, so a key imported with
+  // extractable: false must not be serializable through it. Keys marked
+  // extractable still serialize, and the non-extractable key remains usable.
+  const script = `
+    import { serialize } from "bun:jsc";
+    const secret = "THIS-IS-SECRET-KEY-MATERIAL-32B!";
+    const secretBytes = new TextEncoder().encode(secret);
+    const nonExtractable = await crypto.subtle.importKey(
+      "raw",
+      secretBytes,
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    let outcome;
+    try {
+      const bytes = new Uint8Array(serialize(nonExtractable));
+      const text = Array.from(bytes, b => String.fromCharCode(b)).join("");
+      outcome = text.includes(secret) ? "serialized with key material" : "serialized without key material";
+    } catch {
+      outcome = "rejected";
+    }
+    console.log(outcome);
+    // A key the caller marked extractable still serializes.
+    const extractable = await crypto.subtle.importKey(
+      "raw",
+      secretBytes,
+      { name: "HMAC", hash: "SHA-256" },
+      true,
+      ["sign"],
+    );
+    console.log(serialize(extractable).byteLength > 0);
+    // The non-extractable key is still usable for its intended purpose.
+    const signature = await crypto.subtle.sign("HMAC", nonExtractable, secretBytes);
+    console.log(signature.byteLength);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("rejected\ntrue\n32\n");
+  expect(exitCode).toBe(0);
+});

@@ -1382,6 +1382,24 @@ impl<'a> PackageInstaller<'a> {
                     installer.cache_dir = Fd::cwd();
                 } else {
                     // transitive folder dependencies are relative to their parent. they are not hoisted
+                    if folder.len() >= self.folder_path_buf.len()
+                        || bin::bin_target_escapes_package_dir(folder)
+                    {
+                        if log_level != Options::LogLevel::Silent {
+                            Output::pretty_errorln(format_args!(
+                                "<r><red>error<r>: refusing to install dependency <b>{}<r> with unsafe folder path \"{}\"",
+                                bstr::BStr::new(pkg_name.slice(string_buf!())),
+                                bstr::BStr::new(folder),
+                            ));
+                        }
+                        self.summary.fail += 1;
+                        self.increment_tree_install_count(
+                            !IS_PENDING_PACKAGE_INSTALL,
+                            self.current_tree_id,
+                            log_level,
+                        );
+                        return;
+                    }
                     self.folder_path_buf[..folder.len()].copy_from_slice(folder);
                     self.folder_path_buf[folder.len()] = 0;
                     // SAFETY: buf[folder.len()] == 0 written above

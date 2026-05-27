@@ -1815,6 +1815,10 @@ private:
             }
 #if ENABLE(WEB_CRYPTO)
             if (auto* key = JSCryptoKey::toWrapped(vm, obj)) {
+                if (m_forStorage == SerializationForStorage::Yes && !key->extractable()) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
                 write(CryptoKeyTag);
                 Vector<uint8_t> serializedKey;
                 // Vector<URLKeepingBlobAlive> dummyBlobHandles;

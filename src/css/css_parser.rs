@@ -5446,7 +5446,7 @@ impl<'a> Tokenizer<'a> {
 
     pub fn consume_char(&mut self) -> u32 {
         let c = self.next_char();
-        let len_utf8 = len_utf8(c);
+        let len_utf8 = len_utf8(c).min(self.src.len() - self.position);
         self.position += len_utf8;
         // Note that due to the special case for the 4-byte sequence intro,
         // we must use wrapping add here.

@@ -3814,7 +3814,7 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& ar
 
     JSValue nextTick;
     if (!this->m_nextTickFunction) {
-        nextTick = this->get(globalObject, Identifier::fromString(vm, "nextTick"_s));
+        nextTick = this->constructNextTickFn(vm, defaultGlobalObject(globalObject));
         RETURN_IF_EXCEPTION(scope, void());
     }
 

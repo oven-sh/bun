@@ -789,6 +789,98 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(() => Buffer.from("", "buffer")).toThrow(/encoding/);
       });
 
+      // Like Node.js, the base64 and base64url decoders are lenient: both
+      // alphabets are accepted, whitespace and any other non-alphabet
+      // characters are ignored, and decoding stops at the first '='.
+      forEachBase64("lenient decoding skips non-alphabet characters", encoding => {
+        expect(Buffer.from("Zm9v\x80YmFy", encoding).toString("latin1")).toBe("foobar");
+        expect(Buffer.from("Zm9v*YmFy", encoding).toString("latin1")).toBe("foobar");
+        expect(Buffer.from("Zm9v\x00YmFy", encoding).toString("latin1")).toBe("foobar");
+        expect(Buffer.from("\xffZm9vYmFy\x03", encoding).toString("latin1")).toBe("foobar");
+        expect(Buffer.from(" Z m 9\tv\nY\rm F y ", encoding).toString("latin1")).toBe("foobar");
+        expect(Buffer.from(" \n\t ", encoding).length).toBe(0);
+        // two-byte strings: code units whose low byte is not in the alphabet are skipped too
+        expect(Buffer.from("Zm9v\u0100YmFy", encoding).toString("latin1")).toBe("foobar");
+        expect(Buffer.from("Zm9vYmFy\u3000", encoding).toString("latin1")).toBe("foobar");
+      });
+
+      // Like Node.js, two-byte (UTF-16) strings are decoded from the low byte
+      // of each code unit: a unit like U+013D acts like '=', U+1234 acts like
+      // '4', and units whose low byte is not in the alphabet are skipped.
+      forEachBase64("two-byte strings decode from the low byte of each code unit", encoding => {
+        // \uD83D (first unit of 😀) narrows to 0x3D ('='), which stops decoding
+        expect(Buffer.from("QUJD\u{1F600}REVG", encoding).toString("latin1")).toBe("ABC");
+        expect(Buffer.from("\u{1F600}QUJDREVG", encoding).length).toBe(0);
+        expect(Buffer.from("QUJD\uD83D", encoding).toString("latin1")).toBe("ABC");
+        expect(Buffer.from("\u013DZm9v", encoding).length).toBe(0);
+        expect(Buffer.from("Zm9vYmFy\u013D", encoding).toString("latin1")).toBe("foobar");
+
+        // U+1234 narrows to 0x34 ('4'), U+0441 narrows to 0x41 ('A'): they contribute data
+        expect(Array.from(Buffer.from("\u1234QUJDREVG", encoding))).toStrictEqual([0xe1, 0x05, 0x09, 0x0d, 0x11, 0x15]);
+        expect(Buffer.from("Zm9v\u0441YmFy", encoding)).toStrictEqual(Buffer.from("Zm9vAYmFy", encoding));
+
+        // write() and fill() narrow the same way
+        {
+          const b = Buffer.alloc(8, 0xaa);
+          expect(b.write("QUJD\u{1F600}REVG", 0, encoding)).toBe(3);
+          expect(b.toString("hex")).toBe("414243aaaaaaaaaa");
+        }
+        {
+          const b = Buffer.alloc(1, 0xaa);
+          expect(b.write("YWJj\u3000", 0, encoding)).toBe(1);
+          expect(b.toString("hex")).toBe("61");
+        }
+        expect(Buffer.alloc(6, "QUJD\u{1F600}REVG", encoding).toString("latin1")).toBe("ABCABC");
+      });
+
+      forEachBase64("lenient decoding accepts both alphabets in the same input", encoding => {
+        expect(Array.from(Buffer.from("-_+/", encoding))).toStrictEqual([0xfb, 0xff, 0xbf]);
+        expect(Buffer.from("PDw/Pz8+Pg==", encoding).toString("latin1")).toBe("<<???>>");
+        expect(Buffer.from("PDw_Pz8-Pg", encoding).toString("latin1")).toBe("<<???>>");
+      });
+
+      forEachBase64("lenient decoding stops at the first '='", encoding => {
+        expect(Buffer.from("Zm9v=YmFy", encoding).toString("latin1")).toBe("foo");
+        expect(Buffer.from("=Zm9vYmFy", encoding).length).toBe(0);
+        expect(Buffer.from("YW55=======", encoding).toString("latin1")).toBe("any");
+        expect(Buffer.from("Zm9vYmFy=", encoding).toString("latin1")).toBe("foobar");
+        expect(Buffer.from("Zg=", encoding).toString("latin1")).toBe("f");
+        // a single leftover character contributes nothing
+        expect(Buffer.from("Zm9vYmFyA", encoding).toString("latin1")).toBe("foobar");
+      });
+
+      forEachBase64("lenient decoding of long inputs", encoding => {
+        const expected = Buffer.alloc(6 * 1024, "foobar").toString("latin1");
+        const b64 = Buffer.alloc(8 * 1024, "Zm9vYmFy").toString("latin1");
+        expect(Buffer.from(b64, encoding).toString("latin1")).toBe(expected);
+        expect(Buffer.from(b64.replace(/(.{64})/g, "$1\n"), encoding).toString("latin1")).toBe(expected);
+        expect(Buffer.from(b64.replace(/(.{64})/g, "$1\x85"), encoding).toString("latin1")).toBe(expected);
+      });
+
+      forEachBase64("write() only reports bytes actually written", encoding => {
+        {
+          const b = Buffer.alloc(3, 0xaa);
+          expect(b.write("Zm9vYmFy", 0, encoding)).toBe(3);
+          expect(b.toString("latin1")).toBe("foo");
+        }
+        {
+          const b = Buffer.alloc(8, 0xaa);
+          expect(b.write("Zm9vYmFy", 2, 3, encoding)).toBe(3);
+          expect(Array.from(b)).toStrictEqual([0xaa, 0xaa, 0x66, 0x6f, 0x6f, 0xaa, 0xaa, 0xaa]);
+        }
+        {
+          // '=' early in the string: nothing is decoded and nothing is written
+          const b = Buffer.alloc(8, 0xaa);
+          expect(b.write("Z=m9vYmFy", 0, 3, encoding)).toBe(0);
+          expect(Array.from(b)).toStrictEqual(Array(8).fill(0xaa));
+        }
+        {
+          const b = Buffer.alloc(4, 0xaa);
+          expect(b.write("QQ==QUJD", 0, encoding)).toBe(1);
+          expect(Array.from(b)).toStrictEqual([0x41, 0xaa, 0xaa, 0xaa]);
+        }
+      });
+
       it("creating buffers larger than pool size", () => {
         const l = Buffer.poolSize + 5;
         const s = "h".repeat(l);
@@ -870,6 +962,117 @@ for (let withOverridenBufferWrite of [false, true]) {
         const buf = Buffer.alloc(4);
         expect(buf.write("ab\xff\xffcd", "hex")).toBe(1);
         expect(buf).toEqual(Buffer.from([0xab, 0, 0, 0]));
+      });
+
+      // The hex decoder takes a SIMD path once the input has at least 16 byte
+      // pairs and falls back to scalar code for short inputs, vector tails and
+      // the block containing the first invalid character. These tests sweep the
+      // boundaries of those blocks against a plain JS reference decoder.
+      describe("hex decoding around SIMD block boundaries", () => {
+        const hexDigitValue = c => {
+          if (c >= 0x30 && c <= 0x39) return c - 0x30;
+          if (c >= 0x61 && c <= 0x66) return c - 0x61 + 10;
+          if (c >= 0x41 && c <= 0x46) return c - 0x41 + 10;
+          return -1;
+        };
+        const referenceHexDecode = (str, maxBytes = Infinity) => {
+          const out = [];
+          for (let i = 0; i + 1 < str.length && out.length < maxBytes; i += 2) {
+            const hi = hexDigitValue(str.charCodeAt(i));
+            const lo = hexDigitValue(str.charCodeAt(i + 1));
+            if (hi < 0 || lo < 0) break;
+            out.push((hi << 4) | lo);
+          }
+          return Buffer.from(out);
+        };
+        // deterministic pattern covering all byte values, with mixed case
+        const patternHex = pairs => {
+          let s = "";
+          for (let i = 0; i < pairs; i++) {
+            const byte = (i * 7 + 13) & 0xff;
+            const hex = byte.toString(16).padStart(2, "0");
+            s += i % 3 === 0 ? hex.toUpperCase() : hex;
+          }
+          return s;
+        };
+        // keeps only ASCII hex characters but forces two-byte string storage
+        const toUTF16 = s => (s + "\u0100").slice(0, -1);
+
+        it("decodes valid input at every length around the vector widths", () => {
+          for (const pairs of [15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 127, 128, 129, 255, 256, 1024]) {
+            for (const extraChar of ["", "a"]) {
+              // `extraChar` leaves a trailing lone digit that must be ignored
+              const hex = patternHex(pairs) + extraChar;
+              const expected = referenceHexDecode(hex);
+              expect(expected.length).toBe(pairs);
+
+              const fromLatin1 = Buffer.from(hex, "hex");
+              expect(fromLatin1).toEqual(expected);
+
+              const fromUTF16 = Buffer.from(toUTF16(hex), "hex");
+              expect(fromUTF16).toEqual(expected);
+            }
+          }
+        });
+
+        it("stops at an invalid character at any position", () => {
+          const pairs = 80; // several vector blocks on every target
+          for (const bad of ["x", "g", "G", ":", "@", "/", " ", "\x00", "\x80", "\xff"]) {
+            for (let pos = 0; pos < pairs * 2; pos += 7) {
+              const chars = patternHex(pairs).split("");
+              chars[pos] = bad;
+              const hex = chars.join("");
+              const expected = referenceHexDecode(hex);
+              expect(expected.length).toBe(Math.floor(pos / 2));
+              expect(Buffer.from(hex, "hex")).toEqual(expected);
+              expect(Buffer.from(toUTF16(hex), "hex")).toEqual(expected);
+            }
+          }
+        });
+
+        it("treats UTF-16 code units above 0xFF as invalid even when their low byte is a hex digit", () => {
+          // U+0130, U+0141, U+3061, U+FF41 truncate to '0', 'A', 'a', 'A' — the
+          // decoder must reject them rather than decode the truncated byte.
+          const pairs = 64;
+          for (const bad of ["\u0130", "\u0141", "\u3061", "\uff41"]) {
+            for (const pos of [0, 1, 31, 32, 63, 64, 97, 126, 127]) {
+              const chars = patternHex(pairs).split("");
+              chars[pos] = bad;
+              const hex = chars.join("");
+              const expected = referenceHexDecode(hex);
+              expect(expected.length).toBe(Math.floor(pos / 2));
+              expect(Buffer.from(hex, "hex")).toEqual(expected);
+            }
+          }
+        });
+
+        it("buf.write() with long hex input respects the destination length", () => {
+          const pairs = 100;
+          const hex = patternHex(pairs);
+          const expected = referenceHexDecode(hex);
+
+          // exact fit
+          const exact = Buffer.alloc(pairs);
+          expect(exact.write(hex, "hex")).toBe(pairs);
+          expect(exact).toEqual(expected);
+
+          // destination smaller than the input: truncated, remaining bytes untouched
+          const small = Buffer.alloc(40, 0xaa);
+          expect(small.write(hex, 3, "hex")).toBe(37);
+          expect(small.subarray(0, 3)).toEqual(Buffer.from([0xaa, 0xaa, 0xaa]));
+          expect(small.subarray(3)).toEqual(expected.subarray(0, 37));
+
+          // destination larger than the input
+          const large = Buffer.alloc(pairs + 10, 0xbb);
+          expect(large.write(hex, "hex")).toBe(pairs);
+          expect(large.subarray(0, pairs)).toEqual(expected);
+          expect(large.subarray(pairs)).toEqual(Buffer.alloc(10, 0xbb));
+
+          // 16-bit string path
+          const utf16Target = Buffer.alloc(pairs);
+          expect(utf16Target.write(toUTF16(hex), "hex")).toBe(pairs);
+          expect(utf16Target).toEqual(expected);
+        });
       });
 
       it("single base64 char encodes as 0", () => {

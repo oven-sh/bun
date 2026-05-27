@@ -48,6 +48,59 @@ pub fn decode(destination: &mut [u8], source: &[u8]) -> SIMDUTFResult {
     result
 }
 
+/// Destination size that lets [`decode_lenient`] decode an input of
+/// `source_len` base64 characters in a single simdutf pass (the worst-case
+/// decoded length).
+pub const fn decode_lenient_len(source_len: usize) -> usize {
+    source_len.div_ceil(4) * 3
+}
+
+/// Decode base64 the way Node.js `Buffer.from(str, "base64" | "base64url")`
+/// and `buf.write(str, "base64" | "base64url")` do: both the standard and the
+/// URL-safe alphabets are accepted, whitespace and any other non-alphabet
+/// bytes are skipped, and decoding stops at the first `'='`. Invalid input
+/// never fails — as much data as possible is decoded.
+///
+/// Like Node.js, strictly valid input for the requested alphabet
+/// (`is_urlsafe`) is decoded with simdutf's fastest kernel; everything else is
+/// decoded with simdutf's `base64_default_or_url_accept_garbage` mode.
+///
+/// Returns the number of bytes written to `destination`.
+pub fn decode_lenient(destination: &mut [u8], source: &[u8], is_urlsafe: bool) -> usize {
+    // Fast path: the common case is strictly valid base64 for the requested
+    // alphabet (possibly with whitespace and padding), which simdutf decodes
+    // with its fastest kernel. This is the same first attempt Node.js makes.
+    let strict = simdutf::base64::decode(source, destination, is_urlsafe);
+    if strict.is_successful() {
+        return strict.count;
+    }
+
+    // simdutf only honors the accept-garbage stop-at-'=' rule when the
+    // destination can hold the worst-case decode; with a smaller destination
+    // (e.g. `buf.write` into a short buffer) it switches to a chunked strategy
+    // that keeps decoding past the '='. Apply the rule up front in that case
+    // so both strategies agree.
+    let source = if destination.len() < decode_lenient_len(source.len()) {
+        match source.iter().position(|&c| c == b'=') {
+            Some(index) => &source[..index],
+            None => source,
+        }
+    } else {
+        source
+    };
+
+    let result = simdutf::base64::decode_lenient(source, destination);
+    if result.is_successful() {
+        return result.count;
+    }
+
+    // The decoded data does not fit in `destination`: fall back to the scalar
+    // decoder, which fills `destination` and stops.
+    let mut wrote: usize = 0;
+    let _ = MIXED_DECODER.decode(destination, source, &mut wrote);
+    wrote
+}
+
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeAllocError {
     #[error("DecodingFailed")]

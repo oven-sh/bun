@@ -85,29 +85,6 @@ export const workarounds: Workaround[] = [
     cleanup: `Delete scripts/build/shims/asan-dyld-shim.c, scripts/build/shims.ts, the emitShims() calls in bun.ts, registerShimRules in rules.ts, and this entry.`,
   },
   {
-    id: "globalopt-crash-aarch64-musl",
-    issue: "https://github.com/llvm/llvm-project/issues/ (file once reduced; see CI #53109)",
-    description:
-      "rust-lld's link-stage LTO segfaults in the `globalopt` pass on the bun_runtime " +
-      "bitcode module on aarch64-unknown-linux-musl. Disable cross-language LTO for " +
-      "that target only — both halves still LTO independently (C++ via -flto=thin, " +
-      'Rust via [profile.release] lto = "fat"); only Rust↔C++ inlining is lost.',
-    // Only exercised on the lane the crash hits.
-    applies: cfg => cfg.lto && cfg.arm64 && cfg.abi === "musl",
-    expectedToBeFixed: cfg => {
-      // The crash is inside rust-lld's LLVM (rustc nightly-2026-05-06 ⇒ LLVM 22).
-      // Re-test once the pinned rustc moves to LLVM 23. If it still crashes,
-      // bump this and file the upstream LLVM issue with a reduced repro
-      // (`llvm-reduce` over the bun_runtime cgu bitcode).
-      const FIXED_IN_RUST_LLVM = "23.0.0";
-      return cfg.rustLlvmVersion !== undefined && satisfiesRange(cfg.rustLlvmVersion, `>=${FIXED_IN_RUST_LLVM}`);
-    },
-    cleanup:
-      `Delete the \`!(aarch64 && abi === "musl")\` clause from the \`crossLangLto\` ` +
-      `derivation in resolveConfig() (config.ts), and this entry. The \`crossLangLto\` ` +
-      `field itself can stay (collapses to \`= lto\` when no per-target gates remain).`,
-  },
-  {
     id: "rustc-no-regular-lto-summary",
     issue:
       "https://github.com/rust-lang/rust/issues/ (none filed yet — rustc has no equivalent of clang's shouldEmitRegularLTOSummary())",

@@ -1401,6 +1401,101 @@ pub fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>])
     false
 }
 
+/// Result of [`open_entry_parent_nofollow`].
+#[cfg(target_os = "macos")]
+pub enum NofollowParentError {
+    /// A symlink lies between `root_fd` and the entry's parent directory; the
+    /// entry must be skipped.
+    TraversesSymlink,
+    /// `openat`/`mkdirat` failed for a reason other than a symlink in the path.
+    Io(bun_sys::Error),
+}
+
+/// Open `dirname(path)` relative to `root_fd` with the kernel guaranteeing no
+/// symlink anywhere in the path was followed (`O_NOFOLLOW_ANY`).
+///
+/// `path_traverses_created_symlink` compares path prefixes byte-wise; on
+/// case-insensitive normalizing filesystems (APFS/HFS+) two distinct byte
+/// sequences can name the same on-disk symlink, so the lexical guard alone
+/// can't prove a `mkdirat`/`symlinkat` won't follow a previously extracted
+/// symlink. File entries already use `O_NOFOLLOW_ANY` for the same reason —
+/// this extends that defense to directory and symlink entries by opening their
+/// parent directory with `O_NOFOLLOW_ANY` and issuing the leaf-creating call
+/// against that fd.
+///
+/// Returns `(None, path)` for a single-component `path` (no parent directory to
+/// traverse, so `root_fd` is already the right place). Otherwise returns the
+/// owned parent-directory `File` (closed on drop) and the leaf component, which
+/// remains a NUL-terminated suffix of `path`.
+#[cfg(target_os = "macos")]
+pub fn open_entry_parent_nofollow(
+    root_fd: Fd,
+    path: &[u8],
+) -> Result<(Option<bun_sys::File>, &[u8]), NofollowParentError> {
+    use bun_sys::{E, File, O};
+
+    let Some(last_sep) = path.iter().rposition(|&c| c == b'/') else {
+        return Ok((None, path));
+    };
+    let parent = &path[..last_sep];
+    let leaf = &path[last_sep + 1..];
+    if parent.is_empty() {
+        return Ok((None, leaf));
+    }
+
+    match File::openat(root_fd, parent, O::RDONLY | O::DIRECTORY | O::NOFOLLOW_ANY, 0) {
+        Ok(dir) => return Ok((Some(dir), leaf)),
+        Err(e) => match e.get_errno() {
+            // A symlink in the path, or a path component is not a directory
+            // (which on Darwin can only happen here when a component is a
+            // symlink to a non-directory, since extraction itself only ever
+            // creates directories along entry-parent paths).
+            E::ELOOP | E::ENOTDIR => return Err(NofollowParentError::TraversesSymlink),
+            E::ENOENT => {}
+            _ => return Err(NofollowParentError::Io(e)),
+        },
+    }
+
+    // Parent doesn't exist yet — walk and create it component by component.
+    // Per-component `O_NOFOLLOW` keeps the walk safe: if a `mkdirat` fails with
+    // `EEXIST` because a component already exists as a symlink, the following
+    // `openat(.., O_DIRECTORY | O_NOFOLLOW)` refuses to open it.
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let mut cur: Option<File> = None;
+    for component in parent.split(|&c| c == b'/') {
+        if component.is_empty() {
+            continue;
+        }
+        if component.len() + 1 > buf.len() {
+            return Err(NofollowParentError::Io(bun_sys::Error::new(
+                E::ENAMETOOLONG,
+                bun_sys::Tag::open,
+            )));
+        }
+        buf[..component.len()].copy_from_slice(component);
+        buf[component.len()] = 0;
+        let component_z = ZStr::from_buf(&buf[..], component.len());
+        let cur_fd = cur.as_ref().map(|f| f.fd()).unwrap_or(root_fd);
+        match bun_sys::mkdirat_z(cur_fd, component_z, 0o755) {
+            Ok(()) => {}
+            Err(e) if e.get_errno() == E::EEXIST => {}
+            Err(e) => return Err(NofollowParentError::Io(e)),
+        }
+        match File::openat(cur_fd, component, O::RDONLY | O::DIRECTORY | O::NOFOLLOW, 0) {
+            Ok(next) => cur = Some(next),
+            Err(e) => {
+                return match e.get_errno() {
+                    E::ELOOP | E::ENOTDIR | E::EMLINK => {
+                        Err(NofollowParentError::TraversesSymlink)
+                    }
+                    _ => Err(NofollowParentError::Io(e)),
+                };
+            }
+        }
+    }
+    Ok((cur, leaf))
+}
+
 /// Port of `bun.MakePath.makePath(u16, dir, sub_path)` (bun.zig:2481) — the
 /// Windows arm calls `makeOpenPathAccessMaskW`, which component-iterates the
 /// wide path and `NtCreateFile`s each prefix with `FILE_OPEN_IF`, walking back
@@ -1922,14 +2017,54 @@ impl Archiver {
                             }
                             #[cfg(not(windows))]
                             {
-                                // SAFETY: normalized_buf[path_slice.len()] == 0 (written above),
-                                // so path_slice is a NUL-terminated [:0]u8.
-                                let path_z: &ZStr = unsafe {
-                                    ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
+                                // On Darwin, once any symlink has been created the
+                                // lexical traversal guard above is insufficient
+                                // (case-insensitive normalizing filesystems can alias
+                                // distinct byte sequences to the same on-disk symlink),
+                                // so open the parent with `O_NOFOLLOW_ANY` and create
+                                // the leaf relative to that fd. The fallback that
+                                // mkdirs the parent on `ENOENT` is replaced by the
+                                // helper's per-component walk.
+                                #[cfg(target_os = "macos")]
+                                let nofollow_parent = if !created_symlinks.is_empty() {
+                                    match open_entry_parent_nofollow(dir_fd, path_slice) {
+                                        Ok(r) => Some(r),
+                                        Err(NofollowParentError::TraversesSymlink) => {
+                                            if options.log {
+                                                Output::warn(format_args!(
+                                                    "Skipping entry that traverses a previously extracted symlink: {}\n",
+                                                    bun_core::fmt::fmt_os_path(path_slice, Default::default()),
+                                                ));
+                                            }
+                                            continue;
+                                        }
+                                        Err(NofollowParentError::Io(e)) => return Err(e.into()),
+                                    }
+                                } else {
+                                    None
+                                };
+                                #[cfg(not(target_os = "macos"))]
+                                let nofollow_parent: Option<(Option<bun_sys::File>, &[u8])> = None;
+
+                                let (mkdir_dirfd, mkdir_path_z): (Fd, &ZStr) = match &nofollow_parent
+                                {
+                                    Some((parent, leaf)) => (
+                                        parent.as_ref().map(|f| f.fd()).unwrap_or(dir_fd),
+                                        // SAFETY: `leaf` is a suffix of `path_slice`, which is
+                                        // NUL-terminated in `normalized_buf`.
+                                        unsafe { ZStr::from_raw(leaf.as_ptr(), leaf.len()) },
+                                    ),
+                                    None => (
+                                        dir_fd,
+                                        // SAFETY: normalized_buf[path_slice.len()] == 0 (written above).
+                                        unsafe {
+                                            ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
+                                        },
+                                    ),
                                 };
                                 match bun_sys::mkdirat_z(
-                                    dir_fd,
-                                    path_z,
+                                    mkdir_dirfd,
+                                    mkdir_path_z,
                                     bun_sys::Mode::try_from(mode).expect("int cast"),
                                 ) {
                                     Ok(()) => {}
@@ -1942,12 +2077,18 @@ impl Archiver {
                                             bun_sys::E::EEXIST | bun_sys::E::ENOTDIR => continue,
                                             _ => {}
                                         }
+                                        if nofollow_parent.is_some() {
+                                            // Intermediates were already created by the helper;
+                                            // surface the real error rather than retrying through
+                                            // a path that may follow symlinks.
+                                            return Err(err.into());
+                                        }
                                         let dirname = bun_paths::dirname_simple(path_slice);
                                         if dirname.is_empty() {
                                             return Err(err.into());
                                         }
                                         let _ = dir.make_path_u8(dirname);
-                                        let _ = bun_sys::mkdirat_z(dir_fd, path_z, 0o777);
+                                        let _ = bun_sys::mkdirat_z(dir_fd, mkdir_path_z, 0o777);
                                     }
                                 }
                             }
@@ -1978,22 +2119,57 @@ impl Archiver {
                                     }
                                     continue;
                                 }
-                                // SAFETY: normalized_buf[path_slice.len()] == 0 (written above),
-                                // so path_slice is a NUL-terminated [:0]u8.
-                                let path_z: &ZStr = unsafe {
-                                    ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
+                                #[cfg(target_os = "macos")]
+                                let nofollow_parent = if !created_symlinks.is_empty() {
+                                    match open_entry_parent_nofollow(dir_fd, path_slice) {
+                                        Ok(r) => Some(r),
+                                        Err(NofollowParentError::TraversesSymlink) => {
+                                            if options.log {
+                                                Output::warn(format_args!(
+                                                    "Skipping entry that traverses a previously extracted symlink: {}\n",
+                                                    bun_core::fmt::fmt_os_path(path_slice, Default::default()),
+                                                ));
+                                            }
+                                            continue;
+                                        }
+                                        Err(NofollowParentError::Io(e)) => return Err(e.into()),
+                                    }
+                                } else {
+                                    None
                                 };
-                                match bun_sys::symlinkat(link_target, dir_fd, path_z) {
+                                #[cfg(not(target_os = "macos"))]
+                                let nofollow_parent: Option<(Option<bun_sys::File>, &[u8])> = None;
+
+                                let (link_dirfd, link_path_z): (Fd, &ZStr) = match &nofollow_parent
+                                {
+                                    Some((parent, leaf)) => (
+                                        parent.as_ref().map(|f| f.fd()).unwrap_or(dir_fd),
+                                        // SAFETY: `leaf` is a suffix of `path_slice`, which is
+                                        // NUL-terminated in `normalized_buf`.
+                                        unsafe { ZStr::from_raw(leaf.as_ptr(), leaf.len()) },
+                                    ),
+                                    None => (
+                                        dir_fd,
+                                        // SAFETY: normalized_buf[path_slice.len()] == 0 (written above).
+                                        unsafe {
+                                            ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
+                                        },
+                                    ),
+                                };
+                                match bun_sys::symlinkat(link_target, link_dirfd, link_path_z) {
                                     Ok(()) => {}
                                     // PORT NOTE: Zig matched error.EPERM / error.ENOENT (errnoToZigErr maps 1:1).
                                     Err(err) => match err.get_errno() {
                                         bun_sys::E::EPERM | bun_sys::E::ENOENT => {
+                                            if nofollow_parent.is_some() {
+                                                return Err(err.into());
+                                            }
                                             let dirname = bun_paths::dirname_simple(path_slice);
                                             if dirname.is_empty() {
                                                 return Err(err.into());
                                             }
                                             let _ = dir.make_path_u8(dirname);
-                                            bun_sys::symlinkat(link_target, dir_fd, path_z)?;
+                                            bun_sys::symlinkat(link_target, dir_fd, link_path_z)?;
                                         }
                                         _ => return Err(err.into()),
                                     },

@@ -829,15 +829,20 @@ impl TarballStream {
             return Ok(());
         }
 
+        #[cfg(unix)]
+        let nofollow = !self.created_symlinks.is_empty();
+
         match kind {
             FileKind::Directory => {
-                make_directory(entry, dest, path, path_slice);
+                #[cfg(not(unix))]
+                let nofollow = false;
+                make_directory(entry, dest, path, path_slice, nofollow);
                 self.phase = Phase::WantData;
                 self.out_fd = None;
             }
             FileKind::SymLink => {
                 #[cfg(unix)]
-                if make_symlink(entry, dest, path, path_slice) {
+                if make_symlink(entry, dest, path, path_slice, nofollow) {
                     self.created_symlinks.push(path_slice.to_vec());
                 }
                 self.phase = Phase::WantData;
@@ -850,8 +855,6 @@ impl TarballStream {
                 // archive never reach `openat`'s mode argument.
                 #[cfg(not(windows))]
                 let mode: Mode = Mode::try_from((entry.perm() & 0o777) | 0o666).expect("int cast");
-                #[cfg(unix)]
-                let nofollow = !self.created_symlinks.is_empty();
                 #[cfg(not(unix))]
                 let nofollow = false;
                 let fd = open_output_file(dest, path, path_slice, mode, nofollow)?;
@@ -1368,7 +1371,13 @@ fn open_output_file(
     }
 }
 
-fn make_directory(entry: &mut lib::Entry, dest_fd: Fd, path: OSPathZ, path_slice: &[OSPathChar]) {
+fn make_directory(
+    entry: &mut lib::Entry,
+    dest_fd: Fd,
+    path: OSPathZ,
+    path_slice: &[OSPathChar],
+    nofollow: bool,
+) {
     let mut mode = i32::try_from(entry.perm()).expect("int cast");
     // if dirs are readable, then they should be listable
     // https://github.com/npm/node-tar/blob/main/lib/mode-fix.js
@@ -1384,10 +1393,37 @@ fn make_directory(entry: &mut lib::Entry, dest_fd: Fd, path: OSPathZ, path_slice
     #[cfg(windows)]
     {
         let _ = bun_sys::make_path::make_path::<u16>(Dir::borrow(&dest_fd), &path[..]);
-        let _ = (path_slice, mode);
+        let _ = (path_slice, mode, nofollow);
     }
     #[cfg(not(windows))]
     {
+        // On Darwin, once any symlink has been created the lexical traversal
+        // guard in `begin_entry` is insufficient (case-insensitive normalizing
+        // filesystems can alias distinct byte sequences to the same on-disk
+        // symlink), so open the parent with `O_NOFOLLOW_ANY` and create the
+        // leaf relative to that fd. Same defense as `open_output_file`.
+        #[cfg(target_os = "macos")]
+        if nofollow {
+            match bun_libarchive::open_entry_parent_nofollow(dest_fd, path_slice) {
+                Ok((parent, leaf)) => {
+                    let mkdir_dirfd = parent.as_ref().map(|f| f.fd()).unwrap_or(dest_fd);
+                    // SAFETY: `leaf` is a suffix of `path_slice`, which is
+                    // NUL-terminated (the caller wrote `norm_buf[norm_len] = 0`).
+                    let leaf_z =
+                        unsafe { bun_core::ZStr::from_raw(leaf.as_ptr(), leaf.len()) };
+                    let _ = bun_sys::mkdirat_z(
+                        mkdir_dirfd,
+                        leaf_z,
+                        Mode::try_from(mode).expect("int cast"),
+                    );
+                    return;
+                }
+                Err(bun_libarchive::NofollowParentError::TraversesSymlink) => return,
+                Err(bun_libarchive::NofollowParentError::Io(_)) => return,
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = nofollow;
         match bun_sys::mkdirat_z(dest_fd, path, Mode::try_from(mode).expect("int cast")) {
             Ok(()) => {}
             Err(e) => match e.get_errno() {
@@ -1412,6 +1448,7 @@ fn make_symlink(
     dest_fd: Fd,
     path: OSPathZ,
     path_slice: &[OSPathChar],
+    nofollow: bool,
 ) -> bool {
     let target = entry.symlink();
     // Same safety rule as `isSymlinkTargetSafe` in the buffered path:
@@ -1468,6 +1505,22 @@ fn make_symlink(
             return false;
         }
     }
+    #[cfg(target_os = "macos")]
+    if nofollow {
+        return match bun_libarchive::open_entry_parent_nofollow(dest_fd, path_slice) {
+            Ok((parent, leaf)) => {
+                let link_dirfd = parent.as_ref().map(|f| f.fd()).unwrap_or(dest_fd);
+                // SAFETY: `leaf` is a suffix of `path_slice`, which is
+                // NUL-terminated (the caller wrote `norm_buf[norm_len] = 0`).
+                let leaf_z = unsafe { bun_core::ZStr::from_raw(leaf.as_ptr(), leaf.len()) };
+                bun_sys::symlinkat(target, link_dirfd, leaf_z).is_ok()
+            }
+            Err(bun_libarchive::NofollowParentError::TraversesSymlink) => false,
+            Err(bun_libarchive::NofollowParentError::Io(_)) => false,
+        };
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = nofollow;
     match bun_sys::symlinkat(target, dest_fd, path) {
         Ok(()) => true,
         Err(e) if matches!(e.get_errno(), bun_sys::E::EPERM | bun_sys::E::ENOENT) => {

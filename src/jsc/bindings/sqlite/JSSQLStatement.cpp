@@ -45,6 +45,7 @@
 #include "wtf/BitVector.h"
 #include "wtf/FastBitVector.h"
 #include "wtf/Vector.h"
+#include <wtf/Lock.h>
 #include <atomic>
 #include "wtf/LazyRef.h"
 #include "wtf/text/StringToIntegerConversion.h"
@@ -237,6 +238,7 @@ public:
 };
 
 static SQLiteSingleton* _instance = nullptr;
+static WTF::Lock databasesLock;
 
 static Vector<VersionSqlite3*>& databases()
 {
@@ -248,6 +250,24 @@ static Vector<VersionSqlite3*>& databases()
     }
 
     return _instance->databases;
+}
+
+static size_t registerDatabase(VersionSqlite3* versionDB)
+{
+    WTF::Locker locker { databasesLock };
+    auto& dbs = databases();
+    size_t index = dbs.size();
+    dbs.append(versionDB);
+    return index;
+}
+
+static VersionSqlite3* databaseForHandle(int32_t handle)
+{
+    WTF::Locker locker { databasesLock };
+    auto& dbs = databases();
+    if (handle < 0 || static_cast<size_t>(handle) >= dbs.size())
+        return nullptr;
+    return dbs[static_cast<size_t>(handle)];
 }
 
 extern "C" void Bun__closeAllSQLiteDatabasesForTermination()
@@ -1279,8 +1299,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
         return {};
     }
 
-    auto count = databases().size();
-    databases().append(new VersionSqlite3(db));
+    auto count = registerDatabase(new VersionSqlite3(db));
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(count)));
 }
 
@@ -1297,12 +1316,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexical
     }
 
     int32_t dbIndex = callFrame->argument(0).toInt32(lexicalGlobalObject);
-    if (dbIndex < 0 || dbIndex >= databases().size()) [[unlikely]] {
+    VersionSqlite3* versionDB = databaseForHandle(dbIndex);
+    if (!versionDB) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
     }
 
-    sqlite3* db = databases()[dbIndex]->db;
+    sqlite3* db = versionDB->db;
     if (!db) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Can't do this on a closed database"_s));
         return {};
@@ -1338,7 +1358,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
     }
 
     int32_t dbIndex = callFrame->argument(0).toInt32(lexicalGlobalObject);
-    if (dbIndex < 0 || dbIndex >= databases().size()) [[unlikely]] {
+    VersionSqlite3* versionDB = databaseForHandle(dbIndex);
+    if (!versionDB) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
     }
@@ -1352,7 +1373,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
     auto extensionString = extension.toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    sqlite3* db = databases()[dbIndex]->db;
+    sqlite3* db = versionDB->db;
     if (!db) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Can't do this on a closed database"_s));
         return {};
@@ -1406,11 +1427,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
     }
 
     int32_t handle = callFrame->argument(0).toInt32(lexicalGlobalObject);
-    if (handle < 0 || handle >= databases().size()) [[unlikely]] {
+    VersionSqlite3* versionDB = databaseForHandle(handle);
+    if (!versionDB) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
     }
-    sqlite3* db = databases()[handle]->db;
+    sqlite3* db = versionDB->db;
 
     if (!db) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Database has closed"_s));
@@ -1555,12 +1577,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementIsInTransactionFunction, (JSC::JSGlobalOb
 
     int32_t handle = dbNumber.toInt32(lexicalGlobalObject);
 
-    if (handle < 0 || handle >= databases().size()) [[unlikely]] {
+    VersionSqlite3* versionDB = databaseForHandle(handle);
+    if (!versionDB) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
     }
 
-    sqlite3* db = databases()[handle]->db;
+    sqlite3* db = versionDB->db;
 
     if (!db) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Database has closed"_s));
@@ -1594,12 +1617,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     }
 
     int32_t handle = dbNumber.toInt32(lexicalGlobalObject);
-    if (handle < 0 || handle >= databases().size()) [[unlikely]] {
+    VersionSqlite3* versionDB = databaseForHandle(handle);
+    if (!versionDB) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
     }
 
-    sqlite3* db = databases()[handle]->db;
+    sqlite3* db = versionDB->db;
     if (!db) {
         throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Cannot use a closed database"_s));
         return {};
@@ -1643,7 +1667,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     int64_t memoryChange = sqlite_malloc_amount - currentMemoryUsage;
 
     JSSQLStatement* sqlStatement = JSSQLStatement::create(
-        static_cast<Zig::GlobalObject*>(lexicalGlobalObject), statement, databases()[handle], memoryChange);
+        static_cast<Zig::GlobalObject*>(lexicalGlobalObject), statement, versionDB, memoryChange);
 
     if (internalFlagsValue.isInt32()) {
         const int32_t internalFlags = internalFlagsValue.asInt32();
@@ -1735,12 +1759,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     if (status != SQLITE_OK) {
         // TODO: log a warning here that defensive mode is unsupported.
     }
-    auto index = databases().size();
-
-    databases().append(new VersionSqlite3(db));
+    auto* versionDB = new VersionSqlite3(db);
+    auto index = registerDatabase(versionDB);
     if (finalizationTarget.isObject()) {
-        vm.heap.addFinalizer(finalizationTarget.getObject(), [index](JSC::JSCell* ptr) -> void {
-            databases()[index]->release();
+        vm.heap.addFinalizer(finalizationTarget.getObject(), [versionDB](JSC::JSCell* ptr) -> void {
+            versionDB->release();
         });
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(index)));
@@ -1774,14 +1797,15 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
 
     int dbIndex = dbNumber.toInt32(lexicalGlobalObject);
 
-    if (dbIndex < 0 || dbIndex >= databases().size()) {
+    VersionSqlite3* versionDB = databaseForHandle(dbIndex);
+    if (!versionDB) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
     }
 
     bool shouldThrowOnError = (throwOnError.isEmpty() || throwOnError.isUndefined()) ? false : throwOnError.toBoolean(lexicalGlobalObject);
 
-    sqlite3* db = databases()[dbIndex]->db;
+    sqlite3* db = versionDB->db;
     // no-op if already closed
     if (!db) {
         return JSValue::encode(jsUndefined());
@@ -1794,7 +1818,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
         return {};
     }
 
-    databases()[dbIndex]->db = nullptr;
+    versionDB->db = nullptr;
     return JSValue::encode(jsUndefined());
 }
 
@@ -1828,12 +1852,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
     int dbIndex = dbNumber.toInt32(lexicalGlobalObject);
     int op = opNumber.toInt32(lexicalGlobalObject);
 
-    if (dbIndex < 0 || dbIndex >= databases().size()) {
+    VersionSqlite3* versionDB = databaseForHandle(dbIndex);
+    if (!versionDB) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
     }
 
-    sqlite3* db = databases()[dbIndex]->db;
+    sqlite3* db = versionDB->db;
     // no-op if already closed
     if (!db) {
         return JSValue::encode(jsUndefined());

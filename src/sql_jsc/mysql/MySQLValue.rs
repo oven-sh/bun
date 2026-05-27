@@ -612,7 +612,11 @@ impl DateTime {
         )
     }
 
-    pub fn from_unix_timestamp(timestamp: i64, microseconds: u32) -> DateTime {
+    pub fn from_unix_timestamp(
+        timestamp: i64,
+        microseconds: u32,
+        global_object: &JSGlobalObject,
+    ) -> Result<DateTime, any_mysql_error::Error> {
         let mut ts = timestamp;
         let days = ts.div_euclid(86400);
         ts = ts.rem_euclid(86400);
@@ -624,15 +628,21 @@ impl DateTime {
         let second = ts.rem_euclid(60);
 
         let date = gregorian_date(i32::try_from(days).expect("int cast"));
-        DateTime {
-            year: date.year,
+        let year = u16::try_from(date.year).map_err(|_| {
+            js_error_to_mysql(global_object.throw_invalid_arguments(format_args!(
+                "Date year {} is out of range for a MySQL DATETIME (0..=65535)",
+                date.year,
+            )))
+        })?;
+        Ok(DateTime {
+            year,
             month: date.month,
             day: date.day,
             hour: u8::try_from(hour).expect("int cast"),
             minute: u8::try_from(minute).expect("int cast"),
             second: u8::try_from(second).expect("int cast"),
             microsecond: microseconds,
-        }
+        })
     }
 
     pub fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
@@ -653,14 +663,14 @@ impl DateTime {
             let total_ms = value.get_unix_timestamp();
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
             let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
-            return Ok(DateTime::from_unix_timestamp(ts, ms * 1000));
+            return DateTime::from_unix_timestamp(ts, ms * 1000, global_object);
         }
 
         if value.is_number() {
             let total_ms = value.as_number();
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
             let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
-            return Ok(DateTime::from_unix_timestamp(ts, ms * 1000));
+            return DateTime::from_unix_timestamp(ts, ms * 1000, global_object);
         }
 
         Err(js_error_to_mysql(global_object.throw_invalid_arguments(
@@ -839,7 +849,7 @@ impl Decimal {
 }
 
 struct Date {
-    year: u16,
+    year: i64,
     month: u8,
     day: u8,
 }
@@ -849,8 +859,8 @@ struct Date {
 /// Uses Howard Hinnant's `civil_from_days` (400-year-era arithmetic) so
 /// negative day counts — i.e. any pre-1970 `Date` parameter — yield the
 /// correct calendar date instead of falling through loops that only walk
-/// forwards from 1970. The MySQL wire format stores the year as a `u16`,
-/// so out-of-range proleptic years are clamped rather than panicking.
+/// forwards from 1970. The proleptic year is returned unclamped; the caller
+/// is responsible for rejecting years that don't fit the MySQL wire `u16`.
 fn gregorian_date(days: i32) -> Date {
     let z = i64::from(days) + 719468;
     let era = z.div_euclid(146097);
@@ -861,10 +871,9 @@ fn gregorian_date(days: i32) -> Date {
     let mp = (5 * doy + 2) / 153; // [0, 11]
     let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
     let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
-    let year = y + i64::from(m <= 2);
 
     Date {
-        year: year.clamp(0, i64::from(u16::MAX)) as u16,
+        year: y + i64::from(m <= 2),
         month: m as u8,
         day: d as u8,
     }

@@ -1,3 +1,9 @@
+// The DATETIME encoder writes UTC y/m/d fields but the decoder currently
+// reconstructs a local-time Date, so the pre-1970 round-trip test below only
+// matches when local == UTC. Pin TZ before any imports so the runtime picks
+// it up. This can be dropped once the decoder is moved to UTC.
+process.env.TZ = "Etc/UTC";
+
 import { SQL, randomUUIDv7 } from "bun";
 import { beforeAll, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunRun, describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
@@ -95,6 +101,43 @@ if (isDockerEnabled()) {
           expect(rawRow).toHaveLength(6);
           expect(rawRow[2]).toEqual(new Uint8Array([0xce, 0xff, 0xff])); // -50 as i24 LE
           expect(Buffer.from(rawRow[5]).toString("utf-8")).toBe("alice");
+        });
+        test("pre-1970 Date parameters round-trip through DATETIME", async () => {
+          // The day-count -> civil-date conversion only walked forwards from
+          // 1970, so a negative day count fell through to a negative `day`
+          // and `u8::try_from(negative).expect()` aborted while encoding the
+          // bound parameter.
+          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+          using sql = await db.reserve();
+          const t = "dt_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT PRIMARY KEY, dt DATETIME)`;
+          const cases = [
+            new Date("1969-07-20T20:17:40.000Z"),
+            new Date("1969-12-31T00:00:00.000Z"),
+            new Date("1900-01-01T00:00:00.000Z"),
+            new Date("1970-01-01T00:00:00.000Z"),
+            new Date("2024-02-29T12:34:56.000Z"),
+          ];
+          for (const [id, dt] of cases.entries()) {
+            await sql`INSERT INTO ${sql(t)} VALUES (${id}, ${dt})`;
+          }
+          const rows = await sql`SELECT id, dt FROM ${sql(t)} ORDER BY id`;
+          expect(rows).toEqual(cases.map((dt, id) => ({ id, dt })));
+        });
+        test("Date with year outside the MySQL u16 range is rejected, not silently clamped", async () => {
+          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+          using sql = await db.reserve();
+          const t = "yr_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT PRIMARY KEY, dt DATETIME)`;
+          // First insert primes the prepared-statement cache so the next
+          // execution binds synchronously and the encoder error surfaces
+          // directly as a rejection.
+          await sql`INSERT INTO ${sql(t)} VALUES (${0}, ${new Date(0)})`;
+          const farFuture = new Date("+070000-01-01T00:00:00.000Z");
+          expect(farFuture.getUTCFullYear()).toBe(70000);
+          await expect(sql`INSERT INTO ${sql(t)} VALUES (${1}, ${farFuture})`).rejects.toThrow(
+            /year 70000 is out of range/i,
+          );
         });
         describe("should work with more than the max inline capacity", () => {
           for (let size of [50, 60, 62, 64, 70, 100]) {

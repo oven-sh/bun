@@ -782,7 +782,12 @@ function ClientRequest(input, options, cb) {
   }
   this.joinDuplicateHeaders = joinDuplicateHeaders;
 
-  if (options.pfx) {
+  // An empty `pfx` (e.g. `pfx: []`) carries no certificate data and is a no-op
+  // in Node, so it must not throw. Playwright always sets `pfx: []` on the
+  // request options when `clientCertificates` are configured, even when only
+  // `cert`/`key` are provided. Only reject a `pfx` that actually holds data,
+  // since PKCS#12 is not yet supported by Bun's TLS pipeline.
+  if (options.pfx && (!$isArray(options.pfx) || options.pfx.length > 0)) {
     throw new Error("pfx is not supported");
   }
 

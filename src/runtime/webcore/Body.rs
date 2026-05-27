@@ -60,6 +60,33 @@ fn blob_store_mut(blob: &Blob) -> Option<&mut blob::Store> {
         .map(|s| unsafe { &mut *s.as_ptr() })
 }
 
+fn set_blob_content_type(blob: &Blob, mime_type: MimeType, allocated: bool) {
+    blob.content_type_was_set.set(true);
+    match mime_type.value {
+        Cow::Borrowed(interned) => {
+            if let Some(store) = blob_store_mut(blob) {
+                store.mime_type = MimeType {
+                    value: Cow::Borrowed(interned),
+                    category: mime_type.category,
+                };
+            }
+            blob.content_type.set(std::ptr::from_ref::<[u8]>(interned));
+            blob.content_type_allocated.set(false);
+        }
+        Cow::Owned(owned) => {
+            if let Some(store) = blob_store_mut(blob) {
+                store.mime_type = MimeType {
+                    value: Cow::Owned(owned.clone()),
+                    category: mime_type.category,
+                };
+            }
+            blob.content_type
+                .set(bun_core::heap::into_raw(owned.into_boxed_slice()));
+            blob.content_type_allocated.set(allocated);
+        }
+    }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Local shims for upstream-gated `JsClass` impls / `AnyPromise` methods.
 // These adapt call sites in this file without editing `bun_jsc` (orphan rule).
@@ -1187,28 +1214,7 @@ impl Value {
                                     true,
                                     Some(&mut allocated),
                                 );
-                                blob.content_type_was_set.set(true);
-                                // PORT NOTE: ownership reshape vs Zig. Zig's MimeType has no destructor so
-                                // `blob.content_type` (freed via `content_type_allocated`) is the sole owner
-                                // and `store.mime_type` aliases it. Rust `MimeType.value` is `Cow` (RAII), so
-                                // we give the Store the owning Cow and let `blob.content_type` alias it
-                                // (Blob holds a +1 on Store, alias valid for Blob's lifetime). When there is
-                                // no store, transfer the buffer into `blob.content_type` directly.
-                                if let Some(store) = blob_store_mut(blob) {
-                                    store.mime_type = mime_type;
-                                    blob.content_type.set(std::ptr::from_ref::<[u8]>(
-                                        store.mime_type.value.as_ref(),
-                                    ));
-                                    blob.content_type_allocated.set(false);
-                                } else {
-                                    blob.content_type.set(match mime_type.value {
-                                        Cow::Owned(v) => {
-                                            bun_core::heap::into_raw(v.into_boxed_slice())
-                                        }
-                                        Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
-                                    });
-                                    blob.content_type_allocated.set(allocated);
-                                }
+                                set_blob_content_type(blob, mime_type, allocated);
                                 // content_slice dropped (replaces defer content_slice.deinit())
                             }
                         }
@@ -2191,22 +2197,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                     let mut allocated = false;
                     let mime_type =
                         MimeType::init(content_slice.slice(), true, Some(&mut allocated));
-                    blob.content_type_was_set.set(true);
-                    // PORT NOTE: ownership reshape vs Zig — see `resolve` (Action::None|GetBlob).
-                    // Store's Cow becomes the sole owner; Blob aliases it. With no store, Blob
-                    // takes the buffer directly via `content_type_allocated`.
-                    if let Some(store) = blob_store_mut(blob) {
-                        store.mime_type = mime_type;
-                        blob.content_type
-                            .set(std::ptr::from_ref::<[u8]>(store.mime_type.value.as_ref()));
-                        blob.content_type_allocated.set(false);
-                    } else {
-                        blob.content_type.set(match mime_type.value {
-                            Cow::Owned(v) => bun_core::heap::into_raw(v.into_boxed_slice()),
-                            Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
-                        });
-                        blob.content_type_allocated.set(allocated);
-                    }
+                    set_blob_content_type(blob, mime_type, allocated);
                     // content_slice dropped (replaces defer content_slice.deinit())
                 }
             }

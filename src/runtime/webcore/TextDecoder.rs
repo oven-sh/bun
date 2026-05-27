@@ -5,6 +5,7 @@ use crate::webcore::jsc::{
 use bun_core::AllocError;
 use bun_core::{OwnedString, strings};
 use core::cell::Cell;
+use core::ptr::NonNull;
 
 use jsc::StringJsc as _;
 use jsc::ZigStringJsc as _;
@@ -37,6 +38,12 @@ pub struct TextDecoder {
     pub lead_byte: Cell<Option<u8>>,
     pub lead_surrogate: Cell<Option<u16>>,
 
+    // WebKit `PAL::TextCodec` for every other encoding. The codec owns the
+    // streaming state (lead byte, ISO-2022-JP mode, GB18030 first/second/third),
+    // so it must live across `{stream: true}` chunks. Created lazily on first
+    // decode, dropped when a flushing decode ends the stream and in `Drop`.
+    codec: Cell<Option<NonNull<TextCodec>>>,
+
     // Read-only after construction (set in `constructor` before the JS wrapper
     // exists) — left bare.
     pub ignore_bom: bool,
@@ -50,6 +57,7 @@ impl Default for TextDecoder {
             buffered: Cell::new(Buffered::default()),
             lead_byte: Cell::new(None),
             lead_surrogate: Cell::new(None),
+            codec: Cell::new(None),
             ignore_bom: false,
             fatal: false,
             encoding: EncodingLabel::Utf8,
@@ -57,32 +65,18 @@ impl Default for TextDecoder {
     }
 }
 
+impl Drop for TextDecoder {
+    fn drop(&mut self) {
+        if let Some(codec) = self.codec.get_mut().take() {
+            // SAFETY: `codec` was returned by `TextCodec::create` and has not
+            // been freed (the field is cleared whenever we destroy it).
+            unsafe { TextCodec::destroy(codec.as_ptr()) }
+        }
+    }
+}
+
 // pub const js = jsc.Codegen.JSTextDecoder;
 // pub const toJS / fromJS / fromJSDirect — provided by #[bun_jsc::JsClass] codegen.
-
-/// RAII guard for an FFI-owned `TextCodec` (matches Zig `defer codec.deinit()`).
-struct CodecGuard(core::ptr::NonNull<TextCodec>);
-impl Drop for CodecGuard {
-    fn drop(&mut self) {
-        // SAFETY: `self.0` came from `TextCodec::create` and has not been freed.
-        unsafe { TextCodec::destroy(self.0.as_ptr()) }
-    }
-}
-impl core::ops::Deref for CodecGuard {
-    type Target = TextCodec;
-    fn deref(&self) -> &TextCodec {
-        // `TextCodec` is an opaque ZST FFI handle (S008); pointer is live for
-        // the guard's lifetime — safe `*const → &` via `opaque_deref`.
-        bun_opaque::opaque_deref(self.0.as_ptr())
-    }
-}
-impl core::ops::DerefMut for CodecGuard {
-    fn deref_mut(&mut self) -> &mut TextCodec {
-        // `TextCodec` is an opaque ZST FFI handle (S008); pointer is live for
-        // the guard's lifetime, `&mut self` is exclusive — safe via `opaque_deref_mut`.
-        bun_opaque::opaque_deref_mut(self.0.as_ptr())
-    }
-}
 
 impl TextDecoder {
     pub fn new(init: TextDecoder) -> Box<TextDecoder> {
@@ -258,12 +252,15 @@ impl TextDecoder {
         }
     }
 
+    /// DOMJIT fast path for `decode(typedArray)` called with no options object.
+    /// A no-options decode is flushing per WHATWG Encoding, matching the slow
+    /// path in `decode()` when `stream` is absent.
     pub fn decode_without_type_checks(
         &self,
         global_this: &JSGlobalObject,
         uint8array: &mut JSUint8Array,
     ) -> JsResult<JSValue> {
-        self.decode_slice::<false>(global_this, uint8array.slice())
+        self.decode_slice::<true>(global_this, uint8array.slice())
     }
 
     fn decode_slice<const FLUSH: bool>(
@@ -443,19 +440,30 @@ impl TextDecoder {
             _ => {
                 let encoding_name = EncodingLabel::get_label(self.encoding);
 
-                // Create codec if we don't have one cached
-                // Note: In production, we might want to cache these per-encoding
-                let Some(codec) = TextCodec::create(encoding_name) else {
-                    // Fallback to empty string if codec creation fails
-                    return Ok(ZigString::init(b"").to_js(global_this));
+                // The codec carries streaming state (lead bytes, escape mode),
+                // so reuse the one from the previous `{stream: true}` chunk.
+                // Create it lazily on first use — matches WebKit's
+                // `if (!m_codec) m_codec = newTextCodec(...)`.
+                let codec_ptr = match self.codec.get() {
+                    Some(ptr) => ptr,
+                    None => {
+                        let Some(ptr) = TextCodec::create(encoding_name) else {
+                            // Fallback to empty string if codec creation fails
+                            return Ok(ZigString::init(b"").to_js(global_this));
+                        };
+                        if !self.ignore_bom {
+                            // `TextCodec` is an opaque ZST FFI handle (S008);
+                            // `ptr` is live — safe via `opaque_deref_mut`.
+                            bun_opaque::opaque_deref_mut(ptr.as_ptr()).strip_bom();
+                        }
+                        self.codec.set(Some(ptr));
+                        ptr
+                    }
                 };
-                let mut codec = CodecGuard(codec);
-                // `codec` drops at scope exit (matches `defer codec.deinit()`).
-
-                // Handle BOM stripping if needed
-                if !self.ignore_bom {
-                    codec.strip_bom();
-                }
+                // `TextCodec` is an opaque ZST FFI handle (S008); `codec_ptr`
+                // is live for this call — safe via `opaque_deref_mut`. The
+                // C++ `decode()` does not call back into JS, so no re-entrancy.
+                let codec = bun_opaque::opaque_deref_mut(codec_ptr.as_ptr());
 
                 // Decode the data
                 let result = codec.decode(buffer_slice, FLUSH, self.fatal);
@@ -463,6 +471,18 @@ impl TextDecoder {
                 // `DecodeResult` has none either — wrap the +1 ref in `OwnedString`
                 // so it derefs on scope exit (matches Zig `defer result.result.deref()`).
                 let result_str = OwnedString::new(result.result);
+
+                // A flushing decode ends the stream. Per WHATWG Encoding the
+                // next `decode()` starts with a fresh decoder, so drop this
+                // codec now — otherwise mode state that the C++ codec does not
+                // reset on flush (e.g. `m_iso2022JPDecoderState`) would leak
+                // into the next stream.
+                if FLUSH {
+                    self.codec.set(None);
+                    // SAFETY: `codec_ptr` came from `TextCodec::create` above
+                    // (or on an earlier chunk) and is freed exactly once here.
+                    unsafe { TextCodec::destroy(codec_ptr.as_ptr()) };
+                }
 
                 // Check for errors if fatal mode is enabled
                 if result.saw_error && self.fatal {

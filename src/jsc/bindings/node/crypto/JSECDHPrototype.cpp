@@ -127,7 +127,8 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncComputeSecret, (JSC::JSGlobalObject * gl
     }
 
     // Compute the shared secret
-    if (!ECDH_compute_key(secret.begin(), secret.size(), pubPoint, ecdh->m_key.get(), nullptr)) {
+    int written = ECDH_compute_key(secret.begin(), secret.size(), pubPoint, ecdh->m_key.get(), nullptr);
+    if (written != static_cast<int>(secret.size())) {
         return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to compute ECDH key"_s);
     }
 

@@ -883,6 +883,7 @@ impl Channel {
 
     pub fn resolve<T: ResolveHandler>(&mut self, name: &[u8], ctx: &mut T) {
         if name.len() >= 1023
+            || name.contains(&0)
             || (name.is_empty() && !(T::LOOKUP_NAME == b"ns" || T::LOOKUP_NAME == b"soa"))
         {
             // SAFETY: thunk handles ARES_EBADNAME path.

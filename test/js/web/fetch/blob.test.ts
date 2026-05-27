@@ -471,3 +471,39 @@ test("Blob constructor copies typed array parts before later parts run user code
   expect(stdout.trim()).toBe("OK 68");
   expect(exitCode).toBe(0);
 });
+
+test("Blob.slice at an odd byte offset decodes UTF-16LE (BOM) content with text() and json()", async () => {
+  // A blob sliced at an odd start keeps a view into the original store at an odd
+  // byte offset. When the bytes at that offset begin with a UTF-16LE BOM (FF FE),
+  // text()/json() must decode the remaining (odd-aligned) bytes as UTF-16 instead
+  // of aborting. Run in a subprocess so a process abort surfaces as a nonzero exit
+  // code rather than killing the test runner.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        // 0x41 prefix byte, then UTF-16LE BOM (FF FE) followed by "hi" / "42".
+        // slice(1) makes the decoded view start at an odd offset into the backing store.
+        const textBytes = new Uint8Array([0x41, 0xff, 0xfe, 0x68, 0x00, 0x69, 0x00]);
+        const oddText = await new Blob([textBytes]).slice(1).text();
+
+        const jsonBytes = new Uint8Array([0x41, 0xff, 0xfe, 0x34, 0x00, 0x32, 0x00]);
+        const oddJson = await new Blob([jsonBytes]).slice(1).json();
+
+        // The aligned (offset 0) UTF-16LE BOM case keeps working too.
+        const alignedText = await new Blob([new Uint8Array([0xff, 0xfe, 0x68, 0x00, 0x69, 0x00])]).text();
+
+        console.log(JSON.stringify({ oddText, oddJson, alignedText }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe(JSON.stringify({ oddText: "hi", oddJson: 42, alignedText: "hi" }));
+  expect(exitCode).toBe(0);
+});

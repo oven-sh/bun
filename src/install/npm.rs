@@ -2368,9 +2368,6 @@ impl PackageManifest {
         let all_prerelease_versions_range =
             release_versions_len..release_versions_len + pre_versions_len;
         let dist_tag_versions_start = release_versions_len + pre_versions_len;
-        // SAFETY: all_semver_versions is heap-allocated; we need disjoint mutable subslices.
-        // TODO(port): use split_at_mut chain instead of raw pointers.
-        let all_semver_versions_ptr: *mut Semver::Version = all_semver_versions.as_mut_ptr();
         let mut release_versions_cursor: usize = 0;
         let mut prerelease_versions_cursor: usize = release_versions_len;
 
@@ -3126,20 +3123,12 @@ impl PackageManifest {
                 }
 
                 if !parsed_version.version.tag.has_pre() {
-                    // SAFETY: cursor < release_versions_len by counting pass
-                    unsafe {
-                        *all_semver_versions_ptr.add(release_versions_cursor) =
-                            parsed_version.version.min();
-                    }
+                    all_semver_versions[release_versions_cursor] = parsed_version.version.min();
                     versioned_packages[versioned_package_releases_start] = package_version;
                     release_versions_cursor += 1;
                     versioned_package_releases_start += 1;
                 } else {
-                    // SAFETY: cursor in prerelease range
-                    unsafe {
-                        *all_semver_versions_ptr.add(prerelease_versions_cursor) =
-                            parsed_version.version.min();
-                    }
+                    all_semver_versions[prerelease_versions_cursor] = parsed_version.version.min();
                     versioned_packages[versioned_package_prereleases_start] = package_version;
                     prerelease_versions_cursor += 1;
                     versioned_package_prereleases_start += 1;
@@ -3188,11 +3177,8 @@ impl PackageManifest {
                             .value
                             .sliced(string_builder.allocated_slice());
 
-                        // SAFETY: dist_tag_versions_start + dist_tag_i < all_semver_versions.len()
-                        unsafe {
-                            *all_semver_versions_ptr.add(dist_tag_versions_start + dist_tag_i) =
-                                Semver::Version::parse(sliced_string).version.min();
-                        }
+                        all_semver_versions[dist_tag_versions_start + dist_tag_i] =
+                            Semver::Version::parse(sliced_string).version.min();
                         dist_tag_i += 1;
                     }
                 }

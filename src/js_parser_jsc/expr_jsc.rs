@@ -4,7 +4,7 @@
 
 use bun_ast::{E, Expr, ExprData, G, ToJSError};
 use bun_collections::VecExt;
-use bun_core::{String as BunString, strings};
+use bun_core::{StackCheck, String as BunString, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsError, bun_string_jsc};
 
 /// Map a `bun_jsc::JsError` into the AST-layer `ToJSError`. Orphan rules forbid
@@ -45,9 +45,20 @@ impl ExprJsc for ExprData {
 }
 
 pub fn data_to_js(this: &ExprData, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
+    data_to_js_with_check(this, global, StackCheck::init())
+}
+
+fn data_to_js_with_check(
+    this: &ExprData,
+    global: &JSGlobalObject,
+    stack_check: StackCheck,
+) -> Result<JSValue, ToJSError> {
+    if !stack_check.is_safe_to_recurse() {
+        return Err(js_err(global.throw_stack_overflow()));
+    }
     match this {
-        ExprData::EArray(e) => array_to_js(e, global),
-        ExprData::EObject(e) => object_to_js(e, global),
+        ExprData::EArray(e) => array_to_js(e, global, stack_check),
+        ExprData::EObject(e) => object_to_js(e, global, stack_check),
         ExprData::EString(e) => string_to_js(e, global),
         ExprData::ENull(_) => Ok(JSValue::NULL),
         ExprData::EUndefined(_) => Ok(JSValue::UNDEFINED),
@@ -58,7 +69,9 @@ pub fn data_to_js(this: &ExprData, global: &JSGlobalObject) -> Result<JSValue, T
         }),
         ExprData::ENumber(e) => Ok(number_to_js(*e)),
         // ExprData::EBigInt(e) => e.to_js(ctx, exception),
-        ExprData::EInlinedEnum(inlined) => data_to_js(&inlined.value.data, global),
+        ExprData::EInlinedEnum(inlined) => {
+            data_to_js_with_check(&inlined.value.data, global, stack_check)
+        }
 
         ExprData::EIdentifier(_)
         | ExprData::EImportIdentifier(_)
@@ -69,13 +82,21 @@ pub fn data_to_js(this: &ExprData, global: &JSGlobalObject) -> Result<JSValue, T
     }
 }
 
-pub(crate) fn array_to_js(this: &E::Array, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
+pub(crate) fn array_to_js(
+    this: &E::Array,
+    global: &JSGlobalObject,
+    stack_check: StackCheck,
+) -> Result<JSValue, ToJSError> {
     let items = this.items.slice();
     let array = JSValue::create_empty_array(global, items.len()).map_err(js_err)?;
     let _guard = array.protected();
     for (j, expr) in items.iter().enumerate() {
         array
-            .put_index(global, j as u32, data_to_js(&expr.data, global)?)
+            .put_index(
+                global,
+                j as u32,
+                data_to_js_with_check(&expr.data, global, stack_check)?,
+            )
             .map_err(js_err)?;
     }
 
@@ -89,6 +110,7 @@ pub(crate) fn number_to_js(this: E::Number) -> JSValue {
 pub(crate) fn object_to_js(
     this: &E::Object,
     global: &JSGlobalObject,
+    stack_check: StackCheck,
 ) -> Result<JSValue, ToJSError> {
     let obj = JSValue::create_empty_object(global, this.properties.len_u32() as usize);
     let _guard = obj.protected();
@@ -101,13 +123,19 @@ pub(crate) fn object_to_js(
         {
             return Err(ToJSError::CannotConvertArgumentTypeToJS);
         }
-        let key = data_to_js(
+        let key = data_to_js_with_check(
             &prop.key.as_ref().expect("infallible: prop has key").data,
             global,
+            stack_check,
         )?;
-        let value = expr_to_js(
-            prop.value.as_ref().expect("infallible: prop has value"),
+        let value = data_to_js_with_check(
+            &prop
+                .value
+                .as_ref()
+                .expect("infallible: prop has value")
+                .data,
             global,
+            stack_check,
         )?;
         JSValue::put_to_property_key(obj, global, key, value).map_err(js_err)?;
     }

@@ -6381,6 +6381,10 @@ impl DevServer {
             return &path[self.root.len() + 1..];
         }
 
+        if path.len() + self.root.len() * 2 >= paths::MAX_PATH_BYTES {
+            return path;
+        }
+
         // `relative_platform_buf` with ALWAYS_COPY=true writes into
         // `relative_path_buf[..len]` (same invariant `relative_buf_z` relies
         // on); capture the length, drop the shared borrow, then re-slice

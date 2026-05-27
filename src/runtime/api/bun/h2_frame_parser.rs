@@ -7402,8 +7402,9 @@ impl H2FrameParser {
         // closure so `?` short-circuits to the `result` binding instead of out
         // of the function, and the window-size update still runs on the error
         // path.
+        let array_buffer = buffer.as_pinned_arraybuffer(global_object);
         let result = (|| {
-            if let Some(array_buffer) = buffer.as_array_buffer(global_object) {
+            if let Some(array_buffer) = &array_buffer {
                 let mut bytes = array_buffer.byte_slice();
                 // read all the bytes
                 while !bytes.is_empty() {
@@ -7416,6 +7417,9 @@ impl H2FrameParser {
                     .throw(format_args!("Expected data to be a Buffer or ArrayBuffer")))
             }
         })();
+        if let Some(array_buffer) = &array_buffer {
+            array_buffer.unpin();
+        }
         this.increment_window_size_if_needed();
         result
     }

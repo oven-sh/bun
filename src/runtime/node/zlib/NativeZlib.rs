@@ -141,9 +141,10 @@ mod _impl {
                 validators::validate_int32(global, arguments.ptr[2], "memLevel", None, None)?;
             let strategy =
                 validators::validate_int32(global, arguments.ptr[3], "strategy", None, None)?;
-            // this does not get gc'd because it is stored in the JS object's `this._writeState`. and the JS object is tied to the native handle as `_handle[owner_symbol]`.
             // `flush_write_result` writes two u32s through this pointer, so the
-            // caller-supplied array must hold at least 2 elements.
+            // caller-supplied array must hold at least 2 elements. The backing
+            // store is pinned and rooted (GC-visited `writeState` slot) below,
+            // so the cached pointer can't dangle.
             let write_result_value = arguments.ptr[4];
             let Some(mut write_result_buf) = write_result_value.as_array_buffer(global) else {
                 return Err(global.throw_invalid_argument_type_value(

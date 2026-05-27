@@ -237,8 +237,9 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
         };
         // SAFETY: `write_result` points at a 2-element `u32[]` owned by JS
         // (set in each impl's `init()`); both indices are in-bounds and the
-        // backing buffer is kept alive by `this._writeState` /
-        // `_handle[owner_symbol]`.
+        // backing buffer is both pinned (so `.transfer()` can't free it) and
+        // held in the wrapper's GC-visited `writeState` slot (so it can't be
+        // collected) for the handle's lifetime — see each `init()`.
         let (r1, r0) = unsafe { (&mut *write_result.add(1), &mut *write_result) };
         self.stream().with_mut(|s| s.update_write_result(r1, r0));
     }

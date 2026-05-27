@@ -30,6 +30,16 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
             }
             return SQLDataCell{ .tag = .int4, .value = .{ .int4 = try reader.int(i16) } };
         },
+        .MYSQL_TYPE_YEAR => {
+            // Binary protocol sends YEAR as a fixed 2-byte unsigned field;
+            // column_length is the display width (4), not the wire size.
+            if (raw) {
+                var data = try reader.read(2);
+                defer data.deinit();
+                return SQLDataCell.raw(&data);
+            }
+            return SQLDataCell{ .tag = .uint4, .value = .{ .uint4 = try reader.int(u16) } };
+        },
         .MYSQL_TYPE_INT24 => {
             if (raw) {
                 var data = try reader.read(3);

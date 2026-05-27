@@ -211,8 +211,6 @@ async function fetchWindowsSysroot(cfg: Config, dest: string): Promise<void> {
     }
   }
   console.log(`fetching MSVC CRT + Windows SDK into ${dest} (xwin splat)`);
-  rmSync(dest, { recursive: true, force: true });
-  mkdirSync(dest, { recursive: true });
   const args = [
     "--accept-license",
     "--arch",
@@ -228,15 +226,34 @@ async function fetchWindowsSysroot(cfg: Config, dest: string): Promise<void> {
     "--output",
     dest,
   ];
-  // xwin draws progress bars to stdout even when it isn't a terminal, which
-  // floods CI logs with megabytes of redraws. Keep stderr (real errors);
-  // only show the progress locally where it's actually a progress bar.
-  const result = spawnSync(xwinExe, args, {
-    stdio: ["ignore", process.stdout.isTTY ? "inherit" : "ignore", "inherit"],
-  });
-  if (result.error || result.status !== 0) {
-    throw new BuildError(`xwin splat failed${result.status !== null ? ` (exit ${result.status})` : ""}`, {
-      cause: result.error,
+  // Microsoft's CDN resets connections often enough that agents without a
+  // baked sysroot were failing real builds on it — retry the whole splat a
+  // couple of times before giving up (the package cache in cacheDir/xwin-dl
+  // makes retries cheap; the splat output dir is wiped each attempt so a
+  // partial extraction can't leak through).
+  const attempts = 3;
+  let result;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    rmSync(dest, { recursive: true, force: true });
+    mkdirSync(dest, { recursive: true });
+    // xwin draws progress bars to stdout even when it isn't a terminal, which
+    // floods CI logs with megabytes of redraws. Keep stderr (real errors);
+    // only show the progress locally where it's actually a progress bar.
+    result = spawnSync(xwinExe, args, {
+      stdio: ["ignore", process.stdout.isTTY ? "inherit" : "ignore", "inherit"],
+    });
+    if (!result.error && result.status === 0) {
+      break;
+    }
+    if (attempt < attempts) {
+      console.warn(
+        `xwin splat failed${result.status !== null ? ` (exit ${result.status})` : ""}, retrying (${attempt}/${attempts - 1} retries used)`,
+      );
+    }
+  }
+  if (result!.error || result!.status !== 0) {
+    throw new BuildError(`xwin splat failed${result!.status !== null ? ` (exit ${result!.status})` : ""}`, {
+      cause: result!.error,
       hint: "The MSVC CRT / Windows SDK download from Microsoft's CDN failed — check network access, or provide a sysroot via WINDOWS_SYSROOT / --winsysroot.",
     });
   }

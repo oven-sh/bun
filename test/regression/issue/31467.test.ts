@@ -1,6 +1,5 @@
-import { connect } from "node:net";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { connect } from "node:net";
 
 // https://github.com/oven-sh/bun/issues/31467
 //
@@ -18,8 +17,7 @@ import { bunEnv, bunExe } from "harness";
 test("Bun.serve keep-alive back-to-back POSTs with mid-flight resets don't crash onClose", async () => {
   const body = Buffer.alloc(256, "x").toString();
   const keepAliveReq =
-    `POST / HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n` +
-    `Content-Length: ${body.length}\r\n\r\n${body}`;
+    `POST / HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n` + `Content-Length: ${body.length}\r\n\r\n${body}`;
 
   await using server = Bun.serve({
     port: 0,

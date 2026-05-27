@@ -1018,3 +1018,57 @@ test.skipIf(!isWindows)(
   },
   30000,
 );
+
+// FSWatcher::init joins the user-supplied watch path with the process cwd into a
+// fixed pooled path buffer. The raw-path length validator only bounds the path
+// itself, so a relative path just under the platform path limit used to overflow
+// the buffer during the join and abort the whole process (panic=abort) instead of
+// surfacing an error to JavaScript. Must run in a subprocess: on an unfixed build
+// the abort would take down the test runner itself.
+test("fs.watch reports an error for relative paths that no longer fit in the path buffer once joined with the cwd", async () => {
+  using dir = tempDir("fswatch-long-relative", {
+    "watch-me.txt": "hello",
+  });
+  const base = String(dir);
+
+  const fixture = /* js */ `
+    const fs = require("node:fs");
+
+    // Longest relative path that still passes the per-platform raw-path length
+    // validation (MAX_PATH_BYTES); once joined with the cwd the normalized result
+    // no longer fits in the destination path buffer.
+    const maxPathBytes = { linux: 4096, darwin: 1024, win32: 32767 * 3 + 1 }[process.platform] ?? 1024;
+    const segment = "a/";
+    const longRelativePath = segment.repeat(Math.floor((maxPathBytes - 2) / segment.length));
+
+    try {
+      const watcher = fs.watch(longRelativePath, () => {});
+      watcher.close();
+      throw new Error("expected watching the overlong relative path to fail");
+    } catch (err) {
+      if (err.code !== "ENAMETOOLONG") throw err;
+      if (err.syscall !== "watch") throw new Error("unexpected syscall: " + err.syscall);
+    }
+
+    // A normal relative path must still work after the rejected one.
+    const ok = fs.watch("watch-me.txt", () => {});
+    ok.close();
+
+    console.log("OK");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    cwd: base,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK");
+  // Unfixed builds overflow the pooled path buffer during the cwd join and abort
+  // the subprocess instead of throwing a catchable error.
+  expect(exitCode).toBe(0);
+});

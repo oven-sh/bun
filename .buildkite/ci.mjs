@@ -630,6 +630,57 @@ function getLinkBunStep(platform, options) {
 }
 
 /**
+ * Cross-compiled Windows build (full compile + link on a Linux agent).
+ * Validates that bun.exe for the given arch can be built from Linux with
+ * clang-cl + lld-link + an xwin Windows sysroot — baked into newer agent
+ * images (.buildkite/Dockerfile), fetched at configure time on agents that
+ * don't have one (scripts/build/winsysroot.ts). The x64 lane additionally
+ * exercises the ThinLTO + cross-language LTO configuration (the ci-release
+ * default for windows x64 cross — see config.ts), which the native Windows
+ * lanes never had: clang-cl/rustc bitcode + the -lto WebKit prebuilt linked
+ * by rustc's lld-link. The produced binary is not consumed by tests or
+ * release — the native Windows lanes above stay authoritative — so the step
+ * is soft_fail until it has a green history.
+ *
+ * Runs on the same amazonlinux docker image the other Linux/cross builds
+ * use; `--buildkite=off` keeps the per-step artifact upload/download
+ * machinery (which assumes the cpp/rust/link split and native artifact
+ * names) out of the picture.
+ *
+ * @param {Arch} arch
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function getWindowsCrossBuildStep(arch, options) {
+  const hostPlatform = { os: "linux", arch, distro: "amazonlinux", release: "2023", features: ["docker"] };
+  return {
+    key: `windows-${arch}-cross-build`,
+    label: `${getBuildkiteEmoji("windows")} ${arch}-cross - build-bun`,
+    agents: getEc2Agent(hostPlatform, options, {
+      // Full build (deps + C++ + cargo + link) in one step — size for cores.
+      instanceType: arch === "aarch64" ? "r8g.4xlarge" : "r7i.4xlarge",
+    }),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    soft_fail: true,
+    timeout_in_minutes: 120,
+    command: [
+      // BoringSSL's win-x64 assembly is NASM syntax; newer images carry nasm
+      // (Dockerfile), best-effort install on older ones. Distro-aware: the
+      // agent may be the Ubuntu-based build container (apt) or an Amazon
+      // Linux host (dnf/yum). `|| true` keeps a missing package manager from
+      // failing the step — the build's own "nasm not found" error is clearer.
+      ...(arch === "x64"
+        ? [
+            "which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || sudo dnf install -y -q nasm || true",
+          ]
+        : []),
+      `node --experimental-strip-types scripts/build.ts --profile=ci-release --os=windows --arch=${arch} --buildkite=off`,
+    ],
+  };
+}
+
+/**
  * Returns the artifact triplet for a platform, e.g. "bun-linux-aarch64" or "bun-linux-x64-musl-baseline".
  * Matches the naming convention in cmake/targets/BuildBun.cmake.
  * @param {Platform} platform
@@ -1428,6 +1479,28 @@ async function getPipeline(options = {}) {
         );
       }),
     );
+
+    // Windows cross-compile validation: full builds of bun.exe (x64 + arm64)
+    // from Linux agents. See getWindowsCrossBuildStep(). Honours the same
+    // platform filtering as the per-target groups above, so a manual build
+    // that narrows `build-platforms` to a non-windows subset doesn't spawn
+    // the cross lanes.
+    if (relevantBuildPlatforms.some(({ os }) => os === "windows")) {
+      const crossImageDependsOn = ["x64", "aarch64"]
+        .map(arch => getImageKey({ os: "linux", arch, distro: "amazonlinux", release: "2023", features: ["docker"] }))
+        .filter(imageKey => imagePlatforms.has(imageKey))
+        .map(imageKey => `${imageKey}-build-image`);
+      steps.push(
+        getStepWithDependsOn(
+          {
+            key: "windows-cross",
+            group: `${getBuildkiteEmoji("windows")} cross (linux)`,
+            steps: [getWindowsCrossBuildStep("x64", options), getWindowsCrossBuildStep("aarch64", options)],
+          },
+          ...crossImageDependsOn,
+        ),
+      );
+    }
   }
 
   if (!isMainBranch()) {

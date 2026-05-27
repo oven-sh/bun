@@ -2441,25 +2441,14 @@ lexer_impl_header! {
                     )?;
                 }
                 _ => {
-                    if Environment::ENABLE_SIMD {
-                        if self.code_point < 128 {
-                            let remainder = &contents[self.current..];
-                            if remainder.len() >= 512 {
-                                match skip_to_interesting_character_in_multiline_comment(
-                                    remainder,
-                                ) {
-                                    Some(off) => {
-                                        self.current += off as usize;
-                                        self.end = self.current.saturating_sub(1);
-                                        self.step_with(contents);
-                                        continue;
-                                    }
-                                    None => {
-                                        self.step_with(contents);
-                                        continue;
-                                    }
-                                }
-                            }
+                    if self.code_point < 128 {
+                        let remainder = &contents[self.current..];
+                        if remainder.len() >= 512 {
+                            self.current +=
+                                skip_to_interesting_character_in_multiline_comment(remainder);
+                            self.end = self.current.saturating_sub(1);
+                            self.step_with(contents);
+                            continue;
                         }
                     }
 
@@ -4158,29 +4147,14 @@ impl PragmaArg {
     }
 }
 
-fn skip_to_interesting_character_in_multiline_comment(text_: &[u8]) -> Option<u32> {
-    // PERF(port): Zig uses portable @Vector SIMD here. Rust port uses scalar; could
-    // swap to bun_highway or core::simd. Logic preserved (returns offset of first
-    // '*' / '\r' / '\n' / non-ASCII byte, truncated to chunks of `ascii_vector_size`).
-    // TODO(port): SIMD reimplementation
-    let vsize = strings::ASCII_VECTOR_SIZE;
-    let text_end_len = text_.len() & !(vsize - 1);
-    debug_assert!(text_end_len.is_multiple_of(vsize));
-    debug_assert!(text_end_len <= text_.len());
-
-    let mut off: usize = 0;
-    while off < text_end_len {
-        let chunk = &text_[off..off + vsize];
-        for (j, &b) in chunk.iter().enumerate() {
-            if b > 127 || b == b'*' || b == b'\r' || b == b'\n' {
-                debug_assert!(j < vsize);
-                return Some((off + j) as u32);
-            }
-        }
-        off += vsize;
-    }
-
-    Some(off as u32)
+/// Byte offset of the next character `scan_multi_line_comment_body` has to
+/// inspect one code point at a time: the first `*` (potential `*/`
+/// terminator), `\r` / `\n` (newline tracking for ASI), or non-ASCII byte
+/// (U+2028/U+2029 and other multi-byte sequences). Returns `text_.len()` when
+/// the rest of the input has no such byte — the comment is unterminated, so
+/// the caller's next `step()` lands on EOF and reports the error.
+fn skip_to_interesting_character_in_multiline_comment(text_: &[u8]) -> usize {
+    bun_highway::index_of_interesting_character_in_multiline_comment(text_).unwrap_or(text_.len())
 }
 
 fn index_of_interesting_character_in_string_literal(text_: &[u8], quote: u8) -> Option<usize> {

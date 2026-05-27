@@ -874,7 +874,7 @@ impl Request {
         if let Some(req) = self.request_context.get_request() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
             let req = bun_opaque::opaque_deref(req);
-            let req_url = req.url();
+            let req_url = Self::request_target_path(req.url());
             if !req_url.is_empty() && req_url[0] == b'/' {
                 if let Some(host) = req.header(b"host") {
                     // With `port: None`, HostFormatter always emits exactly `host`, so the
@@ -898,6 +898,26 @@ impl Request {
         b"http://"
     }
 
+    fn request_target_path(target: &[u8]) -> &[u8] {
+        let scheme_len = if strings::has_prefix_case_insensitive(target, b"https://") {
+            b"https://".len()
+        } else if strings::has_prefix_case_insensitive(target, b"http://") {
+            b"http://".len()
+        } else {
+            return target;
+        };
+
+        let path_start = strings::index_of_char_pos(target, b'/', scheme_len);
+        let query_start = strings::index_of_char_pos(target, b'?', scheme_len);
+        match (path_start, query_start) {
+            (Some(path_start), None) => &target[path_start..],
+            (Some(path_start), Some(query_start)) if path_start < query_start => {
+                &target[path_start..]
+            }
+            _ => b"/",
+        }
+    }
+
     pub fn ensure_url(&self) -> Result<(), AllocError> {
         if !self.url.get().is_empty() {
             return Ok(());
@@ -906,7 +926,7 @@ impl Request {
         if let Some(req) = self.request_context.get_request() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
             let req = bun_opaque::opaque_deref(req);
-            let req_url = req.url();
+            let req_url = Self::request_target_path(req.url());
             if !req_url.is_empty() && req_url[0] == b'/' {
                 if let Some(host) = req.header(b"host") {
                     // With `port: None`, HostFormatter always emits exactly `host`. Compute the

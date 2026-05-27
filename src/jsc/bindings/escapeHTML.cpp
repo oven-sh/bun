@@ -21,6 +21,7 @@
 #include "escapeHTML.h"
 
 #include <span>
+#include <JavaScriptCore/ExceptionHelpers.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/WTFString.h>
 
@@ -70,10 +71,12 @@ static ALWAYS_INLINE size_t indexOfHTMLEscape(std::span<const CharacterType> spa
 // Shared escape routine for both 8-bit (Latin-1) and 16-bit (UTF-16) input.
 // For UTF-16 the five metacharacters are all < 0x80, so surrogate code units
 // never match and are copied through verbatim — surrogate pairs and lone
-// surrogates round-trip unchanged.
+// surrogates round-trip unchanged. Throws and returns nullptr if the escaped
+// output would exceed String::MaxLength (output can be up to 6× the input).
 template<typename CharacterType>
-static JSC::JSString* escapeHTMLString(JSC::VM& vm, JSC::JSString* input, std::span<const CharacterType> span)
+static JSC::JSString* escapeHTMLString(JSC::JSGlobalObject* globalObject, JSC::JSString* input, std::span<const CharacterType> span)
 {
+    auto& vm = JSC::getVM(globalObject);
     const size_t length = span.size();
     const size_t firstEscape = indexOfHTMLEscape(span);
     // Nothing to escape — hand back the original string without allocating.
@@ -107,6 +110,12 @@ static JSC::JSString* escapeHTMLString(JSC::VM& vm, JSC::JSString* input, std::s
         i += next;
     }
 
+    if (builder.hasOverflowed()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+
     return JSC::jsString(vm, builder.toString());
 }
 
@@ -128,9 +137,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionBunEscapeHTML, (JSC::JSGlobalObject * globalO
     const auto view = string->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (view->is8Bit())
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(escapeHTMLString<Latin1Character>(vm, string, view->span8())));
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(escapeHTMLString<char16_t>(vm, string, view->span16())));
+    JSC::JSString* result = view->is8Bit()
+        ? escapeHTMLString<Latin1Character>(globalObject, string, view->span8())
+        : escapeHTMLString<char16_t>(globalObject, string, view->span16());
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 
 } // namespace Bun

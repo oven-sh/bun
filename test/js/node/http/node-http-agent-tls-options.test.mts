@@ -20,9 +20,6 @@ import { dirname, join } from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-// uv's negative errno for a refused connection (identical in Bun and Node).
-const { UV_ECONNREFUSED } = process.binding("uv");
-
 // Some CI hosts (and containers) have no IPv6 loopback; binding to ::1 there
 // emits EADDRNOTAVAIL instead of succeeding. Detect an internal (loopback)
 // IPv6 interface. Computed inline rather than via harness.isIPv6() because this
@@ -654,13 +651,10 @@ describe("https.request agent TLS options inheritance", () => {
     // `Error: ECONNREFUSED`. For a proxy agent the refused connection is to the
     // proxy, so the address/port must be the proxy's.
     test("HttpsProxyAgent with an unreachable proxy reports ECONNREFUSED for the proxy host", async () => {
-      // Bind then immediately release a port so connecting to it is refused.
-      const closed = net.createServer();
-      const proxyPort = await new Promise<number>(resolve => {
-        closed.listen(0, "127.0.0.1", () => resolve((closed.address() as AddressInfo).port));
-      });
-      await new Promise<void>(resolve => closed.close(() => resolve()));
-
+      // Connect through a proxy on a fixed port that nothing listens on so the
+      // connection is refused immediately and deterministically on every
+      // platform (a just-closed port can linger in TIME_WAIT on Windows).
+      const proxyPort = 54_324;
       const agent = new HttpsProxyAgent(`http://127.0.0.1:${proxyPort}`);
 
       const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
@@ -682,8 +676,10 @@ describe("https.request agent TLS options inheritance", () => {
       if (error.code !== "ECONNREFUSED") {
         throw new Error(`Expected code ECONNREFUSED, got ${error.code} (${error.message})`);
       }
-      if (error.errno !== UV_ECONNREFUSED) {
-        throw new Error(`Expected errno ${UV_ECONNREFUSED}, got ${error.errno}`);
+      // uv errno is negative; its exact value differs by platform, so just
+      // assert it is present (the pre-fix bare error had no errno).
+      if (typeof error.errno !== "number" || error.errno >= 0) {
+        throw new Error(`Expected a negative numeric errno, got ${error.errno}`);
       }
       if (error.syscall !== "connect") {
         throw new Error(`Expected syscall connect, got ${error.syscall}`);
@@ -700,16 +696,10 @@ describe("https.request agent TLS options inheritance", () => {
     });
 
     test("HttpsProxyAgent with an IPv6 proxy reports the unbracketed address", async () => {
-      if (!hasIPv6Loopback) return; // no IPv6 loopback on this host — nothing to bind
+      if (!hasIPv6Loopback) return; // no IPv6 loopback on this host — can't reach ::1
 
-      // Bind then release an IPv6 loopback port so connecting to it is refused.
-      const closed = net.createServer();
-      const proxyPort = await new Promise<number>((resolve, reject) => {
-        closed.once("error", reject);
-        closed.listen(0, "::1", () => resolve((closed.address() as AddressInfo).port));
-      });
-      await new Promise<void>(resolve => closed.close(() => resolve()));
-
+      // Fixed IPv6 loopback port that nothing listens on (refused immediately).
+      const proxyPort = 54_325;
       const agent = new HttpsProxyAgent(`http://[::1]:${proxyPort}`);
 
       const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();

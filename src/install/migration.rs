@@ -353,6 +353,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
     id_map.reserve(packages_properties.len());
     let mut num_extern_strings: u32 = 0;
     let mut package_idx: u32 = 0;
+    let mut has_unsynthesised_npm_entry = false;
     for (i, entry) in packages_properties.iter().enumerate() {
         let pkg_path = entry
             .key
@@ -435,8 +436,35 @@ pub(crate) fn migrate_npm_lockfile<'a>(
             if let Some(version_prop) = version_prop
                 && !pkg_name.is_empty()
             {
-                // construct registry url
-                let href: &[u8] = manager.scope_for_package_name(pkg_name).url.href();
+                // The `<registry>/<name>/-/<unscoped>-<ver>.tgz` URL we
+                // synthesise here is npm's own convention — it matches
+                // real tarball paths on registry.npmjs.org/.com but not
+                // on alternative registries. GitHub Packages, for
+                // example, publishes at `/download/<scope>/<pkg>/<ver>/
+                // <sha>` and 302-redirects the npm-style path to upstream
+                // npmjs (with the scope dropped), where the private
+                // package doesn't exist → 404 → install fails.
+                //
+                // The synthesised URL was only ever a guess. For
+                // non-default registries we can't reconstruct the path
+                // without the package's metadata, so set a flag that
+                // makes the migration return `NotAllPackagesGotResolved`
+                // before phase 2 runs — bun's caller then falls back to
+                // a fresh resolve, which queries the registry's package
+                // metadata for the correct tarball URL.
+                //
+                // (We can't just `continue` here: the entry already has
+                // an id_map slot, and phase 3's dep-walk would fall
+                // through to a `.folder` resolution pointing at the
+                // package path, which makes bun treat the dep as a
+                // local file that doesn't exist on disk and silently
+                // skip it — the original symptom the customer hit.)
+                let scope = manager.scope_for_package_name(pkg_name);
+                if scope.url_hash != *Npm::registry::DEFAULT_URL_HASH {
+                    has_unsynthesised_npm_entry = true;
+                    continue;
+                }
+                let href: &[u8] = scope.url.href();
                 let mut count: usize = 0;
                 count += href.len() + pkg_name.len() + b"/-/".len();
                 if pkg_name[0] == b'@' {
@@ -486,6 +514,15 @@ pub(crate) fn migrate_npm_lockfile<'a>(
     }
     if num_deps == u32::MAX {
         return Err(err!("InvalidNPMLockfile")); // lol
+    }
+
+    if has_unsynthesised_npm_entry {
+        // At least one `resolved: null` entry resolved to a non-default
+        // registry where the npmjs `/-/<name>-<ver>.tgz` URL pattern
+        // doesn't match — see the comment in the counting loop. Bail
+        // out before phase 2/3 to let bun's caller fall back to a fresh
+        // resolve.
+        return Err(err!("NotAllPackagesGotResolved"));
     }
 
     debug!("counted {} dependencies", num_deps);

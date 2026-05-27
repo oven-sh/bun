@@ -231,9 +231,6 @@ pub mod text {
         executable_lines_that_havent_been_executed.set_intersection(&report.executable_lines);
 
         let mut iter = executable_lines_that_havent_been_executed.iterator::<true, true>();
-        let mut start_of_line_range: usize = 0;
-        let mut prev_line: usize = 0;
-        let mut is_first = true;
 
         // PORT NOTE: `concat!(pretty_fmt!(..), "{}")` requires a literal; split into a
         // prefix `write_all` + plain `write!` so the const-generic `ENABLE_COLORS` can
@@ -241,47 +238,45 @@ pub mod text {
         let red = pretty_fmt::<ENABLE_COLORS>("<red>");
         let comma = pretty_fmt::<ENABLE_COLORS>("<r><d>,<r>");
 
-        while let Some(next_line) = iter.next() {
-            if next_line == (prev_line + 1) {
-                prev_line = next_line;
-                continue;
-            } else if is_first && start_of_line_range == 0 && prev_line == 0 {
-                start_of_line_range = next_line;
-                prev_line = next_line;
-                continue;
-            }
-
+        // Collapse the ascending uncovered line indices into runs and print each as
+        // `start` or `start-end` (1-based), comma-separated. A pending run is tracked
+        // with an explicit `Option` rather than sentinel zeros, because line index 0 is
+        // itself a valid value — the old `start == 0 && prev == 0` guard mistook the
+        // sentinel for line 0, printing a bogus `1-2` for a lone uncovered line 1 and
+        // dropping a trailing single-line run entirely.
+        let mut pending: Option<(usize, usize)> = None;
+        let mut is_first = true;
+        let mut flush = |writer: &mut dyn bun_io::Write, start: usize, end: usize| -> bun_io::Result<()> {
             if is_first {
                 is_first = false;
             } else {
                 writer.write_all(&comma)?;
             }
-
-            if start_of_line_range == prev_line {
-                writer.write_all(&red)?;
-                write!(writer, "{}", start_of_line_range + 1)?;
+            writer.write_all(&red)?;
+            if start == end {
+                write!(writer, "{}", start + 1)
             } else {
-                writer.write_all(&red)?;
-                write!(writer, "{}-{}", start_of_line_range + 1, prev_line + 1)?;
+                write!(writer, "{}-{}", start + 1, end + 1)
             }
+        };
 
-            prev_line = next_line;
-            start_of_line_range = next_line;
+        while let Some(next_line) = iter.next() {
+            match pending {
+                Some((_, prev)) if next_line == prev + 1 => {
+                    pending = pending.map(|(start, _)| (start, next_line));
+                }
+                Some((start, prev)) => {
+                    flush(writer, start, prev)?;
+                    pending = Some((next_line, next_line));
+                }
+                None => {
+                    pending = Some((next_line, next_line));
+                }
+            }
         }
 
-        if prev_line != start_of_line_range {
-            if is_first {
-            } else {
-                writer.write_all(&comma)?;
-            }
-
-            if start_of_line_range == prev_line {
-                writer.write_all(&red)?;
-                write!(writer, "{}", start_of_line_range + 1)?;
-            } else {
-                writer.write_all(&red)?;
-                write!(writer, "{}-{}", start_of_line_range + 1, prev_line + 1)?;
-            }
+        if let Some((start, prev)) = pending {
+            flush(writer, start, prev)?;
         }
         Ok(())
     }

@@ -246,19 +246,20 @@ pub mod text {
         // dropping a trailing single-line run entirely.
         let mut pending: Option<(usize, usize)> = None;
         let mut is_first = true;
-        let mut flush = |writer: &mut dyn bun_io::Write, start: usize, end: usize| -> bun_io::Result<()> {
-            if is_first {
-                is_first = false;
-            } else {
-                writer.write_all(&comma)?;
-            }
-            writer.write_all(&red)?;
-            if start == end {
-                write!(writer, "{}", start + 1)
-            } else {
-                write!(writer, "{}-{}", start + 1, end + 1)
-            }
-        };
+        let mut flush =
+            |writer: &mut dyn bun_io::Write, start: usize, end: usize| -> bun_io::Result<()> {
+                if is_first {
+                    is_first = false;
+                } else {
+                    writer.write_all(&comma)?;
+                }
+                writer.write_all(&red)?;
+                if start == end {
+                    write!(writer, "{}", start + 1)
+                } else {
+                    write!(writer, "{}-{}", start + 1, end + 1)
+                }
+            };
 
         while let Some(next_line) = iter.next() {
             match pending {

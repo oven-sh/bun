@@ -378,7 +378,7 @@ pub enum IntermediateOutput {
     /// If the chunk doesn't have any references to other chunks, then
     /// `joiner` contains the contents of the chunk. This is more efficient
     /// because it avoids doing a join operation twice.
-    Joiner(StringJoiner),
+    Joiner(StringJoiner<'static>),
 
     #[default]
     Empty,

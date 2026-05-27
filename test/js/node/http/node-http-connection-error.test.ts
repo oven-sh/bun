@@ -9,10 +9,12 @@ import http from "node:http";
 // Connect to a fixed port that nothing listens on (rather than bind-then-close)
 // so the connection is refused immediately and deterministically on every
 // platform — a just-closed port can linger in TIME_WAIT on Windows and produce
-// a different error. This mirrors the existing node:net ECONNREFUSED test.
-const REFUSED_PORT_A = 54_321;
-const REFUSED_PORT_B = 54_322;
-const REFUSED_PORT_C = 54_323;
+// a different error. The ports are below the ephemeral range (32768+) so a
+// concurrent listen(0) can't be assigned one of them and turn the refusal into
+// a connect.
+const REFUSED_PORT_A = 18_321;
+const REFUSED_PORT_B = 18_322;
+const REFUSED_PORT_C = 18_323;
 
 it("request to a refused port reports a Node-shaped ECONNREFUSED", async () => {
   const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();

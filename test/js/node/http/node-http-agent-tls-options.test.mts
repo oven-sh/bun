@@ -653,8 +653,9 @@ describe("https.request agent TLS options inheritance", () => {
     test("HttpsProxyAgent with an unreachable proxy reports ECONNREFUSED for the proxy host", async () => {
       // Connect through a proxy on a fixed port that nothing listens on so the
       // connection is refused immediately and deterministically on every
-      // platform (a just-closed port can linger in TIME_WAIT on Windows).
-      const proxyPort = 54_324;
+      // platform (a just-closed port can linger in TIME_WAIT on Windows). Below
+      // the ephemeral range so a concurrent listen(0) can't be assigned it.
+      const proxyPort = 18_324;
       const agent = new HttpsProxyAgent(`http://127.0.0.1:${proxyPort}`);
 
       const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
@@ -699,7 +700,8 @@ describe("https.request agent TLS options inheritance", () => {
       if (!hasIPv6Loopback) return; // no IPv6 loopback on this host — can't reach ::1
 
       // Fixed IPv6 loopback port that nothing listens on (refused immediately).
-      const proxyPort = 54_325;
+      // Below the ephemeral range so a concurrent listen(0) can't be assigned it.
+      const proxyPort = 18_325;
       const agent = new HttpsProxyAgent(`http://[::1]:${proxyPort}`);
 
       const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();

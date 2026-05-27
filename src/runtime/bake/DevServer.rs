@@ -1696,7 +1696,7 @@ impl<const SSL: bool> ResponseLike for bun_uws_sys::response::Response<SSL> {
     fn get_remote_socket_info(&mut self) -> Option<bun_uws::SocketAddress> {
         bun_uws_sys::response::Response::<SSL>::get_remote_socket_info(self).map(|a| {
             bun_uws::SocketAddress {
-                ip: a.ip.to_vec().into_boxed_slice(),
+                ip: a.ip().to_vec().into_boxed_slice(),
                 port: a.port,
                 is_ipv6: a.is_ipv6,
             }

@@ -1914,6 +1914,22 @@ impl Archiver {
                         // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L434
                     }
 
+                    // Never materialise symlinks. npm doesn't either: registry
+                    // tarballs are filtered by pacote's `/Link$/` extract filter,
+                    // and git/GitHub deps are packed with `npm-packlist`, whose
+                    // `onstat` drops anything that isn't a file or directory. The
+                    // GitHub path here is the only one that reaches non-file
+                    // entries (`options.npm == false`), so skipping links makes
+                    // Bun match npm and removes the symlink-traversal surface
+                    // entirely — a symlink that is never created can't be
+                    // traversed or aliased. Directory entries are still created;
+                    // the `created_symlinks`-gated `O_NOFOLLOW_ANY` guards below
+                    // stay as belt-and-braces (inert while this skip holds, they
+                    // re-arm immediately if symlink extraction is ever restored).
+                    if kind == bun_sys::FileKind::SymLink {
+                        continue;
+                    }
+
                     // strip and normalize the path
                     // TODO(port): std.mem.tokenizeScalar(OSPathChar, pathname, '/') + .rest()
                     // `pathname_z` is `&ZStr` on POSIX (`as_bytes() → &[u8]`)

@@ -754,6 +754,18 @@ impl TarballStream {
             return Ok(());
         }
 
+        // Never materialise symlinks, matching npm (registry tarballs are
+        // filtered by pacote's `/Link$/`; git/GitHub deps are packed with
+        // `npm-packlist`, which drops non-file/non-dir entries). Only the GitHub
+        // path (`npm_mode == false`) reaches here for a symlink entry; skipping
+        // it removes the symlink-traversal surface entirely. Mirrors the skip in
+        // `Archiver::extract_to_dir`.
+        if kind == FileKind::SymLink {
+            self.phase = Phase::WantData;
+            self.out_fd = None;
+            return Ok(());
+        }
+
         // Strip the leading `package/` (or `<repo>-<sha>/` for GitHub) and
         // normalise. Same transformation as Archiver.extractToDir so both
         // paths produce identical on-disk layouts.

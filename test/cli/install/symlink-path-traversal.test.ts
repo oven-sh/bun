@@ -6,7 +6,7 @@ import { bunExe, bunEnv as env, isMacOS, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { tmpdir } from "os";
-import { dirname, join } from "path";
+import { basename, dirname, join } from "path";
 
 // This test validates the fix for a symlink path traversal vulnerability in tarball extraction.
 // CVE: Path traversal via symlink when installing packages
@@ -526,19 +526,15 @@ describe.concurrent.skipIf(isWindows)("symlink path traversal protection", () =>
 it.skipIf(!isMacOS)(
   "tarball dir/symlink entries cannot escape the extraction root via Unicode-normalization aliasing of an earlier symlink",
   async () => {
-    // The lexical "does this entry traverse a previously created symlink" guard
-    // compares path prefixes byte-wise. On a case-insensitive normalizing
-    // filesystem (APFS), an NFC name and its NFD equivalent are the same
-    // directory entry but never byte-compare equal, so a tarball can ship an
-    // NFC-named symlink and then address it via its NFD spelling in a later
-    // entry's path to bypass the guard. File entries are already opened with
-    // O_NOFOLLOW_ANY; this test covers the directory and symlink entry kinds.
-    //
-    // The chain below plants `..`-targeted symlinks at successively higher
-    // directories by walking through the previous link's NFD alias each step,
-    // then creates a directory and a symlink through the chain. With the fix,
-    // the parent of every dir/symlink entry is opened with O_NOFOLLOW_ANY, so
-    // the kernel refuses to follow the chain and the entries are skipped.
+    // End-to-end security regression: a tarball that tries to escape the
+    // extraction root via an NFC/NFD-aliased symlink chain must leave nothing
+    // outside the root. Two defenses make this true: (1) symlink entries are
+    // never materialized (matching npm), so the aliasing chain can't form; and
+    // (2) even if a symlink were created, the `O_NOFOLLOW_ANY` parent-open guard
+    // would refuse to follow it. On a case-insensitive normalizing filesystem
+    // (APFS) an NFC name and its NFD equivalent are the same on-disk entry but
+    // never byte-compare equal, so the cheap lexical prefix guard alone could be
+    // bypassed — this asserts the stronger guarantee holds regardless.
     const NFC = "é"; // "é", UTF-8: c3 a9
     const NFD = "é"; // "é", UTF-8: 65 cc 81
     expect(Buffer.from(NFC).equals(Buffer.from(NFD))).toBe(false);
@@ -664,18 +660,16 @@ it.skipIf(!isMacOS)(
   60000,
 );
 
-it.skipIf(!isMacOS)(
-  "extracts a directory entry that follows a created symlink (macOS nofollow parent must handle the trailing slash)",
+it.skipIf(isWindows)(
+  "does not materialize symlinks from a GitHub tarball (matches npm) while directories and files still extract",
   async () => {
-    // Regression: once any symlink has been created, macOS opens each later
-    // dir/symlink entry's parent with O_NOFOLLOW_ANY and creates the leaf
-    // relative to that fd. Tar directory entries carry a trailing `/`
-    // (`git archive` emits `pkg/src/`) which normalization preserves, so the
-    // parent/leaf split of `"subdir/"` must not yield an empty leaf — otherwise
-    // the guarded `mkdirat(parent_fd, "")` returns ENOENT and aborts the whole
-    // install. This ordering (a safe symlink followed by a plain subdirectory)
-    // is common in real GitHub tarballs and is NOT covered by the NFC/NFD test
-    // above, whose post-symlink dirs all hit the aliased-symlink skip path.
+    // npm never installs symlinks: registry tarballs are filtered by pacote's
+    // `/Link$/` extract filter, and git/GitHub deps are packed with
+    // `npm-packlist`, whose `onstat` drops anything that isn't a file or
+    // directory. The GitHub path is the only place Bun's extractor reaches a
+    // symlink entry, so it now skips `SymbolicLink` entries there too. This
+    // matches npm and removes the symlink-traversal surface entirely. The
+    // directory entries (and the files inside them) must still be created.
     const tarball = createTarball([
       { name: "test-package/", type: "dir" },
       {
@@ -683,13 +677,13 @@ it.skipIf(!isMacOS)(
         type: "file",
         content: JSON.stringify({ name: "test-package", version: "1.0.0" }),
       },
-      // A safe self-referential symlink, created first so created_symlinks is
-      // non-empty for every entry that follows.
-      { name: "test-package/self", type: "symlink", linkname: "." },
-      // Directory entries (trailing slash) that must still be created through
-      // the nofollow-parent path. `nested/` exercises the multi-component walk.
-      { name: "test-package/subdir/", type: "dir" },
-      { name: "test-package/subdir/file.txt", type: "file", content: "inside-subdir" },
+      // Symlinks with perfectly safe, in-package targets. Pre-skip these were
+      // created; now they must be dropped like npm does.
+      { name: "test-package/link-to-src", type: "symlink", linkname: "src" },
+      { name: "test-package/src/", type: "dir" },
+      { name: "test-package/src/index.js", type: "file", content: "module.exports = 42;" },
+      { name: "test-package/src/link-to-index", type: "symlink", linkname: "./index.js" },
+      // A directory that follows a symlink entry — still created.
       { name: "test-package/nested/deep/", type: "dir" },
       { name: "test-package/nested/deep/leaf.txt", type: "file", content: "inside-nested" },
     ]);
@@ -709,8 +703,13 @@ it.skipIf(!isMacOS)(
     });
 
     try {
-      using dir = tempDir("symlink-then-dir", {});
+      using dir = tempDir("github-symlink-skip", {});
       const installDir = String(dir);
+      // Pin the cache so we can assert against the extraction output directly.
+      // On Linux the cache→node_modules transfer (hardlink) drops symlinks
+      // regardless, so a node_modules-only check wouldn't prove the extractor
+      // skipped them; scanning the cache checks the extraction layer itself.
+      const cacheDir = join(installDir, ".bun-cache");
 
       await writeFile(
         join(installDir, "package.json"),
@@ -720,20 +719,17 @@ it.skipIf(!isMacOS)(
           dependencies: { "test-package": "github:user/repo#main" },
         }),
       );
-      await writeFile(join(installDir, "bunfig.toml"), `[install]\ncache = false\n`);
 
       const proc = spawn({
         cmd: [bunExe(), "install"],
         cwd: installDir,
         stdout: "pipe",
         stderr: "pipe",
-        env: { ...env, GITHUB_API_URL: `http://localhost:${server.port}` },
+        env: { ...env, GITHUB_API_URL: `http://localhost:${server.port}`, BUN_INSTALL_CACHE_DIR: cacheDir },
       });
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      // Without the fix, the `subdir/` entry aborts extraction with ENOENT and
-      // the install fails; surface stdout/stderr for diagnosis before asserting.
       if (exitCode !== 0) {
         console.error("Install failed with exit code:", exitCode);
         console.error("stdout:", stdout);
@@ -741,12 +737,32 @@ it.skipIf(!isMacOS)(
       }
       expect(exitCode).toBe(0);
 
-      // The directory entries that followed the symlink must have been created
-      // and their files written through them.
+      // Directories and files still extract (into the cache and node_modules).
       const pkgDir = join(installDir, "node_modules", "test-package");
       await access(join(pkgDir, "package.json"));
-      await access(join(pkgDir, "subdir", "file.txt"));
+      await access(join(pkgDir, "src", "index.js"));
       await access(join(pkgDir, "nested", "deep", "leaf.txt"));
+
+      // None of the package's symlink entries may be materialized — anywhere the
+      // package was written (the extraction cache or node_modules). This is the
+      // extraction-layer guarantee: the symlink entries in the tarball were
+      // skipped. (We match on the entry basenames to ignore Bun's own cache
+      // bookkeeping symlinks, e.g. the `@GH@…` friendly-name links.)
+      const skippedSymlinkNames = new Set(["link-to-src", "link-to-index"]);
+      const symlinksFound: string[] = [];
+      for (const root of [cacheDir, join(installDir, "node_modules", "test-package")]) {
+        const names = await readdir(root, { recursive: true }).catch(() => [] as string[]);
+        for (const name of names) {
+          if (!skippedSymlinkNames.has(basename(name))) continue;
+          const full = join(root, name);
+          const isLink = await lstat(full).then(
+            s => s.isSymbolicLink(),
+            () => false,
+          );
+          if (isLink) symlinksFound.push(full);
+        }
+      }
+      expect(symlinksFound).toEqual([]);
     } finally {
       server.stop();
     }

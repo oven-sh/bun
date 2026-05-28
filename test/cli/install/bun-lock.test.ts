@@ -616,12 +616,11 @@ it("should include unused resolutions in the lockfile", async () => {
   await runBunInstall(env, packageDir, { frozenLockfile: true });
 });
 
-it("requires an integrity hash when an npm package entry points at a tarball URL outside the configured registry", async () => {
+it("requires an integrity hash for an off-registry npm tarball URL at lockfileVersion 2", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
 
-  // Stand-in for a host that is not the configured registry. A correct install
-  // must never contact it for this lockfile, because the entry carries no
-  // integrity hash that would pin the tarball contents.
+  // Stand-in for a host that is not the configured registry. Parsing fails
+  // before any fetch, so this is never actually contacted.
   let offRegistryRequests = 0;
   await using offRegistry = Bun.serve({
     port: 0,
@@ -642,9 +641,14 @@ it("requires an integrity hash when an npm package entry points at a tarball URL
     }),
   );
 
-  const lockfileWithUrl = (tarballUrl: string) =>
+  // The entry keeps the well-known name and version but points the tarball at a
+  // different host and provides no integrity hash. At lockfileVersion 2 this
+  // fails closed: parsing rejects it before any fetch. (The v1 backward-compat
+  // case — parsing accepts such an entry — is covered in lockfile-version-2.test.ts.)
+  await write(
+    join(packageDir, "bun.lock"),
     JSON.stringify({
-      lockfileVersion: 1,
+      lockfileVersion: 2,
       configVersion: 1,
       workspaces: {
         "": {
@@ -655,15 +659,14 @@ it("requires an integrity hash when an npm package entry points at a tarball URL
         },
       },
       packages: {
-        "no-deps": ["no-deps@1.0.0", tarballUrl, {}, ""],
+        "no-deps": [
+          "no-deps@1.0.0",
+          `http://127.0.0.1:${offRegistry.port}/no-deps/-/no-deps-1.0.0.tgz`,
+          {},
+          "",
+        ],
       },
-    });
-
-  // The entry keeps the well-known name and version but points the tarball at
-  // a different host and provides no integrity hash.
-  await write(
-    join(packageDir, "bun.lock"),
-    lockfileWithUrl(`http://127.0.0.1:${offRegistry.port}/no-deps/-/no-deps-1.0.0.tgz`),
+    }),
   );
 
   let { exited, stdout, stderr } = spawn({
@@ -681,28 +684,6 @@ it("requires an integrity hash when an npm package entry points at a tarball URL
   expect(offRegistryRequests).toBe(0);
   expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(false);
   expect(await exited).not.toBe(0);
-
-  // The same entry with the tarball URL under the configured registry and no
-  // integrity hash is still accepted (backward compat for lockfiles that omit
-  // the hash for registry-hosted tarballs).
-  await write(join(packageDir, "bun.lock"), lockfileWithUrl(`${registry.registryUrl()}no-deps/-/no-deps-1.0.0.tgz`));
-
-  ({ exited, stdout, stderr } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
-  }));
-
-  [out, err] = await Promise.all([stdout.text(), stderr.text()]);
-  expect(err).not.toContain("Missing integrity hash");
-  expect(offRegistryRequests).toBe(0);
-  expect(await exited).toBe(0);
-  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
-    name: "no-deps",
-    version: "1.0.0",
-  });
 });
 
 it("escapes double quotes in npm registry tarball URLs when saving bun.lock", async () => {

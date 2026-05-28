@@ -9013,7 +9013,7 @@ describe.concurrent("bun-install", () => {
       expect(await exists(join(ctx.package_dir, "bun.lockb"))).toBeFalse();
       expect(await file(join(ctx.package_dir, "bun.lock")).text()).toMatchInlineSnapshot(`
       "{
-        "lockfileVersion": 1,
+        "lockfileVersion": 2,
         "configVersion": 1,
         "workspaces": {
           "": {

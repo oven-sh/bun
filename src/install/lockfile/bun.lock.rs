@@ -108,10 +108,18 @@ pub enum Version {
 
     /// fixed unnecessary listing of workspace dependencies
     V1 = 1,
+
+    /// Stricter parsing that rejects, rather than accepts, lockfiles the
+    /// earlier versions tolerated. Gated here so an already-written v0/v1
+    /// lockfile keeps loading:
+    /// - an npm package resolved to a tarball URL outside the configured
+    ///   registry must carry a supported integrity hash
+    /// - a git/github `.bun-tag` must be a safe path/checkout component
+    V2 = 2,
 }
 
 impl Version {
-    pub const CURRENT: Version = Version::V1;
+    pub const CURRENT: Version = Version::V2;
 
     #[inline]
     pub const fn current() -> Version {
@@ -122,8 +130,16 @@ impl Version {
         match n {
             0 => Some(Version::V0),
             1 => Some(Version::V1),
+            2 => Some(Version::V2),
             _ => None,
         }
+    }
+
+    /// `true` when this lockfile version is at least `other`. Used to gate
+    /// strict parse-time checks introduced in a later version.
+    #[inline]
+    pub const fn at_least(self, other: Version) -> bool {
+        (self as u32) >= (other as u32)
     }
 }
 
@@ -2546,7 +2562,14 @@ pub fn parse_into_binary_lockfile(
                     // Fail closed: otherwise a tampered lockfile could redirect
                     // the tarball URL off-registry and install arbitrary content
                     // under a trusted package name with verification disabled.
-                    if npm_url_needs_integrity && !pkg.meta.integrity.tag.is_supported() {
+                    //
+                    // Only enforced for v2+. Older lockfiles predate this check
+                    // and may legitimately omit integrity for an off-registry
+                    // tarball; rejecting them would break existing installs.
+                    if lockfile_version.at_least(Version::V2)
+                        && npm_url_needs_integrity
+                        && !pkg.meta.integrity.tag.is_supported()
+                    {
                         log.add_error(
                             Some(source),
                             integrity_expr.loc,
@@ -2587,7 +2610,14 @@ pub fn parse_into_binary_lockfile(
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
-                    if !crate::repository::is_safe_resolved_tag(bun_tag_str) {
+                    // Only reject an unsafe `.bun-tag` at parse time for v2+.
+                    // Older lockfiles predate this check; `Repository::checkout`
+                    // re-validates with the same guard before building any cache
+                    // path or invoking `git`, so skipping it here keeps older
+                    // lockfiles loading without reopening the checkout hole.
+                    if lockfile_version.at_least(Version::V2)
+                        && !crate::repository::is_safe_resolved_tag(bun_tag_str)
+                    {
                         log.add_error(Some(source), bun_tag.loc, b"Invalid git dependency tag");
                         return Err(ParseError::InvalidPackageInfo);
                     }

@@ -1978,7 +1978,7 @@ linker = "${linker}"
       const normalizedLockfile = lockfile.replace(/http:\/\/localhost:\d+/g, "http://localhost:<port>");
       expect(normalizeBunSnapshot(normalizedLockfile, dir)).toMatchInlineSnapshot(`
           "{
-            "lockfileVersion": 1,
+            "lockfileVersion": 2,
             "configVersion": 1,
             "workspaces": {
               "": {

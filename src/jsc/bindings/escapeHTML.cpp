@@ -164,7 +164,8 @@ static ALWAYS_INLINE size_t htmlEscapeExtraLen(std::span<const CharacterType> sp
 
 // Shared escape routine for both 8-bit (Latin-1) and 16-bit (UTF-16) input.
 // Throws and returns nullptr if the escaped output would exceed
-// String::MaxLength (tryCreateUninitialized returns null in that case).
+// String::MaxLength — each metacharacter expands up to 6× (`&quot;`/`&#x27;`),
+// so `outLength` can be several times the input length.
 template<typename CharacterType>
 static JSC::JSString* escapeHTMLString(JSC::JSGlobalObject* globalObject, JSC::JSString* input, std::span<const CharacterType> span)
 {
@@ -179,6 +180,16 @@ static JSC::JSString* escapeHTMLString(JSC::JSGlobalObject* globalObject, JSC::J
     // Pass 2: exact output length. firstEscape is a metacharacter, so extra > 0.
     const size_t extra = htmlEscapeExtraLen(span.subspan(firstEscape));
     const size_t outLength = length + extra;
+
+    // Bail before allocating if the escaped output can't fit in a WTF::String.
+    // `outLength` is a size_t that can reach ~6× the input (well past
+    // UINT_MAX for a near-max-length input of all `"`/`'`), so check the full
+    // 64-bit value explicitly rather than relying on the allocator.
+    if (outLength > WTF::StringImpl::MaxLength) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
 
     std::span<CharacterType> out;
     RefPtr<WTF::StringImpl> impl = WTF::StringImpl::tryCreateUninitialized(outLength, out);

@@ -63,6 +63,11 @@ fn dupe_for_cross_thread(blob: &Blob) -> Blob {
 
 fn dupe_without_store_snapshot(blob: &Blob) -> Blob {
     let copy = blob.dupe_with_content_type(true);
+    // Never carry a `JSGlobalObject` across the registry boundary: the source
+    // blob's global belongs to the registering thread (and may already be
+    // freed by the time the copy is used). `resolve_and_dupe` re-seeds the
+    // copy with the *resolving* thread's global.
+    copy.global_this.set(std::ptr::null());
     if !copy.content_type_allocated.get() {
         let content_type = copy.content_type_slice();
         if !content_type.is_empty() {
@@ -106,12 +111,20 @@ impl ObjectURLRegistry {
         REGISTRY.get_or_init(ObjectURLRegistry::default)
     }
 
-    pub fn resolve_and_dupe(&self, pathname: &[u8]) -> Option<Blob> {
+    pub fn resolve_and_dupe(
+        &self,
+        pathname: &[u8],
+        global_object: &JSGlobalObject,
+    ) -> Option<Blob> {
         let uuid = uuid_from_pathname(pathname)?;
         let copy = {
             let map = self.map.lock();
             dupe_without_store_snapshot(&map.get(&uuid.bytes)?.blob)
         };
+        // The registry copy has a null `global_this` (see
+        // `dupe_without_store_snapshot`); seed it with the resolving thread's
+        // global so downstream consumers never see a foreign thread's global.
+        copy.global_this.set(std::ptr::from_ref(global_object));
         snapshot_store(&copy);
         Some(copy)
     }
@@ -121,8 +134,7 @@ impl ObjectURLRegistry {
         pathname: &[u8],
         global_object: &JSGlobalObject,
     ) -> Option<JSValue> {
-        let resolved = self.resolve_and_dupe(pathname)?;
-        resolved.global_this.set(std::ptr::from_ref(global_object));
+        let resolved = self.resolve_and_dupe(pathname, global_object)?;
         let blob = Blob::new(resolved);
         // SAFETY: `Blob::new` returns a freshly-boxed heap pointer.
         Some(unsafe { (*blob).to_js(global_object) })

@@ -33,14 +33,11 @@ describe("tls.createServer listen", () => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
     const server: Server = createServer(COMMON_CERT);
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       0,
@@ -61,14 +58,11 @@ describe("tls.createServer listen", () => {
 
     const server: Server = createServer(COMMON_CERT);
 
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       0,
@@ -90,9 +84,7 @@ describe("tls.createServer listen", () => {
 
     const server: Server = createServer(COMMON_CERT);
 
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
@@ -100,13 +92,10 @@ describe("tls.createServer listen", () => {
     server.on("error", closeAndFail).on(
       "listening",
       mustCall(() => {
-        clearTimeout(timeout);
         server.close();
         done();
       }),
     );
-
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(0, "0.0.0.0");
   });
@@ -116,14 +105,11 @@ describe("tls.createServer listen", () => {
 
     const server: Server = createServer(COMMON_CERT);
 
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       0,
@@ -145,14 +131,11 @@ describe("tls.createServer listen", () => {
 
     const server: Server = createServer(COMMON_CERT);
 
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       0,
@@ -172,14 +155,11 @@ describe("tls.createServer listen", () => {
 
     const server: Server = createServer(COMMON_CERT);
 
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       mustCall(() => {
@@ -199,14 +179,11 @@ describe("tls.createServer listen", () => {
 
     const server: Server = createServer(COMMON_CERT);
 
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       socket_domain,

@@ -2322,6 +2322,44 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(abc.indexOf("b", [])).toBe(1);
       });
 
+      it("indexOf/lastIndexOf with an explicit byteOffset are unchanged by the fix", () => {
+        // When a numeric byteOffset is supplied (with or without a trailing
+        // encoding), both methods take the non-string branch that the fix does
+        // NOT touch. The needle repeats ("hello" at 0 and 12, "o" at 4/7/16) so
+        // the offset genuinely selects which occurrence is returned.
+        const b = Buffer.from("hello world hello");
+
+        // indexOf(value, byteOffset): searches forward from the offset.
+        expect(b.indexOf("hello", 0)).toBe(0);
+        expect(b.indexOf("hello", 1)).toBe(12);
+        expect(b.indexOf("hello", 12)).toBe(12);
+        expect(b.indexOf("hello", 13)).toBe(-1);
+        expect(b.indexOf("hello", -5)).toBe(12); // negative counts from the end
+        expect(b.indexOf("o", 5)).toBe(7);
+        expect(b.indexOf("o", 8)).toBe(16);
+
+        // indexOf(value, byteOffset, encoding): same, with an explicit encoding.
+        expect(b.indexOf("hello", 1, "utf8")).toBe(12);
+        expect(b.indexOf("hello", 0, "latin1")).toBe(0);
+
+        // lastIndexOf(value, byteOffset): searches backward from the offset.
+        expect(b.lastIndexOf("hello", -1)).toBe(12);
+        expect(b.lastIndexOf("hello", 11)).toBe(0);
+        expect(b.lastIndexOf("hello", 12)).toBe(12);
+        expect(b.lastIndexOf("hello", 0)).toBe(0);
+        expect(b.lastIndexOf("o", 6)).toBe(4);
+        expect(b.lastIndexOf("o", 100)).toBe(16); // past the end is clamped
+
+        // lastIndexOf(value, byteOffset, encoding): same, with an encoding.
+        expect(b.lastIndexOf("hello", 11, "utf8")).toBe(0);
+        expect(b.lastIndexOf("hello", 16, "utf8")).toBe(12);
+
+        // utf16le: the byteOffset is in bytes ("hello" starts at byte 0 and 24).
+        const b16 = Buffer.from("hello world hello", "utf16le");
+        expect(b16.indexOf("hello", 2, "ucs2")).toBe(24);
+        expect(b16.lastIndexOf("hello", 22, "ucs2")).toBe(0);
+      });
+
       for (let fn of [Buffer.prototype.slice, Buffer.prototype.subarray]) {
         it(`Buffer.${fn.name}`, () => {
           const buf = new Buffer("buffer");

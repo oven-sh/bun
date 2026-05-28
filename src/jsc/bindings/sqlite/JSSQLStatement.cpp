@@ -275,6 +275,7 @@ extern "C" void Bun__closeAllSQLiteDatabasesForTermination()
     if (!_instance) {
         return;
     }
+    WTF::Locker locker { databasesLock };
     auto& dbs = _instance->databases;
 
     for (auto& db : dbs) {

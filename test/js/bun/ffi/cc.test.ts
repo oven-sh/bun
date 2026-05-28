@@ -171,9 +171,15 @@ describe.skipIf(isASAN || isFFIUnavailable)("given a get_type(napi_value) functi
           },
         },
       });
-    } catch {
-      // Node-API headers aren't available to the compiler in this environment.
-      res = undefined;
+    } catch (err) {
+      // Only tolerate the compiler being unable to find <node/node_api.h> in
+      // this environment (TinyCC reports `include file '...' not found`). Any
+      // other compile/link failure is a real problem and must surface.
+      if (/node_api\.h'? not found|include file '[^']*node_api\.h'/i.test(String(err))) {
+        res = undefined;
+      } else {
+        throw err;
+      }
     }
   });
 

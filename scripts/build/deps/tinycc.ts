@@ -58,6 +58,7 @@ export const tinycc: Dependency = {
       // driver) so we leave it at the default.
     }
     if (cfg.windows) defines.CONFIG_WIN32 = true;
+    if (cfg.freebsd) defines.TARGETOS_FreeBSD = true;
 
     const spec: DirectBuild = {
       kind: "direct",

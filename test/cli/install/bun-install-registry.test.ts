@@ -8967,7 +8967,7 @@ registry = { url = "http://localhost:${port}/", token = "${token}" }
   expect(await exited).not.toBe(0);
 });
 
-test("registry override from a project .env only keeps the saved token when the host matches", async () => {
+test("registry override from a project .env only keeps the saved token when the host matches and the scheme is not downgraded", async () => {
   // `bun install` loads the project's `.env` before computing installer
   // options, so a repo-committed `.env` can point BUN_CONFIG_REGISTRY at a
   // different registry host. The token configured for the default registry
@@ -9060,6 +9060,40 @@ registry = { url = "http://127.0.0.1:${otherRegistry.port}/", token = "${token}"
 
     expect(received.length).toBeGreaterThan(0);
     expect(received.some(r => r.authorization === `Bearer ${token}`)).toBe(true);
+    expect(await exited).not.toBe(0);
+  }
+
+  // Case 3: the override points at the same host but downgrades https to
+  // http. The token configured for the https registry must not be sent.
+  received.length = 0;
+  await Promise.all([
+    rm(join(packageDir, "bun.lock"), { force: true }),
+    rm(join(packageDir, "bun.lockb"), { force: true }),
+    write(
+      join(packageDir, "bunfig.toml"),
+      `
+[install]
+cache = false
+registry = { url = "https://127.0.0.1:${otherRegistry.port}/", token = "${token}" }
+`,
+    ),
+    write(join(packageDir, ".env"), `BUN_CONFIG_REGISTRY=http://127.0.0.1:${otherRegistry.port}/\n`),
+  ]);
+
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    await stderr.text();
+    await stdout.text();
+
+    expect(received.length).toBeGreaterThan(0);
+    expect(received.filter(r => r.authorization !== null)).toEqual([]);
     expect(await exited).not.toBe(0);
   }
 });

@@ -601,6 +601,7 @@ impl Options {
                             let new_url = bun_url::URL::parse(registry_);
                             let token = if bun_core::without_trailing_slash(new_url.host)
                                 == bun_core::without_trailing_slash(prev_url.host)
+                                && (new_url.is_https() || !prev_url.is_https())
                             {
                                 prev_scope.token
                             } else {

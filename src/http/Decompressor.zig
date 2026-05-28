@@ -29,10 +29,20 @@ pub const Decompressor = union(enum) {
                         bun.http.default_allocator,
                         .{
                             // zlib.MAX_WBITS = 15
-                            // to (de-)compress deflate format, use wbits = -zlib.MAX_WBITS
-                            // to (de-)compress deflate format with headers we use wbits = 0 (we can detect the first byte using 120)
+                            // to (de-)compress raw deflate, use wbits = -zlib.MAX_WBITS
+                            // to (de-)compress zlib-wrapped deflate (RFC1950), use wbits = 0 (inflate reads CINFO from the header)
                             // to (de-)compress gzip format, use wbits = zlib.MAX_WBITS | 16
-                            .windowBits = if (encoding == Encoding.gzip) Zlib.MAX_WBITS | 16 else (if (buffer.len > 1 and buffer[0] == 120) 0 else -Zlib.MAX_WBITS),
+                            .windowBits = if (encoding == Encoding.gzip)
+                                Zlib.MAX_WBITS | 16
+                            else if (buffer.len >= 2 and
+                                (buffer[0] & 0x0f) == 8 and
+                                (buffer[0] >> 4) <= 7 and
+                                ((@as(u16, buffer[0]) << 8) | @as(u16, buffer[1])) % 31 == 0)
+                                // RFC1950 §2.2: CM=8, CINFO 0..=7, (CMF<<8 | FLG) % 31 == 0.
+                                // Testing only buffer[0] == 0x78 missed CINFO 0..6 (windows < 32 KiB).
+                                0
+                            else
+                                -Zlib.MAX_WBITS,
                         },
                     );
                     this.* = .{ .zlib = reader };

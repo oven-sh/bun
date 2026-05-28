@@ -180,6 +180,33 @@ describe.concurrent("fetch() with streaming", () => {
     }
   });
 
+  it.each([9, 10, 11, 12, 13, 14, 15])(
+    "decodes a Content-Encoding: deflate body compressed with a %i-bit window",
+    async windowBits => {
+      // RFC1950: the zlib CMF byte is CM=8 | CINFO<<4, so a window smaller than
+      // 32 KiB has CMF != 0x78 (e.g. 0x18 for windowBits=9). Bun used to detect
+      // a zlib header by testing buffer[0] == 0x78 only, so these bodies were
+      // sent through raw inflate and rejected as ZlibError.
+      const original = Buffer.alloc(17 * 1024, "abcdefghijklmnop");
+      const compressed = zlib.deflateSync(original, { windowBits });
+      using server = Bun.serve({
+        port: 0,
+        fetch() {
+          return new Response(compressed, {
+            headers: {
+              "Content-Type": "application/octet-stream",
+              "Content-Encoding": "deflate",
+              "Content-Length": String(compressed.length),
+            },
+          });
+        },
+      });
+      const res = await fetch(server.url);
+      const got = Buffer.from(await res.arrayBuffer());
+      expect(got.equals(original)).toBe(true);
+    },
+  );
+
   for (let file of files) {
     it("stream can handle response.body + await response.something() #4500", async () => {
       let server: ReturnType<typeof http.createServer> | null = null;

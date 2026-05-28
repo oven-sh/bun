@@ -89,12 +89,23 @@ impl Decompressor {
                         // `bun.http.default_allocator`; dropped per §Allocators.
                         bun_zlib::Options {
                             // zlib.MAX_WBITS = 15
-                            // to (de-)compress deflate format, use wbits = -zlib.MAX_WBITS
-                            // to (de-)compress deflate format with headers we use wbits = 0 (we can detect the first byte using 120)
+                            // to (de-)compress raw deflate, use wbits = -zlib.MAX_WBITS
+                            // to (de-)compress zlib-wrapped deflate (RFC1950), use wbits = 0 (inflate reads CINFO from the header)
                             // to (de-)compress gzip format, use wbits = zlib.MAX_WBITS | 16
                             window_bits: if encoding == Encoding::Gzip {
                                 bun_zlib::MAX_WBITS | 16
-                            } else if buffer.len() > 1 && buffer[0] == 120 {
+                            } else if buffer.len() >= 2
+                                && (buffer[0] & 0x0f) == 8
+                                && (buffer[0] >> 4) <= 7
+                                && (((buffer[0] as u16) << 8) | buffer[1] as u16) % 31 == 0
+                            {
+                                // RFC1950 §2.2: CMF byte has CM=8 (deflate) in the low nibble and
+                                // CINFO (log₂ window size - 8) in the high nibble; CINFO 0..=7
+                                // covers all valid windows (256 B .. 32 KiB), and (CMF<<8 | FLG)
+                                // is a multiple of 31. Testing only `buffer[0] == 0x78` (the old
+                                // check) misses CINFO 0..6 — servers that compress with a window
+                                // smaller than 32 KiB — so those bodies were sent through raw
+                                // inflate and rejected as Z_DATA_ERROR.
                                 0
                             } else {
                                 -bun_zlib::MAX_WBITS

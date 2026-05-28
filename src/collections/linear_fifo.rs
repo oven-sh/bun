@@ -280,9 +280,9 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             // this copy overlaps
             let count = self.count;
             let head = self.head;
-            let buf = self.buf.as_mut_slice();
+            let buf = self.buf.as_mut_slice().as_mut_ptr();
             // SAFETY: src/dst within same allocation; ptr::copy is memmove.
-            unsafe { ptr::copy(buf.as_ptr().add(head), buf.as_mut_ptr(), count) };
+            unsafe { ptr::copy(buf.add(head), buf, count) };
             self.head = 0;
         } else {
             // Zig: `var tmp: [page_size_min / 2 / @sizeOf(T)]T = undefined;`
@@ -305,19 +305,15 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             while self.head != 0 {
                 let n = self.head.min(tmp_len);
                 let m = buf_len - n;
-                let buf = self.buf.as_mut_slice();
+                let buf = self.buf.as_mut_slice().as_mut_ptr();
                 // SAFETY: `tmp` is disjoint from `buf`. The tmp↔buf copies move
                 // `n * size_of::<T>()` raw bytes (no `T` typed access through
                 // the 1-aligned scratch). The buf→buf shift overlaps, so use
                 // `ptr::copy` (memmove); it operates on properly-aligned `*T`.
                 unsafe {
-                    ptr::copy_nonoverlapping(buf.as_ptr().cast::<u8>(), tmp_ptr, n * t_size);
-                    ptr::copy(buf.as_ptr().add(n), buf.as_mut_ptr(), m);
-                    ptr::copy_nonoverlapping(
-                        tmp_ptr,
-                        buf.as_mut_ptr().add(m).cast::<u8>(),
-                        n * t_size,
-                    );
+                    ptr::copy_nonoverlapping(buf.cast::<u8>(), tmp_ptr, n * t_size);
+                    ptr::copy(buf.add(n), buf, m);
+                    ptr::copy_nonoverlapping(tmp_ptr, buf.add(m).cast::<u8>(), n * t_size);
                 }
                 self.head -= n;
             }
@@ -886,6 +882,24 @@ mod tests {
             let n = fifo.read(&mut read_buf);
             assert_eq!(3usize, n); // NOTE: It should be the number of items.
         }
+    }
+
+    #[test]
+    fn linear_fifo_realign_wrapped_buffer() {
+        let mut fifo = LinearFifo::<u8, StaticBuffer<u8, 8>>::init();
+
+        fifo.write(b"abcdefgh").unwrap();
+        assert_eq!(b'a', fifo.read_item().unwrap());
+        assert_eq!(b'b', fifo.read_item().unwrap());
+        assert_eq!(b'c', fifo.read_item().unwrap());
+        fifo.write(b"ijk").unwrap();
+
+        fifo.realign();
+
+        let mut result = [0u8; 8];
+        let n = fifo.read(&mut result);
+        assert_eq!(n, 8);
+        assert_eq!(&result, b"defghijk");
     }
 }
 

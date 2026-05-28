@@ -1,12 +1,18 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { isASAN, isDebug, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import * as fs from "node:fs";
 import { resolve } from "node:path";
 import * as stream from "node:stream";
 import * as util from "node:util";
 import * as zlib from "node:zlib";
+
+// The "streaming encode doesn't wait for entire input" tests push 50 MB of
+// random data through a compressor to observe incremental flushing. That is too
+// slow to finish in the 15s budget under the sanitizer-instrumented debug/ASAN
+// build, so skip it there; the release lanes provide the coverage.
+const streamingEncodeIt = isDebug || isASAN ? it.skip : it;
 
 describe("prototype and name and constructor", () => {
   for (let [name, Class] of [
@@ -276,31 +282,35 @@ describe("zlib.brotli", () => {
     }
   });
 
-  it("streaming encode doesn't wait for entire input", async () => {
-    const createPRNG = seed => {
-      let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
-      return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
-    };
-    const readStream = new stream.Readable();
-    const brotliStream = zlib.createBrotliCompress();
-    const rand = createPRNG(1);
-    let all = [];
+  streamingEncodeIt(
+    "streaming encode doesn't wait for entire input",
+    async () => {
+      const createPRNG = seed => {
+        let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
+        return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
+      };
+      const readStream = new stream.Readable();
+      const brotliStream = zlib.createBrotliCompress();
+      const rand = createPRNG(1);
+      let all = [];
 
-    const { promise, resolve, reject } = Promise.withResolvers();
-    brotliStream.on("data", chunk => all.push(chunk.length));
-    brotliStream.on("end", resolve);
-    brotliStream.on("error", reject);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      brotliStream.on("data", chunk => all.push(chunk.length));
+      brotliStream.on("end", resolve);
+      brotliStream.on("error", reject);
 
-    for (let i = 0; i < 50; i++) {
-      let buf = Buffer.alloc(1024 * 1024);
-      for (let j = 0; j < buf.length; j++) buf[j] = (rand() * 256) | 0;
-      readStream.push(buf);
-    }
-    readStream.push(null);
-    readStream.pipe(brotliStream);
-    await promise;
-    expect(all.length).toBeGreaterThanOrEqual(7);
-  }, 15_000);
+      for (let i = 0; i < 50; i++) {
+        let buf = Buffer.alloc(1024 * 1024);
+        for (let j = 0; j < buf.length; j++) buf[j] = (rand() * 256) | 0;
+        readStream.push(buf);
+      }
+      readStream.push(null);
+      readStream.pipe(brotliStream);
+      await promise;
+      expect(all.length).toBeGreaterThanOrEqual(7);
+    },
+    15_000,
+  );
 
   it("should accept params", async () => {
     const ZLIB = zlib.constants;
@@ -640,31 +650,35 @@ describe("zlib.zstd", () => {
     }
   });
 
-  it("streaming encode doesn't wait for entire input", async () => {
-    const createPRNG = seed => {
-      let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
-      return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
-    };
-    const readStream = new stream.Readable();
-    const zstdStream = zlib.createZstdCompress();
-    const rand = createPRNG(1);
-    let all = [];
+  streamingEncodeIt(
+    "streaming encode doesn't wait for entire input",
+    async () => {
+      const createPRNG = seed => {
+        let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
+        return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
+      };
+      const readStream = new stream.Readable();
+      const zstdStream = zlib.createZstdCompress();
+      const rand = createPRNG(1);
+      let all = [];
 
-    const { promise, resolve, reject } = Promise.withResolvers();
-    zstdStream.on("data", chunk => all.push(chunk.length));
-    zstdStream.on("end", resolve);
-    zstdStream.on("error", reject);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      zstdStream.on("data", chunk => all.push(chunk.length));
+      zstdStream.on("end", resolve);
+      zstdStream.on("error", reject);
 
-    for (let i = 0; i < 50; i++) {
-      let buf = Buffer.alloc(1024 * 1024);
-      for (let j = 0; j < buf.length; j++) buf[j] = (rand() * 256) | 0;
-      readStream.push(buf);
-    }
-    readStream.push(null);
-    readStream.pipe(zstdStream);
-    await promise;
-    expect(all.length).toBeGreaterThanOrEqual(7);
-  }, 15_000);
+      for (let i = 0; i < 50; i++) {
+        let buf = Buffer.alloc(1024 * 1024);
+        for (let j = 0; j < buf.length; j++) buf[j] = (rand() * 256) | 0;
+        readStream.push(buf);
+      }
+      readStream.push(null);
+      readStream.pipe(zstdStream);
+      await promise;
+      expect(all.length).toBeGreaterThanOrEqual(7);
+    },
+    15_000,
+  );
 });
 
 describe("async write buffer lifetime", () => {

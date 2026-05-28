@@ -212,10 +212,9 @@ pub fn allocate_latin1_into_utf8(latin1_: &[u8]) -> Result<Vec<u8>, AllocError> 
 // immutable.rs as `strings::{utf16_codepoint, utf16_codepoint_with_fffd,
 // UTF16Replacement}`; the parallel Utf16CodepointLen + duplicate struct/fns
 // that lived in immutable.rs are deleted in favour of this single source of
-// truth. All callers (escapeHTML.rs ×5 — reads only `.len`; visible.rs ×1;
-// unicode.rs ×4; shell_parser/parse.rs ×1; TextEncoderStreamEncoder.rs ×1)
-// resolve through the `pub use unicode_draft::{…}` re-export with no source
-// change.
+// truth. All callers (visible.rs ×1; unicode.rs ×4; shell_parser/parse.rs ×1;
+// TextEncoderStreamEncoder.rs ×1) resolve through the
+// `pub use unicode_draft::{…}` re-export with no source change.
 
 /// `strings.UTF16Replacement` (unicode.zig:569) — decoded UTF-16 codepoint
 /// with surrogate metadata.

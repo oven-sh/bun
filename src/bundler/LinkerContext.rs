@@ -4149,7 +4149,7 @@ impl<'a> LinkerContext<'a> {
     pub fn break_output_into_pieces(
         &self,
         _alloc: *const Bump,
-        j: &mut StringJoiner,
+        j: &mut StringJoiner<'static>,
         count: u32,
     ) -> Result<crate::chunk::IntermediateOutput, BunError> {
         let _trace = bun::perf::trace("Bundler.breakOutputIntoPieces");

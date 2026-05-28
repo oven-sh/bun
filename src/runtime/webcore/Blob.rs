@@ -3596,13 +3596,22 @@ impl BlobExt for Blob {
                                         // or resizes this buffer before `done()`.
                                         joiner.push_cloned(buf.byte_slice());
                                     } else {
-                                        joiner.push_static(buf.byte_slice());
+                                        // SAFETY: the prescan above proved no remaining
+                                        // part can run user JS, so this buffer (rooted
+                                        // via `_keep`/`arg`) stays attached and valid
+                                        // until `joiner.done()` below.
+                                        joiner.push(unsafe {
+                                            bun_ptr::detach_lifetime(buf.byte_slice())
+                                        });
                                     }
                                     continue;
                                 }
                                 jsc::JSType::Array | jsc::JSType::DerivedArray => {
-                                    could_have_non_ascii = true;
-                                    break;
+                                    let sliced = item.to_slice_clone(global)?;
+                                    could_have_non_ascii =
+                                        could_have_non_ascii || sliced.is_allocated();
+                                    joiner.push_cloned(sliced.slice());
+                                    continue;
                                 }
                                 jsc::JSType::DOMWrapper => {
                                     if let Some(blob) = item.as_class_ref::<Blob>() {
@@ -3613,22 +3622,31 @@ impl BlobExt for Blob {
                                         if parts_can_run_js {
                                             joiner.push_cloned(blob.shared_view());
                                         } else {
-                                            joiner.push_static(blob.shared_view());
+                                            // SAFETY: the prescan above proved no
+                                            // remaining part can run user JS, so this
+                                            // Blob (rooted via `_keep`/`arg`) keeps its
+                                            // Store alive until `joiner.done()` below.
+                                            joiner.push(unsafe {
+                                                bun_ptr::detach_lifetime(blob.shared_view())
+                                            });
                                         }
                                         continue;
                                     } else {
-                                        let sliced = current.to_slice_clone(global)?;
+                                        let sliced = item.to_slice_clone(global)?;
                                         could_have_non_ascii =
                                             could_have_non_ascii || sliced.is_allocated();
                                         joiner.push_cloned(sliced.slice());
+                                        continue;
                                     }
                                 }
-                                _ => {}
+                                _ => {
+                                    let sliced = item.to_slice_clone(global)?;
+                                    could_have_non_ascii =
+                                        could_have_non_ascii || sliced.is_allocated();
+                                    joiner.push_cloned(sliced.slice());
+                                }
                             }
                         }
-
-                        // `reserve(iter.len)` above guarantees no realloc here.
-                        stack.push(item);
                     }
                 }
 
@@ -3662,7 +3680,11 @@ impl BlobExt for Blob {
                 | jsc::JSType::BigUint64Array
                 | jsc::JSType::DataView => {
                     let buf = current.as_array_buffer(global).unwrap();
-                    joiner.push_static(buf.slice());
+                    // SAFETY: this arm is only reached when the typed array is the
+                    // top-level value (the walk stack is empty), so no user JS runs
+                    // between this push and `joiner.done()` below; `_keep`/`arg` keeps
+                    // the buffer alive for that span.
+                    joiner.push(unsafe { bun_ptr::detach_lifetime(buf.slice()) });
                     could_have_non_ascii = true;
                 }
 
@@ -3953,7 +3975,7 @@ where
 /// `*jsc.JSGlobalObject`), so they are stored as plain references rather than
 /// raw pointers.
 struct FormDataContext<'a> {
-    joiner: StringJoiner,
+    joiner: StringJoiner<'a>,
     boundary: &'a [u8], // borrowed; outlives the joiner
     failed: bool,
     global_this: &'a JSGlobalObject,
@@ -3986,7 +4008,7 @@ impl FormDataContext<'_> {
     /// (Zig: `joiner.push(slice, slice.allocator.get())`); an owned slice
     /// (UTF-16 / non-ASCII Latin-1 conversion) transfers its allocation to the
     /// joiner. When `escape` is set, `"`/CR/LF are percent-encoded into a copy.
-    fn push_string_slice(joiner: &mut StringJoiner, slice: ZigStringSlice, escape: bool) {
+    fn push_string_slice(joiner: &mut StringJoiner<'_>, slice: ZigStringSlice, escape: bool) {
         if escape {
             if let Some(escaped) = escape_form_data_name(slice.slice()) {
                 joiner.push_owned(escaped);
@@ -3997,7 +4019,9 @@ impl FormDataContext<'_> {
             // `into_vec` moves the buffer out of an `Owned` slice without copying.
             joiner.push_owned(slice.into_vec().into_boxed_slice());
         } else if matches!(slice, ZigStringSlice::Static(..)) {
-            joiner.push_static(slice.slice());
+            // SAFETY: `Static` bytes are owned by the `DOMFormData` being serialized
+            // (never freed), which outlives `joiner.done()` in `from_dom_form_data`.
+            joiner.push(unsafe { bun_ptr::detach_lifetime(slice.slice()) });
         } else {
             // WTF-backed slices release their pin on drop — copy rather than
             // borrow past it. (`ZigString::to_slice` never produces these.)
@@ -4043,7 +4067,10 @@ impl FormDataContext<'_> {
                     b"application/octet-stream"
                 };
                 joiner.push_static(b"Content-Type: ");
-                joiner.push_static(content_type);
+                // SAFETY: either a `'static` literal or borrowed from the entry's Blob,
+                // which the `DOMFormData` keeps alive past `joiner.done()` in
+                // `from_dom_form_data`.
+                joiner.push(unsafe { bun_ptr::detach_lifetime(content_type) });
                 joiner.push_static(b"\r\n\r\n");
 
                 if blob.store.get().is_some() {
@@ -4095,10 +4122,10 @@ impl FormDataContext<'_> {
                             }
                         }
                         store::Data::Bytes(_) => {
-                            // Borrowed: the blob's store is kept alive by the
-                            // `DOMFormData` entry until after `joiner.done()`
-                            // (Zig used `pushStatic` here too).
-                            joiner.push_static(blob.shared_view());
+                            // SAFETY: borrowed from the blob's store, which the
+                            // `DOMFormData` entry keeps alive until after
+                            // `joiner.done()` (Zig used `pushStatic` here too).
+                            joiner.push(unsafe { bun_ptr::detach_lifetime(blob.shared_view()) });
                         }
                     }
                 }

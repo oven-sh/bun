@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, readdirSync, rmSync } from "node:fs";
+import { lstat, readlink } from "node:fs/promises";
 import { join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes).
@@ -586,9 +587,9 @@ describe("Bun.Archive", () => {
       await archive.extract(String(dir));
 
       const linkPath = join(String(dir), "link.js");
-      const st = await import("node:fs/promises").then(fs => fs.lstat(linkPath));
+      const st = await lstat(linkPath);
       expect(st.isSymbolicLink()).toBe(true);
-      const target = await import("node:fs/promises").then(fs => fs.readlink(linkPath));
+      const target = await readlink(linkPath);
       expect(target).toBe("index.js");
     });
   });

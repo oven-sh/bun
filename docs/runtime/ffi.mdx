@@ -169,7 +169,7 @@ The following `FFIType` values are supported.
 | i8         | `int8_t`       | `int8_t`                    |
 | i16        | `int16_t`      | `int16_t`                   |
 | i32        | `int32_t`      | `int32_t`, `int`            |
-| i64        | `int64_t`      | `int64_t`, `isize`          |
+| i64        | `int64_t`      | `int64_t`                   |
 | i64_fast   | `int64_t`      |                             |
 | u8         | `uint8_t`      | `uint8_t`                   |
 | u16        | `uint16_t`     | `uint16_t`                  |
@@ -186,7 +186,9 @@ The following `FFIType` values are supported.
 
 Note: `buffer` arguments must be a `TypedArray` or `DataView`.
 
-Note: `void` is only valid as a `returns` type — it is the default return type and cannot be used as an argument. `usize`/`isize` are pointer-sized integer aliases of `u64`/`i64`.
+Note: `void` is only valid as a `returns` type — it is the default return type and cannot be used as an argument.
+
+Note: `usize` and `isize` are pointer-sized integer aliases for `u64` and `i64`. Both are accepted at runtime, but only `"usize"` is currently in the TypeScript string types — if you need `isize` while type-checking, use `i64` (or `FFIType.i64`).
 
 ---
 
@@ -490,20 +492,22 @@ console.log(
 
 The `read` function behaves similarly to `DataView`, but it's usually faster because it doesn't need to create a `DataView` or `ArrayBuffer`.
 
-| `FFIType` | `read` function |
-| --------- | --------------- |
-| ptr       | `read.ptr`      |
-| intptr    | `read.intptr`   |
-| i8        | `read.i8`       |
-| i16       | `read.i16`      |
-| i32       | `read.i32`      |
-| i64       | `read.i64`      |
-| u8        | `read.u8`       |
-| u16       | `read.u16`      |
-| u32       | `read.u32`      |
-| u64       | `read.u64`      |
-| f32       | `read.f32`      |
-| f64       | `read.f64`      |
+| Type    | `read` function |
+| ------- | --------------- |
+| ptr     | `read.ptr`      |
+| intptr  | `read.intptr`   |
+| i8      | `read.i8`       |
+| i16     | `read.i16`      |
+| i32     | `read.i32`      |
+| i64     | `read.i64`      |
+| u8      | `read.u8`       |
+| u16     | `read.u16`      |
+| u32     | `read.u32`      |
+| u64     | `read.u64`      |
+| f32     | `read.f32`      |
+| f64     | `read.f64`      |
+
+`read.ptr` and `read.intptr` both read a pointer-sized integer. They are `read` helpers only — `intptr` is not an `FFIType`, so it can't be used in `args`/`returns`.
 
 ### Memory management
 

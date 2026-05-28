@@ -413,4 +413,47 @@ describe("worker_threads", () => {
     await p;
     expect(message).toEqual("hello");
   });
+
+  test("postMessage preserves Error cause across the worker boundary", async () => {
+    const worker = new wt.Worker(
+      'const { parentPort } = require("worker_threads"); parentPort.on("message", m => parentPort.postMessage(m));',
+      { eval: true },
+    );
+    try {
+      const cyclic: any = new Error("self");
+      cyclic.cause = cyclic;
+      const inputs = [
+        new Error("plain"),
+        new Error("str", { cause: "boom" }),
+        new Error("obj", { cause: { code: 42 } }),
+        new Error("nested", { cause: new RangeError("inner") }),
+        cyclic,
+      ];
+      const received: any[] = [];
+      const done = new Promise<void>((resolve, reject) => {
+        worker.on("error", reject);
+        worker.on("message", m => {
+          received.push(m);
+          if (received.length === inputs.length) resolve();
+        });
+      });
+      for (const e of inputs) worker.postMessage(e);
+      await done;
+
+      expect(received[0]).toBeInstanceOf(Error);
+      expect(Object.hasOwn(received[0], "cause")).toBe(false);
+
+      expect(received[1].cause).toBe("boom");
+
+      expect(received[2].cause).toEqual({ code: 42 });
+
+      expect(received[3].cause).toBeInstanceOf(RangeError);
+      expect(received[3].cause.message).toBe("inner");
+
+      expect(received[4].cause).toBe(received[4]);
+      expect(received[4].message).toBe("self");
+    } finally {
+      await worker.terminate();
+    }
+  });
 });

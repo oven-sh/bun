@@ -171,7 +171,8 @@ enum WalkerState { StateUnknown,
     MapDataEndVisitKey,
     MapDataEndVisitValue,
     SetDataStartVisitEntry,
-    SetDataEndVisitKey };
+    SetDataEndVisitKey,
+    ErrorEndVisitCause };
 
 // These can't be reordered, and any new types must be added to the end of the list
 // When making changes to these lists please cover your new type(s) in the API test "IndexedDB.StructuredCloneBackwardCompatibility"
@@ -568,8 +569,9 @@ const uint8_t cryptoKeyOKPOpNameTagMaximumValue = 1;
  * Version 11. added support for Blob's memory cost.
  * Version 12. added support for agent cluster ID.
  * Version 13. added support for ErrorInstance objects.
+ * Version 14. added support for ErrorInstance cause (recursively serialized) and identity preservation.
  */
-[[maybe_unused]] static constexpr unsigned CurrentVersion = 13;
+[[maybe_unused]] static constexpr unsigned CurrentVersion = 14;
 [[maybe_unused]] static constexpr unsigned TerminatorTag = 0xFFFFFFFF;
 [[maybe_unused]] static constexpr unsigned StringPoolTag = 0xFFFFFFFE;
 [[maybe_unused]] static constexpr unsigned NonIndexPropertiesTag = 0xFFFFFFFD;
@@ -1569,6 +1571,12 @@ private:
 
     bool dumpIfTerminal(JSValue value, SerializationReturnCode& code)
     {
+        // An ErrorInstance with a cause has already written its header and stashed
+        // the cause for the state machine to recurse into; the re-entry from
+        // StateUnknown must not write anything further for that value.
+        if (!m_pendingErrorCause.isEmpty())
+            return false;
+
         if (!value.isCell()) {
             dumpImmediate(value, code);
             return true;
@@ -1685,6 +1693,9 @@ private:
                 return true;
             }
             if (auto* errorInstance = dynamicDowncast<ErrorInstance>(obj)) {
+                if (!startObjectInternal(errorInstance)) // handle duplicates
+                    return true;
+
                 auto& vm = m_lexicalGlobalObject->vm();
                 auto errorTypeValue = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->name);
                 RETURN_IF_EXCEPTION(scope, false);
@@ -1731,6 +1742,16 @@ private:
                 }
                 RETURN_IF_EXCEPTION(scope, false);
 
+                bool hasCause = false;
+                JSValue cause;
+                PropertyDescriptor causeDescriptor;
+                if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->cause, causeDescriptor) && causeDescriptor.isDataDescriptor()) {
+                    scope.assertNoException();
+                    hasCause = true;
+                    cause = causeDescriptor.value();
+                }
+                RETURN_IF_EXCEPTION(scope, false);
+
                 write(ErrorInstanceTag);
                 write(errorNameToSerializableErrorType(errorTypeString));
                 writeNullableString(message);
@@ -1738,7 +1759,15 @@ private:
                 write(column);
                 writeNullableString(sourceURL);
                 writeNullableString(stack);
-                return true;
+                write(static_cast<uint8_t>(hasCause ? 1 : 0));
+                if (!hasCause)
+                    return true;
+                // The cause is serialized recursively via the state machine so that
+                // nested errors, arbitrary objects, and cycles are handled without
+                // native recursion. Returning false tells the caller to fall through
+                // to StateUnknown, which will dispatch on m_pendingErrorCause.
+                m_pendingErrorCause = cause;
+                return false;
             }
             if (obj->inherits<JSMessagePort>()) {
                 auto index = m_transferredMessagePorts.find(obj);
@@ -2577,6 +2606,7 @@ private:
     }
 #endif
     // Vector<URLKeepingBlobAlive>& m_blobHandles;
+    JSValue m_pendingErrorCause;
     ObjectPool m_objectPool;
     ObjectPool m_transferredMessagePorts;
     ObjectPool m_transferredArrayBuffers;
@@ -2837,6 +2867,21 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             goto setDataStartVisitEntry;
         }
 
+        errorVisitCause: {
+            ASSERT(inValue.isObject());
+            if (inputObjectStack.size() > maximumFilterRecursion)
+                return SerializationReturnCode::StackOverflowError;
+            inputObjectStack.append(asObject(inValue));
+            inValue = m_pendingErrorCause;
+            m_pendingErrorCause = JSValue();
+            stateStack.append(ErrorEndVisitCause);
+            goto stateUnknown;
+        }
+        case ErrorEndVisitCause: {
+            inputObjectStack.removeLast();
+            break;
+        }
+
         stateUnknown:
         case StateUnknown: {
             auto terminalCode = SerializationReturnCode::SuccessfullyCompleted;
@@ -2848,6 +2893,8 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 break;
             }
 
+            if (!m_pendingErrorCause.isEmpty())
+                goto errorVisitCause;
             if (isArray(inValue))
                 goto arrayStartState;
             if (isMap(inValue))
@@ -4798,6 +4845,12 @@ private:
 
     JSValue readTerminal()
     {
+        // An ErrorInstance with a cause has already been constructed and is
+        // waiting for the state machine to deserialize and attach its cause.
+        // The re-entry from StateUnknown must not consume any bytes here.
+        if (m_pendingErrorWithCause)
+            return JSValue();
+
         SerializationTag tag = readTag();
         // if (!isTypeExposedToGlobalObject(*m_globalObject, tag))
         //     return JSValue();
@@ -5036,7 +5089,22 @@ private:
                 fail();
                 return JSValue();
             }
-            return ErrorInstance::create(m_lexicalGlobalObject, WTF::move(message), toErrorType(serializedErrorType), { line, column }, WTF::move(sourceURL), WTF::move(stackString));
+            ErrorInstance* error = ErrorInstance::create(m_lexicalGlobalObject, WTF::move(message), toErrorType(serializedErrorType), { line, column }, WTF::move(sourceURL), WTF::move(stackString));
+            if (m_version < 14)
+                return error;
+            m_gcBuffer.appendWithCrashOnOverflow(error);
+            uint8_t hasCause;
+            if (!read(hasCause)) {
+                fail();
+                return JSValue();
+            }
+            if (!hasCause)
+                return error;
+            // Hand the partially-constructed error to the state machine, which
+            // will deserialize the cause value (recursing as needed) and attach
+            // it in ErrorEndVisitCause. The error is rooted via m_gcBuffer.
+            m_pendingErrorWithCause = error;
+            return JSValue();
         }
         case ObjectReferenceTag: {
             auto index = readConstantPoolIndex(m_gcBuffer);
@@ -5291,6 +5359,7 @@ private:
     const uint8_t* m_ptr;
     const uint8_t* const m_end;
     unsigned m_version;
+    JSObject* m_pendingErrorWithCause { nullptr };
     Vector<CachedString> m_constantPool;
     // Vector<Ref<ImageData>> m_imageDataPool;
     const Vector<RefPtr<MessagePort>>& m_messagePorts;
@@ -5507,6 +5576,14 @@ DeserializationResult CloneDeserializer::deserialize()
             goto setDataStartVisitEntry;
         }
 
+        case ErrorEndVisitCause: {
+            JSObject* error = outputObjectStack.last();
+            outputObjectStack.removeLast();
+            error->putDirect(vm, vm.propertyNames->cause, outValue, static_cast<unsigned>(PropertyAttribute::DontEnum));
+            outValue = error;
+            break;
+        }
+
         stateUnknown:
         case StateUnknown:
             JSValue terminal = readTerminal();
@@ -5517,6 +5594,14 @@ DeserializationResult CloneDeserializer::deserialize()
             if (terminal) {
                 outValue = terminal;
                 break;
+            }
+            if (m_pendingErrorWithCause) {
+                if (outputObjectStack.size() > maximumFilterRecursion)
+                    return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
+                outputObjectStack.append(m_pendingErrorWithCause);
+                m_pendingErrorWithCause = nullptr;
+                stateStack.append(ErrorEndVisitCause);
+                goto stateUnknown;
             }
             SerializationTag tag = readTag();
             if (tag == ArrayTag)

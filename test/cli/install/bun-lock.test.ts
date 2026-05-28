@@ -659,12 +659,7 @@ it("requires an integrity hash for an off-registry npm tarball URL at lockfileVe
         },
       },
       packages: {
-        "no-deps": [
-          "no-deps@1.0.0",
-          `http://127.0.0.1:${offRegistry.port}/no-deps/-/no-deps-1.0.0.tgz`,
-          {},
-          "",
-        ],
+        "no-deps": ["no-deps@1.0.0", `http://127.0.0.1:${offRegistry.port}/no-deps/-/no-deps-1.0.0.tgz`, {}, ""],
       },
     }),
   );

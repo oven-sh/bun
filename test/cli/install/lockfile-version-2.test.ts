@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
 import { expect, it } from "bun:test";
 import { exists } from "fs/promises";
-import { bunEnv as env, bunExe, tempDir } from "harness";
+import { bunExe, bunEnv as env, tempDir } from "harness";
 import { join } from "path";
 
 // These tests cover the text lockfile bump to version 2 and the parse-time

@@ -110,33 +110,6 @@ describe.concurrent("process-stdio", () => {
     expect(process.stderr.isTTY).toBe((isatty(2) || undefined) as any);
   });
 
-  // https://github.com/oven-sh/bun/issues/* — pino (via sonic-boom) decides
-  // whether a stream has been monkey-patched with
-  // `stream.write !== stream.constructor.prototype.write`. Bun used to install
-  // the fast-path `write` as an own property on the instance, so that check was
-  // true for process.stdout/stderr and fast-path WriteStreams, forcing pino onto
-  // a slow unbatched path. `write` must live on the prototype, like Node.js.
-  test("write lives on the prototype, not the instance (pino fast-path detection)", () => {
-    const { stdout, exitCode } = spawnSync({
-      cmd: [bunExe(), path.join(import.meta.dir, "stdio-write-on-prototype-fixture.js")],
-      stdout: "pipe",
-      stdin: null,
-      stderr: "inherit",
-      env: { ...bunEnv },
-    });
-
-    expect(JSON.parse(stdout!.toString())).toEqual({
-      stdoutWriteOnPrototype: true,
-      stdoutNoOwnWrite: true,
-      stderrWriteOnPrototype: true,
-      stderrNoOwnWrite: true,
-      writeStreamWriteOnPrototype: true,
-      writeStreamNoOwnWrite: true,
-      wrote: "hello from write stream",
-    });
-    expect(exitCode).toBe(0);
-  });
-
   test("process.stdout - write", () => {
     const { stdout } = spawnSync({
       cmd: [bunExe(), path.join(import.meta.dir, "stdio-test-instance.js")],

@@ -15,7 +15,12 @@ impl ColumnIdentifier {
             0 => return Ok(Self::Name(Data::Empty)),
             _ => false,
         };
-        if might_be_int {
+        // `parse_unsigned` skips embedded `_` separators (it ports Zig
+        // `std.fmt.parseInt`), so a column named `"2024_01"` would parse as
+        // `202401` and be misclassified as an array index. The original Zig
+        // hand-loop only accepted `'0'..'9'`; mirror that by requiring every
+        // byte be an ASCII digit before treating the name as an index.
+        if might_be_int && name.slice().iter().all(|b| b.is_ascii_digit()) {
             if let Ok(int) = bun_core::parse_unsigned::<u64>(name.slice(), 10) {
                 // keep `<` (not ≤): JSC indexed-property bound
                 if int < u32::MAX as u64 {

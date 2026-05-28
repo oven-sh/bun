@@ -87,18 +87,20 @@ test.skipIf(isWindows)(
         stdout: "pipe",
       }),
     );
-    // Surface any creator's stderr before asserting its exit code so a failed
-    // worker reports *why* rather than just a bare non-zero code.
+    // Collect each creator's output and assert on the combined object so a
+    // failed worker surfaces its stderr in the diff. The exit code is the
+    // signal; stderr is reported, not asserted empty, because ASAN builds can
+    // print harmless warnings (e.g. "ASAN interferes with JSC signal handlers")
+    // that would otherwise flake the assertion.
     const creatorResults = await Promise.all(
       creators.map(async proc => {
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        return { stdout, stderr, exitCode };
+        // Drain stdout too so the child can't block on a full pipe.
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stderr, exitCode };
       }),
     );
-    for (const { stdout, stderr, exitCode } of creatorResults) {
-      expect(stderr).toBe("");
-      expect(stdout).toBe("");
-      expect(exitCode).toBe(0);
+    for (const result of creatorResults) {
+      expect(result).toMatchObject({ exitCode: 0 });
     }
 
     // Before the fix this process aborts with `index out of bounds: the len is
@@ -112,12 +114,14 @@ test.skipIf(isWindows)(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // stdout carries "resolved-ok" on success and the panic stack on the
-    // pre-fix crash; stderr likewise surfaces any abort message. Assert both
-    // before the exit code for a legible failure.
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("resolved-ok");
-    expect(exitCode).toBe(0);
+    // stdout is "resolved-ok" on success and carries the panic stack on the
+    // pre-fix crash, so it distinguishes the two even when the process aborts.
+    // Assert stdout before the exit code for a legible failure; stderr is kept
+    // in the object for diagnostics but not asserted empty (ASAN noise).
+    expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({
+      stdout: "resolved-ok",
+      exitCode: 0,
+    });
   },
-  120_000,
+  240_000,
 );

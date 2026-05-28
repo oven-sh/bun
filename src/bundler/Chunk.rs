@@ -113,7 +113,7 @@ impl Default for Content {
 
 // SAFETY: `Chunk` is processed across the bundler thread pool (see
 // `computeCrossChunkDependencies`, `generateChunksInParallel`). Raw-pointer
-// fields (`Layers::Borrowed`, `StringJoiner` nodes, `ChunkRenamer` arena)
+// fields (`Layers::Borrowed`, `ChunkRenamer` arena)
 // point into bundler-arena storage that outlives the
 // pool join and is only mutated by the owning task. Zig has no Send/Sync
 // distinction; mirror `InputFile`'s blanket impls (bundle_v2.rs).

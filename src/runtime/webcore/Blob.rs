@@ -3629,10 +3629,11 @@ impl BlobExt for Blob {
                                         }
                                         continue;
                                     } else {
-                                        let sliced = current.to_slice_clone(global)?;
+                                        let sliced = item.to_slice_clone(global)?;
                                         could_have_non_ascii =
                                             could_have_non_ascii || sliced.is_allocated();
                                         joiner.push_cloned(sliced.slice());
+                                        continue;
                                     }
                                 }
                                 _ => {}

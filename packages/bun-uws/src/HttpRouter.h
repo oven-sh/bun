@@ -28,6 +28,7 @@
 #include <utility>
 #include <span>
 #include <iostream>
+#include <unordered_map>
 
 #include "MoveOnlyFunction.h"
 
@@ -60,6 +61,13 @@ private:
         std::vector<uint32_t> handlers = {};
         bool isHighPriority = false;
 
+        /* Index into `children` keyed by child->name. Avoids O(n) sibling scans when
+         * many routes share a parent segment (e.g. thousands of /api/foo<N> routes).
+         * Only covers !isHighPriority children; high-priority is rare (WS upgrades)
+         * and falls back to the linear scan. The string_view keys reference the owned
+         * `name` of each child Node, which is stable for the child's lifetime. */
+        std::unordered_map<std::string_view, Node*> child_lookup = {};
+
         explicit constexpr Node(std::string name) noexcept : name(std::move(name)) {}
     } root {"rootNode"};
 
@@ -79,22 +87,36 @@ private:
 
     /* Advance from parent to child, adding child if necessary */
     Node *getNode(Node *parent, std::string_view child, bool isHighPriority) {
-        for (const std::unique_ptr<Node> &node : parent->children) {
-            if (node->name == child && node->isHighPriority == isHighPriority) {
-                return node.get();
+        if (!isHighPriority) {
+            auto it = parent->child_lookup.find(child);
+            if (it != parent->child_lookup.end()) {
+                return it->second;
+            }
+        } else {
+            /* High-priority is rare; the lookup map only indexes !isHighPriority entries,
+             * so linear-scan when looking for a high-priority sibling. */
+            for (const std::unique_ptr<Node> &node : parent->children) {
+                if (node->isHighPriority && node->name == child) {
+                    return node.get();
+                }
             }
         }
 
         /* Insert sorted, but keep order if parent is root (we sort methods by priority elsewhere) */
         auto newNode = std::make_unique<Node>(std::string(child));
         newNode->isHighPriority = isHighPriority;
+        Node *raw = newNode.get();
         auto iter = std::upper_bound(parent->children.begin(), parent->children.end(), newNode, [parent, this](auto &a, auto &b) {
             if (a->isHighPriority != b->isHighPriority) {
                 return a->isHighPriority;
             }
             return !b->name.empty() && (parent != &root) && (lexicalOrder(b->name) < lexicalOrder(a->name));
         });
-        return parent->children.emplace(iter, std::move(newNode))->get();
+        parent->children.emplace(iter, std::move(newNode));
+        if (!isHighPriority) {
+            parent->child_lookup.emplace(std::string_view(raw->name), raw);
+        }
+        return raw;
     }
 
     /* Basically a pre-allocated stack */
@@ -213,12 +235,22 @@ private:
                 Node *n = node.get();
                 for (int i = 0; !getUrlSegment(i).second; i++) {
                     /* Go to next segment or quit */
-                    std::string segment(getUrlSegment(i).first);
+                    std::string_view segment_sv = getUrlSegment(i).first;
                     Node *next = nullptr;
-                    for (const std::unique_ptr<Node> &child : n->children) {
-                        if (((segment.starts_with(':') && child->name.starts_with(':')) || child->name == segment) && child->isHighPriority == (priority == HIGH_PRIORITY)) {
-                            next = child.get();
-                            break;
+                    bool wantHigh = (priority == HIGH_PRIORITY);
+                    /* Param segments are stored as a single ":" node; normalize for lookup. */
+                    std::string_view lookupKey = segment_sv.starts_with(':') ? std::string_view(":") : segment_sv;
+                    if (!wantHigh) {
+                        auto it = n->child_lookup.find(lookupKey);
+                        if (it != n->child_lookup.end()) {
+                            next = it->second;
+                        }
+                    } else {
+                        for (const std::unique_ptr<Node> &child : n->children) {
+                            if (child->isHighPriority && ((segment_sv.starts_with(':') && child->name.starts_with(':')) || child->name == segment_sv)) {
+                                next = child.get();
+                                break;
+                            }
                         }
                     }
                     if (!next) {
@@ -345,6 +377,9 @@ public:
 
             /* If we have no children and no handlers, remove us from the parent->children list */
             if (!node->handlers.size() && !node->children.size()) {
+                if (!node->isHighPriority) {
+                    parent->child_lookup.erase(std::string_view(node->name));
+                }
                 parent->children.erase(std::find_if(parent->children.begin(), parent->children.end(), [node](const std::unique_ptr<Node> &a) {
                     return a.get() == node;
                 }));

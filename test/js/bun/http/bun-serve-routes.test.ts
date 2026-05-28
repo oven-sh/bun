@@ -717,3 +717,29 @@ it("route precedence for mix of method-specific routes and any routes", async ()
     "POST /test/ANY/POST",
   );
 });
+
+test("registers many routes with linear scaling under a shared parent path", () => {
+  // Guards against the O(n²) sibling scan in the uWS HttpRouter trie. With
+  // thousands of routes under a shared prefix (e.g. /api/route<i>), the parent
+  // node accumulates N children; a linear scan per insert was O(N²) overall.
+  // We compare the time to register N vs 4N: linear should be ~4x, quadratic
+  // would be ~16x. Threshold 8 sits comfortably between, so the assertion is
+  // robust to machine speed without being flaky on slow CI.
+  const time = (n: number) => {
+    const routes: Record<string, () => Response> = {};
+    for (let i = 0; i < n; i++) routes[`/api/route${i}`] = () => new Response("");
+    const t0 = performance.now();
+    const server = Bun.serve({ port: 0, routes, fetch: () => new Response("") });
+    const elapsed = performance.now() - t0;
+    server.stop(true);
+    return elapsed;
+  };
+
+  // Warmup so JIT and allocator state stabilize before measurement.
+  time(500);
+
+  const small = time(2000);
+  const big = time(8000);
+  const ratio = big / small;
+  expect(ratio).toBeLessThan(8);
+});

@@ -135,6 +135,63 @@ describe.skipIf(isASAN || isFFIUnavailable)("given a hello() function returning 
   });
 }); // </given a hello() function returning a cstring>
 
+// Regression test: once the `cstring` fix made `FFIBuilder` reachable for `cc`,
+// `napi_value` arguments were coerced with the default `val|0` wrapper (turning
+// them into `0` / throwing on BigInt) instead of being passed through as-is.
+describe.skipIf(isASAN || isFFIUnavailable)("given a get_type(napi_value) function", () => {
+  let dir: string;
+  let res: Library<{ get_type: { args: ["napi_env", "napi_value"]; returns: "cstring" } }> | undefined;
+
+  beforeAll(() => {
+    dir = tempDirWithFiles("bun-ffi-cc-napi-arg", {
+      "get_type.c": /* c */ `
+        #include <node/node_api.h>
+        const char* get_type(napi_env env, napi_value value) {
+          napi_valuetype t;
+          if (napi_typeof(env, value, &t) != napi_ok) return "error";
+          switch (t) {
+            case napi_undefined: return "undefined";
+            case napi_boolean: return "boolean";
+            case napi_number: return "number";
+            case napi_string: return "string";
+            case napi_bigint: return "bigint";
+            case napi_object: return "object";
+            default: return "other";
+          }
+        }
+      `,
+    });
+    try {
+      res = cc({
+        source: path.join(dir, "get_type.c"),
+        symbols: {
+          get_type: {
+            args: ["napi_env", "napi_value"],
+            returns: "cstring",
+          },
+        },
+      });
+    } catch {
+      // Node-API headers aren't available to the compiler in this environment.
+      res = undefined;
+    }
+  });
+
+  afterAll(async () => {
+    res?.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("passes napi_value arguments through without coercion", () => {
+    if (!res) return; // headers unavailable; compilation skipped
+    // `env` is supplied by Bun for napi_env, so `null` here is a placeholder.
+    expect(String(res.symbols.get_type(null, 123))).toBe("number");
+    expect(String(res.symbols.get_type(null, "hello"))).toBe("string");
+    expect(String(res.symbols.get_type(null, true))).toBe("boolean");
+    expect(String(res.symbols.get_type(null, 190n))).toBe("bigint");
+  });
+}); // </given a get_type(napi_value) function>
+
 describe("given a source file with syntax errors", () => {
   const source = /* c */ `
     int add(int a, int b) {

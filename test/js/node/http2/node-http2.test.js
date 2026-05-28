@@ -2441,6 +2441,16 @@ it("http2 server rejects requests carrying connection-specific or repeated pseud
       literal("transfer-encoding"),
       literal("chunked"),
     ]),
+    "connection: keep-alive header": Buffer.concat([
+      Buffer.from([0x82]), // :method: GET
+      Buffer.from([0x86]), // :scheme: http
+      Buffer.from([0x84]), // :path: /
+      Buffer.from([0x01]), // :authority
+      literal("localhost"),
+      Buffer.from([0x00]), // literal header field without indexing, new name
+      literal("connection"),
+      literal("keep-alive"),
+    ]),
     "repeated :path pseudo-header": Buffer.concat([
       Buffer.from([0x82]), // :method: GET
       Buffer.from([0x86]), // :scheme: http

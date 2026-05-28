@@ -138,6 +138,54 @@ if (isDockerEnabled()) {
           const [simpleRow] = await sql`SELECT id, yr, followup, control, yr_last FROM ${sql(t)} WHERE id = 1`.simple();
           expect(simpleRow).toEqual({ id: 1, yr: 2024, followup: 12345, control: 42, yr_last: 2001 });
         });
+        test("computed DECIMAL columns return strings, not Buffers", async () => {
+          // MySQL reports computed/aggregate NEWDECIMAL columns (SUM/AVG/CAST/
+          // arithmetic/ROUND/literals, and SUM of INT) with the BINARY flag and
+          // charset 63. The binary-charset heuristic used for STRING/BLOB types
+          // wrongly returned these as Buffers; NEWDECIMAL is always ASCII text.
+          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+          using sql = await db.reserve();
+          const t = "dec_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT, balance DECIMAL(12,2), qty INT)`;
+          await sql`INSERT INTO ${sql(t)} VALUES (1, 100.50, 3), (2, 250.25, 4)`;
+          const expected = {
+            total: "350.75",
+            avg_bal: "175.375000",
+            casted: "100.5000",
+            mul2: "201.00",
+            rounded: "100.5",
+            sum_int: "7",
+            lit: "1.23",
+            plain: "100.50",
+          };
+          // Binary protocol (prepared statement).
+          const [row] = await sql`SELECT
+              SUM(balance) AS total,
+              AVG(balance) AS avg_bal,
+              CAST(balance AS DECIMAL(20,4)) AS casted,
+              balance*2 AS mul2,
+              ROUND(balance,1) AS rounded,
+              SUM(qty) AS sum_int,
+              1.23 AS lit,
+              balance AS plain
+            FROM ${sql(t)} WHERE id <= ${2}`;
+          expect(row).toEqual(expected);
+          // Text protocol must decode the same way.
+          const [simpleRow] = await sql`SELECT
+              SUM(balance) AS total,
+              AVG(balance) AS avg_bal,
+              CAST(balance AS DECIMAL(20,4)) AS casted,
+              balance*2 AS mul2,
+              ROUND(balance,1) AS rounded,
+              SUM(qty) AS sum_int,
+              1.23 AS lit,
+              balance AS plain
+            FROM ${sql(t)}`.simple();
+          expect(simpleRow).toEqual(expected);
+          // `.raw()` must still return raw bytes.
+          const [rawRow] = await sql`SELECT SUM(balance) AS total FROM ${sql(t)} WHERE id <= ${2}`.raw();
+          expect(rawRow[0]).toEqual(new Uint8Array(Buffer.from("350.75")));
+        });
         describe("should work with more than the max inline capacity", () => {
           for (let size of [50, 60, 62, 64, 70, 100]) {
             for (let duplicated of [true, false]) {

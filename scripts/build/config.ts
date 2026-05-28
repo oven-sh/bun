@@ -696,7 +696,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const darwinCross = darwin && host.os !== "darwin";
   // Windows target on a non-Windows host (clang-cl + lld-link + xwin
   // sysroot). See the cross block further down.
-  const windowsCross = windows && host.os !== "windows";
 
   // Platform file conventions — MSVC style on Windows, Unix everywhere else.
   const exeSuffix = windows ? ".exe" : "";
@@ -996,7 +995,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           hint:
             "Set WINDOWS_SYSROOT or pass --winsysroot=<path>. Create one with xwin (https://github.com/Jake-Shadle/xwin):\n" +
             "  cargo install xwin  (or download a release binary)\n" +
-            "  xwin --accept-license --arch x86_64,aarch64 --include-atl splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output /opt/winsysroot",
+            // Keep the pinned versions in sync with WINDOWS_SDK_VERSION / MSVC_CRT_VERSION in winsysroot.ts.
+            "  xwin --accept-license --arch x86_64,aarch64 --sdk-version 10.0.26100 --crt-version 14.44.17.14 --include-atl splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output /opt/winsysroot",
         });
       }
     }

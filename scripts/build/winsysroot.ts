@@ -184,7 +184,7 @@ export async function ensureWindowsSysroot(cfg: Config): Promise<void> {
       throw new BuildError(`Windows sysroot at ${dest} is missing the MSVC CRT / Windows SDK / ATL for ${cfg.arch}`, {
         hint:
           "Re-create it with xwin (see docs/project/building-windows.mdx):\n" +
-          `  xwin --accept-license --arch x86_64,aarch64 --include-atl splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output ${dest}`,
+          `  xwin --accept-license --arch x86_64,aarch64 --sdk-version ${WINDOWS_SDK_VERSION} --crt-version ${MSVC_CRT_VERSION} --include-atl splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output ${dest}`,
       });
     }
     await fetchWindowsSysroot(cfg, dest);

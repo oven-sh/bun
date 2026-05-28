@@ -110,12 +110,14 @@ function getTargetLabel(target) {
 // Azure VM sizes for Windows CI runners.
 // DDSv6 = x64, DPSv6 = ARM64 (Cobalt 100). Quota: 100 cores per family in eastus2.
 const azureVmSizes = {
+  // Windows builds are cross-compiled on the Linux fleet; these sizes are for
+  // the steps that still need a real Windows machine (test shards, signing,
+  // and the baseline-verification emulator phase).
   "windows-x64": {
-    build: "Standard_D16ds_v6", // 16 vCPU, 64 GiB — C++ build, link
-    test: "Standard_D4ds_v6", // 4 vCPU, 16 GiB — test shards
+    build: "Standard_D16ds_v6", // 16 vCPU, 64 GiB — verify-baseline under Intel SDE
+    test: "Standard_D4ds_v6", // 4 vCPU, 16 GiB — test shards, signing
   },
   "windows-aarch64": {
-    build: "Standard_D16pds_v6", // 16 vCPU, 64 GiB, local NVMe — C++ build, link
     test: "Standard_D4pds_v6", // 4 vCPU, 16 GiB, local NVMe — test shards
   },
 };
@@ -280,15 +282,18 @@ function getImageName(platform, options) {
 
   const name = getImageKey(platform);
 
-  if (buildImages && !publishImages && (!imageFilter || os === imageFilter || distro === imageFilter)) {
+  // Cross-compiled targets (and FreeBSD) build on a Linux host image (see
+  // getImageKey) — both the [build images] filter below and the published
+  // image tag should be judged by the host, not the target. Windows-cross
+  // would otherwise miss the freshly-baked linux image on a
+  // "[build linux images]" run, and pick up bootstrap.ps1's version for a
+  // linux image tag that doesn't exist.
+  const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
+
+  if (buildImages && !publishImages && (!imageFilter || hostOs === imageFilter || distro === imageFilter)) {
     return `${name}-build-${getBuildNumber()}`;
   }
 
-  // Cross-compiled targets (and FreeBSD) build on a Linux host image (see
-  // getImageKey) — version it by the host's bootstrap script, not the
-  // target's. Windows-cross would otherwise pick up bootstrap.ps1's version
-  // and request a linux image tag that doesn't exist.
-  const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
   return `${name}-v${getBootstrapVersion(hostOs)}`;
 }
 
@@ -594,7 +599,7 @@ function getBuildCppStep(platform, options) {
   const nasmSetup =
     os === "windows" && arch === "x64"
       ? [
-          "which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || sudo dnf install -y -q nasm || true",
+          "which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || true",
         ]
       : [];
   return {
@@ -1393,10 +1398,13 @@ async function getPipeline(options = {}) {
   const imagePlatforms = new Map(
     buildImages || publishImages
       ? [...buildPlatforms, ...testPlatforms]
-          // darwin: no cloud images. freebsd: cross-compiles from a linux
-          // image (getImageKey maps it to the matching linux key), so no
-          // separate freebsd image is baked.
-          .filter(({ os }) => os !== "darwin" && os !== "freebsd")
+          // darwin: no cloud images. freebsd and crossCompile platforms:
+          // they build on a linux host image (getImageKey maps them to the
+          // matching linux key, which the real linux entries already cover),
+          // so no separate image is baked for them — and letting them through
+          // would overwrite the linux entry with a windows/freebsd-flavored
+          // platform under the same key.
+          .filter(({ os, crossCompile }) => os !== "darwin" && os !== "freebsd" && !crossCompile)
           .filter(({ os, distro }) => !imageFilter || os === imageFilter || distro === imageFilter)
           .map(platform => [getImageKey(platform), platform])
       : [],
@@ -1442,6 +1450,18 @@ async function getPipeline(options = {}) {
         const dependsOn = imagePlatforms.has(rustImageKey) ? [`${rustImageKey}-build-image`] : [];
         if (imagePlatforms.has(imageKey)) {
           dependsOn.push(`${imageKey}-build-image`);
+        }
+        // Windows builds are cross-compiled on Linux, but steps that end up in
+        // this group still run on native Windows machines: the test shards
+        // (merged in below by group label) and x64-baseline's verify-baseline
+        // emulator phase. On [build images] runs they request the freshly
+        // baked native Windows image, so wait for that bake too.
+        if (target.os === "windows") {
+          const nativeWindowsPlatform = testPlatforms.find(p => p.os === "windows" && p.arch === target.arch);
+          const nativeImageKey = nativeWindowsPlatform && getImageKey(nativeWindowsPlatform);
+          if (nativeImageKey && imagePlatforms.has(nativeImageKey)) {
+            dependsOn.push(`${nativeImageKey}-build-image`);
+          }
         }
 
         const steps = [];
@@ -1491,7 +1511,14 @@ async function getPipeline(options = {}) {
   if (shouldSignWindows) {
     const windowsPlatforms = buildPlatforms.filter(p => p.os === "windows");
     if (windowsPlatforms.length > 0) {
-      steps.push(getWindowsSignStep(windowsPlatforms, options));
+      // Signing runs on a native Windows x64 box — on [build images] runs it
+      // requests the freshly baked native Windows image, so wait for it.
+      steps.push(
+        getStepWithDependsOn(
+          getWindowsSignStep(windowsPlatforms, options),
+          imagePlatforms.has("windows-x64-2019") ? "windows-x64-2019-build-image" : undefined,
+        ),
+      );
     }
   }
 

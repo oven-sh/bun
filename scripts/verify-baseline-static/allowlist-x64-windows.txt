@@ -743,7 +743,7 @@ __std_minmax_8i                                                                 
 
 # ----------------------------------------------------------------------------
 # MSVC CRT libm + mem*/str* SIMD variants. Gate: __isa_available.
-# (44 symbols)
+# (45 symbols)
 # ----------------------------------------------------------------------------
 __remainder_piby2_fma3      [AVX, FMA]
 __remainder_piby2_fma3_bdl  [AVX, FMA]
@@ -811,7 +811,7 @@ _RINvYNtNt<rust-hash>9hashbrown6hasher18DefaultHashBuilderNtNt<rust-hash>4core4h
 # chunkcopy_safe is a static-inline in inflate_p.h that may outline from any of
 # the per-ISA inffast_tpl.h instantiations; the outlined copy is local to that
 # TU and only reachable from the gated inflate_fast_* of the same tier.
-# (31 symbols)
+# (33 symbols)
 # ----------------------------------------------------------------------------
 # has_pclmulqdq
 crc32_pclmulqdq             [PCLMULQDQ]

@@ -117,17 +117,20 @@ const tests = [
 
 // Some tests connect to the live bun.sh host. Skip them when the network (or
 // DNS) is unavailable so the suite still passes offline instead of failing
-// with DNSException/getaddrinfo errors unrelated to what is under test.
+// with DNSException/getaddrinfo errors unrelated to what is under test. The
+// probe is bounded by a hard timer so a stalled handshake or black-holed
+// connection can't hang module load (per-test timeouts don't apply yet).
 const canReachBunSh = await (async () => {
+  const socket = tlsConnect({ host: "bun.sh", servername: "bun.sh", port: 443, rejectUnauthorized: false });
+  const { promise, resolve } = Promise.withResolvers<boolean>();
+  const timer = setTimeout(() => resolve(false), 5000);
+  socket.once("secureConnect", () => resolve(true));
+  socket.once("error", () => resolve(false));
   try {
-    await using socket = tlsConnect({ host: "bun.sh", servername: "bun.sh", port: 443, rejectUnauthorized: false });
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
-    socket.once("secureConnect", () => resolve());
-    socket.once("error", reject);
-    await promise;
-    return true;
-  } catch {
-    return false;
+    return await promise;
+  } finally {
+    clearTimeout(timer);
+    socket.destroy();
   }
 })();
 const itNetwork = it.skipIf(!canReachBunSh);

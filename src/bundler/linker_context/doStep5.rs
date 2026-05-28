@@ -23,7 +23,7 @@ use bun_ast::{
 };
 
 use crate::options::Format;
-use crate::ungate_support::perf;
+use crate::perf;
 use crate::{BundleV2, Index, LinkerContext, RefImportData, ResolvedExports, js_meta};
 
 pub use crate::ThreadPool;

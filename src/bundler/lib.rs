@@ -4,20 +4,133 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 
-// Shared value types + crate-name shims for the `Chunk` / `LinkerContext` /
-// `ParseTask` modules.
-pub mod ungate_support;
-pub use ungate_support::*;
+pub use bun_resolver::fs as bun_fs;
+pub use bun_resolver::node_fallbacks as bun_node_fallbacks;
+
+pub mod perf {
+    pub use bun_perf::{Ctx, PerfEvent};
+
+    #[inline]
+    pub(crate) fn trace(_name: &'static str) -> Ctx {
+        bun_perf::trace(PerfEvent::_Stub)
+    }
+}
+
+pub mod bun_css {
+    pub use ::bun_css::css_modules::Config as CssModuleConfig;
+    pub use ::bun_css::css_parser::LayerName;
+    pub use ::bun_css::*;
+}
+
+pub mod bun_renamer {
+    pub use bun_js_printer::renamer::*;
+
+    #[derive(Default)]
+    pub enum ChunkRenamer {
+        #[default]
+        None,
+        Number(Box<bun_js_printer::renamer::NumberRenamer>),
+        Minify(Box<bun_js_printer::renamer::MinifyRenamer>),
+    }
+
+    impl ChunkRenamer {
+        pub(crate) fn name_for_symbol(&mut self, ref_: bun_ast::Ref) -> &[u8] {
+            match self {
+                ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
+                ChunkRenamer::Number(r) => r.name_for_symbol(ref_),
+                ChunkRenamer::Minify(r) => r.name_for_symbol(ref_),
+            }
+        }
+        pub(crate) fn as_renamer(&mut self) -> bun_js_printer::renamer::Renamer<'_, '_> {
+            match self {
+                ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
+                ChunkRenamer::Number(r) => bun_js_printer::renamer::Renamer::NumberRenamer(r),
+                ChunkRenamer::Minify(r) => bun_js_printer::renamer::Renamer::MinifyRenamer(r),
+            }
+        }
+    }
+}
+
+pub mod html_import_manifest {
+    use crate::Graph::Graph;
+    use crate::HTMLImportManifest as real;
+    use crate::{LinkerGraph, chunk::Chunk};
+
+    pub use real::{EscapedJson, HTMLImportManifest};
+
+    #[inline]
+    pub(crate) fn format_escaped_json<'a>(
+        index: u32,
+        graph: &'a Graph,
+        chunks: &'a [Chunk],
+        linker_graph: &'a LinkerGraph,
+    ) -> real::EscapedJson<'a> {
+        real::HTMLImportManifest {
+            index,
+            graph,
+            chunks,
+            linker_graph,
+        }
+        .format_escaped_json()
+    }
+
+    pub fn write_escaped_json(
+        index: u32,
+        graph: &Graph,
+        linker_graph: &LinkerGraph<'_>,
+        chunks: &[Chunk],
+        w: &mut &mut [u8],
+    ) -> Result<(), core::fmt::Error> {
+        let taken = core::mem::take(w);
+        let mut fbs = bun_io::FixedBufferStream::new_mut(taken);
+        real::write_escaped_json(index, graph, linker_graph, chunks, &mut fbs)
+            .map_err(|_| core::fmt::Error)?;
+        let bun_io::FixedBufferStream { buffer, pos } = fbs;
+        *w = &mut buffer[pos..];
+        Ok(())
+    }
+}
+
+pub use crate::HTMLScanner as html_scanner;
+
+pub mod cross_chunk_import {
+    pub(crate) type ItemList = crate::bundle_v2::CrossChunkImportItemList;
+}
+
+pub(crate) mod index {
+    pub(crate) use bun_ast::IndexInt as Int;
+}
+pub(crate) mod part {
+    pub(crate) use bun_ast::PartList as List;
+}
+pub(crate) mod import_record {
+    pub(crate) use bun_ast::import_record::List;
+}
+
+pub(crate) type JSAst<'a> = crate::BundledAst<'a>;
+pub(crate) use bun_ast::UseDirective;
+pub(crate) use bun_ast::{Part, Ref};
+pub use bun_js_printer::MangledProps;
+pub use options_impl::PathTemplate;
+
+pub use bun_core::cheap_prefix_normalizer;
+pub use bundle_v2::{
+    CompileResult, CompileResultForSourceMap, ContentHasher, CrossChunkImport,
+    CrossChunkImportItem, CrossChunkImportItemList, DeclInfo, DeclInfoKind, EventLoop, ExportData,
+    ImportData, ImportTracker, JSMeta, PartRange, RefImportData, ResolvedExports, StableRef,
+    TopLevelSymbolToParts, WrapKind, entry_point, generic_path_with_pretty_initialized, js_meta,
+    target_from_hashbang,
+};
 
 /// `MultiArrayList` SoA column-accessor traits, gathered so a single
 /// `use crate::mal_prelude::*;` brings every `items_<field>()` set into scope.
 pub mod mal_prelude {
     pub use crate::Graph::InputFileColumns as _;
+    pub use crate::bundle_v2::CompileResultForSourceMapColumns as _;
+    pub use crate::bundle_v2::entry_point::EntryPointColumns as _;
+    pub use crate::bundle_v2::js_meta::JSMetaColumns as _;
     pub use crate::bundled_ast::BundledAstColumns as _;
     pub use crate::linker_graph::FileColumns as _;
-    pub use crate::ungate_support::CompileResultForSourceMapColumns as _;
-    pub use crate::ungate_support::entry_point::EntryPointColumns as _;
-    pub use crate::ungate_support::js_meta::JSMetaColumns as _;
     pub use bun_ast::server_component_boundary::ServerComponentBoundaryColumns as _;
 }
 
@@ -158,6 +271,9 @@ pub mod linker_context {
 pub use Graph::Graph as GraphStruct;
 /// See `bundle_v2`.
 pub use bundle_v2::BundleV2;
+/// `EntryPoint::Kind` is an inherent associated type on the struct (not a
+/// sibling module — that would collide with this re-export).
+pub use bundle_v2::entry_point::EntryPoint;
 /// See `chunk` module.
 pub use chunk::Chunk;
 pub use defines::{Define, DefineDataExt, DefineExt};
@@ -176,9 +292,6 @@ pub use parse_task::ParseTask;
 pub use thread_pool::{ThreadPool, Worker};
 /// See `transpiler`.
 pub use transpiler::Transpiler;
-/// `EntryPoint::Kind` is an inherent associated type on the struct (not a
-/// sibling module — that would collide with this re-export).
-pub use ungate_support::entry_point::EntryPoint;
 /// `bundle_v2.zig:AdditionalFile`.
 pub enum AdditionalFile {
     SourceIndex(u32),

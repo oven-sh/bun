@@ -115,7 +115,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         // PORT NOTE: Zig `SmallList(LayerName,1).fromBabyListNoDeinit(layers.inner().*)`
                         // is a bitwise Vec→SmallList header transfer. In Rust the
                         // `Chunk::Layers` payload is the lifetime-erased shadow
-                        // `ungate_support::bun_css::LayerName { v: Vec<Box<[u8]>> }`,
+                        // `bun_css::LayerName { v: Vec<Box<[u8]>> }`,
                         // not the real `css_parser::LayerName { v: SmallList<&'static [u8],1> }`,
                         // so the layouts differ. Rebuild the real list element-by-element;
                         // segments are arena-owned (`'bump`-laundered to `'static`) so the

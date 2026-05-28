@@ -641,12 +641,7 @@ it("requires an integrity hash for an off-registry npm tarball URL at lockfileVe
     }),
   );
 
-  // The entry keeps the well-known name and version but points the tarball at a
-  // different host and provides no integrity hash. At lockfileVersion 2 this
-  // fails closed: parsing rejects it before any fetch. (The v1 backward-compat
-  // case — parsing accepts such an entry — is covered in lockfile-version-2.test.ts.)
-  await write(
-    join(packageDir, "bun.lock"),
+  const lockfileWithUrl = (tarballUrl: string) =>
     JSON.stringify({
       lockfileVersion: 2,
       configVersion: 1,
@@ -659,9 +654,17 @@ it("requires an integrity hash for an off-registry npm tarball URL at lockfileVe
         },
       },
       packages: {
-        "no-deps": ["no-deps@1.0.0", `http://127.0.0.1:${offRegistry.port}/no-deps/-/no-deps-1.0.0.tgz`, {}, ""],
+        "no-deps": ["no-deps@1.0.0", tarballUrl, {}, ""],
       },
-    }),
+    });
+
+  // The entry keeps the well-known name and version but points the tarball at a
+  // different host and provides no integrity hash. At lockfileVersion 2 this
+  // fails closed: parsing rejects it before any fetch. (The v1 backward-compat
+  // case — parsing accepts such an entry — is covered in lockfile-version-2.test.ts.)
+  await write(
+    join(packageDir, "bun.lock"),
+    lockfileWithUrl(`http://127.0.0.1:${offRegistry.port}/no-deps/-/no-deps-1.0.0.tgz`),
   );
 
   let { exited, stdout, stderr } = spawn({
@@ -679,6 +682,29 @@ it("requires an integrity hash for an off-registry npm tarball URL at lockfileVe
   expect(offRegistryRequests).toBe(0);
   expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(false);
   expect(await exited).not.toBe(0);
+
+  // The same entry with the tarball URL *under* the configured registry and no
+  // integrity hash is accepted even at v2 (the off-registry gate does not apply,
+  // so `npm_url_needs_integrity` is false — registry-hosted tarballs may still
+  // omit the hash).
+  await write(join(packageDir, "bun.lock"), lockfileWithUrl(`${registry.registryUrl()}no-deps/-/no-deps-1.0.0.tgz`));
+
+  ({ exited, stdout, stderr } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  }));
+
+  [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+  expect(err).not.toContain("Missing integrity hash");
+  expect(offRegistryRequests).toBe(0);
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    name: "no-deps",
+    version: "1.0.0",
+  });
 });
 
 it("escapes double quotes in npm registry tarball URLs when saving bun.lock", async () => {

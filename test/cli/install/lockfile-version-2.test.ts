@@ -130,26 +130,27 @@ it("off-registry npm tarball integrity is enforced only at version 2", async () 
 // re-validates the tag before running git, so a v1 lockfile carrying an unsafe
 // tag still never executes anything unsafe.
 it("unsafe git .bun-tag is rejected only at version 2", async () => {
+  // Point at an unreachable local endpoint (port 1) so that when v1 parsing
+  // succeeds and install proceeds to `git clone`, the clone fails fast instead
+  // of reaching out to a real host — keeping this test offline.
+  const gitUrl = "git+ssh://git@127.0.0.1:1/example/repo.git#main";
   const lockfile = (lockfileVersion: number) =>
     JSON.stringify({
       lockfileVersion,
       configVersion: 1,
       workspaces: {
-        "": { name: "root", dependencies: { dep: "git+ssh://git@github.com/example/repo.git#main" } },
+        "": { name: "root", dependencies: { dep: gitUrl } },
       },
       packages: {
         // `.bun-tag` (last element) contains a path separator.
-        dep: ["dep@git+ssh://git@github.com/example/repo.git#main", {}, "../escape"],
+        dep: [`dep@${gitUrl}`, {}, "../escape"],
       },
     });
 
-  // version 2 rejects the unsafe tag while parsing.
+  // version 2 rejects the unsafe tag while parsing, before any git work.
   {
     using dir = tempDir("lockfile-v2-gittag", {
-      "package.json": JSON.stringify({
-        name: "root",
-        dependencies: { dep: "git+ssh://git@github.com/example/repo.git#main" },
-      }),
+      "package.json": JSON.stringify({ name: "root", dependencies: { dep: gitUrl } }),
       "bun.lock": lockfile(2),
     });
     await using proc = spawn({
@@ -164,13 +165,11 @@ it("unsafe git .bun-tag is rejected only at version 2", async () => {
     expect(exitCode).not.toBe(0);
   }
 
-  // version 1 predates the check, so parsing no longer rejects it.
+  // version 1 predates the check, so parsing no longer rejects it (the install
+  // then fails cloning the unreachable repo, but not with the parse-time error).
   {
     using dir = tempDir("lockfile-v1-gittag", {
-      "package.json": JSON.stringify({
-        name: "root",
-        dependencies: { dep: "git+ssh://git@github.com/example/repo.git#main" },
-      }),
+      "package.json": JSON.stringify({ name: "root", dependencies: { dep: gitUrl } }),
       "bun.lock": lockfile(1),
     });
     await using proc = spawn({

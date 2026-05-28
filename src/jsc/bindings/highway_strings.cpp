@@ -133,6 +133,86 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
     return text_len;
 }
 
+// Index of the first byte that HTML-escapes: one of " & ' < >.
+// Returns text_len if none are present.
+size_t IndexOfHTMLEscapeChar8Impl(const uint8_t* HWY_RESTRICT text, size_t text_len)
+{
+    if (text_len == 0) return 0;
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_quot = hn::Set(d, uint8_t { '"' });
+    const auto vec_amp = hn::Set(d, uint8_t { '&' });
+    const auto vec_apos = hn::Set(d, uint8_t { '\'' });
+    const auto vec_lt = hn::Set(d, uint8_t { '<' });
+    const auto vec_gt = hn::Set(d, uint8_t { '>' });
+
+    size_t i = 0;
+    const size_t simd_text_len = text_len - (text_len % N);
+    for (; i < simd_text_len; i += N) {
+        const auto text_vec = hn::LoadU(d, text + i);
+        const auto found_mask = hn::Or(
+            hn::Or(hn::Eq(text_vec, vec_quot), hn::Eq(text_vec, vec_amp)),
+            hn::Or(hn::Eq(text_vec, vec_apos), hn::Or(hn::Eq(text_vec, vec_lt), hn::Eq(text_vec, vec_gt))));
+
+        const intptr_t pos = hn::FindFirstTrue(d, found_mask);
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    for (; i < text_len; ++i) {
+        const uint8_t c = text[i];
+        if (c == '"' || c == '&' || c == '\'' || c == '<' || c == '>') {
+            return i;
+        }
+    }
+
+    return text_len;
+}
+
+// Index of the first UTF-16 code unit that HTML-escapes: one of " & ' < >.
+// Returns text_len if none are present. The five metacharacters are all < 0x80,
+// so no surrogate code unit (0xD800-0xDFFF) can collide with them — non-ASCII
+// text with no metacharacters is reported as "nothing to escape", and the
+// escape loop can copy every non-metacharacter code unit through verbatim.
+size_t IndexOfHTMLEscapeChar16Impl(const uint16_t* HWY_RESTRICT text, size_t text_len)
+{
+    if (text_len == 0) return 0;
+    using D16 = hn::ScalableTag<uint16_t>;
+    D16 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_quot = hn::Set(d, uint16_t { '"' });
+    const auto vec_amp = hn::Set(d, uint16_t { '&' });
+    const auto vec_apos = hn::Set(d, uint16_t { '\'' });
+    const auto vec_lt = hn::Set(d, uint16_t { '<' });
+    const auto vec_gt = hn::Set(d, uint16_t { '>' });
+
+    size_t i = 0;
+    const size_t simd_text_len = text_len - (text_len % N);
+    for (; i < simd_text_len; i += N) {
+        const auto text_vec = hn::LoadU(d, text + i);
+        const auto found_mask = hn::Or(
+            hn::Or(hn::Eq(text_vec, vec_quot), hn::Eq(text_vec, vec_amp)),
+            hn::Or(hn::Eq(text_vec, vec_apos), hn::Or(hn::Eq(text_vec, vec_lt), hn::Eq(text_vec, vec_gt))));
+
+        const intptr_t pos = hn::FindFirstTrue(d, found_mask);
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    for (; i < text_len; ++i) {
+        const uint16_t c = text[i];
+        if (c == '"' || c == '&' || c == '\'' || c == '<' || c == '>') {
+            return i;
+        }
+    }
+
+    return text_len;
+}
+
 void CopyU16ToU8Impl(const uint16_t* HWY_RESTRICT input, size_t count,
     uint8_t* HWY_RESTRICT output)
 {
@@ -171,6 +251,100 @@ void CopyU16ToU8Impl(const uint16_t* HWY_RESTRICT input, size_t count,
     for (; i < count; ++i) {
         output[i] = static_cast<uint8_t>(input[i]); // Truncation happens here
     }
+}
+
+// Extra bytes the HTML-escaped output needs beyond the input length: each
+// metacharacter's entity is longer than its 1 source byte, by
+//   & -> &amp;   (+4)    < -> &lt;   (+3)    > -> &gt;   (+3)
+//   " -> &quot;  (+5)    ' -> &#x27; (+5)
+// so escaped_len == input_len + HtmlEscapeExtraLen(input). Summing per
+// metacharacter class with CountTrue keeps this a single pass, letting the
+// caller allocate the exact output size.
+size_t HtmlEscapeExtraLen8Impl(const uint8_t* HWY_RESTRICT text, size_t text_len)
+{
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_quot = hn::Set(d, uint8_t { '"' });
+    const auto vec_amp = hn::Set(d, uint8_t { '&' });
+    const auto vec_apos = hn::Set(d, uint8_t { '\'' });
+    const auto vec_lt = hn::Set(d, uint8_t { '<' });
+    const auto vec_gt = hn::Set(d, uint8_t { '>' });
+
+    size_t extra = 0;
+    size_t i = 0;
+    const size_t simd_text_len = text_len - (text_len % N);
+    for (; i < simd_text_len; i += N) {
+        const auto v = hn::LoadU(d, text + i);
+        extra += 4 * hn::CountTrue(d, hn::Eq(v, vec_amp));
+        extra += 3 * hn::CountTrue(d, hn::Or(hn::Eq(v, vec_lt), hn::Eq(v, vec_gt)));
+        extra += 5 * hn::CountTrue(d, hn::Or(hn::Eq(v, vec_quot), hn::Eq(v, vec_apos)));
+    }
+
+    for (; i < text_len; ++i) {
+        switch (text[i]) {
+        case '&':
+            extra += 4;
+            break;
+        case '<':
+        case '>':
+            extra += 3;
+            break;
+        case '"':
+        case '\'':
+            extra += 5;
+            break;
+        default:
+            break;
+        }
+    }
+
+    return extra;
+}
+
+// UTF-16 counterpart of HtmlEscapeExtraLen8Impl. Surrogate code units are all
+// > 0x80 and cannot match the metacharacters, so they contribute 0.
+size_t HtmlEscapeExtraLen16Impl(const uint16_t* HWY_RESTRICT text, size_t text_len)
+{
+    using D16 = hn::ScalableTag<uint16_t>;
+    D16 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_quot = hn::Set(d, uint16_t { '"' });
+    const auto vec_amp = hn::Set(d, uint16_t { '&' });
+    const auto vec_apos = hn::Set(d, uint16_t { '\'' });
+    const auto vec_lt = hn::Set(d, uint16_t { '<' });
+    const auto vec_gt = hn::Set(d, uint16_t { '>' });
+
+    size_t extra = 0;
+    size_t i = 0;
+    const size_t simd_text_len = text_len - (text_len % N);
+    for (; i < simd_text_len; i += N) {
+        const auto v = hn::LoadU(d, text + i);
+        extra += 4 * hn::CountTrue(d, hn::Eq(v, vec_amp));
+        extra += 3 * hn::CountTrue(d, hn::Or(hn::Eq(v, vec_lt), hn::Eq(v, vec_gt)));
+        extra += 5 * hn::CountTrue(d, hn::Or(hn::Eq(v, vec_quot), hn::Eq(v, vec_apos)));
+    }
+
+    for (; i < text_len; ++i) {
+        switch (text[i]) {
+        case '&':
+            extra += 4;
+            break;
+        case '<':
+        case '>':
+            extra += 3;
+            break;
+        case '"':
+        case '\'':
+            extra += 5;
+            break;
+        default:
+            break;
+        }
+    }
+
+    return extra;
 }
 
 // Implementation for scanCharFrequency (Unchanged from previous correct version)
@@ -280,6 +454,50 @@ size_t IndexOfInterestingCharacterInStringLiteralImpl(const uint8_t* HWY_RESTRIC
     for (; i < text_len; ++i) {
         const uint8_t c = text[i];
         if (c == quote || c == '\\' || (c < 0x20 || c > 0x7E)) {
+            return i;
+        }
+    }
+
+    return text_len;
+}
+
+// Scans the body of a `/* ... */` block comment for the next byte the lexer
+// must inspect one code point at a time: `*` (potential `*/` terminator),
+// `\r` / `\n` (newline tracking for ASI), or any non-ASCII byte (so U+2028 /
+// U+2029 and other multi-byte sequences are decoded by the scalar path).
+size_t IndexOfInterestingCharacterInMultilineCommentImpl(const uint8_t* HWY_RESTRICT text, size_t text_len)
+{
+    ASSERT(text_len > 0);
+
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_star = hn::Set(d, '*');
+    const auto vec_carriage = hn::Set(d, '\r');
+    const auto vec_newline = hn::Set(d, '\n');
+    const auto vec_max_ascii = hn::Set(d, uint8_t { 127 });
+
+    size_t i = 0;
+    const size_t simd_text_len = text_len - (text_len % N);
+    for (; i < simd_text_len; i += N) {
+        const auto vec = hn::LoadU(d, text + i);
+
+        const auto mask_star = hn::Eq(vec, vec_star);
+        const auto mask_carriage = hn::Eq(vec, vec_carriage);
+        const auto mask_newline = hn::Eq(vec, vec_newline);
+        const auto mask_non_ascii = hn::Gt(vec, vec_max_ascii);
+
+        const auto found_mask = hn::Or(hn::Or(mask_star, mask_non_ascii), hn::Or(mask_carriage, mask_newline));
+
+        const intptr_t pos = hn::FindFirstTrue(d, found_mask);
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    for (; i < text_len; ++i) {
+        const uint8_t char_ = text[i];
+        if (char_ == '*' || char_ == '\r' || char_ == '\n' || char_ > 127) {
             return i;
         }
     }
@@ -1140,6 +1358,231 @@ size_t FirstNonAscii8Impl(const uint8_t* HWY_RESTRICT input, size_t len)
     return len;
 }
 
+size_t CopyAsciiPrefixImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
+{
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_0x7F = hn::Set(d, uint8_t { 0x7F });
+
+    size_t i = 0;
+    if (len >= N) {
+        const size_t simd_len = len - (len % N);
+        for (; i < simd_len; i += N) {
+            const auto chunk = hn::LoadU(d, src + i);
+            const auto non_ascii = hn::Gt(chunk, vec_0x7F);
+            const intptr_t pos = hn::FindFirstTrue(d, non_ascii);
+            if (pos >= 0) {
+                if (pos > 0) {
+                    std::memcpy(dst + i, src + i, static_cast<size_t>(pos));
+                }
+                return i + static_cast<size_t>(pos);
+            }
+            hn::StoreU(chunk, d, dst + i);
+        }
+
+        if (i < len) {
+            const size_t start = len - N;
+            const auto chunk = hn::LoadU(d, src + start);
+            const auto non_ascii = hn::Gt(chunk, vec_0x7F);
+            const intptr_t pos = hn::FindFirstTrue(d, non_ascii);
+            if (pos < 0) {
+                hn::StoreU(chunk, d, dst + start);
+                return len;
+            }
+            const size_t stop = start + static_cast<size_t>(pos);
+            if (stop > i) {
+                std::memcpy(dst + i, src + i, stop - i);
+            }
+            return stop;
+        }
+        return len;
+    }
+
+    for (; i < len; ++i) {
+        const uint8_t c = src[i];
+        if (c > 0x7F) {
+            return i;
+        }
+        dst[i] = c;
+    }
+    return len;
+}
+
+// Lowercase hex encode: writes 2 output bytes per input byte.
+// Per 16-byte block: split each byte into nibbles, map both nibble vectors
+// through the hex-digit table (TableLookupBytes), then interleave so the
+// high-nibble digit precedes the low-nibble digit of every byte.
+void EncodeHexLowerImpl(const uint8_t* HWY_RESTRICT input, size_t len, uint8_t* HWY_RESTRICT output)
+{
+    alignas(16) static constexpr uint8_t kHexDigits[16] = {
+        '0', '1', '2', '3', '4', '5', '6', '7',
+        '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'
+    };
+
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto table = hn::LoadDup128(d, kHexDigits);
+    const auto low_nibble_mask = hn::Set(d, uint8_t { 0x0F });
+
+    size_t i = 0;
+    if (len >= N) {
+        const size_t simd_len = len - (len % N);
+        for (; i < simd_len; i += N) {
+            const auto bytes = hn::LoadU(d, input + i);
+            const auto hi = hn::ShiftRight<4>(bytes);
+            const auto lo = hn::And(bytes, low_nibble_mask);
+            const auto hi_chars = hn::TableLookupBytes(table, hi);
+            const auto lo_chars = hn::TableLookupBytes(table, lo);
+            hn::StoreInterleaved2(hi_chars, lo_chars, d, output + i * 2);
+        }
+    }
+
+    for (; i < len; ++i) {
+        const uint8_t byte = input[i];
+        output[i * 2] = kHexDigits[byte >> 4];
+        output[i * 2 + 1] = kHexDigits[byte & 0x0F];
+    }
+}
+
+// --- Hex decoding (Buffer.from(str, "hex"), buf.write(str, "hex")) ---
+//
+// Helpers shared by DecodeHex8Impl / DecodeHex16Impl. `D` is a u8 or u16 tag;
+// code units outside [0-9A-Fa-f] (including UTF-16 units > 0xFF) are invalid.
+// Both helpers are inlined into the same loop body, so the common
+// subexpressions (case fold, alpha classification) are computed once.
+
+template<class D>
+static HWY_INLINE hn::Mask<D> IsAsciiHexAlpha(D d, hn::Vec<D> chars)
+{
+    using T = hn::TFromD<D>;
+    // Fold to lowercase, then 'a'..'f' → 0..5 (unsigned wraparound pushes
+    // everything below 'a' far above 5).
+    const auto folded = hn::Or(chars, hn::Set(d, T { 0x20 }));
+    return hn::Lt(hn::Sub(folded, hn::Set(d, T { 'a' })), hn::Set(d, T { 6 }));
+}
+
+template<class D>
+static HWY_INLINE hn::Mask<D> IsAsciiHexDigit(D d, hn::Vec<D> chars)
+{
+    using T = hn::TFromD<D>;
+    const auto is_digit = hn::Lt(hn::Sub(chars, hn::Set(d, T { '0' })), hn::Set(d, T { 10 }));
+    return hn::Or(is_digit, IsAsciiHexAlpha(d, chars));
+}
+
+// Nibble value of each lane; only meaningful for lanes that pass IsAsciiHexDigit.
+template<class D>
+static HWY_INLINE hn::Vec<D> HexNibbleValue(D d, hn::Vec<D> chars)
+{
+    using T = hn::TFromD<D>;
+    // '0'-'9': low nibble is already the value. 'a'-'f'/'A'-'F': low nibble is
+    // 1..6, so add 9 to reach 10..15.
+    const auto low = hn::And(chars, hn::Set(d, T { 0x0F }));
+    return hn::Add(low, hn::IfThenElseZero(IsAsciiHexAlpha(d, chars), hn::Set(d, T { 9 })));
+}
+
+static HWY_INLINE uint8_t ScalarHexNibble(uint32_t c)
+{
+    const uint32_t folded = c | 0x20;
+    const bool is_digit = (c - '0') < 10;
+    const bool is_alpha = (folded - 'a') < 6;
+    if (!(is_digit || is_alpha)) {
+        return 0xFF;
+    }
+    return static_cast<uint8_t>((c & 0x0F) + (is_alpha ? 9 : 0));
+}
+
+// Decodes whole blocks of Lanes(d) pairs starting at output index `out`,
+// stopping before the first block that contains a non-hex character (the
+// scalar loop in the callers pinpoints the exact pair). Each iteration loads
+// 2*Lanes(d) characters and stores Lanes(d) bytes. Returns the new `out`.
+template<class D>
+static HWY_INLINE size_t DecodeHexVectorLoop(D d, const hn::TFromD<D>* HWY_RESTRICT input, uint8_t* HWY_RESTRICT output, size_t out, size_t out_len)
+{
+    const size_t N = hn::Lanes(d);
+    if (out_len - out < N) {
+        return out;
+    }
+
+    const size_t simd_out = out + ((out_len - out) - ((out_len - out) % N));
+    for (; out < simd_out; out += N) {
+        const auto chars0 = hn::LoadU(d, input + out * 2);
+        const auto chars1 = hn::LoadU(d, input + out * 2 + N);
+
+        const auto valid = hn::And(IsAsciiHexDigit(d, chars0), IsAsciiHexDigit(d, chars1));
+        if (!hn::AllTrue(d, valid)) {
+            break;
+        }
+
+        const auto nib0 = HexNibbleValue(d, chars0);
+        const auto nib1 = HexNibbleValue(d, chars1);
+        // Even-indexed chars hold the high nibbles, odd-indexed the low nibbles.
+        const auto hi = hn::ConcatEven(d, nib1, nib0);
+        const auto lo = hn::ConcatOdd(d, nib1, nib0);
+        const auto bytes = hn::Or(hn::ShiftLeft<4>(hi), lo);
+        if constexpr (sizeof(hn::TFromD<D>) == 2) {
+            // UTF-16 input: the decoded byte sits in the low half of each u16 lane.
+            const hn::Rebind<uint8_t, D> d8;
+            hn::StoreU(hn::TruncateTo(d8, bytes), d8, output + out);
+        } else {
+            hn::StoreU(bytes, d, output + out);
+        }
+    }
+    return out;
+}
+
+// Decodes `out_len` pairs of ASCII hex digits ("ff" → 0xFF) from `input` into
+// `output`, stopping at the first pair that contains a non-hex character.
+// Returns the number of output bytes written (== out_len when fully valid).
+// The caller guarantees `input` is readable for 2*out_len elements and
+// `output` is writable for out_len bytes.
+size_t DecodeHex8Impl(const uint8_t* HWY_RESTRICT input, uint8_t* HWY_RESTRICT output, size_t out_len)
+{
+    D8 d;
+    size_t out = DecodeHexVectorLoop(d, input, output, 0, out_len);
+#if HWY_MAX_BYTES > 16
+    // On wide-vector targets, mop up the 16..(Lanes-1)-pair remainder with
+    // 128-bit blocks so digest-sized inputs (16-64 pairs) still vectorize
+    // instead of falling through to the scalar loop.
+    const hn::CappedTag<uint8_t, 16> d128;
+    out = DecodeHexVectorLoop(d128, input, output, out, out_len);
+#endif
+
+    for (; out < out_len; out++) {
+        const uint8_t hi = ScalarHexNibble(input[out * 2]);
+        const uint8_t lo = ScalarHexNibble(input[out * 2 + 1]);
+        if (hi == 0xFF || lo == 0xFF) {
+            return out;
+        }
+        output[out] = static_cast<uint8_t>((hi << 4) | lo);
+    }
+    return out_len;
+}
+
+// UTF-16 variant of DecodeHex8Impl (for two-byte JS strings). Code units above
+// 0xFF never classify as hex digits, so they stop decoding like any other
+// invalid character.
+size_t DecodeHex16Impl(const uint16_t* HWY_RESTRICT input, uint8_t* HWY_RESTRICT output, size_t out_len)
+{
+    const hn::ScalableTag<uint16_t> d16;
+    size_t out = DecodeHexVectorLoop(d16, input, output, 0, out_len);
+#if HWY_MAX_BYTES > 16
+    const hn::CappedTag<uint16_t, 8> d128;
+    out = DecodeHexVectorLoop(d128, input, output, out, out_len);
+#endif
+
+    for (; out < out_len; out++) {
+        const uint8_t hi = ScalarHexNibble(input[out * 2]);
+        const uint8_t lo = ScalarHexNibble(input[out * 2 + 1]);
+        if (hi == 0xFF || lo == 0xFF) {
+            return out;
+        }
+        output[out] = static_cast<uint8_t>((hi << 4) | lo);
+    }
+    return out_len;
+}
+
 // Implementation for WebSocket mask application
 void FillWithSkipMaskImpl(const uint8_t* HWY_RESTRICT mask, size_t mask_len, uint8_t* HWY_RESTRICT output, const uint8_t* HWY_RESTRICT input, size_t length, bool skip_mask)
 {
@@ -1197,13 +1640,22 @@ namespace bun {
 // Define the dispatch tables. The names here must exactly match
 // the *Impl function names defined within the HWY_NAMESPACE block above.
 HWY_EXPORT(ContainsNewlineOrNonASCIIOrQuoteImpl);
+HWY_EXPORT(CopyAsciiPrefixImpl);
 HWY_EXPORT(CopyU16ToU8Impl);
 HWY_EXPORT(CountPrintableAscii16Impl);
+HWY_EXPORT(DecodeHex16Impl);
+HWY_EXPORT(DecodeHex8Impl);
+HWY_EXPORT(EncodeHexLowerImpl);
 HWY_EXPORT(FillWithSkipMaskImpl);
 HWY_EXPORT(FirstNonAscii16Impl);
 HWY_EXPORT(FirstNonAscii8Impl);
+HWY_EXPORT(HtmlEscapeExtraLen16Impl);
+HWY_EXPORT(HtmlEscapeExtraLen8Impl);
 HWY_EXPORT(IndexOfAnyCharImpl);
 HWY_EXPORT(IndexOfCharImpl);
+HWY_EXPORT(IndexOfHTMLEscapeChar8Impl);
+HWY_EXPORT(IndexOfHTMLEscapeChar16Impl);
+HWY_EXPORT(IndexOfInterestingCharacterInMultilineCommentImpl);
 HWY_EXPORT(IndexOfInterestingCharacterInStringLiteralImpl);
 HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplBacktick);
 HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplQuote);
@@ -1280,9 +1732,34 @@ size_t highway_index_of_char(const uint8_t* HWY_RESTRICT haystack, size_t haysta
     return HWY_DYNAMIC_DISPATCH(IndexOfCharImpl)(haystack, haystack_len, needle);
 }
 
+size_t highway_index_of_html_escape_char8(const uint8_t* HWY_RESTRICT text, size_t text_len)
+{
+    return HWY_DYNAMIC_DISPATCH(IndexOfHTMLEscapeChar8Impl)(text, text_len);
+}
+
+size_t highway_index_of_html_escape_char16(const uint16_t* HWY_RESTRICT text, size_t text_len)
+{
+    return HWY_DYNAMIC_DISPATCH(IndexOfHTMLEscapeChar16Impl)(text, text_len);
+}
+
+size_t highway_html_escape_extra_len8(const uint8_t* HWY_RESTRICT text, size_t text_len)
+{
+    return HWY_DYNAMIC_DISPATCH(HtmlEscapeExtraLen8Impl)(text, text_len);
+}
+
+size_t highway_html_escape_extra_len16(const uint16_t* HWY_RESTRICT text, size_t text_len)
+{
+    return HWY_DYNAMIC_DISPATCH(HtmlEscapeExtraLen16Impl)(text, text_len);
+}
+
 size_t highway_index_of_interesting_character_in_string_literal(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t quote)
 {
     return HWY_DYNAMIC_DISPATCH(IndexOfInterestingCharacterInStringLiteralImpl)(text, text_len, quote);
+}
+
+size_t highway_index_of_interesting_character_in_multiline_comment(const uint8_t* HWY_RESTRICT text, size_t text_len)
+{
+    return HWY_DYNAMIC_DISPATCH(IndexOfInterestingCharacterInMultilineCommentImpl)(text, text_len);
 }
 
 size_t highway_index_of_newline_or_non_ascii(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len)
@@ -1353,6 +1830,26 @@ size_t highway_first_non_ascii16(const uint16_t* HWY_RESTRICT input, size_t len)
 size_t highway_first_non_ascii8(const uint8_t* HWY_RESTRICT input, size_t len)
 {
     return HWY_DYNAMIC_DISPATCH(FirstNonAscii8Impl)(input, len);
+}
+
+size_t highway_copy_ascii_prefix(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
+{
+    return HWY_DYNAMIC_DISPATCH(CopyAsciiPrefixImpl)(src, len, dst);
+}
+
+void highway_encode_hex_lower(const uint8_t* HWY_RESTRICT input, size_t len, uint8_t* HWY_RESTRICT output)
+{
+    HWY_DYNAMIC_DISPATCH(EncodeHexLowerImpl)(input, len, output);
+}
+
+size_t highway_decode_hex8(const uint8_t* HWY_RESTRICT input, uint8_t* HWY_RESTRICT output, size_t out_len)
+{
+    return HWY_DYNAMIC_DISPATCH(DecodeHex8Impl)(input, output, out_len);
+}
+
+size_t highway_decode_hex16(const uint16_t* HWY_RESTRICT input, uint8_t* HWY_RESTRICT output, size_t out_len)
+{
+    return HWY_DYNAMIC_DISPATCH(DecodeHex16Impl)(input, output, out_len);
 }
 
 } // extern "C"

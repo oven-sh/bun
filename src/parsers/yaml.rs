@@ -2313,6 +2313,8 @@ pub struct Parser<'i, Enc: Encoding> {
     pub whitespace_buf: Vec<Whitespace<Enc>>,
 
     pub stack_check: StackCheck,
+
+    pub merge_props_budget: usize,
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
@@ -2335,6 +2337,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             tag_handles: StringHashMap::default(),
             whitespace_buf: Vec::new(),
             stack_check: StackCheck::init(),
+            merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
         }
     }
 
@@ -2673,7 +2676,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         Expr::init(E::Null {}, self.token.start.loc())
                     };
                     let mut props = MappingProps::init();
-                    props.append_maybe_merge(key, value)?;
+                    props.append_maybe_merge(key, value, &mut self.merge_props_budget)?;
                     Expr::init(
                         E::Object {
                             properties: props.move_list(),
@@ -2799,7 +2802,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     })?;
                 } else {
                     let value = self.parse_node(ParseNodeOptions::default())?;
-                    props.append_maybe_merge(key, value)?;
+                    props.append_maybe_merge(key, value, &mut self.merge_props_budget)?;
                 }
 
                 if matches!(self.token.data, TokenData::CollectEntry) {
@@ -2989,6 +2992,21 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
     }
 
+    fn yaml_merge_key_expr_hash(key: &Expr) -> u64 {
+        match &key.data {
+            ast::ExprData::ENull(_) => 0,
+            ast::ExprData::EBoolean(b) => 1 + b.value as u64,
+            ast::ExprData::ENumber(n) => {
+                let value = if n.value == 0.0 { 0.0 } else { n.value };
+                value.to_bits()
+            }
+            ast::ExprData::EString(s) => s.hash(),
+            ast::ExprData::EArray(a) => a.as_ptr() as usize as u64,
+            ast::ExprData::EObject(o) => o.as_ptr() as usize as u64,
+            _ => u64::MAX,
+        }
+    }
+
     fn parse_block_mapping(
         &mut self,
         first_key: Expr,
@@ -3106,7 +3124,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     _ => Expr::init(E::Null {}, mapping_value_start.loc()),
                 };
 
-                props.append_maybe_merge(first_key, value)?;
+                props.append_maybe_merge(first_key, value, &mut self.merge_props_budget)?;
             }
 
             if self.context.get() == Context::FlowIn {
@@ -3260,7 +3278,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                     };
 
-                    props.append_maybe_merge(key, value)?;
+                    props.append_maybe_merge(key, value, &mut self.merge_props_budget)?;
                 }
 
                 Ok(Expr::init(
@@ -3287,12 +3305,18 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
 pub struct MappingProps {
     list: G::PropertyList,
+    merge_index: bun_collections::HashMap<u64, Vec<u32>>,
+    merge_indexed: usize,
 }
 
 impl MappingProps {
+    pub const MAX_MERGED_PROPERTIES: usize = 1024 * 1024;
+
     pub fn init() -> Self {
         Self {
             list: bun_alloc::AstAlloc::vec(),
+            merge_index: bun_collections::HashMap::default(),
+            merge_indexed: 0,
         }
     }
 
@@ -3301,18 +3325,38 @@ impl MappingProps {
         Ok(())
     }
 
-    pub fn merge(&mut self, merge_props: &[G::Property]) -> Result<(), AllocError> {
-        self.list.reserve(merge_props.len());
+    pub fn merge(
+        &mut self,
+        merge_props: &[G::Property],
+        budget: &mut usize,
+    ) -> Result<(), AllocError> {
+        self.list.reserve(merge_props.len().min(*budget));
         // PERF(port): was ensureUnusedCapacity
+
+        while self.merge_indexed < self.list.len() {
+            let idx = self.merge_indexed;
+            let key = self.list[idx].key.as_ref().unwrap();
+            let hash = Parser::<Utf8>::yaml_merge_key_expr_hash(key);
+            self.merge_index
+                .get_or_put(hash)?
+                .value_ptr
+                .push(idx as u32);
+            self.merge_indexed += 1;
+        }
+
         'next_merge_prop: for merge_prop in merge_props.iter().rev() {
             let merge_key = merge_prop.key.as_ref().unwrap();
-            for existing_prop in self.list.iter() {
-                let existing_key = existing_prop.key.as_ref().unwrap();
-                if Parser::<Utf8>::yaml_merge_key_expr_eql(existing_key, merge_key) {
-                    // TODO(port): yaml_merge_key_expr_eql is generic-agnostic; using Utf8 monomorph here is a hack.
-                    continue 'next_merge_prop;
+            let merge_hash = Parser::<Utf8>::yaml_merge_key_expr_hash(merge_key);
+            if let Some(candidates) = self.merge_index.get(&merge_hash) {
+                for existing_idx in candidates.iter() {
+                    let existing_key = self.list[*existing_idx as usize].key.as_ref().unwrap();
+                    if Parser::<Utf8>::yaml_merge_key_expr_eql(existing_key, merge_key) {
+                        // TODO(port): yaml_merge_key_expr_eql is generic-agnostic; using Utf8 monomorph here is a hack.
+                        continue 'next_merge_prop;
+                    }
                 }
             }
+            *budget = budget.checked_sub(1).ok_or(AllocError)?;
             // `G::Property` is not `Clone`; reconstruct from its `Copy` fields
             // (Zig copied the struct by value).
             self.list.push(G::Property {
@@ -3324,11 +3368,21 @@ impl MappingProps {
                 ..Default::default()
             });
             // PERF(port): was appendAssumeCapacity
+            self.merge_index
+                .get_or_put(merge_hash)?
+                .value_ptr
+                .push((self.list.len() - 1) as u32);
+            self.merge_indexed = self.list.len();
         }
         Ok(())
     }
 
-    pub fn append_maybe_merge(&mut self, key: Expr, value: Expr) -> Result<(), AllocError> {
+    pub fn append_maybe_merge(
+        &mut self,
+        key: Expr,
+        value: Expr,
+        budget: &mut usize,
+    ) -> Result<(), AllocError> {
         let is_merge_key = match &key.data {
             ast::ExprData::EString(key_str) => key_str.eql_comptime(b"<<"),
             _ => false,
@@ -3345,14 +3399,14 @@ impl MappingProps {
         }
 
         match &value.data {
-            ast::ExprData::EObject(value_obj) => self.merge(value_obj.properties.slice()),
+            ast::ExprData::EObject(value_obj) => self.merge(value_obj.properties.slice(), budget),
             ast::ExprData::EArray(value_arr) => {
                 for item in value_arr.items.slice() {
                     let item_obj = match &item.data {
                         ast::ExprData::EObject(obj) => obj,
                         _ => continue,
                     };
-                    self.merge(item_obj.properties.slice())?;
+                    self.merge(item_obj.properties.slice(), budget)?;
                 }
                 Ok(())
             }
@@ -3368,6 +3422,8 @@ impl MappingProps {
     }
 
     pub fn move_list(&mut self) -> G::PropertyList {
+        self.merge_index.clear();
+        self.merge_indexed = 0;
         core::mem::replace(&mut self.list, bun_alloc::AstAlloc::vec())
     }
 }

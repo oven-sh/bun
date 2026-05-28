@@ -68,9 +68,6 @@ impl Drop for BlobOrStringOrBuffer {
     fn drop(&mut self) {
         match self {
             Self::Blob(blob) => {
-                // `.blob` is a raw bitwise copy of a live JS Blob — it does NOT own
-                // content_type/name. Only release the store reference.
-                // `StoreRef::drop` (via `Option::take`) calls `Store::deref()`.
                 let _ = blob.store.with_mut(|s| s.take());
             }
             Self::StringOrBuffer(_) => {
@@ -302,6 +299,10 @@ impl bun_jsc::Unprotect for StringOrBuffer {
     #[inline]
     fn unprotect(&mut self) {
         if let Self::Buffer(buffer) = self {
+            if buffer.pinned {
+                buffer.pinned = false;
+                buffer.buffer.unpin();
+            }
             buffer.buffer.value.unprotect();
         }
     }
@@ -454,7 +455,12 @@ impl StringOrBuffer {
             | JSType::BigInt64Array
             | JSType::BigUint64Array
             | JSType::DataView => {
-                let buffer = Buffer::from_array_buffer(global, value);
+                let buffer = if is_async {
+                    Buffer::from_js_pinned(global, value)
+                        .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
+                } else {
+                    Buffer::from_array_buffer(global, value)
+                };
 
                 if is_async {
                     buffer.buffer.value.protect();
@@ -520,7 +526,12 @@ impl StringOrBuffer {
         allow_string_object: bool,
     ) -> JsResult<bool> {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
-            let buffer = Buffer::from_array_buffer(global, value);
+            let buffer = if is_async {
+                Buffer::from_js_pinned(global, value)
+                    .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
+            } else {
+                Buffer::from_array_buffer(global, value)
+            };
             if is_async {
                 buffer.buffer.value.protect();
             }
@@ -1983,13 +1994,6 @@ impl PathOrBlob {
             ));
         };
         if let Some(blob) = arg.as_class_ref::<Blob>() {
-            // Zig: `blob.*` — a raw bitwise copy with no ref bumps that callers
-            // never `deinit()`. `borrowed_view()` is the sound Rust spelling: it
-            // clones the `StoreRef`/`name` (whose `Drop`s balance the +1) and
-            // aliases `content_type`; `dupe()` would leak the boxed
-            // `content_type` copy. `as_class_ref` is the safe shared-borrow
-            // downcast — the JS wrapper roots the payload while `arg` is on the
-            // stack.
             return Ok(PathOrBlob::Blob(Box::new(blob.borrowed_view())));
         }
         Err(ctx.throw_invalid_argument_type_value(

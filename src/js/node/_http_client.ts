@@ -6,6 +6,7 @@ const {
   validateInteger,
   validateBoolean,
   validateString,
+  validatePort,
 } = require("internal/validators");
 
 // Internal fetch that allows body on GET/HEAD/OPTIONS for Node.js compatibility
@@ -314,7 +315,8 @@ function ClientRequest(input, options, cb) {
         return [path, `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`];
       } else {
         let proxy: string | undefined;
-        const url = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${path}`;
+        const pathname = path.startsWith("/") ? path : "/" + path;
+        const url = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${pathname}`;
         // support agent proxy url/string for http/https
         try {
           // getters can throw
@@ -726,6 +728,10 @@ function ClientRequest(input, options, cb) {
 
   const defaultPort = options.defaultPort || this[kAgent].defaultPort;
   const port = (this[kPort] = options.port || defaultPort || 80);
+  if (typeof port !== "number" && typeof port !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("options.port", ["number", "string"], port);
+  }
+  validatePort(port);
   this[kUseDefaultPort] = this[kPort] === defaultPort;
   const host =
     (this[kHost] =

@@ -98,7 +98,9 @@ impl<'a> Row<'a> {
                     ..SQLDataCell::default()
                 };
             }
-            MYSQL_TYPE_TINY | MYSQL_TYPE_SHORT => {
+            // YEAR arrives as a bare ASCII integer in the text protocol; parse it
+            // like SHORT so `.simple()` returns the same JS number as the binary path.
+            MYSQL_TYPE_TINY | MYSQL_TYPE_SHORT | MYSQL_TYPE_YEAR => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
                     let val: u16 = parse_int::<u16>(value.slice(), 10).unwrap_or(0);
                     *cell = SQLDataCell {

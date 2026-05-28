@@ -32,6 +32,21 @@ pub struct SocketAddress<'a> {
     pub is_ipv6: bool,
 }
 
+impl SocketAddress<'_> {
+    pub fn is_loopback(&self) -> bool {
+        // IPv4 loopback addresses
+        if self.ip.starts_with(b"127.") {
+            return true;
+        }
+        // IPv6 loopback addresses
+        if self.ip.starts_with(b"::ffff:127.") || self.ip == b"::1" || self.ip == b"0:0:0:0:0:0:0:1"
+        {
+            return true;
+        }
+        false
+    }
+}
+
 bun_opaque::opaque_ffi! {
     /// Opaque uWS WebSocket socket handle (forward-decl; concrete type lives in `bun_uws`).
     pub struct Socket;

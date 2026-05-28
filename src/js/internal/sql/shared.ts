@@ -630,7 +630,11 @@ function parseOptions(
         // check adapter then implement for other databases
         // encode string with \0 as finalizer
         // must be key\0value\0
-        query += `${key}\0${queryObject[key]}\0`;
+        const value = `${queryObject[key]}`;
+        if (key.includes("\0") || value.includes("\0")) {
+          throw $ERR_INVALID_ARG_VALUE(`options.${key}`, queryObject[key], "must not contain null bytes");
+        }
+        query += `${key}\0${value}\0`;
       }
     }
     query = query.trim();
@@ -754,7 +758,11 @@ function parseOptions(
   if (connection && $isObject(connection)) {
     for (const key in connection) {
       if (connection[key] !== undefined) {
-        query += `${key}\0${connection[key]}\0`;
+        const value = `${connection[key]}`;
+        if (key.includes("\0") || value.includes("\0")) {
+          throw $ERR_INVALID_ARG_VALUE(`options.connection.${key}`, connection[key], "must not contain null bytes");
+        }
+        query += `${key}\0${value}\0`;
       }
     }
   }
@@ -835,6 +843,12 @@ function parseOptions(
     max = Number(max);
     if (max > 2 ** 31 || max < 1 || max !== max) {
       throw $ERR_INVALID_ARG_VALUE("options.max", max, "must be a non-negative integer between 1 and 2^31");
+    }
+  }
+
+  if ($isObject(tls) && sslMode < SSLMode.verify_ca) {
+    if (tls.rejectUnauthorized === true || (tls.rejectUnauthorized !== false && tls.ca)) {
+      sslMode = SSLMode.verify_full;
     }
   }
 

@@ -271,7 +271,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__StackCheck__initialize()
     stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBounds();
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] void* Bun__StackCheck__getMaxStack()
+extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((__always_inline__)) void* Bun__StackCheck__getMaxStack()
 {
     return stackBoundsForCurrentThread.end();
 }

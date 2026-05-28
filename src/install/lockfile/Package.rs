@@ -1240,20 +1240,20 @@ impl Diff {
 
             // 2
             if let (Some(from_trusted_dependencies), Some(to_trusted_dependencies)) = (
-                from_lockfile.trusted_dependencies.as_ref(),
+                from_lockfile.trusted_dependencies.as_mut(),
                 to_lockfile.trusted_dependencies.as_ref(),
             ) {
                 // added
                 for (&to_trusted, to_name) in to_trusted_dependencies.iter() {
                     // Empty name = legacy bun.lockb hash-only sentinel.
-                    let already_trusted =
-                        from_trusted_dependencies
-                            .get(&to_trusted)
-                            .is_some_and(|from_name| {
-                                from_name.is_empty()
-                                    || to_name.is_empty()
-                                    || **from_name == **to_name
-                            });
+                    let already_trusted = from_trusted_dependencies
+                        .get_mut(&to_trusted)
+                        .is_some_and(|from_name| {
+                            if from_name.is_empty() && !to_name.is_empty() {
+                                from_name.clone_from(to_name);
+                            }
+                            from_name.is_empty() || to_name.is_empty() || **from_name == **to_name
+                        });
                     if !already_trusted {
                         summary.added_trusted_dependencies.put(
                             to_trusted,
@@ -1839,13 +1839,24 @@ impl Package<u64> {
         match dependency_version.tag {
             dependency::version::Tag::Folder => {
                 let folder = *dependency_version.folder();
-                let relative = resolve_path::relative(
+                let mut folder_buf = PathBuffer::uninit();
+                let Some(joined) = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
                     FileSystem::instance().top_level_dir(),
-                    resolve_path::join_abs_string::<path::platform::Auto>(
-                        FileSystem::instance().top_level_dir(),
-                        &[source.path.name().dir, folder.slice(buf)],
-                    ),
-                );
+                    &mut folder_buf.0,
+                    &[source.path.name().dir, folder.slice(buf)],
+                ) else {
+                    log.add_error_fmt(
+                        source,
+                        value_loc,
+                        format_args!(
+                            "Dependency \"{}\" has an unsafe folder path",
+                            bstr::BStr::new(external_alias.slice(buf)),
+                        ),
+                    );
+                    return Err(bun_core::err!("InstallFailed"));
+                };
+                let relative =
+                    resolve_path::relative(FileSystem::instance().top_level_dir(), joined);
                 // if relative is empty, we are linking the package to itself
                 dependency_version.value.folder = string_builder
                     .append::<String>(if relative.is_empty() { b"." } else { relative });

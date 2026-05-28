@@ -788,3 +788,200 @@ describe("pathological inline HTML inputs", () => {
     );
   });
 });
+
+// ============================================================================
+// Pathological inputs: permissive-autolink trailing-paren trimming. The GFM
+// ")"-balancing pass used to recount every "(" and ")" in the URL for each
+// trailing ")" it removed, so a URL whose query string is N closing parens
+// cost O(N^2) (~4e12 byte compares for N = 2M, minutes of CPU). The child
+// process is killed after 30s so a regression fails fast instead of hanging
+// the runner.
+// ============================================================================
+
+describe("pathological autolink inputs", () => {
+  test("autolink with a long run of trailing close-parens renders in linear time", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const parens = Buffer.alloc(2000000, ")").toString();
+        const input = "http://a.bc/?x=" + parens + "\\n";
+        const html = Bun.markdown.html(input, { autolinks: true });
+        if (!html.includes('<a href="http://a.bc/?x=">')) {
+          throw new Error("unexpected link target: " + JSON.stringify(html.slice(0, 120)));
+        }
+        if (!html.includes(")))))))")) throw new Error("trimmed parens missing from output");
+        if (html.length <= parens.length) throw new Error("unexpected output length " + html.length);
+        console.log("DONE");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("DONE");
+    expect(exitCode).toBe(0);
+
+    // The trimming semantics themselves are unchanged: balanced parens stay
+    // part of the URL, a trailing unbalanced ")" is trimmed off it.
+    expect(Markdown.html("http://a.bc/?x=(1)\n", { autolinks: true })).toContain('<a href="http://a.bc/?x=(1)">');
+    const trimmed = Markdown.html("http://a.bc/?x=(1))\n", { autolinks: true });
+    expect(trimmed).toContain('<a href="http://a.bc/?x=(1)">');
+    expect(trimmed).not.toContain('x=(1))"');
+  }, 90_000);
+});
+
+// ============================================================================
+// ANSI renderer: text taken from the markdown document must not be able to
+// smuggle its own terminal control sequences (OSC 52 clipboard writes, title
+// changes, CSI device queries, ...) into the output alongside the renderer's
+// styling escapes.
+// ============================================================================
+
+describe("ansi renderer source-text control bytes", () => {
+  test("escape sequences embedded in markdown source are stripped from terminal output", () => {
+    // OSC 52 clipboard-write sequence in a paragraph. With colors disabled
+    // the renderer emits no escapes of its own, so the output must contain
+    // no ESC or BEL byte at all.
+    const osc52 = "before \x1b]52;c;Y3VybCBldmlsLnNoIHwgc2g=\x07 after\n";
+    const plain = Markdown.ansi(osc52, { colors: false });
+    expect(plain).toContain("before");
+    expect(plain).toContain("after");
+    expect(plain).not.toContain("\x1b");
+    expect(plain).not.toContain("\x07");
+    // With colors enabled the renderer emits its own SGR escapes, but never
+    // an OSC sequence taken from the document (hyperlinks are off by default).
+    expect(Markdown.ansi(osc52)).not.toContain("\x1b]");
+
+    // CSI sequences, OSC title changes, and bare C0 controls are dropped too.
+    const csi = Markdown.ansi("x \x1b[31mred\x1b[0m \x1b]0;owned\x07 \x07\x08 y\n", { colors: false });
+    expect(csi).toContain("red");
+    expect(csi).toContain("y");
+    expect(csi).not.toContain("\x1b");
+    expect(csi).not.toContain("\x07");
+    expect(csi).not.toContain("\x08");
+
+    // A numeric character reference that decodes to a raw control byte is
+    // sanitized after decoding.
+    expect(Markdown.ansi("a &#27;[31m b\n", { colors: false })).not.toContain("\x1b");
+
+    // Ordinary text is unaffected.
+    expect(Markdown.ansi("hello world\n", { colors: false })).toContain("hello world");
+  });
+});
+
+// ============================================================================
+// ANSI renderer: link destinations, image src/title, and code-fence info
+// strings come straight from the markdown document. Like paragraph text, they
+// must not be able to carry their own terminal control bytes (OSC 52
+// clipboard writes, title changes, BEL terminators, ...) into the output.
+// ============================================================================
+
+describe("ansi renderer link and metadata control bytes", () => {
+  test("escape sequences in link destinations, image metadata, and fence info strings are stripped from terminal output", () => {
+    const osc52 = "\x1b]52;c;Y3VybCBldmlsLnNoIHwgc2g=\x07";
+
+    // Angle-bracket link destinations accept almost any byte, so the href can
+    // carry control sequences. With colors disabled the renderer emits no
+    // escapes of its own, so the rendered link (text plus the " (url)"
+    // fallback) must contain no ESC or BEL byte at all.
+    const linkMd = `[click](<x\x07${osc52}y>)\n`;
+    const plain = Markdown.ansi(linkMd, { colors: false });
+    expect(plain).toContain("click");
+    // Guard: the input really parsed as a link (otherwise it would echo "](<").
+    expect(plain).not.toContain("](<");
+    expect(plain).not.toContain("\x1b");
+    expect(plain).not.toContain("\x07");
+
+    // Default theme (colors on, hyperlinks off): the renderer only emits its
+    // own SGR escapes, never an OSC sequence taken from the document.
+    const colored = Markdown.ansi(linkMd);
+    expect(colored).toContain("click");
+    expect(colored).not.toContain("\x07");
+    expect(colored).not.toContain("\x1b]");
+
+    // With hyperlinks enabled the href is wrapped in the renderer's own OSC 8
+    // sequence; a BEL or nested OSC from the document must not be able to
+    // terminate it early.
+    const linked = Markdown.ansi(linkMd, { hyperlinks: true });
+    expect(linked).toContain("click");
+    expect(linked).not.toContain("\x07");
+    expect(linked).not.toContain("\x1b]52");
+
+    // Image src goes into the OSC 8 wrapper too, and the title is printed as
+    // the caption when there is no alt text.
+    const imgMd = `![](<img\x07${osc52}.png> "ti\x1b]0;owned\x07tle")\n`;
+    const imgLinked = Markdown.ansi(imgMd, { hyperlinks: true });
+    expect(imgLinked).not.toContain("\x07");
+    expect(imgLinked).not.toContain("\x1b]52");
+    expect(imgLinked).not.toContain("\x1b]0;");
+    const imgPlain = Markdown.ansi(imgMd, { colors: false });
+    expect(imgPlain).toContain("[img]");
+    expect(imgPlain).not.toContain("\x1b");
+    expect(imgPlain).not.toContain("\x07");
+
+    // Code-fence info strings are echoed as the language badge above the block.
+    const fenceMd = "```js\x1b]0;owned\x07\nconsole.log(1)\n```\n";
+    const fencePlain = Markdown.ansi(fenceMd, { colors: false });
+    expect(fencePlain).toContain("console.log(1)");
+    expect(fencePlain).not.toContain("\x1b");
+    expect(fencePlain).not.toContain("\x07");
+
+    // Ordinary links keep their destination in both modes.
+    const normal = Markdown.ansi("[site](https://example.com/a)\n", { colors: false });
+    expect(normal).toContain("site");
+    expect(normal).toContain("https://example.com/a");
+    expect(Markdown.ansi("[site](https://example.com/a)\n", { hyperlinks: true })).toContain(
+      "\x1b]8;;https://example.com/a",
+    );
+  });
+});
+
+// ============================================================================
+// Pathological inputs: emphasis delimiter floods. Each closer used to scan
+// backward over every already-consumed delimiter in the paragraph, so
+// ("*a " x N) + ("a* " x N) cost Theta(N^2) inner iterations — minutes of CPU
+// for a ~1 MB document. Resolution now skips dead delimiters in O(1); the
+// child process is killed after 30s so a regression fails fast instead of
+// hanging the test runner.
+// ============================================================================
+
+describe("pathological emphasis inputs", () => {
+  test("emphasis delimiter floods render in linear time", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        const n = 200000;
+        const input = fill(n, "*a ") + fill(n, "a* ");
+        const html = Bun.markdown.html(input);
+        if (!html.includes("<em>")) throw new Error("expected emphasis in output: " + JSON.stringify(html.slice(0, 120)));
+        if (html.length < input.length) throw new Error("unexpected output length " + html.length);
+        const ansi = Bun.markdown.ansi(fill(50000, "*a ") + fill(50000, "a* "), { colors: false });
+        if (typeof ansi !== "string" || ansi.length === 0) throw new Error("unexpected ansi output");
+        console.log("DONE");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("DONE");
+    expect(exitCode).toBe(0);
+
+    // Ordinary emphasis still resolves the same way.
+    expect(Markdown.html("**bold** and *em*\n")).toBe("<p><strong>bold</strong> and <em>em</em></p>\n");
+    expect(Markdown.html("*a **b** c*\n")).toBe("<p><em>a <strong>b</strong> c</em></p>\n");
+  }, 90_000);
+});

@@ -3737,3 +3737,61 @@ refs:
     });
   });
 });
+
+test("merging the same large anchor many times completes quickly", () => {
+  // `<<: [*a, *a, ...]` adds no new data after the first merge, but
+  // deduplicating each repeated alias must not rescan the entire property
+  // list per merged key — that makes a ~25 KB document take minutes.
+  const keyCount = 1200;
+  const aliasCount = 3000;
+
+  const lines: string[] = ["a: &a"];
+  for (let i = 0; i < keyCount; i++) {
+    lines.push(`  k${i}: ${i}`);
+  }
+  lines.push("b:");
+  lines.push(`  <<: [${new Array(aliasCount).fill("*a").join(", ")}]`);
+  const input = lines.join("\n");
+
+  const start = performance.now();
+  const parsed = YAML.parse(input) as { a: Record<string, number>; b: Record<string, number> };
+  const elapsed = performance.now() - start;
+
+  // Merge semantics are preserved: `b` receives every key of `a` exactly once.
+  expect(Object.keys(parsed.a)).toHaveLength(keyCount);
+  expect(parsed.b).toEqual(parsed.a);
+  expect(parsed.b.k0).toBe(0);
+  expect(parsed.b[`k${keyCount - 1}`]).toBe(keyCount - 1);
+
+  // Repeated alias merges must be near-linear in the document size.
+  expect(elapsed).toBeLessThan(isDebug || isASAN ? 15_000 : 4_000);
+}, 30_000);
+
+test("limits how many properties merge keys can materialize from a small document", () => {
+  // A normal merge-key document still resolves.
+  const small = YAML.parse("base: &base\n  x: 1\n  y: 2\nchild:\n  <<: *base\n  z: 3\n") as {
+    base: Record<string, number>;
+    child: Record<string, number>;
+  };
+  expect(small.child).toEqual({ x: 1, y: 2, z: 3 });
+
+  // One anchor with `keyCount` properties merged into `mergeCount` separate
+  // mappings would materialize keyCount * mergeCount (~1.2 million) property
+  // entries from a ~30 KB document. The parser caps the total number of
+  // properties materialized through merge keys and reports an error instead
+  // of allocating memory proportional to the product.
+  const keyCount = 2048;
+  const mergeCount = 600;
+
+  const lines: string[] = ["a: &a"];
+  for (let i = 0; i < keyCount; i++) {
+    lines.push(`  k${i}: ${i}`);
+  }
+  for (let i = 0; i < mergeCount; i++) {
+    lines.push(`m${i}:`);
+    lines.push("  <<: *a");
+  }
+  const input = lines.join("\n");
+
+  expect(() => YAML.parse(input)).toThrow();
+}, 30_000);

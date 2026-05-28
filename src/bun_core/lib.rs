@@ -1894,19 +1894,10 @@ pub(crate) mod strings_impl {
 
     /// Port of `elementLengthLatin1IntoUTF8`.
     pub fn element_length_latin1_into_utf8(latin1: &[u8]) -> usize {
-        let mut len = latin1.len();
-        let mut rest = latin1;
-        while let Some(i) = first_non_ascii(rest) {
-            rest = &rest[i..];
-            while let Some(&c) = rest.first() {
-                if c < 0x80 {
-                    break;
-                }
-                len += 1; // each high-latin1 byte → 2 utf8 bytes
-                rest = &rest[1..];
-            }
+        if latin1.len() <= 32 {
+            return latin1.len() + latin1.iter().filter(|&&c| c >= 0x80).count();
         }
-        len
+        simdutf::length::utf8::from::latin1(latin1)
     }
 
     /// Port of `copyUTF16IntoUTF8` — encode UTF-16 into a fixed-size UTF-8 buffer.
@@ -1916,10 +1907,27 @@ pub(crate) mod strings_impl {
         if utf16.is_empty() || buf.is_empty() {
             return EncodeIntoResult::default();
         }
+        let worst_case = utf16.len().saturating_mul(3);
+        let utf8_len = if worst_case <= buf.len() {
+            worst_case
+        } else {
+            simdutf::length::utf8::from::utf16::le(utf16)
+        };
+        copy_utf16_into_utf8_with_utf8_len(buf, utf16, utf8_len)
+    }
+
+    pub fn copy_utf16_into_utf8_with_utf8_len(
+        buf: &mut [u8],
+        utf16: &[u16],
+        utf8_len: usize,
+    ) -> EncodeIntoResult {
+        debug_assert!(utf8_len >= element_length_utf16_into_utf8(utf16));
+        if utf16.is_empty() || buf.is_empty() {
+            return EncodeIntoResult::default();
+        }
         // Fast path: if buf can definitely hold the whole conversion, try simdutf.
-        let need = simdutf::length::utf8::from::utf16::le(utf16);
-        if need > 0 && need <= buf.len() {
-            // SAFETY: buf has `need` writable bytes; simdutf reads exactly utf16.len() u16.
+        if utf8_len > 0 && utf8_len <= buf.len() {
+            // SAFETY: buf has `utf8_len` writable bytes; simdutf reads exactly utf16.len() u16.
             let r = unsafe {
                 simdutf::simdutf__convert_utf16le_to_utf8_with_errors(
                     utf16.as_ptr(),
@@ -1960,53 +1968,75 @@ pub(crate) mod strings_impl {
         copy_latin1_into_utf8_stop_on_non_ascii::<false>(buf, latin1)
     }
 
-    /// Port of `copyLatin1IntoUTF8StopOnNonASCII`. The Zig original hand-rolled a
-    /// `@Vector(16,u8)` max-reduce + two SWAR `u64` mask/ctz ladders to find each
-    /// non-ASCII byte; in Rust that work is exactly [`first_non_ascii`] (simdutf
-    /// `validate_ascii_with_errors`, with a ≤32B scalar fast path), so the body
-    /// reduces to "scan the next ASCII span, memcpy it, encode one high byte,
-    /// repeat". Speculative 8-byte over-write is dropped (callers only read
-    /// `buf[..written]`).
+    #[inline]
+    fn copy_ascii_prefix(dst: &mut [u8], src: &[u8]) -> usize {
+        debug_assert_eq!(dst.len(), src.len());
+
+        const HIGHWAY_MIN_LEN: usize = 64;
+        if src.len() >= HIGHWAY_MIN_LEN {
+            return bun_highway::copy_ascii_prefix(src, dst);
+        }
+
+        const HIGH_BITS: u64 = 0x8080_8080_8080_8080;
+        let mut copied = 0usize;
+        for (d, s) in dst.chunks_exact_mut(8).zip(src.chunks_exact(8)) {
+            let word = u64::from_ne_bytes(s.try_into().expect("infallible: size matches"));
+            let mask = word & HIGH_BITS;
+            if mask != 0 {
+                let ascii = (mask.trailing_zeros() / 8) as usize;
+                d[..ascii].copy_from_slice(&s[..ascii]);
+                return copied + ascii;
+            }
+            d.copy_from_slice(&word.to_ne_bytes());
+            copied += 8;
+        }
+        for (d, &s) in dst[copied..].iter_mut().zip(&src[copied..]) {
+            if s >= 0x80 {
+                return copied;
+            }
+            *d = s;
+            copied += 1;
+        }
+        copied
+    }
+
+    /// Port of `copyLatin1IntoUTF8StopOnNonASCII`.
     pub fn copy_latin1_into_utf8_stop_on_non_ascii<const STOP: bool>(
         buf_: &mut [u8],
         latin1_: &[u8],
     ) -> EncodeIntoResult {
-        let buf_total = buf_.len();
-        let latin1_total = latin1_.len();
-        let mut buf: &mut [u8] = buf_;
-        let mut latin1: &[u8] = latin1_;
+        let mut written = 0usize;
+        let mut read = 0usize;
 
-        while !buf.is_empty() && !latin1.is_empty() {
-            // Find the longest pure-ASCII prefix that fits in `buf` and copy it
-            // in one shot. simdutf provides the index; the subsequent
-            // `copy_from_slice` is a single memcpy.
-            let limit = buf.len().min(latin1.len());
-            let span = first_non_ascii(&latin1[..limit]).unwrap_or(limit);
-            buf[..span].copy_from_slice(&latin1[..span]);
-            buf = &mut buf[span..];
-            latin1 = &latin1[span..];
-
-            // Either we filled `buf`, drained `latin1`, or hit a non-ASCII byte.
-            if latin1.is_empty() || latin1[0] < 0x80 {
+        while written < buf_.len() && read < latin1_.len() {
+            let n = (buf_.len() - written).min(latin1_.len() - read);
+            let copied =
+                copy_ascii_prefix(&mut buf_[written..written + n], &latin1_[read..read + n]);
+            written += copied;
+            read += copied;
+            if copied == n {
                 break;
             }
+
+            debug_assert!(latin1_[read] >= 0x80);
             if STOP {
                 return EncodeIntoResult {
                     written: u32::MAX,
                     read: u32::MAX,
                 };
             }
-            if buf.len() < 2 {
+            if buf_.len() - written < 2 {
                 break;
             }
-            buf[..2].copy_from_slice(&latin1_to_codepoint_bytes_assume_not_ascii(latin1[0]));
-            latin1 = &latin1[1..];
-            buf = &mut buf[2..];
+            buf_[written..written + 2]
+                .copy_from_slice(&latin1_to_codepoint_bytes_assume_not_ascii(latin1_[read]));
+            written += 2;
+            read += 1;
         }
 
         EncodeIntoResult {
-            written: (buf_total - buf.len()) as u32,
-            read: (latin1_total - latin1.len()) as u32,
+            written: written as u32,
+            read: read as u32,
         }
     }
 

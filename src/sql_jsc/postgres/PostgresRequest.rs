@@ -439,6 +439,12 @@ pub(crate) fn on_data<Context: ReaderContext>(
         reader.mark_message_start();
         let c = reader.int::<u8>()?;
         bun_core::scoped_log!(Postgres, "read: {}", c as char);
+        if matches!(connection.tls_status.get(), TlsStatus::MessageSent(_))
+            && c != b'S'
+            && c != b'N'
+        {
+            return Err(AnyPostgresError::UnexpectedMessage);
+        }
         match c {
             b'D' => connection.on(M::DataRow, reader.reborrow())?,
             b'd' => connection.on(M::CopyData, reader.reborrow())?,

@@ -1106,7 +1106,19 @@ static JSC::JSValue rebindStatement(JSC::JSGlobalObject* lexicalGlobalObject, JS
 
     int i = 0;
     for (; i < count; i++) {
-        JSC::JSValue value = array->getIndexQuickly(i);
+        JSC::JSValue value;
+        if (array->canGetIndexQuickly(static_cast<unsigned>(i))) [[likely]] {
+            value = array->getIndexQuickly(i);
+        } else {
+            value = array->getDirectIndex(lexicalGlobalObject, i);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (statement && statement->stmt != stmt) [[unlikely]] {
+                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement has finalized"_s));
+                return {};
+            }
+            if (!value)
+                value = JSC::jsUndefined();
+        }
         if (!rebindValue(lexicalGlobalObject, db, stmt, i + 1, value, scope, safeIntegers)) {
             return {};
         }
@@ -1832,12 +1844,17 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    int resultInt = -1;
+    int64_t resultInt = -1;
     void* resultPtr = nullptr;
     if (resultValue.isObject()) {
         if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(resultValue.getObject())) {
             if (view->isDetached()) {
                 throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "TypedArray is detached"_s));
+                return {};
+            }
+
+            if (view->byteLength() < sizeof(int64_t)) {
+                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "TypedArray must be at least 8 bytes"_s));
                 return {};
             }
 
@@ -2176,6 +2193,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
                     RETURN_IF_EXCEPTION(scope, {});
                     resultArray->push(lexicalGlobalObject, result);
                     RETURN_IF_EXCEPTION(scope, {});
+                    if (castedThis->stmt != stmt) [[unlikely]] {
+                        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement has finalized"_s));
+                        return {};
+                    }
                     status = sqlite3_step(stmt);
                 } while (status == SQLITE_ROW);
             } else {
@@ -2184,6 +2205,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
                     RETURN_IF_EXCEPTION(scope, {});
                     resultArray->push(lexicalGlobalObject, result);
                     RETURN_IF_EXCEPTION(scope, {});
+                    if (castedThis->stmt != stmt) [[unlikely]] {
+                        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement has finalized"_s));
+                        return {};
+                    }
                     status = sqlite3_step(stmt);
                 } while (status == SQLITE_ROW);
             }
@@ -2328,6 +2353,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
                     }
                     resultArray->push(lexicalGlobalObject, row);
                     RETURN_IF_EXCEPTION(scope, {});
+                    if (castedThis->stmt != stmt) [[unlikely]] {
+                        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement has finalized"_s));
+                        return {};
+                    }
                     status = sqlite3_step(stmt);
                 } while (status == SQLITE_ROW);
             }
@@ -2416,6 +2445,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JS
                     if (scope.exception()) [[unlikely]] {
                         sqlite3_reset(stmt);
                         RELEASE_AND_RETURN(scope, {});
+                    }
+
+                    if (castedThis->stmt != stmt) [[unlikely]] {
+                        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement has finalized"_s));
+                        return {};
                     }
 
                     status = sqlite3_step(stmt);

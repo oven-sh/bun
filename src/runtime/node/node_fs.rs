@@ -3043,23 +3043,18 @@ pub mod args {
         }
     }
 
-    /// Zig: `fn wrapTo(comptime T: type, in: i64) T` where `T` is unsigned.
     /// Only ever instantiated with `uid_t`/`gid_t` — `u32` on POSIX, `u8` on
     /// Windows (libuv's `uv_uid_t`/`uv_gid_t` are `unsigned char`). Hard-code
     /// the per-platform wrap rather than pulling `num_traits`.
     #[cfg(not(windows))]
     #[inline]
     fn wrap_to<T: From<u32>>(in_: i64) -> T {
-        // Zig spec (node_fs.zig:1586): `@intCast(@mod(in, std.math.maxInt(T)))`
-        // — modulus is `u32::MAX` (2^32 - 1), **not** 2^32. So `-1 → 4294967294`
-        // and `4294967295 → 0`. Match the spec exactly.
-        T::from(in_.rem_euclid(u32::MAX as i64) as u32)
+        T::from(in_ as u32)
     }
     #[cfg(windows)]
     #[inline]
     fn wrap_to<T: From<u8>>(in_: i64) -> T {
-        // Same `@mod(in, maxInt(T))` semantics with `T = u8`.
-        T::from(in_.rem_euclid(u8::MAX as i64) as u8)
+        T::from(in_ as u8)
     }
 
     pub type LChown = Chown;
@@ -3586,6 +3581,7 @@ pub mod args {
                 prefix: PathLike::Buffer(Buffer {
                     buffer: bun_jsc::ArrayBuffer::EMPTY,
                     owns_buffer: false,
+                    pinned: false,
                 }),
                 encoding: Encoding::Utf8,
             }
@@ -3926,6 +3922,15 @@ pub mod args {
                     }
                 }
             }
+            if arguments.will_be_async && matches!(args.buffer, StringOrBuffer::Buffer(_)) {
+                if let Some(pinned) = bv.as_pinned_arraybuffer(ctx) {
+                    args.buffer = StringOrBuffer::Buffer(Buffer {
+                        buffer: pinned,
+                        owns_buffer: false,
+                        pinned: true,
+                    });
+                }
+            }
             Ok(args)
         }
     }
@@ -4127,6 +4132,7 @@ pub mod args {
                         Buffer {
                             buffer: pinned,
                             owns_buffer: false,
+                            pinned: true,
                         },
                         true,
                     ),
@@ -4273,7 +4279,6 @@ pub mod args {
     impl WriteFile {
         pub fn to_thread_safe(&mut self) {
             self.file.to_thread_safe();
-            self.data.to_thread_safe();
         }
     }
     impl Unprotect for WriteFile {
@@ -4351,8 +4356,7 @@ pub mod args {
             // String objects not allowed (typeof new String("hi") === "object")
             // https://github.com/nodejs/node/blob/6f946c95b9da75c70e868637de8161bc8d048379/lib/internal/fs/utils.js#L916
             let allow_string_object = false;
-            // the pattern in node_fs.zig is to call toThreadSafe after Arguments.*.fromJS
-            let is_async = false;
+            let is_async = arguments.will_be_async;
             let data = StringOrBuffer::from_js_with_encoding_maybe_async(ctx, data_value, encoding, is_async, allow_string_object)?
                 .ok_or_else(|| validators::throw_err_invalid_arg_type_with_message(ctx, format_args!("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView")))?;
             let abort_signal = scopeguard::ScopeGuard::into_inner(abort_signal);
@@ -6649,11 +6653,15 @@ impl NodeFS {
                         E::ENOENT | E::ENOTDIR | E::EPERM => return Ok(()),
                         _ => {}
                     }
-                    let joined = paths::resolve_path::join_z_buf::<paths::platform::Auto>(
-                        &mut buf[..],
-                        &[root_basename, basename.as_bytes()],
-                    );
-                    return Err(err.with_path(joined.as_bytes()));
+                    if root_basename.len() + 1 + basename.as_bytes().len() + 1
+                        < paths::MAX_PATH_BYTES
+                    {
+                        let joined = paths::resolve_path::join_z_buf::<paths::platform::Auto>(
+                            &mut buf[..],
+                            &[root_basename, basename.as_bytes()],
+                        );
+                        return Err(err.with_path(joined.as_bytes()));
+                    }
                 }
                 return Err(err.with_path(args.path.slice()));
             }
@@ -6676,7 +6684,10 @@ impl NodeFS {
             let current = match iterator.next() {
                 Err(err) => {
                     dirent_path_prev.deref();
-                    if !is_root {
+                    if !is_root
+                        && root_basename.len() + 1 + basename.as_bytes().len() + 1
+                            < paths::MAX_PATH_BYTES
+                    {
                         let joined = paths::resolve_path::join_z_buf::<paths::platform::Auto>(
                             &mut buf[..],
                             &[root_basename, basename.as_bytes()],
@@ -6694,6 +6705,11 @@ impl NodeFS {
             // detect "this subtask is the root". The Rust caller passes `is_root`
             // explicitly, which is the same predicate (root subtask's basename *is*
             // root_path).
+            if !is_root
+                && basename.as_bytes().len() + 1 + utf8_name.len() + 1 >= paths::MAX_PATH_BYTES
+            {
+                continue;
+            }
             let name_to_copy: &[u8] = if is_root {
                 utf8_name
             } else {
@@ -6881,6 +6897,11 @@ impl NodeFS {
                 let utf8_name = current.name.slice();
 
                 // name_to_copy: bare name at root, else `basename/utf8_name` joined into `buf`.
+                if !is_root
+                    && basename_bytes.len() + 1 + utf8_name.len() + 1 >= paths::MAX_PATH_BYTES
+                {
+                    continue;
+                }
                 let name_to_copy: &[u8] = if is_root {
                     utf8_name
                 } else {
@@ -7240,6 +7261,7 @@ impl NodeFS {
                                     bun_jsc::MarkedArrayBuffer {
                                         buffer,
                                         owns_buffer: false,
+                                        pinned: false,
                                     },
                                 )),
                                 // This case shouldn't really happen.
@@ -7709,7 +7731,16 @@ impl NodeFS {
             // SAFETY: instance() returns the leaked singleton; INSTANCE_LOADED checked above.
             let fs = FileSystem::get();
             let parts = [fs.top_level_dir, path_slice];
-            let path_len = fs.abs_buf(&parts, &mut inbuf[..]).len();
+            let inbuf_len = inbuf.len();
+            let Some(joined) = fs.abs_buf_checked(&parts, &mut inbuf[..inbuf_len - 1]) else {
+                return Err(sys::Error {
+                    errno: E::ENAMETOOLONG as _,
+                    syscall: sys::Tag::realpath,
+                    path: args.path.slice().into(),
+                    ..Default::default()
+                });
+            };
+            let path_len = joined.len();
             inbuf[path_len] = 0;
             let path = ZStr::from_buf(&inbuf[..], path_len);
 

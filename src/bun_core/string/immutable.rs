@@ -19,14 +19,11 @@ pub use self::unicode::{
 pub use unicode_draft::CodePointZero;
 
 // Sub-modules (peer files under `src/string/immutable/`).
-#[path = "immutable/exact_size_matcher.rs"]
-pub mod exact_size_matcher;
-// AsciiVector/AsciiU16Vector are scalar `ScalarVec` wrappers (see below) so
-// the `if ENABLE_SIMD { .. }` branches type-check; `ENABLE_SIMD = false`
-// keeps them dead at runtime. PERF(port): swap to bun_highway.
 #[path = "immutable/escapeHTML.rs"]
 pub mod escape_html;
-pub use escape_html::{SCALAR_LENGTHS, html_escape_entity, xml_escape_entity};
+#[path = "immutable/exact_size_matcher.rs"]
+pub mod exact_size_matcher;
+pub use escape_html::{html_escape_entity, xml_escape_entity};
 #[path = "immutable/unicode.rs"]
 mod unicode_draft;
 #[path = "immutable/visible.rs"]
@@ -1535,138 +1532,6 @@ pub fn substring(self_: &[u8], start: Option<usize>, stop: Option<usize>) -> &[u
     &self_[sta.min(self_.len())..sto.min(self_.len())]
 }
 
-// PORT NOTE: AsciiVector / @Vector aliases — Zig SIMD types have no stable
-// Rust equivalent. Exposed as thin scalar wrappers so dead-SIMD branches
-// type-check; `ENABLE_SIMD = false` makes those branches unreachable at
-// runtime. Hot loops use scalar fallbacks with `// PERF(port)` markers.
-// TODO(perf): route through bun_highway/portable_simd and flip ENABLE_SIMD.
-pub const ENABLE_SIMD: bool = false;
-pub const ASCII_VECTOR_SIZE: usize = 16;
-pub const ASCII_U16_VECTOR_SIZE: usize = 8;
-
-/// Scalar stand-in for Zig `@Vector(N, T)` — just enough surface
-/// (`splat`/`from_slice`/`simd_eq`/`simd_gt`) for the `escape_html` SIMD
-/// branches to type-check. Every method is a plain elementwise loop.
-/// PERF(port): replace with `core::simd::Simd<T, N>` or `bun_highway` lanes.
-#[derive(Clone, Copy)]
-pub struct ScalarVec<T: Copy + Eq + Ord + Default, const N: usize>(pub [T; N]);
-
-/// Lane mask returned by `simd_eq`/`simd_gt`. `BitOr` combines masks; `any()`
-/// reduces to a single bool (Zig `@reduce(.Max, mask) == 1`).
-#[derive(Clone, Copy)]
-pub struct ScalarMask<const N: usize>(pub [bool; N]);
-
-impl<T: Copy + Eq + Ord + Default, const N: usize> ScalarVec<T, N> {
-    #[inline]
-    pub fn splat(v: T) -> Self {
-        Self([v; N])
-    }
-    #[inline]
-    pub fn from_slice(s: &[T]) -> Self {
-        let mut out = [T::default(); N];
-        out.copy_from_slice(&s[..N]);
-        Self(out)
-    }
-    #[inline]
-    pub fn simd_eq(self, other: Self) -> ScalarMask<N> {
-        let mut m = [false; N];
-        for i in 0..N {
-            m[i] = self.0[i] == other.0[i];
-        }
-        ScalarMask(m)
-    }
-    #[inline]
-    pub fn simd_gt(self, other: Self) -> ScalarMask<N> {
-        let mut m = [false; N];
-        for i in 0..N {
-            m[i] = self.0[i] > other.0[i];
-        }
-        ScalarMask(m)
-    }
-    #[inline]
-    pub fn simd_ge(self, other: Self) -> ScalarMask<N> {
-        let mut m = [false; N];
-        for i in 0..N {
-            m[i] = self.0[i] >= other.0[i];
-        }
-        ScalarMask(m)
-    }
-    #[inline]
-    pub fn simd_lt(self, other: Self) -> ScalarMask<N> {
-        let mut m = [false; N];
-        for i in 0..N {
-            m[i] = self.0[i] < other.0[i];
-        }
-        ScalarMask(m)
-    }
-    #[inline]
-    pub fn simd_le(self, other: Self) -> ScalarMask<N> {
-        let mut m = [false; N];
-        for i in 0..N {
-            m[i] = self.0[i] <= other.0[i];
-        }
-        ScalarMask(m)
-    }
-    #[inline]
-    pub fn simd_ne(self, other: Self) -> ScalarMask<N> {
-        let mut m = [false; N];
-        for i in 0..N {
-            m[i] = self.0[i] != other.0[i];
-        }
-        ScalarMask(m)
-    }
-}
-impl<const N: usize> core::ops::BitOr for ScalarMask<N> {
-    type Output = Self;
-    #[inline]
-    fn bitor(self, rhs: Self) -> Self {
-        let mut m = [false; N];
-        for i in 0..N {
-            m[i] = self.0[i] | rhs.0[i];
-        }
-        Self(m)
-    }
-}
-impl<const N: usize> core::ops::BitAnd for ScalarMask<N> {
-    type Output = Self;
-    #[inline]
-    fn bitand(self, rhs: Self) -> Self {
-        let mut m = [false; N];
-        for i in 0..N {
-            m[i] = self.0[i] & rhs.0[i];
-        }
-        Self(m)
-    }
-}
-impl<const N: usize> core::ops::BitOrAssign for ScalarMask<N> {
-    #[inline]
-    fn bitor_assign(&mut self, rhs: Self) {
-        for i in 0..N {
-            self.0[i] |= rhs.0[i];
-        }
-    }
-}
-impl<const N: usize> ScalarMask<N> {
-    #[inline]
-    pub fn any(self) -> bool {
-        self.0.iter().any(|&b| b)
-    }
-    /// Packs lane truth into the low N bits of a u64 (LSB = lane 0). Mirrors
-    /// `core::simd::Mask::to_bitmask` so `popcount`/`trailing_zeros` work.
-    #[inline]
-    pub fn to_bitmask(self) -> u64 {
-        debug_assert!(N <= 64);
-        let mut bits: u64 = 0;
-        for i in 0..N {
-            bits |= (self.0[i] as u64) << i;
-        }
-        bits
-    }
-}
-
-pub type AsciiVector = ScalarVec<u8, ASCII_VECTOR_SIZE>;
-pub type AsciiU16Vector = ScalarVec<u16, ASCII_U16_VECTOR_SIZE>;
-
 // (UTF16Replacement / utf16_codepoint{,_with_fffd} — deleted; re-exported from unicode_draft above)
 
 /// `w!("foo")` → `&'static [u16]` UTF-16 literal (ASCII-only). Zig's `bun.w`.
@@ -1911,14 +1776,39 @@ pub enum DecodeHexError {
     InvalidByteSequence,
 }
 
-pub fn decode_hex_to_bytes<Char: Copy + Into<u32>>(
+/// Source character types accepted by the hex decoder: `u8` (Latin-1) and
+/// `u16` (UTF-16). The associated function routes full pairs through the
+/// matching Highway kernel while `_decode_hex_to_bytes` keeps the generic
+/// scalar path for short inputs.
+pub trait HexChar: Copy + Into<u32> {
+    /// Decode up to `min(src.len() / 2, dst.len())` hex pairs with SIMD,
+    /// stopping at the first pair containing a non-hex character.
+    /// Returns the number of bytes written.
+    fn decode_hex_highway(src: &[Self], dst: &mut [u8]) -> usize;
+}
+
+impl HexChar for u8 {
+    #[inline(always)]
+    fn decode_hex_highway(src: &[Self], dst: &mut [u8]) -> usize {
+        highway::decode_hex(src, dst)
+    }
+}
+
+impl HexChar for u16 {
+    #[inline(always)]
+    fn decode_hex_highway(src: &[Self], dst: &mut [u8]) -> usize {
+        highway::decode_hex_u16(src, dst)
+    }
+}
+
+pub fn decode_hex_to_bytes<Char: HexChar>(
     destination: &mut [u8],
     source: &[Char],
 ) -> Result<usize, DecodeHexError> {
     _decode_hex_to_bytes::<Char, false>(destination, source)
 }
 
-pub fn decode_hex_to_bytes_truncate<Char: Copy + Into<u32>>(
+pub fn decode_hex_to_bytes_truncate<Char: HexChar>(
     destination: &mut [u8],
     source: &[Char],
 ) -> usize {
@@ -1926,10 +1816,33 @@ pub fn decode_hex_to_bytes_truncate<Char: Copy + Into<u32>>(
 }
 
 #[inline]
-fn _decode_hex_to_bytes<Char: Copy + Into<u32>, const TRUNCATE: bool>(
+fn _decode_hex_to_bytes<Char: HexChar, const TRUNCATE: bool>(
     destination: &mut [u8],
     source: &[Char],
 ) -> Result<usize, DecodeHexError> {
+    // Highway fast path: decode whole pairs in bulk, stopping at the first
+    // invalid pair — the same semantics as the scalar loop below. Short inputs
+    // stay scalar; the dynamically-dispatched FFI call isn't worth it for a
+    // handful of pairs.
+    const HIGHWAY_MIN_PAIRS: usize = 16;
+    let pairs = destination.len().min(source.len() / 2);
+    if pairs >= HIGHWAY_MIN_PAIRS {
+        let written = Char::decode_hex_highway(&source[..pairs * 2], &mut destination[..pairs]);
+        if written < pairs {
+            // Stopped at an invalid character.
+            if TRUNCATE {
+                return Ok(written);
+            }
+            return Err(DecodeHexError::InvalidByteSequence);
+        }
+        if !TRUNCATE && destination.len() > pairs && source.len() > pairs * 2 {
+            // Destination space left over with a trailing lone hex digit
+            // (mirrors the `!remain.is_empty() && !input.is_empty()` check below).
+            return Err(DecodeHexError::InvalidByteSequence);
+        }
+        return Ok(pairs);
+    }
+
     let dest_len = destination.len();
     let mut remain = &mut destination[..];
     let mut input = source;
@@ -1980,9 +1893,15 @@ pub fn encode_bytes_to_hex(destination: &mut [u8], source: &[u8]) -> usize {
 
     let to_read = to_write / 2;
 
-    // PERF(port): Zig had a @Vector(16,u8) interlace fast path. Scalar loop here;
-    // consider a portable_simd shuffle or LUT if hot.
-    crate::fmt::bytes_to_hex_lower(&source[..to_read], &mut destination[..to_read * 2])
+    // Runtime-dispatched SIMD kernel for bulk encodes (Buffer.toString("hex"));
+    // the scalar LUT loop wins below this size because of the dispatch overhead.
+    const HIGHWAY_MIN_LEN: usize = 64;
+    if to_read >= HIGHWAY_MIN_LEN {
+        highway::encode_hex_lower(&source[..to_read], &mut destination[..to_write]);
+        return to_write;
+    }
+
+    crate::fmt::bytes_to_hex_lower(&source[..to_read], &mut destination[..to_write])
 }
 
 /// Leave a single leading char
@@ -2837,7 +2756,6 @@ pub use crate::string::escape_reg_exp::{escape_reg_exp, escape_reg_exp_for_packa
 // TODO(port): re-export the rest of the transcoding suite from unicode_draft —
 //   to_utf8_alloc / to_utf16_alloc / convert_* / copy_*_into_* / EncodeIntoResult / BOM / etc.
 // TODO(port): re-export paths::{to_w_path, basename, add_nt_path_prefix, ...}
-// TODO(port): re-export escape_html::{escape_html_for_latin1_input, escape_html_for_utf16_input}
 
 crate::declare_scope!(STR, hidden);
 // `log` is `bun.Output.scoped(.STR, .hidden)` — use `crate::scoped_log!(STR, ...)`.
@@ -3049,6 +2967,12 @@ pub fn convert_utf8_to_utf16_in_buffer<'a>(buf: &'a mut [u16], input: &[u8]) -> 
     if input.is_empty() {
         return &mut buf[..0];
     }
+    assert!(
+        input.len() <= buf.len() || element_length_utf8_into_utf16(input) <= buf.len(),
+        "convert_utf8_to_utf16_in_buffer: buf too small (have {} u16 for {} input bytes)",
+        buf.len(),
+        input.len(),
+    );
     let r = simdutf::convert::utf8::to::utf16::with_errors::le(input, buf);
     if r.is_successful() {
         return &mut buf[..r.count];

@@ -4438,10 +4438,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         loc: bun_ast::Loc,
     ) -> Result<js_ast::LocRef, bun_core::Error> {
-        // PORT NOTE: Zig `try p.source.path.name.nonUniqueNameString(arena)` allocates the
-        // sanitized identifier, then `allocPrint` formats `{s}_default`. bun_paths::fs::PathName<'static>
-        // exposes the same sanitizer as a Display formatter (`fmt_identifier()`), so format once
-        // and copy into the bump arena.
         let identifier: &'a [u8] = {
             let s = format!("{}_default", self.source.path.name().fmt_identifier());
             self.arena.alloc_slice_copy(s.as_bytes())

@@ -1923,6 +1923,46 @@ describe("should handle relative location in the redirect, issue#5635", () => {
   });
 });
 
+describe("maxRedirects", () => {
+  let server: Server;
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      async fetch(request: Request) {
+        const url = new URL(request.url);
+        if (url.pathname.startsWith("/hop/")) {
+          const hop = Number(url.pathname.slice("/hop/".length));
+          if (hop >= 4) {
+            return new Response("done");
+          }
+          return new Response(null, { status: 302, headers: { Location: `/hop/${hop + 1}` } });
+        }
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+  });
+  afterAll(() => {
+    server.stop(true);
+  });
+
+  it("rejects once the chain exceeds maxRedirects", async () => {
+    expect(fetch(`${server.url}hop/0`, { maxRedirects: 2 })).rejects.toThrow("redirected too many times");
+  });
+
+  it("follows the chain when maxRedirects is large enough", async () => {
+    const resp = await fetch(`${server.url}hop/0`, { maxRedirects: 4 });
+    expect(resp.status).toBe(200);
+    expect(await resp.text()).toBe("done");
+    expect(new URL(resp.url).pathname).toBe("/hop/4");
+  });
+
+  it("rejects invalid values", async () => {
+    expect(async () => await fetch(`${server.url}hop/0`, { maxRedirects: -1 })).toThrow();
+    expect(async () => await fetch(`${server.url}hop/0`, { maxRedirects: 1.5 })).toThrow();
+    expect(async () => await fetch(`${server.url}hop/0`, { maxRedirects: NaN })).toThrow();
+  });
+});
+
 it.concurrent("should allow very long redirect URLS", async () => {
   const Location = "/" + "B".repeat(7 * 1024);
   using server = Bun.serve({
@@ -2542,4 +2582,64 @@ it("drops a custom Host header when following a cross-origin redirect", async ()
     headers: { "Host": "tenant.shared-cdn.example" },
   });
   expect(await direct.text()).toBe("tenant.shared-cdn.example");
+});
+
+it("fetch() with a fixed-size body drops a caller-supplied Transfer-Encoding header and sends only Content-Length", async () => {
+  // RFC 9112 section 6.2/6.3: a sender must never emit both Transfer-Encoding and
+  // Content-Length on the same message. For a fixed-size (non-streaming) body,
+  // fetch() writes the body as raw bytes framed by a computed Content-Length, so a
+  // caller-supplied "Transfer-Encoding: chunked" header (e.g. headers copied wholesale
+  // from an inbound request in a gateway) must be dropped rather than forwarded
+  // alongside Content-Length, where a TE-preferring upstream would mis-frame the body.
+  const requests: string[] = [];
+  await using server = net.createServer(socket => {
+    let raw = "";
+    socket.on("data", data => {
+      raw += data.toString("latin1");
+      const headerEnd = raw.indexOf("\r\n\r\n");
+      if (headerEnd === -1) return;
+      const head = raw.slice(0, headerEnd);
+      const contentLength = Number(/^content-length:\s*(\d+)\s*$/im.exec(head)?.[1] ?? 0);
+      if (raw.length < headerEnd + 4 + contentLength) return;
+      requests.push(raw);
+      raw = "";
+      socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
+    });
+  });
+  await once(server.listen(0, "localhost"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  // A body whose raw bytes look like a terminal chunk followed by a second request.
+  const body = "0\r\n\r\nGET /other HTTP/1.1\r\nHost: upstream\r\nX-Pad: junk";
+  const bodyLength = Buffer.byteLength(body);
+
+  // Caller-supplied Transfer-Encoding header alongside a buffered (string) body.
+  const withTE = await fetch(`http://localhost:${port}/`, {
+    method: "POST",
+    headers: { "Transfer-Encoding": "chunked", "Content-Type": "text/plain" },
+    body,
+  });
+  expect(await withTE.text()).toBe("OK");
+
+  // The same request without the header still works the same way.
+  const plain = await fetch(`http://localhost:${port}/`, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body,
+  });
+  expect(await plain.text()).toBe("OK");
+
+  expect(requests).toHaveLength(2);
+  for (const rawRequest of requests) {
+    const [head, ...bodyParts] = rawRequest.split("\r\n\r\n");
+    const headerLines = head
+      .split("\r\n")
+      .slice(1)
+      .map(line => line.toLowerCase());
+    // Exactly one framing header reaches the wire: the computed Content-Length.
+    expect(headerLines.filter(line => line.startsWith("transfer-encoding:"))).toEqual([]);
+    expect(headerLines.filter(line => line.startsWith("content-length:"))).toEqual([`content-length: ${bodyLength}`]);
+    // The body is the raw bytes described by Content-Length, with no chunk framing added.
+    expect(bodyParts.join("\r\n\r\n")).toBe(body);
+  }
 });

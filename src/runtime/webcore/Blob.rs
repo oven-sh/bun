@@ -83,7 +83,7 @@ pub extern "C" fn blob_store_array_buffer_deallocator(_bytes: *mut c_void, ctx: 
 /// string. Stricter than `is_all_ascii`: also rejects control characters such
 /// as CR/LF, which would otherwise be stored in `content_type` and written
 /// verbatim into outgoing HTTP headers.
-fn is_valid_blob_type(slice: &[u8]) -> bool {
+pub(crate) fn is_valid_blob_type(slice: &[u8]) -> bool {
     slice.iter().all(|&c| matches!(c, 0x20..=0x7E))
 }
 
@@ -724,8 +724,18 @@ impl BlobExt for Blob {
         &self,
         writer: &mut W,
     ) -> Result<(), bun_core::Error> {
+        let is_memory_backed = if let Some(store) = self.store.get() {
+            matches!(store.data, store::Data::Bytes(_))
+        } else {
+            false
+        };
+
         writer.write_int_le::<u8>(SERIALIZATION_VERSION)?;
-        writer.write_int_le::<u64>(self.offset.get())?;
+        writer.write_int_le::<u64>(if is_memory_backed {
+            0
+        } else {
+            self.offset.get()
+        })?;
 
         let ct = self.content_type_slice();
         writer.write_int_le::<u32>(ct.len() as u32)?;
@@ -744,9 +754,19 @@ impl BlobExt for Blob {
 
         writer.write_int_le::<u8>(store_tag as u8)?;
 
-        self.resolve_size();
         if let Some(store) = self.store.get() {
-            store.serialize(writer)?;
+            if let store::Data::Bytes(bytes) = &store.data {
+                let view = self.shared_view();
+                writer.write_int_le::<u32>(view.len() as u32)?;
+                writer.write_all(view)?;
+
+                let stored_name = bytes.stored_name.slice();
+                writer.write_int_le::<u32>(stored_name.len() as u32)?;
+                writer.write_all(stored_name)?;
+            } else {
+                self.resolve_size();
+                store.serialize(writer)?;
+            }
         }
 
         writer.write_int_le::<u8>(self.is_jsdom_file.get() as u8)?;
@@ -858,23 +878,16 @@ impl BlobExt for Blob {
     }
 
     fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob {
-        // PERF(port): was arena bulk-free + stack-fallback alloc — profile if it shows up on a hot path.
-
-        let mut hex_buf = [0u8; 70];
-        let boundary = {
+        // "----WebKitFormBoundary" (22 bytes) + 32 lowercase-hex chars of a fresh UUID.
+        const BOUNDARY_PREFIX: &[u8; 22] = b"----WebKitFormBoundary";
+        let mut boundary_buf = [0u8; BOUNDARY_PREFIX.len() + 32];
+        let boundary: &[u8] = {
             // SAFETY: bun_vm() never returns null for a Bun-owned global.
             let random = global_this.bun_vm().as_mut().rare_data().next_uuid().bytes;
-            use std::io::Write;
-            let mut cursor = &mut hex_buf[..];
+            boundary_buf[..BOUNDARY_PREFIX.len()].copy_from_slice(BOUNDARY_PREFIX);
             // Zig `{x}` on `[16]u8` emits 32 contiguous lowercase-hex chars.
-            // Rust's `{:x?}` on `[u8;16]` is Debug formatting (`[a1, b2, …]`),
-            // so write the prefix then encode bytes one at a time.
-            cursor.write_all(b"----WebKitFormBoundary").unwrap();
-            for b in random {
-                write!(&mut cursor, "{b:02x}").expect("infallible: in-memory write");
-            }
-            let written = 70 - cursor.len();
-            &hex_buf[..written]
+            bun_core::fmt::bytes_to_hex_lower(&random, &mut boundary_buf[BOUNDARY_PREFIX.len()..]);
+            &boundary_buf
         };
 
         let mut context = FormDataContext {
@@ -883,6 +896,9 @@ impl BlobExt for Blob {
             failed: false,
             global_this,
         };
+        // Size the node list up front: a file entry pushes at most 13 slices, a
+        // string entry 8, plus 3 for the closing boundary.
+        context.joiner.reserve(form_data.count() * 13 + 3);
 
         // PORT NOTE (layering): `bun_jsc::DOMFormData::for_each` yields the
         // lower-tier `bun_jsc::dom_form_data::FormDataEntry`, whose `blob`
@@ -945,11 +961,9 @@ impl BlobExt for Blob {
             for_each_thunk,
         );
         if context.failed {
-            // The joiner's Node structs are owned by the (former) arena, but each
-            // node's data carries its own owner allocator — heap for non-ASCII
-            // name/value slices and the NodeFS read_file result buffer. Drop the
-            // joiner (Drop runs StringJoiner::deinit) so every heap-owned slice
-            // already pushed is freed.
+            // Drop the joiner (Drop runs StringJoiner::deinit) so every
+            // heap-owned slice already pushed — escaped names, non-ASCII
+            // conversions, NodeFS read_file result buffers — is freed.
             drop(context.joiner);
             return Blob::init_empty(global_this);
         }
@@ -968,16 +982,10 @@ impl BlobExt for Blob {
         let blob = Blob::init_with_store(store, global_this);
         // Always allocate content_type with the default allocator so deinit() can
         // free it unconditionally.
-        let mut ct = Vec::new();
-        {
-            use std::io::Write;
-            write!(
-                &mut ct,
-                "multipart/form-data; boundary={}",
-                bstr::BStr::new(boundary)
-            )
-            .unwrap();
-        }
+        const CONTENT_TYPE_PREFIX: &[u8] = b"multipart/form-data; boundary=";
+        let mut ct = Vec::with_capacity(CONTENT_TYPE_PREFIX.len() + boundary.len());
+        ct.extend_from_slice(CONTENT_TYPE_PREFIX);
+        ct.extend_from_slice(boundary);
         blob.content_type
             .set(bun_core::heap::into_raw(ct.into_boxed_slice()));
         blob.content_type_allocated.set(true);
@@ -1368,8 +1376,7 @@ impl BlobExt for Blob {
         }
         // Zig: `var blob_internal: PathOrBlob = .{ .blob = this.* }` — a raw
         // bitwise copy with NO ref bumps; `write_file_internal` then `dupe()`s
-        // its own owned `destination_blob` from it. `borrowed_view()` is the
-        // sound Rust spelling — see its doc for why `dupe()` would leak here.
+        // its own owned `destination_blob` from it.
         let mut blob_internal = PathOrBlob::Blob(Box::new(self.borrowed_view()));
         write_file_internal(
             global_this,
@@ -2523,14 +2530,13 @@ impl BlobExt for Blob {
             unsafe { (*s.as_ptr()).is_all_ascii = Some(is_all_ascii) };
             store = Some(s);
         }
-        Blob {
-            size: Cell::new(len as SizeType),
-            store: JsCell::new(store),
-            content_type: Cell::new(std::ptr::from_ref::<[u8]>(b"" as &'static [u8])),
-            global_this: Cell::new(global_this),
-            charset: Cell::new(strings::AsciiStatus::from_bool(Some(is_all_ascii))),
-            ..Default::default()
-        }
+        let blob = Blob::default();
+        blob.size.set(len as SizeType);
+        blob.store.set(store);
+        blob.global_this.set(global_this);
+        blob.charset
+            .set(strings::AsciiStatus::from_bool(Some(is_all_ascii)));
+        blob
     }
 
     fn create_with_bytes_and_allocator(
@@ -2539,21 +2545,20 @@ impl BlobExt for Blob {
         was_string: bool,
     ) -> Blob {
         let len = bytes.len();
-        Blob {
-            size: Cell::new(len as SizeType),
-            store: JsCell::new(if len > 0 {
-                Some(Store::init(bytes))
-            } else {
-                None
-            }),
-            content_type: Cell::new(if was_string {
-                std::ptr::from_ref::<[u8]>(bun_http_types::MimeType::TEXT.value.as_ref())
-            } else {
-                std::ptr::from_ref::<[u8]>(b"" as &'static [u8])
-            }),
-            global_this: Cell::new(global_this),
-            ..Default::default()
+        let blob = Blob::default();
+        blob.size.set(len as SizeType);
+        blob.store.set(if len > 0 {
+            Some(Store::init(bytes))
+        } else {
+            None
+        });
+        if was_string {
+            blob.content_type.set(std::ptr::from_ref::<[u8]>(
+                bun_http_types::MimeType::TEXT.value.as_ref(),
+            ));
         }
+        blob.global_this.set(global_this);
+        blob
     }
 
     fn try_create(
@@ -2711,7 +2716,7 @@ impl BlobExt for Blob {
         if bom == Some(strings::BOM::Utf16Le) {
             let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
             // Mirrors Zig `bun.reinterpretSlice(u16, buf)`: drop a trailing odd byte
-            // (`@divTrunc`) so `bytemuck::cast_slice` cannot panic on slop.
+            // (`@divTrunc`).
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
             //
             // ZIG PARITY: this branch intentionally does NOT `self.detach()` for
@@ -2719,8 +2724,18 @@ impl BlobExt for Blob {
             // returns without detaching, unlike `toJSONWithBytes`. Any change to
             // that asymmetry belongs upstream in the Zig source, not here.
             let buf = &buf[..buf.len() & !1];
-            let out =
-                OwnedString::new(BunString::clone_utf16(bytemuck::cast_slice::<u8, u16>(buf)));
+            let out = match bytemuck::try_cast_slice::<u8, u16>(buf) {
+                Ok(units) => OwnedString::new(BunString::clone_utf16(units)),
+                Err(_) => {
+                    let units: Vec<u16> = buf
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|pair| u16::from_le_bytes(*pair))
+                        .collect();
+                    OwnedString::new(BunString::clone_utf16(&units))
+                }
+            };
             return out.to_js(global);
         }
 
@@ -2936,11 +2951,21 @@ impl BlobExt for Blob {
 
         if bom == Some(strings::BOM::Utf16Le) {
             // Mirrors Zig `bun.reinterpretSlice(u16, buf)`: drop a trailing odd byte
-            // (`@divTrunc`) so `bytemuck::cast_slice` cannot panic on slop.
+            // (`@divTrunc`).
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
             let buf = &buf[..buf.len() & !1];
-            let mut out =
-                OwnedString::new(BunString::clone_utf16(bytemuck::cast_slice::<u8, u16>(buf)));
+            let mut out = match bytemuck::try_cast_slice::<u8, u16>(buf) {
+                Ok(units) => OwnedString::new(BunString::clone_utf16(units)),
+                Err(_) => {
+                    let units: Vec<u16> = buf
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|pair| u16::from_le_bytes(*pair))
+                        .collect();
+                    OwnedString::new(BunString::clone_utf16(&units))
+                }
+            };
             // PORT NOTE: Zig used `defer { free; detach }`. Reshaped to compute the
             // result first, then perform the deferred work explicitly — capturing
             // `&mut self` in a scopeguard closure conflicts with later uses below.
@@ -3306,10 +3331,7 @@ impl BlobExt for Blob {
     ) -> JsResult<Blob> {
         let mut current = arg;
         if current.is_undefined_or_null() {
-            return Ok(Blob {
-                global_this: Cell::new(global),
-                ..Default::default()
-            });
+            return Ok(Blob::init_empty(global));
         }
 
         let mut top_value = current;
@@ -3322,10 +3344,7 @@ impl BlobExt for Blob {
                 let mut top_iter = jsc::JSArrayIterator::init(current, global)?;
                 might_only_be_one_thing = top_iter.len == 1;
                 if top_iter.len == 0 {
-                    return Ok(Blob {
-                        global_this: Cell::new(global),
-                        ..Default::default()
-                    });
+                    return Ok(Blob::init_empty(global));
                 }
                 if might_only_be_one_thing {
                     top_value = top_iter.next()?.unwrap();
@@ -3577,13 +3596,22 @@ impl BlobExt for Blob {
                                         // or resizes this buffer before `done()`.
                                         joiner.push_cloned(buf.byte_slice());
                                     } else {
-                                        joiner.push_static(buf.byte_slice());
+                                        // SAFETY: the prescan above proved no remaining
+                                        // part can run user JS, so this buffer (rooted
+                                        // via `_keep`/`arg`) stays attached and valid
+                                        // until `joiner.done()` below.
+                                        joiner.push(unsafe {
+                                            bun_ptr::detach_lifetime(buf.byte_slice())
+                                        });
                                     }
                                     continue;
                                 }
                                 jsc::JSType::Array | jsc::JSType::DerivedArray => {
-                                    could_have_non_ascii = true;
-                                    break;
+                                    let sliced = item.to_slice_clone(global)?;
+                                    could_have_non_ascii =
+                                        could_have_non_ascii || sliced.is_allocated();
+                                    joiner.push_cloned(sliced.slice());
+                                    continue;
                                 }
                                 jsc::JSType::DOMWrapper => {
                                     if let Some(blob) = item.as_class_ref::<Blob>() {
@@ -3594,22 +3622,31 @@ impl BlobExt for Blob {
                                         if parts_can_run_js {
                                             joiner.push_cloned(blob.shared_view());
                                         } else {
-                                            joiner.push_static(blob.shared_view());
+                                            // SAFETY: the prescan above proved no
+                                            // remaining part can run user JS, so this
+                                            // Blob (rooted via `_keep`/`arg`) keeps its
+                                            // Store alive until `joiner.done()` below.
+                                            joiner.push(unsafe {
+                                                bun_ptr::detach_lifetime(blob.shared_view())
+                                            });
                                         }
                                         continue;
                                     } else {
-                                        let sliced = current.to_slice_clone(global)?;
+                                        let sliced = item.to_slice_clone(global)?;
                                         could_have_non_ascii =
                                             could_have_non_ascii || sliced.is_allocated();
                                         joiner.push_cloned(sliced.slice());
+                                        continue;
                                     }
                                 }
-                                _ => {}
+                                _ => {
+                                    let sliced = item.to_slice_clone(global)?;
+                                    could_have_non_ascii =
+                                        could_have_non_ascii || sliced.is_allocated();
+                                    joiner.push_cloned(sliced.slice());
+                                }
                             }
                         }
-
-                        // `reserve(iter.len)` above guarantees no realloc here.
-                        stack.push(item);
                     }
                 }
 
@@ -3643,7 +3680,11 @@ impl BlobExt for Blob {
                 | jsc::JSType::BigUint64Array
                 | jsc::JSType::DataView => {
                     let buf = current.as_array_buffer(global).unwrap();
-                    joiner.push_static(buf.slice());
+                    // SAFETY: this arm is only reached when the typed array is the
+                    // top-level value (the walk stack is empty), so no user JS runs
+                    // between this push and `joiner.done()` below; `_keep`/`arg` keeps
+                    // the buffer alive for that span.
+                    joiner.push(unsafe { bun_ptr::detach_lifetime(buf.slice()) });
                     could_have_non_ascii = true;
                 }
 
@@ -3934,7 +3975,7 @@ where
 /// `*jsc.JSGlobalObject`), so they are stored as plain references rather than
 /// raw pointers.
 struct FormDataContext<'a> {
-    joiner: StringJoiner,
+    joiner: StringJoiner<'a>,
     boundary: &'a [u8], // borrowed; outlives the joiner
     failed: bool,
     global_this: &'a JSGlobalObject,
@@ -3942,13 +3983,14 @@ struct FormDataContext<'a> {
 
 /// WHATWG HTML "multipart/form-data encoding algorithm": percent-encode `"`,
 /// CR and LF in field names and filenames so they cannot terminate the
-/// quoted-string or inject part headers.
-fn escape_form_data_name(bytes: Vec<u8>) -> Box<[u8]> {
+/// quoted-string or inject part headers. Returns `None` when nothing needs
+/// escaping so the caller can keep using the original bytes without a copy.
+fn escape_form_data_name(bytes: &[u8]) -> Option<Box<[u8]>> {
     if !bytes.iter().any(|&b| matches!(b, b'"' | b'\r' | b'\n')) {
-        return bytes.into_boxed_slice();
+        return None;
     }
     let mut out = Vec::with_capacity(bytes.len() + 6);
-    for &b in &bytes {
+    for &b in bytes {
         match b {
             b'"' => out.extend_from_slice(b"%22"),
             b'\r' => out.extend_from_slice(b"%0D"),
@@ -3956,10 +3998,37 @@ fn escape_form_data_name(bytes: Vec<u8>) -> Box<[u8]> {
             _ => out.push(b),
         }
     }
-    out.into_boxed_slice()
+    Some(out.into_boxed_slice())
 }
 
 impl FormDataContext<'_> {
+    /// Append the UTF-8 view of a form-data string without copying it: the
+    /// borrowed case points into a WTF string owned by the `DOMFormData` being
+    /// serialized, which outlives `joiner.done()` in `from_dom_form_data`
+    /// (Zig: `joiner.push(slice, slice.allocator.get())`); an owned slice
+    /// (UTF-16 / non-ASCII Latin-1 conversion) transfers its allocation to the
+    /// joiner. When `escape` is set, `"`/CR/LF are percent-encoded into a copy.
+    fn push_string_slice(joiner: &mut StringJoiner<'_>, slice: ZigStringSlice, escape: bool) {
+        if escape {
+            if let Some(escaped) = escape_form_data_name(slice.slice()) {
+                joiner.push_owned(escaped);
+                return;
+            }
+        }
+        if matches!(slice, ZigStringSlice::Owned(_)) {
+            // `into_vec` moves the buffer out of an `Owned` slice without copying.
+            joiner.push_owned(slice.into_vec().into_boxed_slice());
+        } else if matches!(slice, ZigStringSlice::Static(..)) {
+            // SAFETY: `Static` bytes are owned by the `DOMFormData` being serialized
+            // (never freed), which outlives `joiner.done()` in `from_dom_form_data`.
+            joiner.push(unsafe { bun_ptr::detach_lifetime(slice.slice()) });
+        } else {
+            // WTF-backed slices release their pin on drop — copy rather than
+            // borrow past it. (`ZigString::to_slice` never produces these.)
+            joiner.push_cloned(slice.slice());
+        }
+    }
+
     pub(crate) fn on_entry(&mut self, name: ZigString, entry: FormDataEntry<'_>) {
         if self.failed {
             return;
@@ -3975,22 +4044,20 @@ impl FormDataContext<'_> {
         joiner.push_static(b"\r\n");
 
         joiner.push_static(b"Content-Disposition: form-data; name=\"");
-        // PORT NOTE: Zig `joiner.push(slice, allocator?)` encoded ownership in
-        // the optional allocator. `StringJoiner::push_owned` is the Rust
-        // equivalent; `ZigStringSlice::into_vec` moves out the buffer if owned
-        // or copies if borrowed (matching Zig's `null`-allocator borrow case).
-        joiner.push_owned(escape_form_data_name(name.to_slice().into_vec()));
+        Self::push_string_slice(joiner, name.to_slice(), true);
 
         match entry {
             FormDataEntry::String(value) => {
                 joiner.push_static(b"\"\r\n\r\n");
-                joiner.push_owned(value.to_slice().into_vec().into_boxed_slice());
+                Self::push_string_slice(joiner, value.to_slice(), false);
             }
             FormDataEntry::File { blob, filename } => {
                 joiner.push_static(b"\"; filename=\"");
-                joiner.push_owned(escape_form_data_name(filename.to_slice().into_vec()));
+                Self::push_string_slice(joiner, filename.to_slice(), true);
                 joiner.push_static(b"\"\r\n");
 
+                // Borrowed from the blob, which the `DOMFormData` keeps alive
+                // past `joiner.done()` (Zig used `pushStatic` here too).
                 let blob_ct = blob.content_type_slice();
                 let content_type: &[u8] = if !blob_ct.is_empty()
                     && !blob_ct.iter().any(|&b| matches!(b, b'\r' | b'\n'))
@@ -4000,7 +4067,10 @@ impl FormDataContext<'_> {
                     b"application/octet-stream"
                 };
                 joiner.push_static(b"Content-Type: ");
-                joiner.push_cloned(content_type);
+                // SAFETY: either a `'static` literal or borrowed from the entry's Blob,
+                // which the `DOMFormData` keeps alive past `joiner.done()` in
+                // `from_dom_form_data`.
+                joiner.push(unsafe { bun_ptr::detach_lifetime(content_type) });
                 joiner.push_static(b"\r\n\r\n");
 
                 if blob.store.get().is_some() {
@@ -4052,7 +4122,10 @@ impl FormDataContext<'_> {
                             }
                         }
                         store::Data::Bytes(_) => {
-                            joiner.push_cloned(blob.shared_view());
+                            // SAFETY: borrowed from the blob's store, which the
+                            // `DOMFormData` entry keeps alive until after
+                            // `joiner.done()` (Zig used `pushStatic` here too).
+                            joiner.push(unsafe { bun_ptr::detach_lifetime(blob.shared_view()) });
                         }
                     }
                 }
@@ -4115,6 +4188,9 @@ fn read_slice<B: AsRef<[u8]>>(
     reader: &mut bun_io::FixedBufferStream<B>,
     len: usize,
 ) -> Result<Vec<u8>, bun_core::Error> {
+    if len > reader.buffer.as_ref().len().saturating_sub(reader.pos) {
+        return Err(bun_core::err!("TooSmall"));
+    }
     let mut slice = vec![0u8; len];
     reader
         .read_exact(&mut slice)
@@ -4688,15 +4764,7 @@ pub fn write_file_with_source_destination(
         }));
 
         // Zig passes `destination_blob.*` / `source_blob.*` (raw struct copy,
-        // +0 store ref) and `WriteFile.create` then calls `store.?.ref()`. The
-        // Rust port folds that pair into RAII: callers hand over a +1 `Blob`
-        // via `borrowed_view()` (clones the `StoreRef`/`name`; `content_type`
-        // is aliased — unused by `WriteFile*`, no `Drop`) and
-        // `WriteFile::create` does NOT re-bump (see PORT NOTE in
-        // `write_file.rs::create_with_ctx`); the matching deref runs when
-        // `heap::take` drops the embedded `StoreRef`/`name` in `then`/`deinit`.
-        // Net ref balance is identical. `dupe()` is wrong here: it boxes a
-        // fresh `content_type`, which is not released by `Blob`'s drop glue.
+        // +0 store ref) and `WriteFile.create` then calls `store.?.ref()`.
         #[cfg(windows)]
         {
             let promise = JSPromise::create(ctx);
@@ -5234,10 +5302,6 @@ pub fn write_file_internal(
                             bun_core::heap::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
                                 global_this: bun_ptr::BackRef::new(global_this),
                                 // Zig moves `destination_blob` by value into the task
-                                // (single store ref transfers; outer local is dead after the
-                                // early return). `dupe()` here would leak one StoreRef since
-                                // Blob has no Drop. Take the value and leave an empty blob
-                                // behind so the residual local owns no store.
                                 file_blob: core::mem::replace(
                                     &mut destination_blob,
                                     Blob::init_empty(global_this),
@@ -6506,8 +6570,6 @@ impl Any {
                     // `StoreRef` exposes interior-mutable `data_mut()` (no DerefMut).
                     let internal = s.data_mut().as_bytes_mut().to_internal_blob();
                     // PORT NOTE: Zig deref's the store; StoreRef::drop on replace handles it.
-                    // `content_type` is a raw pointer not covered by any field's
-                    // drop glue — free it explicitly.
                     blob.free_content_type();
                     *self = Any::InternalBlob(internal);
                     return;
@@ -6807,10 +6869,6 @@ impl Any {
     pub fn detach(&mut self) {
         match self {
             Any::Blob(b) => {
-                // `content_type` is a raw `*const [u8]` not covered by `Blob`'s drop
-                // glue; release it here so a heap-owned content_type (e.g. the
-                // `multipart/form-data; boundary=…` string from `from_dom_form_data`)
-                // doesn't leak when the AnyBlob is torn down.
                 b.free_content_type();
                 b.detach();
                 *self = Any::Blob(Blob::default());

@@ -487,7 +487,47 @@ impl NetworkTask {
             }
 
             // This actually duplicates the string! So we defer deref the WTF managed one above.
-            break 'blk tmp.to_owned_slice().into_boxed_slice();
+            let url_bytes = tmp.to_owned_slice().into_boxed_slice();
+
+            {
+                let joined = URL::parse(&url_bytes);
+                let registry = scope.url.url();
+                let registry_dir_end =
+                    strings::last_index_of_char(registry.pathname, b'/').map_or(0, |i| i + 1);
+                let registry_dir = &registry.pathname[..registry_dir_end];
+                if !joined.protocol.eq_ignore_ascii_case(registry.protocol)
+                    || !joined.hostname.eq_ignore_ascii_case(registry.hostname)
+                    || joined.get_port_auto() != registry.get_port_auto()
+                    || !joined.pathname.starts_with(registry_dir)
+                {
+                    if !is_optional {
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Invalid package name {}: manifest URL {} is not on registry {}",
+                                quote(name),
+                                quote(&url_bytes),
+                                quote(scope.url.href()),
+                            ),
+                        );
+                    } else {
+                        log.add_warning_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Invalid package name {}: manifest URL {} is not on registry {}",
+                                quote(name),
+                                quote(&url_bytes),
+                                quote(scope.url.href()),
+                            ),
+                        );
+                    }
+                    return Err(ForManifestError::InvalidURL);
+                }
+            }
+
+            break 'blk url_bytes;
         };
 
         let mut last_modified: &[u8] = b"";

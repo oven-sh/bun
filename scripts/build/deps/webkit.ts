@@ -3,7 +3,11 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "782504c968e2ae06a511c9e7a4d48318b2a23263";
+// oven-sh/WebKit main: macOS + Windows artifacts cross-compiled on Linux,
+// -lto variants built with ThinLTO (per-module summaries for cross-language
+// importing), and the Windows ICU data table filtered + per-item zstd
+// compressed (lazily decompressed via bun_icu_decompress.cpp).
+export const WEBKIT_VERSION = "963f8758c29e965471c191668d5776a1a1b014b6";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -88,9 +92,20 @@ function prebuiltDestDir(cfg: Config): string {
   const v = cfg.webkitVersion;
   const version16 = v.startsWith("autobuild-") ? v.slice("autobuild-".length) : v.slice(0, 16);
   // Cross-compiled targets share a host (and cache dir) with native builds,
-  // so include os+arch in the key — otherwise a FreeBSD/arm64 extraction
-  // collides with a Linux/x64 one at the same WebKit version.
-  const osKey = cfg.freebsd ? "-freebsd" : cfg.abi === "android" ? "-android" : "";
+  // so include os+arch in the key — otherwise a FreeBSD/arm64, macOS/x64, or
+  // Windows-cross extraction collides with a Linux/x64 one at the same WebKit
+  // version. Windows is keyed only when cross-compiling so native Windows
+  // dev machines keep their existing cache dirs.
+  const osKey =
+    cfg.windows && cfg.host.os !== "windows"
+      ? "-windows"
+      : cfg.freebsd
+        ? "-freebsd"
+        : cfg.darwin
+          ? "-macos"
+          : cfg.abi === "android"
+            ? "-android"
+            : "";
   const archKey = cfg.arm64 ? "-arm64" : "";
   return resolve(cfg.cacheDir, `webkit-${version16}${osKey}${archKey}${prebuiltSuffix(cfg)}`);
 }
@@ -239,7 +254,7 @@ export const webkit: Dependency = {
     // PIE-default distros — without it the driver still passes -pie and the
     // -fno-pic probe object fails R_X86_64_32S relocation, killing FindThreads.
     if (cfg.unix && cfg.abi !== "android") optFlags.push("-fno-pic", "-fno-pie", "-no-pie");
-    if (cfg.lto) optFlags.push("-flto=full");
+    if (cfg.lto) optFlags.push("-flto=thin");
     if (cfg.pgoGenerate) optFlags.push(`-fprofile-generate=${cfg.pgoGenerate}`);
     if (cfg.pgoUse) {
       optFlags.push(

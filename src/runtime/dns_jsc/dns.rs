@@ -258,15 +258,11 @@ pub(super) mod lib_info {
                     // set the `used` bit, so failing to unset it here permanently orphans
                     // the slot and leaves `buffer[pos].lookup` pointing at the request we
                     // are about to free (UAF on the next `.inflight` hit).
-                    // `PendingCacheKey` is POD (`u64`/`u16`/`*mut`), so `put_raw`
-                    // (no `T::drop`) is the right release; the previous
-                    // `MaybeUninit::uninit().assume_init()` write was UB regardless of
-                    // POD-ness.
                     let pos = (*request).cache.pos_in_pending();
                     this.pending_host_cache_native.with_mut(|c| {
                         let slot = c.ptr_at(pos as usize);
                         // SAFETY: `pos` was alloc'd; no other token outstanding.
-                        c.put_raw(slot);
+                        c.put(slot);
                     });
                 }
                 // Drop the KeepAlive + resolver ref that `GetAddrInfoRequest.init` took.
@@ -617,6 +613,7 @@ pub mod resolve_info_request {
     pub struct PendingCacheKey<T: CAresRecordType> {
         pub hash: u64,
         pub len: u16,
+        pub name: Box<[u8]>,
         pub lookup: *mut ResolveInfoRequest<T>,
     }
 
@@ -635,6 +632,7 @@ pub mod resolve_info_request {
             Self {
                 hash,
                 len: name.len() as u16,
+                name: Box::<[u8]>::from(name),
                 lookup: ptr::null_mut(),
             }
         }
@@ -757,6 +755,7 @@ pub mod get_host_by_addr_info_request {
     pub struct PendingCacheKey {
         pub hash: u64,
         pub len: u16,
+        pub name: Box<[u8]>,
         pub lookup: *mut GetHostByAddrInfoRequest,
     }
 
@@ -775,6 +774,7 @@ pub mod get_host_by_addr_info_request {
             Self {
                 hash,
                 len: name.len() as u16,
+                name: Box::<[u8]>::from(name),
                 lookup: ptr::null_mut(),
             }
         }
@@ -1008,6 +1008,7 @@ pub mod get_name_info_request {
     pub struct PendingCacheKey {
         pub hash: u64,
         pub len: u16,
+        pub name: Box<[u8]>,
         pub lookup: *mut GetNameInfoRequest,
     }
 
@@ -1026,6 +1027,7 @@ pub mod get_name_info_request {
             Self {
                 hash,
                 len: name.len() as u16,
+                name: Box::<[u8]>::from(name),
                 lookup: ptr::null_mut(),
             }
         }
@@ -1153,6 +1155,7 @@ pub mod get_addr_info_request {
     pub struct PendingCacheKey {
         pub hash: u64,
         pub len: u16,
+        pub name: Box<[u8]>,
         pub lookup: *mut GetAddrInfoRequest,
     }
 
@@ -1170,6 +1173,7 @@ pub mod get_addr_info_request {
             Self {
                 hash: query.hash(),
                 len: query.name.len() as u16,
+                name: query.name.clone(),
                 lookup: ptr::null_mut(),
             }
         }
@@ -3816,13 +3820,14 @@ pub trait HasPendingCacheKey {
     fn key_hash(key: &Self::PendingCacheKey) -> u64;
     /// `key.len`
     fn key_len(key: &Self::PendingCacheKey) -> u16;
+    fn key_name(key: &Self::PendingCacheKey) -> &[u8];
     /// Construct a fully-initialized `PendingCacheKey { hash, len, lookup: null }`
     /// for `HiveArray::get_init`. `lookup` is filled in later by `*Request::init`
     /// once the request has been heap-allocated; until then it is a defined null
     /// rather than uninit garbage, so the `iter_set` loop in
     /// `get_or_put_into_resolve_pending_cache` can safely materialise
     /// `&mut PendingCacheKey` over the slot.
-    fn key_new(hash: u64, len: u16) -> Self::PendingCacheKey;
+    fn key_new(key: &Self::PendingCacheKey) -> Self::PendingCacheKey;
 }
 
 impl<T: CAresRecordType> HasPendingCacheKey for ResolveInfoRequest<T> {
@@ -3844,10 +3849,15 @@ impl<T: CAresRecordType> HasPendingCacheKey for ResolveInfoRequest<T> {
         key.len
     }
     #[inline]
-    fn key_new(hash: u64, len: u16) -> Self::PendingCacheKey {
+    fn key_name(key: &Self::PendingCacheKey) -> &[u8] {
+        &key.name
+    }
+    #[inline]
+    fn key_new(key: &Self::PendingCacheKey) -> Self::PendingCacheKey {
         resolve_info_request::PendingCacheKey {
-            hash,
-            len,
+            hash: key.hash,
+            len: key.len,
+            name: key.name.clone(),
             lookup: ptr::null_mut(),
         }
     }
@@ -3874,10 +3884,15 @@ impl HasPendingCacheKey for GetHostByAddrInfoRequest {
         key.len
     }
     #[inline]
-    fn key_new(hash: u64, len: u16) -> Self::PendingCacheKey {
+    fn key_name(key: &Self::PendingCacheKey) -> &[u8] {
+        &key.name
+    }
+    #[inline]
+    fn key_new(key: &Self::PendingCacheKey) -> Self::PendingCacheKey {
         get_host_by_addr_info_request::PendingCacheKey {
-            hash,
-            len,
+            hash: key.hash,
+            len: key.len,
+            name: key.name.clone(),
             lookup: ptr::null_mut(),
         }
     }
@@ -3904,10 +3919,15 @@ impl HasPendingCacheKey for GetNameInfoRequest {
         key.len
     }
     #[inline]
-    fn key_new(hash: u64, len: u16) -> Self::PendingCacheKey {
+    fn key_name(key: &Self::PendingCacheKey) -> &[u8] {
+        &key.name
+    }
+    #[inline]
+    fn key_new(key: &Self::PendingCacheKey) -> Self::PendingCacheKey {
         get_name_info_request::PendingCacheKey {
-            hash,
-            len,
+            hash: key.hash,
+            len: key.len,
+            name: key.name.clone(),
             lookup: ptr::null_mut(),
         }
     }
@@ -4686,12 +4706,15 @@ impl Resolver {
         while let Some(index) = inflight_iter.next() {
             // SAFETY: `used` bit is set ⇒ slot was initialized.
             let entry = unsafe { &mut *cache.ptr_at(index) };
-            if R::key_hash(entry) == R::key_hash(key) && R::key_len(entry) == R::key_len(key) {
+            if R::key_hash(entry) == R::key_hash(key)
+                && R::key_len(entry) == R::key_len(key)
+                && R::key_name(entry) == R::key_name(key)
+            {
                 return LookupCacheHit::Inflight(std::ptr::from_mut(entry));
             }
         }
 
-        if let Some(new) = cache.get_init(R::key_new(R::key_hash(key), R::key_len(key))) {
+        if let Some(new) = cache.get_init(R::key_new(key)) {
             return LookupCacheHit::New(new.as_ptr());
         }
 
@@ -4709,7 +4732,7 @@ impl Resolver {
         while let Some(index) = inflight_iter.next() {
             // SAFETY: `used` bit is set ⇒ slot was initialized.
             let entry = unsafe { &mut *cache.ptr_at(index) };
-            if entry.hash == key.hash && entry.len == key.len {
+            if entry.hash == key.hash && entry.len == key.len && entry.name == key.name {
                 return CacheHit::Inflight(std::ptr::from_mut(entry));
             }
         }
@@ -4717,6 +4740,7 @@ impl Resolver {
         if let Some(new) = cache.get_init(get_addr_info_request::PendingCacheKey {
             hash: key.hash,
             len: key.len,
+            name: key.name.clone(),
             lookup: ptr::null_mut(),
         }) {
             return CacheHit::New(new.as_ptr());
@@ -5227,7 +5251,7 @@ impl Resolver {
         // stack before null-terminating it. Reject anything that cannot fit so we never
         // index past that buffer. RFC 1035 caps hostnames at 253 octets and NI_MAXHOST
         // is 1025, so this never rejects a name that could have resolved.
-        if name.len() >= MAX_PATH_BYTES {
+        if name.len() >= MAX_PATH_BYTES || name.contains(&0) {
             let mut promise = JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
             error_to_deferred(

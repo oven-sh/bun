@@ -611,6 +611,48 @@ fn is_valid_request_pseudo_header(name: &[u8]) -> bool {
     }
 }
 
+#[inline]
+fn is_valid_header_value(value: &[u8]) -> bool {
+    !value.iter().any(|&c| matches!(c, 0 | b'\n' | b'\r'))
+}
+
+#[inline]
+fn is_malformed_field_name(name: &[u8]) -> bool {
+    let rest = match name.split_first() {
+        None => return true,
+        Some((b':', rest)) => rest,
+        Some(_) => name,
+    };
+    rest.is_empty()
+        || !rest.iter().all(|&c| {
+            matches!(
+                c,
+                b'a'..=b'z'
+                    | b'0'..=b'9'
+                    | b'!'
+                    | b'#'
+                    | b'$'
+                    | b'%'
+                    | b'&'
+                    | b'\''
+                    | b'*'
+                    | b'+'
+                    | b'-'
+                    | b'.'
+                    | b'^'
+                    | b'_'
+                    | b'`'
+                    | b'|'
+                    | b'~'
+            )
+        })
+}
+
+#[inline]
+fn is_malformed_field_value(value: &[u8]) -> bool {
+    value.iter().any(|&c| c == 0 || c == b'\r' || c == b'\n')
+}
+
 const SINGLE_VALUE_HEADERS_LEN: usize = 40;
 
 /// Returns a stable index in `0..SINGLE_VALUE_HEADERS_LEN` for headers that
@@ -1712,6 +1754,7 @@ impl Stream {
                                 );
                             }
                             buffer[0] = padding;
+                            buffer[1 + able_to_send.len()..payload_size].fill(0);
                             writer.write_all(&buffer[0..payload_size]).is_ok()
                         });
                     } else {
@@ -1769,6 +1812,7 @@ impl Stream {
                                 );
                             }
                             buffer[0] = padding;
+                            buffer[1 + frame_slice.len()..payload_size].fill(0);
                             writer.write_all(&buffer[0..payload_size]).is_ok()
                         });
                     } else {
@@ -1862,16 +1906,18 @@ impl Stream {
                 lf!().end_stream = end_stream;
                 // we can only hold 1 callback at a time so we conclude the last one, and keep the last one as pending
                 // this is fine is like a per-stream CORKING in a frame level
-                if let Some(old_callback) = lf!().callback.get() {
+                let old_callback = core::mem::replace(
+                    &mut lf!().callback,
+                    StrongOptional::create(callback, &global_this),
+                );
+                if let Some(old_callback_value) = old_callback.get() {
                     // Escape `this` so a self-derived address is observable
                     // across the opaque JS call (belt-and-suspenders; either
                     // launder alone defeats the caching).
                     core::hint::black_box(this);
-                    client.dispatch_write_callback(old_callback);
-                    core::hint::black_box(last_frame);
-                    lf!().callback.deinit();
+                    client.dispatch_write_callback(old_callback_value);
                 }
-                lf!().callback = StrongOptional::create(callback, &global_this);
+                drop(old_callback);
                 return;
             }
             if lf!().len == 0 {
@@ -1898,13 +1944,15 @@ impl Stream {
                     lf!().end_stream = end_stream;
                     // we can only hold 1 callback at a time so we conclude the last one, and keep the last one as pending
                     // this is fine is like a per-stream CORKING in a frame level
-                    if let Some(old_callback) = lf!().callback.get() {
+                    let old_callback = core::mem::replace(
+                        &mut lf!().callback,
+                        StrongOptional::create(callback, &global_this),
+                    );
+                    if let Some(old_callback_value) = old_callback.get() {
                         core::hint::black_box(this);
-                        client.dispatch_write_callback(old_callback);
-                        core::hint::black_box(last_frame);
-                        lf!().callback.deinit();
+                        client.dispatch_write_callback(old_callback_value);
                     }
-                    lf!().callback = StrongOptional::create(callback, &global_this);
+                    drop(old_callback);
                     return;
                 }
                 // we keep the old callback because the new will be part of another frame
@@ -3268,6 +3316,7 @@ impl H2FrameParser {
         headers.ensure_still_alive();
 
         let mut sensitive_headers: JSValue = JSValue::UNDEFINED;
+        let mut malformed = false;
 
         // Stream-level limit violations seen mid-decode. The loop must consume
         // the whole block regardless: the HPACK dynamic table is
@@ -3325,7 +3374,18 @@ impl H2FrameParser {
                 continue;
             }
 
-            if let Some(js_header_name) =
+            if malformed
+                || is_malformed_field_name(header.name)
+                || is_malformed_field_value(header.value)
+                || (header.name.first() == Some(&b':')
+                    && !if self.is_server.get() {
+                        is_valid_request_pseudo_header(header.name)
+                    } else {
+                        is_valid_response_pseudo_header(header.name)
+                    })
+            {
+                malformed = true;
+            } else if let Some(js_header_name) =
                 get_http2_common_string(&global_object, header.well_know as u32)
             {
                 headers.push(&global_object, js_header_name)?;
@@ -3376,6 +3436,11 @@ impl H2FrameParser {
                 self.end_stream(stream, ErrorCode::ENHANCE_YOUR_CALM);
             }
             return Ok(None);
+        }
+
+        if malformed {
+            self.end_stream(stream, ErrorCode::PROTOCOL_ERROR);
+            return Ok(self.streams.get().get(&stream_id).copied());
         }
 
         self.dispatch_with_3_extra(
@@ -5630,22 +5695,10 @@ impl H2FrameParser {
 impl H2FrameParser {
     // get memory usage in MB
     fn get_session_memory_usage(&self) -> usize {
-        // Count only live streams: entries stay in the map until connection
-        // teardown, so counting every entry would grow monotonically over the
-        // life of a keep-alive connection and eventually trip the session cap
-        // for a well-behaved peer making sequential requests.
-        let live_streams = self
-            .streams
-            .get()
-            .iter()
-            .filter(|(_, item)| {
-                // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
-                unsafe { &***item }.state != StreamState::CLOSED
-            })
-            .count();
+        let stream_count = self.streams.get().len();
         (self.write_buffer.get().len_u32() as usize
             + self.queued_data_size.get() as usize
-            + live_streams * core::mem::size_of::<Stream>())
+            + stream_count * core::mem::size_of::<Stream>())
             / 1024
             / 1024
     }
@@ -5794,6 +5847,7 @@ impl H2FrameParser {
                                 );
                             }
                             buffer[0] = padding;
+                            buffer[1 + slice.len()..payload_size].fill(0);
                             let _ = writer.write_all(&buffer[0..payload_size]);
                         });
                     } else {
@@ -6031,46 +6085,54 @@ impl H2FrameParser {
             };
 
             // closure for encode error handling
-            let mut handle_encode =
-                |this: &Self, value: &[u8], never_index: bool| -> JsResult<Option<JSValue>> {
-                    bun_output::scoped_log!(
-                        H2FrameParser,
-                        "encode header {} {}",
-                        BStr::new(validated_name),
-                        BStr::new(value)
+            let mut handle_encode = |this: &Self,
+                                     value: &[u8],
+                                     never_index: bool|
+             -> JsResult<Option<JSValue>> {
+                if !is_valid_header_value(value) {
+                    let exception = global_object.to_type_error(
+                        bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                        format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)),
                     );
-                    match this.encode_header_into_list(
-                        &mut encoded_headers,
-                        validated_name,
-                        value,
-                        never_index,
-                    ) {
-                        Ok(_) => Ok(None),
-                        Err(err) if err == bun_core::err!("OutOfMemory") => {
-                            Err(global_object
-                                .throw(format_args!("Failed to allocate header buffer")))
-                        }
-                        Err(_) => {
-                            stream.state = StreamState::CLOSED;
-                            let identifier = stream.get_identifier();
-                            identifier.ensure_still_alive();
-                            stream.free_resources::<false>(this);
-                            stream.rst_code = ErrorCode::FRAME_SIZE_ERROR.0;
-                            this.dispatch_with_2_extra(
-                                JSH2FrameParser::Gc::onFrameError,
-                                identifier,
-                                JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
-                                JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
-                            );
-                            this.dispatch_with_extra(
-                                JSH2FrameParser::Gc::onStreamError,
-                                identifier,
-                                JSValue::js_number(stream.rst_code as f64),
-                            );
-                            Ok(Some(JSValue::UNDEFINED))
-                        }
+                    return Err(global_object.throw_value(exception));
+                }
+                bun_output::scoped_log!(
+                    H2FrameParser,
+                    "encode header {} {}",
+                    BStr::new(validated_name),
+                    BStr::new(value)
+                );
+                match this.encode_header_into_list(
+                    &mut encoded_headers,
+                    validated_name,
+                    value,
+                    never_index,
+                ) {
+                    Ok(_) => Ok(None),
+                    Err(err) if err == bun_core::err!("OutOfMemory") => {
+                        Err(global_object.throw(format_args!("Failed to allocate header buffer")))
                     }
-                };
+                    Err(_) => {
+                        stream.state = StreamState::CLOSED;
+                        let identifier = stream.get_identifier();
+                        identifier.ensure_still_alive();
+                        stream.free_resources::<false>(this);
+                        stream.rst_code = ErrorCode::FRAME_SIZE_ERROR.0;
+                        this.dispatch_with_2_extra(
+                            JSH2FrameParser::Gc::onFrameError,
+                            identifier,
+                            JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
+                            JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
+                        );
+                        this.dispatch_with_extra(
+                            JSH2FrameParser::Gc::onStreamError,
+                            identifier,
+                            JSValue::js_number(stream.rst_code as f64),
+                        );
+                        Ok(Some(JSValue::UNDEFINED))
+                    }
+                }
+            };
 
             if js_value.js_type().is_array() {
                 let mut value_iter = js_value.array_iterator(global_object)?;
@@ -6755,6 +6817,17 @@ impl H2FrameParser {
 
                         let value_slice = value_str.to_slice(global_object);
                         let value = value_slice.slice();
+                        if !is_valid_header_value(value) {
+                            return Err(global_object
+                                .err(
+                                    JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                    format_args!(
+                                        "Invalid value for header \"{}\"",
+                                        BStr::new(validated_name)
+                                    ),
+                                )
+                                .throw());
+                        }
                         bun_output::scoped_log!(
                             H2FrameParser,
                             "encode header {} {}",
@@ -6831,6 +6904,17 @@ impl H2FrameParser {
 
                     let value_slice = value_str.to_slice(global_object);
                     let value = value_slice.slice();
+                    if !is_valid_header_value(value) {
+                        return Err(global_object
+                            .err(
+                                JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                format_args!(
+                                    "Invalid value for header \"{}\"",
+                                    BStr::new(validated_name)
+                                ),
+                            )
+                            .throw());
+                    }
                     bun_output::scoped_log!(
                         H2FrameParser,
                         "encode header {} {}",

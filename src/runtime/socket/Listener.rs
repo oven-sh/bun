@@ -1071,9 +1071,9 @@ impl Listener {
                         // SAFETY: caller passes a live TLSSocket
                         let prev = unsafe { &*prev_ptr };
                         if let Some(prev_handlers) = prev.handlers.get() {
-                            // SAFETY: prev_handlers was heap-allocated; shared
-                            // reborrow is scoped to this expression.
                             if prev.flags.get().contains(SocketFlags::OWNS_HANDLERS)
+                                // SAFETY: prev_handlers was heap-allocated; shared
+                                // reborrow is scoped to this expression.
                                 && unsafe { (*prev_handlers.as_ptr()).active_connections.get() }
                                     == 0
                             {
@@ -1171,9 +1171,9 @@ impl Listener {
                         let prev = unsafe { &*prev_ptr };
                         debug_assert!(!prev.this_value.get().is_empty());
                         if let Some(prev_handlers) = prev.handlers.get() {
-                            // SAFETY: prev_handlers was heap-allocated; shared
-                            // reborrow is scoped to this expression.
                             if prev.flags.get().contains(SocketFlags::OWNS_HANDLERS)
+                                // SAFETY: prev_handlers was heap-allocated; shared
+                                // reborrow is scoped to this expression.
                                 && unsafe { (*prev_handlers.as_ptr()).active_connections.get() }
                                     == 0
                             {
@@ -1428,9 +1428,9 @@ fn connect_finish<const IS_SSL: bool>(
             // holding it. If a `data`/`close` handler synchronously re-entered
             // `connect`, `Scope::exit` (via `Handlers::mark_inactive`) frees it
             // once the in-flight callback unwinds; freeing here would be a UAF.
-            // SAFETY: prev_handlers was heap-allocated; shared reborrow is
-            // scoped to this expression.
             if prev.flags.get().contains(SocketFlags::OWNS_HANDLERS)
+                // SAFETY: prev_handlers was heap-allocated; shared reborrow is
+                // scoped to this expression.
                 && unsafe { (*prev_handlers.as_ptr()).active_connections.get() } == 0
             {
                 // SAFETY: prev_handlers was heap-allocated and unreferenced.

@@ -198,9 +198,9 @@ export const profiles = {
 
   /**
    * CI: compile libbun_rust.a only. Target platform via --os/--arch
-   * overrides (cargo `--target <triple>`; linux/freebsd targets cross-
-   * compile from a linux box, darwin/windows run on a native agent — see
-   * `rustCanCrossFromLinux()`).
+   * overrides (cargo `--target <triple>`; linux/freebsd/darwin targets
+   * cross-compile from the shared linux box, windows from the amazonlinux
+   * fleet with a fetched winsysroot — see `rustCanCrossFromLinux()`).
    */
   "ci-rust-only": {
     buildType: "Release",

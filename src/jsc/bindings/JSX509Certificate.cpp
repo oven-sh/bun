@@ -10,6 +10,7 @@
 #include "JSX509Certificate.h"
 #include "JSX509CertificatePrototype.h"
 #include "ZigGlobalObject.h"
+#include "wtf/ASCIICType.h"
 #include "wtf/Assertions.h"
 #include "wtf/SharedTask.h"
 #include "wtf/text/ASCIILiteral.h"
@@ -50,6 +51,26 @@ WTF::String toWTFString(ncrypto::BIOPointer& bio)
         return toExternalStringImpl(bio, span);
     }
     return WTF::String::fromUTF8({ reinterpret_cast<const Latin1Character*>(bptr->data), bptr->length });
+}
+
+// BoringSSL's BN_bn2hex/BN_print emit lowercase hex; OpenSSL (and therefore
+// Node.js) emits uppercase. The input is always ASCII hex, so uppercase it
+// while building the string in a single allocation rather than creating the
+// lowercase string first and then allocating a second uppercased copy.
+static WTF::String toUppercaseASCIIWTFString(std::span<const char> span)
+{
+    std::span<Latin1Character> buffer;
+    auto string = WTF::String::createUninitialized(span.size(), buffer);
+    for (size_t i = 0; i < span.size(); ++i)
+        buffer[i] = WTF::toASCIIUpper(static_cast<Latin1Character>(span[i]));
+    return string;
+}
+
+static WTF::String toUppercaseASCIIWTFString(ncrypto::BIOPointer& bio)
+{
+    BUF_MEM* bptr;
+    BIO_get_mem_ptr(bio.get(), &bptr);
+    return toUppercaseASCIIWTFString(std::span<const char>(bptr->data, bptr->length));
 }
 
 static JSC_DECLARE_HOST_FUNCTION(x509CertificateConstructorCall);
@@ -510,8 +531,7 @@ JSString* JSX509Certificate::computeSerialNumber(ncrypto::X509View view, JSGloba
         return jsEmptyString(vm);
     }
 
-    // BoringSSL's BN_bn2hex emits lowercase hex; OpenSSL (and therefore Node.js) emits uppercase.
-    return jsString(vm, String::fromUTF8(std::span(static_cast<const char*>(serial.get()), serial.size())).convertToASCIIUppercase());
+    return jsString(vm, toUppercaseASCIIWTFString(std::span(static_cast<const char*>(serial.get()), serial.size())));
 }
 
 JSString* JSX509Certificate::computeFingerprint(ncrypto::X509View view, JSGlobalObject* globalObject)
@@ -752,10 +772,9 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(ncrypto::X509View view, JSGloba
                 RSA_get0_key(rsa, &n, &e, nullptr);
 
                 // Convert modulus to string
-                // BoringSSL's BN_print emits lowercase hex; OpenSSL (and therefore Node.js) emits uppercase.
                 auto bio = ncrypto::BIOPointer::New(n);
                 if (bio) {
-                    object->putDirect(vm, Identifier::fromString(vm, "modulus"_s), jsString(vm, toWTFString(bio).convertToASCIIUppercase()));
+                    object->putDirect(vm, Identifier::fromString(vm, "modulus"_s), jsString(vm, toUppercaseASCIIWTFString(bio)));
                     RETURN_IF_EXCEPTION(scope, nullptr);
                 }
 
@@ -922,10 +941,9 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(JSGlobalObject* globalObject)
                 RSA_get0_key(rsa, &n, &e, nullptr);
 
                 // Convert modulus to string
-                // BoringSSL's BN_print emits lowercase hex; OpenSSL (and therefore Node.js) emits uppercase.
                 auto bio = ncrypto::BIOPointer::New(n);
                 if (bio) {
-                    object->putDirect(vm, Identifier::fromString(vm, "modulus"_s), jsString(vm, toWTFString(bio).convertToASCIIUppercase()));
+                    object->putDirect(vm, Identifier::fromString(vm, "modulus"_s), jsString(vm, toUppercaseASCIIWTFString(bio)));
                     RETURN_IF_EXCEPTION(scope, nullptr);
                 }
 

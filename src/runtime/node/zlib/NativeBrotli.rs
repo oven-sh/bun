@@ -418,16 +418,19 @@ mod _impl {
         }
 
         pub fn set_flush(&mut self, flush: c_int) {
-            // Caller passes a valid BrotliEncoderOperation discriminant (Node
-            // zlib constants 0..=3). Exhaustive match — `Op` is `#[repr(u32)]`
-            // so the prior `c_int` bit-cast was a width hazard anyway. Out-of-
-            // range traps to match Zig `this.flush = @enumFromInt(flush)`.
+            // The shared write path validates `flush` against the *zlib* range
+            // (0..=6), not the brotli range (0..=3), so Z_FINISH(4)/Z_BLOCK(5)
+            // can reach us. Zig's `@enumFromInt` and Node's `static_cast` both
+            // pass the raw int through to BrotliEncoderCompressStream, which
+            // for an unknown op encodes with is_last=false/force_flush=false —
+            // i.e. PROCESS semantics. Map out-of-range to PROCESS to preserve
+            // that behavior instead of aborting. (The decoder ignores `flush`.)
             self.flush = match flush {
                 0 => Op::process,
                 1 => Op::flush,
                 2 => Op::finish,
                 3 => Op::emit_metadata,
-                n => unreachable!("invalid BrotliEncoderOperation {n}"),
+                _ => Op::process,
             };
         }
 

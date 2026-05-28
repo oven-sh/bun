@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import * as fs from "node:fs";
 import { resolve } from "node:path";
@@ -322,6 +322,69 @@ describe("zlib.brotli", () => {
       });
       expect(compressed.toString()).toEqual(Buffer.from(compressedString3, "base64").toString());
     }
+  });
+
+  // .flush() with a *zlib* flush constant (Z_FINISH=4, Z_BLOCK=5) on a brotli
+  // stream used to abort the process — the shared write path validates against
+  // the zlib flush range (0..=6) but the brotli set_flush only mapped 0..=3.
+  // Out-of-range values are now coerced to BROTLI_OPERATION_PROCESS, matching
+  // Node and earlier Bun.
+  describe.each([
+    ["Z_FINISH", zlib.constants.Z_FINISH],
+    ["Z_BLOCK", zlib.constants.Z_BLOCK],
+  ])("flush(%s) does not abort the process", (_, kind) => {
+    it("createBrotliCompress", async () => {
+      const input = Buffer.alloc(128, 0x61);
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const z = require("zlib");
+            const s = z.createBrotliCompress();
+            const chunks = [];
+            s.on("data", c => chunks.push(c));
+            s.on("end", () => process.stdout.write(Buffer.concat(chunks)));
+            s.write(Buffer.alloc(128, 0x61));
+            s.flush(${kind}, () => s.end());
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(zlib.brotliDecompressSync(stdout).equals(input)).toBe(true);
+      expect(exitCode).toBe(0);
+    });
+
+    it("createBrotliDecompress", async () => {
+      const input = Buffer.alloc(128, 0x62);
+      const compressed = zlib.brotliCompressSync(input);
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const z = require("zlib");
+            const s = z.createBrotliDecompress();
+            const chunks = [];
+            s.on("data", c => chunks.push(c));
+            s.on("end", () => process.stdout.write(Buffer.concat(chunks)));
+            s.write(Buffer.from(${JSON.stringify([...compressed])}));
+            s.flush(${kind}, () => s.end());
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(Buffer.from(stdout).equals(input)).toBe(true);
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

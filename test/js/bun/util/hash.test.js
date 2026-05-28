@@ -157,6 +157,14 @@ describe("xxHash3 SIMD kernel", () => {
     expect(Bun.hash.xxHash3(str)).toBe(Bun.hash.xxHash3(bytes));
     expect(Bun.hash.xxHash3(bytes)).toBe(xxHash3ForTesting(bytes));
   });
+
+  it("treats an undefined seed as 0 and rejects other non-number/bigint seeds", () => {
+    const bytes = makeInput(256);
+    // undefined == no seed
+    expect(xxHash3ForTesting(bytes, undefined)).toBe(xxHash3ForTesting(bytes));
+    // a wrong-type seed is a mistaken call
+    expect(() => xxHash3ForTesting(bytes, "nope")).toThrow("seed must be a number or bigint");
+  });
 });
 
 it("does not crash when changing Int32Array constructor with Bun.hash.xxHash32 as species", () => {

@@ -49,6 +49,11 @@ BUN_DEFINE_HOST_FUNCTION(Bun__xxhash3_64_forTesting, (JSC::JSGlobalObject * glob
         } else if (seedValue.isBigInt()) {
             seed = seedValue.toBigUInt64(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
+        } else if (!seedValue.isUndefined()) {
+            // Per the (seed?: number | bigint) contract: undefined means "no
+            // seed" (0); anything else is a mistaken call, so surface it.
+            throwTypeError(globalObject, scope, "seed must be a number or bigint"_s);
+            return {};
         }
     }
 

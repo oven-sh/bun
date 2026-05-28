@@ -499,10 +499,15 @@ function cc(options) {
 
   for (let key in result.symbols) {
     var symbol = result.symbols[key];
-    if (options[key]?.args?.length || FFIType[options[key]?.returns as string] === FFIType.cstring) {
+    // `cc` nests the symbol definitions under `options.symbols` (unlike
+    // `dlopen`/`linkSymbols`, where `options` is the symbol map itself), so we
+    // must read from `options.symbols[key]` — otherwise the `cstring` return
+    // wrapper is never applied and the function returns a raw pointer.
+    const definition = options.symbols?.[key];
+    if (definition?.args?.length || FFIType[definition?.returns as string] === FFIType.cstring) {
       result.symbols[key] = FFIBuilder(
-        options[key].args ?? [],
-        options[key].returns ?? FFIType.void,
+        definition.args ?? [],
+        definition.returns ?? FFIType.void,
         symbol,
         // in stacktraces:
         // instead of

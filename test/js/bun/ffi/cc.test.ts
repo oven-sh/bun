@@ -96,6 +96,45 @@ describe.skipIf(isASAN || isFFIUnavailable)("given an add(a, b) function", () =>
   });
 }); // </given add(a, b) function>
 
+// Regression test: `cc` read symbol definitions from `options[key]` instead of
+// `options.symbols[key]`, so the `cstring` return wrapper was never applied and
+// the function returned a raw pointer number instead of a `CString`.
+describe.skipIf(isASAN || isFFIUnavailable)("given a hello() function returning a cstring", () => {
+  let dir: string;
+  let res: Library<{ hello: { args: []; returns: "cstring" } }>;
+
+  beforeAll(() => {
+    dir = tempDirWithFiles("bun-ffi-cc-cstring", {
+      "hello.c": /* c */ `
+        const char* hello() {
+          return "Hello, World!";
+        }
+      `,
+    });
+    res = cc({
+      source: path.join(dir, "hello.c"),
+      symbols: {
+        hello: {
+          returns: "cstring",
+          args: [],
+        },
+      },
+    });
+  });
+
+  afterAll(async () => {
+    res.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("returns a CString, not a raw pointer number", () => {
+    const result = res.symbols.hello();
+    expect(typeof result).not.toBe("number");
+    expect(result).toBeInstanceOf(CString);
+    expect(String(result)).toBe("Hello, World!");
+  });
+}); // </given a hello() function returning a cstring>
+
 describe("given a source file with syntax errors", () => {
   const source = /* c */ `
     int add(int a, int b) {

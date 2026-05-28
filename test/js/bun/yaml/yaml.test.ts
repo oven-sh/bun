@@ -1422,7 +1422,10 @@ folded: >
             ["explicit-key", (n: string, p: string, t: string) => `${n}? a\n${n}? ${p}\n${t}? b\n`],
           ] as const;
           const props = ["!!str", "&x", "!!str &x", "&x !!str"] as const;
-          const tabs = [["col0", "\t", ""], ["after-spaces", "  \t", "  "]] as const;
+          const tabs = [
+            ["col0", "\t", ""],
+            ["after-spaces", "  \t", "  "],
+          ] as const;
           for (const [iname, build] of indicators) {
             for (const prop of props) {
               for (const [tname, tab, indent] of tabs) {

@@ -337,6 +337,11 @@ ffiWrappers[FFIType.function] = `{
   return ptr;
 }`;
 
+// Node-API arguments are passed through as raw JSValues. `napi_value` is read
+// directly on the native side, and `napi_env` is substituted there for the
+// module's env, so neither must go through the default `val|0` coercion.
+ffiWrappers[FFIType.napi_env] = ffiWrappers[FFIType.napi_value] = "val";
+
 function FFIBuilder(params, returnType, functionToCall, name) {
   const hasReturnType = typeof FFIType[returnType] === "number" && FFIType[returnType as string] !== FFIType.void;
   var paramNames = new Array(params.length);

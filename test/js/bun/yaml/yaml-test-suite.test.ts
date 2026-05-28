@@ -2989,7 +2989,7 @@ bar: 2
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/DK95/06", () => {
+test("yaml-test-suite/DK95/06", () => {
   // Tabs that look like indentation
   // Error test - expecting parse to fail
   const input: string = `foo:
@@ -6185,7 +6185,7 @@ test("yaml-test-suite/Y79Y/004", () => {
   }).toThrow();
 });
 
-test.todo("yaml-test-suite/Y79Y/005", () => {
+test("yaml-test-suite/Y79Y/005", () => {
   // Tabs in various contexts
   // Error test - expecting parse to fail
   const input: string = `- 	-
@@ -6219,7 +6219,7 @@ test("yaml-test-suite/Y79Y/007", () => {
   }).toThrow();
 });
 
-test.todo("yaml-test-suite/Y79Y/008", () => {
+test("yaml-test-suite/Y79Y/008", () => {
   // Tabs in various contexts
   // Error test - expecting parse to fail
   const input: string = `?	key:

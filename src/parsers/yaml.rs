@@ -2291,6 +2291,12 @@ pub struct Parser<'i, Enc: Encoding> {
 
     pub pos: Pos,
     pub line_indent: Indent,
+    /// A tab was seen between the line's s-indent (or post-indicator
+    /// additional_parent_indent position) and the current token's content.
+    /// [62]/[63] s-indent is spaces only; tab here is s-separate-in-line, valid
+    /// before [197] flow-in-block content but not before a [185] compact
+    /// construct or a sibling block entry. Reset on newline().
+    pub tab_after_indent: bool,
     pub line: Line,
     pub token: Token<Enc>,
 
@@ -2324,6 +2330,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             bump,
             pos: Pos::from(0),
             line_indent: Indent::NONE,
+            tab_after_indent: false,
             line: Line::from(1),
             token: Token::eof(TokenInit {
                 start: Pos::from(0),
@@ -2387,7 +2394,17 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     fn newline(&mut self) {
         self.line_indent = Indent::NONE;
+        self.tab_after_indent = false;
         self.line.inc(1);
+    }
+
+    #[inline]
+    fn token_init(&self, start: Pos) -> TokenInit {
+        TokenInit {
+            start,
+            indent: self.line_indent,
+            line: self.line,
+        }
     }
 
     fn slice(&self, off: Pos, end: Pos) -> &[Enc::Unit] {
@@ -2547,6 +2564,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
 
         let root = self.parse_node(ParseNodeOptions::default())?;
+
 
         // If document_start it needs to create a new document.
         // If document_end, consume as many as possible. They should
@@ -2846,6 +2864,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             while matches!(self.token.data, TokenData::SequenceEntry)
                 && self.token.indent == sequence_indent
             {
+                // [184] each `-` sits at s-indent(n) (spaces only).
+                if self.tab_after_indent {
+                    return Err(Self::unexpected_token());
+                }
                 let entry_line = self.token.line;
                 let entry_start = self.token.start;
 
@@ -2974,7 +2996,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         // The `:` must be at exactly the `?` indent (block ctx).
                         if mapping_value_line != mapping_line
                             && !matches!(self.context.get(), Context::FlowIn | Context::FlowKey)
-                            && self.token.indent != mapping_indent
+                            && (self.token.indent != mapping_indent
+                                || self.tab_after_indent)
                         {
                             if self.token.indent.is_less_than(mapping_indent) {
                                 // [189] e-node — `:` belongs to an outer
@@ -3035,6 +3058,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 ) && self.token.indent == mapping_indent
                     && self.token.line != previous_line
                 {
+                    // [192]/[195] each entry sits at s-indent(n) (spaces only).
+                    if self.tab_after_indent {
+                        return Err(Self::unexpected_token());
+                    }
                     let key_line = self.token.line;
                     previous_line = key_line;
                     let explicit_key = matches!(self.token.data, TokenData::MappingKey);
@@ -3059,7 +3086,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                         TokenData::MappingValue if explicit_key => {
                             // [191] l-block-map-explicit-value ::= s-indent(n) ':' …
-                            if self.token.indent != mapping_indent {
+                            if self.token.indent != mapping_indent
+                                || self.tab_after_indent
+                            {
                                 if self.token.indent.is_less_than(mapping_indent) {
                                     // [189] e-node — `:` belongs to an outer
                                     // construct; this entry has no value.
@@ -3583,6 +3612,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         self.pos = self.token.start;
                         self.line = self.token.line;
                         self.line_indent = self.token.indent;
+                        self.tab_after_indent = false;
                         self.scan(ScanOptions::default())?;
                     }
                     return self.props_to_e_node(&value_tag, &value_anchor, indicator_start.loc());
@@ -3598,10 +3628,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
                 // [185] a compact construct on the indicator's line must be at
                 // indent ≥ n+1 via s-indent (spaces only); tab separation
-                // leaves the token at the line's natural indent.
+                // either leaves the token at the line's natural indent (≤ n)
+                // or, when spaces preceded the tab, taints tab_after_indent.
                 TokenData::SequenceEntry | TokenData::MappingKey
                     if self.token.line == indicator_line
-                        && self.token.indent.is_less_than_or_equal(n) =>
+                        && (self.token.indent.is_less_than_or_equal(n)
+                            || self.tab_after_indent) =>
                 {
                     return Err(Self::unexpected_token());
                 }
@@ -3619,6 +3651,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     return self.props_to_e_node(&value_tag, &value_anchor, indicator_start.loc());
                 }
                 _ => {
+
                     return self.parse_node(ParseNodeOptions {
                         current_mapping_indent: Some(n),
                         explicit_mapping_key: kind == BlockIndentedKind::MapExplicitKey,
@@ -3720,6 +3753,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let alias_start = self.token.start;
                     let alias_indent = self.token.indent;
                     let alias_line = self.token.line;
+                    let alias_tab_after_indent = self.tab_after_indent;
 
                     if let Some(anchor) = &node_props.has_anchor {
                         if anchor.line == alias_line {
@@ -3762,6 +3796,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             return Ok(copy);
                         }
 
+                        // [192] implicit key sits at s-indent(n) (spaces only).
+                        if alias_tab_after_indent
+                            && matches!(
+                                self.context.get(),
+                                Context::BlockOut | Context::BlockIn
+                            )
+                        {
+                            return Err(Self::unexpected_token());
+                        }
+
                         if let Some(current_mapping_indent) = opts.current_mapping_indent {
                             if current_mapping_indent == alias_indent {
                                 return Ok(copy);
@@ -3785,6 +3829,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let sequence_start = self.token.start;
                     let sequence_indent = self.token.indent;
                     let sequence_line = self.token.line;
+                    let sequence_tab_after_indent = self.tab_after_indent;
                     let json_key = self.maybe_set_json_key(opts.flow_pair_allowed)?;
                     let seq = self.parse_flow_sequence();
                     self.unset_json_key(json_key);
@@ -3804,6 +3849,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         if self.context.get() == Context::FlowKey {
                             break 'node seq;
+                        }
+
+                        // [192] implicit key sits at s-indent(n) (spaces only).
+                        if sequence_tab_after_indent
+                            && matches!(
+                                self.context.get(),
+                                Context::BlockOut | Context::BlockIn
+                            )
+                        {
+                            return Err(Self::unexpected_token());
                         }
 
                         if let Some(current_mapping_indent) = opts.current_mapping_indent {
@@ -3864,6 +3919,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let mapping_start = self.token.start;
                     let mapping_indent = self.token.indent;
                     let mapping_line = self.token.line;
+                    let mapping_tab_after_indent = self.tab_after_indent;
 
                     let json_key = self.maybe_set_json_key(opts.flow_pair_allowed)?;
                     let map = self.parse_flow_mapping();
@@ -3884,6 +3940,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         if self.context.get() == Context::FlowKey {
                             break 'node map;
+                        }
+
+                        // [192] implicit key sits at s-indent(n) (spaces only).
+                        if mapping_tab_after_indent
+                            && matches!(
+                                self.context.get(),
+                                Context::BlockOut | Context::BlockIn
+                            )
+                        {
+                            return Err(Self::unexpected_token());
                         }
 
                         if let Some(current_mapping_indent) = opts.current_mapping_indent {
@@ -3928,6 +3994,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         // the legitimate paths.
                         return Err(Self::unexpected_token());
                     }
+                    // [195] each `?` sits at s-indent(n) (spaces only).
+                    if self.tab_after_indent {
+                        return Err(Self::unexpected_token());
+                    }
 
                     let mapping_start = self.token.start;
                     let mapping_indent = self.token.indent;
@@ -3940,12 +4010,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         ..Default::default()
                     })?;
 
+
                     let key = self.parse_block_indented(
                         mapping_indent,
                         mapping_line,
                         mapping_start,
                         BlockIndentedKind::MapExplicitKey,
                     )?;
+
 
                     self.block_indents.pop();
 
@@ -3955,18 +4027,27 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                     }
 
-                    break 'node self.parse_block_mapping(
+
+                    let r = self.parse_block_mapping(
                         key,
                         mapping_start,
                         mapping_indent,
                         mapping_line,
                         opts.flow_pair_allowed,
-                    )?;
+                    );
+
+                    break 'node r?;
                 }
 
                 TokenData::MappingValue => {
                     if self.context.get() == Context::FlowKey {
                         break 'node Expr::init(E::Null {}, self.token.start.loc());
+                    }
+                    // [195] block `:` (e-node key) sits at s-indent(n) only.
+                    if self.tab_after_indent
+                        && !matches!(self.context.get(), Context::FlowIn)
+                    {
+                        return Err(Self::unexpected_token());
                     }
                     if let Some(current_mapping_indent) = opts.current_mapping_indent {
                         if current_mapping_indent == self.token.indent {
@@ -3987,6 +4068,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let scalar_start = self.token.start;
                     let scalar_indent = self.token.indent;
                     let scalar_line = self.token.line;
+                    let scalar_tab_after_indent = self.tab_after_indent;
 
                     // PORT NOTE: reshaped for borrowck — we must hold the scalar
                     // payload across `self.scan()` which replaces self.token.
@@ -4024,6 +4106,19 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             // explicit-value indicator after `? - a` or
                             // `? sky\n: blue`). This scalar is not a key.
                             break 'node scalar.data.to_expr(scalar_start, self.input, self.bump);
+                        }
+                        // [192] ns-l-block-map-implicit-entry: the key is at
+                        // s-indent(n) (spaces only). A tab between s-indent
+                        // and the key means it cannot be a sibling block-map
+                        // entry; in compact position ([185]) it cannot be the
+                        // compact mapping's first key either.
+                        if scalar_tab_after_indent
+                            && matches!(
+                                self.context.get(),
+                                Context::BlockOut | Context::BlockIn
+                            )
+                        {
+                            return Err(Self::unexpected_token());
                         }
                         if let Some(current_mapping_indent) = opts.current_mapping_indent {
                             if current_mapping_indent == scalar_indent {
@@ -4144,12 +4239,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         indent.inc(1);
                     }
                     self.line_indent = indent;
+                    if Enc::wide(self.next()) == 0x09 {
+                        self.tab_after_indent = true;
+                    }
                     self.skip_s_white();
                     __c = Enc::wide(self.next());
                     continue;
                 }
                 0x09 /* '\t' */ => {
                     // there's no indentation, but we still skip the whitespace
+                    self.tab_after_indent = true;
                     self.inc(1);
                     self.skip_s_white();
                     __c = Enc::wide(self.next());
@@ -5430,6 +5529,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     fn scan(&mut self, opts: ScanOptions) -> Result<(), ParseError> {
         // ScanCtx state inlined
         let mut count_indentation = opts.first_scan || opts.additional_parent_indent.is_some();
+        // Tracks whether we are still in leading whitespace (after a newline
+        // or after an indicator with additional_parent_indent), so a tab at
+        // this position can taint `tab_after_indent`. Unlike count_indentation
+        // it stays true through the space arm.
+        let mut in_indent_position = count_indentation;
+        if in_indent_position {
+            self.tab_after_indent = false;
+        }
         let mut additional_parent_indent = opts.additional_parent_indent;
 
         let previous_token_line = self.token.line;
@@ -5441,7 +5548,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             match c {
                 0 => {
                     let start = self.pos;
-                    break 'next Token::eof(TokenInit { start, indent: self.line_indent, line: self.line });
+                    break 'next Token::eof(self.token_init(start));
                 }
                 0x2D /* '-' */ => {
                     let start = self.pos;
@@ -5450,7 +5557,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         && self.is_s_white_or_b_char_or_eof_at(3)
                     {
                         self.inc(3);
-                        break 'next Token::document_start(TokenInit { start, indent: self.line_indent, line: self.line });
+                        break 'next Token::document_start(self.token_init(start));
                     }
 
                     match Enc::wide(self.peek(1)) {
@@ -5463,12 +5570,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                     return Err(Self::unexpected_token());
                                 }
                             }
-                            break 'next Token::sequence_entry(TokenInit { start, indent: self.line_indent, line: self.line });
+                            break 'next Token::sequence_entry(self.token_init(start));
                         }
                         0x2C | 0x5D | 0x5B | 0x7D | 0x7B => match self.context.get() {
                             Context::FlowIn | Context::FlowKey => {
                                 self.inc(1);
-                                self.token = Token::sequence_entry(TokenInit { start, indent: self.line_indent, line: self.line });
+                                self.token = Token::sequence_entry(self.token_init(start));
                                 return Err(Self::unexpected_token());
                             }
                             Context::BlockIn | Context::BlockOut => {
@@ -5488,7 +5595,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         && self.is_s_white_or_b_char_or_eof_at(3)
                     {
                         self.inc(3);
-                        break 'next Token::document_end(TokenInit { start, indent: self.line_indent, line: self.line });
+                        break 'next Token::document_end(self.token_init(start));
                     }
                     break 'next self.scan_plain_scalar(opts)?;
                 }
@@ -5497,13 +5604,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     match Enc::wide(self.peek(1)) {
                         0 | 0x20 | 0x09 | 0x0A | 0x0D => {
                             self.inc(1);
-                            break 'next Token::mapping_key(TokenInit { start, indent: self.line_indent, line: self.line });
+                            break 'next Token::mapping_key(self.token_init(start));
                         }
                         0x2C | 0x5D | 0x5B | 0x7D | 0x7B => match self.context.get() {
                             Context::BlockIn | Context::BlockOut => {}
                             Context::FlowIn | Context::FlowKey => {
                                 self.inc(1);
-                                break 'next Token::mapping_key(TokenInit { start, indent: self.line_indent, line: self.line });
+                                break 'next Token::mapping_key(self.token_init(start));
                             }
                         },
                         _ => {}
@@ -5515,20 +5622,20 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     match Enc::wide(self.peek(1)) {
                         0 | 0x20 | 0x09 | 0x0A | 0x0D => {
                             self.inc(1);
-                            break 'next Token::mapping_value(TokenInit { start, indent: self.line_indent, line: self.line });
+                            break 'next Token::mapping_value(self.token_init(start));
                         }
                         0x2C | 0x5D | 0x5B | 0x7D | 0x7B => match self.context.get() {
                             Context::BlockIn | Context::BlockOut => {}
                             Context::FlowIn | Context::FlowKey => {
                                 self.inc(1);
-                                break 'next Token::mapping_value(TokenInit { start, indent: self.line_indent, line: self.line });
+                                break 'next Token::mapping_value(self.token_init(start));
                             }
                         },
                         _ => match self.context.get() {
                             Context::BlockIn | Context::BlockOut | Context::FlowIn => {}
                             Context::FlowKey => {
                                 self.inc(1);
-                                break 'next Token::mapping_value(TokenInit { start, indent: self.line_indent, line: self.line });
+                                break 'next Token::mapping_value(self.token_init(start));
                             }
                         },
                     }
@@ -5539,7 +5646,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     match self.context.get() {
                         Context::FlowIn | Context::FlowKey => {
                             self.inc(1);
-                            break 'next Token::collect_entry(TokenInit { start, indent: self.line_indent, line: self.line });
+                            break 'next Token::collect_entry(self.token_init(start));
                         }
                         Context::BlockIn | Context::BlockOut => {}
                     }
@@ -5548,22 +5655,22 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 0x5B /* '[' */ => {
                     let start = self.pos;
                     self.inc(1);
-                    break 'next Token::sequence_start(TokenInit { start, indent: self.line_indent, line: self.line });
+                    break 'next Token::sequence_start(self.token_init(start));
                 }
                 0x5D /* ']' */ => {
                     let start = self.pos;
                     self.inc(1);
-                    break 'next Token::sequence_end(TokenInit { start, indent: self.line_indent, line: self.line });
+                    break 'next Token::sequence_end(self.token_init(start));
                 }
                 0x7B /* '{' */ => {
                     let start = self.pos;
                     self.inc(1);
-                    break 'next Token::mapping_start(TokenInit { start, indent: self.line_indent, line: self.line });
+                    break 'next Token::mapping_start(self.token_init(start));
                 }
                 0x7D /* '}' */ => {
                     let start = self.pos;
                     self.inc(1);
-                    break 'next Token::mapping_end(TokenInit { start, indent: self.line_indent, line: self.line });
+                    break 'next Token::mapping_end(self.token_init(start));
                 }
                 0x23 /* '#' */ => {
                     let start = self.pos;
@@ -5672,12 +5779,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 0x25 /* '%' */ => {
                     let start = self.pos;
                     self.inc(1);
-                    break 'next Token::directive(TokenInit { start, indent: self.line_indent, line: self.line });
+                    break 'next Token::directive(self.token_init(start));
                 }
                 0x40 /* '@' */ | 0x60 /* '`' */ => {
                     let start = self.pos;
                     self.inc(1);
-                    self.token = Token::reserved(TokenInit { start, indent: self.line_indent, line: self.line });
+                    self.token = Token::reserved(self.token_init(start));
                     return Err(Self::unexpected_token());
                 }
                 // PORT NOTE: ScanCtx.scanWhitespace inlined.
@@ -5688,6 +5795,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                     // fallthrough to '\n'
                     count_indentation = true;
+                    in_indent_position = true;
                     additional_parent_indent = None;
                     self.newline();
                     self.inc(1);
@@ -5695,6 +5803,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
                 0x0A /* '\n' */ => {
                     count_indentation = true;
+                    in_indent_position = true;
                     additional_parent_indent = None;
                     self.newline();
                     self.inc(1);
@@ -5715,16 +5824,23 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     continue;
                 }
                 0x09 /* '\t' */ => {
-                    if additional_parent_indent.is_some() {
-                        // The same-line tab after `?`/`:`/`-` is s-separate-in-
-                        // line, not s-indent. [185] compact constructs require
-                        // s-indent (spaces), so the additional-parent-indent
-                        // treatment does not apply — the resulting token gets
-                        // the line's natural indent and the caller's compact-
-                        // indent check catches it.
-                        additional_parent_indent = None;
-                    } else if count_indentation && self.context.get() == Context::BlockIn {
+                    if count_indentation
+                        && additional_parent_indent.is_none()
+                        && self.context.get() == Context::BlockIn
+                    {
                         return Err(ParseError::UnexpectedCharacter);
+                    }
+                    if in_indent_position {
+                        // [63] s-indent is spaces only. A tab here is
+                        // s-separate-in-line — valid before [197]
+                        // flow-in-block content, but not before a [185]
+                        // compact construct or a sibling block entry. The
+                        // parser-side checks distinguish; here we record the
+                        // taint and drop additional_parent_indent (so the
+                        // resulting token's indent is what the *spaces*
+                        // reached, not column-based).
+                        self.tab_after_indent = true;
+                        additional_parent_indent = None;
                     }
                     count_indentation = false;
                     self.inc(1);

@@ -535,8 +535,10 @@ it.skipIf(!isMacOS)(
     // (APFS) an NFC name and its NFD equivalent are the same on-disk entry but
     // never byte-compare equal, so the cheap lexical prefix guard alone could be
     // bypassed — this asserts the stronger guarantee holds regardless.
-    const NFC = "é"; // "é", UTF-8: c3 a9
-    const NFD = "é"; // "é", UTF-8: 65 cc 81
+    // Explicit escapes so the NFC/NFD distinction is visible in source and
+    // survives any editor/tool that normalizes Unicode on save.
+    const NFC = "\u00e9"; // "é" as one precomposed codepoint, UTF-8: c3 a9
+    const NFD = "e\u0301"; // "é" as "e" + combining acute, UTF-8: 65 cc 81
     expect(Buffer.from(NFC).equals(Buffer.from(NFD))).toBe(false);
 
     const victimName = `victim-${Math.random().toString(36).slice(2, 10)}`;
@@ -646,11 +648,19 @@ it.skipIf(!isMacOS)(
       }
       for (let cur = dirname(installDir); cur !== dirname(cur); cur = dirname(cur)) {
         const link = join(cur, NFC);
+        // Only remove a link this test could have created: every link the
+        // escaped chain leaves behind is an `é -> ..` symlink, so gate on both
+        // "is a symlink" and "points to `..`" to stay scoped to test artifacts.
+        const isEscapedLink = await lstat(link).then(
+          s => s.isSymbolicLink(),
+          () => false,
+        );
         if (
-          await lstat(link).then(
-            s => s.isSymbolicLink(),
+          isEscapedLink &&
+          (await readlink(link).then(
+            t => t === "..",
             () => false,
-          )
+          ))
         ) {
           await rm(link, { force: true }).catch(() => {});
         }

@@ -1262,10 +1262,11 @@ describe("block scalar conformance matrix", () => {
   });
 });
 
-// These inputs hit genuine YAML 1.2.2 ambiguities (oracles split 2-2). The
-// expected values lock in the spec-derived answer; the comment column shows
-// what each reference parser produces. If any of these change, re-derive
-// from the spec — don't pick a ref to match.
+// On these inputs the four reference parsers disagree (typically 2-2). The
+// spec is unambiguous; one or more refs deviate from it. The expected values
+// lock in the spec-derived answer; the comment column shows what each
+// reference parser produces. If any of these change, re-derive from the spec
+// — don't pick a ref to match.
 describe("block scalar oracle-split (refs disagree)", () => {
   test.each([
     [

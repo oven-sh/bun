@@ -2656,11 +2656,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             .expect("No handlers set on Socket")
             .as_ptr();
         // SAFETY: `p` is the freely-aliased raw pointer; no `&Handlers` borrow
-        // is live across the read/writes below (single-threaded event loop,
-        // and `from_js` cannot reenter this socket's handlers).
+        // is live across the read/writes below (single-threaded event loop).
         let prev_mode = unsafe { (*p).mode };
         let handlers =
             Handlers::from_js(global, socket_obj, prev_mode == super::SocketMode::Server)?;
+        if this.handlers.get().map(|n| n.as_ptr()) != Some(p) {
+            return Ok(JSValue::UNDEFINED);
+        }
         // Preserve runtime state across the struct assignment. `Handlers.fromJS` returns a
         // fresh struct with `active_connections = 0` and `mode` limited to `.server`/`.client`,
         // but this socket (and any in-flight callback scope) still holds references that were
@@ -2668,7 +2670,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `.duplex_server`. Losing the counter causes the next `markInactive` to either free
         // the heap-allocated client `Handlers` while the socket still points at it, or
         // underflow on the server path.
-        // SAFETY: raw-pointer-only access; see `get_handlers` contract.
+        // SAFETY: `this.handlers` still points at `p` (checked above), so the
+        // allocation is live; raw-pointer-only access; see `get_handlers` contract.
         unsafe {
             let active_connections = (*p).active_connections.get();
             core::ptr::drop_in_place(p); // Zig: this_handlers.deinit()

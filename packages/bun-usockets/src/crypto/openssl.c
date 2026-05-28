@@ -1119,8 +1119,15 @@ restart:
     read += just_read;
 
     if (read == LIBUS_RECV_BUFFER_LENGTH) {
+      char *saved_input = loop_ssl_data->ssl_read_input;
+      unsigned int saved_length = loop_ssl_data->ssl_read_input_length;
+      unsigned int saved_offset = loop_ssl_data->ssl_read_input_offset;
       s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
       if (!s || ssl_gone(s)) return NULL;
+      loop_ssl_data->ssl_read_input = saved_input;
+      loop_ssl_data->ssl_read_input_length = saved_length;
+      loop_ssl_data->ssl_read_input_offset = saved_offset;
+      loop_ssl_data->ssl_socket = s;
       read = 0;
       goto restart;
     }

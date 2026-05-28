@@ -243,29 +243,29 @@ impl ExtractTarball {
         // `open_dir_at_windows_a` boundary, not here.
         let mut tmpname_buf = PathBuffer::uninit();
         let (name, basename) = self.name_and_basename();
-        if !self.resolution.tag.is_git()
-            && self.resolution.tag != ResolutionTag::LocalTarball
-            && !bun_install::dependency::is_safe_install_folder_name(
-                &basename[0..basename.len().min(32)],
-            )
-        {
-            log.add_error_fmt(
-                None,
-                bun_ast::Loc::EMPTY,
-                format_args!(
-                    "Refusing to install package with invalid name \"{}\"",
-                    bun_fmt::s(name),
-                ),
-            );
-            return Err(bun_core::err!("InstallFailed"));
-        }
+        let truncated_basename = &basename[0..basename.len().min(32)];
+        let tmpname_suffix: &[u8] =
+            if bun_install::dependency::is_safe_install_folder_name(truncated_basename) {
+                truncated_basename
+            } else if self.resolution.tag.is_git()
+                || self.resolution.tag == ResolutionTag::LocalTarball
+            {
+                b"package"
+            } else {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "Refusing to install package with invalid name \"{}\"",
+                        bun_fmt::s(name),
+                    ),
+                );
+                return Err(bun_core::err!("InstallFailed"));
+            };
 
         let mut resolved: &'static [u8] = b"";
-        let tmpname = FileSystem::tmpname(
-            &basename[0..basename.len().min(32)],
-            &mut tmpname_buf.0,
-            bun_core::fast_random(),
-        )?;
+        let tmpname =
+            FileSystem::tmpname(tmpname_suffix, &mut tmpname_buf.0, bun_core::fast_random())?;
         {
             let extract_destination = match bun_sys::make_path::make_open_path(
                 tmpdir,

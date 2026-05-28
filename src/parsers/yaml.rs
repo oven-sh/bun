@@ -793,6 +793,8 @@ pub enum ParseError {
     InvalidIndentation,
     #[error("StackOverflow")]
     StackOverflow,
+    #[error("ExcessiveAliasing")]
+    ExcessiveAliasing,
 }
 
 bun_core::oom_from_alloc!(ParseError);
@@ -2161,6 +2163,7 @@ pub enum ParseResultError {
     UnexpectedDocumentEnd { pos: Pos },
     MultipleYamlDirectives { pos: Pos },
     InvalidIndentation { pos: Pos },
+    ExcessiveAliasing { pos: Pos },
 }
 
 impl ParseResultError {
@@ -2210,6 +2213,9 @@ impl ParseResultError {
             }
             ParseResultError::InvalidIndentation { pos } => {
                 log.add_error(Some(source), pos.loc(), b"Invalid indentation");
+            }
+            ParseResultError::ExcessiveAliasing { pos } => {
+                log.add_error(Some(source), pos.loc(), b"Excessive aliasing");
             }
         }
         Ok(())
@@ -2268,6 +2274,9 @@ impl<Enc: Encoding> ParseResult<Enc> {
             ParseError::InvalidIndentation => {
                 ParseResultError::InvalidIndentation { pos: parser.pos }
             }
+            ParseError::ExcessiveAliasing => ParseResultError::ExcessiveAliasing {
+                pos: parser.token.start,
+            },
         };
         ParseResult::Err(e)
     }
@@ -2315,9 +2324,18 @@ pub struct Parser<'i, Enc: Encoding> {
     pub stack_check: StackCheck,
 
     pub merge_props_budget: usize,
+    pub alias_expansion_budget: usize,
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
+    /// Total number of nodes that may be reached through alias expansion in a
+    /// single document. Repeated merges of the same anchor (`<<: [*a, *a, ...]`)
+    /// charge the anchor's full subtree per occurrence even though merge keys
+    /// deduplicate, so this needs enough headroom for legitimate documents that
+    /// reuse a large anchor many times while still rejecting exponential
+    /// (billion-laughs style) expansion.
+    pub const MAX_ALIAS_EXPANSION: usize = 16 * 1024 * 1024;
+
     pub fn init(bump: &'i bun_alloc::Arena, input: &'i [Enc::Unit]) -> Self {
         Self {
             input,
@@ -2338,6 +2356,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             whitespace_buf: Vec::new(),
             stack_check: StackCheck::init(),
             merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
+            alias_expansion_budget: Self::MAX_ALIAS_EXPANSION,
         }
     }
 
@@ -3672,6 +3691,33 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         Ok(e_node)
     }
 
+    fn charge_alias_expansion(&mut self, root: Expr) -> Result<(), ParseError> {
+        let mut stack: Vec<Expr> = vec![root];
+        while let Some(node) = stack.pop() {
+            self.alias_expansion_budget = self
+                .alias_expansion_budget
+                .checked_sub(1)
+                .ok_or(ParseError::ExcessiveAliasing)?;
+            match &node.data {
+                ast::ExprData::EArray(arr) => {
+                    stack.extend_from_slice(arr.items.slice());
+                }
+                ast::ExprData::EObject(obj) => {
+                    for prop in obj.properties.slice() {
+                        if let Some(key) = prop.key {
+                            stack.push(key);
+                        }
+                        if let Some(value) = prop.value {
+                            stack.push(value);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     fn parse_node(&mut self, opts: ParseNodeOptions<Enc>) -> Result<Expr, ParseError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(ParseError::StackOverflow);
@@ -3740,6 +3786,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             return Err(ParseError::UnresolvedAlias);
                         }
                     };
+
+                    self.charge_alias_expansion(copy)?;
 
                     // update position from the anchor node to the alias node.
                     copy.loc = alias_start.loc();

@@ -103,10 +103,9 @@ pub use bun_uws_sys::{
 // `verifyErrorToJS`) live as extension traits in the *_jsc crate per PORTING.md.
 pub use bun_uws_sys::{Opcode, SendStatus, create_bun_socket_error_t, us_bun_verify_error_t};
 
-/// Owned socket-address shape (boxed IP) used where the borrowed
-/// `bun_uws_sys::SocketAddress<'a>` would tie a lifetime to a transient
-/// `uws_res` buffer. Distinct from the sys type by design — that one is the
-/// zero-copy borrow returned from `Response::get_remote_socket_info`.
+/// Owned socket-address shape (boxed IP). Distinct from the sys type by
+/// design — that one stores the IP text inline as returned from
+/// `Response::get_remote_socket_info`.
 pub struct SocketAddress {
     pub ip: Box<[u8]>,
     pub port: i32,

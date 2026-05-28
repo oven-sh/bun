@@ -12757,3 +12757,123 @@ test("rejects Postgres connection options containing null bytes", async () => {
   expect(ok).toBeDefined();
   await ok.close();
 });
+
+// A Postgres server controls two independent column counts: the
+// RowDescription's field list (which sizes the per-row cell buffer and the
+// cached row Structure) and each DataRow's own column count. When a DataRow
+// declares fewer columns than the RowDescription, the unfilled cells stay in
+// their default "named null" state; building the row object must only write
+// as many properties as the Structure actually has, leaving the missing
+// columns as null instead of writing past the row object's property storage.
+// The row description here uses 62 identically-named fields so the cached
+// Structure has a single property while the cell buffer has 62 entries.
+// Runs in a subprocess because a regression corrupts the JS heap of the
+// process that parses the response.
+test("data row that omits columns declared in the row description yields nulls for the missing columns", async () => {
+  const fixtureDir = tempDirWithFiles("pg-short-data-row", {
+    "fixture.ts": `
+import { SQL } from "bun";
+import net from "node:net";
+
+function pkt(type, body) {
+  const header = Buffer.alloc(5);
+  header.write(type, 0);
+  header.writeInt32BE(body.length + 4, 1);
+  return Buffer.concat([header, body]);
+}
+const int16 = n => { const b = Buffer.alloc(2); b.writeInt16BE(n, 0); return b; };
+const int32 = n => { const b = Buffer.alloc(4); b.writeInt32BE(n, 0); return b; };
+const cstr = s => Buffer.concat([Buffer.from(s), Buffer.from([0])]);
+
+// 62 text columns (oid 25, format 0) that all share the same name "c", so the
+// cached row Structure has a single property and the other 61 fields are
+// duplicates.
+const COLUMNS = 62;
+const rowDescription = pkt("T", Buffer.concat([
+  int16(COLUMNS),
+  ...Array.from({ length: COLUMNS }, () =>
+    Buffer.concat([cstr("c"), int32(0), int16(0), int32(25), int16(-1), int32(-1), int16(0)]),
+  ),
+]));
+function dataRow(values) {
+  const cols = Buffer.concat(
+    values.map(v => {
+      const bytes = Buffer.from(v);
+      return Buffer.concat([int32(bytes.length), bytes]);
+    }),
+  );
+  return pkt("D", Buffer.concat([int16(values.length), cols]));
+}
+const authenticationOk = pkt("R", int32(0));
+const readyForQuery = pkt("Z", Buffer.from("I"));
+const commandComplete = pkt("C", cstr("SELECT 1"));
+
+async function run(label, rowValues) {
+  const server = net.createServer(socket => {
+    let startup = true;
+    socket.on("data", data => {
+      if (startup) {
+        startup = false;
+        socket.write(Buffer.concat([authenticationOk, readyForQuery]));
+        return;
+      }
+      if (data[0] !== 0x51 /* 'Q' */) return;
+      socket.write(Buffer.concat([rowDescription, dataRow(rowValues), commandComplete, readyForQuery]));
+    });
+    socket.on("error", () => {});
+  });
+  await new Promise(r => server.listen(0, "127.0.0.1", () => r()));
+  const port = server.address().port;
+  const sql = new SQL({
+    url: "postgres://u@127.0.0.1:" + port + "/db",
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+  try {
+    const rows = await sql\`select c\`.simple();
+    console.log(label + " " + JSON.stringify(rows[0]));
+  } catch (e) {
+    console.log(label + "_ERROR " + (e.code || e.message));
+  } finally {
+    await sql.close().catch(() => {});
+    await new Promise(r => server.close(() => r()));
+  }
+}
+
+// The DataRow declares zero of the 62 described columns: the row's single
+// named property must come back as null and nothing else may be written.
+await run("EMPTY_ROW", []);
+// A DataRow that supplies all 62 declared columns still resolves the duplicate
+// column name following the established "last one wins" rule.
+await run("FULL_ROW", Array.from({ length: COLUMNS }, (_, i) => "v" + i));
+console.log("FIXTURE_DONE");
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    cwd: fixtureDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 10_000,
+    killSignal: "SIGKILL",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split(/\r?\n/)
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+
+  // The row built from the short DataRow has exactly the structure's one
+  // property, valued null; the fully-populated row still maps the duplicate
+  // column name to the last column's value (last one wins, matching the
+  // existing duplicate-column-name behavior).
+  expect(stdout).toContain('EMPTY_ROW {"c":null}');
+  expect(stdout).toContain('FULL_ROW {"c":"v61"}');
+  expect(stdout).toContain("FIXTURE_DONE");
+  expect(filteredStderr).toBe("");
+  expect(exitCode).toBe(0);
+}, 30_000);

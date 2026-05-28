@@ -1101,6 +1101,136 @@ it("writing to an established TLS socket from another TLS client's open() does n
   }
 }, 30_000);
 
+it("TLS mid-read boundary dispatch: writing to another TLS socket from data() does not corrupt the rest of the stream", async () => {
+  // When SSL_read fills the per-loop 512KiB output buffer exactly, uSockets
+  // dispatches that chunk to the data() callback mid-read and then continues
+  // decrypting the rest of the same TCP read. If the callback does TLS work on
+  // another socket on the same loop (here: write() to a second TLS client),
+  // the per-loop ssl_read_input/offset/length and ssl_socket must be restored
+  // afterwards — otherwise the remaining ciphertext is dropped and the stream
+  // desyncs (bad record MAC / truncated payload).
+  const BOUNDARY_CHUNK = 512 * 1024;
+  const PAYLOAD_SIZE = 12 * 1024 * 1024;
+  const block = Buffer.alloc(64 * 1024);
+  for (let i = 0; i < block.length; i++) block[i] = i & 0xff;
+  const payload = Buffer.concat(Array(PAYLOAD_SIZE / block.length).fill(block));
+  const expectedHash = new Bun.CryptoHasher("sha256").update(payload).digest("hex");
+
+  const downloadDone = Promise.withResolvers<string>();
+  const sideReceived = Promise.withResolvers<void>();
+
+  // Server that streams the 12MiB payload once the client asks for it.
+  let sent = 0;
+  const pump = (socket: Socket) => {
+    while (sent < payload.length) {
+      const written = socket.write(payload.subarray(sent, Math.min(sent + 1024 * 1024, payload.length)));
+      if (written <= 0) break;
+      sent += written;
+    }
+    socket.flush();
+  };
+  const payloadServer = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls,
+    socket: {
+      open() {},
+      data(socket) {
+        pump(socket);
+      },
+      drain(socket) {
+        pump(socket);
+      },
+      close() {},
+      error() {},
+    },
+  });
+
+  // Second TLS server + client on the same loop; the download's data() handler
+  // writes to this client from inside the boundary dispatch.
+  const sideServer = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls,
+    socket: {
+      open() {},
+      data() {
+        sideReceived.resolve();
+      },
+      close() {},
+      error() {},
+    },
+  });
+
+  let sideSocket: Socket | undefined;
+  let downloadSocket: Socket | undefined;
+  const hasher = new Bun.CryptoHasher("sha256");
+  let receivedBytes = 0;
+  let boundaryChunks = 0;
+  let sideWrites = 0;
+
+  try {
+    sideSocket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: sideServer.port,
+      tls: { ...tls, rejectUnauthorized: false },
+      socket: {
+        open() {},
+        data() {},
+        close() {},
+        error() {},
+      },
+    });
+
+    downloadSocket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: payloadServer.port,
+      tls: { ...tls, rejectUnauthorized: false },
+      socket: {
+        open() {},
+        handshake(socket) {
+          socket.write("GO\n");
+        },
+        data(_socket, chunk) {
+          hasher.update(chunk);
+          receivedBytes += chunk.byteLength;
+
+          const isBoundary = chunk.byteLength === BOUNDARY_CHUNK;
+          if (isBoundary) boundaryChunks += 1;
+          // Write to the second TLS socket from the boundary dispatch; if this
+          // run never produces an exact 512KiB chunk, fall back to writing on
+          // every data event so the re-entrancy is still exercised.
+          if (isBoundary || boundaryChunks === 0) {
+            sideWrites += 1;
+            sideSocket!.write("ping\n");
+          }
+
+          if (receivedBytes >= PAYLOAD_SIZE) {
+            downloadDone.resolve("done");
+          }
+        },
+        close() {
+          downloadDone.resolve(`closed after ${receivedBytes} bytes`);
+        },
+        error(_socket, err) {
+          downloadDone.resolve(`error: ${err} after ${receivedBytes} bytes`);
+        },
+      },
+    });
+
+    expect(await downloadDone.promise).toBe("done");
+    expect(receivedBytes).toBe(PAYLOAD_SIZE);
+    expect(hasher.digest("hex")).toBe(expectedHash);
+    expect(sideWrites).toBeGreaterThan(0);
+    await sideReceived.promise;
+  } finally {
+    downloadSocket?.end();
+    sideSocket?.end();
+    payloadServer.stop(true);
+    sideServer.stop(true);
+  }
+}, 60_000);
+
 // Bun.connect() on a Windows named pipe takes a dedicated early branch in
 // Listener.connectInner that heap-allocates a standalone Handlers block. That
 // block's `.mode` must be `.client` so Handlers.markInactive() destroys it on
@@ -1212,4 +1342,219 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
       signalCode: null,
     });
   });
+});
+
+it("reload() backs out cleanly when a handler getter closes the socket mid-reload", async () => {
+  // socket.reload() reads the new callbacks off the user object property by
+  // property, so a getter can run arbitrary JS — including terminating the
+  // very socket being reloaded, which releases its current handlers. The
+  // reload must then back out instead of writing through the released
+  // handlers, and reload() on a live socket must keep working.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open() {},
+            data(s, buf) { s.write("polo"); },
+            close() {},
+            error() {},
+          },
+        });
+
+        // 1) reload() whose "data" getter terminates the socket mid-reload.
+        {
+          const closed = Promise.withResolvers();
+          const sock = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            socket: {
+              open() {},
+              data() {},
+              close() { closed.resolve(); },
+              error() {},
+            },
+          });
+          sock.reload({
+            socket: {
+              get data() {
+                sock.terminate();
+                return () => {};
+              },
+              open() {},
+              drain() {},
+              close() {},
+              error() {},
+            },
+          });
+          await closed.promise;
+          console.log("reload-with-terminate-ok");
+        }
+
+        // 2) A normal reload() on a live socket still swaps the handlers.
+        {
+          const got = Promise.withResolvers();
+          const closed = Promise.withResolvers();
+          const sock = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            socket: {
+              open() {},
+              data() { got.resolve("old-handler"); },
+              close() { closed.resolve(); },
+              error() {},
+            },
+          });
+          sock.reload({
+            socket: {
+              data(_s, buf) { got.resolve(buf.toString()); },
+              drain() {},
+              close() { closed.resolve(); },
+              error() {},
+            },
+          });
+          sock.write("marco");
+          console.log("second-reload:" + (await got.promise));
+          sock.end();
+          await closed.promise;
+        }
+
+        Bun.gc(true);
+        console.log("DONE");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 15_000,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("reload-with-terminate-ok\nsecond-reload:polo\nDONE\n");
+  expect(exitCode).toBe(0);
+  void stderr;
+});
+
+it("node:net connect() reusing a server-accepted handle keeps the listener's handlers working", async () => {
+  // A Bun.listen()-accepted socket wrapper does not own its handlers — they
+  // live inside the listener. Reusing such a wrapper as the handle for an
+  // outbound node:net connect must not release the listener's handlers: the
+  // outbound connect gets its own handlers and works, and the listener keeps
+  // accepting and dispatching new connections afterwards.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const net = require("node:net");
+
+        // Target server for the outbound connect.
+        using target = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open(s) { s.write("target-hello"); },
+            data() {},
+            close() {},
+            error() {},
+          },
+        });
+
+        // Listener whose accepted-socket wrapper is captured and reused.
+        let accepted;
+        let openCount = 0;
+        const acceptedOpen = Promise.withResolvers();
+        const acceptedClosed = Promise.withResolvers();
+        const secondAccepted = Promise.withResolvers();
+        using listener = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open(s) {
+              openCount += 1;
+              if (openCount === 1) {
+                accepted = s;
+                acceptedOpen.resolve();
+              } else {
+                s.write("second-accept");
+                secondAccepted.resolve();
+              }
+            },
+            data() {},
+            close() {
+              if (openCount === 1) acceptedClosed.resolve();
+            },
+            error() {},
+          },
+        });
+
+        // First inbound connection, then the peer disconnects so the accepted
+        // wrapper is left closed with no active connections on the listener.
+        const firstClosed = Promise.withResolvers();
+        const first = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: listener.port,
+          socket: {
+            open() {},
+            data() {},
+            close() { firstClosed.resolve(); },
+            error() {},
+          },
+        });
+        await acceptedOpen.promise;
+        first.end();
+        await acceptedClosed.promise;
+        await firstClosed.promise;
+        await new Promise((r) => setImmediate(r));
+        console.log("STEP1");
+
+        // Reuse the closed server-accepted wrapper as the handle for an
+        // outbound node:net connect.
+        const outboundResult = Promise.withResolvers();
+        let outboundData = "";
+        const outbound = new net.Socket();
+        outbound._handle = accepted;
+        outbound.on("data", (d) => {
+          outboundData += d.toString();
+          if (outboundData.includes("target-hello")) outboundResult.resolve("connected+data");
+        });
+        outbound.on("error", (e) => outboundResult.resolve("error:" + (e && e.code)));
+        outbound.on("close", () => outboundResult.resolve("closed:" + outboundData));
+        outbound.connect(target.port, "127.0.0.1");
+        console.log("STEP2:" + (await outboundResult.promise));
+
+        // The original listener still dispatches to its own handlers.
+        const verify = Promise.withResolvers();
+        const verifyClient = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: listener.port,
+          socket: {
+            open() {},
+            data(_s, buf) { verify.resolve(buf.toString()); },
+            close() {},
+            error() {},
+          },
+        });
+        await secondAccepted.promise;
+        console.log("STEP3:" + (await verify.promise));
+
+        outbound.destroy();
+        verifyClient.end();
+        console.log("DONE");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 20_000,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("STEP1\nSTEP2:connected+data\nSTEP3:second-accept\nDONE\n");
+  expect(exitCode).toBe(0);
+  void stderr;
 });

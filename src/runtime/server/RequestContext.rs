@@ -3560,6 +3560,11 @@ where
         ctx_log!("render");
         self.set_response(response);
 
+        if matches!(response.status_code(), 101 | 103 | 204 | 205 | 304) {
+            self.do_render_blob();
+            return;
+        }
+
         self.do_render();
     }
 
@@ -3856,11 +3861,11 @@ where
     pub fn get_remote_socket_info(&self) -> Option<uws::SocketAddress> {
         let resp = self.resp?;
         // `AnyResponse::get_remote_socket_info` returns the uws_sys
-        // borrowed-slice variant; convert to the owned `bun_uws::SocketAddress`.
+        // variant; convert to the owned `bun_uws::SocketAddress`.
         // SAFETY: FFI handle
         let info = resp.get_remote_socket_info()?;
         Some(uws::SocketAddress {
-            ip: info.ip.to_vec().into_boxed_slice(),
+            ip: info.ip().to_vec().into_boxed_slice(),
             port: info.port,
             is_ipv6: info.is_ipv6,
         })

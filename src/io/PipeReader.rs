@@ -828,13 +828,13 @@ impl PosixBufferedReader {
         if streaming {
             // Per-loop scratch buffer; single-threaded event loop (see
             // `EventLoopCtx::pipe_read_buffer_mut`).
-            let stack_buffer = parent.vtable.event_loop().pipe_read_buffer_mut();
-            let stack_buffer_len = stack_buffer.len();
+            let event_loop = parent.vtable.event_loop();
+            let stack_buffer_len = event_loop.pipe_read_buffer_mut().len();
             while parent._buffer.capacity() == 0 {
                 let stack_buffer_cutoff = stack_buffer_len / 2;
                 let mut head_start = 0usize; // index into stack_buffer where the unwritten head begins
                 while stack_buffer_len - head_start > 16 * 1024 {
-                    let buf = &mut stack_buffer[head_start..];
+                    let buf = &mut event_loop.pipe_read_buffer_mut()[head_start..];
 
                     match sys_fn(fd, buf, parent._offset) {
                         sys::Result::Ok(bytes_read) => {
@@ -849,9 +849,10 @@ impl PosixBufferedReader {
                             if bytes_read == 0 {
                                 parent.close_without_reporting();
                                 if head_start > 0 {
-                                    let _ = parent
-                                        .vtable
-                                        .on_read_chunk(&stack_buffer[..head_start], ReadState::Eof);
+                                    let _ = parent.vtable.on_read_chunk(
+                                        &event_loop.pipe_read_buffer_mut()[..head_start],
+                                        ReadState::Eof,
+                                    );
                                 }
                                 if !parent.flags.contains(PosixFlags::IS_DONE) {
                                     parent.done();
@@ -876,7 +877,7 @@ impl PosixBufferedReader {
                                 // returns the remaining bytes then 0, so
                                 // draining to `bytes_read == 0` is bounded.
                                 if !parent.vtable.on_read_chunk(
-                                    &stack_buffer[..head_start],
+                                    &event_loop.pipe_read_buffer_mut()[..head_start],
                                     if received_hup {
                                         ReadState::Eof
                                     } else {
@@ -901,7 +902,7 @@ impl PosixBufferedReader {
 
                                 if head_start > 0 {
                                     let _ = parent.vtable.on_read_chunk(
-                                        &stack_buffer[..head_start],
+                                        &event_loop.pipe_read_buffer_mut()[..head_start],
                                         ReadState::Drained,
                                     );
                                 }
@@ -910,7 +911,7 @@ impl PosixBufferedReader {
 
                             if head_start > 0 {
                                 let _ = parent.vtable.on_read_chunk(
-                                    &stack_buffer[..head_start],
+                                    &event_loop.pipe_read_buffer_mut()[..head_start],
                                     ReadState::Progress,
                                 );
                             }
@@ -922,7 +923,7 @@ impl PosixBufferedReader {
 
                 if head_start > 0 {
                     if !parent.vtable.on_read_chunk(
-                        &stack_buffer[..head_start],
+                        &event_loop.pipe_read_buffer_mut()[..head_start],
                         if received_hup {
                             ReadState::Eof
                         } else {

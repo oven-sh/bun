@@ -1,6 +1,6 @@
 import { YAML, file } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.YAML", () => {
@@ -3981,3 +3981,68 @@ test("limits how many properties merge keys can materialize from a small documen
 
   expect(() => YAML.parse(input)).toThrow();
 }, 30_000);
+
+test("bounds alias expansion for parsed and imported YAML documents", async () => {
+  // A document with a few levels of anchors, where each level is a sequence of
+  // aliases to the previous one, expands to width^depth nodes even though the
+  // source is only ~1 KB. The parser must cap the total number of nodes
+  // reachable through alias expansion and report an error instead of letting
+  // the .yaml import / bundler paths materialize the full expansion.
+  const width = 30;
+  const levelNames = ["a", "b", "c", "d"];
+  const lines: string[] = [`a: &a [${new Array(width).fill("0").join(", ")}]`];
+  for (let i = 1; i < levelNames.length; i++) {
+    lines.push(`${levelNames[i]}: &${levelNames[i]} [${new Array(width).fill(`*${levelNames[i - 1]}`).join(", ")}]`);
+  }
+  lines.push(`e: [${new Array(width).fill("*d").join(", ")}]`);
+  const payload = lines.join("\n") + "\n";
+
+  // Ordinary anchor/alias reuse still parses.
+  const legit = YAML.parse("base: &base [1, 2, 3]\nuses: [*base, *base, *base]\n") as {
+    base: number[];
+    uses: number[][];
+  };
+  expect(legit.uses).toEqual([
+    [1, 2, 3],
+    [1, 2, 3],
+    [1, 2, 3],
+  ]);
+
+  // The payload's aliases would expand to ~24 million nodes (30^5). The parser
+  // rejects it instead of materializing the expansion.
+  expect(() => YAML.parse(payload)).toThrow();
+
+  // The same document reaches the parser through the runtime .yaml import path.
+  // A reasonable document still imports; the over-expanding one fails with a
+  // catchable parse error instead of allocating memory proportional to the
+  // expanded node count.
+  using dir = tempDir("yaml-alias-budget", {
+    "ok.yaml": "base: &base\n  retries: 3\n  region: us-east-1\ncopy: *base\n",
+    "payload.yaml": payload,
+    "index.ts": `
+      const ok = (await import("./ok.yaml")).default;
+      console.log("ok:" + JSON.stringify(ok.copy));
+      try {
+        const big = (await import("./payload.yaml")).default;
+        console.log("payload:" + Object.keys(big).length);
+      } catch (err) {
+        console.log("rejected:" + String((err && err.name) || err));
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain('ok:{"retries":3,"region":"us-east-1"}');
+  expect(stdout).toContain("rejected:");
+  expect(stdout).not.toContain("payload:");
+  expect(exitCode).toBe(0);
+}, 60_000);

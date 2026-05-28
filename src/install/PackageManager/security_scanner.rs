@@ -535,11 +535,6 @@ impl<'a> PackageCollector<'a> {
                 continue;
             }
 
-            let dep_res = &pkg_resolutions[dep_pkg_id as usize];
-            if dep_res.tag != bun_install::resolution::Tag::Npm {
-                continue;
-            }
-
             if self.dedupe.get_or_put(dep_pkg_id)?.found_existing {
                 continue;
             }
@@ -569,11 +564,6 @@ impl<'a> PackageCollector<'a> {
                 let dep_pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
 
                 if dep_pkg_id == invalid_package_id {
-                    continue;
-                }
-
-                let dep_res = &pkg_resolutions[dep_pkg_id as usize];
-                if dep_res.tag != bun_install::resolution::Tag::Npm {
                     continue;
                 }
 
@@ -607,10 +597,6 @@ impl<'a> PackageCollector<'a> {
                 let update_pkg_id: PackageID =
                     PackageID::try_from(_update_pkg_id).expect("int cast");
                 if update_pkg_id != req.package_id {
-                    continue;
-                }
-                if pkg_resolutions[update_pkg_id as usize].tag != bun_install::resolution::Tag::Npm
-                {
                     continue;
                 }
 
@@ -682,16 +668,18 @@ impl<'a> PackageCollector<'a> {
             let pkg_id = item.pkg_id;
             let _ = item.dep_id; // Could be useful in the future for dependency-specific processing
 
-            let pkg_path_copy: Box<[PackageID]> = item.pkg_path.clone().into_boxed_slice();
-            let dep_path_copy: Box<[DependencyID]> = item.dep_path.clone().into_boxed_slice();
+            if pkg_resolutions[pkg_id as usize].tag == bun_install::resolution::Tag::Npm {
+                let pkg_path_copy: Box<[PackageID]> = item.pkg_path.clone().into_boxed_slice();
+                let dep_path_copy: Box<[DependencyID]> = item.dep_path.clone().into_boxed_slice();
 
-            self.package_paths.put(
-                pkg_id,
-                PackagePath {
-                    pkg_path: pkg_path_copy,
-                    dep_path: dep_path_copy,
-                },
-            )?;
+                self.package_paths.put(
+                    pkg_id,
+                    PackagePath {
+                        pkg_path: pkg_path_copy,
+                        dep_path: dep_path_copy,
+                    },
+                )?;
+            }
 
             let pkg_deps = pkg_dependencies[pkg_id as usize];
             for _next_dep_id in pkg_deps.begin()..pkg_deps.end() {
@@ -700,11 +688,6 @@ impl<'a> PackageCollector<'a> {
                 let next_pkg_id = self.manager.lockfile.buffers.resolutions[next_dep_id as usize];
 
                 if next_pkg_id == invalid_package_id {
-                    continue;
-                }
-
-                let next_pkg_res = &pkg_resolutions[next_pkg_id as usize];
-                if next_pkg_res.tag != bun_install::resolution::Tag::Npm {
                     continue;
                 }
 
@@ -773,9 +756,9 @@ impl<'a> JSONBuilder<'a> {
                 json_buf.extend_from_slice(b",\n");
             }
 
-            // SAFETY: `PackageCollector::collect_packages_from_root` only inserts
-            // packages whose resolution tag is `Tag::Npm` into `package_paths`,
-            // so the `npm` union variant is the active field here.
+            // SAFETY: `PackageCollector::process_queue` only inserts packages
+            // whose resolution tag is `Tag::Npm` into `package_paths`, so the
+            // `npm` union variant is the active field here.
             let npm = pkg_res.npm();
             if dep_id == invalid_dependency_id {
                 write!(
@@ -889,14 +872,10 @@ fn attempt_security_scan_with_retry(
 
     // PORT NOTE: destructure `collector` here to release its `&PackageManager`
     // borrow before constructing `SecurityScanSubprocess` (which needs `&mut`).
-    // Only `package_paths` and the dedupe count are read past this point.
-    let PackageCollector {
-        dedupe,
-        package_paths,
-        ..
-    } = collector;
+    // Only `package_paths` is read past this point.
+    let PackageCollector { package_paths, .. } = collector;
     let mut package_paths = package_paths;
-    let packages_scanned = dedupe.count();
+    let packages_scanned = package_paths.count();
 
     let mut code: Vec<u8> = Vec::new();
 

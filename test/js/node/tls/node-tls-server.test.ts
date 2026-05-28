@@ -722,3 +722,75 @@ it("connectionListener should emit the right amount of times, and with alpnProto
   await Promise.all(promises);
   expect(count).toBe(50);
 });
+
+it("leaves socket.authorized false unless a client certificate was requested and verified", async () => {
+  // A server that never requested a client certificate must not report the
+  // connection as authorized (matches Node.js fail-closed semantics).
+  {
+    const { promise, resolve, reject } = Promise.withResolvers<boolean>();
+    const server: Server = createServer(COMMON_CERT, socket => {
+      resolve(socket.authorized);
+      socket.end();
+    });
+    server.on("error", reject);
+    server.listen(0);
+    await once(server, "listening");
+    const address = server.address() as AddressInfo;
+    const client = connect({
+      port: address.port,
+      host: "127.0.0.1",
+      rejectUnauthorized: false,
+    });
+    client.on("error", reject);
+    try {
+      expect(await promise).toBe(false);
+    } finally {
+      client.end();
+      server.close();
+    }
+  }
+
+  // The legitimate mutual-TLS case still works: when the server requests a
+  // certificate and the client presents one that verifies against the
+  // server's CA, the socket is reported as authorized.
+  {
+    const fixtures = join(import.meta.dir, "fixtures");
+    const agent1Key = readFileSync(join(fixtures, "agent1-key.pem"), "utf8");
+    const agent1Cert = readFileSync(join(fixtures, "agent1-cert.pem"), "utf8");
+    const ca1 = readFileSync(join(fixtures, "ca1-cert.pem"), "utf8");
+
+    const { promise, resolve, reject } = Promise.withResolvers<boolean>();
+    const server: Server = createServer(
+      {
+        key: agent1Key,
+        cert: agent1Cert,
+        ca: [ca1],
+        requestCert: true,
+        rejectUnauthorized: false,
+      },
+      socket => {
+        resolve(socket.authorized);
+        socket.end();
+      },
+    );
+    server.on("error", reject);
+    server.listen(0);
+    await once(server, "listening");
+    const address = server.address() as AddressInfo;
+    const client = connect({
+      port: address.port,
+      host: "127.0.0.1",
+      key: agent1Key,
+      cert: agent1Cert,
+      ca: [ca1],
+      rejectUnauthorized: false,
+    });
+    client.on("error", reject);
+    try {
+      expect(await promise).toBe(true);
+    } finally {
+      client.end();
+      server.close();
+    }
+  }
+});

@@ -3804,3 +3804,98 @@ test.concurrent(
     expect(await exited).toBe(0);
   },
 );
+
+test.concurrent(
+  "trustedDependencies entries for non-npm dependencies only apply to dependencies declared by the root or a workspace",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+
+    // A transitive dependency picks the aliases of its own dependencies. An alias
+    // that happens to match an entry in the root's `trustedDependencies` must not
+    // grant lifecycle-script trust to a tarball/git/folder package the root never
+    // declared itself.
+    const tarballUrl = `http://localhost:${verdaccio.port}/electron/-/electron-1.0.0.tgz`;
+    const middleDir = join(packageDir, "middle");
+    await mkdir(middleDir, { recursive: true });
+    await writeFile(
+      join(middleDir, "package.json"),
+      JSON.stringify({
+        name: "middle",
+        version: "1.0.0",
+        dependencies: {
+          "trusted-native-addon": tarballUrl,
+        },
+      }),
+    );
+
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "middle": "file:./middle",
+        },
+        trustedDependencies: ["trusted-native-addon"],
+      }),
+    );
+
+    let { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    let err = await stderr.text();
+    let out = await stdout.text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    // The remote tarball was introduced by `middle`, not by the root, so its
+    // preinstall must stay blocked even though the alias matches an entry in the
+    // root's trustedDependencies.
+    expect(out).toContain("Blocked 1 postinstall");
+    expect(await exited).toBe(0);
+    expect(await exists(join(packageDir, "node_modules", "trusted-native-addon", "preinstall.txt"))).toBeFalse();
+    expect(
+      await exists(
+        join(packageDir, "node_modules", "middle", "node_modules", "trusted-native-addon", "preinstall.txt"),
+      ),
+    ).toBeFalse();
+
+    // The same tarball declared by the root itself under the trusted alias still
+    // runs its lifecycle scripts.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "bun.lock"), { force: true });
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "trusted-native-addon": tarballUrl,
+        },
+        trustedDependencies: ["trusted-native-addon"],
+      }),
+    );
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await stderr.text();
+    out = await stdout.text();
+    expect(err).not.toContain("error:");
+    expect(out).not.toContain("Blocked");
+    expect(await exited).toBe(0);
+    expect(await exists(join(packageDir, "node_modules", "trusted-native-addon", "preinstall.txt"))).toBeTrue();
+  },
+);

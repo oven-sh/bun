@@ -1091,7 +1091,7 @@ pub(crate) fn inject(
         #[cfg(unix)]
         {
             // Make the file writable so we can delete it
-            let _ = Syscall::fchmod(fd, 0o777);
+            let _ = Syscall::fchmod(fd, 0o700);
         }
         fd.close();
         let _ = Syscall::unlink(name);
@@ -1170,7 +1170,7 @@ pub(crate) fn inject(
             for retry in 0..3 {
                 match Syscall::open(
                     zname,
-                    bun_sys::O::CLOEXEC | bun_sys::O::RDWR | bun_sys::O::CREAT,
+                    bun_sys::O::CLOEXEC | bun_sys::O::RDWR | bun_sys::O::CREAT | bun_sys::O::EXCL,
                     0,
                 ) {
                     Ok(res) => break 'brk2 res,
@@ -1342,7 +1342,7 @@ pub(crate) fn inject(
             #[cfg(not(windows))]
             {
                 // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o777) };
+                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
             return cloned_executable_fd;
         }
@@ -1396,7 +1396,7 @@ pub(crate) fn inject(
             #[cfg(not(windows))]
             {
                 // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o777) };
+                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
             return cloned_executable_fd;
         }
@@ -1453,7 +1453,7 @@ pub(crate) fn inject(
             #[cfg(not(windows))]
             {
                 // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o777) };
+                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
             return cloned_executable_fd;
         }
@@ -1530,7 +1530,7 @@ pub(crate) fn inject(
             #[cfg(not(windows))]
             {
                 // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o777) };
+                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
 
             return cloned_executable_fd;

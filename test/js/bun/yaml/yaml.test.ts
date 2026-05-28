@@ -1420,7 +1420,10 @@ folded: >
             ["explicit-key", "? a\n? ", "  ", "b"],
           ] as const;
           const props = ["!!str", "&x", "!!str &x", "&x !!str"] as const;
-          const tabs = [["col0", "\t"], ["after-spaces", "  \t"]] as const;
+          const tabs = [
+            ["col0", "\t"],
+            ["after-spaces", "  \t"],
+          ] as const;
           for (const [iname, head, indent, sibling] of indicators) {
             for (const prop of props) {
               for (const [tname, tab] of tabs) {

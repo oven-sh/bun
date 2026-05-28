@@ -256,6 +256,12 @@ export const BunString_toThreadSafeRefCountDelta: () => number = $newCppFunction
   0,
 );
 
+export const lowercaseHeaderNameSIMD: (name: string) => string = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_lowercaseHeaderNameSIMD",
+  1,
+);
+
 export const getEventLoopStats: () => { activeTasks: number; concurrentRef: number; numPolls: number } =
   $newZigFunction("event_loop.zig", "getActiveTasks", 0);
 

@@ -1501,6 +1501,154 @@ size_t CopyAsciiPrefixImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t*
     return len;
 }
 
+// Vector with the 0x20 case bit set in every lane holding an ASCII uppercase
+// letter ('A'..'Z') and 0 everywhere else. The uppercase test is the usual
+// unsigned range fold: (c - 'A') < 26. `VecFromMask` turns the predicate into a
+// lane mask that we AND with 0x20, so the case bit is OR-ed into uppercase
+// letters only and every other byte (digits, punctuation, Latin-1 >= 0x80) is
+// left untouched.
+template<class D>
+static HWY_INLINE hn::Vec<D> AsciiLowerBit(D d, hn::Vec<D> chunk)
+{
+    using T = hn::TFromD<D>;
+    const auto folded = hn::Sub(chunk, hn::Set(d, T { 'A' }));
+    const auto is_upper = hn::Lt(folded, hn::Set(d, T { 26 }));
+    return hn::And(hn::VecFromMask(d, is_upper), hn::Set(d, T { 0x20 }));
+}
+
+// Index of the first ASCII uppercase letter ('A'..'Z'), or len if none.
+// Used to early-out the header-name lowercasing: when a name is already
+// lowercase we hand back the original String without allocating a copy,
+// matching StringImpl::convertToASCIILowercase.
+size_t IndexOfFirstAsciiUpperImpl(const uint8_t* HWY_RESTRICT input, size_t len)
+{
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_A = hn::Set(d, uint8_t { 'A' });
+    const auto vec_26 = hn::Set(d, uint8_t { 26 });
+
+    size_t i = 0;
+    const size_t simd_len = len - (len % N);
+    for (; i < simd_len; i += N) {
+        const auto chunk = hn::LoadU(d, input + i);
+        // (c - 'A') < 26, unsigned: only 'A'..'Z' land in range; everything
+        // below 'A' wraps around to a large value.
+        const auto is_upper = hn::Lt(hn::Sub(chunk, vec_A), vec_26);
+        const intptr_t pos = hn::FindFirstTrue(d, is_upper);
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    for (; i < len; ++i) {
+        const uint8_t c = input[i];
+        if (static_cast<uint8_t>(c - 'A') < 26) {
+            return i;
+        }
+    }
+    return len;
+}
+
+// Copy `src` to `dst`, lowercasing ASCII uppercase letters ('A'..'Z') and
+// leaving every other byte (digits, punctuation, Latin-1 >= 0x80) untouched.
+// Per block: OR in the 0x20 case bit only on the uppercase lanes. Mirrors
+// StringImpl::convertToASCIILowercase's per-character mapping without the
+// scalar per-byte branch.
+void LowerAsciiImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
+{
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    size_t i = 0;
+    if (len >= N) {
+        const size_t simd_len = len - (len % N);
+        for (; i < simd_len; i += N) {
+            const auto chunk = hn::LoadU(d, src + i);
+            hn::StoreU(hn::Or(chunk, AsciiLowerBit(d, chunk)), d, dst + i);
+        }
+
+        if (i < len) {
+            const size_t start = len - N;
+            const auto chunk = hn::LoadU(d, src + start);
+            hn::StoreU(hn::Or(chunk, AsciiLowerBit(d, chunk)), d, dst + start);
+        }
+        return;
+    }
+
+    // Branchless case fold for the sub-vector remainder (no data-dependent
+    // branch per byte). On wide-vector targets the compiler still
+    // auto-vectorizes this with AVX-512 masked ops; those live in the
+    // runtime-dispatched target namespaces and are covered by the
+    // verify-baseline-static allowlist.
+    for (; i < len; ++i) {
+        const uint8_t c = src[i];
+        const uint8_t isUpper = static_cast<uint8_t>(c - 'A') < 26 ? 1 : 0;
+        dst[i] = static_cast<uint8_t>(c | (isUpper << 5));
+    }
+}
+
+// 16-bit (UTF-16) counterparts of the two kernels above. WTF strings holding
+// only ASCII may still be stored as 16-bit, so the header-name lowercasing
+// needs a 16-bit path too. The A-Z test and 0x20 case bit are identical; only
+// the lane width changes (ASCII letters are well within a 16-bit lane, and
+// code units >= 0x80 are left untouched).
+size_t IndexOfFirstAsciiUpper16Impl(const uint16_t* HWY_RESTRICT input, size_t len)
+{
+    const hn::ScalableTag<uint16_t> d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_A = hn::Set(d, uint16_t { 'A' });
+    const auto vec_26 = hn::Set(d, uint16_t { 26 });
+
+    size_t i = 0;
+    const size_t simd_len = len - (len % N);
+    for (; i < simd_len; i += N) {
+        const auto chunk = hn::LoadU(d, input + i);
+        const auto is_upper = hn::Lt(hn::Sub(chunk, vec_A), vec_26);
+        const intptr_t pos = hn::FindFirstTrue(d, is_upper);
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    for (; i < len; ++i) {
+        const uint16_t c = input[i];
+        if (static_cast<uint16_t>(c - 'A') < 26) {
+            return i;
+        }
+    }
+    return len;
+}
+
+void LowerAscii16Impl(const uint16_t* HWY_RESTRICT src, size_t len, uint16_t* HWY_RESTRICT dst)
+{
+    const hn::ScalableTag<uint16_t> d;
+    const size_t N = hn::Lanes(d);
+
+    size_t i = 0;
+    if (len >= N) {
+        const size_t simd_len = len - (len % N);
+        for (; i < simd_len; i += N) {
+            const auto chunk = hn::LoadU(d, src + i);
+            hn::StoreU(hn::Or(chunk, AsciiLowerBit(d, chunk)), d, dst + i);
+        }
+
+        if (i < len) {
+            const size_t start = len - N;
+            const auto chunk = hn::LoadU(d, src + start);
+            hn::StoreU(hn::Or(chunk, AsciiLowerBit(d, chunk)), d, dst + start);
+        }
+        return;
+    }
+
+    for (; i < len; ++i) {
+        const uint16_t c = src[i];
+        const uint16_t isUpper = static_cast<uint16_t>(c - 'A') < 26 ? 1 : 0;
+        dst[i] = static_cast<uint16_t>(c | (isUpper << 5));
+    }
+}
+
 // Lowercase hex encode: writes 2 output bytes per input byte.
 // Per 16-byte block: split each byte into nibbles, map both nibble vectors
 // through the hex-digit table (TableLookupBytes), then interleave so the
@@ -1747,6 +1895,8 @@ HWY_EXPORT(IndexOfAnyCharImpl);
 HWY_EXPORT(IndexOfCharImpl);
 HWY_EXPORT(IndexOfEscapeChar16Impl);
 HWY_EXPORT(IndexOfEscapeChar8Impl);
+HWY_EXPORT(IndexOfFirstAsciiUpper16Impl);
+HWY_EXPORT(IndexOfFirstAsciiUpperImpl);
 HWY_EXPORT(IndexOfHTMLEscapeChar8Impl);
 HWY_EXPORT(IndexOfHTMLEscapeChar16Impl);
 HWY_EXPORT(IndexOfInterestingCharacterInMultilineCommentImpl);
@@ -1756,6 +1906,8 @@ HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplQuote);
 HWY_EXPORT(IndexOfNewlineOrNonASCIIImpl);
 HWY_EXPORT(IndexOfNewlineOrNonASCIIOrHashOrAtImpl);
 HWY_EXPORT(IndexOfSpaceOrNewlineOrNonASCIIImpl);
+HWY_EXPORT(LowerAscii16Impl);
+HWY_EXPORT(LowerAsciiImpl);
 HWY_EXPORT(MemMemImpl);
 HWY_EXPORT(ScanCharFrequencyImpl);
 HWY_EXPORT(VisibleLatin1WidthExcludeANSIImpl);
@@ -1939,6 +2091,26 @@ size_t highway_first_non_ascii8(const uint8_t* HWY_RESTRICT input, size_t len)
 size_t highway_copy_ascii_prefix(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
 {
     return HWY_DYNAMIC_DISPATCH(CopyAsciiPrefixImpl)(src, len, dst);
+}
+
+size_t highway_index_of_first_ascii_upper(const uint8_t* HWY_RESTRICT input, size_t len)
+{
+    return HWY_DYNAMIC_DISPATCH(IndexOfFirstAsciiUpperImpl)(input, len);
+}
+
+void highway_lower_ascii(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
+{
+    HWY_DYNAMIC_DISPATCH(LowerAsciiImpl)(src, len, dst);
+}
+
+size_t highway_index_of_first_ascii_upper16(const uint16_t* HWY_RESTRICT input, size_t len)
+{
+    return HWY_DYNAMIC_DISPATCH(IndexOfFirstAsciiUpper16Impl)(input, len);
+}
+
+void highway_lower_ascii16(const uint16_t* HWY_RESTRICT src, size_t len, uint16_t* HWY_RESTRICT dst)
+{
+    HWY_DYNAMIC_DISPATCH(LowerAscii16Impl)(src, len, dst);
 }
 
 void highway_encode_hex_lower(const uint8_t* HWY_RESTRICT input, size_t len, uint8_t* HWY_RESTRICT output)

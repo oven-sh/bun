@@ -696,7 +696,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
         for (const auto& it : vec) {
             const auto& name = it.key;
             const auto& value = it.value;
-            obj->putDirectMayBeIndex(lexicalGlobalObject, Identifier::fromString(vm, name.convertToASCIILowercase()), jsString(vm, value));
+            obj->putDirectMayBeIndex(lexicalGlobalObject, Identifier::fromString(vm, lowercaseHeaderName(name)), jsString(vm, value));
         }
     }
 

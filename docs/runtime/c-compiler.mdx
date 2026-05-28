@@ -202,3 +202,22 @@ cc({
 ```
 
 These are preprocessor definitions passed to the TinyCC compiler.
+
+#### `include: string | string[]`
+
+Use `include` to add directories to the compiler's header search path. Equivalent to the `-I` option in gcc/clang.
+
+```ts
+type Include = string | string[];
+
+cc({
+  source: "hello.c",
+  include: ["./vendor/include"],
+  symbols: {
+    hello: {
+      args: [],
+      returns: "int",
+    },
+  },
+});
+```

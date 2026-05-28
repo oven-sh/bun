@@ -3798,7 +3798,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                         }
 
-                        let implicit_key_anchors = node_props.implicit_key_anchors(sequence_line)?;
+                        let implicit_key_anchors =
+                            node_props.implicit_key_anchors(sequence_line)?;
 
                         if let Some(key_anchor) = implicit_key_anchors.key_anchor {
                             self.anchors

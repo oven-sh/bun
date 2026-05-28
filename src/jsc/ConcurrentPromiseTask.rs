@@ -48,10 +48,22 @@ pub struct ConcurrentPromiseTask<'a, Context: ConcurrentPromiseTaskContext> {
 
 bun_threading::intrusive_work_task!(['a, Context: ConcurrentPromiseTaskContext] ConcurrentPromiseTask<'a, Context>, task);
 
-// SAFETY: `ConcurrentPromiseTask` is heap-allocated and only its address crosses
-// threads via the intrusive `task` node and the concurrent queue. All access to
-// `ctx` / `promise` / `global_this` is sequenced by the work-pool → on_finish →
-// run_from_js hand-off; raw pointers are inert.
+// SAFETY: `ConcurrentPromiseTask` is heap-allocated and only its *address* crosses
+// threads, via the intrusive `task` node and the concurrent queue; it is never
+// aliased on two threads at once. The hand-off is strictly sequenced:
+// `schedule` (JS thread) → `run_from_thread_pool` (one worker, exclusive) →
+// `on_finish` re-enqueues onto the JS event loop → `run_from_js` (JS thread).
+//
+// `Context` is deliberately NOT required to be `Send`: its implementors hold
+// JS-thread-bound state — a `&JSGlobalObject` (opaque `!Sync` FFI handle) and
+// raw pointers into the JS heap — that `then()` touches back on the JS thread.
+// The only method the worker runs is `ctx.run()`, which operates on the
+// thread-safe subset; any value that genuinely needs to cross to the worker is
+// wrapped at the field level in `bun_jsc::ThreadSafe` (e.g. `TransformTask::input_code`),
+// which protects the JS value and unprotects on drop. Requiring `C: Send` would
+// reject this correct-by-construction design, so the invariant is discharged here
+// rather than by an auto-trait bound — the same single-JS-thread contract that
+// backs `JsCell` and `VirtualMachine`'s hand-written `unsafe impl`s.
 unsafe impl<C: ConcurrentPromiseTaskContext> Send for ConcurrentPromiseTask<'_, C> {}
 
 impl<Context: ConcurrentPromiseTaskContext> Taskable for ConcurrentPromiseTask<'_, Context> {

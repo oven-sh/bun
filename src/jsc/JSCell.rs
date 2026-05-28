@@ -119,11 +119,21 @@ pub struct JsCell<T>(core::cell::UnsafeCell<T>);
 // SAFETY: see type-level docs — `JsCell` is only dereferenced on the owning
 // JS thread; the `Sync` impl exists so `&'static VirtualMachine` (which
 // contains `JsCell` fields) satisfies `'static`-bound trait objects and
-// `thread_local!` accessors without `T: Sync` cascading everywhere. It is NOT
-// a license for cross-thread `get_mut()`.
-unsafe impl<T> Sync for JsCell<T> {}
-// SAFETY: same single-thread-owner invariant as `Sync` above.
-unsafe impl<T> Send for JsCell<T> {}
+// `thread_local!` accessors without hand-written `unsafe impl`s cascading
+// everywhere. It is NOT a license for cross-thread `get_mut()`.
+//
+// The `T: Sync` / `T: Send` bounds are load-bearing: `get()` is a *safe* fn
+// that hands out `&T`, so an unconditional `Sync` would let a `&JsCell<T>`
+// cross threads (via any `Sync` container) and surface a `&T` to a `!Sync`
+// `T` (`Rc`, `Cell`, `RefCell`) on another thread — UB with zero `unsafe` at
+// the call site. Gating on the inner bound keeps the thread-affinity escape
+// hatch while making `JsCell<!Sync>`/`JsCell<!Send>` correctly `!Sync`/`!Send`,
+// so such a field can never silently make its container cross-thread-shareable.
+unsafe impl<T: Sync> Sync for JsCell<T> {}
+// SAFETY: same single-thread-owner invariant as `Sync` above; `T: Send`
+// because `into_inner()` moves the owned `T` out across whatever thread holds
+// the cell.
+unsafe impl<T: Send> Send for JsCell<T> {}
 
 impl<T> JsCell<T> {
     #[inline(always)]
@@ -224,4 +234,41 @@ impl<T: core::fmt::Debug> core::fmt::Debug for JsCell<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.get().fmt(f)
     }
+}
+
+// Compile-time proof that the `Send`/`Sync` bounds on `JsCell<T>` are honored.
+//
+// The safe `get()` makes unconditional `Send`/`Sync` unsound (see the SAFETY
+// note on the impls): a `&JsCell<!Sync>` must not be shareable across threads.
+// Stable Rust has no negative bounds, so the `!Send`/`!Sync` direction uses the
+// auto-trait-ambiguity trick — if `JsCell<Rc<u32>>` ever regains `Send`/`Sync`,
+// both blanket impls below apply and the anonymous `const` fails to compile
+// with "conflicting implementations" (same shape as `subproc.rs`'s
+// `__pipe_reader_thread_confined`).
+mod jscell_send_sync_proof {
+    use super::JsCell;
+
+    // `JsCell<T>` stays `Send`/`Sync` when `T` is — the escape hatch still works.
+    const _: fn() = || {
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+        assert_send::<JsCell<u32>>();
+        assert_sync::<JsCell<u32>>();
+    };
+
+    // `JsCell<T>` is NOT `Send`/`Sync` when `T` is not (`Rc` is `!Send + !Sync`).
+    trait NotSend<A> {
+        const OK: () = ();
+    }
+    impl<T: ?Sized> NotSend<()> for T {}
+    impl<T: ?Sized + Send> NotSend<u8> for T {}
+
+    trait NotSync<A> {
+        const OK: () = ();
+    }
+    impl<T: ?Sized> NotSync<()> for T {}
+    impl<T: ?Sized + Sync> NotSync<u8> for T {}
+
+    const _: () = <JsCell<std::rc::Rc<u32>> as NotSend<_>>::OK;
+    const _: () = <JsCell<std::rc::Rc<u32>> as NotSync<_>>::OK;
 }

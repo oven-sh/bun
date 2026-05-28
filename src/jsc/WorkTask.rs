@@ -51,10 +51,20 @@ pub struct WorkTask<Context: WorkTaskContext> {
 
 bun_threading::intrusive_work_task!([Context: WorkTaskContext] WorkTask<Context>, task);
 
-// SAFETY: `WorkTask` is moved into the thread pool's queue (intrusive `task`
-// node) and back via the concurrent task queue. All access to `ctx` /
-// `global_this` is sequenced by the work-pool → on_finish → run_from_js
-// hand-off; raw pointers are inert.
+// SAFETY: `WorkTask` is heap-allocated; only its *address* crosses threads, via
+// the intrusive `task` node and the concurrent queue, and it is never aliased on
+// two threads at once. The hand-off is strictly sequenced: `schedule` (JS thread)
+// → `run_from_thread_pool` (one worker, exclusive) → `on_finish` re-enqueues onto
+// the JS event loop → `run_from_js` (JS thread).
+//
+// `Context` is deliberately NOT required to be `Send`: `ctx` is a raw
+// `*mut Context` and its implementors (e.g. `GetAddrInfoRequest`) hold
+// JS-thread-bound raw pointers (`*mut DNSLookup`, `*mut Resolver`) that `then()`
+// uses back on the JS thread. The worker only runs `Context::run`, which touches
+// the thread-safe subset; the raw pointer is inert while the address is in flight.
+// Requiring `C: Send` would reject this correct-by-construction design — the same
+// single-JS-thread contract that backs `JsCell` and `VirtualMachine`'s
+// hand-written `unsafe impl`s.
 unsafe impl<C: WorkTaskContext> Send for WorkTask<C> {}
 
 impl<Context: WorkTaskContext> Taskable for WorkTask<Context> {

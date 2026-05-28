@@ -783,4 +783,38 @@ it("routes absolute-form request targets by path and derives request.url from th
   expect(seen).toHaveLength(1);
   expect(seen[0].matched).toBe("route");
   expect(new URL(seen[0].url).pathname).toBe("/admin/secret");
+
+  for (const target of ["http://spoofed.example?a=b", "http://spoofed.example?redirect=/elsewhere"]) {
+    seen.length = 0;
+    const rawResponse = await new Promise<string>((resolve, reject) => {
+      let received = "";
+      Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          open(socket) {
+            socket.write(`GET ${target} HTTP/1.1\r\nHost: ${hostHeader}\r\nConnection: close\r\n\r\n`);
+          },
+          data(socket, chunk) {
+            received += chunk.toString();
+          },
+          close() {
+            resolve(received);
+          },
+          error(socket, err) {
+            reject(err);
+          },
+        },
+      }).catch(reject);
+    });
+
+    expect(rawResponse).toContain("fallback");
+    expect(seen).toHaveLength(1);
+    expect(seen[0].matched).toBe("fallback");
+    expect(seen[0].url).not.toContain("spoofed.example");
+    const rawUrl = new URL(seen[0].url);
+    expect(rawUrl.host).toBe(hostHeader);
+    expect(rawUrl.pathname).toBe("/");
+    expect(rawUrl.search).toBe(new URL(target).search);
+  }
 });

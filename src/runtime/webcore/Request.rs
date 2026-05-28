@@ -3,6 +3,7 @@
 use core::cell::Cell;
 use core::ffi::c_uint;
 use core::ptr::NonNull;
+use std::borrow::Cow;
 
 use bun_jsc::JsCell;
 use enumset::EnumSet;
@@ -898,23 +899,29 @@ impl Request {
         b"http://"
     }
 
-    fn request_target_path(target: &[u8]) -> &[u8] {
+    fn request_target_path(target: &[u8]) -> Cow<'_, [u8]> {
         let scheme_len = if strings::has_prefix_case_insensitive(target, b"https://") {
             b"https://".len()
         } else if strings::has_prefix_case_insensitive(target, b"http://") {
             b"http://".len()
         } else {
-            return target;
+            return Cow::Borrowed(target);
         };
 
         let path_start = strings::index_of_char_pos(target, b'/', scheme_len);
         let query_start = strings::index_of_char_pos(target, b'?', scheme_len);
         match (path_start, query_start) {
-            (Some(path_start), None) => &target[path_start..],
+            (Some(path_start), None) => Cow::Borrowed(&target[path_start..]),
             (Some(path_start), Some(query_start)) if path_start < query_start => {
-                &target[path_start..]
+                Cow::Borrowed(&target[path_start..])
             }
-            _ => b"/",
+            (_, Some(query_start)) => {
+                let mut path = Vec::with_capacity(1 + target.len() - query_start);
+                path.push(b'/');
+                path.extend_from_slice(&target[query_start..]);
+                Cow::Owned(path)
+            }
+            _ => Cow::Borrowed(b"/"),
         }
     }
 
@@ -947,7 +954,7 @@ impl Request {
                             at += protocol.len();
                             buffer[at..at + host.len()].copy_from_slice(host);
                             at += host.len();
-                            buffer[at..at + req_url.len()].copy_from_slice(req_url);
+                            buffer[at..at + req_url.len()].copy_from_slice(&req_url);
                             at += req_url.len();
                             &buffer[..at]
                         };
@@ -971,7 +978,7 @@ impl Request {
                         return Ok(());
                     }
 
-                    if strings::is_all_ascii(host) && strings::is_all_ascii(req_url) {
+                    if strings::is_all_ascii(host) && strings::is_all_ascii(&req_url) {
                         let (new_url, bytes) =
                             BunString::create_uninitialized_latin1(url_bytelength);
                         self.url.set(new_url);
@@ -980,13 +987,13 @@ impl Request {
                         let (b, c) = rest.split_at_mut(host.len());
                         a.copy_from_slice(protocol);
                         b.copy_from_slice(host);
-                        c.copy_from_slice(req_url);
+                        c.copy_from_slice(&req_url);
                     } else {
                         // slow path
                         let mut temp_url: Vec<u8> = Vec::with_capacity(url_bytelength);
                         temp_url.extend_from_slice(protocol);
                         temp_url.extend_from_slice(host);
-                        temp_url.extend_from_slice(req_url);
+                        temp_url.extend_from_slice(&req_url);
                         // `defer bun.default_allocator.free(temp_url)` → Vec drops at scope end
                         self.url.set(BunString::clone_utf8(&temp_url));
                     }
@@ -1003,7 +1010,7 @@ impl Request {
 
             #[cfg(debug_assertions)]
             debug_assert!(self.size_of_url() == req_url.len());
-            self.url.set(BunString::clone_utf8(req_url));
+            self.url.set(BunString::clone_utf8(&req_url));
         }
         Ok(())
     }

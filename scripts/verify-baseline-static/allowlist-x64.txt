@@ -602,9 +602,7 @@ _ZN3bun9N_AVX3_DL49IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh     [
 
 
 # ----------------------------------------------------------------------------
-# Bun's Highway SIMD xxHash3 (src/jsc/bindings/xxhash3.cpp).
-# Gate: HWY_DYNAMIC_DISPATCH via hwy::SupportedTargets.
-# (5 symbols)
+# Bun xxHash3 (src/jsc/bindings/xxhash3.cpp). Gate: HWY_DYNAMIC_DISPATCH via hwy::SupportedTargets. (5 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun4xxh36N_AVX28HashLongEPKhmS3_                                          [AVX, AVX2, BMI2]
 _ZN3bun4xxh36N_AVX38HashLongEPKhmS3_                                          [AVX, AVX2, AVX512DQ, AVX512F, BMI2]

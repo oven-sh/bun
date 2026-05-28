@@ -2,11 +2,6 @@
   {
     "package": "elysia",
     "repository": "https://github.com/elysiajs/elysia",
-    "tag": "1.4.28",
-    "skipTests": {
-      "core*status.test.ts": "asserts non-null bodies are accepted and dropped for 101/204/205/304; Response now follows the fetch spec and rejects them",
-      "adapter*web-standard*map-response.test.ts": "constructs a Response with a file body and status 304; Response now follows the fetch spec and rejects bodies on null-body statuses",
-      "adapter*web-standard*map-early-response.test.ts": "constructs a Response with a file body and status 304; Response now follows the fetch spec and rejects bodies on null-body statuses"
-    }
+    "tag": "1.4.28"
   }
 ]

@@ -3560,6 +3560,11 @@ where
         ctx_log!("render");
         self.set_response(response);
 
+        if matches!(response.status_code(), 101 | 103 | 204 | 205 | 304) {
+            self.do_render_blob();
+            return;
+        }
+
         self.do_render();
     }
 

@@ -206,7 +206,7 @@ describe("s3 - Requester Pays", () => {
       async fetch(req) {
         reqHeaders = req.headers;
         reqMethod = req.method;
-        return new Response(null, {
+        return new Response("", {
           status: 204,
         });
       },

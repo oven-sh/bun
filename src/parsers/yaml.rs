@@ -773,6 +773,8 @@ pub enum ParseError {
     InvalidDirective,
     #[error("UnexpectedCharacter")]
     UnexpectedCharacter,
+    #[error("TabIndentation")]
+    TabIndentation,
     #[error("UnresolvedTagHandle")]
     UnresolvedTagHandle,
     #[error("UnresolvedAlias")]
@@ -2151,6 +2153,7 @@ pub enum ParseResultError {
     UnexpectedEof { pos: Pos },
     UnexpectedToken { pos: Pos },
     UnexpectedCharacter { pos: Pos },
+    TabIndentation { pos: Pos },
     InvalidDirective { pos: Pos },
     UnresolvedTagHandle { pos: Pos },
     UnresolvedAlias { pos: Pos },
@@ -2180,6 +2183,13 @@ impl ParseResultError {
             }
             ParseResultError::UnexpectedCharacter { pos } => {
                 log.add_error(Some(source), pos.loc(), b"Unexpected character");
+            }
+            ParseResultError::TabIndentation { pos } => {
+                log.add_error(
+                    Some(source),
+                    pos.loc(),
+                    b"Tab characters cannot be used as indentation",
+                );
             }
             ParseResultError::InvalidDirective { pos } => {
                 log.add_error(Some(source), pos.loc(), b"Invalid directive");
@@ -2229,6 +2239,9 @@ impl<Enc: Encoding> ParseResult<Enc> {
                 pos: parser.token.start,
             },
             ParseError::UnexpectedEof => ParseResultError::UnexpectedEof {
+                pos: parser.token.start,
+            },
+            ParseError::TabIndentation => ParseResultError::TabIndentation {
                 pos: parser.token.start,
             },
             ParseError::InvalidDirective => ParseResultError::InvalidDirective {
@@ -2865,7 +2878,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             {
                 // [184] each `-` sits at s-indent(n) (spaces only).
                 if self.tab_after_indent {
-                    return Err(Self::unexpected_token());
+                    return Err(ParseError::TabIndentation);
                 }
                 let entry_line = self.token.line;
                 let entry_start = self.token.start;
@@ -3002,7 +3015,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                 // construct; this entry has no value.
                                 break 'value Expr::init(E::Null {}, mapping_value_start.loc());
                             }
-                            return Err(Self::unexpected_token());
+                            return Err(if self.tab_after_indent {
+                                ParseError::TabIndentation
+                            } else {
+                                Self::unexpected_token()
+                            });
                         }
                         // [191] explicit `:` is on a new line at mapping_indent;
                         // a same-line `- ` after it is a compact sequence whose
@@ -3058,7 +3075,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 {
                     // [192]/[195] each entry sits at s-indent(n) (spaces only).
                     if self.tab_after_indent {
-                        return Err(Self::unexpected_token());
+                        return Err(ParseError::TabIndentation);
                     }
                     let key_line = self.token.line;
                     previous_line = key_line;
@@ -3096,7 +3113,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                     })?;
                                     continue;
                                 }
-                                return Err(Self::unexpected_token());
+                                return Err(if self.tab_after_indent {
+                                    ParseError::TabIndentation
+                                } else {
+                                    Self::unexpected_token()
+                                });
                             }
                         }
                         TokenData::MappingValue => {
@@ -3634,7 +3655,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         && (self.token.indent.is_less_than_or_equal(n)
                             || self.tab_after_indent) =>
                 {
-                    return Err(Self::unexpected_token());
+                    return Err(if self.tab_after_indent {
+                        ParseError::TabIndentation
+                    } else {
+                        Self::unexpected_token()
+                    });
                 }
                 // [149] e-node pair value in flow (`"a":,` / `"a":]`). Gated
                 // on flow_pair_allowed so this only fires for [139]
@@ -3798,7 +3823,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         if alias_tab_after_indent
                             && matches!(self.context.get(), Context::BlockOut | Context::BlockIn)
                         {
-                            return Err(Self::unexpected_token());
+                            return Err(ParseError::TabIndentation);
                         }
 
                         if let Some(current_mapping_indent) = opts.current_mapping_indent {
@@ -3850,7 +3875,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         if sequence_tab_after_indent
                             && matches!(self.context.get(), Context::BlockOut | Context::BlockIn)
                         {
-                            return Err(Self::unexpected_token());
+                            return Err(ParseError::TabIndentation);
                         }
 
                         if let Some(current_mapping_indent) = opts.current_mapping_indent {
@@ -3938,7 +3963,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         if mapping_tab_after_indent
                             && matches!(self.context.get(), Context::BlockOut | Context::BlockIn)
                         {
-                            return Err(Self::unexpected_token());
+                            return Err(ParseError::TabIndentation);
                         }
 
                         if let Some(current_mapping_indent) = opts.current_mapping_indent {
@@ -3985,7 +4010,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                     // [195] each `?` sits at s-indent(n) (spaces only).
                     if self.tab_after_indent {
-                        return Err(Self::unexpected_token());
+                        return Err(ParseError::TabIndentation);
                     }
 
                     let mapping_start = self.token.start;
@@ -4031,7 +4056,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                     // [195] block `:` (e-node key) sits at s-indent(n) only.
                     if self.tab_after_indent && !matches!(self.context.get(), Context::FlowIn) {
-                        return Err(Self::unexpected_token());
+                        return Err(ParseError::TabIndentation);
                     }
                     if let Some(current_mapping_indent) = opts.current_mapping_indent {
                         if current_mapping_indent == self.token.indent {
@@ -4106,7 +4131,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         if scalar_tab_after_indent
                             && matches!(self.context.get(), Context::BlockOut | Context::BlockIn)
                         {
-                            return Err(Self::unexpected_token());
+                            return Err(ParseError::TabIndentation);
                         }
                         if let Some(current_mapping_indent) = opts.current_mapping_indent {
                             if current_mapping_indent == scalar_indent {
@@ -5816,7 +5841,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         && additional_parent_indent.is_none()
                         && self.context.get() == Context::BlockIn
                     {
-                        return Err(ParseError::UnexpectedCharacter);
+                        return Err(ParseError::TabIndentation);
                     }
                     if in_indent_position {
                         // [63] s-indent is spaces only. A tab here is

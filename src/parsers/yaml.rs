@@ -4079,8 +4079,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     };
                     let first_key = key_tag.resolve_null(self.token.start.loc());
 
-                    let implicit_key_anchors =
-                        node_props.implicit_key_anchors(colon_line)?;
+                    let implicit_key_anchors = node_props.implicit_key_anchors(colon_line)?;
                     if let Some(key_anchor) = implicit_key_anchors.key_anchor {
                         self.anchors
                             .put(Enc::key_bytes(key_anchor.slice(self.input)), first_key)?;

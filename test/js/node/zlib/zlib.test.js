@@ -104,6 +104,38 @@ describe("zlib", () => {
     const data = new TextEncoder().encode("Hello World!".repeat(1));
     expect(() => gunzipSync(data, { library: "zlib" })).toThrow(new Error("incorrect header check"));
   });
+
+  // RFC 1952 §2.2: a gzip file may contain multiple members back-to-back.
+  // `cat a.gz b.gz` is a valid gzip stream that decodes to `a + b`.
+  it("Bun.gunzipSync decodes a concatenated multi-member gzip stream", () => {
+    const a = Buffer.from("Hello, ");
+    const b = Buffer.from("multi-member ");
+    const c = Buffer.from("gzip world!\n");
+    const multi = Buffer.concat([zlib.gzipSync(a), zlib.gzipSync(b), zlib.gzipSync(c)]);
+    const expected = Buffer.concat([a, b, c]);
+
+    expect(Buffer.from(gunzipSync(multi))).toEqual(expected);
+    // Must match node:zlib exactly.
+    expect(Buffer.from(gunzipSync(multi))).toEqual(zlib.gunzipSync(multi));
+  });
+
+  it("Bun.gunzipSync decodes multi-member gzip with trailing zero padding", () => {
+    const multi = Buffer.concat([zlib.gzipSync("abc"), zlib.gzipSync("def"), Buffer.alloc(10)]);
+    expect(Buffer.from(gunzipSync(multi)).toString()).toBe("abcdef");
+    expect(Buffer.from(gunzipSync(multi))).toEqual(zlib.gunzipSync(multi));
+  });
+
+  it("Bun.gunzipSync decodes multi-member gzip larger than the initial output buffer", () => {
+    const a = Buffer.alloc(5000, "A");
+    const b = Buffer.alloc(5000, "B");
+    const c = Buffer.alloc(5000, "C");
+    const multi = Buffer.concat([zlib.gzipSync(a), zlib.gzipSync(b), zlib.gzipSync(c)]);
+    const expected = Buffer.concat([a, b, c]);
+
+    const got = Buffer.from(gunzipSync(multi));
+    expect(got.length).toBe(expected.length);
+    expect(got.equals(expected)).toBe(true);
+  });
 });
 
 function* window(buffer, size, advance = size) {

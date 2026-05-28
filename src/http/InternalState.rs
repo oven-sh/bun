@@ -303,7 +303,15 @@ impl<'a> InternalState<'a> {
                             bun_libdeflate::Encoding::Gzip,
                         );
                         if result.status == bun_libdeflate::Status::Success {
-                            still_needs_to_decompress = false;
+                            // libdeflate decodes a single gzip member. If input remains,
+                            // this is a concatenated multi-member stream (RFC 1952 §2.2);
+                            // discard the partial result and let the zlib slow path
+                            // decode all members.
+                            if result.read < buffer.len() {
+                                body_out_str.list.clear();
+                            } else {
+                                still_needs_to_decompress = false;
+                            }
                         }
 
                         break 'libdeflate;
@@ -320,7 +328,13 @@ impl<'a> InternalState<'a> {
                     },
                 );
 
-                if result.status == bun_libdeflate::Status::Success {
+                // libdeflate decodes a single gzip member. If input remains after
+                // a successful gzip decode, this is a concatenated multi-member
+                // stream (RFC 1952 §2.2); leave `still_needs_to_decompress` set so
+                // the zlib slow path decodes all members.
+                if result.status == bun_libdeflate::Status::Success
+                    && !(self.encoding == Encoding::Gzip && result.read < buffer.len())
+                {
                     body_out_str
                         .list
                         .reserve_exact(result.written.saturating_sub(body_out_str.list.len()));

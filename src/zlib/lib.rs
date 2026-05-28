@@ -282,10 +282,22 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
 
             match rc {
                 ReturnCode::StreamEnd => {
-                    self.state = ZlibReaderState::End;
                     let remainder = &self.buf[0..BUFFER_SIZE - self.zlib.avail_out as usize];
                     // PORT NOTE: Zig's partial-write retry loop collapses to write_all under bun_io::Write.
                     self.context.write_all(remainder)?;
+                    // RFC 1952 §2.2: a gzip file may contain multiple back-to-back members.
+                    // If input remains after the trailer, reset and decode the next member,
+                    // matching node:zlib's GUNZIP loop. Trailing zero bytes are common
+                    // padding and are skipped (the next inflate call would BufError on them).
+                    // SAFETY: avail_in > 0 ⇒ next_in points to ≥1 readable byte.
+                    if self.zlib.avail_in > 0 && unsafe { *self.zlib.next_in } != 0 {
+                        // SAFETY: self.zlib was initialized via inflateInit2_.
+                        let _ = unsafe { inflateReset(&raw mut self.zlib) };
+                        self.zlib.next_out = self.buf.as_mut_ptr();
+                        self.zlib.avail_out = BUFFER_SIZE as uInt;
+                        continue;
+                    }
+                    self.state = ZlibReaderState::End;
                     self.end();
                     return Ok(());
                 }
@@ -369,6 +381,10 @@ pub struct ZlibReaderArrayList<'a> {
     /// Decompression-bomb guard: `read_all` errors instead of growing the
     /// output past this many bytes. Defaults to unbounded.
     pub max_output_size: usize,
+    /// `inflateInit2` window bits. Retained so `read_all` knows whether the
+    /// stream was opened in a gzip-capable mode (`> 15`), which is the only
+    /// mode where RFC 1952 multi-member concatenation applies.
+    window_bits: c_int,
 }
 
 impl<'a> Drop for ZlibReaderArrayList<'a> {
@@ -417,6 +433,7 @@ impl<'a> ZlibReaderArrayList<'a> {
             zlib: bun_core::ffi::zeroed(),
             state: ZlibReaderArrayListState::Uninitialized,
             max_output_size: usize::MAX,
+            window_bits: options.window_bits,
         });
 
         let list_len = zlib_reader.list_ptr.len();
@@ -536,6 +553,23 @@ impl<'a> ZlibReaderArrayList<'a> {
 
                 match rc {
                     ReturnCode::StreamEnd => {
+                        // RFC 1952 §2.2: a gzip file may contain multiple back-to-back
+                        // members. If we were opened in a gzip-capable mode and input
+                        // remains, reset and decode the next member — matches the loop
+                        // node:zlib runs in GUNZIP mode. Trailing zero bytes are common
+                        // padding and stop the loop. `inflateReset` zeroes `total_out`;
+                        // restore it so the epilogue's length sync stays correct.
+                        if self.window_bits > MAX_WBITS
+                            && self.zlib.avail_in > 0
+                            // SAFETY: avail_in > 0 ⇒ next_in points to ≥1 readable byte.
+                            && unsafe { *self.zlib.next_in } != 0
+                        {
+                            let total_out = self.zlib.total_out;
+                            // SAFETY: self.zlib was initialized via inflateInit2_.
+                            let _ = unsafe { inflateReset(&raw mut self.zlib) };
+                            self.zlib.total_out = total_out;
+                            continue;
+                        }
                         self.end();
                         return Ok(());
                     }

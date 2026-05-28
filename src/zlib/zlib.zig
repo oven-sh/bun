@@ -257,12 +257,22 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
 
                 switch (rc) {
                     ReturnCode.StreamEnd => {
-                        this.state = State.End;
                         var remainder = this.buf[0 .. buffer_size - this.zlib.avail_out];
                         remainder = remainder[try this.context.write(remainder)..];
                         while (remainder.len > 0) {
                             remainder = remainder[try this.context.write(remainder)..];
                         }
+                        // RFC 1952 §2.2: a gzip file may contain multiple back-to-back
+                        // members. If input remains, reset and decode the next member,
+                        // matching node:zlib's GUNZIP loop. Trailing zero bytes are
+                        // common padding and stop the loop.
+                        if (this.zlib.avail_in > 0 and this.zlib.next_in[0] != 0) {
+                            _ = inflateReset(&this.zlib);
+                            this.zlib.next_out = &this.buf;
+                            this.zlib.avail_out = buffer_size;
+                            continue;
+                        }
+                        this.state = State.End;
                         this.end();
                         return;
                     },
@@ -345,6 +355,7 @@ pub const ZlibReaderArrayList = struct {
     zlib: zStream_struct,
     allocator: std.mem.Allocator,
     state: State = State.Uninitialized,
+    window_bits: c_int = 0,
 
     pub fn deinit(this: *ZlibReader) void {
         var allocator = this.allocator;
@@ -385,6 +396,7 @@ pub const ZlibReaderArrayList = struct {
             .list_ptr = list,
             .allocator = allocator,
             .zlib = undefined,
+            .window_bits = options.windowBits,
         };
 
         zlib_reader.zlib = zStream_struct{
@@ -486,6 +498,21 @@ pub const ZlibReaderArrayList = struct {
 
             switch (rc) {
                 ReturnCode.StreamEnd => {
+                    // RFC 1952 §2.2: a gzip file may contain multiple back-to-back
+                    // members. If we were opened in a gzip-capable mode and input
+                    // remains, reset and decode the next member — matches the loop
+                    // node:zlib runs in GUNZIP mode. Trailing zero bytes are common
+                    // padding and stop the loop. `inflateReset` zeroes `total_out`;
+                    // restore it so the deferred length sync stays correct.
+                    if (this.window_bits > MAX_WBITS and
+                        this.zlib.avail_in > 0 and
+                        this.zlib.next_in[0] != 0)
+                    {
+                        const total_out = this.zlib.total_out;
+                        _ = inflateReset(&this.zlib);
+                        this.zlib.total_out = total_out;
+                        continue;
+                    }
                     this.end();
                     return;
                 },

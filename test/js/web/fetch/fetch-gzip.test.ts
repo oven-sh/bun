@@ -5,6 +5,7 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import { brotliCompressSync, deflateSync, gzipSync, zstdCompressSync } from "node:zlib";
 import path from "path";
+import { gzipSync } from "zlib";
 
 const gzipped = path.join(import.meta.dir, "fixture.html.gz");
 const html = path.join(import.meta.dir, "fixture.html");
@@ -292,4 +293,79 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async don
   socketToClose.end();
   server.stop();
   done();
+});
+
+// RFC 1952 §2.2: a gzip file may contain multiple back-to-back members
+// (`cat a.gz b.gz`). fetch() must decode all of them, not silently
+// truncate to the first.
+describe("fetch() with a concatenated multi-member gzip body", () => {
+  const a = Buffer.from("Hello, ");
+  const b = Buffer.from("multi-member ");
+  const c = Buffer.from("gzip world!\n");
+  const small = Buffer.concat([gzipSync(a), gzipSync(b), gzipSync(c)]);
+  const smallExpected = Buffer.concat([a, b, c]).toString();
+
+  const big1 = Buffer.alloc(300 * 1024, "A");
+  const big2 = Buffer.alloc(300 * 1024, "B");
+  const large = Buffer.concat([gzipSync(big1), gzipSync(big2)]);
+  const largeExpected = Buffer.concat([big1, big2]);
+
+  function serve(body: Buffer) {
+    return Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(body, {
+          headers: {
+            "Content-Encoding": "gzip",
+            "Content-Type": "text/plain",
+          },
+        });
+      },
+    });
+  }
+
+  it("decodes all members (small body, libdeflate fast path)", async () => {
+    using server = serve(small);
+    const res = await fetch(server.url);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(smallExpected);
+  });
+
+  it("decodes all members (large body)", async () => {
+    using server = serve(large);
+    const res = await fetch(server.url);
+    expect(res.status).toBe(200);
+    const got = Buffer.from(await res.arrayBuffer());
+    expect(got.length).toBe(largeExpected.length);
+    expect(got.equals(largeExpected)).toBe(true);
+  });
+
+  it("decodes all members (chunked transfer, zlib slow path)", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              for (let i = 0; i < small.length; i += 7) {
+                controller.write(small.subarray(i, i + 7));
+                await controller.flush();
+              }
+              controller.close();
+            },
+          }),
+          {
+            headers: {
+              "Content-Encoding": "gzip",
+              "Content-Type": "text/plain",
+            },
+          },
+        );
+      },
+    });
+    const res = await fetch(server.url);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(smallExpected);
+  });
 });

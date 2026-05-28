@@ -22,80 +22,7 @@ pub mod bun_css {
     pub use ::bun_css::*;
 }
 
-pub mod bun_renamer {
-    pub use bun_js_printer::renamer::*;
-
-    #[derive(Default)]
-    pub enum ChunkRenamer {
-        #[default]
-        None,
-        Number(Box<bun_js_printer::renamer::NumberRenamer>),
-        Minify(Box<bun_js_printer::renamer::MinifyRenamer>),
-    }
-
-    impl ChunkRenamer {
-        pub(crate) fn name_for_symbol(&mut self, ref_: bun_ast::Ref) -> &[u8] {
-            match self {
-                ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
-                ChunkRenamer::Number(r) => r.name_for_symbol(ref_),
-                ChunkRenamer::Minify(r) => r.name_for_symbol(ref_),
-            }
-        }
-        pub(crate) fn as_renamer(&mut self) -> bun_js_printer::renamer::Renamer<'_, '_> {
-            match self {
-                ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
-                ChunkRenamer::Number(r) => bun_js_printer::renamer::Renamer::NumberRenamer(r),
-                ChunkRenamer::Minify(r) => bun_js_printer::renamer::Renamer::MinifyRenamer(r),
-            }
-        }
-    }
-}
-
-pub mod html_import_manifest {
-    use crate::Graph::Graph;
-    use crate::HTMLImportManifest as real;
-    use crate::{LinkerGraph, chunk::Chunk};
-
-    pub use real::{EscapedJson, HTMLImportManifest};
-
-    #[inline]
-    pub(crate) fn format_escaped_json<'a>(
-        index: u32,
-        graph: &'a Graph,
-        chunks: &'a [Chunk],
-        linker_graph: &'a LinkerGraph,
-    ) -> real::EscapedJson<'a> {
-        real::HTMLImportManifest {
-            index,
-            graph,
-            chunks,
-            linker_graph,
-        }
-        .format_escaped_json()
-    }
-
-    pub fn write_escaped_json(
-        index: u32,
-        graph: &Graph,
-        linker_graph: &LinkerGraph<'_>,
-        chunks: &[Chunk],
-        w: &mut &mut [u8],
-    ) -> Result<(), core::fmt::Error> {
-        let taken = core::mem::take(w);
-        let mut fbs = bun_io::FixedBufferStream::new_mut(taken);
-        real::write_escaped_json(index, graph, linker_graph, chunks, &mut fbs)
-            .map_err(|_| core::fmt::Error)?;
-        let bun_io::FixedBufferStream { buffer, pos } = fbs;
-        *w = &mut buffer[pos..];
-        Ok(())
-    }
-}
-
 pub use crate::HTMLScanner as html_scanner;
-
-pub mod cross_chunk_import {
-    pub(crate) type ItemList = crate::bundle_v2::CrossChunkImportItemList;
-}
 
 pub(crate) mod index {
     pub(crate) use bun_ast::IndexInt as Int;
@@ -113,13 +40,20 @@ pub(crate) use bun_ast::{Part, Ref};
 pub use bun_js_printer::MangledProps;
 pub use options_impl::PathTemplate;
 
+pub use HTMLImportManifest::html_import_manifest;
 pub use bun_core::cheap_prefix_normalizer;
 pub use bundle_v2::{
-    CompileResult, CompileResultForSourceMap, ContentHasher, CrossChunkImport,
-    CrossChunkImportItem, CrossChunkImportItemList, DeclInfo, DeclInfoKind, EventLoop, ExportData,
-    ImportData, ImportTracker, JSMeta, PartRange, RefImportData, ResolvedExports, StableRef,
-    TopLevelSymbolToParts, WrapKind, entry_point, generic_path_with_pretty_initialized, js_meta,
+    CompileResult, CompileResultForSourceMap, ContentHasher, DeclInfo, DeclInfoKind, EventLoop,
+    ImportTracker, PartRange, StableRef, WrapKind, generic_path_with_pretty_initialized,
     target_from_hashbang,
+};
+pub use chunk::{
+    CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, bun_renamer,
+    cross_chunk_import,
+};
+pub use linker_graph::{
+    ExportData, ImportData, JSMeta, RefImportData, ResolvedExports, TopLevelSymbolToParts,
+    entry_point, js_meta,
 };
 
 /// `MultiArrayList` SoA column-accessor traits, gathered so a single
@@ -127,10 +61,10 @@ pub use bundle_v2::{
 pub mod mal_prelude {
     pub use crate::Graph::InputFileColumns as _;
     pub use crate::bundle_v2::CompileResultForSourceMapColumns as _;
-    pub use crate::bundle_v2::entry_point::EntryPointColumns as _;
-    pub use crate::bundle_v2::js_meta::JSMetaColumns as _;
     pub use crate::bundled_ast::BundledAstColumns as _;
     pub use crate::linker_graph::FileColumns as _;
+    pub use crate::linker_graph::entry_point::EntryPointColumns as _;
+    pub use crate::linker_graph::js_meta::JSMetaColumns as _;
     pub use bun_ast::server_component_boundary::ServerComponentBoundaryColumns as _;
 }
 
@@ -271,9 +205,6 @@ pub mod linker_context {
 pub use Graph::Graph as GraphStruct;
 /// See `bundle_v2`.
 pub use bundle_v2::BundleV2;
-/// `EntryPoint::Kind` is an inherent associated type on the struct (not a
-/// sibling module — that would collide with this re-export).
-pub use bundle_v2::entry_point::EntryPoint;
 /// See `chunk` module.
 pub use chunk::Chunk;
 pub use defines::{Define, DefineDataExt, DefineExt};
@@ -283,6 +214,9 @@ pub use linker::Linker;
 pub use linker_context_mod::LinkerContext;
 /// See `linker_graph` module.
 pub use linker_graph::LinkerGraph;
+/// `EntryPoint::Kind` is an inherent associated type on the struct (not a
+/// sibling module — that would collide with this re-export).
+pub use linker_graph::entry_point::EntryPoint;
 /// See `options_impl`.
 pub use options_impl::BundleOptions;
 pub use output_file::OutputFile;

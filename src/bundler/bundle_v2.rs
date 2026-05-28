@@ -15,13 +15,10 @@ use bun_core::ThreadLock;
 pub use bv2_impl::api;
 pub use bv2_impl::bake_types;
 pub use bv2_impl::dispatch;
-pub use bv2_impl::entry_point::{EntryPoint, Kind as EntryPointKind, List as EntryPointList};
 pub use bv2_impl::{
     CompileResult, CompileResultForSourceMap, CompileResultForSourceMapColumns, ContentHasher,
-    CrossChunkImportItem, CrossChunkImportItemList, DeclInfo, DeclInfoKind, EventLoop, ExportData,
-    ImportData, ImportTracker, JSMeta, PartRange, RefImportData, ResolvedExports, StableRef,
-    TopLevelSymbolToParts, WrapKind, entry_point, generic_path_with_pretty_initialized, js_meta,
-    target_from_hashbang,
+    DeclInfo, DeclInfoKind, EventLoop, ImportTracker, PartRange, StableRef, WrapKind,
+    generic_path_with_pretty_initialized, target_from_hashbang,
 };
 pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, ImportTrackerStatus};
 // Flatten the impl-body module into this file's namespace so external callers
@@ -29,8 +26,8 @@ pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, Impor
 // `bundle_v2::Foo` rather than naming the implementation submodule.
 use self::bake_types as bake;
 pub use bv2_impl::{
-    BuildResult, BundleV2Result, CompletionStruct, CrossChunkImport, DependenciesScanner,
-    DependenciesScannerResult, EXTERNAL_FREE_VTABLE, OnDependenciesAnalyze, singleton,
+    BuildResult, BundleV2Result, CompletionStruct, DependenciesScanner, DependenciesScannerResult,
+    EXTERNAL_FREE_VTABLE, OnDependenciesAnalyze, singleton,
 };
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
@@ -7313,11 +7310,6 @@ pub mod bv2_impl {
 
     pub use crate::AdditionalFile;
     pub use bun_core::cheap_prefix_normalizer;
-    pub use entry_point::{EntryPoint, Kind as EntryPointKind, List as EntryPointList};
-    pub use js_meta::Flags as JSMetaFlags;
-    pub use js_meta::{
-        ExportData, ImportData, JSMeta, RefImportData, ResolvedExports, TopLevelSymbolToParts,
-    };
 
     #[derive(Clone, Copy, Default)]
     pub struct PartRange {
@@ -7569,170 +7561,6 @@ pub mod bv2_impl {
         None
     }
 
-    pub mod entry_point {
-        use bun_collections::MultiArrayList;
-        use bun_core::PathString;
-
-        #[derive(Default)]
-        pub struct EntryPoint {
-            pub output_path: PathString,
-            pub source_index: crate::IndexInt,
-            pub output_path_was_auto_generated: bool,
-        }
-
-        pub type List = MultiArrayList<EntryPoint>;
-
-        bun_collections::multi_array_columns! {
-            pub trait EntryPointColumns for EntryPoint {
-                output_path: PathString,
-                source_index: crate::IndexInt,
-                output_path_was_auto_generated: bool,
-            }
-        }
-
-        impl EntryPoint {
-            pub type Kind = Kind;
-        }
-
-        #[repr(u8)]
-        #[derive(Clone, Copy, PartialEq, Eq, Default)]
-        pub enum Kind {
-            #[default]
-            None,
-            UserSpecified,
-            DynamicImport,
-            Html,
-        }
-        impl Kind {
-            #[inline]
-            pub fn is_entry_point(self) -> bool {
-                self != Self::None
-            }
-            #[inline]
-            pub fn is_user_specified_entry_point(self) -> bool {
-                self == Self::UserSpecified
-            }
-            #[inline]
-            pub fn is_server_entry_point(self) -> bool {
-                self == Self::UserSpecified
-            }
-            #[inline]
-            pub fn output_kind(self) -> crate::options::OutputKind {
-                match self {
-                    Self::UserSpecified => crate::options::OutputKind::EntryPoint,
-                    _ => crate::options::OutputKind::Chunk,
-                }
-            }
-        }
-    }
-    pub use entry_point::EntryPointColumns;
-
-    pub mod js_meta {
-        use bun_alloc::{AstAlloc, AstVec};
-        use bun_ast::{Dependency, Ref};
-        use bun_collections::array_hash_map::StringContext;
-        use bun_collections::{ArrayHashMap, AutoContext, StringArrayHashMap};
-
-        use crate::{ImportTracker, Index, WrapKind};
-
-        pub struct ImportData {
-            pub re_exports: AstVec<Dependency>,
-            pub data: ImportTracker,
-        }
-        impl Default for ImportData {
-            fn default() -> Self {
-                Self {
-                    re_exports: AstAlloc::vec(),
-                    data: ImportTracker::default(),
-                }
-            }
-        }
-        pub(crate) type ImportToBind = ImportData;
-
-        pub struct ExportData {
-            pub potentially_ambiguous_export_star_refs: AstVec<ImportData>,
-            pub data: ImportTracker,
-        }
-        impl Default for ExportData {
-            fn default() -> Self {
-                Self {
-                    potentially_ambiguous_export_star_refs: AstAlloc::vec(),
-                    data: ImportTracker::default(),
-                }
-            }
-        }
-        pub(crate) type ResolvedExport = ExportData;
-
-        pub type RefImportData = ArrayHashMap<Ref, ImportData, AutoContext, AstAlloc>;
-        pub type ResolvedExports = StringArrayHashMap<ExportData, StringContext, AstAlloc>;
-        pub type ProbablyTypescriptType = ArrayHashMap<Ref, (), AutoContext, AstAlloc>;
-        pub type SortedAndFilteredExportAliases = AstVec<Box<[u8], AstAlloc>>;
-        pub type CjsExportCopies = AstVec<Ref>;
-        pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
-
-        #[derive(Clone, Copy, Default)]
-        pub struct Flags {
-            pub is_async_or_has_async_dependency: bool,
-            pub needs_exports_variable: bool,
-            pub force_include_exports_for_entry_point: bool,
-            pub needs_export_symbol_from_runtime: bool,
-            pub did_wrap_dependencies: bool,
-            pub needs_synthetic_default_export: bool,
-            pub wrap: WrapKind,
-        }
-        pub use crate::WrapKind as Wrap;
-
-        pub struct JSMeta {
-            pub probably_typescript_type: ProbablyTypescriptType,
-            pub imports_to_bind: RefImportData,
-            pub resolved_exports: ResolvedExports,
-            pub resolved_export_star: ExportData,
-            pub sorted_and_filtered_export_aliases: SortedAndFilteredExportAliases,
-            pub top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
-            pub cjs_export_copies: CjsExportCopies,
-            pub wrapper_part_index: Index,
-            pub entry_point_part_index: Index,
-            pub flags: Flags,
-        }
-
-        impl Default for JSMeta {
-            fn default() -> Self {
-                Self {
-                    probably_typescript_type: ProbablyTypescriptType::default(),
-                    imports_to_bind: RefImportData::default(),
-                    resolved_exports: ResolvedExports::default(),
-                    resolved_export_star: ExportData::default(),
-                    sorted_and_filtered_export_aliases: AstAlloc::vec(),
-                    top_level_symbol_to_parts_overlay: TopLevelSymbolToParts::default(),
-                    cjs_export_copies: AstAlloc::vec(),
-                    wrapper_part_index: Index::default(),
-                    entry_point_part_index: Index::default(),
-                    flags: Flags::default(),
-                }
-            }
-        }
-
-        bun_collections::multi_array_columns! {
-            pub trait JSMetaColumns for JSMeta {
-                probably_typescript_type: ProbablyTypescriptType,
-                imports_to_bind: RefImportData,
-                resolved_exports: ResolvedExports,
-                resolved_export_star: ExportData,
-                sorted_and_filtered_export_aliases: SortedAndFilteredExportAliases,
-                top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
-                cjs_export_copies: CjsExportCopies,
-                wrapper_part_index: Index,
-                entry_point_part_index: Index,
-                flags: Flags,
-            }
-        }
-
-        impl JSMeta {
-            pub type Flags = Flags;
-            pub type Wrap = crate::WrapKind;
-        }
-    }
-
     pub fn generic_path_with_pretty_initialized(
         path: &bun_paths::fs::Path<'static>,
         target: options::Target,
@@ -7856,68 +7684,6 @@ pub mod bv2_impl {
                 value: crate::ImportTracker::default(),
                 import_data: bun_ptr::BackRef::new(&[] as &[crate::ImportData]),
             }
-        }
-    }
-
-    #[derive(Default, Clone)]
-    pub struct CrossChunkImportItem {
-        pub export_alias: Box<[u8]>,
-        pub r#ref: bun_ast::Ref,
-    }
-    pub type CrossChunkImportItemList = Vec<CrossChunkImportItem>;
-    #[derive(Default)]
-    pub struct CrossChunkImport {
-        pub chunk_index: IndexInt,
-        pub sorted_import_items: core::mem::ManuallyDrop<CrossChunkImportItemList>,
-    }
-
-    impl CrossChunkImportItem {
-        pub fn less_than(_: (), a: &CrossChunkImportItem, b: &CrossChunkImportItem) -> bool {
-            strings::order(&a.export_alias, &b.export_alias) == core::cmp::Ordering::Less
-        }
-    }
-
-    impl CrossChunkImport {
-        pub fn less_than(_: (), a: &CrossChunkImport, b: &CrossChunkImport) -> bool {
-            a.chunk_index < b.chunk_index
-        }
-
-        pub fn sorted_cross_chunk_imports(
-            list: &mut Vec<CrossChunkImport>,
-            chunks: &mut [Chunk],
-            imports_from_other_chunks: &mut chunk::ImportsFromOtherChunks,
-        ) -> Result<(), Error> {
-            // PORT NOTE: reshaped for borrowck — Zig used `defer list.* = result;`.
-            list.clear();
-            list.reserve(imports_from_other_chunks.count());
-
-            for i in 0..imports_from_other_chunks.count() {
-                let chunk_index = imports_from_other_chunks.keys()[i];
-                let chunk = &mut chunks[chunk_index as usize];
-
-                // Sort imports from a single chunk by alias for determinism
-                let exports_to_other_chunks = &chunk.content.javascript().exports_to_other_chunks;
-                let import_items = &mut imports_from_other_chunks.values_mut()[i];
-                for item in import_items.slice_mut() {
-                    item.export_alias = (*exports_to_other_chunks.get(&item.r#ref).unwrap()).into();
-                    debug_assert!(!item.export_alias.is_empty());
-                }
-                import_items
-                    .slice_mut()
-                    .sort_by(|a, b| strings::order(&a.export_alias, &b.export_alias));
-
-                // Zig value-copies the Vec header so both `result[_]` and the
-                // map slot share the backing buffer; `rename_symbols_in_chunk`
-                // re-reads `imports_from_other_chunks.values()` afterwards. Taking
-                // would leave the map slot empty and break that consumer.
-                list.push(CrossChunkImport {
-                    chunk_index,
-                    sorted_import_items: import_items.shallow_copy(),
-                });
-            }
-
-            list.sort_by_key(|a| a.chunk_index);
-            Ok(())
         }
     }
 

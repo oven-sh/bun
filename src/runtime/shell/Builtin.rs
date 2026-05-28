@@ -825,6 +825,17 @@ impl Builtin {
                     } else if redirect.stderr() {
                         me.stderr = BuiltinIO::Blob(theblob);
                     }
+                } else if crate::webcore::ReadableStream::from_js(jsval, global)
+                    .unwrap_or(None)
+                    .is_some()
+                {
+                    // Builtins read/write their redirects as in-memory buffers and
+                    // have no pipe to stream a ReadableStream through. Throw a
+                    // catchable error instead of the generic "Unknown JS value".
+                    let _ = global.throw(format_args!(
+                        "ReadableStream is not supported as a redirect target for shell builtins"
+                    ));
+                    return Some(Yield::failed());
                 } else {
                     let _ = global.throw(format_args!(
                         "Unknown JS value used in shell: {}",

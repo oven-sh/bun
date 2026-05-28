@@ -792,8 +792,40 @@ impl Cmd {
                             STDERR_NO as i32,
                         )?;
                     }
-                } else if crate::webcore::ReadableStream::from_js(jsval, global)?.is_some() {
-                    panic!("TODO SHELL READABLE STREAM");
+                } else if let Some(mut stream) =
+                    crate::webcore::ReadableStream::from_js(jsval, global)?
+                {
+                    // If the stream is already fully buffered (a Blob/File/bytes
+                    // source), turn it into a Blob and go through the same
+                    // buffered path as the Blob/Response branches above. Works
+                    // for stdin, stdout and stderr.
+                    if let Some(blob) = stream.to_any_blob(global) {
+                        if flags.stdin() {
+                            stdio[STDIN_NO].extract_blob(global, blob, STDIN_NO as i32)?;
+                        } else if flags.stdout() {
+                            stdio[STDOUT_NO].extract_blob(global, blob, STDOUT_NO as i32)?;
+                        } else if flags.stderr() {
+                            stdio[STDERR_NO].extract_blob(global, blob, STDERR_NO as i32)?;
+                        }
+                    } else if flags.stdin() {
+                        // Arbitrary JS stream: stream it into the command's
+                        // stdin across event-loop turns (see `Writable::init`).
+                        if stream.is_disturbed(global) {
+                            return Err(global.err(
+                                crate::jsc::ErrorCode::INVALID_STATE,
+                                format_args!("'stdin' ReadableStream has already been used"),
+                            )
+                            .throw());
+                        }
+                        stdio[STDIN_NO] = Stdio::ReadableStream(stream);
+                    } else {
+                        // Streaming to stdout/stderr isn't supported yet; throw
+                        // instead of crashing so `.nothrow()`/try-catch can see it.
+                        let name = if flags.stdout() { "stdout" } else { "stderr" };
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "ReadableStream cannot be used for {name} yet"
+                        )));
+                    }
                 } else if let Some(req) = jsval.as_::<crate::webcore::Response>() {
                     // SAFETY: `as_` returns a live JSC-owned `*mut Response`.
                     let req = unsafe { &mut *req };

@@ -2908,6 +2908,141 @@ test("stdin redirect from a Uint8Array sends the bytes captured when the command
   expect(result.exitCode).toBe(0);
 }, 60_000);
 
+describe("stdin redirect from a ReadableStream", async () => {
+  // Regression: `< ${stream}` on an external command used to hit
+  // `panic!("TODO SHELL READABLE STREAM")` and kill the process (exit 132),
+  // uncatchable by try/catch or `.nothrow()`. A ReadableStream stdin redirect
+  // should now be pumped into the child across event-loop turns, like the
+  // Blob/Uint8Array redirects.
+
+  // Runs the redirect inside a child process so that, on the buggy build, the
+  // panic is contained in the child (observed as a non-zero exit + no
+  // "survived") instead of crashing the test runner.
+  test("a single-chunk stream is delivered to the child and the process survives", async () => {
+    const childCode = /* js */ `
+      const s = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("hi\\n"));
+          c.close();
+        },
+      });
+      const out = await Bun.$\`cat < \${s}\`.text();
+      console.log("OUT:" + JSON.stringify(out));
+      console.log("survived");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [BUN, "-e", childCode],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(`OUT:"hi\\n"\nsurvived\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a multi-chunk stream drained across event-loop turns is delivered in order", async () => {
+    const childCode = /* js */ `
+      const s = new ReadableStream({
+        async start(c) {
+          c.enqueue(new TextEncoder().encode("line1\\n"));
+          await Bun.sleep(1);
+          c.enqueue(new TextEncoder().encode("line2\\n"));
+          await Bun.sleep(1);
+          c.enqueue(new TextEncoder().encode("line3\\n"));
+          c.close();
+        },
+      });
+      const out = await Bun.$\`cat < \${s}\`.text();
+      process.stdout.write(out);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [BUN, "-e", childCode],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("line1\nline2\nline3\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a large stream is delivered in full", async () => {
+    const childCode = /* js */ `
+      const CHUNK = new Uint8Array(16 * 1024).fill(0x41); // "A"
+      const s = new ReadableStream({
+        start(c) {
+          for (let i = 0; i < 8; i++) c.enqueue(CHUNK);
+          c.close();
+        },
+      });
+      const out = await Bun.$\`cat < \${s}\`.text();
+      console.log(out.length);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [BUN, "-e", childCode],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(`${8 * 16 * 1024}\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("redirecting a ReadableStream to stdout of an external command throws a catchable error", async () => {
+    // Run in a child: on the buggy build this panicked (an uncatchable crash),
+    // so the child would exit non-zero without printing the marker. On the
+    // fixed build the redirect error is catchable. (`process.exit` is explicit
+    // because a redirect-setup error leaves the shell's event loop ref'd — the
+    // same is true for the pre-existing Blob-to-stdout error.)
+    const childCode = /* js */ `
+      const s = new ReadableStream({ start(c) { c.close(); } });
+      try {
+        await Bun.$\`cat /dev/null > \${s}\`;
+        process.stdout.write("NO_THROW");
+      } catch (e) {
+        process.stdout.write("CAUGHT:" + e.message);
+      }
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [BUN, "-e", childCode],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("CAUGHT:ReadableStream cannot be used for stdout yet");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a disturbed ReadableStream throws a catchable error", async () => {
+    const childCode = /* js */ `
+      const s = new ReadableStream({
+        start(c) { c.enqueue(new TextEncoder().encode("x")); c.close(); },
+      });
+      await s.getReader().read(); // disturb the stream before redirecting it
+      try {
+        await Bun.$\`cat < \${s}\`;
+        process.stdout.write("NO_THROW");
+      } catch (e) {
+        process.stdout.write("CAUGHT:" + e.message);
+      }
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [BUN, "-e", childCode],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("CAUGHT:'stdin' ReadableStream has already been used");
+    expect(exitCode).toBe(0);
+  });
+});
+
 test("output redirect buffer for an external command stays attached until the command finishes", async () => {
   // `> ${buf}` for an external (non-builtin) command stores the buffer and
   // copies the child's stdout into it as chunks arrive across event-loop

@@ -146,7 +146,6 @@ impl FileSinkPtr {
     /// `ptr` is non-null, points to a live `FileSink` from
     /// `FileSink::create*`, and the caller transfers its single owned ref to
     /// this handle.
-    #[cfg(windows)]
     #[inline]
     unsafe fn adopt(ptr: *mut FileSink) -> Self {
         // SAFETY: caller contract — `ptr` is non-null.
@@ -475,6 +474,12 @@ impl ShellSubprocess {
                     pipe.signal.with_mut(|s| s.clear());
                     // FileSinkPtr::drop derefs (Zig: `pipe.deref()`).
                     self.stdin = Writable::Ignore;
+                    // A `< ${stream}` stdin pipe has finished draining; tell the
+                    // Cmd so `all_closed()` can be satisfied (parallels the
+                    // `Writable::Buffer` arm's `on_static_pipe_writer_done`).
+                    // SAFETY: cmd_parent backref resolves to the owning Cmd which
+                    // outlives the subprocess. Single-threaded.
+                    unsafe { self.cmd_parent.cmd_mut() }.buffered_input_close();
                 }
                 Writable::Buffer(_) => {
                     self.on_static_pipe_writer_done();
@@ -764,6 +769,14 @@ impl ShellSubprocess {
         let stdio1 = core::mem::replace(&mut stdio_guard[1], Stdio::Ignore);
         let stdio2 = core::mem::replace(&mut stdio_guard[2], Stdio::Ignore);
 
+        // `ReadableStream` is a `Copy` handle; snapshot it before `Writable::init`
+        // consumes `stdio0`. The stream is pumped into the stdin pipe once the
+        // subprocess is fully constructed (see below).
+        let stdin_stream: Option<ReadableStream> = match &stdio0 {
+            Stdio::ReadableStream(rs) => Some(*rs),
+            _ => None,
+        };
+
         // `to_process` consumes the result for pid/pidfd; pull the fd handles out first.
         let spawn_stdin = spawn_result.stdin.take();
         let spawn_stdout = spawn_result.stdout.take();
@@ -846,36 +859,69 @@ impl ShellSubprocess {
         });
         let _ = scopeguard::ScopeGuard::into_inner(stdio_guard);
 
-        // Spec: `subprocess.stdin.pipe.signal = Signal.init(&subprocess.stdin)`.
-        // Wire the FileSink's close-signal back to the enclosing `Writable` so
-        // `Writable::on_close` (drops the `Arc<FileSink>`) runs when the sink
-        // finishes. `stdin` lives inside the Box-allocated `Subprocess` at a
-        // stable address, so the self-referential raw pointer is sound for the
-        // life of the subprocess. Only reachable on Windows (POSIX
-        // `Writable::init` never returns `Pipe` for shell stdio).
-        {
-            // Derive `stdin_ptr` from the raw heap pointer (`subprocess`), not
-            // the local `subproc: &mut` reborrow — the pointer is stored
-            // long-term in `FileSink::signal` and dereferenced from
-            // `Writable::on_close` after this frame returns. Under Stacked
-            // Borrows a child of `subproc`'s tag would be invalidated when
-            // that borrow ends; rooting in the allocation's provenance keeps
-            // it valid for the box's lifetime.
-            // SAFETY: `subprocess` is the live, fully-initialised heap alloc.
-            let stdin_ptr: *mut Writable = unsafe { &raw mut (*subprocess).stdin };
-            // SAFETY: reborrow as a child of `stdin_ptr` so it does not
-            // invalidate the sibling we store in `signal`.
-            if let Writable::Pipe(pipe) = unsafe { &mut *stdin_ptr } {
-                // SAFETY: shell is single-threaded; the FileSink allocation is
-                // disjoint from `*stdin_ptr`. `stdin_ptr` outlives the sink —
-                // the Subprocess owns both and `Writable::on_close` is the only
-                // path that drops the FileSinkPtr. `init_with_type` is
-                // `unsafe fn` (caller asserts the handler outlives the
-                // `Signal`).
-                pipe.signal.set(unsafe {
-                    webcore::streams::Signal::init_with_type::<Writable>(stdin_ptr)
-                });
+        // For a `< ${stream}` redirect, pump the ReadableStream into the stdin
+        // FileSink. `assign_to_stream` keeps the sink and the event loop alive
+        // while the stream drains and closes the pipe (the child's EOF) on
+        // completion. A fully-buffered stream drains synchronously here.
+        //
+        // This must run before the close-signal wiring below: `assign_to_stream`
+        // deliberately clears `FileSink::signal` during setup, so wiring the
+        // signal first would just be wiped out.
+        if let Some(mut stream) = stdin_stream {
+            if let Writable::Pipe(pipe) = &mut subproc.stdin {
+                // SAFETY: single-threaded shell; `pipe` is the sole owner of the
+                // FileSink and no other borrow is live across this call.
+                let sink = unsafe { pipe.as_mut() };
+                // `global_object()` is non-null on the JS event loop, which is
+                // the only loop the async shell spawn path runs on.
+                let global_ptr = event_loop.global_object();
+                debug_assert!(!global_ptr.is_null());
+                let global: &JSGlobalObject =
+                    bun_opaque::opaque_deref(global_ptr.cast::<JSGlobalObject>());
+                let assign_result = sink.assign_to_stream(&mut stream, global);
+                if assign_result.to_error().is_some() {
+                    let _ = subproc.try_kill(SignalCode::SIGTERM as i32);
+                    Self::abort_after_failed_start(subprocess);
+                    return Err(ShellErr::Custom(
+                        b"Failed to pipe ReadableStream to stdin".to_vec().into_boxed_slice(),
+                    ));
+                }
             }
+        }
+
+        // Spec: `subprocess.stdin.pipe.signal = Signal.init(&subprocess.stdin)`.
+        // Wire the stdin FileSink's close-signal back to the owning Subprocess
+        // so `Subprocess::on_close_io(Stdin)` runs when the sink finishes —
+        // releasing the `Writable::Pipe` and telling the `Cmd` that stdin is
+        // done. The handler pointer is the raw `subprocess` (the Box-stable
+        // allocation), which the FileSink dereferences from its close callback
+        // after this frame returns — it is rooted in the allocation, not in the
+        // `subproc` reborrow's tag. Reachable for a `< ${stream}` redirect (the
+        // stdin pipe is a FileSink) and for Windows pipes.
+        if let Writable::Pipe(pipe) = &mut subproc.stdin {
+            // SAFETY: shell is single-threaded; `subprocess` is the live,
+            // Box-stable allocation that owns this FileSink and outlives it —
+            // `on_close_io` is the only path that drops the `FileSinkPtr`.
+            // `init_with_type` is `unsafe fn` (caller asserts the handler
+            // outlives the `Signal`).
+            pipe.signal.set(unsafe {
+                webcore::streams::Signal::init_with_type::<Subprocess>(subprocess)
+            });
+        }
+
+        // A fully-buffered `< ${stream}` drains synchronously inside
+        // `assign_to_stream` above, while `FileSink::signal` was still dead, so
+        // the close-signal wired above never fired and stdin is still
+        // `Writable::Pipe`. Drive `on_close_io(Stdin)` now so the pipe is
+        // released and the `Cmd` learns stdin is done. A stream that hasn't
+        // drained yet is handled by the close-signal instead.
+        let stdin_done = match &subproc.stdin {
+            // SAFETY: single-threaded; shared read of the sink's writer flag.
+            Writable::Pipe(pipe) => unsafe { pipe.as_mut() }.writer.get().is_done,
+            _ => false,
+        };
+        if stdin_done {
+            subproc.on_close_io(StdioKind::Stdin);
         }
 
         match subproc.proc().watch() {
@@ -1035,6 +1081,19 @@ impl webcore::streams::SignalHandler for Writable {
     }
 }
 
+// The stdin FileSink's close-signal (a `< ${stream}` redirect, or a Windows
+// stdin pipe) targets the owning `ShellSubprocess` so that when the sink
+// finishes, `on_close_io(Stdin)` runs — releasing the `Writable::Pipe` and
+// telling the `Cmd` that stdin is done (parallels the blob/StaticPipeWriter
+// path, which calls `on_close_io(Stdin)` directly).
+impl webcore::streams::SignalHandler for Subprocess {
+    fn on_close(&mut self, _err: Option<bun_sys::Error>) {
+        self.on_close_io(StdioKind::Stdin);
+    }
+    fn on_ready(&mut self, _: Option<blob::SizeType>, _: Option<blob::SizeType>) {}
+    fn on_start(&mut self) {}
+}
+
 impl Writable {
     pub fn init(
         stdio: Stdio,
@@ -1185,8 +1244,38 @@ impl Writable {
                 Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
                 Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
                 Stdio::ReadableStream(_) => {
-                    // The shell never uses this
-                    panic!("Unimplemented stdin readable_stream");
+                    // `< ${stream}` on an external command. Wrap the stdin pipe
+                    // fd in a FileSink; the ReadableStream is pumped into it by
+                    // `assign_to_stream` once the subprocess is fully built (see
+                    // `spawn_maybe_sync_impl`). Mirrors the `Bun.spawn` stdin path.
+                    let fd = result.unwrap();
+                    let _ = bun_sys::set_nonblocking(fd);
+
+                    // `create` returns a freshly-boxed non-null FileSink with
+                    // refcount 1.
+                    let pipe_ptr = FileSink::create(event_loop, fd);
+                    // SAFETY: `create` just returned a live, sole-owned pointer.
+                    let pipe = unsafe { &mut *pipe_ptr };
+
+                    match pipe.writer.with_mut(|w| w.start(fd, true)) {
+                        bun_sys::Result::Ok(()) => {}
+                        bun_sys::Result::Err(_err) => {
+                            // SAFETY: `pipe_ptr` is live with the sole ref;
+                            // `deref` frees it.
+                            unsafe { FileSink::deref(pipe_ptr) };
+                            return Err(WritableInitError::UnexpectedCreatingStdin);
+                        }
+                    }
+
+                    pipe.writer.with_mut(|w| {
+                        if let Some(poll) = w.handle.get_poll() {
+                            poll.set_flag(bun_io::FilePollFlag::Socket);
+                        }
+                    });
+
+                    // SAFETY: `create` returned a non-null pointer carrying one
+                    // owned ref; `adopt` transfers it to the `FileSinkPtr`.
+                    Ok(Writable::Pipe(unsafe { FileSinkPtr::adopt(pipe_ptr) }))
                 }
             }
         }

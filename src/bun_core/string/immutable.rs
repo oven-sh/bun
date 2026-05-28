@@ -19,14 +19,11 @@ pub use self::unicode::{
 pub use unicode_draft::CodePointZero;
 
 // Sub-modules (peer files under `src/string/immutable/`).
-#[path = "immutable/exact_size_matcher.rs"]
-pub mod exact_size_matcher;
-// AsciiVector/AsciiU16Vector are scalar `ScalarVec` wrappers (see below) so
-// the `if ENABLE_SIMD { .. }` branches type-check; `ENABLE_SIMD = false`
-// keeps them dead at runtime. PERF(port): swap to bun_highway.
 #[path = "immutable/escapeHTML.rs"]
 pub mod escape_html;
-pub use escape_html::{SCALAR_LENGTHS, html_escape_entity, xml_escape_entity};
+#[path = "immutable/exact_size_matcher.rs"]
+pub mod exact_size_matcher;
+pub use escape_html::{html_escape_entity, xml_escape_entity};
 #[path = "immutable/unicode.rs"]
 mod unicode_draft;
 #[path = "immutable/visible.rs"]
@@ -1535,138 +1532,6 @@ pub fn substring(self_: &[u8], start: Option<usize>, stop: Option<usize>) -> &[u
     &self_[sta.min(self_.len())..sto.min(self_.len())]
 }
 
-// PORT NOTE: AsciiVector / @Vector aliases — Zig SIMD types have no stable
-// Rust equivalent. Exposed as thin scalar wrappers so dead-SIMD branches
-// type-check; `ENABLE_SIMD = false` makes those branches unreachable at
-// runtime. Hot loops use scalar fallbacks with `// PERF(port)` markers.
-// TODO(perf): route through bun_highway/portable_simd and flip ENABLE_SIMD.
-pub const ENABLE_SIMD: bool = false;
-pub const ASCII_VECTOR_SIZE: usize = 16;
-pub const ASCII_U16_VECTOR_SIZE: usize = 8;
-
-/// Scalar stand-in for Zig `@Vector(N, T)` — just enough surface
-/// (`splat`/`from_slice`/`simd_eq`/`simd_gt`) for the `escape_html` SIMD
-/// branches to type-check. Every method is a plain elementwise loop.
-/// PERF(port): replace with `core::simd::Simd<T, N>` or `bun_highway` lanes.
-#[derive(Clone, Copy)]
-pub struct ScalarVec<T: Copy + Eq + Ord + Default, const N: usize>(pub [T; N]);
-
-/// Lane mask returned by `simd_eq`/`simd_gt`. `BitOr` combines masks; `any()`
-/// reduces to a single bool (Zig `@reduce(.Max, mask) == 1`).
-#[derive(Clone, Copy)]
-pub struct ScalarMask<const N: usize>(pub [bool; N]);
-
-impl<T: Copy + Eq + Ord + Default, const N: usize> ScalarVec<T, N> {
-    #[inline]
-    pub fn splat(v: T) -> Self {
-        Self([v; N])
-    }
-    #[inline]
-    pub fn from_slice(s: &[T]) -> Self {
-        let mut out = [T::default(); N];
-        out.copy_from_slice(&s[..N]);
-        Self(out)
-    }
-    #[inline]
-    pub fn simd_eq(self, other: Self) -> ScalarMask<N> {
-        let mut m = [false; N];
-        for i in 0..N {
-            m[i] = self.0[i] == other.0[i];
-        }
-        ScalarMask(m)
-    }
-    #[inline]
-    pub fn simd_gt(self, other: Self) -> ScalarMask<N> {
-        let mut m = [false; N];
-        for i in 0..N {
-            m[i] = self.0[i] > other.0[i];
-        }
-        ScalarMask(m)
-    }
-    #[inline]
-    pub fn simd_ge(self, other: Self) -> ScalarMask<N> {
-        let mut m = [false; N];
-        for i in 0..N {
-            m[i] = self.0[i] >= other.0[i];
-        }
-        ScalarMask(m)
-    }
-    #[inline]
-    pub fn simd_lt(self, other: Self) -> ScalarMask<N> {
-        let mut m = [false; N];
-        for i in 0..N {
-            m[i] = self.0[i] < other.0[i];
-        }
-        ScalarMask(m)
-    }
-    #[inline]
-    pub fn simd_le(self, other: Self) -> ScalarMask<N> {
-        let mut m = [false; N];
-        for i in 0..N {
-            m[i] = self.0[i] <= other.0[i];
-        }
-        ScalarMask(m)
-    }
-    #[inline]
-    pub fn simd_ne(self, other: Self) -> ScalarMask<N> {
-        let mut m = [false; N];
-        for i in 0..N {
-            m[i] = self.0[i] != other.0[i];
-        }
-        ScalarMask(m)
-    }
-}
-impl<const N: usize> core::ops::BitOr for ScalarMask<N> {
-    type Output = Self;
-    #[inline]
-    fn bitor(self, rhs: Self) -> Self {
-        let mut m = [false; N];
-        for i in 0..N {
-            m[i] = self.0[i] | rhs.0[i];
-        }
-        Self(m)
-    }
-}
-impl<const N: usize> core::ops::BitAnd for ScalarMask<N> {
-    type Output = Self;
-    #[inline]
-    fn bitand(self, rhs: Self) -> Self {
-        let mut m = [false; N];
-        for i in 0..N {
-            m[i] = self.0[i] & rhs.0[i];
-        }
-        Self(m)
-    }
-}
-impl<const N: usize> core::ops::BitOrAssign for ScalarMask<N> {
-    #[inline]
-    fn bitor_assign(&mut self, rhs: Self) {
-        for i in 0..N {
-            self.0[i] |= rhs.0[i];
-        }
-    }
-}
-impl<const N: usize> ScalarMask<N> {
-    #[inline]
-    pub fn any(self) -> bool {
-        self.0.iter().any(|&b| b)
-    }
-    /// Packs lane truth into the low N bits of a u64 (LSB = lane 0). Mirrors
-    /// `core::simd::Mask::to_bitmask` so `popcount`/`trailing_zeros` work.
-    #[inline]
-    pub fn to_bitmask(self) -> u64 {
-        debug_assert!(N <= 64);
-        let mut bits: u64 = 0;
-        for i in 0..N {
-            bits |= (self.0[i] as u64) << i;
-        }
-        bits
-    }
-}
-
-pub type AsciiVector = ScalarVec<u8, ASCII_VECTOR_SIZE>;
-pub type AsciiU16Vector = ScalarVec<u16, ASCII_U16_VECTOR_SIZE>;
-
 // (UTF16Replacement / utf16_codepoint{,_with_fffd} — deleted; re-exported from unicode_draft above)
 
 /// `w!("foo")` → `&'static [u16]` UTF-16 literal (ASCII-only). Zig's `bun.w`.
@@ -2891,7 +2756,6 @@ pub use crate::string::escape_reg_exp::{escape_reg_exp, escape_reg_exp_for_packa
 // TODO(port): re-export the rest of the transcoding suite from unicode_draft —
 //   to_utf8_alloc / to_utf16_alloc / convert_* / copy_*_into_* / EncodeIntoResult / BOM / etc.
 // TODO(port): re-export paths::{to_w_path, basename, add_nt_path_prefix, ...}
-// TODO(port): re-export escape_html::{escape_html_for_latin1_input, escape_html_for_utf16_input}
 
 crate::declare_scope!(STR, hidden);
 // `log` is `bun.Output.scoped(.STR, .hidden)` — use `crate::scoped_log!(STR, ...)`.

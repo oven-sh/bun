@@ -1205,7 +1205,7 @@ test("yaml-test-suite/6JWB", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/6KGN", () => {
+test("yaml-test-suite/6KGN", () => {
   // Anchor for empty node
   const input: string = `---
 a: &anchor
@@ -3260,7 +3260,7 @@ test("yaml-test-suite/FBC9", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/FH7J", () => {
+test("yaml-test-suite/FH7J", () => {
   // Tags on Empty Scalars (using test.event for expected values)
   const input: string = `- !!str
 -
@@ -3501,7 +3501,7 @@ wanted: love ♥ and peace ☮
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/H7J7", () => {
+test("yaml-test-suite/H7J7", () => {
   // Node anchor not indented
   // Error test - expecting parse to fail
   const input: string = `key: &x
@@ -4829,7 +4829,7 @@ a: b
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/PW8X", () => {
+test("yaml-test-suite/PW8X", () => {
   // Anchors on Empty Scalars (using test.event for expected values)
   const input: string = `- &a
 - a

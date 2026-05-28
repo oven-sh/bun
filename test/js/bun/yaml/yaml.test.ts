@@ -1153,6 +1153,192 @@ folded: >
         });
       });
 
+      describe("anchor/tag on empty node ([161] e-scalar)", () => {
+        test("anchor on empty mapping value", () => {
+          // [197] s-l+flow-in-block: content on a later line must be at
+          // indent > n; `b` at indent 0 is the next key, not content for `&x`.
+          const r = YAML.parse("a: &x\nb: *x\n");
+          expect(r).toEqual({ a: null, b: null });
+          expect(r.a).toBe(r.b);
+        });
+
+        test("tag on empty mapping value", () => {
+          expect(YAML.parse("a: !!str\nb: y\n")).toEqual({ a: "", b: "y" });
+          expect(YAML.parse("a: &x !!str\nb: *x\n")).toEqual({ a: "", b: "" });
+        });
+
+        test("anchor on empty sequence item", () => {
+          const r = YAML.parse("- &a\n- *a\n");
+          expect(r).toEqual([null, null]);
+          expect(r[0]).toBe(r[1]);
+        });
+
+        test("content at indent > n still attaches", () => {
+          // s-separate-lines(n+1): content on later line at indent > n.
+          expect(YAML.parse("a: &x\n  b\n")).toEqual({ a: "b" });
+          expect(YAML.parse("a: &x\n b\n")).toEqual({ a: "b" });
+          expect(YAML.parse("a:\n &x\n b\n")).toEqual({ a: "b" });
+        });
+
+        test("[200]/[201] block sequence may sit at indent n", () => {
+          // BLOCK-OUT seq-space(n) = l+block-sequence(n-1).
+          expect(YAML.parse("a: !!seq\n- x\n- y\n")).toEqual({ a: ["x", "y"] });
+          expect(YAML.parse("a:\n &m\n- x\n")).toEqual({ a: ["x"] });
+        });
+
+        test("second property at parent indent terminates first", () => {
+          // [197] property at indent ≤ n is the parent's, not value content.
+          expect(() => YAML.parse("key: &x\n!!map\n  a: b\n")).toThrow("Unexpected token");
+        });
+
+        test("second anchor at indent > n is the [200] collection's first key", () => {
+          const r = YAML.parse("top: &node\n  &k key: one\n");
+          expect(r).toEqual({ top: { key: "one" } });
+        });
+
+        test("anchor on empty `?` key", () => {
+          expect(YAML.parse("? &d\n: v\n")).toEqual({ null: "v" });
+          expect(YAML.parse("- ? &d\n- ? &e\n  : &a\n")).toEqual([{ null: null }, { null: null }]);
+        });
+
+        test.todo("anchor as implicit-key e-node, alias in later entry", () => {
+          // [154]/[159] `&a` is the key's ns-flow-yaml-node = props + e-scalar.
+          // Currently the anchor is applied to the mapping (not the key) at
+          // parse_node's exit, AFTER subsequent entries are parsed, so `*a`
+          // is unresolved at parse time. Pre-existing.
+          expect(YAML.parse("&a : x\nb: *a\n")).toEqual({ null: "x", b: null });
+        });
+
+        test("at top level, content at indent 0 is still content (n = -1)", () => {
+          expect(YAML.parse("&x\nb\n")).toEqual("b");
+          expect(YAML.parse("&x\n")).toEqual(null);
+        });
+
+        test("nested explicit `?` key uses its own indent for sibling detection", () => {
+          // The `?` key parse passes the `?`'s indent as n, not the outer
+          // mapping's, so `:` at the inner indent terminates the entry.
+          expect(YAML.parse("x:\n  ? a\n  : b\ny: z\n")).toEqual({
+            x: { a: "b" },
+            y: "z",
+          });
+          expect(YAML.parse("? a\n:\n  ? b\n  : c\n")).toEqual({ a: { b: "c" } });
+        });
+
+        test("seq-item property followed by non-`- ` at parent indent", () => {
+          // [185] s-l+block-indented(n, BLOCK-IN): content on a later line at
+          // indent ≤ n belongs to the parent.
+          expect(() => YAML.parse("- &a\nk: v\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("- &a\nb\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("-\na\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("-\ta: b\n")).toThrow("Unexpected token");
+        });
+
+        test("rejects same-line `?` at indent ≤ n after indicator", () => {
+          // [185] compact construct on the indicator line needs s-indent
+          // (spaces, indent ≥ n+1). Tab leaves indent at the line's natural
+          // value; implicit-`:` scan has no additional_parent_indent.
+          expect(() => YAML.parse("?\t? x\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("a:\t? x\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("-\t? x\n")).toThrow("Unexpected token");
+          // [194] implicit value reaches s-l+block-node, not block-indented;
+          // no same-line compact `?` allowed.
+          expect(() => YAML.parse("a: ? x\n")).toThrow("Unexpected token");
+          // [186] seq entry reaches block-indented; compact `?` is valid here.
+          expect(YAML.parse("- ? x\n")).toEqual([{ x: null }]);
+        });
+
+        test("anchor on empty subsequent-mapping value", () => {
+          const r = YAML.parse("a: 1\nb: &x\nc: *x\n");
+          expect(r).toEqual({ a: 1, b: null, c: null });
+          expect(YAML.parse("a: 1\nb: !!str\nc: y\n")).toEqual({ a: 1, b: "", c: "y" });
+        });
+
+        test("tag on empty `?` key", () => {
+          expect(YAML.parse("? !!str\n: v\n")).toEqual({ "": "v" });
+          expect(YAML.parse("? !!str &k\n: *k\n")).toEqual({ "": "" });
+        });
+
+        test("anchor and tag in both orders on e-node", () => {
+          expect(YAML.parse("a: &x !!str\nb: *x\n")).toEqual({ a: "", b: "" });
+          expect(YAML.parse("a: !!str &x\nb: *x\n")).toEqual({ a: "", b: "" });
+          expect(YAML.parse("- &x !!str\n- *x\n")).toEqual(["", ""]);
+          expect(YAML.parse("- !!str &x\n- *x\n")).toEqual(["", ""]);
+        });
+
+        test("properties span lines, content/e-node decided by next-line indent", () => {
+          expect(YAML.parse("a:\n  &x\n  !!str\nb: *x\n")).toEqual({ a: "", b: "" });
+          expect(YAML.parse("a:\n  &x\n  !!str\n  c\n")).toEqual({ a: "c" });
+          expect(YAML.parse("a:\n  &x\n  b\n")).toEqual({ a: "b" });
+        });
+
+        test("block scalar after a property uses the indicator's indent", () => {
+          // Token.indent for `|`/`>` is the indicator's s-indent (not the
+          // auto-detected content indent), so belongs_to_parent compares
+          // consistently with other scalar kinds.
+          expect(YAML.parse("a: &x\n |\nb: c\n")).toEqual({ a: "", b: "c" });
+          expect(YAML.parse("a: &x\n >\nb: c\n")).toEqual({ a: "", b: "c" });
+          expect(YAML.parse("a: !!str\n |\n  text\nb: c\n")).toEqual({ a: "text\n", b: "c" });
+          // [199] s-separate(n+1,c) before `|`: indent 0 isn't reached.
+          expect(() => YAML.parse("key:\n|\n text\n")).toThrow("Unexpected token");
+        });
+
+        test("rewind only applies to plain single-line scalars", () => {
+          // Quoted scalars: token.start is past the opening quote, and
+          // ScanOptions.tag doesn't affect their resolution anyway.
+          expect(YAML.parse('a: !!str\n"b": c\n')).toEqual({ a: "", b: "c" });
+          expect(YAML.parse("a: !!str\n'b': c\n")).toEqual({ a: "", b: "c" });
+        });
+
+        test("tag does not leak to abandoned sibling key", () => {
+          // The post-tag re-scan resolves a plain scalar under that tag; when
+          // belongs_to_parent then abandons it, the sibling key must be
+          // re-scanned tag-neutral.
+          expect(YAML.parse("a: !!str\n0xFF: c\n")).toEqual({ a: "", 255: "c" });
+          expect(YAML.parse("a: !!str\n~: c\n")).toEqual({ a: "", null: "c" });
+          expect(YAML.parse("a: !!int\ntrue: c\n")).toEqual({ a: null, true: "c" });
+          // Content (indent > n) keeps the tag.
+          expect(YAML.parse("a: !!str\n  0xFF\n")).toEqual({ a: "0xFF" });
+          expect(YAML.parse("a:\n  !!str\n  0xFF\n")).toEqual({ a: "0xFF" });
+        });
+
+        test("tag on e-node resolves per resolve_null", () => {
+          expect(YAML.parse("a: !!null\nb: y\n")).toEqual({ a: null, b: "y" });
+          expect(YAML.parse("a: !!str\nb: y\n").a).toBe("");
+          // Unknown tag on e-scalar resolves as null.
+          expect(YAML.parse("a: !foo\nb: y\n")).toEqual({ a: null, b: "y" });
+        });
+
+        test("BLOCK-OUT vs BLOCK-IN seq-space at indent == n", () => {
+          // [201] After `:` (BLOCK-OUT) a `- ` at indent n is content; after
+          // `-` (BLOCK-IN) it's a sibling.
+          expect(YAML.parse("a:\n- x\n")).toEqual({ a: ["x"] });
+          expect(YAML.parse("-\n- x\n")).toEqual([null, "x"]);
+          expect(YAML.parse("-\n  - x\n")).toEqual([["x"]]);
+        });
+
+        test("properties on e-node in flow context (PW8X family)", () => {
+          expect(YAML.parse("[&a , *a]\n")).toEqual([null, null]);
+          expect(YAML.parse("[!!str , !!null ]\n")).toEqual(["", null]);
+          expect(YAML.parse("{? &k : v, x: *k}\n")).toEqual({ null: "v", x: null });
+          expect(YAML.parse("{&a : v}\n")).toEqual({ null: "v" });
+        });
+
+        test("two anchors on a seq item: [200] collection vs first-key", () => {
+          // The helper falls through on a second anchor so parse_node's
+          // mapping-anchor split applies. Only valid when the content is a
+          // mapping (so the second anchors the first key).
+          expect(YAML.parse("- &outer\n  &inner b: 1\n- *outer\n- *inner\n")).toEqual([{ b: 1 }, { b: 1 }, "b"]);
+          expect(() => YAML.parse("- &x &y a\n")).toThrow("Multiple anchors");
+          // The inner anchor is the implicit key's, so it must share the
+          // key's line (BLOCK-KEY = s-separate-in-line). On its own line it
+          // would be a second [200] collection-prop, which [161] disallows.
+          expect(() => YAML.parse("- &x\n  &y\n  a: 1\n")).toThrow("Multiple anchors");
+          expect(() => YAML.parse("a: &x\n  &y\n  c: 1\n")).toThrow("Multiple anchors");
+          // Both props more-indented; inner same-line as key — valid.
+          expect(YAML.parse("a:\n  &x\n  &y c: 1\n")).toEqual({ a: { c: 1 } });
+        });
+      });
+
       // Pre-existing flow-context over-accepts surfaced by adversarial review.
       // Each `test.todo` asserts the spec result (per ≥3/4 reference parsers);
       // the comment documents what Bun currently produces.

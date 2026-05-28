@@ -10,6 +10,51 @@ const dir = tempDirWithFiles("sql-test", {
 function rel(filename: string) {
   return path.join(dir, filename);
 }
+
+// Shared assertions for the NEWDECIMAL decoder, used by both the docker-backed
+// suite below and the non-docker fallback at the end of this file.
+//
+// MySQL reports computed/aggregate NEWDECIMAL columns (SUM/AVG/CAST/arithmetic/
+// ROUND/literals, and SUM of an INT column) with the BINARY flag and charset
+// 63. The binary-charset heuristic used for STRING/BLOB types wrongly returned
+// these as Buffers; NEWDECIMAL is always ASCII decimal text.
+async function assertComputedDecimalsAreStrings(sql: SQL) {
+  const t = "dec_" + randomUUIDv7("hex").replaceAll("-", "");
+  await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT, balance DECIMAL(12,2), qty INT)`;
+  await sql`INSERT INTO ${sql(t)} VALUES (1, 100.50, 3), (2, 250.25, 4)`;
+
+  // Aggregate decimals, plus a decimal literal and SUM of an INT column (which
+  // MySQL also returns as NEWDECIMAL). Kept separate from the per-row
+  // expressions below so the query has no non-aggregated columns and stays
+  // valid under ONLY_FULL_GROUP_BY (the MySQL 8+ default).
+  const aggExpected = { total: "350.75", avg_bal: "175.375000", sum_int: "7", lit: "1.23" };
+  // Binary protocol (prepared statement).
+  const [aggRow] = await sql`
+    SELECT SUM(balance) AS total, AVG(balance) AS avg_bal, SUM(qty) AS sum_int, 1.23 AS lit
+    FROM ${sql(t)}`;
+  expect(aggRow).toEqual(aggExpected);
+  // Text protocol (`.simple()`) must decode the same way.
+  const [aggSimple] = await sql`
+    SELECT SUM(balance) AS total, AVG(balance) AS avg_bal, SUM(qty) AS sum_int, 1.23 AS lit
+    FROM ${sql(t)}`.simple();
+  expect(aggSimple).toEqual(aggExpected);
+
+  // Per-row computed decimals: CAST, arithmetic, ROUND, and a plain stored
+  // column. A single row is selected so the result is deterministic.
+  const rowExpected = { casted: "100.5000", mul2: "201.00", rounded: "100.5", plain: "100.50" };
+  const [row] = await sql`
+    SELECT CAST(balance AS DECIMAL(20,4)) AS casted, balance*2 AS mul2, ROUND(balance,1) AS rounded, balance AS plain
+    FROM ${sql(t)} WHERE id = ${1}`;
+  expect(row).toEqual(rowExpected);
+  const [simpleRow] = await sql`
+    SELECT CAST(balance AS DECIMAL(20,4)) AS casted, balance*2 AS mul2, ROUND(balance,1) AS rounded, balance AS plain
+    FROM ${sql(t)} WHERE id = 1`.simple();
+  expect(simpleRow).toEqual(rowExpected);
+
+  // `.raw()` must still return raw bytes.
+  const [rawRow] = await sql`SELECT SUM(balance) AS total FROM ${sql(t)}`.raw();
+  expect(rawRow[0]).toEqual(new Uint8Array(Buffer.from("350.75")));
+}
 if (isDockerEnabled()) {
   const images = [
     {
@@ -139,47 +184,9 @@ if (isDockerEnabled()) {
           expect(simpleRow).toEqual({ id: 1, yr: 2024, followup: 12345, control: 42, yr_last: 2001 });
         });
         test("computed DECIMAL columns return strings, not Buffers", async () => {
-          // MySQL reports computed/aggregate NEWDECIMAL columns (SUM/AVG/CAST/
-          // arithmetic/ROUND/literals, and SUM of INT) with the BINARY flag and
-          // charset 63. The binary-charset heuristic used for STRING/BLOB types
-          // wrongly returned these as Buffers; NEWDECIMAL is always ASCII text.
           await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
           using sql = await db.reserve();
-          const t = "dec_" + randomUUIDv7("hex").replaceAll("-", "");
-          await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT, balance DECIMAL(12,2), qty INT)`;
-          await sql`INSERT INTO ${sql(t)} VALUES (1, 100.50, 3), (2, 250.25, 4)`;
-
-          // Aggregate decimals, plus a decimal literal and SUM of an INT column
-          // (which MySQL also returns as NEWDECIMAL). Kept separate from the
-          // per-row expressions below so the query has no non-aggregated columns
-          // and stays valid under ONLY_FULL_GROUP_BY (the MySQL 8+ default).
-          const aggExpected = { total: "350.75", avg_bal: "175.375000", sum_int: "7", lit: "1.23" };
-          // Binary protocol (prepared statement).
-          const [aggRow] = await sql`
-            SELECT SUM(balance) AS total, AVG(balance) AS avg_bal, SUM(qty) AS sum_int, 1.23 AS lit
-            FROM ${sql(t)}`;
-          expect(aggRow).toEqual(aggExpected);
-          // Text protocol (`.simple()`) must decode the same way.
-          const [aggSimple] = await sql`
-            SELECT SUM(balance) AS total, AVG(balance) AS avg_bal, SUM(qty) AS sum_int, 1.23 AS lit
-            FROM ${sql(t)}`.simple();
-          expect(aggSimple).toEqual(aggExpected);
-
-          // Per-row computed decimals: CAST, arithmetic, ROUND, and a plain stored
-          // column. A single row is selected so the result is deterministic.
-          const rowExpected = { casted: "100.5000", mul2: "201.00", rounded: "100.5", plain: "100.50" };
-          const [row] = await sql`
-            SELECT CAST(balance AS DECIMAL(20,4)) AS casted, balance*2 AS mul2, ROUND(balance,1) AS rounded, balance AS plain
-            FROM ${sql(t)} WHERE id = ${1}`;
-          expect(row).toEqual(rowExpected);
-          const [simpleRow] = await sql`
-            SELECT CAST(balance AS DECIMAL(20,4)) AS casted, balance*2 AS mul2, ROUND(balance,1) AS rounded, balance AS plain
-            FROM ${sql(t)} WHERE id = 1`.simple();
-          expect(simpleRow).toEqual(rowExpected);
-
-          // `.raw()` must still return raw bytes.
-          const [rawRow] = await sql`SELECT SUM(balance) AS total FROM ${sql(t)}`.raw();
-          expect(rawRow[0]).toEqual(new Uint8Array(Buffer.from("350.75")));
+          await assertComputedDecimalsAreStrings(sql);
         });
         describe("should work with more than the max inline capacity", () => {
           for (let size of [50, 60, 62, 64, 70, 100]) {
@@ -1146,4 +1153,46 @@ if (isDockerEnabled()) {
       },
     );
   }
+} else {
+  // No docker daemon (e.g. local/sandboxed environments). If a MySQL server is
+  // reachable — via MYSQL_URL, or as root over a conventional unix socket — run
+  // the NEWDECIMAL regression there so it is still covered off-CI. When nothing
+  // is reachable and MYSQL_URL was not set, soft-skip: the docker-backed suite
+  // above provides the CI coverage.
+  describe("mysql (local)", () => {
+    // Connection candidates, most-specific first. A plain `root` over the unix
+    // socket needs no TCP auth and works against the stock server images used
+    // outside CI.
+    const candidates: Bun.SQL.Options[] = [];
+    if (process.env.MYSQL_URL) candidates.push({ url: process.env.MYSQL_URL });
+    for (const socketPath of ["/run/mysqld/mysqld.sock", "/var/run/mysqld/mysqld.sock", "/tmp/mysql.sock"]) {
+      candidates.push({ adapter: "mysql", username: "root", database: "mysql", path: socketPath });
+    }
+
+    async function connect(): Promise<SQL | undefined> {
+      for (const options of candidates) {
+        const db = new SQL({ ...options, max: 1, idleTimeout: 5 });
+        try {
+          await db`SELECT 1`;
+          return db;
+        } catch {
+          await db.close().catch(() => {});
+        }
+      }
+      return undefined;
+    }
+
+    test("computed DECIMAL columns return strings, not Buffers", async () => {
+      const db = await connect();
+      if (!db) {
+        if (process.env.MYSQL_URL) {
+          throw new Error(`MYSQL_URL was provided but no MySQL server was reachable at ${process.env.MYSQL_URL}`);
+        }
+        console.warn("sql-mysql: no MySQL reachable locally; skipping NEWDECIMAL assertions");
+        return;
+      }
+      await using sql = db;
+      await assertComputedDecimalsAreStrings(sql);
+    });
+  });
 }

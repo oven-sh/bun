@@ -1,5 +1,5 @@
 import { deserialize, serialize } from "bun:jsc";
-import { openSync } from "fs";
+import { closeSync, openSync } from "fs";
 import { bunEnv } from "harness";
 import { bunExe } from "js/bun/shell/test_builder";
 import { join } from "path";
@@ -199,11 +199,15 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
         });
         test("file from fd", async () => {
           const fd = openSync(join(import.meta.dir, "example.txt"), "r");
-          const blob = Bun.file(fd);
-          const cloned = structuredCloneFn(blob);
-          expect(cloned.lastModified).toBe(blob.lastModified);
-          expect(cloned.name).toBe(blob.name);
-          expect(cloned.size).toBe(blob.size);
+          try {
+            const blob = Bun.file(fd);
+            const cloned = structuredCloneFn(blob);
+            expect(cloned.lastModified).toBe(blob.lastModified);
+            expect(cloned.name).toBe(blob.name);
+            expect(cloned.size).toBe(blob.size);
+          } finally {
+            closeSync(fd);
+          }
         });
       } else if (structuredCloneFn === jscSerializeRoundtrip) {
         test("file from path is rejected", () => {
@@ -212,8 +216,12 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
         });
         test("file from fd is rejected", () => {
           const fd = openSync(join(import.meta.dir, "example.txt"), "r");
-          const blob = Bun.file(fd);
-          expect(() => structuredCloneFn(blob)).toThrow();
+          try {
+            const blob = Bun.file(fd);
+            expect(() => structuredCloneFn(blob)).toThrow();
+          } finally {
+            closeSync(fd);
+          }
         });
       } else {
         // Cross-process: the child process's deserialize() rejects the
@@ -226,8 +234,12 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
         });
         test("file from fd is rejected", () => {
           const fd = openSync(join(import.meta.dir, "example.txt"), "r");
-          const blob = Bun.file(fd);
-          expect(jscSerializeRoundtripCrossProcess(blob, "ignore")).not.toBeInstanceOf(Blob);
+          try {
+            const blob = Bun.file(fd);
+            expect(jscSerializeRoundtripCrossProcess(blob, "ignore")).not.toBeInstanceOf(Blob);
+          } finally {
+            closeSync(fd);
+          }
         });
       }
       describe("dom file", async () => {

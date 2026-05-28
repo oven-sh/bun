@@ -1,7 +1,7 @@
 import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
-import { openSync } from "node:fs";
+import { closeSync, openSync } from "node:fs";
 import { join } from "node:path";
 import v8 from "node:v8";
 
@@ -609,9 +609,13 @@ describe("structuredClone with Blob and File", () => {
           "fd.txt": "fd-backed contents",
         });
         const fd = openSync(join(String(dir), "fd.txt"), "r");
-        const payload = serialize(Bun.file(fd));
-        for (const [, de] of deserializers) {
-          expect(() => de(payload)).toThrow();
+        try {
+          const payload = serialize(Bun.file(fd));
+          for (const [, de] of deserializers) {
+            expect(() => de(payload)).toThrow();
+          }
+        } finally {
+          closeSync(fd);
         }
       });
 

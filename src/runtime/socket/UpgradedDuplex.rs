@@ -154,10 +154,11 @@ impl UpgradedDuplex {
         // `deinit_in_next_tick()`; the next-tick Close task drops the
         // `DuplexUpgradeContext`, whose `Drop for UpgradedDuplex` runs
         // `teardown()` once no SSLWrapper frame is live. Until then every
-        // re-entry is inert: `closed_notified` is already set (gates
-        // `handle_traffic` / the data, write and close callbacks),
-        // `sent_ssl_shutdown` short-circuits `shutdown()`, and the
-        // `DuplexUpgradeContext` already nulled its `tls`.
+        // re-entry is inert: `closed_notified` is already set (it gates
+        // `handle_traffic` and every data/write/handshake/close callback,
+        // including the ones a re-entrant `shutdown()` would fire), `ssl` is
+        // still a valid pointer, and the `DuplexUpgradeContext` already
+        // nulled its `tls`.
     }
 
     fn call_write_or_end(&mut self, data: Option<&[u8]>, msg_more: bool) {

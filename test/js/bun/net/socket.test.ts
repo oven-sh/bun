@@ -1101,6 +1101,136 @@ it("writing to an established TLS socket from another TLS client's open() does n
   }
 }, 30_000);
 
+it("TLS mid-read boundary dispatch: writing to another TLS socket from data() does not corrupt the rest of the stream", async () => {
+  // When SSL_read fills the per-loop 512KiB output buffer exactly, uSockets
+  // dispatches that chunk to the data() callback mid-read and then continues
+  // decrypting the rest of the same TCP read. If the callback does TLS work on
+  // another socket on the same loop (here: write() to a second TLS client),
+  // the per-loop ssl_read_input/offset/length and ssl_socket must be restored
+  // afterwards — otherwise the remaining ciphertext is dropped and the stream
+  // desyncs (bad record MAC / truncated payload).
+  const BOUNDARY_CHUNK = 512 * 1024;
+  const PAYLOAD_SIZE = 12 * 1024 * 1024;
+  const block = Buffer.alloc(64 * 1024);
+  for (let i = 0; i < block.length; i++) block[i] = i & 0xff;
+  const payload = Buffer.concat(Array(PAYLOAD_SIZE / block.length).fill(block));
+  const expectedHash = new Bun.CryptoHasher("sha256").update(payload).digest("hex");
+
+  const downloadDone = Promise.withResolvers<string>();
+  const sideReceived = Promise.withResolvers<void>();
+
+  // Server that streams the 12MiB payload once the client asks for it.
+  let sent = 0;
+  const pump = (socket: Socket) => {
+    while (sent < payload.length) {
+      const written = socket.write(payload.subarray(sent, Math.min(sent + 1024 * 1024, payload.length)));
+      if (written <= 0) break;
+      sent += written;
+    }
+    socket.flush();
+  };
+  const payloadServer = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls,
+    socket: {
+      open() {},
+      data(socket) {
+        pump(socket);
+      },
+      drain(socket) {
+        pump(socket);
+      },
+      close() {},
+      error() {},
+    },
+  });
+
+  // Second TLS server + client on the same loop; the download's data() handler
+  // writes to this client from inside the boundary dispatch.
+  const sideServer = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls,
+    socket: {
+      open() {},
+      data() {
+        sideReceived.resolve();
+      },
+      close() {},
+      error() {},
+    },
+  });
+
+  let sideSocket: Socket | undefined;
+  let downloadSocket: Socket | undefined;
+  const hasher = new Bun.CryptoHasher("sha256");
+  let receivedBytes = 0;
+  let boundaryChunks = 0;
+  let sideWrites = 0;
+
+  try {
+    sideSocket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: sideServer.port,
+      tls: { ...tls, rejectUnauthorized: false },
+      socket: {
+        open() {},
+        data() {},
+        close() {},
+        error() {},
+      },
+    });
+
+    downloadSocket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: payloadServer.port,
+      tls: { ...tls, rejectUnauthorized: false },
+      socket: {
+        open() {},
+        handshake(socket) {
+          socket.write("GO\n");
+        },
+        data(_socket, chunk) {
+          hasher.update(chunk);
+          receivedBytes += chunk.byteLength;
+
+          const isBoundary = chunk.byteLength === BOUNDARY_CHUNK;
+          if (isBoundary) boundaryChunks += 1;
+          // Write to the second TLS socket from the boundary dispatch; if this
+          // run never produces an exact 512KiB chunk, fall back to writing on
+          // every data event so the re-entrancy is still exercised.
+          if (isBoundary || boundaryChunks === 0) {
+            sideWrites += 1;
+            sideSocket!.write("ping\n");
+          }
+
+          if (receivedBytes >= PAYLOAD_SIZE) {
+            downloadDone.resolve("done");
+          }
+        },
+        close() {
+          downloadDone.resolve(`closed after ${receivedBytes} bytes`);
+        },
+        error(_socket, err) {
+          downloadDone.resolve(`error: ${err} after ${receivedBytes} bytes`);
+        },
+      },
+    });
+
+    expect(await downloadDone.promise).toBe("done");
+    expect(receivedBytes).toBe(PAYLOAD_SIZE);
+    expect(hasher.digest("hex")).toBe(expectedHash);
+    expect(sideWrites).toBeGreaterThan(0);
+    await sideReceived.promise;
+  } finally {
+    downloadSocket?.end();
+    sideSocket?.end();
+    payloadServer.stop(true);
+    sideServer.stop(true);
+  }
+}, 60_000);
+
 // Bun.connect() on a Windows named pipe takes a dedicated early branch in
 // Listener.connectInner that heap-allocates a standalone Handlers block. That
 // block's `.mode` must be `.client` so Handlers.markInactive() destroys it on

@@ -308,7 +308,9 @@ static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db)
     int byteOffset = sqlite3_error_offset(db);
 
     const char* msg = sqlite3_errmsg(db);
-    WTF::String str = WTF::String::fromUTF8(msg);
+    // Error messages can echo identifiers/values from the query, which SQLite does
+    // not validate as UTF-8, so decode leniently to avoid dropping the message.
+    WTF::String str = WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(msg), strlen(msg) });
     JSC::JSObject* object = JSC::createError(globalObject, str);
     auto& builtinNames = WebCore::builtinNames(vm);
     object->putDirect(vm, vm.propertyNames->name, jsString(vm, String("SQLiteError"_s)), JSC::PropertyAttribute::DontEnum | 0);
@@ -574,7 +576,7 @@ static JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, sqlite3_stmt
         }
 
         if (len < 64) {
-            return jsString(vm, WTF::String::fromUTF8({ text, len }));
+            return jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ text, len }));
         }
 
         auto encoded = Bun__encoding__toStringUTF8(text, len, globalObject);
@@ -721,7 +723,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             // We can't have two properties with the same name, so we use validColumns to track this.
             auto preCount = columnNames->size();
             columnNames->add(
-                Identifier::fromString(vm, WTF::String::fromUTF8({ name, len })));
+                Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), len })));
             auto curCount = columnNames->size();
 
             if (preCount != curCount) {
@@ -774,7 +776,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         if (len == 0)
             break;
 
-        const auto key = Identifier::fromString(vm, WTF::String::fromUTF8({ name, len }));
+        const auto key = Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), len }));
 
         JSC::JSValue primitive = JSC::jsUndefined();
         auto decl = sqlite3_column_decltype(stmt, i);
@@ -2559,7 +2561,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementToStringFunction, (JSC::JSGlobalObject * 
         RELEASE_AND_RETURN(scope, JSValue::encode(jsEmptyString(vm)));
     }
     size_t length = strlen(string);
-    auto* jsString = JSC::jsString(vm, WTF::String::fromUTF8({ string, length }));
+    auto* jsString = JSC::jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(string), length }));
     sqlite3_free(string);
     RELEASE_AND_RETURN(scope, JSValue::encode(jsString));
 }
@@ -2729,8 +2731,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnDeclaredTypes, (JSGlobalObject *
         JSC::JSValue typeValue;
 
         if (declType != nullptr) {
-            String typeStr = String::fromUTF8(declType);
-            typeValue = JSC::jsNontrivialString(vm, typeStr);
+            // Declared types come from the schema, which SQLite does not validate as
+            // UTF-8, so decode leniently (invalid -> U+FFFD) like column names. Use
+            // jsString rather than jsNontrivialString because a single-character
+            // declared type (e.g. CREATE TABLE t (a "X")) is valid.
+            String typeStr = WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(declType), strlen(declType) });
+            typeValue = JSC::jsString(vm, typeStr);
             RETURN_IF_EXCEPTION(scope, {});
         } else {
             // If no declared type (e.g., for expressions or results of functions)

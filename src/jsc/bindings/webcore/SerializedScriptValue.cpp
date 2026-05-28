@@ -1765,7 +1765,11 @@ private:
                 // The cause is serialized recursively via the state machine so that
                 // nested errors, arbitrary objects, and cycles are handled without
                 // native recursion. Returning false tells the caller to fall through
-                // to StateUnknown, which will dispatch on m_pendingErrorCause.
+                // to StateUnknown, which will dispatch on m_pendingErrorCause. Root
+                // the cause in m_gcBuffer while it is pending, mirroring the map
+                // value path, so it cannot be collected before it is visited.
+                if (cause.isCell())
+                    m_gcBuffer.appendWithCrashOnOverflow(cause);
                 m_pendingErrorCause = cause;
                 return false;
             }

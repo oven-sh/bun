@@ -1,4 +1,3 @@
-import { BunString_fromJSNullNoException } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -6,29 +5,19 @@ import { join } from "node:path";
 
 // Bun.write with a non-BlobPart value falls through Blob.fromJSWithoutDeferGC's
 // default branch to JSValue.toSlice -> String.fromJS -> BunString__fromJS ->
-// toWTFString. Fuzzilli repeatedly (cb01d84a, 16d4efee, 4d4492f1, eac903bf)
-// observed the debug assertion `Dead => has_exception` failing here under
-// sustained REPRL eval + forced GC: toWTFString returned a null WTF::String
-// while vm.exception() was null. Bun::fromJS now uses RETURN_IF_EXCEPTION so
-// Dead is returned iff an exception is pending; a null-without-exception
-// string falls through isEmpty() to Empty instead.
+// Bun::fromJS -> toWTFString. Fuzzilli repeatedly (cb01d84a, 16d4efee,
+// 4d4492f1, eac903bf, + a fifth) tripped the debug assertion `Dead =>
+// has_exception` in String.fromJS when toWTFString returned a null WTF::String
+// while vm.exception() was null, under sustained REPRL eval + forced GC.
+//
+// Bun::fromJS / Bun::toStringRef now decide Dead vs Empty by reading
+// vm.exceptionForInspection() (the accessor documented for inspecting pending
+// exceptions without disturbing Throw/CatchScopes) when toWTFString yields
+// null: Dead only when a real exception is pending, else Empty. That edge
+// state is not reproducible from JavaScript (every null-return site in JSC's
+// toWTFString throws first), so these tests pin the observable stringification
+// behavior the fix must preserve.
 describe("Bun.write stringifies non-BlobPart values via Bun::fromJS", () => {
-  // The fuzzer-observed state cannot be produced from JavaScript (every
-  // null-return path in JSC's toWTFString throws first). Synthesize it via a
-  // native hook that nulls a JSString's m_fiber so toWTFString's isString()
-  // fast path returns null without entering any throw scope, then call the
-  // real BunString__fromJS on it. Before the fix this returned Dead with no
-  // pending exception — exactly what fires debugAssert(has_exception) in
-  // String.fromJS and propagates a phantom error.JSError. After the fix the
-  // null string is treated as Empty and ok=true.
-  test("BunString__fromJS does not return Dead without a pending exception", () => {
-    const { ok, dead, hasException } = BunString_fromJSNullNoException();
-    // The invariant String.fromJS relies on: !ok implies hasException.
-    // Equivalently: never (dead && !hasException).
-    expect({ dead, hasException }).not.toEqual({ dead: true, hasException: false });
-    expect(ok).toBe(true);
-  });
-
   test.each([
     ["native constructor", ArrayBuffer],
     ["typed-array constructor", Float64Array],

@@ -18,9 +18,9 @@
 // References (byte-identical constants): vendor/zstd/lib/common/xxhash.h
 // (XXH3_kSecret, PRIME*), and the twox-hash crate this replaces.
 
-// Must be first.
-#include "root.h"
-
+// No "root.h" — like the sibling Highway TU image_resize.cpp, this file uses no
+// JSC/WTF symbols, so it starts straight at the Highway setup. (The build's
+// forced PCH still provides base headers; this TU adds none of its own.)
 #undef HWY_TARGET_INCLUDE
 // Path relative to the build root (CMakeLists.txt), matching highway_strings.cpp.
 #define HWY_TARGET_INCLUDE "xxhash3.cpp"
@@ -369,9 +369,11 @@ HWY_AFTER_NAMESPACE();
 // ---------------------------------------------------------------------------
 // Dispatch table + C entry point (compiled once).
 //
-// This TU intentionally pulls in no JSC/WebKit headers — it stays a lean SIMD
-// unit. The `bun:internal-for-testing` host wrapper that needs JSC types lives
-// in xxhash3_testing.cpp and calls the C symbol below.
+// This TU intentionally includes no JSC/WebKit headers of its own — in
+// particular not ZigGlobalObject.h, which would drag the whole JSC type
+// universe in and balloon the object's debug info. The
+// `bun:internal-for-testing` host wrapper that needs JSC types lives in
+// xxhash3_testing.cpp and calls the C symbol below.
 // ---------------------------------------------------------------------------
 #if HWY_ONCE
 

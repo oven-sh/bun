@@ -1018,6 +1018,14 @@ describe("WebSocket CloseEvent reports the received close code", () => {
     },
   );
 
+  // RFC6455 §7.4.1: codes < 1000, the reserved 1004-1006 range, and 1016-2999
+  // are not legal on the wire; a server that sends one is reporting a protocol
+  // error, so JS sees 1002.
+  it.each([999, 1004, 1005, 1006, 1016, 2999])("reserved/invalid code %i reports 1002", async code => {
+    const server = await rawWsServer(sock => sock.write(closeFrame(code)));
+    expect(await connectAndAwaitClose(server)).toEqual({ code: 1002, reason: "", wasClean: true });
+  });
+
   it("Close frame with reason preserves reason", async () => {
     const server = await rawWsServer(sock => sock.write(closeFrame(1011, "boom")));
     expect(await connectAndAwaitClose(server)).toEqual({ code: 1011, reason: "boom", wasClean: true });

@@ -115,6 +115,23 @@ const tests = [
   },
 ];
 
+// Some tests connect to the live bun.sh host. Skip them when the network (or
+// DNS) is unavailable so the suite still passes offline instead of failing
+// with DNSException/getaddrinfo errors unrelated to what is under test.
+const canReachBunSh = await (async () => {
+  try {
+    await using socket = tlsConnect({ host: "bun.sh", servername: "bun.sh", port: 443, rejectUnauthorized: false });
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    socket.once("secureConnect", () => resolve());
+    socket.once("error", reject);
+    await promise;
+    return true;
+  } catch {
+    return false;
+  }
+})();
+const itNetwork = it.skipIf(!canReachBunSh);
+
 it("should have checkServerIdentity", async () => {
   expect(checkServerIdentity).toBeFunction();
   expect(tls.checkServerIdentity).toBeFunction();
@@ -145,7 +162,7 @@ it("should be able to grab the JSStreamSocket constructor", () => {
 });
 for (const { name, connect } of tests) {
   describe(name, () => {
-    it("should work with alpnProtocols", done => {
+    itNetwork("should work with alpnProtocols", done => {
       try {
         let socket: TLSSocket | null = connect({
           ALPNProtocols: ["http/1.1"],
@@ -259,7 +276,7 @@ for (const { name, connect } of tests) {
       }
     });
 
-    it("should have peer certificate", async () => {
+    itNetwork("should have peer certificate", async () => {
       const socket = (await new Promise((resolve, reject) => {
         const instance = connect(
           {
@@ -307,7 +324,7 @@ for (const { name, connect } of tests) {
       }
     });
 
-    it("getCipher, getProtocol, getEphemeralKeyInfo, getSharedSigalgs, getSession, exportKeyingMaterial and isSessionReused should work", async () => {
+    itNetwork("getCipher, getProtocol, getEphemeralKeyInfo, getSharedSigalgs, getSession, exportKeyingMaterial and isSessionReused should work", async () => {
       const allowedCipherObjects = [
         {
           name: "TLS_AES_128_GCM_SHA256",
@@ -368,7 +385,7 @@ for (const { name, connect } of tests) {
 
     // Test using only options
     // prettier-ignore
-    it.skipIf(connect === duplexProxy)("should process options correctly when connect is called with only options", done => {
+    it.skipIf(connect === duplexProxy || !canReachBunSh)("should process options correctly when connect is called with only options", done => {
       let socket = connect({
         port: 443,
         host: "bun.sh",
@@ -389,7 +406,7 @@ for (const { name, connect } of tests) {
     });
 
     // Test using port and host
-    it("should process port and host correctly", done => {
+    itNetwork("should process port and host correctly", done => {
       let socket = connect(443, "bun.sh", {
         rejectUnauthorized: false,
       });
@@ -410,7 +427,7 @@ for (const { name, connect } of tests) {
     });
 
     // Test using port, host, and callback
-    it("should process port, host, and callback correctly", done => {
+    itNetwork("should process port, host, and callback correctly", done => {
       let socket = connect(
         443,
         "bun.sh",
@@ -431,7 +448,7 @@ for (const { name, connect } of tests) {
     });
 
     // Additional tests to ensure the callback is optional and handled correctly
-    it("should handle the absence of a callback gracefully", done => {
+    itNetwork("should handle the absence of a callback gracefully", done => {
       let socket = connect(443, "bun.sh", {
         rejectUnauthorized: false,
       });
@@ -451,7 +468,7 @@ for (const { name, connect } of tests) {
       });
     });
 
-    it("should timeout", done => {
+    itNetwork("should timeout", done => {
       const socket = connect(
         {
           port: 443,
@@ -479,7 +496,7 @@ for (const { name, connect } of tests) {
       });
     }, 10_000); // 10 seconds because uWS sometimes is not that precise with timeouts
 
-    it("should be able to transfer data", done => {
+    itNetwork("should be able to transfer data", done => {
       const socket = connect(
         {
           port: 443,

@@ -423,12 +423,20 @@ describe("fetch() with a concatenated multi-member gzip body", () => {
               else resolve();
             });
 
+          // Yield to the event loop's check phase between writes so the socket
+          // flushes each member as its own send() before the next is queued —
+          // a bare microtask can leave them in one TCP segment on fast loopback.
+          const tick = () => new Promise<void>(r => setImmediate(r));
+
           await send(
             Buffer.from(
               "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n",
             ),
           );
-          for (const member of members) await send(member);
+          for (const member of members) {
+            await send(member);
+            await tick();
+          }
           socket.end();
         },
       },

@@ -282,22 +282,10 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
 
             match rc {
                 ReturnCode::StreamEnd => {
+                    self.state = ZlibReaderState::End;
                     let remainder = &self.buf[0..BUFFER_SIZE - self.zlib.avail_out as usize];
                     // PORT NOTE: Zig's partial-write retry loop collapses to write_all under bun_io::Write.
                     self.context.write_all(remainder)?;
-                    // RFC 1952 §2.2: a gzip file may contain multiple back-to-back members.
-                    // If input remains after the trailer, reset and decode the next member,
-                    // matching node:zlib's GUNZIP loop. Trailing zero bytes are common
-                    // padding and are skipped (the next inflate call would BufError on them).
-                    // SAFETY: avail_in > 0 ⇒ next_in points to ≥1 readable byte.
-                    if self.zlib.avail_in > 0 && unsafe { *self.zlib.next_in } != 0 {
-                        // SAFETY: self.zlib was initialized via inflateInit2_.
-                        let _ = unsafe { inflateReset(&raw mut self.zlib) };
-                        self.zlib.next_out = self.buf.as_mut_ptr();
-                        self.zlib.avail_out = BUFFER_SIZE as uInt;
-                        continue;
-                    }
-                    self.state = ZlibReaderState::End;
                     self.end();
                     return Ok(());
                 }
@@ -381,10 +369,6 @@ pub struct ZlibReaderArrayList<'a> {
     /// Decompression-bomb guard: `read_all` errors instead of growing the
     /// output past this many bytes. Defaults to unbounded.
     pub max_output_size: usize,
-    /// `inflateInit2` window bits. Retained so `read_all` knows whether the
-    /// stream was opened in a gzip-capable mode (`> 15`), which is the only
-    /// mode where RFC 1952 multi-member concatenation applies.
-    window_bits: c_int,
 }
 
 impl<'a> Drop for ZlibReaderArrayList<'a> {
@@ -433,7 +417,6 @@ impl<'a> ZlibReaderArrayList<'a> {
             zlib: bun_core::ffi::zeroed(),
             state: ZlibReaderArrayListState::Uninitialized,
             max_output_size: usize::MAX,
-            window_bits: options.window_bits,
         });
 
         let list_len = zlib_reader.list_ptr.len();
@@ -553,40 +536,6 @@ impl<'a> ZlibReaderArrayList<'a> {
 
                 match rc {
                     ReturnCode::StreamEnd => {
-                        if self.window_bits > MAX_WBITS {
-                            // RFC 1952 §2.2: a gzip file may contain multiple back-to-back
-                            // members. In a gzip-capable mode, mirror node:zlib's GUNZIP
-                            // loop (NativeZlib::do_work_inflate).
-                            //
-                            // Next member already in this buffer: reset and decode it now.
-                            // A trailing *zero* byte is padding, not a member — it stops the
-                            // loop (a subsequent gzip header check would reject it anyway).
-                            // `inflateReset` zeroes `total_out`; restore it so the epilogue's
-                            // length sync stays correct.
-                            // SAFETY: avail_in > 0 ⇒ next_in points to ≥1 readable byte.
-                            if self.zlib.avail_in > 0 && unsafe { *self.zlib.next_in } != 0 {
-                                let total_out = self.zlib.total_out;
-                                // SAFETY: self.zlib was initialized via inflateInit2_.
-                                let _ = unsafe { inflateReset(&raw mut self.zlib) };
-                                self.zlib.total_out = total_out;
-                                continue;
-                            }
-                            // A member ended but the stream is not finished (incremental
-                            // feeding, e.g. fetch per network chunk): the next member may
-                            // arrive in a later chunk, or the remainder may be zero padding.
-                            // Keep the inflate state ALIVE — do NOT `end()` (that frees it) —
-                            // and leave the reader `Inflating` so the next `read_all` (after
-                            // `update_buffers` re-seats the input) re-enters here: `inflate`
-                            // on a finished stream returns `StreamEnd` without consuming, then
-                            // the `avail_in > 0 && *next_in != 0` check above resets for the
-                            // next member or stops on padding — matching node:zlib exactly.
-                            // Clear any trailing-zero remainder so `update_buffers`'
-                            // `avail_in == 0` assertion holds on the next chunk.
-                            if !is_done {
-                                self.zlib.avail_in = 0;
-                                return Ok(());
-                            }
-                        }
                         self.end();
                         return Ok(());
                     }

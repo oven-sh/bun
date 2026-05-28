@@ -1358,6 +1358,98 @@ size_t FirstNonAscii8Impl(const uint8_t* HWY_RESTRICT input, size_t len)
     return len;
 }
 
+// An "escape character" for ANSI tokenizing: ESC, the ST-terminated C1
+// introducers, plus C1 ST (0x9C) itself so a standalone terminator stops the
+// scan. Matches ANSIHelpers.h's scalar contract (isEscapeCharacter + 0x9C).
+template<class T>
+static HWY_INLINE bool IsEscapeCharScalar(T c)
+{
+    return c == 0x1b || c == 0x90 || c == 0x98 || c == 0x9b
+        || c == 0x9c || c == 0x9d || c == 0x9e || c == 0x9f;
+}
+
+// Scalar scan over [from, len); returns the first escape index or len.
+template<class T>
+static HWY_INLINE size_t IndexOfEscapeCharScalar(const T* HWY_RESTRICT input, size_t from, size_t len)
+{
+    for (size_t i = from; i < len; ++i) {
+        if (IsEscapeCharScalar(input[i]))
+            return i;
+    }
+    return len;
+}
+
+// Index of the first ANSI escape introducer, or len if none. Shared by
+// Bun.stripANSI / stringWidth / wrapAnsi / sliceAnsi via ANSIHelpers.h's
+// findEscapeCharacter.
+//
+// Two-stage like the original WTF-SIMD version: a broad range mask
+// (c & 0x70) == 0x10 catches 0x10-0x1F and 0x90-0x9F in one compare — the hot
+// no-escape path pays only this per chunk — then an exact 8-value match
+// refines a broad hit down to the real introducers. `T` is u8 (Latin-1) or
+// u16 (UTF-16); on u16 the broad mask 0xFF70 also rejects code units >= 0x100.
+//
+// Short inputs take the scalar path before any vector setup, so the kernel is
+// cheap when called standalone. (The only current caller, findEscapeCharacter,
+// gates dispatch at >= kEscapeDispatchThreshold, but this is extern "C".)
+template<class T>
+static HWY_INLINE size_t IndexOfEscapeCharImpl(const T* HWY_RESTRICT input, size_t len)
+{
+    const hn::ScalableTag<T> d;
+    const size_t N = hn::Lanes(d);
+
+    if (len < N)
+        return IndexOfEscapeCharScalar<T>(input, 0, len);
+
+    // Broad range: (c & ~0b10001111) == 0b00010000 → 0x10-0x1F and 0x90-0x9F.
+    const auto broad_mask = hn::Set(d, static_cast<T>(~0b10001111U));
+    const auto broad_vec = hn::Set(d, static_cast<T>(0b00010000));
+
+    // Exact introducers (including C1 ST 0x9C), used to reject broad-mask
+    // false positives (0x10-0x1A, 0x1C-0x1F, 0x91-0x97, 0x99-0x9A).
+    const auto vec_1b = hn::Set(d, static_cast<T>(0x1b));
+    const auto vec_90 = hn::Set(d, static_cast<T>(0x90));
+    const auto vec_98 = hn::Set(d, static_cast<T>(0x98));
+    const auto vec_9b = hn::Set(d, static_cast<T>(0x9b));
+    const auto vec_9c = hn::Set(d, static_cast<T>(0x9c));
+    const auto vec_9d = hn::Set(d, static_cast<T>(0x9d));
+    const auto vec_9e = hn::Set(d, static_cast<T>(0x9e));
+    const auto vec_9f = hn::Set(d, static_cast<T>(0x9f));
+
+    const auto exact_match = [&](auto chunk) HWY_ATTR {
+        return hn::Or(
+            hn::Or(hn::Or(hn::Eq(chunk, vec_1b), hn::Eq(chunk, vec_90)),
+                hn::Or(hn::Eq(chunk, vec_98), hn::Eq(chunk, vec_9b))),
+            hn::Or(hn::Or(hn::Eq(chunk, vec_9c), hn::Eq(chunk, vec_9d)),
+                hn::Or(hn::Eq(chunk, vec_9e), hn::Eq(chunk, vec_9f))));
+    };
+
+    size_t i = 0;
+    const size_t simd_len = len - (len % N);
+    for (; i < simd_len; i += N) {
+        const auto chunk = hn::LoadU(d, input + i);
+        const auto broad = hn::Eq(hn::And(chunk, broad_mask), broad_vec);
+        if (hn::AllFalse(d, broad))
+            continue;
+        const intptr_t pos = hn::FindFirstTrue(d, exact_match(chunk));
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    return IndexOfEscapeCharScalar<T>(input, i, len);
+}
+
+size_t IndexOfEscapeChar8Impl(const uint8_t* HWY_RESTRICT input, size_t len)
+{
+    return IndexOfEscapeCharImpl<uint8_t>(input, len);
+}
+
+size_t IndexOfEscapeChar16Impl(const uint16_t* HWY_RESTRICT input, size_t len)
+{
+    return IndexOfEscapeCharImpl<uint16_t>(input, len);
+}
+
 size_t CopyAsciiPrefixImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
 {
     D8 d;
@@ -1653,6 +1745,8 @@ HWY_EXPORT(HtmlEscapeExtraLen16Impl);
 HWY_EXPORT(HtmlEscapeExtraLen8Impl);
 HWY_EXPORT(IndexOfAnyCharImpl);
 HWY_EXPORT(IndexOfCharImpl);
+HWY_EXPORT(IndexOfEscapeChar16Impl);
+HWY_EXPORT(IndexOfEscapeChar8Impl);
 HWY_EXPORT(IndexOfHTMLEscapeChar8Impl);
 HWY_EXPORT(IndexOfHTMLEscapeChar16Impl);
 HWY_EXPORT(IndexOfInterestingCharacterInMultilineCommentImpl);
@@ -1730,6 +1824,16 @@ size_t highway_index_of_char(const uint8_t* HWY_RESTRICT haystack, size_t haysta
     uint8_t needle)
 {
     return HWY_DYNAMIC_DISPATCH(IndexOfCharImpl)(haystack, haystack_len, needle);
+}
+
+size_t highway_index_of_escape_char8(const uint8_t* HWY_RESTRICT input, size_t len)
+{
+    return HWY_DYNAMIC_DISPATCH(IndexOfEscapeChar8Impl)(input, len);
+}
+
+size_t highway_index_of_escape_char16(const uint16_t* HWY_RESTRICT input, size_t len)
+{
+    return HWY_DYNAMIC_DISPATCH(IndexOfEscapeChar16Impl)(input, len);
 }
 
 size_t highway_index_of_html_escape_char8(const uint8_t* HWY_RESTRICT text, size_t text_len)

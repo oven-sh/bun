@@ -1853,8 +1853,26 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
         return;
     }
 
-    let size = this.io_request.statbuf.size();
-    this.on_complete(size as usize);
+    // `uv_fs_copyfile` does not populate `req->statbuf` on every platform (it's
+    // 0 after a Windows `CopyFileW`), so the byte count `Bun.write` resolves with
+    // would be wrong for a whole-file copy. When the size is unbounded
+    // (`self.size == MAX_SIZE`), stat the freshly written destination to get the
+    // real count; for a finite window `on_complete` already reports `self.size`.
+    let mut size = this.io_request.statbuf.size() as usize;
+    if this.size == MAX_SIZE && size == 0 {
+        let destination = &this.destination_file_store.data.as_file();
+        let stat_result = if let PathOrFileDescriptor::Fd(fd) = &destination.pathlike {
+            bun_sys::fstat(*fd)
+        } else {
+            let mut path_buf = PathBuffer::uninit();
+            bun_sys::stat(destination.pathlike.path().slice_z(&mut path_buf))
+        };
+        if let bun_sys::Result::Ok(stat) = stat_result {
+            // Windows `uv_stat_t::st_size` is u64.
+            size = usize::try_from(stat.st_size).expect("int cast");
+        }
+    }
+    this.on_complete(size);
 }
 
 #[cfg(windows)]

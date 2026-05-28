@@ -4838,17 +4838,29 @@ pub fn write_file_with_source_destination(
     else if destination_type == store::DataTag::File && source_type == store::DataTag::File {
         // The copy window applies to the *source* read: a sliced file blob
         // (`Bun.file(path).slice(start, end)`) must copy only its window, not the
-        // whole backing file.
+        // whole backing file. A slice that runs to EOF (`file.slice(start)`) has
+        // `size == original_size - start`, which for a file blob is
+        // `MAX_SIZE - start`; treat `offset + size >= MAX_SIZE` as "unbounded"
+        // (read to EOF) rather than a literal finite length.
         let source_offset = source_blob.offset.get();
+        let to_eof = source_offset.saturating_add(source_blob.size.get()) >= MAX_SIZE;
         #[cfg(windows)]
         {
+            // CopyFileWindows reads `size` bytes (clamping its read loop and
+            // deciding whether to truncate); pass MAX_SIZE for to-EOF so it
+            // copies to EOF instead of a bogus `MAX_SIZE - offset` length.
+            let source_size = if to_eof {
+                MAX_SIZE
+            } else {
+                source_blob.size.get()
+            };
             return Ok(copy_file::CopyFileWindows::init(
                 destination_store,
                 source_store,
                 ctx.bun_vm().event_loop_shared(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 source_offset,
-                source_blob.size.get(),
+                source_size,
                 options.mode,
             ));
         }
@@ -4857,7 +4869,7 @@ pub fn write_file_with_source_destination(
             // CopyFile treats `max_len` as an absolute end offset (it later
             // subtracts `offset` after stat), so pass `offset + size` for finite
             // slices and MAX_SIZE for "to EOF".
-            let source_end = if source_blob.size.get() == MAX_SIZE {
+            let source_end = if to_eof {
                 MAX_SIZE
             } else {
                 source_offset.saturating_add(source_blob.size.get())

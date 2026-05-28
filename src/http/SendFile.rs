@@ -111,7 +111,7 @@ impl SendFile {
                     self.fd.native(),
                     socket_fd.native(),
                     signed_offset,
-                    &mut sbytes,
+                    &raw mut sbytes,
                     ptr::null_mut(),
                     0,
                 )

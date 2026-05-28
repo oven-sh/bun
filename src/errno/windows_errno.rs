@@ -346,25 +346,44 @@ pub mod posix {
     /// `posix::S::IFDIR` / `posix::S::ISREG(m)` resolve identically to POSIX.
     pub use super::s as S;
 
-    pub const ACCES: i32 = SystemErrno::EACCES as i32;
-    pub const AGAIN: i32 = SystemErrno::EAGAIN as i32;
-    pub const BADF: i32 = SystemErrno::EBADF as i32;
-    pub const BUSY: i32 = SystemErrno::EBUSY as i32;
-    pub const EXIST: i32 = SystemErrno::EEXIST as i32;
-    pub const INTR: i32 = SystemErrno::EINTR as i32;
-    pub const INVAL: i32 = SystemErrno::EINVAL as i32;
-    pub const ISDIR: i32 = SystemErrno::EISDIR as i32;
-    pub const MFILE: i32 = SystemErrno::EMFILE as i32;
-    pub const NAMETOOLONG: i32 = SystemErrno::ENAMETOOLONG as i32;
-    pub const NOENT: i32 = SystemErrno::ENOENT as i32;
-    pub const NOMEM: i32 = SystemErrno::ENOMEM as i32;
-    pub const NOSPC: i32 = SystemErrno::ENOSPC as i32;
-    pub const NOSYS: i32 = SystemErrno::ENOSYS as i32;
-    pub const NOTDIR: i32 = SystemErrno::ENOTDIR as i32;
-    pub const NOTSUP: i32 = SystemErrno::ENOTSUP as i32;
-    pub const PERM: i32 = SystemErrno::EPERM as i32;
-    pub const PIPE: i32 = SystemErrno::EPIPE as i32;
-    pub const XDEV: i32 = SystemErrno::EXDEV as i32;
+    #[allow(dead_code)]
+    pub(crate) const ACCES: i32 = SystemErrno::EACCES as i32;
+    #[allow(dead_code)]
+    pub(crate) const AGAIN: i32 = SystemErrno::EAGAIN as i32;
+    #[allow(dead_code)]
+    pub(crate) const BADF: i32 = SystemErrno::EBADF as i32;
+    #[allow(dead_code)]
+    pub(crate) const BUSY: i32 = SystemErrno::EBUSY as i32;
+    #[allow(dead_code)]
+    pub(crate) const EXIST: i32 = SystemErrno::EEXIST as i32;
+    #[allow(dead_code)]
+    pub(crate) const INTR: i32 = SystemErrno::EINTR as i32;
+    #[allow(dead_code)]
+    pub(crate) const INVAL: i32 = SystemErrno::EINVAL as i32;
+    #[allow(dead_code)]
+    pub(crate) const ISDIR: i32 = SystemErrno::EISDIR as i32;
+    #[allow(dead_code)]
+    pub(crate) const MFILE: i32 = SystemErrno::EMFILE as i32;
+    #[allow(dead_code)]
+    pub(crate) const NAMETOOLONG: i32 = SystemErrno::ENAMETOOLONG as i32;
+    #[allow(dead_code)]
+    pub(crate) const NOENT: i32 = SystemErrno::ENOENT as i32;
+    #[allow(dead_code)]
+    pub(crate) const NOMEM: i32 = SystemErrno::ENOMEM as i32;
+    #[allow(dead_code)]
+    pub(crate) const NOSPC: i32 = SystemErrno::ENOSPC as i32;
+    #[allow(dead_code)]
+    pub(crate) const NOSYS: i32 = SystemErrno::ENOSYS as i32;
+    #[allow(dead_code)]
+    pub(crate) const NOTDIR: i32 = SystemErrno::ENOTDIR as i32;
+    #[allow(dead_code)]
+    pub(crate) const NOTSUP: i32 = SystemErrno::ENOTSUP as i32;
+    #[allow(dead_code)]
+    pub(crate) const PERM: i32 = SystemErrno::EPERM as i32;
+    #[allow(dead_code)]
+    pub(crate) const PIPE: i32 = SystemErrno::EPIPE as i32;
+    #[allow(dead_code)]
+    pub(crate) const XDEV: i32 = SystemErrno::EXDEV as i32;
 }
 
 /// Uppercase re-export so `bun_errno::S::IFDIR` compiles cross-platform.
@@ -403,7 +422,8 @@ pub use bun_core::S as s;
 // Rust has no specialization on stable; callers must pick the right overload.
 
 /// `getErrno(rc)` for the NTSTATUS case.
-pub fn get_errno_ntstatus(rc: NTSTATUS) -> E {
+#[allow(dead_code)]
+pub(crate) fn get_errno_ntstatus(rc: NTSTATUS) -> E {
     windows::translate_ntstatus_to_errno(rc)
 }
 
@@ -939,7 +959,7 @@ pub mod windows {
     /// no mapping (e.g. `WSANOTINITIALISED`/`WSAEDISCON`); callers that need
     /// a success-on-unmapped fallthrough (`getErrno`) rely on that `None`.
     #[inline]
-    pub fn wsa_get_last_error() -> Option<SystemErrno> {
+    pub(crate) fn wsa_get_last_error() -> Option<SystemErrno> {
         SystemErrno::init_c_int(WSAGetLastError())
     }
 

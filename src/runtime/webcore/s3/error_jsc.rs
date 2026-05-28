@@ -128,7 +128,7 @@ impl Default for JSS3Error {
 }
 
 impl JSS3Error {
-    pub fn init(code: &[u8], message: &[u8], path: Option<&[u8]>) -> Self {
+    pub(crate) fn init(code: &[u8], message: &[u8], path: Option<&[u8]>) -> Self {
         Self {
             // lets make sure we can reuse code and message and keep it service independent
             code: BunString::create_atom_if_possible(code),
@@ -144,7 +144,7 @@ impl JSS3Error {
     // Zig `deinit` only deref'd the three `bun.String` fields; `bun_core::String: Drop`
     // handles that automatically, so no explicit `Drop` impl is needed here.
 
-    pub fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {
         // `defer this.deinit()` → `self` is consumed and dropped at scope exit.
         S3Error__toErrorInstance(&self, global)
     }
@@ -171,7 +171,7 @@ pub fn s3_error_to_js(
 /// Like `to_js` but populates the error's stack trace with async frames from
 /// the given promise's await chain. Use when rejecting from an HTTP
 /// callback at the top of the event loop.
-pub fn s3_error_to_js_with_async_stack(
+pub(crate) fn s3_error_to_js_with_async_stack(
     err: &S3Error,
     global_object: &JSGlobalObject,
     path: Option<&[u8]>,

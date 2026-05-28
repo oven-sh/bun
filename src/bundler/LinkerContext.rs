@@ -93,7 +93,7 @@ bun_crash_handler::link_impl_BundleGenerateChunkCtx! {
 /// Helper for call-sites that previously wrote `Action::BundleGenerateChunk(.{...})`.
 #[cfg(feature = "show_crash_trace")]
 #[inline]
-pub fn bundle_generate_chunk_action(
+pub(crate) fn bundle_generate_chunk_action(
     ctx: &LinkerContext,
     chunk: &Chunk,
     part_range: &PartRange,
@@ -109,15 +109,6 @@ pub fn bundle_generate_chunk_action(
         chunk: core::ptr::from_ref::<Chunk>(chunk).cast::<()>(),
         part_range: core::ptr::from_ref::<PartRange>(part_range).cast::<()>(),
     })
-}
-#[cfg(not(feature = "show_crash_trace"))]
-#[inline]
-pub fn bundle_generate_chunk_action(
-    _ctx: &LinkerContext,
-    _chunk: &Chunk,
-    _part_range: &PartRange,
-) -> bun_crash_handler::Action {
-    bun_crash_handler::Action::BundleGenerateChunk(())
 }
 
 // Scoped-log wrappers (LinkerContext.zig:2, :2705); re-exported so `linker_context/*` submodules import directly.
@@ -1292,7 +1283,7 @@ impl<'a> LinkerContext<'a> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ScanCssImportsResult {
+pub(crate) enum ScanCssImportsResult {
     Ok,
     Errors,
 }
@@ -1550,7 +1541,7 @@ impl SourceMapData {
         let _ = alloc;
         // SAFETY: sole writer to this slot (disjoint by source_index).
         // `Worker::get` (the caller) brackets this in `ast_memory_store.push()/
-        // pop()`, so `AST_HEAP` points at this worker's `MimallocArena` and the
+        // pop()`, so the active `AstAlloc` state is this worker's and the
         // `AstAlloc` route lands the SoA slab + every `columns_for_non_ascii`
         // payload there for bulk-free on `pool.deinit()`.
         unsafe {
@@ -1593,8 +1584,8 @@ impl SourceMapData {
         }
 
         let source: &Source = &parse_graph.input_files.items_source()[source_index as usize];
-        // Allocate from the worker's AST heap (`Worker::get` has set
-        // `AST_HEAP`); ~12.5% escape-expansion slack matches `quote_for_json`'s
+        // Allocate from the worker's AST allocation state (installed by
+        // `Worker::get`); ~12.5% escape-expansion slack matches `quote_for_json`'s
         // heuristic so the writer rarely reallocs. The slack is dropped with
         // the arena at bundle end, and `StringJoiner` only borrows a `&[u8]`
         // view downstream.
@@ -1627,7 +1618,7 @@ pub struct MatchImport {
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
-pub enum MatchImportKind {
+pub(crate) enum MatchImportKind {
     /// The import is either external or undefined
     #[default]
     Ignore,
@@ -1651,7 +1642,7 @@ pub struct ChunkMeta {
     pub dynamic_imports: ArrayHashMap<crate::IndexInt, ()>,
 }
 
-pub type ChunkMetaMap = ArrayHashMap<Ref, ()>;
+pub(crate) type ChunkMetaMap = ArrayHashMap<Ref, ()>;
 
 /// PORT NOTE: raw-pointer fields (was `&'a mut`) because `each_ptr` requires
 /// `Ctx: Sync + Copy` and the same context is observed from every worker
@@ -4158,7 +4149,7 @@ impl<'a> LinkerContext<'a> {
     pub fn break_output_into_pieces(
         &self,
         _alloc: *const Bump,
-        j: &mut StringJoiner,
+        j: &mut StringJoiner<'static>,
         count: u32,
     ) -> Result<crate::chunk::IntermediateOutput, BunError> {
         let _trace = bun::perf::trace("Bundler.breakOutputIntoPieces");
@@ -4307,7 +4298,7 @@ pub struct InsideWrapperPrefix {
 }
 
 impl InsideWrapperPrefix {
-    pub fn init() -> Self {
+    pub(crate) fn init() -> Self {
         Self {
             stmts: Vec::new(),
             sync_dependencies_end: 0,
@@ -4317,7 +4308,7 @@ impl InsideWrapperPrefix {
 
     // deinit → Drop (Vec frees automatically); reset is explicit
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.stmts.clear();
         self.sync_dependencies_end = 0;
         self.has_async_dependency = false;
@@ -4328,17 +4319,17 @@ impl InsideWrapperPrefix {
 // — bun_js_parser AST builder surface not yet stable.
 
 impl InsideWrapperPrefix {
-    pub fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
+    pub(crate) fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
         self.stmts.push(stmt);
         Ok(())
     }
 
-    pub fn append_non_dependency_slice(&mut self, stmts: &[Stmt]) -> Result<(), AllocError> {
+    pub(crate) fn append_non_dependency_slice(&mut self, stmts: &[Stmt]) -> Result<(), AllocError> {
         self.stmts.extend_from_slice(stmts);
         Ok(())
     }
 
-    pub fn append_sync_dependency(&mut self, call_expr: Expr) -> Result<(), AllocError> {
+    pub(crate) fn append_sync_dependency(&mut self, call_expr: Expr) -> Result<(), AllocError> {
         self.stmts.insert(
             self.sync_dependencies_end,
             Stmt::alloc(
@@ -4353,7 +4344,7 @@ impl InsideWrapperPrefix {
         Ok(())
     }
 
-    pub fn append_async_dependency(
+    pub(crate) fn append_async_dependency(
         &mut self,
         call_expr: Expr,
         promise_all_ref: Ref,
@@ -4459,7 +4450,7 @@ impl InsideWrapperPrefix {
 }
 
 impl StmtList {
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.inside_wrapper_prefix.reset();
         self.outside_wrapper_prefix.clear();
         self.inside_wrapper_suffix.clear();
@@ -4468,7 +4459,7 @@ impl StmtList {
 
     // deinit → Drop (Vec fields free automatically)
 
-    pub fn init() -> Self {
+    pub(crate) fn init() -> Self {
         Self {
             inside_wrapper_prefix: InsideWrapperPrefix::init(),
             outside_wrapper_prefix: Vec::new(),
@@ -4477,7 +4468,7 @@ impl StmtList {
         }
     }
 
-    pub fn append_slice(&mut self, list: StmtListWhich, stmts: &[Stmt]) {
+    pub(crate) fn append_slice(&mut self, list: StmtListWhich, stmts: &[Stmt]) {
         match list {
             StmtListWhich::OutsideWrapperPrefix => {
                 self.outside_wrapper_prefix.extend_from_slice(stmts)
@@ -4489,7 +4480,7 @@ impl StmtList {
         }
     }
 
-    pub fn append(&mut self, list: StmtListWhich, stmt: Stmt) {
+    pub(crate) fn append(&mut self, list: StmtListWhich, stmt: Stmt) {
         match list {
             StmtListWhich::OutsideWrapperPrefix => self.outside_wrapper_prefix.push(stmt),
             StmtListWhich::InsideWrapperSuffix => self.inside_wrapper_suffix.push(stmt),

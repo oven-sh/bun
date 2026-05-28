@@ -9172,3 +9172,184 @@ describe.concurrent("bun-install", () => {
     });
   });
 });
+
+it("rejects dependency aliases containing '..' path segments", async () => {
+  await withContext(defaultOpts, async ctx => {
+    const urls: string[] = [];
+    setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.3": {} }));
+    // The alias (the key in `dependencies`) becomes the folder name under
+    // node_modules/. An alias containing ".." segments must not be able to
+    // place the package outside the project directory. The name is unique per
+    // run so a previous (vulnerable) run's escape artifact can't fail this one.
+    const escapeName =
+      "bun-install-alias-escape-target-" + Date.now().toString(36) + Math.random().toString(36).slice(2);
+    await writeFile(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          [`../../${escapeName}`]: "npm:baz@0.0.3",
+        },
+      }),
+    );
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: ctx.package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    const out = await stdout.text();
+    // node_modules/../../<escapeName> resolves to a sibling of the project
+    // directory; nothing may be materialized there.
+    expect(await exists(join(ctx.package_dir, "..", escapeName))).toBe(false);
+    // The alias is reported as invalid instead of being used as a path.
+    expect(err).toContain("Invalid dependency name");
+    expect(out).not.toContain("1 package installed");
+    expect(await exited).toBe(1);
+  });
+});
+
+it("does not extract a tarball for a dependency alias containing '..' path segments", async () => {
+  await withContext(defaultOpts, async ctx => {
+    const urls: string[] = [];
+    setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+
+    // The dependency alias (the key in `dependencies`) is used to derive the
+    // temporary extraction folder name. Point bun's temp dir at a deep
+    // directory tree we control so that an alias with '..' segments would have
+    // to land inside `zone` (above the temp dir) to be observed.
+    using zoneDir = tempDir("install-alias-tmp-zone", {
+      "a/b/c/.keep": "",
+    });
+    const zone = String(zoneDir);
+    const bunTmp = join(zone, "a", "b", "c");
+
+    await writeFile(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          "x/../../../..": `${ctx.registry_url}baz-0.0.3.tgz`,
+        },
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: ctx.package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_TMPDIR: bunTmp, TMPDIR: bunTmp },
+    });
+    const err = await stderr.text();
+    const out = await stdout.text();
+    const exitCode = await exited;
+
+    // Nothing from the tarball may be written above bun's temp dir (zone/a/b/c).
+    expect(await readdirSorted(zone)).toEqual(["a"]);
+    expect(await readdirSorted(join(zone, "a"))).toEqual(["b"]);
+    expect(await readdirSorted(join(zone, "a", "b"))).toEqual(["c"]);
+    // The unsafe alias is reported as an error and nothing is installed.
+    expect(err).toContain("Refusing to install package with invalid name");
+    expect(out).not.toContain("1 package installed");
+    expect(exitCode).not.toBe(0);
+  });
+});
+
+it("does not install transitive file: dependencies that point outside their package", async () => {
+  // A dependency declared by a non-workspace package (here: a folder dependency
+  // of the project) uses a file: specifier pointing at an absolute path outside
+  // of that package and outside the project. That directory must not be linked
+  // into node_modules.
+  using dir = tempDir("transitive-file-dep", {
+    "secret/credentials.txt": "do-not-link-me",
+    "project/package.json": JSON.stringify({
+      name: "my-app",
+      version: "1.0.0",
+      dependencies: {
+        "evil-folder-dep": "file:./evil-folder-dep",
+      },
+    }),
+    "project/evil-folder-dep/index.js": "module.exports = 1;",
+  });
+  const projectDir = join(String(dir), "project");
+  const secretDir = join(String(dir), "secret");
+
+  await write(
+    join(projectDir, "evil-folder-dep", "package.json"),
+    JSON.stringify({
+      name: "evil-folder-dep",
+      version: "1.0.0",
+      dependencies: {
+        loot: "file:" + secretDir.replaceAll("\\", "/"),
+      },
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: projectDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  const out = await stdout.text();
+  const exitCode = await exited;
+
+  // The directory outside the package must not appear under node_modules,
+  // neither hoisted nor nested under the declaring package.
+  expect(await exists(join(projectDir, "node_modules", "loot"))).toBe(false);
+  expect(await exists(join(projectDir, "node_modules", "evil-folder-dep", "node_modules", "loot"))).toBe(false);
+  // The dependency is reported as unresolvable instead of silently linking local files.
+  expect(err).toContain("Could not find package.json");
+  expect(out).not.toContain("2 packages installed");
+  expect(exitCode).toBe(1);
+});
+
+it("does not install transitive file: dependencies with overlong folder targets", async () => {
+  const overlongTarget = "file:./" + Buffer.alloc(120000, "a").toString();
+  using dir = tempDir("transitive-file-dep-overlong", {
+    "project/package.json": JSON.stringify({
+      name: "my-app",
+      version: "1.0.0",
+      dependencies: {
+        "evil-folder-dep": "file:./evil-folder-dep",
+      },
+    }),
+    "project/evil-folder-dep/index.js": "module.exports = 1;",
+    "project/evil-folder-dep/package.json": JSON.stringify({
+      name: "evil-folder-dep",
+      version: "1.0.0",
+      dependencies: {
+        loot: overlongTarget,
+      },
+    }),
+  });
+  const projectDir = join(String(dir), "project");
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: projectDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  const out = await stdout.text();
+  const exitCode = await exited;
+
+  expect(await exists(join(projectDir, "node_modules", "loot"))).toBe(false);
+  expect(await exists(join(projectDir, "node_modules", "evil-folder-dep", "node_modules", "loot"))).toBe(false);
+  expect(err).toContain("unsafe folder path");
+  expect(out).not.toContain("2 packages installed");
+  expect(exitCode).toBe(1);
+});

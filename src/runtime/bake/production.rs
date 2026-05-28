@@ -271,7 +271,7 @@ fn fail_with_build_error(vm: &mut VirtualMachine) -> ! {
     Global::exit(1);
 }
 
-pub fn write_sourcemap_to_disk(
+pub(super) fn write_sourcemap_to_disk(
     file: &OutputFile,
     bundled_outputs: &[OutputFile],
     source_maps: &mut StringArrayHashMap<OutputFileIndex>,
@@ -297,7 +297,7 @@ pub fn write_sourcemap_to_disk(
     Ok(())
 }
 
-pub fn build_with_vm(
+pub(super) fn build_with_vm(
     ctx: Context,
     cwd: &[u8],
     vm_ptr: *mut VirtualMachine,
@@ -1357,7 +1357,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
+pub(super) extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
     #[cfg(unix)]
     {
         let _ = input;
@@ -1375,7 +1375,7 @@ pub extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn BakeProdResolve(
+pub(super) extern "C" fn BakeProdResolve(
     global: &JSGlobalObject,
     a_str: BunString,
     specifier_str: BunString,
@@ -1663,7 +1663,7 @@ impl Drop for PerThread {
 
 /// Given a key, returns the source code to load.
 #[unsafe(no_mangle)]
-pub extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> BunString {
+pub(super) extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> BunString {
     // PERF(port): was stack-fallback alloc
     // SAFETY: `pt` is the non-null pointer previously attached via
     // BakeGlobalObject__attachPerThreadData; C++ only calls this while attached.
@@ -1682,7 +1682,7 @@ pub extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> BunString 
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn BakeProdSourceMap(pt: *mut PerThread, key: BunString) -> BunString {
+pub(super) extern "C" fn BakeProdSourceMap(pt: *mut PerThread, key: BunString) -> BunString {
     // PERF(port): was stack-fallback alloc
     // SAFETY: `pt` is the non-null pointer previously attached via
     // BakeGlobalObject__attachPerThreadData; C++ only calls this while attached.

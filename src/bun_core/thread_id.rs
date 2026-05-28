@@ -170,7 +170,7 @@ fn current_uncached() -> ThreadId {
         }
         let mut id: u64 = 0;
         // SAFETY: passing null requests the current thread; `id` is a valid out-ptr.
-        let rc = unsafe { pthread_threadid_np(core::ptr::null_mut(), &mut id) };
+        let rc = unsafe { pthread_threadid_np(core::ptr::null_mut(), &raw mut id) };
         debug_assert_eq!(rc, 0);
         return id;
     }

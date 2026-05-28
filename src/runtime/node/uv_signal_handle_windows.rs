@@ -12,7 +12,7 @@ use bun_sys::windows::libuv;
 
 #[cfg(windows)]
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__UVSignalHandle__init(
+pub(crate) extern "C" fn Bun__UVSignalHandle__init(
     global: &JSGlobalObject,
     signal_num: i32,
     callback: unsafe extern "C" fn(sig: *mut libuv::uv_signal_t, num: c_int),
@@ -61,7 +61,7 @@ extern "C" fn free_with_default_allocator(handle: *mut libuv::uv_handle_t) {
 // register usage on Win64). Return null (handle is being torn down).
 #[cfg(windows)]
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__UVSignalHandle__close(
+pub(crate) extern "C" fn Bun__UVSignalHandle__close(
     signal: *mut libuv::uv_signal_t,
 ) -> *mut libuv::uv_signal_t {
     // SAFETY: `signal` is a live handle previously returned by Bun__UVSignalHandle__init.

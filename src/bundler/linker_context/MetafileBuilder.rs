@@ -410,6 +410,11 @@ pub fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> Result<Box<[u8]>
 
     // Break output into pieces and resolve chunk references to final paths
     let alloc = c.arena();
+    // SAFETY: every borrowed node in `j` points into `chunk.metafile_chunk_json`,
+    // parse-graph data (import-record kind labels), or `'static` literals, all of
+    // which outlive `intermediate` — it is consumed by `code()` below while `chunks`
+    // and `c` are still alive.
+    let mut j = unsafe { j.detach_lifetime() };
     let mut intermediate = c.break_output_into_pieces(
         alloc,
         &mut j,

@@ -142,7 +142,7 @@ pub(crate) mod compile {
     use super::*;
 
     #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
-    pub enum ClientStateRequirement {
+    pub(crate) enum ClientStateRequirement {
         /// The client must not be a subscriber (not in subscription mode).
         NotSubscriber,
         /// We don't care about the client state (subscriber or not).

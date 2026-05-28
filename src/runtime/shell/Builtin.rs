@@ -67,7 +67,7 @@ pub struct Builtin {
 /// actually calls. Call sites keep writing `Self::state_mut(interp, cmd)` —
 /// they only need this trait in scope. Impls are generated per-row by
 /// [`shell_builtins!`].
-pub trait BuiltinState: Sized {
+pub(crate) trait BuiltinState: Sized {
     /// Project `&mut Impl` → `&mut Self`. `unreachable!` on variant mismatch.
     fn extract(impl_: &mut Impl) -> &mut Self;
 
@@ -266,7 +266,7 @@ pub enum BuiltinIO {
     /// stderr aimed at stdout's buffer.
     Buf(IoKind),
     ArrayBuf {
-        buf: crate::jsc::array_buffer::ArrayBufferStrong,
+        buf: PinnedArrayBuf,
         i: u32,
     },
     Blob(Arc<BuiltinBlob>),
@@ -281,11 +281,38 @@ pub enum BuiltinInput {
     /// pipeline-from-builtin.
     Buf(Vec<u8>),
     ArrayBuf {
-        buf: crate::jsc::array_buffer::ArrayBufferStrong,
+        buf: PinnedArrayBuf,
         i: u32,
     },
     Blob(Arc<BuiltinBlob>),
     Ignore,
+}
+
+pub struct PinnedArrayBuf {
+    buf: crate::jsc::array_buffer::ArrayBufferStrong,
+    pinned: bool,
+}
+
+impl core::ops::Deref for PinnedArrayBuf {
+    type Target = crate::jsc::array_buffer::ArrayBufferStrong;
+
+    fn deref(&self) -> &Self::Target {
+        &self.buf
+    }
+}
+
+impl core::ops::DerefMut for PinnedArrayBuf {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.buf
+    }
+}
+
+impl Drop for PinnedArrayBuf {
+    fn drop(&mut self) {
+        if self.pinned {
+            self.buf.array_buffer.unpin();
+        }
+    }
 }
 
 /// Spec: Builtin.zig `BuiltinIO.Blob` — refcounted wrapper around a
@@ -333,7 +360,7 @@ impl BuiltinIO {
     }
 
     #[inline]
-    pub fn needs_io(&self) -> Option<OutputNeedsIOSafeGuard> {
+    pub(crate) fn needs_io(&self) -> Option<OutputNeedsIOSafeGuard> {
         match self {
             BuiltinIO::Fd(_) => Some(OutputNeedsIOSafeGuard::OutputNeedsIo),
             _ => None,
@@ -351,7 +378,7 @@ impl BuiltinIO {
     /// `shell` must point to the live `ShellExecEnv` owning this builtin
     /// (i.e. `cmd.base.shell`); only dereferenced for the [`BuiltinIO::Buf`]
     /// arm.
-    pub unsafe fn write_no_io_to(
+    pub(crate) unsafe fn write_no_io_to(
         &mut self,
         shell: *mut crate::shell::interpreter::ShellExecEnv,
         buf: &[u8],
@@ -410,7 +437,7 @@ impl BuiltinIO {
     /// `fd.captured` as the tee bytelist.
     ///
     /// `_safeguard` proves the caller checked `needs_io()`.
-    pub fn enqueue(
+    pub(crate) fn enqueue(
         &mut self,
         child: io_writer::ChildPtr,
         buf: &[u8],
@@ -424,7 +451,7 @@ impl BuiltinIO {
 
     /// Spec: Builtin.zig `BuiltinIO.Output.enqueueFmtBltn` — format with the
     /// optional `"{kind}: "` prefix and enqueue on the underlying IOWriter.
-    pub fn enqueue_fmt(
+    pub(crate) fn enqueue_fmt(
         &mut self,
         child: io_writer::ChildPtr,
         kind: Option<Kind>,
@@ -726,9 +753,15 @@ impl Builtin {
                 if let Some(buf) = jsval.as_array_buffer(global) {
                     // Each slot gets its own Strong (sharing one would
                     // double-free on Drop).
-                    let mk = || crate::jsc::array_buffer::ArrayBufferStrong {
-                        array_buffer: buf,
-                        held: crate::jsc::StrongOptional::create(buf.value, global),
+                    let mk = || {
+                        let pinned = jsval.as_pinned_arraybuffer(global);
+                        PinnedArrayBuf {
+                            buf: crate::jsc::array_buffer::ArrayBufferStrong {
+                                array_buffer: pinned.unwrap_or(buf),
+                                held: crate::jsc::StrongOptional::create(buf.value, global),
+                            },
+                            pinned: pinned.is_some(),
+                        }
                     };
                     let me = Self::of_mut(interp, cmd);
                     if redirect.stdin() {

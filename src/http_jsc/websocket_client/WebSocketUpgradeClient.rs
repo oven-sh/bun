@@ -70,7 +70,7 @@ unsafe fn vm_loop_ctx(vm: *mut VirtualMachineRef) -> bun_io::EventLoopCtx {
 type Socket<const SSL: bool> = SocketHandler<SSL>;
 
 #[derive(Default, Clone, Copy)]
-pub struct DeflateNegotiationResult {
+pub(crate) struct DeflateNegotiationResult {
     pub enabled: bool,
     pub params: WebSocketDeflate::Params,
 }
@@ -993,6 +993,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let me = unsafe { &mut *this };
         let mut body = data;
         if !me.body.is_empty() {
+            if me.body.len().saturating_add(data.len()) > bun_http::max_http_header_size() {
+                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
+                unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
+                return;
+            }
             me.body.extend_from_slice(data);
             body = &me.body;
         }
@@ -1020,6 +1025,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
             }
             Err(picohttp::ParseResponseError::ShortRead) => {
                 if me.body.is_empty() {
+                    if data.len() > bun_http::max_http_header_size() {
+                        // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
+                        unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
+                        return;
+                    }
                     me.body.extend_from_slice(data);
                 }
                 return;
@@ -1233,6 +1243,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // Process as if it came directly from the socket
         let mut body = data;
         if !me.body.is_empty() {
+            if me.body.len().saturating_add(data.len()) > bun_http::max_http_header_size() {
+                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
+                unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
+                return;
+            }
             me.body.extend_from_slice(data);
             body = &me.body;
         }
@@ -1257,6 +1272,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
             }
             Err(picohttp::ParseResponseError::ShortRead) => {
                 if me.body.is_empty() {
+                    if data.len() > bun_http::max_http_header_size() {
+                        // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
+                        unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
+                        return;
+                    }
                     me.body.extend_from_slice(data);
                 }
                 return;
@@ -2185,8 +2205,10 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
 macro_rules! export_http_client {
     ($ssl:literal, $connect:ident, $cancel:ident, $memory_cost:ident) => {
         const _: () = {
+            // `pub(crate)`: these exist only for the C++ caller via `no_mangle`;
+            // the anonymous `const` block makes them unreachable from Rust paths.
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn $connect(
+            pub(crate) unsafe extern "C" fn $connect(
                 global: &JSGlobalObject,
                 websocket: *mut CppWebSocket,
                 host: &BunString,
@@ -2242,14 +2264,14 @@ macro_rules! export_http_client {
             }
 
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn $cancel(this: *mut HTTPClient<$ssl>) {
+            pub(crate) unsafe extern "C" fn $cancel(this: *mut HTTPClient<$ssl>) {
                 // SAFETY: caller (C++) holds a live ref; `this` carries root
                 // (userdata) provenance from `heap::alloc`.
                 unsafe { HTTPClient::<$ssl>::cancel(this) };
             }
 
             #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn $memory_cost(this: *mut HTTPClient<$ssl>) -> usize {
+            pub(crate) unsafe extern "C" fn $memory_cost(this: *mut HTTPClient<$ssl>) -> usize {
                 // SAFETY: caller (C++) holds a live ref.
                 unsafe { (*this).memory_cost() }
             }
@@ -2274,7 +2296,7 @@ export_http_client!(
 
 /// Aliases for `WebSocketProxyTunnel` (matches Zig `HTTPClient` / `HTTPSClient`).
 pub type NewHttpUpgradeClient<const SSL: bool> = HTTPClient<SSL>;
-pub type HttpUpgradeClient = HTTPClient<false>;
-pub type HttpsUpgradeClient = HTTPClient<true>;
+pub(crate) type HttpUpgradeClient = HTTPClient<false>;
+pub(crate) type HttpsUpgradeClient = HTTPClient<true>;
 
 // ported from: src/http_jsc/websocket_client/WebSocketUpgradeClient.zig

@@ -59,6 +59,42 @@ describe("parse shell", () => {
     expect(result).toEqual(expected);
   });
 
+  test("single atom", () => {
+    expect(JSON.parse(parse`ls`)).toEqual({
+      stmts: [
+        {
+          exprs: [
+            {
+              cmd: {
+                assigns: [],
+                name_and_args: [{ simple: { Text: "ls" } }],
+                redirect: redirect({}),
+                redirect_file: null,
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(JSON.parse(parse`echo ~`)).toEqual({
+      stmts: [
+        {
+          exprs: [
+            {
+              cmd: {
+                assigns: [],
+                name_and_args: [{ simple: { Text: "echo" } }, { simple: { tilde: {} } }],
+                redirect: redirect({}),
+                redirect_file: null,
+              },
+            },
+          ],
+        },
+      ],
+    });
+  });
+
   test("compound atom", () => {
     const expected = {
       stmts: [

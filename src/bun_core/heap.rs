@@ -45,13 +45,6 @@ pub fn into_raw<T: ?Sized>(boxed: Box<T>) -> *mut T {
     Box::into_raw(boxed)
 }
 
-/// Deprecated alias — see [`into_raw`].
-#[deprecated(note = "renamed to heap::into_raw — this is paired hand-off, not a leak")]
-#[inline(always)]
-pub fn leak<T: ?Sized>(boxed: Box<T>) -> *mut T {
-    Box::into_raw(boxed)
-}
-
 /// Give up our owning `Box<T>` and return a `&mut T` whose lifetime the caller
 /// picks (annotate it `&'static mut T` at the call site if the owner is
 /// process-lifetime). The backing allocation's lifetime is now managed by

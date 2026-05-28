@@ -64,7 +64,7 @@ pub struct EbusyState {
 }
 
 impl Cp {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let mut opts = Opts::default();
         let (sources_start, target_idx) = {
             let args = Builtin::of(interp, cmd).args_slice();
@@ -99,7 +99,7 @@ impl Cp {
         Self::next(interp, cmd)
     }
 
-    pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         enum Action {
             Done(ExitCode),
             Schedule {
@@ -195,7 +195,7 @@ impl Cp {
         }
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         written: usize,
@@ -264,7 +264,7 @@ impl Cp {
     }
 
     /// Spec: cp.zig `onShellCpTaskDone`.
-    pub fn on_shell_cp_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellCpTask) {
+    pub(crate) fn on_shell_cp_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellCpTask) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_count -= 1;
         }
@@ -328,8 +328,6 @@ impl Cp {
         OutputTask::<Cp>::start(output_task, interp, errstr.as_deref())
     }
 }
-
-pub type ShellCpOutputTask = OutputTask<Cp>;
 
 impl OutputTaskVTable for Cp {
     fn write_err(
@@ -416,7 +414,7 @@ pub struct ShellCpTask {
 }
 
 impl ShellCpTask {
-    pub fn create(
+    pub(crate) fn create(
         cmd: NodeId,
         evtloop: EventLoopHandle,
         opts: Opts,
@@ -463,7 +461,7 @@ impl ShellCpTask {
     /// for `-v`; on Windows the paths arrive as WTF-16 and are transcoded.
     /// Takes `&self` because subtasks fan out concurrently — the only mutated
     /// state is the locked `verbose_output` buffer.
-    pub fn cp_on_copy(&self, src: &[bun_paths::OSPathChar], dest: &[bun_paths::OSPathChar]) {
+    pub(crate) fn cp_on_copy(&self, src: &[bun_paths::OSPathChar], dest: &[bun_paths::OSPathChar]) {
         if !self.opts.verbose {
             return;
         }
@@ -490,7 +488,7 @@ impl ShellCpTask {
     /// `this` is the live `heap::alloc`'d task originally passed to
     /// [`schedule`](Self::schedule); not touched again on this thread after
     /// return.
-    pub unsafe fn cp_on_finish(this: *mut ShellCpTask, result: bun_sys::Maybe<()>) {
+    pub(crate) unsafe fn cp_on_finish(this: *mut ShellCpTask, result: bun_sys::Maybe<()>) {
         // SAFETY: caller contract — `this` is live and exclusively owned by
         // this thread until `enqueue_to_event_loop` hands it off.
         unsafe {
@@ -511,7 +509,7 @@ impl ShellCpTask {
     ///
     /// # Safety
     /// `this` must be a fresh `heap::alloc`'d task (see [`create`]).
-    pub unsafe fn schedule(this: *mut ShellCpTask) {
+    pub(crate) unsafe fn schedule(this: *mut ShellCpTask) {
         use bun_threading::work_pool::WorkPool;
         // SAFETY: `this` is live; `task` is the embedded `ShellTask`. Stay on
         // raw pointers — once `WorkPool::schedule` returns the worker thread

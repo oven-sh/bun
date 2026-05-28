@@ -79,7 +79,7 @@ pub struct S3ListObjectsV2Result<'a> {
 // by Drop on Vec / Cow; no explicit Drop impl needed.
 
 impl<'a> S3ListObjectsV2Result<'a> {
-    pub fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let js_result = JSValue::create_empty_object(global_object, 0);
 
         js_result.put_optional_utf8(global_object, b"name", self.name)?;

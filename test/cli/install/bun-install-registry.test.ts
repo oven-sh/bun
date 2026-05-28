@@ -260,6 +260,42 @@ describe("certificate authority", () => {
     expect(await exited).toBe(1);
   });
 
+  test("non-existent --cafile with workspaces exits 1 without crashing", async () => {
+    // The workspace walk in `PackageManager::init()` populates the workspace
+    // package.json cache before the HTTP thread starts. When the HTTP thread
+    // then fails CA validation and drives process exit, the exit path must not
+    // tear down that main-thread-owned cache from the HTTP thread.
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "1.1.1" },
+        }),
+      ),
+      ...["a", "b", "c"].map(name =>
+        write(
+          join(packageDir, "packages", name, "package.json"),
+          JSON.stringify({ name: `pkg-${name}`, version: "1.0.0" }),
+        ),
+      ),
+    ]);
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--cafile", "/does/not/exist"],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "pipe",
+      env,
+    });
+    const out = await stdout.text();
+    expect(out).not.toContain("no-deps");
+    const err = await stderr.text();
+    expect(err).toContain(`HTTPThread: could not find CA file: '/does/not/exist'`);
+    expect(await exited).toBe(1);
+  });
+
   test("cafile from bunfig does not exist", async () => {
     await Promise.all([
       write(
@@ -8721,4 +8757,212 @@ registry = "http://localhost:${port}/"
       expect(await exited).toBe(0);
     });
   }
+});
+
+test("rejects dependency aliases containing relative path segments", async () => {
+  // A dependency alias is used verbatim as a folder name when building install
+  // paths (`node_modules/<alias>/node_modules/...`). `one-fixed-dep@2.0.0`
+  // depends on `no-deps@2.0.0`, which conflicts with the root `no-deps@1.0.0`
+  // and therefore has to nest underneath the aliased folder. With the alias
+  // below, that nested install destination would resolve to
+  // `<packageDir>/escaped-target/node_modules/no-deps`, outside of
+  // `node_modules`.
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "no-deps": "1.0.0",
+        "../escaped-target": "npm:one-fixed-dep@2.0.0",
+      },
+    }),
+  );
+
+  let { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  let err = await stderr.text();
+  await stdout.text();
+  expect(err).toContain('Invalid dependency name "../escaped-target"');
+  // Nothing may be created outside of `node_modules`. `node_modules/../escaped-target`
+  // resolves to a sibling of `node_modules` inside the project directory.
+  expect(await exists(join(packageDir, "escaped-target"))).toBe(false);
+  expect(await exited).not.toBe(0);
+
+  // The same dependency graph with a well-formed alias still installs, and the
+  // conflicting transitive dependency nests under the aliased folder.
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, "bun.lockb"), { force: true });
+  await rm(join(packageDir, "bun.lock"), { force: true });
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "no-deps": "1.0.0",
+        "escaped-target": "npm:one-fixed-dep@2.0.0",
+      },
+    }),
+  );
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+
+  err = await stderr.text();
+  await stdout.text();
+  expect(err).not.toContain("error:");
+  expect(
+    await file(join(packageDir, "node_modules", "escaped-target", "node_modules", "no-deps", "package.json")).json(),
+  ).toMatchObject({ name: "no-deps", version: "2.0.0" });
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+  expect(await exited).toBe(0);
+});
+
+test("rejects package names containing relative path components in bun.lock", async () => {
+  // The package name from a bun.lock `packages` entry is written verbatim into
+  // the cache folder name (`<cache>/<name>@<version>@@<host>@@@1`) before the
+  // extracted tarball is renamed into place. A name with a leading `..`
+  // component would make that rename land outside the cache directory:
+  // `<packageDir>/.bun-cache/../escaped-pkg@1.0.0@@localhost@@@1` resolves to
+  // `<packageDir>/escaped-pkg@1.0.0@@localhost@@@1`, a sibling of the cache.
+  const tarballUrl = `${registryUrl()}no-deps/-/no-deps-1.0.0.tgz`;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "bun.lock"),
+      JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: {
+          "": {
+            name: "foo",
+            dependencies: {
+              "no-deps": "1.0.0",
+            },
+          },
+        },
+        packages: {
+          "no-deps": [
+            "../escaped-pkg@1.0.0",
+            tarballUrl,
+            {},
+            "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
+          ],
+        },
+      }),
+    ),
+  ]);
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await stderr.text();
+  await stdout.text();
+
+  // The lockfile entry must be rejected instead of being used as a cache path.
+  expect(err).toContain("Invalid package name");
+
+  // Nothing may be created outside the cache directory. The escape target for
+  // a "../escaped-pkg" name is a direct child of packageDir (a sibling of
+  // `.bun-cache`).
+  const escaped = (await readdirSorted(packageDir)).filter(entry => entry.includes("escaped-pkg"));
+  expect(escaped).toEqual([]);
+
+  // The well-formed dependency declared in package.json still installs.
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+  expect(await exited).toBe(0);
+});
+
+test("rejects npm aliases whose manifest URL resolves to a different host than the registry", async () => {
+  // The manifest URL is built by joining the registry URL with the package
+  // name. WHATWG URL joining treats "\" like "/" for http(s) schemes, so a
+  // name beginning with two backslashes becomes a protocol-relative authority:
+  // "\\localhost:<otherPort>\pkg" joined onto "http://localhost:<port>/"
+  // resolves to "http://localhost:<otherPort>/pkg" and would receive this
+  // registry scope's Authorization header. Bun must refuse to send the request
+  // when the joined URL is not on the configured registry origin.
+  const received: { url: string; authorization: string | null }[] = [];
+  using offRegistry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      received.push({ url: req.url, authorization: req.headers.get("authorization") });
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  const token = await generateRegistryUser("manifest-host-pinning", "manifest-host-pinning");
+  await Promise.all([
+    write(
+      join(packageDir, "bunfig.toml"),
+      `
+[install]
+cache = false
+registry = { url = "http://localhost:${port}/", token = "${token}" }
+`,
+    ),
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "innocent": `npm:\\\\localhost:${offRegistry.port}\\pkg@1.0.0`,
+        },
+      }),
+    ),
+  ]);
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await stderr.text();
+  await stdout.text();
+
+  // The manifest request must be refused with a clear error...
+  expect(err).toContain("is not on registry");
+  // ...and no request (carrying the registry Authorization header) may reach
+  // a host other than the configured registry.
+  expect(received).toEqual([]);
+  expect(await exited).not.toBe(0);
 });

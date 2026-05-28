@@ -16,7 +16,7 @@ enum State {
 }
 
 impl Exit {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let bltn = Builtin::of(interp, cmd);
         let code: crate::shell::ExitCode = match bltn.args_slice().len() {
             0 => 0,
@@ -44,7 +44,7 @@ impl Exit {
         Builtin::write_failing_error(interp, cmd, msg, 1)
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,

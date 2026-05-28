@@ -95,7 +95,7 @@ void us_udp_socket_remote_ip(struct us_udp_socket_t *s, char *buf, int *length) 
   }
 }
 
-void *us_udp_socket_user(struct us_udp_socket_t *udp) {
+__attribute__((always_inline)) void *us_udp_socket_user(struct us_udp_socket_t *udp) {
     return udp->user;
 }
 

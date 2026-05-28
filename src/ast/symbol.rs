@@ -207,7 +207,7 @@ pub enum SlotNamespace {
 
 // Zig: `pub const CountsArray = std.EnumArray(SlotNamespace, u32);` (nested decl).
 // Inherent associated types are nightly-only; expose as a free alias.
-pub type SlotNamespaceCountsArray = enum_map::EnumMap<SlotNamespace, u32>;
+pub(crate) type SlotNamespaceCountsArray = enum_map::EnumMap<SlotNamespace, u32>;
 
 impl Symbol {
     /// This is for generating cross-chunk imports and exports for code splitting.
@@ -345,17 +345,6 @@ pub enum Kind {
 }
 
 impl Kind {
-    // TODO(port): Zig std.json.stringify protocol — `writer.write(@tagName(self))` writes a
-    // JSON string value (with quotes). Verify the Rust JSON writer trait used.
-    pub fn json_stringify<W: core::fmt::Write>(
-        self,
-        writer: &mut W,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        writer.write_str(<&'static str>::from(self))?;
-        Ok(())
-    }
-
     #[inline]
     pub fn is_private(self) -> bool {
         (self as u8) >= (Kind::PrivateField as u8)

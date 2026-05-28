@@ -46,6 +46,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
+        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            self.report_stack_overflow(e.loc);
+            return;
+        }
+
         if in_.assign_target != js_ast::AssignTarget::None && !self.is_valid_assignment_target(e) {
             self.log()
                 .add_error(Some(self.source), e.loc, b"Invalid assignment target");

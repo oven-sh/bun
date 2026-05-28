@@ -315,11 +315,15 @@ impl CronRegisterJob {
         #[cfg(target_os = "macos")]
         {
             match s.state {
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 RegisterState::WritingPlist => unsafe { Self::spawn_bootout(this) },
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 RegisterState::BootingOut => unsafe { Self::spawn_bootstrap(this) },
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 RegisterState::Bootstrapping => unsafe { Self::finish(this) },
                 _ => {
                     s.set_err(format_args!("Unexpected state"));
+                    // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                     unsafe { Self::finish(this) };
                 }
             }
@@ -633,8 +637,8 @@ impl CronRegisterJob {
             }
         };
         let mut argv: [*const c_char; 4] = [
-            b"/bin/launchctl\0".as_ptr().cast(),
-            b"bootout\0".as_ptr().cast(),
+            c"/bin/launchctl".as_ptr().cast(),
+            c"bootout".as_ptr().cast(),
             uid_str.as_ptr().cast(),
             core::ptr::null(),
         ];
@@ -663,8 +667,8 @@ impl CronRegisterJob {
             }
         };
         let mut argv: [*const c_char; 5] = [
-            b"/bin/launchctl\0".as_ptr().cast(),
-            b"bootstrap\0".as_ptr().cast(),
+            c"/bin/launchctl".as_ptr().cast(),
+            c"bootstrap".as_ptr().cast(),
             uid_str.as_ptr().cast(),
             plist_path.as_ptr().cast(),
             core::ptr::null(),
@@ -1096,6 +1100,7 @@ impl CronRemoveJob {
                 RemoveState::BootingOut => {
                     let Some(home) = env_var::HOME.get() else {
                         s.set_err(format_args!("HOME not set"));
+                        // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                         return unsafe { Self::finish(this) };
                     };
                     if let Ok(plist_path) = alloc_print_z(format_args!(
@@ -1106,12 +1111,15 @@ impl CronRemoveJob {
                         let _ = sys::unlink(&plist_path);
                     } else {
                         s.set_err(format_args!("Out of memory"));
+                        // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                         return unsafe { Self::finish(this) };
                     }
+                    // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                     unsafe { Self::finish(this) };
                 }
                 _ => {
                     s.set_err(format_args!("Unexpected state"));
+                    // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                     unsafe { Self::finish(this) };
                 }
             }
@@ -1271,8 +1279,8 @@ impl CronRemoveJob {
             }
         };
         let mut argv: [*const c_char; 4] = [
-            b"/bin/launchctl\0".as_ptr().cast(),
-            b"bootout\0".as_ptr().cast(),
+            c"/bin/launchctl".as_ptr().cast(),
+            c"bootout".as_ptr().cast(),
             uid_str.as_ptr().cast(),
             core::ptr::null(),
         ];
@@ -2244,8 +2252,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         argv0: resolved_argv0,
         #[cfg(windows)]
         windows: spawn::WindowsOptions {
-            // SAFETY: `vm_mut().event_loop()` returns the live per-thread `jsc::EventLoop`.
-            loop_: unsafe { EventLoopHandle::init(vm_mut().event_loop().cast::<()>()) },
+            loop_: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
             ..Default::default()
         },
         ..SpawnOptions::default()

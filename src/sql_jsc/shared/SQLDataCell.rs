@@ -381,7 +381,7 @@ unsafe extern "C" {
     // site is the safe `construct_object_from_data_cell` wrapper above, which
     // already accepts the same raw-pointer shape from safe code, so the
     // memory-validity contract is identical → `safe fn`.
-    pub safe fn JSC__constructObjectFromDataCell(
+    pub(crate) safe fn JSC__constructObjectFromDataCell(
         global: &JSGlobalObject,
         encoded_array_value: JSValue,
         encoded_structure_value: JSValue,

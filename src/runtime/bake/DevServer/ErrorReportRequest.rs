@@ -37,7 +37,7 @@ use crate::server::StaticRoute;
 use crate::server::static_route::InitFromBytesOptions;
 use bun_core::fmt::parse_hex_to_int;
 
-pub struct ErrorReportRequest {
+pub(crate) struct ErrorReportRequest {
     // BACKREF: heap-allocated request; DevServer owns the server lifecycle and
     // outlives every in-flight request (BackRef invariant).
     dev: bun_ptr::BackRef<DevServer>,
@@ -67,7 +67,7 @@ impl BodyReaderHandler for ErrorReportRequest {
 }
 
 impl ErrorReportRequest {
-    pub fn run<R: BodyResponse>(dev: &mut DevServer, _req: &mut Request, resp: &mut R) {
+    pub(crate) fn run<R: BodyResponse>(dev: &mut DevServer, _req: &mut Request, resp: &mut R) {
         // Use the caller's `&mut DevServer` directly (matches
         // `UnrefSourceMapRequest::run`) — no need to re-derive it through the
         // freshly-allocated ctx's `BackRef` under `unsafe`.
@@ -84,7 +84,7 @@ impl ErrorReportRequest {
 
     /// `ctx` must be the pointer returned by `heap::alloc` in `run`; called
     /// exactly once (success path here, or via `on_error` on abort/error).
-    pub fn finalize(ctx: *mut ErrorReportRequest) {
+    pub(crate) fn finalize(ctx: *mut ErrorReportRequest) {
         // SAFETY: `ctx` is the original Box allocation produced by `run`; no
         // live borrow of `*ctx` exists (BodyReaderHandler hands us the raw
         // pointer, never `&mut self`). Only reachable via `on_body`/`on_error`,
@@ -105,7 +105,7 @@ impl ErrorReportRequest {
     /// with no live `&`/`&mut` into the allocation. On `Ok(())` return this
     /// consumes `ctx` via `finalize`; on `Err` the caller (BodyReaderMixin)
     /// retains ownership and will call `on_error`.
-    pub unsafe fn run_with_body(
+    pub(crate) unsafe fn run_with_body(
         ctx: *mut ErrorReportRequest,
         body: &[u8],
         r: AnyResponse,
@@ -135,16 +135,16 @@ impl ErrorReportRequest {
         let dev: &DevServer = unsafe { &*ctx }.dev.get();
 
         // Read payload, assemble ZigException
-        let name = read_string32(&mut reader)?;
-        let message = read_string32(&mut reader)?;
-        let browser_url = read_string32(&mut reader)?;
+        let name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
+        let message = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
+        let browser_url = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
         let stack_count = reader.read_int_le::<u32>()?.min(255); // does not support more than 255
         let mut frames: Vec<ZigStackFrame> = Vec::with_capacity(stack_count as usize);
         for _ in 0..stack_count {
             let line = reader.read_int_le::<i32>()?;
             let column = reader.read_int_le::<i32>()?;
-            let function_name = read_string32(&mut reader)?;
-            let file_name = read_string32(&mut reader)?;
+            let function_name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
+            let file_name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
             frames.push(ZigStackFrame {
                 function_name: BunString::init(function_name),
                 source_url: BunString::init(file_name),
@@ -425,7 +425,7 @@ impl ErrorReportRequest {
     }
 }
 
-pub fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_map_store::Key> {
+pub(crate) fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_map_store::Key> {
     if !source_url.starts_with(browser_url) {
         return None;
     }
@@ -575,6 +575,48 @@ fn read_string32<'a>(
     let s = &buf[r.pos..end];
     r.pos = end;
     Ok(s)
+}
+
+/// The report body is attacker-controlled: `/_bun/report_error` accepts a
+/// CORS "simple request" POST from any origin, and these strings are printed
+/// to the developer's terminal. Replace C0 control bytes (except `\t`/`\n`)
+/// and DEL so the payload cannot inject ANSI/OSC escape sequences (cursor
+/// movement, OSC 52 clipboard writes, hyperlinks). UTF-8-encoded C1 controls
+/// (U+0080..=U+009F, i.e. `0xC2 0x80..=0x9F`) are also replaced: xterm-family
+/// terminals decode them back to C1, so `0xC2 0x9B` would otherwise act as CSI.
+pub(crate) fn sanitize_for_terminal<'a>(s: &'a [u8], arena: &'a Arena) -> &'a [u8] {
+    fn is_disallowed(prev: u8, b: u8) -> bool {
+        // Lone 0x80..=0x9F bytes are continuation bytes of legitimate
+        // multi-byte characters and must not be blanked; only the encoded C1
+        // form (a 0xC2 lead byte followed by 0x80..=0x9F) reaches the
+        // terminal as a control.
+        (b < 0x20 && b != b'\t' && b != b'\n')
+            || b == 0x7f
+            || (prev == 0xc2 && (0x80..=0x9f).contains(&b))
+    }
+    let mut prev = 0u8;
+    if !s.iter().any(|&b| {
+        let bad = is_disallowed(prev, b);
+        prev = b;
+        bad
+    }) {
+        return s;
+    }
+    let copy = arena.alloc_slice_copy(s);
+    let mut prev = 0u8;
+    for i in 0..copy.len() {
+        let cur = copy[i];
+        if is_disallowed(prev, cur) {
+            copy[i] = b' ';
+            // For an encoded C1 control, blank the 0xC2 lead byte too so the
+            // output stays valid UTF-8 instead of leaving a dangling lead byte.
+            if prev == 0xc2 && i > 0 {
+                copy[i - 1] = b' ';
+            }
+        }
+        prev = cur;
+    }
+    copy
 }
 
 // ported from: src/bake/DevServer/ErrorReportRequest.zig

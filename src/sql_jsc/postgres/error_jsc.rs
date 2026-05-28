@@ -3,7 +3,7 @@
 use crate::jsc::{JSGlobalObject, JSValue, JsError, JsResult, bun_string_jsc};
 use bun_sql::postgres::any_postgres_error::{AnyPostgresError, PostgresErrorOptions};
 
-pub fn create_postgres_error(
+pub(crate) fn create_postgres_error(
     global: &JSGlobalObject,
     message: &[u8],
     options: &PostgresErrorOptions,
@@ -50,7 +50,7 @@ pub fn create_postgres_error(
     Ok(opts_obj)
 }
 
-pub fn postgres_error_to_js(
+pub(crate) fn postgres_error_to_js(
     global: &JSGlobalObject,
     message: Option<&[u8]>,
     err: AnyPostgresError,

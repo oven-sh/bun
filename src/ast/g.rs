@@ -256,16 +256,6 @@ pub enum PropertyKind {
     AutoAccessor,
 }
 
-impl PropertyKind {
-    // TODO(port): Zig `jsonStringify(self, writer: anytype) !void` — maps to a serde-like
-    // protocol writing @tagName(self). Decide on a shared json writer trait.
-    pub fn json_stringify(self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
-        // Zig: `writer.write(@tagName(self))` on a std.json WriteStream — emits a
-        // *quoted* JSON string. Tag names are [a-z_] so no escaping needed.
-        write!(writer, "\"{}\"", <&'static str>::from(self))
-    }
-}
-
 pub struct FnBody {
     pub loc: crate::Loc,
     pub stmts: StmtNodeList,

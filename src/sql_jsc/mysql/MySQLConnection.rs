@@ -603,7 +603,20 @@ impl MySQLConnection {
 
             // Process packet based on connection state
             match self.status {
-                ConnectionState::Handshaking => self.handle_handshake(reader)?,
+                ConnectionState::Handshaking => {
+                    self.handle_handshake(reader)?;
+                    // If the handshake negotiated TLS, the SSLRequest has been sent and
+                    // everything after this packet must arrive over the encrypted channel.
+                    // Any bytes already buffered behind the handshake packet are plaintext
+                    // a man-in-the-middle could have injected (CVE-2021-23222 class), so
+                    // reject them instead of feeding them to the auth/command handlers.
+                    if self.tls_status == TLSStatus::MessageSent {
+                        reader.set_offset_from_start(packet_length);
+                        if !reader.peek().is_empty() {
+                            return Err(AnyMySQLError::UnexpectedPacket);
+                        }
+                    }
+                }
                 ConnectionState::Authenticating | ConnectionState::AuthenticationAwaitingPk => {
                     self.handle_auth(reader, header_length)?
                 }
@@ -706,13 +719,14 @@ impl MySQLConnection {
             self.tls_status = TLSStatus::SslNotAvailable;
 
             match self.ssl_mode {
-                SSLMode::VerifyCa | SSLMode::VerifyFull => {
+                // The server did not advertise CLIENT_SSL. `require` and
+                // stricter must fail rather than silently continue in
+                // plaintext (matches the Postgres driver's TLSNotAvailable
+                // handling).
+                SSLMode::Require | SSLMode::VerifyCa | SSLMode::VerifyFull => {
                     return Err(AnyMySQLError::AuthenticationFailed);
                 }
-                // require behaves like prefer for postgres.js compatibility,
-                // allowing graceful fallback to non-SSL when the server
-                // doesn't support it.
-                SSLMode::Require | SSLMode::Prefer | SSLMode::Disable => {}
+                SSLMode::Prefer | SSLMode::Disable => {}
             }
         }
         // Send auth response
@@ -1415,6 +1429,14 @@ impl MySQLConnection {
                         // Can't be 0
                         return Err(AnyMySQLError::UnexpectedPacket);
                     }
+                    // field_count is a server-controlled lenenc int (up to 2^64-1) and is
+                    // used below to size a Vec<ColumnDefinition41> (~256 bytes each). MySQL
+                    // hard-caps a result set at 4096 columns (MAX_FIELDS), so anything
+                    // larger is a malformed/hostile packet trying to make us commit
+                    // gigabytes from a ~13-byte response.
+                    if header.field_count > 4096 {
+                        return Err(AnyMySQLError::UnexpectedPacket);
+                    }
                     if statement.columns.len() as u64 != header.field_count {
                         bun_core::scoped_log!(
                             MySQLConnection,
@@ -1586,6 +1608,12 @@ impl WriterContext for Writer {
     fn offset(self) -> usize {
         self.write_buffer().len() as usize
     }
+
+    fn truncate(self, offset: usize) {
+        let buffer = self.write_buffer();
+        let head = buffer.head as usize;
+        buffer.byte_list.truncate(head + offset);
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1694,10 +1722,10 @@ impl ReaderContext for Reader {
 pub use bun_sql::mysql::MySQLQueryResult as QueryResult;
 
 // TODO(port): IdentityContext(u64) hasher — bun_collections::HashMap should support identity hash for u64 keys
-pub type PreparedStatementsMap = HashMap<u64, *mut MySQLStatement>;
+pub(crate) type PreparedStatementsMap = HashMap<u64, *mut MySQLStatement>;
 /// Result of `PreparedStatementsMap::get_or_put` — surfaced for
 /// `JSMySQLConnection::get_statement_from_signature_hash`.
-pub type PreparedStatementsMapGetOrPutResult<'a> =
+pub(crate) type PreparedStatementsMapGetOrPutResult<'a> =
     bun_collections::hash_map::GetOrPutResult<'a, *mut MySQLStatement>;
 
 const MAX_PIPELINE_SIZE: usize = u16::MAX as usize; // about 64KB per connection

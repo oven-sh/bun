@@ -978,10 +978,6 @@ mod tests {
 // and the parser's lexer. Data-only (codepoint tables live in `bun_core`).
 
 #[inline]
-pub fn is_identifier_start(codepoint: i32) -> bool {
-    bun_core::identifier::is_identifier_start(codepoint)
-}
-#[inline]
 pub fn is_identifier_continue(codepoint: i32) -> bool {
     bun_core::identifier::is_identifier_part(codepoint)
 }

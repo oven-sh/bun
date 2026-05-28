@@ -34,6 +34,9 @@ pub struct InitOpts<'a> {
     pub loader: bun_ast::Loader,
     pub hash: u32,
     pub arena: Box<ArenaAllocator>,
+    /// Backs `parse_result`'s small `AstVec`s (inline bump chunk); must stay
+    /// alive alongside `arena` until the module finishes loading.
+    pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
 }
 
 pub struct AsyncModule {
@@ -58,6 +61,8 @@ pub struct AsyncModule {
     pub hash: u32, // default = u32::MAX
     pub global_this: crate::GlobalRef,
     pub arena: Box<ArenaAllocator>,
+    /// See [`InitOpts::ast_alloc_state`].
+    pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
 
     // This is the specific state for making it async
     pub poll_ref: KeepAlive,
@@ -66,24 +71,18 @@ pub struct AsyncModule {
 
 pub type Id = u32;
 
-pub struct PackageDownloadError<'a> {
+pub(crate) struct PackageDownloadError<'a> {
     pub name: &'a [u8],
     pub resolution: Resolution,
     pub err: bun_core::Error,
     pub url: &'a [u8],
 }
 
-pub struct PackageResolveError<'a> {
+pub(crate) struct PackageResolveError<'a> {
     pub name: &'a [u8],
     pub err: bun_core::Error,
     pub url: &'a [u8],
     pub version: bun_install::dependency::Version,
-}
-
-pub struct DeferredDependencyError {
-    pub dependency: Dependency,
-    pub root_dependency_id: DependencyID,
-    pub err: bun_core::Error,
 }
 
 pub type Map = Vec<AsyncModule>;
@@ -692,6 +691,7 @@ impl AsyncModule {
             // .expr_blocks = expr_blocks,
             global_this: crate::GlobalRef::new(global_object),
             arena: opts.arena,
+            ast_alloc_state: opts.ast_alloc_state,
             poll_ref: KeepAlive::default(),
             any_task: AnyTask::AnyTask::default(),
         })

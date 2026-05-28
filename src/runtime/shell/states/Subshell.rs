@@ -30,7 +30,7 @@ impl Subshell {
     /// `shell` must already be a duped env owned by this node (see
     /// `init_dupe_shell_state` for the Stmt/Binary path; Pipeline dupes the
     /// env itself before calling this). `Subshell::deinit` frees it.
-    pub fn init(
+    pub(crate) fn init(
         interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: &ast::Subshell,
@@ -56,7 +56,7 @@ impl Subshell {
     // Caller (Interpreter::spawn_expr) holds the parent env as a raw pointer;
     // the safety contract is documented above and at the call site.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn init_dupe_shell_state(
+    pub(crate) fn init_dupe_shell_state(
         interp: &Interpreter,
         parent_shell: *mut ShellExecEnv,
         node: &ast::Subshell,
@@ -70,11 +70,11 @@ impl Subshell {
         Ok(Self::init(interp, duped, node, parent, io))
     }
 
-    pub fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
         Yield::Next(this)
     }
 
-    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
         let (state_tag, parent) = {
             let me = interp.as_subshell(this);
             (<&'static str>::from(&me.state), me.base.parent)
@@ -107,7 +107,7 @@ impl Subshell {
     }
 
     /// Spec: Subshell.zig `onIOWriterChunk` (lines 163-174).
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
         _written: usize,
@@ -125,7 +125,7 @@ impl Subshell {
         interp.child_done(parent, this, exit)
     }
 
-    pub fn child_done(
+    pub(crate) fn child_done(
         interp: &Interpreter,
         this: NodeId,
         child: NodeId,
@@ -140,7 +140,7 @@ impl Subshell {
         Yield::Next(this)
     }
 
-    pub fn deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Subshell {} deinit", this);
         let me = interp.as_subshell_mut(this);
         // The env was duped at construction (either by Pipeline or by

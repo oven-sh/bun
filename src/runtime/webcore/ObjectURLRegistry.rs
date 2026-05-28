@@ -50,11 +50,6 @@ impl Entry {
 impl Drop for Entry {
     fn drop(&mut self) {
         // Zig `Entry.deinit`: `this.blob.deinit(); bun.destroy(this);`.
-        // `Blob` has no `Drop` impl (it's a `.classes.ts` ctx payload with an
-        // explicit `deinit()` — see webcore_types.rs PORT NOTE), so we must
-        // call it here to release the +1 `name` ref and any heap-allocated
-        // `content_type` taken by `dupe_with_content_type`. The duped blob's
-        // `ref_count == 0`, so `deinit`'s heap-free branch is skipped.
         self.blob.deinit();
         // `bun.destroy(this)` ↔ `Box<Entry>` drop.
     }
@@ -112,7 +107,7 @@ fn uuid_from_pathname(pathname: &[u8]) -> Option<UUID> {
 }
 
 #[bun_jsc::host_fn(export = "Bun__createObjectURL")]
-pub fn bun_create_object_url(
+pub(crate) fn bun_create_object_url(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -132,7 +127,7 @@ pub fn bun_create_object_url(
 }
 
 #[bun_jsc::host_fn(export = "Bun__revokeObjectURL")]
-pub fn bun_revoke_object_url(
+pub(crate) fn bun_revoke_object_url(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -168,7 +163,7 @@ pub fn bun_revoke_object_url(
 }
 
 #[bun_jsc::host_fn(export = "jsFunctionResolveObjectURL")]
-pub fn js_function_resolve_object_url(
+pub(crate) fn js_function_resolve_object_url(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -201,9 +196,9 @@ pub fn js_function_resolve_object_url(
     Ok(blob.unwrap_or(JSValue::UNDEFINED))
 }
 
-pub const SPECIFIER_LEN: usize = b"blob:".len() + UUID::STRING_LENGTH;
+pub(crate) const SPECIFIER_LEN: usize = b"blob:".len() + UUID::STRING_LENGTH;
 
-pub fn is_blob_url(url: &[u8]) -> bool {
+pub(crate) fn is_blob_url(url: &[u8]) -> bool {
     url.len() >= SPECIFIER_LEN && strings::has_prefix_comptime(url, b"blob:")
 }
 

@@ -2,14 +2,14 @@ use crate::shell::builtin::Builtin;
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::yield_::Yield;
 
-pub struct True;
+pub(crate) struct True;
 
 impl True {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         Builtin::done(interp, cmd, 0)
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         _interp: &Interpreter,
         _cmd: NodeId,
         _: usize,

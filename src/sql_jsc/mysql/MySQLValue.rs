@@ -15,7 +15,7 @@ use bun_sql::shared::Data;
 
 use crate::jsc::webcore::Blob;
 
-pub fn field_type_from_js(
+pub(crate) fn field_type_from_js(
     global_object: &JSGlobalObject,
     value: JSValue,
     unsigned: &mut bool,
@@ -643,6 +643,22 @@ impl DateTime {
         )
     }
 
+    /// `from_unix_timestamp`/`gregorian_date` can only represent
+    /// 1970-01-01T00:00:00Z through 9999-12-31T23:59:59Z (the MySQL DATETIME
+    /// maximum). Anything outside that window panics on an integer cast, so
+    /// reject it with a catchable error instead.
+    fn check_range(ts: i64, global_object: &JSGlobalObject) -> Result<(), any_mysql_error::Error> {
+        const MAX_DATETIME_UNIX_TIMESTAMP: i64 = 253_402_300_799;
+        if !(0..=MAX_DATETIME_UNIX_TIMESTAMP).contains(&ts) {
+            return Err(js_error_to_mysql(global_object.throw_invalid_arguments(
+                format_args!(
+                    "MySQL DATE/DATETIME value must be between 1970-01-01T00:00:00Z and 9999-12-31T23:59:59Z"
+                ),
+            )));
+        }
+        Ok(())
+    }
+
     pub fn from_js(
         value: JSValue,
         global_object: &JSGlobalObject,
@@ -653,6 +669,7 @@ impl DateTime {
             let total_ms = value.get_unix_timestamp();
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
             let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
+            Self::check_range(ts, global_object)?;
             return Ok(DateTime::from_unix_timestamp(ts, ms * 1000));
         }
 
@@ -660,6 +677,7 @@ impl DateTime {
             let total_ms = value.as_number();
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
             let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
+            Self::check_range(ts, global_object)?;
             return Ok(DateTime::from_unix_timestamp(ts, ms * 1000));
         }
 
@@ -680,6 +698,19 @@ pub struct Time {
 }
 
 impl Time {
+    /// `from_unix_timestamp` stores whole days in a `u32`; negative or
+    /// oversized values panic on an integer cast. Reject them with a
+    /// catchable error instead.
+    fn check_range(ts: i64, global_object: &JSGlobalObject) -> Result<(), any_mysql_error::Error> {
+        const MAX_TIME_SECONDS: i64 = (u32::MAX as i64) * 86400 + 86399;
+        if !(0..=MAX_TIME_SECONDS).contains(&ts) {
+            return Err(js_error_to_mysql(global_object.throw_invalid_arguments(
+                format_args!("MySQL TIME value is out of range"),
+            )));
+        }
+        Ok(())
+    }
+
     pub fn from_js(
         value: JSValue,
         global_object: &JSGlobalObject,
@@ -689,11 +720,13 @@ impl Time {
             let total_ms = value.get_unix_timestamp();
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
             let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
+            Self::check_range(ts, global_object)?;
             Ok(Time::from_unix_timestamp(ts, ms * 1000))
         } else if value.is_number() {
             let total_ms = value.as_number();
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
             let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
+            Self::check_range(ts, global_object)?;
             Ok(Time::from_unix_timestamp(ts, ms * 1000))
         } else {
             Err(js_error_to_mysql(global_object.throw_invalid_arguments(

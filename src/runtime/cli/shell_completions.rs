@@ -12,7 +12,7 @@ const BASH_COMPLETIONS: &[u8] = include_bytes!("../../../completions/bun.bash");
 const ZSH_COMPLETIONS: &[u8] = include_bytes!("../../../completions/bun.zsh");
 const FISH_COMPLETIONS: &[u8] = include_bytes!("../../../completions/bun.fish");
 
-pub trait ShellCompletionsExt {
+pub(crate) trait ShellCompletionsExt {
     fn completions(self) -> &'static [u8];
 }
 

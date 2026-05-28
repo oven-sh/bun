@@ -25,10 +25,10 @@ use crate::package_manager_command::PackageManagerCommand;
 
 type DepIdSet = ArrayHashMap<DependencyID, (), ArrayIdentityContext>;
 
-pub struct DefaultTrustedCommand;
+pub(crate) struct DefaultTrustedCommand;
 
 impl DefaultTrustedCommand {
-    pub fn exec() -> Result<(), bun_core::Error> {
+    pub(crate) fn exec() -> Result<(), bun_core::Error> {
         Output::print(format_args!(
             "Default trusted dependencies ({}):\n",
             DEFAULT_TRUSTED_DEPENDENCIES_LIST.len()
@@ -41,10 +41,10 @@ impl DefaultTrustedCommand {
     }
 }
 
-pub struct UntrustedCommand;
+pub(crate) struct UntrustedCommand;
 
 impl UntrustedCommand {
-    pub fn exec(
+    pub(crate) fn exec(
         ctx: Command::Context,
         pm: &mut PackageManager,
         args: &[&[u8]],
@@ -95,8 +95,9 @@ impl UntrustedCommand {
 
             // called alias because a dependency name is not always the package name
             let alias = dep.name.slice(buf);
+            let pkg_name = packages.items_name()[package_id as usize].slice(buf);
             let resolution = &resolutions[package_id as usize];
-            if !lockfile.has_trusted_dependency(alias, resolution) {
+            if !lockfile.has_trusted_dependency(alias, pkg_name, resolution) {
                 untrusted_dep_ids.put(dep_id, ())?;
             }
         }
@@ -204,7 +205,7 @@ impl UntrustedCommand {
     }
 }
 
-pub struct TrustCommand;
+pub(crate) struct TrustCommand;
 
 /// Anonymous struct from Zig: value type stored in `scripts_at_depth`.
 struct ScriptInfo {
@@ -213,14 +214,8 @@ struct ScriptInfo {
     skip: bool,
 }
 
-// PORT NOTE: Zig had `TrustCommand.Sorter` nested struct; Rust cannot nest
 // structs in impl blocks — hoisted to module level.
 pub struct TrustCommandSorter;
-impl TrustCommandSorter {
-    pub fn less_than(_: (), rhs: &[u8], lhs: &[u8]) -> bool {
-        rhs.cmp(lhs) == core::cmp::Ordering::Less
-    }
-}
 
 impl TrustCommand {
     fn error_expected_args() -> ! {
@@ -246,7 +241,7 @@ impl TrustCommand {
         }
     }
 
-    pub fn exec(
+    pub(crate) fn exec(
         ctx: Command::Context,
         pm: &mut PackageManager,
         args: &[&[u8]],
@@ -325,8 +320,9 @@ impl TrustCommand {
             }
 
             let alias = dep.name.slice(buf);
+            let pkg_name = packages.items_name()[package_id as usize].slice(buf);
             let resolution = &resolutions[package_id as usize];
-            if !lockfile.has_trusted_dependency(alias, resolution) {
+            if !lockfile.has_trusted_dependency(alias, pkg_name, resolution) {
                 untrusted_dep_ids.put(dep_id, ())?;
             }
         }
@@ -407,7 +403,11 @@ impl TrustCommand {
 
                         for package_name_from_cli in &packages_to_trust {
                             if strings::eql_long(package_name_from_cli, alias, true)
-                                && !lockfile.has_trusted_dependency(alias, resolution)
+                                && !lockfile.has_trusted_dependency(
+                                    alias,
+                                    packages.items_name()[package_id as usize].slice(buf),
+                                    resolution,
+                                )
                             {
                                 break 'brk false;
                             }
@@ -631,7 +631,7 @@ impl TrustCommand {
                     .put(
                         bun_semver::string::Builder::string_hash(name)
                             as install::TruncatedPackageNameHash,
-                        (),
+                        Box::<[u8]>::from(&**name),
                     )?;
             }
         }

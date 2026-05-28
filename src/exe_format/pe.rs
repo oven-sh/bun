@@ -94,7 +94,7 @@ pub struct PEFile {
 // (the Zig original used `*align(1) const T`).
 #[repr(C, packed)]
 #[derive(Copy, Clone)]
-pub struct DOSHeader {
+pub(crate) struct DOSHeader {
     pub e_magic: u16,      // Magic number
     pub e_cblp: u16,       // Bytes on last page of file
     pub e_cp: u16,         // Pages in file
@@ -118,7 +118,7 @@ pub struct DOSHeader {
 
 #[repr(C, packed)]
 #[derive(Copy, Clone)]
-pub struct PEHeader {
+pub(crate) struct PEHeader {
     pub signature: u32,               // PE signature
     pub machine: u16,                 // Machine type
     pub number_of_sections: u16,      // Number of sections
@@ -131,7 +131,7 @@ pub struct PEHeader {
 
 #[repr(C, packed)]
 #[derive(Copy, Clone)]
-pub struct OptionalHeader64 {
+pub(crate) struct OptionalHeader64 {
     pub magic: u16,                            // Magic number
     pub major_linker_version: u8,              // Major linker version
     pub minor_linker_version: u8,              // Minor linker version
@@ -166,14 +166,14 @@ pub struct OptionalHeader64 {
 
 #[repr(C, packed)]
 #[derive(Copy, Clone)]
-pub struct DataDirectory {
+pub(crate) struct DataDirectory {
     pub virtual_address: u32,
     pub size: u32,
 }
 
 #[repr(C, packed)]
 #[derive(Copy, Clone)]
-pub struct SectionHeader {
+pub(crate) struct SectionHeader {
     pub name: [u8; 8],                // Section name
     pub virtual_size: u32,            // Virtual size
     pub virtual_address: u32,         // Virtual address
@@ -879,36 +879,6 @@ impl PEFile {
         Ok(())
     }
 }
-
-/// Utilities for PE file detection and validation
-pub mod utils {
-    use super::*;
-
-    pub fn is_pe(data: &[u8]) -> bool {
-        if data.len() < size_of::<DOSHeader>() {
-            return false;
-        }
-
-        // SAFETY: bounds-checked above; DOSHeader is #[repr(C)] POD at offset 0
-        let dos = unsafe { ptr::read_unaligned(data.as_ptr().cast::<DOSHeader>()) };
-        if dos.e_magic != DOS_SIGNATURE {
-            return false;
-        }
-
-        let off = dos.e_lfanew as usize;
-        if off < size_of::<DOSHeader>() || off > data.len().saturating_sub(size_of::<PEHeader>()) {
-            return false;
-        }
-
-        // SAFETY: bounds-checked above; PEHeader is #[repr(C)] POD
-        let pe = unsafe { ptr::read_unaligned(data.as_ptr().add(off).cast::<PEHeader>()) };
-        pe.signature == PE_SIGNATURE
-    }
-}
-
-/// Windows-specific external interface for accessing embedded Bun data
-/// This matches the macOS interface but for PE files
-pub const BUN_COMPILED_SECTION_NAME: &str = ".bun";
 
 // External C interface declarations - these are implemented in C++ bindings
 // (src/jsc/bindings/c-bindings.cpp). The C++ code uses Windows PE APIs to

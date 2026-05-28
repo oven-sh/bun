@@ -6,6 +6,7 @@ const {
   validateInteger,
   validateBoolean,
   validateString,
+  validatePort,
 } = require("internal/validators");
 
 // Internal fetch that allows body on GET/HEAD/OPTIONS for Node.js compatibility
@@ -314,7 +315,8 @@ function ClientRequest(input, options, cb) {
         return [path, `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`];
       } else {
         let proxy: string | undefined;
-        const url = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${path}`;
+        const pathname = path.startsWith("/") ? path : "/" + path;
+        const url = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${pathname}`;
         // support agent proxy url/string for http/https
         try {
           // getters can throw
@@ -488,6 +490,14 @@ function ClientRequest(input, options, cb) {
             if (err.code === "ConnectionRefused") {
               err = new Error("ECONNREFUSED");
               err.code = "ECONNREFUSED";
+            } else if (err.code === "InvalidContentLength") {
+              // The native client refuses to deliver a response with a
+              // malformed or conflicting Content-Length. Node surfaces this
+              // as an llhttp parse error on the request object.
+              err = $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error");
+            } else if (err.code === "InvalidHTTPResponse") {
+              // Unparseable status line or header structure.
+              err = $HPE_INVALID_HEADER_TOKEN("Parse Error: Invalid header token encountered");
             }
             // Node treats AbortError separately.
             // The "abort" listener on the abort controller should have called this
@@ -718,6 +728,10 @@ function ClientRequest(input, options, cb) {
 
   const defaultPort = options.defaultPort || this[kAgent].defaultPort;
   const port = (this[kPort] = options.port || defaultPort || 80);
+  if (typeof port !== "number" && typeof port !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("options.port", ["number", "string"], port);
+  }
+  validatePort(port);
   this[kUseDefaultPort] = this[kPort] === defaultPort;
   const host =
     (this[kHost] =

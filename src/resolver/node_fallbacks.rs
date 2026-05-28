@@ -8,7 +8,7 @@ pub const IMPORT_PATH: &[u8] = b"/bun-vfs$$/node_modules/";
 // because 24 bytes == 8 * 3 --> read and compare three u64s
 const _: () = assert!(IMPORT_PATH.len().is_multiple_of(8));
 
-pub struct FallbackModule {
+pub(crate) struct FallbackModule {
     pub path: fs::Path<'static>,
     // PORT NOTE: Zig stored `*const PackageJSON` to a comptime literal (rvalue static
     // promotion). PackageJSON has heap-backed fields (`Box<[u8]>`, hash maps) that cannot
@@ -26,13 +26,47 @@ pub struct FallbackModule {
 // `*const fn () string` by defining a nested struct with a `get` fn closing over the
 // comptime path. Rust fn pointers cannot close over const-generic `&str` on stable, so
 // this is expressed as a macro that expands to a local `fn get()` and yields its pointer.
+//
+// Release builds (`bun_codegen_embed`) embed the zstd-compressed `<name>.js.zst`
+// written by the codegen step (src/node-fallbacks/build-fallbacks.ts) and
+// decompress it lazily on first access; these polyfills are only ever read when
+// bundling with `--target=browser`, so everything else stops paying ~1 MB of
+// .rodata for the plain text. Debug builds keep loading the uncompressed `.js`
+// from `BUN_CODEGEN_DIR` at runtime so JS-only edits don't need a native rebuild.
 macro_rules! create_source_code_getter {
     ($code_path:literal) => {{
         // `$code_path` is relative to `BUN_CODEGEN_DIR` (codegen output, not
-        // the source tree). The `cfg(bun_codegen_embed)` split lives inside
-        // `runtime_embed_file!` itself.
+        // the source tree).
         fn get() -> &'static str {
-            ::bun_core::runtime_embed_file!(Codegen, $code_path)
+            // `bun_codegen_embed` is set via RUSTFLAGS by scripts/build/rust.ts;
+            // plain `cargo check` doesn't pass `--check-cfg` for it.
+            #[allow(unexpected_cfgs)]
+            let source: &'static str = {
+                #[cfg(bun_codegen_embed)]
+                {
+                    static SOURCE: ::bun_core::Once<String> = ::bun_core::Once::new();
+                    SOURCE
+                        .get_or_init(|| {
+                            let compressed: &'static [u8] =
+                                ::core::include_bytes!(::core::concat!(
+                                    ::core::env!("BUN_CODEGEN_DIR"),
+                                    "/",
+                                    $code_path,
+                                    ".zst"
+                                ));
+                            let bytes = ::bun_zstd::decompress_alloc(compressed)
+                                .expect("embedded node-fallback polyfill: invalid zstd frame");
+                            String::from_utf8(bytes)
+                                .expect("embedded node-fallback polyfill: invalid UTF-8")
+                        })
+                        .as_str()
+                }
+                #[cfg(not(bun_codegen_embed))]
+                {
+                    ::bun_core::runtime_embed_file!(Codegen, $code_path)
+                }
+            };
+            source
         }
         get as fn() -> &'static str
     }};
@@ -137,7 +171,7 @@ fn init_modules() {
 }
 
 #[inline]
-pub fn map() -> &'static bun_collections::StringHashMap<FallbackModule> {
+pub(crate) fn map() -> &'static bun_collections::StringHashMap<FallbackModule> {
     INIT.call_once(init_modules);
     // SAFETY: `INIT` guarantees `MAP` is `Some` and never written again.
     unsafe { (*MAP.get()).as_ref().unwrap() }

@@ -42,7 +42,7 @@ impl bun_ptr::weak_ptr::HasWeakPtrData for Request {
         unsafe { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
     }
 }
-pub type WeakRef = bun_ptr::WeakPtr<Request>;
+pub(crate) type WeakRef = bun_ptr::WeakPtr<Request>;
 
 // PORT NOTE: hand-rolled `JsClass` impl (proc-macro `#[bun_jsc::JsClass]`
 // not yet wired for Request). Routes through the codegen'd

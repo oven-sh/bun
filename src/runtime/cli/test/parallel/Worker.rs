@@ -223,8 +223,7 @@ impl Worker {
                 extra_fds: vec![Stdio::Ipc(ipc_pipe)].into_boxed_slice(),
                 cwd: coord.cwd.to_vec().into_boxed_slice(),
                 windows: spawn::WindowsOptions {
-                    // SAFETY: `coord.vm.event_loop()` is the live per-thread `jsc::EventLoop`.
-                    loop_: unsafe { jsc::EventLoopHandle::init(coord.vm.event_loop().cast()) },
+                    loop_: jsc::EventLoopHandle::init(coord.vm.event_loop().cast()),
                     ..Default::default()
                 },
                 stream: true,
@@ -483,14 +482,6 @@ impl WorkerPipe {
     }
     pub fn on_reader_error(&mut self, _: bun_sys::Error) {
         self.done = true;
-    }
-    pub fn event_loop(&self) -> *mut jsc::event_loop::EventLoop {
-        // SAFETY: worker/coord backrefs valid for pipe lifetime.
-        unsafe { (*(*self.worker).coord).vm.event_loop() }
-    }
-    pub fn loop_(&self) -> *mut r#async::Loop {
-        // SAFETY: worker/coord backrefs valid for pipe lifetime.
-        unsafe { (*(*self.worker).coord).vm.uv_loop() }
     }
 }
 

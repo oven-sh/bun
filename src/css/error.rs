@@ -234,6 +234,9 @@ pub enum PrinterErrorKind {
     invalid_composes_selector,
     /// The CSS modules pattern must end with `[local]` for use in CSS grid.
     invalid_css_modules_pattern_in_grid,
+    /// Substituting parent selectors for `&` while compiling CSS nesting for
+    /// the configured targets exceeded the expansion limit.
+    maximum_nesting_expansion,
     no_import_records,
 }
 
@@ -255,6 +258,9 @@ impl fmt::Display for PrinterErrorKind {
             Self::invalid_css_modules_pattern_in_grid => {
                 f.write_str("CSS modules pattern must end with '[local]' when used in CSS grid")
             }
+            Self::maximum_nesting_expansion => f.write_str(
+                "Maximum nesting expansion exceeded when compiling CSS nesting for the configured targets",
+            ),
             Self::no_import_records => f.write_str("No import records found"),
         }
     }
@@ -502,6 +508,13 @@ pub enum MinifyErrorKind {
         /// The source location of the `@custom-media` rule with unsupported boolean logic.
         custom_media_loc: Location,
     },
+    /// Compiling nested rules for the configured browser targets would expand to
+    /// more than [`crate::css_rules::MAX_SELECTOR_EXPANSION`] selectors.
+    selector_expansion_limit_exceeded,
+    /// Rule minification failed without recording a more specific diagnostic on
+    /// `MinifyContext::err`. Defensive fallback — every failing path is expected
+    /// to record one before returning an error.
+    unknown,
 }
 
 impl fmt::Display for MinifyErrorKind {
@@ -518,6 +531,12 @@ impl fmt::Display for MinifyErrorKind {
                 "Unsupported boolean logic in custom media rule at line {}, column {}",
                 custom_media_loc.line, custom_media_loc.column,
             ),
+            Self::selector_expansion_limit_exceeded => write!(
+                f,
+                "Nested CSS rules expand to more than {} selectors when compiled for the configured browser targets. Reduce the nesting depth or the number of selectors per rule, or target browsers that support CSS nesting.",
+                crate::css_rules::MAX_SELECTOR_EXPANSION,
+            ),
+            Self::unknown => write!(f, "CSS minification failed"),
         }
     }
 }

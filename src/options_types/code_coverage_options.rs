@@ -60,11 +60,6 @@ impl Default for CodeCoverageOptions {
     }
 }
 
-pub enum Reporter {
-    Text,
-    Lcov,
-}
-
 #[derive(Clone, Copy)]
 pub struct Reporters {
     pub text: bool,

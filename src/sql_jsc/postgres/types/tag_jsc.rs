@@ -13,7 +13,7 @@ use bun_sql::shared::Data;
 // is a plain match and the only caller (DataCell) computes the tag at runtime
 // anyway.
 // TODO(port): narrow error set (Zig inferred `error{UnsupportedArrayType}`).
-pub fn to_js_typed_array_type(t: Tag) -> Result<JSType, bun_core::Error> {
+pub(crate) fn to_js_typed_array_type(t: Tag) -> Result<JSType, bun_core::Error> {
     match t {
         Tag::int4_array => Ok(JSType::Int32Array),
         // Tag::int2_array => Ok(JSType::Uint2Array),
@@ -23,13 +23,6 @@ pub fn to_js_typed_array_type(t: Tag) -> Result<JSType, bun_core::Error> {
     }
 }
 
-/// Zig's `toJSWithType(comptime Type: type, value: Type)` monomorphizes per call
-/// site so each `switch` arm only needs to typecheck for the concrete `Type`
-/// actually passed. Rust generics don't admit that — every arm must typecheck
-/// for every `T`. Following the pattern established in `date.rs` (`DateToJs`)
-/// and `PostgresString.rs` (`ToJsWithType`), this trait supplies one conversion
-/// per arm-target so the original match body is preserved verbatim. Concrete
-/// value types implement only the conversions that make sense for them; the
 /// rest may `unreachable!()` (mirroring Zig's per-monomorphization compile
 /// error becoming a runtime impossibility once the `tag` is fixed).
 pub trait TagToJs: Sized {
@@ -46,34 +39,6 @@ pub trait TagToJs: Sized {
     fn date_to_js(self, global: &JSGlobalObject) -> JSValue;
     /// `else` arm → `string.toJS(global, value)`.
     fn string_to_js(self, global: &JSGlobalObject) -> Result<JSValue, AnyPostgresError>;
-}
-
-pub fn to_js_with_type<T: TagToJs>(
-    tag: Tag,
-    global: &JSGlobalObject,
-    value: T,
-) -> Result<JSValue, AnyPostgresError> {
-    match tag {
-        Tag::numeric => Ok(JSValue::js_number(value.as_js_number())),
-        Tag::float4 | Tag::float8 => Ok(JSValue::js_number(value.as_js_number())),
-        Tag::json | Tag::jsonb => super::json::to_js(global, value.into_data()),
-        Tag::bool => super::r#bool::to_js(global, value.as_bool()),
-        Tag::timestamp | Tag::timestamptz => Ok(value.date_to_js(global)),
-        Tag::bytea => super::bytea::to_js(global, value.into_data()),
-        Tag::int8 => Ok(JSValue::from_int64_no_truncate(global, value.as_i64())),
-        Tag::int4 => Ok(JSValue::js_number(value.as_js_number())),
-        _ => value.string_to_js(global),
-    }
-}
-
-pub fn to_js<T: TagToJs>(
-    tag: Tag,
-    global: &JSGlobalObject,
-    value: T,
-) -> Result<JSValue, AnyPostgresError> {
-    // Zig: `toJSWithType(tag, globalObject, @TypeOf(value), value)` — the
-    // `@TypeOf` is dropped; the generic `<T>` already names the type.
-    to_js_with_type(tag, global, value)
 }
 
 pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Tag> {

@@ -15,7 +15,7 @@ use crate::crypto::evp::{self, Algorithm};
 // (Zig: src/boringssl_sys/boringssl.zig:6422).
 const EVP_R_MEMORY_LIMIT_EXCEEDED: u32 = 132;
 
-pub struct PBKDF2 {
+pub(crate) struct PBKDF2 {
     pub password: StringOrBuffer,
     pub salt: StringOrBuffer,
     pub iteration_count: u32,
@@ -38,7 +38,7 @@ impl Default for PBKDF2 {
 }
 
 impl PBKDF2 {
-    pub fn run(&mut self, output: &mut [u8]) -> bool {
+    pub(crate) fn run(&mut self, output: &mut [u8]) -> bool {
         let password = self.password.slice();
         let salt = self.salt.slice();
         let algorithm = self.algorithm;
@@ -80,7 +80,7 @@ impl PBKDF2 {
     // `ThreadSafe<PBKDF2>`, whose `Drop` additionally unprotects JS-rooted
     // buffers via the `Unprotect` impl below.
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
         is_async: bool,
@@ -264,7 +264,7 @@ impl bun_jsc::Unprotect for PBKDF2 {
     }
 }
 
-pub struct Pbkdf2Ctx {
+pub(crate) struct Pbkdf2Ctx {
     /// Wrapped in [`bun_jsc::ThreadSafe`] so the paired `unprotect()` runs on
     /// drop — `Job` is only constructed on the async path
     /// (`from_js(.., is_async=true)` already protected the buffers).
@@ -313,13 +313,13 @@ impl AnyTaskJobCtx for Pbkdf2Ctx {
     }
 }
 
-pub type Job = AnyTaskJob<Pbkdf2Ctx>;
+pub(crate) type Job = AnyTaskJob<Pbkdf2Ctx>;
 
 /// Zig `Job.create` — heap-allocate, init the promise, ref the loop, and hand
 /// to the work pool. Returns the live job so the caller can read
 /// `(*job).ctx.promise.value()` before the JS-thread completion fires.
 /// Free fn (not `impl Job`) because `AnyTaskJob<_>` is a foreign type.
-pub fn create_job(global_this: &JSGlobalObject, data: PBKDF2) -> *mut Job {
+pub(crate) fn create_job(global_this: &JSGlobalObject, data: PBKDF2) -> *mut Job {
     let job = AnyTaskJob::create(
         global_this,
         Pbkdf2Ctx {

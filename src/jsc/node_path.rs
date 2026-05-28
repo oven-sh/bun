@@ -113,6 +113,7 @@ impl Clone for PathLike {
                 // The clone borrows the JS-owned backing store; only the
                 // original (if any) owns the allocation.
                 owns_buffer: false,
+                pinned: false,
             }),
             Self::SliceWithUnderlyingString(s) => {
                 // `dupe_ref()` alone leaves `utf8` empty (lib.rs:1603) — a

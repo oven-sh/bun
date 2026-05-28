@@ -220,15 +220,9 @@ impl Parser<'_> {
                             + align_mask_)
                             & !align_mask_;
                         if top_off + size_of::<BlockHeader>() <= self.block_bytes.len() {
-                            // SAFETY: len > size_of::<BlockHeader>() guarded above; offset is in-bounds
-                            let top_hdr: BlockHeader = unsafe {
-                                self.block_bytes
-                                    .as_ptr()
-                                    .add(self.block_bytes.len() - size_of::<BlockHeader>())
-                                    .cast::<BlockHeader>()
-                                    .read_unaligned()
-                            };
-                            if top_hdr.block_type == BlockType::Li {
+                            let top_type =
+                                self.block_bytes[self.block_bytes.len() - size_of::<BlockHeader>()];
+                            if top_type == BlockType::Li as u8 {
                                 self.last_list_item_starts_with_two_blank_lines = true;
                             }
                         }
@@ -246,15 +240,9 @@ impl Parser<'_> {
                         && self.current_block.is_none()
                         && self.block_bytes.len() > size_of::<BlockHeader>()
                     {
-                        // SAFETY: len > size_of::<BlockHeader>() guarded above; offset is in-bounds
-                        let top_hdr: BlockHeader = unsafe {
-                            self.block_bytes
-                                .as_ptr()
-                                .add(self.block_bytes.len() - size_of::<BlockHeader>())
-                                .cast::<BlockHeader>()
-                                .read_unaligned()
-                        };
-                        if top_hdr.block_type == BlockType::Li {
+                        let top_type =
+                            self.block_bytes[self.block_bytes.len() - size_of::<BlockHeader>()];
+                        if top_type == BlockType::Li as u8 {
                             n_parents -= 1;
                             line.indent = total_indent;
                             if n_parents > 0 {

@@ -497,29 +497,33 @@ pub struct JSSink<T> {
 macro_rules! decl_js_sink_externs {
     ($abi:literal as $m:ident) => {
         #[allow(non_snake_case)]
-        pub mod $m {
+        pub(crate) mod $m {
             use ::bun_jsc::{JSGlobalObject, JSValue};
             use ::core::ffi::c_void;
             unsafe extern "C" {
                 #[link_name = concat!($abi, "__fromJS")]
-                pub safe fn from_js(value: JSValue) -> usize;
+                pub(crate) safe fn from_js(value: JSValue) -> usize;
                 #[link_name = concat!($abi, "__createObject")]
-                pub safe fn create_object(g: &JSGlobalObject, o: *mut c_void, d: usize) -> JSValue;
+                pub(crate) safe fn create_object(
+                    g: &JSGlobalObject,
+                    o: *mut c_void,
+                    d: usize,
+                ) -> JSValue;
                 #[link_name = concat!($abi, "__setDestroyCallback")]
-                pub safe fn set_destroy_callback(v: JSValue, cb: usize);
+                pub(crate) safe fn set_destroy_callback(v: JSValue, cb: usize);
                 #[link_name = concat!($abi, "__assignToStream")]
-                pub safe fn assign_to_stream(
+                pub(crate) safe fn assign_to_stream(
                     g: &JSGlobalObject,
                     s: JSValue,
                     p: *mut c_void,
                     jp: *mut *mut c_void,
                 ) -> JSValue;
                 #[link_name = concat!($abi, "__onClose")]
-                pub safe fn on_close(p: JSValue, r: JSValue);
+                pub(crate) safe fn on_close(p: JSValue, r: JSValue);
                 #[link_name = concat!($abi, "__onReady")]
-                pub safe fn on_ready(p: JSValue, a: JSValue, o: JSValue);
+                pub(crate) safe fn on_ready(p: JSValue, a: JSValue, o: JSValue);
                 #[link_name = concat!($abi, "__detachPtr")]
-                pub safe fn detach_ptr(p: JSValue);
+                pub(crate) safe fn detach_ptr(p: JSValue);
             }
         }
     };

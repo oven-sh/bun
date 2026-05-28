@@ -291,13 +291,6 @@ pub enum Kind {
 }
 
 impl Kind {
-    // TODO(port): Zig `jsonStringify` hooks into std.json; wire to whatever
-    // JSON-serialize trait the AST uses in Rust (serde::Serialize or custom).
-    pub fn json_stringify(self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
-        // TODO(port): narrow error set
-        writer.write_str(<&'static str>::from(self))
-    }
-
     pub fn is_using(self) -> bool {
         matches!(self, Kind::KUsing | Kind::KAwaitUsing)
     }

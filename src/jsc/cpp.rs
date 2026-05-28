@@ -40,10 +40,4 @@
     clippy::too_many_arguments
 )]
 
-use crate::{JSGlobalObject, JSValue, JsError, JsResult};
-// Generated `cpp.rs` may spell the string types as `bun_core::…` or
-// `bun_core::…` depending on which side of the `bun_string → bun_core` merge
-// the codegen ran on; alias here so both resolve.
-use bun_core as bun_string;
-
 include!(concat!(env!("BUN_CODEGEN_DIR"), "/cpp.rs"));

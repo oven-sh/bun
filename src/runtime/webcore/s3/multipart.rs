@@ -198,9 +198,6 @@ impl MultiPartUpload {
     }
 }
 
-/// Intrusive-refcount handle alias (Zig: `bun.ptr.RefCount(MultiPartUpload, ...)`).
-pub type MultiPartUploadRef = bun_ptr::IntrusiveRc<MultiPartUpload>;
-
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PartState {
@@ -253,7 +250,10 @@ impl UploadPart {
         unsafe { &*self.data }
     }
 
-    pub fn on_part_response(result: S3PartResult, this: *mut c_void) -> JsTerminatedResult<()> {
+    pub(crate) fn on_part_response(
+        result: S3PartResult,
+        this: *mut c_void,
+    ) -> JsTerminatedResult<()> {
         let this = this.cast::<Self>();
         // SAFETY: callback context — `this` is the `*mut UploadPart` passed in `perform()`
         let this = unsafe { &mut *this };
@@ -370,7 +370,7 @@ impl UploadPart {
         )
     }
 
-    pub fn start(&mut self) -> JsTerminatedResult<()> {
+    pub(crate) fn start(&mut self) -> JsTerminatedResult<()> {
         let ctx = self.ctx.get();
         if self.state != PartState::Pending || ctx.state != State::MultipartCompleted {
             return Ok(());
@@ -380,7 +380,7 @@ impl UploadPart {
         self.perform()
     }
 
-    pub fn cancel(&mut self) {
+    pub(crate) fn cancel(&mut self) {
         let state = self.state;
         self.state = PartState::Canceled;
 
@@ -700,7 +700,10 @@ impl MultiPartUpload {
                     }
                 }
                 this.uploadid_buffer = response.body;
-                if this.upload_id.is_empty() || this.upload_id.len() > Self::MAX_UPLOAD_ID_LEN {
+                if this.upload_id.is_empty()
+                    || this.upload_id.len() > Self::MAX_UPLOAD_ID_LEN
+                    || this.upload_id.iter().any(|b| b.is_ascii_control())
+                {
                     // Unknown type of response error from AWS
                     scoped_log!(
                         S3MultiPartUpload,
@@ -1179,7 +1182,7 @@ impl MultiPartUpload {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum WriteEncoding {
+pub(crate) enum WriteEncoding {
     Bytes,
     Latin1,
     Utf16,

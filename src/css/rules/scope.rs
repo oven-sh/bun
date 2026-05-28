@@ -26,6 +26,10 @@ impl<R> ScopeRule<R> {
 
         dest.write_str("@scope")?;
         dest.whitespace()?;
+        // The scope preludes get their own budget for `&` substitutions when
+        // compiling nesting, like style rule preludes do (see
+        // `serialize::serialize_nesting`).
+        dest.nesting_expansions = 0;
         if let Some(scope_start) = &self.scope_start {
             dest.write_char(b'(')?;
             // scope_start.to_css(dest)?;

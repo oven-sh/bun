@@ -2225,7 +2225,7 @@ pub struct InitialDataHandler<const SSL: bool> {
 impl<const SSL: bool> InitialDataHandler<SSL> {
     // pub const Handle = jsc.AnyTask.New(@This(), handle);
 
-    pub fn handle_without_deinit(&mut self) {
+    pub(crate) fn handle_without_deinit(&mut self) {
         let Some(this_socket_ptr) = self.adopted.take() else {
             return;
         };
@@ -2258,7 +2258,7 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
     }
 
     /// `extern "C"` thunk shape for `JSGlobalObject::queue_microtask_callback`.
-    pub unsafe extern "C" fn handle(this: *mut c_void) {
+    pub(crate) unsafe extern "C" fn handle(this: *mut c_void) {
         let this = this.cast::<Self>();
         // SAFETY: called from microtask queue with the pointer we passed in
         // (heap::alloc in init()/init_with_tunnel()).
@@ -2321,10 +2321,10 @@ pub enum ErrorCode {
 // Mask
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct Mask;
+pub(crate) struct Mask;
 
 impl Mask {
-    pub fn fill(
+    pub(crate) fn fill(
         global_this: &JSGlobalObject,
         mask_buf: &mut [u8; 4],
         output: &mut [u8],
@@ -2341,7 +2341,11 @@ impl Mask {
     /// In-place variant for when output and input alias the same buffer.
     /// PORT NOTE: Zig's `fill` allowed output==input; Rust borrowck forbids
     /// `&mut [u8]` + `&[u8]` aliasing. Callers that masked in-place use this.
-    pub fn fill_in_place(global_this: &JSGlobalObject, mask_buf: &mut [u8; 4], buf: &mut [u8]) {
+    pub(crate) fn fill_in_place(
+        global_this: &JSGlobalObject,
+        mask_buf: &mut [u8; 4],
+        buf: &mut [u8],
+    ) {
         let entropy = global_this.bun_vm().as_mut().rare_data().entropy_slice(4);
         mask_buf.copy_from_slice(&entropy[..4]);
         let mask = *mask_buf;
@@ -2379,19 +2383,6 @@ pub enum ReceiveState {
     Pong,
     Close,
     Fail,
-}
-
-impl ReceiveState {
-    pub fn need_control_frame(self) -> bool {
-        self != ReceiveState::NeedBody
-    }
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum DataType {
-    None,
-    Text,
-    Binary,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2491,7 +2482,7 @@ enum Copy<'a> {
 }
 
 impl<'a> Copy<'a> {
-    pub fn len(&self, byte_len: &mut usize) -> usize {
+    pub(crate) fn len(&self, byte_len: &mut usize) -> usize {
         match self {
             Copy::Utf16(utf16) => {
                 *byte_len = strings::element_length_utf16_into_utf8(utf16);
@@ -2512,7 +2503,7 @@ impl<'a> Copy<'a> {
         }
     }
 
-    pub fn copy(
+    pub(crate) fn copy(
         &self,
         global_this: &JSGlobalObject,
         buf: &mut [u8],
@@ -2616,7 +2607,7 @@ impl<'a> Copy<'a> {
         }
     }
 
-    pub fn copy_compressed(
+    pub(crate) fn copy_compressed(
         global_this: &JSGlobalObject,
         buf: &mut [u8],
         compressed_data: &[u8],

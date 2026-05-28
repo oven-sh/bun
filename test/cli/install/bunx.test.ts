@@ -1462,6 +1462,6 @@ it.concurrent.skipIf(isWindows)(
     }
 
     expect(existsSync(userCacheRoot)).toBe(false);
-    expect(existsSync(bunfigCacheDir)).toBe(false);
+    expect(existsSync(bunfigCacheDir)).toBe(true);
   },
 );

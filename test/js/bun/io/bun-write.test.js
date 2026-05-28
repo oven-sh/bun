@@ -281,10 +281,13 @@ const IS_UV_FS_COPYFILE_DISABLED =
         env: { ...bunEnv, BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1", BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE: "1" },
         stdio: ["inherit", "inherit", "inherit"],
       });
-      expect(await proc.exited).toBe(0);
+      // Wait for the fixture to finish writing before reading the destination,
+      // but assert the copied bytes first and the exit code last.
+      const exitCode = await proc.exited;
       const out = await Bun.file(dst).bytes();
       expect(out).toEqual(buf.slice(start, end));
       expect(out.length).toBe(end - start);
+      expect(exitCode).toBe(0);
     });
   });
 

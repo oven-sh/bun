@@ -1311,6 +1311,13 @@ folded: >
           // mapping (so the second anchors the first key).
           expect(YAML.parse("- &outer\n  &inner b: 1\n- *outer\n- *inner\n")).toEqual([{ b: 1 }, { b: 1 }, "b"]);
           expect(() => YAML.parse("- &x &y a\n")).toThrow("Multiple anchors");
+          // The inner anchor is the implicit key's, so it must share the
+          // key's line (BLOCK-KEY = s-separate-in-line). On its own line it
+          // would be a second [200] collection-prop, which [161] disallows.
+          expect(() => YAML.parse("- &x\n  &y\n  a: 1\n")).toThrow("Multiple anchors");
+          expect(() => YAML.parse("a: &x\n  &y\n  c: 1\n")).toThrow("Multiple anchors");
+          // Both props more-indented; inner same-line as key — valid.
+          expect(YAML.parse("a:\n  &x\n  &y c: 1\n")).toEqual({ a: { c: 1 } });
         });
       });
 

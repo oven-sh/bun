@@ -3354,11 +3354,21 @@ impl<Enc: Encoding> NodeProperties<Enc> {
             })
     }
 
-    pub fn implicit_key_anchors(&self, implicit_key_line: Line) -> ImplicitKeyAnchors {
+    pub fn implicit_key_anchors(
+        &self,
+        implicit_key_line: Line,
+    ) -> Result<ImplicitKeyAnchors, ParseError> {
         if let Some(mapping_anchor) = &self.has_mapping_anchor {
-            debug_assert!(self.has_anchor.is_some());
-            return ImplicitKeyAnchors {
-                key_anchor: self.has_anchor.as_ref().and_then(|t| match &t.data {
+            // Two anchors recorded: the outer anchors the [200] block
+            // collection; the inner anchors the implicit first key. The key's
+            // c-ns-properties are in BLOCK-KEY context (s-separate-in-line),
+            // so the inner anchor must share the key's line.
+            let inner = self.has_anchor.as_ref();
+            if inner.is_some_and(|t| t.line != implicit_key_line) {
+                return Err(ParseError::MultipleAnchors);
+            }
+            return Ok(ImplicitKeyAnchors {
+                key_anchor: inner.and_then(|t| match &t.data {
                     TokenData::Anchor(r) => Some(*r),
                     _ => None,
                 }),
@@ -3366,7 +3376,7 @@ impl<Enc: Encoding> NodeProperties<Enc> {
                     TokenData::Anchor(r) => Some(*r),
                     _ => None,
                 },
-            };
+            });
         }
 
         if let Some(mystery_anchor) = &self.has_anchor {
@@ -3376,21 +3386,21 @@ impl<Enc: Encoding> NodeProperties<Enc> {
                 _ => None,
             };
             if mystery_anchor.line == implicit_key_line {
-                return ImplicitKeyAnchors {
+                return Ok(ImplicitKeyAnchors {
                     key_anchor: r,
                     mapping_anchor: None,
-                };
+                });
             }
-            return ImplicitKeyAnchors {
+            return Ok(ImplicitKeyAnchors {
                 key_anchor: None,
                 mapping_anchor: r,
-            };
+            });
         }
 
-        ImplicitKeyAnchors {
+        Ok(ImplicitKeyAnchors {
             key_anchor: None,
             mapping_anchor: None,
-        }
+        })
     }
 
     pub fn set_tag(&mut self, tag_token: Token<Enc>) -> Result<(), ParseError> {
@@ -3788,7 +3798,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                         }
 
-                        let implicit_key_anchors = node_props.implicit_key_anchors(sequence_line);
+                        let implicit_key_anchors = node_props.implicit_key_anchors(sequence_line)?;
 
                         if let Some(key_anchor) = implicit_key_anchors.key_anchor {
                             self.anchors
@@ -3867,7 +3877,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                         }
 
-                        let implicit_key_anchors = node_props.implicit_key_anchors(mapping_line);
+                        let implicit_key_anchors = node_props.implicit_key_anchors(mapping_line)?;
 
                         if let Some(key_anchor) = implicit_key_anchors.key_anchor {
                             self.anchors
@@ -4029,7 +4039,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         let implicit_key = scalar.data.to_expr(scalar_start, self.input, self.bump);
 
-                        let implicit_key_anchors = node_props.implicit_key_anchors(scalar_line);
+                        let implicit_key_anchors = node_props.implicit_key_anchors(scalar_line)?;
 
                         if let Some(key_anchor) = implicit_key_anchors.key_anchor {
                             self.anchors

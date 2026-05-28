@@ -2256,6 +2256,32 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(b.lastIndexOf("b", [])).toBe(-1);
       });
 
+      it("lastIndexOf(value, encoding) defaults to searching from the end", () => {
+        // When the second argument is an encoding string (no byteOffset), the
+        // search must start from the end of the buffer, matching Node.js.
+        const b = Buffer.from("ello hello hello");
+        expect(b.lastIndexOf("hello", "utf8")).toBe(11);
+        expect(b.lastIndexOf("hello", "latin1")).toBe(11);
+        expect(b.lastIndexOf("hello", "binary")).toBe(11);
+
+        const b16 = Buffer.from("ello hello hello", "utf16le");
+        expect(b16.lastIndexOf("hello", "utf16le")).toBe(22);
+        expect(b16.lastIndexOf("hello", "ucs2")).toBe(22);
+
+        const bhex = Buffer.from("aabbccaabbcc", "hex");
+        expect(bhex.lastIndexOf("aabb", "hex")).toBe(3);
+
+        const bb64 = Buffer.from("Zm9vYmFyZm9v", "base64");
+        expect(bb64.lastIndexOf("Zm9v", "base64")).toBe(6);
+
+        // Forward indexOf with the same overload must remain 0-based.
+        expect(b.indexOf("hello", "utf8")).toBe(5);
+        expect(b.includes("hello", "utf8")).toBe(true);
+
+        // Explicit byteOffset still works.
+        expect(b.lastIndexOf("hello", 8, "utf8")).toBe(5);
+      });
+
       for (let fn of [Buffer.prototype.slice, Buffer.prototype.subarray]) {
         it(`Buffer.${fn.name}`, () => {
           const buf = new Buffer("buffer");

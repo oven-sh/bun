@@ -1647,11 +1647,13 @@ impl PostgresSQLConnection {
     /// pair (16 callers in `clean_up_requests` / `advance`).
     #[inline]
     fn discard_request(&self, request: *mut PostgresSQLQuery) {
-        if self.requests.get().readable_length() == 0 || self.requests.get().peek_item(0) != request
+        if self
+            .requests
+            .with(|q| q.readable_length() == 0 || q.peek_item(0) != request)
         {
             return;
         }
-        // SAFETY: `request` was obtained via `self.requests.get().peek_item(_)`
+        // SAFETY: `request` was obtained via `self.requests.peek_item(_)`
         // (queue invariant: every stored pointer is a live, heap-allocated
         // `PostgresSQLQuery` with refcount ≥ 1 held by the queue itself); this
         // releases exactly that ref. May free if no other refs remain.
@@ -2885,10 +2887,10 @@ impl PostgresSQLConnection {
                         // before AuthenticationOk is acceptable. Accepting Ok
                         // mid-exchange would let a MITM skip the
                         // server-signature verification.
-                        if matches!(
-                            self.authentication_state.get(),
-                            AuthenticationState::Sasl(_)
-                        ) {
+                        if self
+                            .authentication_state
+                            .with(|s| matches!(s, AuthenticationState::Sasl(_)))
+                        {
                             debug!("AuthenticationOk before SASL exchange completed");
                             return Err(AnyPostgresError::UnexpectedMessage);
                         }

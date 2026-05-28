@@ -203,10 +203,12 @@ impl CryptoHasher {
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__isXof", no_catch)]
     pub fn extern_is_xof(&self) -> bool {
         match self {
-            CryptoHasher::Zig(inner) => matches!(
-                inner.get().algorithm,
-                evp::Algorithm::Shake128 | evp::Algorithm::Shake256
-            ),
+            CryptoHasher::Zig(inner) => inner.with(|v| {
+                matches!(
+                    v.algorithm,
+                    evp::Algorithm::Shake128 | evp::Algorithm::Shake256
+                )
+            }),
             _ => false,
         }
     }

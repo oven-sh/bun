@@ -1332,10 +1332,13 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         if SSL && authorized && !handlers.mode.is_server() {
             if let Some(ssl_ptr) = this.socket.get().ssl() {
-                let hostname: &[u8] = if let Some(server_name) = this.server_name.get() {
+                // SAFETY: single-JS-thread `JsCell` read; the `hostname` borrow is
+                // only read by the synchronous server-identity check below, which
+                // never mutates `server_name` / `connection`.
+                let hostname: &[u8] = if let Some(server_name) = unsafe { this.server_name.get() } {
                     &server_name[..]
                 } else if let Some(super::listener::UnixOrHost::Host { host, .. }) =
-                    this.connection.get()
+                    unsafe { this.connection.get() }
                 {
                     &host[..]
                 } else {

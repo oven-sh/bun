@@ -724,7 +724,7 @@ impl BlobExt for Blob {
         &self,
         writer: &mut W,
     ) -> Result<(), bun_core::Error> {
-        let is_memory_backed = if let Some(store) = self.store.get() {
+        let is_memory_backed = if let Some(store) = self.store() {
             matches!(store.data, store::Data::Bytes(_))
         } else {
             false

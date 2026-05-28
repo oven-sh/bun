@@ -1887,3 +1887,89 @@ it("decodes declared types leniently and accepts single-character declared types
   expect(s.declaredTypes).toEqual(["INT\uFFFDGER"]);
   db.close();
 });
+
+// The process-global SQLite database registry is shared by every Worker
+// thread. Concurrent opens, prepares, serialize/deserialize, and closes from
+// several Workers must not corrupt the registry while its backing storage
+// grows. Run in a subprocess so a crash shows up as a non-zero exit code
+// instead of taking down the test runner.
+it("keeps database handles working when many Workers open databases concurrently", async () => {
+  const dir = tempDirWithFiles("sqlite-worker-registry", {
+    "main.js": `
+      import { Database } from "bun:sqlite";
+
+      const WORKER_COUNT = 4;
+      const workerUrl = new URL("./worker.js", import.meta.url).href;
+
+      const results = await Promise.all(
+        Array.from({ length: WORKER_COUNT }, () => {
+          return new Promise((resolve, reject) => {
+            const worker = new Worker(workerUrl);
+            worker.onmessage = event => {
+              resolve(event.data);
+              worker.terminate();
+            };
+            worker.onerror = event => {
+              reject(new Error(event.message ?? "worker error"));
+              worker.terminate();
+            };
+          });
+        }),
+      );
+
+      // The main thread's own database still works after the Workers churned
+      // the shared registry.
+      const db = new Database(":memory:");
+      db.exec("CREATE TABLE t (a INTEGER)");
+      db.run("INSERT INTO t VALUES (42)");
+      const main = db.query("SELECT a FROM t").get().a;
+      db.close();
+
+      console.log(JSON.stringify({ workers: results, main }));
+    `,
+    "worker.js": `
+      import { Database } from "bun:sqlite";
+
+      const ROUNDS = 12;
+      const DBS_PER_ROUND = 8;
+      const ROWS = 4;
+
+      let total = 0;
+      for (let round = 0; round < ROUNDS; round++) {
+        const dbs = [];
+        for (let i = 0; i < DBS_PER_ROUND; i++) {
+          const db = new Database(":memory:");
+          db.exec("CREATE TABLE t (a INTEGER, b TEXT)");
+          const insert = db.query("INSERT INTO t (a, b) VALUES (?1, ?2)");
+          for (let j = 0; j < ROWS; j++) insert.run(j, "row" + j);
+          total += db.query("SELECT count(*) AS n FROM t").get().n;
+
+          // serialize() and deserialize() index into / append to the same
+          // process-wide registry as open().
+          const restored = Database.deserialize(db.serialize());
+          total += restored.query("SELECT count(*) AS n FROM t").get().n;
+          restored.close();
+
+          dbs.push(db);
+        }
+        for (const db of dbs) db.close();
+      }
+
+      const expected = ROUNDS * DBS_PER_ROUND * ROWS * 2;
+      postMessage(total === expected ? "ok" : "bad total: " + total + " expected " + expected);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe(JSON.stringify({ workers: ["ok", "ok", "ok", "ok"], main: 42 }));
+  expect(exitCode).toBe(0);
+}, 30000);

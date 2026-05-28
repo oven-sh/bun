@@ -292,6 +292,43 @@ if (isDockerEnabled()) {
           expect().pass();
         }, 10_000);
 
+        test("rebuilds row object shape when a reused statement's result columns change", async () => {
+          // Result-set column metadata is re-read from the wire on every execution
+          // of a cached prepared statement. When the column count stays the same
+          // but the names change (e.g. ALTER TABLE between executions of the same
+          // query text), the cached row-object structure must be rebuilt so values
+          // are written under the current column names and never past the end of
+          // the previously-shaped object.
+          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+          using sql = await db.reserve();
+
+          // Same column count, different names across two executions of the same query text.
+          const t = "rs_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql`CREATE TEMPORARY TABLE ${sql(t)} (a INT, b INT)`;
+          await sql`INSERT INTO ${sql(t)} VALUES (1, 2)`;
+          const first = await sql`SELECT * FROM ${sql(t)}`;
+          expect(first[0]).toEqual({ a: 1, b: 2 });
+          await sql`ALTER TABLE ${sql(t)} CHANGE a c INT, CHANGE b d INT`;
+          const second = await sql`SELECT * FROM ${sql(t)}`;
+          expect(second[0]).toEqual({ c: 1, d: 2 });
+
+          // Duplicate column names collapse into a single property on the first
+          // execution; once a rename makes them distinct, the same cached
+          // statement must produce every property of the new column list.
+          const ta = "rsa_" + randomUUIDv7("hex").replaceAll("-", "");
+          const tb = "rsb_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql`CREATE TEMPORARY TABLE ${sql(ta)} (x INT, y INT)`;
+          await sql`CREATE TEMPORARY TABLE ${sql(tb)} (x INT, y INT)`;
+          await sql`INSERT INTO ${sql(ta)} VALUES (1, 2)`;
+          await sql`INSERT INTO ${sql(tb)} VALUES (3, 4)`;
+          const dupFirst = await sql`SELECT * FROM ${sql(ta)} CROSS JOIN ${sql(tb)}`;
+          // Last one wins for duplicate names, so only x and y exist.
+          expect(Object.keys(dupFirst[0]).sort()).toEqual(["x", "y"]);
+          await sql`ALTER TABLE ${sql(tb)} CHANGE x z INT, CHANGE y w INT`;
+          const dupSecond = await sql`SELECT * FROM ${sql(ta)} CROSS JOIN ${sql(tb)}`;
+          expect(dupSecond[0]).toEqual({ x: 1, y: 2, z: 3, w: 4 });
+        });
+
         test("Handles numeric column names", async () => {
           // deliberately out of order
           const result = await sql`select 1 as "1", 2 as "2", 3 as "3", 0 as "0"`;

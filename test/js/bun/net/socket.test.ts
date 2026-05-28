@@ -1213,3 +1213,218 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
     });
   });
 });
+
+it("reload() backs out cleanly when a handler getter closes the socket mid-reload", async () => {
+  // socket.reload() reads the new callbacks off the user object property by
+  // property, so a getter can run arbitrary JS — including terminating the
+  // very socket being reloaded, which releases its current handlers. The
+  // reload must then back out instead of writing through the released
+  // handlers, and reload() on a live socket must keep working.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open() {},
+            data(s, buf) { s.write("polo"); },
+            close() {},
+            error() {},
+          },
+        });
+
+        // 1) reload() whose "data" getter terminates the socket mid-reload.
+        {
+          const closed = Promise.withResolvers();
+          const sock = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            socket: {
+              open() {},
+              data() {},
+              close() { closed.resolve(); },
+              error() {},
+            },
+          });
+          sock.reload({
+            socket: {
+              get data() {
+                sock.terminate();
+                return () => {};
+              },
+              open() {},
+              drain() {},
+              close() {},
+              error() {},
+            },
+          });
+          await closed.promise;
+          console.log("reload-with-terminate-ok");
+        }
+
+        // 2) A normal reload() on a live socket still swaps the handlers.
+        {
+          const got = Promise.withResolvers();
+          const closed = Promise.withResolvers();
+          const sock = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            socket: {
+              open() {},
+              data() { got.resolve("old-handler"); },
+              close() { closed.resolve(); },
+              error() {},
+            },
+          });
+          sock.reload({
+            socket: {
+              data(_s, buf) { got.resolve(buf.toString()); },
+              drain() {},
+              close() { closed.resolve(); },
+              error() {},
+            },
+          });
+          sock.write("marco");
+          console.log("second-reload:" + (await got.promise));
+          sock.end();
+          await closed.promise;
+        }
+
+        Bun.gc(true);
+        console.log("DONE");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 15_000,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("reload-with-terminate-ok\nsecond-reload:polo\nDONE\n");
+  expect(exitCode).toBe(0);
+  void stderr;
+});
+
+it("node:net connect() reusing a server-accepted handle keeps the listener's handlers working", async () => {
+  // A Bun.listen()-accepted socket wrapper does not own its handlers — they
+  // live inside the listener. Reusing such a wrapper as the handle for an
+  // outbound node:net connect must not release the listener's handlers: the
+  // outbound connect gets its own handlers and works, and the listener keeps
+  // accepting and dispatching new connections afterwards.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const net = require("node:net");
+
+        // Target server for the outbound connect.
+        using target = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open(s) { s.write("target-hello"); },
+            data() {},
+            close() {},
+            error() {},
+          },
+        });
+
+        // Listener whose accepted-socket wrapper is captured and reused.
+        let accepted;
+        let openCount = 0;
+        const acceptedOpen = Promise.withResolvers();
+        const acceptedClosed = Promise.withResolvers();
+        const secondAccepted = Promise.withResolvers();
+        using listener = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open(s) {
+              openCount += 1;
+              if (openCount === 1) {
+                accepted = s;
+                acceptedOpen.resolve();
+              } else {
+                s.write("second-accept");
+                secondAccepted.resolve();
+              }
+            },
+            data() {},
+            close() {
+              if (openCount === 1) acceptedClosed.resolve();
+            },
+            error() {},
+          },
+        });
+
+        // First inbound connection, then the peer disconnects so the accepted
+        // wrapper is left closed with no active connections on the listener.
+        const firstClosed = Promise.withResolvers();
+        const first = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: listener.port,
+          socket: {
+            open() {},
+            data() {},
+            close() { firstClosed.resolve(); },
+            error() {},
+          },
+        });
+        await acceptedOpen.promise;
+        first.end();
+        await acceptedClosed.promise;
+        await firstClosed.promise;
+        await new Promise((r) => setImmediate(r));
+        console.log("STEP1");
+
+        // Reuse the closed server-accepted wrapper as the handle for an
+        // outbound node:net connect.
+        const outboundResult = Promise.withResolvers();
+        let outboundData = "";
+        const outbound = new net.Socket();
+        outbound._handle = accepted;
+        outbound.on("data", (d) => {
+          outboundData += d.toString();
+          if (outboundData.includes("target-hello")) outboundResult.resolve("connected+data");
+        });
+        outbound.on("error", (e) => outboundResult.resolve("error:" + (e && e.code)));
+        outbound.on("close", () => outboundResult.resolve("closed:" + outboundData));
+        outbound.connect(target.port, "127.0.0.1");
+        console.log("STEP2:" + (await outboundResult.promise));
+
+        // The original listener still dispatches to its own handlers.
+        const verify = Promise.withResolvers();
+        const verifyClient = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: listener.port,
+          socket: {
+            open() {},
+            data(_s, buf) { verify.resolve(buf.toString()); },
+            close() {},
+            error() {},
+          },
+        });
+        await secondAccepted.promise;
+        console.log("STEP3:" + (await verify.promise));
+
+        outbound.destroy();
+        verifyClient.end();
+        console.log("DONE");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 20_000,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("STEP1\nSTEP2:connected+data\nSTEP3:second-accept\nDONE\n");
+  expect(exitCode).toBe(0);
+  void stderr;
+});

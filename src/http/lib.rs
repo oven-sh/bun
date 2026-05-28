@@ -211,6 +211,7 @@ pub struct Flags {
     /// Set after the first H3 retry so a stale-session/GOAWAY race retries
     /// once on a fresh connection but never loops.
     pub h3_retried: bool,
+    pub is_node_http_client: bool,
 }
 
 impl Default for Flags {
@@ -233,6 +234,7 @@ impl Default for Flags {
             force_http1: false,
             force_http3: false,
             h3_retried: false,
+            is_node_http_client: false,
         }
     }
 }
@@ -2261,7 +2263,8 @@ impl<'a> HTTPClient<'a> {
                 header_count += 1;
             }
         } else if let Some(content_length) = original_content_length
-            && matches!(bun_core::parse_unsigned::<usize>(content_length, 10), Ok(0))
+            && (self.flags.is_node_http_client
+                || matches!(bun_core::parse_unsigned::<usize>(content_length, 10), Ok(0)))
         {
             request_headers_buf[header_count] =
                 picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, content_length);

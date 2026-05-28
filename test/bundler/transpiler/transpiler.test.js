@@ -226,7 +226,9 @@ describe("Bun.Transpiler", () => {
 
       // The exact fuzz repro: ts loader, dead-code elimination, trailing \r.
       const dce = new Bun.Transpiler({ loader: "ts", target: "browser", deadCodeElimination: true });
-      expect(dce.transformSync("if(l)function f(ag): g;\r\nfor (g in {}) {}\r")).toBe("if (l)\n  ;\nfor (g in {}) {}\n");
+      expect(dce.transformSync("if(l)function f(ag): g;\r\nfor (g in {}) {}\r")).toBe(
+        "if (l)\n  ;\nfor (g in {}) {}\n",
+      );
     });
 
     it("export default interface that is not an interface declaration does not crash", () => {

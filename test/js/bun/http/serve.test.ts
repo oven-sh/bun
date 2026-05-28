@@ -1131,7 +1131,7 @@ it("does not write body bytes for null body statuses", async () => {
     });
 
     const received: Buffer[] = [];
-    const { resolve, promise } = Promise.withResolvers<void>();
+    const { resolve, reject, promise } = Promise.withResolvers<void>();
     await using connection = await Bun.connect({
       hostname: "127.0.0.1",
       port: server.port,
@@ -1141,6 +1141,9 @@ it("does not write body bytes for null body statuses", async () => {
         },
         end() {
           resolve();
+        },
+        error(socket, error) {
+          reject(error);
         },
         close() {
           resolve();

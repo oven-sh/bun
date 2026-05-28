@@ -1970,6 +1970,9 @@ it("keeps database handles working when many Workers open databases concurrently
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout.trim()).toBe(JSON.stringify({ workers: ["ok", "ok", "ok", "ok"], main: 42 }));
-  expect(exitCode).toBe(0);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ workers: ["ok", "ok", "ok", "ok"], main: 42 }),
+    stderr: "",
+    exitCode: 0,
+  });
 }, 30000);

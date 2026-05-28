@@ -3858,13 +3858,13 @@ test.concurrent(
     // preinstall must stay blocked even though the alias matches an entry in the
     // root's trustedDependencies.
     expect(out).toContain("Blocked 1 postinstall");
+    expect(await exited).toBe(0);
     expect(await exists(join(packageDir, "node_modules", "trusted-native-addon", "preinstall.txt"))).toBeFalse();
     expect(
       await exists(
         join(packageDir, "node_modules", "middle", "node_modules", "trusted-native-addon", "preinstall.txt"),
       ),
     ).toBeFalse();
-    expect(await exited).toBe(0);
 
     // The same tarball declared by the root itself under the trusted alias still
     // runs its lifecycle scripts.
@@ -3895,7 +3895,7 @@ test.concurrent(
     out = await stdout.text();
     expect(err).not.toContain("error:");
     expect(out).not.toContain("Blocked");
-    expect(await exists(join(packageDir, "node_modules", "trusted-native-addon", "preinstall.txt"))).toBeTrue();
     expect(await exited).toBe(0);
+    expect(await exists(join(packageDir, "node_modules", "trusted-native-addon", "preinstall.txt"))).toBeTrue();
   },
 );

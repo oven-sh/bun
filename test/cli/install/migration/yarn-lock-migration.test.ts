@@ -1515,7 +1515,8 @@ lodash@^4.17.21:
     stdin: "ignore",
   });
 
-  const [rejectedStderr, rejectedExitCode] = await Promise.all([
+  const [rejectedStdout, rejectedStderr, rejectedExitCode] = await Promise.all([
+    new Response(rejectedResult.stdout).text(),
     new Response(rejectedResult.stderr).text(),
     rejectedResult.exited,
   ]);
@@ -1558,7 +1559,8 @@ lodash@^4.17.21:
     stdin: "ignore",
   });
 
-  const [allowedStderr, allowedExitCode] = await Promise.all([
+  const [allowedStdout, allowedStderr, allowedExitCode] = await Promise.all([
+    new Response(allowedResult.stdout).text(),
     new Response(allowedResult.stderr).text(),
     allowedResult.exited,
   ]);

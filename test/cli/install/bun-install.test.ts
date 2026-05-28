@@ -9412,7 +9412,7 @@ it("does not extract a local file: tarball outside the temp dir for a dependency
   expect(await exists(join(root, "package.json"))).toBe(false);
   expect(await exists(join(root, "index.js"))).toBe(false);
   // The unsafe alias is rejected as an install folder name and nothing is installed.
-  expect(err).toMatch(/Invalid dependency name|is not a valid install folder name/);
+  expect(err).toContain('Invalid dependency name "../../../../../.."');
   expect(out).not.toContain("1 package installed");
   expect(exitCode).not.toBe(0);
 

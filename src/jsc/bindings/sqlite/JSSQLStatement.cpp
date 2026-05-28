@@ -721,7 +721,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             // We can't have two properties with the same name, so we use validColumns to track this.
             auto preCount = columnNames->size();
             columnNames->add(
-                Identifier::fromString(vm, WTF::String::fromUTF8({ name, len })));
+                Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), len })));
             auto curCount = columnNames->size();
 
             if (preCount != curCount) {
@@ -774,7 +774,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         if (len == 0)
             break;
 
-        const auto key = Identifier::fromString(vm, WTF::String::fromUTF8({ name, len }));
+        const auto key = Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), len }));
 
         JSC::JSValue primitive = JSC::jsUndefined();
         auto decl = sqlite3_column_decltype(stmt, i);
@@ -2559,7 +2559,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementToStringFunction, (JSC::JSGlobalObject * 
         RELEASE_AND_RETURN(scope, JSValue::encode(jsEmptyString(vm)));
     }
     size_t length = strlen(string);
-    auto* jsString = JSC::jsString(vm, WTF::String::fromUTF8({ string, length }));
+    auto* jsString = JSC::jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(string), length }));
     sqlite3_free(string);
     RELEASE_AND_RETURN(scope, JSValue::encode(jsString));
 }

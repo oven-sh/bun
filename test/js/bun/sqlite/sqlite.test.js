@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-import { readdirSync, realpathSync } from "fs";
+import { readdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -1797,6 +1797,62 @@ it("decodes non-UTF-8 TEXT leniently and consistently across the 64-byte boundar
   // Valid UTF-8 short strings are unaffected.
   expect(q(Buffer.from("héllo")).get().t).toBe("héllo");
   expect(q(Buffer.from("👋")).get().t).toBe("👋");
+
+  db.close();
+});
+
+it("decodes non-UTF-8 column names leniently instead of dropping the column", () => {
+  // SQLite does not validate UTF-8 in identifiers, so a database created by an
+  // external tool can have a column name containing raw non-UTF-8 bytes. The
+  // column-name decoder used strict fromUTF8, which returns a null string on any
+  // invalid byte; two such names then both collapsed to "" and collided, silently
+  // dropping one column from every row (and tripping a null-AtomString assertion
+  // in debug builds). Decode leniently to U+FFFD instead.
+  const file = tmpbase + `sqlite-badcols-${Date.now()}-${(Math.random() * 1e9) | 0}.db`;
+
+  const setup = new Database(file, { create: true });
+  // Distinctive, same-length ASCII names so we can binary-patch them in place.
+  setup.run(`CREATE TABLE t ("Xaa" INTEGER, "Ybb" INTEGER)`);
+  setup.run("INSERT INTO t VALUES (1, 2)");
+  setup.close();
+
+  // Replace the ASCII names inside the stored CREATE TABLE text with the same
+  // length but different invalid lead bytes (0xE9, 0xFF) so the two names decode
+  // to distinct replacement strings and must not collide.
+  const buf = readFileSync(file);
+  const patch = (find, replacement) => {
+    const at = buf.indexOf(Buffer.from(find, "latin1"));
+    expect(at).toBeGreaterThanOrEqual(0);
+    Buffer.from(replacement).copy(buf, at);
+  };
+  patch('"Xaa"', [0x22, 0x58, 0xe9, 0x61, 0x22]); // "X\xe9a"
+  patch('"Ybb"', [0x22, 0x59, 0xff, 0x62, 0x22]); // "Y\xffb"
+  writeFileSync(file, buf);
+
+  const db = new Database(file);
+  const q = db.query("SELECT * FROM t");
+  const row = q.get();
+
+  // Both columns survive with distinct, leniently-decoded names; no data is lost.
+  expect(q.columnNames).toEqual(["X\uFFFDa", "Y\uFFFDb"]);
+  expect(row).toEqual({ "X\uFFFDa": 1, "Y\uFFFDb": 2 });
+
+  db.close();
+});
+
+it("expands bound non-UTF-8 values in Statement#toString instead of returning an empty string", () => {
+  const db = new Database(":memory:");
+  const stmt = db.prepare("SELECT ? AS x");
+
+  // A lone surrogate binds via sqlite3_bind_text16 and is stored by SQLite as
+  // invalid UTF-8. sqlite3_expanded_sql() then returns those bytes, which the
+  // strict decoder turned into a null string -> the whole toString() became "".
+  stmt.get("\uD800");
+  expect(String(stmt)).toBe("SELECT '\uFFFD\uFFFD\uFFFD' AS x");
+
+  // Valid values still round-trip.
+  stmt.get("ok");
+  expect(String(stmt)).toBe("SELECT 'ok' AS x");
 
   db.close();
 });

@@ -2055,11 +2055,17 @@ impl<const SSL: bool> WebSocket<SSL> {
         this_ref.deflate = None;
         if let Some(handler) = this_ref.initial_data_handler.take() {
             // SAFETY: the handler box was allocated via `heap::into_raw` in
-            // init()/init_with_tunnel() and is freed only by the queued
+            // init()/init_with_tunnel() and is normally freed by the queued
             // microtask in `InitialDataHandler::handle`; this field still
             // being set means that microtask has not run yet, so the box is
             // live and the raw field write does not alias any borrow.
             unsafe { core::ptr::addr_of_mut!((*handler.as_ptr()).adopted).write(None) };
+            if this_ref.global_this.bun_vm().is_shutting_down() {
+                // SAFETY: same allocation as above; the VM is shutting down, so
+                // the queued microtask can no longer run and this is the sole
+                // remaining owner of the box.
+                drop(unsafe { bun_core::heap::take(handler.as_ptr()) });
+            }
         }
         bun_core::scoped_log!(alloc, "destroy({}) = {:p}", Self::ALLOC_TYPE_NAME, this);
         // SAFETY: this was allocated via heap::alloc in init/init_with_tunnel

@@ -1377,6 +1377,18 @@ folded: >
           expect(() => YAML.parse("?\tkey:\n")).toThrow(TAB_ERR);
         });
 
+        test("rejects tab before sibling that immediately follows block-scalar body", () => {
+          // The block-scalar body scanner is the third leading-whitespace
+          // consumer (after scan() and fold_lines()) and must taint
+          // tab_after_indent on the line that terminates the body.
+          expect(() => YAML.parse("- |\n  x\n\t- y\n")).toThrow(TAB_ERR);
+          expect(() => YAML.parse("a: |\n  x\n\tb: y\n")).toThrow(TAB_ERR);
+          expect(() => YAML.parse("? |\n  x\n\t: y\n")).toThrow(TAB_ERR);
+          expect(() => YAML.parse("a: >\n  x\n\tb: y\n")).toThrow(TAB_ERR);
+          // Tab in more-indented body content is valid (part of the scalar).
+          expect(YAML.parse("- |\n  x\n  \ty\n")).toEqual(["x\n\ty\n"]);
+        });
+
         test("rejects tab before alias/flow as implicit-key sibling", () => {
           expect(() => YAML.parse("&x a: 1\n\t*x : 2\n")).toThrow(TAB_ERR);
           expect(() => YAML.parse("a: 1\n\t[b]: 2\n")).toThrow(TAB_ERR);

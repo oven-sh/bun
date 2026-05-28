@@ -4039,15 +4039,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                     }
 
-                    let r = self.parse_block_mapping(
+                    break 'node self.parse_block_mapping(
                         key,
                         mapping_start,
                         mapping_indent,
                         mapping_line,
                         opts.flow_pair_allowed,
-                    );
-
-                    break 'node r?;
+                    )?;
                 }
 
                 TokenData::MappingValue => {
@@ -5015,11 +5013,17 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                 self.line_indent = indent;
                                 let nc = Enc::wide(self.next());
                                 ctx.cur_more_indented = matches!(nc, 0x20 | 0x09);
+                                if nc == 0x09 {
+                                    self.tab_after_indent = true;
+                                }
                                 __c = nc;
                                 break;
                             }
                             other => {
                                 ctx.cur_more_indented = other == 0x09;
+                                if other == 0x09 {
+                                    self.tab_after_indent = true;
+                                }
                                 __c = other;
                                 break;
                             }

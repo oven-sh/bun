@@ -1064,9 +1064,7 @@ impl Response {
         if !matches!(response.body.get().value.get(), BodyValue::Empty)
             && matches!(response.init.get().status_code, 101 | 103 | 204 | 205 | 304)
         {
-            return Err(global_this.throw_type_error(format_args!(
-                "Failed to execute 'json' on 'Response': Response with null body status cannot have body",
-            )));
+            response.body.get().reset();
         }
 
         let headers_ref = response.get_or_create_headers(global_this)?;
@@ -1292,16 +1290,10 @@ impl Response {
             return Err(bun_jsc::JsError::Thrown);
         }
 
-        if !arguments[0].is_undefined_or_null()
-            && matches!(init.status_code, 101 | 103 | 204 | 205 | 304)
-        {
-            return Err(global_this.throw_type_error(format_args!(
-                "Failed to construct 'Response': Response with null body status cannot have body",
-            )));
-        }
-
         let body: Body = 'brk: {
-            if arguments[0].is_undefined_or_null() {
+            if arguments[0].is_undefined_or_null()
+                || matches!(init.status_code, 101 | 103 | 204 | 205 | 304)
+            {
                 break 'brk Body::new(BodyValue::Null);
             }
             // PORT NOTE: `Body::extract` is a free fn re-exported as `body::extract`.

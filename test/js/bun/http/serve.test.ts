@@ -1107,7 +1107,7 @@ describe("status code text", () => {
       await runTest(
         {
           fetch(req) {
-            return new Response([204, 205, 304].includes(+code) ? null : "hey", { status: +code });
+            return new Response("hey", { status: +code });
           },
         },
         async server => {
@@ -1117,6 +1117,42 @@ describe("status code text", () => {
         },
       );
     });
+  }
+});
+
+it("does not write body bytes for null body statuses", async () => {
+  for (const status of [204, 205, 304]) {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response("hey", { status });
+      },
+    });
+
+    const received: Buffer[] = [];
+    const { resolve, promise } = Promise.withResolvers<void>();
+    await using connection = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        data(socket, data) {
+          received.push(data);
+        },
+        end() {
+          resolve();
+        },
+        close() {
+          resolve();
+        },
+      },
+    });
+    connection.write(`GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
+    connection.flush();
+    await promise;
+    const raw = Buffer.concat(received).toString();
+    expect(raw).toStartWith(`HTTP/1.1 ${status} `);
+    expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("");
   }
 });
 

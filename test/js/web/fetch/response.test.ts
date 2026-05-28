@@ -49,7 +49,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (6.86 KB) {
+    "Response (6.71 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -177,22 +177,21 @@ describe("clone()", () => {
   });
 });
 
-test("rejects a non-null body when the status is a null-body status (204, 205, 304)", () => {
+test("ignores a non-null body when the status is a null-body status (204, 205, 304)", async () => {
   for (const status of [204, 205, 304]) {
-    // A non-null body with a null-body status must throw a TypeError per the Fetch spec.
-    expect(() => new Response("hey", { status })).toThrow(TypeError);
-    expect(() => new Response("", { status })).toThrow(TypeError);
-    expect(() => new Response(new Uint8Array([1, 2, 3]), { status })).toThrow(TypeError);
+    expect(new Response("hey", { status }).body).toBeNull();
+    expect(new Response("", { status }).body).toBeNull();
+    expect(new Response(new Uint8Array([1, 2, 3]), { status }).body).toBeNull();
+    expect(await new Response("hey", { status }).text()).toBe("");
 
-    // Response.json() always produces a body, so it must also reject these statuses.
-    expect(() => Response.json({ ok: true }, { status })).toThrow(TypeError);
+    expect(Response.json({ ok: true }, { status }).body).toBeNull();
 
-    // The legitimate case still works: null/undefined body with the same status.
+    expect(new Response("hey", { status }).status).toBe(status);
     expect(new Response(null, { status }).status).toBe(status);
     expect(new Response(undefined, { status }).status).toBe(status);
   }
 
   // Bodies remain allowed for ordinary statuses.
-  expect(new Response("hey", { status: 200 }).status).toBe(200);
+  expect(new Response("hey", { status: 200 }).body).not.toBeNull();
   expect(Response.json({ ok: true }, { status: 201 }).status).toBe(201);
 });

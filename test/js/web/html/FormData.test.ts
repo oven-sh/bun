@@ -255,6 +255,51 @@ describe("FormData", () => {
     }
   });
 
+  // RFC 2045 §5.1 / RFC 7231 §3.1.1.1: media type/subtype and parameter
+  // attribute names are case-insensitive; the boundary VALUE is byte-exact.
+  describe("Content-Type case-insensitivity", () => {
+    const body = '--X\r\nContent-Disposition: form-data; name="a"\r\n\r\nhello\r\n--X--\r\n';
+    for (const C of [Response, Request] as const) {
+      const make = (b: string, ct: string) =>
+        C === Response
+          ? new Response(b, { headers: { "Content-Type": ct } })
+          : new Request("http://x/", { method: "POST", body: b, headers: { "Content-Type": ct } });
+
+      describe.each([
+        "multipart/form-data; boundary=X",
+        "Multipart/Form-Data; boundary=X",
+        "multipart/form-data; Boundary=X",
+        "Multipart/Form-Data; Boundary=X",
+        "MULTIPART/FORM-DATA; BOUNDARY=X",
+      ])(`${C.name}: %s`, ct => {
+        it("parses", async () => {
+          const fd = await make(body, ct).formData();
+          expect(fd.get("a")).toBe("hello");
+          expect([...fd.keys()]).toEqual(["a"]);
+        });
+      });
+
+      it(`${C.name}: boundary value is matched case-sensitively`, async () => {
+        const bodyAbC = '--AbC\r\nContent-Disposition: form-data; name="a"\r\n\r\nhello\r\n--AbC--\r\n';
+        const fd = await make(bodyAbC, "multipart/form-data; Boundary=AbC").formData();
+        expect(fd.get("a")).toBe("hello");
+        expect(make(bodyAbC, "multipart/form-data; boundary=abc").formData()).rejects.toThrow();
+      });
+
+      it(`${C.name}: application/x-www-form-urlencoded matches case-insensitively`, async () => {
+        for (const ct of ["application/x-www-form-urlencoded", "Application/X-WWW-Form-URLEncoded"]) {
+          const fd = await make("a=hello&b=2", ct).formData();
+          expect(fd.get("a")).toBe("hello");
+          expect(fd.get("b")).toBe("2");
+        }
+      });
+
+      it(`${C.name}: unrelated content-type still rejects`, async () => {
+        expect(make(body, "text/plain").formData()).rejects.toThrow();
+      });
+    }
+  });
+
   test("FormData.from (URLSearchParams)", () => {
     expect(
       // @ts-expect-error

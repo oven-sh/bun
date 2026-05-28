@@ -5788,10 +5788,18 @@ pub mod form_data {
 
     impl Encoding {
         pub fn get(content_type: &[u8]) -> Option<Encoding> {
-            if crate::strings_impl::includes(content_type, b"application/x-www-form-urlencoded") {
+            // RFC 2045 §5.1 / RFC 7231 §3.1.1.1: media type and subtype are
+            // case-insensitive.
+            if crate::strings_impl::contains_case_insensitive_ascii(
+                content_type,
+                b"application/x-www-form-urlencoded",
+            ) {
                 return Some(Encoding::URLEncoded);
             }
-            if !crate::strings_impl::includes(content_type, b"multipart/form-data") {
+            if !crate::strings_impl::contains_case_insensitive_ascii(
+                content_type,
+                b"multipart/form-data",
+            ) {
                 return None;
             }
             let boundary = get_boundary(content_type)?;
@@ -5813,11 +5821,17 @@ pub mod form_data {
         loop {
             let semi = index_of_unquoted_semicolon(rest)?;
             rest = &rest[semi + 1..];
-            let Some(begin) =
-                crate::strings_impl::trim_left(rest, b" \t").strip_prefix(b"boundary=")
-            else {
+            let param = crate::strings_impl::trim_left(rest, b" \t");
+            // RFC 2045 §5.1: parameter attribute names are case-insensitive;
+            // the `=` value is matched byte-exact (the boundary delimiter in
+            // the body must match it verbatim).
+            let Some(eq) = crate::strings_impl::index_of_char(param, b'=') else {
                 continue;
             };
+            if !param[..eq].eq_ignore_ascii_case(b"boundary") {
+                continue;
+            }
+            let begin = &param[eq + 1..];
             if begin.is_empty() {
                 return None;
             }

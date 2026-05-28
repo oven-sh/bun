@@ -132,8 +132,7 @@ impl HashAlgorithm for XxHash3 {
     fn hash(seed: u64, input: &[u8]) -> u64 {
         // Runtime-dispatched SIMD xxHash3 (Highway); see
         // src/jsc/bindings/xxhash3.cpp. Output is bit-identical to the xxHash
-        // reference, pinned by the vector suite in src/hash/xxhash.rs and
-        // test/js/bun/util/hash.test.js.
+        // reference, pinned by the vector suite in test/js/bun/util/hash.test.js.
         //
         // Zig wrapper forces a u32 seed (via @truncate) before widening back to
         // XxHash3's native u64 — preserve that truncation.

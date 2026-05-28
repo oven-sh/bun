@@ -13,7 +13,7 @@
 // the same accumulators. The 0..240 byte branches, the merge/avalanche
 // finisher, and the seeded-secret derivation are the reference's scalar code
 // verbatim; they do not depend on vector width. Verified against the xxHash
-// reference test vectors and SMHasher in xxhash.rs.
+// reference test vectors and SMHasher constants in test/js/bun/util/hash.test.js.
 //
 // References (byte-identical constants): vendor/zstd/lib/common/xxhash.h
 // (XXH3_kSecret, PRIME*), and the twox-hash crate this replaces.
@@ -274,7 +274,8 @@ static inline void InitCustomSecret(u8* customSecret, u64 seed64)
 // generic twox-hash Rust codegen and matches Zig's std.hash.XxHash{32,64}.
 //
 // Output is bit-identical to the reference (and the retired twox-hash crate);
-// verified against the vector suite and SMHasher in xxhash.rs.
+// verified against the reference vectors and SMHasher constants in
+// test/js/bun/util/hash.test.js.
 // ---------------------------------------------------------------------------
 
 static inline u32 Rotl32(u32 x, int r) { return (x << r) | (x >> (32 - r)); }

@@ -311,11 +311,20 @@ function ClientRequest(input, options, cb) {
         host = `[${host}]`;
       }
 
-      if (path.startsWith("http://")) {
+      if (path.startsWith("http://") || path.startsWith("https://")) {
         if (!this.hasHeader("Host")) {
           this.setHeader("Host", `${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`);
         }
-        return [path, `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`];
+        const origin = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`;
+        if (path.startsWith("http://")) {
+          return [path, origin];
+        }
+        let target = path;
+        try {
+          const parsed = new URL(path);
+          target = `${parsed.pathname}${parsed.search}`;
+        } catch {}
+        return [target.startsWith("/") ? `${origin}${target}` : `${origin}/${target}`, undefined];
       } else {
         let proxy: string | undefined;
         const pathname = path.startsWith("/") ? path : "/" + path;

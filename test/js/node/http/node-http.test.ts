@@ -2128,6 +2128,7 @@ it("http.request keeps the configured host as the request authority when path is
     await sendRequest("https://other-vhost.example/admin");
     expect(seen).toHaveLength(2);
     expect(seen[1].method).toBe("GET");
+    expect(seen[1].url).toBe("/admin");
     expect(seen[1].host).toBe(authority);
 
     // Ordinary relative paths keep working exactly as before.

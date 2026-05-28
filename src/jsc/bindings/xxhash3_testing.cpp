@@ -41,9 +41,11 @@ BUN_DEFINE_HOST_FUNCTION(Bun__xxhash3_64_forTesting, (JSC::JSGlobalObject * glob
     if (callFrame->argumentCount() > 1) {
         JSC::JSValue seedValue = callFrame->argument(1);
         if (seedValue.isNumber()) {
-            // toBigUInt64 performs ToBigInt, which throws on a Number; take the
-            // integer value directly so a plain-number seed works.
-            seed = static_cast<uint64_t>(seedValue.asNumber());
+            // toBigUInt64 performs ToBigInt, which throws on a Number. ToUint32
+            // is a defined conversion (no float-cast UB for NaN/Inf/negatives)
+            // and matches the u32 truncation Bun.hash.xxHash3 applies anyway.
+            seed = seedValue.toUInt32(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
         } else if (seedValue.isBigInt()) {
             seed = seedValue.toBigUInt64(globalObject);
             RETURN_IF_EXCEPTION(scope, {});

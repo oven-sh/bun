@@ -102,11 +102,6 @@ static inline u64 Swap64(u64 x) { return __builtin_bswap64(x); }
 static inline u64 Rotl64(u64 x, int r) { return (x << r) | (x >> (64 - r)); }
 static inline u64 Xorshift64(u64 v, int shift) { return v ^ (v >> shift); }
 
-static inline u64 Mult32to64(u64 a, u64 b)
-{
-    return static_cast<u64>(static_cast<u32>(a)) * static_cast<u64>(static_cast<u32>(b));
-}
-
 // 64x64 -> 128, fold halves. Uses the compiler's 128-bit integer.
 static inline u64 Mul128Fold64(u64 lhs, u64 rhs)
 {

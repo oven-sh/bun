@@ -3505,34 +3505,6 @@ pub mod serializer {
                 ));
             }
         }
-
-        // SECURITY: lifecycle script text for installed dependencies must come
-        // from the installed package's own package.json
-        // (`Scripts::fill_from_package_json`), never from whatever a (possibly
-        // tampered) binary lockfile claims. Clear the deserialized scripts for
-        // everything except the root and workspace packages — those mirror
-        // package.json files inside the project itself and feed the workspace
-        // script list / meta hash — so `Scripts::get_list` falls back to the
-        // package.json path for dependencies.
-        {
-            let clear_scripts: Vec<bool> = sliced
-                .items::<"resolution", ResolutionType<SemverIntType>>()
-                .iter()
-                .map(|resolution| {
-                    !matches!(
-                        resolution.tag,
-                        ResolutionTag::Root | ResolutionTag::Workspace
-                    )
-                })
-                .collect();
-            let scripts: &mut [Scripts] = sliced.items_mut::<"scripts", Scripts>();
-            for (script, clear) in scripts.iter_mut().zip(clear_scripts) {
-                if clear {
-                    *script = Scripts::default();
-                }
-            }
-        }
-
         Ok(())
     }
 }

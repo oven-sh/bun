@@ -176,11 +176,15 @@ impl SSLConfigFromJs for SSLConfig {
             as i32;
         result.request_cert = generated.request_cert as i32;
         result.secure_options = generated.secure_options;
+        result.ssl_min_version = generated.ssl_min_version;
+        result.ssl_max_version = generated.ssl_max_version;
         any = any
             || result.low_memory_mode
             || generated.reject_unauthorized.is_some()
             || generated.request_cert
-            || result.secure_options != 0;
+            || result.secure_options != 0
+            || result.ssl_min_version != 0
+            || result.ssl_max_version != 0;
 
         result.ca = handle_file_for_field(global, "ca", &generated.ca)?;
         result.cert = handle_file_for_field(global, "cert", &generated.cert)?;

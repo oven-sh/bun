@@ -474,6 +474,7 @@ impl PostgresSQLConnection {
             bun_uws::SocketKind::PostgresTls,
             ssl_ctx,
             sni,
+            true, // is_client
             ext_size,
             ext_size,
         ) else {

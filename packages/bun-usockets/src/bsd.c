@@ -1261,6 +1261,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
     struct sockaddr_un server_address;
     size_t addrlen = 0;
     if (bsd_create_unix_socket_address(path, len, &dirfd_workaround_for_unix_path_len, &server_address, &addrlen)) {
+        /* The path could not be expressed as a sockaddr_un (the basename
+         * exceeds sun_path even with the dirfd workaround); surface the errno
+         * so the caller can report something better than a codeless failure. */
+        if (error && errno) *error = errno;
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1599,10 +1603,29 @@ static int is_loopback(struct sockaddr_storage *sockaddr) {
 }
 #endif
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, int options) {
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr_storage *local_addr, int options) {
     LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addr->ss_family, SOCK_STREAM, 0, NULL);
     if (fd == LIBUS_SOCKET_ERROR) {
         return LIBUS_SOCKET_ERROR;
+    }
+
+    /* Bind to the requested local address/port before connecting (the
+     * `localAddress`/`localPort` connect options). A failure here - typically
+     * EADDRINUSE or EADDRNOTAVAIL - fails the connect with that errno. */
+    if (local_addr) {
+        socklen_t local_len = local_addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+        if (bind(fd, (struct sockaddr *) local_addr, local_len)) {
+#ifdef _WIN32
+            int bind_err = WSAGetLastError();
+            bsd_close_socket(fd);
+            WSASetLastError(bind_err);
+#else
+            int bind_err = errno;
+            bsd_close_socket(fd);
+            errno = bind_err;
+#endif
+            return LIBUS_SOCKET_ERROR;
+        }
     }
 
 #ifdef _WIN32

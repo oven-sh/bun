@@ -259,6 +259,16 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
  * handshake/secureConnection event. openssl.c re-enters here once that
  * graceful path is done. */
 struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code, void *reason) {
+  if (s->ssl && s->ssl_in_use) {
+    /* A JS callback running from inside SSL_do_handshake/SSL_read (ALPN, SNI,
+     * keylog, ...) destroyed this socket. Closing now frees the SSL and
+     * releases context state BoringSSL is still reading on the stack; defer
+     * the close to the SSL driver's epilogue instead, preserving the close
+     * code so a requested reset still resets. */
+    s->ssl_pending_detach = 1;
+    s->ssl_pending_close_code = (unsigned char) code;
+    return s;
+  }
     if (!us_socket_is_closed(s)) {
         struct us_loop_t *loop = s->group->loop;
 

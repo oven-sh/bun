@@ -1,7 +1,9 @@
 use core::ffi::{c_char, c_int, c_long, c_void};
 
+use crate::api::bun_secure_context::SecureContext;
 use bun_boringssl_sys as boringssl;
 use bun_core::{String as BunString, ZigString, strings};
+use bun_jsc::JsClass as _;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, ZigStringJsc as _,
 };
@@ -15,7 +17,7 @@ use crate::api::bun_x509 as X509;
 // ──────────────────────────────────────────────────────────────────────────
 #[allow(non_camel_case_types, non_upper_case_globals, dead_code)]
 pub mod ffi {
-    use super::boringssl::{SSL, SSL_CTX, X509, struct_stack_st_X509};
+    use super::boringssl::{SSL, SSL_CTX, X509, X509_STORE, X509_STORE_CTX, struct_stack_st_X509};
     use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 
     // Re-export the one decl whose `*const c_char` NUL-terminated arg keeps a
@@ -173,6 +175,10 @@ pub mod ffi {
             out_len: &mut c_uint,
         );
         pub safe fn SSL_get_ex_data(ssl: &SSL, idx: c_int) -> *mut c_void;
+        /// Save/restore the per-loop BIO routing state around in-handshake JS
+        /// callbacks (defined in usockets' openssl.c).
+        pub safe fn us_internal_ssl_loop_state_save(ssl: &SSL, out5: *mut *mut c_void);
+        pub safe fn us_internal_ssl_loop_state_restore(saved5: *mut *mut c_void);
         pub safe fn SSL_renegotiate(ssl: &SSL) -> c_int;
         pub safe fn SSL_set_renegotiate_mode(
             ssl: &SSL,
@@ -188,6 +194,22 @@ pub mod ffi {
         pub safe fn SSL_set_ex_data(ssl: &SSL, idx: c_int, data: *mut c_void) -> c_int;
         // Returns the borrowed parent CTX (always non-null for a live `SSL*`).
         pub safe fn SSL_get_SSL_CTX(ssl: &SSL) -> *mut SSL_CTX;
+        // Swaps the cert/key/chain (and session-related state) this connection
+        // serves to those of `ctx`; takes its own reference to `ctx`.
+        pub fn SSL_set_SSL_CTX(ssl: *mut SSL, ctx: *mut SSL_CTX) -> *mut SSL_CTX;
+        // Apply `ctx`'s leaf certificate / private key / extra chain directly
+        // to the connection - SSL_set_SSL_CTX alone does not retarget the
+        // certificate once ClientHello processing has reached ALPN selection.
+        pub fn SSL_CTX_get0_certificate(ctx: *const SSL_CTX) -> *mut core::ffi::c_void;
+        pub fn SSL_CTX_get0_privatekey(ctx: *const SSL_CTX) -> *mut core::ffi::c_void;
+        pub fn SSL_use_certificate(ssl: *mut SSL, x509: *mut core::ffi::c_void)
+        -> core::ffi::c_int;
+        pub fn SSL_use_PrivateKey(ssl: *mut SSL, pkey: *mut core::ffi::c_void) -> core::ffi::c_int;
+        pub fn SSL_CTX_get0_chain_certs(
+            ctx: *const SSL_CTX,
+            out_chain: *mut *mut core::ffi::c_void,
+        ) -> core::ffi::c_int;
+        pub fn SSL_set1_chain(ssl: *mut SSL, chain: *mut core::ffi::c_void) -> core::ffi::c_int;
         // Atomic refcount bump on a live `SSL_CTX*`; opaque-ZST ref ⇒ no
         // caller-side precondition (route via `SSL_CTX::opaque_ref`).
         pub safe fn SSL_CTX_up_ref(ctx: &SSL_CTX) -> c_int;
@@ -208,6 +230,35 @@ pub mod ffi {
             >,
             arg: *mut c_void,
         );
+        // Returns the borrowed cert store of a live `SSL_CTX*`.
+        pub safe fn SSL_CTX_get_cert_store(ctx: &SSL_CTX) -> *mut X509_STORE;
+        // Emptiness probe for a cert store: `get0_objects` borrows the
+        // object stack and `OPENSSL_sk_num(NULL)` returns 0.
+        pub fn X509_STORE_get0_objects(store: *mut X509_STORE) -> *mut c_void;
+        pub fn OPENSSL_sk_num(sk: *const c_void) -> usize;
+        // The process-wide default root store; up-refs before returning, so
+        // the caller owns a reference it must release with X509_STORE_free.
+        pub fn us_get_shared_default_ca_store() -> *mut X509_STORE;
+        pub fn X509_STORE_free(store: *mut X509_STORE);
+        // X509_STORE_CTX lifecycle for issuer lookups; `new` allocates,
+        // `init` borrows the store, `free` releases. Used to extend the peer
+        // certificate chain through the local trust store.
+        pub fn X509_STORE_CTX_new() -> *mut X509_STORE_CTX;
+        pub fn X509_STORE_CTX_init(
+            ctx: *mut X509_STORE_CTX,
+            store: *mut X509_STORE,
+            x509: *mut X509,
+            chain: *mut struct_stack_st_X509,
+        ) -> c_int;
+        pub fn X509_STORE_CTX_free(ctx: *mut X509_STORE_CTX);
+        // Writes a +1 X509 reference to `*issuer` on success (> 0).
+        pub fn X509_STORE_CTX_get1_issuer(
+            issuer: *mut *mut X509,
+            ctx: *mut X509_STORE_CTX,
+            x: *mut X509,
+        ) -> c_int;
+        // Returns X509_V_OK (0) when `issuer` could have issued `subject`.
+        pub fn X509_check_issued(issuer: *mut X509, subject: *mut X509) -> c_int;
     }
 }
 use crate::node::StringOrBuffer;
@@ -448,8 +499,117 @@ pub fn get_peer_certificate(
         return Ok(JSValue::UNDEFINED);
     }
 
-    // TODO: we need to support the non abbreviated version of this
-    Ok(JSValue::UNDEFINED)
+    // The detailed form returns the whole chain the peer presented, each
+    // certificate linking to its issuer through `issuerCertificate`, the way
+    // Node's getPeerCertificate(true) does. SSL_get_peer_cert_chain includes
+    // the leaf on the client side but not on the server side, where the +1
+    // peer certificate above is the leaf instead.
+    let first_obj = X509::to_js(boringssl::X509::opaque_mut(first_cert), global)?;
+    // Link each certificate to its predecessor immediately so every object in
+    // the chain is reachable from the stack-rooted `first_obj` before the next
+    // `X509::to_js` allocation can trigger a GC - a heap-backed Vec<JSValue>
+    // is not stack-scanned.
+    let mut prev_obj: JSValue = first_obj;
+    let mut last_cert: *mut boringssl::X509 = first_cert;
+    if !cert_chain.is_null() {
+        let mut i: usize = if cert.is_null() { 1 } else { 0 };
+        loop {
+            let next =
+                ffi::sk_X509_value(boringssl::struct_stack_st_X509::opaque_ref(cert_chain), i);
+            if next.is_null() {
+                break;
+            }
+            let obj = X509::to_js(boringssl::X509::opaque_mut(next), global)?;
+            prev_obj.put(global, b"issuerCertificate", obj);
+            prev_obj = obj;
+            last_cert = next;
+            i += 1;
+        }
+    }
+
+    // Extend the chain through the local trust store until a self-issued
+    // certificate is reached, the way Node's getPeerCertificate(true) walks
+    // X509_STORE_CTX_get1_issuer to surface the root that completed
+    // verification even though the peer never sent it.
+    let mut last_is_self_issued = false;
+    // SAFETY: the store ctx is created, initialized against the live SSL_CTX's
+    // store, used only within this scope and freed before returning; every
+    // issuer returned by get1_issuer is a +1 reference collected in `extras`
+    // and released after its fields have been copied into JS values and the
+    // terminal self-issued check has run.
+    unsafe {
+        let mut store = ffi::SSL_CTX_get_cert_store(boringssl::SSL_CTX::opaque_ref(
+            ffi::SSL_get_SSL_CTX(boringssl::SSL::opaque_ref(ssl_ptr)),
+        ));
+        // A context built without an explicit `ca` (and without requestCert,
+        // which installs the shared roots) carries an empty store and the
+        // issuer walk would stop at whatever the peer sent. Fall back to the
+        // process-wide default roots the way Node's per-context store always
+        // contains the bundled roots. The getter up-refs, so the temporary
+        // reference is released after the walk.
+        let mut shared_store: *mut boringssl::X509_STORE = core::ptr::null_mut();
+        if store.is_null() || ffi::OPENSSL_sk_num(ffi::X509_STORE_get0_objects(store)) == 0 {
+            shared_store = ffi::us_get_shared_default_ca_store();
+            if !shared_store.is_null() {
+                store = shared_store;
+            }
+        }
+        let store_ctx = ffi::X509_STORE_CTX_new();
+        if !store_ctx.is_null() {
+            if !store.is_null()
+                && ffi::X509_STORE_CTX_init(
+                    store_ctx,
+                    store,
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                ) == 1
+            {
+                let mut extras: Vec<*mut boringssl::X509> = Vec::new();
+                // Cap the walk so a cyclic store cannot loop forever.
+                while extras.len() < 16 && ffi::X509_check_issued(last_cert, last_cert) != 0 {
+                    let mut issuer: *mut boringssl::X509 = core::ptr::null_mut();
+                    if ffi::X509_STORE_CTX_get1_issuer(&raw mut issuer, store_ctx, last_cert) <= 0
+                        || issuer.is_null()
+                    {
+                        break;
+                    }
+                    match X509::to_js(boringssl::X509::opaque_mut(issuer), global) {
+                        Ok(obj) => {
+                            prev_obj.put(global, b"issuerCertificate", obj);
+                            prev_obj = obj;
+                        }
+                        Err(e) => {
+                            boringssl::X509_free(issuer);
+                            for extra in extras {
+                                boringssl::X509_free(extra);
+                            }
+                            ffi::X509_STORE_CTX_free(store_ctx);
+                            if !shared_store.is_null() {
+                                ffi::X509_STORE_free(shared_store);
+                            }
+                            return Err(e);
+                        }
+                    }
+                    extras.push(issuer);
+                    last_cert = issuer;
+                }
+                last_is_self_issued = ffi::X509_check_issued(last_cert, last_cert) == 0;
+                for extra in extras {
+                    boringssl::X509_free(extra);
+                }
+            }
+            ffi::X509_STORE_CTX_free(store_ctx);
+        }
+        if !shared_store.is_null() {
+            ffi::X509_STORE_free(shared_store);
+        }
+    }
+
+    // A self-issued terminal certificate references itself, like Node.
+    if last_is_self_issued {
+        prev_obj.put(global, b"issuerCertificate", prev_obj);
+    }
+    Ok(first_obj)
 }
 
 pub fn get_certificate(
@@ -690,6 +850,50 @@ pub fn get_tls_peer_finished_message(
     let result_size = unsafe { ffi::SSL_get_peer_finished(ssl_ptr, buffer_ptr, buffer_size) };
     debug_assert!(result_size == size);
     Ok(buffer)
+}
+
+/// `tlsSocket.setKeyCert(secureContext)` - serve this connection's identity
+/// from the given context: SSL_set_SSL_CTX swaps the cert/key/chain used for
+/// the rest of the handshake (Node calls it from ALPNCallback / SNICallback).
+pub fn set_key_cert(this: &This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    if this.socket.get().is_detached() {
+        return Ok(JSValue::UNDEFINED);
+    }
+    let args = frame.arguments_old::<1>();
+    if args.len < 1 {
+        return Err(global.throw(format_args!("setKeyCert requires a SecureContext")));
+    }
+    let Some(sc) = SecureContext::from_js(args.ptr[0]) else {
+        return Err(global.throw(format_args!("setKeyCert requires a SecureContext")));
+    };
+    let Some(ssl_ptr) = this.socket.get().ssl() else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: `sc` is a live SecureContext; borrow() hands back an owned
+    // reference and SSL_set_SSL_CTX takes its own, so release the temporary.
+    unsafe {
+        let ctx = (*sc).borrow();
+        ffi::SSL_set_SSL_CTX(ssl_ptr.cast(), ctx.cast());
+        // SSL_set_SSL_CTX stops retargeting the certificate once ClientHello
+        // processing has reached ALPN selection, and Node supports calling
+        // setKeyCert from ALPNCallback - apply the identity directly.
+        let leaf = ffi::SSL_CTX_get0_certificate(ctx.cast());
+        let pkey = ffi::SSL_CTX_get0_privatekey(ctx.cast());
+        if !leaf.is_null() && !pkey.is_null() {
+            let ok_cert = ffi::SSL_use_certificate(ssl_ptr.cast(), leaf);
+            let ok_key = ffi::SSL_use_PrivateKey(ssl_ptr.cast(), pkey);
+            let mut chain: *mut core::ffi::c_void = core::ptr::null_mut();
+            if ffi::SSL_CTX_get0_chain_certs(ctx.cast(), &raw mut chain) == 1 && !chain.is_null() {
+                let _ = ffi::SSL_set1_chain(ssl_ptr.cast(), chain);
+            }
+            if ok_cert != 1 || ok_key != 1 {
+                boringssl::SSL_CTX_free(ctx.cast());
+                return Err(global.throw(format_args!("setKeyCert failed to apply the context")));
+            }
+        }
+        boringssl::SSL_CTX_free(ctx.cast());
+    }
+    Ok(JSValue::UNDEFINED)
 }
 
 pub fn export_keying_material(

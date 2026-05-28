@@ -23,7 +23,10 @@ pub static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true);
 // If this becomes used in more places, and especially if it can be read by other threads, we may
 // need to store it as a field in the VirtualMachine instead of in a `threadlocal`.
 thread_local! {
-    pub static AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_DEFAULT: Cell<u32> = const { Cell::new(250) };
+    // Node's default is 250ms with a documented floor of 10ms, but the CLI
+    // default in node_options.h is 500ms; the vendored test/common multiplies
+    // the default by 5 (upstream) assuming 500.
+    pub static AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_DEFAULT: Cell<u32> = const { Cell::new(500) };
 }
 
 pub fn get_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
@@ -142,6 +145,7 @@ pub fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
             ref_count: bun_ptr::RefCount::init(),
             protos: JsCell::new(None),
             handlers: Cell::new(None),
+            local_binding: JsCell::new(None),
             // — defaults —
             owned_ssl_ctx: Cell::new(None),
             flags: Cell::new(SocketFlags::default()),

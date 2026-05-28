@@ -220,4 +220,59 @@ pub unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     s
 }
 
+/// A new (resumable) TLS session is ready. BoringSSL's new-session callback
+/// parks the serialized session while `SSL_read`/`SSL_do_handshake` runs;
+/// `ssl_flush_pending_session()` dispatches it here once that stack has
+/// unwound. Mirrors Node's `NewSessionCallback` → `onnewsession` flow. Only
+/// `bun_socket_tls` sockets reach this.
+///
+/// # Safety
+/// `openssl.c` must pass a live, non-null `s` whose ext slot holds a valid
+/// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn us_dispatch_session(s: *mut us_socket_t, data: *const u8, len: c_int) {
+    let s_ref = us_socket_t::opaque_mut(s);
+    if s_ref.kind() != SocketKind::BunSocketTls {
+        return;
+    }
+    type TLSSocket = super::NewSocket<true>;
+    let tls_ptr: *mut TLSSocket = *s_ref.ext::<*mut TLSSocket>();
+    if tls_ptr.is_null() {
+        return;
+    }
+    // SAFETY: `data` points to `len` readable bytes owned by the caller for the
+    // duration of this call.
+    let slice =
+        unsafe { core::slice::from_raw_parts(data, usize::try_from(len).expect("len >= 0")) };
+    // SAFETY: ext slot for BunSocketTls holds a live *mut TLSSocket; dispatch is
+    // single-threaded. `on_session` takes `*mut Self` (noalias re-entrancy).
+    let _ = unsafe { TLSSocket::on_session(tls_ptr, slice) };
+}
+
+/// Hands an NSS key-log line parked by the keylog callback to the JS
+/// `keylog` handler.
+///
+/// # Safety
+/// `openssl.c` must pass a live, non-null `s` whose ext slot holds a valid
+/// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn us_dispatch_keylog(s: *mut us_socket_t, data: *const u8, len: c_int) {
+    let s_ref = us_socket_t::opaque_mut(s);
+    if s_ref.kind() != SocketKind::BunSocketTls {
+        return;
+    }
+    type TLSSocket = super::NewSocket<true>;
+    let tls_ptr: *mut TLSSocket = *s_ref.ext::<*mut TLSSocket>();
+    if tls_ptr.is_null() {
+        return;
+    }
+    // SAFETY: `data` points to `len` readable bytes owned by the caller for the
+    // duration of this call.
+    let slice =
+        unsafe { core::slice::from_raw_parts(data, usize::try_from(len).expect("len >= 0")) };
+    // SAFETY: ext slot for BunSocketTls holds a live *mut TLSSocket; dispatch is
+    // single-threaded. `on_keylog` takes `*mut Self` (noalias re-entrancy).
+    let _ = unsafe { TLSSocket::on_keylog(tls_ptr, slice) };
+}
+
 // ported from: src/runtime/socket/uws_dispatch.zig

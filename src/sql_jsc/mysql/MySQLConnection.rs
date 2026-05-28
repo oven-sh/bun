@@ -364,6 +364,7 @@ impl MySQLConnection {
             bun_uws::SocketKind::MysqlTls,
             ssl_ctx,
             sni,
+            true, // is_client
             ext_size,
             ext_size,
         ) else {

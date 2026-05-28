@@ -17,6 +17,7 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
     });
 
     server.on("connection", socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       let requestData = "";
 
       socket.on("data", data => {

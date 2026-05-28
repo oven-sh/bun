@@ -722,3 +722,53 @@ it("connectionListener should emit the right amount of times, and with alpnProto
   await Promise.all(promises);
   expect(count).toBe(50);
 });
+
+it("destroying the socket from inside SNICallback or ALPNCallback does not crash the process", async () => {
+  // Both callbacks run synchronously from inside the native handshake; a
+  // destroy() there must defer the SSL teardown until the handshake call
+  // unwinds instead of freeing it out from under BoringSSL.
+  const connections: Array<{ destroy(): void }> = [];
+  for (const extra of [
+    {
+      ALPNCallback(this: unknown, { protocols }: { protocols: string[] }) {
+        (this as { destroy(): void }).destroy();
+        return protocols[0];
+      },
+    },
+    {
+      SNICallback(_name: string, cb: (err: Error | null, ctx?: unknown) => void) {
+        connections.at(-1)?.destroy();
+        cb(null, undefined);
+      },
+    },
+  ]) {
+    // Declared above the for-of's iterable so the SNICallback closure (built
+    // once when the array literal is evaluated) captures it; reset per case.
+    connections.length = 0;
+    const server = tls.createServer({ key: cert1.key, cert: cert1.cert, ...extra }, socket => socket.end());
+    server.on("connection", socket => connections.push(socket));
+    server.on("tlsClientError", () => {});
+    await new Promise<void>(resolve => server.listen(0, resolve));
+    const { port } = server.address() as AddressInfo;
+    await new Promise<void>(resolve => {
+      const client = tls.connect(
+        {
+          port,
+          rejectUnauthorized: false,
+          ALPNProtocols: ["x/1"],
+          servername: "x.test",
+          checkServerIdentity: () => undefined,
+        },
+        () => {
+          client.end();
+          resolve();
+        },
+      );
+      client.on("error", () => resolve());
+      client.on("close", () => resolve());
+    });
+    server.close();
+  }
+  // Reaching here without an abort/ASAN report is the assertion.
+  expect(true).toBe(true);
+});

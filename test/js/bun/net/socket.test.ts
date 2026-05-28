@@ -637,7 +637,7 @@ describe.concurrent("socket", () => {
         }),
       ).toThrow(
         expect.objectContaining({
-          code: "ERR_BORINGSSL",
+          code: "ERR_OSSL_PEM_NO_START_LINE",
         }),
       );
 
@@ -651,7 +651,7 @@ describe.concurrent("socket", () => {
         }),
       ).toThrow(
         expect.objectContaining({
-          code: "ERR_BORINGSSL",
+          code: "ERR_OSSL_PEM_NO_START_LINE",
         }),
       );
 
@@ -666,7 +666,7 @@ describe.concurrent("socket", () => {
         }),
       ).toThrow(
         expect.objectContaining({
-          code: "ERR_BORINGSSL",
+          code: "ERR_OSSL_PEM_NO_START_LINE",
         }),
       );
 

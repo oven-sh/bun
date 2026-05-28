@@ -384,7 +384,20 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             /* Both connect and listen sockets are semi-sockets
              * but they poll for different events */
             if (us_poll_events(p) == LIBUS_SOCKET_WRITABLE) {
-                us_internal_socket_after_open((struct us_socket_t *) p, error || eof);
+                /* The connecting fd became writable with an error/HUP flag also
+                 * set: the handshake may have completed and then been reset
+                 * before we collected the event. Report the kernel's actual
+                 * SO_ERROR (ECONNRESET for that race) instead of the literal
+                 * boolean, which downstream would misreport as ECONNREFUSED.
+                 * libuv does the same getsockopt in uv__stream_connect. */
+                int connect_error = 0;
+                if (error || eof) {
+                    connect_error = us_socket_get_error((struct us_socket_t *) p);
+                    if (connect_error == 0) {
+                        connect_error = ECONNRESET;
+                    }
+                }
+                us_internal_socket_after_open((struct us_socket_t *) p, connect_error);
             } else {
                 struct us_listen_socket_t *listen_socket = (struct us_listen_socket_t *) p;
                 struct us_socket_group_t *accept_group = listen_socket->accept_group;
@@ -662,8 +675,17 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     return;
                 }
                 if(s->flags.allow_half_open) {
-                    /* We got a Error but is EOF and we allow half open so stop polling for readable and keep going*/
-                    us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
+                    /* EOF with half-open allowed: stop polling readable but KEEP
+                     * polling writable. Masking with the current events dropped
+                     * writable when the EOF landed before the poll had been
+                     * switched to writable for a just-queued write (an end()
+                     * issued in the same tick as connect): the queued bytes
+                     * never flushed, their drain callback never fired, and the
+                     * stream's 'finish' never happened - the FIN-terminated
+                     * http response tests hung on every Linux target. The
+                     * writable dispatch disables writable polling again once
+                     * the buffer is drained, so this does not busy-poll. */
+                    us_poll_change(&s->p, loop, LIBUS_SOCKET_WRITABLE);
                     s = s->ssl ? us_internal_ssl_on_end(s) : us_dispatch_end(s);
                 } else {
                     /* We dont allow half open just emit end and close the socket */

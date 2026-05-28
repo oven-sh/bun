@@ -713,7 +713,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         // discriminant-first), which would hand the trampoline `1` instead of
         // the owner pointer.
         let ext_size = size_of::<Option<NonNull<Owner>>>() as c_int;
-        match g.connect(kind, ssl_ctx, host_z, port, opts, ext_size) {
+        match g.connect(kind, ssl_ctx, host_z, port, None, opts, ext_size) {
             ConnectResult::Failed => Err(ConnectError::FailedToOpenSocket),
             ConnectResult::Socket(s) => {
                 *sock(s).ext::<Option<NonNull<Owner>>>() = NonNull::new(owner);

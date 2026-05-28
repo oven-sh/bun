@@ -65,6 +65,10 @@ function generate(ssl) {
         fn: "getTLSTicket",
         length: 0,
       },
+      setKeyCert: {
+        fn: "setKeyCert",
+        length: 1,
+      },
       exportKeyingMaterial: {
         fn: "exportKeyingMaterial",
         length: 3,

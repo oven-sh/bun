@@ -3043,6 +3043,14 @@ class ServerHttp2Session extends Http2Session {
     this.close();
   }
   #onError(error: Error) {
+    if (this.listenerCount("error") === 0) {
+      // An unobserved transport teardown (the peer dropped a connection
+      // nobody is listening to anymore): destroy quietly - the destroy still
+      // errors any remaining streams - instead of re-emitting on a session
+      // with no 'error' listener and crashing the process.
+      this.destroy();
+      return;
+    }
     this.destroy(error);
   }
   #onTimeout() {
@@ -3611,6 +3619,13 @@ class ClientHttp2Session extends Http2Session {
   #onError(error: Error) {
     this[bunHTTP2Socket] = null;
     if (this.#closed) {
+      this.destroy();
+      return;
+    }
+    if (this.listenerCount("error") === 0) {
+      // Same as the server-session case: a transport teardown on a session
+      // nobody observes (an idle pooled connection) shuts down quietly; the
+      // destroy still errors any remaining streams.
       this.destroy();
       return;
     }

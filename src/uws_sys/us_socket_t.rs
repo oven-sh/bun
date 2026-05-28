@@ -243,6 +243,7 @@ impl us_socket_t {
         k: SocketKind,
         ssl_ctx: &mut SslCtx,
         sni: Option<&core::ffi::CStr>,
+        is_client: bool,
         old_ext: i32,
         new_ext: i32,
     ) -> Option<NonNull<us_socket_t>> {
@@ -255,6 +256,7 @@ impl us_socket_t {
                 k as u8,
                 ssl_ctx,
                 sni.map_or(ptr::null(), |s| s.as_ptr()),
+                is_client as i32,
                 old_ext,
                 new_ext,
             ))
@@ -265,6 +267,19 @@ impl us_socket_t {
     /// repointed before any handshake/close dispatch can fire.
     pub fn start_tls_handshake(&mut self) {
         c::us_socket_start_tls_handshake(self);
+    }
+
+    /// Feed bytes that were already read off the wire (e.g. a ClientHello the
+    /// plain-TCP layer consumed before the upgrade) through the same decrypt
+    /// path as bytes arriving from the kernel.
+    pub fn tls_feed(&mut self, data: &[u8]) {
+        if data.is_empty() {
+            return;
+        }
+        // SAFETY: `self` is a live TLS `us_socket_t`; `data` is valid for its length.
+        unsafe {
+            c::us_socket_tls_feed(self, data.as_ptr().cast(), data.len() as i32);
+        }
     }
 
     /// Tee inbound ciphertext to `us_dispatch_ssl_raw_tap` before `SSL_read`
@@ -476,8 +491,15 @@ mod c {
             kind: u8,
             ssl_ctx: *mut SslCtx,
             sni: *const c_char,
+            is_client: i32,
             old_ext_size: i32,
             ext_size: i32,
+        ) -> *mut us_socket_t;
+        /// Feed already-read bytes through the TLS decrypt path.
+        pub fn us_socket_tls_feed(
+            s: *mut us_socket_t,
+            data: *const c_char,
+            length: i32,
         ) -> *mut us_socket_t;
         pub safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
     }

@@ -322,7 +322,11 @@ struct us_socket_t *us_socket_adopt(us_socket_r s, us_socket_group_r group,
  * sni may be NULL. */
 struct us_socket_t *us_socket_adopt_tls(us_socket_r s, us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx, const char *sni,
-    int old_ext_size, int ext_size) __attribute__((nonnull(1, 2, 4)));
+    int is_client, int old_ext_size, int ext_size) __attribute__((nonnull(1, 2, 4)));
+/* Feed bytes that were already read off the wire (e.g. a ClientHello consumed
+ * by the plain-TCP layer before the socket was adopted into TLS) through the
+ * same decrypt path as bytes arriving from the kernel. */
+struct us_socket_t *us_socket_tls_feed(us_socket_r s, const char *data, int length) __attribute__((nonnull(1)));
 /* Send ClientHello after adopt_tls. Separate so the caller can repoint the
  * ext slot before any dispatch can fire. */
 void us_socket_start_tls_handshake(us_socket_r s) nonnull_fn_decl;
@@ -350,8 +354,16 @@ void us_listen_socket_remove_server_name(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;
 void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;
+/* Returns an owned reference; the caller must release it. */
+struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket_t *ls,
+    const char *hostname_pattern) nonnull_fn_decl;
+/* Parses a PKCS#12 blob into malloc'd PEM key/cert/ca strings (caller frees);
+ * returns 0 with a static *err_reason tag on failure. */
+int us_ssl_parse_pkcs12(const char *data, size_t len, const char *pass,
+    char **out_key, size_t *out_key_len, char **out_cert, size_t *out_cert_len,
+    char **out_ca, size_t *out_ca_len, const char **err_reason);
 void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
-    void (*cb)(struct us_listen_socket_t *, const char *hostname)) nonnull_fn_decl;
+    struct ssl_ctx_st *(*cb)(struct us_listen_socket_t *, const char *hostname)) nonnull_fn_decl;
 void *us_socket_server_name_userdata(us_socket_r s);
 
 /* ── Connect ──────────────────────────────────────────────────────────────
@@ -359,9 +371,10 @@ void *us_socket_server_name_userdata(us_socket_r s);
  * us_connecting_socket_t* (DNS / happy-eyeballs in flight, *is_connecting=0).
  * ssl_ctx may be NULL for plain TCP. */
 void *us_socket_group_connect(us_socket_group_r group, unsigned char kind,
-    struct ssl_ctx_st *ssl_ctx, const char *host, int port, int options,
+    struct ssl_ctx_st *ssl_ctx, const char *host, int port,
+    const char *local_host, int local_port, int options,
     int socket_ext_size, int *is_connecting)
-    __attribute__((nonnull(1, 4, 8)));  /* ssl_ctx nullable */
+    __attribute__((nonnull(1, 4, 10)));  /* ssl_ctx, local_host nullable */
 struct us_socket_t *us_socket_group_connect_unix(us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx,
     const char *server_path, size_t pathlen, int options, int socket_ext_size)
@@ -404,6 +417,9 @@ struct us_bun_socket_context_options_t {
     const char * const *ca;
     unsigned int ca_count;
     unsigned int secure_options;
+    // Minimum/maximum TLS protocol version (TLS1_VERSION..TLS1_3_VERSION); 0 = unset/default.
+    int ssl_min_version;
+    int ssl_max_version;
     int reject_unauthorized;
     int request_cert;
     unsigned int client_renegotiation_limit;
@@ -438,6 +454,9 @@ struct ssl_ctx_st *us_ssl_ctx_from_options(
 void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
 long us_ssl_ctx_live_count(void);
+/* Appends the certificates in the PEM `content` to `ctx`'s trust store;
+ * returns 0 when nothing could be added. */
+int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
 
 /* Public interfaces for loops */
 

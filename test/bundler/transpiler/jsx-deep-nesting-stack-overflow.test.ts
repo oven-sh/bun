@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import path from "node:path";
 
 // Regression test for a stack overflow in the TSX parser, found by fuzzing.
 //
@@ -19,12 +18,14 @@ test("deeply nested arrow/JSX does not overflow the stack", async () => {
   // Each `() => <div>` adds one arrow frame and one JSX-element frame. This is
   // far deeper than the fuzzer's ~23k repetitions so the guard fires well
   // before the real stack end on both release and the larger debug frames.
-  const source = "() => <div>".repeat(50_000);
+  // (`Buffer.alloc` fill over `.repeat` — the latter is very slow in debug JSC.)
+  const unit = "() => <div>";
+  const source = Buffer.alloc(unit.length * 50_000, unit).toString();
 
   using dir = tempDir("jsx-deep-nesting-stack-overflow", {
     "input.tsx": source,
     "run.ts": `
-      const src = require("node:fs").readFileSync(${JSON.stringify(path.join("input.tsx"))}, "latin1");
+      const src = require("node:fs").readFileSync("input.tsx", "latin1");
       try {
         new Bun.Transpiler({
           loader: "tsx",

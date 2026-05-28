@@ -1349,6 +1349,8 @@ folded: >
           expect(() => YAML.parse("a: 1\n\tb: 2\n")).toThrow("Unexpected token");
           expect(() => YAML.parse("foo:\n  a: 1\n  \tb: 2\n")).toThrow("Unexpected token");
           expect(() => YAML.parse("? a\n\t? b\n")).toThrow("Unexpected token");
+          // Tag-neutral rewind in the helper preserves the taint.
+          expect(() => YAML.parse("a: !!str\n\tb: 2\n")).toThrow("Unexpected token");
         });
 
         test("rejects tab before explicit `:` continuation ([191])", () => {
@@ -1405,6 +1407,39 @@ folded: >
           // The tab is consumed by fold_lines lookahead; the next line is
           // content of the same plain scalar, not a sibling.
           expect(YAML.parse("a: 1\n  \tb\n")).toEqual({ a: "1 b" });
+        });
+
+        // The tag-neutral rewind in parse_block_indented re-scans an
+        // abandoned scalar from token.start (past the tab), so the original
+        // taint must be preserved across the rewind. Exhaustive over each
+        // indicator × each property prefix × each tab position.
+        describe("property prefix does not lose tab taint on abandoned sibling", () => {
+          const indicators = [
+            ["map-value", "a: ", "  ", "b: 2"],
+            ["seq-entry", "- a\n- ", "  ", "b: 2"],
+            ["explicit-key", "? a\n? ", "  ", "b"],
+          ] as const;
+          const props = ["!!str", "&x", "!!str &x", "&x !!str"] as const;
+          const tabs = [["col0", "\t"], ["after-spaces", "  \t"]] as const;
+          for (const [iname, head, indent, sibling] of indicators) {
+            for (const prop of props) {
+              for (const [tname, tab] of tabs) {
+                test(`${iname} × ${prop} × ${tname}`, () => {
+                  // For col0 the sibling is at indent 0; for after-spaces, at
+                  // indent 2 — adjust the head's indent to match so the
+                  // sibling lands at the structural indent.
+                  const n = tname === "col0" ? "" : indent;
+                  const yaml =
+                    iname === "explicit-key"
+                      ? `${n}? a\n${n}? ${prop}\n${tab}${sibling}\n`
+                      : iname === "seq-entry"
+                        ? `${n}- a\n${n}- ${prop}\n${tab}${sibling}\n`
+                        : `${n}a: ${prop}\n${tab}${sibling}\n`;
+                  expect(() => YAML.parse(yaml)).toThrow(/Unexpected (token|character)/);
+                });
+              }
+            }
+          }
         });
       });
 

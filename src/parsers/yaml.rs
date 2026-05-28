@@ -3608,7 +3608,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         self.pos = self.token.start;
                         self.line = self.token.line;
                         self.line_indent = self.token.indent;
-                        self.tab_after_indent = false;
+                        // tab_after_indent is preserved: the original scan
+                        // recorded it for this token's leading whitespace,
+                        // and the re-scan (in_indent_position=false) won't
+                        // re-detect it since pos is already past the tab.
                         self.scan(ScanOptions::default())?;
                     }
                     return self.props_to_e_node(&value_tag, &value_anchor, indicator_start.loc());

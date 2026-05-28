@@ -2282,6 +2282,46 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(b.lastIndexOf("hello", 8, "utf8")).toBe(5);
       });
 
+      it("indexOf(value, encoding) is unchanged by the lastIndexOf fix", () => {
+        // The lastIndexOf fix routes the encoding-as-2nd-arg case through the
+        // direction-aware default. For forward indexOf/includes that default is
+        // 0, so these must keep returning the FIRST match from offset 0. The
+        // buffer repeats "hello" so a regression that searched from the end
+        // would return 12 instead of 0.
+        const b = Buffer.from("hello world hello");
+        expect(b.indexOf("hello", "utf8")).toBe(0);
+        expect(b.indexOf("hello", "latin1")).toBe(0);
+        expect(b.indexOf("hello", "binary")).toBe(0);
+        expect(b.indexOf("hello", "ascii")).toBe(0);
+        expect(b.includes("hello", "utf8")).toBe(true);
+        expect(b.indexOf("zzz", "utf8")).toBe(-1);
+        expect(b.indexOf("o", "utf8")).toBe(4);
+
+        const b16 = Buffer.from("hello world hello", "utf16le");
+        expect(b16.indexOf("hello", "utf16le")).toBe(0);
+        expect(b16.indexOf("hello", "ucs2")).toBe(0);
+        expect(b16.includes("hello", "utf16le")).toBe(true);
+
+        const bhex = Buffer.from("aabbccaabbcc", "hex");
+        expect(bhex.indexOf("aabb", "hex")).toBe(0);
+        expect(bhex.includes("aabb", "hex")).toBe(true);
+
+        const bb64 = Buffer.from("Zm9vYmFyZm9v", "base64");
+        expect(bb64.indexOf("Zm9v", "base64")).toBe(0);
+        expect(bb64.includes("Zm9v", "base64")).toBe(true);
+
+        // A 3-arg indexOf(value, byteOffset, encoding) still skips forward.
+        expect(b.indexOf("hello", 1, "utf8")).toBe(12);
+
+        // A non-string 2nd arg is a byteOffset, not an encoding: these go
+        // through the other branch and must also be unchanged.
+        const abc = Buffer.from("abcdef");
+        expect(abc.indexOf("b", undefined)).toBe(1);
+        expect(abc.indexOf("b", null)).toBe(1);
+        expect(abc.indexOf("b", {})).toBe(1);
+        expect(abc.indexOf("b", [])).toBe(1);
+      });
+
       for (let fn of [Buffer.prototype.slice, Buffer.prototype.subarray]) {
         it(`Buffer.${fn.name}`, () => {
           const buf = new Buffer("buffer");

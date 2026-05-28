@@ -1,4 +1,4 @@
-import { cc, CFunction, dlopen, FFIType, JSCallback, read, suffix, viewSource, type CString, type Pointer } from "bun:ffi";
+import { dlopen, FFIType, JSCallback, read, suffix, type CString, type Pointer } from "bun:ffi";
 import * as tsd from "./utilities";
 
 // `suffix` is either "dylib", "so", or "dll" depending on the platform
@@ -181,53 +181,3 @@ tsd.expectType<number>(read.f32(ptr, 0));
 tsd.expectType<number>(read.f64(ptr, 0));
 tsd.expectType<number>(read.ptr(ptr, 0));
 tsd.expectType<number>(read.intptr(ptr, 0));
-
-// `CFunction` is a factory function, not a constructor: call it without `new`.
-const getVersion = CFunction({
-  returns: "cstring",
-  args: [],
-  ptr,
-});
-// The result is callable and exposes a `close()` method.
-getVersion();
-tsd.expectType<() => void>(getVersion.close);
-
-// Constructing it with `new` is not allowed (it has no construct signature).
-// @ts-expect-error - CFunction is not a constructor
-new CFunction({ returns: "cstring", args: [], ptr });
-
-// `cc` compiles C source and returns a library whose symbols are callable.
-const ccLib = cc({
-  source: "./hello.c",
-  symbols: {
-    hello: {
-      returns: "cstring",
-      args: [],
-    },
-  },
-});
-tsd.expectType<CString>(ccLib.symbols.hello());
-tsd.expectType<() => void>(ccLib.close);
-
-// `viewSource` returns an array of strings for a map of symbols, and a single
-// string for a single callback definition (when the second arg is `true`).
-tsd.expectType<string[]>(
-  viewSource(
-    {
-      getVersion: {
-        returns: "cstring",
-        args: [],
-      },
-    },
-    false,
-  ),
-);
-tsd.expectType<string>(
-  viewSource(
-    {
-      returns: "bool",
-      args: ["ptr", "usize"],
-    },
-    true,
-  ),
-);

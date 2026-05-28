@@ -6,6 +6,7 @@ import {
   getMaxFD,
   isBroken,
   isIntelMacOS,
+  isLinux,
   isPosix,
   isWindows,
   tempDir,
@@ -3760,6 +3761,152 @@ it("fs.statfs (callback) should work with bigint", async () => {
   if (isPosix) {
     expect(stats.bsize > 0n).toBe(true);
     expect(stats.blocks > 0n).toBe(true);
+  }
+});
+
+// Regression for oven-sh/bun#31510: on linux-x64 the statfs block/inode count
+// fields (`f_blocks`/`f_bfree`/`f_bavail`) are `u64`, but the non-bigint StatFS
+// stored them as `i32`, so a filesystem with a block count above i32::MAX
+// (roughly `bavail * bsize > 8 TB` with 4 KiB blocks) wrapped negative. Node
+// returns these as plain numbers (doubles, exact to 2^53).
+//
+// A real >8 TB filesystem isn't available in CI, so an LD_PRELOAD shim injects
+// a large f_bavail/f_blocks/f_bfree into the real statfs syscalls and we read
+// them back through the full JS binding in a subprocess. This is linux-glibc
+// specific (the shim interposes glibc's statfs/statfs64), so it's skipped
+// elsewhere.
+describe.skipIf(!isLinux)("statfs large-filesystem block counts (#31510)", () => {
+  // Injected values mirror the issue report: ~3.2e9 blocks of 4 KiB ≈ 13.3 TB.
+  // All three block-count fields are above i32::MAX (2147483647); `bsize *
+  // bavail` stays well under 2^53 so the expected double is exact.
+  const BSIZE = 4096;
+  const BLOCKS = 3747442852; // > 2^31
+  const BFREE = 3248532185; // > 2^31
+  const BAVAIL = 3248532185; // > 2^31
+
+  const shimSrc = `
+#define _GNU_SOURCE
+#include <sys/statfs.h>
+#include <sys/vfs.h>
+#include <dlfcn.h>
+
+#define PATCH(buf) do { \
+  if (buf) { \
+    (buf)->f_bsize  = ${BSIZE}; \
+    (buf)->f_blocks = ${BLOCKS}ULL; \
+    (buf)->f_bfree  = ${BFREE}ULL; \
+    (buf)->f_bavail = ${BAVAIL}ULL; \
+  } \
+} while (0)
+
+int statfs(const char *p, struct statfs *b) {
+  static int (*real)(const char *, struct statfs *) = 0;
+  if (!real) real = dlsym(RTLD_NEXT, "statfs");
+  int rc = real(p, b);
+  if (rc == 0) PATCH(b);
+  return rc;
+}
+int statfs64(const char *p, struct statfs64 *b) {
+  static int (*real)(const char *, struct statfs64 *) = 0;
+  if (!real) real = dlsym(RTLD_NEXT, "statfs64");
+  int rc = real(p, b);
+  if (rc == 0) PATCH(b);
+  return rc;
+}
+int fstatfs(int fd, struct statfs *b) {
+  static int (*real)(int, struct statfs *) = 0;
+  if (!real) real = dlsym(RTLD_NEXT, "fstatfs");
+  int rc = real(fd, b);
+  if (rc == 0) PATCH(b);
+  return rc;
+}
+int fstatfs64(int fd, struct statfs64 *b) {
+  static int (*real)(int, struct statfs64 *) = 0;
+  if (!real) real = dlsym(RTLD_NEXT, "fstatfs64");
+  int rc = real(fd, b);
+  if (rc == 0) PATCH(b);
+  return rc;
+}
+`;
+
+  // Compile the LD_PRELOAD shim once. Returns the .so path, or null if the host
+  // genuinely can't build it (no cc). Any other compile failure throws so a
+  // source regression isn't silently hidden as a skip.
+  const tryBuild = (): string | null => {
+    const cc = Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");
+    if (!cc) return null; // no compiler on PATH — expected skip
+    const dir = tempDirWithFiles("statfs-shim", { "statfs_shim.c": shimSrc });
+    const src = join(dir, "statfs_shim.c");
+    const so = join(dir, "statfs_shim.so");
+    const compile = spawnSync({
+      cmd: [cc, "-shared", "-fPIC", "-O0", "-o", so, src, "-ldl"],
+      stderr: "pipe",
+    });
+    if (!compile.success) {
+      throw new Error(`failed to compile statfs shim:\n${compile.stderr.toString()}`);
+    }
+    if (!existsSync(so)) {
+      throw new Error("statfs shim compiled successfully but output .so is missing");
+    }
+    return so;
+  };
+
+  const shimSo = tryBuild();
+
+  // Read statfs back through the given entry point in a bun subprocess with the
+  // shim preloaded. Returns the parsed object, or null if the shim didn't take
+  // effect (e.g. a statically linked / musl bun that LD_PRELOAD can't interpose).
+  async function statfsUnderShim(so: string, expr: string) {
+    const snippet = `
+      const fs = require("node:fs");
+      (async () => {
+        const s = ${expr};
+        const toNum = v => (typeof v === "bigint" ? Number(v) : v);
+        process.stdout.write(JSON.stringify({
+          bsize: toNum(s.bsize),
+          blocks: toNum(s.blocks),
+          bfree: toNum(s.bfree),
+          bavail: toNum(s.bavail),
+        }));
+      })();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", snippet],
+      env: { ...bunEnv, LD_PRELOAD: so },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const parsed = JSON.parse(stdout);
+    // Shim didn't interpose (e.g. musl / static bun): bsize won't be ours.
+    if (parsed.bsize !== BSIZE) return null;
+    return parsed;
+  }
+
+  const cases: Array<{ name: string; expr: string }> = [
+    { name: "statfsSync", expr: `fs.statfsSync("/")` },
+    { name: "statfs (promise)", expr: `await fs.promises.statfs("/")` },
+    {
+      name: "statfs (callback)",
+      expr: `await new Promise((res, rej) => fs.statfs("/", (e, s) => (e ? rej(e) : res(s))))`,
+    },
+    { name: "statfsSync (bigint)", expr: `fs.statfsSync("/", { bigint: true })` },
+  ];
+
+  for (const c of cases) {
+    it(`${c.name} does not truncate block counts above i32::MAX`, async () => {
+      if (shimSo == null) {
+        console.warn(`SKIP statfs #31510 ${c.name}: cc not available`);
+        return;
+      }
+      const out = await statfsUnderShim(shimSo, c.expr);
+      if (out == null) {
+        console.warn(`SKIP statfs #31510 ${c.name}: LD_PRELOAD shim did not interpose statfs`);
+        return;
+      }
+      expect(out).toEqual({ bsize: BSIZE, blocks: BLOCKS, bfree: BFREE, bavail: BAVAIL });
+    });
   }
 });
 

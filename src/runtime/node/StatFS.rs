@@ -10,23 +10,26 @@ pub(crate) type RawStatFS = libc::statfs;
 #[cfg(not(unix))]
 pub(crate) type RawStatFS = bun_sys::StatFS;
 
-// PORT NOTE: Zig `pub fn StatFSType(comptime big: bool) type` picks the field
-// integer type via `const Int = if (big) i64 else i32;`. Stable Rust const
-// generics cannot select a field type from a `const BIG: bool`, so we generate
-// the two concrete instantiations with a small macro. The two exported aliases
+// PORT NOTE: Zig `pub fn StatFSType(comptime big: bool) type` picked the field
+// integer type via `const Int = if (big) i64 else i32;`. The `i32` for the
+// non-bigint variant truncated block/inode counts above `i32::MAX` (see `init`),
+// so both variants store `i64` here and differ only in how they hand the values
+// to JS (`jsNumber` double vs `BigInt`). Stable Rust const generics cannot select
+// a branch from a `const BIG: bool` inside these bodies, so the two concrete
+// instantiations are generated with a small macro. The two exported aliases
 // (`StatFSSmall`, `StatFSBig`) are the only call sites.
 macro_rules! define_statfs_type {
-    ($name:ident, $Int:ty, big = $big:expr) => {
+    ($name:ident, big = $big:expr) => {
         #[allow(non_snake_case)]
         pub struct $name {
             // Common fields between Linux and macOS
-            pub _fstype: $Int,
-            pub _bsize: $Int,
-            pub _blocks: $Int,
-            pub _bfree: $Int,
-            pub _bavail: $Int,
-            pub _files: $Int,
-            pub _ffree: $Int,
+            pub _fstype: i64,
+            pub _bsize: i64,
+            pub _blocks: i64,
+            pub _bfree: i64,
+            pub _bavail: i64,
+            pub _files: i64,
+            pub _ffree: i64,
         }
 
         impl $name {
@@ -41,26 +44,26 @@ macro_rules! define_statfs_type {
                     return bun_jsc::from_js_host_call(global, || {
                         Bun__createJSBigIntStatFSObject(
                             global,
-                            self._fstype as i64,
-                            self._bsize as i64,
-                            self._blocks as i64,
-                            self._bfree as i64,
-                            self._bavail as i64,
-                            self._files as i64,
-                            self._ffree as i64,
+                            self._fstype,
+                            self._bsize,
+                            self._blocks,
+                            self._bfree,
+                            self._bavail,
+                            self._files,
+                            self._ffree,
                         )
                     });
                 }
 
                 Ok(Bun__createJSStatFSObject(
                     global,
-                    self._fstype as i64,
-                    self._bsize as i64,
-                    self._blocks as i64,
-                    self._bfree as i64,
-                    self._bavail as i64,
-                    self._files as i64,
-                    self._ffree as i64,
+                    self._fstype,
+                    self._bsize,
+                    self._blocks,
+                    self._bfree,
+                    self._bavail,
+                    self._files,
+                    self._ffree,
                 ))
             }
 
@@ -84,18 +87,23 @@ macro_rules! define_statfs_type {
                 #[cfg(target_arch = "wasm32")]
                 compile_error!("Unsupported OS");
 
-                // @truncate(@as(i64, @intCast(x))) — @intCast to i64 then @truncate to Int.
-                // PORT NOTE: platform field types vary (u32/i64/u64); `as i64` matches
-                // Zig's @intCast for the in-range values statfs reports, then `as $Int`
-                // is the @truncate (intentional wrap).
+                // Platform field types vary (i32/i64/u64); widen every field to i64.
+                // On linux-x64 the block/inode counts (`f_blocks`/`f_bfree`/
+                // `f_bavail`/`f_files`/`f_ffree`) are `u64`, so a filesystem with a
+                // block count above `i32::MAX` (roughly `bavail * bsize > 8 TB` with
+                // 4 KiB blocks) overflows a 32-bit field and wraps negative. Both the
+                // non-bigint and bigint paths hand these values to C++ as `i64`; the
+                // non-bigint binding wraps them with `jsNumber(int64_t)` (a double,
+                // exact to 2^53), matching Node, and the bigint binding wraps them in
+                // a `BigInt`. Neither loses data for the range real filesystems report.
                 Self {
-                    _fstype: (fstype_ as i64) as $Int,
-                    _bsize: (bsize_ as i64) as $Int,
-                    _blocks: (blocks_ as i64) as $Int,
-                    _bfree: (bfree_ as i64) as $Int,
-                    _bavail: (bavail_ as i64) as $Int,
-                    _files: (files_ as i64) as $Int,
-                    _ffree: (ffree_ as i64) as $Int,
+                    _fstype: fstype_ as i64,
+                    _bsize: bsize_ as i64,
+                    _blocks: blocks_ as i64,
+                    _bfree: bfree_ as i64,
+                    _bavail: bavail_ as i64,
+                    _files: files_ as i64,
+                    _ffree: ffree_ as i64,
                 }
             }
         }
@@ -130,8 +138,8 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-define_statfs_type!(StatFSSmall, i32, big = false);
-define_statfs_type!(StatFSBig, i64, big = true);
+define_statfs_type!(StatFSSmall, big = false);
+define_statfs_type!(StatFSBig, big = true);
 
 /// Union between `Stats` and `BigIntStats` where the type can be decided at runtime
 pub enum StatFS {

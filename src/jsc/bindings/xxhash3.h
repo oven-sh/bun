@@ -1,14 +1,9 @@
 #pragma once
 
-#include "root.h"
+#include <cstddef>
+#include <cstdint>
 
-namespace Bun {
-
-// Testing-only entry point for the runtime-dispatched SIMD xxHash3 kernel
-// (src/jsc/bindings/xxhash3.cpp), exposed via `bun:internal-for-testing` so a
-// test can exercise `highway_xxhash3_64` directly rather than relying on the
-// Bun.hash.xxHash3 wiring. Signature: (view: ArrayBufferView, seed?:
-// number | bigint) -> bigint.
-BUN_DECLARE_HOST_FUNCTION(Bun__xxhash3_64_forTesting);
-
-} // namespace Bun
+// Runtime-dispatched XXH3_64bits_withSeed, implemented with Google Highway in
+// xxhash3.cpp. `input` may be null only when `len == 0`. `seed` is the full
+// 64-bit seed. Output is bit-identical to the xxHash reference.
+extern "C" uint64_t highway_xxhash3_64(const uint8_t* input, size_t len, uint64_t seed);

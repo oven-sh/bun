@@ -17,7 +17,7 @@ export const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeI
 // Runtime-dispatched SIMD xxHash3 kernel (src/jsc/bindings/xxhash3.cpp), driven
 // directly so tests can exercise the Highway path independent of Bun.hash.
 export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) => bigint = $newCppFunction(
-  "xxhash3.cpp",
+  "xxhash3_testing.cpp",
   "Bun__xxhash3_64_forTesting",
   2,
 );

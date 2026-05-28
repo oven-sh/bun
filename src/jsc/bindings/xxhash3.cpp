@@ -373,15 +373,12 @@ HWY_AFTER_NAMESPACE();
 
 // ---------------------------------------------------------------------------
 // Dispatch table + C entry point (compiled once).
+//
+// This TU intentionally pulls in no JSC/WebKit headers — it stays a lean SIMD
+// unit. The `bun:internal-for-testing` host wrapper that needs JSC types lives
+// in xxhash3_testing.cpp and calls the C symbol below.
 // ---------------------------------------------------------------------------
 #if HWY_ONCE
-
-#include "xxhash3.h"
-#include "ZigGlobalObject.h"
-#include <JavaScriptCore/JSArrayBufferView.h>
-#include <JavaScriptCore/JSBigInt.h>
-#include <JavaScriptCore/JSCJSValue.h>
-#include <JavaScriptCore/JSCast.h>
 
 namespace bun {
 namespace xxh3 {
@@ -425,47 +422,5 @@ uint64_t highway_xxhash3_64(const uint8_t* input, size_t len, uint64_t seed)
 } // extern "C"
 
 } // namespace bun
-
-// Testing-only: hash a typed array with the dispatched kernel and return the
-// result as a BigInt. Exposed through `bun:internal-for-testing` so a test can
-// drive the Highway path directly (not just via Bun.hash.xxHash3). Signature:
-//   (view: ArrayBufferView, seed?: number | bigint) -> bigint
-namespace Bun {
-
-BUN_DEFINE_HOST_FUNCTION(Bun__xxhash3_64_forTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto* view = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->argument(0));
-    if (!view) {
-        throwTypeError(globalObject, scope, "expected an ArrayBufferView"_s);
-        return {};
-    }
-    if (view->isDetached()) {
-        throwTypeError(globalObject, scope, "ArrayBufferView is detached"_s);
-        return {};
-    }
-
-    uint64_t seed = 0;
-    if (callFrame->argumentCount() > 1) {
-        JSC::JSValue seedValue = callFrame->argument(1);
-        if (seedValue.isNumber()) {
-            // toBigUInt64 performs ToBigInt, which throws on a Number; take the
-            // integer value directly so a plain-number seed works.
-            seed = static_cast<uint64_t>(seedValue.asNumber());
-        } else if (seedValue.isBigInt()) {
-            seed = seedValue.toBigUInt64(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-    }
-
-    const uint8_t* data = reinterpret_cast<const uint8_t*>(view->vector());
-    size_t len = view->byteLength();
-    uint64_t result = bun::xxh3::Hash64(data, len, seed);
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSBigInt::createFrom(globalObject, result)));
-}
-
-} // namespace Bun
 
 #endif // HWY_ONCE

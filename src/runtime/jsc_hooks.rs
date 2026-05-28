@@ -3824,13 +3824,12 @@ unsafe fn get_loader_and_virtual_source<'a>(
 
     // Spec :981-1007 — `blob:` ObjectURL → in-memory virtual source.
     if crate::webcore::object_url_registry::is_blob_url(specifier) {
-        match crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
-            .resolve_and_dupe(
-                &specifier[b"blob:".len()..],
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM;
-                // `global` is set during init and lives for the VM lifetime.
-                unsafe { &*(*jsc_vm).global },
-            ) {
+        match crate::webcore::object_url_registry::ObjectURLRegistry::singleton().resolve_and_dupe(
+            &specifier[b"blob:".len()..],
+            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM;
+            // `global` is set during init and lives for the VM lifetime.
+            unsafe { &*(*jsc_vm).global },
+        ) {
             Some(blob) => {
                 *blob_to_deinit = Some(blob);
                 // SAFETY: `blob_to_deinit` is `Some` (just written); we hold

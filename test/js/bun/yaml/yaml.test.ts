@@ -1209,6 +1209,9 @@ folded: >
           // Two anchors on separate lines before `:` — the inner can't be the
           // key's (different line), and [161] disallows two collection-props.
           expect(() => YAML.parse("&outer\n&inner\n: x\n")).toThrow("Multiple anchors");
+          // Overflow (3 anchors / 2 tags) reaches the post-loop guards.
+          expect(() => YAML.parse("&a\n&b\n&c : x\n")).toThrow("Multiple anchors");
+          expect(() => YAML.parse("!!str\n!!map\n: x\n")).toThrow("Multiple tags");
         });
 
         test("tag on e-node implicit key — [200]/[193] line split", () => {

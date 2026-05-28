@@ -4097,7 +4097,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         self.anchors
                             .put(Enc::key_bytes(mapping_anchor.slice(self.input)), mapping)?;
                     }
-                    node_props = NodeProperties::default();
+                    // Only clear what was consumed: has_anchor (the inner,
+                    // registered as key_anchor or as the sole mapping_anchor
+                    // by implicit_key_anchors). has_mapping_anchor and tag
+                    // fields stay so the post-loop guards still catch
+                    // overflow (`!!a\n!!b\n: x`, `&a\n&b\n&c : x`).
+                    node_props.has_anchor = None;
                     break 'node mapping;
                 }
 

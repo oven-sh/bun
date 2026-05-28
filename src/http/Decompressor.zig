@@ -28,18 +28,11 @@ pub const Decompressor = union(enum) {
                         body_out_str.allocator,
                         bun.http.default_allocator,
                         .{
-                            // zlib.MAX_WBITS = 15
-                            // to (de-)compress raw deflate, use wbits = -zlib.MAX_WBITS
-                            // to (de-)compress zlib-wrapped deflate (RFC1950), use wbits = 0 (inflate reads CINFO from the header)
-                            // to (de-)compress gzip format, use wbits = zlib.MAX_WBITS | 16
+                            // gzip: MAX_WBITS | 16. zlib-wrapped deflate: 0 (inflate
+                            // reads the window from the header). Raw deflate: -MAX_WBITS.
                             .windowBits = if (encoding == Encoding.gzip)
                                 Zlib.MAX_WBITS | 16
-                            else if (buffer.len >= 2 and
-                                (buffer[0] & 0x0f) == 8 and
-                                (buffer[0] >> 4) <= 7 and
-                                ((@as(u16, buffer[0]) << 8) | @as(u16, buffer[1])) % 31 == 0)
-                                // RFC1950 §2.2: CM=8, CINFO 0..=7, (CMF<<8 | FLG) % 31 == 0.
-                                // Testing only buffer[0] == 0x78 missed CINFO 0..6 (windows < 32 KiB).
+                            else if (hasZlibHeader(buffer))
                                 0
                             else
                                 -Zlib.MAX_WBITS,
@@ -119,6 +112,17 @@ pub const Decompressor = union(enum) {
         }
     }
 };
+
+/// Whether `buffer` starts with an RFC1950 zlib header (zlib-wrapped deflate),
+/// as opposed to raw deflate. A valid header is CMF/FLG where CMF has CM=8 in
+/// the low nibble and CINFO 0..=7 in the high nibble, and (CMF << 8 | FLG) is a
+/// multiple of 31 — covering every window from 256 B to 32 KiB.
+fn hasZlibHeader(buffer: []const u8) bool {
+    return buffer.len >= 2 and
+        (buffer[0] & 0x0f) == 8 and
+        (buffer[0] >> 4) <= 7 and
+        ((@as(u16, buffer[0]) << 8) | @as(u16, buffer[1])) % 31 == 0;
+}
 
 const Zlib = @import("../zlib/zlib.zig");
 const Encoding = @import("../http_types/Encoding.zig").Encoding;

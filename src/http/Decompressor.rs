@@ -59,6 +59,17 @@ unsafe fn seat<'a>(input: &'a [u8], out: &'a mut Vec<u8>) -> (&'static [u8], &'s
 /// an unbounded allocation.
 const MAX_DECOMPRESSED_BODY_SIZE: usize = 1024 * 1024 * 1024;
 
+/// Whether `buffer` starts with an RFC1950 zlib header (zlib-wrapped deflate),
+/// as opposed to raw deflate. A valid header is CMF/FLG where CMF has CM=8 in
+/// the low nibble and CINFO 0..=7 in the high nibble, and `(CMF << 8 | FLG)` is
+/// a multiple of 31 — covering every window from 256 B to 32 KiB.
+fn has_zlib_header(buffer: &[u8]) -> bool {
+    buffer.len() >= 2
+        && (buffer[0] & 0x0f) == 8
+        && (buffer[0] >> 4) <= 7
+        && (((buffer[0] as u16) << 8) | buffer[1] as u16).is_multiple_of(31)
+}
+
 impl Decompressor {
     // PORT NOTE: Zig `deinit` called `that.deinit()` on the active reader and
     // reset to `.none`. The boxed readers' `Drop` impls call `end()`, so an
@@ -88,24 +99,11 @@ impl Decompressor {
                         // PORT NOTE: Zig passed `body_out_str.allocator` and
                         // `bun.http.default_allocator`; dropped per §Allocators.
                         bun_zlib::Options {
-                            // zlib.MAX_WBITS = 15
-                            // to (de-)compress raw deflate, use wbits = -zlib.MAX_WBITS
-                            // to (de-)compress zlib-wrapped deflate (RFC1950), use wbits = 0 (inflate reads CINFO from the header)
-                            // to (de-)compress gzip format, use wbits = zlib.MAX_WBITS | 16
+                            // gzip: MAX_WBITS | 16. zlib-wrapped deflate: 0 (inflate
+                            // reads the window from the header). Raw deflate: -MAX_WBITS.
                             window_bits: if encoding == Encoding::Gzip {
                                 bun_zlib::MAX_WBITS | 16
-                            } else if buffer.len() >= 2
-                                && (buffer[0] & 0x0f) == 8
-                                && (buffer[0] >> 4) <= 7
-                                && (((buffer[0] as u16) << 8) | buffer[1] as u16) % 31 == 0
-                            {
-                                // RFC1950 §2.2: CMF byte has CM=8 (deflate) in the low nibble and
-                                // CINFO (log₂ window size - 8) in the high nibble; CINFO 0..=7
-                                // covers all valid windows (256 B .. 32 KiB), and (CMF<<8 | FLG)
-                                // is a multiple of 31. Testing only `buffer[0] == 0x78` (the old
-                                // check) misses CINFO 0..6 — servers that compress with a window
-                                // smaller than 32 KiB — so those bodies were sent through raw
-                                // inflate and rejected as Z_DATA_ERROR.
+                            } else if has_zlib_header(buffer) {
                                 0
                             } else {
                                 -bun_zlib::MAX_WBITS

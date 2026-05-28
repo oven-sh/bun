@@ -8,7 +8,6 @@ const { FileHandle, kRef, kUnref, kFd } = (fs.promises as any).$data as {
   readonly kRef: unique symbol;
   readonly kUnref: unique symbol;
   readonly kFd: unique symbol;
-  fs: typeof fs;
 };
 type FileHandle = import("node:fs/promises").FileHandle & {
   on(event: any, listener: any): FileHandle;

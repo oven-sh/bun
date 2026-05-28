@@ -186,7 +186,7 @@ impl ScanOpts {
     }
 }
 
-pub struct WalkTask<'a> {
+pub(crate) struct WalkTask<'a> {
     // PORT NOTE: Zig `WalkTask.deinit` did `walker.deinit(true); destroy(walker)`.
     // `Box<GlobWalker>` drop runs `GlobWalker::Drop` (≡ `deinit(true)`) then frees.
     walker: Box<GlobWalker>,
@@ -195,13 +195,13 @@ pub struct WalkTask<'a> {
     has_pending_activity: &'a AtomicUsize,
 }
 
-pub enum WalkTaskErr {
+pub(crate) enum WalkTaskErr {
     Syscall(syscall::Error),
     Unknown(bun_core::Error),
 }
 
 impl WalkTaskErr {
-    pub fn to_js(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_js(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             WalkTaskErr::Syscall(err) => Ok(err.to_js(global_this)),
             WalkTaskErr::Unknown(err) => {
@@ -211,13 +211,13 @@ impl WalkTaskErr {
     }
 }
 
-pub type AsyncGlobWalkTask<'a> = ConcurrentPromiseTask<'a, WalkTask<'a>>;
+pub(crate) type AsyncGlobWalkTask<'a> = ConcurrentPromiseTask<'a, WalkTask<'a>>;
 
 impl<'a> WalkTask<'a> {
     // PORT NOTE: Zig returned `!*AsyncGlobWalkTask` (the only `try` was the heap
     // allocation). With the global mimalloc allocator `Box::new` is infallible
     // (panics on OOM), so the Rust port returns the boxed task directly.
-    pub fn create(
+    pub(crate) fn create(
         global_this: &'a JSGlobalObject,
         glob_walker: Box<GlobWalker>,
         has_pending_activity: &'a AtomicUsize,

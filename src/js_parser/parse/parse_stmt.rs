@@ -1052,7 +1052,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     };
                                 }
                             }
-                            _ => {}
+                            // "interface" turned out not to start an interface
+                            // declaration: the nested statement came back as an
+                            // expression statement ("export default interface = 2",
+                            // "export default interface => 1") or a labeled statement
+                            // ("export default interface: 0"). None of these can be a
+                            // default export value, so report a syntax error instead of
+                            // building an S.ExportDefault that the visit and print
+                            // passes don't support.
+                            _ => {
+                                let r = js_lexer::range_of_identifier(p.source, stmt.loc);
+                                p.log().add_range_error_fmt(
+                                    Some(p.source),
+                                    r,
+                                    format_args!(
+                                        "Unexpected \"{}\"",
+                                        bstr::BStr::new(p.source.text_for_range(r))
+                                    ),
+                                );
+                                return Err(err!("SyntaxError"));
+                            }
                         }
 
                         p.create_default_name(default_loc).expect("unreachable")
@@ -1077,58 +1096,57 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && is_identifier
                     && (p.lexer.token == T::TClass || opts.ts_decorators.is_some())
                     && name == b"abstract"
+                    && matches!(expr.data, js_ast::ExprData::EIdentifier(_))
                 {
-                    match &expr.data {
-                        js_ast::ExprData::EIdentifier(_) => {
-                            let mut stmt_opts = ParseStatementOptions {
-                                ts_decorators: opts.ts_decorators.take(),
-                                is_name_optional: true,
-                                ..Default::default()
-                            };
-                            let stmt: Stmt = p.parse_class_stmt(loc, &mut stmt_opts)?;
+                    let mut stmt_opts = ParseStatementOptions {
+                        ts_decorators: opts.ts_decorators.take(),
+                        is_name_optional: true,
+                        ..Default::default()
+                    };
+                    let stmt: Stmt = p.parse_class_stmt(loc, &mut stmt_opts)?;
 
-                            // Use the statement name if present, since it's a better name
-                            let default_name: LocRef = 'default_name_getter: {
-                                match &stmt.data {
-                                    // This was just a type annotation
-                                    js_ast::StmtData::STypeScript(_) => {
-                                        return Ok(stmt);
-                                    }
+                    // Use the statement name if present, since it's a better name
+                    let default_name: LocRef = 'default_name_getter: {
+                        match &stmt.data {
+                            // This was just a type annotation
+                            js_ast::StmtData::STypeScript(_) => {
+                                return Ok(stmt);
+                            }
 
-                                    js_ast::StmtData::SFunction(func_container) => {
-                                        if let Some(_name) = func_container.func.name {
-                                            break 'default_name_getter LocRef {
-                                                loc: default_loc,
-                                                ref_: _name.ref_,
-                                            };
-                                        }
-                                    }
-                                    js_ast::StmtData::SClass(class) => {
-                                        if let Some(_name) = class.class.class_name {
-                                            break 'default_name_getter LocRef {
-                                                loc: default_loc,
-                                                ref_: _name.ref_,
-                                            };
-                                        }
-                                    }
-                                    _ => {}
+                            js_ast::StmtData::SFunction(func_container) => {
+                                if let Some(_name) = func_container.func.name {
+                                    break 'default_name_getter LocRef {
+                                        loc: default_loc,
+                                        ref_: _name.ref_,
+                                    };
                                 }
+                            }
+                            js_ast::StmtData::SClass(class) => {
+                                if let Some(_name) = class.class.class_name {
+                                    break 'default_name_getter LocRef {
+                                        loc: default_loc,
+                                        ref_: _name.ref_,
+                                    };
+                                }
+                            }
+                            _ => {}
+                        }
 
-                                p.create_default_name(default_loc).expect("unreachable")
-                            };
-                            p.has_export_default = true;
-                            return Ok(p.s(
-                                S::ExportDefault {
-                                    default_name,
-                                    value: js_ast::StmtOrExpr::Stmt(stmt),
-                                },
-                                loc,
-                            ));
-                        }
-                        _ => {
-                            p.panic("internal error: unexpected", format_args!(""));
-                        }
-                    }
+                        p.create_default_name(default_loc).expect("unreachable")
+                    };
+                    p.has_export_default = true;
+                    return Ok(p.s(
+                        S::ExportDefault {
+                            default_name,
+                            value: js_ast::StmtOrExpr::Stmt(stmt),
+                        },
+                        loc,
+                    ));
+                }
+
+                // "@decorator export default abstract = 1"
+                if opts.ts_decorators.is_some() {
+                    p.lexer.expected(T::TClass)?;
                 }
 
                 p.lexer.expect_or_insert_semicolon()?;
@@ -1146,7 +1164,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             T::TAsterisk => {
                 if !opts.is_module_scope
-                    && !(opts.is_namespace_scope || !opts.is_typescript_declare)
+                    && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
                     return Err(err!("SyntaxError"));
@@ -1229,7 +1247,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             T::TOpenBrace => {
                 if !opts.is_module_scope
-                    && !(opts.is_namespace_scope || !opts.is_typescript_declare)
+                    && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
                     return Err(err!("SyntaxError"));
@@ -1877,21 +1895,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub fn parse_stmt(&mut self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt> {
-        // PORT NOTE: Zig only checks `stack_check`; the hard cap is added so
-        // Windows' 18 MB worker stack (where the small Rust `parse_stmt`→`t_*`
-        // frames never exhaust it) still throws before the uncapped visitor/
-        // printer pass hard-overflows. See `P::parse_stmt_depth` field doc.
-        if self.parse_stmt_depth >= MAX_STMT_DEPTH || !self.stack_check.is_safe_to_recurse() {
+        if !self.stack_check.is_safe_to_recurse() {
             // TODO(port): bun_core::throw_stack_overflow() not yet exported; map to a SyntaxError
             // until the StackOverflow error variant lands.
             return Err(err!("StackOverflow"));
         }
-        self.parse_stmt_depth += 1;
 
         // Zig used `inline ... => |function| @field(@This(), @tagName(function))(...)` to dispatch
         // by token name via comptime reflection. Rust has no `@field`/`@tagName`; expand the arms.
         let loc = self.lexer.loc();
-        let result = match self.lexer.token {
+        match self.lexer.token {
             T::TSemicolon => Self::t_semicolon(self),
             T::TAt => Self::t_at(self, opts),
 
@@ -1917,12 +1930,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TOpenBrace => Self::t_open_brace(self, opts, loc),
 
             _ => Self::parse_stmt_fallthrough(self, opts, loc),
-        };
-        self.parse_stmt_depth -= 1;
-        result
+        }
     }
 }
-
-/// See `P::parse_stmt_depth` — sized so the visitor/printer (larger per-level
-/// frames, no stack check) fit on the smallest 4 MB POSIX worker stack.
-const MAX_STMT_DEPTH: u32 = 1000;

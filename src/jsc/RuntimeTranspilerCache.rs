@@ -10,7 +10,7 @@ use bun_core::{PathString, String as BunString, ZStr};
 use bun_js_parser::ParserOptions;
 use bun_paths::resolve_path::{self as path_handler, platform};
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
-use bun_resolver::fs::{FileSystem, Path as FsPath, RealFS};
+use bun_resolver::fs::{FileSystem, Path as FsPath};
 use bun_sys::{self as sys, Fd, FdExt as _};
 // Zig: `std.hash.Wyhash` (final4 variant). Must match exactly so on-disk
 // `.pile` filenames/hashes are interchangeable with Zig-produced caches.
@@ -747,10 +747,7 @@ impl RuntimeTranspilerCache {
             .len();
         }
 
-        {
-            let parts: &[&[u8]] = &[RealFS::tmpdir_path(), b"bun", b"@t@"];
-            path_handler::join_abs_string_buf_z::<platform::Loose>(top, &mut buf[..], parts).len()
-        }
+        0
     }
 
     // Only do this at most once per-thread.

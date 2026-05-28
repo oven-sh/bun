@@ -101,18 +101,18 @@ impl MySQLStatement {
     /// a statement with >1 owner (query + connection-map entry) go through
     /// this instead of writing the field directly.
     #[inline]
-    pub fn init_exact_refs(&mut self, n: u32) {
+    pub(crate) fn init_exact_refs(&mut self, n: u32) {
         debug_assert!(n > 0);
         self.ref_count.set(n);
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.result_count = 0;
         self.columns_received = 0;
         self.execution_flags = ExecutionFlags::default();
     }
 
-    pub fn check_for_duplicate_fields(&mut self) {
+    pub(crate) fn check_for_duplicate_fields(&mut self) {
         if !self
             .execution_flags
             .contains(ExecutionFlags::NEEDS_DUPLICATE_CHECK)
@@ -174,7 +174,7 @@ impl MySQLStatement {
     // PORT NOTE: Zig returns `CachedStructure` by value (struct copy). Returning `&CachedStructure`
     // here to avoid moving out of `self`; callers may need `.clone()` if they require
     // an owned copy.
-    pub fn structure(
+    pub(crate) fn structure(
         &mut self,
         owner: JSValue,
         global_object: &JSGlobalObject,

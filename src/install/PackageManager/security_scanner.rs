@@ -93,7 +93,7 @@ impl SecurityScanResults {
     }
 }
 
-pub fn do_partial_install_of_security_scanner(
+pub(crate) fn do_partial_install_of_security_scanner(
     manager: &mut PackageManager,
     ctx: CommandContext,
     log_level: crate::package_manager::Options::LogLevel,
@@ -169,7 +169,7 @@ struct ScannerFinder<'a> {
 }
 
 impl<'a> ScannerFinder<'a> {
-    pub fn find_in_root_dependencies(&self) -> Option<PackageID> {
+    pub(crate) fn find_in_root_dependencies(&self) -> Option<PackageID> {
         let pkgs = self.manager.lockfile.packages.slice();
         let pkg_dependencies = pkgs.items_dependencies();
         let pkg_resolutions = pkgs.items_resolution();
@@ -200,7 +200,7 @@ impl<'a> ScannerFinder<'a> {
         None
     }
 
-    pub fn validate_not_in_workspaces(&self) -> Result<(), Error> {
+    pub(crate) fn validate_not_in_workspaces(&self) -> Result<(), Error> {
         let pkgs = self.manager.lockfile.packages.slice();
         let pkg_deps = pkgs.items_dependencies();
         let pkg_res = pkgs.items_resolution();
@@ -226,7 +226,7 @@ impl<'a> ScannerFinder<'a> {
     }
 }
 
-pub fn perform_security_scan_after_resolution(
+pub(crate) fn perform_security_scan_after_resolution(
     manager: &mut PackageManager,
     command_ctx: CommandContext,
     original_cwd: &[u8],
@@ -424,7 +424,7 @@ pub fn print_security_advisories(manager: &PackageManager, results: &SecuritySca
     }
 }
 
-pub fn prompt_for_warnings() -> bool {
+pub(crate) fn prompt_for_warnings() -> bool {
     let can_prompt = Output::is_stdin_tty();
 
     if !can_prompt {
@@ -507,7 +507,7 @@ struct QueueItem {
 }
 
 impl<'a> PackageCollector<'a> {
-    pub fn init(manager: &'a PackageManager) -> Self {
+    pub(crate) fn init(manager: &'a PackageManager) -> Self {
         Self {
             manager,
             dedupe: ArrayHashMap::new(),
@@ -518,7 +518,7 @@ impl<'a> PackageCollector<'a> {
 
     // Zig `deinit` only freed owned fields; Rust drops them automatically.
 
-    pub fn collect_all_packages(&mut self) -> Result<(), Error> {
+    pub(crate) fn collect_all_packages(&mut self) -> Result<(), Error> {
         let pkgs = self.manager.lockfile.packages.slice();
         let pkg_dependencies = pkgs.items_dependencies();
         let pkg_resolutions = pkgs.items_resolution();
@@ -597,7 +597,7 @@ impl<'a> PackageCollector<'a> {
         Ok(())
     }
 
-    pub fn collect_update_packages(&mut self) -> Result<(), Error> {
+    pub(crate) fn collect_update_packages(&mut self) -> Result<(), Error> {
         let pkgs = self.manager.lockfile.packages.slice();
         let pkg_resolutions = pkgs.items_resolution();
         let pkg_dependencies = pkgs.items_dependencies();
@@ -671,7 +671,7 @@ impl<'a> PackageCollector<'a> {
         Ok(())
     }
 
-    pub fn process_queue(&mut self) -> Result<(), Error> {
+    pub(crate) fn process_queue(&mut self) -> Result<(), Error> {
         let pkgs = self.manager.lockfile.packages.slice();
         let pkg_resolutions = pkgs.items_resolution();
         let pkg_dependencies = pkgs.items_dependencies();
@@ -739,7 +739,7 @@ struct JSONBuilder<'a> {
 }
 
 impl<'a> JSONBuilder<'a> {
-    pub fn build_package_json(&self) -> Result<Box<[u8]>, Error> {
+    pub(crate) fn build_package_json(&self) -> Result<Box<[u8]>, Error> {
         let mut json_buf: Vec<u8> = Vec::new();
 
         let pkgs = self.manager.lockfile.packages.slice();
@@ -998,7 +998,7 @@ pub struct SecurityScanSubprocess<'a> {
 // The comptime type generator is the generic `subprocess::StaticPipeWriter<P>`;
 // monomorphize on `'static` because the writer stores `*mut P` (raw backref —
 // lifetime is erased anyway) and the type alias must name a concrete `P`.
-pub type StaticPipeWriter = subprocess::StaticPipeWriter<SecurityScanSubprocess<'static>>;
+pub(crate) type StaticPipeWriter = subprocess::StaticPipeWriter<SecurityScanSubprocess<'static>>;
 
 // Wire the writer's `on_close` callback back to this type. Raw `*mut Self`
 // because the call is re-entrant: it may fire synchronously inside

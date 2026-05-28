@@ -38,19 +38,10 @@ pub enum Tag {
     BMissing,
 }
 
-impl Tag {
-    pub fn json_stringify<W: crate::JsonWriter>(
-        self,
-        writer: &mut W,
-    ) -> Result<(), bun_core::Error> {
-        writer.write(<&'static str>::from(self))
-    }
-}
-
 // Zig: `pub var icount: usize = 0;` — mutable global counter, never read.
 // Debug-only so release doesn't pay a contended `lock xadd` per Binding.
 #[cfg(debug_assertions)]
-pub static ICOUNT: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static ICOUNT: AtomicUsize = AtomicUsize::new(0);
 
 // ──────────────────────────────────────────────────────────────────────────
 // `init` / `alloc` — Zig switched on `@TypeOf(t)` to pick the `B` variant.
@@ -298,47 +289,6 @@ impl Binding {
             }
         }
     }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// jsonStringify — Zig wrote a `Serializable` aggregate via the std.json
-// protocol. The Rust JSON-writer trait is still shape-agnostic (`write<T>`),
-// so we mirror the Zig body 1:1 and let the writer impl decide how to emit
-// the aggregate. `Serializable` is a private layout-only carrier.
-// ──────────────────────────────────────────────────────────────────────────
-
-// Fields are the JSON-serialization payload (Zig std.json wrote each via
-// `@typeInfo` reflection). No `BindingJsonWriter` implementor exists yet, so
-// rustc correctly proves they are never *read*; they are the data contract for
-// when the writer lands, not dead code.
-#[expect(dead_code)]
-pub struct Serializable {
-    r#type: Tag,
-    object: &'static [u8],
-    value: B,
-    loc: crate::Loc,
-}
-
-impl Binding {
-    pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
-    where
-        W: BindingJsonWriter,
-    {
-        writer.write(Serializable {
-            r#type: self.data.tag(),
-            object: b"binding",
-            value: self.data,
-            loc: self.loc,
-        })
-    }
-}
-
-/// Stand-in for Zig's `anytype` json writer used by `Binding::json_stringify`.
-/// Kept local (not `crate::JsonWriter`) because the crate-level trait is
-/// currently `&str`-only; this preserves the Zig call-shape until the JSON
-/// layer settles.
-pub trait BindingJsonWriter {
-    fn write(&mut self, value: Serializable) -> Result<(), bun_core::Error>;
 }
 
 // ported from: src/js_parser/ast/Binding.zig

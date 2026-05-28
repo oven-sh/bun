@@ -162,7 +162,6 @@ pub mod border_radius;
 // `box_shadow`: un-gated — real BoxShadow + BoxShadowHandler live in
 // `box_shadow.rs`.
 pub mod box_shadow;
-pub mod contain;
 pub mod display;
 pub mod effects;
 pub mod flex;
@@ -405,7 +404,7 @@ mod generic_registrations {
     /// Indirection so the `generic::{Parse,ToCss}` impls above don't have to
     /// repeat `GenericBorder`'s `S`-bounds (which name the same protocol
     /// traits and would otherwise create a coherence cycle).
-    pub trait GenericBorderImpl: Sized {
+    pub(crate) trait GenericBorderImpl: Sized {
         fn parse(input: &mut crate::css_parser::Parser) -> crate::css_parser::CssResult<Self>;
         fn to_css(
             &self,

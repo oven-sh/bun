@@ -790,9 +790,6 @@ pub struct HiveRef<T, const CAPACITY: usize> {
     pub value: T,
 }
 
-/// Convenience alias mirroring Zig's nested `const HiveAllocator`.
-pub type HiveAllocator<T, const CAPACITY: usize> = Fallback<HiveRef<T, CAPACITY>, CAPACITY>;
-
 impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
     /// Zig: `pub fn init(value, allocator) !*@This()`.
     ///
@@ -1250,7 +1247,7 @@ mod tests {
         let drops = core::cell::Cell::new(0u32);
 
         const CAP: usize = 2;
-        type Pool<'c> = HiveAllocator<Tracked<'c>, CAP>;
+        type Pool<'c> = Fallback<HiveRef<Tracked<'c>, CAP>, CAP>;
         let pool: Pool = Fallback::init();
         let pool_ptr: *const Pool = &pool;
 
@@ -1322,7 +1319,7 @@ mod tests {
         let drops = core::cell::Cell::new(0u32);
 
         const CAP: usize = 1;
-        type Pool<'c> = HiveAllocator<Tracked<'c>, CAP>;
+        type Pool<'c> = Fallback<HiveRef<Tracked<'c>, CAP>, CAP>;
         let pool: Pool = Fallback::init();
         let pool_ptr: *const Pool = &pool;
 

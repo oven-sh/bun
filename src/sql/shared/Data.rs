@@ -2,7 +2,7 @@ use bun_collections::{BoundedArray, VecExt};
 use bun_core::ZStr;
 use bun_ptr::RawSlice;
 
-pub type InlineStorage = BoundedArray<u8, 15>;
+pub(crate) type InlineStorage = BoundedArray<u8, 15>;
 
 /// Represents data that can be either owned or temporary
 #[derive(Default)]

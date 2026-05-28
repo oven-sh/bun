@@ -8,7 +8,6 @@
 // Self-alias so Phase-A drafts written against `bun_install::…` resolve
 // without rewriting every `use` (e.g. yarn.rs, extract_tarball.rs,
 // lifecycle_script_runner.rs).
-extern crate bun_core as bun_str;
 extern crate bun_sha_hmac as bun_sha;
 extern crate self as bun_install;
 // `bun_output::declare_scope!` / `scoped_log!` in Phase-A drafts → the macros
@@ -16,26 +15,24 @@ extern crate self as bun_install;
 // `bun_output::` path resolves in un-gated install modules.
 extern crate bun_analytics as analytics;
 extern crate bun_core as bun_output;
-// `bun_simdutf` → real crate is `bun_simdutf_sys`.
-extern crate bun_simdutf_sys as bun_simdutf;
 
 /// `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
 pub(crate) mod bun_schema {
-    pub use bun_options_types::schema::api;
+    pub(crate) use bun_options_types::schema::api;
 }
 
 /// `bun_json` → JSON parser lives in `bun_parsers::json`; AST nodes
 /// (`Expr`, `ExprData`, `E*` variants) live in `bun_ast::js_ast`.
 pub(crate) mod bun_json {
-    pub use bun_ast::{Expr, ExprData, G::Property, e as E};
-    pub use bun_parsers::json::*;
+    pub(crate) use bun_ast::{Expr, ExprData, G::Property, e as E};
+    pub(crate) use bun_parsers::json::*;
 }
 
 /// `bun.fs` namespace — resolver-tier `FileSystem` / `DirEntry` / `Entry`.
 /// `bun_install` depends on `bun_resolver` directly (no cycle), so re-export
 /// the real types instead of routing through any lower-tier shim.
 pub(crate) mod bun_fs {
-    pub use bun_resolver::fs::*;
+    pub(crate) use bun_resolver::fs::*;
 }
 
 /// `bun_progress` → re-export of the real `bun_core::Progress` (snapshot of
@@ -45,7 +42,7 @@ pub(crate) mod bun_fs {
 /// `unprotected_*` atomics, `&mut Node` from `start()`); keeping a parallel
 /// type here just bifurcated `Node` identity across the crate.
 pub(crate) mod bun_progress {
-    pub use bun_core::Progress::{Node, Progress};
+    pub(crate) use bun_core::Progress::{Node, Progress};
 }
 
 /// `bun_bunfig` → config-loading entrypoint. The real `bun_bunfig` crate now
@@ -57,7 +54,7 @@ pub(crate) mod bun_progress {
 /// the real crate spell it `::bun_bunfig`.
 pub(crate) mod bun_bunfig {
 
-    pub use bun_options_types::context as Arguments;
+    pub(crate) use bun_options_types::context as Arguments;
 }
 
 use core::cell::Cell;
@@ -147,7 +144,7 @@ pub mod lockfile {
     /// `MultiArrayList<Package>.append` row type — the real `PackageList`
     /// (`package::List<u64>`) takes a `Package` value, so alias the row type
     /// for callers (e.g. `migration.rs`) that spell it `PackageListEntry`.
-    pub type PackageListEntry = crate::lockfile_real::Package;
+    pub(crate) type PackageListEntry = crate::lockfile_real::Package;
     pub mod package {
         pub use crate::lockfile_real::package::meta::{HasInstallScript, Meta};
         pub use crate::lockfile_real::package::*;
@@ -226,7 +223,7 @@ pub mod package_manager {
 /// `bun_install::install` submodule path mirroring `install.zig`. The crate
 /// root *is* that file now, so re-export everything under both names.
 pub(crate) mod install {
-    pub use crate::*;
+    pub(crate) use crate::*;
 }
 
 /// `windows-shim/BinLinkingShim.zig` — `.bunx` shim encoder consumed by
@@ -337,13 +334,7 @@ pub use package_manager_real::{
 // during the port now resolve to the real types. Once every call site is
 // migrated these aliases drop.
 // ──────────────────────────────────────────────────────────────────────────
-pub type PackageManagerOptionsStub = package_manager_real::Options;
 pub type PackageManagerDoStub = package_manager_real::package_manager_options::Do;
-pub type PackageManagerEnableStub = package_manager_real::package_manager_options::Enable;
-pub type PublishConfigStub = package_manager_real::package_manager_options::PublishConfig;
-pub type AsyncNetworkTaskQueueStub = package_manager_real::AsyncNetworkTaskQueue;
-pub type PreallocatedResolveTasksStub =
-    bun_collections::HiveArrayFallback<package_manager_task::Task<'static>, 64>;
 pub use package_manager_real::package_manager_options::{Access, AuthType};
 
 /// Port of the anonymous `comptime callbacks: anytype` struct passed to
@@ -407,7 +398,7 @@ pub struct PackageJSONDependencyMap {
 /// not reachable from this tier, so the shim returns the `CI` env var name
 /// when set (the same fallback `npm-registry-fetch` uses) and `None` otherwise.
 pub mod ci_info {
-    pub fn detect_ci_name() -> Option<&'static [u8]> {
+    pub(crate) fn detect_ci_name() -> Option<&'static [u8]> {
         // Port of the trailing fallback in `ci_info.zig:detectCiName` —
         // the per-vendor probes live in `bun_runtime` (T6) and are wired in
         // there; install only needs *some* answer for the user-agent string.
@@ -929,10 +920,10 @@ impl RunCommand {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub const BUN_HASH_TAG: &[u8] = b".bun-tag-";
+pub(crate) const BUN_HASH_TAG: &[u8] = b".bun-tag-";
 
 /// Length of `u64::MAX` formatted as lowercase hex (`ffffffffffffffff`).
-pub const MAX_HEX_HASH_LEN: usize = {
+pub(crate) const MAX_HEX_HASH_LEN: usize = {
     // Zig computed this with std.fmt.bufPrint at comptime; u64::MAX in hex is
     // always 16 nibbles.
     let mut n = u64::MAX;
@@ -945,10 +936,10 @@ pub const MAX_HEX_HASH_LEN: usize = {
 };
 const _: () = assert!(MAX_HEX_HASH_LEN == 16);
 
-pub const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + BUN_HASH_TAG.len() + 1;
-pub type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
+pub(crate) const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + BUN_HASH_TAG.len() + 1;
+pub(crate) type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 
-pub fn buntaghashbuf_make(buf: &mut BuntagHashBuf, patch_hash: u64) -> &mut [u8] {
+pub(crate) fn buntaghashbuf_make(buf: &mut BuntagHashBuf, patch_hash: u64) -> &mut [u8] {
     buf[0..BUN_HASH_TAG.len()].copy_from_slice(BUN_HASH_TAG);
     // std.fmt.bufPrint(buf[bun_hash_tag.len..], "{x}", .{patch_hash})
     let mut tmp = [0u8; 16];
@@ -996,22 +987,22 @@ impl<'a> fmt::Display for StorePathFormatter<'a> {
     }
 }
 
-pub fn fmt_store_path(str: &[u8]) -> StorePathFormatter<'_> {
+pub(crate) fn fmt_store_path(str: &[u8]) -> StorePathFormatter<'_> {
     StorePathFormatter { str }
 }
 
 // these bytes are skipped
 // so we just make it repeat bun bun bun bun bun bun bun bun bun
-pub static ALIGNMENT_BYTES_TO_REPEAT_BUFFER: [u8; 144] = [0u8; 144];
+pub(crate) static ALIGNMENT_BYTES_TO_REPEAT_BUFFER: [u8; 144] = [0u8; 144];
 
-pub fn initialize_store() {
+pub(crate) fn initialize_store() {
     bun_ast::initialize_store_or_reset();
 }
 
 /// The default store we use pre-allocates around 16 MB of memory per thread
 /// That adds up in multi-threaded scenarios.
 /// ASTMemoryAllocator uses a smaller fixed buffer allocator
-pub fn initialize_mini_store() {
+pub(crate) fn initialize_mini_store() {
     use bun_alloc::Arena;
 
     struct MiniStore {
@@ -1071,16 +1062,16 @@ pub use bun_install_types::{
     TruncatedPackageNameHash,
 };
 // Phase-A drafts use the Zig field-style lowercase names; alias both spellings.
-pub const invalid_package_id: PackageID = INVALID_PACKAGE_ID;
-pub const invalid_dependency_id: DependencyID = INVALID_DEPENDENCY_ID;
+pub(crate) const invalid_package_id: PackageID = INVALID_PACKAGE_ID;
+pub(crate) const invalid_dependency_id: DependencyID = INVALID_DEPENDENCY_ID;
 pub const bun_hash_tag: &[u8] = BUN_HASH_TAG;
 
-pub type PackageNameAndVersionHash = u64;
+pub(crate) type PackageNameAndVersionHash = u64;
 
-pub struct Aligner;
+pub(crate) struct Aligner;
 
 impl Aligner {
-    pub fn write<T, W: bun_io::Write>(writer: &mut W, pos: u64) -> bun_io::Result<usize> {
+    pub(crate) fn write<T, W: bun_io::Write>(writer: &mut W, pos: u64) -> bun_io::Result<usize> {
         let to_write = Self::skip_amount::<T>(pos as usize);
 
         let remainder: &[u8] = &ALIGNMENT_BYTES_TO_REPEAT_BUFFER
@@ -1093,7 +1084,7 @@ impl Aligner {
     /// Runtime-alignment variant of [`Aligner::write`] for call sites that
     /// compute `align_of::<T>()` at the caller (Zig passed `comptime Type`;
     /// Rust callers without a nameable `T` pass the alignment as a value).
-    pub fn write_with_align<W: bun_io::Write>(
+    pub(crate) fn write_with_align<W: bun_io::Write>(
         align: usize,
         writer: &mut W,
         pos: u64,
@@ -1108,12 +1099,12 @@ impl Aligner {
     }
 
     #[inline]
-    pub fn skip_amount<T>(pos: usize) -> usize {
+    pub(crate) fn skip_amount<T>(pos: usize) -> usize {
         Self::skip_amount_with_align(core::mem::align_of::<T>(), pos)
     }
 
     #[inline]
-    pub fn skip_amount_with_align(align: usize, pos: usize) -> usize {
+    pub(crate) fn skip_amount_with_align(align: usize, pos: usize) -> usize {
         // std.mem.alignForward(usize, pos, align) - pos
         pos.next_multiple_of(align) - pos
     }
@@ -1164,16 +1155,6 @@ pub struct DependencyInstallContext {
     pub dependency_id: DependencyID,
 }
 
-impl DependencyInstallContext {
-    pub fn new(dependency_id: DependencyID) -> Self {
-        Self {
-            tree_id: 0,
-            path: Vec::new(),
-            dependency_id,
-        }
-    }
-}
-
 #[derive(Clone)]
 pub enum TaskCallbackContext {
     Dependency(DependencyID),
@@ -1189,7 +1170,7 @@ pub enum TaskCallbackContext {
 // 2.
 
 #[derive(strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
-pub enum PackageManifestError {
+pub(crate) enum PackageManifestError {
     PackageManifestHTTP400,
     PackageManifestHTTP401,
     PackageManifestHTTP402,

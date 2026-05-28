@@ -1,5 +1,4 @@
 use bun_core::MutableString;
-use bun_zlib::{ZlibError, ZlibReaderArrayList};
 
 // PORT NOTE: Zig used `bun.ObjectPool(MutableString, initMutableString, false, 4)` and
 // recovered the node via `container_of`. `MutableString` is a foreign type so we
@@ -44,18 +43,5 @@ mod buffer_pool {
     }
 }
 pub use buffer_pool::{get, put};
-
-pub fn decompress(compressed_data: &[u8], output: &mut MutableString) -> Result<(), ZlibError> {
-    let mut reader = ZlibReaderArrayList::init_with_options_and_list_allocator(
-        compressed_data,
-        &mut output.list,
-        bun_zlib::Options {
-            window_bits: 15 + 32,
-            ..Default::default()
-        },
-    )?;
-    reader.read_all(true)?;
-    Ok(())
-}
 
 // ported from: src/http/zlib.zig

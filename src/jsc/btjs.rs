@@ -11,13 +11,13 @@ use bun_core::{self, Error, err};
 // plus the symbol-lookup helpers. The frame-pointer unwinder lives in `bun_core::debug`.
 #[cfg(debug_assertions)]
 mod zig_std_debug {
-    pub use bun_core::debug::{StackIterator, frame_address};
+    pub(super) use bun_core::debug::{StackIterator, frame_address};
 
     // ── SelfInfo (vendor/zig/lib/std/debug/SelfInfo.zig) ─────────────────
     // D104: relocated to `bun_crash_handler::debug` (lower-tier crate, also
     // needed by the crash handler's stack-trace printer). Re-export so the
     // in-file callers below compile unchanged.
-    pub use bun_crash_handler::debug::{
+    pub(super) use bun_crash_handler::debug::{
         Module, SelfInfo, SourceLocation, SymbolInfo, get_self_debug_info,
     };
 }
@@ -36,7 +36,7 @@ mod tty {
     // `detect_config_stdout` stays LOCAL — it ports a *different* Zig call
     // site (`detectConfig(stdout())` with NO_COLOR/CLICOLOR_FORCE/isatty) than
     // crash_handler's `detect_tty_config_stderr()` (Output::ENABLE_ANSI_COLORS_STDERR).
-    pub use bun_crash_handler::debug::{Color, TtyConfig as Config};
+    pub(super) use bun_crash_handler::debug::{Color, TtyConfig as Config};
 
     /// Port of `process.hasNonEmptyEnvVarConstant`.
     fn has_non_empty_env_var(name: &core::ffi::CStr) -> bool {
@@ -85,7 +85,7 @@ mod tty {
     }
 
     /// Port of `std.io.tty.detectConfig(std.fs.File.stdout())`.
-    pub fn detect_config_stdout() -> Config {
+    pub(super) fn detect_config_stdout() -> Config {
         let force_color: Option<bool> = if has_non_empty_env_var(c"NO_COLOR") {
             Some(false)
         } else if has_non_empty_env_var(c"CLICOLOR_FORCE") {
@@ -127,7 +127,7 @@ unsafe extern "C" {
 
 /// allocated using bun.default_allocator. when called from lldb, it is never freed.
 #[unsafe(no_mangle)]
-pub extern "C" fn dumpBtjsTrace() -> *const c_char {
+pub(crate) extern "C" fn dumpBtjsTrace() -> *const c_char {
     // Zig: `if (comptime bun.Environment.isDebug)` — must use #[cfg], not cfg!(), so the
     // entire debug impl is DCE'd from release builds.
     #[cfg(debug_assertions)]

@@ -1083,13 +1083,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 }
 
                                 let subdir_parts: &[&[u8]] = &[dir_dir_path, entry_name];
-                                let entry_start: u32 = u32::try_from(if dir_dir_path.is_empty() {
-                                    0
-                                } else {
-                                    dir_dir_path.len() + 1
-                                })
-                                .unwrap();
                                 let subdir_entry_name = self.walker.join(subdir_parts)?;
+                                let joined = work_item_logical_path(&subdir_entry_name);
+                                let entry_start: u32 =
+                                    u32::try_from(joined.len() - strings::basename(joined).len())
+                                        .unwrap();
 
                                 self.walker.workbuf.push(WorkItem::new_symlink(
                                     subdir_entry_name,
@@ -1170,14 +1168,12 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 bun_sys::FileKind::SymLink => {
                                     if self.walker.follow_symlinks {
                                         let subdir_parts: &[&[u8]] = &[dir_dir_path, entry_name];
-                                        let entry_start: u32 =
-                                            u32::try_from(if dir_dir_path.is_empty() {
-                                                0
-                                            } else {
-                                                dir_dir_path.len() + 1
-                                            })
-                                            .unwrap();
                                         let subdir_entry_name = self.walker.join(subdir_parts)?;
+                                        let joined = work_item_logical_path(&subdir_entry_name);
+                                        let entry_start: u32 = u32::try_from(
+                                            joined.len() - strings::basename(joined).len(),
+                                        )
+                                        .unwrap();
                                         self.walker.workbuf.push(WorkItem::new_symlink(
                                             subdir_entry_name,
                                             active,

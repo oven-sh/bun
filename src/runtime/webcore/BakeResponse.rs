@@ -46,7 +46,7 @@ pub enum SSRKind {
 /// `this` must be a valid heap-allocated `Response` whose ownership is being
 /// transferred to the JS GC. After this call the caller must not free or
 /// dereference `this`.
-pub unsafe fn to_js_for_ssr(
+pub(crate) unsafe fn to_js_for_ssr(
     this: *mut Response,
     global_object: &JSGlobalObject,
     kind: SSRKind,
@@ -59,7 +59,7 @@ pub unsafe fn to_js_for_ssr(
 // C++ side declares `extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES` (SYSV_ABI on win-x64).
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
-    pub unsafe fn BakeResponseClass__constructForSSR(
+    pub(crate) unsafe fn BakeResponseClass__constructForSSR(
         global_object: &JSGlobalObject,
         call_frame: &CallFrame,
         bake_ssr_has_jsx: *mut c_int,
@@ -79,7 +79,7 @@ bun_jsc::jsc_host_abi! {
     }
 }
 
-pub fn constructor(
+pub(crate) fn constructor(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
     bake_ssr_has_jsx: &mut c_int,
@@ -112,7 +112,7 @@ pub fn constructor(
 // C++ side declares `extern "C" SYSV_ABI ... JSC_HOST_CALL_ATTRIBUTES`.
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
-    pub unsafe fn BakeResponseClass__constructRedirect(
+    pub(crate) unsafe fn BakeResponseClass__constructRedirect(
         global_object: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JSValue {
@@ -120,7 +120,7 @@ bun_jsc::jsc_host_abi! {
     }
 }
 
-pub fn construct_redirect(
+pub(crate) fn construct_redirect(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -148,7 +148,7 @@ pub fn construct_redirect(
 // C++ side declares `extern "C" SYSV_ABI ... JSC_HOST_CALL_ATTRIBUTES`.
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
-    pub unsafe fn BakeResponseClass__constructRender(
+    pub(crate) unsafe fn BakeResponseClass__constructRender(
         global_object: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JSValue {
@@ -158,7 +158,10 @@ bun_jsc::jsc_host_abi! {
 }
 
 /// This function is only available on JSBakeResponse
-pub fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn construct_render(
+    global_this: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
     let arguments: [JSValue; 2] = callframe.arguments_as_array::<2>();
     let vm = global_this.bun_vm().as_mut();
 

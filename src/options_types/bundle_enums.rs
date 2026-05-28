@@ -93,9 +93,6 @@ pub enum BundlePackage {
     Never,
 }
 
-// Zig: `bun.StringArrayHashMapUnmanaged(BundlePackage)` — insertion-ordered,
-// string-keyed. Maps to bun_collections per PORTING.md §Collections.
-// (E0658: inherent assoc types are nightly-only; lifted to module scope.)
 pub type BundlePackageMap = bun_collections::StringArrayHashMap<BundlePackage>;
 
 // ─── move-in: TYPE_ONLY from bun_bundler::options ─────────────────────────

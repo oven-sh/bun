@@ -42,7 +42,7 @@ pub enum KnownGlobal {
 // no indirection. 21 keys, ≤3 per length bucket: well within the range where
 // open-coded dispatch beats `phf`.
 #[inline]
-pub fn lookup(name: &[u8]) -> Option<KnownGlobal> {
+pub(crate) fn lookup(name: &[u8]) -> Option<KnownGlobal> {
     match name.len() {
         3 => match name {
             b"Set" => Some(KnownGlobal::Set),

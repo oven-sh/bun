@@ -25,7 +25,7 @@ pub trait HasAutoFlusher: Sized {
 /// monomorphic `extern "C"` trampoline rather than a fn-ptr cast so the
 /// calling convention is honest.
 #[inline]
-pub fn erase_flush_callback<T: HasAutoFlusher>() -> DeferredRepeatingTask {
+pub(crate) fn erase_flush_callback<T: HasAutoFlusher>() -> DeferredRepeatingTask {
     // Body is fully safe (`cast` + safe trait call); a safe `extern "C"` fn
     // item coerces to the `DeferredRepeatingTask` fn-ptr slot. `ctx` is
     // exactly the `*mut T` registered by
@@ -42,7 +42,7 @@ pub fn erase_flush_callback<T: HasAutoFlusher>() -> DeferredRepeatingTask {
 // `vm.event_loop().deferred_tasks`. To break the event_loop→jsc upward edge,
 // callers now pass the `DeferredTaskQueue` directly (it lives in this crate).
 // Higher-tier call sites do `&mut vm.event_loop().deferred_tasks` themselves.
-pub fn register_deferred_microtask_with_type<T: HasAutoFlusher>(
+pub(crate) fn register_deferred_microtask_with_type<T: HasAutoFlusher>(
     this: &mut T,
     deferred: &mut DeferredTaskQueue,
 ) {
@@ -52,7 +52,7 @@ pub fn register_deferred_microtask_with_type<T: HasAutoFlusher>(
     register_deferred_microtask_with_type_unchecked(this, deferred);
 }
 
-pub fn unregister_deferred_microtask_with_type<T: HasAutoFlusher>(
+pub(crate) fn unregister_deferred_microtask_with_type<T: HasAutoFlusher>(
     this: &mut T,
     deferred: &mut DeferredTaskQueue,
 ) {
@@ -62,7 +62,7 @@ pub fn unregister_deferred_microtask_with_type<T: HasAutoFlusher>(
     unregister_deferred_microtask_with_type_unchecked(this, deferred);
 }
 
-pub fn unregister_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
+pub(crate) fn unregister_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
     this: &mut T,
     deferred: &mut DeferredTaskQueue,
 ) {
@@ -75,7 +75,7 @@ pub fn unregister_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
     this.auto_flusher().registered = false;
 }
 
-pub fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
+pub(crate) fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
     this: &mut T,
     deferred: &mut DeferredTaskQueue,
 ) {

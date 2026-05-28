@@ -15,11 +15,13 @@ use bun_sys::windows::HANDLE;
 
 bun_core::declare_scope!(watcher, visible);
 
-pub type Platform = WindowsWatcher;
+pub(crate) type Platform = WindowsWatcher;
 
-pub type EventListIndex = core::ffi::c_int;
+#[allow(dead_code)]
+pub(crate) type EventListIndex = core::ffi::c_int;
 
 pub struct WindowsWatcher {
+    #[allow(dead_code)]
     pub mutex: Mutex,
     pub iocp: HANDLE,
     pub watcher: DirWatcher,
@@ -62,7 +64,7 @@ pub enum Action {
     RenamedNew = w::FILE_ACTION_RENAMED_NEW_NAME,
 }
 
-pub struct FileEvent {
+pub(crate) struct FileEvent {
     pub action: Action,
     // BACKREF: Zig `[]u16` borrows `DirWatcher.buf`. [`RawSlice`] (not a
     // lifetime-carrying `&'a [u16]`) so `FileEvent` carries no lifetime param;
@@ -150,14 +152,14 @@ impl DirWatcher {
 /// because the iterator is only advanced while the owning `DirWatcher` is
 /// alive and `prepare()` has not been re-called; safe `Deref` replaces the
 /// previously open-coded raw `(*self.watcher).buf` projection.
-pub struct EventIterator {
+pub(crate) struct EventIterator {
     pub watcher: BackRef<DirWatcher>,
     pub offset: usize,
     pub has_next: bool,
 }
 
 impl EventIterator {
-    pub fn next(&mut self) -> Option<FileEvent> {
+    pub(crate) fn next(&mut self) -> Option<FileEvent> {
         if !self.has_next {
             return None;
         }
@@ -224,7 +226,7 @@ impl EventIterator {
 impl WindowsWatcher {
     // TODO(port): in-place init — `self` is the pre-allocated `platform` slot inside
     // crate::Watcher (64KB+ buffers; avoid moving). Zig sig: `fn init(this, root) !void`.
-    pub fn init(&mut self, root: &[u8]) -> Result<(), bun_core::Error> {
+    pub(crate) fn init(&mut self, root: &[u8]) -> Result<(), bun_core::Error> {
         use bun_paths::string_paths as paths;
         let mut pathbuf = WPathBuffer::uninit();
         let wpath = paths::to_nt_path(&mut pathbuf, root);
@@ -305,7 +307,7 @@ impl WindowsWatcher {
     }
 
     /// wait until new events are available
-    pub fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Option<EventIterator>> {
+    pub(crate) fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Option<EventIterator>> {
         if let Err(err) = self.watcher.prepare() {
             bun_core::scoped_log!(watcher, "prepare() returned error");
             return Err(err);
@@ -386,7 +388,7 @@ impl WindowsWatcher {
         }
     }
 
-    pub fn stop(&mut self) {
+    pub(crate) fn stop(&mut self) {
         // SAFETY: handles were opened in init() and are valid until stop() is called once.
         unsafe {
             w::CloseHandle(self.watcher.dir_handle);
@@ -397,13 +399,14 @@ impl WindowsWatcher {
 
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Timeout {
+pub(crate) enum Timeout {
     Infinite = w::INFINITE,
+    #[allow(dead_code)]
     Minimal = 1,
     None = 0,
 }
 
-pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
+pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     // PORT NOTE: reshaped for borrowck — Zig held `&this.platform.buf` across the loop while
     // also calling `this.platform.next()`. We re-borrow buf inside the inner loop instead.
     let base_idx = this.platform.base_idx;
@@ -567,7 +570,7 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
     Ok(())
 }
 
-pub fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> WatchEvent {
+pub(crate) fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> WatchEvent {
     let mut op = Op::empty();
     if event.action == Action::Removed {
         op |= Op::DELETE;

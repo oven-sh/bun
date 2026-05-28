@@ -64,7 +64,7 @@ pub struct ArrayListAlignedIn<T> {
 }
 
 /// Zig: `Unmanaged = std.ArrayListAlignedUnmanaged(T, alignment)`
-pub type Unmanaged<T> = Vec<T>;
+pub(crate) type Unmanaged<T> = Vec<T>;
 
 /// Zig: `Slice = Unmanaged.Slice` (= `[]align(alignment) T`, an owned slice when detached).
 // TODO(port): Zig `Slice` is used both as a borrow (`items()`) and as an owned return

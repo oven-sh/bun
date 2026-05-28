@@ -20,8 +20,6 @@ use bun_collections::StringArrayHashMap;
 use bun_core::{self, ZigString};
 use bun_jsc::{self as jsc, JSGlobalObject, JSPropertyIterator, JSValue, JsResult};
 
-use crate::napi::NapiEnv;
-
 use super::{ABIType, Function};
 
 unsafe extern "C" {
@@ -243,27 +241,6 @@ pub fn generate_symbols(
 // ══════════════════════════════════════════════════════════════════════════
 
 impl Function {
-    /// `Function.compile` (FFI.zig:1769). Prints the C trampoline source,
-    /// compiles + relocates it via TinyCC, and stores the resulting
-    /// `JSFunctionCall` symbol address in `self.step`.
-    ///
-    /// `bun_tcc_sys::tcc` (the method-ful `State` API) is still gated, so
-    /// this body short-circuits to `Step::Failed` after generating the
-    /// source. The full TCC sequence (`State::init` → `add_symbol` →
-    /// `compile_string` → `relocate` → `get_symbol`) is preserved verbatim
-    /// in `ffi_body.rs:1940-2024` and re-enables once `bun_tcc_sys` un-gates.
-    pub fn compile(&mut self, _napi_env: Option<&NapiEnv>) -> Result<(), bun_core::Error> {
-        let mut source_code: Vec<u8> = Vec::new();
-        self.print_source_code(&mut source_code)?;
-        source_code.push(0);
-
-        // TODO(blocked): bun_tcc_sys::State (compile/relocate/add_symbol/get_symbol)
-        //   — un-gate from `ffi_body.rs` once `bun_tcc_sys::tcc` is real.
-        let _ = source_code;
-        self.fail(b"TinyCC is not available in this build of Bun");
-        Ok(())
-    }
-
     /// `Function.printSourceCode` (FFI.zig:2007) — emit the C trampoline that
     /// adapts a JSC host-call frame to the native symbol's ABI.
     pub fn print_source_code(

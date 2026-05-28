@@ -95,7 +95,7 @@ pub trait BufferedReaderParent {
 }
 
 impl BufferedReaderVTable {
-    pub fn init<T: BufferedReaderParent>() -> BufferedReaderVTable {
+    pub(crate) fn init<T: BufferedReaderParent>() -> BufferedReaderVTable {
         BufferedReaderVTable {
             parent: core::ptr::null_mut(),
             kind: T::KIND,
@@ -109,15 +109,15 @@ impl BufferedReaderVTable {
         unsafe { crate::BufferedReaderParentLink::new(self.kind, self.parent) }
     }
 
-    pub fn event_loop(&self) -> EventLoopHandle {
+    pub(crate) fn event_loop(&self) -> EventLoopHandle {
         self.link().event_loop()
     }
 
-    pub fn loop_(&self) -> *mut Loop {
+    pub(crate) fn loop_(&self) -> *mut Loop {
         self.link().loop_ptr()
     }
 
-    pub fn is_streaming_enabled(&self) -> bool {
+    pub(crate) fn is_streaming_enabled(&self) -> bool {
         self.link().has_on_read_chunk()
     }
 
@@ -125,19 +125,19 @@ impl BufferedReaderVTable {
     /// and hasMore is true, it means that there might be more data to read.
     ///
     /// Returning false prevents the reader from reading more data.
-    pub fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
+    pub(crate) fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
         self.link().on_read_chunk(chunk, has_more)
     }
 
-    pub fn on_reader_done(&self) {
+    pub(crate) fn on_reader_done(&self) {
         self.link().on_reader_done()
     }
 
-    pub fn on_reader_error(&self, err: sys::Error) {
+    pub(crate) fn on_reader_error(&self, err: sys::Error) {
         self.link().on_reader_error(err)
     }
 
-    pub fn on_max_buffer_overflow(&self, maxbuf: NonNull<MaxBuf>) {
+    pub(crate) fn on_max_buffer_overflow(&self, maxbuf: NonNull<MaxBuf>) {
         self.link().on_max_buffer_overflow(maxbuf)
     }
 }
@@ -1094,6 +1094,7 @@ pub struct WindowsBufferedReader {
     pub flags: WindowsFlags,
     pub maxbuf: Option<NonNull<MaxBuf>>,
 
+    #[allow(dead_code)]
     pub parent: *mut c_void,
     pub vtable: BufferedReaderVTable,
 }
@@ -1125,10 +1126,12 @@ impl WindowsFlags {
 
 #[cfg(windows)]
 impl WindowsBufferedReader {
+    #[allow(dead_code)]
     pub fn memory_cost(&self) -> usize {
         mem::size_of::<Self>() + self._buffer.capacity()
     }
 
+    #[allow(dead_code)]
     pub fn init<T: BufferedReaderParent>() -> WindowsBufferedReader {
         WindowsBufferedReader {
             source: None,
@@ -1142,6 +1145,7 @@ impl WindowsBufferedReader {
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub fn is_done(&self) -> bool {
         self.flags.intersects(
             WindowsFlags::IS_DONE
@@ -1150,6 +1154,7 @@ impl WindowsBufferedReader {
         )
     }
 
+    #[allow(dead_code)]
     pub fn from(&mut self, other: &mut WindowsBufferedReader, parent: *mut c_void) {
         debug_assert!(other.source.is_some() && self.source.is_none());
         // PORT NOTE: keep self.vtable; move other's state in.
@@ -1171,6 +1176,7 @@ impl WindowsBufferedReader {
         self.set_parent(parent);
     }
 
+    #[allow(dead_code)]
     pub fn get_fd(&self) -> Fd {
         let Some(source) = &self.source else {
             return Fd::INVALID;
@@ -1178,6 +1184,7 @@ impl WindowsBufferedReader {
         source.get_fd()
     }
 
+    #[allow(dead_code)]
     pub fn watch(&mut self) {
         // No-op on windows.
     }
@@ -1196,6 +1203,7 @@ impl WindowsBufferedReader {
         }
     }
 
+    #[allow(dead_code)]
     pub fn update_ref(&mut self, value: bool) {
         if let Some(source) = self.source.as_mut() {
             if value {
@@ -1206,14 +1214,17 @@ impl WindowsBufferedReader {
         }
     }
 
-    pub fn enable_keeping_process_alive<C>(&mut self, _: C) {
+    #[allow(dead_code)]
+    pub(crate) fn enable_keeping_process_alive<C>(&mut self, _: C) {
         self.update_ref(true);
     }
 
+    #[allow(dead_code)]
     pub fn disable_keeping_process_alive<C>(&mut self, _: C) {
         self.update_ref(false);
     }
 
+    #[allow(dead_code)]
     pub fn take_buffer(&mut self) -> Vec<u8> {
         mem::take(&mut self._buffer)
     }
@@ -1222,10 +1233,12 @@ impl WindowsBufferedReader {
         &mut self._buffer
     }
 
+    #[allow(dead_code)]
     pub fn final_buffer(&mut self) -> &mut Vec<u8> {
         self.buffer()
     }
 
+    #[allow(dead_code)]
     pub fn has_pending_activity(&self) -> bool {
         let Some(source) = &self.source else {
             return false;
@@ -1233,6 +1246,7 @@ impl WindowsBufferedReader {
         source.is_active()
     }
 
+    #[allow(dead_code)]
     pub fn has_pending_read(&self) -> bool {
         if self.flags.contains(WindowsFlags::HAS_INFLIGHT_READ) {
             return true;
@@ -1294,7 +1308,7 @@ impl WindowsBufferedReader {
         self._buffer.shrink_to_fit();
     }
 
-    pub fn done(&mut self) {
+    pub(crate) fn done(&mut self) {
         if let Some(source) = &self.source {
             debug_assert!(source.is_closed());
         }
@@ -1304,12 +1318,14 @@ impl WindowsBufferedReader {
         self.vtable.on_reader_done();
     }
 
+    #[allow(dead_code)]
     pub fn on_error(&mut self, err: sys::Error) {
         self.finish();
         self.vtable.on_reader_error(err);
     }
 
-    pub fn get_read_buffer_with_stable_memory_address(
+    #[allow(dead_code)]
+    pub(crate) fn get_read_buffer_with_stable_memory_address(
         &mut self,
         suggested_size: usize,
     ) -> &mut [u8] {
@@ -1319,6 +1335,7 @@ impl WindowsBufferedReader {
         unsafe { bun_core::vec::spare_bytes_mut(&mut self._buffer) }
     }
 
+    #[allow(dead_code)]
     pub fn start_with_current_pipe(&mut self) -> sys::Result<()> {
         debug_assert!(!self.source.as_ref().unwrap().is_closed());
         let self_ptr = core::ptr::from_mut(self).cast::<c_void>();
@@ -1331,12 +1348,14 @@ impl WindowsBufferedReader {
     /// SAFETY: `pipe` must be a `Box<uv::Pipe>`-allocated pointer; ownership
     /// transfers to `self.source` (later freed via `close_and_destroy`).
     #[cfg(windows)]
+    #[allow(dead_code)]
     pub unsafe fn start_with_pipe(&mut self, pipe: *mut uv::Pipe) -> sys::Result<()> {
         // SAFETY: caller contract — Box-allocated, ownership transfers.
         self.source = Some(Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
         self.start_with_current_pipe()
     }
 
+    #[allow(dead_code)]
     pub fn start(&mut self, fd: Fd, _: bool) -> sys::Result<()> {
         debug_assert!(self.source.is_none());
         // Use the event loop from the parent, not the global one
@@ -1351,12 +1370,14 @@ impl WindowsBufferedReader {
         self.start_with_current_pipe()
     }
 
+    #[allow(dead_code)]
     pub fn start_file_offset(&mut self, fd: Fd, poll: bool, offset: usize) -> sys::Result<()> {
         self._offset = offset;
         self.flags.insert(WindowsFlags::USE_PREAD);
         self.start(fd, poll)
     }
 
+    #[allow(dead_code)]
     pub fn set_raw_mode(&mut self, value: bool) -> sys::Result<()> {
         let Some(source) = self.source.as_mut() else {
             return sys::Result::Err(sys::Error {
@@ -1599,7 +1620,7 @@ impl WindowsBufferedReader {
     }
 
     #[cfg(windows)]
-    pub fn start_reading(&mut self) -> sys::Result<()> {
+    pub(crate) fn start_reading(&mut self) -> sys::Result<()> {
         if self.flags.contains(WindowsFlags::IS_DONE)
             || !self.flags.contains(WindowsFlags::IS_PAUSED)
         {
@@ -1796,6 +1817,7 @@ impl WindowsBufferedReader {
     /// Explicit teardown that does **not** fire `on_reader_done` (unlike
     /// [`close`]). Mirrors Zig `WindowsBufferedReader.deinit`. Safe to call
     /// before Drop; both paths are idempotent over an already-taken source.
+    #[allow(dead_code)]
     pub fn deinit(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
         self._buffer = Vec::new();
@@ -1840,7 +1862,12 @@ impl WindowsBufferedReader {
         drop(unsafe { bun_core::heap::take(handle) });
     }
 
-    pub fn on_read(&mut self, amount: sys::Result<usize>, slice: &mut [u8], has_more: ReadState) {
+    pub(crate) fn on_read(
+        &mut self,
+        amount: sys::Result<usize>,
+        slice: &mut [u8],
+        has_more: ReadState,
+    ) {
         if let sys::Result::Err(err) = amount {
             self.on_error(err);
             return;
@@ -1889,14 +1916,17 @@ impl WindowsBufferedReader {
         }
     }
 
+    #[allow(dead_code)]
     pub fn pause(&mut self) {
         let _ = self.stop_reading();
     }
 
+    #[allow(dead_code)]
     pub fn unpause(&mut self) {
         let _ = self.start_reading();
     }
 
+    #[allow(dead_code)]
     pub fn read(&mut self) {
         // we cannot sync read pipes on Windows so we just check if we are paused to resume the reading
         self.unpause();

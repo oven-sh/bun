@@ -400,7 +400,7 @@ pub fn terminate_all_and_wait(timeout_ms: u64) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WebWorker__getParentWorker(vm: &VirtualMachine) -> *mut c_void {
+pub(crate) extern "C" fn WebWorker__getParentWorker(vm: &VirtualMachine) -> *mut c_void {
     vm.worker_ref()
         .map(|w| w.cpp_worker)
         .unwrap_or(core::ptr::null_mut())

@@ -112,7 +112,7 @@ struct SloppyGlobalGitConfig {
 static SLOPPY_HOLDER: OnceLock<SloppyGlobalGitConfig> = OnceLock::new();
 
 impl SloppyGlobalGitConfig {
-    pub fn get() -> SloppyGlobalGitConfig {
+    pub(crate) fn get() -> SloppyGlobalGitConfig {
         *SLOPPY_HOLDER.get_or_init(Self::load_and_parse)
     }
 
@@ -226,7 +226,7 @@ impl SloppyGlobalGitConfig {
 // once `RepositoryExt` is in scope.
 pub use bun_install_types::resolver_hooks::Repository;
 
-pub struct SharedEnv {
+pub(crate) struct SharedEnv {
     env: Option<bun_dotenv::Map>,
 }
 
@@ -240,11 +240,11 @@ pub struct SharedEnv {
 // PORTING.md §Global mutable state: lazy-init on the install main thread,
 // then `&'static`-read from worker threads. RacyCell — the install enqueue
 // path is single-threaded at the write point (Zig parity).
-pub static SHARED_ENV: bun_core::RacyCell<SharedEnv> =
+pub(crate) static SHARED_ENV: bun_core::RacyCell<SharedEnv> =
     bun_core::RacyCell::new(SharedEnv { env: None });
 
 impl SharedEnv {
-    pub fn get(other: &mut bun_dotenv::Loader) -> &'static bun_dotenv::Map {
+    pub(crate) fn get(other: &mut bun_dotenv::Loader) -> &'static bun_dotenv::Map {
         // SAFETY: `SHARED_ENV` is only initialised from the main install thread
         // during enqueue (single-threaded at that point in Zig too). Once
         // `env` is `Some` it is never reassigned, so the returned `&'static`
@@ -289,7 +289,7 @@ impl SharedEnv {
 /// memcmp; this rejects on a single `usize` compare for everything that isn't
 /// 6 or 9 bytes (the common case: real hostnames like `git.company.io`).
 #[inline]
-pub fn host_tld(host: &[u8]) -> Option<&'static [u8]> {
+pub(crate) fn host_tld(host: &[u8]) -> Option<&'static [u8]> {
     match host.len() {
         6 => match host {
             b"github" => Some(b".com"),
@@ -306,7 +306,7 @@ pub fn host_tld(host: &[u8]) -> Option<&'static [u8]> {
 /// directory name and passed to `git checkout`, so it must be a single safe path
 /// component: no separators, no NUL, and no leading `-` that git would parse as an
 /// option.
-pub fn is_safe_resolved_tag(resolved: &[u8]) -> bool {
+pub(crate) fn is_safe_resolved_tag(resolved: &[u8]) -> bool {
     !resolved.is_empty()
         && resolved.len() <= 256
         && resolved[0] != b'-'

@@ -184,6 +184,23 @@ describe("bundler", () => {
       {"$$typeof":"Symbol(jsx)","type":"Symbol("jsx.fragment")","key":"null","ref":"null","props":{"children":"Fragment"},"_owner":"null"}
     `,
   });
+  // A used `Fragment` import must not be reported as a duplicate of the
+  // auto-imported JSX `Fragment` helper that shares its name at module scope.
+  itBundledDevAndProd("jsx/AutomaticFragmentNamedImport", {
+    files: {
+      "/index.tsx": /* tsx */ `
+        import { print } from 'bun-test-helpers'
+        import { Fragment } from 'react'
+        const F = Fragment
+        const el = <>hi</>
+        print([typeof F, typeof el])
+      `,
+      ...helpers,
+    },
+    target: "bun",
+    devStdout: `["symbol","object"]`,
+    prodStdout: `["symbol","object"]`,
+  });
   itBundledDevAndProd("jsx/ImportSource", {
     prodTodo: true,
     files: {

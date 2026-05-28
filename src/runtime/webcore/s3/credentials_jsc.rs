@@ -25,7 +25,7 @@ use bun_url::URL;
 ///   (credentials_jsc.zig behaviour).
 /// * `strict = false` — non-string is silently ignored (list_objects.zig
 ///   behaviour).
-pub fn get_truthy_string_utf8(
+pub(crate) fn get_truthy_string_utf8(
     opts: JSValue,
     global: &JSGlobalObject,
     key: &[u8],
@@ -70,7 +70,7 @@ const STORAGE_CLASS_ONE_OF: &str = "\"STANDARD\", \"STANDARD_IA\", \"INTELLIGENT
 \"ONEZONE_IA\", \"GLACIER\", \"GLACIER_IR\", \"REDUCED_REDUNDANCY\", \"OUTPOSTS\", \"DEEP_ARCHIVE\", \"SNOW\"";
 
 #[allow(clippy::too_many_arguments)]
-pub fn get_credentials_with_options(
+pub(crate) fn get_credentials_with_options(
     this: &S3Credentials,
     default_options: MultiPartUploadOptions,
     options: Option<JSValue>,

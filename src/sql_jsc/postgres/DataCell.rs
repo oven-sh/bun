@@ -447,6 +447,7 @@ fn parse_array(
                                     slice = try_slice(slice, 5);
                                     continue;
                                 }
+                                return Err(AnyPostgresError::UnsupportedArrayFormat);
                             } else {
                                 array.push(SQLDataCell {
                                     tag: Tag::Bool,
@@ -472,6 +473,7 @@ fn parse_array(
                                     slice = try_slice(slice, 4);
                                     continue;
                                 }
+                                return Err(AnyPostgresError::UnsupportedArrayFormat);
                             } else {
                                 array.push(SQLDataCell {
                                     tag: Tag::Bool,
@@ -852,7 +854,7 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
     })
 }
 
-pub fn from_bytes(
+pub(crate) fn from_bytes(
     binary: bool,
     bigint: bool,
     oid: types::Tag,
@@ -1242,7 +1244,7 @@ enum PGNummericString<'a> {
 }
 
 impl<'a> PGNummericString<'a> {
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         match self {
             PGNummericString::Static(value) => value,
             PGNummericString::Dynamic(value) => value,
@@ -1312,10 +1314,8 @@ fn parse_binary_numeric<'a>(
     let _ = decimal_pos; // matches Zig: computed but unused below
     // Output all digits before the decimal point
 
-    let mut scale_start: i32 = 0;
     if weight < 0 {
         result.push(b'0');
-        scale_start = weight as i32 + 1;
     } else {
         let mut idx: usize = 0;
         let mut first_non_zero = false;
@@ -1350,33 +1350,31 @@ fn parse_binary_numeric<'a>(
         }
     }
     // If requested, output a decimal point and all the digits that follow it.
-    // We initially put out a multiple of 4 digits, then truncate if needed.
+    // We initially put out a multiple of DEC_DIGITS (4) digits, then truncate.
+    //
+    // This mirrors Postgres' get_str_from_var: two independent counters —
+    // `d` walks base-10000 digits (advances by 1), `i` counts decimal places
+    // emitted (advances by DEC_DIGITS). Conflating them drops leading-zero
+    // groups when weight <= -3 and shifts significant digits left.
     if dscale > 0 {
         result.push(b'.');
-        // negative scale means we need to add zeros before the decimal point
-        // greater than ndigits means we need to add zeros after the decimal point
-        let mut idx: isize = scale_start as isize;
         let end: usize = result.len() + usize::try_from(dscale).expect("int cast");
-        while idx < dscale as isize {
-            if idx >= 0 && idx < dscale as isize {
-                let digit: u16 = if cursor.len() >= 2 {
-                    let v = u16::from_be_bytes(
-                        cursor[..2].try_into().expect("infallible: size matches"),
-                    );
-                    cursor = &cursor[2..];
-                    v
-                } else {
-                    0
-                };
-                bun_core::scoped_log!(PostgresDataCell, "dscale digit: {}", digit);
-                let digit_str: [u8; 4] = bun_core::fmt::itoa_padded::<4>(u64::from(digit));
-                let digit_len = 4usize;
-                result.extend_from_slice(&digit_str[0..digit_len]);
+        let mut d: i32 = weight as i32 + 1;
+        let mut i: i32 = 0;
+        while i < dscale as i32 {
+            let digit: u16 = if d >= 0 && d < ndigits as i32 && cursor.len() >= 2 {
+                let v =
+                    u16::from_be_bytes(cursor[..2].try_into().expect("infallible: size matches"));
+                cursor = &cursor[2..];
+                v
             } else {
-                bun_core::scoped_log!(PostgresDataCell, "dscale digit: 0000");
-                result.extend_from_slice(b"0000");
-            }
-            idx += 4;
+                0
+            };
+            bun_core::scoped_log!(PostgresDataCell, "dscale digit: {}", digit);
+            let digit_str: [u8; 4] = bun_core::fmt::itoa_padded::<4>(u64::from(digit));
+            result.extend_from_slice(&digit_str);
+            d += 1;
+            i += 4;
         }
         if result.len() > end {
             result.truncate(end);
@@ -1449,7 +1447,7 @@ pub fn parse_binary_float4(bytes: &[u8]) -> Result<f32, AnyPostgresError> {
     Ok(f32::from_bits(parse_binary_int4(bytes)? as u32))
 }
 
-pub struct Putter<'a> {
+pub(crate) struct Putter<'a> {
     pub list: &'a mut [SQLDataCell],
     pub fields: &'a [protocol::FieldDescription],
     pub binary: bool,
@@ -1459,24 +1457,7 @@ pub struct Putter<'a> {
 }
 
 impl<'a> Putter<'a> {
-    /// Mirrors Zig field defaults: `binary = false`, `bigint = false`, `count = 0`.
-    /// (Cannot `impl Default` — `list`/`fields`/`global_object` are borrows with no default.)
-    pub fn new(
-        list: &'a mut [SQLDataCell],
-        fields: &'a [protocol::FieldDescription],
-        global_object: &'a JSGlobalObject,
-    ) -> Self {
-        Self {
-            list,
-            fields,
-            binary: false,
-            bigint: false,
-            count: 0,
-            global_object,
-        }
-    }
-
-    pub fn to_js(
+    pub(crate) fn to_js(
         &mut self,
         global_object: &JSGlobalObject,
         array: JSValue,
@@ -1582,11 +1563,15 @@ impl<'a> Putter<'a> {
         Ok(true)
     }
 
-    pub fn put_raw(&mut self, index: u32, optional_bytes: Option<&mut Data>) -> Result<bool> {
+    pub(crate) fn put_raw(
+        &mut self,
+        index: u32,
+        optional_bytes: Option<&mut Data>,
+    ) -> Result<bool> {
         self.put_impl::<true>(index, optional_bytes)
     }
 
-    pub fn put(&mut self, index: u32, optional_bytes: Option<&mut Data>) -> Result<bool> {
+    pub(crate) fn put(&mut self, index: u32, optional_bytes: Option<&mut Data>) -> Result<bool> {
         self.put_impl::<false>(index, optional_bytes)
     }
 }

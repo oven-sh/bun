@@ -37,14 +37,14 @@ use bun_semver::{self as semver, SlicedString};
 
 use crate::Command;
 
-pub struct TerminalHyperlink<'a> {
+pub(crate) struct TerminalHyperlink<'a> {
     link: &'a [u8],
     text: &'a [u8],
     enabled: bool,
 }
 
 impl<'a> TerminalHyperlink<'a> {
-    pub fn new(link: &'a [u8], text: &'a [u8], enabled: bool) -> TerminalHyperlink<'a> {
+    pub(crate) fn new(link: &'a [u8], text: &'a [u8], enabled: bool) -> TerminalHyperlink<'a> {
         TerminalHyperlink {
             link,
             text,
@@ -71,7 +71,7 @@ impl fmt::Display for TerminalHyperlink<'_> {
     }
 }
 
-pub struct UpdateInteractiveCommand;
+pub(crate) struct UpdateInteractiveCommand;
 
 struct OutdatedPackage {
     name: Box<[u8]>,
@@ -112,7 +112,7 @@ struct PackageUpdate {
     workspace_path: Box<[u8]>,
 }
 
-pub struct CatalogUpdateRequest {
+pub(crate) struct CatalogUpdateRequest {
     // TODO(port): lifetime — these borrow from caller in Zig; using owned for now
     package_name: Box<[u8]>,
     new_version: Box<[u8]>,
@@ -246,7 +246,7 @@ impl UpdateInteractiveCommand {
         Ok(())
     }
 
-    pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
         Output::prettyln(format_args!(
             "<r><b>bun update --interactive <r><d>v{}<r>",
             Global::package_json_version_with_sha
@@ -2262,7 +2262,7 @@ fn leak_dup(bytes: &[u8]) -> &'static [u8] {
 // PORT NOTE: Zig threads `manager` only for `manager.allocator`; the Rust port
 // uses a local `Bump` (`E::Object::put` ignores its allocator arg), so the
 // parameter is dropped to keep `update_catalog_definitions` borrowck-clean.
-pub fn edit_catalog_definitions(
+pub(crate) fn edit_catalog_definitions(
     updates: &mut [CatalogUpdateRequest],
     current_package_json: &mut Expr,
 ) -> Result<(), bun_core::Error> {

@@ -142,11 +142,33 @@ mod _impl {
             let strategy =
                 validators::validate_int32(global, arguments.ptr[3], "strategy", None, None)?;
             // this does not get gc'd because it is stored in the JS object's `this._writeState`. and the JS object is tied to the native handle as `_handle[owner_symbol]`.
-            let write_result = arguments.ptr[4]
-                .as_array_buffer(global)
-                .unwrap()
-                .as_u32()
-                .as_mut_ptr();
+            // `flush_write_result` writes two u32s through this pointer, so the
+            // caller-supplied array must hold at least 2 elements.
+            let write_result_value = arguments.ptr[4];
+            let Some(mut write_result_buf) = write_result_value.as_array_buffer(global) else {
+                return Err(global.throw_invalid_argument_type_value(
+                    "writeResult",
+                    "Uint32Array",
+                    write_result_value,
+                ));
+            };
+            if write_result_buf.typed_array_type != bun_jsc::JSType::Uint32Array {
+                return Err(global.throw_invalid_argument_type_value(
+                    "writeResult",
+                    "Uint32Array",
+                    write_result_value,
+                ));
+            }
+            let write_result_slice = write_result_buf.as_u32();
+            if write_result_slice.len() < 2 {
+                return Err(global
+                    .err(
+                        bun_jsc::ErrorCode::INVALID_ARG_VALUE,
+                        format_args!("writeResult must be a Uint32Array with at least 2 elements"),
+                    )
+                    .throw());
+            }
+            let write_result = write_result_slice.as_mut_ptr();
             let write_callback =
                 validators::validate_function(global, "writeCallback", arguments.ptr[5])?;
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice() outlives
@@ -155,7 +177,17 @@ mod _impl {
             let dictionary = if arguments.ptr[6].is_undefined() {
                 None
             } else {
-                dictionary_buf = arguments.ptr[6].as_array_buffer(global).unwrap();
+                let dictionary_value = arguments.ptr[6];
+                dictionary_buf = match dictionary_value.as_array_buffer(global) {
+                    Some(buf) => buf,
+                    None => {
+                        return Err(global.throw_invalid_argument_type_value(
+                            "dictionary",
+                            "Buffer, TypedArray, or DataView",
+                            dictionary_value,
+                        ));
+                    }
+                };
                 Some(dictionary_buf.byte_slice())
             };
 
@@ -165,11 +197,6 @@ mod _impl {
                 global,
                 write_callback.with_async_context_if_needed(global),
             );
-
-            // Keep the dictionary alive by keeping a reference to it in the JS object.
-            if dictionary.is_some() {
-                js::dictionary_set_cached(this_value, global, arguments.ptr[6]);
-            }
 
             self.stream
                 .with_mut(|s| s.init(level, window_bits, mem_level, strategy, dictionary));
@@ -232,10 +259,7 @@ pub struct Context {
     pub state: c::z_stream,
     pub err: c::ReturnCode,
     pub flush: c::FlushValue,
-    // Borrows a JS ArrayBuffer kept alive via `js::dictionary_set_cached`
-    // (BACKREF/FFI class) for the lifetime of the JS wrapper, which strictly
-    // outlives this Context — `RawSlice` invariant. Default is `EMPTY`.
-    pub dictionary: bun_ptr::RawSlice<u8>,
+    pub dictionary: Vec<u8>,
     pub gzip_id_bytes_read: u8,
 }
 
@@ -246,7 +270,7 @@ impl Default for Context {
             state: bun_core::ffi::zeroed::<c::z_stream>(),
             err: c::ReturnCode::Ok,
             flush: c::FlushValue::NoFlush,
-            dictionary: bun_ptr::RawSlice::EMPTY,
+            dictionary: Vec::new(),
             gzip_id_bytes_read: 0,
         }
     }
@@ -258,7 +282,7 @@ impl Context {
 
     #[inline]
     fn dictionary(&self) -> &[u8] {
-        self.dictionary.slice()
+        &self.dictionary
     }
 
     pub fn init(
@@ -283,10 +307,9 @@ impl Context {
             ZSTD_COMPRESS | ZSTD_DECOMPRESS => unreachable!(),
         };
 
-        // See field comment on `dictionary` — `RawSlice` invariant.
         self.dictionary = match dictionary {
-            Some(d) => bun_ptr::RawSlice::new(d),
-            None => bun_ptr::RawSlice::EMPTY,
+            Some(d) => d.to_vec(),
+            None => Vec::new(),
         };
 
         match self.mode {
@@ -337,11 +360,11 @@ impl Context {
         };
         self.err = c::ReturnCode::Ok;
         match self.mode {
-            // SAFETY: FFI — state is an initialized deflate stream; dict_ptr/dict_len borrow a rooted ArrayBuffer.
+            // SAFETY: FFI — state is an initialized deflate stream; dict_ptr/dict_len borrow the Context-owned dictionary copy.
             DEFLATE | DEFLATERAW => unsafe {
                 self.err = c::deflateSetDictionary(&raw mut self.state, dict_ptr, dict_len);
             },
-            // SAFETY: FFI — state is an initialized inflate stream; dict_ptr/dict_len borrow a rooted ArrayBuffer.
+            // SAFETY: FFI — state is an initialized inflate stream; dict_ptr/dict_len borrow the Context-owned dictionary copy.
             INFLATERAW => unsafe {
                 self.err = c::inflateSetDictionary(&raw mut self.state, dict_ptr, dict_len);
             },
@@ -524,7 +547,7 @@ impl Context {
                 let dict = self.dictionary();
                 (dict.as_ptr(), u32::try_from(dict.len()).expect("int cast"))
             };
-            // SAFETY: FFI — state is an initialized inflate stream; dict is rooted.
+            // SAFETY: FFI — state is an initialized inflate stream; dict is the Context-owned copy.
             self.err = unsafe { c::inflateSetDictionary(&raw mut self.state, dict_ptr, dict_len) };
 
             if self.err == c::ReturnCode::Ok {

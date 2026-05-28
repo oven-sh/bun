@@ -68,11 +68,11 @@ fn runner_arena() -> &'static bun_alloc::Arena {
 // the shell escaper cannot silently diverge.
 use bun_shell_parser::{escape_8bit, needs_escape_utf8_ascii_latin1};
 
-pub struct NpmArgs;
+pub(crate) struct NpmArgs;
 impl NpmArgs {
     // https://github.com/npm/rfcs/blob/main/implemented/0021-reduce-lifecycle-script-environment.md#detailed-explanation
-    pub const PACKAGE_NAME: &'static [u8] = b"npm_package_name";
-    pub const PACKAGE_VERSION: &'static [u8] = b"npm_package_version";
+    pub(crate) const PACKAGE_NAME: &'static [u8] = b"npm_package_name";
+    pub(crate) const PACKAGE_VERSION: &'static [u8] = b"npm_package_version";
 }
 
 /// Runtime knobs `Command::start` passes through; mirrors the Zig
@@ -248,7 +248,34 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         silent: bool,
         use_system_shell: bool,
     ) -> Result<(), bun_core::Error> {
-        let shell_bin = Self::find_shell(env.get(b"PATH").unwrap_or(b""), cwd)
+        Self::run_package_script_foreground_with_shell_path(
+            ctx,
+            original_script,
+            name,
+            cwd,
+            env,
+            passthrough,
+            silent,
+            use_system_shell,
+            None,
+        )
+    }
+
+    /// Like [`Self::run_package_script_foreground`], but resolves the shell
+    /// interpreter from `shell_path` instead of the loader's `PATH`.
+    pub fn run_package_script_foreground_with_shell_path(
+        ctx: &mut ContextData,
+        original_script: &[u8],
+        name: &[u8],
+        cwd: &[u8],
+        env: &mut DotEnv::Loader<'_>,
+        passthrough: &[Box<[u8]>],
+        silent: bool,
+        use_system_shell: bool,
+        shell_path: Option<&[u8]>,
+    ) -> Result<(), bun_core::Error> {
+        let shell_search_path = shell_path.unwrap_or_else(|| env.get(b"PATH").unwrap_or(b""));
+        let shell_bin = Self::find_shell(shell_search_path, cwd)
             .ok_or_else(|| bun_core::err!("MissingShell"))?;
         env.map
             .put(b"npm_lifecycle_event", name)
@@ -2193,6 +2220,7 @@ impl RunCommand {
                 bun_core::handle_error_return_trace(&err);
 
                 // an error occurred before the process was spawned
+                #[allow(unused_labels)]
                 'print_error: {
                     if !silent {
                         #[cfg(unix)]
@@ -2525,7 +2553,7 @@ impl RunCommand {
                         let use_system_shell = ctx.debug.use_system_shell;
 
                         if let Some(&prescript) = scripts.get(&temp_script_buffer[1..]) {
-                            Self::run_package_script_foreground(
+                            Self::run_package_script_foreground_with_shell_path(
                                 ctx,
                                 prescript,
                                 &temp_script_buffer[1..],
@@ -2534,10 +2562,11 @@ impl RunCommand {
                                 &[],
                                 silent,
                                 use_system_shell,
+                                Some(original_path.as_slice()),
                             )?;
                         }
 
-                        Self::run_package_script_foreground(
+                        Self::run_package_script_foreground_with_shell_path(
                             ctx,
                             script_content,
                             target_name,
@@ -2546,12 +2575,13 @@ impl RunCommand {
                             &passthrough,
                             silent,
                             use_system_shell,
+                            Some(original_path.as_slice()),
                         )?;
 
                         temp_script_buffer[..b"post".len()].copy_from_slice(b"post");
 
                         if let Some(&postscript) = scripts.get(&temp_script_buffer[..]) {
-                            Self::run_package_script_foreground(
+                            Self::run_package_script_foreground_with_shell_path(
                                 ctx,
                                 postscript,
                                 &temp_script_buffer,
@@ -2560,6 +2590,7 @@ impl RunCommand {
                                 &[],
                                 silent,
                                 use_system_shell,
+                                Some(original_path.as_slice()),
                             )?;
                         }
 
@@ -3935,7 +3966,6 @@ impl RunCommand {
 
 bun_core::declare_scope!(BUNX_FAST_PATH_LOG, visible);
 
-/// Uninhabited namespace holder; all members are associated items.
 pub enum BunXFastPath {}
 
 #[cfg(windows)]
@@ -3943,11 +3973,11 @@ mod bunx_fast_path_buffers {
     use super::*;
     // PORTING.md §Global mutable state: Windows-only single-thread CLI scratch
     // buffers (bunx fast-path runs once on the main thread) → RacyCell.
-    pub static DIRECT_LAUNCH_BUFFER: bun_core::RacyCell<WPathBuffer> =
+    pub(super) static DIRECT_LAUNCH_BUFFER: bun_core::RacyCell<WPathBuffer> =
         bun_core::RacyCell::new(WPathBuffer::ZEROED);
     // Zig spec (run_command.zig:2014): `var environment_buffer: bun.WPathBuffer`
     // — same `[PATH_MAX_WIDE]u16` shape as the launch buffer.
-    pub static ENVIRONMENT_BUFFER: bun_core::RacyCell<WPathBuffer> =
+    pub(super) static ENVIRONMENT_BUFFER: bun_core::RacyCell<WPathBuffer> =
         bun_core::RacyCell::new(WPathBuffer::ZEROED);
 }
 

@@ -25,7 +25,7 @@ pub struct MemoryCost {
 /// unlike the HTTP server, it controls a lot of objects that are frequently
 /// being added, removed, and changed (as the developer edits source files). It
 /// is exponentially easy to mess up memory management.
-pub fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
+pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     let mut other_bytes: usize = size_of::<DevServer>();
     let mut incremental_graph_client: usize = 0;
     let mut incremental_graph_server: usize = 0;
@@ -194,7 +194,7 @@ pub fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     }
 }
 
-pub fn memory_cost(dev: &DevServer) -> usize {
+pub(crate) fn memory_cost(dev: &DevServer) -> usize {
     let cost = memory_cost_detailed(dev);
     // PORT NOTE: Zig iterated `@typeInfo(MemoryCost).@"struct".fields` to sum every
     // field. Rust has no field reflection; the sum is written out explicitly. Keep this
@@ -209,15 +209,15 @@ pub fn memory_cost(dev: &DevServer) -> usize {
     acc
 }
 
-pub fn memory_cost_array_list<T>(slice: &Vec<T>) -> usize {
+pub(crate) fn memory_cost_array_list<T>(slice: &Vec<T>) -> usize {
     slice.capacity() * size_of::<T>()
 }
 
-pub fn memory_cost_slice<T>(slice: &[T]) -> usize {
+pub(crate) fn memory_cost_slice<T>(slice: &[T]) -> usize {
     std::mem::size_of_val(slice)
 }
 
-pub fn memory_cost_array_hash_map<K, V, C>(map: &ArrayHashMap<K, V, C>) -> usize {
+pub(crate) fn memory_cost_array_hash_map<K, V, C>(map: &ArrayHashMap<K, V, C>) -> usize {
     // Zig: `@TypeOf(map.entries).capacityInBytes(map.entries.capacity)` — the
     // SoA byte capacity of the backing `MultiArrayList`. The Rust `ArrayHashMap`
     // stores three separate `Vec`s (keys, values, 32-bit hashes) instead, so the

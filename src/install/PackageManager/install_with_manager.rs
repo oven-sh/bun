@@ -1276,7 +1276,7 @@ fn print_blocked_packages_info(summary: &PackageInstallSummary, global: bool) {
     }
 }
 
-pub fn get_workspace_filters(
+pub(crate) fn get_workspace_filters(
     manager: &mut PackageManager,
     original_cwd: &[u8],
 ) -> Result<(Vec<WorkspaceFilter>, bool), bun_core::Error> {

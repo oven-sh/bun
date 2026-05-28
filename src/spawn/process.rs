@@ -1411,6 +1411,7 @@ pub mod waiter_thread_posix {
         // (aliased-&mut). A shared `&'static` is fine — see `instance_ref()`.
         let this: &'static WaiterThreadPosix = instance_ref();
 
+        #[allow(unused_labels)]
         'outer: loop {
             // `loop_` takes `&self`; coexists soundly with producer `&NewQueue`
             // in `append()` (interior mutability via `active: UnsafeCell`).
@@ -1441,9 +1442,9 @@ pub mod waiter_thread_posix {
                 // SAFETY: sigwait with a valid (empty) mask.
                 unsafe {
                     let mut mask: libc::sigset_t = bun_core::ffi::zeroed();
-                    libc::sigemptyset(&mut mask);
+                    libc::sigemptyset(&raw mut mask);
                     let mut signal: c_int = libc::SIGCHLD;
-                    let _rc = libc::sigwait(&mask, &mut signal);
+                    let _rc = libc::sigwait(&raw const mask, &raw mut signal);
                 }
             }
         }

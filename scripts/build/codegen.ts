@@ -772,7 +772,6 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "InternalModuleRegistry+enum.h"),
     resolve(cfg.codegenDir, "InternalModuleRegistry+numberOfModules.h"),
     resolve(cfg.codegenDir, "NativeModuleImpl.h"),
-    resolve(cfg.codegenDir, "ResolvedSourceTag.zig"),
     resolve(cfg.codegenDir, "SyntheticModuleType.h"),
     resolve(cfg.codegenDir, "GeneratedJS2Native.h"),
     js2nativeZig,
@@ -780,6 +779,10 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     // a declared output so the cargo edge re-invokes when bundle-modules.ts /
     // generate-js2native.ts changes — the includer shim's mtime never moves.
     resolve(cfg.codegenDir, "generated_js2native.rs"),
+    // Specifier → module-ID tag table: include!()'d by the
+    // `resolved_source_tag` module in src/jsc/lib.rs. Declared for the same
+    // reason as generated_js2native.rs.
+    resolve(cfg.codegenDir, "generated_resolved_source_tag.rs"),
   ];
 
   n.build({

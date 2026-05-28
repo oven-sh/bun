@@ -25,7 +25,9 @@ pub struct PathBufferPoolT<T: 'static + Default>(PhantomData<T>);
 // lock; per-thread is closer to "use a thread-local allocator so mimalloc
 // deletes it on thread deinit" (the original comment) and avoids any lock.
 thread_local! {
+    #[allow(clippy::vec_box)]
     static U8_POOL: RefCell<Vec<Box<PathBuffer>>> = const { RefCell::new(Vec::new()) };
+    #[allow(clippy::vec_box)]
     static U16_POOL: RefCell<Vec<Box<WPathBuffer>>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -81,7 +83,7 @@ impl<T: PoolStorage> PathBufferPoolT<T> {
 
     /// Manual return path (kept for structure parity with Zig). Prefer dropping
     /// the `PoolGuard` instead.
-    pub fn put(buf: Box<T>) {
+    pub(crate) fn put(buf: Box<T>) {
         T::with_pool(|p| {
             let mut p = p.borrow_mut();
             if p.len() < POOL_CAP {
@@ -89,10 +91,6 @@ impl<T: PoolStorage> PathBufferPoolT<T> {
             }
             // else: drop — mimalloc frees it.
         });
-    }
-
-    pub fn delete_all() {
-        T::with_pool(|p| p.borrow_mut().clear());
     }
 }
 

@@ -44,10 +44,10 @@ pub(super) const PREFIX_FLAGS: [VendorPrefix; 5] = [
     VendorPrefix::NONE,
 ];
 
-pub mod property_id_mixin {
+pub(super) mod property_id_mixin {
     use super::*;
 
-    pub fn to_css(this: &PropertyId, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(this: &PropertyId, dest: &mut Printer) -> Result<(), PrintErr> {
         let name = this.name();
         let prefix_value = this.prefix().or_none();
 
@@ -66,25 +66,29 @@ pub mod property_id_mixin {
         )
     }
 
-    pub fn parse(input: &mut css::Parser) -> css::Result<PropertyId> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<PropertyId> {
         // PORT NOTE: `css::Result<T>` is assumed to alias `Result<T, css::ParserError>`;
         // the Zig `.result`/`.err` switch collapses to `?`.
         let name = input.expect_ident()?;
         Ok(from_string(name))
     }
 
-    pub fn from_string(name_: &[u8]) -> PropertyId {
+    pub(crate) fn from_string(name_: &[u8]) -> PropertyId {
         let (prefix, trimmed_name) = VendorPrefix::strip_from(name_);
         PropertyId::from_name_and_prefix(trimmed_name, prefix)
             .unwrap_or_else(|| PropertyId::Custom(CustomPropertyName::from_str(name_)))
     }
 }
 
-pub mod property_mixin {
+pub(super) mod property_mixin {
     use super::*;
 
     /// Serializes the CSS property, with an optional `!important` flag.
-    pub fn to_css(this: &Property, dest: &mut Printer, important: bool) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(
+        this: &Property,
+        dest: &mut Printer,
+        important: bool,
+    ) -> Result<(), PrintErr> {
         if let Property::Custom(custom) = this {
             custom.name.to_css(dest)?;
             dest.delim(b':', false)?;

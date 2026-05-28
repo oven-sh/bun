@@ -67,12 +67,7 @@ impl<Impl: ValidSelectorImpl> Default for SelectorBuilder<Impl> {
 
 impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     #[inline]
-    pub fn init() -> Self {
-        Self::default()
-    }
-
-    #[inline]
-    pub fn init_in(alloc: ArenaPtr) -> Self {
+    pub(crate) fn init_in(alloc: ArenaPtr) -> Self {
         Self {
             simple_selectors: SmallList::default(),
             combinators: SmallList::default(),
@@ -83,14 +78,14 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
 
     /// Returns true if combinators have ever been pushed to this builder.
     #[inline]
-    pub fn has_combinators(&self) -> bool {
+    pub(crate) fn has_combinators(&self) -> bool {
         self.combinators.len() > 0
     }
 
     /// Completes the current compound selector and starts a new one, delimited
     /// by the given combinator.
     #[inline]
-    pub fn push_combinator(&mut self, combinator: Combinator) {
+    pub(crate) fn push_combinator(&mut self, combinator: Combinator) {
         // PORT NOTE: `SmallList::append/insert` no longer take an arena —
         // it owns its spill buffer (global arena). The `bump` field is
         // retained for `BuildResult.components` (BumpVec) only.
@@ -99,13 +94,13 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     }
 
     /// Pushes a simple selector onto the current compound selector.
-    pub fn push_simple_selector(&mut self, ss: GenericComponent<Impl>) {
+    pub(crate) fn push_simple_selector(&mut self, ss: GenericComponent<Impl>) {
         debug_assert!(!ss.is_combinator());
         self.simple_selectors.append(ss);
         self.current_len += 1;
     }
 
-    pub fn add_nesting_prefix(&mut self) {
+    pub(crate) fn add_nesting_prefix(&mut self) {
         self.combinators.insert(0, (Combinator::Descendant, 1));
         self.simple_selectors.insert(0, GenericComponent::Nesting);
     }
@@ -117,7 +112,7 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     /// Consumes the builder, producing a Selector.
     ///
     /// *NOTE*: This will free all allocated memory in the builder
-    pub fn build(
+    pub(crate) fn build(
         &mut self,
         parsed_pseudo: bool,
         parsed_slotted: bool,
@@ -152,7 +147,7 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     ///     order requires additional allocations, and undoing the reversal when serializing the
     ///     selector. So we could just change this code to store the components in the same order
     ///     as the source.
-    pub fn build_with_specificity_and_flags(
+    pub(crate) fn build_with_specificity_and_flags(
         &mut self,
         spec: SpecificityAndFlags,
     ) -> BuildResult<Impl> {
@@ -223,7 +218,7 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     }
 }
 
-pub fn split_from_end<T>(s: &[T], at: usize) -> (&[T], &[T]) {
+pub(crate) fn split_from_end<T>(s: &[T], at: usize) -> (&[T], &[T]) {
     let midpoint = s.len() - at;
     (&s[0..midpoint], &s[midpoint..])
 }

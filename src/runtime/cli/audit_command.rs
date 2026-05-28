@@ -49,7 +49,7 @@ struct AuditResult {
 }
 
 impl AuditResult {
-    pub fn init() -> AuditResult {
+    pub(crate) fn init() -> AuditResult {
         AuditResult {
             vulnerable_packages: StringArrayHashMap::default(),
             all_vulnerabilities: Vec::new(),
@@ -59,11 +59,13 @@ impl AuditResult {
 
 // `deinit` body only freed owned fields → Drop is automatic on `StringHashMap`/`Vec`/`Box`.
 
-pub struct AuditCommand;
+pub(crate) struct AuditCommand;
 
 impl AuditCommand {
     // `!noreturn` → `Result<Infallible, _>` so callers can `?`; all Ok paths Global::exit.
-    pub fn exec(ctx: Command::Context) -> Result<core::convert::Infallible, bun_core::Error> {
+    pub(crate) fn exec(
+        ctx: Command::Context,
+    ) -> Result<core::convert::Infallible, bun_core::Error> {
         let cli = CommandLineArguments::parse(Subcommand::Audit)?;
         // PORT NOTE: `init` consumes `cli`; capture the fields read after it.
         let audit_level = cli.audit_level;
@@ -107,7 +109,7 @@ impl AuditCommand {
     /// Returns the exit code of the command. 0 if no vulnerabilities were found, 1 if vulnerabilities were found.
     /// The exception is when you pass --json, it will simply return 0 as that was considered a successful "request
     /// for the audit information"
-    pub fn audit(
+    pub(crate) fn audit(
         _ctx: Command::Context,
         pm: &mut PackageManager,
         json_output: bool,

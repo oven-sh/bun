@@ -55,15 +55,15 @@ const fn encoding_from_u8(n: u8) -> Encoding {
 #[allow(non_snake_case, dead_code)]
 mod enc {
     use super::Encoding;
-    pub const UTF8: u8 = Encoding::Utf8 as u8;
-    pub const UCS2: u8 = Encoding::Ucs2 as u8;
-    pub const UTF16LE: u8 = Encoding::Utf16le as u8;
-    pub const LATIN1: u8 = Encoding::Latin1 as u8;
-    pub const ASCII: u8 = Encoding::Ascii as u8;
-    pub const BASE64: u8 = Encoding::Base64 as u8;
-    pub const BASE64URL: u8 = Encoding::Base64url as u8;
-    pub const HEX: u8 = Encoding::Hex as u8;
-    pub const BUFFER: u8 = Encoding::Buffer as u8;
+    pub(super) const UTF8: u8 = Encoding::Utf8 as u8;
+    pub(super) const UCS2: u8 = Encoding::Ucs2 as u8;
+    pub(super) const UTF16LE: u8 = Encoding::Utf16le as u8;
+    pub(super) const LATIN1: u8 = Encoding::Latin1 as u8;
+    pub(super) const ASCII: u8 = Encoding::Ascii as u8;
+    pub(super) const BASE64: u8 = Encoding::Base64 as u8;
+    pub(super) const BASE64URL: u8 = Encoding::Base64url as u8;
+    pub(super) const HEX: u8 = Encoding::Hex as u8;
+    pub(super) const BUFFER: u8 = Encoding::Buffer as u8;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -113,7 +113,7 @@ pub(crate) use dispatch_encoding;
 /// Caller (C++) must guarantee `input[..len]` and `to[..to_len]` are valid for
 /// reading / writing respectively for the duration of the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__encoding__writeLatin1(
+pub(crate) unsafe extern "C" fn Bun__encoding__writeLatin1(
     input: *const u8,
     len: usize,
     to: *mut u8,
@@ -134,7 +134,7 @@ pub unsafe extern "C" fn Bun__encoding__writeLatin1(
 /// Caller (C++) must guarantee `input[..len]` and `to[..to_len]` are valid for
 /// reading / writing respectively for the duration of the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__encoding__writeUTF16(
+pub(crate) unsafe extern "C" fn Bun__encoding__writeUTF16(
     input: *const u16,
     len: usize,
     to: *mut u8,
@@ -156,7 +156,7 @@ pub unsafe extern "C" fn Bun__encoding__writeUTF16(
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__encoding__byteLengthLatin1AsUTF8(
+pub(crate) unsafe extern "C" fn Bun__encoding__byteLengthLatin1AsUTF8(
     input: *const u8,
     len: usize,
 ) -> usize {
@@ -168,7 +168,7 @@ pub unsafe extern "C" fn Bun__encoding__byteLengthLatin1AsUTF8(
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__encoding__byteLengthUTF16AsUTF8(
+pub(crate) unsafe extern "C" fn Bun__encoding__byteLengthUTF16AsUTF8(
     input: *const u16,
     len: usize,
 ) -> usize {
@@ -180,7 +180,7 @@ pub unsafe extern "C" fn Bun__encoding__byteLengthUTF16AsUTF8(
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__encoding__constructFromLatin1(
+pub(crate) unsafe extern "C" fn Bun__encoding__constructFromLatin1(
     global_object: &JSGlobalObject,
     input: *const u8,
     len: usize,
@@ -203,7 +203,7 @@ pub unsafe extern "C" fn Bun__encoding__constructFromLatin1(
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__encoding__constructFromUTF16(
+pub(crate) unsafe extern "C" fn Bun__encoding__constructFromUTF16(
     global_object: &JSGlobalObject,
     input: *const u16,
     len: usize,
@@ -227,7 +227,7 @@ pub unsafe extern "C" fn Bun__encoding__constructFromUTF16(
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__encoding__toStringUTF8(
+pub(crate) unsafe extern "C" fn Bun__encoding__toStringUTF8(
     input: *const u8,
     len: usize,
     global_object: &JSGlobalObject,
@@ -243,7 +243,7 @@ pub unsafe extern "C" fn Bun__encoding__toStringUTF8(
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__encoding__toString(
+pub(crate) unsafe extern "C" fn Bun__encoding__toString(
     input: *const u8,
     len: usize,
     global_object: &JSGlobalObject,
@@ -261,7 +261,7 @@ pub unsafe extern "C" fn Bun__encoding__toString(
 //     return @intCast(i32, strings.copyUTF16IntoUTF8(to[0..to_len], []const u16, utf16[0..len]).written);
 // }
 
-pub fn to_string(
+pub(crate) fn to_string(
     input: &[u8],
     global_object: &JSGlobalObject,
     encoding: impl Into<Encoding>,
@@ -273,7 +273,7 @@ pub fn to_string(
     }, |E| to_string_comptime::<E>(input, global_object))
 }
 
-pub fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> BunString {
+pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> BunString {
     if input.is_empty() {
         return BunString::empty();
     }
@@ -385,7 +385,7 @@ pub fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> Bun
     }
 }
 
-pub fn to_string_comptime<const ENCODING: u8>(
+pub(crate) fn to_string_comptime<const ENCODING: u8>(
     input: &[u8],
     global: &JSGlobalObject,
 ) -> JsResult<JSValue> {
@@ -393,11 +393,11 @@ pub fn to_string_comptime<const ENCODING: u8>(
     bun_string.transfer_to_js(global)
 }
 
-pub fn to_bun_string(input: &[u8], encoding: impl Into<Encoding>) -> BunString {
+pub(crate) fn to_bun_string(input: &[u8], encoding: impl Into<Encoding>) -> BunString {
     dispatch_encoding!(encoding.into(), |E| to_bun_string_comptime::<E>(input))
 }
 
-pub fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
+pub(crate) fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
     if input.is_empty() {
         return BunString::empty();
     }
@@ -463,35 +463,69 @@ pub fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
             str
         }
 
-        Encoding::Base64url => {
-            let to_len = bun_base64::url_safe_encode_len(input);
-            let (str, chars) = BunString::create_uninitialized_latin1(to_len);
-            if str.is_dead() {
-                return str;
-            }
-            let wrote = bun_base64::encode_url_safe(chars, input);
-            debug_assert_eq!(wrote, to_len);
-            str
-        }
+        Encoding::Base64url => encode_base64_to_bun_string(input, true),
 
-        Encoding::Base64 => {
-            let to_len = bun_base64::encode_len(input);
-            let (str, chars) = BunString::create_uninitialized_latin1(to_len);
-            if str.is_dead() {
-                return str;
-            }
-            let wrote = bun_base64::encode(chars, input);
-            debug_assert_eq!(wrote, to_len);
-            str
-        }
+        Encoding::Base64 => encode_base64_to_bun_string(input, false),
     }
+}
+
+/// Base64/base64url-encode `input` into a new Latin-1 `BunString`.
+///
+/// Small outputs are encoded straight into an uninitialized WTF string (one
+/// allocation, no finalizer). Large outputs are encoded into a mimalloc-backed
+/// buffer wrapped in an external WTF string, because cycling large blocks
+/// through WTF's string allocator on every call is measurably more expensive
+/// than letting mimalloc reuse them (this mirrors the original Zig
+/// implementation of `Buffer.toString("base64")`).
+fn encode_base64_to_bun_string(input: &[u8], url_safe: bool) -> BunString {
+    // Output size above which the external-string strategy is used.
+    const EXTERNAL_MIN_LEN: usize = 32 * 1024;
+
+    let to_len = if url_safe {
+        bun_base64::url_safe_encode_len(input)
+    } else {
+        bun_base64::encode_len(input)
+    };
+
+    if to_len < EXTERNAL_MIN_LEN {
+        let (str, chars) = BunString::create_uninitialized_latin1(to_len);
+        if str.is_dead() {
+            return str;
+        }
+        let wrote = if url_safe {
+            bun_base64::encode_url_safe(chars, input)
+        } else {
+            bun_base64::encode(chars, input)
+        };
+        debug_assert_eq!(wrote, to_len);
+        return str;
+    }
+
+    let mut to: Vec<u8> = Vec::new();
+    if to.try_reserve_exact(to_len).is_err() {
+        return BunString::dead();
+    }
+    // SAFETY: the spare bytes are write-only; the encoder reports how many it
+    // initialized and only those are committed.
+    let wrote = unsafe {
+        bun_core::vec::fill_spare(&mut to, 0, |spare| {
+            let wrote = if url_safe {
+                bun_base64::encode_url_safe(&mut spare[..to_len], input)
+            } else {
+                bun_base64::encode(&mut spare[..to_len], input)
+            };
+            (wrote, wrote)
+        })
+    };
+    debug_assert_eq!(wrote, to_len);
+    create_external_globally_allocated_latin1(to)
 }
 
 // TODO(port): narrow error set — Zig signature is `!usize` but body never fails.
 /// # Safety
 /// `input` must be valid for reading `len` bytes and `to_ptr` must be valid for
 /// writing `to_len` bytes; the two ranges must not overlap.
-pub unsafe fn write_u8<const ENCODING: u8>(
+pub(crate) unsafe fn write_u8<const ENCODING: u8>(
     input: *const u8,
     len: usize,
     to_ptr: *mut u8,
@@ -572,14 +606,19 @@ pub unsafe fn write_u8<const ENCODING: u8>(
         Encoding::Hex => Ok(strings::decode_hex_to_bytes_truncate(to_slice, input_slice)),
 
         Encoding::Base64 | Encoding::Base64url => {
-            Ok(bun_base64::decode(to_slice, input_slice).count)
+            let is_urlsafe = matches!(encoding_from_u8(ENCODING), Encoding::Base64url);
+            Ok(bun_base64::decode_lenient(
+                to_slice,
+                input_slice,
+                is_urlsafe,
+            ))
         }
     }
 }
 
 /// # Safety
 /// `input` must be valid for reading `len` bytes.
-pub unsafe fn byte_length_u8<const ENCODING: u8>(input: *const u8, len: usize) -> usize {
+pub(crate) unsafe fn byte_length_u8<const ENCODING: u8>(input: *const u8, len: usize) -> usize {
     if len == 0 {
         return 0;
     }
@@ -603,7 +642,7 @@ pub unsafe fn byte_length_u8<const ENCODING: u8>(input: *const u8, len: usize) -
     }
 }
 
-pub fn encode_into_from16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
+pub(crate) fn encode_into_from16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
     input: &[u16],
     to: &mut [u8],
 ) -> Result<usize, bun_core::Error> {
@@ -618,7 +657,7 @@ pub fn encode_into_from16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
     }
 }
 
-pub fn encode_into_from8<const ENCODING: u8>(
+pub(crate) fn encode_into_from8<const ENCODING: u8>(
     input: &[u8],
     to: &mut [u8],
 ) -> Result<usize, bun_core::Error> {
@@ -631,7 +670,7 @@ pub fn encode_into_from8<const ENCODING: u8>(
 /// `input` must be valid for reading `len` `u16`s and `to` must be valid for
 /// writing `to_len` bytes. For `Ucs2`/`Utf16le` the ranges may overlap (memmove
 /// semantics); for all other encodings they must not.
-pub unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
+pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
     input: *const u16,
     len: usize,
     to: *mut u8,
@@ -716,20 +755,18 @@ pub unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
         }
 
         Encoding::Base64 | Encoding::Base64url => {
-            if to_len < 2 || len == 0 {
-                return Ok(0);
-            }
-
-            // very very slow case!
-            // shouldn't really happen though
+            // Match Node.js: two-byte strings are decoded from the low byte of
+            // each UTF-16 code unit (so e.g. U+013D behaves like '=' and
+            // U+1234 like '4'), the same narrowing Node's lenient fallback
+            // decoder applies.
             // SAFETY: caller guarantees `input[..len]` is valid; only an immutable view is
             // needed here since the output goes through `write_u8` with raw `to`.
             let input_slice = unsafe { bun_core::ffi::slice(input, len) };
-            let transcoded = strings::to_utf8_alloc(input_slice);
-            // transcoded dropped at end of scope
-            // SAFETY: `transcoded` is a valid local Vec; `to[..to_len]` validity is
-            // forwarded from this fn's contract and is disjoint from `transcoded`.
-            unsafe { write_u8::<ENCODING>(transcoded.as_ptr(), transcoded.len(), to, to_len) }
+            let mut narrowed = vec![0u8; len];
+            strings::copy_u16_into_u8(&mut narrowed, input_slice);
+            // SAFETY: `narrowed` is a valid local Vec; `to[..to_len]` validity is
+            // forwarded from this fn's contract and is disjoint from `narrowed`.
+            unsafe { write_u8::<ENCODING>(narrowed.as_ptr(), narrowed.len(), to, to_len) }
         } // else => return &[_]u8{};
     }
 }
@@ -745,7 +782,10 @@ pub unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
 
 /// # Safety
 /// `input` must be valid for reading `len` bytes.
-pub unsafe fn construct_from_u8<const ENCODING: u8>(input: *const u8, len: usize) -> Vec<u8> {
+pub(crate) unsafe fn construct_from_u8<const ENCODING: u8>(
+    input: *const u8,
+    len: usize,
+) -> Vec<u8> {
     if len == 0 {
         return Vec::new();
     }
@@ -808,14 +848,23 @@ pub unsafe fn construct_from_u8<const ENCODING: u8>(input: *const u8, len: usize
                 return Vec::new();
             }
 
-            let outlen = bun_base64::decode_len(slice);
-            let mut to = vec![0u8; outlen];
-
-            let wrote = bun_base64::decode(&mut to[..outlen], slice).count;
+            let is_urlsafe = matches!(encoding_from_u8(ENCODING), Encoding::Base64url);
+            let outlen = bun_base64::decode_lenient_len(slice.len());
+            // Decode into uninitialized spare capacity: the decoder only ever
+            // writes to the destination, and only the `wrote` bytes it
+            // initialized are committed below. This buffer becomes the
+            // Buffer's storage, so a zero-fill would be pure overhead for
+            // large inputs.
+            let mut to: Vec<u8> = Vec::new();
+            // SAFETY: the returned spare bytes are write-only until committed.
+            let dest = unsafe { bun_core::vec::reserve_spare_bytes(&mut to, outlen) };
+            let wrote = bun_base64::decode_lenient(&mut dest[..outlen], slice, is_urlsafe);
             if wrote == 0 {
                 return Vec::new();
             }
-            to.truncate(wrote);
+            // SAFETY: the decoder initialized the first `wrote` bytes
+            // (`wrote <= outlen <= capacity`).
+            unsafe { bun_core::vec::commit_spare(&mut to, wrote) };
             to
         }
     }
@@ -823,7 +872,10 @@ pub unsafe fn construct_from_u8<const ENCODING: u8>(input: *const u8, len: usize
 
 /// # Safety
 /// `input` must be valid for reading `len` `u16`s.
-pub unsafe fn construct_from_u16<const ENCODING: u8>(input: *const u16, len: usize) -> Vec<u8> {
+pub(crate) unsafe fn construct_from_u16<const ENCODING: u8>(
+    input: *const u16,
+    len: usize,
+) -> Vec<u8> {
     if len == 0 {
         return Vec::new();
     }
@@ -862,12 +914,14 @@ pub unsafe fn construct_from_u16<const ENCODING: u8>(input: *const u16, len: usi
         }
 
         Encoding::Base64 | Encoding::Base64url => {
-            // very very slow case!
-            // shouldn't really happen though
-            let transcoded = strings::to_utf8_alloc(input_slice);
-            // transcoded dropped at end of scope
-            // SAFETY: `transcoded` is a valid local Vec.
-            unsafe { construct_from_u8::<ENCODING>(transcoded.as_ptr(), transcoded.len()) }
+            // Match Node.js: two-byte strings are decoded from the low byte of
+            // each UTF-16 code unit (so e.g. U+013D behaves like '=' and
+            // U+1234 like '4'), the same narrowing Node's lenient fallback
+            // decoder applies.
+            let mut narrowed = vec![0u8; len];
+            strings::copy_u16_into_u8(&mut narrowed, input_slice);
+            // SAFETY: `narrowed` is a valid local Vec.
+            unsafe { construct_from_u8::<ENCODING>(narrowed.as_ptr(), narrowed.len()) }
         }
     }
 }

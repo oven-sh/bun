@@ -19,7 +19,7 @@ pub struct FallbackHandler {
 }
 
 impl FallbackHandler {
-    pub fn handle_property(
+    pub(crate) fn handle_property(
         &mut self,
         property: &Property,
         dest: &mut css::DeclarationList,
@@ -156,7 +156,7 @@ impl FallbackHandler {
         false
     }
 
-    pub fn finalize(
+    pub(crate) fn finalize(
         &mut self,
         _dest: &mut css::DeclarationList,
         _context: &mut css::PropertyHandlerContext,

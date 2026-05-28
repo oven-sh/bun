@@ -107,7 +107,7 @@ pub enum BufferedIoState {
 
 impl BufferedIoState {
     #[inline]
-    pub fn closed(&self) -> bool {
+    pub(crate) fn closed(&self) -> bool {
         matches!(self, BufferedIoState::Closed(_))
     }
 }
@@ -125,7 +125,7 @@ impl Drop for BufferedIoState {
 
 impl BufferedIoClosed {
     /// Spec: `BufferedIoClosed.fromStdio`.
-    pub fn from_stdio(io: &[Stdio; 3]) -> Self {
+    pub(crate) fn from_stdio(io: &[Stdio; 3]) -> Self {
         const STDIN_NO: usize = 0;
         const STDOUT_NO: usize = 1;
         const STDERR_NO: usize = 2;
@@ -149,7 +149,7 @@ impl BufferedIoClosed {
     }
 
     /// Spec: `BufferedIoClosed.allClosed`.
-    pub fn all_closed(&self) -> bool {
+    pub(crate) fn all_closed(&self) -> bool {
         let stdin_closed = self.stdin.unwrap_or(true);
         let stdout_closed = self.stdout.as_ref().is_none_or(BufferedIoState::closed);
         let stderr_closed = self.stderr.as_ref().is_none_or(BufferedIoState::closed);
@@ -165,7 +165,7 @@ impl BufferedIoClosed {
     }
 
     /// Spec: `BufferedIoClosed.close` `.stdin` arm.
-    pub fn close_stdin(&mut self) {
+    pub(crate) fn close_stdin(&mut self) {
         self.stdin = Some(true);
     }
 
@@ -748,24 +748,27 @@ impl Cmd {
                 let jsval = interp.jsobjs[idx];
 
                 if let Some(buf) = jsval.as_array_buffer(global) {
-                    let mk = || {
+                    let mk_out = || {
+                        let pinned = jsval.as_pinned_arraybuffer(global);
                         Stdio::ArrayBuffer(crate::jsc::array_buffer::ArrayBufferStrong {
-                            array_buffer: buf,
+                            array_buffer: pinned.unwrap_or(buf),
                             held: crate::jsc::StrongOptional::create(buf.value, global),
                         })
                     };
                     if flags.stdin() {
-                        stdio[STDIN_NO] = mk();
+                        stdio[STDIN_NO] = Stdio::Blob(crate::webcore::blob::Any::from_owned_slice(
+                            buf.byte_slice().to_vec(),
+                        ));
                     }
                     if flags.duplicate_out() {
-                        stdio[STDOUT_NO] = mk();
-                        stdio[STDERR_NO] = mk();
+                        stdio[STDOUT_NO] = mk_out();
+                        stdio[STDERR_NO] = mk_out();
                     } else {
                         if flags.stdout() {
-                            stdio[STDOUT_NO] = mk();
+                            stdio[STDOUT_NO] = mk_out();
                         }
                         if flags.stderr() {
-                            stdio[STDERR_NO] = mk();
+                            stdio[STDERR_NO] = mk_out();
                         }
                     }
                 } else if let Some(blob_ref) = jsval.as_class_ref::<crate::webcore::Blob>() {

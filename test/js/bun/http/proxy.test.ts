@@ -16,47 +16,111 @@ async function createProxyServer(is_tls: boolean) {
   }
   const log: Array<string> = [];
   serverArgs.push((clientSocket: net.Socket | tls.TLSSocket) => {
+    // ignore client errors (can happen because of happy eye balls and now we error on write when not connected for node.js compatibility)
+    clientSocket.on("error", () => {});
+
     clientSocket.once("data", data => {
       const request = data.toString();
       const [method, path] = request.split(" ");
-      let host: string;
-      let port: number | string = 0;
-      let request_path = "";
-      if (path.indexOf("http") !== -1) {
-        const url = new URL(path);
-        host = url.hostname;
-        port = url.port;
-        request_path = url.pathname + (url.search || "");
-      } else {
-        // Extract the host and port from the CONNECT request
-        [host, port] = path.split(":");
-      }
-      const destinationPort = Number.parseInt((port || (method === "CONNECT" ? "443" : "80")).toString(), 10);
-      const destinationHost = host || "";
-      log.push(`${method} ${host}:${port}${request_path}`);
 
-      // Establish a connection to the destination server
-      const serverSocket = net.connect(destinationPort, destinationHost, () => {
-        if (method === "CONNECT") {
+      if (path.indexOf("http") === -1) {
+        // Extract the host and port from the CONNECT request
+        const [host, port] = path.split(":");
+        const destinationPort = Number.parseInt((port || "443").toString(), 10);
+        const destinationHost = host || "";
+        log.push(`${method} ${host}:${port}`);
+
+        // Establish a connection to the destination server
+        const serverSocket = net.connect(destinationPort, destinationHost, () => {
           // 220 OK with host so the client knows the connection was successful
           clientSocket.write("HTTP/1.1 200 OK\r\nHost: localhost\r\n\r\n");
 
           // Pipe data between client and server
           clientSocket.pipe(serverSocket);
           serverSocket.pipe(clientSocket);
-        } else {
-          serverSocket.write(`${method} ${request_path} HTTP/1.1\r\n`);
-          // Send the request to the destination server
-          serverSocket.write(data.slice(request.indexOf("\r\n") + 2));
-          serverSocket.pipe(clientSocket);
-        }
-      });
-      // ignore client errors (can happen because of happy eye balls and now we error on write when not connected for node.js compatibility)
-      clientSocket.on("error", () => {});
 
-      serverSocket.on("error", err => {
-        clientSocket.end();
-      });
+          // `pipe` only tears the upstream down on a clean 'end' from the
+          // client. An abortive client teardown surfaces as 'error'/'close'
+          // with no 'end' (notably on Windows), which would leave the target
+          // holding a half-open connection forever. Propagate it; `end()`
+          // still flushes any data already piped toward the target.
+          clientSocket.on("close", () => serverSocket.end());
+        });
+        serverSocket.on("error", () => {
+          clientSocket.end();
+        });
+        return;
+      }
+
+      // Absolute-form (non-tunneled) proxying. The client negotiates
+      // keep-alive on the proxy connection, so after a redirect the next
+      // request arrives on this same socket — forward every request that
+      // shows up, not just the first one. The reused proxy connection is
+      // keyed only by the proxy address, so consecutive requests may also
+      // target different origins; keep one upstream per destination at a
+      // time and reconnect when it changes.
+      let upstream: net.Socket | undefined;
+      let upstreamKey = "";
+      let upstreamConnected = false;
+      let pending: Buffer[] = [];
+
+      const forward = (chunk: Buffer) => {
+        const text = chunk.toString();
+        const eol = text.indexOf("\r\n");
+        const parts = eol === -1 ? [] : text.slice(0, eol).split(" ");
+
+        if (parts.length === 3 && parts[1].startsWith("http")) {
+          // A new absolute-form request line: rewrite it to origin form and
+          // forward it to the destination it names.
+          const url = new URL(parts[1]);
+          const request_path = url.pathname + (url.search || "");
+          log.push(`${parts[0]} ${url.hostname}:${url.port}${request_path}`);
+
+          const key = `${url.hostname}:${url.port}`;
+          if (upstream === undefined || upstreamKey !== key) {
+            // First request on this connection, or the reused proxy
+            // connection switched targets.
+            if (upstream !== undefined) {
+              upstream.unpipe(clientSocket);
+              upstream.destroy();
+            }
+            upstreamKey = key;
+            upstreamConnected = false;
+            pending = [];
+            const destinationPort = Number.parseInt((url.port || "80").toString(), 10);
+            const serverSocket = net.connect(destinationPort, url.hostname, () => {
+              upstreamConnected = true;
+              for (const buffered of pending) serverSocket.write(buffered);
+              pending = [];
+              serverSocket.pipe(clientSocket);
+            });
+            serverSocket.on("error", () => {
+              clientSocket.end();
+            });
+            upstream = serverSocket;
+          }
+
+          const head = Buffer.from(`${parts[0]} ${request_path} HTTP/1.1\r\n`);
+          // Send the rest of the request to the destination server
+          const rest = chunk.slice(text.indexOf("\r\n") + 2);
+          if (upstreamConnected) {
+            upstream.write(head);
+            upstream.write(rest);
+          } else {
+            pending.push(head, rest);
+          }
+        } else if (upstream !== undefined) {
+          // Continuation of the previous request's body.
+          if (upstreamConnected) {
+            upstream.write(chunk);
+          } else {
+            pending.push(chunk);
+          }
+        }
+      };
+
+      forward(data);
+      clientSocket.on("data", forward);
     });
   });
   // Create a server to listen for incoming HTTPS connections
@@ -238,6 +302,48 @@ for (const server_tls of [false, true]) {
     });
   });
 }
+
+test("non-TLS origin redirect through HTTPS proxy forwards every hop through the proxy", async () => {
+  // Dedicated proxy instance so its log is not polluted by the concurrent
+  // tests that share httpsProxyServer.
+  const proxy = await createProxyServer(true);
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      if (req.url.endsWith("/bunbun")) {
+        return Response.redirect("/bun", 302);
+      }
+      if (req.url.endsWith("/bun")) {
+        return Response.redirect("/", 302);
+      }
+      return new Response("BUN!", { status: 200 });
+    },
+  });
+
+  try {
+    const response = await fetch(`${server.url.origin}/bunbun`, {
+      proxy: proxy.url,
+      tls: {
+        rejectUnauthorized: false,
+      },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("BUN!");
+
+    // Every redirect hop must have been forwarded through the proxy as its own
+    // absolute-form request — none dropped, none bypassing the proxy, and no
+    // CONNECT fallback.
+    expect(proxy.log).toEqual([
+      `GET localhost:${server.port}/bunbun`,
+      `GET localhost:${server.port}/bun`,
+      `GET localhost:${server.port}/`,
+    ]);
+  } finally {
+    // Not awaited: the client's pooled keep-alive connection keeps the server's
+    // close event from firing (matches the afterAll teardown above).
+    proxy.server.close();
+  }
+});
 
 test("unsupported protocol", async () => {
   expect(
@@ -485,6 +591,92 @@ test("HTTPS proxy tunnel keep-alive does not share tunnel across different crede
     for (const s of upstreamSockets) s.destroy();
     proxy.close();
     await once(proxy, "close");
+  }
+});
+
+test("HTTPS target through proxy with passing checkServerIdentity round-trips", async () => {
+  // The CONNECT tunnel parks after the inner TLS handshake until the JS
+  // checkServerIdentity callback approves the target's certificate. While
+  // parked, raw inner-TLS records (e.g. TLS 1.3 NewSessionTicket) keep
+  // arriving on the outer socket and must keep flowing into the SSL state
+  // machine, otherwise the handshake never completes and this hangs.
+  const verified: string[] = [];
+  const response = await fetch(httpsServer.url, {
+    method: "POST",
+    proxy: httpProxyServer.url,
+    body: "tunneled body",
+    keepalive: false,
+    tls: {
+      ca: tlsCert.cert,
+      checkServerIdentity(hostname: string) {
+        verified.push(hostname);
+        return undefined;
+      },
+    },
+  });
+  expect(response.status).toBe(200);
+  expect(await response.text()).toBe("tunneled body");
+  expect(verified).toEqual(["localhost"]);
+});
+
+test("HTTPS target through proxy with rejecting checkServerIdentity transmits nothing to the target", async () => {
+  // Raw TLS target so we can observe exactly which decrypted bytes (if any)
+  // reach it before the pinning callback rejects the certificate.
+  const receivedPerConnection: Buffer[][] = [];
+  let rawConnections = 0;
+  const { promise: firstConnectionClosed, resolve: onFirstConnectionClosed } = Promise.withResolvers<void>();
+  const target = tls.createServer({ key: tlsCert.key, cert: tlsCert.cert }, socket => {
+    const chunks: Buffer[] = [];
+    receivedPerConnection.push(chunks);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("error", () => {});
+  });
+  // Track teardown on the raw TCP connection rather than the TLS socket: the
+  // client tears the tunnel down as soon as checkServerIdentity rejects, so
+  // the target may never finish its side of the inner handshake and the
+  // secureConnection callback above may never fire.
+  target.on("connection", rawSocket => {
+    rawConnections++;
+    rawSocket.on("close", onFirstConnectionClosed);
+    rawSocket.on("error", () => {});
+  });
+  target.listen(0);
+  await once(target, "listening");
+  const targetPort = (target.address() as net.AddressInfo).port;
+
+  try {
+    let err: unknown;
+    try {
+      await fetch(`https://localhost:${targetPort}/`, {
+        method: "POST",
+        proxy: httpProxyServer.url,
+        body: "secret tunneled body",
+        headers: { Authorization: "Bearer super-secret-token" },
+        keepalive: false,
+        tls: {
+          ca: tlsCert.cert,
+          checkServerIdentity() {
+            return new Error("pinned");
+          },
+        },
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe("pinned");
+
+    // The tunnel must be torn down without the request line, the
+    // Authorization header, or the body ever reaching the target.
+    await firstConnectionClosed;
+    expect(rawConnections).toBe(1);
+    const decryptedBytesSeenByTarget = receivedPerConnection.reduce(
+      (sum, chunks) => sum + Buffer.concat(chunks).byteLength,
+      0,
+    );
+    expect(decryptedBytesSeenByTarget).toBe(0);
+  } finally {
+    target.close();
   }
 });
 
@@ -1171,4 +1363,74 @@ describe.concurrent("NO_PROXY with explicit proxy option", () => {
     expect(stdout.trim()).toBe("5");
     expect(exitCode).toBe(0);
   });
+});
+
+test("non-200 CONNECT response from proxy is surfaced and its Location header is not followed", async () => {
+  // RFC 9110 §9.3.6: a non-2xx response to CONNECT means the tunnel was not
+  // established. The proxy's response must be returned to the caller, but a
+  // Location header on it must never be followed — otherwise the original
+  // method, body, and custom headers would be re-sent to whatever plaintext
+  // origin the proxy names.
+
+  // Records anything that reaches the address named in the proxy's Location
+  // header. Nothing should ever arrive here.
+  const reachedRedirectTarget: { method: string; apiKey: string | null; body: string }[] = [];
+  using redirectTarget = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      reachedRedirectTarget.push({
+        method: req.method,
+        apiKey: req.headers.get("x-api-key"),
+        body: await req.text(),
+      });
+      return new Response("redirect target reached");
+    },
+  });
+
+  // Proxy that refuses the CONNECT with a redirect pointing at the plaintext
+  // target above, instead of establishing the tunnel.
+  const proxySockets = new Set<net.Socket>();
+  const sawConnect: string[] = [];
+  const proxy = net.createServer(clientSocket => {
+    proxySockets.add(clientSocket);
+    clientSocket.on("close", () => proxySockets.delete(clientSocket));
+    clientSocket.on("error", () => {});
+    clientSocket.once("data", data => {
+      sawConnect.push(data.toString().split("\r\n")[0]);
+      clientSocket.write(
+        "HTTP/1.1 307 Temporary Redirect\r\n" +
+          `Location: ${redirectTarget.url.origin}/\r\n` +
+          "Content-Length: 0\r\n" +
+          "\r\n",
+      );
+    });
+  });
+  proxy.listen(0);
+  await once(proxy, "listening");
+  const proxyPort = (proxy.address() as net.AddressInfo).port;
+
+  try {
+    const response = await fetch(httpsServer.url, {
+      method: "POST",
+      body: "secret request body",
+      headers: { "X-Api-Key": "super-secret" },
+      proxy: `http://localhost:${proxyPort}`,
+      keepalive: false,
+      tls: { ca: tlsCert.cert, rejectUnauthorized: false },
+    });
+
+    // The request did go through the proxy as a CONNECT...
+    expect(sawConnect.length).toBe(1);
+    expect(sawConnect[0]!.startsWith("CONNECT ")).toBe(true);
+    // ...the proxy's refusal is surfaced to the caller as-is...
+    expect(response.status).toBe(307);
+    // ...and the Location header on the failed CONNECT is never followed:
+    // the body and the X-Api-Key header must not reach the plaintext server
+    // it points at.
+    expect(reachedRedirectTarget).toEqual([]);
+  } finally {
+    for (const s of proxySockets) s.destroy();
+    proxy.close();
+    await once(proxy, "close");
+  }
 });

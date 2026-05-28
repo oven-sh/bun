@@ -13,7 +13,6 @@
 
 #![allow(unsafe_op_in_unsafe_fn)]
 // ── submodules ──────────────────────────────────────────────────────────────
-#![warn(unreachable_pub)]
 
 // ── merged from bun_io ──────────────────────────────────────────────────────
 //
@@ -286,7 +285,8 @@ pub mod file_poll {
     pub use super::Store;
     pub use super::posix_event_loop::{Flags, Flags as Flag, FlagsSet};
     /// Kqueue/epoll watch kind passed to `FilePoll::register`.
-    pub type Pollable = Flags;
+    #[allow(dead_code)]
+    pub(crate) type Pollable = Flags;
 }
 
 // ── bun_io original submodules ──────────────────────────────────────────────
@@ -524,7 +524,8 @@ use bun_sys::{self as sys, E, Fd};
 // Zig scope name is `.loop` (io.zig:11). `loop` is a Rust keyword, so the static is
 // named `io_loop` but the runtime tagname is `"loop"` so `BUN_DEBUG_loop=1` works.
 #[allow(non_upper_case_globals)]
-pub static io_loop: bun_core::output::ScopedLogger =
+#[allow(dead_code)]
+pub(crate) static io_loop: bun_core::output::ScopedLogger =
     bun_core::output::ScopedLogger::new("loop", bun_core::output::Visibility::Visible);
 // All `log!` call sites are inside epoll/kqueue paths (Linux/macOS/FreeBSD); on
 // Windows the IoRequestLoop is `panic!`-stubbed, so gate the macro to match.
@@ -1301,9 +1302,7 @@ unsafe impl bun_threading::Linked for Request {
 }
 
 /// Zig: `pub const Queue = bun.UnboundedQueue(Request, .next);`
-pub type RequestQueue = bun_threading::UnboundedQueue<Request>;
-pub type RequestBatch = bun_threading::unbounded_queue::Batch<Request>;
-pub type RequestBatchIter = bun_threading::unbounded_queue::BatchIterator<Request>;
+pub(crate) type RequestQueue = bun_threading::UnboundedQueue<Request>;
 
 // ─── Action ───────────────────────────────────────────────────────────────────
 
@@ -1565,7 +1564,7 @@ impl Poll {
         );
 
         let one_shot_flag = libc::EV_ONESHOT;
-        let udata: usize = Pollable::init(tag, poll as *mut Poll).ptr() as usize;
+        let udata: usize = Pollable::init(tag, std::ptr::from_mut::<Poll>(poll)).ptr() as usize;
         let (filter, flags_): (i16, u16) = match action {
             ApplyAction::Readable => (libc::EVFILT_READ, libc::EV_ADD | one_shot_flag),
             ApplyAction::Writable => (libc::EVFILT_WRITE, libc::EV_ADD | one_shot_flag),
@@ -2044,6 +2043,7 @@ pub mod waker {
         /// Stand-in until `init()` runs (e.g. a `BundleThread` allocated before
         /// its real waker is created). `Fd::INVALID` is sentinel-only; never
         /// poll/wake through it.
+        #[allow(dead_code)]
         pub const fn placeholder() -> Self {
             Self { fd: Fd::INVALID }
         }
@@ -2059,15 +2059,16 @@ pub mod waker {
         }
 
         #[inline]
-        pub fn get_fd(&self) -> Fd {
+        pub(crate) fn get_fd(&self) -> Fd {
             self.fd
         }
 
         #[inline]
-        pub fn init_with_file_descriptor(fd: Fd) -> Self {
+        pub(crate) fn init_with_file_descriptor(fd: Fd) -> Self {
             Self { fd }
         }
 
+        #[allow(dead_code)]
         pub fn wait(&self) {
             // eventfd reads are always exactly 8 bytes (u64 counter). Use a u64
             // directly instead of type-punning through usize, which would be UB
@@ -2210,10 +2211,12 @@ pub mod waker {
         /// `wake()`/`wait()`/`uv_loop()`. Mirrors `LinuxWaker::placeholder` /
         /// `KEventWaker::placeholder` so cross-platform call sites don't fall
         /// back to `mem::zeroed()` (UB for the niche-optimised `Option<BackRef>`).
+        #[allow(dead_code)]
         pub const fn placeholder() -> Self {
             Self { loop_: None }
         }
 
+        #[allow(dead_code)]
         pub fn init() -> Result<Self, bun_core::Error> {
             Ok(Self {
                 loop_: Some(bun_ptr::BackRef::from(
@@ -2231,6 +2234,7 @@ pub mod waker {
             self.loop_.expect("WindowsWaker used before init()")
         }
 
+        #[allow(dead_code)]
         pub fn wait(&self) {
             // Do NOT route through `WindowsLoop::wait(&mut self)`: that would
             // materialize a `&mut WindowsLoop` over the process-global
@@ -2263,6 +2267,7 @@ pub mod waker {
         /// block at the call site. Mirrors Zig's `waker.loop.uv_loop` field
         /// chain (BundleThread.zig:79).
         #[inline]
+        #[allow(dead_code)]
         pub fn uv_loop(&self) -> *mut bun_sys::windows::libuv::Loop {
             // `BackRef` deref is safe (process-lifetime singleton); `uv_loop`
             // is a `Copy` field set once by C `us_create_loop`.

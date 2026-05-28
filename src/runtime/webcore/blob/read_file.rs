@@ -103,9 +103,6 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
         // Decay to a raw pointer so `handler` can be dropped before resolution.
         let promise: *mut jsc::JSPromise = handler.promise.swap();
         let blob = core::mem::take(&mut handler.context);
-        // `context` was populated via `this.dupe()` in doReadFile(), so it
-        // owns a store ref, a name ref, and possibly a content_type copy.
-        // (blob is dropped at end of scope — Drop handles deinit.)
         let global_this = handler.global_this;
         drop(handler);
         match maybe_bytes {

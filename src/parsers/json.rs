@@ -113,7 +113,7 @@ where
     // are bump-alloc'd but stored in `&'a` fields).
     'bump: 'a,
 {
-    pub fn init(
+    pub(crate) fn init(
         opts: js_lexer::JSONOptions,
         bump: &'bump Bump,
         source_: &'a bun_ast::Source,
@@ -123,7 +123,7 @@ where
         Self::init_with_list_allocator(opts, bump, bump, source_, log)
     }
 
-    pub fn init_with_list_allocator(
+    pub(crate) fn init_with_list_allocator(
         opts: js_lexer::JSONOptions,
         bump: &'bump Bump,
         list_bump: &'bump Bump,
@@ -146,7 +146,7 @@ where
     }
 
     #[inline]
-    pub fn source(&self) -> &bun_ast::Source {
+    pub(crate) fn source(&self) -> &bun_ast::Source {
         self.lexer.source
     }
 
@@ -779,10 +779,6 @@ impl ToAst for bun_core::Error {
 // single-field anonymous struct `{ <variant_name>: payload }` and recurses.
 // In Rust this is the natural shape of `enum` payloads; the derive should emit
 // `match self { Variant(v) => /* { "Variant": v } */ }`.
-
-pub fn to_ast<Ty: ToAst + ?Sized>(bump: &Bump, value: &Ty) -> Result<Expr, bun_core::Error> {
-    value.to_ast(bump)
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Parser option presets

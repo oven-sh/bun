@@ -1,7 +1,8 @@
 use bun_alloc::AllocError;
 
 use crate::string::strings::{
-    self, ASCII_U16_VECTOR_SIZE, ASCII_VECTOR_SIZE, AsciiU16Vector, AsciiVector, utf16_codepoint,
+    self, ASCII_U16_VECTOR_SIZE, ASCII_VECTOR_SIZE, AsciiU16Vector, AsciiVector,
+    utf16_codepoint_with_fffd,
 };
 use crate::string::w;
 
@@ -583,7 +584,8 @@ pub fn escape_html_for_utf16_input(utf16: &[u16]) -> Result<Escaped<u16>, AllocE
                                         break 'lazy;
                                     }
                                     128..=u16::MAX => {
-                                        let cp = utf16_codepoint(&remaining[i as usize..]);
+                                        let cp =
+                                            utf16_codepoint_with_fffd(&remaining[i as usize..]);
                                         i += u16::from(cp.len);
                                     }
                                     _ => {
@@ -621,7 +623,7 @@ pub fn escape_html_for_utf16_input(utf16: &[u16]) -> Result<Escaped<u16>, AllocE
                                     i += 1;
                                 }
                                 128..=u16::MAX => {
-                                    let cp = utf16_codepoint(&remaining[i as usize..]);
+                                    let cp = utf16_codepoint_with_fffd(&remaining[i as usize..]);
 
                                     buf.extend_from_slice(
                                         &remaining[i as usize..][..usize::from(cp.len)],
@@ -683,7 +685,8 @@ pub fn escape_html_for_utf16_input(utf16: &[u16]) -> Result<Escaped<u16>, AllocE
                                         i += 1;
                                     }
                                     128..=u16::MAX => {
-                                        let cp = utf16_codepoint(&remaining[i as usize..]);
+                                        let cp =
+                                            utf16_codepoint_with_fffd(&remaining[i as usize..]);
 
                                         buf.extend_from_slice(
                                             &remaining[i as usize..][..usize::from(cp.len)],
@@ -730,7 +733,7 @@ pub fn escape_html_for_utf16_input(utf16: &[u16]) -> Result<Escaped<u16>, AllocE
                         }
                         128..=u16::MAX => {
                             let avail = if idx + 1 == end { 1 } else { 2 };
-                            let cp = utf16_codepoint(&remaining[idx..idx + avail]);
+                            let cp = utf16_codepoint_with_fffd(&remaining[idx..idx + avail]);
 
                             idx += usize::from(cp.len);
                         }
@@ -766,7 +769,7 @@ pub fn escape_html_for_utf16_input(utf16: &[u16]) -> Result<Escaped<u16>, AllocE
                     }
                     128..=u16::MAX => {
                         let avail = if idx + 1 == end { 1 } else { 2 };
-                        let cp = utf16_codepoint(&remaining[idx..idx + avail]);
+                        let cp = utf16_codepoint_with_fffd(&remaining[idx..idx + avail]);
 
                         buf.extend_from_slice(&remaining[idx..idx + usize::from(cp.len)]);
                         idx += usize::from(cp.len);

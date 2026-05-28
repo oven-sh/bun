@@ -1882,7 +1882,7 @@ macro_rules! dim_pct_protocol {
             fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
                 Ok(DimensionPercentage::Calc(Box::new(c)))
             }
-            #[inline] fn eql(&self, other: &Self) -> bool { DimensionPercentage::eql(self, other) }
+            #[inline] fn eql(&self, other: &Self) -> bool { self == other }
         }
     };
 }

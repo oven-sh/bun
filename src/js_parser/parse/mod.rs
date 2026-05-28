@@ -212,6 +212,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Parse decorators for this property
             let first_decorator_loc = p.lexer.loc();
+            let property_scope_index = p.scopes_in_order.len();
             if opts.allow_ts_decorators {
                 opts.ts_decorators = p.parse_type_script_decorators()?;
                 opts.has_class_decorators = class_opts.ts_decorators.len() > 0;
@@ -245,6 +246,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 has_decorators = has_decorators || opts.has_argument_decorators;
+            } else {
+                // The property was dropped (e.g. a TypeScript overload signature or
+                // abstract method), which drops its decorators and computed key too.
+                // Discard any scopes recorded while parsing them or the visit pass
+                // will hit a scope order mismatch.
+                p.discard_scopes_up_to(property_scope_index);
             }
         }
 
@@ -919,7 +926,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             decls: decls_slice,
                         });
                     }
-                    let r = p.store_name_in_ref(raw)?;
+                    let r = p.store_name_in_ref(raw2)?;
                     break 'value p.new_expr(
                         E::Identifier {
                             ref_: r,
@@ -971,6 +978,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn parse_binding(&mut self, opts: ParseBindingOptions) -> Result<Binding, Error> {
         let p = self;
+        if !p.stack_check.is_safe_to_recurse() {
+            return Err(err!("StackOverflow"));
+        }
         let loc = p.lexer.loc();
 
         match p.lexer.token {

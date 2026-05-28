@@ -270,7 +270,7 @@ fn lookup_zig_string(
 // TODO(port): bun_jsc::JSValue::{get, get_truthy, to_boolean, is_string,
 // get_zig_string, to_int64, is_any_int}.
 
-pub fn on_create(
+pub(crate) fn on_create(
     global_object: &JSGlobalObject,
     object: JSValue,
 ) -> JsResult<WebSocketServerContext> {

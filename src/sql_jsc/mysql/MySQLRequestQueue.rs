@@ -37,7 +37,7 @@ pub struct MySQLRequestQueue {
 
 impl MySQLRequestQueue {
     #[inline]
-    pub fn can_execute_query(&self, connection: &MySQLConnection) -> bool {
+    pub(crate) fn can_execute_query(&self, connection: &MySQLConnection) -> bool {
         connection.is_able_to_write()
             && self.is_ready_for_query.get()
             && self.nonpipelinable_requests.get() == 0
@@ -45,7 +45,7 @@ impl MySQLRequestQueue {
     }
 
     #[inline]
-    pub fn can_prepare_query(&self, connection: &MySQLConnection) -> bool {
+    pub(crate) fn can_prepare_query(&self, connection: &MySQLConnection) -> bool {
         connection.is_able_to_write()
             && self.is_ready_for_query.get()
             && !self.waiting_to_prepare.get()
@@ -53,12 +53,12 @@ impl MySQLRequestQueue {
     }
 
     #[inline]
-    pub fn mark_as_ready_for_query(&mut self) {
+    pub(crate) fn mark_as_ready_for_query(&mut self) {
         self.is_ready_for_query.set(true);
     }
 
     #[inline]
-    pub fn mark_as_prepared(&mut self) {
+    pub(crate) fn mark_as_prepared(&mut self) {
         self.waiting_to_prepare.set(false);
         if let Some(request) = self.current_ref() {
             debug!("markAsPrepared markAsPrepared");
@@ -67,7 +67,7 @@ impl MySQLRequestQueue {
     }
 
     #[inline]
-    pub fn can_pipeline(&self, connection: &MySQLConnection) -> bool {
+    pub(crate) fn can_pipeline(&self, connection: &MySQLConnection) -> bool {
         // TODO(port): env_var feature_flag::get() returns Option<bool> until the
         // non-nullable defaulted-var get() wrapper is restored (see env_var.rs).
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING
@@ -84,7 +84,7 @@ impl MySQLRequestQueue {
             && connection.is_able_to_write()
     }
 
-    pub fn mark_current_request_as_finished(&mut self, item: &JSMySQLQuery) {
+    pub(crate) fn mark_current_request_as_finished(&mut self, item: &JSMySQLQuery) {
         self.waiting_to_prepare.set(false);
         if item.is_being_prepared() {
             debug!("markCurrentRequestAsFinished markAsPrepared");
@@ -114,7 +114,7 @@ impl MySQLRequestQueue {
     /// is consumed via the safe `ParentRef::from(NonNull)` constructor (null
     /// checked at the boundary), so a function-level guard adds nothing —
     /// caller liveness/provenance is the `ParentRef` contract.
-    pub fn advance(connection: *mut MySQLConnection) {
+    pub(crate) fn advance(connection: *mut MySQLConnection) {
         // R-2: every `JSMySQLConnection` method reached below is `&self`
         // (interior mutability), so a `ParentRef` (yields `&T` only) collapses
         // the per-site `unsafe { (*connection).… }` / `&*connection` derefs.
@@ -181,7 +181,10 @@ impl MySQLRequestQueue {
                     debug!("run failed");
                     // R-2: `on_error` takes `&self`.
                     conn_ref.on_error(Some(req.get()), err);
-                    if offset == 0 {
+                    if offset == 0
+                        && queue_ref.requests.get().readable_length() > 0
+                        && queue_ref.requests.get().peek_item(0) == request
+                    {
                         queue_ref.requests.with_mut(|q| q.discard(1));
                         // SAFETY: queue held one ref; pointer is live until this deref.
                         unsafe { JSMySQLQuery::deref(request) };
@@ -247,7 +250,7 @@ impl MySQLRequestQueue {
         }
     }
 
-    pub fn init() -> Self {
+    pub(crate) fn init() -> Self {
         Self {
             requests: JsCell::new(Queue::init()),
             pipelined_requests: Cell::new(0),
@@ -257,11 +260,7 @@ impl MySQLRequestQueue {
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.requests.get().readable_length() == 0
-    }
-
-    pub fn add(&mut self, request: *mut JSMySQLQuery) {
+    pub(crate) fn add(&mut self, request: *mut JSMySQLQuery) {
         debug!("add");
         // Caller passes a live JSMySQLQuery; we ref() it before storing.
         // R-2: `ParentRef` yields `&T` only — every method body reached below
@@ -288,7 +287,7 @@ impl MySQLRequestQueue {
     }
 
     #[inline]
-    pub fn current(&self) -> Option<*mut JSMySQLQuery> {
+    pub(crate) fn current(&self) -> Option<*mut JSMySQLQuery> {
         let q = self.requests.get();
         if q.readable_length() == 0 {
             return None;
@@ -307,13 +306,13 @@ impl MySQLRequestQueue {
     ///
     /// [`current`]: Self::current
     #[inline]
-    pub fn current_ref(&self) -> Option<bun_ptr::ThisPtr<JSMySQLQuery>> {
+    pub(crate) fn current_ref(&self) -> Option<bun_ptr::ThisPtr<JSMySQLQuery>> {
         // SAFETY: `current()` returns a pointer the queue holds a ref on
         // (taken in `add()`); non-null and live until `discard()`/`read_item()`.
         self.current().map(|p| unsafe { bun_ptr::ThisPtr::new(p) })
     }
 
-    pub fn clean(&mut self, reason: Option<JSValue>, queries_array: JSValue) {
+    pub(crate) fn clean(&mut self, reason: Option<JSValue>, queries_array: JSValue) {
         // reject()/rejectWithJSValue() run JS which can synchronously call .close()
         // (or otherwise fail the connection) and re-enter clean(). Swap the queue
         // into a local first so the re-entrant call sees an empty queue instead of

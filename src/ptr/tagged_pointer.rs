@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 
 /// Logically a u49. Rust has no native u49, so we carry it in a u64 and mask.
-pub type AddressableSize = u64;
+pub(crate) type AddressableSize = u64;
 
 /// `TaggedPtr::Tag` — logically u15, carried in u16. (Inherent assoc types are nightly; hoisted here.)
 pub type TagType = u16;

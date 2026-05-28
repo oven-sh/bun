@@ -32,6 +32,7 @@ pub enum RedisError {
     ConnectionTimeout,
     IdleTimeout,
     NestingDepthExceeded,
+    LineTooLong,
 }
 
 bun_core::impl_tag_error!(RedisError);
@@ -55,7 +56,7 @@ impl From<bun_core::Error> for RedisError {
 /// RESP protocol types
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum RESPType {
+pub(crate) enum RESPType {
     // RESP2 types
     SimpleString = b'+',
     Error = b'-',
@@ -77,7 +78,7 @@ pub enum RESPType {
 }
 
 impl RESPType {
-    pub fn from_byte(byte: u8) -> Option<RESPType> {
+    pub(crate) fn from_byte(byte: u8) -> Option<RESPType> {
         match byte {
             x if x == RESPType::SimpleString as u8 => Some(RESPType::SimpleString),
             x if x == RESPType::Error as u8 => Some(RESPType::Error),
@@ -218,6 +219,7 @@ pub struct ValkeyReader<'a> {
     /// Bytes of aggregate `Vec` preallocation still allowed for the current
     /// `read_value` call. See `take_prealloc_budget`.
     prealloc_budget: usize,
+    crlf_skip: usize,
 }
 
 impl<'a> ValkeyReader<'a> {
@@ -226,6 +228,7 @@ impl<'a> ValkeyReader<'a> {
             buffer,
             pos: 0,
             prealloc_budget: buffer.len(),
+            crlf_skip: 0,
         }
     }
 
@@ -249,12 +252,18 @@ impl<'a> ValkeyReader<'a> {
 
     pub fn read_until_crlf(&mut self) -> Result<&'a [u8], RedisError> {
         let buffer = &self.buffer[self.pos..];
-        for (i, &byte) in buffer.iter().enumerate() {
+        let limit = buffer.len().min(Self::MAX_LINE_LEN + 1);
+        let start = self.crlf_skip.min(limit);
+        self.crlf_skip = 0;
+        for (i, &byte) in buffer.iter().enumerate().take(limit).skip(start) {
             if byte == b'\r' && buffer.len() > i + 1 && buffer[i + 1] == b'\n' {
                 let result = &buffer[0..i];
                 self.pos += i + 2;
                 return Ok(result);
             }
+        }
+        if buffer.len() > Self::MAX_LINE_LEN + 1 {
+            return Err(RedisError::LineTooLong);
         }
 
         Err(RedisError::InvalidResponse)
@@ -337,6 +346,8 @@ impl<'a> ValkeyReader<'a> {
     /// machine stops buffering instead of growing the read buffer toward an
     /// attacker-chosen size.
     const MAX_BULK_LEN: i64 = 512 * 1024 * 1024;
+
+    const MAX_LINE_LEN: usize = 512 * 1024;
 
     /// Caps an aggregate's `Vec::with_capacity` so the total bytes reserved
     /// across the whole parse — every nesting level combined — never exceed
@@ -601,6 +612,7 @@ pub struct ReplyScanner {
     /// Remaining child-value count for each in-progress aggregate, outermost
     /// first.
     stack: Vec<u64>,
+    crlf_skip: usize,
 }
 
 impl ReplyScanner {
@@ -609,6 +621,7 @@ impl ReplyScanner {
     pub fn reset(&mut self) {
         self.pos = 0;
         self.stack.clear();
+        self.crlf_skip = 0;
     }
 
     /// Resume scanning `buffer` (the connection's accumulated, unconsumed read
@@ -620,13 +633,22 @@ impl ReplyScanner {
                 buffer,
                 pos: self.pos,
                 prealloc_budget: 0,
+                crlf_skip: self.crlf_skip,
             };
             let children = match Self::scan_one(&mut reader, self.stack.len()) {
                 Ok(children) => children,
                 // `InvalidResponse` is the parser's "ran out of bytes" sentinel.
-                Err(RedisError::InvalidResponse) => return Ok(ScanResult::NeedMoreData),
+                Err(RedisError::InvalidResponse) => {
+                    self.crlf_skip = if reader.pos == self.pos + 1 {
+                        (buffer.len() - reader.pos).saturating_sub(1)
+                    } else {
+                        0
+                    };
+                    return Ok(ScanResult::NeedMoreData);
+                }
                 Err(err) => return Err(err),
             };
+            self.crlf_skip = 0;
             self.pos = reader.pos;
             if let Some(children) = children
                 && children > 0

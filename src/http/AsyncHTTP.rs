@@ -275,6 +275,7 @@ pub struct Options<'a> {
     pub verbose: Option<HTTPVerboseLevel>,
     pub disable_keepalive: Option<bool>,
     pub disable_decompression: Option<bool>,
+    pub max_redirects: Option<u8>,
     pub reject_unauthorized: Option<bool>,
     pub tls_props: Option<SSLConfigSharedPtr>,
 }
@@ -534,6 +535,9 @@ impl<'a> AsyncHTTP<'a> {
         }
         if let Some(val) = options.disable_decompression {
             this.client.flags.disable_decompression = val;
+        }
+        if let Some(val) = options.max_redirects {
+            this.client.remaining_redirect_count = (val.min(126) + 1) as i8;
         }
         if let Some(val) = options.disable_keepalive {
             this.client.flags.disable_keepalive = val;

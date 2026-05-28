@@ -1,5 +1,6 @@
 import { YAML, file } from "bun";
 import { describe, expect, test } from "bun:test";
+import { isASAN, isDebug } from "harness";
 import { join } from "path";
 
 describe("Bun.YAML", () => {
@@ -2280,7 +2281,9 @@ config:
         },
       };
 
-      for (let i = 0; i < 10000; i++) {
+      // Debug/ASAN builds are much slower; keep this stress test within the default test timeout.
+      const iterations = isDebug || isASAN ? 1000 : 10000;
+      for (let i = 0; i < iterations; i++) {
         expect(YAML.stringify(config)).toBeString();
       }
     });
@@ -2363,6 +2366,94 @@ config:
         expect(parsed.a).not.toBe(parsed.c);
         expect(parsed.a.type).toBe("first");
         expect(parsed.c.type).toBe("second");
+      });
+
+      test("anchors named after keys with special characters re-parse", () => {
+        const specialKeys = [
+          "\\u{10FFFF}a", // literal backslash-u-braces text, not a codepoint
+          "{",
+          "}",
+          "[",
+          "]",
+          ",",
+          "{a}",
+          "key[0]",
+          "a,b",
+          "a\\b",
+          "a b",
+          "a\tb",
+          "a\nb",
+          " ",
+          "key:with#chars",
+          "🙂emoji",
+        ];
+
+        for (const key of specialKeys) {
+          const shared = [1, 2];
+          const obj = { [key]: shared, other: shared };
+
+          for (const space of [undefined, 2]) {
+            const yaml = YAML.stringify(obj, null, space);
+            const parsed = YAML.parse(yaml);
+            expect(parsed).toEqual({ [key]: [1, 2], other: [1, 2] });
+            expect(parsed[key]).toBe(parsed.other);
+          }
+        }
+      });
+
+      test("falls back to generated anchor names for unsafe keys", () => {
+        const shared = [1, 2];
+        expect(YAML.stringify({ "a[b]": shared, other: shared })).toBe('{"a[b]": &value0 [1,2],other: *value0}');
+      });
+
+      test("generated anchor names cannot collide with keys named like them", () => {
+        const cases: Array<{ obj: Record<string, unknown>; expected: Record<string, unknown> }> = [];
+
+        {
+          // literal "value0" key vs generated name for an unsafe key
+          const a = [1];
+          const b = [2];
+          cases.push({
+            obj: { value0: a, "[k]": b, x: a, y: b },
+            expected: { value0: [1], "[k]": [2], x: [1], y: [2] },
+          });
+        }
+        {
+          // literal "value0" key vs generated name for an empty key
+          const a = [1];
+          const b = [2];
+          cases.push({
+            obj: { "": a, value0: b, x: a, y: b },
+            expected: { "": [1], value0: [2], x: [1], y: [2] },
+          });
+        }
+        {
+          // literal "item0" key vs array item anchor names
+          const a = [1];
+          const b = [2];
+          cases.push({
+            obj: { item0: a, list: [b, b], x: a },
+            expected: { item0: [1], list: [[2], [2]], x: [1] },
+          });
+        }
+
+        for (const { obj, expected } of cases) {
+          for (const space of [undefined, 2]) {
+            const parsed = YAML.parse(YAML.stringify(obj, null, space));
+            expect(parsed).toEqual(expected);
+          }
+        }
+      });
+
+      test("round-trips parsed documents whose aliased keys contain flow indicators", () => {
+        const doc = "\\u{10FFFF}a: &x [1, 2]\nb: *x";
+        const value = YAML.parse(doc);
+        expect(value).toEqual({ "\\u{10FFFF}a": [1, 2], b: [1, 2] });
+
+        const yaml = YAML.stringify(value);
+        const reparsed = YAML.parse(yaml);
+        expect(reparsed).toEqual(value);
+        expect(reparsed["\\u{10FFFF}a"]).toBe(reparsed.b);
       });
     });
 
@@ -3807,3 +3898,61 @@ refs:
     });
   });
 });
+
+test("merging the same large anchor many times completes quickly", () => {
+  // `<<: [*a, *a, ...]` adds no new data after the first merge, but
+  // deduplicating each repeated alias must not rescan the entire property
+  // list per merged key — that makes a ~25 KB document take minutes.
+  const keyCount = 1200;
+  const aliasCount = 3000;
+
+  const lines: string[] = ["a: &a"];
+  for (let i = 0; i < keyCount; i++) {
+    lines.push(`  k${i}: ${i}`);
+  }
+  lines.push("b:");
+  lines.push(`  <<: [${new Array(aliasCount).fill("*a").join(", ")}]`);
+  const input = lines.join("\n");
+
+  const start = performance.now();
+  const parsed = YAML.parse(input) as { a: Record<string, number>; b: Record<string, number> };
+  const elapsed = performance.now() - start;
+
+  // Merge semantics are preserved: `b` receives every key of `a` exactly once.
+  expect(Object.keys(parsed.a)).toHaveLength(keyCount);
+  expect(parsed.b).toEqual(parsed.a);
+  expect(parsed.b.k0).toBe(0);
+  expect(parsed.b[`k${keyCount - 1}`]).toBe(keyCount - 1);
+
+  // Repeated alias merges must be near-linear in the document size.
+  expect(elapsed).toBeLessThan(isDebug || isASAN ? 15_000 : 4_000);
+}, 30_000);
+
+test("limits how many properties merge keys can materialize from a small document", () => {
+  // A normal merge-key document still resolves.
+  const small = YAML.parse("base: &base\n  x: 1\n  y: 2\nchild:\n  <<: *base\n  z: 3\n") as {
+    base: Record<string, number>;
+    child: Record<string, number>;
+  };
+  expect(small.child).toEqual({ x: 1, y: 2, z: 3 });
+
+  // One anchor with `keyCount` properties merged into `mergeCount` separate
+  // mappings would materialize keyCount * mergeCount (~1.2 million) property
+  // entries from a ~30 KB document. The parser caps the total number of
+  // properties materialized through merge keys and reports an error instead
+  // of allocating memory proportional to the product.
+  const keyCount = 2048;
+  const mergeCount = 600;
+
+  const lines: string[] = ["a: &a"];
+  for (let i = 0; i < keyCount; i++) {
+    lines.push(`  k${i}: ${i}`);
+  }
+  for (let i = 0; i < mergeCount; i++) {
+    lines.push(`m${i}:`);
+    lines.push("  <<: *a");
+  }
+  const input = lines.join("\n");
+
+  expect(() => YAML.parse(input)).toThrow();
+}, 30_000);

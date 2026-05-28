@@ -11,7 +11,7 @@ use crate::node::fs::{
 };
 
 /// Signature of every generated NodeFS host function.
-pub type NodeFSFunction =
+pub(crate) type NodeFSFunction =
     fn(this: &Binding, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>;
 
 // Zig: `const NodeFSFunctionEnum = std.meta.DeclEnum(node.fs.NodeFS);`
@@ -90,7 +90,7 @@ fn run_async<A: FsArgument>(
     // Task completes), and `slice` is intentionally not dropped — its
     // `Drop`-unprotect would race that.
 
-    let args = match <A as FsArgument>::from_js(global, &mut slice) {
+    let mut args = match <A as FsArgument>::from_js(global, &mut slice) {
         Ok(a) => a,
         Err(err) => {
             // SAFETY: not yet dropped; only drop site for this path.
@@ -100,6 +100,7 @@ fn run_async<A: FsArgument>(
     };
 
     if global.has_exception() {
+        args.unprotect();
         drop(args);
         // SAFETY: not yet dropped; only drop site for this path.
         unsafe { ManuallyDrop::drop(&mut slice) };
@@ -114,6 +115,7 @@ fn run_async<A: FsArgument>(
                         global,
                         reason.to_js(global),
                     );
+                args.unprotect();
                 drop(args);
                 // SAFETY: not yet dropped; only drop site for this path.
                 unsafe { ManuallyDrop::drop(&mut slice) };
@@ -415,7 +417,7 @@ impl Binding {
     // pub const statfsSync = callSync(.statfs);
 }
 
-pub fn create_binding(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
     let module = Binding::new(Binding::default());
 
     let vm = global.bun_vm_ptr();
@@ -429,7 +431,10 @@ pub fn create_binding(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub fn create_memfd_for_testing(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn create_memfd_for_testing(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     let arguments = frame.arguments_old::<1>();
 
     if arguments.len < 1 {

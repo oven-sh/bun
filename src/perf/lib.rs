@@ -4,7 +4,6 @@
 //! callers that cannot reach this crate; that subset is Linux-only (ftrace
 //! needs no high-tier deps) and reports disabled on macOS, so callers above T0
 //! should use `bun_perf::trace` to keep os_signpost coverage.
-#![warn(unreachable_pub)]
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
 
@@ -16,11 +15,11 @@ pub mod tracy;
 pub use crate::generated_perf_trace_events::PerfEvent;
 
 #[cfg(target_os = "macos")]
-pub type EnabledImpl = Darwin;
+pub(crate) type EnabledImpl = Darwin;
 #[cfg(any(target_os = "linux", target_os = "android"))]
-pub type EnabledImpl = Linux;
+pub(crate) type EnabledImpl = Linux;
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-pub type EnabledImpl = Disabled;
+pub(crate) type EnabledImpl = Disabled;
 
 pub enum Ctx {
     Disabled(Disabled),
@@ -32,7 +31,7 @@ pub struct Disabled;
 
 impl Disabled {
     #[inline]
-    pub fn end(&self) {}
+    pub(crate) fn end(&self) {}
 }
 
 impl Ctx {
@@ -95,7 +94,7 @@ fn is_enabled_once() {
     }
 }
 
-pub fn is_enabled() -> bool {
+pub(crate) fn is_enabled() -> bool {
     IS_ENABLED_ONCE.call_once(is_enabled_once);
     IS_ENABLED.load(Ordering::SeqCst)
 }
@@ -200,7 +199,7 @@ pub struct Linux {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 impl Linux {
-    pub fn is_supported() -> bool {
+    pub(crate) fn is_supported() -> bool {
         INIT_ONCE.call_once(Self::init_once);
         IS_INITIALIZED.load(Ordering::Relaxed)
     }
@@ -210,14 +209,14 @@ impl Linux {
         IS_INITIALIZED.store(result != 0, Ordering::Relaxed);
     }
 
-    pub fn init(event: PerfEvent) -> Self {
+    pub(crate) fn init(event: PerfEvent) -> Self {
         Self {
             start_time: bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns(),
             event,
         }
     }
 
-    pub fn end(&self) {
+    pub(crate) fn end(&self) {
         if !Self::is_supported() {
             return;
         }

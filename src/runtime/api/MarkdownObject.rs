@@ -1,7 +1,7 @@
 //! `Bun.markdown` — html/ansi/react/render host fns over `bun_md`.
 
 use bun_core::StackCheck;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
+use bun_jsc::{ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
 // PORT NOTE: Zig's `bun.md` is `src/md/root.zig`; the Rust crate's lib.rs is a
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
 // SpanType, TextType, SpanDetail, Renderer, helpers, types, ansi, …) as `md`.
@@ -33,7 +33,32 @@ fn js_to_parser_err(e: bun_jsc::JsError) -> ParserError {
     }
 }
 
-pub fn create(global_this: &JSGlobalObject) -> JSValue {
+struct PinnedView(ArrayBuffer);
+
+impl PinnedView {
+    fn pin(global: &JSGlobalObject, buffer: &StringOrBuffer) -> JsResult<Option<Self>> {
+        let Some(b) = buffer.buffer() else {
+            return Ok(None);
+        };
+        match b.buffer.value.as_pinned_arraybuffer(global) {
+            Some(pinned) => Ok(Some(Self(pinned))),
+            None => Err(global.throw_out_of_memory()),
+        }
+    }
+
+    #[inline]
+    fn slice(&self) -> &[u8] {
+        self.0.byte_slice()
+    }
+}
+
+impl Drop for PinnedView {
+    fn drop(&mut self) {
+        self.0.unpin();
+    }
+}
+
+pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
     bun_jsc::create_host_function_object(
         global_this,
         &[
@@ -64,7 +89,11 @@ pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let input = buffer.slice();
+    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let input: &[u8] = match &pinned {
+        Some(p) => p.slice(),
+        None => buffer.slice(),
+    };
 
     let mut theme = md::AnsiTheme {
         colors: true,
@@ -117,7 +146,10 @@ pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
 }
 
 #[bun_jsc::host_fn]
-pub fn render_to_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn render_to_html(
+    global_this: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
     let [input_value, opts_value] = callframe.arguments_as_array::<2>();
 
     if input_value.is_empty_or_undefined_or_null() {
@@ -131,7 +163,11 @@ pub fn render_to_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let input = buffer.slice();
+    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let input: &[u8] = match &pinned {
+        Some(p) => p.slice(),
+        None => buffer.slice(),
+    };
 
     let options = parse_options(global_this, opts_value)?;
 
@@ -225,7 +261,7 @@ fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<
 /// metadata object, and returns a string. The final result is the concatenation
 /// of all callback outputs.
 #[bun_jsc::host_fn]
-pub fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let [input_value, callbacks_value, opts_value] = callframe.arguments_as_array::<3>();
 
     if input_value.is_empty_or_undefined_or_null() {
@@ -239,7 +275,11 @@ pub fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let input = buffer.slice();
+    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let input: &[u8] = match &pinned {
+        Some(p) => p.slice(),
+        None => buffer.slice(),
+    };
 
     // Parse parser options from 3rd argument
     let options = parse_options(global_this, opts_value)?;
@@ -278,7 +318,10 @@ pub fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
 // the host-fn shim that allocates a MarkedArgumentBuffer. Here we hand-roll the
 // equivalent until bun_jsc provides a `#[marked_args]` attribute.
 #[bun_jsc::host_fn]
-pub fn render_react(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn render_react(
+    global_this: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
     MarkedArgumentBuffer::new(|marked_args| render_react_impl(global_this, callframe, marked_args))
 }
 
@@ -336,7 +379,11 @@ fn render_ast(
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let input = buffer.slice();
+    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let input: &[u8] = match &pinned {
+        Some(p) => p.slice(),
+        None => buffer.slice(),
+    };
 
     // Parse parser options from 3rd argument
     let options = parse_options(global_this, opts_value)?;
@@ -1556,7 +1603,7 @@ impl<'a> JsCallbackRenderer<'a> {
 }
 
 /// Slice the language token out of a fenced-code info string.
-pub fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
+pub(crate) fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
     let mut lang_end = info_beg;
     while (lang_end as usize) < src_text.len() {
         let c = src_text[lang_end as usize];
@@ -1574,7 +1621,7 @@ pub fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
 /// Cached tag string indices — must match `BunMarkdownTagStrings.h`.
 #[repr(u8)]
 #[derive(Copy, Clone)]
-pub enum TagIndex {
+pub(crate) enum TagIndex {
     H1 = 0,
     H2 = 1,
     H3 = 2,

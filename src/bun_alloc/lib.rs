@@ -2238,6 +2238,26 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
     }
 
     pub fn tail(&mut self) -> core::result::Result<&mut Block, AllocError> {
+        // Terminal "full" state: every slot is allocated and the current block
+        // is full, so the only way forward is to write `ptrs[allocated]` past
+        // the fixed array. Bail out *before* touching `used` — Zig wrote here
+        // unconditionally (`catch unreachable`) and relied on never reaching the
+        // ceiling, but Rust's bounds check would turn the same write into a hard
+        // panic. Surfacing `AllocError` lets the caller propagate a normal OOM.
+        // Checked first so this path is idempotent: the group stays in a stable
+        // `used == allocated - 1, last block full` state and re-derives the same
+        // `Err` on every retry rather than leaving `used` poisoned for the next
+        // call. With `BSS_OVERFLOW_BLOCK_SIZE` at the Zig value this is only
+        // reachable past the store's design capacity.
+        if self.allocated as usize >= OVERFLOW_GROUP_SLOTS
+            && self.ptrs[self.used as usize]
+                .as_ref()
+                .expect("alloc")
+                .is_full()
+        {
+            return Err(AllocError);
+        }
+
         if self.allocated > 0
             && self.ptrs[self.used as usize]
                 .as_ref()
@@ -2254,17 +2274,9 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
         }
 
         if self.allocated <= self.used {
-            // Every block is allocated and full: the next slot would be
-            // `ptrs[allocated]`, which is past the fixed-size array. Zig wrote
-            // here unconditionally (`catch unreachable`) and relied on never
-            // reaching the ceiling; Rust's bounds check turns the same write
-            // into a hard panic. Surface it as an allocation failure instead so
-            // the caller can propagate a normal OOM rather than abort. With
-            // `BSS_OVERFLOW_BLOCK_SIZE` restored to the Zig value this is only
-            // reachable past the store's design capacity.
-            if self.allocated as usize >= OVERFLOW_GROUP_SLOTS {
-                return Err(AllocError);
-            }
+            // The top guard already rejected the only case where `allocated`
+            // has reached `OVERFLOW_GROUP_SLOTS`, so this write is in bounds.
+            debug_assert!((self.allocated as usize) < OVERFLOW_GROUP_SLOTS);
             // Zig: default_allocator.create(Block) catch unreachable
             // SAFETY: Box<MaybeUninit> → zero() initializes the `used` counter; payload array
             // is `[MaybeUninit<T>; N]` and stays uninit exactly as Zig does.
@@ -3089,6 +3101,11 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         let value_len: usize = value.total_len() + 1;
 
         let (out_ptr, out_len): (*mut u8, usize);
+        // Whether `out_ptr` came from the `mi_malloc` fallback below (vs. the
+        // inline `backing_buf`). A heap buffer is only reachable once it is
+        // recorded in `overflow_list`/`slice_buf`; if recording later fails it
+        // must be freed here, since nothing else holds a handle to it.
+        let mut from_heap = false;
         if value_len + (self.backing_buf_used as usize) < self.backing_buf.len() - 1 {
             let start = self.backing_buf_used as usize;
             self.backing_buf_used += value_len as u64;
@@ -3119,6 +3136,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             if ptr.is_null() {
                 return Err(AllocError);
             }
+            from_heap = true;
             // SAFETY: `ptr` is a fresh allocation of `value_len` bytes with no other alias.
             let value_buf = unsafe { core::slice::from_raw_parts_mut(ptr, value_len) };
             value.copy_into(&mut value_buf[..value_len - 1]);
@@ -3146,7 +3164,17 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 
         if result.is_overflow() {
             if self.overflow_list.len() == result.index() {
-                self.overflow_list.append(stored)?;
+                if let Err(e) = self.overflow_list.append(stored) {
+                    // The overflow list is full, so `stored` was never recorded.
+                    // Free it if it was heap-allocated; the inline-buffer case
+                    // needs no cleanup (it's process-lifetime storage).
+                    if from_heap {
+                        // SAFETY: `out_ptr` is the `mi_malloc` allocation from the
+                        // branch above; nothing else references it now.
+                        unsafe { mimalloc::mi_free(out_ptr.cast()) };
+                    }
+                    return Err(e);
+                }
             } else {
                 *self.overflow_list.at_index_mut(result) = stored;
             }
@@ -3322,8 +3350,13 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
             }
         }
 
-        self.index.insert(result.hash, result.index);
-
+        // Materialize the slot *before* recording the hash -> index mapping.
+        // `overflow_list.append` is fallible (it rejects once the store hits its
+        // ceiling), and on its `Err` it does not advance `overflow_list.len()`.
+        // Inserting the index first would then leave `self.index` pointing at a
+        // slot that was never created, so a later `get()` would index past the
+        // overflow array (UB in release, bounds panic in debug). Inserting after
+        // the `?` keeps the map consistent with the backing storage.
         let ret = if result.index.is_overflow() {
             if self.overflow_list.len() == result.index.index() {
                 self.overflow_list.append(value)?
@@ -3339,6 +3372,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
             // SAFETY: just initialized on the line above.
             unsafe { self.backing_buf[idx].assume_init_mut() }
         };
+        self.index.insert(result.hash, result.index);
         Ok(ret)
     }
 

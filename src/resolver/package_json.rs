@@ -2876,6 +2876,25 @@ impl<'a> ESModule<'a> {
                         ));
                     }
 
+                    if let Some(invalid) = find_invalid_segment(result) {
+                        if let Some(log) = self.debug_logs.as_deref_mut() {
+                            log.add_note_fmt(format_args!(
+                                "The path \"{}\" is invalid because it contains an invalid segment \"{}\"",
+                                bstr::BStr::new(result),
+                                bstr::BStr::new(invalid)
+                            ));
+                        }
+                        dedent!();
+                        return Resolution {
+                            path: Box::<[u8]>::from(result),
+                            status: Status::InvalidModuleSpecifier,
+                            debug: ResolutionDebug {
+                                token: target.first_token,
+                                ..Default::default()
+                            },
+                        };
+                    }
+
                     let status: Status = if strings::ends_with_char_or_is_zero_length(result, b'*')
                         && strings::index_of_char(result, b'*').unwrap() as usize
                             == result.len() - 1

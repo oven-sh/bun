@@ -217,3 +217,178 @@ test("npm lockfile migration skips extraneous packages that also declare inBundl
   expect(await Bun.file(join(testDir, "node_modules", "pkg0", "package.json")).json()).toEqual({ name: "pkg0" });
   expect(fs.existsSync(join(testDir, "bun.lock"))).toBeTrue();
 });
+
+test("package-lock.json migration requires integrity for tarball URLs outside the configured registry", async () => {
+  // A package-lock.json entry whose `resolved` tarball URL points outside the configured
+  // registry and that carries no `integrity` field must not be imported as-is. The bun.lock
+  // parser already fails closed on this shape; migration must apply the same rule.
+  let tarballRequests = 0;
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      tarballRequests++;
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  const offRegistryUrl = `http://localhost:${server.port}/lodash-4.17.21.tgz`;
+
+  const testDir = tempDirWithFiles("migrate-off-registry-tarball", {
+    "package.json": JSON.stringify({
+      name: "off-registry-tarball-test",
+      version: "1.0.0",
+      dependencies: {
+        "lodash": "4.17.21",
+      },
+    }),
+    "package-lock.json": JSON.stringify({
+      name: "off-registry-tarball-test",
+      version: "1.0.0",
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        "": {
+          name: "off-registry-tarball-test",
+          version: "1.0.0",
+          dependencies: {
+            "lodash": "4.17.21",
+          },
+        },
+        "node_modules/lodash": {
+          version: "4.17.21",
+          // off-registry tarball URL and no "integrity" field
+          resolved: offRegistryUrl,
+          license: "MIT",
+        },
+      },
+    }),
+  });
+
+  const { exitCode, stderr } = Bun.spawnSync([bunExe(), "install"], {
+    env: bunEnv,
+    cwd: testDir,
+  });
+
+  const err = stderr.toString();
+  // The migration is rejected instead of importing an unverifiable off-registry tarball URL.
+  expect(err).toContain("InvalidNPMLockfile");
+  expect(err).not.toContain("migrated lockfile from package-lock.json");
+  // The off-registry URL is never fetched.
+  expect(tarballRequests).toBe(0);
+  expect(exitCode).toBe(0);
+  // The install still succeeds by ignoring the lockfile and resolving lodash@4.17.21 from the registry.
+  expect(await Bun.file(join(testDir, "node_modules", "lodash", "package.json")).json()).toHaveProperty(
+    "version",
+    "4.17.21",
+  );
+});
+
+test("package-lock.json migration rejects git committish values that are not a single path component", async () => {
+  // The value after "#" in a git `resolved` field becomes a cache folder name, so migration
+  // must only accept a single safe path component (same rule the bun.lock parser applies).
+  const testDir = tempDirWithFiles("migrate-git-committish-validation", {
+    "package.json": JSON.stringify({
+      name: "git-committish-test",
+      version: "1.0.0",
+      dependencies: {
+        "jquery": "3.7.1",
+      },
+    }),
+    "package-lock.json": JSON.stringify({
+      name: "git-committish-test",
+      version: "1.0.0",
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        "": {
+          name: "git-committish-test",
+          version: "1.0.0",
+          dependencies: {
+            "jquery": "3.7.1",
+          },
+        },
+        "node_modules/jquery": {
+          version: "3.7.1",
+          resolved:
+            "git+ssh://git@github.com/dylan-conway/install-test.git#596234dab30564f37adae1e5c4d7123bcffce537/../../../../outside-of-cache",
+          license: "MIT",
+        },
+      },
+    }),
+  });
+
+  const { exitCode, stderr } = Bun.spawnSync([bunExe(), "install"], {
+    env: bunEnv,
+    cwd: testDir,
+  });
+
+  const err = stderr.toString();
+  // The migration is rejected instead of accepting a committish containing path separators and "..".
+  expect(err).toContain("InvalidNPMLockfile");
+  expect(err).not.toContain("migrated lockfile from package-lock.json");
+  expect(exitCode).toBe(0);
+  // The install still succeeds by ignoring the lockfile and resolving jquery@3.7.1 from the registry.
+  expect(await Bun.file(join(testDir, "node_modules", "jquery", "package.json")).json()).toHaveProperty(
+    "version",
+    "3.7.1",
+  );
+});
+
+test("package-lock.json migration keeps dependencies declared as arbitrary tarball URLs without integrity", async () => {
+  const tarball = await Bun.file(join(import.meta.dir, "..", "baz-0.0.3.tgz")).arrayBuffer();
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response(tarball);
+    },
+  });
+
+  const tarballUrl = `http://localhost:${server.port}/baz-0.0.3.tgz`;
+
+  const testDir = tempDirWithFiles("migrate-arbitrary-tarball-url", {
+    "package.json": JSON.stringify({
+      name: "arbitrary-tarball-url-test",
+      version: "1.0.0",
+      dependencies: {
+        "baz": tarballUrl,
+      },
+    }),
+    "package-lock.json": JSON.stringify({
+      name: "arbitrary-tarball-url-test",
+      version: "1.0.0",
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        "": {
+          name: "arbitrary-tarball-url-test",
+          version: "1.0.0",
+          dependencies: {
+            "baz": tarballUrl,
+          },
+        },
+        "node_modules/baz": {
+          version: "0.0.3",
+          resolved: tarballUrl,
+          license: "MIT",
+        },
+      },
+    }),
+  });
+
+  await using proc = Bun.spawn([bunExe(), "install"], {
+    env: bunEnv,
+    cwd: testDir,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(err).not.toContain("InvalidNPMLockfile");
+  expect(err).toContain("migrated lockfile from package-lock.json");
+  expect(await Bun.file(join(testDir, "node_modules", "baz", "package.json")).json()).toHaveProperty(
+    "version",
+    "0.0.3",
+  );
+  expect(fs.existsSync(join(testDir, "bun.lock"))).toBeTrue();
+  expect(exitCode).toBe(0);
+});

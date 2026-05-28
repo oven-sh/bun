@@ -73,6 +73,21 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 ..Default::default()
             })
         }
+        FieldType::MYSQL_TYPE_YEAR => {
+            // Binary protocol sends YEAR as a fixed 2-byte unsigned field;
+            // column_length is the display width (4), not the wire size.
+            if raw {
+                let data = reader.read(2)?;
+                return Ok(SQLDataCell::raw(Some(&data)));
+            }
+            Ok(SQLDataCell {
+                tag: CellTag::Uint4,
+                value: CellValue {
+                    uint4: reader.int::<u16>()? as u32,
+                },
+                ..Default::default()
+            })
+        }
         FieldType::MYSQL_TYPE_INT24 => {
             if raw {
                 // Binary protocol sends INT24 as a fixed 4-byte field; consume

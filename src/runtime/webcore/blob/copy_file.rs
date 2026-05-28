@@ -878,6 +878,18 @@ impl<'a> CopyFile<'a> {
 
             #[cfg(target_os = "macos")]
             {
+                // fcopyfile reads from the source fd's current position. For a sliced
+                // source blob (offset > 0), seek to the slice start so the destination
+                // begins at the right byte instead of the start of the backing file.
+                if self.offset > 0 {
+                    if let bun_sys::Result::Err(err) =
+                        bun_sys::lseek(self.source_fd, self.offset as i64, libc::SEEK_SET)
+                    {
+                        self.system_error = Some(err.to_system_error());
+                        self.do_close();
+                        return;
+                    }
+                }
                 if self.do_fcopy_file_with_read_write_loop_fallback().is_err() {
                     self.do_close();
                     return;
@@ -893,6 +905,9 @@ impl<'a> CopyFile<'a> {
                         )
                     };
                 }
+                if stat.st_size != 0 {
+                    self.read_len = self.max_length;
+                }
 
                 self.do_close();
                 return;
@@ -900,6 +915,15 @@ impl<'a> CopyFile<'a> {
 
             #[cfg(target_os = "freebsd")]
             {
+                if self.offset > 0 {
+                    if let bun_sys::Result::Err(err) =
+                        bun_sys::lseek(self.source_fd, self.offset as i64, libc::SEEK_SET)
+                    {
+                        self.system_error = Some(err.to_system_error());
+                        self.do_close();
+                        return;
+                    }
+                }
                 let mut total_written: u64 = 0;
                 match node_fs::NodeFS::copy_file_using_read_write_loop(
                     bun_core::ZStr::EMPTY,

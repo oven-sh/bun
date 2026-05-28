@@ -169,13 +169,9 @@ const IS_UV_FS_COPYFILE_DISABLED =
     }
 
     {
-      await Bun.write(
-        Bun.file(tmpbase + "fetch.js.in").slice(0, (exampleHtml.length / 2) | 0),
-        Bun.file(tmpbase + "fetch.js.out"),
-      );
-      expect(await Bun.file(tmpbase + "fetch.js.in").text()).toBe(
-        exampleHtml.substring(0, (exampleHtml.length / 2) | 0),
-      );
+      const half = (exampleHtml.length / 2) | 0;
+      await Bun.write(Bun.file(tmpbase + "fetch.js.in"), Bun.file(tmpbase + "fetch.js.out").slice(0, half));
+      expect(await Bun.file(tmpbase + "fetch.js.in").text()).toBe(exampleHtml.substring(0, half));
     }
 
     {
@@ -184,6 +180,77 @@ const IS_UV_FS_COPYFILE_DISABLED =
       await gcTick();
       expect(await Bun.file(tmpbase + "fetch.js.in").text()).toBe(exampleHtml);
     }
+  });
+
+  describe("Bun.file -> Bun.file with sliced source", () => {
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    // TODO(windows): CopyFileWindows has no source-offset support yet (see FIXME in Blob.rs)
+    const itSliced = isWindows ? it.skip : it;
+
+    itSliced("slice(start, end) copies only the window, not the whole file", async () => {
+      using dir = tempDir("bun-write-file-slice-mid", { "src.txt": alphabet });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      const ret = await Bun.write(dst, Bun.file(src).slice(5, 10));
+      expect(await Bun.file(dst).text()).toBe("FGHIJ");
+      expect(ret).toBe(5);
+    });
+
+    itSliced("slice(0, end) copies only the leading window", async () => {
+      using dir = tempDir("bun-write-file-slice-head", { "src.txt": alphabet });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      const ret = await Bun.write(dst, Bun.file(src).slice(0, 10));
+      expect(await Bun.file(dst).text()).toBe("ABCDEFGHIJ");
+      expect(ret).toBe(10);
+    });
+
+    itSliced("slice(start) copies from start to EOF", async () => {
+      using dir = tempDir("bun-write-file-slice-tail", { "src.txt": alphabet });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      const ret = await Bun.write(dst, Bun.file(src).slice(20));
+      expect(await Bun.file(dst).text()).toBe("UVWXYZ");
+      expect(ret).toBe(6);
+    });
+
+    it("unsliced source still copies the whole file", async () => {
+      using dir = tempDir("bun-write-file-slice-whole", { "src.txt": alphabet });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      const ret = await Bun.write(dst, Bun.file(src));
+      expect(await Bun.file(dst).text()).toBe(alphabet);
+      expect(ret).toBe(26);
+    });
+
+    itSliced("sliced source overwrites a larger pre-existing destination", async () => {
+      using dir = tempDir("bun-write-file-slice-exists", {
+        "src.txt": alphabet,
+        "dst.txt": Buffer.alloc(64, "Z").toString(),
+      });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      const ret = await Bun.write(dst, Bun.file(src).slice(5, 10));
+      expect(await Bun.file(dst).text()).toBe("FGHIJ");
+      expect(ret).toBe(5);
+    });
+
+    itSliced("large (>1MB) source sliced in the middle copies exactly the window", async () => {
+      using dir = tempDir("bun-write-file-slice-large", {});
+      const src = join(String(dir), "big.bin");
+      const dst = join(String(dir), "big-dst.bin");
+      const size = 2 * 1024 * 1024;
+      const buf = new Uint8Array(size);
+      for (let i = 0; i < size; i++) buf[i] = i % 256;
+      await Bun.write(src, buf);
+      const start = 1024 * 1024 + 7;
+      const end = start + 4096;
+      const ret = await Bun.write(dst, Bun.file(src).slice(start, end));
+      const out = await Bun.file(dst).bytes();
+      expect(out).toEqual(buf.slice(start, end));
+      expect(out.length).toBe(end - start);
+      expect(ret).toBe(end - start);
+    });
   });
 
   it("Bun.file", async () => {

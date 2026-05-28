@@ -13,7 +13,8 @@
 
 import { join } from "node:path";
 import { bunExeName, type Config } from "./config.ts";
-import { slash } from "./shell.ts";
+import { quote, slash } from "./shell.ts";
+import { ucrtServicingLibDir } from "./winsysroot.ts";
 
 export type FlagValue = string | string[] | ((cfg: Config) => string | string[]);
 
@@ -97,6 +98,16 @@ export const globalFlags: Flag[] = [
     flag: c => `--sysroot=${c.sysroot!}`,
     when: c => c.sysroot !== undefined,
     desc: "Cross-compile sysroot (target libc headers + libs)",
+  },
+  {
+    // Windows cross-compile: clang-cl can't read the VS dev shell's INCLUDE
+    // env on a non-Windows host. /winsysroot points it at an xwin-style
+    // splat laid out like a VS install (VC/Tools/MSVC + Windows Kits/10),
+    // covering the MSVC CRT/STL and Windows SDK headers + import libs.
+    // The lld-link equivalent (/winsysroot:) is added in linkerFlags below.
+    flag: c => ["/winsysroot", quote(c.winsysroot!, false)],
+    when: c => c.windows && c.winsysroot !== undefined,
+    desc: "Windows cross-compile: MSVC CRT + Windows SDK root (xwin splat)",
   },
   {
     // Same host-GCC #include_next leak as the FreeBSD block below: on
@@ -474,21 +485,35 @@ export const globalFlags: Flag[] = [
     // importing disabled, ICF ruled out, and WPD ruled out. The same
     // bitcode through ld64.lld on darwin is fine. Full LTO uses a different
     // (regular-LTO) pass pipeline over one merged module and has shipped
-    // green for months. Costs: the link is serial (~14 min vs ~1.5 min) and
-    // there is no Rust<->C++ cross-language inlining (the Rust thin
-    // partition cannot import from the C++ regular partition). Revisit once
-    // the miscompiling pass is isolated — the repro is
-    // `bun -e 'require("axobject-query")'` failing in the DFG tier.
+    // green for months. Cost: the link is serial (~14 min vs ~1.5 min).
+    // Rust<->C++ cross-language inlining still happens: the Rust side emits
+    // one fat, summary-less bitcode module (CARGO_PROFILE_RELEASE_LTO=fat
+    // under -Clinker-plugin-lto — see rust.ts) that joins the same
+    // regular-LTO partition as the C++, so nothing goes through the
+    // miscompiling ThinLTO backends. Revisit ThinLTO once the bad pass is
+    // isolated — the repro is `bun -e 'require("axobject-query")'` failing
+    // in the DFG tier.
     flag: "-flto=full",
     when: c => c.unix && !c.darwin && c.lto,
     desc: "Full link-time optimization (linux: ThinLTO miscompiles JSC, see comment)",
   },
   {
-    flag: "-flto",
+    // Windows (cross) uses ThinLTO like darwin: clang-cl accepts -flto=thin
+    // directly (core option), the WebKit windows-amd64-lto prebuilt is
+    // ThinLTO-summaried bitcode, and rustc's -Clinker-plugin-lto bitcode is
+    // too, so lld-link runs one uniform ThinLTO graph with cross-language
+    // importing. lld-link does LTO automatically when it sees bitcode
+    // inputs — no link-side -flto spelling exists or is needed there.
+    flag: "-flto=thin",
     when: c => c.windows && c.lto,
-    desc: "Link-time optimization",
+    desc: "Thin link-time optimization (clang-cl)",
   },
   {
+    // Unix only (not windows): on COFF, whole-program vtable opt drops
+    // vtable symbols that associative COMDAT sections still name as their
+    // parent and the LTO codegen aborts ("Associative COMDAT symbol
+    // '??_7...' does not exist"). The WebKit windows-amd64-lto prebuilt is
+    // built without it for the same reason.
     flag: ["-fforce-emit-vtables", "-fwhole-program-vtables"],
     when: c => c.unix && c.lto,
     lang: "cxx",
@@ -507,11 +532,13 @@ export const globalFlags: Flag[] = [
     // (typeidCompatibleVTable entries) and whole-program devirtualization
     // runs in index-based mode via --lto-whole-program-visibility at link
     // time. 0 is also the default for rustc, for Apple targets, and for the
-    // WebKit macos -lto prebuilts, so this is the configuration that can't
-    // drift. Darwin only: linux uses full LTO (no per-module summaries, so
-    // the flag is meaningless there).
+    // WebKit macos/windows -lto prebuilts, so this is the configuration that
+    // can't drift. Windows: -fwhole-program-vtables is never passed there
+    // (see above) so 0 is already the default — kept explicit so the
+    // ThinLTO graph can't drift if that ever changes. Not linux: full LTO
+    // (no per-module summaries, so the flag is meaningless there).
     flag: "-fno-split-lto-unit",
-    when: c => c.darwin && c.lto,
+    when: c => (c.darwin || c.windows) && c.lto,
     desc: "Index-based WPD: keep type metadata in the ThinLTO summaries, no regular-LTO half",
   },
 
@@ -909,6 +936,38 @@ export const linkerFlags: Flag[] = [
     desc: "Target machine type for lld-link (required on arm64; x64 hosts default correctly but explicit is harmless)",
   },
   {
+    // Serviced UCRT overlay: an explicit /libpath: is searched before the
+    // /winsysroot-derived paths, so its libucrt.lib/ucrt.lib win over the
+    // splat's stale copies (see UCRT_SERVICING_VERSION in winsysroot.ts —
+    // the VS-manifest payload xwin downloads carries an ancient arm64 UCRT
+    // with broken printf formatting).
+    flag: c => quote(`/libpath:${ucrtServicingLibDir(c)!}`, false),
+    when: c => c.windows && c.host.os !== "windows",
+    desc: "Windows cross-compile: serviced Universal CRT static libs (SDK NuGet) override the splat's",
+  },
+  {
+    // Windows cross-compile: these ldflags go after /link, straight to
+    // lld-link, which doesn't see the compile-side `/winsysroot` from
+    // globalFlags — repeat it in lld-link's own spelling so the MSVC CRT
+    // and Windows SDK import libraries (libcmt, kernel32, ...) are found
+    // without a VS dev shell's LIB env.
+    flag: c => quote(`/winsysroot:${c.winsysroot!}`, false),
+    when: c => c.windows && c.winsysroot !== undefined,
+    desc: "Windows cross-compile: MSVC CRT + Windows SDK library search root (xwin splat)",
+  },
+  {
+    // BoringSSL's allocator hooks (defined in src/boringssl/lib.rs, routing
+    // OPENSSL_malloc to mimalloc) are referenced by BoringSSL only as COFF
+    // weak externals, which never pull the defining archive member on their
+    // own — so on Windows the hooks silently stayed unbound and every
+    // BoringSSL allocation (TLS handshakes, parsed certificates) landed on
+    // the CRT's NT heap instead of mimalloc. Force the symbols in so the
+    // weak externals bind, like they already do on ELF/Mach-O.
+    flag: ["/INCLUDE:OPENSSL_memory_alloc", "/INCLUDE:OPENSSL_memory_free", "/INCLUDE:OPENSSL_memory_get_size"],
+    when: c => c.windows,
+    desc: "Bind BoringSSL's mimalloc-backed allocator hooks (COFF weak externals don't pull archive members)",
+  },
+  {
     flag: ["/STACK:0x1200000,0x200000", "/errorlimit:0"],
     when: c => c.windows,
     desc: "18MB stack reserve (JSC uses deep recursion), no error limit",
@@ -923,23 +982,20 @@ export const linkerFlags: Flag[] = [
       "/LTCG",
       "/OPT:REF",
       // SAFEICF (lld-specific) only folds functions whose address is never
-      // taken, so JSC ClassInfo native constructors — stored as pointers and
-      // compared for identity — stay distinct. /OPT:ICF (aggressive) folded
+      // taken (it honours .llvm_addrsig; objects without one — MSVC CRT
+      // import libs, the prebuilt ICU data — are treated conservatively), so
+      // JSC ClassInfo native constructors — stored as pointers and compared
+      // for identity — stay distinct. /OPT:ICF (aggressive) folded
       // callBigIntConstructor with constructBigInt → "not a constructor",
       // and broke expect.any(Constructor); see commit 218430c731. Mirrors
       // Linux `-Wl,-icf=safe`.
       //
-      // TEMPORARILY /OPT:NOICF instead of /OPT:SAFEICF: re-enabling
-      // `panic = "abort"` (Cargo.toml) exposes a Windows-only `Strong<Impl>*
-      // corrupted (0x1)` in the fs/promises writeFile async-iterable path
-      // (#53265+). Under abort's no-landing-pad codegen SAFEICF folds enough
-      // Rust+C++ bodies that PDB symbolication maps the crash to
-      // lol_html/ucnv_MBCS/JSBigInt — useless for finding the owning struct.
-      // `bun-profile.exe` and `bun.exe` share this link (strip-only diff), so
-      // NOICF can't be confined to the profile binary alone; once the
-      // corruption is root-caused via `llvm-symbolizer --relative-address`
-      // against the NOICF PDB, revert this to `/OPT:SAFEICF`.
-      "/OPT:NOICF",
+      // (This was temporarily /OPT:NOICF so PDB symbolication stayed
+      // unfolded while chasing the Windows-only `Strong<Impl>* corrupted
+      // (0x1)` crash in the fs/promises writeFile async-iterable path under
+      // `panic = "abort"` — flip it back locally if that investigation needs
+      // an unfolded PDB again.)
+      "/OPT:SAFEICF",
       // String-literal tail merging (lld-specific; MSVC link.exe has no
       // equivalent). Helps .rdata the same way --icf handles .rodata.cst on ELF.
       "/OPT:lldtailmerge",

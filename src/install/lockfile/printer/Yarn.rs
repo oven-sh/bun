@@ -149,18 +149,35 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
                 }
                 let version_name: &[u8] = dependency_version.literal.slice(string_buf);
                 let needs_quote = always_needs_quote
-                    || strings::index_of_any(version_name, b" |\t-/!:").is_some()
+                    || strings::index_of_any(version_name, b" |\t-/!:\"\\,\n\r").is_some()
                     || version_name.starts_with(b"npm:");
 
                 if needs_quote {
                     writer.write_all(b"\"")?;
+                    write!(
+                        writer,
+                        "{}",
+                        bun_core::fmt::format_json_string_utf8(
+                            name,
+                            bun_core::fmt::JSONFormatterUTF8Options { quote: false }
+                        ),
+                    )?;
+                } else {
+                    writer.write_all(name)?;
                 }
-
-                writer.write_all(name)?;
                 writer.write_all(b"@")?;
                 if version_name.is_empty() {
                     writer.write_all(b"^")?;
                     version_formatter.write_to(writer)?;
+                } else if needs_quote {
+                    write!(
+                        writer,
+                        "{}",
+                        bun_core::fmt::format_json_string_utf8(
+                            version_name,
+                            bun_core::fmt::JSONFormatterUTF8Options { quote: false }
+                        ),
+                    )?;
                 } else {
                     writer.write_all(version_name)?;
                 }
@@ -176,21 +193,30 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
         }
 
         {
+            let mut quoted_buf: Vec<u8> = Vec::new();
+
             writer.write_all(b"  version ")?;
 
             // Version is always quoted
-            writer.write_all(b"\"")?;
-            version_formatter.write_to(writer)?;
-            writer.write_all(b"\"\n")?;
+            version_formatter.write_to(&mut quoted_buf)?;
+            writeln!(
+                writer,
+                "{}",
+                bun_core::fmt::format_json_string_utf8(&quoted_buf, Default::default()),
+            )?;
 
             writer.write_all(b"  resolved ")?;
 
             let url_formatter = resolution.fmt_url(string_buf);
 
             // Resolved URL is always quoted
-            writer.write_all(b"\"")?;
-            url_formatter.write_to(writer)?;
-            writer.write_all(b"\"\n")?;
+            quoted_buf.clear();
+            url_formatter.write_to(&mut quoted_buf)?;
+            writeln!(
+                writer,
+                "{}",
+                bun_core::fmt::format_json_string_utf8(&quoted_buf, Default::default()),
+            )?;
 
             if meta.integrity.tag != integrity::Tag::UNKNOWN {
                 // Integrity is...never quoted?
@@ -235,15 +261,25 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
                     let needs_quote = strings::must_escape_yaml_string(dependency_name);
 
                     if needs_quote {
-                        writer.write_all(b"\"")?;
+                        write!(
+                            writer,
+                            "{}",
+                            bun_core::fmt::format_json_string_utf8(
+                                dependency_name,
+                                Default::default()
+                            ),
+                        )?;
+                    } else {
+                        writer.write_all(dependency_name)?;
                     }
-                    writer.write_all(dependency_name)?;
-                    if needs_quote {
-                        writer.write_all(b"\"")?;
-                    }
-                    writer.write_all(b" \"")?;
-                    writer.write_all(dep.version.literal.slice(string_buf))?;
-                    writer.write_all(b"\"\n")?;
+                    writeln!(
+                        writer,
+                        " {}",
+                        bun_core::fmt::format_json_string_utf8(
+                            dep.version.literal.slice(string_buf),
+                            Default::default()
+                        ),
+                    )?;
                 }
                 let _ = dependency_behavior_change_count;
             }

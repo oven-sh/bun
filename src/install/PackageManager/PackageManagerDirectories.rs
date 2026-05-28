@@ -581,10 +581,7 @@ impl<'a> ByteCursor<'a> {
     #[inline(always)]
     fn finish_z(self) -> &'a ZStr {
         let at = self.at;
-        debug_assert!(at < self.buf.len());
-        // SAFETY: see `put`; one byte of headroom for the NUL is part of the
-        // PathBuffer-size invariant.
-        unsafe { *self.buf.as_mut_ptr().add(at) = 0 };
+        self.buf[at] = 0;
         ZStr::from_buf(self.buf, at)
     }
 }

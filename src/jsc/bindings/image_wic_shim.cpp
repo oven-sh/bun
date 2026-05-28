@@ -14,6 +14,7 @@
 
 #include <windows.h>
 #include <ocidl.h> // IPropertyBag2, PROPBAG2
+#include <cstdint> // int32_t/uint8_t — not guaranteed by the SDK headers above
 
 static int32_t write1(void* props, const wchar_t* name, VARTYPE vt, void (*set)(VARIANT&))
 {

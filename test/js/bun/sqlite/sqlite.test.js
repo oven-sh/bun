@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-import { readdirSync, realpathSync } from "fs";
+import { readdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -1771,5 +1771,119 @@ it("fileControl rejects result TypedArrays smaller than 8 bytes", () => {
   // plain number for the result argument.
   expect(db.fileControl(constants.SQLITE_FCNTL_VFSNAME, 0)).toBe(0);
 
+  db.close();
+});
+
+it("decodes non-UTF-8 TEXT leniently and consistently across the 64-byte boundary", () => {
+  const db = new Database(":memory:");
+  const q = bytes => db.query(`SELECT CAST(x'${Buffer.from(bytes).toString("hex")}' AS TEXT) t`);
+
+  // Short non-UTF-8 TEXT (4 bytes, Latin-1 "José") used to be silently dropped to "".
+  // It must now decode leniently with U+FFFD, matching node:sqlite.
+  const stmt = q([0x4a, 0x6f, 0x73, 0xe9]);
+  expect(stmt.get().t).toBe("Jos�");
+  expect(stmt.all()).toEqual([{ t: "Jos�" }]);
+  expect(stmt.values()).toEqual([["Jos�"]]);
+
+  // The decoder previously switched implementations at len === 64. Verify the
+  // same invalid trailing byte yields the same replacement on both sides of
+  // that boundary so there is no length-dependent discontinuity.
+  for (const n of [1, 4, 32, 63, 64, 65, 100]) {
+    const bytes = Buffer.alloc(n, 0x61);
+    bytes[n - 1] = 0xe9;
+    expect(q(bytes).get().t).toBe(Buffer.alloc(n - 1, "a").toString() + "�");
+  }
+
+  // Valid UTF-8 short strings are unaffected.
+  expect(q(Buffer.from("héllo")).get().t).toBe("héllo");
+  expect(q(Buffer.from("👋")).get().t).toBe("👋");
+
+  db.close();
+});
+
+it("decodes non-UTF-8 column names leniently instead of dropping the column", () => {
+  // SQLite does not validate UTF-8 in identifiers, so a database created by an
+  // external tool can have a column name containing raw non-UTF-8 bytes. The
+  // column-name decoder used strict fromUTF8, which returns a null string on any
+  // invalid byte; two such names then both collapsed to "" and collided, silently
+  // dropping one column from every row (and tripping a null-AtomString assertion
+  // in debug builds). Decode leniently to U+FFFD instead.
+  const file = tmpbase + `sqlite-badcols-${Date.now()}-${(Math.random() * 1e9) | 0}.db`;
+
+  const setup = new Database(file, { create: true });
+  // Distinctive, same-length ASCII names so we can binary-patch them in place.
+  setup.run(`CREATE TABLE t ("Xaa" INTEGER, "Ybb" INTEGER)`);
+  setup.run("INSERT INTO t VALUES (1, 2)");
+  setup.close();
+
+  // Replace the ASCII names inside the stored CREATE TABLE text with the same
+  // length but different invalid lead bytes (0xE9, 0xFF) so the two names decode
+  // to distinct replacement strings and must not collide.
+  const buf = readFileSync(file);
+  const patch = (find, replacement) => {
+    const at = buf.indexOf(Buffer.from(find, "latin1"));
+    expect(at).toBeGreaterThanOrEqual(0);
+    Buffer.from(replacement).copy(buf, at);
+  };
+  patch('"Xaa"', [0x22, 0x58, 0xe9, 0x61, 0x22]); // "X\xe9a"
+  patch('"Ybb"', [0x22, 0x59, 0xff, 0x62, 0x22]); // "Y\xffb"
+  writeFileSync(file, buf);
+
+  const db = new Database(file);
+  const q = db.query("SELECT * FROM t");
+  const row = q.get();
+
+  // Both columns survive with distinct, leniently-decoded names; no data is lost.
+  expect(q.columnNames).toEqual(["X\uFFFDa", "Y\uFFFDb"]);
+  expect(row).toEqual({ "X\uFFFDa": 1, "Y\uFFFDb": 2 });
+
+  db.close();
+});
+
+it("expands bound non-UTF-8 values in Statement#toString instead of returning an empty string", () => {
+  const db = new Database(":memory:");
+  const stmt = db.prepare("SELECT ? AS x");
+
+  // A lone surrogate binds via sqlite3_bind_text16 and is stored by SQLite as
+  // invalid UTF-8. sqlite3_expanded_sql() then returns those bytes, which the
+  // strict decoder turned into a null string -> the whole toString() became "".
+  stmt.get("\uD800");
+  expect(String(stmt)).toBe("SELECT '\uFFFD\uFFFD\uFFFD' AS x");
+
+  // Valid values still round-trip.
+  stmt.get("ok");
+  expect(String(stmt)).toBe("SELECT 'ok' AS x");
+
+  db.close();
+});
+
+it("decodes declared types leniently and accepts single-character declared types", () => {
+  // A single-character declared type is valid SQLite but tripped a length>1 assert
+  // (jsNontrivialString). A non-UTF-8 declared type from an externally-created DB
+  // decoded to a null string and then null-dereferenced. Both must work now.
+  const mem = new Database(":memory:");
+  mem.run(`CREATE TABLE t (a "X", b "INTEGER")`);
+  const s0 = mem.query("SELECT a, b FROM t");
+  s0.all();
+  expect(s0.declaredTypes).toEqual(["X", "INTEGER"]);
+  mem.close();
+
+  // Non-UTF-8 declared type: patch "INTQGER" -> "INT\xe9GER" in the stored schema.
+  const file = tmpbase + `sqlite-decltype-${Date.now()}-${(Math.random() * 1e9) | 0}.db`;
+  const setup = new Database(file, { create: true });
+  setup.run(`CREATE TABLE t (a "INTQGER")`);
+  setup.run("INSERT INTO t VALUES (5)");
+  setup.close();
+
+  const buf = readFileSync(file);
+  const at = buf.indexOf(Buffer.from("INTQGER", "latin1"));
+  expect(at).toBeGreaterThanOrEqual(0);
+  buf[at + 3] = 0xe9; // the "Q" -> 0xe9
+  writeFileSync(file, buf);
+
+  const db = new Database(file);
+  const s = db.query("SELECT a FROM t");
+  s.all();
+  expect(s.declaredTypes).toEqual(["INT\uFFFDGER"]);
   db.close();
 });

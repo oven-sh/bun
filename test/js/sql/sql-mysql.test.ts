@@ -116,6 +116,28 @@ if (isDockerEnabled()) {
           expect(rawRow[2]).toEqual(new Uint8Array([0xce, 0xff, 0xff])); // -50 as i24 LE
           expect(Buffer.from(rawRow[5]).toString("utf-8")).toBe("alice");
         });
+        test("YEAR not in the last column reads following columns correctly", async () => {
+          // MySQL's binary protocol sends MYSQL_TYPE_YEAR as a fixed 2-byte
+          // field, but the column definition reports column_length = 4 (display
+          // width). Reading column_length bytes left the cursor 2 bytes ahead,
+          // returning YEAR as a Buffer and corrupting every following column.
+          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+          using sql = await db.reserve();
+          const t = "yr_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT PRIMARY KEY, yr YEAR, followup INT, control SMALLINT, yr_last YEAR)`;
+          await sql`INSERT INTO ${sql(t)} VALUES (1, 2024, 12345, 42, 2001)`;
+          const [row] = await sql`SELECT id, yr, followup, control, yr_last FROM ${sql(t)} WHERE id = ${1}`;
+          expect(row).toEqual({ id: 1, yr: 2024, followup: 12345, control: 42, yr_last: 2001 });
+          // `.raw()` takes a separate branch that must also consume 2 bytes.
+          const [rawRow] = await sql`SELECT id, yr, followup, control, yr_last FROM ${sql(t)} WHERE id = ${1}`.raw();
+          expect(rawRow).toHaveLength(5);
+          expect(rawRow[1]).toEqual(new Uint8Array([0xe8, 0x07])); // 2024 as u16 LE
+          expect(rawRow[2]).toEqual(new Uint8Array([0x39, 0x30, 0x00, 0x00])); // 12345 as u32 LE
+          expect(rawRow[4]).toEqual(new Uint8Array([0xd1, 0x07])); // 2001 as u16 LE
+          // The text protocol (`.simple()`) must decode YEAR as the same number.
+          const [simpleRow] = await sql`SELECT id, yr, followup, control, yr_last FROM ${sql(t)} WHERE id = 1`.simple();
+          expect(simpleRow).toEqual({ id: 1, yr: 2024, followup: 12345, control: 42, yr_last: 2001 });
+        });
         describe("should work with more than the max inline capacity", () => {
           for (let size of [50, 60, 62, 64, 70, 100]) {
             for (let duplicated of [true, false]) {

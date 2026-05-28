@@ -1,5 +1,6 @@
 import { pathToFileURL } from "bun";
 import { bunEnv, bunExe, bunRun, bunRunAsScript, isMacOS, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { EventEmitter } from "node:events";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
 
@@ -264,6 +265,31 @@ describe("fs.watch", () => {
       expect(err.code).toBe("ENOENT");
       expect(err.syscall).toBe("watch");
       done();
+    }
+  });
+
+  test("returns an FSWatcher that inherits from EventEmitter", () => {
+    const watcher = fs.watch(path.join(testDir, "watch.txt"));
+    try {
+      expect(watcher).toBeInstanceOf(EventEmitter);
+      expect(watcher.constructor.name).toBe("FSWatcher");
+      expect(typeof watcher.ref).toBe("function");
+      expect(typeof watcher.unref).toBe("function");
+      expect(typeof watcher.start).toBe("function");
+    } finally {
+      watcher.close();
+    }
+  });
+
+  test("errors from watching a missing path keep path and filename properties", () => {
+    const missing = path.join(testDir, "missing-subdir", "404.txt");
+    try {
+      fs.watch(missing);
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err.code).toBe("ENOENT");
+      expect(err.path).toBe(missing);
+      expect(err.filename).toBe(missing);
     }
   });
 

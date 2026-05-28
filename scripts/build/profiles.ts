@@ -92,6 +92,40 @@ export const profiles = {
     webkit: "prebuilt",
   },
 
+  /**
+   * Windows cross-compile from a non-Windows host: clang-cl + lld-link from
+   * the host LLVM plus an xwin-style Windows sysroot (see config.ts
+   * `winsysroot`). On a Windows host just use the regular debug/release
+   * profiles. Sanitizers are forced off in resolveConfig().
+   */
+  "windows-x64": {
+    buildType: "Debug",
+    os: "windows",
+    arch: "x64",
+    webkit: "prebuilt",
+  },
+
+  "windows-arm64": {
+    buildType: "Debug",
+    os: "windows",
+    arch: "aarch64",
+    webkit: "prebuilt",
+  },
+
+  "windows-x64-release": {
+    buildType: "Release",
+    os: "windows",
+    arch: "x64",
+    webkit: "prebuilt",
+  },
+
+  "windows-arm64-release": {
+    buildType: "Release",
+    os: "windows",
+    arch: "aarch64",
+    webkit: "prebuilt",
+  },
+
   /** Release build for local testing. No LTO (that's CI-only). */
   release: {
     buildType: "Release",
@@ -164,9 +198,9 @@ export const profiles = {
 
   /**
    * CI: compile libbun_rust.a only. Target platform via --os/--arch
-   * overrides (cargo `--target <triple>`; linux/freebsd targets cross-
-   * compile from a linux box, darwin/windows run on a native agent — see
-   * `rustCanCrossFromLinux()`).
+   * overrides (cargo `--target <triple>`; linux/freebsd/darwin targets
+   * cross-compile from the shared linux box, windows from the amazonlinux
+   * fleet with a fetched winsysroot — see `rustCanCrossFromLinux()`).
    */
   "ci-rust-only": {
     buildType: "Release",

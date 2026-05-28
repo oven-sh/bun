@@ -2854,7 +2854,11 @@ JSC::EncodedJSValue JSC__JSGlobalObject__putCachedObject(JSC::JSGlobalObject* gl
 void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global, ZigString* arg1)
 {
     const JSC::Identifier identifier = Zig::toIdentifier(*arg1, global);
-    global->moduleLoader()->removeEntry(identifier);
+    auto* moduleLoader = global->moduleLoader();
+    // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
+    // under cellLock(); take the same lock so the removal can't race it.
+    WTF::Locker locker { moduleLoader->cellLock() };
+    moduleLoader->removeEntry(identifier);
 }
 
 void JSC__VM__collectAsync(JSC::VM* vm)
@@ -4969,7 +4973,11 @@ void JSC__VM__deleteAllCode(JSC::VM* arg1, JSC::JSGlobalObject* globalObject)
     JSC::JSLockHolder locker(globalObject->vm());
 
     arg1->drainMicrotasks();
-    globalObject->moduleLoader()->clearAll();
+    {
+        auto* moduleLoader = globalObject->moduleLoader();
+        WTF::Locker cellLocker { moduleLoader->cellLock() };
+        moduleLoader->clearAll();
+    }
     arg1->deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
     arg1->heap.reportAbandonedObjectGraph();
 }

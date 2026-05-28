@@ -1466,7 +1466,13 @@ impl<'a> HTTPClient<'a> {
 
                     // check if we need to report the error (probably to `checkServerIdentity` was informed from JS side)
                     // this is the slow path
-                    if self.signals.get(signals::Field::CertErrors) {
+                    //
+                    // The JS callback only applies to the *target's* certificate
+                    // (Node semantics). For the HTTPS proxy's own handshake, use
+                    // the native SAN check — a pinning callback written for the
+                    // target would reject the proxy's certificate.
+                    let is_proxy_certificate = allow_proxy_url && self.http_proxy.is_some();
+                    if !is_proxy_certificate && self.signals.get(signals::Field::CertErrors) {
                         // clone the relevant data
                         // SAFETY: x509 is a live *mut X509 borrowed from cert_chain; null out-ptr requests size-only
                         let cert_size =
@@ -1484,6 +1490,14 @@ impl<'a> HTTPClient<'a> {
                             hostname: Box::<[u8]>::from(hostname),
                             cert_error,
                         });
+
+                        // Park the connection until the JS-side
+                        // `checkServerIdentity` callback approves this
+                        // certificate (gates `on_writable`/`on_data`; see the
+                        // flag's doc comment). The JS thread resumes via
+                        // `HTTPThread::schedule_cert_check_resume` on success,
+                        // or schedules a shutdown on failure.
+                        self.state.flags.is_waiting_for_cert_check = true;
 
                         // we inform the user that the cert is invalid
                         let ctx = self.get_ssl_ctx::<IS_SSL>();
@@ -1633,6 +1647,12 @@ impl<'a> HTTPClient<'a> {
     /// `BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT` env var, or
     /// `protocol: "http2"` on the fetch options.
     pub fn can_offer_h2(&self) -> bool {
+        // The h2 session transmits from `attach()` without consulting the
+        // `is_waiting_for_cert_check` park gate, so requests with a JS
+        // `checkServerIdentity` callback stay on HTTP/1.1.
+        if self.signals.get(signals::Field::CertErrors) {
+            return false;
+        }
         if self.flags.force_http1 {
             return false;
         }
@@ -1674,6 +1694,11 @@ impl<'a> HTTPClient<'a> {
     /// specific protocol). When true, `start_()` consults `H3.AltSvc.lookup`
     /// before opening TCP.
     pub fn can_try_h3_alt_svc(&self) -> bool {
+        // The h3 client never routes through `check_server_identity`, so a JS
+        // `checkServerIdentity` callback could never run; stay on TCP.
+        if self.signals.get(signals::Field::CertErrors) {
+            return false;
+        }
         if self.flags.force_http1 || self.flags.force_http2 {
             return false;
         }
@@ -1692,7 +1717,18 @@ impl<'a> HTTPClient<'a> {
         ) {
             return false;
         }
+        if self.has_tls_options_unsupported_by_h3() {
+            return false;
+        }
         h3_alt_svc_enabled()
+    }
+
+    fn has_tls_options_unsupported_by_h3(&self) -> bool {
+        self.signals.get(signals::Field::CertErrors)
+            || self
+                .tls_props
+                .as_ref()
+                .is_some_and(|tls| tls.get().requires_custom_request_ctx)
     }
 
     pub fn first_call<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
@@ -2140,6 +2176,9 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name()) => {
+                    if !self.flags.is_streaming_request_body {
+                        continue;
+                    }
                     // We don't want to override chunked encoding header if it was set by the user
                     if will_append {
                         add_transfer_encoding = false;
@@ -2452,13 +2491,34 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
+        // `can_offer_h2` refuses to advertise h2 when a JS `checkServerIdentity`
+        // callback is set, so `protocol: "http2"` + callback would handshake and
+        // then fail in `first_call` anyway. Fail up front instead.
+        if self.flags.force_http2 && self.signals.get(signals::Field::CertErrors) {
+            self.fail(err!(HTTP2Unsupported));
+            self.complete_connecting_process();
+            return;
+        }
+
         if self.flags.force_http3 {
+            // h3 never routes through `check_server_identity`; refuse the
+            // combination instead of silently skipping the JS callback.
+            if self.signals.get(signals::Field::CertErrors) {
+                self.fail(err!(HTTP3Unsupported));
+                self.complete_connecting_process();
+                return;
+            }
             if !IS_SSL {
                 self.fail(err!(HTTP3Unsupported));
                 self.complete_connecting_process();
                 return;
             }
             if self.http_proxy.is_some() || self.unix_socket_path.slice().len() > 0 {
+                self.fail(err!(HTTP3Unsupported));
+                self.complete_connecting_process();
+                return;
+            }
+            if self.has_tls_options_unsupported_by_h3() {
                 self.fail(err!(HTTP3Unsupported));
                 self.complete_connecting_process();
                 return;
@@ -2779,6 +2839,13 @@ impl<'a> HTTPClient<'a> {
             proxy.on_writable::<IS_SSL>(socket);
         }
 
+        // Parked until the JS `checkServerIdentity` callback approves the peer
+        // certificate: write no HTTP data. Kept below the tunnel flush so the
+        // handshake's final flight still reaches the wire while parked.
+        if self.state.flags.is_waiting_for_cert_check {
+            return;
+        }
+
         match self.state.request_stage {
             RequestStage::Pending | RequestStage::Headers | RequestStage::Opened => {
                 bun_core::scoped_log!(fetch, "sendInitialRequestPayload");
@@ -3016,6 +3083,19 @@ impl<'a> HTTPClient<'a> {
             }
             _ => {}
         }
+    }
+
+    /// The JS-side `checkServerIdentity` callback approved the peer
+    /// certificate: clear the park flag and write the request that
+    /// `on_writable` has been holding back since the handshake completed.
+    pub fn resume_after_cert_check<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+        if !self.state.flags.is_waiting_for_cert_check {
+            // Never parked, or already resumed/reset by a redirect or failure.
+            return;
+        }
+        bun_core::scoped_log!(fetch, "resumeAfterCertCheck");
+        self.state.flags.is_waiting_for_cert_check = false;
+        self.on_writable::<true, IS_SSL>(socket);
     }
 
     pub fn close_and_fail<const IS_SSL: bool>(
@@ -3290,6 +3370,16 @@ impl<'a> HTTPClient<'a> {
             // if we have a tunnel we dont care about the other stages, we will just tunnel the data
             self.set_timeout(&socket);
             self.proxy_tunnel_mut().unwrap().receive(incoming_data);
+            return;
+        }
+
+        // While parked waiting for the JS `checkServerIdentity` verdict, no
+        // request has been written, so any data is unexpected. Must stay below
+        // the proxy_tunnel dispatch above: a tunneled target's raw inner-TLS
+        // records must keep reaching the SSLWrapper while parked.
+        if self.state.flags.is_waiting_for_cert_check {
+            self.state.pending_response = None;
+            self.close_and_fail::<IS_SSL>(err!(UnexpectedData), socket);
             return;
         }
 

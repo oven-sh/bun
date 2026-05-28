@@ -1107,7 +1107,7 @@ describe("status code text", () => {
       await runTest(
         {
           fetch(req) {
-            return new Response("hey", { status: +code });
+            return new Response([204, 205, 304].includes(+code) ? null : "hey", { status: +code });
           },
         },
         async server => {
@@ -1126,7 +1126,7 @@ it("does not write body bytes for null body statuses", async () => {
       port: 0,
       hostname: "127.0.0.1",
       fetch() {
-        return new Response("hey", { status });
+        return new Response(null, { status });
       },
     });
 

@@ -49,10 +49,24 @@ import { test, expect } from "bun:test";
 import * as net from "node:net";
 import { resourceUsage } from "node:process";
 
+/**
+ * Measure CPU consumed over a wall-clock window.
+ *
+ * NOTE on the sleep here: bun's test guidelines say "don't `setTimeout` —
+ * `await` the condition you're testing". This test is the exception that
+ * proves the rule: the condition under test IS "did wall-clock time pass
+ * without burning CPU". We can't poll for "loop became idle" because in the
+ * bug being regressed the loop is ALWAYS dispatchable (kqueue keeps refiring
+ * the same EOF event), so a `waitFor` would resolve immediately on the very
+ * first tick and never observe the spin. We need real wall-clock idleness.
+ *
+ * Using `Bun.sleep` (not `setTimeout`) to make the time-passes intent
+ * explicit and idiomatic.
+ */
 async function measureIdleCpu(wallMs: number) {
   const t0 = resourceUsage();
   const w0 = Date.now();
-  await new Promise(r => setTimeout(r, wallMs));
+  await Bun.sleep(wallMs);
   const t1 = resourceUsage();
   const wall = Date.now() - w0;
   const cpuMs = (t1.userCPUTime - t0.userCPUTime + t1.systemCPUTime - t0.systemCPUTime) / 1000;

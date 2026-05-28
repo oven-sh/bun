@@ -431,17 +431,25 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 s->flags.is_ipc = 0;
                 s->flags.is_closed = 0;
                 s->flags.adopted = 0;
+                /* Bitfield member must be zeroed explicitly — the rest of this
+                 * init block touches every other flag and us_create_poll uses
+                 * us_malloc (not us_calloc), so without this the writable-poll
+                 * branch in POLL_TYPE_SOCKET could read stale memory. */
+                s->flags.last_write_failed = 0;
 
                 /* We always use nodelay */
                 bsd_socket_nodelay(client_fd, 1);
 
                 us_internal_socket_group_link_socket(accept_group, s);
 
+                /* The on_open hooks return the (possibly reallocated/adopted)
+                 * socket pointer; the adoption check below needs the post-open
+                 * value, not the pre-open one we cached at accept time. */
                 if (listen_socket->ssl_ctx) {
                     us_internal_ssl_attach(s, listen_socket->ssl_ctx, /*is_client*/ 0, NULL, listen_socket);
-                    us_internal_ssl_on_open(s, 0, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));
+                    s = us_internal_ssl_on_open(s, 0, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));
                 } else {
-                    us_dispatch_open(s, 0, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));
+                    s = us_dispatch_open(s, 0, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));
                 }
                 /* After socket adoption, track the new socket; the old one becomes invalid */
                 if(s && s->flags.adopted && s->prev) {

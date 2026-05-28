@@ -510,7 +510,8 @@ JSString* JSX509Certificate::computeSerialNumber(ncrypto::X509View view, JSGloba
         return jsEmptyString(vm);
     }
 
-    return jsString(vm, String::fromUTF8(std::span(static_cast<const char*>(serial.get()), serial.size())));
+    // BoringSSL's BN_bn2hex emits lowercase hex; OpenSSL (and therefore Node.js) emits uppercase.
+    return jsString(vm, String::fromUTF8(std::span(static_cast<const char*>(serial.get()), serial.size())).convertToASCIIUppercase());
 }
 
 JSString* JSX509Certificate::computeFingerprint(ncrypto::X509View view, JSGlobalObject* globalObject)
@@ -751,9 +752,10 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(ncrypto::X509View view, JSGloba
                 RSA_get0_key(rsa, &n, &e, nullptr);
 
                 // Convert modulus to string
+                // BoringSSL's BN_print emits lowercase hex; OpenSSL (and therefore Node.js) emits uppercase.
                 auto bio = ncrypto::BIOPointer::New(n);
                 if (bio) {
-                    object->putDirect(vm, Identifier::fromString(vm, "modulus"_s), jsString(vm, toWTFString(bio)));
+                    object->putDirect(vm, Identifier::fromString(vm, "modulus"_s), jsString(vm, toWTFString(bio).convertToASCIIUppercase()));
                     RETURN_IF_EXCEPTION(scope, nullptr);
                 }
 
@@ -920,9 +922,10 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(JSGlobalObject* globalObject)
                 RSA_get0_key(rsa, &n, &e, nullptr);
 
                 // Convert modulus to string
+                // BoringSSL's BN_print emits lowercase hex; OpenSSL (and therefore Node.js) emits uppercase.
                 auto bio = ncrypto::BIOPointer::New(n);
                 if (bio) {
-                    object->putDirect(vm, Identifier::fromString(vm, "modulus"_s), jsString(vm, toWTFString(bio)));
+                    object->putDirect(vm, Identifier::fromString(vm, "modulus"_s), jsString(vm, toWTFString(bio).convertToASCIIUppercase()));
                     RETURN_IF_EXCEPTION(scope, nullptr);
                 }
 

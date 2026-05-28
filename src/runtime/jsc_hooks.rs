@@ -650,25 +650,12 @@ unsafe fn load_preloads(
 
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
     let global: *mut JSGlobalObject = unsafe { &*vm }.global;
-    // ── guard: zeroed transpiler ────────────────────────────────────────
-    // `init_runtime_state` swallows `Transpiler::init`'s `Err` (logs + leaves
-    // `vm.transpiler` as zeroed bytes — see its `TODO(b2): widen return`).
-    // Spec VirtualMachine.zig:1240 uses `try Transpiler.init(...)`, so
-    // `loadPreloads` is unreachable with an invalid transpiler; in Rust we
-    // must check `fs.is_null()` to avoid null-deref UB on `--preload` until
-    // `Transpiler::init`'s gated tail un-gates and `init_runtime_state`'s
-    // return widens to `Result`. Fail loudly (PORTING.md §Forbidden:
-    // silent-no-op).
-    // SAFETY: per fn contract — reading the raw ptr field itself is fine; only
-    // the deref below would be UB on null.
-    if unsafe { &*vm }.transpiler.fs.is_null() {
-        bun_core::Output::err(
-            "preload",
-            "transpiler not initialized; ignoring --preload",
-            (),
-        );
-        return Ok(ptr::null_mut());
-    }
+    // `vm.transpiler` (hence `transpiler.fs`) is always initialized here: spec
+    // VirtualMachine.zig:1240 builds it with `try Transpiler.init(...)`, and the
+    // Rust port matches — `init_runtime_state` returns `Err` on `Transpiler::init`
+    // failure and `VirtualMachine::init` propagates it via `?`, so a VM that
+    // failed to build its transpiler never reaches `load_preloads` (this hook
+    // only runs via `reload_entry_point*`, which operate on an already-`Ok` VM).
     let top_level_dir: *const [u8] = Fs::FileSystem::get().top_level_dir;
     // Spec VirtualMachine.zig:2213 — `if (this.standalone_module_graph == null)
     // .read_only else .disable`.

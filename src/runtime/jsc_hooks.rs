@@ -338,11 +338,10 @@ unsafe fn init_runtime_state(
         .log
         .map(|p| p.as_ptr())
         .unwrap_or(ptr::null_mut());
-    // `bun_bundler::Transpiler::init` is now public (transpiler.rs); its body
-    // sub-gates the `BundleOptions::from_api` / `Resolver::init1` tail and
-    // returns `Err(Error::TODO)` until those surface, so the `Err` arm below
-    // is the live path for now. The `ptr::write` shape is load-bearing: do
-    // not replace with `(*vm).transpiler = ...` (drops zeroed bytes → UB).
+    // `bun_bundler::Transpiler::init` (transpiler.rs) returns `Ok` on the
+    // happy path; the `Err` arm below handles genuine failures (e.g. a deleted
+    // cwd → `getcwd` ENOENT). The `ptr::write` shape is load-bearing: do not
+    // replace with `(*vm).transpiler = ...` (drops zeroed bytes → UB).
     {
         use bun_options_types::schema::api;
         // Move (not clone) the caller's `TransformOptions` into the

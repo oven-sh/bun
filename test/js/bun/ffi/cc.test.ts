@@ -180,16 +180,9 @@ describe.skipIf(isASAN || isFFIUnavailable)("given an identity(napi_value) funct
   it("works when the type is given as the numeric FFIType enum", () => {
     // `FFIType.napi_value` is 19; the reverse lookup `FFIType[19]` must resolve
     // so `FFIBuilder` picks the right wrapper instead of throwing/coercing.
-    const numericDir = tempDirWithFiles("bun-ffi-cc-napi-arg-numeric", {
-      "identity.c": /* c */ `
-        typedef struct napi_value__* napi_value;
-        napi_value identity(napi_value value) {
-          return value;
-        }
-      `,
-    });
+    // Reuses the identical source compiled in `beforeAll` (cleaned up by `afterAll`).
     const numericRes = cc({
-      source: path.join(numericDir, "identity.c"),
+      source: path.join(dir, "identity.c"),
       symbols: {
         identity: {
           args: [FFIType.napi_value],

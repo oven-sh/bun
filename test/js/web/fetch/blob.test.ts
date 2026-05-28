@@ -103,10 +103,13 @@ test("new Blob", () => {
   expect(blob.type).toBe("");
 });
 
-test("new Blob stringifies non-Blob object wrapper parts in order", async () => {
+test("new Blob stringifies non-Blob object parts in order", async () => {
   const url = new URL("https://example.com/path");
   expect(await new Blob([url]).text()).toBe("https://example.com/path");
   expect(await new Blob(["a", url, "b"]).text()).toBe("ahttps://example.com/pathb");
+  expect(await new Blob(["a", {}, "b"]).text()).toBe("a[object Object]b");
+  expect(await new Blob(["a", {}, "b", { toString: () => "X" }]).text()).toBe("a[object Object]bX");
+  expect(await new Blob(["a", ["x", "y"], "b"]).text()).toBe("ax,yb");
 });
 
 test("blob: can be fetched", async () => {

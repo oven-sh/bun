@@ -3607,8 +3607,11 @@ impl BlobExt for Blob {
                                     continue;
                                 }
                                 jsc::JSType::Array | jsc::JSType::DerivedArray => {
-                                    could_have_non_ascii = true;
-                                    break;
+                                    let sliced = item.to_slice_clone(global)?;
+                                    could_have_non_ascii =
+                                        could_have_non_ascii || sliced.is_allocated();
+                                    joiner.push_cloned(sliced.slice());
+                                    continue;
                                 }
                                 jsc::JSType::DOMWrapper => {
                                     if let Some(blob) = item.as_class_ref::<Blob>() {
@@ -3636,12 +3639,14 @@ impl BlobExt for Blob {
                                         continue;
                                     }
                                 }
-                                _ => {}
+                                _ => {
+                                    let sliced = item.to_slice_clone(global)?;
+                                    could_have_non_ascii =
+                                        could_have_non_ascii || sliced.is_allocated();
+                                    joiner.push_cloned(sliced.slice());
+                                }
                             }
                         }
-
-                        // `reserve(iter.len)` above guarantees no realloc here.
-                        stack.push(item);
                     }
                 }
 

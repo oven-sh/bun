@@ -492,20 +492,20 @@ console.log(
 
 The `read` function behaves similarly to `DataView`, but it's usually faster because it doesn't need to create a `DataView` or `ArrayBuffer`.
 
-| Type    | `read` function |
-| ------- | --------------- |
-| ptr     | `read.ptr`      |
-| intptr  | `read.intptr`   |
-| i8      | `read.i8`       |
-| i16     | `read.i16`      |
-| i32     | `read.i32`      |
-| i64     | `read.i64`      |
-| u8      | `read.u8`       |
-| u16     | `read.u16`      |
-| u32     | `read.u32`      |
-| u64     | `read.u64`      |
-| f32     | `read.f32`      |
-| f64     | `read.f64`      |
+| Type   | `read` function |
+| ------ | --------------- |
+| ptr    | `read.ptr`      |
+| intptr | `read.intptr`   |
+| i8     | `read.i8`       |
+| i16    | `read.i16`      |
+| i32    | `read.i32`      |
+| i64    | `read.i64`      |
+| u8     | `read.u8`       |
+| u16    | `read.u16`      |
+| u32    | `read.u32`      |
+| u64    | `read.u64`      |
+| f32    | `read.f32`      |
+| f64    | `read.f64`      |
 
 `read.ptr` and `read.intptr` both read a pointer-sized integer. They are `read` helpers only — `intptr` is not an `FFIType`, so it can't be used in `args`/`returns`.
 

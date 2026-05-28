@@ -238,3 +238,13 @@ _ZN9bun_image10N_SVE2_128L13Rotate180ImplEPKhmmPh                             [S
 _ZN9bun_image10N_SVE2_128L8VertPassEPKhmmPhmPKNS_4SpanEPKsm                   [SVE]
 _ZN9bun_image10N_SVE2_128L9FlipHImplEPKhmmPh                                  [SVE]
 _ZN9bun_image10N_SVE2_128L9HorizPassEPKhmmPhmPKNS_4SpanEPKsm                  [SVE]
+
+
+# ----------------------------------------------------------------------------
+# Bun xxHash3 SVE/SVE2 targets. Gate: hwy::SupportedTargets via getauxval(AT_HWCAP). (4 symbols)
+# (Variants that don't materialize on this target show up as STALE.)
+# ----------------------------------------------------------------------------
+_ZN3bun4xxh35N_SVE8HashLongEPKhmS3_                                           [SVE]
+_ZN3bun4xxh36N_SVE28HashLongEPKhmS3_                                          [SVE]
+_ZN3bun4xxh39N_SVE_2568HashLongEPKhmS3_                                       [SVE]
+_ZN3bun4xxh310N_SVE2_1288HashLongEPKhmS3_                                     [SVE]

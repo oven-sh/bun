@@ -916,6 +916,18 @@ crc32_fold_vpclmulqdq_reset  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, 
 
 
 # ----------------------------------------------------------------------------
+# Bun xxHash3 windows-x64. Gate: HWY_DYNAMIC_DISPATCH -> hwy::SupportedTargets() via CPUID. (6 symbols)
+# (PDB demangles to bun::xxh3::N_*::HashLong; unmaterialized variants show up as STALE.)
+# ----------------------------------------------------------------------------
+bun::xxh3::N_AVX2::HashLong       [AVX, AVX2, BMI2]
+bun::xxh3::N_AVX3::HashLong       [AVX, AVX2, AVX512DQ, AVX512F, BMI2]
+bun::xxh3::N_AVX3_DL::HashLong    [AVX, AVX2, AVX512DQ, AVX512F, BMI2]
+bun::xxh3::N_AVX3_SPR::HashLong   [AVX, AVX2, AVX512DQ, AVX512F, BMI2]
+bun::xxh3::N_AVX3_ZEN4::HashLong  [AVX, AVX2, AVX512DQ, AVX512F, BMI2]
+bun::xxh3::N_AVX10_2::HashLong    [AVX, AVX2, AVX512DQ, AVX512F, BMI2]
+
+
+# ----------------------------------------------------------------------------
 # Bun.Image highway kernels (image_resize.cpp). Gate: HWY_DYNAMIC_DISPATCH ->
 # hwy::SupportedTargets() via CPUID. Same gate as the highway_strings block.
 # (40 symbols; PDB demangles these to bun_image::N_*::*)

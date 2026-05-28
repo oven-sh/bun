@@ -66,8 +66,8 @@ bun_url.workspace = true
 bun_watcher.workspace = true
 bun_wyhash.workspace = true
 # `bundle_v2.zig:ContentHasher` uses `std.hash.XxHash64`. Streaming xxh64 comes
-# from `bun_hash::XxHash64Streaming` (twox-hash) so the workspace has exactly
-# one xxhash implementation.
+# from `bun_hash::XxHash64Streaming` (the C++/Highway kernel) so the workspace
+# has exactly one xxhash implementation.
 bun_hash.workspace = true
 
 [features]

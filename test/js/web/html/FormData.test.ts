@@ -283,7 +283,7 @@ describe("FormData", () => {
         const bodyAbC = '--AbC\r\nContent-Disposition: form-data; name="a"\r\n\r\nhello\r\n--AbC--\r\n';
         const fd = await make(bodyAbC, "multipart/form-data; Boundary=AbC").formData();
         expect(fd.get("a")).toBe("hello");
-        expect(make(bodyAbC, "multipart/form-data; boundary=abc").formData()).rejects.toThrow();
+        await expect(make(bodyAbC, "multipart/form-data; boundary=abc").formData()).rejects.toThrow();
       });
 
       it(`${C.name}: application/x-www-form-urlencoded matches case-insensitively`, async () => {
@@ -295,7 +295,7 @@ describe("FormData", () => {
       });
 
       it(`${C.name}: unrelated content-type still rejects`, async () => {
-        expect(make(body, "text/plain").formData()).rejects.toThrow();
+        await expect(make(body, "text/plain").formData()).rejects.toThrow();
       });
     }
   });

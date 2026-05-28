@@ -32,10 +32,13 @@
 //! startup chain.
 
 #![warn(unused_must_use)]
+#![allow(
+    non_snake_case,
+    clippy::missing_safety_doc,
+    clippy::not_unsafe_ptr_arg_deref
+)]
 
-use core::ffi::{c_char, c_int};
-
-mod phase_c_exports;
+use core::ffi::{c_char, c_int, c_void};
 
 // Force-link `bun_platform` so its `#[no_mangle]` C exports
 // (`sys_epoll_pwait2`, `ioctl_ficlone`, …) reach the linker.
@@ -139,6 +142,44 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
     .as_ptr()
     .cast()
 }
+
+/// Opaque JSC handles at the C ABI boundary — pointer-sized, never dereferenced
+/// here. `JSValue` is a `JSC::EncodedJSValue`.
+type JSGlobalObject = c_void;
+type JSValue = i64;
+
+/// C++ crash bridge: `Bun__panic(msg, len)` routes a C++-side fatal error
+/// through the Rust panic/crash-report path.
+///
+/// # Safety
+/// `msg` must be null or valid for reading `len` bytes for the duration of the
+/// call, as guaranteed by the C++ caller.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
+    let bytes = if msg.is_null() {
+        &b""[..]
+    } else {
+        unsafe { core::slice::from_raw_parts(msg, len) }
+    };
+    bun_core::output::panic(format_args!("{}", String::from_utf8_lossy(bytes)));
+}
+
+/// Declared `CPP_DECL` in `headers.h` but never given a C++ body, so the final
+/// link needs a definition to resolve the reference from `bun_jsc`.
+#[unsafe(no_mangle)]
+pub extern "C" fn JSC__JSValue__parseJSON(
+    _string: JSValue,
+    _global: *const JSGlobalObject,
+) -> JSValue {
+    unreachable!("JSC__JSValue__parseJSON is not implemented in C++")
+}
+
+/// Inspector lifecycle `preventExit` / `stopPreventingExit` are no-ops today;
+/// C++ only forward-declares them, so the final link provides the bodies.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__LifecycleAgentPreventExit(_agent: *mut c_void) {}
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__LifecycleAgentStopPreventingExit(_agent: *mut c_void) {}
 
 /// Process entry point. `extern "C"` so the linker resolves crt1.o's
 /// undefined `main` against this symbol — same role as Zig's `pub fn main`.

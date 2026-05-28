@@ -1003,7 +1003,6 @@ impl VirtualMachine {
     }
 
     /// Port of `VirtualMachine.scriptExecutionStatus` (VirtualMachine.zig:885).
-    /// Exported to C++ as `Bun__VM__scriptExecutionStatus` via virtual_machine_exports.rs.
     pub fn script_execution_status(&self) -> crate::ScriptExecutionStatus {
         if self.is_shutting_down {
             return crate::ScriptExecutionStatus::Stopped;
@@ -1016,6 +1015,11 @@ impl VirtualMachine {
         }
 
         crate::ScriptExecutionStatus::Running
+    }
+
+    #[unsafe(export_name = "Bun__VM__scriptExecutionStatus")]
+    pub extern "C" fn script_execution_status_c(&self) -> i32 {
+        self.script_execution_status() as i32
     }
 
     /// Per-callback hot path: `drain_microtasks_with_global` calls

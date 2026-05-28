@@ -3690,7 +3690,7 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
 // `check_timeouts`; UnsafeCell-backed fields suppress `noalias` so LLVM cannot
 // cache them across re-entrant FFI calls (the proper fix for the
 // PROVEN_CACHED ref_count miscompile previously laundered with `black_box`).
-#[bun_jsc::JsClass(name = "DNSResolver")]
+#[bun_jsc::JsClass(name = "DNSResolver", no_constructor)]
 pub struct Resolver {
     pub ref_count: bun_ptr::RefCount<Resolver>, // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — already Cell-backed
     pub channel: Cell<Option<*mut c_ares::Channel>>, // FFI

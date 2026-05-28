@@ -1,4 +1,4 @@
-import { cc, CString, JSCallback, ptr, type FFIFunction, type Library } from "bun:ffi";
+import { cc, CString, FFIType, JSCallback, ptr, type FFIFunction, type Library } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { promises as fs } from "fs";
 import { bunEnv, bunExe, isArm64, isASAN, isWindows, tempDirWithFiles } from "harness";
@@ -174,6 +174,34 @@ describe.skipIf(isASAN || isFFIUnavailable)("given an identity(napi_value) funct
     // round-tripped value would not be identical to the input.
     for (const value of [{ a: 1 }, "hello", 12345, [1, 2, 3], true]) {
       expect(Object.is(res.symbols.identity(value), value)).toBe(true);
+    }
+  });
+
+  it("works when the type is given as the numeric FFIType enum", () => {
+    // `FFIType.napi_value` is 19; the reverse lookup `FFIType[19]` must resolve
+    // so `FFIBuilder` picks the right wrapper instead of throwing/coercing.
+    const numericDir = tempDirWithFiles("bun-ffi-cc-napi-arg-numeric", {
+      "identity.c": /* c */ `
+        typedef struct napi_value__* napi_value;
+        napi_value identity(napi_value value) {
+          return value;
+        }
+      `,
+    });
+    const numericRes = cc({
+      source: path.join(numericDir, "identity.c"),
+      symbols: {
+        identity: {
+          args: [FFIType.napi_value],
+          returns: FFIType.napi_value,
+        },
+      },
+    });
+    try {
+      const value = { b: 2 };
+      expect(Object.is(numericRes.symbols.identity(value), value)).toBe(true);
+    } finally {
+      numericRes.close();
     }
   });
 }); // </given an identity(napi_value) function>

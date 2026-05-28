@@ -4973,13 +4973,14 @@ impl NodeFS {
         }
         // buf_to_free dropped at scope exit
 
+        // A non-zero `stat_size` is the exact number of bytes to copy (e.g. a
+        // sliced source blob's window); read precisely that many and stop. A
+        // zero `stat_size` means the size is unknown, so fall through to the
+        // read-to-EOF loop below. `copy_file_range`-disabled copies and
+        // `fs.copyFile` pass the full file size here, for which the two are
+        // equivalent; slice copies pass a sub-file window, for which reading to
+        // EOF would over-copy the rest of the backing file.
         let mut remain = stat_size as u64;
-        // VERIFY-FIX(round1): Zig `while (cond) {} else {}` runs the else only when
-        // the loop exits because `cond` became false — never on `break`. The
-        // `if remain == 0` check below was wrong: `break 'toplevel` after
-        // `remain` had already saturated to 0 would still enter the else. Track
-        // an explicit `broke` flag instead.
-        let mut broke = false;
         'toplevel: while remain > 0 {
             let read_len = (buf.len() as u64).min(remain) as usize;
             let amt = match Syscall::read(src_fd, &mut buf[..read_len]) {
@@ -4994,7 +4995,6 @@ impl NodeFS {
             };
             // 0 == EOF
             if amt == 0 {
-                broke = true;
                 break 'toplevel;
             }
             *wrote += amt as u64;
@@ -5013,13 +5013,12 @@ impl NodeFS {
                     }
                 };
                 if written == 0 {
-                    broke = true;
                     break 'toplevel;
                 }
                 slice = &slice[written..];
             }
         }
-        if !broke {
+        if stat_size == 0 {
             'outer: loop {
                 let amt = match Syscall::read(src_fd, buf) {
                     Ok(result) => result,

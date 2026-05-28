@@ -4836,25 +4836,27 @@ pub fn write_file_with_source_destination(
     }
     // If this is file <> file, we can just copy the file
     else if destination_type == store::DataTag::File && source_type == store::DataTag::File {
+        // The copy window applies to the *source* read: a sliced file blob
+        // (`Bun.file(path).slice(start, end)`) must copy only its window, not the
+        // whole backing file.
+        let source_offset = source_blob.offset.get();
         #[cfg(windows)]
         {
-            // FIXME(windows): a sliced source blob's offset/size window is not honored here — CopyFileWindows copies the whole source file (the posix branch below applies the slice window). Known follow-up.
             return Ok(copy_file::CopyFileWindows::init(
                 destination_store,
                 source_store,
                 ctx.bun_vm().event_loop_shared(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
-                destination_blob.size.get(),
+                source_offset,
+                source_blob.size.get(),
                 options.mode,
             ));
         }
         #[cfg(not(windows))]
         {
-            // The copy window applies to the *source* read: a sliced file blob should
-            // copy only its window, not the whole backing file. CopyFile treats
-            // `max_len` as an absolute end offset (it later subtracts `offset` after
-            // stat), so pass `offset + size` for finite slices and MAX_SIZE for "to EOF".
-            let source_offset = source_blob.offset.get();
+            // CopyFile treats `max_len` as an absolute end offset (it later
+            // subtracts `offset` after stat), so pass `offset + size` for finite
+            // slices and MAX_SIZE for "to EOF".
             let source_end = if source_blob.size.get() == MAX_SIZE {
                 MAX_SIZE
             } else {

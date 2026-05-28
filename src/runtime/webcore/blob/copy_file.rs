@@ -826,6 +826,24 @@ impl<'a> CopyFile<'a> {
                 }
             }
 
+            // A sliced source blob starts at `offset`, but the source fd is at
+            // position 0 (freshly opened, or a user-supplied fd). Every copy
+            // primitive below reads from the fd's current position — the
+            // copy_file_range/sendfile/splice syscalls are called with a null
+            // source offset, fcopyfile reads from the fd position, and the
+            // read/write loop fallback reads from it too. Seek to the slice
+            // start so the destination begins at the right byte rather than the
+            // start of the backing file.
+            if self.offset > 0 {
+                if let bun_sys::Result::Err(err) =
+                    bun_sys::lseek(self.source_fd, self.offset as i64, libc::SEEK_SET)
+                {
+                    self.system_error = Some(err.to_system_error());
+                    self.do_close();
+                    return;
+                }
+            }
+
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 // Bun.write(Bun.file("a"), Bun.file("b"))
@@ -878,18 +896,6 @@ impl<'a> CopyFile<'a> {
 
             #[cfg(target_os = "macos")]
             {
-                // fcopyfile reads from the source fd's current position. For a sliced
-                // source blob (offset > 0), seek to the slice start so the destination
-                // begins at the right byte instead of the start of the backing file.
-                if self.offset > 0 {
-                    if let bun_sys::Result::Err(err) =
-                        bun_sys::lseek(self.source_fd, self.offset as i64, libc::SEEK_SET)
-                    {
-                        self.system_error = Some(err.to_system_error());
-                        self.do_close();
-                        return;
-                    }
-                }
                 if self.do_fcopy_file_with_read_write_loop_fallback().is_err() {
                     self.do_close();
                     return;
@@ -915,15 +921,6 @@ impl<'a> CopyFile<'a> {
 
             #[cfg(target_os = "freebsd")]
             {
-                if self.offset > 0 {
-                    if let bun_sys::Result::Err(err) =
-                        bun_sys::lseek(self.source_fd, self.offset as i64, libc::SEEK_SET)
-                    {
-                        self.system_error = Some(err.to_system_error());
-                        self.do_close();
-                        return;
-                    }
-                }
                 let mut total_written: u64 = 0;
                 match node_fs::NodeFS::copy_file_using_read_write_loop(
                     bun_core::ZStr::EMPTY,
@@ -1028,6 +1025,11 @@ pub struct CopyFileWindows<'a> {
     // likely should be *const jsc::EventLoop.
     pub event_loop: &'a jsc::event_loop::EventLoop,
 
+    /// Byte offset of the source slice window. A sliced source blob
+    /// (`Bun.file(path).slice(start, end)`) copies only `[offset, offset + size)`
+    /// of the backing file, not the whole file.
+    pub offset: SizeType,
+
     pub size: SizeType,
 
     /// Bytes written, stored for use after async chmod completes
@@ -1047,6 +1049,9 @@ pub struct ReadWriteLoop {
     pub destination_fd: Fd,
     pub must_close_destination_fd: bool,
     pub written: usize,
+    /// Next byte offset to read from the source fd. Seeded with the slice
+    /// `offset` so positioned `uv_fs_read`s copy the window, not the whole file.
+    pub read_pos: u64,
     pub read_buf: Vec<u8>,
     pub uv_buf: libuv::uv_buf_t,
 }
@@ -1060,6 +1065,7 @@ impl Default for ReadWriteLoop {
             destination_fd: Fd::INVALID,
             must_close_destination_fd: false,
             written: 0,
+            read_pos: 0,
             read_buf: Vec::new(),
             // Zig: `.{ .base = undefined, .len = 0 }`
             uv_buf: libuv::uv_buf_t {
@@ -1087,11 +1093,24 @@ impl<'a> CopyFileWindows<'a> {
         self.read_write_loop.read_buf.clear();
         // PORT NOTE: reshaped for borrowck — Zig's `allocatedSlice()` is the full capacity slice.
         let cap = self.read_write_loop.read_buf.capacity();
+        // A finite slice copies only `size` bytes; clamp each read to the bytes
+        // still inside the window so we stop at the slice end rather than EOF.
+        // A zero-length read reports 0 == EOF, which drives the loop to
+        // completion through the existing `on_read` path (keeping the
+        // event-loop ref/unref balanced).
+        let remaining: usize = if self.size == MAX_SIZE {
+            cap
+        } else {
+            cap.min((self.size as usize).saturating_sub(self.read_write_loop.written))
+        };
         self.read_write_loop.uv_buf = libuv::uv_buf_t {
-            len: cap as libuv::ULONG,
+            len: remaining as libuv::ULONG,
             base: self.read_write_loop.read_buf.as_mut_ptr(),
         };
         let source_fd = self.read_write_loop.source_fd;
+        // Positioned read: start at the slice offset (read_pos seeded with it)
+        // so the destination begins at the right byte instead of file start.
+        let read_pos = i64::try_from(self.read_write_loop.read_pos).expect("int cast");
         let loop_ = self.event_loop.uv_loop();
 
         // This io_request is used for both reading and writing.
@@ -1109,7 +1128,7 @@ impl<'a> CopyFileWindows<'a> {
                 source_fd.uv(),
                 core::ptr::from_mut(&mut self.read_write_loop.uv_buf),
                 1,
-                -1,
+                read_pos,
                 Some(on_read),
             )
         };
@@ -1192,6 +1211,9 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
     let n = usize::try_from(rc.int()).expect("int cast");
     // SAFETY: libuv wrote `n` bytes into the buffer's capacity.
     unsafe { read_buf.set_len(n) };
+    // Advance the positioned-read cursor so the next chunk continues from where
+    // this one ended rather than re-reading the slice start.
+    this.read_write_loop.read_pos += n as u64;
     this.read_write_loop.uv_buf = libuv::uv_buf_t::init(read_buf.as_slice());
 
     if rc.int() == 0 {
@@ -1323,6 +1345,7 @@ impl<'a> CopyFileWindows<'a> {
         source_file_store: StoreRef,
         event_loop: &'a jsc::event_loop::EventLoop,
         mkdirp_if_not_exists: bool,
+        offset_: SizeType,
         size_: SizeType,
         destination_mode: Option<Mode>,
     ) -> JSValue {
@@ -1337,10 +1360,14 @@ impl<'a> CopyFileWindows<'a> {
             event_loop,
             mkdirp_if_not_exists,
             destination_mode,
+            offset: offset_,
             size: size_,
             written_bytes: 0,
             err: None,
-            read_write_loop: ReadWriteLoop::default(),
+            read_write_loop: ReadWriteLoop {
+                read_pos: offset_,
+                ..ReadWriteLoop::default()
+            },
         }));
         // SAFETY: result was just allocated above
         let result_ref = unsafe { &mut *result };
@@ -1441,6 +1468,14 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn copyfile(&mut self) {
+        // uv_fs_copyfile always copies the whole source file; it can't honor a
+        // slice offset. A sliced source blob must go through the positioned
+        // read/write loop, which reads from `read_pos` (seeded with `offset`).
+        if self.offset > 0 {
+            self.prepare_read_write_loop();
+            return;
+        }
+
         // This is for making it easier for us to test this code path
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE
             .get()

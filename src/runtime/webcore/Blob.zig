@@ -1212,7 +1212,6 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
     // If this is file <> file, we can just copy the file
     else if (destination_type == .file and source_type == .file) {
         if (comptime Environment.isWindows) {
-            // FIXME(windows): a sliced source blob's offset/size window is not honored here — CopyFileWindows copies the whole source file (the posix branch below applies the slice window). Known follow-up.
             return Blob.copy_file.CopyFileWindows.init(
                 destination_store,
                 source_store,
@@ -1222,18 +1221,12 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                 options.mode,
             );
         }
-        // The copy window applies to the *source* read; CopyFile treats max_len as
-        // an absolute end offset (it later subtracts offset after stat).
-        const source_end = if (source_blob.size == Blob.max_size)
-            Blob.max_size
-        else
-            source_blob.offset +| source_blob.size;
         var file_copier = copy_file.CopyFile.create(
             bun.default_allocator,
             destination_store,
             source_store,
-            source_blob.offset,
-            source_end,
+            destination_blob.offset,
+            destination_blob.size,
             ctx,
             options.mkdirp_if_not_exists orelse true,
             options.mode,

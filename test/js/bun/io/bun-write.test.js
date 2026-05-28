@@ -184,10 +184,8 @@ const IS_UV_FS_COPYFILE_DISABLED =
 
   describe("Bun.file -> Bun.file with sliced source", () => {
     const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    // TODO(windows): CopyFileWindows has no source-offset support yet (see FIXME in Blob.rs)
-    const itSliced = isWindows ? it.skip : it;
 
-    itSliced("slice(start, end) copies only the window, not the whole file", async () => {
+    it("slice(start, end) copies only the window, not the whole file", async () => {
       using dir = tempDir("bun-write-file-slice-mid", { "src.txt": alphabet });
       const src = join(String(dir), "src.txt");
       const dst = join(String(dir), "dst.txt");
@@ -196,7 +194,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(ret).toBe(5);
     });
 
-    itSliced("slice(0, end) copies only the leading window", async () => {
+    it("slice(0, end) copies only the leading window", async () => {
       using dir = tempDir("bun-write-file-slice-head", { "src.txt": alphabet });
       const src = join(String(dir), "src.txt");
       const dst = join(String(dir), "dst.txt");
@@ -205,7 +203,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(ret).toBe(10);
     });
 
-    itSliced("slice(start) copies from start to EOF", async () => {
+    it("slice(start) copies from start to EOF", async () => {
       using dir = tempDir("bun-write-file-slice-tail", { "src.txt": alphabet });
       const src = join(String(dir), "src.txt");
       const dst = join(String(dir), "dst.txt");
@@ -223,7 +221,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(ret).toBe(26);
     });
 
-    itSliced("sliced source overwrites a larger pre-existing destination", async () => {
+    it("sliced source overwrites a larger pre-existing destination", async () => {
       using dir = tempDir("bun-write-file-slice-exists", {
         "src.txt": alphabet,
         "dst.txt": Buffer.alloc(64, "Z").toString(),
@@ -235,7 +233,21 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(ret).toBe(5);
     });
 
-    itSliced("large (>1MB) source sliced in the middle copies exactly the window", async () => {
+    it("sliced source from a file descriptor copies only the window", async () => {
+      using dir = tempDir("bun-write-file-slice-fd", { "src.txt": alphabet });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      const fd = fs.openSync(src, "r");
+      try {
+        const ret = await Bun.write(dst, Bun.file(fd).slice(5, 10));
+        expect(await Bun.file(dst).text()).toBe("FGHIJ");
+        expect(ret).toBe(5);
+      } finally {
+        fs.closeSync(fd);
+      }
+    });
+
+    it("large (>1MB) source sliced in the middle copies exactly the window", async () => {
       using dir = tempDir("bun-write-file-slice-large", {});
       const src = join(String(dir), "big.bin");
       const dst = join(String(dir), "big-dst.bin");
@@ -250,6 +262,29 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(out).toEqual(buf.slice(start, end));
       expect(out.length).toBe(end - start);
       expect(ret).toBe(end - start);
+    });
+
+    it("large (>1MB) source sliced in the middle copies the window via the read/write loop", async () => {
+      using dir = tempDir("bun-write-file-slice-large-rw", {});
+      const src = join(String(dir), "big.bin");
+      const dst = join(String(dir), "big-dst.bin");
+      const size = 2 * 1024 * 1024;
+      const buf = new Uint8Array(size);
+      for (let i = 0; i < size; i++) buf[i] = i % 256;
+      await Bun.write(src, buf);
+      const start = 1024 * 1024 + 7;
+      const end = start + 4096;
+      // Exercise the positioned read/write loop fallback (and, on Windows, the
+      // CopyFileWindows read/write loop) rather than copy_file_range/fcopyfile.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "./bun-write-slice-fixture.js"), src, dst, String(start), String(end)],
+        env: { ...bunEnv, BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1", BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE: "1" },
+        stdio: ["inherit", "inherit", "inherit"],
+      });
+      expect(await proc.exited).toBe(0);
+      const out = await Bun.file(dst).bytes();
+      expect(out).toEqual(buf.slice(start, end));
+      expect(out.length).toBe(end - start);
     });
   });
 

@@ -2369,10 +2369,7 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
     }
 
     #[inline]
-    pub fn append(
-        &mut self,
-        value: ValueType,
-    ) -> core::result::Result<&mut ValueType, AllocError> {
+    pub fn append(&mut self, value: ValueType) -> core::result::Result<&mut ValueType, AllocError> {
         // Reserve the block first; only bump `count` once the slot exists so a
         // failed allocation leaves the list's length consistent with its storage.
         let block = self.list.tail()?;

@@ -99,11 +99,7 @@ test.skipIf(isWindows)(
       stderr: "pipe",
       stdout: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout.trim()).toBe("resolved-ok");
     expect(exitCode).toBe(0);

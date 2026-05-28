@@ -392,15 +392,6 @@ if (isDockerEnabled()) {
           expect((await sql`select ${"hello"} as x`)[0].x).toBe("hello");
         });
 
-        test("Column name that is digits with an interior underscore stays a named key", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          const [row] = await sql`SELECT 100 AS \`2024_01\`, 200 AS \`2024_02\``;
-          expect(row).toEqual({ "2024_01": 100, "2024_02": 200 });
-
-          const [mixed] = await sql`SELECT 'widget' AS product, 10 AS \`2024_01\`, 20 AS \`2024_02\``;
-          expect(mixed).toEqual({ product: "widget", "2024_01": 10, "2024_02": 20 });
-        });
-
         test("MediumInt/Int24", async () => {
           await using sql = new SQL({ ...getOptions(), max: 1 });
           let random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();

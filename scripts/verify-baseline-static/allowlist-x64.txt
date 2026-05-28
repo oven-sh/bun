@@ -460,7 +460,6 @@ ctiMasmProbeTrampolineAVX  [AVX]
 # ----------------------------------------------------------------------------
 # Bun's Highway SIMD. Gate: HWY_DYNAMIC_DISPATCH via hwy::SupportedTargets.
 # (174 symbols)
-# (162 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_AVX3_SPR10MemMemImplEPKhmS2_m                                       [AVX, AVX512BW, AVX512F, BMI1]
 _ZN3bun10N_AVX3_SPR14DecodeHex8ImplEPKhPhm                                     [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, GFNI]

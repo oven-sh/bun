@@ -438,7 +438,6 @@ ctiMasmProbeTrampolineAVX  [AVX]
 # ----------------------------------------------------------------------------
 # Highway. MSVC-mangled bun::N_AVX* names.
 # (174 symbols)
-# (162 symbols)
 # ----------------------------------------------------------------------------
 bun::N_AVX10_2::ContainsNewlineOrNonASCIIOrQuoteImpl                 [AVX, AVX512BW, AVX512F]
 bun::N_AVX10_2::CopyAsciiPrefixImpl                                  [AVX, AVX512BW, AVX512F, AVX512VL]

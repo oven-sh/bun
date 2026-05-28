@@ -1011,19 +1011,24 @@ impl<const SSL: bool> WebSocket<SSL> {
                             .copy_from_slice(&self.ping_frame_bytes[6..][..ping_len]);
                         let close_data = &close_data_buf[..ping_len];
                         if ping_len >= 2 {
-                            let mut code = u16::from_be_bytes([close_data[0], close_data[1]]);
-                            if code == 1001 {
-                                code = 1000;
-                            }
-                            if code < 1000
-                                || (code >= 1004 && code < 1007)
-                                || (code >= 1016 && code <= 2999)
+                            let received_code = u16::from_be_bytes([close_data[0], close_data[1]]);
+                            // RFC6455 §7.1.5: the JS-visible close code is the
+                            // code received on the wire. Reserved/invalid codes
+                            // are still a protocol error → report 1002.
+                            let dispatch_code = if received_code < 1000
+                                || (received_code >= 1004 && received_code < 1007)
+                                || (received_code >= 1016 && received_code <= 2999)
                             {
-                                code = 1002;
-                            }
+                                1002
+                            } else {
+                                received_code
+                            };
+                            // Wire echo: acknowledge a 1001 ("going away") with
+                            // a normal-closure frame; otherwise echo the code.
+                            let echo_code = if dispatch_code == 1001 { 1000 } else { dispatch_code };
                             let mut buf: [u8; 125] = [0; 125];
                             buf[..ping_len - 2].copy_from_slice(&close_data[2..ping_len]);
-                            self.send_close_with_body(code, Some(&mut buf), ping_len - 2);
+                            self.send_close_with_body(echo_code, dispatch_code, Some(&mut buf), ping_len - 2);
                         } else {
                             self.send_close();
                         }
@@ -1056,7 +1061,9 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     pub fn send_close(&mut self) {
-        self.send_close_with_body(1000, None, 0);
+        // Received a bodyless Close: echo a normal-closure frame on the wire,
+        // but report 1005 ("no status received") to JS per RFC6455 §7.1.5.
+        self.send_close_with_body(1000, 1005, None, 0);
     }
 
     // PORT NOTE: Zig passed `socket` by value (a copy of `this.tcp`). Every
@@ -1339,12 +1346,18 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    fn send_close_with_body(&mut self, code: u16, body: Option<&mut [u8; 125]>, body_len: usize) {
+    fn send_close_with_body(
+        &mut self,
+        echo_code: u16,
+        dispatch_code: u16,
+        body: Option<&mut [u8; 125]>,
+        body_len: usize,
+    ) {
         // RFC 6455 §5.5: control-frame payloads are capped at 125 bytes total,
         // and a close-frame payload starts with the 2-byte status code, so the
         // reason text is limited to 123 bytes.
         let body_len = body_len.min(123);
-        log!("Sending close with code {}", code);
+        log!("Sending close with code {}", echo_code);
         if !self.has_tcp() {
             self.dispatch_abrupt_close(ErrorCode::Ended);
             self.clear_data();
@@ -1369,7 +1382,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         final_body_bytes[0] = header_slice[0];
         final_body_bytes[1] = header_slice[1];
         // mask_buf at [2..6]
-        final_body_bytes[6..8].copy_from_slice(&code.to_be_bytes());
+        final_body_bytes[6..8].copy_from_slice(&echo_code.to_be_bytes());
 
         let mut reason = bun_core::String::empty();
         if let Some(data) = body {
@@ -1399,7 +1412,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         if self.enqueue_encoded_bytes(slice) {
             self.clear_data();
-            self.dispatch_close(code, &mut reason);
+            self.dispatch_close(dispatch_code, &mut reason);
         }
     }
 
@@ -1706,12 +1719,12 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // (the only other borrow) ended at `wrote_len` above, so this
                 // `&mut` is unique.
                 let buf = unsafe { &mut *close_reason_buf.as_mut_ptr().cast::<[u8; 125]>() };
-                this.send_close_with_body(code, Some(buf), wrote_len);
+                this.send_close_with_body(code, code, Some(buf), wrote_len);
                 return;
             }
         }
 
-        this.send_close_with_body(code, None, 0);
+        this.send_close_with_body(code, code, None, 0);
     }
 
     pub extern "C" fn init(

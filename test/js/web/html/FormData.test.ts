@@ -715,7 +715,9 @@ describe("FormData", () => {
         Bun.gc();
       }
     }
-  });
+    // 100k iterations of allocate-and-GC is fast on release but slow under a
+    // debug/ASAN build, where it runs well past the default 5s test timeout.
+  }, 180000);
 });
 
 // https://github.com/oven-sh/bun/issues/14988

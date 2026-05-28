@@ -113,9 +113,10 @@ pub trait ArrayLike {
 
     fn ensure_unused_capacity(&mut self, additional: usize);
     fn append_assume_capacity(&mut self, elem: Self::Elem);
-    /// Set `len` to `n` (caller has already reserved) and return the now-live
-    /// slice for bulk memcpy. Mirrors the Zig `map.items.len = n; slice = map.items`.
-    fn set_len_and_slice(&mut self, n: usize) -> &mut [Self::Elem];
+    /// Append all elements from `items`.
+    fn extend_from_slice(&mut self, items: &[Self::Elem])
+    where
+        Self::Elem: Copy;
 }
 
 pub type Of<A> = <A as ArrayLike>::Elem;
@@ -156,17 +157,11 @@ where
 
     // TODO(port): the Zig MultiArrayList arm (`@hasField(Array, "bytes")`)
     // appended element-by-element because SoA storage cannot be memcpy'd as one
-    // block. The trait impl for `MultiArrayList<T>` must override
-    // `set_len_and_slice` to panic and instead route through
-    // `append_assume_capacity`. For now we take the memcpy path and rely on the
-    // impl to do the right thing.
+    // block. A future trait impl for `MultiArrayList<T>` can implement
+    // `extend_from_slice` with repeated `append_assume_capacity` calls.
 
     map.ensure_unused_capacity(default.len());
-
-    let slice = map.set_len_and_slice(default.len());
-
-    // Zig: `@memcpy(out[0..in.len], in)` over `sliceAsBytes`
-    slice.copy_from_slice(default);
+    map.extend_from_slice(default);
 
     map
 }
@@ -282,13 +277,11 @@ impl<T> ArrayLike for Vec<T> {
         // PERF(port): was appendAssumeCapacity
         self.push(elem);
     }
-    fn set_len_and_slice(&mut self, n: usize) -> &mut [T] {
-        debug_assert!(self.capacity() >= n);
-        // SAFETY: capacity reserved above; caller immediately memcpy-fills [0..n].
-        // Matches Zig `map.items.len = default.len; slice = map.items;` which
-        // also exposes uninitialized memory until the subsequent @memcpy.
-        unsafe { self.set_len(n) };
-        self.as_mut_slice()
+    fn extend_from_slice(&mut self, items: &[T])
+    where
+        T: Copy,
+    {
+        Vec::extend_from_slice(self, items);
     }
 }
 

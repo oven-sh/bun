@@ -121,6 +121,41 @@ zig build-lib add.cpp -dynamic -lc -lc++
 
 ---
 
+## Compiling C from JavaScript (`cc`)
+
+Instead of compiling a shared library ahead of time, you can compile and run ISO C11 source code directly from JavaScript with `cc`. Bun compiles the source with [TinyCC](https://github.com/TinyCC/tinycc) and exposes the requested `symbols` as JavaScript functions, just like `dlopen`.
+
+```ts
+import { cc } from "bun:ffi";
+import source from "./hello.c" with { type: "file" };
+
+const {
+  symbols: { hello },
+} = cc({
+  source,
+  symbols: {
+    hello: {
+      returns: "cstring",
+      args: [],
+    },
+  },
+});
+
+console.log(hello()); // "Hello, World!"
+```
+
+```c hello.c icon="file-code"
+#include <stdio.h>
+
+const char* hello() {
+  return "Hello, World!";
+}
+```
+
+See the [C Compiler](/runtime/c-compiler) page for the full `cc` reference, including the `source`, `symbols`, `define`, `include`, `library`, and `flags` options.
+
+---
+
 ## FFI types
 
 The following `FFIType` values are supported.
@@ -134,21 +169,32 @@ The following `FFIType` values are supported.
 | i8         | `int8_t`       | `int8_t`                    |
 | i16        | `int16_t`      | `int16_t`                   |
 | i32        | `int32_t`      | `int32_t`, `int`            |
-| i64        | `int64_t`      | `int64_t`                   |
+| i64        | `int64_t`      | `int64_t`, `isize`          |
 | i64_fast   | `int64_t`      |                             |
 | u8         | `uint8_t`      | `uint8_t`                   |
 | u16        | `uint16_t`     | `uint16_t`                  |
 | u32        | `uint32_t`     | `uint32_t`                  |
-| u64        | `uint64_t`     | `uint64_t`                  |
+| u64        | `uint64_t`     | `uint64_t`, `usize`         |
 | u64_fast   | `uint64_t`     |                             |
 | f32        | `float`        | `float`                     |
 | f64        | `double`       | `double`                    |
 | bool       | `bool`         |                             |
 | char       | `char`         |                             |
+| void       | `void`         |                             |
 | napi_env   | `napi_env`     |                             |
 | napi_value | `napi_value`   |                             |
 
 Note: `buffer` arguments must be a `TypedArray` or `DataView`.
+
+Note: `void` is only valid as a `returns` type — it is the default return type and cannot be used as an argument. `usize`/`isize` are pointer-sized integer aliases of `u64`/`i64`.
+
+---
+
+## Node-API types
+
+The `napi_env` and `napi_value` types let `bun:ffi` interoperate with [Node-API](/runtime/node-api). A C function that receives a `napi_env` argument is called with Bun's current N-API environment, and a function that returns `napi_value` has its result converted directly into a JavaScript value — which is useful for passing strings, objects, and other non-primitive values that don't map 1:1 to C types.
+
+These types work with `cc`. See [Strings, objects, and non-primitive types](/runtime/c-compiler#strings-objects-and-non-primitive-types) on the C Compiler page for worked examples.
 
 ---
 
@@ -229,7 +275,7 @@ import { CFunction } from "bun:ffi";
 
 let myNativeLibraryGetVersion = /* somehow, you got this pointer */
 
-const getVersion = new CFunction({
+const getVersion = CFunction({
   returns: "cstring",
   args: [],
   ptr: myNativeLibraryGetVersion,
@@ -331,7 +377,7 @@ const onResolve = new JSCallback(arg => arg === 42, {
   returns: "bool",
   args: ["i32"],
 });
-const setOnResolve = new CFunction({
+const setOnResolve = CFunction({
   returns: "bool",
   args: ["function"],
   ptr: myNativeLibrarySetOnResolve,
@@ -345,6 +391,38 @@ setOnResolve(onResolve);
 ```
 
 </Note>
+
+---
+
+## Viewing generated bindings
+
+Bun just-in-time compiles C wrappers for each symbol. To inspect the generated C code — for debugging a binding or out of curiosity — use `viewSource`. Given a map of symbols it returns an array of strings (one per symbol); for a single callback definition, pass `true` as the second argument to get a single string.
+
+```ts
+import { viewSource } from "bun:ffi";
+
+// the generated wrappers for a set of symbols
+const [getVersionSource] = viewSource(
+  {
+    getVersion: {
+      returns: "cstring",
+      args: [],
+    },
+  },
+  false,
+);
+
+// the generated wrapper for a single callback
+const callbackSource = viewSource(
+  {
+    returns: "bool",
+    args: ["ptr", "usize"],
+  },
+  true,
+);
+```
+
+You typically won't need this unless there's a bug in the FFI bindings generator.
 
 ---
 
@@ -415,6 +493,7 @@ The `read` function behaves similarly to `DataView`, but it's usually faster bec
 | `FFIType` | `read` function |
 | --------- | --------------- |
 | ptr       | `read.ptr`      |
+| intptr    | `read.intptr`   |
 | i8        | `read.i8`       |
 | i16       | `read.i16`      |
 | i32       | `read.i32`      |

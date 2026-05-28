@@ -709,7 +709,7 @@ declare module "bun:ffi" {
    * ```js
    * import {CFunction} from 'bun:ffi';
    *
-   * const getVersion = new CFunction({
+   * const getVersion = CFunction({
    *   returns: "cstring",
    *   args: [],
    *   ptr: myNativeLibraryGetVersion,

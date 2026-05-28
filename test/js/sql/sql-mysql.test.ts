@@ -148,42 +148,37 @@ if (isDockerEnabled()) {
           const t = "dec_" + randomUUIDv7("hex").replaceAll("-", "");
           await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT, balance DECIMAL(12,2), qty INT)`;
           await sql`INSERT INTO ${sql(t)} VALUES (1, 100.50, 3), (2, 250.25, 4)`;
-          const expected = {
-            total: "350.75",
-            avg_bal: "175.375000",
-            casted: "100.5000",
-            mul2: "201.00",
-            rounded: "100.5",
-            sum_int: "7",
-            lit: "1.23",
-            plain: "100.50",
-          };
+
+          // Aggregate decimals, plus a decimal literal and SUM of an INT column
+          // (which MySQL also returns as NEWDECIMAL). Kept separate from the
+          // per-row expressions below so the query has no non-aggregated columns
+          // and stays valid under ONLY_FULL_GROUP_BY (the MySQL 8+ default).
+          const aggExpected = { total: "350.75", avg_bal: "175.375000", sum_int: "7", lit: "1.23" };
           // Binary protocol (prepared statement).
-          const [row] = await sql`SELECT
-              SUM(balance) AS total,
-              AVG(balance) AS avg_bal,
-              CAST(balance AS DECIMAL(20,4)) AS casted,
-              balance*2 AS mul2,
-              ROUND(balance,1) AS rounded,
-              SUM(qty) AS sum_int,
-              1.23 AS lit,
-              balance AS plain
-            FROM ${sql(t)} WHERE id <= ${2}`;
-          expect(row).toEqual(expected);
-          // Text protocol must decode the same way.
-          const [simpleRow] = await sql`SELECT
-              SUM(balance) AS total,
-              AVG(balance) AS avg_bal,
-              CAST(balance AS DECIMAL(20,4)) AS casted,
-              balance*2 AS mul2,
-              ROUND(balance,1) AS rounded,
-              SUM(qty) AS sum_int,
-              1.23 AS lit,
-              balance AS plain
+          const [aggRow] = await sql`
+            SELECT SUM(balance) AS total, AVG(balance) AS avg_bal, SUM(qty) AS sum_int, 1.23 AS lit
+            FROM ${sql(t)}`;
+          expect(aggRow).toEqual(aggExpected);
+          // Text protocol (`.simple()`) must decode the same way.
+          const [aggSimple] = await sql`
+            SELECT SUM(balance) AS total, AVG(balance) AS avg_bal, SUM(qty) AS sum_int, 1.23 AS lit
             FROM ${sql(t)}`.simple();
-          expect(simpleRow).toEqual(expected);
+          expect(aggSimple).toEqual(aggExpected);
+
+          // Per-row computed decimals: CAST, arithmetic, ROUND, and a plain stored
+          // column. A single row is selected so the result is deterministic.
+          const rowExpected = { casted: "100.5000", mul2: "201.00", rounded: "100.5", plain: "100.50" };
+          const [row] = await sql`
+            SELECT CAST(balance AS DECIMAL(20,4)) AS casted, balance*2 AS mul2, ROUND(balance,1) AS rounded, balance AS plain
+            FROM ${sql(t)} WHERE id = ${1}`;
+          expect(row).toEqual(rowExpected);
+          const [simpleRow] = await sql`
+            SELECT CAST(balance AS DECIMAL(20,4)) AS casted, balance*2 AS mul2, ROUND(balance,1) AS rounded, balance AS plain
+            FROM ${sql(t)} WHERE id = 1`.simple();
+          expect(simpleRow).toEqual(rowExpected);
+
           // `.raw()` must still return raw bytes.
-          const [rawRow] = await sql`SELECT SUM(balance) AS total FROM ${sql(t)} WHERE id <= ${2}`.raw();
+          const [rawRow] = await sql`SELECT SUM(balance) AS total FROM ${sql(t)}`.raw();
           expect(rawRow[0]).toEqual(new Uint8Array(Buffer.from("350.75")));
         });
         describe("should work with more than the max inline capacity", () => {

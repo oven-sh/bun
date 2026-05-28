@@ -132,7 +132,6 @@ describe("node:http Agent socket accounting", () => {
     // and dispatches cQueued into the freed global slot — the Node behavior.
     const agent = new http.Agent({ maxSockets: 1, maxTotalSockets: 2 });
 
-    const heldA: Array<() => void> = [];
     let hitsC = 0;
     const serverA = http.createServer(() => {}); // never responds — holds A's slot
     const serverB = http.createServer((req, res) => res.end("b"));
@@ -187,7 +186,8 @@ describe("node:http Agent socket accounting", () => {
       expect(hitsC).toBe(1); // cQueued reached server C
       expect(nameC in agent.requests).toBe(false); // C's queue drained
 
-      heldA.shift()?.();
+      // serverA never responds (a1 holds A's slot for the whole test);
+      // agent.destroy() + serverA.close() in finally tear down a1/a2.
     } finally {
       agent.destroy();
       serverA.close();

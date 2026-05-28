@@ -1632,6 +1632,12 @@ pub mod archiver {
         pub close_handles: bool,
         pub log: bool,
         pub npm: bool,
+        /// Skip symlink entries instead of creating them. Set by the package
+        /// installer so `bun install` matches npm (which never materializes
+        /// symlinks); left `false` for general-purpose callers like the
+        /// `Bun.Archive` JS API, `bun create`, and the standalone binary fetch,
+        /// which keep extracting symlinks.
+        pub skip_symlinks: bool,
     }
 
     impl Default for ExtractOptions {
@@ -1641,6 +1647,7 @@ pub mod archiver {
                 close_handles: true,
                 log: false,
                 npm: false,
+                skip_symlinks: false,
             }
         }
     }
@@ -1914,19 +1921,23 @@ impl Archiver {
                         // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L434
                     }
 
-                    // Never materialise symlinks. npm doesn't either: registry
+                    // The package installer sets `skip_symlinks` so `bun install`
+                    // never materialises symlinks. npm doesn't either: registry
                     // tarballs are filtered by pacote's `/Link$/` extract filter,
                     // and git/GitHub deps are packed with `npm-packlist`, whose
                     // `onstat` drops anything that isn't a file or directory. The
-                    // GitHub path here is the only one that reaches non-file
-                    // entries (`options.npm == false`), so skipping links makes
-                    // Bun match npm and removes the symlink-traversal surface
+                    // GitHub install path is the only one that reaches non-file
+                    // entries (`options.npm == false`), so skipping links there
+                    // makes Bun match npm and removes the symlink-traversal surface
                     // entirely — a symlink that is never created can't be
                     // traversed or aliased. Directory entries are still created;
                     // the `created_symlinks`-gated `O_NOFOLLOW_ANY` guards below
                     // stay as belt-and-braces (inert while this skip holds, they
                     // re-arm immediately if symlink extraction is ever restored).
-                    if kind == bun_sys::FileKind::SymLink {
+                    // General-purpose callers (the `Bun.Archive` JS API, `bun
+                    // create`, the standalone binary fetch) leave `skip_symlinks`
+                    // false and keep extracting symlinks.
+                    if options.skip_symlinks && kind == bun_sys::FileKind::SymLink {
                         continue;
                     }
 

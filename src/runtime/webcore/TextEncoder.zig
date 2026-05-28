@@ -220,13 +220,7 @@ pub export fn TextEncoder__encodeInto16(
 ) u64 {
     const output = buf_ptr[0..buf_len];
     const input = input_ptr[0..input_len];
-    var result: strings.EncodeIntoResult = strings.copyUTF16IntoUTF8(output, input);
-    if (output.len >= 3 and (result.read == 0 or result.written == 0)) {
-        const replacement_char = [_]u8{ 239, 191, 189 };
-        @memcpy(buf_ptr[0..replacement_char.len], &replacement_char);
-        result.read = 1;
-        result.written = 3;
-    }
+    const result: strings.EncodeIntoResult = strings.copyUTF16IntoUTF8(output, input);
     const sized: [2]u32 = .{ result.read, result.written };
     return @bitCast(sized);
 }

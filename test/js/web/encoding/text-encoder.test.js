@@ -22,6 +22,29 @@ it("not enough space for replacement character", () => {
   expect(Array.from(bytes)).toEqual([0x00, 0x00]);
 });
 
+describe("encodeInto astral characters and buffer sizing", () => {
+  // WHATWG Encoding spec: a code point that doesn't fit in the remaining
+  // destination space is left unwritten, and that destination space is left
+  // untouched. A previous implementation incorrectly wrote U+FFFD when a
+  // valid 4-byte astral character met an exactly-3-byte buffer.
+  it.each([
+    ["\u{1F600}", 3, { read: 0, written: 0 }, [0xaa, 0xaa, 0xaa]],
+    ["\u{1F600}", 4, { read: 2, written: 4 }, [0xf0, 0x9f, 0x98, 0x80]],
+    ["\u{1F600}", 2, { read: 0, written: 0 }, [0xaa, 0xaa]],
+    ["\uD800", 3, { read: 1, written: 3 }, [0xef, 0xbf, 0xbd]],
+    ["\uDC00", 3, { read: 1, written: 3 }, [0xef, 0xbf, 0xbd]],
+    ["\uD800", 2, { read: 0, written: 0 }, [0xaa, 0xaa]],
+    ["a\u{1F600}", 3, { read: 1, written: 1 }, [0x61, 0xaa, 0xaa]],
+    ["a\u{1F600}", 4, { read: 1, written: 1 }, [0x61, 0xaa, 0xaa, 0xaa]],
+    ["a\u{1F600}", 5, { read: 3, written: 5 }, [0x61, 0xf0, 0x9f, 0x98, 0x80]],
+  ])("%j into %i-byte buffer", (input, size, expectedResult, expectedBytes) => {
+    const bytes = new Uint8Array(size).fill(0xaa);
+    const result = new TextEncoder().encodeInto(input, bytes);
+    expect(Array.from(bytes)).toEqual(expectedBytes);
+    expect(result).toEqual(expectedResult);
+  });
+});
+
 describe("TextEncoder", () => {
   it("should handle undefined", () => {
     const encoder = new TextEncoder();
@@ -442,11 +465,12 @@ describe("TextEncoder", () => {
       expect(Array.from(buffer2)).toEqual([0xef, 0xbf, 0xbd]); // U+FFFD in UTF-8
 
       // Multiple unpaired surrogates with limited buffer
-      const str2 = String.fromCharCode(0xd800, 0xdc00);
+      const str2 = String.fromCharCode(0xd800, 0xd801);
       const buffer3 = new Uint8Array(3); // Only room for one replacement
       const result3 = encoder.encodeInto(str2, buffer3);
       expect(result3.read).toBe(1); // Should only read first surrogate
       expect(result3.written).toBe(3); // Should write one U+FFFD
+      expect(Array.from(buffer3)).toEqual([0xef, 0xbf, 0xbd]);
     });
 
     it("should handle boundary surrogates correctly", () => {

@@ -1533,11 +1533,17 @@ folded: >
           expect(YAML.parse("|\nx\n  z...\n")).toEqual("x\n  z...\n");
         });
 
-        test.todo("tab between `---` and same-line content", () => {
-          // [203] c-directives-end is followed by s-l-comments or content via
-          // s-separate-in-line; a `- ` after tab would be a [185] compact at
-          // unknown indent. ee/js both error. Pre-existing.
+        test.todo("block collection on the `---` line", () => {
+          // [200] s-l+block-collection requires s-l-comments (a line break)
+          // before l+block-sequence/mapping; same-line content after `---` is
+          // s-separate-in-line + ns-flow-node only. Not tab-specific (`--- - x`
+          // is equally invalid). ee rejects both; js-yaml only rejects the
+          // tab variant. Pre-existing.
           expect(() => YAML.parse("---\t- x\n")).toThrow();
+          expect(() => YAML.parse("--- - x\n")).toThrow();
+          // Same-line flow node IS valid.
+          expect(YAML.parse("--- foo\n")).toEqual("foo");
+          expect(YAML.parse("---\tfoo\n")).toEqual("foo");
         });
 
         test.todo("`---` inside a plain scalar (issue #25660)", () => {

@@ -1631,6 +1631,7 @@ dependencies = [
  "bun_url",
  "bun_watcher",
  "bun_wyhash",
+ "bun_zstd",
  "const_format",
  "enum-map",
  "enumset",

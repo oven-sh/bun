@@ -13,8 +13,8 @@
 
 import { join } from "node:path";
 import { bunExeName, type Config } from "./config.ts";
-import { ucrtServicingLibDir } from "./winsysroot.ts";
 import { quote, slash } from "./shell.ts";
+import { ucrtServicingLibDir } from "./winsysroot.ts";
 
 export type FlagValue = string | string[] | ((cfg: Config) => string | string[]);
 

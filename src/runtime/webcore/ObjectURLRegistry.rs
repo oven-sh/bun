@@ -56,10 +56,13 @@ impl Entry {
 /// registry's own `Entry` blob is only ever touched under the registry mutex
 /// and resolved blobs are private to the resolving thread.
 fn dupe_for_cross_thread(blob: &Blob) -> Blob {
+    let copy = dupe_without_store_snapshot(blob);
+    snapshot_store(&copy);
+    copy
+}
+
+fn dupe_without_store_snapshot(blob: &Blob) -> Blob {
     let copy = blob.dupe_with_content_type(true);
-    if let Some(store) = blob.store() {
-        copy.store.set(Some(store.deep_dupe()));
-    }
     if !copy.content_type_allocated.get() {
         let content_type = copy.content_type_slice();
         if !content_type.is_empty() {
@@ -73,6 +76,12 @@ fn dupe_for_cross_thread(blob: &Blob) -> Blob {
     name.to_thread_safe();
     copy.name.set(name);
     copy
+}
+
+fn snapshot_store(copy: &Blob) {
+    if let Some(store) = copy.take_store() {
+        copy.store.set(Some(store.deep_dupe()));
+    }
 }
 
 impl Drop for Entry {
@@ -99,8 +108,12 @@ impl ObjectURLRegistry {
 
     pub fn resolve_and_dupe(&self, pathname: &[u8]) -> Option<Blob> {
         let uuid = uuid_from_pathname(pathname)?;
-        let map = self.map.lock();
-        map.get(&uuid.bytes).map(|e| dupe_for_cross_thread(&e.blob))
+        let copy = {
+            let map = self.map.lock();
+            dupe_without_store_snapshot(&map.get(&uuid.bytes)?.blob)
+        };
+        snapshot_store(&copy);
+        Some(copy)
     }
 
     pub fn resolve_and_dupe_to_js(
@@ -108,7 +121,9 @@ impl ObjectURLRegistry {
         pathname: &[u8],
         global_object: &JSGlobalObject,
     ) -> Option<JSValue> {
-        let blob = Blob::new(self.resolve_and_dupe(pathname)?);
+        let resolved = self.resolve_and_dupe(pathname)?;
+        resolved.global_this.set(std::ptr::from_ref(global_object));
+        let blob = Blob::new(resolved);
         // SAFETY: `Blob::new` returns a freshly-boxed heap pointer.
         Some(unsafe { (*blob).to_js(global_object) })
     }

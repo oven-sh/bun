@@ -21,7 +21,7 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 // (atomic refcounting now via `bun_ptr::ThreadSafeRefCount`)
-use std::sync::Arc;
+use std::rc::Rc;
 
 use bun_core::{PathString, immutable::AsciiStatus};
 use bun_http_types::MimeType::MimeType;
@@ -817,7 +817,7 @@ pub mod store {
     pub struct S3 {
         pub pathlike: PathLike,
         pub mime_type: MimeType,
-        pub credentials: Option<Arc<bun_s3_signing::S3Credentials>>,
+        pub credentials: Option<Rc<bun_s3_signing::S3Credentials>>,
         pub options: bun_s3_signing::MultiPartUploadOptions,
         pub acl: Option<bun_s3_signing::ACL>,
         pub storage_class: Option<bun_s3_signing::StorageClass>,
@@ -830,7 +830,7 @@ pub mod store {
             Some(true)
         }
 
-        pub fn get_credentials(&self) -> &Arc<bun_s3_signing::S3Credentials> {
+        pub fn get_credentials(&self) -> &Rc<bun_s3_signing::S3Credentials> {
             debug_assert!(self.credentials.is_some());
             self.credentials.as_ref().unwrap()
         }
@@ -861,7 +861,7 @@ pub mod store {
         pub fn init_with_referenced_credentials(
             pathlike: PathLike,
             mime_type: Option<MimeType>,
-            credentials: Arc<bun_s3_signing::S3Credentials>,
+            credentials: Rc<bun_s3_signing::S3Credentials>,
         ) -> S3 {
             S3 {
                 credentials: Some(credentials),
@@ -881,7 +881,7 @@ pub mod store {
         ) -> S3 {
             S3 {
                 // Zig: `credentials.dupe()` — heap-allocate a fresh refcounted copy.
-                credentials: Some(Arc::new(credentials)),
+                credentials: Some(Rc::new(credentials)),
                 pathlike,
                 mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
                 options: bun_s3_signing::MultiPartUploadOptions::default(),
@@ -921,8 +921,8 @@ pub mod store {
         /// Allocate a fresh `Store` with the same observable contents as
         /// `self` that shares no mutable state with it: `Bytes` payloads and
         /// `stored_name` are copied, `File` paths are re-owned (lazily-derived
-        /// stat fields reset), and `S3` keys are re-owned (the immutable
-        /// credentials are shared via `Arc`). Returns a +1-ref heap `Store`.
+        /// stat fields reset), and `S3` keys and credentials are re-owned.
+        /// Returns a +1-ref heap `Store`.
         pub fn deep_dupe(&self) -> StoreRef {
             let data = match &self.data {
                 Data::Bytes(bytes) => {
@@ -948,7 +948,7 @@ pub mod store {
                         ..Default::default()
                     }),
                     mime_type: s3.mime_type.clone(),
-                    credentials: s3.credentials.clone(),
+                    credentials: s3.credentials.as_deref().map(|c| Rc::new(c.clone())),
                     options: s3.options,
                     acl: s3.acl,
                     storage_class: s3.storage_class,
@@ -1218,9 +1218,10 @@ pub mod store {
     // SAFETY: `Store::ref_count` is atomic, so handing the handle to another
     // thread cannot tear the count. The non-atomic payload (`data`,
     // `is_all_ascii`) is only mutated by the thread that owns the blobs
-    // referencing the store: `ObjectURLRegistry` never shares a store across
-    // threads (it stores and resolves `Store::deep_dupe` copies), and work-pool
-    // tasks adopt their own +1 handed off by the owning JS thread.
+    // referencing the store: `ObjectURLRegistry` entries hold `Store::deep_dupe`
+    // copies that no thread mutates (resolvers only read them to take their own
+    // `deep_dupe` snapshot), and work-pool tasks adopt their own +1 handed off
+    // by the owning JS thread.
     unsafe impl Send for StoreRef {}
     // SAFETY: see `Send` — `&StoreRef` only derefs to `&Store`, and any
     // cross-thread `&Store` reads go through stores whose owning thread is not

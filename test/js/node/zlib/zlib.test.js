@@ -354,7 +354,8 @@ describe("zlib.brotli", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
+      const stderrLines = stderr.split("\n").filter(l => l && !l.startsWith("WARNING: ASAN interferes"));
+      expect(stderrLines).toEqual([]);
       expect(zlib.brotliDecompressSync(stdout).equals(input)).toBe(true);
       expect(exitCode).toBe(0);
     });
@@ -381,7 +382,8 @@ describe("zlib.brotli", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
+      const stderrLines = stderr.split("\n").filter(l => l && !l.startsWith("WARNING: ASAN interferes"));
+      expect(stderrLines).toEqual([]);
       expect(Buffer.from(stdout).equals(input)).toBe(true);
       expect(exitCode).toBe(0);
     });

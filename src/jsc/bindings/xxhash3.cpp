@@ -51,6 +51,8 @@ using u64 = uint64_t;
 static constexpr u32 PRIME32_1 = 0x9E3779B1u;
 static constexpr u32 PRIME32_2 = 0x85EBCA77u;
 static constexpr u32 PRIME32_3 = 0xC2B2AE3Du;
+static constexpr u32 PRIME32_4 = 0x27D4EB2Fu; // used by XXH32 (not XXH3)
+static constexpr u32 PRIME32_5 = 0x165667B1u; // used by XXH32 (not XXH3)
 static constexpr u64 PRIME64_1 = 0x9E3779B185EBCA87ull;
 static constexpr u64 PRIME64_2 = 0xC2B2AE3D27D4EB4Full;
 static constexpr u64 PRIME64_3 = 0x165667B19E3779F9ull;
@@ -262,6 +264,248 @@ static inline void InitCustomSecret(u8* customSecret, u64 seed64)
     }
 }
 
+// ===========================================================================
+// XXH32 / XXH64 (scalar).
+//
+// These are the classic xxHash algorithms. Unlike XXH3 they have no SIMD form
+// in the reference — each processes a fixed stripe of 16/32 bytes per iteration
+// with scalar integer ops — so they live outside the Highway per-ISA namespace
+// (no runtime dispatch, no baseline-allowlist entries). Straight C++ beats the
+// generic twox-hash Rust codegen and matches Zig's std.hash.XxHash{32,64}.
+//
+// Output is bit-identical to the reference (and the retired twox-hash crate);
+// verified against the vector suite and SMHasher in xxhash.rs.
+// ---------------------------------------------------------------------------
+
+static inline u32 Rotl32(u32 x, int r) { return (x << r) | (x >> (32 - r)); }
+
+static inline u32 XXH32_round(u32 acc, u32 input)
+{
+    acc += input * PRIME32_2;
+    acc = Rotl32(acc, 13);
+    acc *= PRIME32_1;
+    return acc;
+}
+
+static inline u32 XXH32_avalanche(u32 h)
+{
+    h ^= h >> 15;
+    h *= PRIME32_2;
+    h ^= h >> 13;
+    h *= PRIME32_3;
+    h ^= h >> 16;
+    return h;
+}
+
+// Processes the trailing < 16 bytes (the reference's XXH32_finalize, "normal"
+// non-aligned branch — reads are unaligned via ReadLE).
+static inline u32 XXH32_finalize(u32 h, const u8* p, size_t len)
+{
+    len &= 15;
+    while (len >= 4) {
+        h += ReadLE32(p) * PRIME32_3;
+        p += 4;
+        h = Rotl32(h, 17) * PRIME32_4;
+        len -= 4;
+    }
+    while (len > 0) {
+        h += (*p++) * PRIME32_5;
+        h = Rotl32(h, 11) * PRIME32_1;
+        --len;
+    }
+    return XXH32_avalanche(h);
+}
+
+static inline u64 XXH64_round(u64 acc, u64 input)
+{
+    acc += input * PRIME64_2;
+    acc = Rotl64(acc, 31);
+    acc *= PRIME64_1;
+    return acc;
+}
+
+static inline u64 XXH64_mergeRound(u64 acc, u64 val)
+{
+    val = XXH64_round(0, val);
+    acc ^= val;
+    acc = acc * PRIME64_1 + PRIME64_4;
+    return acc;
+}
+
+// XXH64's finalizer avalanche is identical to XXH3's XXH64_avalanche (defined
+// above), so reuse it rather than redefining.
+
+// Trailing < 32 bytes (reference XXH64_finalize, non-aligned branch).
+static inline u64 XXH64_finalize(u64 h, const u8* p, size_t len)
+{
+    len &= 31;
+    while (len >= 8) {
+        u64 const k1 = XXH64_round(0, ReadLE64(p));
+        p += 8;
+        h ^= k1;
+        h = Rotl64(h, 27) * PRIME64_1 + PRIME64_4;
+        len -= 8;
+    }
+    if (len >= 4) {
+        h ^= static_cast<u64>(ReadLE32(p)) * PRIME64_1;
+        p += 4;
+        h = Rotl64(h, 23) * PRIME64_2 + PRIME64_3;
+        len -= 4;
+    }
+    while (len > 0) {
+        h ^= (*p++) * PRIME64_5;
+        h = Rotl64(h, 11) * PRIME64_1;
+        --len;
+    }
+    return XXH64_avalanche(h);
+}
+
+static u32 XXH32(const u8* input, size_t len, u32 seed)
+{
+    u32 h;
+    const u8* p = input;
+    if (len >= 16) {
+        const u8* const limit = input + len - 16;
+        u32 v1 = seed + PRIME32_1 + PRIME32_2;
+        u32 v2 = seed + PRIME32_2;
+        u32 v3 = seed + 0;
+        u32 v4 = seed - PRIME32_1;
+        do {
+            v1 = XXH32_round(v1, ReadLE32(p));
+            p += 4;
+            v2 = XXH32_round(v2, ReadLE32(p));
+            p += 4;
+            v3 = XXH32_round(v3, ReadLE32(p));
+            p += 4;
+            v4 = XXH32_round(v4, ReadLE32(p));
+            p += 4;
+        } while (p <= limit);
+        h = Rotl32(v1, 1) + Rotl32(v2, 7) + Rotl32(v3, 12) + Rotl32(v4, 18);
+    } else {
+        h = seed + PRIME32_5;
+    }
+    h += static_cast<u32>(len);
+    return XXH32_finalize(h, p, len);
+}
+
+static u64 XXH64(const u8* input, size_t len, u64 seed)
+{
+    u64 h;
+    const u8* p = input;
+    if (len >= 32) {
+        const u8* const limit = input + len - 32;
+        u64 v1 = seed + PRIME64_1 + PRIME64_2;
+        u64 v2 = seed + PRIME64_2;
+        u64 v3 = seed + 0;
+        u64 v4 = seed - PRIME64_1;
+        do {
+            v1 = XXH64_round(v1, ReadLE64(p));
+            p += 8;
+            v2 = XXH64_round(v2, ReadLE64(p));
+            p += 8;
+            v3 = XXH64_round(v3, ReadLE64(p));
+            p += 8;
+            v4 = XXH64_round(v4, ReadLE64(p));
+            p += 8;
+        } while (p <= limit);
+        h = Rotl64(v1, 1) + Rotl64(v2, 7) + Rotl64(v3, 12) + Rotl64(v4, 18);
+        h = XXH64_mergeRound(h, v1);
+        h = XXH64_mergeRound(h, v2);
+        h = XXH64_mergeRound(h, v3);
+        h = XXH64_mergeRound(h, v4);
+    } else {
+        h = seed + PRIME64_5;
+    }
+    h += static_cast<u64>(len);
+    return XXH64_finalize(h, p, len);
+}
+
+// Streaming XXH64 state (reference XXH64_state_t layout). Owned by value on the
+// Rust side, so no allocation: new/update/digest operate on this POD.
+struct XXH64State {
+    u64 total_len;
+    u64 v[4]; // accumulators
+    u64 mem64[4]; // 32-byte staging buffer (as u64 for alignment)
+    u32 memsize; // bytes currently buffered (0..31)
+};
+
+static void XXH64_reset(XXH64State* s, u64 seed)
+{
+    std::memset(s, 0, sizeof(*s));
+    s->v[0] = seed + PRIME64_1 + PRIME64_2;
+    s->v[1] = seed + PRIME64_2;
+    s->v[2] = seed + 0;
+    s->v[3] = seed - PRIME64_1;
+}
+
+static void XXH64_update(XXH64State* s, const u8* input, size_t len)
+{
+    if (len == 0) return;
+    const u8* p = input;
+    const u8* const end = p + len;
+    s->total_len += len;
+
+    u8* const mem = reinterpret_cast<u8*>(s->mem64);
+    if (s->memsize + len < 32) {
+        // Not enough to fill the buffer — just stage.
+        std::memcpy(mem + s->memsize, input, len);
+        s->memsize += static_cast<u32>(len);
+        return;
+    }
+
+    if (s->memsize) {
+        // Complete the staged block, consume 32 bytes.
+        std::memcpy(mem + s->memsize, input, 32 - s->memsize);
+        s->v[0] = XXH64_round(s->v[0], ReadLE64(mem + 0));
+        s->v[1] = XXH64_round(s->v[1], ReadLE64(mem + 8));
+        s->v[2] = XXH64_round(s->v[2], ReadLE64(mem + 16));
+        s->v[3] = XXH64_round(s->v[3], ReadLE64(mem + 24));
+        p += 32 - s->memsize;
+        s->memsize = 0;
+    }
+
+    if (p + 32 <= end) {
+        const u8* const limit = end - 32;
+        u64 v1 = s->v[0], v2 = s->v[1], v3 = s->v[2], v4 = s->v[3];
+        do {
+            v1 = XXH64_round(v1, ReadLE64(p));
+            p += 8;
+            v2 = XXH64_round(v2, ReadLE64(p));
+            p += 8;
+            v3 = XXH64_round(v3, ReadLE64(p));
+            p += 8;
+            v4 = XXH64_round(v4, ReadLE64(p));
+            p += 8;
+        } while (p <= limit);
+        s->v[0] = v1;
+        s->v[1] = v2;
+        s->v[2] = v3;
+        s->v[3] = v4;
+    }
+
+    if (p < end) {
+        std::memcpy(mem, p, static_cast<size_t>(end - p));
+        s->memsize = static_cast<u32>(end - p);
+    }
+}
+
+static u64 XXH64_digest(const XXH64State* s)
+{
+    const u8* const mem = reinterpret_cast<const u8*>(s->mem64);
+    u64 h;
+    if (s->total_len >= 32) {
+        h = Rotl64(s->v[0], 1) + Rotl64(s->v[1], 7) + Rotl64(s->v[2], 12) + Rotl64(s->v[3], 18);
+        h = XXH64_mergeRound(h, s->v[0]);
+        h = XXH64_mergeRound(h, s->v[1]);
+        h = XXH64_mergeRound(h, s->v[2]);
+        h = XXH64_mergeRound(h, s->v[3]);
+    } else {
+        h = s->v[2] /* seed + 0 */ + PRIME64_5;
+    }
+    h += s->total_len;
+    return XXH64_finalize(h, mem, static_cast<size_t>(s->memsize));
+}
+
 } // namespace xxh3
 } // namespace bun
 
@@ -407,6 +651,11 @@ static u64 Hash64(const u8* input, size_t len, u64 seed)
 
 } // namespace xxh3
 
+// Opaque-to-Rust streaming XXH64 state. `bun_hash` holds this by value (an
+// `[u64; 10]` mirror); its size/alignment must match. 80 bytes, 8-aligned.
+static_assert(sizeof(bun::xxh3::XXH64State) == 80, "XXH64State size changed; update the Rust mirror in bun_hash");
+static_assert(alignof(bun::xxh3::XXH64State) == 8, "XXH64State alignment changed; update the Rust mirror in bun_hash");
+
 extern "C" {
 
 // Runtime-dispatched XXH3_64bits_withSeed. `input` may be null only when
@@ -414,6 +663,35 @@ extern "C" {
 uint64_t highway_xxhash3_64(const uint8_t* input, size_t len, uint64_t seed)
 {
     return bun::xxh3::Hash64(input, len, seed);
+}
+
+// XXH32 one-shot. Scalar; bit-identical to the reference / Zig std.hash.XxHash32.
+uint32_t highway_xxhash32(const uint8_t* input, size_t len, uint32_t seed)
+{
+    return bun::xxh3::XXH32(input, len, seed);
+}
+
+// XXH64 one-shot. Scalar; bit-identical to the reference / Zig std.hash.XxHash64.
+uint64_t highway_xxhash64(const uint8_t* input, size_t len, uint64_t seed)
+{
+    return bun::xxh3::XXH64(input, len, seed);
+}
+
+// Streaming XXH64: state is a 56-byte POD owned by the caller. reset → repeated
+// update(any chunk sizes) → digest; output equals XXH64 of the concatenation.
+void highway_xxhash64_reset(void* state, uint64_t seed)
+{
+    bun::xxh3::XXH64_reset(static_cast<bun::xxh3::XXH64State*>(state), seed);
+}
+
+void highway_xxhash64_update(void* state, const uint8_t* input, size_t len)
+{
+    bun::xxh3::XXH64_update(static_cast<bun::xxh3::XXH64State*>(state), input, len);
+}
+
+uint64_t highway_xxhash64_digest(const void* state)
+{
+    return bun::xxh3::XXH64_digest(static_cast<const bun::xxh3::XXH64State*>(state));
 }
 
 } // extern "C"

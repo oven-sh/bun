@@ -1,8 +1,11 @@
 //! XxHash32 / XxHash64 / XxHash3.
 //!
-//! Thin wrappers over the `twox-hash` crate (the canonical Rust port of the
-//! reference xxHash). Output is bit-identical to `std.hash.XxHash{32,64,3}` in
-//! Zig — both follow Cyan4973's reference test vectors.
+//! Thin wrappers over the C++/Highway xxHash kernel in
+//! `src/jsc/bindings/xxhash3.cpp` (exposed by `bun_highway`). XXH3's long-input
+//! stripe loop is runtime-dispatched to the widest SIMD ISA the CPU supports;
+//! XXH32/XXH64 are scalar (no SIMD form exists in the reference). Output is
+//! bit-identical to `std.hash.XxHash{32,64,3}` in Zig and to the xxHash
+//! reference test vectors — verified by the vector suite + SMHasher below.
 //!
 //! `HashObject.zig` exposes these via `hashWrap` with a `(seed, bytes)`
 //! signature (seed first, unlike Murmur/CityHash).
@@ -12,7 +15,7 @@ pub struct XxHash32;
 impl XxHash32 {
     #[inline]
     pub fn hash(seed: u32, input: &[u8]) -> u32 {
-        twox_hash::XxHash32::oneshot(seed, input)
+        bun_highway::xxhash32(seed, input)
     }
 }
 
@@ -21,32 +24,31 @@ pub struct XxHash64;
 impl XxHash64 {
     #[inline]
     pub fn hash(seed: u64, input: &[u8]) -> u64 {
-        twox_hash::XxHash64::oneshot(seed, input)
+        bun_highway::xxhash64(seed, input)
     }
 }
 
-use core::hash::Hasher;
-
-/// Streaming `std.hash.XxHash64` — used by `bundle_v2.zig:ContentHasher`
+/// Streaming `std.hash.XxHash64` — used by the bundler's `ContentHasher`
 /// (length-prefixed chunk hashing across many `update()` calls before a single
-/// `digest()`). Wraps `twox_hash::XxHash64` so the workspace has exactly one
-/// xxhash implementation; output is bit-identical to Zig's `std.hash.XxHash64`.
-pub struct XxHash64Streaming(twox_hash::XxHash64);
+/// `digest()`), plus the dev-server source-map hash and the resolver stat hash.
+/// Wraps `bun_highway::XxHash64State` so the workspace has exactly one xxhash
+/// implementation; output is bit-identical to Zig's `std.hash.XxHash64`.
+pub struct XxHash64Streaming(bun_highway::XxHash64State);
 
 impl XxHash64Streaming {
     #[inline]
     pub fn new(seed: u64) -> Self {
-        Self(twox_hash::XxHash64::with_seed(seed))
+        Self(bun_highway::XxHash64State::new(seed))
     }
 
     #[inline]
     pub fn update(&mut self, bytes: &[u8]) {
-        self.0.write(bytes);
+        self.0.update(bytes);
     }
 
     #[inline]
     pub fn digest(&self) -> u64 {
-        self.0.finish()
+        self.0.digest()
     }
 }
 
@@ -62,16 +64,19 @@ pub struct XxHash3;
 impl XxHash3 {
     #[inline]
     pub fn hash(seed: u64, input: &[u8]) -> u64 {
-        twox_hash::XxHash3_64::oneshot_with_seed(seed, input)
+        bun_highway::xxhash3_64(seed, input)
     }
 }
 
-#[cfg(test)]
+// These tests call the C++/Highway kernel through the FFI, so they can't run
+// under Miri (no foreign-function support) — gate them out there. The rest of
+// `bun_hash` (cityhash/murmur/adler/rapidhash) stays Miri-tested.
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 
-    // Vectors copied verbatim from `vendor/zig/lib/std/hash/xxhash.zig` to
-    // prove twox-hash matches Zig std.hash output.
+    // Vectors copied verbatim from the xxHash reference (and Zig
+    // `std.hash.xxhash`) to prove the C++ kernel matches reference output.
 
     #[test]
     fn xxhash3_vectors() {

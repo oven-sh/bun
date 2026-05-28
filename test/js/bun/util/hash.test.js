@@ -167,6 +167,71 @@ describe("xxHash3 SIMD kernel", () => {
   });
 });
 
+// XXH32 and XXH64 are now C++ (src/jsc/bindings/xxhash3.cpp) — scalar, no SIMD
+// form in the reference. These vectors pin the output bit-identical to the
+// xxHash reference (and the retired twox-hash crate) across every length branch
+// (16/32-byte stripes, trailing 4-/1-byte tails) and a seeded case. Input byte
+// i = (i * 191 + 17) & 0xff.
+describe("xxHash32 / xxHash64 reference vectors", () => {
+  const makeInput = n => {
+    const b = new Uint8Array(n);
+    for (let i = 0; i < n; i++) b[i] = (i * 191 + 17) & 0xff;
+    return b;
+  };
+
+  it("xxHash32 matches the reference", () => {
+    // [length, seed, expected u32]
+    const REFERENCE = [
+      [0, 0, 0x02cc5d05],
+      [0, 0xabcdef01, 0x994fa74b],
+      [1, 0, 0xb804f774],
+      [3, 0xabcdef01, 0x43722566],
+      [4, 0, 0xf025fee3],
+      [15, 0, 0x8c29721d],
+      [16, 0, 0x9c01fb3f],
+      [16, 0xabcdef01, 0x850a7a8c],
+      [31, 0, 0x053d400f],
+      [32, 0, 0xa756e696],
+      [33, 0xabcdef01, 0x62f10491],
+      [64, 0, 0x66b9c369],
+      [240, 0, 0xf93f2096],
+      [256, 0xabcdef01, 0xd19b892a],
+      [1024, 0, 0xc6f48900],
+      [65536, 0, 0x4eaba9f5],
+      [131072, 0xabcdef01, 0x55124bc7],
+    ];
+    for (const [len, seed, expected] of REFERENCE) {
+      expect(Bun.hash.xxHash32(makeInput(len), seed)).toBe(expected);
+    }
+  });
+
+  it("xxHash64 matches the reference", () => {
+    // [length, seed, expected u64]
+    const REFERENCE = [
+      [0, 0n, 0xef46db3751d8e999n],
+      [0, 0xabcdef01n, 0x4ec16b94b18c49efn],
+      [1, 0n, 0xad10cd9780ac4ff7n],
+      [3, 0xabcdef01n, 0xf63c72cac1f3f4c4n],
+      [4, 0n, 0x7e8a72c9a223a1c0n],
+      [8, 0n, 0xb6e941d7f6bbbb0cn],
+      [15, 0n, 0x131410330f796b84n],
+      [16, 0n, 0x82facd078c4684ccn],
+      [31, 0xabcdef01n, 0xea551fb3e7ef7b93n],
+      [32, 0n, 0xd27d959564fd4575n],
+      [33, 0n, 0x2d5ce4a1d52b96den],
+      [64, 0xabcdef01n, 0x84ce6b0d00882c58n],
+      [240, 0n, 0xb1d89115ab8aa560n],
+      [256, 0n, 0x5ace78799b251d86n],
+      [1024, 0xabcdef01n, 0x52a820eb6c45f54en],
+      [65536, 0n, 0x86ec0151ae772f43n],
+      [131072, 0n, 0x6d834d77afc89932n],
+    ];
+    for (const [len, seed, expected] of REFERENCE) {
+      expect(Bun.hash.xxHash64(makeInput(len), seed)).toBe(expected);
+    }
+  });
+});
+
 it("does not crash when changing Int32Array constructor with Bun.hash.xxHash32 as species", () => {
   const arr = new Int32Array();
   function foo(a4) {

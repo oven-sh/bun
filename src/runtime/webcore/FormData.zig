@@ -203,37 +203,6 @@ pub const FormData = struct {
         @export(&jsFunctionFromMultipartData, .{ .name = "FormData__jsFunctionFromMultipartData" });
     }
 
-    /// Reverse the WHATWG multipart/form-data escaping applied to `name=`/
-    /// `filename=` values in a `Content-Disposition` header: `%0A`→LF,
-    /// `%0D`→CR, `%22`→`"`. Hex digits in `%0A`/`%0D` are matched case-
-    /// insensitively to match undici/Node. Every other byte (including any
-    /// other `%xx` sequence) passes through unchanged. Returns `null` when
-    /// the input contains no `%` so the caller can keep borrowing the
-    /// original slice without allocating.
-    fn unescapeFormDataName(bytes: []const u8) ?[]u8 {
-        if (strings.indexOfChar(bytes, '%') == null) return null;
-        var out = std.ArrayList(u8).initCapacity(bun.default_allocator, bytes.len) catch bun.outOfMemory();
-        var i: usize = 0;
-        while (i < bytes.len) {
-            if (bytes[i] == '%' and i + 2 < bytes.len) {
-                const replacement: ?u8 = switch (@as(u16, bytes[i + 1]) << 8 | bytes[i + 2]) {
-                    (@as(u16, '0') << 8 | 'A'), (@as(u16, '0') << 8 | 'a') => '\n',
-                    (@as(u16, '0') << 8 | 'D'), (@as(u16, '0') << 8 | 'd') => '\r',
-                    (@as(u16, '2') << 8 | '2') => '"',
-                    else => null,
-                };
-                if (replacement) |b| {
-                    out.append(b) catch bun.outOfMemory();
-                    i += 3;
-                    continue;
-                }
-            }
-            out.append(bytes[i]) catch bun.outOfMemory();
-            i += 1;
-        }
-        return out.items;
-    }
-
     pub fn toJSFromMultipartData(
         globalThis: *jsc.JSGlobalObject,
         input: []const u8,
@@ -251,16 +220,10 @@ pub const FormData = struct {
 
             pub fn onEntry(wrap: *@This(), name: bun.Semver.String, field: Field, buf: []const u8) void {
                 const value_str = field.value;
-                const name_raw = name.slice(buf);
-                const name_unescaped = unescapeFormDataName(name_raw);
-                defer if (name_unescaped) |b| bun.default_allocator.free(b);
-                var key = jsc.ZigString.initUTF8(name_unescaped orelse name_raw);
+                var key = jsc.ZigString.initUTF8(name.slice(buf));
 
                 if (field.is_file) {
-                    const filename_raw = field.filename.slice(buf);
-                    const filename_unescaped = unescapeFormDataName(filename_raw);
-                    defer if (filename_unescaped) |b| bun.default_allocator.free(b);
-                    const filename_str = filename_unescaped orelse filename_raw;
+                    const filename_str = field.filename.slice(buf);
 
                     var blob = jsc.WebCore.Blob.create(value_str, bun.default_allocator, wrap.globalThis, false);
                     defer blob.detach();

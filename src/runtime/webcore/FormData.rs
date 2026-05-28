@@ -207,9 +207,9 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 /// so the caller can keep borrowing the original slice without allocating.
 /// Inverse of `escape_form_data_name` in `Blob.rs`.
 fn unescape_form_data_name(bytes: &[u8]) -> Option<Vec<u8>> {
-    if strings::index_of_char(bytes, b'%').is_none() {
-        return None;
-    }
+    // Fast path: no `%` means nothing to unescape, so bail out (returning
+    // `None`) and let the caller keep borrowing the original slice.
+    strings::index_of_char(bytes, b'%')?;
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {

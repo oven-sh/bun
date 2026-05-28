@@ -212,6 +212,26 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(ret).toBe(6);
     });
 
+    it("slice(start, end past EOF) is clamped to the available bytes", async () => {
+      using dir = tempDir("bun-write-file-slice-past-eof", { "src.txt": alphabet });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      // A file blob is lazy, so slice(5, 100) doesn't know the file is 26 bytes;
+      // the copy must stop at EOF and not zero-extend the destination to 95.
+      const ret = await Bun.write(dst, Bun.file(src).slice(5, 100));
+      expect(await Bun.file(dst).text()).toBe("FGHIJKLMNOPQRSTUVWXYZ");
+      expect(ret).toBe(21);
+    });
+
+    it("slice(0, end past EOF) copies the whole file without padding", async () => {
+      using dir = tempDir("bun-write-file-slice-head-past-eof", { "src.txt": alphabet });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      const ret = await Bun.write(dst, Bun.file(src).slice(0, 100));
+      expect(await Bun.file(dst).text()).toBe(alphabet);
+      expect(ret).toBe(26);
+    });
+
     it("unsliced source still copies the whole file", async () => {
       using dir = tempDir("bun-write-file-slice-whole", { "src.txt": alphabet });
       const src = join(String(dir), "src.txt");

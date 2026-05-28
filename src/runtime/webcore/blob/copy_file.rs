@@ -558,13 +558,23 @@ impl<'a> CopyFile<'a> {
                     bun_sys::E::EBADF => {
                         let mut total_written: u64 = 0;
 
+                        // For a non-seekable destination (pipe/FIFO) fcopyfile
+                        // bailed before copying; the read/write loop honors a
+                        // finite slice window here (ftruncate can't trim a pipe).
+                        // MAX_SIZE means "whole file" → 0 (read to EOF).
+                        let copy_len = if self.max_length == MAX_SIZE {
+                            0
+                        } else {
+                            self.max_length as usize
+                        };
+
                         // TODO: this should use non-blocking I/O.
                         match node_fs::NodeFS::copy_file_using_read_write_loop(
                             bun_core::ZStr::EMPTY,
                             bun_core::ZStr::EMPTY,
                             self.source_fd,
                             self.destination_fd,
-                            0,
+                            copy_len,
                             &mut total_written,
                         ) {
                             bun_sys::Result::Err(err) => {
@@ -922,12 +932,21 @@ impl<'a> CopyFile<'a> {
             #[cfg(target_os = "freebsd")]
             {
                 let mut total_written: u64 = 0;
+                // Read exactly the slice window so a non-seekable destination
+                // (pipe/FIFO, where the ftruncate below is a no-op) doesn't
+                // over-copy past the slice end. MAX_SIZE means "whole file" → 0
+                // (read to EOF).
+                let copy_len = if self.max_length == MAX_SIZE {
+                    0
+                } else {
+                    self.max_length as usize
+                };
                 match node_fs::NodeFS::copy_file_using_read_write_loop(
                     bun_core::ZStr::EMPTY,
                     bun_core::ZStr::EMPTY,
                     self.source_fd,
                     self.destination_fd,
-                    0,
+                    copy_len,
                     &mut total_written,
                 ) {
                     bun_sys::Result::Err(err) => {
@@ -1467,7 +1486,36 @@ impl<'a> CopyFileWindows<'a> {
         }
     }
 
+    /// Clamp a finite slice window (`size != MAX_SIZE`) to the bytes actually
+    /// available in the source, mirroring the POSIX path's `fstat`-based
+    /// `max_length = min(st_size, end).max(offset) - offset`. A file blob is
+    /// lazy (`size == MAX_SIZE` until stat), so `slice(start, end)` can request
+    /// an `end` past EOF; without this the read/write loop would write the real
+    /// bytes but `on_complete` would then extend the destination up to the
+    /// unclamped length with NUL padding (and resolve with it).
+    fn clamp_size_to_source(&mut self) {
+        if self.size == MAX_SIZE {
+            return;
+        }
+        let source = &self.source_file_store.data.as_file();
+        let stat_result = if let PathOrFileDescriptor::Fd(fd) = &source.pathlike {
+            bun_sys::fstat(*fd)
+        } else {
+            let mut path_buf = PathBuffer::uninit();
+            bun_sys::stat(source.pathlike.path().slice_z(&mut path_buf))
+        };
+        if let bun_sys::Result::Ok(stat) = stat_result {
+            // Windows `uv_stat_t::st_size` is u64, matching `SizeType`.
+            let available: SizeType = stat.st_size.saturating_sub(self.offset);
+            self.size = self.size.min(available);
+        }
+    }
+
     fn copyfile(&mut self) {
+        // A finite slice can request an end past the source EOF; clamp it to the
+        // real available bytes before anything decides how much to copy/truncate.
+        self.clamp_size_to_source();
+
         // uv_fs_copyfile always copies the whole source file; it can't honor a
         // slice offset. A sliced source blob must go through the positioned
         // read/write loop, which reads from `read_pos` (seeded with `offset`).

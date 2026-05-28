@@ -3474,6 +3474,12 @@ impl<Enc: Encoding> NodeProperties<Enc> {
         self.has_tag.as_ref().map(|t| t.line)
     }
 
+    pub fn take_tag(&mut self) -> NodeTag {
+        let t = self.tag();
+        self.has_tag = None;
+        t
+    }
+
     pub fn tag_indent(&self) -> Option<Indent> {
         self.has_tag.as_ref().map(|t| t.indent)
     }
@@ -4061,21 +4067,39 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             break 'node Expr::init(E::Null {}, self.token.start.loc());
                         }
                     }
-                    // The properties recorded in node_props apply to the
-                    // e-node key (`!!str : x` → key ""), not to the mapping.
-                    let first_key = node_props.tag().resolve_null(self.token.start.loc());
-                    if let Some(anchor) = node_props.anchor() {
+                    // [200]/[193] split: a property on the `:` line is the
+                    // e-node key's (`!!str : x` → key ""); on a prior line
+                    // it is the [200] block-collection's. Only the key's tag
+                    // affects resolution.
+                    let colon_line = self.token.line;
+                    let key_tag = if node_props.tag_line() == Some(colon_line) {
+                        node_props.take_tag()
+                    } else {
+                        NodeTag::None
+                    };
+                    let first_key = key_tag.resolve_null(self.token.start.loc());
+
+                    let implicit_key_anchors =
+                        node_props.implicit_key_anchors(colon_line)?;
+                    if let Some(key_anchor) = implicit_key_anchors.key_anchor {
                         self.anchors
-                            .put(Enc::key_bytes(anchor.slice(self.input)), first_key)?;
+                            .put(Enc::key_bytes(key_anchor.slice(self.input)), first_key)?;
                     }
-                    node_props = NodeProperties::default();
-                    break 'node self.parse_block_mapping(
+
+                    let mapping = self.parse_block_mapping(
                         first_key,
                         self.token.start,
                         self.token.indent,
-                        self.token.line,
+                        colon_line,
                         opts.flow_pair_allowed,
                     )?;
+
+                    if let Some(mapping_anchor) = implicit_key_anchors.mapping_anchor {
+                        self.anchors
+                            .put(Enc::key_bytes(mapping_anchor.slice(self.input)), mapping)?;
+                    }
+                    node_props = NodeProperties::default();
+                    break 'node mapping;
                 }
 
                 TokenData::Scalar(_) => {

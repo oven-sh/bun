@@ -1201,9 +1201,21 @@ folded: >
           expect(YAML.parse("- ? &d\n- ? &e\n  : &a\n")).toEqual([{ null: null }, { null: null }]);
         });
 
-        test("anchor as implicit-key e-node, alias in later entry", () => {
-          // [154]/[159] `&a` is the key's ns-flow-yaml-node = props + e-scalar.
+        test("anchor on e-node implicit key — [200]/[193] line split", () => {
+          // Same line as `:` → key's anchor.
           expect(YAML.parse("&a : x\nb: *a\n")).toEqual({ null: "x", b: null });
+          // Prior line → [200] collection's anchor.
+          expect(YAML.parse("- &a\n  : x\n- *a\n")).toEqual([{ null: "x" }, { null: "x" }]);
+          // Two anchors on separate lines before `:` — the inner can't be the
+          // key's (different line), and [161] disallows two collection-props.
+          expect(() => YAML.parse("&outer\n&inner\n: x\n")).toThrow("Multiple anchors");
+        });
+
+        test("tag on e-node implicit key — [200]/[193] line split", () => {
+          // Same line → key's tag (`!!str` e-node = "").
+          expect(YAML.parse("!!str : x\n")).toEqual({ "": "x" });
+          // Prior line → collection's tag; key stays null.
+          expect(YAML.parse("!!str\n: x\n")).toEqual({ null: "x" });
         });
 
         test("at top level, content at indent 0 is still content (n = -1)", () => {

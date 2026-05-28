@@ -1906,38 +1906,57 @@ foo: bar
         });
       });
 
-      test("duplicate keys from the same anchor", () => {
-        let input = `
+      test("explicit key after merged-in same key overrides (no error)", () => {
+        const input = `
+defaults: &d
+  foo: 1
+  bar: 2
+config:
+  <<: *d
+  foo: 3`;
+        expect(YAML.parse(input)).toEqual({
+          defaults: { foo: 1, bar: 2 },
+          config: { foo: 3, bar: 2 },
+        });
+      });
+
+      describe("duplicate mapping keys (§3.2.1.3)", () => {
+        test("rejects duplicate explicit keys", () => {
+          expect(() => YAML.parse("a: 1\na: 2\n")).toThrow("Duplicate mapping key");
+          expect(() => YAML.parse("{a: 1, a: 2}\n")).toThrow("Duplicate mapping key");
+          expect(() => YAML.parse(": a\n: b\n")).toThrow("Duplicate mapping key");
+          expect(() => YAML.parse("? a\n: 1\n? a\n: 2\n")).toThrow("Duplicate mapping key");
+        });
+
+        test("compares keys at the YAML node level, not JS-coerced", () => {
+          // null and "null" are different YAML nodes (different keys).
+          expect(YAML.parse("~: a\n'null': b\n")).toEqual({ null: "b" });
+          // 1 (int) and "1" (string) are different YAML nodes.
+          expect(YAML.parse("1: a\n'1': b\n")).toEqual({ 1: "b" });
+        });
+
+        test("explicit key after merged-in same key overrides (no error)", () => {
+          expect(YAML.parse("<<: {a: 2}\na: 1\n")).toEqual({ a: 1 });
+          expect(YAML.parse("<<: {a: 2, b: 3}\na: 1\nb: 9\n")).toEqual({ b: 9, a: 1 });
+        });
+
+        test("merged-in key after explicit same key is skipped (no error)", () => {
+          expect(YAML.parse("a: 1\n<<: {a: 2, b: 3}\n")).toEqual({ a: 1, b: 3 });
+        });
+
+        test("alias to a key node is the same key (duplicate)", () => {
+          expect(() => YAML.parse("{ &a [x]: 1, *a : 2 }\n")).toThrow("Duplicate mapping key");
+        });
+      });
+
+      test("duplicate explicit keys inside the anchor source error", () => {
+        const input = `
 defaults: &d
   foo: 1
   foo: 2
 config:
   <<: *d`;
-        expect(YAML.parse(input)).toEqual({
-          defaults: {
-            foo: 2,
-          },
-          config: {
-            foo: 2,
-          },
-        });
-
-        // Can still override
-        input = `
-defaults: &d
-  foo: 1
-  foo: 2
-config:
-  <<: *d
-  foo: 3`;
-        expect(YAML.parse(input)).toEqual({
-          defaults: {
-            foo: 2,
-          },
-          config: {
-            foo: 3,
-          },
-        });
+        expect(() => YAML.parse(input)).toThrow("Duplicate mapping key");
       });
     });
   });

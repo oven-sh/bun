@@ -182,15 +182,14 @@ test("yaml-test-suite/2G84/03", () => {
 
 test("yaml-test-suite/2JQS", () => {
   // Block Mapping with Missing Keys (using test.event for expected values)
+  // Upstream has no `error` file (parse-valid), but both keys are e-node
+  // null — duplicate at the representation level. Per §3.2.1.3 mapping
+  // keys must be unique; Bun errors (matches eemeli/yaml, ruamel).
   const input: string = `: a
 : b
 `;
 
-  const parsed = YAML.parse(input);
-
-  const expected: any = { null: "b" };
-
-  expect(parsed).toEqual(expected);
+  expect(() => YAML.parse(input)).toThrow("Duplicate mapping key");
 });
 
 test("yaml-test-suite/2LFX", () => {
@@ -5998,17 +5997,15 @@ test("yaml-test-suite/WZ62", () => {
 
 test("yaml-test-suite/X38W", () => {
   // Aliases in Flow Objects
-  // Special case: *a references the same array as first key, creating duplicate key
+  // Upstream has no `error` file (parse-valid), but key2 is `*a` (alias to
+  // key1's array) — same node identity, duplicate at the representation
+  // level. Per §3.2.1.3 mapping keys must be unique; Bun errors (matches
+  // js-yaml, PyYAML, ruamel; eemeli accepts only because its
+  // key-stringification differs so the keys don't collide).
   const input: string = `{ &a [a, &b b]: *b, *a : [c, *b, d]}
 `;
 
-  const parsed = YAML.parse(input);
-
-  const expected: any = {
-    "a,b": ["c", "b", "d"],
-  };
-
-  expect(parsed).toEqual(expected);
+  expect(() => YAML.parse(input)).toThrow("Duplicate mapping key");
 });
 
 test("yaml-test-suite/X4QW", () => {

@@ -781,6 +781,8 @@ pub enum ParseError {
     MultilineImplicitKey,
     #[error("MultipleAnchors")]
     MultipleAnchors,
+    #[error("DuplicateKey")]
+    DuplicateKey,
     #[error("MultipleTags")]
     MultipleTags,
     #[error("UnexpectedDocumentStart")]
@@ -2156,6 +2158,7 @@ pub enum ParseResultError {
     UnresolvedAlias { pos: Pos },
     MultilineImplicitKey { pos: Pos },
     MultipleAnchors { pos: Pos },
+    DuplicateKey { pos: Pos },
     MultipleTags { pos: Pos },
     UnexpectedDocumentStart { pos: Pos },
     UnexpectedDocumentEnd { pos: Pos },
@@ -2195,6 +2198,9 @@ impl ParseResultError {
             }
             ParseResultError::MultipleAnchors { pos } => {
                 log.add_error(Some(source), pos.loc(), b"Multiple anchors");
+            }
+            ParseResultError::DuplicateKey { pos } => {
+                log.add_error(Some(source), pos.loc(), b"Duplicate mapping key");
             }
             ParseResultError::MultipleTags { pos } => {
                 log.add_error(Some(source), pos.loc(), b"Multiple tags");
@@ -2251,6 +2257,9 @@ impl<Enc: Encoding> ParseResult<Enc> {
                 pos: parser.token.start,
             },
             ParseError::MultipleAnchors => ParseResultError::MultipleAnchors {
+                pos: parser.token.start,
+            },
+            ParseError::DuplicateKey => ParseResultError::DuplicateKey {
                 pos: parser.token.start,
             },
             ParseError::MultipleTags => ParseResultError::MultipleTags {
@@ -3161,6 +3170,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
 pub struct MappingProps {
     list: G::PropertyList,
+    /// `list[i]` was added by a direct key (not via `<<` merge). Parallel to
+    /// `list`; used by the duplicate-key check so an explicit key after a
+    /// merged-in key overrides instead of erroring.
+    explicit_at: Vec<bool>,
     merge_index: bun_collections::HashMap<u64, Vec<u32>>,
     merge_indexed: usize,
 }
@@ -3171,12 +3184,46 @@ impl MappingProps {
     pub fn init() -> Self {
         Self {
             list: bun_alloc::AstAlloc::vec(),
+            explicit_at: Vec::new(),
             merge_index: bun_collections::HashMap::default(),
             merge_indexed: 0,
         }
     }
 
-    pub fn append(&mut self, prop: G::Property) -> Result<(), AllocError> {
+    /// Hash + index `key`. If an equal *explicit* key is already present →
+    /// DuplicateKey. If an equal *merged-in* key is present → return its
+    /// index so the caller can override the value in place.
+    fn check_and_index_key(
+        &mut self,
+        key: &Expr,
+    ) -> Result<Option<usize>, ParseError> {
+        let hash = Parser::<Utf8>::yaml_merge_key_expr_hash(key);
+        let bucket = self.merge_index.get_or_put(hash)?.value_ptr;
+        for existing_idx in bucket.iter() {
+            let i = *existing_idx as usize;
+            let existing_key = self.list[i].key.as_ref().unwrap();
+            if Parser::<Utf8>::yaml_merge_key_expr_eql(existing_key, key) {
+                if self.explicit_at[i] {
+                    return Err(ParseError::DuplicateKey);
+                }
+                // Merged-in entry — caller overrides in place.
+                self.explicit_at[i] = true;
+                return Ok(Some(i));
+            }
+        }
+        bucket.push(self.list.len() as u32);
+        self.merge_indexed = self.list.len() + 1;
+        Ok(None)
+    }
+
+    pub fn append(&mut self, prop: G::Property) -> Result<(), ParseError> {
+        if let Some(key) = prop.key.as_ref() {
+            if let Some(override_idx) = self.check_and_index_key(key)? {
+                self.list[override_idx].value = prop.value;
+                return Ok(());
+            }
+        }
+        self.explicit_at.push(true);
         self.list.push(prop);
         Ok(())
     }
@@ -3215,6 +3262,7 @@ impl MappingProps {
             *budget = budget.checked_sub(1).ok_or(AllocError)?;
             // `G::Property` is not `Clone`; reconstruct from its `Copy` fields
             // (Zig copied the struct by value).
+            self.explicit_at.push(false);
             self.list.push(G::Property {
                 key: merge_prop.key,
                 value: merge_prop.value,
@@ -3238,7 +3286,7 @@ impl MappingProps {
         key: Expr,
         value: Expr,
         budget: &mut usize,
-    ) -> Result<(), AllocError> {
+    ) -> Result<(), ParseError> {
         let is_merge_key = match &key.data {
             ast::ExprData::EString(key_str) => key_str.eql_comptime(b"<<"),
             _ => false,
@@ -3246,6 +3294,11 @@ impl MappingProps {
         // TODO(port): exact ExprData variant names depend on bun_ast.
 
         if !is_merge_key {
+            if let Some(override_idx) = self.check_and_index_key(&key)? {
+                self.list[override_idx].value = Some(value);
+                return Ok(());
+            }
+            self.explicit_at.push(true);
             self.list.push(G::Property {
                 key: Some(key),
                 value: Some(value),
@@ -3255,7 +3308,10 @@ impl MappingProps {
         }
 
         match &value.data {
-            ast::ExprData::EObject(value_obj) => self.merge(value_obj.properties.slice(), budget),
+            ast::ExprData::EObject(value_obj) => {
+                self.merge(value_obj.properties.slice(), budget)?;
+                Ok(())
+            }
             ast::ExprData::EArray(value_arr) => {
                 for item in value_arr.items.slice() {
                     let item_obj = match &item.data {
@@ -3267,6 +3323,11 @@ impl MappingProps {
                 Ok(())
             }
             _ => {
+                if let Some(override_idx) = self.check_and_index_key(&key)? {
+                    self.list[override_idx].value = Some(value);
+                    return Ok(());
+                }
+                self.explicit_at.push(true);
                 self.list.push(G::Property {
                     key: Some(key),
                     value: Some(value),
@@ -3279,6 +3340,7 @@ impl MappingProps {
 
     pub fn move_list(&mut self) -> G::PropertyList {
         self.merge_index.clear();
+        self.explicit_at.clear();
         self.merge_indexed = 0;
         core::mem::replace(&mut self.list, bun_alloc::AstAlloc::vec())
     }

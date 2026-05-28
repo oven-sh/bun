@@ -133,6 +133,86 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
     return text_len;
 }
 
+// Index of the first byte that HTML-escapes: one of " & ' < >.
+// Returns text_len if none are present.
+size_t IndexOfHTMLEscapeChar8Impl(const uint8_t* HWY_RESTRICT text, size_t text_len)
+{
+    if (text_len == 0) return 0;
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_quot = hn::Set(d, uint8_t { '"' });
+    const auto vec_amp = hn::Set(d, uint8_t { '&' });
+    const auto vec_apos = hn::Set(d, uint8_t { '\'' });
+    const auto vec_lt = hn::Set(d, uint8_t { '<' });
+    const auto vec_gt = hn::Set(d, uint8_t { '>' });
+
+    size_t i = 0;
+    const size_t simd_text_len = text_len - (text_len % N);
+    for (; i < simd_text_len; i += N) {
+        const auto text_vec = hn::LoadU(d, text + i);
+        const auto found_mask = hn::Or(
+            hn::Or(hn::Eq(text_vec, vec_quot), hn::Eq(text_vec, vec_amp)),
+            hn::Or(hn::Eq(text_vec, vec_apos), hn::Or(hn::Eq(text_vec, vec_lt), hn::Eq(text_vec, vec_gt))));
+
+        const intptr_t pos = hn::FindFirstTrue(d, found_mask);
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    for (; i < text_len; ++i) {
+        const uint8_t c = text[i];
+        if (c == '"' || c == '&' || c == '\'' || c == '<' || c == '>') {
+            return i;
+        }
+    }
+
+    return text_len;
+}
+
+// Index of the first UTF-16 code unit that HTML-escapes: one of " & ' < >.
+// Returns text_len if none are present. The five metacharacters are all < 0x80,
+// so no surrogate code unit (0xD800-0xDFFF) can collide with them — non-ASCII
+// text with no metacharacters is reported as "nothing to escape", and the
+// escape loop can copy every non-metacharacter code unit through verbatim.
+size_t IndexOfHTMLEscapeChar16Impl(const uint16_t* HWY_RESTRICT text, size_t text_len)
+{
+    if (text_len == 0) return 0;
+    using D16 = hn::ScalableTag<uint16_t>;
+    D16 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_quot = hn::Set(d, uint16_t { '"' });
+    const auto vec_amp = hn::Set(d, uint16_t { '&' });
+    const auto vec_apos = hn::Set(d, uint16_t { '\'' });
+    const auto vec_lt = hn::Set(d, uint16_t { '<' });
+    const auto vec_gt = hn::Set(d, uint16_t { '>' });
+
+    size_t i = 0;
+    const size_t simd_text_len = text_len - (text_len % N);
+    for (; i < simd_text_len; i += N) {
+        const auto text_vec = hn::LoadU(d, text + i);
+        const auto found_mask = hn::Or(
+            hn::Or(hn::Eq(text_vec, vec_quot), hn::Eq(text_vec, vec_amp)),
+            hn::Or(hn::Eq(text_vec, vec_apos), hn::Or(hn::Eq(text_vec, vec_lt), hn::Eq(text_vec, vec_gt))));
+
+        const intptr_t pos = hn::FindFirstTrue(d, found_mask);
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    for (; i < text_len; ++i) {
+        const uint16_t c = text[i];
+        if (c == '"' || c == '&' || c == '\'' || c == '<' || c == '>') {
+            return i;
+        }
+    }
+
+    return text_len;
+}
+
 void CopyU16ToU8Impl(const uint16_t* HWY_RESTRICT input, size_t count,
     uint8_t* HWY_RESTRICT output)
 {
@@ -171,6 +251,100 @@ void CopyU16ToU8Impl(const uint16_t* HWY_RESTRICT input, size_t count,
     for (; i < count; ++i) {
         output[i] = static_cast<uint8_t>(input[i]); // Truncation happens here
     }
+}
+
+// Extra bytes the HTML-escaped output needs beyond the input length: each
+// metacharacter's entity is longer than its 1 source byte, by
+//   & -> &amp;   (+4)    < -> &lt;   (+3)    > -> &gt;   (+3)
+//   " -> &quot;  (+5)    ' -> &#x27; (+5)
+// so escaped_len == input_len + HtmlEscapeExtraLen(input). Summing per
+// metacharacter class with CountTrue keeps this a single pass, letting the
+// caller allocate the exact output size.
+size_t HtmlEscapeExtraLen8Impl(const uint8_t* HWY_RESTRICT text, size_t text_len)
+{
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_quot = hn::Set(d, uint8_t { '"' });
+    const auto vec_amp = hn::Set(d, uint8_t { '&' });
+    const auto vec_apos = hn::Set(d, uint8_t { '\'' });
+    const auto vec_lt = hn::Set(d, uint8_t { '<' });
+    const auto vec_gt = hn::Set(d, uint8_t { '>' });
+
+    size_t extra = 0;
+    size_t i = 0;
+    const size_t simd_text_len = text_len - (text_len % N);
+    for (; i < simd_text_len; i += N) {
+        const auto v = hn::LoadU(d, text + i);
+        extra += 4 * hn::CountTrue(d, hn::Eq(v, vec_amp));
+        extra += 3 * hn::CountTrue(d, hn::Or(hn::Eq(v, vec_lt), hn::Eq(v, vec_gt)));
+        extra += 5 * hn::CountTrue(d, hn::Or(hn::Eq(v, vec_quot), hn::Eq(v, vec_apos)));
+    }
+
+    for (; i < text_len; ++i) {
+        switch (text[i]) {
+        case '&':
+            extra += 4;
+            break;
+        case '<':
+        case '>':
+            extra += 3;
+            break;
+        case '"':
+        case '\'':
+            extra += 5;
+            break;
+        default:
+            break;
+        }
+    }
+
+    return extra;
+}
+
+// UTF-16 counterpart of HtmlEscapeExtraLen8Impl. Surrogate code units are all
+// > 0x80 and cannot match the metacharacters, so they contribute 0.
+size_t HtmlEscapeExtraLen16Impl(const uint16_t* HWY_RESTRICT text, size_t text_len)
+{
+    using D16 = hn::ScalableTag<uint16_t>;
+    D16 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_quot = hn::Set(d, uint16_t { '"' });
+    const auto vec_amp = hn::Set(d, uint16_t { '&' });
+    const auto vec_apos = hn::Set(d, uint16_t { '\'' });
+    const auto vec_lt = hn::Set(d, uint16_t { '<' });
+    const auto vec_gt = hn::Set(d, uint16_t { '>' });
+
+    size_t extra = 0;
+    size_t i = 0;
+    const size_t simd_text_len = text_len - (text_len % N);
+    for (; i < simd_text_len; i += N) {
+        const auto v = hn::LoadU(d, text + i);
+        extra += 4 * hn::CountTrue(d, hn::Eq(v, vec_amp));
+        extra += 3 * hn::CountTrue(d, hn::Or(hn::Eq(v, vec_lt), hn::Eq(v, vec_gt)));
+        extra += 5 * hn::CountTrue(d, hn::Or(hn::Eq(v, vec_quot), hn::Eq(v, vec_apos)));
+    }
+
+    for (; i < text_len; ++i) {
+        switch (text[i]) {
+        case '&':
+            extra += 4;
+            break;
+        case '<':
+        case '>':
+            extra += 3;
+            break;
+        case '"':
+        case '\'':
+            extra += 5;
+            break;
+        default:
+            break;
+        }
+    }
+
+    return extra;
 }
 
 // Implementation for scanCharFrequency (Unchanged from previous correct version)
@@ -1567,10 +1741,14 @@ HWY_EXPORT(EncodeHexLowerImpl);
 HWY_EXPORT(FillWithSkipMaskImpl);
 HWY_EXPORT(FirstNonAscii16Impl);
 HWY_EXPORT(FirstNonAscii8Impl);
+HWY_EXPORT(HtmlEscapeExtraLen16Impl);
+HWY_EXPORT(HtmlEscapeExtraLen8Impl);
 HWY_EXPORT(IndexOfAnyCharImpl);
 HWY_EXPORT(IndexOfCharImpl);
 HWY_EXPORT(IndexOfEscapeChar16Impl);
 HWY_EXPORT(IndexOfEscapeChar8Impl);
+HWY_EXPORT(IndexOfHTMLEscapeChar8Impl);
+HWY_EXPORT(IndexOfHTMLEscapeChar16Impl);
 HWY_EXPORT(IndexOfInterestingCharacterInMultilineCommentImpl);
 HWY_EXPORT(IndexOfInterestingCharacterInStringLiteralImpl);
 HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplBacktick);
@@ -1656,6 +1834,26 @@ size_t highway_index_of_escape_char8(const uint8_t* HWY_RESTRICT input, size_t l
 size_t highway_index_of_escape_char16(const uint16_t* HWY_RESTRICT input, size_t len)
 {
     return HWY_DYNAMIC_DISPATCH(IndexOfEscapeChar16Impl)(input, len);
+}
+
+size_t highway_index_of_html_escape_char8(const uint8_t* HWY_RESTRICT text, size_t text_len)
+{
+    return HWY_DYNAMIC_DISPATCH(IndexOfHTMLEscapeChar8Impl)(text, text_len);
+}
+
+size_t highway_index_of_html_escape_char16(const uint16_t* HWY_RESTRICT text, size_t text_len)
+{
+    return HWY_DYNAMIC_DISPATCH(IndexOfHTMLEscapeChar16Impl)(text, text_len);
+}
+
+size_t highway_html_escape_extra_len8(const uint8_t* HWY_RESTRICT text, size_t text_len)
+{
+    return HWY_DYNAMIC_DISPATCH(HtmlEscapeExtraLen8Impl)(text, text_len);
+}
+
+size_t highway_html_escape_extra_len16(const uint16_t* HWY_RESTRICT text, size_t text_len)
+{
+    return HWY_DYNAMIC_DISPATCH(HtmlEscapeExtraLen16Impl)(text, text_len);
 }
 
 size_t highway_index_of_interesting_character_in_string_literal(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t quote)

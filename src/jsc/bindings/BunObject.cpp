@@ -79,6 +79,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv5);
 
 #include "sliceAnsi.h"
+#include "escapeHTML.h"
 
 namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionBunStripANSI);
@@ -655,7 +656,6 @@ static JSValue constructBunPeekObject(VM& vm, JSObject* bunObject)
 
 extern "C" uint64_t Bun__readOriginTimer(void*);
 extern "C" double Bun__readOriginTimerStart(void*);
-static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(functionBunEscapeHTMLWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSObject*, JSString*));
 
 JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -679,37 +679,6 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     Bun__Timer__sleep(globalObject, JSValue::encode(promise), JSC::JSValue::encode(millisecondsValue));
     return JSC::JSValue::encode(promise);
-}
-
-extern "C" JSC::EncodedJSValue Bun__escapeHTML8(JSGlobalObject* globalObject, JSC::EncodedJSValue input, const Latin1Character* ptr, size_t length);
-extern "C" JSC::EncodedJSValue Bun__escapeHTML16(JSGlobalObject* globalObject, JSC::EncodedJSValue input, const char16_t* ptr, size_t length);
-
-JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    JSC::JSValue argument = callFrame->argument(0);
-    if (argument.isEmpty())
-        return JSValue::encode(jsEmptyString(vm));
-    if (argument.isNumber() || argument.isBoolean() || argument.isUndefined() || argument.isNull())
-        return JSValue::encode(argument.toString(lexicalGlobalObject));
-
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto string = argument.toString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (string->length() == 0)
-        RELEASE_AND_RETURN(scope, JSValue::encode(string));
-
-    auto resolvedString = string->view(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    JSC::EncodedJSValue encodedInput = JSValue::encode(string);
-    if (!resolvedString->is8Bit()) {
-        const auto span = resolvedString->span16();
-        RELEASE_AND_RETURN(scope, Bun__escapeHTML16(lexicalGlobalObject, encodedInput, span.data(), span.size()));
-    } else {
-        const auto span = resolvedString->span8();
-        RELEASE_AND_RETURN(scope, Bun__escapeHTML8(lexicalGlobalObject, encodedInput, span.data(), span.size()));
-    }
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -988,7 +957,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     dns                                            constructDNSObject                                                  ReadOnly|DontDelete|PropertyCallback
     enableANSIColors                               BunObject_lazyPropCb_wrap_enableANSIColors                          DontDelete|PropertyCallback
     env                                            constructEnvObject                                                  ReadOnly|DontDelete|PropertyCallback
-    escapeHTML                                     functionBunEscapeHTML                                               DontDelete|Function 2
+    escapeHTML                                     jsFunctionBunEscapeHTML                                             DontDelete|Function 2
     fetch                                          constructBunFetchObject                                             ReadOnly|DontDelete|PropertyCallback
     file                                           BunObject_callback_file                                             DontDelete|Function 1
     fileURLToPath                                  functionFileURLToPath                                               DontDelete|Function 1

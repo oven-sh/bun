@@ -35,9 +35,10 @@ namespace WebCore {
 // FIXME: Not every header fits into a map. Notably, multiple Set-Cookie header fields are needed to set multiple cookies.
 
 // ASCII-lowercase a header name. Equivalent to String::convertToASCIILowercase
-// but routes the common 8-bit path through a Highway SIMD kernel so the scan
-// and copy don't depend on the build's -march. Returns the original String
-// (no allocation) when it is already lowercase, matching the WTF behavior.
+// but routes both the 8-bit and 16-bit paths through Highway SIMD kernels so
+// the scan and copy don't depend on the build's -march. Returns the original
+// String (no allocation) when it is already lowercase, matching the WTF
+// behavior.
 String lowercaseHeaderName(const String &);
 
 class HTTPHeaderMap {

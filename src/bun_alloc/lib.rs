@@ -2209,7 +2209,16 @@ pub trait OverflowBlock {
     fn used_mut(&mut self) -> &mut u32;
 }
 
+// Zig `max`: the largest valid block index, not the slot count. `tail()` writes
+// `ptrs[allocated]` and only then does `allocated += 1`, so after the last block is
+// allocated `allocated == OVERFLOW_GROUP_MAX + 1` and the final write lands at index
+// `OVERFLOW_GROUP_MAX`. The backing array must therefore hold `OVERFLOW_GROUP_MAX + 1`
+// slots — sizing it to `OVERFLOW_GROUP_MAX` leaves index 4095 out of bounds, which the
+// Rust bounds check turns into a hard panic (Zig release-fast silently wrote past the
+// array). This matches `UsedSize = IntFittingRange(0, max + 1)`, whose range is picked so
+// the counters can legally reach `max + 1`.
 const OVERFLOW_GROUP_MAX: usize = 4095;
+const OVERFLOW_GROUP_SLOTS: usize = OVERFLOW_GROUP_MAX + 1;
 // Zig: `UsedSize = std.math.IntFittingRange(0, max + 1)` → u13. Rust has no u13; use u16.
 type OverflowUsedSize = u16;
 
@@ -2218,7 +2227,7 @@ pub struct OverflowGroup<Block> {
     // ...right?
     pub used: OverflowUsedSize,
     pub allocated: OverflowUsedSize,
-    pub ptrs: [Option<Box<Block>>; OVERFLOW_GROUP_MAX],
+    pub ptrs: [Option<Box<Block>>; OVERFLOW_GROUP_SLOTS],
 }
 
 impl<Block: OverflowBlock> OverflowGroup<Block> {
@@ -2228,7 +2237,7 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
         self.allocated = 0;
     }
 
-    pub fn tail(&mut self) -> &mut Block {
+    pub fn tail(&mut self) -> core::result::Result<&mut Block, AllocError> {
         if self.allocated > 0
             && self.ptrs[self.used as usize]
                 .as_ref()
@@ -2245,6 +2254,17 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
         }
 
         if self.allocated <= self.used {
+            // Every block is allocated and full: the next slot would be
+            // `ptrs[allocated]`, which is past the fixed-size array. Zig wrote
+            // here unconditionally (`catch unreachable`) and relied on never
+            // reaching the ceiling; Rust's bounds check turns the same write
+            // into a hard panic. Surface it as an allocation failure instead so
+            // the caller can propagate a normal OOM rather than abort. With
+            // `BSS_OVERFLOW_BLOCK_SIZE` restored to the Zig value this is only
+            // reachable past the store's design capacity.
+            if self.allocated as usize >= OVERFLOW_GROUP_SLOTS {
+                return Err(AllocError);
+            }
             // Zig: default_allocator.create(Block) catch unreachable
             // SAFETY: Box<MaybeUninit> → zero() initializes the `used` counter; payload array
             // is `[MaybeUninit<T>; N]` and stays uninit exactly as Zig does.
@@ -2256,7 +2276,7 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
             self.allocated = self.allocated.wrapping_add(1);
         }
 
-        self.ptrs[self.used as usize].as_mut().expect("alloc")
+        Ok(self.ptrs[self.used as usize].as_mut().expect("alloc"))
     }
 
     #[inline]
@@ -2325,8 +2345,8 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
     /// In-place init of just the three scalar counters (`list.used`,
     /// `list.allocated`, `count`) into storage that is already all-zeros.
     ///
-    /// `list.ptrs: [Option<Box<_>>; 4095]` is ~32 KiB; the all-zeros bit
-    /// pattern is `[None; 4095]` via the null-pointer niche, so when `slot`
+    /// `list.ptrs: [Option<Box<_>>; 4096]` is ~32 KiB; the all-zeros bit
+    /// pattern is `[None; 4096]` via the null-pointer niche, so when `slot`
     /// lives in a fresh `bss_lazy_bytes`/`bss_heap_init` mapping (always
     /// zero-on-read) we touch one cache line instead of faulting eight pages.
     ///
@@ -2349,9 +2369,15 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
     }
 
     #[inline]
-    pub fn append(&mut self, value: ValueType) -> &mut ValueType {
+    pub fn append(
+        &mut self,
+        value: ValueType,
+    ) -> core::result::Result<&mut ValueType, AllocError> {
+        // Reserve the block first; only bump `count` once the slot exists so a
+        // failed allocation leaves the list's length consistent with its storage.
+        let block = self.list.tail()?;
         self.count += 1;
-        self.list.tail().append(value)
+        Ok(block.append(value))
     }
 
     pub fn reset(&mut self) {
@@ -2455,12 +2481,27 @@ unsafe impl<ValueType: Send, const COUNT: usize> Sync for BSSList<ValueType, COU
 
 const BSS_LIST_CHUNK_SIZE: usize = 256;
 
-/// Fixed overflow-block capacity for `BSSStringList` / `BSSMapInner`.
-/// Zig uses `count / 4`; stable Rust cannot express const-generic arithmetic
-/// (`generic_const_exprs`), so use a nonzero stand-in until the
-/// per-instantiation value is threaded through. A value of 0 here would make
-/// `OverflowListBlock::is_full` always true and `at_index`'s `idx % COUNT` panic.
-pub const BSS_OVERFLOW_BLOCK_SIZE: usize = 64;
+/// Overflow-block capacity for `BSSStringList` / `BSSMapInner`.
+///
+/// Zig sizes this per store as `count / 4`; stable Rust can't express
+/// const-generic arithmetic (`generic_const_exprs`) inside the struct body, so
+/// a single constant is shared across every instantiation. It must be at least
+/// as large as the largest store's `count / 4` so no store's capacity regresses
+/// below what Zig shipped: the biggest is the filename store (`count = 8192`,
+/// `count / 4 = 2048`), so use 2048. Picking a smaller value (the previous
+/// stand-in was 64) silently caps the store at `COUNT + 4096 * BLOCK_SIZE`
+/// entries — only ~270k filenames at 64 — which a large `--bun` build walking
+/// many `node_modules` directories can exhaust, at which point
+/// `OverflowGroup::tail` runs off the end of its block-pointer array.
+///
+/// Cost is lazy: overflow blocks are heap-allocated only once the `COUNT`-entry
+/// inline buffer fills (never, for the common case), and only as many as are
+/// actually needed, so a larger block size adds no static footprint and at most
+/// one partially-filled block of slack per store that does overflow.
+///
+/// A value of 0 would make `OverflowListBlock::is_full` always true and
+/// `at_index`'s `idx % COUNT` panic.
+pub const BSS_OVERFLOW_BLOCK_SIZE: usize = 2048;
 
 /// `#[repr(C)]` with `prev` before `data` so the inline `BSSList::tail` block's
 /// scalar fields cluster at the front of the singleton mapping (see the layout
@@ -2747,8 +2788,10 @@ pub struct BSSStringList<
     // `[..backing_buf_used]` / `[..slice_buf_used]` are ever read.
     pub backing_buf: NonNull<[MaybeUninit<u8>]>, // len == COUNT * ITEM_LENGTH
     pub backing_buf_used: u64,
-    // TODO(port): Overflow = OverflowList<&'static [u8], COUNT / 4> (generic_const_exprs).
-    // Fixed nonzero block size until generic_const_exprs lands; 0 would div-by-zero in at_index.
+    // Port note: Zig sizes this `OverflowList<&'static [u8], COUNT / 4>`. Stable
+    // Rust can't make the block size depend on `COUNT` (needs `generic_const_exprs`),
+    // so the shared `BSS_OVERFLOW_BLOCK_SIZE` is used instead — see that constant's
+    // docs for why it is the max of every store's `COUNT / 4`, not an arbitrary value.
     pub overflow_list: OverflowList<&'static [u8], BSS_OVERFLOW_BLOCK_SIZE>,
     pub slice_buf: NonNull<[MaybeUninit<&'static [u8]>]>, // len == COUNT
     pub slice_buf_used: u16,
@@ -2822,7 +2865,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // ~1.4 MiB of array storage stays unfaulted until `append` writes a byte.
         // Match that exactly: lazy-map the arrays, write the four scalars, and
         // zero only the three OverflowList counters (its 32 KiB `ptrs` array is
-        // already `[None; 4095]` because `slot` came from `bss_heap_init`).
+        // already `[None; 4096]` because `slot` came from `bss_heap_init`).
         // SAFETY: caller contract — `slot` is a valid, exclusive, aligned
         // `*mut Self` in all-zeros storage from `bss_heap_init`.
         unsafe {
@@ -3106,7 +3149,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 
         if result.is_overflow() {
             if self.overflow_list.len() == result.index() {
-                let _ = self.overflow_list.append(stored);
+                self.overflow_list.append(stored)?;
             } else {
                 *self.overflow_list.at_index_mut(result) = stored;
             }
@@ -3139,8 +3182,10 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 
 pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool> {
     pub index: IndexMap,
-    // TODO(port): Overflow = OverflowList<ValueType, COUNT / 4> (generic_const_exprs).
-    // Fixed nonzero block size until generic_const_exprs lands; 0 would div-by-zero in at_index.
+    // Port note: Zig sizes this `OverflowList<ValueType, COUNT / 4>`. Stable Rust
+    // can't make the block size depend on `COUNT` (needs `generic_const_exprs`), so
+    // the shared `BSS_OVERFLOW_BLOCK_SIZE` is used instead — see that constant's docs
+    // for why it is the max of every store's `COUNT / 4`, not an arbitrary value.
     pub overflow_list: OverflowList<ValueType, BSS_OVERFLOW_BLOCK_SIZE>,
     pub mutex: Mutex,
     // Zig leaves `backing_buf` undefined; only `[0..backing_buf_used]` is initialized.
@@ -3161,7 +3206,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     pub unsafe fn init_at(slot: *mut Self) {
         // SAFETY: caller contract — `slot` is a valid, exclusive, aligned
         // `*mut Self` in all-zeros storage from `bss_heap_init`. The 32 KiB
-        // `overflow_list.list.ptrs` array is already `[None; 4095]` (null
+        // `overflow_list.list.ptrs` array is already `[None; 4096]` (null
         // niche), so write only the three counters; `backing_buf` is
         // intentionally left uninitialized (Zig: `undefined`).
         unsafe {
@@ -3284,7 +3329,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
 
         let ret = if result.index.is_overflow() {
             if self.overflow_list.len() == result.index.index() {
-                self.overflow_list.append(value)
+                self.overflow_list.append(value)?
             } else {
                 let ptr = self.overflow_list.at_index_mut(result.index);
                 *ptr = value;

@@ -2846,103 +2846,28 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             while matches!(self.token.data, TokenData::SequenceEntry)
                 && self.token.indent == sequence_indent
             {
-                let _entry_line = self.token.line;
+                let entry_line = self.token.line;
                 let entry_start = self.token.start;
-                let entry_indent = self.token.indent;
 
-                if !seq.is_empty() && prev_line == self.token.line {
+                if !seq.is_empty() && prev_line == entry_line {
                     // only the first entry can be another sequence entry on the
                     // same line
                     break;
                 }
 
-                prev_line = self.token.line;
+                prev_line = entry_line;
 
                 self.scan(ScanOptions {
-                    additional_parent_indent: Some(entry_indent.add(1)),
+                    additional_parent_indent: Some(sequence_indent.add(1)),
                     ..Default::default()
                 })?;
 
-                // check if the sequence entry is a null value (see Zig comments)
-                let item: Expr = match &self.token.data {
-                    TokenData::Eof => Expr::init(E::Null {}, entry_start.add(2).loc()),
-                    TokenData::SequenceEntry => {
-                        if self.token.indent.is_less_than_or_equal(sequence_indent) {
-                            Expr::init(E::Null {}, entry_start.add(2).loc())
-                        } else {
-                            self.parse_node(ParseNodeOptions::default())?
-                        }
-                    }
-                    TokenData::Tag(_) | TokenData::Anchor(_) => {
-                        // consume anchor and/or tag, then decide if the next node
-                        // should be parsed.
-                        let mut has_tag: Option<Token<Enc>> = None;
-                        let mut has_anchor: Option<Token<Enc>> = None;
-
-                        // PORT NOTE: labeled-switch loop
-                        'item: loop {
-                            match &self.token.data {
-                                TokenData::Tag(tag) => {
-                                    if has_tag.is_some() {
-                                        return Err(Self::unexpected_token());
-                                    }
-                                    let tag = *tag;
-                                    has_tag = Some(self.token.clone());
-                                    self.scan(ScanOptions {
-                                        additional_parent_indent: Some(entry_indent.add(1)),
-                                        tag,
-                                        ..Default::default()
-                                    })?;
-                                    continue;
-                                }
-                                TokenData::Anchor(_anchor) => {
-                                    if has_anchor.is_some() {
-                                        return Err(Self::unexpected_token());
-                                    }
-                                    has_anchor = Some(self.token.clone());
-                                    let tag = match &has_tag {
-                                        Some(t) => match &t.data {
-                                            TokenData::Tag(tg) => *tg,
-                                            _ => NodeTag::None,
-                                        },
-                                        None => NodeTag::None,
-                                    };
-                                    self.scan(ScanOptions {
-                                        additional_parent_indent: Some(entry_indent.add(1)),
-                                        tag,
-                                        ..Default::default()
-                                    })?;
-                                    continue;
-                                }
-                                TokenData::SequenceEntry => {
-                                    if self.token.indent.is_less_than_or_equal(sequence_indent) {
-                                        let tag = match &has_tag {
-                                            Some(t) => match &t.data {
-                                                TokenData::Tag(tg) => *tg,
-                                                _ => NodeTag::None,
-                                            },
-                                            None => NodeTag::None,
-                                        };
-                                        break 'item tag.resolve_null(entry_start.add(2).loc());
-                                    }
-                                    break 'item self.parse_node(ParseNodeOptions {
-                                        scanned_tag: has_tag,
-                                        scanned_anchor: has_anchor,
-                                        ..Default::default()
-                                    })?;
-                                }
-                                _ => {
-                                    break 'item self.parse_node(ParseNodeOptions {
-                                        scanned_tag: has_tag,
-                                        scanned_anchor: has_anchor,
-                                        ..Default::default()
-                                    })?;
-                                }
-                            }
-                        }
-                    }
-                    _ => self.parse_node(ParseNodeOptions::default())?,
-                };
+                let item = self.parse_block_indented(
+                    sequence_indent,
+                    entry_line,
+                    entry_start.add(2),
+                    BlockIndentedKind::SeqEntry,
+                )?;
 
                 seq.push(item);
             }
@@ -3071,52 +2996,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             ..Default::default()
                         })?;
 
-                        match self.token.data {
-                            TokenData::SequenceEntry => {
-                                // [185] a compact construct on the explicit-`:`
-                                // line must be at indent >= n+1 via s-indent
-                                // (spaces). A tab separator leaves the token at
-                                // the line's natural indent, which fails this.
-                                if self.token.line == mapping_line
-                                    || (self.token.line == mapping_value_line
-                                        && self.token.indent.is_less_than_or_equal(mapping_indent))
-                                {
-                                    return Err(Self::unexpected_token());
-                                }
-                                if self.token.indent.is_less_than(mapping_indent) {
-                                    break 'value Expr::init(E::Null {}, mapping_value_start.loc());
-                                }
-                                break 'value self.parse_node(ParseNodeOptions {
-                                    current_mapping_indent: Some(mapping_indent),
-                                    ..Default::default()
-                                })?;
-                            }
-                            // [149] e-node value in flow (`"a":,` / `"a":]`).
-                            // Gated on flow_pair_allowed so this only fires
-                            // for [139] ns-flow-seq-entry positions, not for
-                            // a flow-map [147] value reaching here via the
-                            // pre-existing implicit-mapping fallthrough.
-                            TokenData::CollectEntry | TokenData::SequenceEnd
-                                if flow_pair_allowed
-                                    && matches!(
-                                        self.context.get(),
-                                        Context::FlowIn | Context::FlowKey
-                                    ) =>
-                            {
-                                break 'value Expr::init(E::Null {}, mapping_value_start.loc());
-                            }
-                            _ => {
-                                if self.token.line != mapping_value_line
-                                    && self.token.indent.is_less_than_or_equal(mapping_indent)
-                                {
-                                    break 'value Expr::init(E::Null {}, mapping_value_start.loc());
-                                }
-                                break 'value self.parse_node(ParseNodeOptions {
-                                    current_mapping_indent: Some(mapping_indent),
-                                    ..Default::default()
-                                })?;
-                            }
-                        }
+                        break 'value self.parse_block_indented(
+                            mapping_indent,
+                            mapping_value_line,
+                            mapping_value_start,
+                            BlockIndentedKind::MapValue { flow_pair_allowed },
+                        )?;
                     }
                     // [189] explicit-value is optional; the current token is the
                     // next entry (or end of mapping). Implicit first entries
@@ -3227,7 +3112,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                             Expr::init(E::Null {}, mapping_value_start.loc())
                         }
-                        _ => 'value: {
+                        _ => {
                             let parent_indent = if mapping_value_line != key_line {
                                 Some(mapping_indent.add(1))
                             } else {
@@ -3238,43 +3123,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                 ..Default::default()
                             })?;
 
-                            match self.token.data {
-                                TokenData::SequenceEntry => {
-                                    if self.token.line == key_line
-                                        || (self.token.line == mapping_value_line
-                                            && self
-                                                .token
-                                                .indent
-                                                .is_less_than_or_equal(mapping_indent))
-                                    {
-                                        return Err(Self::unexpected_token());
-                                    }
-                                    if self.token.indent.is_less_than(mapping_indent) {
-                                        break 'value Expr::init(
-                                            E::Null {},
-                                            mapping_value_start.loc(),
-                                        );
-                                    }
-                                    break 'value self.parse_node(ParseNodeOptions {
-                                        current_mapping_indent: Some(mapping_indent),
-                                        ..Default::default()
-                                    })?;
-                                }
-                                _ => {
-                                    if self.token.line != mapping_value_line
-                                        && self.token.indent.is_less_than_or_equal(mapping_indent)
-                                    {
-                                        break 'value Expr::init(
-                                            E::Null {},
-                                            mapping_value_start.loc(),
-                                        );
-                                    }
-                                    break 'value self.parse_node(ParseNodeOptions {
-                                        current_mapping_indent: Some(mapping_indent),
-                                        ..Default::default()
-                                    })?;
-                                }
-                            }
+                            self.parse_block_indented(
+                                mapping_indent,
+                                mapping_value_line,
+                                mapping_value_start,
+                                BlockIndentedKind::MapValue {
+                                    flow_pair_allowed: false,
+                                },
+                            )?
                         }
                     };
 
@@ -3498,11 +3354,21 @@ impl<Enc: Encoding> NodeProperties<Enc> {
             })
     }
 
-    pub fn implicit_key_anchors(&self, implicit_key_line: Line) -> ImplicitKeyAnchors {
+    pub fn implicit_key_anchors(
+        &self,
+        implicit_key_line: Line,
+    ) -> Result<ImplicitKeyAnchors, ParseError> {
         if let Some(mapping_anchor) = &self.has_mapping_anchor {
-            debug_assert!(self.has_anchor.is_some());
-            return ImplicitKeyAnchors {
-                key_anchor: self.has_anchor.as_ref().and_then(|t| match &t.data {
+            // Two anchors recorded: the outer anchors the [200] block
+            // collection; the inner anchors the implicit first key. The key's
+            // c-ns-properties are in BLOCK-KEY context (s-separate-in-line),
+            // so the inner anchor must share the key's line.
+            let inner = self.has_anchor.as_ref();
+            if inner.is_some_and(|t| t.line != implicit_key_line) {
+                return Err(ParseError::MultipleAnchors);
+            }
+            return Ok(ImplicitKeyAnchors {
+                key_anchor: inner.and_then(|t| match &t.data {
                     TokenData::Anchor(r) => Some(*r),
                     _ => None,
                 }),
@@ -3510,7 +3376,7 @@ impl<Enc: Encoding> NodeProperties<Enc> {
                     TokenData::Anchor(r) => Some(*r),
                     _ => None,
                 },
-            };
+            });
         }
 
         if let Some(mystery_anchor) = &self.has_anchor {
@@ -3520,21 +3386,21 @@ impl<Enc: Encoding> NodeProperties<Enc> {
                 _ => None,
             };
             if mystery_anchor.line == implicit_key_line {
-                return ImplicitKeyAnchors {
+                return Ok(ImplicitKeyAnchors {
                     key_anchor: r,
                     mapping_anchor: None,
-                };
+                });
             }
-            return ImplicitKeyAnchors {
+            return Ok(ImplicitKeyAnchors {
                 key_anchor: None,
                 mapping_anchor: r,
-            };
+            });
         }
 
-        ImplicitKeyAnchors {
+        Ok(ImplicitKeyAnchors {
             key_anchor: None,
             mapping_anchor: None,
-        }
+        })
     }
 
     pub fn set_tag(&mut self, tag_token: Token<Enc>) -> Result<(), ParseError> {
@@ -3646,7 +3512,166 @@ impl Escape {
 // Parser methods (continued)
 // ───────────────────────────────────────────────────────────────────────────
 
+/// Spec-level kind of the [185] s-l+block-indented call site.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BlockIndentedKind {
+    /// [186] `c-l-block-seq-entry`: c = BLOCK-IN.
+    SeqEntry,
+    /// [190] `c-l-block-map-explicit-key`: c = BLOCK-OUT.
+    MapExplicitKey,
+    /// [191]/[194] block-map value: c = BLOCK-OUT. Carries the [149]
+    /// flow-pair gate for the first-value call reached from flow context.
+    MapValue { flow_pair_allowed: bool },
+}
+
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
+    /// [185] `s-l+block-indented(n, c)` dispatch shared by the block-mapping
+    /// value (`:`), explicit key (`?`), and block-sequence item (`-`) paths.
+    /// The current token is the post-indicator token.
+    ///
+    /// Owns the property loop: anchor/tag tokens are consumed here so the
+    /// indent rules below re-run on what follows ([161] c-ns-properties may
+    /// stand alone as e-scalar when the next token belongs to the parent).
+    /// A second anchor or tag falls through to `_` so parse_node's
+    /// mapping-anchor split applies ([200] collection vs first-key).
+    fn parse_block_indented(
+        &mut self,
+        n: Indent,
+        indicator_line: Line,
+        indicator_start: Pos,
+        kind: BlockIndentedKind,
+    ) -> Result<Expr, ParseError> {
+        let mut value_tag: Option<Token<Enc>> = None;
+        let mut value_anchor: Option<Token<Enc>> = None;
+
+        loop {
+            // [196] s-l+block-node(n) reaches content via [197] flow-in-block
+            // (s-separate-lines(n+1)) or [200] block-collection. Either way a
+            // token on a later line at indent ≤ n belongs to the parent —
+            // properties collected so far attach to e-scalar per [161].
+            // [201] seq-space: a nested block sequence may sit at indent n in
+            // BLOCK-OUT, but needs n+1 in BLOCK-IN.
+            if self.token.line != indicator_line {
+                let belongs_to_parent = if matches!(self.token.data, TokenData::SequenceEntry)
+                    && kind != BlockIndentedKind::SeqEntry
+                {
+                    self.token.indent.is_less_than(n)
+                } else {
+                    self.token.indent.is_less_than_or_equal(n)
+                };
+                if belongs_to_parent {
+                    // The post-property re-scan baked `value_tag` into a plain
+                    // scalar's resolution (`ScanOptions.tag`); if that scalar
+                    // is now abandoned to the parent, rewind to its start and
+                    // re-scan tag-neutral so the sibling key resolves under
+                    // the default schema. Only plain single-line scalars are
+                    // tag-resolved at scan time; quoted scalars ignore
+                    // ScanOptions.tag (and their token.start is past the
+                    // opening quote, so rewind would be wrong); multiline
+                    // plain scalars may have advanced parser state across
+                    // lines that a positional rewind cannot fully restore.
+                    if value_tag.is_some()
+                        && matches!(
+                            &self.token.data,
+                            TokenData::Scalar(TokenScalar {
+                                is_quoted: false,
+                                multiline: false,
+                                ..
+                            })
+                        )
+                    {
+                        self.pos = self.token.start;
+                        self.line = self.token.line;
+                        self.line_indent = self.token.indent;
+                        self.scan(ScanOptions::default())?;
+                    }
+                    return self.props_to_e_node(&value_tag, &value_anchor, indicator_start.loc());
+                }
+            }
+
+            match self.token.data {
+                TokenData::Anchor(_) if value_anchor.is_none() => {
+                    value_anchor = Some(self.token.clone());
+                }
+                TokenData::Tag(_) if value_tag.is_none() => {
+                    value_tag = Some(self.token.clone());
+                }
+                // [185] a compact construct on the indicator's line must be at
+                // indent ≥ n+1 via s-indent (spaces only); tab separation
+                // leaves the token at the line's natural indent.
+                TokenData::SequenceEntry | TokenData::MappingKey
+                    if self.token.line == indicator_line
+                        && self.token.indent.is_less_than_or_equal(n) =>
+                {
+                    return Err(Self::unexpected_token());
+                }
+                // [149] e-node pair value in flow (`"a":,` / `"a":]`). Gated
+                // on flow_pair_allowed so this only fires for [139]
+                // ns-flow-seq-entry positions.
+                TokenData::CollectEntry | TokenData::SequenceEnd
+                    if matches!(
+                        kind,
+                        BlockIndentedKind::MapValue {
+                            flow_pair_allowed: true
+                        }
+                    ) && matches!(self.context.get(), Context::FlowIn | Context::FlowKey) =>
+                {
+                    return self.props_to_e_node(&value_tag, &value_anchor, indicator_start.loc());
+                }
+                _ => {
+                    return self.parse_node(ParseNodeOptions {
+                        current_mapping_indent: Some(n),
+                        explicit_mapping_key: kind == BlockIndentedKind::MapExplicitKey,
+                        scanned_tag: value_tag,
+                        scanned_anchor: value_anchor,
+                        ..Default::default()
+                    });
+                }
+            }
+
+            // recorded a property — re-dispatch on what follows
+            let tag = match &value_tag {
+                Some(Token {
+                    data: TokenData::Tag(t),
+                    ..
+                }) => *t,
+                _ => NodeTag::None,
+            };
+            self.scan(ScanOptions {
+                tag,
+                ..Default::default()
+            })?;
+        }
+    }
+
+    /// [161] e-scalar with a property's tag resolved and anchor registered.
+    /// Used by call-site property loops when the post-property token is not
+    /// content for this position.
+    fn props_to_e_node(
+        &mut self,
+        tag: &Option<Token<Enc>>,
+        anchor: &Option<Token<Enc>>,
+        loc: Loc,
+    ) -> Result<Expr, ParseError> {
+        let resolved_tag = match tag {
+            Some(Token {
+                data: TokenData::Tag(t),
+                ..
+            }) => *t,
+            _ => NodeTag::None,
+        };
+        let e_node = resolved_tag.resolve_null(loc);
+        if let Some(Token {
+            data: TokenData::Anchor(name),
+            ..
+        }) = anchor
+        {
+            self.anchors
+                .put(Enc::key_bytes(name.slice(self.input)), e_node)?;
+        }
+        Ok(e_node)
+    }
+
     fn parse_node(&mut self, opts: ParseNodeOptions<Enc>) -> Result<Expr, ParseError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(ParseError::StackOverflow);
@@ -3787,7 +3812,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                         }
 
-                        let implicit_key_anchors = node_props.implicit_key_anchors(sequence_line);
+                        let implicit_key_anchors =
+                            node_props.implicit_key_anchors(sequence_line)?;
 
                         if let Some(key_anchor) = implicit_key_anchors.key_anchor {
                             self.anchors
@@ -3866,7 +3892,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                         }
 
-                        let implicit_key_anchors = node_props.implicit_key_anchors(mapping_line);
+                        let implicit_key_anchors = node_props.implicit_key_anchors(mapping_line)?;
 
                         if let Some(key_anchor) = implicit_key_anchors.key_anchor {
                             self.anchors
@@ -3914,42 +3940,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         ..Default::default()
                     })?;
 
-                    // [185] a compact construct on the `?` line must be at
-                    // indent >= n+1 via s-indent (spaces). A tab separator
-                    // leaves the token at the line's natural indent, which
-                    // fails this.
-                    if self.token.line == mapping_line
-                        && self.token.indent.is_less_than_or_equal(mapping_indent)
-                        && matches!(
-                            self.token.data,
-                            TokenData::SequenceEntry | TokenData::MappingKey
-                        )
-                    {
-                        self.block_indents.pop();
-                        return Err(Self::unexpected_token());
-                    }
-
-                    let key = if self.token.line != mapping_line
-                        && self.token.indent.is_less_than_or_equal(mapping_indent)
-                        && !(self.token.indent == mapping_indent
-                            && matches!(self.token.data, TokenData::SequenceEntry))
-                    {
-                        // [185] e-node — `?` followed by nothing more-indented
-                        // has an empty key; the current token is the explicit
-                        // `:`, the next entry, or the end of the mapping.
-                        // Exception: a zero-indented `- ` at the `?` indent is
-                        // the key (block sequences may sit at their parent's
-                        // indent).
-                        Expr::init(E::Null {}, self.token.start.loc())
-                    } else {
-                        self.parse_node(ParseNodeOptions {
-                            explicit_mapping_key: true,
-                            current_mapping_indent: Some(
-                                opts.current_mapping_indent.unwrap_or(mapping_indent),
-                            ),
-                            ..Default::default()
-                        })?
-                    };
+                    let key = self.parse_block_indented(
+                        mapping_indent,
+                        mapping_line,
+                        mapping_start,
+                        BlockIndentedKind::MapExplicitKey,
+                    )?;
 
                     self.block_indents.pop();
 
@@ -4058,7 +4054,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         let implicit_key = scalar.data.to_expr(scalar_start, self.input, self.bump);
 
-                        let implicit_key_anchors = node_props.implicit_key_anchors(scalar_line);
+                        let implicit_key_anchors = node_props.implicit_key_anchors(scalar_line)?;
 
                         if let Some(key_anchor) = implicit_key_anchors.key_anchor {
                             self.anchors
@@ -5634,8 +5630,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let start = self.pos;
                     match self.context.get() {
                         Context::BlockOut | Context::BlockIn => {
+                            let indicator_indent = self.line_indent;
                             self.inc(1);
-                            break 'next self.scan_literal_scalar()?;
+                            let mut tok = self.scan_literal_scalar()?;
+                            // Token.indent for a block scalar is the
+                            // indicator's s-indent, not the auto-detected
+                            // content indent — keeps belongs_to_parent and
+                            // other indent comparisons consistent across
+                            // scalar kinds.
+                            tok.indent = indicator_indent;
+                            break 'next tok;
                         }
                         Context::FlowIn | Context::FlowKey => {}
                     }
@@ -5646,8 +5650,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let start = self.pos;
                     match self.context.get() {
                         Context::BlockOut | Context::BlockIn => {
+                            let indicator_indent = self.line_indent;
                             self.inc(1);
-                            break 'next self.scan_folded_scalar()?;
+                            let mut tok = self.scan_folded_scalar()?;
+                            tok.indent = indicator_indent;
+                            break 'next tok;
                         }
                         Context::FlowIn | Context::FlowKey => {}
                     }

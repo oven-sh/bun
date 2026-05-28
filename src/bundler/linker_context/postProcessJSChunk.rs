@@ -804,9 +804,9 @@ pub fn post_process_js_chunk(
                 // PERF(port): worker.arena is an arena in Zig
                 let _ = js_printer::quote_for_json(input.pretty, &mut buf, true); // fmt::Result into Vec<u8> is infallible
                 // bun.handleOom dropped — Rust aborts on OOM
-                let str = buf.slice(); // worker.arena is an arena
-                j.push_static(str);
-                line_offset.advance(str);
+                let quoted = buf.take_slice();
+                line_offset.advance(&quoted);
+                j.push_owned(quoted.into_boxed_slice());
             }
             // {
             //     let str = b"\n  react_refresh: ";
@@ -842,6 +842,15 @@ pub fn post_process_js_chunk(
         line_offset.advance(b"\n");
     }
 
+    // SAFETY: every borrowed node in `j` points into `chunk.compile_results_for_chunk`
+    // (slots pre-sized in generateChunksInParallel, filled in place by the print
+    // workers before post-processing, never reassigned afterwards), `c.options`
+    // banner/footer (`&'static`), graph/parse-graph data (hashbangs, source paths,
+    // HMR runtime), or `'static` literals; `watcher.input` is `chunk.unique_key`
+    // (`&'static`). All of these outlive the joiner stored in
+    // `chunk.intermediate_output`, which is only read while the chunk and the
+    // linker graph are alive.
+    let mut j = unsafe { j.detach_lifetime() };
     chunk.intermediate_output = c
         .break_output_into_pieces(worker_arena, &mut j, ctx.chunks.len() as u32)
         .unwrap_or_else(|_| panic!("Unhandled out of memory error in breakOutputIntoPieces()"));

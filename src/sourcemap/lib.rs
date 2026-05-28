@@ -1278,11 +1278,11 @@ pub fn parse_json(
 // After all chunks are computed, they are joined together in a second pass.
 // This rewrites the first mapping in each chunk to be relative to the end
 // state of the previous chunk.
-pub fn append_source_map_chunk(
-    j: &mut bun_core::string_joiner::StringJoiner,
+pub fn append_source_map_chunk<'a>(
+    j: &mut bun_core::string_joiner::StringJoiner<'a>,
     prev_end_state_: SourceMapState,
     start_state_: SourceMapState,
-    source_map_: &[u8],
+    source_map_: &'a [u8],
 ) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
     let mut prev_end_state = prev_end_state_;

@@ -368,4 +368,71 @@ describe("fetch() with a concatenated multi-member gzip body", () => {
     expect(res.status).toBe(200);
     expect(await res.text()).toBe(smallExpected);
   });
+
+  // The body is decompressed incrementally, one network read at a time (the
+  // Connection: close / streaming path — no Content-Length to buffer against).
+  // If a gzip member's trailer lands exactly on a read boundary, the reader
+  // sees StreamEnd with no input left: it must keep its inflate state alive for
+  // the next read instead of finishing and silently dropping later members.
+  //
+  // We force that exact boundary with a raw TCP server that writes each member
+  // as its own frame and only sends the next after the previous has fully
+  // drained into the kernel — so member A's trailer ends a read before B's
+  // bytes arrive. Small members keep the whole member inside one read (no
+  // output-buffer-full splitting), making the StreamEnd-at-boundary
+  // deterministic.
+  it("decodes all members split across network reads (streaming slow path)", async () => {
+    const partA = Buffer.from("first member payload");
+    const partB = Buffer.from("second member payload");
+    const partC = Buffer.from("third member payload");
+    const members = [gzipSync(partA), gzipSync(partB), gzipSync(partC)];
+    const expected = Buffer.concat([partA, partB, partC]).toString();
+
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        drain(socket) {
+          const q: Array<{ buf: Buffer; resolve: () => void }> = socket.data;
+          while (q.length) {
+            const head = q[0];
+            const n = socket.write(head.buf);
+            if (n < head.buf.length) {
+              head.buf = head.buf.subarray(n);
+              return;
+            }
+            q.shift();
+            head.resolve();
+          }
+        },
+        async open(socket) {
+          const q: Array<{ buf: Buffer; resolve: () => void }> = (socket.data = []);
+          // Resolve only once `buf` has fully drained into the kernel, so the
+          // next write lands in a separate network read on the client.
+          const send = (buf: Buffer) =>
+            new Promise<void>(resolve => {
+              if (q.length) {
+                q.push({ buf, resolve });
+                return;
+              }
+              const n = socket.write(buf);
+              if (n < buf.length) q.push({ buf: buf.subarray(n), resolve });
+              else resolve();
+            });
+
+          await send(
+            Buffer.from(
+              "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n",
+            ),
+          );
+          for (const member of members) await send(member);
+          socket.end();
+        },
+      },
+    });
+
+    const res = await fetch(`http://${server.hostname}:${server.port}`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(expected);
+  });
 });

@@ -244,32 +244,36 @@ describe("zlib.brotli", () => {
     }
   });
 
-  it("streaming encode doesn't wait for entire input", async () => {
-    const createPRNG = seed => {
-      let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
-      return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
-    };
-    const readStream = new stream.Readable();
-    const brotliStream = zlib.createBrotliCompress();
-    const rand = createPRNG(1);
-    let all = [];
+  it(
+    "streaming encode doesn't wait for entire input",
+    async () => {
+      const createPRNG = seed => {
+        let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
+        return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
+      };
+      const readStream = new stream.Readable();
+      const brotliStream = zlib.createBrotliCompress();
+      const rand = createPRNG(1);
+      let all = [];
 
-    const { promise, resolve, reject } = Promise.withResolvers();
-    brotliStream.on("data", chunk => all.push(chunk.length));
-    brotliStream.on("end", resolve);
-    brotliStream.on("error", reject);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      brotliStream.on("data", chunk => all.push(chunk.length));
+      brotliStream.on("end", resolve);
+      brotliStream.on("error", reject);
 
-    for (let i = 0; i < 50; i++) {
-      let buf = Buffer.alloc(1024 * 1024);
-      for (let j = 0; j < buf.length; j++) buf[j] = (rand() * 256) | 0;
-      readStream.push(buf);
-    }
-    readStream.push(null);
-    readStream.pipe(brotliStream);
-    await promise;
-    expect(all.length).toBeGreaterThanOrEqual(7);
-    // Debug/ASAN builds are much slower at streaming 50MB through brotli.
-  }, isDebug || isASAN ? 60_000 : 15_000);
+      for (let i = 0; i < 50; i++) {
+        let buf = Buffer.alloc(1024 * 1024);
+        for (let j = 0; j < buf.length; j++) buf[j] = (rand() * 256) | 0;
+        readStream.push(buf);
+      }
+      readStream.push(null);
+      readStream.pipe(brotliStream);
+      await promise;
+      expect(all.length).toBeGreaterThanOrEqual(7);
+      // Debug/ASAN builds are much slower at streaming 50MB through brotli.
+    },
+    isDebug || isASAN ? 60_000 : 15_000,
+  );
 
   it("should accept params", async () => {
     const ZLIB = zlib.constants;
@@ -674,32 +678,36 @@ describe("zlib.zstd", () => {
     }
   });
 
-  it("streaming encode doesn't wait for entire input", async () => {
-    const createPRNG = seed => {
-      let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
-      return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
-    };
-    const readStream = new stream.Readable();
-    const zstdStream = zlib.createZstdCompress();
-    const rand = createPRNG(1);
-    let all = [];
+  it(
+    "streaming encode doesn't wait for entire input",
+    async () => {
+      const createPRNG = seed => {
+        let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
+        return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
+      };
+      const readStream = new stream.Readable();
+      const zstdStream = zlib.createZstdCompress();
+      const rand = createPRNG(1);
+      let all = [];
 
-    const { promise, resolve, reject } = Promise.withResolvers();
-    zstdStream.on("data", chunk => all.push(chunk.length));
-    zstdStream.on("end", resolve);
-    zstdStream.on("error", reject);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      zstdStream.on("data", chunk => all.push(chunk.length));
+      zstdStream.on("end", resolve);
+      zstdStream.on("error", reject);
 
-    for (let i = 0; i < 50; i++) {
-      let buf = Buffer.alloc(1024 * 1024);
-      for (let j = 0; j < buf.length; j++) buf[j] = (rand() * 256) | 0;
-      readStream.push(buf);
-    }
-    readStream.push(null);
-    readStream.pipe(zstdStream);
-    await promise;
-    expect(all.length).toBeGreaterThanOrEqual(7);
-    // Debug/ASAN builds are much slower at streaming 50MB through zstd.
-  }, isDebug || isASAN ? 60_000 : 15_000);
+      for (let i = 0; i < 50; i++) {
+        let buf = Buffer.alloc(1024 * 1024);
+        for (let j = 0; j < buf.length; j++) buf[j] = (rand() * 256) | 0;
+        readStream.push(buf);
+      }
+      readStream.push(null);
+      readStream.pipe(zstdStream);
+      await promise;
+      expect(all.length).toBeGreaterThanOrEqual(7);
+      // Debug/ASAN builds are much slower at streaming 50MB through zstd.
+    },
+    isDebug || isASAN ? 60_000 : 15_000,
+  );
 });
 
 describe("async write buffer lifetime", () => {

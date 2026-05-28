@@ -1,7 +1,7 @@
 import { TCPSocketListener } from "bun";
 import { describe, expect, test } from "bun:test";
-import { WebSocket } from "ws";
 import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { WebSocket } from "ws";
 
 const hostname = process.env.HOST || "127.0.0.1";
 const port = parseInt(process.env.PORT || "0");

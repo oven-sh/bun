@@ -324,64 +324,67 @@ for (const { name, connect } of tests) {
       }
     });
 
-    itNetwork("getCipher, getProtocol, getEphemeralKeyInfo, getSharedSigalgs, getSession, exportKeyingMaterial and isSessionReused should work", async () => {
-      const allowedCipherObjects = [
-        {
-          name: "TLS_AES_128_GCM_SHA256",
-          standardName: "TLS_AES_128_GCM_SHA256",
-          version: "TLSv1/SSLv3",
-        },
-        {
-          name: "TLS_AES_256_GCM_SHA384",
-          standardName: "TLS_AES_256_GCM_SHA384",
-          version: "TLSv1/SSLv3",
-        },
-        {
-          name: "TLS_CHACHA20_POLY1305_SHA256",
-          standardName: "TLS_CHACHA20_POLY1305_SHA256",
-          version: "TLSv1/SSLv3",
-        },
-      ];
-      const socket = (await new Promise((resolve, reject) => {
-        connect({
-          ALPNProtocols: ["http/1.1"],
-          host: "bun.sh",
-          servername: "bun.sh",
-          port: 443,
-          rejectUnauthorized: false,
-          requestCert: true,
-        })
-          .on("secure", resolve)
-          .on("error", reject);
-      })) as TLSSocket;
+    itNetwork(
+      "getCipher, getProtocol, getEphemeralKeyInfo, getSharedSigalgs, getSession, exportKeyingMaterial and isSessionReused should work",
+      async () => {
+        const allowedCipherObjects = [
+          {
+            name: "TLS_AES_128_GCM_SHA256",
+            standardName: "TLS_AES_128_GCM_SHA256",
+            version: "TLSv1/SSLv3",
+          },
+          {
+            name: "TLS_AES_256_GCM_SHA384",
+            standardName: "TLS_AES_256_GCM_SHA384",
+            version: "TLSv1/SSLv3",
+          },
+          {
+            name: "TLS_CHACHA20_POLY1305_SHA256",
+            standardName: "TLS_CHACHA20_POLY1305_SHA256",
+            version: "TLSv1/SSLv3",
+          },
+        ];
+        const socket = (await new Promise((resolve, reject) => {
+          connect({
+            ALPNProtocols: ["http/1.1"],
+            host: "bun.sh",
+            servername: "bun.sh",
+            port: 443,
+            rejectUnauthorized: false,
+            requestCert: true,
+          })
+            .on("secure", resolve)
+            .on("error", reject);
+        })) as TLSSocket;
 
-      try {
-        const cipher = socket.getCipher();
-        let hadMatch = false;
-        for (const allowedCipher of allowedCipherObjects) {
-          if (cipher.name === allowedCipher.name) {
-            expect(cipher).toMatchObject(allowedCipher);
-            hadMatch = true;
-            break;
+        try {
+          const cipher = socket.getCipher();
+          let hadMatch = false;
+          for (const allowedCipher of allowedCipherObjects) {
+            if (cipher.name === allowedCipher.name) {
+              expect(cipher).toMatchObject(allowedCipher);
+              hadMatch = true;
+              break;
+            }
           }
-        }
-        if (!hadMatch) {
-          throw new Error(`Unexpected cipher ${cipher.name}`);
-        }
-        expect(socket.getProtocol()).toBe("TLSv1.3");
-        expect(typeof socket.getEphemeralKeyInfo()).toBe("object");
-        expect(socket.getSharedSigalgs()).toBeInstanceOf(Array);
-        expect(socket.getSession()).toBeInstanceOf(Buffer);
-        expect(socket.exportKeyingMaterial(512, "client finished")).toBeInstanceOf(Buffer);
-        expect(socket.isSessionReused()).toBe(false);
+          if (!hadMatch) {
+            throw new Error(`Unexpected cipher ${cipher.name}`);
+          }
+          expect(socket.getProtocol()).toBe("TLSv1.3");
+          expect(typeof socket.getEphemeralKeyInfo()).toBe("object");
+          expect(socket.getSharedSigalgs()).toBeInstanceOf(Array);
+          expect(socket.getSession()).toBeInstanceOf(Buffer);
+          expect(socket.exportKeyingMaterial(512, "client finished")).toBeInstanceOf(Buffer);
+          expect(socket.isSessionReused()).toBe(false);
 
-        // BoringSSL does not support these methods for >= TLSv1.3
-        expect(socket.getFinished()).toBeUndefined();
-        expect(socket.getPeerFinished()).toBeUndefined();
-      } finally {
-        socket.end();
-      }
-    });
+          // BoringSSL does not support these methods for >= TLSv1.3
+          expect(socket.getFinished()).toBeUndefined();
+          expect(socket.getPeerFinished()).toBeUndefined();
+        } finally {
+          socket.end();
+        }
+      },
+    );
 
     // Test using only options
     // prettier-ignore
@@ -468,33 +471,37 @@ for (const { name, connect } of tests) {
       });
     });
 
-    itNetwork("should timeout", done => {
-      const socket = connect(
-        {
-          port: 443,
-          host: "bun.sh",
-        },
-        () => {
-          socket.setTimeout(1000, () => {
-            clearTimeout(timer);
-            done();
-            socket.end();
-          });
-        },
-      );
+    itNetwork(
+      "should timeout",
+      done => {
+        const socket = connect(
+          {
+            port: 443,
+            host: "bun.sh",
+          },
+          () => {
+            socket.setTimeout(1000, () => {
+              clearTimeout(timer);
+              done();
+              socket.end();
+            });
+          },
+        );
 
-      const timer = setTimeout(() => {
-        socket.end();
-        done(new Error("timeout did not trigger"));
-      }, 8000);
+        const timer = setTimeout(() => {
+          socket.end();
+          done(new Error("timeout did not trigger"));
+        }, 8000);
 
-      socket.on("error", err => {
-        clearTimeout(timer);
+        socket.on("error", err => {
+          clearTimeout(timer);
 
-        socket.end();
-        done(err);
-      });
-    }, 10_000); // 10 seconds because uWS sometimes is not that precise with timeouts
+          socket.end();
+          done(err);
+        });
+      },
+      10_000,
+    ); // 10 seconds because uWS sometimes is not that precise with timeouts
 
     itNetwork("should be able to transfer data", done => {
       const socket = connect(

@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import * as fs from "node:fs";
 import { resolve } from "node:path";
@@ -268,7 +268,8 @@ describe("zlib.brotli", () => {
     readStream.pipe(brotliStream);
     await promise;
     expect(all.length).toBeGreaterThanOrEqual(7);
-  }, 15_000);
+    // Debug/ASAN builds are much slower at streaming 50MB through brotli.
+  }, isDebug || isASAN ? 60_000 : 15_000);
 
   it("should accept params", async () => {
     const ZLIB = zlib.constants;
@@ -697,7 +698,8 @@ describe("zlib.zstd", () => {
     readStream.pipe(zstdStream);
     await promise;
     expect(all.length).toBeGreaterThanOrEqual(7);
-  }, 15_000);
+    // Debug/ASAN builds are much slower at streaming 50MB through zstd.
+  }, isDebug || isASAN ? 60_000 : 15_000);
 });
 
 describe("async write buffer lifetime", () => {

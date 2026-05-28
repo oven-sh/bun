@@ -159,7 +159,11 @@ pub type ZlibCompressorArrayListState = State;
 
 impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
     pub fn end(&mut self) {
-        if self.state == ZlibReaderState::Inflating {
+        // always free with `inflateEnd` (matches ZlibReaderArrayList::end): a
+        // `!= End` gate frees from every non-End state, including `Error`; a
+        // narrower `== Inflating` gate would skip `inflateEnd` on those paths
+        // and leak zlib's internal_state.
+        if self.state != ZlibReaderState::End {
             // SAFETY: zlib was initialized via inflateInit2_; safe to end.
             unsafe { inflateEnd(&raw mut self.zlib) };
             self.state = ZlibReaderState::End;
@@ -297,7 +301,9 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
                         self.zlib.avail_out = BUFFER_SIZE as uInt;
                         continue;
                     }
-                    self.state = ZlibReaderState::End;
+                    // `end()` (gated `!= End`) runs `inflateEnd` while still
+                    // `Inflating` and sets `End`; setting `End` up front would
+                    // make it a no-op and leak zlib's internal_state.
                     self.end();
                     return Ok(());
                 }

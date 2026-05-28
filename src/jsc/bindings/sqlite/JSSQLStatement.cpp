@@ -308,7 +308,9 @@ static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db)
     int byteOffset = sqlite3_error_offset(db);
 
     const char* msg = sqlite3_errmsg(db);
-    WTF::String str = WTF::String::fromUTF8(msg);
+    // Error messages can echo identifiers/values from the query, which SQLite does
+    // not validate as UTF-8, so decode leniently to avoid dropping the message.
+    WTF::String str = WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(msg), strlen(msg) });
     JSC::JSObject* object = JSC::createError(globalObject, str);
     auto& builtinNames = WebCore::builtinNames(vm);
     object->putDirect(vm, vm.propertyNames->name, jsString(vm, String("SQLiteError"_s)), JSC::PropertyAttribute::DontEnum | 0);
@@ -2729,8 +2731,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnDeclaredTypes, (JSGlobalObject *
         JSC::JSValue typeValue;
 
         if (declType != nullptr) {
-            String typeStr = String::fromUTF8(declType);
-            typeValue = JSC::jsNontrivialString(vm, typeStr);
+            // Declared types come from the schema, which SQLite does not validate as
+            // UTF-8, so decode leniently (invalid -> U+FFFD) like column names. Use
+            // jsString rather than jsNontrivialString because a single-character
+            // declared type (e.g. CREATE TABLE t (a "X")) is valid.
+            String typeStr = WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(declType), strlen(declType) });
+            typeValue = JSC::jsString(vm, typeStr);
             RETURN_IF_EXCEPTION(scope, {});
         } else {
             // If no declared type (e.g., for expressions or results of functions)

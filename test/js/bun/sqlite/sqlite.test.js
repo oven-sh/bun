@@ -1856,3 +1856,34 @@ it("expands bound non-UTF-8 values in Statement#toString instead of returning an
 
   db.close();
 });
+
+it("decodes declared types leniently and accepts single-character declared types", () => {
+  // A single-character declared type is valid SQLite but tripped a length>1 assert
+  // (jsNontrivialString). A non-UTF-8 declared type from an externally-created DB
+  // decoded to a null string and then null-dereferenced. Both must work now.
+  const mem = new Database(":memory:");
+  mem.run(`CREATE TABLE t (a "X", b "INTEGER")`);
+  const s0 = mem.query("SELECT a, b FROM t");
+  s0.all();
+  expect(s0.declaredTypes).toEqual(["X", "INTEGER"]);
+  mem.close();
+
+  // Non-UTF-8 declared type: patch "INTQGER" -> "INT\xe9GER" in the stored schema.
+  const file = tmpbase + `sqlite-decltype-${Date.now()}-${(Math.random() * 1e9) | 0}.db`;
+  const setup = new Database(file, { create: true });
+  setup.run(`CREATE TABLE t (a "INTQGER")`);
+  setup.run("INSERT INTO t VALUES (5)");
+  setup.close();
+
+  const buf = readFileSync(file);
+  const at = buf.indexOf(Buffer.from("INTQGER", "latin1"));
+  expect(at).toBeGreaterThanOrEqual(0);
+  buf[at + 3] = 0xe9; // the "Q" -> 0xe9
+  writeFileSync(file, buf);
+
+  const db = new Database(file);
+  const s = db.query("SELECT a FROM t");
+  s.all();
+  expect(s.declaredTypes).toEqual(["INT\uFFFDGER"]);
+  db.close();
+});

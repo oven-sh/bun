@@ -518,13 +518,13 @@ describe("Bun.stripANSI", () => {
       "\x9ctext", // standalone C1 ST (0x9C) — in the mask, not an introducer
       "no escapes at all here", // nothing to strip past the prefix
     ];
-    for (const seq of sequences) {
-      test(`dispatched scan matches inlined for ${JSON.stringify(seq)}`, () => {
+    describe.each(sequences)("dispatched scan matches inlined for %j", seq => {
+      test("strips identically with and without a large prefix", () => {
         const short = Bun.stripANSI(seq);
         expect(Bun.stripANSI(prefix + seq)).toBe(prefix + short);
         expect(Bun.stripANSI(prefix + seq + suffix)).toBe(prefix + Bun.stripANSI(seq + suffix));
       });
-    }
+    });
 
     // An ESC at each of many byte offsets exercises the SIMD chunk scan
     // (offsets landing mid-vector) and the scalar tail, for lengths crossing

@@ -3193,10 +3193,7 @@ impl MappingProps {
     /// Hash + index `key`. If an equal *explicit* key is already present →
     /// DuplicateKey. If an equal *merged-in* key is present → return its
     /// index so the caller can override the value in place.
-    fn check_and_index_key(
-        &mut self,
-        key: &Expr,
-    ) -> Result<Option<usize>, ParseError> {
+    fn check_and_index_key(&mut self, key: &Expr) -> Result<Option<usize>, ParseError> {
         let hash = Parser::<Utf8>::yaml_merge_key_expr_hash(key);
         let bucket = self.merge_index.get_or_put(hash)?.value_ptr;
         for existing_idx in bucket.iter() {

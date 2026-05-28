@@ -481,21 +481,13 @@ for (const { name, connect } of tests) {
           },
           () => {
             socket.setTimeout(1000, () => {
-              clearTimeout(timer);
               done();
               socket.end();
             });
           },
         );
 
-        const timer = setTimeout(() => {
-          socket.end();
-          done(new Error("timeout did not trigger"));
-        }, 8000);
-
         socket.on("error", err => {
-          clearTimeout(timer);
-
           socket.end();
           done(err);
         });

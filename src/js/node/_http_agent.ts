@@ -386,7 +386,13 @@ Agent.prototype.removeSocket = function removeSocket(s, options) {
     const keys = Object.keys(this.requests);
     for (let i = 0; i < keys.length; i++) {
       const prop = keys[i];
-      if (this.sockets[prop]?.length) break;
+      // If this origin already has active sockets it's at its own maxSockets
+      // limit, so skip it and try the next origin. (This loop only runs when a
+      // slot freed for `name` but `name` has no queued request — the queued
+      // request we can now service was held back by maxTotalSockets under a
+      // different origin.) Node uses `continue` here; `break` would stall that
+      // request behind the first origin that happens to have a socket open.
+      if (this.sockets[prop]?.length) continue;
       $debug("removeSocket, have a request with different origin, make a socket");
       req = this.requests[prop][0];
       options = req[kRequestOptions];

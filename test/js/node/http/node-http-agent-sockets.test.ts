@@ -116,6 +116,86 @@ describe("node:http Agent socket accounting", () => {
     }
   });
 
+  test("a request queued by maxTotalSockets is dequeued across origins when a slot frees", async () => {
+    // maxSockets: 1 per origin, maxTotalSockets: 2 global. removeSocket's
+    // cross-origin scan must `continue` past an origin that is at its own
+    // maxSockets (not `break`), otherwise a request queued purely by
+    // maxTotalSockets under a different origin is starved behind it.
+    //
+    // Setup — three origins A, B, C:
+    //   A: a1 holds A's only slot (server A never responds) + a2 queued on A
+    //   B: b1 holds the 2nd/last global slot; B has NO queued request
+    //   C: cQueued queued purely by maxTotalSockets (both slots were full)
+    // When b1 frees, removeSocket(name=B) finds requests[B] empty and scans
+    // Object.keys(requests) = [A, C]. With `break` it aborts at A (which has an
+    // active socket) and cQueued is never serviced. With `continue` it skips A
+    // and dispatches cQueued into the freed global slot — the Node behavior.
+    const agent = new http.Agent({ maxSockets: 1, maxTotalSockets: 2 });
+
+    const heldA: Array<() => void> = [];
+    let hitsC = 0;
+    const serverA = http.createServer(() => {}); // never responds — holds A's slot
+    const serverB = http.createServer((req, res) => res.end("b"));
+    const serverC = http.createServer((req, res) => {
+      hitsC++;
+      res.end("c");
+    });
+    serverA.listen(0);
+    serverB.listen(0);
+    serverC.listen(0);
+    try {
+      await Promise.all([once(serverA, "listening"), once(serverB, "listening"), once(serverC, "listening")]);
+      const portA = (serverA.address() as AddressInfo).port;
+      const portB = (serverB.address() as AddressInfo).port;
+      const portC = (serverC.address() as AddressInfo).port;
+      const nameC = agent.getName({ port: portC });
+
+      const get = (port: number) => {
+        const req = http.get({ port, agent }, res => res.resume());
+        req.on("error", () => {});
+        return req;
+      };
+
+      // a1 takes origin A's only slot; wait until it actually reaches A so the
+      // socket is tracked before we saturate the global limit.
+      const a1Hit = once(serverA, "request");
+      get(portA);
+      await a1Hit;
+
+      // a2 queued under A (A is at maxSockets=1). Insert A into requests first.
+      get(portA);
+
+      // b1 takes the 2nd and last global slot.
+      const b1Hit = once(serverB, "request");
+      const b1 = get(portB);
+      const b1Closed = once(b1, "close");
+      await b1Hit;
+
+      // cQueued queued under C purely by maxTotalSockets (total is now 2).
+      const cQueued = get(portC);
+      const cQueuedClosed = once(cQueued, "close");
+
+      expect(agent.requests[agent.getName({ port: portA })]?.length).toBe(1);
+      expect(agent.requests[nameC]?.length).toBe(1);
+
+      // b1 completes → frees a global slot under origin B (no queued request on
+      // B) → cross-origin scan must reach C.
+      await b1Closed;
+      await cQueuedClosed;
+
+      expect(cQueued.destroyed).toBe(false);
+      expect(hitsC).toBe(1); // cQueued reached server C
+      expect(nameC in agent.requests).toBe(false); // C's queue drained
+
+      heldA.shift()?.();
+    } finally {
+      agent.destroy();
+      serverA.close();
+      serverB.close();
+      serverC.close();
+    }
+  });
+
   test("socket emits 'connect' after the request 'socket' event", async () => {
     const agent = new http.Agent({ maxSockets: 1 });
 
@@ -440,6 +520,50 @@ describe("node:http Agent socket accounting", () => {
       await new Promise<void>(r => setImmediate(() => setImmediate(r)));
       expect(agent.totalSocketCount).toBe(0);
       expect(name in agent.sockets).toBe(false);
+    } finally {
+      agent.destroy();
+      server.close();
+    }
+  });
+
+  test("a pre-aborted signal does not dispatch and keeps 'close' terminal", async () => {
+    const agent = new http.Agent({ maxSockets: 1 });
+    let hits = 0;
+    const server = http.createServer((req, res) => {
+      hits++;
+      res.end("ok");
+    });
+    server.listen(0);
+    try {
+      await once(server, "listening");
+      const port = (server.address() as AddressInfo).port;
+
+      const ac = new AbortController();
+      ac.abort();
+
+      const events: string[] = [];
+      const req = http.get({ port, agent, signal: ac.signal });
+      for (const e of ["socket", "prefinish", "finish", "close", "abort"]) {
+        req.on(e, () => events.push(e));
+      }
+      req.on("error", () => {});
+
+      await once(req, "close");
+      // Give any stray deferred ticks (finish/prefinish) a chance to fire.
+      await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+
+      // The stream-completion events must not fire for an aborted request, and
+      // in particular must not appear after 'close' (which breaks the terminal
+      // contract). 'abort' after 'close' matches req.abort()'s own ordering.
+      expect(events).not.toContain("prefinish");
+      expect(events).not.toContain("finish");
+      const closeIdx = events.indexOf("close");
+      expect(closeIdx).toBeGreaterThanOrEqual(0);
+      // Nothing but (optionally) 'abort' may follow 'close'.
+      expect(events.slice(closeIdx + 1).filter(e => e !== "abort")).toEqual([]);
+
+      // An already-aborted request is never dispatched to the server.
+      expect(hits).toBe(0);
     } finally {
       agent.destroy();
       server.close();

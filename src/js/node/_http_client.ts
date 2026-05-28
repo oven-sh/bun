@@ -334,6 +334,16 @@ function ClientRequest(input, options, cb) {
       return false;
     }
 
+    // Never dispatch an already-aborted request (matches Node's addAbortSignal,
+    // which destroys synchronously). A pre-aborted options.signal schedules its
+    // abort on a nextTick that runs after this synchronous send()/startFetch()
+    // path, so without this guard the fetch would be posted and then torn down
+    // one tick later. The pending onSignalAbort (or a later destroy()) handles
+    // teardown; bail before wiring the AbortController / posting the fetch.
+    if (this.aborted) {
+      return false;
+    }
+
     fetching = true;
 
     // Every entry point that dispatches the request (send(), flushHeaders(),
@@ -730,6 +740,10 @@ function ClientRequest(input, options, cb) {
   };
 
   const maybeEmitPrefinish = () => {
+    // Don't emit 'prefinish'/'finish' after the request was destroyed (e.g. an
+    // already-aborted signal tears it down and emits 'close' before send()'s
+    // deferred finish tick runs). 'close' is terminal — nothing follows it.
+    if (this.destroyed) return;
     maybeEmitSocket();
 
     if (!(this[kEmitState] & (1 << ClientRequestEmitState.prefinish))) {
@@ -739,6 +753,7 @@ function ClientRequest(input, options, cb) {
   };
 
   const maybeEmitFinish = () => {
+    if (this.destroyed) return;
     maybeEmitPrefinish();
 
     if (!(this[kEmitState] & (1 << ClientRequestEmitState.finish))) {

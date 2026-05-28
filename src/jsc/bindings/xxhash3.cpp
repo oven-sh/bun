@@ -450,7 +450,11 @@ BUN_DEFINE_HOST_FUNCTION(Bun__xxhash3_64_forTesting, (JSC::JSGlobalObject * glob
     uint64_t seed = 0;
     if (callFrame->argumentCount() > 1) {
         JSC::JSValue seedValue = callFrame->argument(1);
-        if (seedValue.isNumber() || seedValue.isBigInt()) {
+        if (seedValue.isNumber()) {
+            // toBigUInt64 performs ToBigInt, which throws on a Number; take the
+            // integer value directly so a plain-number seed works.
+            seed = static_cast<uint64_t>(seedValue.asNumber());
+        } else if (seedValue.isBigInt()) {
             seed = seedValue.toBigUInt64(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
         }
@@ -459,7 +463,7 @@ BUN_DEFINE_HOST_FUNCTION(Bun__xxhash3_64_forTesting, (JSC::JSGlobalObject * glob
     const uint8_t* data = reinterpret_cast<const uint8_t*>(view->vector());
     size_t len = view->byteLength();
     uint64_t result = bun::xxh3::Hash64(data, len, seed);
-    return JSC::JSValue::encode(JSC::JSBigInt::createFrom(globalObject, result));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSBigInt::createFrom(globalObject, result)));
 }
 
 } // namespace Bun

@@ -139,11 +139,13 @@ describe("xxHash3 SIMD kernel", () => {
 
   it("the dispatched kernel agrees with Bun.hash.xxHash3 on large inputs", () => {
     // Bun.hash.xxHash3 truncates the seed to u32 (@truncate); use seeds that
-    // fit in u32 so both surfaces take the same seed.
+    // fit in u32 so both surfaces take the same seed. The hook accepts the seed
+    // as either a number or a bigint — both must agree.
     for (const len of [241, 256, 513, 1024, 65536, 131072]) {
       for (const seed of [0, 1, 0xabcdef01]) {
         const input = makeInput(len);
-        expect(Bun.hash.xxHash3(input, seed)).toBe(xxHash3ForTesting(input, BigInt(seed)));
+        expect(xxHash3ForTesting(input, seed)).toBe(xxHash3ForTesting(input, BigInt(seed)));
+        expect(Bun.hash.xxHash3(input, seed)).toBe(xxHash3ForTesting(input, seed));
       }
     }
     gcTick();

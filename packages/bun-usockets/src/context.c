@@ -372,7 +372,9 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
     }
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
-    us_poll_init(p, listen_socket_fd, POLL_TYPE_SEMI_SOCKET);
+    /* Listen sockets get their own POLL_TYPE_LISTEN_SOCKET so the dispatcher
+     * never confuses a paused/half-closed connecting socket for one. */
+    us_poll_init(p, listen_socket_fd, POLL_TYPE_LISTEN_SOCKET);
     us_poll_start(p, group->loop, LIBUS_SOCKET_READABLE);
 
     struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
@@ -394,7 +396,9 @@ struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t 
     }
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
-    us_poll_init(p, listen_socket_fd, POLL_TYPE_SEMI_SOCKET);
+    /* See the IP-listener variant above for why this is POLL_TYPE_LISTEN_SOCKET
+     * and not POLL_TYPE_SEMI_SOCKET. */
+    us_poll_init(p, listen_socket_fd, POLL_TYPE_LISTEN_SOCKET);
     us_poll_start(p, group->loop, LIBUS_SOCKET_READABLE);
 
     struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;

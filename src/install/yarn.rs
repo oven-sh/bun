@@ -679,6 +679,28 @@ struct VersionInfo {
     yarn_idx: usize,
 }
 
+fn check_remote_tarball_url(
+    manager: &PackageManager,
+    name_to_use: &[u8],
+    resolved: &[u8],
+    integrity: Option<&[u8]>,
+) -> Result<(), Error> {
+    let configured_registry = manager.scope_for_package_name(name_to_use).url.href();
+    let has_supported_integrity =
+        integrity.is_some_and(|integrity| Integrity::parse(integrity).tag.is_supported());
+    if !lockfile::bun_lock::url_is_under_registry(resolved, configured_registry)
+        && !lockfile::bun_lock::url_is_under_registry(
+            resolved,
+            npm::Registry::DEFAULT_URL.as_bytes(),
+        )
+        && !resolved.starts_with(b"https://codeload.github.com/")
+        && !has_supported_integrity
+    {
+        return Err(bun_core::err!("InvalidYarnLockfile"));
+    }
+    Ok(())
+}
+
 pub(crate) fn migrate_yarn_lockfile<'a>(
     this: &'a mut Lockfile,
     manager: &mut PackageManager,
@@ -1163,21 +1185,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                         .starts_with(b"https://registry.yarnpkg.com/")
                         || resolved.starts_with(b"https://registry.npmjs.org/");
                     if is_remote_url && !is_default_registry_tarball {
-                        let configured_registry =
-                            manager.scope_for_package_name(name_to_use).url.href();
-                        let has_supported_integrity = entry.integrity.is_some_and(|integrity| {
-                            Integrity::parse(integrity).tag.is_supported()
-                        });
-                        if !lockfile::bun_lock::url_is_under_registry(resolved, configured_registry)
-                            && !lockfile::bun_lock::url_is_under_registry(
-                                resolved,
-                                npm::Registry::DEFAULT_URL.as_bytes(),
-                            )
-                            && !resolved.starts_with(b"https://codeload.github.com/")
-                            && !has_supported_integrity
-                        {
-                            return Err(bun_core::err!("InvalidYarnLockfile"));
-                        }
+                        check_remote_tarball_url(manager, name_to_use, resolved, entry.integrity)?;
                     }
                     break 'blk Resolution::init(ResolutionValue::RemoteTarball(
                         sbuf!().append(resolved)?,
@@ -1200,21 +1208,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     let is_remote_url =
                         resolved.starts_with(b"https://") || resolved.starts_with(b"http://");
                     if is_remote_url {
-                        let configured_registry =
-                            manager.scope_for_package_name(name_to_use).url.href();
-                        let has_supported_integrity = entry.integrity.is_some_and(|integrity| {
-                            Integrity::parse(integrity).tag.is_supported()
-                        });
-                        if !lockfile::bun_lock::url_is_under_registry(resolved, configured_registry)
-                            && !lockfile::bun_lock::url_is_under_registry(
-                                resolved,
-                                npm::Registry::DEFAULT_URL.as_bytes(),
-                            )
-                            && !resolved.starts_with(b"https://codeload.github.com/")
-                            && !has_supported_integrity
-                        {
-                            return Err(bun_core::err!("InvalidYarnLockfile"));
-                        }
+                        check_remote_tarball_url(manager, name_to_use, resolved, entry.integrity)?;
                     }
                     sbuf!().append(resolved)?
                 };

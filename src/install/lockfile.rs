@@ -3411,7 +3411,7 @@ impl Lockfile {
                     continue;
                 }
                 let package_id = self.buffers.resolutions[dep_id as usize];
-                if package_id == invalid_package_id {
+                if package_id == invalid_package_id || package_id as usize >= resolutions.len() {
                     continue;
                 }
                 if resolutions[package_id as usize].eql(resolution, buf, buf) {

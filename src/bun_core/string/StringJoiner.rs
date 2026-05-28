@@ -288,6 +288,28 @@ mod tests {
         j.push_cloned(b"another KEY");
         assert_eq!(j.watcher.estimated_count, 2);
     }
+
+    #[test]
+    fn detach_lifetime_round_trips_borrowed_data() {
+        let borrowed = b"KEY borrowed ".to_vec();
+        let input = b"KEY".to_vec();
+        let mut j = StringJoiner {
+            watcher: Watcher {
+                input: &input,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        j.push(&borrowed);
+        j.push_cloned(b"cloned KEY");
+        // SAFETY: `borrowed` and `input` are declared before `detached`, so they outlive it.
+        let mut detached = unsafe { j.detach_lifetime() };
+        assert_eq!(detached.len, "KEY borrowed cloned KEY".len());
+        assert_eq!(detached.watcher.input, b"KEY");
+        assert_eq!(detached.watcher.estimated_count, 2);
+        assert!(detached.watcher.needs_newline);
+        assert_eq!(&*detached.done().unwrap(), b"KEY borrowed cloned KEY");
+    }
 }
 
 // ported from: src/string/StringJoiner.zig

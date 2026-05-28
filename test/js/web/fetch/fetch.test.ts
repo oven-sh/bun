@@ -2829,6 +2829,7 @@ it("does not reuse a keep-alive connection whose response carried more bytes tha
     for (const socket of sockets) socket.destroy();
     server.close();
   }
+});
 
 // https://github.com/oven-sh/bun/issues/29195 — init is a Web IDL dictionary
 describe("init argument validation (#29195)", () => {

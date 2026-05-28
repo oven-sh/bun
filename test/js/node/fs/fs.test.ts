@@ -7,6 +7,7 @@ import {
   isBroken,
   isIntelMacOS,
   isLinux,
+  isMusl,
   isPosix,
   isWindows,
   tempDir,
@@ -3772,14 +3773,21 @@ it("fs.statfs (callback) should work with bigint", async () => {
 //
 // A real >8 TB filesystem isn't available in CI, so an LD_PRELOAD shim injects
 // a large f_bavail/f_blocks/f_bfree into the real statfs syscalls and we read
-// them back through the full JS binding in a subprocess. This is linux-glibc
-// specific (the shim interposes glibc's statfs/statfs64), so it's skipped
-// elsewhere.
-describe.skipIf(!isLinux)("statfs large-filesystem block counts (#31510)", () => {
+// them back through the full JS binding in a subprocess. The shim interposes
+// glibc's statfs/statfs64, which needs a dynamically linked glibc bun — musl is
+// skipped (static libc can't be interposed) and so is every non-Linux platform
+// (the shim's <sys/vfs.h>/struct statfs64 are Linux-only and wouldn't compile).
+// NOTE: keep all compilation and spawning inside the it() bodies. bun:test (like
+// Jest) still *runs* a describe.skipIf(true) callback during collection to
+// discover test names, so anything thrown at the top level here would fail the
+// whole file on skipped platforms.
+describe.skipIf(!isLinux || isMusl)("statfs large-filesystem block counts (#31510)", () => {
   // Injected values mirror the issue report: ~3.2e9 blocks of 4 KiB ≈ 13.3 TB.
   // All three block-count fields are above i32::MAX (2147483647); `bsize *
-  // bavail` stays well under 2^53 so the expected double is exact.
-  const BSIZE = 4096;
+  // bavail` stays well under 2^53 so the expected double is exact. bsize uses a
+  // sentinel (3 * 4096) that no real filesystem reports, so a failure to
+  // interpose is unambiguous rather than colliding with a real 4 KiB bsize.
+  const BSIZE = 12288;
   const BLOCKS = 3747442852; // > 2^31
   const BFREE = 3248532185; // > 2^31
   const BAVAIL = 3248532185; // > 2^31
@@ -3829,12 +3837,19 @@ int fstatfs64(int fd, struct statfs64 *b) {
 }
 `;
 
-  // Compile the LD_PRELOAD shim once. Returns the .so path, or null if the host
-  // genuinely can't build it (no cc). Any other compile failure throws so a
-  // source regression isn't silently hidden as a skip.
-  const tryBuild = (): string | null => {
+  // Compile the LD_PRELOAD shim, memoized across the cases. Returns the .so path,
+  // or null if the host genuinely can't build it (no cc). Any other compile
+  // failure throws so a source regression isn't silently hidden as a skip. Lazy
+  // (not a top-level const) so nothing runs during collection on skipped
+  // platforms — see the NOTE above.
+  let built: { so: string | null } | undefined;
+  const buildShim = (): string | null => {
+    if (built) return built.so;
     const cc = Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");
-    if (!cc) return null; // no compiler on PATH — expected skip
+    if (!cc) {
+      built = { so: null }; // no compiler on PATH — expected skip
+      return null;
+    }
     const dir = tempDirWithFiles("statfs-shim", { "statfs_shim.c": shimSrc });
     const src = join(dir, "statfs_shim.c");
     const so = join(dir, "statfs_shim.so");
@@ -3848,14 +3863,13 @@ int fstatfs64(int fd, struct statfs64 *b) {
     if (!existsSync(so)) {
       throw new Error("statfs shim compiled successfully but output .so is missing");
     }
+    built = { so };
     return so;
   };
 
-  const shimSo = tryBuild();
-
   // Read statfs back through the given entry point in a bun subprocess with the
   // shim preloaded. Returns the parsed object, or null if the shim didn't take
-  // effect (e.g. a statically linked / musl bun that LD_PRELOAD can't interpose).
+  // effect (e.g. a statically linked bun that LD_PRELOAD can't interpose).
   async function statfsUnderShim(so: string, expr: string) {
     const snippet = `
       const fs = require("node:fs");
@@ -3879,7 +3893,7 @@ int fstatfs64(int fd, struct statfs64 *b) {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     const parsed = JSON.parse(stdout);
-    // Shim didn't interpose (e.g. musl / static bun): bsize won't be ours.
+    // Shim didn't interpose (static bun): the sentinel bsize won't be ours.
     if (parsed.bsize !== BSIZE) return null;
     return parsed;
   }
@@ -3896,6 +3910,7 @@ int fstatfs64(int fd, struct statfs64 *b) {
 
   for (const c of cases) {
     it(`${c.name} does not truncate block counts above i32::MAX`, async () => {
+      const shimSo = buildShim();
       if (shimSo == null) {
         console.warn(`SKIP statfs #31510 ${c.name}: cc not available`);
         return;

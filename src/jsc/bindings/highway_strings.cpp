@@ -1215,9 +1215,9 @@ static HWY_INLINE size_t IndexOfEscapeCharScalar(const T* HWY_RESTRICT input, si
 // refines a broad hit down to the real introducers. `T` is u8 (Latin-1) or
 // u16 (UTF-16); on u16 the broad mask 0xFF70 also rejects code units >= 0x100.
 //
-// Short inputs take the scalar path before any vector setup. sliceAnsi/wrapAnsi
-// call this once per visible run, often on a handful of bytes, so the Set
-// broadcasts below would otherwise dominate those tiny calls.
+// Short inputs take the scalar path before any vector setup, so the kernel is
+// cheap when called standalone. (The only current caller, findEscapeCharacter,
+// gates dispatch at >= kEscapeDispatchThreshold, but this is extern "C".)
 template<class T>
 static HWY_INLINE size_t IndexOfEscapeCharImpl(const T* HWY_RESTRICT input, size_t len)
 {
@@ -1232,7 +1232,7 @@ static HWY_INLINE size_t IndexOfEscapeCharImpl(const T* HWY_RESTRICT input, size
     const auto broad_vec = hn::Set(d, static_cast<T>(0b00010000));
 
     // Exact introducers (including C1 ST 0x9C), used to reject broad-mask
-    // false positives (0x10-0x1A, 0x1C-0x1F, 0x90-0x97, 0x99-0x9A).
+    // false positives (0x10-0x1A, 0x1C-0x1F, 0x91-0x97, 0x99-0x9A).
     const auto vec_1b = hn::Set(d, static_cast<T>(0x1b));
     const auto vec_90 = hn::Set(d, static_cast<T>(0x90));
     const auto vec_98 = hn::Set(d, static_cast<T>(0x98));

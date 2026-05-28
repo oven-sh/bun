@@ -547,7 +547,7 @@ describe("Bun.stripANSI", () => {
       expect(Bun.stripANSI(input)).toBe("☃" + prefix + "red" + suffix);
     });
 
-    // Broad-mask false positives (0x10-0x1A, 0x1C-0x1F, 0x90-0x97, 0x99-0x9A)
+    // Broad-mask false positives (0x10-0x1A, 0x1C-0x1F, 0x91-0x97, 0x99-0x9A)
     // are in the broad range but not the exact introducer set — the large-input
     // kernel's refinement rejects them, so the bytes survive verbatim.
     test("broad-mask false positives are preserved in a large string", () => {

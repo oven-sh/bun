@@ -4950,6 +4950,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         };
         ctx.content_indent = content_indent;
         ctx.cur_more_indented = matches!(first, 0x20 | 0x09);
+        if first == 0x09 {
+            self.tab_after_indent = true;
+        }
 
         // A line is part of the body iff its indentation is >= content_indent
         // and strictly > the parent block's indent. Collapse both into one

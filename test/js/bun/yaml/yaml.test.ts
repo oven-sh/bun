@@ -1385,8 +1385,13 @@ folded: >
           expect(() => YAML.parse("a: |\n  x\n\tb: y\n")).toThrow(TAB_ERR);
           expect(() => YAML.parse("? |\n  x\n\t: y\n")).toThrow(TAB_ERR);
           expect(() => YAML.parse("a: >\n  x\n\tb: y\n")).toThrow(TAB_ERR);
+          // Same when the FIRST line after the header terminates (phase-1).
+          expect(() => YAML.parse("a:\n  - |\n  \t- x\n")).toThrow(TAB_ERR);
+          expect(() => YAML.parse("a:\n  key: |\n  \tsibling: x\n")).toThrow(TAB_ERR);
+          expect(() => YAML.parse("a:\n  key: >\n  \tsibling: x\n")).toThrow(TAB_ERR);
           // Tab in more-indented body content is valid (part of the scalar).
           expect(YAML.parse("- |\n  x\n  \ty\n")).toEqual(["x\n\ty\n"]);
+          expect(YAML.parse("- |\n  \t- x\n")).toEqual(["\t- x\n"]);
         });
 
         test("rejects tab before alias/flow as implicit-key sibling", () => {

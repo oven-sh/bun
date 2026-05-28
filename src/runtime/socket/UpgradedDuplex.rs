@@ -24,7 +24,7 @@ use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTim
 
 bun_output::declare_scope!(UpgradedDuplex, visible);
 
-pub struct UpgradedDuplex {
+pub(crate) struct UpgradedDuplex {
     pub wrapper: Option<WrapperType>,
     pub origin: StrongOptional, // any duplex
     // JSC_BORROW per LIFETIMES.tsv.
@@ -200,7 +200,7 @@ impl UpgradedDuplex {
     }
 
     #[uws_callback(export = "UpgradedDuplex__flush")]
-    pub fn flush(&mut self) {
+    pub(crate) fn flush(&mut self) {
         if let Some(wrapper) = &mut self.wrapper {
             let _ = wrapper.flush();
         }
@@ -217,7 +217,7 @@ impl UpgradedDuplex {
         }
     }
 
-    pub fn on_timeout(&mut self) {
+    pub(crate) fn on_timeout(&mut self) {
         bun_output::scoped_log!(UpgradedDuplex, "onTimeout");
 
         let has_been_cleared = self.event_loop_timer.state == EventLoopTimerState::CANCELLED
@@ -235,7 +235,11 @@ impl UpgradedDuplex {
         (self.handlers.on_timeout)(self.handlers.ctx);
     }
 
-    pub fn from(global: &JSGlobalObject, origin: JSValue, handlers: Handlers) -> UpgradedDuplex {
+    pub(crate) fn from(
+        global: &JSGlobalObject,
+        origin: JSValue,
+        handlers: Handlers,
+    ) -> UpgradedDuplex {
         UpgradedDuplex {
             vm: Some(global.bun_vm()),
             origin: StrongOptional::create(origin, global),
@@ -252,7 +256,7 @@ impl UpgradedDuplex {
         }
     }
 
-    pub fn get_js_handlers(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_js_handlers(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let array = JSValue::create_empty_array(global, 4)?;
         array.ensure_still_alive();
 
@@ -301,7 +305,7 @@ impl UpgradedDuplex {
         Ok(array)
     }
 
-    pub fn start_tls(
+    pub(crate) fn start_tls(
         &mut self,
         ssl_options: &crate::server::server_config::SSLConfig,
         is_client: bool,
@@ -328,7 +332,7 @@ impl UpgradedDuplex {
     /// error. Mirrors `start_tls` but skips the
     /// `SSLConfig.asUSockets() → us_ssl_ctx_from_options()` round-trip so a
     /// memoised `SecureContext` can be reused on the duplex/named-pipe path.
-    pub fn start_tls_with_ctx(
+    pub(crate) fn start_tls_with_ctx(
         &mut self,
         ctx: *mut bun_boringssl_sys::SSL_CTX,
         is_client: bool,
@@ -361,7 +365,7 @@ impl UpgradedDuplex {
     }
 
     #[uws_callback(export = "UpgradedDuplex__encode_and_write")]
-    pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {
+    pub(crate) fn encode_and_write(&mut self, data: &[u8]) -> i32 {
         bun_output::scoped_log!(UpgradedDuplex, "encodeAndWrite (len: {})", data.len());
         if let Some(wrapper) = &mut self.wrapper {
             return i32::try_from(wrapper.write_data(data).unwrap_or(0)).expect("int cast");
@@ -370,34 +374,34 @@ impl UpgradedDuplex {
     }
 
     #[uws_callback(export = "UpgradedDuplex__raw_write")]
-    pub fn raw_write(&mut self, encoded_data: &[u8]) -> i32 {
+    pub(crate) fn raw_write(&mut self, encoded_data: &[u8]) -> i32 {
         Self::internal_write(std::ptr::from_mut::<Self>(self), encoded_data);
         i32::try_from(encoded_data.len()).expect("int cast")
     }
 
     #[uws_callback(export = "UpgradedDuplex__close")]
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         if let Some(wrapper) = &mut self.wrapper {
             let _ = wrapper.shutdown(true);
         }
     }
 
     #[uws_callback(export = "UpgradedDuplex__shutdown")]
-    pub fn shutdown(&mut self) {
+    pub(crate) fn shutdown(&mut self) {
         if let Some(wrapper) = &mut self.wrapper {
             let _ = wrapper.shutdown(false);
         }
     }
 
     #[uws_callback(export = "UpgradedDuplex__shutdown_read")]
-    pub fn shutdown_read(&mut self) {
+    pub(crate) fn shutdown_read(&mut self) {
         if let Some(wrapper) = &mut self.wrapper {
             let _ = wrapper.shutdown_read();
         }
     }
 
     #[uws_callback(export = "UpgradedDuplex__is_shutdown", no_catch)]
-    pub fn is_shutdown(&self) -> bool {
+    pub(crate) fn is_shutdown(&self) -> bool {
         if let Some(wrapper) = &self.wrapper {
             return wrapper.is_shutdown();
         }
@@ -405,7 +409,7 @@ impl UpgradedDuplex {
     }
 
     #[uws_callback(export = "UpgradedDuplex__is_closed", no_catch)]
-    pub fn is_closed(&self) -> bool {
+    pub(crate) fn is_closed(&self) -> bool {
         if let Some(wrapper) = &self.wrapper {
             return wrapper.is_closed();
         }
@@ -413,11 +417,11 @@ impl UpgradedDuplex {
     }
 
     #[uws_callback(export = "UpgradedDuplex__is_established", no_catch)]
-    pub fn is_established(&self) -> bool {
+    pub(crate) fn is_established(&self) -> bool {
         !self.is_closed()
     }
 
-    pub fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
+    pub(crate) fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
         if let Some(wrapper) = &self.wrapper {
             return wrapper.ssl.map(|p| p.as_ptr());
         }
@@ -425,7 +429,7 @@ impl UpgradedDuplex {
     }
 
     #[uws_callback(export = "UpgradedDuplex__ssl_error", no_catch)]
-    pub fn ssl_error(&self) -> us_bun_verify_error_t {
+    pub(crate) fn ssl_error(&self) -> us_bun_verify_error_t {
         us_bun_verify_error_t {
             error_no: self.ssl_error.error_no,
             code: self
@@ -442,11 +446,11 @@ impl UpgradedDuplex {
         }
     }
 
-    pub fn reset_timeout(&mut self) {
+    pub(crate) fn reset_timeout(&mut self) {
         self.set_timeout_in_milliseconds(self.current_timeout);
     }
 
-    pub fn set_timeout_in_milliseconds(&mut self, ms: c_uint) {
+    pub(crate) fn set_timeout_in_milliseconds(&mut self, ms: c_uint) {
         if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
             timer_all().remove(&raw mut self.event_loop_timer);
         }
@@ -470,7 +474,7 @@ impl UpgradedDuplex {
     }
 
     #[uws_callback(export = "UpgradedDuplex__set_timeout")]
-    pub fn set_timeout(&mut self, seconds: c_uint) {
+    pub(crate) fn set_timeout(&mut self, seconds: c_uint) {
         bun_output::scoped_log!(UpgradedDuplex, "setTimeout({})", seconds);
         self.set_timeout_in_milliseconds(seconds * 1000);
     }
@@ -617,7 +621,7 @@ fn on_close_js(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
 // ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub extern "C" fn UpgradedDuplex__ssl(this: *const c_void) -> *mut bun_boringssl_sys::SSL {
+pub(crate) extern "C" fn UpgradedDuplex__ssl(this: *const c_void) -> *mut bun_boringssl_sys::SSL {
     // SAFETY: `this` is a live `*const UpgradedDuplex` from the uws_sys opaque handle.
     unsafe {
         (*this.cast::<UpgradedDuplex>())

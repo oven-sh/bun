@@ -53,7 +53,6 @@ pub use crate::ipc_host::emit_handle_ipc_message as jsc_ipc_emit_handle_ipc_mess
 // ── src/string/*.zig ────────────────────────────────────────────────────────
 pub use bun_jsc::bun_string_jsc::js_escape_reg_exp as string_escape_reg_exp_js_escape_reg_exp;
 pub use bun_jsc::bun_string_jsc::js_escape_reg_exp_for_package_name_matching as string_escape_reg_exp_js_escape_reg_exp_for_package_name_matching;
-pub use bun_jsc::bun_string_jsc::js_get_string_width as string_string_string_js_get_string_width;
 pub use bun_jsc::bun_string_jsc::unicode_testing_apis::to_utf16_alloc_sentinel as bun_core_string_immutable_unicode_testing_ap_is_to_utf16_alloc_sentinel;
 
 // ── src/patch/patch.zig TestingAPIs ─────────────────────────────────────────
@@ -80,7 +79,10 @@ pub use bun_http_jsc::headers_jsc::h3_quic_live_counts as http_h3_client_testing
 /// because the flag it reads — `cli::Arguments::Bun__Node__UseSystemCA` — is
 /// owned by `bun_runtime`; placing the body in a lower crate would invert the
 /// dependency edge.
-pub fn bun_get_use_system_ca(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn bun_get_use_system_ca(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
     let v =
         crate::cli::Arguments::Bun__Node__UseSystemCA.load(core::sync::atomic::Ordering::Relaxed);
     Ok(JSValue::js_boolean(v))

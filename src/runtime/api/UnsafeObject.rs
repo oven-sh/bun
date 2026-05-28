@@ -3,7 +3,7 @@ use bun_jsc::virtual_machine::GCLevel;
 use bun_jsc::zig_string::ZigString;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSType, JSValue, JsResult};
 
-pub fn create(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     // NB: helper sizes inline capacity from `fns.len()`, fixing the prior
     // `len = 3` vs 4-entry drift.
     jsc::create_host_function_object(
@@ -18,7 +18,7 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub fn gc_aggression_level(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn gc_aggression_level(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for a Bun-owned global;
     // we hold no other Rust borrow of the VM across these accesses.
     let vm = global.bun_vm().as_mut();
@@ -37,7 +37,10 @@ pub fn gc_aggression_level(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 }
 
 #[bun_jsc::host_fn]
-pub fn array_buffer_to_string(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn array_buffer_to_string(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     let args_buf = frame.arguments_old::<2>();
     let args = args_buf.slice();
     if args.len() < 1 || !args[0].is_cell() || !args[0].js_type().is_typed_array_or_array_buffer() {

@@ -590,7 +590,7 @@ pub mod internal_bindings {
     /// Node.js). So the best course of action is for Bun to also expose a function that reveals the
     /// clock that is used to schedule timers.
     #[bun_jsc::host_fn]
-    pub fn timer_clock_ms(
+    pub(crate) fn timer_clock_ms(
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {

@@ -32,14 +32,6 @@ pub use bun_collections::SmallList;
 // dispatch with a comptime-computed return type. In Rust this becomes a trait
 // with associated type for the return.
 
-pub trait GetFallbacks<const N: usize>: Sized {
-    type Output;
-    fn get_fallbacks(
-        this: &mut SmallList<Self, N>,
-        targets: &crate::targets::Targets,
-    ) -> Self::Output;
-}
-
 /// Duck-typed protocol from the Zig source (`@hasDecl(T, "getImage")`): any
 /// value type that carries an `Image` and can produce color/prefix fallbacks
 /// of itself. Implemented by `values::image::Image` and
@@ -68,7 +60,7 @@ pub trait ImageFallback: Sized {
 /// crate now that `SmallList` is foreign. The lone caller threads `self`
 /// explicitly.
 #[inline]
-pub fn get_fallbacks<T: ImageFallback>(
+pub(crate) fn get_fallbacks<T: ImageFallback>(
     this: &mut SmallList<T, 1>,
     arena: &bun_alloc::Arena,
     targets: &crate::targets::Targets,
@@ -213,7 +205,10 @@ pub mod fallbacks_gated {
                 // dummy non-alloced color to avoid deep cloning the real one since we will replace it
                 new_shadow.color = css::css_values::color::CssColor::CurrentColor;
                 new_shadow = new_shadow.deep_clone(arena);
-                new_shadow.color = shadow.color.to_rgb().unwrap();
+                new_shadow.color = shadow
+                    .color
+                    .to_rgb()
+                    .unwrap_or_else(|| shadow.color.deep_clone(arena));
                 rgb.append_assume_capacity(new_shadow);
             }
             res.append(rgb);
@@ -226,7 +221,10 @@ pub mod fallbacks_gated {
                 // dummy non-alloced color to avoid deep cloning the real one since we will replace it
                 new_shadow.color = css::css_values::color::CssColor::CurrentColor;
                 new_shadow = new_shadow.deep_clone(arena);
-                new_shadow.color = shadow.color.to_p3().unwrap();
+                new_shadow.color = shadow
+                    .color
+                    .to_p3()
+                    .unwrap_or_else(|| shadow.color.deep_clone(arena));
                 p3.append_assume_capacity(new_shadow);
             }
             res.append(p3);
@@ -234,7 +232,9 @@ pub mod fallbacks_gated {
 
         if fallbacks.contains(css::ColorFallbackKind::LAB) {
             for shadow in this.slice_mut() {
-                let out = shadow.color.to_lab().unwrap();
+                let Some(out) = shadow.color.to_lab() else {
+                    continue;
+                };
                 // old color dropped via replace
                 let _ = core::mem::replace(&mut shadow.color, out);
             }

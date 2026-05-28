@@ -12,12 +12,12 @@ use crate::bake::dev_server_body::HmrTopicBits;
 
 // Local shim for Zig's `res: anytype` — shared with `DevServer::on_web_socket_upgrade`.
 // TODO(port): replace with `bun_uws::ResponseLike` once that trait lands upstream.
-pub use super::ResponseLike;
+pub(crate) use super::ResponseLike;
 
 // Struct definition lives in `dev_server/mod.rs` so the public
 // `crate::bake::dev_server::HmrSocket` path and these impl blocks name a
 // single type (no cross-type pointer casts).
-pub use super::HmrSocket;
+pub(crate) use super::HmrSocket;
 
 impl HmrSocket {
     // `res: anytype` — only `.getRemoteSocketInfo()` is called on it.
@@ -296,6 +296,9 @@ impl HmrSocket {
                 }
 
                 if dev.broadcast_console_log_from_browser_to_server {
+                    let arena = bun_alloc::Arena::new();
+                    let data =
+                        super::error_report_request_body::sanitize_for_terminal(data, &arena);
                     match kind {
                         ConsoleLogKind::Log => {
                             Output::pretty(format_args!(

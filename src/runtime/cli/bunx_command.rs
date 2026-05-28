@@ -31,7 +31,7 @@ use crate::api::bun::process::sync as proc_sync;
 
 bun_output::declare_scope!(bunx, visible);
 
-pub struct BunxCommand;
+pub(crate) struct BunxCommand;
 
 /// bunx-specific options parsed from argv.
 //
@@ -212,7 +212,7 @@ impl Options {
 // so no explicit `Drop` impl is needed.
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GetBinNameError {
+pub(crate) enum GetBinNameError {
     #[error("NoBinFound")]
     NoBinFound,
     #[error("NeedToInstall")]
@@ -229,7 +229,7 @@ impl BunxCommand {
     /// occupies `v[..v.len()-1]` (matches Zig `[:0]const u8` from `allocSentinel`).
     // TODO(port): return owned `bun_core::ZString` / `Box<ZStr>` once that type exists,
     // instead of a Vec<u8> with a trailing-NUL convention.
-    pub fn add_create_prefix(input: &[u8]) -> Result<Vec<u8>, AllocError> {
+    pub(crate) fn add_create_prefix(input: &[u8]) -> Result<Vec<u8>, AllocError> {
         const PREFIX_LENGTH: usize = b"create-".len();
 
         if input.is_empty() {
@@ -279,6 +279,21 @@ impl BunxCommand {
     #[cfg(windows)]
     const NANOSECONDS_CACHE_VALID: i128 = (Self::SECONDS_CACHE_VALID as i128) * 1_000_000_000;
 
+    /// `bin` keys (and the `name` fallback) in package.json are command
+    /// names, not paths. The bunx cache lives in a world-writable temp dir,
+    /// so a crafted package.json there could yield a key like
+    /// `../../../../tmp/x` or `/tmp/x`; `bun_which::which` resolves
+    /// slash-containing names against the cwd, escaping `node_modules/.bin`
+    /// and skipping the cache-ownership check before execution. Reject
+    /// anything that isn't a plain file name.
+    fn is_safe_bin_name(name: &[u8]) -> bool {
+        !name.is_empty()
+            && name != b"."
+            && name != b".."
+            && strings::index_of_char(name, b'/').is_none()
+            && strings::index_of_char(name, b'\\').is_none()
+    }
+
     fn get_bin_name_from_subpath(
         transpiler: &mut Transpiler,
         dir_fd: Fd,
@@ -308,7 +323,7 @@ impl BunxCommand {
                     for prop in object.properties.slice() {
                         if let Some(key) = &prop.key {
                             if let Some(bin_name) = key.as_string(&bump) {
-                                if bin_name.is_empty() {
+                                if !Self::is_safe_bin_name(bin_name) {
                                     continue;
                                 }
                                 return Ok(Box::<[u8]>::from(bin_name));
@@ -319,7 +334,16 @@ impl BunxCommand {
                 ExprData::EString(_) => {
                     if let Some(name_expr) = expr.get(b"name") {
                         if let Some(name) = name_expr.as_string(&bump) {
-                            return Ok(Box::<[u8]>::from(name));
+                            // A scoped `name` (`@scope/pkg`) is legitimate here;
+                            // the command name is its unscoped portion.
+                            let bin_name = if name.is_empty() {
+                                name
+                            } else {
+                                bun_install::dependency::unscoped_package_name(name)
+                            };
+                            if Self::is_safe_bin_name(bin_name) {
+                                return Ok(Box::<[u8]>::from(bin_name));
+                            }
                         }
                     }
                 }
@@ -562,12 +586,33 @@ impl BunxCommand {
         true
     }
 
+    #[cfg(unix)]
+    fn is_trusted_cache_root(cache_root: &ZStr, uid: libc::uid_t) -> bool {
+        match bun_sys::lstat(cache_root) {
+            Ok(st) => {
+                (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
+                    && st.st_uid == uid
+                    && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+            }
+            Err(_) => true,
+        }
+    }
+
+    #[cfg(not(unix))]
+    #[inline(always)]
+    fn is_trusted_cache_root(_cache_root: &ZStr, _uid: u32) -> bool {
+        true
+    }
+
     fn exit_with_usage() -> ! {
         crate::cli::command::tag_print_help(Command::Tag::BunxCommand, false);
         Global::exit(1);
     }
 
-    pub fn exec(ctx: &mut ContextData, argv: &[&'static ZStr]) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(
+        ctx: &mut ContextData,
+        argv: &[&'static ZStr],
+    ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         // Don't log stuff
         ctx.debug.silent = true;
@@ -904,6 +949,22 @@ impl BunxCommand {
             // SAFETY: `written` bytes were just initialized above
             unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
         };
+
+        {
+            let mut cache_root_buf = PathBuffer::uninit();
+            cache_root_buf[..bunx_cache_dir.len()].copy_from_slice(bunx_cache_dir);
+            cache_root_buf[bunx_cache_dir.len()] = 0;
+            if !Self::is_trusted_cache_root(
+                ZStr::from_buf(&cache_root_buf[..], bunx_cache_dir.len()),
+                uid,
+            ) {
+                Output::err_generic(
+                    "refusing to use bunx cache directory <b>{}<r> because it is not a directory owned by the current user. Remove it and try again.",
+                    format_args!("{}", BStr::new(bunx_cache_dir)),
+                );
+                Global::exit(1);
+            }
+        }
 
         let passthrough: &[Box<[u8]>] = opts.passthrough_list.as_slice();
 

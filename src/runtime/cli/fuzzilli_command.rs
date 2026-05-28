@@ -11,11 +11,11 @@ use bun_sys::{self as sys, Fd, FdExt, O};
 use super::run_command::RunCommand;
 use crate::Command;
 
-pub struct FuzzilliCommand;
+pub(crate) struct FuzzilliCommand;
 
 impl FuzzilliCommand {
     #[cold]
-    pub fn exec(_ctx: Command::Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(_ctx: Command::Context) -> Result<(), bun_core::Error> {
         // Zig: `if (bun.Environment.enable_fuzzilli) struct { … } else struct {}` —
         // the dispatch site (`cli/mod.rs`) already gates on `ENABLE_FUZZILLI`, so
         // this body is unreachable when the flag is off; bail loudly if a caller

@@ -33,7 +33,7 @@ macro_rules! pfmt {
 // `runtime/webcore/s3/credentials_jsc.rs`. Surface them as associated fns via
 // an extension trait so call sites keep their Zig shape
 // (`S3Credentials.guessRegion(...)` / `.getCredentialsWithOptions(...)`).
-pub trait S3CredentialsExt {
+pub(crate) trait S3CredentialsExt {
     fn guess_region(endpoint: &[u8]) -> &[u8];
     fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]>;
     #[allow(clippy::too_many_arguments)]
@@ -262,7 +262,10 @@ impl S3Client {
     // PORT NOTE: no `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]`
     // derive on the struct emits `S3ClientClass__construct` which calls
     // `<S3Client>::constructor` directly.
-    pub fn constructor(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Self>> {
+    pub(crate) fn constructor(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<Box<Self>> {
         let arguments = callframe.arguments_old::<1>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
@@ -296,7 +299,7 @@ impl S3Client {
         }))
     }
 
-    pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
+    pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &self,
         formatter: &mut F,
         writer: &mut W,
@@ -342,7 +345,11 @@ impl S3Client {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn file(ptr: &Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn file(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
@@ -383,7 +390,7 @@ impl S3Client {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn presign(
+    pub(crate) fn presign(
         ptr: &Self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
@@ -426,7 +433,11 @@ impl S3Client {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn exists(ptr: &Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn exists(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
@@ -463,7 +474,11 @@ impl S3Client {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn size(ptr: &Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn size(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
@@ -500,7 +515,11 @@ impl S3Client {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn stat(ptr: &Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn stat(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
@@ -537,7 +556,11 @@ impl S3Client {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn write(ptr: &Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn write(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<3>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
@@ -591,7 +614,7 @@ impl S3Client {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn list_objects(
+    pub(crate) fn list_objects(
         ptr: &Self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
@@ -622,7 +645,11 @@ impl S3Client {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn unlink(ptr: &Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn unlink(
+        ptr: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
@@ -661,27 +688,39 @@ impl S3Client {
     // so they must be associated fns (no `#[bun_jsc::host_fn]` needed — the
     // codegen layer already handles the `host_fn_result` wrapping).
 
-    pub fn static_write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn static_write(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         S3File::write(global, callframe)
     }
 
-    pub fn static_presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn static_presign(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         S3File::presign(global, callframe)
     }
 
-    pub fn static_exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn static_exists(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         S3File::exists(global, callframe)
     }
 
-    pub fn static_size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn static_size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         S3File::size(global, callframe)
     }
 
-    pub fn static_unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn static_unlink(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         S3File::unlink(global, callframe)
     }
 
-    pub fn static_file(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn static_file(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
@@ -694,11 +733,11 @@ impl S3Client {
         S3File::construct_internal_js(global, path, args.next_eat())
     }
 
-    pub fn static_stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn static_stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         S3File::stat(global, callframe)
     }
 
-    pub fn static_list_objects(
+    pub(crate) fn static_list_objects(
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {

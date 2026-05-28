@@ -855,7 +855,15 @@ impl TimerObjectInternals {
             // reclamation is omitted. Correctness is unaffected — the entry is
             // gone — only the high-watermark capacity lingers.
             // TODO(port): plumb a `shrink_to_fit` once `ArrayHashMap` grows one.
-            let _ = map.remove(&self.id);
+            if map.remove(&self.id).is_none() && kind == Kind::SetInterval {
+                // A `setTimeout` promoted to a `setInterval` by
+                // `convert_to_interval()` keeps the entry minted by
+                // `toPrimitive` in `maps.set_timeout`. Remove it from there
+                // too, or `remove_timer_by_id` would hand out a dangling
+                // `*mut EventLoopTimer` after the parent is freed.
+                // SAFETY: as above.
+                let _ = unsafe { (*state).timer.maps.set_timeout.remove(&self.id) };
+            }
         }
 
         // (d) `setEnableKeepingEventLoopAlive(vm, false)` — without this a

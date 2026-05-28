@@ -160,8 +160,18 @@ mod _impl {
                     write_state_value,
                 ));
             }
-            self.write_result
-                .set(Some(write_state.as_u32().as_mut_ptr()));
+            // `flush_write_result` writes two u32s through this pointer, so the
+            // caller-supplied array must hold at least 2 elements.
+            let write_state_slice = write_state.as_u32();
+            if write_state_slice.len() < 2 {
+                return Err(global
+                    .err(
+                        jsc::ErrorCode::INVALID_ARG_VALUE,
+                        format_args!("writeState must be a Uint32Array with at least 2 elements"),
+                    )
+                    .throw());
+            }
+            self.write_result.set(Some(write_state_slice.as_mut_ptr()));
 
             let write_js_callback =
                 validators::validate_function(global, "processCallback", process_callback_value)?;

@@ -137,7 +137,7 @@ impl HTMLBundle {
 }
 
 /// Deprecated: use Route instead.
-pub type HTMLBundleRoute = Route;
+pub(crate) type HTMLBundleRoute = Route;
 
 /// An HTMLBundle can be used across multiple server instances, an
 /// HTMLBundle.Route can only be used on one server, but is also
@@ -197,7 +197,7 @@ pub enum State {
 // completion task (whose matching deref is the caller's `defer this.deref()` in
 // `JSBundleCompletionTask.onComplete`). So `deinit` stays an explicit method.
 impl State {
-    pub fn deinit(&mut self) {
+    pub(crate) fn deinit(&mut self) {
         match mem::replace(self, State::Pending) {
             State::Err(_log) => {
                 // Log drops itself
@@ -222,7 +222,7 @@ impl State {
 }
 
 impl State {
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         match self {
             State::Pending => 0,
             State::Building(_) => 0,

@@ -5,7 +5,7 @@ const Duplex = require("internal/streams/duplex");
 const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray } = require("internal/tls");
-const { validateString } = require("internal/validators");
+const { validateString, validateFunction } = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
@@ -532,6 +532,9 @@ function TLSSocket(socket?, options?) {
   this.secureConnecting = true;
   this._secureEstablished = false;
   this._securePending = true;
+  if (options.checkServerIdentity !== undefined) {
+    validateFunction(options.checkServerIdentity, "options.checkServerIdentity");
+  }
   this[kcheckServerIdentity] = options.checkServerIdentity || checkServerIdentity;
   this[ksession] = options.session || null;
 }

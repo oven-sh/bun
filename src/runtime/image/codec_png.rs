@@ -197,7 +197,7 @@ fn embed_iccp(ctx: *mut spng_ctx, icc_profile: Option<&[u8]>) {
     let _ = unsafe { spng_set_iccp(ctx, &raw const iccp) };
 }
 
-pub fn encode(
+pub(crate) fn encode(
     rgba: &[u8],
     w: u32,
     h: u32,
@@ -269,7 +269,7 @@ pub fn encode(
 /// cut operates on the raw RGB numbers without converting colour spaces,
 /// so the palette entries are still in that space and need the profile
 /// to be interpreted correctly — same contract as truecolour encode.
-pub fn encode_indexed(
+pub(crate) fn encode_indexed(
     rgba: &[u8],
     w: u32,
     h: u32,

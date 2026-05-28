@@ -63,7 +63,7 @@ pub struct Result<'a> {
 /// reaches a changed file. On success, `test_files` is compacted (preserving
 /// order) and the new length is returned via `Result.test_files`.
 // TODO(port): narrow error set
-pub fn filter<'a>(
+pub(crate) fn filter<'a>(
     ctx: &Command::Context,
     vm: &mut VirtualMachine,
     test_files: &'a mut [PathString],
@@ -325,12 +325,6 @@ pub fn filter<'a>(
     })
 }
 
-/// Env var carrying the absolute path of the temp file that the
-/// previous process's watcher wrote its changed-path list into before
-/// exec()ing. Set once by `initWatchTrigger` in the first process and
-/// inherited through every restart. The value is a short path, never
-/// the list itself, so there is no env size concern.
-pub const TRIGGER_FILE_ENV_VAR: &str = "BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE";
 #[cfg(not(windows))]
 const TRIGGER_FILE_ENV_VAR_Z: &ZStr =
     ZStr::from_static(b"BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE\0");
@@ -340,7 +334,7 @@ const TRIGGER_FILE_ENV_VAR_Z: &ZStr =
 /// the hot-reloader collector to record changed paths. The collector
 /// and the path string intentionally live for the rest of the process;
 /// --watch exec()s on reload so nothing accumulates across restarts.
-pub fn init_watch_trigger() {
+pub(crate) fn init_watch_trigger() {
     #[cfg(windows)]
     {
         // Windows --watch restarts via TerminateProcess + parent
@@ -402,7 +396,8 @@ pub fn init_watch_trigger() {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    pub fn setenv(name: *const c_char, value: *const c_char, overwrite: c_int) -> c_int;
+    #[allow(dead_code)]
+    pub(crate) fn setenv(name: *const c_char, value: *const c_char, overwrite: c_int) -> c_int;
 }
 
 /// If the previous process's watcher recorded which files triggered
@@ -461,7 +456,7 @@ fn consume_watch_trigger() -> Option<StringSet> {
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum GitError {
+pub(crate) enum GitError {
     #[error("GitNotFound")]
     GitNotFound,
     #[error("GitFailed")]
@@ -605,7 +600,7 @@ fn get_changed_files(
 }
 
 #[derive(Default)]
-pub struct GitResult {
+pub(crate) struct GitResult {
     pub ok: bool,
     /// Set when the git process could not be spawned at all. The failure
     /// has already been reported; callers should not print a second
@@ -641,8 +636,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
             // `*VirtualMachine` and called `vm.eventLoop()` internally; the
             // Rust split keeps `init` taking the erased `*mut ()` event-loop
             // pointer directly, so unwrap it here.
-            // SAFETY: `VirtualMachine::get().event_loop()` is the live per-thread `jsc::EventLoop`.
-            loop_: unsafe { EventLoopHandle::init(VirtualMachine::get().event_loop().cast()) },
+            loop_: EventLoopHandle::init(VirtualMachine::get().event_loop().cast()),
             ..Default::default()
         },
         ..Default::default()

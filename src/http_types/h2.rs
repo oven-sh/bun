@@ -16,7 +16,6 @@
 pub const CLIENT_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
 pub const MAX_WINDOW_SIZE: u32 = i32::MAX as u32;
-pub const MAX_HEADER_TABLE_SIZE: u32 = u32::MAX;
 pub const MAX_STREAM_ID: u32 = i32::MAX as u32;
 /// `std.math.maxInt(u24)`
 pub const MAX_FRAME_SIZE: u32 = 0x00FF_FFFF;
@@ -304,7 +303,7 @@ impl SettingsPayloadUnit {
 /// Zig: `packed struct(u336)` — 7 × (`u16` type + `u32` value) = 42 bytes.
 #[repr(C, packed)]
 #[derive(Copy, Clone)]
-pub struct FullSettingsPayload {
+pub(crate) struct FullSettingsPayload {
     _header_table_size_type: u16,
     pub header_table_size: u32,
     _enable_push_type: u16,
@@ -349,44 +348,7 @@ impl Default for FullSettingsPayload {
     }
 }
 impl FullSettingsPayload {
-    pub const BYTE_SIZE: usize = 42;
-
-    pub fn update_with(&mut self, option: SettingsPayloadUnit) {
-        match SettingsType(option.type_) {
-            SettingsType::SETTINGS_HEADER_TABLE_SIZE => self.header_table_size = option.value,
-            SettingsType::SETTINGS_ENABLE_PUSH => self.enable_push = option.value,
-            SettingsType::SETTINGS_MAX_CONCURRENT_STREAMS => {
-                self.max_concurrent_streams = option.value
-            }
-            SettingsType::SETTINGS_INITIAL_WINDOW_SIZE => self.initial_window_size = option.value,
-            SettingsType::SETTINGS_MAX_FRAME_SIZE => self.max_frame_size = option.value,
-            SettingsType::SETTINGS_MAX_HEADER_LIST_SIZE => self.max_header_list_size = option.value,
-            SettingsType::SETTINGS_ENABLE_CONNECT_PROTOCOL => {
-                self.enable_connect_protocol = option.value
-            }
-            _ => {}
-        }
-    }
-
-    /// `std.mem.byteSwapAllFields` — write the big-endian wire image.
-    pub fn encode_into(&self, dst: &mut [u8; Self::BYTE_SIZE]) {
-        let mut swap = *self;
-        swap._header_table_size_type = swap._header_table_size_type.swap_bytes();
-        swap.header_table_size = u32::swap_bytes(swap.header_table_size);
-        swap._enable_push_type = swap._enable_push_type.swap_bytes();
-        swap.enable_push = u32::swap_bytes(swap.enable_push);
-        swap._max_concurrent_streams_type = swap._max_concurrent_streams_type.swap_bytes();
-        swap.max_concurrent_streams = u32::swap_bytes(swap.max_concurrent_streams);
-        swap._initial_window_size_type = swap._initial_window_size_type.swap_bytes();
-        swap.initial_window_size = u32::swap_bytes(swap.initial_window_size);
-        swap._max_frame_size_type = swap._max_frame_size_type.swap_bytes();
-        swap.max_frame_size = u32::swap_bytes(swap.max_frame_size);
-        swap._max_header_list_size_type = swap._max_header_list_size_type.swap_bytes();
-        swap.max_header_list_size = u32::swap_bytes(swap.max_header_list_size);
-        swap._enable_connect_protocol_type = swap._enable_connect_protocol_type.swap_bytes();
-        swap.enable_connect_protocol = u32::swap_bytes(swap.enable_connect_protocol);
-        dst.copy_from_slice(bytemuck::bytes_of(&swap));
-    }
+    pub(crate) const BYTE_SIZE: usize = 42;
 }
 
 // ported from: src/http/H2FrameParser.zig + src/runtime/api/bun/h2_frame_parser.zig (wire types)

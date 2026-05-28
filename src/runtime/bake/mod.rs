@@ -20,6 +20,7 @@ pub(crate) mod bake_body;
 #[path = "DevServer.rs"]
 mod dev_server_body;
 pub(crate) use dev_server_body::get_deinit_count_for_testing;
+pub(crate) use dev_server_body::is_allowed_dev_host;
 
 #[path = "FrameworkRouter.rs"]
 pub(crate) mod framework_router_body;
@@ -32,18 +33,17 @@ mod production_body;
 pub use bake_body::{PatternBuffer, UserOptions, print_warning};
 
 /// All bake JSC references go through this re-export of `bun_jsc`.
-pub(crate) mod jsc {
+pub mod jsc {
     /// `jsc.API.JSBundler.Plugin` — the C++ `BunPlugin` FFI handle. The
     /// canonical opaque struct lives in `bun_bundler::bundle_v2::api::JSBundler`
     /// (T5) and is re-exported through `crate::api::js_bundler` so the
     /// JSC-aware `PluginJscExt` methods are in scope; both paths name the same
     /// nominal type.
-    pub use crate::api::js_bundler::Plugin;
-    pub use crate::jsc::*;
-    pub use bun_jsc::debugger::DebuggerId;
+    pub(crate) use crate::api::js_bundler::Plugin;
+    pub(crate) use crate::jsc::*;
+    pub(crate) use bun_jsc::debugger::DebuggerId;
 }
 
-/// export default { app: ... };
 pub const API_NAME: &str = "app";
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -227,9 +227,8 @@ impl Framework {
     ) -> Result<*mut bun_bundler::bake_types::Framework, bun_core::Error> {
         use bun_options_types::schema as bun_schema;
 
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new_without_stack(arena);
-        let ast_scope = ast_memory_allocator.enter();
-        let _guard = scopeguard::guard(ast_scope, |s| s.exit());
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
+        let _ast_scope = ast_memory_allocator.enter();
 
         let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
             arena,
@@ -673,12 +672,12 @@ pub mod framework_router {
     /// generated trampolines. The Rust port maps that to a trait object
     /// (`&mut dyn InsertionHandler`); this is the `wrap` shim only, kept so
     /// callsites read `InsertionContext::wrap(&mut ctx)` like the spec.
-    pub enum InsertionContext {}
+    pub(crate) enum InsertionContext {}
     impl InsertionContext {
         /// Zig: `InsertionContext.wrap(T, ptr)` — comptime vtable generation.
         /// Port: thin shim over the trait-object form (`&mut dyn InsertionHandler`).
         #[inline]
-        pub fn wrap<T: InsertionHandler>(ctx: &mut T) -> &mut dyn InsertionHandler {
+        pub(crate) fn wrap<T: InsertionHandler>(ctx: &mut T) -> &mut dyn InsertionHandler {
             ctx
         }
     }

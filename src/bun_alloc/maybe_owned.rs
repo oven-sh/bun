@@ -27,7 +27,7 @@ pub struct MaybeOwned<A> {
 // Zig: `pub const Borrowed = MaybeOwned(BorrowedParent);`
 // Rust has no stable inherent associated types, so expose as a free alias.
 // `Borrowed<A>` collapsed to `()` — borrows carry no allocator state.
-pub type MaybeOwnedBorrowed = MaybeOwned<()>;
+pub(crate) type MaybeOwnedBorrowed = MaybeOwned<()>;
 
 impl<A: Default> MaybeOwned<A> {
     /// Creates a `MaybeOwned` allocator that owns memory.

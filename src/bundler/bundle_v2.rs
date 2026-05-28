@@ -158,7 +158,7 @@ bun_core::declare_scope!(scan_counter, visible);
 /// `bundle_v2.zig` `ResolveQueue = std.StringArrayHashMap(*ParseTask)`.
 /// Values are raw `*mut ParseTask` (arena-owned by `graph.heap`); the map only
 /// dedups by path during a single `on_parse_task_complete` pass.
-pub type ResolveQueue = StringHashMap<*mut ParseTask>;
+pub(crate) type ResolveQueue = StringHashMap<*mut ParseTask>;
 
 /// `bundle_v2.zig:BakeOptions`.
 pub struct BakeOptions<'a> {
@@ -418,7 +418,7 @@ pub mod bv2_impl {
             pub kind: CacheKind,
         }
         /// Mirrors src/bake/DevServer.zig `ASSET_PREFIX` (= INTERNAL_PREFIX ++ "/asset" = "/_bun/asset").
-        pub const ASSET_PREFIX: &str = "/_bun/asset";
+        pub(crate) const ASSET_PREFIX: &str = "/_bun/asset";
 
         /// Mirrors src/bake/bake.zig:355 `BuiltInModule = union(enum)`. TYPE_ONLY moved
         /// down to bundler (T5); bake (in runtime, T6) constructs values of this type.
@@ -591,7 +591,7 @@ pub mod bv2_impl {
         /// Mirrors src/bake/bake.zig:936 `server_virtual_source` / :942 `client_virtual_source`.
         /// `bun_ast::Source` is not `const`-constructible (owns a `fs::Path`), so these
         /// are lazy statics. PERF(port): was `pub const` in Zig.
-        pub static SERVER_VIRTUAL_SOURCE: std::sync::LazyLock<bun_ast::Source> =
+        pub(crate) static SERVER_VIRTUAL_SOURCE: std::sync::LazyLock<bun_ast::Source> =
             std::sync::LazyLock::new(|| {
                 // Port of `Fs.Path.initForKitBuiltIn("bun", "bake/server")` (fs.zig:1992) —
                 // inlined because `bun_paths::fs::Path<'static>` is the local TYPE_ONLY stub and
@@ -608,7 +608,7 @@ pub mod bv2_impl {
                     ..Default::default()
                 }
             });
-        pub static CLIENT_VIRTUAL_SOURCE: std::sync::LazyLock<bun_ast::Source> =
+        pub(crate) static CLIENT_VIRTUAL_SOURCE: std::sync::LazyLock<bun_ast::Source> =
             std::sync::LazyLock::new(|| bun_ast::Source {
                 path: bun_paths::fs::Path {
                     pretty: b"bun:bake/client",
@@ -620,8 +620,6 @@ pub mod bv2_impl {
                 index: bun_ast::Index(crate::Index::BAKE_CLIENT_DATA.get()),
                 ..Default::default()
             });
-        /// Alias kept for callers that referenced the DevServer constant name directly.
-        pub const DEV_SERVER_ASSET_PREFIX: &str = ASSET_PREFIX;
 
         /// Canonical port of src/bake/production.zig:844 `EntryPointMap`.
         /// Lives in the bundler (lower tier) so both `bun_runtime::bake::production`
@@ -1482,7 +1480,7 @@ pub mod bv2_impl {
 
         /// `Watcher.enableHotModuleReloading(this, null)` for `bun build --watch`.
         #[inline]
-        pub fn enable_hot_module_reloading_for_bundler(bv2: *mut super::BundleV2<'_>) {
+        pub(crate) fn enable_hot_module_reloading_for_bundler(bv2: *mut super::BundleV2<'_>) {
             let bv2 = core::ptr::NonNull::new(bv2.cast::<super::BundleV2<'static>>())
                 .expect("BundleV2 watcher: bv2 is non-null");
             // SAFETY: link-time-resolved Rust-ABI fn in `bun_jsc::hot_reloader`.
@@ -4347,7 +4345,7 @@ pub mod bv2_impl {
         BundleV2::on_resolve(unsafe { &mut *resolve }, unsafe { &mut *this });
     }
 
-    pub fn on_load_from_js_loop(load: &mut jsc_api::JSBundler::Load) {
+    pub(crate) fn on_load_from_js_loop(load: &mut jsc_api::JSBundler::Load) {
         // SAFETY: `bv2` is a live backref set in `Load::init`.
         let bv2 = unsafe { &mut *load.bv2 };
         BundleV2::on_load(load, bv2);
@@ -4538,7 +4536,7 @@ pub mod bv2_impl {
         }
     }
 
-    pub fn on_resolve_from_js_loop(resolve: &mut jsc_api::JSBundler::Resolve) {
+    pub(crate) fn on_resolve_from_js_loop(resolve: &mut jsc_api::JSBundler::Resolve) {
         // SAFETY: `bv2` is a live backref set in `Resolve::init`.
         let bv2 = unsafe { &mut *resolve.bv2 };
         BundleV2::on_resolve(resolve, bv2);
@@ -7575,17 +7573,6 @@ pub mod bv2_impl {
         free: |ctx, buf, a, ra| ExternalFreeFunctionAllocator::free(ctx, buf, a, ra),
     };
 
-    /// Returns true if `arena` definitely has a valid `.ptr`.
-    /// May return false even if `.ptr` is valid.
-    ///
-    /// This function should check whether `arena` matches any internal arena types known to
-    /// have valid pointers. Allocators defined outside of this file, like `std.heap.ArenaAllocator`,
-    /// don't need to be checked.
-    pub fn allocator_has_pointer(arena: &bun_alloc::StdAllocator) -> bool {
-        // bundle_v2.zig:4443 — vtable identity check.
-        core::ptr::eq(arena.vtable, &raw const EXTERNAL_FREE_VTABLE)
-    }
-
     // LAYERING: `BuildResult` / `BundleV2Result` are defined once in
     // `BundleThread.rs` (the trait that consumes them lives there). The previous
     // duplicate here meant `CompletionStruct::set_result` and `BundleV2::
@@ -7597,7 +7584,6 @@ pub mod bv2_impl {
     // re-exports
     pub use crate::HTMLScanner::HTMLScanner;
     pub use crate::IndexStringMap::IndexStringMap;
-    pub type BitSet = DynamicBitSetUnmanaged;
     pub use bun_ast::Loc;
 
     // C++ binding for lazy metafile getter (defined in BundlerMetafile.cpp)

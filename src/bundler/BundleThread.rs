@@ -10,7 +10,7 @@ use crate::{BundleV2, Transpiler};
 
 /// Used to keep the bundle thread from spinning on Windows
 #[cfg(windows)]
-pub extern "C" fn timer_callback(_: *mut bun_sys::windows::libuv::Timer) {}
+pub(crate) extern "C" fn timer_callback(_: *mut bun_sys::windows::libuv::Timer) {}
 
 /// Port of `std.Thread.ResetEvent` — single-shot manual-reset event used to
 /// block `spawn()` until the bundle thread has initialized its `Waker`.

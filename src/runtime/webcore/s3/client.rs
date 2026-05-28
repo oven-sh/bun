@@ -64,7 +64,7 @@ bun_core::declare_scope!(S3UploadStream, visible);
 // TODO(port): `bun.JSTerminated!T` is not in the type map; assuming a thin alias in bun_jsc.
 type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
 
-pub fn stat(
+pub(crate) fn stat(
     this: &S3Credentials,
     path: &[u8],
     callback: fn(S3StatResult, *mut c_void) -> JsTerminatedResult<()>,
@@ -87,7 +87,7 @@ pub fn stat(
     )
 }
 
-pub fn download(
+pub(crate) fn download(
     this: &S3Credentials,
     path: &[u8],
     callback: fn(S3DownloadResult, *mut c_void) -> JsTerminatedResult<()>,
@@ -110,7 +110,7 @@ pub fn download(
     )
 }
 
-pub fn download_slice(
+pub(crate) fn download_slice(
     this: &S3Credentials,
     path: &[u8],
     offset: usize,
@@ -154,7 +154,7 @@ pub fn download_slice(
     )
 }
 
-pub fn delete(
+pub(crate) fn delete(
     this: &S3Credentials,
     path: &[u8],
     callback: fn(S3DeleteResult, *mut c_void) -> JsTerminatedResult<()>,
@@ -177,7 +177,7 @@ pub fn delete(
     )
 }
 
-pub fn list_objects(
+pub(crate) fn list_objects(
     this: &S3Credentials,
     // PORT NOTE: Zig took `S3ListObjectsOptions` by-value (implicit struct
     // copy at the call site). The Rust struct owns `Utf8Slice`s and is not
@@ -420,7 +420,7 @@ pub fn upload(
 ///
 /// Takes ownership of one `credentials` ref (adopted directly into the
 /// `MultiPartUpload`; not bumped). Callers pass `creds.dupe()`.
-pub fn writable_stream(
+pub(crate) fn writable_stream(
     credentials: bun_ptr::IntrusiveRc<S3Credentials>,
     path: &[u8],
     global_this: &JSGlobalObject,
@@ -577,24 +577,17 @@ pub struct S3UploadStreamWrapper {
     pub global: GlobalRef, // JSC_BORROW
 }
 
-/// Intrusive ref-counted handle. `ref()`/`deref()` from the Zig `bun.ptr.RefCount` mixin
-/// are provided by cloning/dropping this handle; `Drop for S3UploadStreamWrapper` runs the
 /// finalizer body when the last ref is released.
 pub type S3UploadStreamWrapperRef = *mut S3UploadStreamWrapper;
 
 // Zig: `pub const ResumableSink = @import("../ResumableSink.zig").ResumableS3UploadSink;`
 // Inherent associated types are unstable; expose as a module-level alias instead.
-pub type ResumableSink = ResumableS3UploadSink;
+pub(crate) type ResumableSink = ResumableS3UploadSink;
 
 impl S3UploadStreamWrapper {
-    /// Intrusive `ref()` — bumps the ref_count.
-    pub fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
-
     /// Intrusive `deref()` — decrements ref_count; runs finalizer + frees on zero.
     /// SAFETY: `this` must be a live Box-allocated `Self` (created via heap::alloc).
-    pub unsafe fn deref_(this: *mut Self) {
+    pub(crate) unsafe fn deref_(this: *mut Self) {
         // SAFETY: caller contract above.
         let rc = unsafe { (*this).ref_count.get() } - 1;
         // SAFETY: caller contract above — `this` is still live (freed only after rc hits zero below).
@@ -628,7 +621,7 @@ impl S3UploadStreamWrapper {
         unsafe { &mut *self.task }
     }
 
-    pub fn on_writable(task: &mut MultiPartUpload, self_: &mut Self, _: u64) {
+    pub(crate) fn on_writable(task: &mut MultiPartUpload, self_: &mut Self, _: u64) {
         bun_output::scoped_log!(
             S3UploadStream,
             "onWritable {} {}",
@@ -646,12 +639,12 @@ impl S3UploadStreamWrapper {
         }
     }
 
-    pub fn write_request_data(&mut self, data: &[u8]) -> ResumableSinkBackpressure {
+    pub(crate) fn write_request_data(&mut self, data: &[u8]) -> ResumableSinkBackpressure {
         bun_output::scoped_log!(S3UploadStream, "writeRequestData {}", data.len());
         self.task_mut().write_bytes(data, false).expect("OOM")
     }
 
-    pub fn write_end_request(&mut self, err: Option<JSValue>) {
+    pub(crate) fn write_end_request(&mut self, err: Option<JSValue>) {
         bun_output::scoped_log!(S3UploadStream, "writeEndRequest {}", err.is_some());
         self.detach_sink();
         // PORT NOTE: reshaped for borrowck — Zig used `defer this.deref()`
@@ -680,7 +673,7 @@ impl S3UploadStreamWrapper {
         }
     }
 
-    pub fn resolve(result: S3UploadResult, self_: &mut Self) -> JsTerminatedResult<()> {
+    pub(crate) fn resolve(result: S3UploadResult, self_: &mut Self) -> JsTerminatedResult<()> {
         bun_output::scoped_log!(S3UploadStream, "resolve");
         // PORT NOTE: reshaped for borrowck — Zig used `defer self.deref()`
         let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), |s| {
@@ -941,7 +934,7 @@ pub fn upload_stream(
 }
 
 /// download a file from s3 chunk by chunk aka streaming (used on readableStream)
-pub fn download_stream(
+pub(crate) fn download_stream(
     this: &S3Credentials,
     path: &[u8],
     offset: usize,
@@ -1130,7 +1123,7 @@ pub fn readable_stream(
     request_payer: bool,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    pub struct S3DownloadStreamWrapper {
+    struct S3DownloadStreamWrapper {
         pub readable_stream_ref: ReadableStreamStrong,
         pub path: Box<[u8]>,
         pub global: GlobalRef, // JSC_BORROW
@@ -1141,11 +1134,11 @@ pub fn readable_stream(
     }
 
     impl S3DownloadStreamWrapper {
-        pub fn new(init: Self) -> *mut Self {
+        fn new(init: Self) -> *mut Self {
             bun_core::heap::into_raw(Box::new(init))
         }
 
-        pub fn callback(
+        fn callback(
             chunk: &MutableString,
             has_more: bool,
             request_err: Option<Error::S3Error>,
@@ -1231,7 +1224,7 @@ pub fn readable_stream(
             }
         }
 
-        pub fn opaque_callback(
+        fn opaque_callback(
             chunk: &MutableString,
             has_more: bool,
             err: Option<Error::S3Error>,

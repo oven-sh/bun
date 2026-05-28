@@ -90,7 +90,7 @@ impl SavedFile {
 
 /// Extension trait wiring `to_js` / `to_blob` onto `OutputFile` from the
 /// `bun_bundler` crate (the base `bun_bundler` crate has no JSC dep).
-pub trait OutputFileJsc {
+pub(crate) trait OutputFileJsc {
     fn to_js(&mut self, owned_pathname: Option<&[u8]>, global_object: &JSGlobalObject) -> JSValue;
     fn to_blob(&mut self, global_this: &JSGlobalObject) -> Result<Blob, bun_core::Error>;
 }

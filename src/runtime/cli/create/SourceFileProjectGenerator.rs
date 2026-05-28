@@ -823,7 +823,7 @@ pub enum Reason {
 pub mod react_tailwind_spa {
     use super::*;
 
-    pub const FILES: &[TemplateFile] = &[
+    pub(crate) const FILES: &[TemplateFile] = &[
         TemplateFile::new(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
             SHARED_BUILD_TS,
@@ -847,8 +847,6 @@ pub mod react_tailwind_spa {
         TemplateFile::new_no_overwrite(b"bunfig.toml", SHARED_BUNFIG_TOML, Reason::Bun),
         TemplateFile::new_no_overwrite(b"package.json", SHARED_PACKAGE_JSON, Reason::Npm),
     ];
-
-    pub const INIT_FILES: &[TemplateFile] = &[];
 }
 
 const SHARED_BUILD_TS: &[u8] =
@@ -864,7 +862,7 @@ const SHARED_BUNFIG_TOML: &[u8] = include_bytes!("projects/react-shadcn-spa/bunf
 pub mod react_spa {
     use super::*;
 
-    pub const FILES: &[TemplateFile] = &[
+    pub(crate) const FILES: &[TemplateFile] = &[
         TemplateFile::new(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
             SHARED_BUILD_TS,
@@ -897,7 +895,7 @@ pub mod react_spa {
 pub mod react_shadcn_spa {
     use super::*;
 
-    pub const FILES: &[TemplateFile] = &[
+    pub(crate) const FILES: &[TemplateFile] = &[
         TemplateFile::new(
             b"lib/utils.ts",
             include_bytes!("projects/react-shadcn-spa/lib/utils.ts"),
@@ -991,7 +989,7 @@ impl Tag {
 }
 
 impl Template {
-    pub fn logger(&self) -> Logger {
+    pub(crate) fn logger(&self) -> Logger {
         Logger {
             template: self.tag(),
             has_written_initial_message: false,

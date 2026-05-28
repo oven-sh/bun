@@ -73,8 +73,22 @@ pub fn post_process_css_chunk(
             j.push_static(b"/* ");
             line_offset.advance(b"/* ");
 
-            j.push_static(pretty);
-            line_offset.advance(pretty);
+            // A `*/` in the path would terminate the comment early and let the
+            // rest of the path be parsed as CSS in the bundled output.
+            if bun_core::strings::contains(pretty, b"*/") {
+                let mut escaped = Vec::with_capacity(pretty.len() + 1);
+                for &byte in pretty {
+                    if byte == b'/' && escaped.last() == Some(&b'*') {
+                        escaped.push(b'\\');
+                    }
+                    escaped.push(byte);
+                }
+                line_offset.advance(&escaped);
+                j.push_owned(escaped.into_boxed_slice());
+            } else {
+                j.push_static(pretty);
+                line_offset.advance(pretty);
+            }
 
             j.push_static(b" */\n");
             line_offset.advance(b" */\n");
@@ -128,6 +142,13 @@ pub fn post_process_css_chunk(
 
     // SAFETY: `worker.arena` set by `Worker::create`, outlives the worker step.
     let alloc = worker.arena();
+    // SAFETY: every borrowed node in `j` points into `chunk.compile_results_for_chunk`
+    // (filled in place before post-processing, never reassigned afterwards), graph
+    // source paths (`Path<'static>`), or `'static` literals; `watcher.input` is
+    // `chunk.unique_key` (`&'static`). All of these outlive the joiner stored in
+    // `chunk.intermediate_output`, which is only read while the chunk and the linker
+    // graph are alive.
+    let mut j = unsafe { j.detach_lifetime() };
     chunk.intermediate_output =
         bun_core::handle_oom(c.break_output_into_pieces(alloc, &mut j, ctx.chunks.len() as u32));
     // TODO: meta contents

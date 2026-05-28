@@ -35,9 +35,9 @@ pub use crate::{
 bun_output::declare_scope!(InstallPatch, visible);
 
 /// Length of the hex representation of `u64::MAX` (i.e. 16).
-pub const MAX_HEX_HASH_LEN: usize = const_format::formatcp!("{:x}", u64::MAX).len();
-pub const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + bun_hash_tag.len() + 1;
-pub type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
+pub(crate) const MAX_HEX_HASH_LEN: usize = const_format::formatcp!("{:x}", u64::MAX).len();
+pub(crate) const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + bun_hash_tag.len() + 1;
+pub(crate) type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 
 // `std.fs.Dir` aliases on `PatchTask`/`ApplyPatch` are *borrowed views* of the
 // `PackageManager`-owned cache/temp directory descriptors. Store the raw `Fd`
@@ -84,20 +84,20 @@ pub enum Callback {
 impl Callback {
     /// Zig: `@tagName(self.callback)`.
     #[inline]
-    pub fn tag_name(&self) -> &'static str {
+    pub(crate) fn tag_name(&self) -> &'static str {
         <&'static str>::from(self)
     }
     #[inline]
-    pub fn is_calc_hash(&self) -> bool {
+    pub(crate) fn is_calc_hash(&self) -> bool {
         matches!(self, Callback::CalcHash(_))
     }
     #[inline]
-    pub fn is_apply(&self) -> bool {
+    pub(crate) fn is_apply(&self) -> bool {
         matches!(self, Callback::Apply(_))
     }
     /// Zig: `&self.callback.apply`. Panics if the active variant is not `Apply`.
     #[inline]
-    pub fn apply_mut(&mut self) -> &mut ApplyPatch {
+    pub(crate) fn apply_mut(&mut self) -> &mut ApplyPatch {
         match self {
             Callback::Apply(a) => a,
             _ => unreachable!("PatchTask.callback is not .apply"),

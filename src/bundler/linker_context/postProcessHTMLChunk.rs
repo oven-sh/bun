@@ -31,6 +31,12 @@ pub fn post_process_html_chunk(
 
     // SAFETY: `worker.arena` is set by `Worker::create` and outlives the worker step.
     let alloc = worker.arena();
+    // SAFETY: every borrowed node in `j` points into `chunk.compile_results_for_chunk`
+    // (filled in place before post-processing, never reassigned afterwards);
+    // `watcher.input` is `chunk.unique_key` (`&'static`). Both outlive the joiner
+    // stored in `chunk.intermediate_output`, which is only read while the chunk and
+    // the linker graph are alive.
+    let mut j = unsafe { j.detach_lifetime() };
     chunk.intermediate_output = bun_core::handle_oom(c.break_output_into_pieces(
         alloc,
         &mut j,

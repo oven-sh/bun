@@ -42,7 +42,7 @@ type Readers = Vec<ChildPtr>;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Spec: IOReader.zig `ReaderImpl = bun.io.BufferedReader`.
-pub type ReaderImpl = bun_io::BufferedReader;
+pub(crate) type ReaderImpl = bun_io::BufferedReader;
 
 struct State {
     fd: Fd,
@@ -471,31 +471,6 @@ fn dispatch_reader_done(
         return Yield::suspended();
     };
     let interp = interp.get();
-    match child.tag {
-        ReaderTag::Cat => {
-            crate::shell::builtins::cat::Cat::on_io_reader_done(interp, child.node, err)
-        }
-    }
-}
-
-/// Public hoisted dispatch (kept for parity with `io_writer::on_io_writer_chunk`).
-pub fn on_read_chunk(interp: &Interpreter, child: ChildPtr, chunk: &[u8]) -> Yield {
-    let mut remove = false;
-    match child.tag {
-        ReaderTag::Cat => crate::shell::builtins::cat::Cat::on_io_reader_chunk(
-            interp,
-            child.node,
-            chunk,
-            &mut remove,
-        ),
-    }
-}
-
-pub fn on_reader_done(
-    interp: &Interpreter,
-    child: ChildPtr,
-    err: Option<sys::SystemError>,
-) -> Yield {
     match child.tag {
         ReaderTag::Cat => {
             crate::shell::builtins::cat::Cat::on_io_reader_done(interp, child.node, err)

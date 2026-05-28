@@ -17,12 +17,12 @@ use bun_router::Router;
 use crate::options;
 
 /// Port of `transpiler.zig:ResolveResults` — keyed by source path hash.
-pub type ResolveResults = HashMap<u64, ()>;
+pub(crate) type ResolveResults = HashMap<u64, ()>;
 /// Port of `transpiler.zig:ResolveQueue` — `std.fifo.LinearFifo(resolver.Result, .Dynamic)`.
 // PORT NOTE: `bun_collections::LinearFifo<T, DynamicBuffer<T>>` would be exact,
 // but `DynamicBuffer` isn't re-exported from `bun_collections` yet. `VecDeque`
 // is structurally equivalent (growable ring buffer); swap once the re-export lands.
-pub type ResolveQueue = std::collections::VecDeque<resolver::Result>;
+pub(crate) type ResolveQueue = std::collections::VecDeque<resolver::Result>;
 
 /// Spec `JSGlobalObject.BunPluginTarget` (JSGlobalObject.zig:265). Defined at
 /// this tier (lowest crate that needs to name it) and re-exported from
@@ -436,14 +436,12 @@ impl<'a> Transpiler<'a> {
         // evaluation pins the store via `DisableStoreReset`, and
         // `ParseTask`/`RuntimeTranspilerStore` call this from inside an
         // `ASTMemoryAllocator::Scope` (where the block-store reset is a no-op
-        // and `AST_HEAP` belongs to that scope's arena, NOT the side-arena).
-        // If we ran `store_ast_alloc_heap::reset()` there it would (a)
-        // `mi_heap_destroy` whatever side-arena buffers earlier main-thread
-        // transpiles left and (b) clobber `AST_HEAP` to the side-arena's new
-        // heap, so subsequent `AstVec` allocations land in the side-arena
-        // instead of the active `ASTMemoryAllocator` arena and survive its
-        // `enter()` reset → cross-reset UAF (hot.test.ts "Unexpected NUL" /
-        // transpiled `:1:12` coords on aarch64).
+        // and the active `AstAlloc` state belongs to that scope, NOT the
+        // side module). If we ran `store_ast_alloc_heap::reset()` there it
+        // would bulk-free whatever side-state buffers earlier main-thread
+        // transpiles left while `--define`/install still hold `StoreRef`s
+        // into them (and the side module's debug assert that *its* state is
+        // the installed one would fire).
         if !bun_ast::stmt::data::Store::disable_reset()
             && bun_ast::stmt::data::Store::memory_allocator().is_null()
         {
@@ -1024,7 +1022,7 @@ use bun_options_types::schema::api;
 // keep their pre-unification semantics (parser only ever sees a resolved
 // runtime; options.zig:1199 default).
 #[inline]
-pub fn to_parser_jsx_pragma(
+pub(crate) fn to_parser_jsx_pragma(
     mut p: crate::options_impl::jsx::Pragma,
 ) -> js_ast::parser::options::JSX::Pragma {
     use crate::options_impl::jsx::Runtime;
@@ -3312,20 +3310,6 @@ impl<'a> Transpiler<'a> {
 enum TransformOutstream {
     Stdout,
     Dir(#[expect(dead_code)] bun_sys::Fd),
-}
-
-/// Port of `transpiler.zig:374 BuildResolveResultPair`.
-#[derive(Default)]
-pub struct BuildResolveResultPair {
-    pub written: usize,
-    pub input_fd: Option<FD>,
-    pub empty: bool,
-}
-
-/// Port of `transpiler.zig:1405 ServeResult`.
-pub struct ServeResult {
-    pub file: options::OutputFile,
-    pub mime_type: bun_http_types::MimeType::MimeType,
 }
 
 // ported from: src/bundler/transpiler.zig

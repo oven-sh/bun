@@ -1564,7 +1564,7 @@ use bun_core::fmt::VecWriter as WriteVec;
 // ──────────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Zig__GlobalObject__resolve(
+pub(crate) unsafe extern "C" fn Zig__GlobalObject__resolve(
     res: *mut ErrorableString,
     global: *const JSGlobalObject,
     specifier: *mut BunString,
@@ -1587,7 +1587,7 @@ pub unsafe extern "C" fn Zig__GlobalObject__resolve(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Zig__GlobalObject__reportUncaughtException(
+pub(crate) unsafe extern "C" fn Zig__GlobalObject__reportUncaughtException(
     global: *const JSGlobalObject,
     exception: *mut Exception,
 ) -> JSValue {
@@ -1598,13 +1598,13 @@ pub unsafe extern "C" fn Zig__GlobalObject__reportUncaughtException(
 
 // Safe wrapper used internally (matches Zig's pub fn).
 #[inline]
-pub fn report_uncaught_exception(global: &JSGlobalObject, exception: &Exception) -> JSValue {
+pub(crate) fn report_uncaught_exception(global: &JSGlobalObject, exception: &Exception) -> JSValue {
     crate::mark_binding();
     VirtualMachine::report_uncaught_exception(global, exception)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Zig__GlobalObject__onCrash() {
+pub(crate) extern "C" fn Zig__GlobalObject__onCrash() {
     crate::mark_binding();
     Output::flush();
     panic!("A C++ exception occurred");

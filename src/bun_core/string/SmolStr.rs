@@ -263,7 +263,7 @@ pub trait JsonWriter {
 pub struct Inlined(u128);
 
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr)]
-pub enum InlinedError {
+pub(crate) enum InlinedError {
     #[error("StringTooLong")]
     StringTooLong,
 }
@@ -275,12 +275,12 @@ impl From<InlinedError> for crate::Error {
 }
 
 impl Inlined {
-    pub const MAX_LEN: usize = 120 / 8; // = 15
-    pub const EMPTY: Inlined = Inlined(1u128 << 127); // data=0, __len=0, _tag=1
+    pub(crate) const MAX_LEN: usize = 120 / 8; // = 15
+    pub(crate) const EMPTY: Inlined = Inlined(1u128 << 127); // data=0, __len=0, _tag=1
 
     /// ## Errors
     /// if `str` is longer than `MAX_LEN`
-    pub fn init(str: &[u8]) -> Result<Inlined, InlinedError> {
+    pub(crate) fn init(str: &[u8]) -> Result<Inlined, InlinedError> {
         if str.len() > Self::MAX_LEN {
             // PERF(port): @branchHint(.unlikely) — no stable Rust equivalent
             return Err(InlinedError::StringTooLong);
@@ -295,11 +295,11 @@ impl Inlined {
     }
 
     #[inline]
-    pub fn len(&self) -> u8 {
+    pub(crate) fn len(&self) -> u8 {
         ((self.0 >> 120) & 0x7F) as u8
     }
 
-    pub fn set_len(&mut self, new_len: u8) {
+    pub(crate) fn set_len(&mut self, new_len: u8) {
         debug_assert!(new_len < 128); // u7
         self.0 = (self.0 & !(0x7Fu128 << 120)) | ((new_len as u128) << 120);
     }
@@ -310,19 +310,13 @@ impl Inlined {
         self.0 = (self.0 & !(1u128 << 127)) | ((tag as u128) << 127);
     }
 
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         // Bytes 0..len of the backing u128 are the inline data on little-endian;
         // `u128: Pod` lets us view them safely.
         &crate::bytes_of(&self.0)[..self.len() as usize]
     }
 
-    pub fn slice_mut(&mut self) -> &mut [u8] {
-        let len = self.len() as usize;
-        // `u128: Pod` lets us view its bytes safely; first `len` are the data.
-        &mut crate::bytes_of_mut(&mut self.0)[..len]
-    }
-
-    pub fn all_chars(&mut self) -> &mut [u8; Self::MAX_LEN] {
+    pub(crate) fn all_chars(&mut self) -> &mut [u8; Self::MAX_LEN] {
         // SAFETY: the first 15 bytes of the u128 backing storage are the `data` field
         // (little-endian, asserted at module top). `ptr()` derives a `*mut u8` from
         // `&mut self.0`, so the resulting reference has provenance over the full u128 and

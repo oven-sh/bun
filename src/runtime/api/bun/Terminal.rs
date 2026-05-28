@@ -70,7 +70,12 @@ pub mod js {
         }
 
         #[inline]
-        pub fn set(which: GcValue, this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+        pub(crate) fn set(
+            which: GcValue,
+            this_value: JSValue,
+            global: &JSGlobalObject,
+            value: JSValue,
+        ) {
             match which {
                 GcValue::Data => super::data_set_cached(this_value, global, value),
                 GcValue::Exit => super::exit_set_cached(this_value, global, value),
@@ -297,7 +302,7 @@ impl Drop for Options {
 }
 
 /// Result from creating a Terminal
-pub struct CreateResult {
+pub(crate) struct CreateResult {
     // Intrusive single-thread refcount that crosses FFI as `*mut Terminal`; see
     // ref_count comment on `Terminal` for why this is not `Arc`.
     pub terminal: bun_ptr::IntrusiveRc<Terminal>,
@@ -387,7 +392,7 @@ impl Terminal {
 
     // ─────────────────────────────────────────────────────────────────────────
 
-    pub fn ref_(&self) {
+    pub(crate) fn ref_(&self) {
         // SAFETY: `self` derived from a heap-allocated allocation; intrusive
         // refcount mixin only reads/writes the `ref_count` field via shared
         // access (Cell), so the &T→*mut cast is sound for `ref_` (no &mut
@@ -395,7 +400,7 @@ impl Terminal {
         unsafe { bun_ptr::RefCount::<Terminal>::ref_(self.as_ctx_ptr()) };
     }
 
-    pub fn deref_(&self) {
+    pub(crate) fn deref_(&self) {
         // SAFETY: `self` derived from a heap-allocated allocation; the RefCount
         // mixin's `deref` reads/writes `ref_count` via Cell and runs
         // `destructor()` (→ deinit_and_destroy) iff the count hits zero.
@@ -567,7 +572,7 @@ impl Terminal {
     /// Thunk emitted by `.classes.ts` codegen (`TerminalClass__construct` in
     /// `generated_classes.rs`); the `JsClass(no_construct)` attribute suppresses
     /// the macro's 2-arg default.
-    pub fn constructor(
+    pub(crate) fn constructor(
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
         this_value: JSValue,
@@ -615,7 +620,7 @@ impl Terminal {
     /// Create a Terminal from Bun.spawn options (not from JS constructor)
     /// Returns the Terminal and its JS wrapper value
     /// The slave_fd should be used for the subprocess's stdin/stdout/stderr
-    pub fn create_from_spawn(
+    pub(crate) fn create_from_spawn(
         global_object: &JSGlobalObject,
         options: &mut Options,
     ) -> Result<CreateResult, InitError> {
@@ -623,20 +628,21 @@ impl Terminal {
     }
 
     /// Get the slave fd for subprocess to use
-    pub fn get_slave_fd(&self) -> Fd {
+    #[allow(dead_code)]
+    pub(crate) fn get_slave_fd(&self) -> Fd {
         self.slave_fd.get()
     }
 
     /// `flags.closed` — read by `Bun.spawn` arg validation.
     #[inline]
-    pub fn is_closed(&self) -> bool {
+    pub(crate) fn is_closed(&self) -> bool {
         self.flags.get().contains(Flags::CLOSED)
     }
 
     /// `flags.inline_spawned` — read by `Bun.spawn` to reject reuse of an
     /// inline-created terminal.
     #[inline]
-    pub fn is_inline_spawned(&self) -> bool {
+    pub(crate) fn is_inline_spawned(&self) -> bool {
         self.flags.get().contains(Flags::INLINE_SPAWNED)
     }
 
@@ -646,7 +652,7 @@ impl Terminal {
     /// `on_reader_done` skips the JS exit callback, and runs `close_internal`.
     /// Mirrors the `defer { terminal_info.? }` block in
     /// `js_bun_spawn_bindings.zig`.
-    pub fn abandon_from_spawn(&self) {
+    pub(crate) fn abandon_from_spawn(&self) {
         self.this_value.with_mut(|v| v.downgrade());
         self.update_flags(|f| f.insert(Flags::FINALIZED));
         self.close_internal();
@@ -655,18 +661,14 @@ impl Terminal {
     /// Windows: get the ConPTY handle to pass to uv_spawn via
     /// uv_process_options_t.pseudoconsole.
     #[cfg(windows)]
-    pub fn get_pseudoconsole(&self) -> Option<windows::HPCON> {
+    pub(crate) fn get_pseudoconsole(&self) -> Option<windows::HPCON> {
         self.hpcon.get()
-    }
-    #[cfg(not(windows))]
-    pub fn get_pseudoconsole(&self) -> Option<*mut c_void> {
-        None
     }
 
     /// Close the parent's copy of slave_fd after fork
     /// The child process has its own copy - closing the parent's ensures
     /// EOF is received on the master side when the child exits
-    pub fn close_slave_fd(&self) {
+    pub(crate) fn close_slave_fd(&self) {
         self.update_flags(|f| f.insert(Flags::INLINE_SPAWNED));
         let fd = self.slave_fd.get();
         if fd != Fd::INVALID {
@@ -679,7 +681,8 @@ impl Terminal {
     /// our reader observes EOF. Leaves the Terminal itself open (closed=false),
     /// matching POSIX semantics where child exit delivers EOF without closing the
     /// master fd.
-    pub fn close_pseudoconsole(&self) {
+    #[allow(dead_code)]
+    pub(crate) fn close_pseudoconsole(&self) {
         #[cfg(windows)]
         if let Some(hpcon) = self.hpcon.take() {
             self.close_pseudoconsole_off_thread(hpcon);
@@ -798,7 +801,7 @@ mod lib_util {
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
     static LOADED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-    pub fn get_handle() -> Option<*mut c_void> {
+    pub(super) fn get_handle() -> Option<*mut c_void> {
         use core::sync::atomic::Ordering::Relaxed;
         if LOADED.load(Relaxed) {
             let h = HANDLE.load(Relaxed);
@@ -821,7 +824,7 @@ mod lib_util {
         None
     }
 
-    pub fn get_open_pty() -> Option<OpenPtyFn> {
+    pub(super) fn get_open_pty() -> Option<OpenPtyFn> {
         sys::dlsym_with_handle!(OpenPtyFn, "openpty", get_handle())
     }
 }
@@ -837,7 +840,7 @@ fn get_open_pty_fn() -> Option<OpenPtyFn> {
             // SAFETY precondition: out-param fd pointers must be writable and
             // termp/winp must be null or valid — raw-pointer contract. Kept
             // `unsafe` so the fn item coerces to `OpenPtyFn` (unsafe fn ptr).
-            pub fn openpty(
+            pub(crate) fn openpty(
                 amaster: *mut c_int,
                 aslave: *mut c_int,
                 name: *mut u8,
@@ -1011,7 +1014,7 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
 }
 
 #[cfg(windows)]
-pub struct PipePair {
+pub(crate) struct PipePair {
     pub server: windows::HANDLE,
     pub client: windows::HANDLE,
 }
@@ -1242,7 +1245,7 @@ enum TermiosField {
 impl Terminal {
     /// Check if terminal is closed
     #[bun_jsc::host_fn(getter)]
-    pub fn get_closed(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_closed(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::from(self.flags.get().contains(Flags::CLOSED))
     }
 
@@ -1308,11 +1311,11 @@ impl Terminal {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_input_flags(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_input_flags(&self, _global: &JSGlobalObject) -> JSValue {
         self.get_termios_flag::<{ TermiosField::Iflag }>()
     }
     #[bun_jsc::host_fn(setter)]
-    pub fn set_input_flags(
+    pub(crate) fn set_input_flags(
         &self,
         global_object: &JSGlobalObject,
         value: JSValue,
@@ -1321,11 +1324,11 @@ impl Terminal {
         Ok(true)
     }
     #[bun_jsc::host_fn(getter)]
-    pub fn get_output_flags(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_output_flags(&self, _global: &JSGlobalObject) -> JSValue {
         self.get_termios_flag::<{ TermiosField::Oflag }>()
     }
     #[bun_jsc::host_fn(setter)]
-    pub fn set_output_flags(
+    pub(crate) fn set_output_flags(
         &self,
         global_object: &JSGlobalObject,
         value: JSValue,
@@ -1334,11 +1337,11 @@ impl Terminal {
         Ok(true)
     }
     #[bun_jsc::host_fn(getter)]
-    pub fn get_local_flags(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_local_flags(&self, _global: &JSGlobalObject) -> JSValue {
         self.get_termios_flag::<{ TermiosField::Lflag }>()
     }
     #[bun_jsc::host_fn(setter)]
-    pub fn set_local_flags(
+    pub(crate) fn set_local_flags(
         &self,
         global_object: &JSGlobalObject,
         value: JSValue,
@@ -1347,11 +1350,11 @@ impl Terminal {
         Ok(true)
     }
     #[bun_jsc::host_fn(getter)]
-    pub fn get_control_flags(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_control_flags(&self, _global: &JSGlobalObject) -> JSValue {
         self.get_termios_flag::<{ TermiosField::Cflag }>()
     }
     #[bun_jsc::host_fn(setter)]
-    pub fn set_control_flags(
+    pub(crate) fn set_control_flags(
         &self,
         global_object: &JSGlobalObject,
         value: JSValue,
@@ -1362,7 +1365,7 @@ impl Terminal {
 
     /// Write data to the terminal
     #[bun_jsc::host_fn(method)]
-    pub fn write(
+    pub(crate) fn write(
         &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1417,7 +1420,7 @@ impl Terminal {
 
     /// Resize the terminal
     #[bun_jsc::host_fn(method)]
-    pub fn resize(
+    pub(crate) fn resize(
         &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1507,7 +1510,7 @@ impl Terminal {
 
     /// Set raw mode on the terminal
     #[bun_jsc::host_fn(method)]
-    pub fn set_raw_mode(
+    pub(crate) fn set_raw_mode(
         &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1559,14 +1562,14 @@ fn set_termios(fd: Fd, termios_p: &Termios) -> bool {
 impl Terminal {
     /// Reference the terminal to keep the event loop alive
     #[bun_jsc::host_fn(method)]
-    pub fn do_ref(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_ref(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
         self.update_ref(true);
         Ok(JSValue::UNDEFINED)
     }
 
     /// Unreference the terminal
     #[bun_jsc::host_fn(method)]
-    pub fn do_unref(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_unref(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
         self.update_ref(false);
         Ok(JSValue::UNDEFINED)
     }
@@ -1581,14 +1584,14 @@ impl Terminal {
 
     /// Close the terminal
     #[bun_jsc::host_fn(method)]
-    pub fn close(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn close(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
         self.close_internal();
         Ok(JSValue::UNDEFINED)
     }
 
     /// Async dispose for "using" syntax
     #[bun_jsc::host_fn(method)]
-    pub fn async_dispose(
+    pub(crate) fn async_dispose(
         &self,
         global_object: &JSGlobalObject,
         _f: &CallFrame,
@@ -1606,7 +1609,7 @@ impl Terminal {
         ))
     }
 
-    pub fn close_internal(&self) {
+    pub(crate) fn close_internal(&self) {
         if self.flags.get().contains(Flags::CLOSED) {
             return;
         }
@@ -1699,7 +1702,7 @@ impl Terminal {
     }
 
     // IOReader callbacks
-    pub fn on_reader_done(&self) {
+    pub(crate) fn on_reader_done(&self) {
         bun_output::scoped_log!(Terminal, "onReaderDone");
         // R-2: `&self` (no `noalias`) + `Cell<Flags>` makes the prior
         // `black_box`-launder unnecessary — the post-`call_exit_callback`
@@ -1720,7 +1723,7 @@ impl Terminal {
         }
     }
 
-    pub fn on_reader_error(&self, err: &sys::Error) {
+    pub(crate) fn on_reader_error(&self, err: &sys::Error) {
         bun_output::scoped_log!(Terminal, "onReaderError: {:?}", err);
         // R-2: see `on_reader_done` — `&self` + `Cell<Flags>` replaces the
         // prior `black_box` launder.
@@ -1773,7 +1776,7 @@ impl Terminal {
 
     // Called when data is available from the reader
     // Returns true to continue reading, false to pause
-    pub fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
+    pub(crate) fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
         let _ = has_more;
         bun_output::scoped_log!(Terminal, "onReadChunk: {} bytes", chunk.len());
 
@@ -1826,11 +1829,7 @@ impl Terminal {
         true // Continue reading
     }
 
-    pub fn event_loop(&self) -> EventLoopHandle {
-        self.event_loop_handle
-    }
-
-    pub fn loop_(&self) -> *mut AsyncLoop {
+    pub(crate) fn loop_(&self) -> *mut AsyncLoop {
         #[cfg(windows)]
         {
             self.event_loop_handle.uv_loop()
@@ -1842,7 +1841,7 @@ impl Terminal {
     }
 
     /// Finalize - called by GC when object is collected
-    pub fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(Terminal, "finalize");
         jsc::mark_binding();
         bun_ptr::finalize_js_box(self, |this| {

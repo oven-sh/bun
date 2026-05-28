@@ -114,14 +114,6 @@ pub enum Code {
 }
 
 impl Code {
-    // Zig std.json.Stringify hook → write the tag name as a JSON string.
-    pub fn json_stringify<W: crate::JsonWriter>(
-        self,
-        writer: &mut W,
-    ) -> Result<(), bun_core::Error> {
-        writer.write(<&'static str>::from(self))
-    }
-
     pub fn unary_assign_target(code: Code) -> AssignTarget {
         if (code as u8) >= (Code::UnPreDec as u8) && (code as u8) <= (Code::UnPostInc as u8) {
             return AssignTarget::Update;
@@ -279,15 +271,6 @@ impl Op {
             level,
             is_keyword,
         }
-    }
-
-    // Zig std.json.Stringify hook → emits `self.text` as a JSON-encoded string
-    // (quoted + escaped), e.g. `"+"` — not raw bytes.
-    pub fn json_stringify<W: crate::JsonWriter>(
-        &self,
-        writer: &mut W,
-    ) -> Result<(), bun_core::Error> {
-        writer.write(self.text)
     }
 }
 

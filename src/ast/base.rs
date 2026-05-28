@@ -181,12 +181,6 @@ impl Ref {
             symbol: symbol_table.get_symbol(self),
         }
     }
-    pub fn json_stringify<W: crate::JsonWriter>(
-        self,
-        writer: &mut W,
-    ) -> Result<(), bun_core::Error> {
-        writer.write(&[self.source_index(), self.inner_index()])
-    }
 }
 
 // Zig: `DumpImplData` + `dumpImpl` — formatter wrapper returned by `Ref.dump`.

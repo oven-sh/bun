@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import net from "node:net";
 
 // Fuzzer found a flaky SIGILL when a RedisClient is constructed, a command
 // throws during argument validation (before any connection attempt), and the
@@ -65,4 +66,82 @@ test.concurrent("RedisClient survives GC across many short-lived instances", asy
   expect(stdout.trim()).toBe("OK");
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
+});
+
+// A RESP scalar line (simple string, error, integer, ...) must end with CRLF.
+// The reader bounds how many bytes it will accumulate while waiting for that
+// terminator (MAX_LINE_LEN = 512 KiB), so a server that streams an endless
+// unterminated line gets a protocol error promptly instead of the client
+// buffering and rescanning the whole line on every socket read.
+test.concurrent("rejects a RESP simple-string reply whose line terminator never arrives", async () => {
+  // Minimal mock Redis server: replies +OK to the HELLO handshake, then
+  // answers the next command with `payload`.
+  function listen(payload: Buffer, endAfterPayload: boolean): Promise<{ server: net.Server; port: number }> {
+    return new Promise((resolve, reject) => {
+      const server = net.createServer(socket => {
+        socket.on("data", (data: Buffer) => {
+          if (data.includes("HELLO")) {
+            socket.write("+OK\r\n");
+          }
+          if (data.includes("PING")) {
+            socket.write(payload, () => {
+              if (endAfterPayload) socket.end();
+            });
+          }
+        });
+        socket.on("error", () => {});
+      });
+      server.listen(0, "127.0.0.1", () => {
+        resolve({ server, port: (server.address() as net.AddressInfo).port });
+      });
+      server.on("error", reject);
+    });
+  }
+
+  // 1) A simple-string reply whose CRLF terminator never arrives. Once more
+  //    than 512 KiB of the line has accumulated, the client must fail the
+  //    reply with a protocol error rather than keep waiting for a terminator
+  //    that never comes. (The server closes the socket after the payload so
+  //    that a client which keeps waiting still settles the promise -- with a
+  //    connection-closed error instead of the expected protocol error.)
+  {
+    const unterminated = Buffer.from("+" + Buffer.alloc(600_000, "A").toString());
+    const { server, port } = await listen(unterminated, true);
+    try {
+      const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, {
+        autoReconnect: false,
+        connectionTimeout: 5000,
+      });
+      try {
+        await client.send("PING", []);
+        expect.unreachable();
+      } catch (error: any) {
+        expect(error.code).toBe("ERR_REDIS_INVALID_RESPONSE");
+      } finally {
+        client.close();
+      }
+    } finally {
+      server.close();
+    }
+  }
+
+  // 2) A large but properly terminated simple string under the bound still
+  //    parses.
+  {
+    const value = Buffer.alloc(100_000, "B").toString();
+    const { server, port } = await listen(Buffer.from("+" + value + "\r\n"), false);
+    try {
+      const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, {
+        autoReconnect: false,
+        connectionTimeout: 5000,
+      });
+      try {
+        expect(await client.send("PING", [])).toBe(value);
+      } finally {
+        client.close();
+      }
+    } finally {
+      server.close();
+    }
+  }
 });

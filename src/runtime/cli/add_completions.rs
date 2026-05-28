@@ -4,7 +4,7 @@
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum FirstLetter {
+pub(crate) enum FirstLetter {
     A = b'a',
     B = b'b',
     C = b'c',
@@ -34,14 +34,14 @@ pub enum FirstLetter {
 }
 
 /// Largest per-letter package list length (Zig: `pub const biggest_list`).
-pub const BIGGEST_LIST: usize = 1034;
+pub(crate) const BIGGEST_LIST: usize = 1034;
 
 /// Decompress the package-name table. The compressed blob and Index table are
 /// emitted by the generator; until that runs for Rust, this is a no-op.
 pub fn init() {}
 
 /// Returns the slice of package names beginning with `letter`.
-pub fn get_packages(_letter: FirstLetter) -> &'static [&'static [u8]] {
+pub(crate) fn get_packages(_letter: FirstLetter) -> &'static [&'static [u8]] {
     // Populated by the generator (see file header). Empty until generated.
     &[]
 }

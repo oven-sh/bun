@@ -28,7 +28,7 @@ pub enum FlexDirection {
 }
 
 impl FlexDirection {
-    pub fn to_2009(self) -> (BoxOrient, BoxDirection) {
+    pub(crate) fn to_2009(self) -> (BoxOrient, BoxDirection) {
         match self {
             FlexDirection::Row => (BoxOrient::Horizontal, BoxDirection::Normal),
             FlexDirection::Column => (BoxOrient::Vertical, BoxDirection::Normal),
@@ -51,12 +51,6 @@ pub enum FlexWrap {
     WrapReverse,
 }
 
-impl FlexWrap {
-    pub fn from_standard(self) -> Option<FlexWrap> {
-        Some(self)
-    }
-}
-
 /// A value for the [flex-flow](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#flex-flow-property) shorthand property.
 #[derive(Clone, PartialEq, Eq)]
 pub struct FlexFlow {
@@ -73,7 +67,7 @@ pub struct FlexFlow {
 //   VendorPrefixMap  = { direction: true, wrap: true }
 
 impl FlexFlow {
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<Self> {
         let mut direction: Option<FlexDirection> = None;
         let mut wrap: Option<FlexWrap> = None;
 
@@ -99,7 +93,7 @@ impl FlexFlow {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let mut needs_space = false;
         if self.direction != FlexDirection::default() || self.wrap == FlexWrap::default() {
             self.direction.to_css(dest)?;
@@ -135,7 +129,7 @@ pub struct Flex {
 //   VendorPrefixMap  = { grow: true, shrink: true, basis: true }
 
 impl Flex {
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -179,7 +173,7 @@ impl Flex {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self.grow == 0.0
             && self.shrink == 0.0
             && matches!(self.basis, LengthPercentageOrAuto::Auto)
@@ -259,7 +253,7 @@ pub enum BoxDirection {
     Reverse,
 }
 
-pub type FlexAlign = BoxAlign;
+pub(crate) type FlexAlign = BoxAlign;
 
 /// A value for the legacy (prefixed) [box-align](https://www.w3.org/TR/2009/WD-css3-flexbox-20090723/#alignment) property.
 /// Equivalent to the `align-items` property in the standard syntax.
@@ -280,7 +274,7 @@ pub enum BoxAlign {
 }
 
 impl BoxAlign {
-    pub fn from_standard(align: &AlignItems) -> Option<BoxAlign> {
+    pub(crate) fn from_standard(align: &AlignItems) -> Option<BoxAlign> {
         use css::css_properties::align::SelfPosition;
         match align {
             AlignItems::SelfPosition(sp) => {
@@ -318,7 +312,7 @@ pub enum BoxPack {
 }
 
 impl BoxPack {
-    pub fn from_standard(justify: &JustifyContent) -> Option<BoxPack> {
+    pub(crate) fn from_standard(justify: &JustifyContent) -> Option<BoxPack> {
         use css::css_properties::align::{ContentDistribution, ContentPosition};
         match justify {
             JustifyContent::ContentDistribution(cd) => match cd {
@@ -354,7 +348,7 @@ pub enum BoxLines {
 }
 
 impl BoxLines {
-    pub fn from_standard(wrap: FlexWrap) -> Option<BoxLines> {
+    pub(crate) fn from_standard(wrap: FlexWrap) -> Option<BoxLines> {
         match wrap {
             FlexWrap::Nowrap => Some(BoxLines::Single),
             FlexWrap::Wrap => Some(BoxLines::Multiple),
@@ -383,7 +377,7 @@ pub enum FlexPack {
 }
 
 impl FlexPack {
-    pub fn from_standard(justify: &JustifyContent) -> Option<FlexPack> {
+    pub(crate) fn from_standard(justify: &JustifyContent) -> Option<FlexPack> {
         use css::css_properties::align::{ContentDistribution, ContentPosition};
         match justify {
             JustifyContent::ContentDistribution(cd) => match cd {
@@ -430,7 +424,7 @@ pub enum FlexItemAlign {
 }
 
 impl FlexItemAlign {
-    pub fn from_standard(justify: &AlignSelf) -> Option<FlexItemAlign> {
+    pub(crate) fn from_standard(justify: &AlignSelf) -> Option<FlexItemAlign> {
         use css::css_properties::align::SelfPosition;
         match justify {
             AlignSelf::Auto => Some(FlexItemAlign::Auto),
@@ -473,7 +467,7 @@ pub enum FlexLinePack {
 }
 
 impl FlexLinePack {
-    pub fn from_standard(justify: &AlignContent) -> Option<FlexLinePack> {
+    pub(crate) fn from_standard(justify: &AlignContent) -> Option<FlexLinePack> {
         use css::css_properties::align::{ContentDistribution, ContentPosition};
         match justify {
             AlignContent::ContentDistribution(cd) => match cd {
@@ -500,7 +494,7 @@ impl FlexLinePack {
     }
 }
 
-pub type BoxOrdinalGroup = CSSInteger;
+pub(crate) type BoxOrdinalGroup = CSSInteger;
 
 // A handler for flex-related properties that manages both standard and legacy vendor prefixed values.
 #[derive(Default)]
@@ -540,7 +534,7 @@ pub struct FlexHandler {
 }
 
 impl FlexHandler {
-    pub fn handle_property(
+    pub(crate) fn handle_property(
         &mut self,
         property: &Property,
         dest: &mut css::DeclarationList,
@@ -666,7 +660,7 @@ impl FlexHandler {
         true
     }
 
-    pub fn finalize(
+    pub(crate) fn finalize(
         &mut self,
         dest: &mut css::DeclarationList,
         context: &mut css::PropertyHandlerContext,

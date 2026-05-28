@@ -19,9 +19,9 @@ pub const STD_OUTPUT_HANDLE: DWORD = (-11i32) as DWORD;
 pub const STD_ERROR_HANDLE: DWORD = (-12i32) as DWORD;
 
 // Console mode flags (consoleapi.h).
-pub const ENABLE_PROCESSED_OUTPUT: DWORD = 0x0001;
-pub const ENABLE_WRAP_AT_EOL_OUTPUT: DWORD = 0x0002;
-pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
+pub(crate) const ENABLE_PROCESSED_OUTPUT: DWORD = 0x0001;
+pub(crate) const ENABLE_WRAP_AT_EOL_OUTPUT: DWORD = 0x0002;
+pub(crate) const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
 
 /// Wrapper that returns `None` on `INVALID_HANDLE_VALUE` (matches
 /// `std.os.windows.GetStdHandle` error-union semantics).
@@ -64,6 +64,6 @@ pub use kernel32 as c;
 pub mod libuv {
     unsafe extern "C" {
         /// No preconditions; walks the CRT fd table and clears HANDLE_FLAG_INHERIT.
-        pub safe fn uv_disable_stdio_inheritance();
+        pub(crate) safe fn uv_disable_stdio_inheritance();
     }
 }

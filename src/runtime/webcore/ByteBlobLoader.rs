@@ -40,8 +40,6 @@ impl Default for ByteBlobLoader {
     }
 }
 
-pub const TAG: readable_stream::Tag = readable_stream::Tag::Blob;
-
 // Zig `NewSource(@This(), "Blob", onStart, onPull, onCancel, deinit, null, drain,
 // memoryCost, toBufferedValue)` is a comptime type-returning fn that wires callbacks. In Rust
 // this becomes a generic `ReadableStreamSource<Ctx>` where `Ctx` impls `SourceContext`.
@@ -256,10 +254,6 @@ impl ByteBlobLoader {
     ) -> JsResult<JSValue> {
         if let Some(mut blob) = self.to_any_blob(global) {
             let result = blob.to_promise(global, action);
-            // `Any` has no `Drop` and the inner `Blob`'s `content_type` is a
-            // raw `*const [u8]` that `to_any_blob` filled via `into_raw`;
-            // release the store ref + content_type explicitly (same shape as
-            // the BodyMixin arms in `Body.rs`).
             blob.detach();
             return Ok(result?);
         }

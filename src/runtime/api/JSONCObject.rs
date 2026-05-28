@@ -5,7 +5,7 @@ use bun_js_parser_jsc::ExprJsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, LogJsc};
 use bun_parsers::json;
 
-pub fn create(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     bun_jsc::create_host_function_object(global, &[("parse", __jsc_host_parse, 1)])
 }
 

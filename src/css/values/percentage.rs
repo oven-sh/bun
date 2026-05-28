@@ -2,7 +2,7 @@ use crate::css_parser as css;
 use crate::css_parser::{CssResult, ParserError, PrintErr, Printer, Token};
 use crate::targets::Browsers;
 use crate::values::angle::Angle;
-use crate::values::calc::{Calc, MathFunction};
+use crate::values::calc::Calc;
 use crate::values::number::CSSNumber;
 use crate::values::protocol;
 use core::cmp::Ordering;
@@ -13,7 +13,7 @@ pub struct Percentage {
 }
 
 impl Percentage {
-    pub fn parse(input: &mut css::Parser) -> CssResult<Percentage> {
+    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Percentage> {
         if let Ok(calc_value) = input.try_parse(Calc::<Percentage>::parse) {
             if let Calc::Value(v) = calc_value {
                 return Ok(*v);
@@ -27,7 +27,7 @@ impl Percentage {
         Ok(Percentage { v: percent })
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         let x = self.v * 100.0;
         let int_value: Option<i32> = if (x - x.trunc()) == 0.0 {
             // PORT NOTE: Rust `as` saturates on overflow/NaN where Zig is UB.
@@ -63,70 +63,55 @@ impl Percentage {
     }
 
     #[inline]
-    pub fn eql(self, other: Percentage) -> bool {
+    pub(crate) fn eql(self, other: Percentage) -> bool {
         self.v == other.v
     }
 
-    pub fn add_internal(self, other: Percentage) -> Percentage {
+    pub(crate) fn add_internal(self, other: Percentage) -> Percentage {
         self.add(other)
     }
 
-    pub fn add(self, rhs: Percentage) -> Percentage {
+    pub(crate) fn add(self, rhs: Percentage) -> Percentage {
         Percentage { v: self.v + rhs.v }
     }
 
-    pub fn into_calc(self) -> Calc<Percentage> {
-        // PERF(port): was arena alloc (bun.create) — profile if hot.
-        Calc::Value(Box::new(self))
-    }
-
-    pub fn mul_f32(self, other: f32) -> Percentage {
+    pub(crate) fn mul_f32(self, other: f32) -> Percentage {
         Percentage { v: self.v * other }
     }
 
-    pub fn is_zero(self) -> bool {
+    pub(crate) fn is_zero(self) -> bool {
         self.v == 0.0
     }
 
-    pub fn sign(self) -> f32 {
+    pub(crate) fn sign(self) -> f32 {
         css::signfns::sign_f32(self.v)
     }
 
-    pub fn try_sign(self) -> Option<f32> {
+    pub(crate) fn try_sign(self) -> Option<f32> {
         Some(self.sign())
     }
 
-    pub fn partial_cmp(self, other: Percentage) -> Option<Ordering> {
+    pub(crate) fn partial_cmp(self, other: Percentage) -> Option<Ordering> {
         crate::generic::partial_cmp_f32(self.v, other.v)
     }
 
-    pub fn try_from_angle(_: Angle) -> Option<Percentage> {
-        None
-    }
-
-    pub fn try_map(self, _map_fn: impl Fn(f32) -> f32) -> Option<Percentage> {
+    pub(crate) fn try_map(self, _map_fn: impl Fn(f32) -> f32) -> Option<Percentage> {
         // Percentages cannot be mapped because we don't know what they will resolve to.
         // For example, they might be positive or negative depending on what they are a
         // percentage of, which we don't know.
         None
     }
 
-    pub fn op<C>(
+    pub(crate) fn op_to<R, C>(
         self,
         other: Percentage,
         ctx: C,
-        op_fn: impl Fn(C, f32, f32) -> f32,
-    ) -> Percentage {
-        Percentage {
-            v: op_fn(ctx, self.v, other.v),
-        }
-    }
-
-    pub fn op_to<R, C>(self, other: Percentage, ctx: C, op_fn: impl Fn(C, f32, f32) -> R) -> R {
+        op_fn: impl Fn(C, f32, f32) -> R,
+    ) -> R {
         op_fn(ctx, self.v, other.v)
     }
 
-    pub fn try_op<C>(
+    pub(crate) fn try_op<C>(
         self,
         other: Percentage,
         ctx: C,
@@ -181,7 +166,7 @@ where
     // TODO(port): narrow these bounds; mirroring methods called on D below.
     D: Clone,
 {
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self>
+    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self>
     where
         Self: crate::values::calc::CalcValue,
         D: protocol::Parse,
@@ -205,7 +190,7 @@ where
         Err(input.new_error_for_next_token())
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr>
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr>
     where
         Self: crate::values::calc::CalcValue,
         D: protocol::ToCss,
@@ -217,7 +202,7 @@ where
         }
     }
 
-    pub fn is_compatible(&self, browsers: &Browsers) -> bool
+    pub(crate) fn is_compatible(&self, browsers: &Browsers) -> bool
     where
         Self: crate::values::calc::CalcValue,
         D: protocol::IsCompatible,
@@ -229,15 +214,7 @@ where
         }
     }
 
-    pub fn eql(&self, other: &Self) -> bool
-    where
-        D: PartialEq,
-    {
-        // PORT NOTE: Zig used css.implementEql (reflection); Rust uses the manual PartialEq impl above.
-        self == other
-    }
-
-    pub fn deep_clone(&self) -> Self {
+    pub(crate) fn deep_clone(&self) -> Self {
         match self {
             // PORT NOTE: Zig branched on `comptime needs_deepclone` to avoid cloning POD types.
             // In Rust, D: Clone covers both — Copy types' clone is a bitwise copy.
@@ -251,7 +228,7 @@ where
     // PORT NOTE: `deinit` dropped — Box<Calc<...>> frees via Drop; D's Drop (if any) runs
     // automatically. Zig body only freed owned fields, so no explicit `impl Drop` needed.
 
-    pub fn zero() -> Self
+    pub(crate) fn zero() -> Self
     where
         D: protocol::Zero,
     {
@@ -259,7 +236,7 @@ where
         Self::Dimension(D::zero())
     }
 
-    pub fn is_zero(&self) -> bool
+    pub(crate) fn is_zero(&self) -> bool
     where
         D: protocol::Zero,
     {
@@ -279,7 +256,7 @@ where
         lhs.mul_f32(rhs)
     }
 
-    pub fn mul_f32(self, other: f32) -> Self
+    pub(crate) fn mul_f32(self, other: f32) -> Self
     where
         Self: crate::values::calc::CalcValue,
         D: protocol::MulF32,
@@ -292,38 +269,7 @@ where
         }
     }
 
-    pub fn add(self, other: Self) -> Self
-    where
-        Self: crate::values::calc::CalcValue,
-        D: protocol::TryAdd + protocol::Zero + protocol::TrySign + protocol::MulF32,
-    {
-        // Unwrap calc(...) functions so we can add inside.
-        // Then wrap the result in a calc(...) again if necessary.
-        let a = self.unwrap_calc();
-        let b = other.unwrap_calc();
-        let res = a.add_internal(b);
-        match res {
-            Self::Calc(c) => match *c {
-                Calc::Value(l) => *l,
-                Calc::Function(f) => {
-                    if !matches!(*f, MathFunction::Calc(_)) {
-                        // PERF(port): was arena alloc (bun.create) — profile if hot.
-                        Self::Calc(Box::new(Calc::Function(f)))
-                    } else {
-                        Self::Calc(Box::new(Calc::Function(Box::new(MathFunction::Calc(
-                            Calc::Function(f),
-                        )))))
-                    }
-                }
-                other_calc => Self::Calc(Box::new(Calc::Function(Box::new(MathFunction::Calc(
-                    other_calc,
-                ))))),
-            },
-            other_res => other_res,
-        }
-    }
-
-    pub fn add_internal(self, other: Self) -> Self
+    pub(crate) fn add_internal(self, other: Self) -> Self
     where
         Self: crate::values::calc::CalcValue,
         D: protocol::TryAdd + protocol::Zero + protocol::TrySign,
@@ -457,21 +403,7 @@ where
         sign.is_sign_negative()
     }
 
-    fn unwrap_calc(self) -> Self {
-        match self {
-            Self::Calc(calc) => match *calc {
-                Calc::Function(f) => match *f {
-                    // PERF(port): was arena alloc (bun.create) — profile if hot.
-                    MathFunction::Calc(c2) => Self::Calc(Box::new(c2)),
-                    other_fn => Self::Calc(Box::new(Calc::Function(Box::new(other_fn)))),
-                },
-                other_calc => Self::Calc(Box::new(other_calc)),
-            },
-            other => other,
-        }
-    }
-
-    pub fn partial_cmp(&self, other: &Self) -> Option<Ordering>
+    pub(crate) fn partial_cmp(&self, other: &Self) -> Option<Ordering>
     where
         D: protocol::PartialCmp,
     {
@@ -482,7 +414,7 @@ where
         }
     }
 
-    pub fn try_sign(&self) -> Option<f32>
+    pub(crate) fn try_sign(&self) -> Option<f32>
     where
         Self: crate::values::calc::CalcValue,
         D: protocol::TrySign,
@@ -494,14 +426,14 @@ where
         }
     }
 
-    pub fn try_from_angle(angle: Angle) -> Option<Self>
+    pub(crate) fn try_from_angle(angle: Angle) -> Option<Self>
     where
         D: protocol::TryFromAngle,
     {
         Some(Self::Dimension(D::try_from_angle(angle)?))
     }
 
-    pub fn try_map(&self, map_fn: impl Fn(f32) -> f32) -> Option<Self>
+    pub(crate) fn try_map(&self, map_fn: impl Fn(f32) -> f32) -> Option<Self>
     where
         D: protocol::TryMap,
     {
@@ -511,45 +443,7 @@ where
         }
     }
 
-    pub fn try_op<C>(
-        &self,
-        other: &Self,
-        ctx: C,
-        op_fn: impl Fn(C, f32, f32) -> f32,
-    ) -> Option<Self>
-    where
-        C: Copy,
-        D: protocol::TryOp,
-    {
-        match (self, other) {
-            (Self::Dimension(a), Self::Dimension(b)) => {
-                Some(Self::Dimension(a.try_op(b, ctx, &op_fn)?))
-            }
-            (Self::Percentage(a), Self::Percentage(b)) => Some(Self::Percentage(Percentage {
-                v: op_fn(ctx, a.v, b.v),
-            })),
-            _ => None,
-        }
-    }
-
-    pub fn try_op_to<R, C>(
-        &self,
-        other: &Self,
-        ctx: C,
-        op_fn: impl Fn(C, f32, f32) -> R,
-    ) -> Option<R>
-    where
-        C: Copy,
-        D: protocol::TryOpTo,
-    {
-        match (self, other) {
-            (Self::Dimension(a), Self::Dimension(b)) => a.try_op_to(b, ctx, &op_fn),
-            (Self::Percentage(a), Self::Percentage(b)) => Some(op_fn(ctx, a.v, b.v)),
-            _ => None,
-        }
-    }
-
-    pub fn into_calc(self) -> Calc<DimensionPercentage<D>> {
+    pub(crate) fn into_calc(self) -> Calc<DimensionPercentage<D>> {
         match self {
             Self::Calc(calc) => *calc,
             // PERF(port): was arena alloc (bun.create) — profile if hot.
@@ -571,14 +465,14 @@ impl NumberOrPercentage {
     // PORT NOTE: Zig used `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss`
     // (comptime reflection derives). Hand-rolled here as the trivial two-variant
     // try-parse cascade so `AlphaValue::parse` doesn't panic at runtime.
-    pub fn parse(input: &mut css::Parser) -> CssResult<NumberOrPercentage> {
+    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<NumberOrPercentage> {
         if let Ok(n) = input.try_parse(crate::values::number::CSSNumberFns::parse) {
             return Ok(NumberOrPercentage::Number(n));
         }
         Percentage::parse(input).map(NumberOrPercentage::Percentage)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             NumberOrPercentage::Number(n) => crate::values::number::CSSNumberFns::to_css(*n, dest),
             NumberOrPercentage::Percentage(p) => p.to_css(dest),
@@ -596,12 +490,7 @@ impl NumberOrPercentage {
     //     @panic(css.todo_stuff.depth);
     // }
 
-    pub fn deep_clone(&self) -> NumberOrPercentage {
-        // PORT NOTE: Zig used css.implementDeepClone (reflection) → #[derive(Clone)].
-        self.clone()
-    }
-
-    pub fn into_f32(&self) -> f32 {
+    pub(crate) fn into_f32(&self) -> f32 {
         match self {
             Self::Number(n) => *n,
             Self::Percentage(p) => p.v,

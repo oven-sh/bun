@@ -152,7 +152,7 @@ mod platform {
                             self.dir.native(),
                             self.buf.0.as_mut_ptr(),
                             self.buf.0.len(),
-                            &mut self.seek,
+                            &raw mut self.seek,
                         )
                     };
 
@@ -190,8 +190,11 @@ mod platform {
                 // SAFETY: `entry` points at a valid (possibly unaligned)
                 // dirent; addr_of! avoids creating intermediate references.
                 let d_reclen: u16 = unsafe { addr_of!((*entry).d_reclen).read_unaligned() };
+                // SAFETY: same `entry` record as above.
                 let d_namlen: u16 = unsafe { addr_of!((*entry).d_namlen).read_unaligned() };
+                // SAFETY: same `entry` record as above.
                 let d_ino: u64 = unsafe { addr_of!((*entry).d_ino).read_unaligned() };
+                // SAFETY: same `entry` record as above.
                 let d_type: u8 = unsafe { addr_of!((*entry).d_type).read_unaligned() };
                 let entry_idx = self.index;
                 self.index += d_reclen as usize;
@@ -522,7 +525,7 @@ mod platform {
         }
     }
     // Map the const bool to the marker type.
-    pub type Select<const B: bool> = <() as SelectImpl<B>>::T;
+    pub(super) type Select<const B: bool> = <() as SelectImpl<B>>::T;
     pub trait SelectImpl<const B: bool> {
         type T: WindowsOsPath;
     }

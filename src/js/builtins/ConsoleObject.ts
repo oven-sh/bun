@@ -165,7 +165,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const kMinute = 60 * kSecond;
   const kHour = 60 * kMinute;
 
-  const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
+  const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBunStringWidth", 1);
 
   /**
    * Returns the number of columns required to display the given string.

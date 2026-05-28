@@ -12,7 +12,6 @@
 // Wyhash11 (legacy, 32-byte rounds, 5 primes)
 // ════════════════════════════════════════════════════════════════════════════
 
-#![warn(unreachable_pub)]
 #![feature(hasher_prefixfree_extras)]
 const PRIMES: [u64; 5] = [
     0xa0761d6478bd642f,

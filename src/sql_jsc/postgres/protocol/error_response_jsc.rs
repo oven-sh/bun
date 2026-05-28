@@ -9,7 +9,7 @@ use bun_sql::postgres::any_postgres_error::PostgresErrorOptions;
 
 use super::notice_response_jsc::field_message_payload;
 
-pub fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSValue {
+pub(crate) fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSValue {
     let mut b = StringBuilder::default();
 
     for msg in this.messages.iter() {

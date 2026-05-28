@@ -181,7 +181,7 @@ enum Key {
 }
 
 impl Key {
-    pub fn from_byte(byte: u8) -> Key {
+    pub(crate) fn from_byte(byte: u8) -> Key {
         match byte {
             1 => Key::CtrlA,
             2 => Key::CtrlB,
@@ -220,7 +220,7 @@ struct History {
 }
 
 impl History {
-    pub fn init() -> History {
+    pub(crate) fn init() -> History {
         History {
             entries: Vec::new(),
             position: 0,
@@ -230,7 +230,7 @@ impl History {
         }
     }
 
-    pub fn load(&mut self) -> Result<(), bun_core::Error> {
+    pub(crate) fn load(&mut self) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         let Some(home_path) = env_var::HOME.get() else {
             return Ok(());
@@ -266,7 +266,7 @@ impl History {
         Ok(())
     }
 
-    pub fn save(&mut self) {
+    pub(crate) fn save(&mut self) {
         if !self.modified {
             return;
         }
@@ -299,7 +299,7 @@ impl History {
         self.modified = false;
     }
 
-    pub fn add(&mut self, line: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn add(&mut self, line: &[u8]) -> Result<(), bun_alloc::AllocError> {
         if line.is_empty() {
             return Ok(());
         }
@@ -324,7 +324,7 @@ impl History {
         Ok(())
     }
 
-    pub fn prev(&mut self, current_line: &[u8]) -> Option<&[u8]> {
+    pub(crate) fn prev(&mut self, current_line: &[u8]) -> Option<&[u8]> {
         if self.entries.is_empty() {
             return None;
         }
@@ -342,7 +342,7 @@ impl History {
         None
     }
 
-    pub fn next(&mut self) -> Option<&[u8]> {
+    pub(crate) fn next(&mut self) -> Option<&[u8]> {
         if self.position < self.entries.len() {
             self.position += 1;
         }
@@ -360,7 +360,7 @@ impl History {
         None
     }
 
-    pub fn reset_position(&mut self) {
+    pub(crate) fn reset_position(&mut self) {
         self.position = self.entries.len();
         self.temp_line = None;
     }
@@ -376,26 +376,26 @@ struct LineEditor {
 }
 
 impl LineEditor {
-    pub fn init() -> LineEditor {
+    pub(crate) fn init() -> LineEditor {
         LineEditor {
             buffer: Vec::new(),
             cursor: 0,
         }
     }
 
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.buffer.clear();
         self.cursor = 0;
     }
 
-    pub fn set(&mut self, text: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn set(&mut self, text: &[u8]) -> Result<(), bun_alloc::AllocError> {
         self.buffer.clear();
         self.buffer.extend_from_slice(text);
         self.cursor = text.len();
         Ok(())
     }
 
-    pub fn insert(&mut self, ch: u8) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn insert(&mut self, ch: u8) -> Result<(), bun_alloc::AllocError> {
         if self.cursor == self.buffer.len() {
             self.buffer.push(ch);
         } else {
@@ -405,7 +405,7 @@ impl LineEditor {
         Ok(())
     }
 
-    pub fn insert_slice(&mut self, slice: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn insert_slice(&mut self, slice: &[u8]) -> Result<(), bun_alloc::AllocError> {
         if self.cursor == self.buffer.len() {
             self.buffer.extend_from_slice(slice);
         } else {
@@ -417,20 +417,20 @@ impl LineEditor {
         Ok(())
     }
 
-    pub fn delete_char(&mut self) {
+    pub(crate) fn delete_char(&mut self) {
         if self.cursor < self.buffer.len() {
             self.buffer.remove(self.cursor);
         }
     }
 
-    pub fn backspace(&mut self) {
+    pub(crate) fn backspace(&mut self) {
         if self.cursor > 0 {
             self.cursor -= 1;
             self.buffer.remove(self.cursor);
         }
     }
 
-    pub fn delete_word(&mut self) {
+    pub(crate) fn delete_word(&mut self) {
         // Delete word forward
         while self.cursor < self.buffer.len() && self.buffer[self.cursor].is_ascii_whitespace() {
             self.buffer.remove(self.cursor);
@@ -440,7 +440,7 @@ impl LineEditor {
         }
     }
 
-    pub fn backspace_word(&mut self) {
+    pub(crate) fn backspace_word(&mut self) {
         // Delete word backward
         while self.cursor > 0 && self.buffer[self.cursor - 1].is_ascii_whitespace() {
             self.cursor -= 1;
@@ -452,28 +452,28 @@ impl LineEditor {
         }
     }
 
-    pub fn delete_to_end(&mut self) {
+    pub(crate) fn delete_to_end(&mut self) {
         self.buffer.truncate(self.cursor);
     }
 
-    pub fn delete_to_start(&mut self) {
+    pub(crate) fn delete_to_start(&mut self) {
         self.buffer.drain_front(self.cursor);
         self.cursor = 0;
     }
 
-    pub fn move_left(&mut self) {
+    pub(crate) fn move_left(&mut self) {
         if self.cursor > 0 {
             self.cursor -= 1;
         }
     }
 
-    pub fn move_right(&mut self) {
+    pub(crate) fn move_right(&mut self) {
         if self.cursor < self.buffer.len() {
             self.cursor += 1;
         }
     }
 
-    pub fn move_word_left(&mut self) {
+    pub(crate) fn move_word_left(&mut self) {
         while self.cursor > 0 && self.buffer[self.cursor - 1].is_ascii_whitespace() {
             self.cursor -= 1;
         }
@@ -482,7 +482,7 @@ impl LineEditor {
         }
     }
 
-    pub fn move_word_right(&mut self) {
+    pub(crate) fn move_word_right(&mut self) {
         while self.cursor < self.buffer.len() && !self.buffer[self.cursor].is_ascii_whitespace() {
             self.cursor += 1;
         }
@@ -491,15 +491,15 @@ impl LineEditor {
         }
     }
 
-    pub fn move_to_start(&mut self) {
+    pub(crate) fn move_to_start(&mut self) {
         self.cursor = 0;
     }
 
-    pub fn move_to_end(&mut self) {
+    pub(crate) fn move_to_end(&mut self) {
         self.cursor = self.buffer.len();
     }
 
-    pub fn swap(&mut self) {
+    pub(crate) fn swap(&mut self) {
         if self.cursor > 0 && self.cursor < self.buffer.len() {
             self.buffer.swap(self.cursor - 1, self.cursor);
             self.cursor += 1;
@@ -508,7 +508,7 @@ impl LineEditor {
         }
     }
 
-    pub fn get_line(&self) -> &[u8] {
+    pub(crate) fn get_line(&self) -> &[u8] {
         &self.buffer
     }
 }
@@ -525,7 +525,7 @@ struct ReplCommand {
 }
 
 impl ReplCommand {
-    pub const ALL: [ReplCommand; 9] = [
+    pub(crate) const ALL: [ReplCommand; 9] = [
         ReplCommand {
             name: b".help",
             help: "Print this help message",
@@ -573,7 +573,7 @@ impl ReplCommand {
         },
     ];
 
-    pub fn find(name: &[u8]) -> Option<&'static ReplCommand> {
+    pub(crate) fn find(name: &[u8]) -> Option<&'static ReplCommand> {
         Self::ALL.iter().find(|&cmd| {
             strings::eql_long(cmd.name, name, true)
                 || (name.len() > 1 && cmd.name.starts_with(name))
@@ -834,7 +834,7 @@ fn cmd_history(repl: &mut Repl, _: &[u8]) -> ReplResult {
 // Main REPL Struct
 // ============================================================================
 
-pub struct Repl<'a> {
+pub(super) struct Repl<'a> {
     line_editor: LineEditor,
     history: History,
     multiline_buffer: Vec<u8>,
@@ -871,7 +871,7 @@ pub struct Repl<'a> {
 }
 
 impl<'a> Repl<'a> {
-    pub fn init() -> Repl<'a> {
+    pub(super) fn init() -> Repl<'a> {
         Repl {
             line_editor: LineEditor::init(),
             history: History::init(),
@@ -1367,7 +1367,7 @@ impl<'a> Repl<'a> {
     /// result to stdout. Errors are written to stderr.
     /// Returns true if an error occurred (the caller should set exit_code=1 and
     /// skip onBeforeExit); false on success (caller preserves process.exitCode).
-    pub fn eval_script(&mut self, code: &[u8], print_result: bool) -> bool {
+    pub(super) fn eval_script(&mut self, code: &[u8], print_result: bool) -> bool {
         let Some(global) = self.global else {
             return true;
         };
@@ -1947,7 +1947,10 @@ impl<'a> Repl<'a> {
     // Main Loop
     // ========================================================================
 
-    pub fn run_with_vm(&mut self, vm: Option<&'a VirtualMachine>) -> Result<(), bun_core::Error> {
+    pub(super) fn run_with_vm(
+        &mut self,
+        vm: Option<&'a VirtualMachine>,
+    ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         self.vm = vm;
         if let Some(v) = vm {

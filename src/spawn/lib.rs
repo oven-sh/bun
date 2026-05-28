@@ -16,8 +16,6 @@
 //! `src/runtime/api/bun/spawn.zig`,
 //! `src/runtime/api/bun/subprocess/StaticPipeWriter.zig`.
 
-#![warn(unreachable_pub)]
-
 use core::ffi::c_char;
 
 // ──────────────────────────────────────────────────────────────────────────

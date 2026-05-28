@@ -200,6 +200,17 @@ impl CryptoHasher {
         }
     }
 
+    #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__isXof", no_catch)]
+    pub fn extern_is_xof(&self) -> bool {
+        match self {
+            CryptoHasher::Zig(inner) => matches!(
+                inner.get().algorithm,
+                evp::Algorithm::Shake128 | evp::Algorithm::Shake256
+            ),
+            _ => false,
+        }
+    }
+
     // ── JS host fns ────────────────────────────────────────────────────────
 
     /// `pub const digest = jsc.host_fn.wrapInstanceMethod(CryptoHasher, "digest_", false);`
@@ -816,13 +827,13 @@ mod zig_crypto_algos {
     use super::{ZigHashAlgo, evp};
     use sha3::digest::{ExtendableOutputReset, FixedOutputReset, Output, Update};
 
-    pub type Sha3_224 = sha3::Sha3_224;
-    pub type Sha3_256 = sha3::Sha3_256;
-    pub type Sha3_384 = sha3::Sha3_384;
-    pub type Sha3_512 = sha3::Sha3_512;
-    pub type Shake128 = sha3::Shake128;
-    pub type Shake256 = sha3::Shake256;
-    pub type Blake2s256 = blake2::Blake2s256;
+    pub(super) type Sha3_224 = sha3::Sha3_224;
+    pub(super) type Sha3_256 = sha3::Sha3_256;
+    pub(super) type Sha3_384 = sha3::Sha3_384;
+    pub(super) type Sha3_512 = sha3::Sha3_512;
+    pub(super) type Shake128 = sha3::Shake128;
+    pub(super) type Shake256 = sha3::Shake256;
+    pub(super) type Blake2s256 = blake2::Blake2s256;
 
     /// Fixed-digest Keccak/BLAKE2 — Zig `T.final(state, *[digest_length]u8)`
     /// writes exactly `digest_length` bytes; mirror via `FixedOutputReset`.
@@ -898,7 +909,7 @@ impl CryptoHasherZig {
     ) -> JsResult<Option<JSValue>> {
         macro_rules! arm {
             ($name:literal, $ty:ty, $g:expr, $alg:expr, $in:expr, $out:expr) => {
-                if $alg.slice() == $name {
+                if $alg.eql_comptime($name) {
                     return Ok(Some(Self::hash_by_name_inner::<$ty>($g, $in, $out)?));
                 }
             };
@@ -1011,7 +1022,7 @@ impl CryptoHasherZig {
     fn constructor(algorithm: &ZigString) -> Option<Box<CryptoHasher>> {
         macro_rules! arm {
             ($name:literal, $ty:ty, $alg:expr) => {
-                if $alg.slice() == $name {
+                if $alg.eql_comptime($name) {
                     return Some(CryptoHasher::new(CryptoHasher::Zig(JsCell::new(
                         CryptoHasherZig {
                             algorithm: <$ty as ZigHashAlgo>::ALGORITHM,

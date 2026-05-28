@@ -46,11 +46,11 @@ use bun_http::{Method, MimeType};
 use bun_safety::ThreadLock;
 use bun_watcher::Watcher;
 
-pub use crate::bake::dev_server::DirectoryWatchStore;
-pub use crate::bake::dev_server::HmrSocket;
+pub(super) use crate::bake::dev_server::DirectoryWatchStore;
+pub(super) use crate::bake::dev_server::HmrSocket;
 use crate::bake::dev_server::ResponseLike;
-pub use crate::bake::dev_server::assets::Assets;
-pub use crate::bake::dev_server::error_report_request_body::ErrorReportRequest;
+pub(super) use crate::bake::dev_server::assets::Assets;
+pub(super) use crate::bake::dev_server::error_report_request_body::ErrorReportRequest;
 
 // ── local extension shims for upstream-crate methods missing in Rust port ──
 // LAYERING: `bake::Framework::{init_transpiler, resolve}` are now inherent
@@ -74,9 +74,9 @@ impl LogToJsAggregateErrorExt for Log {
         bun_ast_jsc::log_to_js_aggregate_error(self, global, msg)
     }
 }
-pub use crate::bake::dev_server::HotReloadEvent;
-pub use crate::bake::dev_server::incremental_graph::IncrementalGraph;
-pub use crate::bake::dev_server::memory_cost_body::MemoryCost;
+pub(super) use crate::bake::dev_server::HotReloadEvent;
+pub(super) use crate::bake::dev_server::incremental_graph::IncrementalGraph;
+pub(super) use crate::bake::dev_server::memory_cost_body::MemoryCost;
 
 impl DevServer {
     /// `DevServer.memoryCost` — sums the per-category breakdown from
@@ -156,10 +156,10 @@ impl DevServer {
         unsafe { self.ssr_transpiler.assume_init_mut() }
     }
 }
-pub use crate::bake::dev_server::WatcherAtomics;
-pub use crate::bake::dev_server::route_bundle::RouteBundle;
-pub use crate::bake::dev_server::serialized_failure::SerializedFailure;
-pub use crate::bake::dev_server::source_map_store::SourceMapStore;
+pub(super) use crate::bake::dev_server::WatcherAtomics;
+pub(super) use crate::bake::dev_server::route_bundle::RouteBundle;
+pub(super) use crate::bake::dev_server::serialized_failure::SerializedFailure;
+pub(super) use crate::bake::dev_server::source_map_store::SourceMapStore;
 
 bun_output::declare_scope!(DevServer, visible);
 bun_output::declare_scope!(IncrementalGraph, visible);
@@ -259,6 +259,9 @@ pub struct CurrentBundle {
     /// Owns the arena that `bv2.graph.heap` borrows (`'static` self-ref via the
     /// boxed allocation's stable address; same erasure as `bv2` above).
     pub heap: Box<bun_alloc::MimallocArena>,
+    /// Backs the small `AstVec`s built during bundle setup
+    /// (`start_async_bundle`'s AST scope); dropped with the bundle.
+    pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
     /// Information BundleV2 needs to finalize the bundle
     pub start_data: bundler::bundle_v2::DevServerInput,
     /// Started when the bundle was queued
@@ -455,9 +458,9 @@ pub struct DevServer {
 
 bun_event_loop::impl_timer_owner!(DevServer; from_timer_ptr => memory_visualizer_timer);
 
-pub const INTERNAL_PREFIX: &str = "/_bun";
+pub(super) const INTERNAL_PREFIX: &str = "/_bun";
 /// Assets which are routed to the `Assets` storage.
-pub const ASSET_PREFIX: &str = const_format::concatcp!(INTERNAL_PREFIX, "/asset");
+pub(super) const ASSET_PREFIX: &str = const_format::concatcp!(INTERNAL_PREFIX, "/asset");
 /// Client scripts are available at `/_bun/client/{name}-{rbi}{generation}.js`
 /// where:
 /// - `name` is the display name of the route, such as "index" or
@@ -467,7 +470,7 @@ pub const ASSET_PREFIX: &str = const_format::concatcp!(INTERNAL_PREFIX, "/asset"
 ///                re-randomized whenever `client_bundle` is invalidated.
 ///
 /// Example: `/_bun/client/index-00000000f209a20e.js`
-pub const CLIENT_PREFIX: &str = const_format::concatcp!(INTERNAL_PREFIX, "/client");
+pub(super) const CLIENT_PREFIX: &str = const_format::concatcp!(INTERNAL_PREFIX, "/client");
 
 #[derive(Default)]
 pub struct DeferredPromise {
@@ -1398,7 +1401,7 @@ impl DevServer {
 /// pointer as a const generic, so use a `ConstParamTy` enum instead and
 /// `match` inside the trampoline (the optimizer folds the constant `match`).
 #[derive(Copy, Clone, Eq, PartialEq, ::core::marker::ConstParamTy)]
-pub enum DevHandlerId {
+pub(super) enum DevHandlerId {
     JsRequest,
     AssetRequest,
     SrcRequest,
@@ -1412,25 +1415,16 @@ pub enum DevHandlerId {
     MemoryVisualizer,
 }
 
-/// DNS-rebinding guard for `/_bun/...` internal routes. A rebound origin
+/// DNS-rebinding guard for `/_bun/...` internal routes and the Chrome
+/// DevTools `/.well-known/...` route. A rebound origin
 /// (`attacker.com` → 127.0.0.1) presents `Host: attacker.com`; rejecting
 /// non-loopback / non-IP / non-configured hostnames prevents the attacker's
 /// page from reading bundled source via same-origin fetch.
-fn is_allowed_dev_host(dev: &DevServer, req: &Request) -> bool {
+pub(crate) fn is_allowed_dev_host(dev: &DevServer, req: &Request) -> bool {
     let Some(host) = req.header(b"host") else {
         return false;
     };
-    let host = if host.first() == Some(&b'[') {
-        match strings::index_of_scalar(host, b']') {
-            Some(end) => &host[..=end],
-            None => host,
-        }
-    } else {
-        match strings::last_index_of_char(host, b':') {
-            Some(colon) => &host[..colon],
-            None => host,
-        }
-    };
+    let host = host_without_port(host);
     if strings::eql_case_insensitive_ascii(host, b"localhost", true) {
         return true;
     }
@@ -1463,10 +1457,81 @@ fn is_allowed_dev_host(dev: &DevServer, req: &Request) -> bool {
     false
 }
 
+/// `host[":" port]` / `"[" v6 "]" [":" port]` → host (brackets retained for IPv6).
+/// Malformed authorities (missing `]`, empty or non-numeric port, trailing
+/// garbage) yield an empty slice so callers fail closed.
+fn host_without_port(host: &[u8]) -> &[u8] {
+    let (host, rest) = if host.first() == Some(&b'[') {
+        match strings::index_of_scalar(host, b']') {
+            Some(end) => (&host[..=end], &host[end + 1..]),
+            None => return b"",
+        }
+    } else {
+        match strings::last_index_of_char(host, b':') {
+            Some(colon) => (&host[..colon], &host[colon..]),
+            None => (host, &host[host.len()..]),
+        }
+    };
+    match rest {
+        [] => host,
+        [b':', port @ ..] if !port.is_empty() && port.iter().all(u8::is_ascii_digit) => host,
+        _ => b"",
+    }
+}
+
+/// Cross-origin guard for the HMR WebSocket. WebSocket handshakes are exempt
+/// from the same-origin policy, so any page the developer visits could open
+/// `ws://localhost:<port>/_bun/hmr` and subscribe to hot-update payloads (the
+/// bundled source) — the browser still sends `Host: localhost`, so
+/// `is_allowed_dev_host` alone does not stop it. Browsers always include an
+/// `Origin` header on WebSocket handshakes; require its host to be the
+/// request's own host or a localhost name. Requests without an `Origin`
+/// header (non-browser clients) are allowed.
+fn is_allowed_dev_origin(req: &Request) -> bool {
+    let Some(origin) = req.header(b"origin") else {
+        return true;
+    };
+    // An origin is `scheme "://" host [":" port]`; opaque origins serialize
+    // to `null` and are rejected here.
+    let Some(scheme_end) = strings::index_of(origin, b"://") else {
+        return false;
+    };
+    let origin_host = host_without_port(&origin[scheme_end + 3..]);
+    if strings::eql_case_insensitive_ascii(origin_host, b"localhost", true) {
+        return true;
+    }
+    const DOT_LOCALHOST: &[u8] = b".localhost";
+    if origin_host.len() > DOT_LOCALHOST.len()
+        && strings::eql_case_insensitive_ascii(
+            &origin_host[origin_host.len() - DOT_LOCALHOST.len()..],
+            DOT_LOCALHOST,
+            true,
+        )
+    {
+        return true;
+    }
+    match req.header(b"host") {
+        Some(host) => {
+            strings::eql_case_insensitive_ascii(origin_host, host_without_port(host), true)
+        }
+        None => false,
+    }
+}
+
 fn host_forbidden(resp: AnyResponse) {
     resp.corked(move || {
         resp.write_status(b"403 Forbidden");
         resp.end(b"Blocked: Host header does not match the dev server", false);
+    });
+}
+
+fn origin_forbidden(resp: AnyResponse) {
+    resp.corked(move || {
+        resp.write_status(b"403 Forbidden");
+        resp.end(
+            b"Blocked: Origin header does not match the dev server",
+            false,
+        );
     });
 }
 
@@ -1487,7 +1552,7 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     } else {
         AnyResponse::TCP(res.cast::<bun_uws_sys::response::TCPResponse>())
     };
-    if !matches!(ID, DevHandlerId::Request) && !is_allowed_dev_host(dev, req) {
+    if !is_allowed_dev_host(dev, req) {
         return host_forbidden(resp);
     }
     match ID {
@@ -1596,6 +1661,9 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         let res = unsafe { &mut *res };
         if !is_allowed_dev_host(this, req) {
             return host_forbidden(res.as_any_response());
+        }
+        if !is_allowed_dev_origin(req) {
+            return origin_forbidden(res.as_any_response());
         }
         let dw = bun_core::heap::into_raw(HmrSocket::new(this, res));
         let _ = this.active_websocket_connections.insert(dw, ());
@@ -1772,7 +1840,7 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     unsafe { StaticRoute::on(asset, resp) };
 }
 
-pub use bun_core::fmt::parse_hex_to_int;
+pub(super) use bun_core::fmt::parse_hex_to_int;
 
 fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     if req.header(b"open-in-editor").is_none() {
@@ -2141,7 +2209,7 @@ enum ReqOrSaved {
 }
 
 impl ReqOrSaved {
-    pub fn method(&self) -> Method {
+    pub(crate) fn method(&self) -> Method {
         match self {
             ReqOrSaved::Req(req) => {
                 // SAFETY: `req` is a uWS `Request*` valid for the handler callback's duration.
@@ -2985,7 +3053,7 @@ impl DevServer {
     }
 }
 
-pub enum DevResponse<'a> {
+pub(super) enum DevResponse<'a> {
     Http(AnyResponse),
     Promise(PromiseResponse<'a>),
 }
@@ -3047,7 +3115,7 @@ use deferred_request::{DlogeferredRequest, Handler, PromiseResponse};
 // LAYERING: `SavedRequestUnion` was a local mirror because `server_body`'s
 // copy was unnameable; the canonical enum now lives in `crate::server` so
 // `AnyServer::on_saved_request` can name it across the seam.
-pub use crate::server::SavedRequestUnion;
+pub(super) use crate::server::SavedRequestUnion;
 
 impl DeferredRequest {
     pub const MAX_PREALLOCATED: usize = deferred_request::MAX_PREALLOCATED;
@@ -3207,13 +3275,26 @@ impl DevServer {
         // borrows it (self-ref via `CurrentBundle`, see PORT NOTE on
         // `CurrentBundle.bv2`).
         let heap: Box<bun_alloc::MimallocArena> = Box::new(bun_alloc::MimallocArena::new());
-        // TODO(port): ASTMemoryAllocator scope — bake is an AST crate; arena threading required
+        // Borrows `heap` (Zig parity), so AST nodes built during bundle setup
+        // live exactly as long as the bundle. The arena-allocated allocator
+        // never runs `Drop`; the `AstAllocState` is taken into `CurrentBundle`
+        // on success and recycled by the guard below on error paths.
         let ast_memory_store: *mut bun_ast::ASTMemoryAllocator =
-            heap.alloc(bun_ast::ASTMemoryAllocator::default());
+            heap.alloc(bun_ast::ASTMemoryAllocator::borrowing(&heap));
+        struct ReleaseAstState(*mut bun_ast::ASTMemoryAllocator);
+        impl Drop for ReleaseAstState {
+            fn drop(&mut self) {
+                // SAFETY: points at the arena-allocated allocator in `heap`,
+                // which outlives this guard; the `Scope` has already exited.
+                unsafe { (*self.0).release_ast_state() };
+            }
+        }
+        let _release_ast_state = ReleaseAstState(ast_memory_store);
         // SAFETY: the `ASTMemoryAllocator` lives in a bumpalo chunk owned by
         // `heap` → `bv2.graph.heap`; address is stable for the bv2 lifetime,
-        // and `_ast_scope` is dropped before `bv2` at end of this fn.
-        let _ast_scope = unsafe { &mut *ast_memory_store }.enter();
+        // and `ast_scope` is dropped before `bv2` is moved into
+        // `current_bundle` below.
+        let ast_scope = unsafe { &mut *ast_memory_store }.enter();
 
         // Zig: `.{ .js = dev.vm.eventLoop() }` constructed an `AnyEventLoop`
         // by value; the Rust bundler instead stores
@@ -3291,9 +3372,16 @@ impl DevServer {
             bt
         })?;
         drop(entry_points);
+        // End the AST scope and move its state into the bundle so the small
+        // `AstVec`s built during setup stay alive until the bundle completes.
+        drop(ast_scope);
+        // SAFETY: `ast_memory_store` lives in `heap`; the scope above has
+        // exited, so no `&mut` to the allocator is live.
+        let ast_alloc_state = unsafe { (*ast_memory_store).take_ast_state() };
         self.current_bundle = Some(CurrentBundle {
             bv2,
             heap,
+            ast_alloc_state,
             timer,
             start_data,
             had_reload_event,
@@ -3776,7 +3864,7 @@ impl<'a> HotUpdateContext<'a> {
 
 /// Called at the end of BundleV2 to index bundle contents into the `IncrementalGraph`s
 /// This function does not recover DevServer state if it fails (allocation failure)
-pub fn finalize_bundle(
+pub(super) fn finalize_bundle(
     dev: &mut DevServer,
     bv2: &mut BundleV2,
     result: &mut bundler::bundle_v2::DevServerOutput,
@@ -5140,7 +5228,7 @@ impl DevServer {
 }
 
 // TODO(port): helper enum for `optional_id: anytype` in append_opaque_entry_point
-pub enum OpaqueFileIdOrOptional {
+pub(super) enum OpaqueFileIdOrOptional {
     Id(OpaqueFileId),
     Optional(framework_router::OpaqueFileIdOptional),
 }
@@ -5241,6 +5329,10 @@ impl DevServer {
         req: &mut Request,
         resp: AnyResponse,
     ) -> Result<(), AllocError> {
+        if !is_allowed_dev_host(self, req) {
+            host_forbidden(resp);
+            return Ok(());
+        }
         let route_bundle_index = self
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))
             .map_err(|_| AllocError)?;
@@ -5328,7 +5420,11 @@ impl DevServer {
                     });
                 }
             },
-            client_script_generation: bun_core::fast_random() as u32,
+            client_script_generation: {
+                let mut buf = [0u8; 4];
+                bun_core::csprng(&mut buf);
+                u32::from_ne_bytes(buf)
+            },
             server_state: route_bundle::State::Unqueued,
             client_bundle: None,
             active_viewers: 0,
@@ -5508,19 +5604,19 @@ impl DevServer {
 // PORT NOTE: FileKind/ChunkKind/TraceImportGoal/IncrementalResult/GraphTraceState
 // are defined once in `crate::bake::dev_server` and re-exported here so the
 // Phase-A draft body and the keystone struct module agree on identity.
-pub use crate::bake::dev_server::FileKind;
+pub(super) use crate::bake::dev_server::FileKind;
 
-pub use crate::bake::dev_server::IncrementalResult;
+pub(super) use crate::bake::dev_server::IncrementalResult;
 
 /// Used during an incremental update to determine what "HMR roots"
 /// are affected. Re-exported from the keystone `dev_server` module so that
 /// `HotUpdateContext.gts` and `IncrementalGraph::trace_dependencies` agree on
 /// a single type (the body-local duplicate caused E0308).
-pub use crate::bake::dev_server::GraphTraceState;
+pub(super) use crate::bake::dev_server::GraphTraceState;
 
 // GraphTraceState::deinit → Drop on DynamicBitSet (allocator param dropped)
 
-pub use crate::bake::dev_server::TraceImportGoal;
+pub(super) use crate::bake::dev_server::TraceImportGoal;
 
 impl DevServer {
     /// `extra_client_bits` is specified if it is possible that the client graph may
@@ -5541,7 +5637,7 @@ impl DevServer {
 
 // PORT NOTE: canonical `ChunkKind` lives in `crate::bake::dev_server`; the
 // body module re-exports it so both modules name the same type.
-pub use crate::bake::dev_server::ChunkKind;
+pub(super) use crate::bake::dev_server::ChunkKind;
 
 // For debugging, it is helpful to be able to see bundles.
 #[cfg(feature = "bake_debugging_features")]
@@ -5841,7 +5937,7 @@ impl DevServer {
 
 // PORT NOTE: MessageId/IncomingMessageId/ConsoleLogKind/HmrTopic are defined
 // once in `crate::bake::dev_server` and re-exported here.
-pub use crate::bake::dev_server::{HmrTopic, MessageId};
+pub(super) use crate::bake::dev_server::{HmrTopic, MessageId};
 
 bitflags::bitflags! {
     // TODO(port): Zig generated `Bits` via @Type from HmrTopic enum fields.
@@ -5879,7 +5975,7 @@ impl DevServer {
 mod c {
     use super::*;
 
-    pub fn bake_load_server_hmr_patch(
+    pub(super) fn bake_load_server_hmr_patch(
         global: &JSGlobalObject,
         code: BunString,
     ) -> JsResult<JSValue> {
@@ -5889,7 +5985,7 @@ mod c {
         jsc::from_js_host_call(global, || BakeLoadServerHmrPatch(global, code))
     }
 
-    pub fn bake_load_server_hmr_patch_with_source_map(
+    pub(super) fn bake_load_server_hmr_patch_with_source_map(
         global: &JSGlobalObject,
         code: BunString,
         source_map_json_ptr: *const u8,
@@ -5921,7 +6017,7 @@ mod c {
         })
     }
 
-    pub fn bake_load_initial_server_code(
+    pub(super) fn bake_load_initial_server_code(
         global: &JSGlobalObject,
         code: BunString,
         separate_ssr_graph: bool,
@@ -6283,6 +6379,10 @@ impl DevServer {
             && path.starts_with(&self.root)
         {
             return &path[self.root.len() + 1..];
+        }
+
+        if path.len() + self.root.len() * 2 >= paths::MAX_PATH_BYTES {
+            return path;
         }
 
         // `relative_platform_buf` with ALWAYS_COPY=true writes into
@@ -6661,7 +6761,7 @@ impl TestingBatch {
 /// using the dev server test harness.
 static DEV_SERVER_DEINIT_COUNT_FOR_TESTING: ::core::sync::atomic::AtomicUsize =
     ::core::sync::atomic::AtomicUsize::new(0);
-pub fn get_deinit_count_for_testing() -> usize {
+pub(crate) fn get_deinit_count_for_testing() -> usize {
     DEV_SERVER_DEINIT_COUNT_FOR_TESTING.load(::core::sync::atomic::Ordering::Relaxed)
 }
 
@@ -6948,7 +7048,7 @@ bun_jsc::jsc_abi_extern! {
     ) -> JSValue;
 }
 
-pub fn create_dev_server_framework_request_args_object(
+pub(super) fn create_dev_server_framework_request_args_object(
     global: &JSGlobalObject,
     router_type_main: JSValue,
     route_modules: JSValue,
@@ -6969,7 +7069,7 @@ pub fn create_dev_server_framework_request_args_object(
 }
 
 #[bun_jsc::host_fn(export = "Bake__getNewRouteParamsJSFunctionImpl")]
-pub fn bake_get_new_route_params_js_function_impl(
+pub(super) fn bake_get_new_route_params_js_function_impl(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JSValue {

@@ -206,7 +206,7 @@ impl If {
     }
 }
 
-enum Action {
+pub enum Action {
     Done(ExitCode),
     SpawnStmt(*const ast::Stmt),
 }

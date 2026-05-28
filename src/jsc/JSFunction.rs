@@ -25,7 +25,7 @@ pub enum ImplementationVisibility {
 pub struct Intrinsic(u8);
 
 impl Intrinsic {
-    pub const NONE: Intrinsic = Intrinsic(0);
+    pub(crate) const NONE: Intrinsic = Intrinsic(0);
 }
 
 impl Default for Intrinsic {
@@ -59,7 +59,7 @@ unsafe extern "C" {
         constructor: Option<JSHostFn>,
     ) -> JSValue;
 
-    pub safe fn JSC__JSFunction__optimizeSoon(value: JSValue);
+    pub(crate) safe fn JSC__JSFunction__optimizeSoon(value: JSValue);
 
     safe fn JSC__JSFunction__getSourceCode(value: JSValue, out: &mut ZigString) -> bool;
 }

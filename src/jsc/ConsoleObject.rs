@@ -23,23 +23,23 @@ use bun_core::{OwnedString, String as BunString, strings};
 /// encoding on `write_json_string`).
 mod JSLexer {
     #[inline]
-    pub fn is_latin1_identifier_u8(name: &[u8]) -> bool {
+    pub(super) fn is_latin1_identifier_u8(name: &[u8]) -> bool {
         bun_ast::lexer_tables::is_latin1_identifier(name)
     }
     /// Zig `isLatin1Identifier(comptime []const u16, name)` — same predicate
     /// over a UTF-16 slice. Canonical impl lives next to the u8 overload in
     /// `bun_js_parser::lexer`.
     #[inline]
-    pub fn is_latin1_identifier_u16(name: &[u16]) -> bool {
+    pub(super) fn is_latin1_identifier_u16(name: &[u16]) -> bool {
         bun_ast::lexer_tables::is_latin1_identifier_u16(name)
     }
 }
 mod JSPrinter {
-    pub use bun_js_printer::Encoding;
+    pub(super) use bun_js_printer::Encoding;
     /// Runtime-encoding adapter over `bun_js_printer::write_json_string`,
     /// which takes `Encoding` as a const generic.
     #[inline]
-    pub fn write_json_string(
+    pub(super) fn write_json_string(
         input: &[u8],
         writer: &mut (impl bun_io::Write + ?Sized),
         encoding: Encoding,

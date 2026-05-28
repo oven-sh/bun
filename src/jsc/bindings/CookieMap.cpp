@@ -112,12 +112,7 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
                     continue;
                 }
 
-                if (hasAnyPercentEncoded) {
-                    Bun::UTF8View utf8View(nameView);
-                    name = Bun::decodeURIComponentSIMD(utf8View.bytes());
-                } else {
-                    name = nameView.toString();
-                }
+                name = nameView.toString();
 
                 if (hasAnyPercentEncoded) {
                     Bun::UTF8View utf8View(valueView);

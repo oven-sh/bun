@@ -1923,6 +1923,46 @@ describe("should handle relative location in the redirect, issue#5635", () => {
   });
 });
 
+describe("maxRedirects", () => {
+  let server: Server;
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      async fetch(request: Request) {
+        const url = new URL(request.url);
+        if (url.pathname.startsWith("/hop/")) {
+          const hop = Number(url.pathname.slice("/hop/".length));
+          if (hop >= 4) {
+            return new Response("done");
+          }
+          return new Response(null, { status: 302, headers: { Location: `/hop/${hop + 1}` } });
+        }
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+  });
+  afterAll(() => {
+    server.stop(true);
+  });
+
+  it("rejects once the chain exceeds maxRedirects", async () => {
+    expect(fetch(`${server.url}hop/0`, { maxRedirects: 2 })).rejects.toThrow("redirected too many times");
+  });
+
+  it("follows the chain when maxRedirects is large enough", async () => {
+    const resp = await fetch(`${server.url}hop/0`, { maxRedirects: 4 });
+    expect(resp.status).toBe(200);
+    expect(await resp.text()).toBe("done");
+    expect(new URL(resp.url).pathname).toBe("/hop/4");
+  });
+
+  it("rejects invalid values", async () => {
+    expect(async () => await fetch(`${server.url}hop/0`, { maxRedirects: -1 })).toThrow();
+    expect(async () => await fetch(`${server.url}hop/0`, { maxRedirects: 1.5 })).toThrow();
+    expect(async () => await fetch(`${server.url}hop/0`, { maxRedirects: NaN })).toThrow();
+  });
+});
+
 it.concurrent("should allow very long redirect URLS", async () => {
   const Location = "/" + "B".repeat(7 * 1024);
   using server = Bun.serve({
@@ -2460,5 +2500,146 @@ it("should allow to follow redirect if connection is closed, abort should work e
         expect.unreachable();
       }
     }
+  }
+});
+
+it("rejects a response with an unparseable Content-Length instead of treating it as empty", async () => {
+  // RFC 9112 section 6.3: an invalid Content-Length (or duplicate Content-Length
+  // headers with differing values) is an unrecoverable framing error. Falling
+  // back to "0" would deliver an empty body and return a desynchronized socket
+  // to the keep-alive pool with the unread response bytes still in flight,
+  // where they would be read as the response to the next request.
+  await using server = net.createServer(socket => {
+    socket.once("data", data => {
+      const path = data.toString("utf8").split(" ")[1];
+      if (path === "/invalid") {
+        socket.end(
+          "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: x\r\nConnection: keep-alive\r\n\r\n" +
+            "HTTP/1.1 200 OK\r\nContent-Length: 25\r\n\r\ninjected follow-up bytes!",
+        );
+      } else if (path === "/conflicting") {
+        socket.end(
+          "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello!",
+        );
+      } else {
+        socket.end(
+          "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
+        );
+      }
+    });
+  });
+  await once(server.listen(0, "localhost"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  for (const path of ["invalid", "conflicting"]) {
+    const result = await fetch(`http://localhost:${port}/${path}`)
+      .then(res => res.text())
+      .catch(e => e);
+    expect(result).toBeInstanceOf(Error);
+    expect((result as any).code).toBe("InvalidContentLength");
+  }
+
+  // A well-formed Content-Length is still delivered normally.
+  const ok = await fetch(`http://localhost:${port}/valid`);
+  expect(await ok.text()).toBe("hello");
+});
+
+it("drops a custom Host header when following a cross-origin redirect", async () => {
+  // A per-request Host override must not survive a change of origin: the
+  // follow-up request's Host header (and the TLS SNI / certificate identity
+  // derived from the same field) has to be re-computed from the redirect
+  // target's URL, not carried over from the previous origin.
+  await using target = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      return new Response(request.headers.get("host") ?? "<no host header>");
+    },
+  });
+
+  await using origin = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      if (new URL(request.url).pathname === "/redirect") {
+        return new Response(null, {
+          status: 302,
+          headers: { "Location": `http://${target.hostname}:${target.port}/landed` },
+        });
+      }
+      return new Response(request.headers.get("host") ?? "<no host header>");
+    },
+  });
+
+  // Cross-origin redirect: the redirect target must see its own authority,
+  // not the caller-supplied Host override naming the previous origin.
+  const redirected = await fetch(`http://${origin.hostname}:${origin.port}/redirect`, {
+    headers: { "Host": "tenant.shared-cdn.example" },
+  });
+  expect(redirected.redirected).toBe(true);
+  expect(await redirected.text()).toBe(`${target.hostname}:${target.port}`);
+
+  // Without a redirect the explicit Host header is still honored.
+  const direct = await fetch(`http://${origin.hostname}:${origin.port}/direct`, {
+    headers: { "Host": "tenant.shared-cdn.example" },
+  });
+  expect(await direct.text()).toBe("tenant.shared-cdn.example");
+});
+
+it("fetch() with a fixed-size body drops a caller-supplied Transfer-Encoding header and sends only Content-Length", async () => {
+  // RFC 9112 section 6.2/6.3: a sender must never emit both Transfer-Encoding and
+  // Content-Length on the same message. For a fixed-size (non-streaming) body,
+  // fetch() writes the body as raw bytes framed by a computed Content-Length, so a
+  // caller-supplied "Transfer-Encoding: chunked" header (e.g. headers copied wholesale
+  // from an inbound request in a gateway) must be dropped rather than forwarded
+  // alongside Content-Length, where a TE-preferring upstream would mis-frame the body.
+  const requests: string[] = [];
+  await using server = net.createServer(socket => {
+    let raw = "";
+    socket.on("data", data => {
+      raw += data.toString("latin1");
+      const headerEnd = raw.indexOf("\r\n\r\n");
+      if (headerEnd === -1) return;
+      const head = raw.slice(0, headerEnd);
+      const contentLength = Number(/^content-length:\s*(\d+)\s*$/im.exec(head)?.[1] ?? 0);
+      if (raw.length < headerEnd + 4 + contentLength) return;
+      requests.push(raw);
+      raw = "";
+      socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
+    });
+  });
+  await once(server.listen(0, "localhost"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  // A body whose raw bytes look like a terminal chunk followed by a second request.
+  const body = "0\r\n\r\nGET /other HTTP/1.1\r\nHost: upstream\r\nX-Pad: junk";
+  const bodyLength = Buffer.byteLength(body);
+
+  // Caller-supplied Transfer-Encoding header alongside a buffered (string) body.
+  const withTE = await fetch(`http://localhost:${port}/`, {
+    method: "POST",
+    headers: { "Transfer-Encoding": "chunked", "Content-Type": "text/plain" },
+    body,
+  });
+  expect(await withTE.text()).toBe("OK");
+
+  // The same request without the header still works the same way.
+  const plain = await fetch(`http://localhost:${port}/`, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body,
+  });
+  expect(await plain.text()).toBe("OK");
+
+  expect(requests).toHaveLength(2);
+  for (const rawRequest of requests) {
+    const [head, ...bodyParts] = rawRequest.split("\r\n\r\n");
+    const headerLines = head
+      .split("\r\n")
+      .slice(1)
+      .map(line => line.toLowerCase());
+    // Exactly one framing header reaches the wire: the computed Content-Length.
+    expect(headerLines.filter(line => line.startsWith("transfer-encoding:"))).toEqual([]);
+    expect(headerLines.filter(line => line.startsWith("content-length:"))).toEqual([`content-length: ${bodyLength}`]);
+    // The body is the raw bytes described by Content-Length, with no chunk framing added.
+    expect(bodyParts.join("\r\n\r\n")).toBe(body);
   }
 });

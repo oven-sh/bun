@@ -29,7 +29,7 @@ extern "C" fn deep_equals_iterator(
 }
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_contain_equal(
+pub(crate) fn to_contain_equal(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,

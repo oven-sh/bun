@@ -24,7 +24,7 @@ pub struct TransformList {
 // PORT NOTE: split out of the parse/to_css `impl TransformList` below —
 // `TransformHandler` only needs deep_clone/eql.
 impl TransformList {
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         // TODO(port): css.implementDeepClone reflection — `Transform`/`TransformList`
         // are `Clone`-via-derive (Vec + POD payloads); an arena-aware DeepClone
         // trait should land crate-wide.
@@ -33,7 +33,7 @@ impl TransformList {
 }
 
 impl TransformList {
-    pub fn parse(input: &mut Parser<'_>) -> Result<Self> {
+    pub(crate) fn parse(input: &mut Parser<'_>) -> Result<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -56,7 +56,7 @@ impl TransformList {
         }
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         if self.v.is_empty() {
             return dest.write_str("none");
         }
@@ -145,7 +145,7 @@ pub enum Transform {
 }
 
 impl Transform {
-    pub fn parse(input: &mut Parser) -> Result<Transform> {
+    pub(crate) fn parse(input: &mut Parser) -> Result<Transform> {
         let function = input.expect_function_cloned()?;
 
         // PORT NOTE: Zig used a Closure struct + nested anon-struct fn passed to
@@ -319,7 +319,7 @@ impl Transform {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             Transform::Translate { x, y } => {
                 if dest.minify && x.is_zero() && !y.is_zero() {
@@ -573,7 +573,7 @@ impl Transform {
         Ok(())
     }
 
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         // TODO(port): css.implementDeepClone reflection — payload types may need bump-aware clone
         self.clone()
     }
@@ -588,19 +588,6 @@ pub struct Matrix<T> {
     pub d: T,
     pub e: T,
     pub f: T,
-}
-
-impl<T: Clone> Matrix<T> {
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
-        self.clone()
-    }
-
-    pub fn eql(&self, rhs: &Self) -> bool
-    where
-        T: PartialEq,
-    {
-        self == rhs
-    }
 }
 
 /// A 3D matrix.
@@ -622,12 +609,6 @@ pub struct Matrix3d<T> {
     pub m42: T,
     pub m43: T,
     pub m44: T,
-}
-
-impl<T: PartialEq> Matrix3d<T> {
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
-    }
 }
 
 /// A value for the [transform-style](https://drafts.csswg.org/css-transforms-2/#transform-style-property) property.
@@ -680,7 +661,7 @@ pub enum Perspective {
 }
 
 impl Perspective {
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         self.clone()
     }
 }
@@ -703,7 +684,7 @@ pub enum Translate {
 }
 
 impl Translate {
-    pub fn parse(input: &mut Parser) -> Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> Result<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -726,7 +707,7 @@ impl Translate {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             Translate::None => dest.write_str("none")?,
             Translate::Xyz { x, y, z } => {
@@ -748,7 +729,7 @@ impl Translate {
 // PORT NOTE: split out of the parse/to_css `impl Translate` above — these
 // don't depend on Parser/Printer surface and are needed by `TransformHandler`.
 impl Translate {
-    pub fn to_transform(&self, _bump: &Bump) -> Transform {
+    pub(crate) fn to_transform(&self, _bump: &Bump) -> Transform {
         match self {
             Translate::None => Transform::Translate3d {
                 x: LengthPercentage::zero(),
@@ -763,7 +744,7 @@ impl Translate {
         }
     }
 
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         // TODO(port): css.implementDeepClone — arena-aware clone for LengthPercentage
         self.clone()
     }
@@ -783,7 +764,7 @@ pub struct Rotate {
 }
 
 impl Rotate {
-    pub fn parse(input: &mut Parser) -> Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> Result<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -842,7 +823,7 @@ impl Rotate {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         if self.x == 0.0 && self.y == 0.0 && self.z == 1.0 && self.angle.is_zero() {
             dest.write_str("none")?;
             return Ok(());
@@ -869,7 +850,7 @@ impl Rotate {
 // `TransformHandler`.
 impl Rotate {
     /// Converts the rotation to a transform function.
-    pub fn to_transform(&self, _bump: &Bump) -> Transform {
+    pub(crate) fn to_transform(&self, _bump: &Bump) -> Transform {
         Transform::Rotate3d {
             x: self.x,
             y: self.y,
@@ -878,7 +859,7 @@ impl Rotate {
         }
     }
 
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         *self
     }
 }
@@ -901,7 +882,7 @@ pub enum Scale {
 }
 
 impl Scale {
-    pub fn parse(input: &mut Parser) -> Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> Result<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -929,7 +910,7 @@ impl Scale {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             Scale::None => dest.write_str("none")?,
             Scale::Xyz { x, y, z } => {
@@ -952,7 +933,7 @@ impl Scale {
 // PORT NOTE: split out of the parse/to_css `impl Scale` above — needed by
 // `TransformHandler`.
 impl Scale {
-    pub fn to_transform(&self, _bump: &Bump) -> Transform {
+    pub(crate) fn to_transform(&self, _bump: &Bump) -> Transform {
         match self {
             Scale::None => Transform::Scale3d {
                 x: NumberOrPercentage::Number(1.0),
@@ -967,7 +948,7 @@ impl Scale {
         }
     }
 
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         self.clone()
     }
 }
@@ -996,7 +977,7 @@ pub struct TransformHandler {
 // PORT NOTE: `context.arena` was dropped from PropertyHandlerContext, so the
 // arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
 impl TransformHandler {
-    pub fn handle_property(
+    pub(crate) fn handle_property(
         &mut self,
         property: &Property,
         dest: &mut DeclarationList,
@@ -1080,7 +1061,11 @@ impl TransformHandler {
         true
     }
 
-    pub fn finalize(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+    pub(crate) fn finalize(
+        &mut self,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
         self.flush(dest, context);
     }
 

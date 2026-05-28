@@ -83,7 +83,7 @@ const ST_MAX_CONCURRENT_STREAMS: u16 = wire::SettingsType::SETTINGS_MAX_CONCURRE
 const ST_INITIAL_WINDOW_SIZE: u16 = wire::SettingsType::SETTINGS_INITIAL_WINDOW_SIZE.0;
 const ST_MAX_FRAME_SIZE: u16 = wire::SettingsType::SETTINGS_MAX_FRAME_SIZE.0;
 
-pub fn dispatch_frame(
+pub(crate) fn dispatch_frame(
     session: &mut ClientSession,
     frame_type: u8,
     flags: u8,
@@ -619,7 +619,7 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
         if stream.status_code != 0 || malformed {
             continue;
         }
-        if is_malformed_response_field(result.name) {
+        if is_malformed_response_field(result.name) || is_malformed_response_value(result.value) {
             malformed = true;
             continue;
         }
@@ -722,7 +722,7 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
     }
 }
 
-pub fn strip_padding(payload: &[u8]) -> Option<&[u8]> {
+pub(crate) fn strip_padding(payload: &[u8]) -> Option<&[u8]> {
     if payload.is_empty() {
         return None;
     }
@@ -736,10 +736,30 @@ pub fn strip_padding(payload: &[u8]) -> Option<&[u8]> {
 /// RFC 9113 §8.2.1/§8.2.2 response-side validation: lowercase names, no
 /// hop-by-hop fields. Names from lshpack are already lowercase for table
 /// hits but a literal can carry anything.
-pub fn is_malformed_response_field(name: &[u8]) -> bool {
+pub(crate) fn is_malformed_response_field(name: &[u8]) -> bool {
+    if name.is_empty() {
+        return true;
+    }
     for &c in name {
-        if c >= b'A' && c <= b'Z' {
-            return true;
+        match c {
+            b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'!'
+            | b'#'
+            | b'$'
+            | b'%'
+            | b'&'
+            | b'\''
+            | b'*'
+            | b'+'
+            | b'-'
+            | b'.'
+            | b'^'
+            | b'_'
+            | b'`'
+            | b'|'
+            | b'~' => {}
+            _ => return true,
         }
     }
     // PORT NOTE: Zig used a comptime string set; small enough to open-code.
@@ -752,6 +772,14 @@ pub fn is_malformed_response_field(name: &[u8]) -> bool {
             | b"transfer-encoding"
             | b"upgrade"
     )
+}
+
+/// RFC 9113 §8.2.1: a field value MUST NOT contain NUL (0x00), LF (0x0a), or
+/// CR (0x0d). HPACK is length-prefixed so these would otherwise pass through
+/// verbatim, breaking the no-CR/LF invariant the HTTP/1.1 parser provides and
+/// enabling header injection when values are forwarded downstream.
+pub fn is_malformed_response_value(value: &[u8]) -> bool {
+    value.iter().any(|&c| c == 0 || c == b'\r' || c == b'\n')
 }
 
 pub fn error_code_for(err: bun_core::Error) -> wire::ErrorCode {

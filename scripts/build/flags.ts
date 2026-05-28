@@ -13,9 +13,19 @@
 
 import { join } from "node:path";
 import { bunExeName, type Config } from "./config.ts";
-import { slash } from "./shell.ts";
+import { quote, slash } from "./shell.ts";
 
 export type FlagValue = string | string[] | ((cfg: Config) => string | string[]);
+
+/**
+ * Main-thread stack size for darwin executables (18 MB — JSC's interpreter
+ * and the bundler's visitor recursion both go deep). Passed to the linker as
+ * `-Wl,-stack_size` on native darwin links; ld64.lld parses but doesn't
+ * implement that option, so cross links additionally patch LC_MAIN.stacksize
+ * post-link with the same value (shims/macho-postlink.c). Keep in sync with
+ * the Windows `/STACK:` reserve and the Linux `-z stack-size` below.
+ */
+export const DARWIN_STACK_SIZE = "0x1200000";
 
 export interface Flag {
   /** Flag(s) to emit. Can be a function for flags that interpolate config values. */
@@ -89,6 +99,16 @@ export const globalFlags: Flag[] = [
     desc: "Cross-compile sysroot (target libc headers + libs)",
   },
   {
+    // Windows cross-compile: clang-cl can't read the VS dev shell's INCLUDE
+    // env on a non-Windows host. /winsysroot points it at an xwin-style
+    // splat laid out like a VS install (VC/Tools/MSVC + Windows Kits/10),
+    // covering the MSVC CRT/STL and Windows SDK headers + import libs.
+    // The lld-link equivalent (/winsysroot:) is added in linkerFlags below.
+    flag: c => ["/winsysroot", quote(c.winsysroot!, false)],
+    when: c => c.windows && c.winsysroot !== undefined,
+    desc: "Windows cross-compile: MSVC CRT + Windows SDK root (xwin splat)",
+  },
+  {
     // Same host-GCC #include_next leak as the FreeBSD block below: on
     // amazonlinux, clang's driver injects /usr/include/c++/N even with
     // --sysroot. -nostdlibinc drops all default system include paths
@@ -139,6 +159,52 @@ export const globalFlags: Flag[] = [
     flag: "-D__BSD_VISIBLE=1",
     when: c => c.freebsd,
     desc: "FreeBSD: expose BSD typedefs (u_long etc.) in <sys/types.h>",
+  },
+  {
+    // macOS cross-compile: C++ must see Apple's libc++ from the SDK and
+    // nothing from the build host. Left to its defaults, clang prefers its
+    // own toolchain libc++ headers (<llvm>/include/c++/v1) — a newer libc++
+    // than the OS dylib the SDK's libc++.tbd describes, so compiles pick up
+    // out-of-line symbols (e.g. std::__hash_memory, added in libc++ 19) that
+    // Apple's libc++ never exports → undefined symbols at link. On CI images
+    // with a host GCC install the driver also injects the host's
+    // /usr/include/c++/N and /usr/include into the search list (the FreeBSD
+    // block above documents the same behaviour; -nostdlibinc alone did not
+    // stop it there either), which breaks the SDK headers' #include_next
+    // chains. So drop every default include dir (-nostdinc) and rebuild the
+    // exact list Apple's own driver uses: SDK libc++ → clang builtins → SDK
+    // libc → SDK frameworks. Native darwin builds keep the default search.
+    flag: c => [
+      "-nostdinc",
+      "-isystem",
+      join(c.osxSysroot!, "usr", "include", "c++", "v1"),
+      "-isystem",
+      join(c.clangResourceDir!, "include"),
+      "-isystem",
+      join(c.osxSysroot!, "usr", "include"),
+      "-iframework",
+      join(c.osxSysroot!, "System", "Library", "Frameworks"),
+    ],
+    when: c =>
+      c.darwin && c.crossTarget !== undefined && c.osxSysroot !== undefined && c.clangResourceDir !== undefined,
+    lang: "cxx",
+    desc: "macOS cross: only the SDK's (Apple) libc++/libc/framework headers + clang builtins",
+  },
+
+  {
+    // Emit the address-significance table (__DATA,__llvm_addrsig) so
+    // ld64.lld's --icf=safe knows which functions never have their address
+    // taken and can be folded without breaking pointer-identity comparisons
+    // (the same table -faddrsig emits by default on ELF for the Linux
+    // -Wl,-icf=safe). Cross-only: lld consumes the section and drops it
+    // from the output, but Apple's ld doesn't know it and would copy ~8
+    // bytes of dead __DATA per TU into the native binary — and `strip`
+    // won't remove a regular data section post-link. Flip the predicate to
+    // plain `c.darwin` once someone confirms on a Mac that Apple's ld
+    // discards it.
+    flag: "-faddrsig",
+    when: c => c.darwin && c.crossTarget !== undefined,
+    desc: "macOS cross: address-significance table for the linker's safe ICF",
   },
 
   // ─── CPU target ───
@@ -347,8 +413,10 @@ export const globalFlags: Flag[] = [
   {
     // Address-significance table: enables safe ICF at link.
     // Macos debug mode + this flag breaks libarchive configure ("pid_t doesn't exist").
+    // darwin cross targets get this from their own entry above (debug and
+    // release), so skip them here rather than emit the flag twice.
     flag: "-faddrsig",
-    when: c => (c.debug && c.linux) || (c.release && c.unix),
+    when: c => (c.debug && c.linux) || (c.release && c.unix && !(c.darwin && c.crossTarget !== undefined)),
     desc: "Emit address-significance table (enables safe ICF)",
   },
 
@@ -397,20 +465,80 @@ export const globalFlags: Flag[] = [
 
   // ─── LTO (compile-side) ───
   {
+    // Thin, not full: each .o carries a per-module summary so the link runs
+    // the LTO backends in parallel (and could cache them) instead of merging
+    // every module into one serial multi-gigabyte regular-LTO partition. The
+    // WebKit macos -lto prebuilts and rustc's -Clinker-plugin-lto bitcode are
+    // both ThinLTO-summaried, so this makes the whole link one uniform
+    // ThinLTO graph with cross-module importing across C++/Rust/JSC
+    // boundaries. Darwin only for now — see the -flto=full entry below.
+    flag: "-flto=thin",
+    when: c => c.darwin && c.lto,
+    desc: "Thin link-time optimization",
+  },
+  {
+    // Linux stays on full LTO: the LLVM 22 ThinLTO backend pipeline
+    // (rust-lld) miscompiles JavaScriptCore on linux at every opt level
+    // above --lto-O0 — a JIT-tier correctness bug plus several bundler hangs
+    // in the test suite, on both x64 and aarch64, with cross-module
+    // importing disabled, ICF ruled out, and WPD ruled out. The same
+    // bitcode through ld64.lld on darwin is fine. Full LTO uses a different
+    // (regular-LTO) pass pipeline over one merged module and has shipped
+    // green for months. Cost: the link is serial (~14 min vs ~1.5 min).
+    // Rust<->C++ cross-language inlining still happens: the Rust side emits
+    // one fat, summary-less bitcode module (CARGO_PROFILE_RELEASE_LTO=fat
+    // under -Clinker-plugin-lto — see rust.ts) that joins the same
+    // regular-LTO partition as the C++, so nothing goes through the
+    // miscompiling ThinLTO backends. Revisit ThinLTO once the bad pass is
+    // isolated — the repro is `bun -e 'require("axobject-query")'` failing
+    // in the DFG tier.
     flag: "-flto=full",
-    when: c => c.unix && c.lto,
-    desc: "Full link-time optimization (not thin)",
+    when: c => c.unix && !c.darwin && c.lto,
+    desc: "Full link-time optimization (linux: ThinLTO miscompiles JSC, see comment)",
   },
   {
-    flag: "-flto",
+    // Windows (cross) uses ThinLTO like darwin: clang-cl accepts -flto=thin
+    // directly (core option), the WebKit windows-amd64-lto prebuilt is
+    // ThinLTO-summaried bitcode, and rustc's -Clinker-plugin-lto bitcode is
+    // too, so lld-link runs one uniform ThinLTO graph with cross-language
+    // importing. lld-link does LTO automatically when it sees bitcode
+    // inputs — no link-side -flto spelling exists or is needed there.
+    flag: "-flto=thin",
     when: c => c.windows && c.lto,
-    desc: "Link-time optimization",
+    desc: "Thin link-time optimization (clang-cl)",
   },
   {
+    // Unix only (not windows): on COFF, whole-program vtable opt drops
+    // vtable symbols that associative COMDAT sections still name as their
+    // parent and the LTO codegen aborts ("Associative COMDAT symbol
+    // '??_7...' does not exist"). The WebKit windows-amd64-lto prebuilt is
+    // built without it for the same reason.
     flag: ["-fforce-emit-vtables", "-fwhole-program-vtables"],
     when: c => c.unix && c.lto,
     lang: "cxx",
     desc: "Enable devirtualization across whole program (LTO only)",
+  },
+  {
+    // Every summaried bitcode module in the link must agree on the
+    // EnableSplitLTOUnit flag or lld dies with "inconsistent LTO Unit
+    // splitting". -fwhole-program-vtables (above) defaults the split ON for
+    // C++ on ELF targets but it's a cxx-only flag, so the C modules (zlib,
+    // c-ares, mimalloc, boringssl's .c files, ...) would disagree. Force it
+    // OFF everywhere instead of on: split LTO units shunt every module's
+    // vtables + type metadata into a merged regular-LTO half — a serial
+    // merged module, which is exactly what ThinLTO is supposed to avoid.
+    // The type hierarchy goes into the per-module ThinLTO summaries instead
+    // (typeidCompatibleVTable entries) and whole-program devirtualization
+    // runs in index-based mode via --lto-whole-program-visibility at link
+    // time. 0 is also the default for rustc, for Apple targets, and for the
+    // WebKit macos/windows -lto prebuilts, so this is the configuration that
+    // can't drift. Windows: -fwhole-program-vtables is never passed there
+    // (see above) so 0 is already the default — kept explicit so the
+    // ThinLTO graph can't drift if that ever changes. Not linux: full LTO
+    // (no per-module summaries, so the flag is meaningless there).
+    flag: "-fno-split-lto-unit",
+    when: c => (c.darwin || c.windows) && c.lto,
+    desc: "Index-based WPD: keep type metadata in the ThinLTO summaries, no regular-LTO half",
   },
 
   // ─── PGO (compile-side) ───
@@ -501,6 +629,8 @@ export const bunOnlyFlags: Flag[] = [
   // UBSan is bun-only because it's stricter and vendored code often violates it.
   // Enabled: debug builds (non-musl — musl's implementation hits false positives),
   // and release-asan builds (if you're debugging memory you want UBSan too).
+  // Darwin cross-compiles are excluded: the UBSan runtime dylib for macOS
+  // isn't shipped by the Linux LLVM toolchain, so the link would fail.
   {
     flag: [
       "-fsanitize=null",
@@ -513,7 +643,10 @@ export const bunOnlyFlags: Flag[] = [
       "-fsanitize=returns-nonnull-attribute",
       "-fsanitize=unreachable",
     ],
-    when: c => c.unix && ((c.debug && c.abi !== "musl" && c.abi !== "android" && !c.freebsd) || (c.release && c.asan)),
+    when: c =>
+      c.unix &&
+      !(c.darwin && c.crossTarget !== undefined) &&
+      ((c.debug && c.abi !== "musl" && c.abi !== "android" && !c.freebsd) || (c.release && c.asan)),
     desc: "Undefined-behavior sanitizers",
   },
   {
@@ -696,7 +829,13 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: "-fsanitize=null",
-    when: c => c.unix && c.debug && c.abi !== "musl" && c.abi !== "android" && !c.freebsd,
+    when: c =>
+      c.unix &&
+      c.debug &&
+      c.abi !== "musl" &&
+      c.abi !== "android" &&
+      !c.freebsd &&
+      !(c.darwin && c.crossTarget !== undefined),
     desc: "Link UBSan runtime",
   },
   {
@@ -712,8 +851,27 @@ export const linkerFlags: Flag[] = [
 
   // ─── LTO (link-side) ───
   {
+    // Whole-program devirtualization needs two things: the type hierarchy in
+    // the ThinLTO summaries (compile-side -fwhole-program-vtables with
+    // -fno-split-lto-unit) and the linker's assertion that every derived
+    // class is visible in this link — without the visibility upgrade WPD
+    // only fires for classes explicitly annotated [[clang::lto_visibility]],
+    // i.e. never. A static executable that only dlopens C-ABI addons (NAPI)
+    // satisfies the whole-program assumption. ld64.lld has no named option
+    // for this; -mllvm reaches the underlying cl::opt directly. Darwin only:
+    // linux is on full LTO where this was never enabled.
+    flag: ["-Wl,-mllvm,-whole-program-visibility"],
+    when: c => c.darwin && c.lto,
+    desc: "Enable index-based whole-program devirtualization at link time",
+  },
+  {
+    flag: ["-flto=thin", "-fwhole-program-vtables", "-fforce-emit-vtables"],
+    when: c => c.darwin && c.lto,
+    desc: "LTO at link time (matches compile-side -flto=thin)",
+  },
+  {
     flag: ["-flto=full", "-fwhole-program-vtables", "-fforce-emit-vtables"],
-    when: c => c.unix && c.lto,
+    when: c => c.unix && !c.darwin && c.lto,
     desc: "LTO at link time (matches compile-side -flto=full)",
   },
   {
@@ -721,9 +879,30 @@ export const linkerFlags: Flag[] = [
     // CMake implicitly forwarded CMAKE_CXX_FLAGS (incl. -O2) to the link line;
     // we must do so explicitly. Dropping this cost ~5 MB of .text on linux-x64
     // (less unrolling/inlining in JSC — measurable in Yarr, DFG, BuiltinNames).
+    // ELF only: the driver forwards this to lld as -plugin-opt=O2. The Darwin
+    // driver forwards no opt-level flag at all — see the next entry.
     flag: "-O2",
-    when: c => c.unix && c.lto && c.release && !c.smol,
-    desc: "LTO codegen at -O2",
+    when: c => c.unix && !c.darwin && c.lto && c.release && !c.smol,
+    desc: "LTO codegen at -O2 (ELF: forwarded to lld as -plugin-opt=O2)",
+  },
+  {
+    // The Darwin driver drops a bare -O at link time (`clang++ -### …` shows
+    // no opt-level flag reaching the linker), so Mach-O LTO would codegen at
+    // ld64.lld's built-in defaults: --lto-O2 for the IR pipeline and
+    // --lto-CGO2 (CodeGenOptLevel::Default) for instruction selection —
+    // inline threshold 225 and default isel, while the per-TU build codegens
+    // everything at -O3 + CodeGenOptLevel::Aggressive (threshold 275). Pass
+    // ld64.lld's own options so LTO codegen matches the compile side.
+    // Cross links only: --lto-O/--lto-CGO are lld-specific, and only the
+    // darwin cross link uses lld's Mach-O port (ld64.lld). Native darwin
+    // links go through Apple's ld, which rejects unknown double-dash options,
+    // so they keep the driver's default LTO codegen level.
+    // arm64 only: O3 codegen costs +0.3 MB there but +3.1 MB on x64 (the
+    // higher inline threshold is much more expensive in x86-64's
+    // variable-length encoding); x64 stays at lld's default --lto-O2/CGO2.
+    flag: ["-Wl,--lto-O3", "-Wl,--lto-CGO3"],
+    when: c => c.darwin && c.arm64 && c.crossTarget !== undefined && c.lto && c.release && !c.smol,
+    desc: "LTO codegen at -O3 + aggressive isel (Darwin driver forwards no -O to ld64.lld)",
   },
   {
     flag: "-Os",
@@ -756,6 +935,16 @@ export const linkerFlags: Flag[] = [
     desc: "Target machine type for lld-link (required on arm64; x64 hosts default correctly but explicit is harmless)",
   },
   {
+    // Windows cross-compile: these ldflags go after /link, straight to
+    // lld-link, which doesn't see the compile-side `/winsysroot` from
+    // globalFlags — repeat it in lld-link's own spelling so the MSVC CRT
+    // and Windows SDK import libraries (libcmt, kernel32, ...) are found
+    // without a VS dev shell's LIB env.
+    flag: c => quote(`/winsysroot:${c.winsysroot!}`, false),
+    when: c => c.windows && c.winsysroot !== undefined,
+    desc: "Windows cross-compile: MSVC CRT + Windows SDK library search root (xwin splat)",
+  },
+  {
     flag: ["/STACK:0x1200000,0x200000", "/errorlimit:0"],
     when: c => c.windows,
     desc: "18MB stack reserve (JSC uses deep recursion), no error limit",
@@ -770,23 +959,20 @@ export const linkerFlags: Flag[] = [
       "/LTCG",
       "/OPT:REF",
       // SAFEICF (lld-specific) only folds functions whose address is never
-      // taken, so JSC ClassInfo native constructors — stored as pointers and
-      // compared for identity — stay distinct. /OPT:ICF (aggressive) folded
+      // taken (it honours .llvm_addrsig; objects without one — MSVC CRT
+      // import libs, the prebuilt ICU data — are treated conservatively), so
+      // JSC ClassInfo native constructors — stored as pointers and compared
+      // for identity — stay distinct. /OPT:ICF (aggressive) folded
       // callBigIntConstructor with constructBigInt → "not a constructor",
       // and broke expect.any(Constructor); see commit 218430c731. Mirrors
       // Linux `-Wl,-icf=safe`.
       //
-      // TEMPORARILY /OPT:NOICF instead of /OPT:SAFEICF: re-enabling
-      // `panic = "abort"` (Cargo.toml) exposes a Windows-only `Strong<Impl>*
-      // corrupted (0x1)` in the fs/promises writeFile async-iterable path
-      // (#53265+). Under abort's no-landing-pad codegen SAFEICF folds enough
-      // Rust+C++ bodies that PDB symbolication maps the crash to
-      // lol_html/ucnv_MBCS/JSBigInt — useless for finding the owning struct.
-      // `bun-profile.exe` and `bun.exe` share this link (strip-only diff), so
-      // NOICF can't be confined to the profile binary alone; once the
-      // corruption is root-caused via `llvm-symbolizer --relative-address`
-      // against the NOICF PDB, revert this to `/OPT:SAFEICF`.
-      "/OPT:NOICF",
+      // (This was temporarily /OPT:NOICF so PDB symbolication stayed
+      // unfolded while chasing the Windows-only `Strong<Impl>* corrupted
+      // (0x1)` crash in the fs/promises writeFile async-iterable path under
+      // `panic = "abort"` — flip it back locally if that investigation needs
+      // an unfolded PDB again.)
+      "/OPT:SAFEICF",
       // String-literal tail merging (lld-specific; MSVC link.exe has no
       // equivalent). Helps .rdata the same way --icf handles .rodata.cst on ELF.
       "/OPT:lldtailmerge",
@@ -810,9 +996,86 @@ export const linkerFlags: Flag[] = [
 
   // ─── macOS ───
   {
-    flag: ["-Wl,-ld_new", "-Wl,-no_compact_unwind", "-Wl,-stack_size,0x1200000", "-fno-keep-static-consts"],
+    flag: ["-Wl,-no_compact_unwind", `-Wl,-stack_size,${DARWIN_STACK_SIZE}`, "-fno-keep-static-consts"],
     when: c => c.darwin,
-    desc: "Use new Apple linker, 18MB stack, skip compact unwind",
+    desc: "18MB stack, skip compact unwind",
+  },
+  {
+    // Force the linker to reserve + emit LC_CODE_SIGNATURE on arm64 cross
+    // links so the post-link fixup (shims/macho-postlink.c) has a signature
+    // to replace after patching the stack size — arm64 macOS refuses to exec
+    // unsigned binaries. x64 deliberately ships UNSIGNED, matching the
+    // native x64 build (Apple's ld only auto-signs arm64; x64 macOS runs
+    // unsigned binaries fine, an ad-hoc signature buys nothing there, and
+    // the CodeDirectory costs 32 bytes per 4 KB page ≈ 0.8% of the binary).
+    flag: "-Wl,-adhoc_codesign",
+    when: c => c.darwin && c.crossTarget !== undefined && c.arm64,
+    desc: "macOS arm64 cross-link: emit an ad-hoc LC_CODE_SIGNATURE for macho-postlink to replace",
+  },
+  {
+    // `bun build --compile` grows the __BUN placeholder segment in place and
+    // can only shift the one segment nothing references by address —
+    // __LINKEDIT — so __BUN must be the last content segment. Apple's ld
+    // orders known segments canonically (…, __DATA_DIRTY, __BUN, __LINKEDIT),
+    // but ld64.lld orders unknown segments by creation order, and the
+    // -sectcreate'd __BUN is created before the input objects' __DATA_DIRTY
+    // is encountered — leaving __DATA_DIRTY *between* __BUN and __LINKEDIT.
+    // Growing __BUN then overlaps it (`OverlappingSegments` from
+    // src/exe_format/macho.rs). Fold __DATA_DIRTY into __DATA instead: it
+    // holds a single 8-byte JSC::SourceProfiler hook and is only meaningful
+    // as a dyld-shared-cache page-grouping hint, which executables don't use.
+    flag: "-Wl,-rename_segment,__DATA_DIRTY,__DATA",
+    when: c => c.darwin && c.crossTarget !== undefined,
+    desc: "macOS cross-link: keep __BUN as the last content segment so `bun build --compile` can grow it",
+  },
+  {
+    // Identical-code folding, on top of -dead_strip: dead_strip removes
+    // unreferenced functions, ICF merges duplicate ones (template/bindgen
+    // instantiations, mostly). `safe` only folds functions whose address is
+    // never taken, per the -faddrsig table in globalFlags — the aggressive
+    // mode is what folded callBigIntConstructor into constructBigInt on
+    // Windows (/OPT:ICF) and broke `expect.any()`. Matches the Linux
+    // release link's -Wl,-icf=safe. lld-only: Apple's ld has no ICF, so
+    // this is a cross-only divergence (smaller binary than native). The
+    // prebuilt WebKit archives are compiled with -faddrsig too, so WebKit
+    // code participates in the folding.
+    flag: "-Wl,--icf=safe",
+    when: c => c.darwin && c.crossTarget !== undefined && c.release,
+    desc: "macOS cross-link: fold identical address-insignificant functions",
+  },
+  {
+    // -ld_new selects Apple's new linker — only meaningful (and only
+    // understood) when Apple's ld driver does the link. ld64.lld (the
+    // cross-link path) parses it as `-l d_new` and fails.
+    flag: "-Wl,-ld_new",
+    when: c => c.darwin && c.crossTarget === undefined,
+    desc: "Use new Apple linker (native darwin links only)",
+  },
+  {
+    // Cross-link from a non-darwin host: same pattern as Android/FreeBSD —
+    // target triple + explicit linker. -isysroot is added by the deployment-
+    // target flag below; the clang driver forwards it to ld64.lld as
+    // -syslibroot. -mlinker-version≥520 makes the driver emit the modern
+    // -platform_version argument ld64.lld requires (without it the driver
+    // assumes an ancient host ld64 and emits nothing usable); the exact
+    // value only gates driver behavior, so track a recent ld64 release.
+    flag: c => [`--target=${c.crossTarget!}`, "-mlinker-version=705", `--ld-path=${c.ld}`],
+    when: c => c.darwin && c.crossTarget !== undefined,
+    desc: "macOS cross-link: target triple + ld64.lld + modern linker arg style",
+  },
+  {
+    // The `__BUN,__bun` standalone-graph placeholder (c-bindings.cpp) is a
+    // 16 KB-aligned section. On x86_64, ld64.lld 16K-aligns its FILE offset
+    // inside a 4K-aligned segment but not its VM span, producing
+    // filesize > vmsize for the __BUN segment — an invalid Mach-O that
+    // llvm-strip/dsymutil (and codesign) reject. Capping the section's
+    // alignment at the x86_64 page size removes the padding asymmetry; the
+    // placeholder only needs 8-byte alignment at runtime, and
+    // `bun build --compile` rewrites the segment at 16 KB alignment anyway
+    // (exe_format/macho.rs). arm64 uses 16 KB pages, so it's unaffected.
+    flag: ["-Wl,-sectalign,__BUN,__bun,0x1000"],
+    when: c => c.darwin && c.crossTarget !== undefined && c.x64,
+    desc: "macOS x64 cross-link: keep the __BUN segment's filesize ≤ vmsize under ld64.lld",
   },
   {
     // Must also be passed at link: ld64 reads this to write LC_BUILD_VERSION.minos.
@@ -831,6 +1094,17 @@ export const linkerFlags: Flag[] = [
     flag: c => ["-dead_strip", "-dead_strip_dylibs", `-Wl,-map,${c.buildDir}/${bunExeName(c)}.linker-map`],
     when: c => c.darwin && c.release,
     desc: "Dead-code strip + emit linker map",
+  },
+  {
+    // Mach-O keeps DWARF in the input .o files and records their paths in
+    // the linked binary's debug map (N_OSO stabs); dsymutil follows the map
+    // to build the .dSYM. Under LTO the "input objects" are temporaries the
+    // linker deletes after the link, which would leave the debug map dangling
+    // and the dSYM empty. -object_path_lto persists the LTO-codegen'd object
+    // at a stable path inside the build dir and points the debug map at it.
+    flag: c => `-Wl,-object_path_lto,${c.buildDir}/${bunExeName(c)}.lto.o`,
+    when: c => c.darwin && c.lto,
+    desc: "Persist the LTO-generated object so dsymutil can extract its DWARF into the dSYM",
   },
 
   // ─── Linux ───

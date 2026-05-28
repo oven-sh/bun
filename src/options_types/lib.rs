@@ -1,7 +1,6 @@
 #![feature(adt_const_params)]
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
-#![warn(unreachable_pub)]
 pub mod bundle_enums;
 pub mod code_coverage_options;
 pub mod command_tag;
@@ -52,7 +51,7 @@ pub mod standalone_path {
         const_format::concatcp!(BASE_PUBLIC_PATH, "root/");
 
     #[inline]
-    pub fn is_bun_standalone_file_path_canonicalized(str_: &[u8]) -> bool {
+    pub(crate) fn is_bun_standalone_file_path_canonicalized(str_: &[u8]) -> bool {
         str_.starts_with(BASE_PATH.as_bytes())
             || (cfg!(windows) && str_.starts_with(BASE_PUBLIC_PATH.as_bytes()))
     }

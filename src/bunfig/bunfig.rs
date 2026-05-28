@@ -144,7 +144,7 @@ fn num_to_u32(n: f64) -> u32 {
 // Parser
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub struct Parser<'a> {
+pub(crate) struct Parser<'a> {
     json: Expr,
     source: &'a bun_ast::Source,
     log: &'a mut bun_ast::Log,
@@ -188,7 +188,7 @@ impl<'a> Parser<'a> {
         Err(err!("Invalid Bunfig"))
     }
 
-    pub fn expect_string(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
+    pub(crate) fn expect_string(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
         match &expr.data {
             ExprData::EString(_) => Ok(()),
             _ => self.add_error_format(
@@ -216,7 +216,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    pub fn expect(&mut self, expr: &Expr, token: ExprTag) -> Result<(), bun_core::Error> {
+    pub(crate) fn expect(&mut self, expr: &Expr, token: ExprTag) -> Result<(), bun_core::Error> {
         if expr.data.tag() != token {
             return self.add_error_format(
                 expr.loc,
@@ -353,7 +353,7 @@ impl<'a> Parser<'a> {
     // already derives `enum_map::Enum`, which conflicts). The Zig original
     // monomorphised over `cmd` purely to dead-code-eliminate untaken arms; the
     // runtime branches below are equivalent and the few hot fields are tiny.
-    pub fn parse(&mut self, cmd: CommandTag) -> Result<(), bun_core::Error> {
+    pub(crate) fn parse(&mut self, cmd: CommandTag) -> Result<(), bun_core::Error> {
         bun_analytics::features::bunfig.fetch_add(1, Ordering::Relaxed);
 
         let json = self.json;

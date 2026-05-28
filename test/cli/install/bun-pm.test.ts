@@ -627,3 +627,39 @@ test("bun pm cache rm resolves the cache directory from the process environment,
   expect(stdout).toInclude("Cleared 'bun install' cache");
   expect(exitCode).toBe(0);
 });
+
+test("bun pm cache rm does not create the directory named by a project-local .env override", async () => {
+  using dir = tempDir("pm-cache-rm-no-create", {
+    "package.json": JSON.stringify({ name: "cache-rm-no-create", version: "1.0.0" }),
+    "bun-install/install/cache/cached-package.txt": "cached artifact",
+  });
+  const dirStr = String(dir);
+  const bunInstallDir = join(dirStr, "bun-install");
+  const realCacheDir = join(bunInstallDir, "install", "cache");
+  const overrideDir = join(dirStr, "env-named-cache");
+
+  await writeFile(join(dirStr, ".env"), `BUN_INSTALL_CACHE_DIR=${overrideDir}\n`);
+
+  const spawnEnv: NodeJS.Dict<string> = {
+    ...env,
+    BUN_INSTALL: bunInstallDir,
+    XDG_CACHE_HOME: join(dirStr, "xdg-cache"),
+    HOME: dirStr,
+  };
+  delete spawnEnv.BUN_INSTALL_CACHE_DIR;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "cache", "rm"],
+    cwd: dirStr,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: spawnEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(await exists(overrideDir)).toBeFalse();
+  expect(await exists(join(realCacheDir, "cached-package.txt"))).toBeFalse();
+  expect(stdout).toInclude("Cleared 'bun install' cache");
+  expect(stderr).not.toContain("error");
+  expect(exitCode).toBe(0);
+});

@@ -14,7 +14,7 @@ use bun_install::package_manager_real::{
 use bun_install::{DependencyID, PackageID, PackageManager, migration};
 use bun_paths::{self as Path, PathBuffer};
 use bun_resolver::fs as Fs;
-use bun_sys::{self, Dir, Fd, FdExt as _, File};
+use bun_sys::{self, Dir, Fd, File};
 
 use crate::cli::Command;
 use crate::cli::pm_pkg_command::PmPkgCommand;
@@ -370,24 +370,9 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 .has_meta_hash_changed(true, pm.lockfile.packages.len())?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"cache") {
-            let mut dir = PathBuffer::uninit();
-            let fd = get_cache_directory(pm);
-            let outpath = match bun_sys::get_fd_path(fd, &mut dir) {
-                Ok(p) => &p[..],
-                Err(err) => {
-                    Output::pretty_errorln(format_args!(
-                        "{} getting cache directory",
-                        bun_core::Error::from(err).name(),
-                    ));
-                    Global::crash();
-                }
-            };
-
             if pm.options.positionals.len() > 1
                 && strings::eql_comptime(pm.options.positionals[1], b"rm")
             {
-                fd.close();
-
                 let mut had_err = false;
 
                 let mut env_map = bun_dotenv::Map::init();
@@ -486,6 +471,18 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 Global::exit(if had_err { 1 } else { 0 });
             }
 
+            let mut dir = PathBuffer::uninit();
+            let fd = get_cache_directory(pm);
+            let outpath = match bun_sys::get_fd_path(fd, &mut dir) {
+                Ok(p) => &p[..],
+                Err(err) => {
+                    Output::pretty_errorln(format_args!(
+                        "{} getting cache directory",
+                        bun_core::Error::from(err).name(),
+                    ));
+                    Global::crash();
+                }
+            };
             let _ = Output::writer().write_all(outpath);
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"default-trusted") {

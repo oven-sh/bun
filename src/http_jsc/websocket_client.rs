@@ -1025,10 +1025,19 @@ impl<const SSL: bool> WebSocket<SSL> {
                             };
                             // Wire echo: acknowledge a 1001 ("going away") with
                             // a normal-closure frame; otherwise echo the code.
-                            let echo_code = if dispatch_code == 1001 { 1000 } else { dispatch_code };
+                            let echo_code = if dispatch_code == 1001 {
+                                1000
+                            } else {
+                                dispatch_code
+                            };
                             let mut buf: [u8; 125] = [0; 125];
                             buf[..ping_len - 2].copy_from_slice(&close_data[2..ping_len]);
-                            self.send_close_with_body(echo_code, dispatch_code, Some(&mut buf), ping_len - 2);
+                            self.send_close_with_body(
+                                echo_code,
+                                dispatch_code,
+                                Some(&mut buf),
+                                ping_len - 2,
+                            );
                         } else {
                             self.send_close();
                         }

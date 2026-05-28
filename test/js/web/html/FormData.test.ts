@@ -300,6 +300,91 @@ describe("FormData", () => {
     }
   });
 
+  describe("multipart name/filename unescaping", () => {
+    const parse = (parts: string) =>
+      new Response(parts, {
+        headers: { "Content-Type": "multipart/form-data; boundary=foo" },
+      }).formData();
+
+    it("decodes %22/%0D/%0A in field names", async () => {
+      const fd = await parse(
+        '--foo\r\nContent-Disposition: form-data; name="x%22y"\r\n\r\nq\r\n' +
+          '--foo\r\nContent-Disposition: form-data; name="a%0D%0Ab"\r\n\r\nv\r\n' +
+          "--foo--\r\n",
+      );
+      expect([...fd.keys()]).toEqual(['x"y', "a\r\nb"]);
+      expect(fd.get('x"y')).toBe("q");
+      expect(fd.get("a\r\nb")).toBe("v");
+    });
+
+    it("decodes %22/%0D/%0A in filenames", async () => {
+      const fd = await parse(
+        '--foo\r\nContent-Disposition: form-data; name="f"; filename="a%0D%0Ab%22.txt"\r\n' +
+          "Content-Type: text/plain\r\n\r\nbody\r\n--foo--\r\n",
+      );
+      const file = fd.get("f") as File;
+      expect(file.name).toBe('a\r\nb".txt');
+      expect(await file.text()).toBe("body");
+    });
+
+    it("decodes lowercase %0a/%0d", async () => {
+      const fd = await parse('--foo\r\nContent-Disposition: form-data; name="a%0d%0ab"\r\n\r\nv\r\n--foo--\r\n');
+      expect([...fd.keys()]).toEqual(["a\r\nb"]);
+    });
+
+    it("leaves other percent sequences literal", async () => {
+      const fd = await parse(
+        '--foo\r\nContent-Disposition: form-data; name="keep %20 %25 %41 %zz %"\r\n\r\nv\r\n--foo--\r\n',
+      );
+      expect([...fd.keys()]).toEqual(["keep %20 %25 %41 %zz %"]);
+    });
+
+    it("round-trips quote/CR/LF in names and filenames", async () => {
+      const form = new FormData();
+      form.append('x"y', "ok");
+      form.append("a\r\nb", new Blob(["c"]), 'f\r\n".txt');
+      const fd = await new Response(form).formData();
+      const file = fd.get("a\r\nb") as File;
+      expect({
+        keys: [...fd.keys()],
+        value: fd.get('x"y'),
+        filename: file?.name,
+        body: await file?.text(),
+      }).toEqual({
+        keys: ['x"y', "a\r\nb"],
+        value: "ok",
+        filename: 'f\r\n".txt',
+        body: "c",
+      });
+    });
+
+    it("round-trips quote/CR/LF in names and filenames through Bun.serve", async () => {
+      using server = Bun.serve({
+        port: 0,
+        development: false,
+        async fetch(req) {
+          const fd = await req.formData();
+          const file = fd.get("a\r\nb") as File;
+          return Response.json({
+            keys: [...fd.keys()],
+            value: fd.get('x"y'),
+            filename: file?.name,
+          });
+        },
+      });
+
+      const form = new FormData();
+      form.append('x"y', "ok");
+      form.append("a\r\nb", new Blob(["c"]), 'f\r\n".txt');
+      const res = await fetch(server.url, { method: "POST", body: form });
+      expect(await res.json()).toEqual({
+        keys: ['x"y', "a\r\nb"],
+        value: "ok",
+        filename: 'f\r\n".txt',
+      });
+    });
+  });
+
   test("FormData.from (URLSearchParams)", () => {
     expect(
       // @ts-expect-error

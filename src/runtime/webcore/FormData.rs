@@ -199,6 +199,39 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     }
 }
 
+/// Reverse the WHATWG multipart/form-data escaping applied to `name=`/
+/// `filename=` values in a `Content-Disposition` header: `%0A`→LF, `%0D`→CR,
+/// `%22`→`"`. Hex digits in `%0A`/`%0D` are matched case-insensitively to
+/// match undici/Node. Every other byte (including any other `%xx` sequence)
+/// passes through unchanged. Returns `None` when the input contains no `%`
+/// so the caller can keep borrowing the original slice without allocating.
+/// Inverse of `escape_form_data_name` in `Blob.rs`.
+fn unescape_form_data_name(bytes: &[u8]) -> Option<Vec<u8>> {
+    if strings::index_of_char(bytes, b'%').is_none() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let replacement = match &bytes[i + 1..i + 3] {
+                b"0A" | b"0a" => Some(b'\n'),
+                b"0D" | b"0d" => Some(b'\r'),
+                b"22" => Some(b'"'),
+                _ => None,
+            };
+            if let Some(b) = replacement {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    Some(out)
+}
+
 // TODO(port): narrow error set
 pub fn to_js_from_multipart_data(
     global: &JSGlobalObject,
@@ -221,10 +254,14 @@ pub fn to_js_from_multipart_data(
         fn on_entry(wrap: &mut Self, name: bun_semver::String, field: &Field, buf: &[u8]) {
             // SAFETY: `field.value` points into `buf` (caller-owned input), valid for this call.
             let value_str: &[u8] = unsafe { &*field.value };
-            let key = ZigString::init_utf8(name.slice(buf));
+            let name_raw = name.slice(buf);
+            let name_unescaped = unescape_form_data_name(name_raw);
+            let key = ZigString::init_utf8(name_unescaped.as_deref().unwrap_or(name_raw));
 
             if field.is_file {
-                let filename_str = field.filename.slice(buf);
+                let filename_raw = field.filename.slice(buf);
+                let filename_unescaped = unescape_form_data_name(filename_raw);
+                let filename_str = filename_unescaped.as_deref().unwrap_or(filename_raw);
 
                 // PORT NOTE: dropped `bun.default_allocator` arg.
                 let mut blob = Blob::create(value_str, wrap.global, false);

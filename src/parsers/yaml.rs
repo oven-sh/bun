@@ -3564,8 +3564,22 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     // scalar's resolution (`ScanOptions.tag`); if that scalar
                     // is now abandoned to the parent, rewind to its start and
                     // re-scan tag-neutral so the sibling key resolves under
-                    // the default schema.
-                    if value_tag.is_some() && matches!(self.token.data, TokenData::Scalar(_)) {
+                    // the default schema. Only plain single-line scalars are
+                    // tag-resolved at scan time; quoted scalars ignore
+                    // ScanOptions.tag (and their token.start is past the
+                    // opening quote, so rewind would be wrong); multiline
+                    // plain scalars may have advanced parser state across
+                    // lines that a positional rewind cannot fully restore.
+                    if value_tag.is_some()
+                        && matches!(
+                            &self.token.data,
+                            TokenData::Scalar(TokenScalar {
+                                is_quoted: false,
+                                multiline: false,
+                                ..
+                            })
+                        )
+                    {
                         self.pos = self.token.start;
                         self.line = self.token.line;
                         self.line_indent = self.token.indent;
@@ -5616,8 +5630,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let start = self.pos;
                     match self.context.get() {
                         Context::BlockOut | Context::BlockIn => {
+                            let indicator_indent = self.line_indent;
                             self.inc(1);
-                            break 'next self.scan_literal_scalar()?;
+                            let mut tok = self.scan_literal_scalar()?;
+                            // Token.indent for a block scalar is the
+                            // indicator's s-indent, not the auto-detected
+                            // content indent — keeps belongs_to_parent and
+                            // other indent comparisons consistent across
+                            // scalar kinds.
+                            tok.indent = indicator_indent;
+                            break 'next tok;
                         }
                         Context::FlowIn | Context::FlowKey => {}
                     }
@@ -5628,8 +5650,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let start = self.pos;
                     match self.context.get() {
                         Context::BlockOut | Context::BlockIn => {
+                            let indicator_indent = self.line_indent;
                             self.inc(1);
-                            break 'next self.scan_folded_scalar()?;
+                            let mut tok = self.scan_folded_scalar()?;
+                            tok.indent = indicator_indent;
+                            break 'next tok;
                         }
                         Context::FlowIn | Context::FlowKey => {}
                     }

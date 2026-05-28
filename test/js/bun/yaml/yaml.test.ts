@@ -1271,6 +1271,24 @@ folded: >
           expect(YAML.parse("a:\n  &x\n  b\n")).toEqual({ a: "b" });
         });
 
+        test("block scalar after a property uses the indicator's indent", () => {
+          // Token.indent for `|`/`>` is the indicator's s-indent (not the
+          // auto-detected content indent), so belongs_to_parent compares
+          // consistently with other scalar kinds.
+          expect(YAML.parse("a: &x\n |\nb: c\n")).toEqual({ a: "", b: "c" });
+          expect(YAML.parse("a: &x\n >\nb: c\n")).toEqual({ a: "", b: "c" });
+          expect(YAML.parse("a: !!str\n |\n  text\nb: c\n")).toEqual({ a: "text\n", b: "c" });
+          // [199] s-separate(n+1,c) before `|`: indent 0 isn't reached.
+          expect(() => YAML.parse("key:\n|\n text\n")).toThrow("Unexpected token");
+        });
+
+        test("rewind only applies to plain single-line scalars", () => {
+          // Quoted scalars: token.start is past the opening quote, and
+          // ScanOptions.tag doesn't affect their resolution anyway.
+          expect(YAML.parse('a: !!str\n"b": c\n')).toEqual({ a: "", b: "c" });
+          expect(YAML.parse("a: !!str\n'b': c\n")).toEqual({ a: "", b: "c" });
+        });
+
         test("tag does not leak to abandoned sibling key", () => {
           // The post-tag re-scan resolves a plain scalar under that tag; when
           // belongs_to_parent then abandons it, the sibling key must be

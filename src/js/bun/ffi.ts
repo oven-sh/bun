@@ -497,6 +497,9 @@ function cc(options) {
   const result = ccFn(options);
   if (Error.isError(result)) throw result;
 
+  // `source` may be an array of files; use the first one for stack-trace labels.
+  const displayPath = $isJSArray(path) ? path[0] : path;
+
   for (let key in result.symbols) {
     var symbol = result.symbols[key];
     // `cc` nests the symbol definitions under `options.symbols` (unlike
@@ -514,7 +517,7 @@ function cc(options) {
         //    "/usr/lib/sqlite3.so"
         // we want
         //    "sqlite3_get_version() - sqlit3.so"
-        path.includes("/") ? `${key} (${path.split("/").pop()})` : `${key} (${path})`,
+        displayPath.includes("/") ? `${key} (${displayPath.split("/").pop()})` : `${key} (${displayPath})`,
       );
     } else {
       // consistentcy

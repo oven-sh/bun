@@ -1201,11 +1201,8 @@ folded: >
           expect(YAML.parse("- ? &d\n- ? &e\n  : &a\n")).toEqual([{ null: null }, { null: null }]);
         });
 
-        test.todo("anchor as implicit-key e-node, alias in later entry", () => {
+        test("anchor as implicit-key e-node, alias in later entry", () => {
           // [154]/[159] `&a` is the key's ns-flow-yaml-node = props + e-scalar.
-          // Currently the anchor is applied to the mapping (not the key) at
-          // parse_node's exit, AFTER subsequent entries are parsed, so `*a`
-          // is unresolved at parse time. Pre-existing.
           expect(YAML.parse("&a : x\nb: *a\n")).toEqual({ null: "x", b: null });
         });
 

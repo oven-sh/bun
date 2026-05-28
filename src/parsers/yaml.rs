@@ -4035,7 +4035,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             break 'node Expr::init(E::Null {}, self.token.start.loc());
                         }
                     }
-                    let first_key = Expr::init(E::Null {}, self.token.start.loc());
+                    // The properties recorded in node_props apply to the
+                    // e-node key (`!!str : x` → key ""), not to the mapping.
+                    let first_key =
+                        node_props.tag().resolve_null(self.token.start.loc());
+                    if let Some(anchor) = node_props.anchor() {
+                        self.anchors
+                            .put(Enc::key_bytes(anchor.slice(self.input)), first_key)?;
+                    }
+                    node_props = NodeProperties::default();
                     break 'node self.parse_block_mapping(
                         first_key,
                         self.token.start,

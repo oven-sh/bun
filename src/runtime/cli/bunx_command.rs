@@ -589,13 +589,16 @@ impl BunxCommand {
     }
 
     #[cfg(unix)]
+    fn is_trusted_cache_root_stat(st: &bun_sys::Stat, uid: libc::uid_t) -> bool {
+        (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
+            && st.st_uid == uid
+            && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+    }
+
+    #[cfg(unix)]
     fn is_trusted_cache_root(cache_root: &ZStr, uid: libc::uid_t) -> bool {
         match bun_sys::lstat(cache_root) {
-            Ok(st) => {
-                (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
-                    && st.st_uid == uid
-                    && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
-            }
+            Ok(st) => Self::is_trusted_cache_root_stat(&st, uid),
             Err(_) => true,
         }
     }
@@ -1323,14 +1326,20 @@ impl BunxCommand {
         }
         let bunx_install_dir = Fd::cwd().make_open_path(bunx_cache_dir)?;
 
+        #[cfg(unix)]
         {
+            let handle_trusted = matches!(
+                bun_sys::fstat(bunx_install_dir.fd),
+                Ok(st) if Self::is_trusted_cache_root_stat(&st, uid)
+            );
             let mut cache_root_buf = PathBuffer::uninit();
             cache_root_buf[..bunx_cache_dir.len()].copy_from_slice(bunx_cache_dir);
             cache_root_buf[bunx_cache_dir.len()] = 0;
-            if !Self::is_trusted_cache_root(
-                ZStr::from_buf(&cache_root_buf[..], bunx_cache_dir.len()),
-                uid,
-            ) {
+            let path_trusted = matches!(
+                bun_sys::lstat(ZStr::from_buf(&cache_root_buf[..], bunx_cache_dir.len())),
+                Ok(st) if Self::is_trusted_cache_root_stat(&st, uid)
+            );
+            if !handle_trusted || !path_trusted {
                 Output::err_generic(
                     "refusing to use bunx cache directory <b>{}<r> because it is not a directory owned by the current user. Remove it and try again.",
                     format_args!("{}", BStr::new(bunx_cache_dir)),

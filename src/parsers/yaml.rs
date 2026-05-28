@@ -4747,7 +4747,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.inc(1);
                     if Enc::wide(self.next()) == 0x09 {
                         // tab for indentation
-                        return Err(ParseError::UnexpectedCharacter);
+                        return Err(ParseError::TabIndentation);
                     }
                     return Ok((
                         indent_indicator.unwrap_or(IndentIndicator::DEFAULT),
@@ -4924,7 +4924,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.newline();
                     self.inc(1);
                     if Enc::wide(self.next()) == 0x09 {
-                        return Err(ParseError::UnexpectedCharacter);
+                        return Err(ParseError::TabIndentation);
                     }
                     ctx.leading_newlines += 1;
                     consumed_indent_this_line = false;
@@ -4934,7 +4934,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.newline();
                     self.inc(1);
                     if Enc::wide(self.next()) == 0x09 {
-                        return Err(ParseError::UnexpectedCharacter);
+                        return Err(ParseError::TabIndentation);
                     }
                     ctx.leading_newlines += 1;
                     consumed_indent_this_line = false;
@@ -5020,7 +5020,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                 self.newline();
                                 self.inc(1);
                                 if Enc::wide(self.next()) == 0x09 {
-                                    return Err(ParseError::UnexpectedCharacter);
+                                    return Err(ParseError::TabIndentation);
                                 }
                                 continue;
                             }
@@ -5029,7 +5029,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                 self.newline();
                                 self.inc(1);
                                 if Enc::wide(self.next()) == 0x09 {
-                                    return Err(ParseError::UnexpectedCharacter);
+                                    return Err(ParseError::TabIndentation);
                                 }
                                 continue;
                             }

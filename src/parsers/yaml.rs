@@ -2565,7 +2565,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         let root = self.parse_node(ParseNodeOptions::default())?;
 
-
         // If document_start it needs to create a new document.
         // If document_end, consume as many as possible. They should
         // not create new documents.
@@ -2996,8 +2995,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         // The `:` must be at exactly the `?` indent (block ctx).
                         if mapping_value_line != mapping_line
                             && !matches!(self.context.get(), Context::FlowIn | Context::FlowKey)
-                            && (self.token.indent != mapping_indent
-                                || self.tab_after_indent)
+                            && (self.token.indent != mapping_indent || self.tab_after_indent)
                         {
                             if self.token.indent.is_less_than(mapping_indent) {
                                 // [189] e-node — `:` belongs to an outer
@@ -3086,9 +3084,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                         TokenData::MappingValue if explicit_key => {
                             // [191] l-block-map-explicit-value ::= s-indent(n) ':' …
-                            if self.token.indent != mapping_indent
-                                || self.tab_after_indent
-                            {
+                            if self.token.indent != mapping_indent || self.tab_after_indent {
                                 if self.token.indent.is_less_than(mapping_indent) {
                                     // [189] e-node — `:` belongs to an outer
                                     // construct; this entry has no value.
@@ -3651,7 +3647,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     return self.props_to_e_node(&value_tag, &value_anchor, indicator_start.loc());
                 }
                 _ => {
-
                     return self.parse_node(ParseNodeOptions {
                         current_mapping_indent: Some(n),
                         explicit_mapping_key: kind == BlockIndentedKind::MapExplicitKey,
@@ -3798,10 +3793,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         // [192] implicit key sits at s-indent(n) (spaces only).
                         if alias_tab_after_indent
-                            && matches!(
-                                self.context.get(),
-                                Context::BlockOut | Context::BlockIn
-                            )
+                            && matches!(self.context.get(), Context::BlockOut | Context::BlockIn)
                         {
                             return Err(Self::unexpected_token());
                         }
@@ -3853,10 +3845,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         // [192] implicit key sits at s-indent(n) (spaces only).
                         if sequence_tab_after_indent
-                            && matches!(
-                                self.context.get(),
-                                Context::BlockOut | Context::BlockIn
-                            )
+                            && matches!(self.context.get(), Context::BlockOut | Context::BlockIn)
                         {
                             return Err(Self::unexpected_token());
                         }
@@ -3944,10 +3933,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         // [192] implicit key sits at s-indent(n) (spaces only).
                         if mapping_tab_after_indent
-                            && matches!(
-                                self.context.get(),
-                                Context::BlockOut | Context::BlockIn
-                            )
+                            && matches!(self.context.get(), Context::BlockOut | Context::BlockIn)
                         {
                             return Err(Self::unexpected_token());
                         }
@@ -4010,14 +3996,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         ..Default::default()
                     })?;
 
-
                     let key = self.parse_block_indented(
                         mapping_indent,
                         mapping_line,
                         mapping_start,
                         BlockIndentedKind::MapExplicitKey,
                     )?;
-
 
                     self.block_indents.pop();
 
@@ -4026,7 +4010,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             return Ok(key);
                         }
                     }
-
 
                     let r = self.parse_block_mapping(
                         key,
@@ -4044,9 +4027,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         break 'node Expr::init(E::Null {}, self.token.start.loc());
                     }
                     // [195] block `:` (e-node key) sits at s-indent(n) only.
-                    if self.tab_after_indent
-                        && !matches!(self.context.get(), Context::FlowIn)
-                    {
+                    if self.tab_after_indent && !matches!(self.context.get(), Context::FlowIn) {
                         return Err(Self::unexpected_token());
                     }
                     if let Some(current_mapping_indent) = opts.current_mapping_indent {
@@ -4113,10 +4094,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         // entry; in compact position ([185]) it cannot be the
                         // compact mapping's first key either.
                         if scalar_tab_after_indent
-                            && matches!(
-                                self.context.get(),
-                                Context::BlockOut | Context::BlockIn
-                            )
+                            && matches!(self.context.get(), Context::BlockOut | Context::BlockIn)
                         {
                             return Err(Self::unexpected_token());
                         }

@@ -1901,7 +1901,7 @@ pub fn bss_heap_init<T>(init_at: unsafe fn(*mut T)) -> NonNull<T> {
     // allocation; lives for process lifetime (singleton; never freed/unmapped,
     // matching Zig). `init_at` is therefore free to skip writing any field whose
     // all-zeros bit pattern is already a valid initial value (e.g. `OverflowList`'s
-    // 32 KiB `[Option<Box<_>>; 4095]` array — `None` is the null niche).
+    // 32 KiB `[Option<Box<_>>; 4096]` array — `None` is the null niche).
     unsafe { init_at(ptr.as_ptr()) };
     ptr
 }
@@ -2238,18 +2238,24 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
     }
 
     pub fn tail(&mut self) -> core::result::Result<&mut Block, AllocError> {
-        // Terminal "full" state: every slot is allocated and the current block
-        // is full, so the only way forward is to write `ptrs[allocated]` past
-        // the fixed array. Bail out *before* touching `used` — Zig wrote here
+        // Terminal "full" state: the current block is the last slot and it is
+        // full, so the only way forward is to write `ptrs[allocated]` past the
+        // fixed array. Bail out *before* touching `used` — Zig wrote here
         // unconditionally (`catch unreachable`) and relied on never reaching the
         // ceiling, but Rust's bounds check would turn the same write into a hard
         // panic. Surfacing `AllocError` lets the caller propagate a normal OOM.
         // Checked first so this path is idempotent: the group stays in a stable
-        // `used == allocated - 1, last block full` state and re-derives the same
-        // `Err` on every retry rather than leaving `used` poisoned for the next
-        // call. With `BSS_OVERFLOW_BLOCK_SIZE` at the Zig value this is only
-        // reachable past the store's design capacity.
-        if self.allocated as usize >= OVERFLOW_GROUP_SLOTS
+        // `last slot, current block full` state and re-derives the same `Err` on
+        // every retry rather than leaving `used` poisoned for the next call.
+        //
+        // Keyed on `used`, not `allocated`: on the append-only path `used + 1 ==
+        // allocated`, so the two are equivalent there; but `OverflowList::reset`
+        // zeroes `used` while leaving `allocated` at the ceiling, and after a
+        // reset the lower blocks are reused via the advance branch below. Gating
+        // on `allocated` would wrongly reject once block 0 refilled even though
+        // blocks `1..allocated` are still available. With `BSS_OVERFLOW_BLOCK_SIZE`
+        // at the Zig value this is only reachable past the store's design capacity.
+        if self.used as usize + 1 >= OVERFLOW_GROUP_SLOTS
             && self.ptrs[self.used as usize]
                 .as_ref()
                 .expect("alloc")
@@ -2274,8 +2280,10 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
         }
 
         if self.allocated <= self.used {
-            // The top guard already rejected the only case where `allocated`
-            // has reached `OVERFLOW_GROUP_SLOTS`, so this write is in bounds.
+            // Reached only when the advance branch bumped `used` to `allocated`.
+            // The top guard rejects (before that bump) the case where the full
+            // block sits at the last slot, so `used < OVERFLOW_GROUP_SLOTS` here
+            // and this write to `ptrs[allocated == used]` is in bounds.
             debug_assert!((self.allocated as usize) < OVERFLOW_GROUP_SLOTS);
             // Zig: default_allocator.create(Block) catch unreachable
             // SAFETY: Box<MaybeUninit> → zero() initializes the `used` counter; payload array

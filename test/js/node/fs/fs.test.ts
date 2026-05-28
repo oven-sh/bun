@@ -3783,14 +3783,18 @@ it("fs.statfs (callback) should work with bigint", async () => {
 // whole file on skipped platforms.
 describe.skipIf(!isLinux || isMusl)("statfs large-filesystem block counts (#31510)", () => {
   // Injected values mirror the issue report: ~3.2e9 blocks of 4 KiB ≈ 13.3 TB.
-  // All three block-count fields are above i32::MAX (2147483647); `bsize *
-  // bavail` stays well under 2^53 so the expected double is exact. bsize uses a
-  // sentinel (3 * 4096) that no real filesystem reports, so a failure to
-  // interpose is unambiguous rather than colliding with a real 4 KiB bsize.
+  // Every count field (blocks/bfree/bavail and the inode files/ffree, which the
+  // fix also widens) is above i32::MAX (2147483647) so a narrowing regression in
+  // any of them wraps negative; each `field * bsize` stays well under 2^53 so the
+  // expected double is exact. bsize uses a sentinel (3 * 4096) that no real
+  // filesystem reports, so a failure to interpose is unambiguous rather than
+  // colliding with a real 4 KiB bsize.
   const BSIZE = 12288;
   const BLOCKS = 3747442852; // > 2^31
   const BFREE = 3248532185; // > 2^31
   const BAVAIL = 3248532185; // > 2^31
+  const FILES = 3147483649; // > 2^31
+  const FFREE = 3147483648; // > 2^31
 
   const shimSrc = `
 #define _GNU_SOURCE
@@ -3804,6 +3808,8 @@ describe.skipIf(!isLinux || isMusl)("statfs large-filesystem block counts (#3151
     (buf)->f_blocks = ${BLOCKS}ULL; \
     (buf)->f_bfree  = ${BFREE}ULL; \
     (buf)->f_bavail = ${BAVAIL}ULL; \
+    (buf)->f_files  = ${FILES}ULL; \
+    (buf)->f_ffree  = ${FFREE}ULL; \
   } \
 } while (0)
 
@@ -3881,6 +3887,8 @@ int fstatfs64(int fd, struct statfs64 *b) {
           blocks: toNum(s.blocks),
           bfree: toNum(s.bfree),
           bavail: toNum(s.bavail),
+          files: toNum(s.files),
+          ffree: toNum(s.ffree),
         }));
       })();
     `;
@@ -3891,7 +3899,13 @@ int fstatfs64(int fd, struct statfs64 *b) {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    // Assert exit code before parsing so a crashed subprocess gives a clear
+    // failure (with stderr surfaced in the message) instead of a JSON parse
+    // error. Don't hard-assert empty stderr: the gate runs under an ASAN debug
+    // build, which can print a startup line to stderr (same reason the sibling
+    // fs-stat-seccomp-linux test avoids asserting stderr) — and a glibc "cannot
+    // preload" warning, if any, shows up here for debugging.
+    expect({ stderr, exitCode }).toMatchObject({ exitCode: 0 });
     const parsed = JSON.parse(stdout);
     // Shim didn't interpose (static bun): the sentinel bsize won't be ours.
     if (parsed.bsize !== BSIZE) return null;
@@ -3909,7 +3923,7 @@ int fstatfs64(int fd, struct statfs64 *b) {
   ];
 
   for (const c of cases) {
-    it(`${c.name} does not truncate block counts above i32::MAX`, async () => {
+    it(`${c.name} does not truncate block/inode counts above i32::MAX`, async () => {
       const shimSo = buildShim();
       if (shimSo == null) {
         console.warn(`SKIP statfs #31510 ${c.name}: cc not available`);
@@ -3920,7 +3934,7 @@ int fstatfs64(int fd, struct statfs64 *b) {
         console.warn(`SKIP statfs #31510 ${c.name}: LD_PRELOAD shim did not interpose statfs`);
         return;
       }
-      expect(out).toEqual({ bsize: BSIZE, blocks: BLOCKS, bfree: BFREE, bavail: BAVAIL });
+      expect(out).toEqual({ bsize: BSIZE, blocks: BLOCKS, bfree: BFREE, bavail: BAVAIL, files: FILES, ffree: FFREE });
     });
   }
 });

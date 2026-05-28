@@ -87,8 +87,19 @@ test.skipIf(isWindows)(
         stdout: "pipe",
       }),
     );
-    const creatorExits = await Promise.all(creators.map(p => p.exited));
-    expect(creatorExits).toEqual(Array(WORKERS).fill(0));
+    // Surface any creator's stderr before asserting its exit code so a failed
+    // worker reports *why* rather than just a bare non-zero code.
+    const creatorResults = await Promise.all(
+      creators.map(async proc => {
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      }),
+    );
+    for (const { stdout, stderr, exitCode } of creatorResults) {
+      expect(stderr).toBe("");
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(0);
+    }
 
     // Before the fix this process aborts with `index out of bounds: the len is
     // 4095 but the index is 4095` partway through interning; after, it resolves
@@ -101,6 +112,10 @@ test.skipIf(isWindows)(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    // stdout carries "resolved-ok" on success and the panic stack on the
+    // pre-fix crash; stderr likewise surfaces any abort message. Assert both
+    // before the exit code for a legible failure.
+    expect(stderr).toBe("");
     expect(stdout.trim()).toBe("resolved-ok");
     expect(exitCode).toBe(0);
   },

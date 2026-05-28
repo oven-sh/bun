@@ -651,10 +651,11 @@ static u64 Hash64(const u8* input, size_t len, u64 seed)
 
 } // namespace xxh3
 
-// Opaque-to-Rust streaming XXH64 state. `bun_hash` holds this by value (an
-// `[u64; 10]` mirror); its size/alignment must match. 80 bytes, 8-aligned.
-static_assert(sizeof(bun::xxh3::XXH64State) == 80, "XXH64State size changed; update the Rust mirror in bun_hash");
-static_assert(alignof(bun::xxh3::XXH64State) == 8, "XXH64State alignment changed; update the Rust mirror in bun_hash");
+// Opaque-to-Rust streaming XXH64 state. `bun_highway::XxHash64State` holds this
+// by value (an `[u64; 10]` mirror); its size/alignment must match. 80 bytes,
+// 8-aligned. (`bun_hash::XxHash64Streaming` is just a newtype around that.)
+static_assert(sizeof(bun::xxh3::XXH64State) == 80, "XXH64State size changed; update the Rust mirror in bun_highway");
+static_assert(alignof(bun::xxh3::XXH64State) == 8, "XXH64State alignment changed; update the Rust mirror in bun_highway");
 
 extern "C" {
 
@@ -677,7 +678,7 @@ uint64_t highway_xxhash64(const uint8_t* input, size_t len, uint64_t seed)
     return bun::xxh3::XXH64(input, len, seed);
 }
 
-// Streaming XXH64: state is a 56-byte POD owned by the caller. reset → repeated
+// Streaming XXH64: state is an 80-byte POD owned by the caller. reset → repeated
 // update(any chunk sizes) → digest; output equals XXH64 of the concatenation.
 void highway_xxhash64_reset(void* state, uint64_t seed)
 {

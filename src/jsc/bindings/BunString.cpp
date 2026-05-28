@@ -206,11 +206,17 @@ BunString toString(const char* bytes, size_t length)
 
 BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
 {
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::String str = value.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, { BunStringTag::Dead });
-    if (str.isEmpty()) [[unlikely]] {
+    if (str.isNull()) [[unlikely]] {
+        // toWTFString only yields a null string after throwing. Fuzzilli has
+        // repeatedly hit it returning null with no pending exception under GC
+        // pressure; map that to Empty so the Zig-side `Dead => pending
+        // exception` invariant in String.fromJS holds. exceptionForInspection()
+        // reads the pending exception without disturbing any Throw/CatchScope,
+        // so callers that inspect errors (e.g. ZigException.cpp) still work.
+        return globalObject->vm().exceptionForInspection() ? BunString { BunStringTag::Dead } : BunString { BunStringTag::Empty };
+    }
+    if (str.length() == 0) [[unlikely]] {
         return { BunStringTag::Empty };
     }
 
@@ -241,11 +247,15 @@ BunString toString(JSC::JSGlobalObject* globalObject, JSValue value)
 
 BunString toStringRef(JSC::JSGlobalObject* globalObject, JSValue value)
 {
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
     auto str = value.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, { BunStringTag::Dead });
-    if (str.isEmpty()) [[unlikely]] {
+    if (str.isNull()) [[unlikely]] {
+        // See fromJS: Dead only when a real exception is pending, else Empty.
+        // toStringRef is called during error inspection (ZigException.cpp) with
+        // an exception already pending, so we must not add a verifying
+        // ThrowScope here; exceptionForInspection() reads it harmlessly.
+        return globalObject->vm().exceptionForInspection() ? BunString { BunStringTag::Dead } : BunString { BunStringTag::Empty };
+    }
+    if (str.length() == 0) [[unlikely]] {
         return { BunStringTag::Empty };
     }
 

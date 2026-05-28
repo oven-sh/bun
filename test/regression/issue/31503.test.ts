@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMusl, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/31503
@@ -22,11 +22,11 @@ import { join } from "node:path";
 // No `Module._resolveFilename` hook or webpack is needed — plain `Bun.resolveSync`
 // of a relative specifier reads (and interns) the whole containing directory.
 
-// The old ceiling was `8192 + 4095 * 64 = 270272`; create comfortably more than
-// that so the pre-fix binary panics deterministically, while staying far below
-// the fixed ~8.4M ceiling so the fixed binary resolves cleanly.
-const TOTAL_FILES = 300_000;
-const WORKERS = 6;
+// The old ceiling was `8192 + 4095 * 64 = 270272` interned names; go comfortably
+// past it so the pre-fix binary panics deterministically, while staying far below
+// the fixed `8192 + 4095 * 2048` ceiling so the fixed binary resolves cleanly.
+const TOTAL_FILES = 280_000;
+const WORKERS = 4;
 const PER_WORKER = Math.ceil(TOTAL_FILES / WORKERS);
 // Names must exceed the 31-byte inline threshold so each one is actually
 // appended to the store rather than stored inline.
@@ -50,10 +50,10 @@ fs.closeSync(fs.openSync(path.join(dir, "target.js"), "w"));
 `;
 
 // Resolving a relative specifier in each directory forces the resolver to read
-// the entire directory, interning every long filename. Before the fix this
-// overflows the store and panics; after, it prints OK.
+// the whole directory, interning every long filename into the process-global
+// store. Before the fix the store overflows partway through and the process
+// aborts; after, it resolves everything and prints "resolved-ok".
 const RESOLVER = /* js */ `
-const fs = require("fs");
 const path = require("path");
 const base = process.argv[2];
 const workers = Number(process.argv[3]);
@@ -63,10 +63,12 @@ for (let w = 0; w < workers; w++) {
 console.log("resolved-ok");
 `;
 
-// Creating ~300k files and interning them is inherently heavy; restrict to
-// POSIX where bulk file creation is cheap. The overflowing code path lives in
-// the platform-independent allocator, so Linux + macOS coverage is sufficient.
-test.skipIf(isWindows)(
+// Interning ~280k names is inherently heavy: it needs that many files on disk at
+// once (CI puts the temp dir on a tmpfs, so it is also memory). Skip musl/Alpine,
+// whose CI containers are too small to hold the working set — the overflowing
+// code path is in the platform- and libc-independent allocator, so the glibc
+// Linux and macOS lanes provide equivalent coverage.
+test.skipIf(isWindows || isMusl)(
   "resolver filename store survives interning >270k long filenames (#31503)",
   async () => {
     using dir = tempDir("issue-31503", {

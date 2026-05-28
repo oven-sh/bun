@@ -1177,7 +1177,7 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
 it("parses a large list response containing repeated unclosed Key tags quickly", async () => {
   // ListObjectsV2 body with a valid <Name> followed by ~5MB of opening <Key> tags
   // that never have a matching closing tag.
-  const malformed = `<ListBucketResult><Name>my_bucket</Name><Contents>${"<Key>".repeat(1_000_000)}`;
+  const malformed = `<ListBucketResult><Name>my_bucket</Name><Contents>${Buffer.alloc(5_000_000, "<Key>").toString()}`;
 
   using server = createBunServer(async () => {
     return new Response(malformed, {

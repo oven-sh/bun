@@ -62,6 +62,8 @@ unsafe extern "C" {
     fn highway_decode_hex8(input: *const u8, output: *mut u8, out_len: usize) -> usize;
 
     fn highway_decode_hex16(input: *const u16, output: *mut u8, out_len: usize) -> usize;
+
+    fn highway_xxhash3_64(input: *const u8, len: usize, seed: u64) -> u64;
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -453,6 +455,22 @@ pub fn index_of_space_or_newline_or_non_ascii(haystack: &[u8]) -> Option<usize> 
     }
 
     Some(result)
+}
+
+/// XxHash3 (`XXH3_64bits_withSeed`), runtime-dispatched to the widest SIMD ISA
+/// the CPU supports. Output is bit-identical to the xxHash reference (and to
+/// `bun_hash::XxHash3`, which backs the Miri-tested vector suite) for every
+/// input — only the long-input stripe loop is vectorized and its per-64-bit-
+/// lane math does not depend on vector width.
+///
+/// `seed` is the full 64-bit seed. Callers wanting the JS `@truncate(seed)`
+/// semantics must truncate before calling (as `HashObject` does).
+#[inline(always)]
+pub fn xxhash3_64(seed: u64, input: &[u8]) -> u64 {
+    // SAFETY: `input.ptr/len` are a valid readable range; for an empty slice
+    // the kernel takes the `len == 0` branch and never dereferences the
+    // pointer. The kernel only reads `input` and writes nothing through it.
+    unsafe { highway_xxhash3_64(input.as_ptr(), input.len(), seed) }
 }
 
 // ported from: src/highway/highway.zig

@@ -1,4 +1,5 @@
-import { expect, it } from "bun:test";
+import { xxHash3ForTesting } from "bun:internal-for-testing";
+import { describe, expect, it } from "bun:test";
 import { gcTick } from "harness";
 
 it(`Bun.hash()`, () => {
@@ -74,6 +75,88 @@ it(`Bun.hash.rapidhash()`, () => {
   gcTick();
   expect(Bun.hash.rapidhash(new TextEncoder().encode("hello world"))).toBe(0x58a89bdcee89c08cn);
 });
+// Bun.hash.xxHash3 is backed by a runtime-dispatched SIMD kernel
+// (src/jsc/bindings/xxhash3.cpp). The `len <= 16` case above only exercises
+// the scalar short-key branch; these cover every length branch (16 / 128 / 240
+// cutoffs, 64-byte stripes, multi-block long inputs) and the seeded
+// custom-secret path. Expected values come from the xxHash reference
+// (XXH3_64bits_withSeed, v0.8.2 — bit-identical to the twox-hash crate this
+// kernel replaces); any SIMD-width divergence would change them.
+describe("xxHash3 SIMD kernel", () => {
+  // Deterministic input: byte i = (i * 191 + 17) & 0xff.
+  const makeInput = n => {
+    const b = new Uint8Array(n);
+    for (let i = 0; i < n; i++) b[i] = (i * 191 + 17) & 0xff;
+    return b;
+  };
+
+  // [length, seed, expected] — reference XXH3_64bits_withSeed.
+  const REFERENCE = [
+    [0, 0n, 0x2d06800538d394c2n],
+    [0, 42n, 0xb029411ff43d84d2n],
+    [0, 2882400001n, 0x823d212dbc05808an],
+    [1, 0n, 0xf319fe2bdfcdfebdn],
+    [3, 42n, 0xca175fa91402884fn],
+    [4, 0n, 0xaed869f675eac794n],
+    [8, 2882400001n, 0x8408fa079f431149n],
+    [9, 0n, 0xe17aa5899a63caefn],
+    [16, 0n, 0x858ddc7a8189c802n],
+    [16, 2882400001n, 0x7353d4b9da395f86n],
+    [17, 0n, 0x80ec4e641b4cfc2bn],
+    [32, 42n, 0xa91e40e07bc2b693n],
+    [64, 0n, 0x9efbe7494c1483f9n],
+    [65, 0n, 0x2fdde7eb844656c4n],
+    [96, 2882400001n, 0x4701ffae732a05ddn],
+    [128, 0n, 0x506426d4fd0a2163n],
+    [129, 0n, 0x0fe55d4c5d8d8f71n],
+    [160, 42n, 0x0760cc17d49d97b9n],
+    [200, 0n, 0x7af78b7865491461n],
+    [239, 0n, 0x5e6dd82b298c64d5n],
+    [240, 0n, 0x744366c87a6954e9n],
+    [240, 2882400001n, 0xdc5d0fd70f358c69n],
+    // Long-input path (> 240): the Highway-dispatched stripe loop.
+    [241, 0n, 0xdc3fc1135592d6e6n],
+    [256, 0n, 0xd3a2265cf3c76bccn],
+    [257, 0n, 0xf11e5731791d1209n],
+    [257, 2882400001n, 0x9e93f1a43223b5d8n],
+    [512, 0n, 0x8f3ce4e54002823bn],
+    [513, 42n, 0xab3f1cf78b260c6fn],
+    [1024, 0n, 0xa9e2eee0215aa4e9n],
+    [1025, 2882400001n, 0xc39418c639c2fab2n],
+    [4096, 0n, 0xa8e6a7a23c5b3935n],
+    // Multi-block: 64 KB and 128 KB (the canary regression size).
+    [65536, 42n, 0x56bfc657f60303can],
+    [131072, 0n, 0x6afc5e23ce3c83a5n],
+    [131072, 2882400001n, 0x28a47fbb68e0e9abn],
+  ];
+
+  it("matches the xxHash reference across every length branch and seed", () => {
+    for (const [len, seed, expected] of REFERENCE) {
+      const input = makeInput(len);
+      expect(xxHash3ForTesting(input, seed)).toBe(expected);
+    }
+  });
+
+  it("the dispatched kernel agrees with Bun.hash.xxHash3 on large inputs", () => {
+    // Bun.hash.xxHash3 truncates the seed to u32 (@truncate); use seeds that
+    // fit in u32 so both surfaces take the same seed.
+    for (const len of [241, 256, 513, 1024, 65536, 131072]) {
+      for (const seed of [0, 1, 0xabcdef01]) {
+        const input = makeInput(len);
+        expect(Bun.hash.xxHash3(input, seed)).toBe(xxHash3ForTesting(input, BigInt(seed)));
+      }
+    }
+    gcTick();
+  });
+
+  it("hashes a string and its UTF-8 bytes identically for a large input", () => {
+    const str = Buffer.alloc(100 * 1024, "xABcDpQrStUvWxYz=-1]23]12312312][3123][123][").toString();
+    const bytes = new TextEncoder().encode(str);
+    expect(Bun.hash.xxHash3(str)).toBe(Bun.hash.xxHash3(bytes));
+    expect(Bun.hash.xxHash3(bytes)).toBe(xxHash3ForTesting(bytes));
+  });
+});
+
 it("does not crash when changing Int32Array constructor with Bun.hash.xxHash32 as species", () => {
   const arr = new Int32Array();
   function foo(a4) {

@@ -12,8 +12,9 @@ function rel(filename: string) {
   return path.join(dir, filename);
 }
 
-// Shared assertions for the NEWDECIMAL decoder, used by both the docker-backed
-// suite below and the non-docker fallback at the end of this file.
+// Assertions for the NEWDECIMAL decoder against a real server, used by the
+// docker-backed suite below. (The non-docker mock-server suite at the end of
+// this file drives a single canned column, so it asserts inline instead.)
 //
 // MySQL reports computed/aggregate NEWDECIMAL columns (SUM/AVG/CAST/arithmetic/
 // ROUND/literals, and SUM of an INT column) with the BINARY flag and charset

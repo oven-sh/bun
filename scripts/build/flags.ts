@@ -13,6 +13,7 @@
 
 import { join } from "node:path";
 import { bunExeName, type Config } from "./config.ts";
+import { ucrtServicingLibDir } from "./winsysroot.ts";
 import { quote, slash } from "./shell.ts";
 
 export type FlagValue = string | string[] | ((cfg: Config) => string | string[]);
@@ -933,6 +934,16 @@ export const linkerFlags: Flag[] = [
     flag: c => `/machine:${c.arm64 ? "arm64" : "x64"}`,
     when: c => c.windows,
     desc: "Target machine type for lld-link (required on arm64; x64 hosts default correctly but explicit is harmless)",
+  },
+  {
+    // Serviced UCRT overlay: an explicit /libpath: is searched before the
+    // /winsysroot-derived paths, so its libucrt.lib/ucrt.lib win over the
+    // splat's stale copies (see UCRT_SERVICING_VERSION in winsysroot.ts —
+    // the VS-manifest payload xwin downloads carries an ancient arm64 UCRT
+    // with broken printf formatting).
+    flag: c => quote(`/libpath:${ucrtServicingLibDir(c)!}`, false),
+    when: c => c.windows && c.host.os !== "windows",
+    desc: "Windows cross-compile: serviced Universal CRT static libs (SDK NuGet) override the splat's",
   },
   {
     // Windows cross-compile: these ldflags go after /link, straight to

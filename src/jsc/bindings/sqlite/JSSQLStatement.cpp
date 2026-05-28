@@ -574,7 +574,7 @@ static JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, sqlite3_stmt
         }
 
         if (len < 64) {
-            return jsString(vm, WTF::String::fromUTF8({ text, len }));
+            return jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ text, len }));
         }
 
         auto encoded = Bun__encoding__toStringUTF8(text, len, globalObject);

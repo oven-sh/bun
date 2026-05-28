@@ -1773,3 +1773,30 @@ it("fileControl rejects result TypedArrays smaller than 8 bytes", () => {
 
   db.close();
 });
+
+it("decodes non-UTF-8 TEXT leniently and consistently across the 64-byte boundary", () => {
+  const db = new Database(":memory:");
+  const q = bytes => db.query(`SELECT CAST(x'${Buffer.from(bytes).toString("hex")}' AS TEXT) t`);
+
+  // Short non-UTF-8 TEXT (4 bytes, Latin-1 "José") used to be silently dropped to "".
+  // It must now decode leniently with U+FFFD, matching node:sqlite.
+  const stmt = q([0x4a, 0x6f, 0x73, 0xe9]);
+  expect(stmt.get().t).toBe("Jos�");
+  expect(stmt.all()).toEqual([{ t: "Jos�" }]);
+  expect(stmt.values()).toEqual([["Jos�"]]);
+
+  // The decoder previously switched implementations at len === 64. Verify the
+  // same invalid trailing byte yields the same replacement on both sides of
+  // that boundary so there is no length-dependent discontinuity.
+  for (const n of [1, 4, 32, 63, 64, 65, 100]) {
+    const bytes = Buffer.alloc(n, 0x61);
+    bytes[n - 1] = 0xe9;
+    expect(q(bytes).get().t).toBe(Buffer.alloc(n - 1, "a").toString() + "�");
+  }
+
+  // Valid UTF-8 short strings are unaffected.
+  expect(q(Buffer.from("héllo")).get().t).toBe("héllo");
+  expect(q(Buffer.from("👋")).get().t).toBe("👋");
+
+  db.close();
+});

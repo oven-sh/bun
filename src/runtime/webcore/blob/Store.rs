@@ -20,7 +20,7 @@ use crate::webcore::s3::client::{
     S3ListObjectsResult,
 };
 use bun_collections::HashMap;
-use bun_core::{ZigString, strings};
+use bun_core::{String as BunString, strings};
 use bun_http_types::MimeType::MimeType;
 use bun_url::URL;
 
@@ -287,7 +287,7 @@ impl FileExt for File {
                     PathLike::EncodedSlice(slice) => {
                         bun_core::ZigStringSlice::Owned(slice.slice().to_vec())
                     }
-                    _ => ZigString::from_utf8(path_like.slice()).to_slice_clone(),
+                    _ => BunString::borrow_utf8(path_like.slice()).to_slice_clone(),
                 };
                 // Zig passes `undefined` for the `*Binding` arg (it is unused in
                 // `AsyncFSTask::create`).

@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::ZigString;
+use bun_core::String as BunString;
 
 use super::Expect;
 
@@ -30,7 +30,7 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
     }
 
     let mut has_expected = false;
-    let mut expected_string: ZigString = ZigString::EMPTY;
+    let mut expected_string: BunString = BunString::EMPTY;
     match arguments.len() {
         0 => {}
         1 => {

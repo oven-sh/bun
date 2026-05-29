@@ -308,7 +308,7 @@ pub struct MatchedMapContext;
 // TODO(port): ArrayHashMap context trait shape — wire the actual trait.
 impl MatchedMapContext {
     pub fn hash(&self, this: &BunString) -> u32 {
-        debug_assert!(this.tag() == bun_core::Tag::ZigString);
+        debug_assert!(this.tag() == bun_core::Tag::StringView);
         let slice = this.byte_slice();
         // For SENTINEL the slice includes trailing NUL; hash excludes it.
         // TODO(port): const-generic SENTINEL not reachable here; Zig branched at comptime.

@@ -78,7 +78,7 @@ pub(crate) extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
 // MarkedArrayBuffer_deallocator
 
 // REAL: now provided by bun_jsc (src/jsc/ZigString.rs).
-// ZigString__freeGlobal
+// BunStringView__freeGlobal
 
 // REAL: now provided by bun_runtime (src/runtime/node/node_process.rs).
 // Bun__NODE_NO_WARNINGS

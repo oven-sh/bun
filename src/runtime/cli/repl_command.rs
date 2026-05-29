@@ -14,7 +14,7 @@ use core::ptr::NonNull;
 
 use crate::dns_jsc::Order as DnsOrder;
 use bun_alloc::Arena;
-use bun_core::ZigString;
+use bun_core::String as BunString;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject};
@@ -286,10 +286,10 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         // SAFETY: transpiler.env is a valid *mut Loader set during VM init.
         if let Some(tz) = unsafe { (*vm.transpiler.env).get(b"TZ") } {
             if !tz.is_empty() {
-                // SAFETY: vm.global is valid; ZigString borrows `tz` for the FFI call duration.
+                // SAFETY: vm.global is valid; BunString borrows `tz` for the FFI call duration.
                 // PORT NOTE: `JSGlobalObject::set_time_zone` isn't exposed on the Rust
                 // wrapper yet — call the underlying C++ export directly.
-                let _ = unsafe { JSGlobalObject__setTimeZone(vm.global, &ZigString::init(tz)) };
+                let _ = unsafe { JSGlobalObject__setTimeZone(vm.global, &BunString::ascii(tz)) };
             }
         }
 
@@ -306,7 +306,7 @@ unsafe extern "C" {
     // bun_jsc grows a wrapper.
     fn JSGlobalObject__setTimeZone(
         global: *const JSGlobalObject,
-        time_zone: *const ZigString,
+        time_zone: *const BunString,
     ) -> bool;
 }
 

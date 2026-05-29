@@ -4,8 +4,8 @@ use core::ffi::c_int;
 use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{self, fmt as bun_fmt};
-use bun_core::{WStr, ZStr, ZigString};
-use bun_jsc::{SliceWithUnderlyingStringJsc as _, StringJsc as _, ZigStringJsc as _};
+use bun_core::{String as BunString, WStr, ZStr};
+use bun_jsc::{SliceWithUnderlyingStringJsc as _, StringJsc as _};
 use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer, WPathBuffer};
 use bun_sys::{self, Fd, Mode, O};
 
@@ -859,7 +859,7 @@ impl Encoding {
             }
             Self::Base64url => {
                 let buf = bun_base64::simdutf_encode_url_safe_alloc(input);
-                Ok(jsc::zig_string::ZigString::init(&buf).to_js(global_object))
+                Ok(BunString::ascii(&buf).to_js_value(global_object))
             }
             Self::Hex => {
                 // PORT NOTE: Zig used `bufPrint("{x}", input)` into a stack buffer.
@@ -1379,8 +1379,8 @@ impl Valid {
         }
     }
 
-    pub fn path_string(zig_str: &ZigString, ctx: &JSGlobalObject) -> JsResult<()> {
-        Self::path_string_length(zig_str.len, ctx)
+    pub fn path_string(zig_str: &BunString, ctx: &JSGlobalObject) -> JsResult<()> {
+        Self::path_string_length(zig_str.length(), ctx)
     }
 
     pub fn path_buffer(buffer: &Buffer, ctx: &JSGlobalObject) -> JsResult<()> {
@@ -1568,9 +1568,9 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
         // the example), specifies permissions for the group. The right-most
         // digit (5 in the example), specifies the permissions for others.
 
-        let mut zig_str = ZigString::EMPTY;
+        let mut zig_str = BunString::EMPTY;
         value.to_zig_string(&mut zig_str, ctx)?;
-        let mut slice = zig_str.slice();
+        let mut slice = zig_str.latin1();
         if slice.starts_with(b"0o") {
             slice = &slice[2..];
         }
@@ -1702,13 +1702,13 @@ impl FileSystemFlags {
         let js_type = val.js_type();
         if js_type.is_string_like() {
             let str = val.get_zig_string(ctx)?;
-            if str.len == 0 {
+            if str.length() == 0 {
                 return Err(ctx.throw_invalid_arguments(format_args!(
                     "Expected flags to be a non-empty string. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
                 )));
             }
             // it's definitely wrong when the string is super long
-            else if str.len > 12 {
+            else if str.length() > 12 {
                 return Err(ctx.throw_invalid_arguments(format_args!(
                     "Invalid flag '{}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
                     str
@@ -1717,11 +1717,11 @@ impl FileSystemFlags {
 
             let flags: Option<i32> = 'brk: {
                 // PERF(port): was comptime bool dispatch (`inline else`) — profile if it shows up on a hot path
-                if str.is_16bit() {
-                    let chars = str.utf16_slice_aligned();
+                if str.is_utf16() {
+                    let chars = str.utf16();
                     if (chars[0] as u8).is_ascii_digit() {
                         // node allows "0o644" as a string :(
-                        let slice = str.to_slice();
+                        let slice = str.to_utf8_without_ref();
                         // slice.deinit() on Drop
                         // Zig: `@as(i32, @intCast(...))` — release builds wrap.
                         break 'brk strings::parse_int::<Mode>(slice.slice(), 10)
@@ -1729,16 +1729,16 @@ impl FileSystemFlags {
                             .map(|v| v as i32);
                     }
                 } else {
-                    let chars = str.slice();
+                    let chars = str.latin1();
                     if chars[0].is_ascii_digit() {
                         break 'brk strings::parse_int::<Mode>(chars, 10).ok().map(|v| v as i32);
                     }
                 }
 
-                // PORT NOTE: Zig used `ComptimeStringMap.getWithEql(str, ZigString.eqlComptime)`.
-                // Convert the ZigString (≤12 bytes here) to a UTF-8 slice and
+                // PORT NOTE: Zig used `ComptimeStringMap.getWithEql(str, eqlComptime)`.
+                // Convert the string (≤12 bytes here) to a UTF-8 slice and
                 // dispatch through the length-gated match below.
-                let key_slice = str.to_slice();
+                let key_slice = str.to_utf8_without_ref();
                 break 'brk lookup_file_system_flags(key_slice.slice());
             };
 
@@ -1809,7 +1809,7 @@ impl FileSystemFlags {
     }
 }
 
-// PERF(port): Zig used `ComptimeStringMap.getWithEql(str, ZigString.eqlComptime)`.
+// PERF(port): Zig used `ComptimeStringMap.getWithEql(str, eqlComptime)`.
 // A 44-entry `phf::Map` would work, but the keys are tiny (1..=3 bytes) and
 // cluster heavily by length (6/22/16). phf's hash+probe is dominated by the
 // SipHash of the input slice; a length-gated byte match rejects on a single

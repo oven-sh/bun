@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::ZigString;
+use bun_core::String as BunString;
 
 use super::Expect;
 use super::get_signature;
@@ -43,7 +43,7 @@ pub(crate) fn to_throw_error_matching_snapshot(
     // Zig: `defer bunTest_strong.deinit();` — handled by Drop.
     let _ = &bun_test_strong;
 
-    let mut hint_string: ZigString = ZigString::EMPTY;
+    let mut hint_string: BunString = BunString::EMPTY;
     match arguments.len() {
         0 => {}
         1 => {

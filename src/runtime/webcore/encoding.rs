@@ -927,7 +927,7 @@ pub(crate) unsafe fn construct_from_u16<const ENCODING: u8>(
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `bun.String.encodeInto` / `bun.String.encode` / `ZigString.encodeWithAllocator`
+// `bun.String.encodeInto` / `bun.String.encode`
 //
 // Hosted here (not on `bun_core::String`) because the encoder bodies above
 // (`encodeIntoFrom{8,16}` / `constructFrom{U8,U16}`) belong to `bun_runtime`;
@@ -991,29 +991,12 @@ impl BunStringEncode for bun_core::String {
         encode_into_from8_dyn(self.latin1(), out, enc)
     }
 
-    /// `bun.String.encode` (string.zig:642) —
-    /// `self.toZigString().encodeWithAllocator(allocator, enc)`.
+    /// `bun.String.encode` (string.zig:642).
     fn encode(&self, enc: Encoding) -> Vec<u8> {
-        self.to_zig_string().encode_with_allocator(enc)
-    }
-}
-
-/// `ZigString.encodeWithAllocator` (ZigString.zig). Extension trait — encoder
-/// bodies live in this crate.
-pub trait ZigStringEncode {
-    fn encode_with_allocator(&self, enc: Encoding) -> Vec<u8>;
-    #[inline]
-    fn encode(&self, enc: Encoding) -> Vec<u8> {
-        self.encode_with_allocator(enc)
-    }
-}
-
-impl ZigStringEncode for bun_core::ZigString {
-    fn encode_with_allocator(&self, enc: Encoding) -> Vec<u8> {
-        if self.is_16bit() {
-            construct_from_u16_dyn(self.utf16_slice(), enc)
+        if self.is_utf16() {
+            construct_from_u16_dyn(self.utf16(), enc)
         } else {
-            construct_from_u8_dyn(self.slice(), enc)
+            construct_from_u8_dyn(self.latin1(), enc)
         }
     }
 }

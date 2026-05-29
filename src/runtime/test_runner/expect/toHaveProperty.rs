@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::ZigString;
+use bun_core::String as BunString;
 
 use super::DiffFormatter;
 use super::Expect;
@@ -44,7 +44,7 @@ pub(crate) fn to_have_property(
     }
 
     let not = this.flags.get().not();
-    let mut path_string = ZigString::EMPTY;
+    let mut path_string = BunString::EMPTY;
     expected_property_path.to_zig_string(&mut path_string, global)?;
 
     let mut pass = !value.is_undefined_or_null();

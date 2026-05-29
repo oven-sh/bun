@@ -19,7 +19,7 @@ use crate::webcore::jsc::{
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use bun_alloc::AllocError;
 use bun_core::{Output, fmt as bun_fmt};
-use bun_core::{OwnedStringCell, String as BunString, ZigString, strings};
+use bun_core::{OwnedStringCell, String as BunString, strings};
 use bun_http_jsc::fetch_enums_jsc::{
     fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js,
 };
@@ -29,7 +29,6 @@ use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::FetchRequestMode::FetchRequestMode;
 use bun_http_types::Method::Method;
 use bun_jsc::AbortSignalRef;
-use bun_jsc::StringJsc as _;
 use bun_jsc::generated::JSRequest as js_gen;
 use bun_ptr::weak_ptr::WeakPtrData;
 use bun_uws as uws;
@@ -364,7 +363,7 @@ impl Request {
 
         if let Some(headers) = self.headers_mut().as_mut() {
             if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
-                return Ok(Some(value.to_slice()));
+                return Ok(Some(value.to_utf8()));
             }
         }
 
@@ -464,7 +463,7 @@ impl Request {
         let Some(content_type_slice) = self.get_content_type()? else {
             return Ok(None);
         };
-        // `defer content_type_slice.deinit()` → Drop on ZigString::Slice
+        // `defer content_type_slice.deinit()` → Drop on ZigStringSlice
         let Some(encoding) = crate::webcore::form_data::Encoding::get(content_type_slice.slice())
         else {
             return Ok(None);
@@ -726,14 +725,14 @@ impl Request {
             // TODO(port): Zig has `try` here but fn returns plain `string` — preserved as
             // non-fallible; FetchHeaders.fastGet may need to be infallible in Rust.
             if let Some(content_type) = headers.fast_get(HTTPHeaderName::ContentType) {
-                // PORT NOTE: `fast_get` returns a `ZigString` by value whose
+                // PORT NOTE: `fast_get` returns a `BunString` by value whose
                 // bytes borrow the FetchHeaders' WTF::String storage (NOT the
-                // local). `ZigString::slice` ties the borrow to the local
+                // local). `BunString::latin1` ties the borrow to the local
                 // `content_type`; detach and re-anchor on `self` so the
                 // returned `&[u8]` outlives the temporary.
                 // SAFETY: the bytes point into `self.headers`' WTF storage,
                 // which is held alive for the borrow `&self`.
-                return unsafe { bun_ptr::detach_lifetime(content_type.slice()) };
+                return unsafe { bun_ptr::detach_lifetime(content_type.latin1()) };
             }
         }
 
@@ -772,11 +771,11 @@ impl Request {
     }
 
     pub fn get_destination(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        ZigString::init(b"").to_js(global_this)
+        BunString::ascii(b"").to_js_value(global_this)
     }
 
     pub fn get_integrity(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        ZigString::EMPTY.to_js(global_this)
+        BunString::EMPTY.to_js_value(global_this)
     }
 
     pub fn get_signal(&self, global_this: &JSGlobalObject) -> JSValue {
@@ -850,15 +849,15 @@ impl Request {
     pub fn get_referrer(&self, global_object: &JSGlobalObject) -> JSValue {
         if let Some(headers_ref) = self.headers_mut().as_mut() {
             if let Some(referrer) = headers_ref.get(b"referrer", global_object) {
-                return referrer.to_js(global_object);
+                return referrer.to_js_value(global_object);
             }
         }
 
-        ZigString::init(b"").to_js(global_object)
+        BunString::ascii(b"").to_js_value(global_object)
     }
 
     pub fn get_referrer_policy(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        ZigString::init(b"").to_js(global_this)
+        BunString::ascii(b"").to_js_value(global_this)
     }
 
     pub fn get_url(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {

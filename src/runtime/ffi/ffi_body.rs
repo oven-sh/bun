@@ -11,10 +11,10 @@ use bstr::BStr;
 use crate::napi;
 use bun_collections::StringArrayHashMap;
 use bun_core::{ZBox, env_var, fmt as bun_fmt, zstr};
-use bun_core::{ZStr, ZigString};
+use bun_core::{String as BunString, ZStr};
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsCell, JsClass,
-    JsError, JsResult, SystemError, ZigStringJsc,
+    JsError, JsResult, StringJsc, SystemError,
 };
 #[cfg(target_os = "macos")]
 use bun_paths as path;
@@ -39,16 +39,16 @@ fn dir_exists(path: &'static [u8]) -> bool {
 #[inline]
 fn create_object_2(
     global: &JSGlobalObject,
-    key1: &ZigString,
-    key2: &ZigString,
+    key1: &BunString,
+    key2: &BunString,
     value1: JSValue,
     value2: JSValue,
 ) -> JSValue {
     unsafe extern "C" {
         fn JSC__JSValue__createObject2(
             global: *const JSGlobalObject,
-            key1: *const ZigString,
-            key2: *const ZigString,
+            key1: *const BunString,
+            key2: *const BunString,
             value1: JSValue,
             value2: JSValue,
         ) -> JSValue;
@@ -126,7 +126,7 @@ unsafe extern "C" {
     /// `host_fn::NewRuntimeFunction` — `Bun__CreateFFIFunctionValue`.
     fn Bun__CreateFFIFunctionValue(
         global: *const JSGlobalObject,
-        symbol_name: *const ZigString,
+        symbol_name: *const BunString,
         arg_count: u32,
         function_pointer: *const c_void,
         add_ptr_property: bool,
@@ -155,7 +155,7 @@ mod exposed_to_ffi {
 #[inline]
 fn new_runtime_function(
     global: &JSGlobalObject,
-    symbol_name: &ZigString,
+    symbol_name: &BunString,
     arg_count: u32,
     function_pointer: *const c_void,
     add_ptr_property: bool,
@@ -938,7 +938,7 @@ impl StringArray {
                 ));
             }
             let str = val.get_zig_string(global_this)?;
-            if str.len == 0 {
+            if str.length() == 0 {
                 continue;
             }
             items.push(str.to_owned_slice_z());
@@ -963,7 +963,7 @@ impl StringArray {
             ));
         }
         let str = value.get_zig_string(global_this)?;
-        if str.len == 0 {
+        if str.length() == 0 {
             return Ok(StringArray::default());
         }
         let items: Vec<ZBox> = vec![str.to_owned_slice_z()];
@@ -1081,7 +1081,7 @@ impl FFI {
                 }
 
                 let str = flags_value.get_zig_string(global_this)?;
-                if str.len > 0 {
+                if str.length() > 0 {
                     compile_c.flags = str.to_owned_slice_z();
                 }
             }
@@ -1107,7 +1107,7 @@ impl FFI {
                     if !iter.value.is_undefined_or_null() {
                         if iter.value.is_string() {
                             let value = iter.value.get_zig_string(global_this)?;
-                            if value.len > 0 {
+                            if value.length() > 0 {
                                 owned_value = value.to_owned_slice_z();
                             }
                         }
@@ -1230,7 +1230,7 @@ impl FFI {
             }
             match &mut function.step {
                 Step::Failed { msg, .. } => {
-                    let res = ZigString::init(msg).to_error_instance(global_this);
+                    let res = BunString::ascii(msg).to_error_instance(global_this);
                     return Err(global_this.throw_value(res));
                 }
                 Step::Pending => {
@@ -1239,7 +1239,7 @@ impl FFI {
                     );
                 }
                 Step::Compiled(compiled) => {
-                    let str = ZigString::init(function_name.as_bytes());
+                    let str = BunString::ascii(function_name.as_bytes());
                     let cb = new_runtime_function(
                         global_this,
                         &str,
@@ -1249,7 +1249,7 @@ impl FFI {
                         function.symbol_from_dynamic_library,
                     );
                     compiled.js_function = cb;
-                    obj.put(global_this, str.slice(), cb);
+                    obj.put(global_this, str.latin1(), cb);
                 }
             }
         }
@@ -1298,7 +1298,7 @@ impl FFI {
 
         if let Some(val) = generate_symbol_for_function(global_this, interface, func)
             .unwrap_or_else(|_| {
-                Some(ZigString::init(b"Out of memory").to_error_instance(global_this))
+                Some(BunString::ascii(b"Out of memory").to_error_instance(global_this))
             })
         {
             return Ok(val);
@@ -1312,14 +1312,14 @@ impl FFI {
             .compile_callback(global_this, js_callback, func.threadsafe)
             .is_err()
         {
-            return Ok(ZigString::init(b"Out of memory").to_error_instance(global_this));
+            return Ok(BunString::ascii(b"Out of memory").to_error_instance(global_this));
         }
         match &func.step {
             Step::Failed { msg, .. } => {
-                let message = ZigString::init(msg).to_error_instance(global_this);
+                let message = BunString::ascii(msg).to_error_instance(global_this);
                 Ok(message)
             }
-            Step::Pending => Ok(ZigString::init(
+            Step::Pending => Ok(BunString::ascii(
                 b"Failed to compile, but not sure why. Please report this bug",
             )
             .to_error_instance(global_this)),
@@ -1329,8 +1329,8 @@ impl FFI {
                 let compiled_ptr = unsafe { (*function_).step.compiled_ptr() };
                 Ok(create_object_2(
                     global_this,
-                    &ZigString::static_(b"ptr"),
-                    &ZigString::static_(b"ctx"),
+                    &BunString::static_(b"ptr"),
+                    &BunString::static_(b"ctx"),
                     JSValue::from_ptr_address(compiled_ptr as usize),
                     JSValue::from_ptr_address(function_ as usize),
                 ))
@@ -1368,7 +1368,7 @@ impl FFI {
 
         let mut function = Function::default();
         if let Some(val) = generate_symbol_for_function(global, object, &mut function)
-            .unwrap_or_else(|_| Some(ZigString::init(b"Out of memory").to_error_instance(global)))
+            .unwrap_or_else(|_| Some(BunString::ascii(b"Out of memory").to_error_instance(global)))
         {
             return val;
         }
@@ -1381,7 +1381,7 @@ impl FFI {
             .print_callback_source_code(None, None, &mut arraylist)
             .is_err()
         {
-            return ZigString::init(b"Error while printing code").to_error_instance(global);
+            return BunString::ascii(b"Error while printing code").to_error_instance(global);
         }
         jsc::bun_string_jsc::create_utf8_for_js(global, &arraylist).unwrap_or(JSValue::ZERO)
     }
@@ -1421,7 +1421,7 @@ impl FFI {
             let mut arraylist: Vec<u8> = Vec::new();
             if function.print_source_code(&mut arraylist).is_err() {
                 // an error while generating source code
-                return Ok(ZigString::init(b"Error while printing code").to_error_instance(global));
+                return Ok(BunString::ascii(b"Error while printing code").to_error_instance(global));
             }
             strs.push(bun_core::String::clone_utf8(&arraylist));
             // PERF(port): was appendAssumeCapacity
@@ -1445,7 +1445,7 @@ fn invalid_options_arg(global: &JSGlobalObject) -> JSValue {
 }
 
 impl FFI {
-    pub fn open(global: &JSGlobalObject, name_str: ZigString, object_value: JSValue) -> JSValue {
+    pub fn open(global: &JSGlobalObject, name_str: BunString, object_value: JSValue) -> JSValue {
         if !bun_core::Environment::ENABLE_TINYCC {
             let _ = global.throw(format_args!(
                 "bun:ffi dlopen() is not available in this build (TinyCC is disabled)"
@@ -1454,7 +1454,7 @@ impl FFI {
         }
         jsc::mark_binding();
         let vm = jsc::VirtualMachineRef::get();
-        let name_slice = name_str.to_slice();
+        let name_slice = name_str.to_utf8();
 
         if object_value.is_empty_or_undefined_or_null() {
             return invalid_options_arg(global);
@@ -1594,17 +1594,17 @@ impl FFI {
             }
             match &mut function.step {
                 Step::Failed { msg, .. } => {
-                    let res = ZigString::init(msg).to_error_instance(global);
+                    let res = BunString::ascii(msg).to_error_instance(global);
                     dylib.close();
                     return res;
                 }
                 Step::Pending => {
                     dylib.close();
-                    return ZigString::init(b"Failed to compile (nothing happend!)")
+                    return BunString::ascii(b"Failed to compile (nothing happend!)")
                         .to_error_instance(global);
                 }
                 Step::Compiled(compiled) => {
-                    let str = ZigString::init(function_name.as_bytes());
+                    let str = BunString::ascii(function_name.as_bytes());
                     let cb = new_runtime_function(
                         global,
                         &str,
@@ -1614,7 +1614,7 @@ impl FFI {
                         function.symbol_from_dynamic_library,
                     );
                     compiled.js_function = cb;
-                    obj.put(global, str.slice(), cb);
+                    obj.put(global, str.latin1(), cb);
                 }
             }
         }
@@ -1691,15 +1691,15 @@ impl FFI {
             }
             match &mut function.step {
                 Step::Failed { msg, .. } => {
-                    let res = ZigString::init(msg).to_error_instance(global);
+                    let res = BunString::ascii(msg).to_error_instance(global);
                     return res;
                 }
                 Step::Pending => {
-                    return ZigString::static_(b"Failed to compile (nothing happend!)")
+                    return BunString::static_(b"Failed to compile (nothing happend!)")
                         .to_error_instance(global);
                 }
                 Step::Compiled(compiled) => {
-                    let name = ZigString::init(function_name.as_bytes());
+                    let name = BunString::ascii(function_name.as_bytes());
 
                     let cb = new_runtime_function(
                         global,
@@ -1711,7 +1711,7 @@ impl FFI {
                     );
                     compiled.js_function = cb;
 
-                    obj.put(global, name.slice(), cb);
+                    obj.put(global, name.latin1(), cb);
                 }
             }
         }
@@ -1740,7 +1740,7 @@ pub(super) fn generate_symbol_for_function(
     if let Some(args) = value.get_own(global, &bun_core::String::borrow_utf8(b"args"))? {
         if args.is_empty_or_undefined_or_null() || !args.js_type().is_array() {
             return Ok(Some(
-                ZigString::static_(b"Expected an object with \"args\" as an array")
+                BunString::static_(b"Expected an object with \"args\" as an array")
                     .to_error_instance(global),
             ));
         }
@@ -1751,7 +1751,7 @@ pub(super) fn generate_symbol_for_function(
         while let Some(val) = array.next()? {
             if val.is_empty_or_undefined_or_null() {
                 return Ok(Some(
-                    ZigString::static_(b"param must be a string (type name) or number")
+                    BunString::static_(b"param must be a string (type name) or number")
                         .to_error_instance(global),
                 ));
             }
@@ -1765,14 +1765,14 @@ pub(super) fn generate_symbol_for_function(
                     continue;
                 } else {
                     return Ok(Some(
-                        ZigString::static_(b"invalid ABI type").to_error_instance(global),
+                        BunString::static_(b"invalid ABI type").to_error_instance(global),
                     ));
                 }
             }
 
             if !val.js_type().is_string_like() {
                 return Ok(Some(
-                    ZigString::static_(b"param must be a string (type name) or number")
+                    BunString::static_(b"param must be a string (type name) or number")
                         .to_error_instance(global),
                 ));
             }
@@ -1807,7 +1807,7 @@ pub(super) fn generate_symbol_for_function(
                     break 'brk;
                 } else {
                     return Ok(Some(
-                        ZigString::static_(b"invalid ABI type").to_error_instance(global),
+                        BunString::static_(b"invalid ABI type").to_error_instance(global),
                     ));
                 }
             }
@@ -1827,13 +1827,13 @@ pub(super) fn generate_symbol_for_function(
 
     if return_type == ABIType::NapiEnv {
         return Ok(Some(
-            ZigString::static_(b"Cannot return napi_env to JavaScript").to_error_instance(global),
+            BunString::static_(b"Cannot return napi_env to JavaScript").to_error_instance(global),
         ));
     }
 
     if return_type == ABIType::Buffer {
         return Ok(Some(
-            ZigString::static_(
+            BunString::static_(
                 b"Cannot return a buffer to JavaScript (since byteLength and byteOffset are unknown)",
             )
             .to_error_instance(global),
@@ -1842,7 +1842,7 @@ pub(super) fn generate_symbol_for_function(
 
     if function.threadsafe && return_type != ABIType::Void {
         return Ok(Some(
-            ZigString::static_(b"Threadsafe functions must return void").to_error_instance(global),
+            BunString::static_(b"Threadsafe functions must return void").to_error_instance(global),
         ));
     }
 

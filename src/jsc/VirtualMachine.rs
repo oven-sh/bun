@@ -2595,8 +2595,8 @@ pub fn process_fetch_log(
                     .into_bytes()
                     .into_boxed_slice(),
             );
-            let mut message = crate::ZigString::init(message_text);
-            message.mark_global();
+            let mut message = bun_core::String::ascii(message_text);
+            message.0.mark_global();
             *ret = ErrorableResolvedSource::err(
                 err,
                 take(global_this.create_aggregate_error(&errors, &message)),
@@ -4571,7 +4571,7 @@ impl VirtualMachine {
         if self.main().is_empty() {
             return Ok(());
         }
-        let str = crate::zig_string::ZigString::init(MAIN_FILE_NAME);
+        let str = bun_core::String::ascii(MAIN_FILE_NAME);
         self.global().delete_module_registry_entry(&str)
     }
 
@@ -6372,7 +6372,7 @@ impl VirtualMachine {
                 }
             }
             if cursor > 0 {
-                let body = jsc::ZigString::init_utf8(&msg[cursor as usize..]);
+                let body = bun_core::String::borrow_utf8(&msg[cursor as usize..]);
                 let _ = write!(writer, "{}", body.github_action());
             }
         } else {

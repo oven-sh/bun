@@ -13,9 +13,8 @@ use bun_jsc::{
 
 use crate::dns_jsc::options_jsc::{address_to_js, result_to_js};
 
-/// Local shim for the missing `ZigString::to_js` extension — Zig's
-/// `ZigString.fromUTF8(slice).toJS(global)` is equivalent to creating a JS
-/// string directly from UTF-8 bytes.
+/// Local shim — `String::borrow_utf8(slice).to_js(global)` is equivalent to
+/// creating a JS string directly from UTF-8 bytes.
 #[inline]
 fn utf8_to_js(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
     bun_string_jsc::create_utf8_for_js(global, bytes)

@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use bun_core::ZigString;
+use bun_core::String as BunString;
 use bun_jsc::host_fn::DomCall;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSObject, JSValue, JsResult,
@@ -755,7 +755,7 @@ pub(crate) fn getter(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
 // target's parameter types (see src/jsc/host_fn.zig:654). Rust has no
 // `@typeInfo`, so the eight wrappers are unrolled manually here — each body is
 // exactly what `wrapStaticMethod(.., auto_protect=false)` would emit for that
-// signature (only the `*JSGlobalObject` / `JSValue` / `?JSValue` / `ZigString`
+// signature (only the `*JSGlobalObject` / `JSValue` / `?JSValue` / `BunString`
 // arms are exercised by this table).
 
 /// Minimal `ArgumentsSlice::nextEat` — pops the next non-consumed argument.
@@ -776,12 +776,12 @@ fn eat_required(
     next_eat(iter).ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))
 }
 
-/// `wrapStaticMethod` decode arm for `ZigString`.
+/// `wrapStaticMethod` decode arm for `BunString`.
 #[inline]
 fn eat_zig_string(
     global: &JSGlobalObject,
     iter: &mut core::slice::Iter<'_, JSValue>,
-) -> JsResult<ZigString> {
+) -> JsResult<BunString> {
     let string_value = next_eat(iter)
         .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
     if string_value.is_undefined_or_null() {
@@ -829,7 +829,7 @@ mod fields {
         FfiImpl::print(global, object, is_callback)
     }
 
-    // dlopen → FFI::open(global, ZigString, JSValue) -> JSValue
+    // dlopen → FFI::open(global, BunString, JSValue) -> JSValue
     pub(super) fn dlopen(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<2>();
         let mut iter = args.slice().iter();

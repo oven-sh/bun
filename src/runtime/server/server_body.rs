@@ -21,10 +21,9 @@ use crate::webcore::{
 use ::bstr::BStr;
 use bun_collections::HashMap;
 use bun_core::{Output, fmt as bun_fmt};
-use bun_core::{String as BunString, ZigString, strings};
+use bun_core::{String as BunString, strings};
 use bun_http::{self as http, Method, MimeType};
 use bun_jsc::Debugger::DebuggerId;
-use bun_jsc::ZigStringJsc as _;
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError,
@@ -1495,7 +1494,7 @@ where
     // is a comptime type-directed argument decoder (see host_fn.zig:493-648).
     // The `#[bun_jsc::host_fn(method)]` proc-macro that will eventually
     // replace it hasn't landed, so the per-type decode arms used by the
-    // server (`ZigString`, `JSValue`, `?JSValue`, `*WebCore.Request`) are
+    // server (`BunString`, `JSValue`, `?JSValue`, `*WebCore.Request`) are
     // open-coded here. They mirror the Zig branches exactly: same error
     // messages, same undefined/null handling, same eat order.
 
@@ -1546,7 +1545,7 @@ where
     ) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<5>();
         let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
-        // jsc.ZigString
+        // bun.String
         let topic_value = iter
             .next_eat()
             .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
@@ -1677,7 +1676,7 @@ where
     pub fn publish(
         &mut self,
         global: &JSGlobalObject,
-        topic: ZigString,
+        topic: BunString,
         message_value: JSValue,
         compress_value: Option<JSValue>,
     ) -> JsResult<JSValue> {
@@ -1687,12 +1686,12 @@ where
 
         let app = self.app.unwrap().cast::<c_void>();
 
-        if topic.len == 0 {
+        if topic.length() == 0 {
             httplog!("publish() topic invalid");
             return Err(global.throw(format_args!("publish requires a topic string")));
         }
 
-        let topic_slice = topic.to_slice();
+        let topic_slice = topic.to_utf8_without_ref();
         if topic_slice.slice().is_empty() {
             return Err(global.throw(format_args!("publish requires a non-empty topic")));
         }
@@ -1720,7 +1719,7 @@ where
         {
             let js_string = message_value.to_js_string(global)?;
             let view = js_string.view(global);
-            let slice = view.to_slice();
+            let slice = view.to_utf8_without_ref();
             // Spec keeps `js_string` alive (server.zig:748), not `message_value`:
             // when the input was not already a JSString, `to_js_string` allocates
             // a fresh GC cell that is *not* reachable from `message_value`, so a
@@ -1790,11 +1789,11 @@ where
                 }
             });
 
-            let mut sec_websocket_protocol = ZigString::EMPTY;
-            let mut sec_websocket_extensions = ZigString::EMPTY;
+            let mut sec_websocket_protocol = BunString::EMPTY;
+            let mut sec_websocket_extensions = BunString::EMPTY;
 
             // Owned backing storage for the above when they come from options.headers.
-            // fastGet returns a ZigString that borrows from the header map entry's
+            // fastGet returns a BunString that borrows from the header map entry's
             // StringImpl, which fastRemove then frees — so we must copy the bytes
             // before removing the entry.
             let mut _sec_websocket_protocol_owned = ZigStringSlice::EMPTY;
@@ -1860,7 +1859,7 @@ where
                             // Clone before fastRemove frees the backing StringImpl.
                             _sec_websocket_protocol_owned = protocol.to_slice_clone();
                             sec_websocket_protocol =
-                                ZigString::init(_sec_websocket_protocol_owned.slice());
+                                BunString::ascii(_sec_websocket_protocol_owned.slice());
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use.fast_remove(HTTPHeaderName::SecWebSocketProtocol);
                         }
@@ -1871,7 +1870,7 @@ where
                             // Clone before fastRemove frees the backing StringImpl.
                             _sec_websocket_extensions_owned = extensions.to_slice_clone();
                             sec_websocket_extensions =
-                                ZigString::init(_sec_websocket_extensions_owned.slice());
+                                BunString::ascii(_sec_websocket_extensions_owned.slice());
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use
                                 .fast_remove(HTTPHeaderName::SecWebSocketExtensions);
@@ -1938,9 +1937,9 @@ where
             unsafe { (*p).deref() }
         });
 
-        let mut sec_websocket_key_str = ZigString::EMPTY;
-        let mut sec_websocket_protocol = ZigString::EMPTY;
-        let mut sec_websocket_extensions = ZigString::EMPTY;
+        let mut sec_websocket_key_str = BunString::EMPTY;
+        let mut sec_websocket_protocol = BunString::EMPTY;
+        let mut sec_websocket_extensions = BunString::EMPTY;
 
         // Owned backing storage for sec_websocket_* — see server.zig:910 comment.
         // `ZigStringSlice` impls `Drop`; reassignment drops the previous value.
@@ -1959,15 +1958,15 @@ where
             let head = bun_opaque::opaque_deref_mut(head.as_ptr());
             if let Some(key) = head.fast_get(HTTPHeaderName::SecWebSocketKey) {
                 _sec_websocket_key_owned = key.to_slice_clone();
-                sec_websocket_key_str = ZigString::init(_sec_websocket_key_owned.slice());
+                sec_websocket_key_str = BunString::ascii(_sec_websocket_key_owned.slice());
             }
             if let Some(proto) = head.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
                 _sec_websocket_protocol_owned = proto.to_slice_clone();
-                sec_websocket_protocol = ZigString::init(_sec_websocket_protocol_owned.slice());
+                sec_websocket_protocol = BunString::ascii(_sec_websocket_protocol_owned.slice());
             }
             if let Some(ext) = head.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
                 _sec_websocket_extensions_owned = ext.to_slice_clone();
-                sec_websocket_extensions = ZigString::init(_sec_websocket_extensions_owned.slice());
+                sec_websocket_extensions = BunString::ascii(_sec_websocket_extensions_owned.slice());
             }
         }
 
@@ -1982,28 +1981,28 @@ where
             // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref
             // (BACKREF; live while RequestContext.req is Some).
             let r = bun_opaque::opaque_deref_mut(req_ptr.cast::<uws_sys::Request>());
-            if sec_websocket_key_str.len == 0 {
+            if sec_websocket_key_str.length() == 0 {
                 sec_websocket_key_str =
-                    ZigString::init(r.header(b"sec-websocket-key").unwrap_or(b""));
+                    BunString::ascii(r.header(b"sec-websocket-key").unwrap_or(b""));
             }
-            if sec_websocket_protocol.len == 0 {
+            if sec_websocket_protocol.length() == 0 {
                 sec_websocket_protocol =
-                    ZigString::init(r.header(b"sec-websocket-protocol").unwrap_or(b""));
+                    BunString::ascii(r.header(b"sec-websocket-protocol").unwrap_or(b""));
             }
-            if sec_websocket_extensions.len == 0 {
+            if sec_websocket_extensions.length() == 0 {
                 sec_websocket_extensions =
-                    ZigString::init(r.header(b"sec-websocket-extensions").unwrap_or(b""));
+                    BunString::ascii(r.header(b"sec-websocket-extensions").unwrap_or(b""));
             }
         }
 
-        if sec_websocket_key_str.len != 24 {
+        if sec_websocket_key_str.length() != 24 {
             return Ok(JSValue::FALSE);
         }
-        if sec_websocket_protocol.len > 0 {
-            sec_websocket_protocol.mark_utf8();
+        if sec_websocket_protocol.length() > 0 {
+            sec_websocket_protocol.0.mark_utf8();
         }
-        if sec_websocket_extensions.len > 0 {
-            sec_websocket_extensions.mark_utf8();
+        if sec_websocket_extensions.length() > 0 {
+            sec_websocket_extensions.0.mark_utf8();
         }
 
         let mut data_value = JSValue::ZERO;
@@ -2074,13 +2073,13 @@ where
                     if let Some(p) = fh.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
                         _sec_websocket_protocol_owned = p.to_slice_clone();
                         sec_websocket_protocol =
-                            ZigString::init(_sec_websocket_protocol_owned.slice());
+                            BunString::ascii(_sec_websocket_protocol_owned.slice());
                         fh.fast_remove(HTTPHeaderName::SecWebSocketProtocol);
                     }
                     if let Some(e) = fh.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
                         _sec_websocket_extensions_owned = e.to_slice_clone();
                         sec_websocket_extensions =
-                            ZigString::init(_sec_websocket_extensions_owned.slice());
+                            BunString::ascii(_sec_websocket_extensions_owned.slice());
                         fh.fast_remove(HTTPHeaderName::SecWebSocketExtensions);
                     }
                 }
@@ -2136,7 +2135,7 @@ where
         );
         data_value.ensure_still_alive();
 
-        // `ZigString::Slice` impls `Drop` — freed at scope exit.
+        // `ZigStringSlice` impls `Drop` — freed at scope exit.
         let proto_str = sec_websocket_protocol.to_slice();
         let ext_str = sec_websocket_extensions.to_slice();
 
@@ -2149,7 +2148,7 @@ where
 
         resp.upgrade(
             ws,
-            sec_websocket_key_str.slice(),
+            sec_websocket_key_str.latin1(),
             proto_str.slice(),
             ext_str.slice(),
             // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe
@@ -2328,7 +2327,7 @@ where
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
-                    ZigString::init(b"fetch() requires the server to have a fetch handler")
+                    BunString::ascii(b"fetch() requires the server to have a fetch handler")
                         .to_error_instance(ctx),
                 ),
             );
@@ -2341,7 +2340,7 @@ where
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
-                    ZigString::init(fetch_error.as_bytes()).to_error_instance(ctx),
+                    BunString::ascii(fetch_error.as_bytes()).to_error_instance(ctx),
                 ),
             );
         }
@@ -2365,7 +2364,7 @@ where
                 return Ok(
                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                         ctx,
-                        ZigString::init(fetch_error.as_bytes()).to_error_instance(ctx),
+                        BunString::ascii(fetch_error.as_bytes()).to_error_instance(ctx),
                     ),
                 );
             }
@@ -2416,7 +2415,7 @@ where
                         Err(_) => {
                             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                                 ctx,
-                                ZigString::init(b"fetch() received invalid body").to_error_instance(ctx),
+                                BunString::ascii(b"fetch() received invalid body").to_error_instance(ctx),
                             ));
                         }
                     }
@@ -2489,7 +2488,7 @@ where
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
-                    ZigString::init(b"fetch() returned an empty value").to_error_instance(ctx),
+                    BunString::ascii(b"fetch() returned an empty value").to_error_instance(ctx),
                 ),
             );
         }
@@ -3864,7 +3863,7 @@ unsafe extern "C" {
     pub(super) safe fn Bun__ServerRouteList__create(
         global: *const JSGlobalObject,
         callbacks: *mut JSValue,
-        paths: *mut ZigString,
+        paths: *mut BunString,
         paths_length: usize,
     ) -> JSValue;
 }

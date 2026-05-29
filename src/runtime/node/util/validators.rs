@@ -1,12 +1,12 @@
 use core::fmt;
 
-use bun_core::ZigString;
+use bun_core::String as BunString;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
 
-pub(crate) fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigString {
+pub(crate) fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> BunString {
     let js_type = value.js_type();
     if js_type.is_array() {
-        return ZigString::static_("array");
+        return BunString::static_("array");
     }
     value
         .js_type_string(global_object)

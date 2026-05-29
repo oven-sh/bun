@@ -1,9 +1,9 @@
 use core::ffi::{c_char, c_int, c_long, c_void};
 
 use bun_boringssl_sys as boringssl;
-use bun_core::{String as BunString, ZigString, strings};
+use bun_core::{String as BunString, strings};
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, ZigStringJsc as _,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _,
 };
 
 use crate::api::bun_x509 as X509;
@@ -244,7 +244,7 @@ pub(super) fn get_servername(
     }
     // SAFETY: SSL_get_servername returns a NUL-terminated C string owned by the SSL session.
     let slice = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-    Ok(ZigString::from_utf8(slice).to_js(global))
+    Ok(BunString::borrow_utf8(slice).to_js_value(global))
 }
 
 pub(super) fn set_servername(
@@ -344,7 +344,7 @@ pub(super) fn get_tls_version(
     if slice.is_empty() {
         return Ok(JSValue::NULL);
     }
-    Ok(ZigString::from_utf8(slice).to_js(global))
+    Ok(BunString::borrow_utf8(slice).to_js_value(global))
 }
 
 pub(super) fn set_max_send_fragment(
@@ -595,7 +595,7 @@ pub(super) fn get_shared_sigalgs(
             array.put_index(
                 global,
                 u32::try_from(i).expect("int cast"),
-                ZigString::from_utf8(&buffer).to_js(global),
+                BunString::borrow_utf8(&buffer).to_js_value(global),
             )?;
         } else {
             let mut buffer: Vec<u8> = Vec::with_capacity(sig_with_md.len() + 6);
@@ -604,7 +604,7 @@ pub(super) fn get_shared_sigalgs(
             array.put_index(
                 global,
                 u32::try_from(i).expect("int cast"),
-                ZigString::from_utf8(&buffer).to_js(global),
+                BunString::borrow_utf8(&buffer).to_js_value(global),
             )?;
         }
     }
@@ -636,7 +636,7 @@ pub(super) fn get_cipher(
     } else {
         // SAFETY: SSL_CIPHER_get_name returns a static NUL-terminated C string.
         let s = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
-        result.put(global, b"name", ZigString::from_utf8(s).to_js(global));
+        result.put(global, b"name", BunString::borrow_utf8(s).to_js_value(global));
     }
 
     let standard_name = ffi::SSL_CIPHER_standard_name(cipher);
@@ -648,7 +648,7 @@ pub(super) fn get_cipher(
         result.put(
             global,
             b"standardName",
-            ZigString::from_utf8(s).to_js(global),
+            BunString::borrow_utf8(s).to_js_value(global),
         );
     }
 
@@ -658,7 +658,7 @@ pub(super) fn get_cipher(
     } else {
         // SAFETY: SSL_CIPHER_get_version returns a static NUL-terminated C string.
         let s = unsafe { bun_core::ffi::cstr(version) }.to_bytes();
-        result.put(global, b"version", ZigString::from_utf8(s).to_js(global));
+        result.put(global, b"version", BunString::borrow_utf8(s).to_js_value(global));
     }
 
     Ok(result)
@@ -863,7 +863,7 @@ pub(super) fn get_ephemeral_key_info(
             result.put(
                 global,
                 b"name",
-                ZigString::from_utf8(curve_name).to_js(global),
+                BunString::borrow_utf8(curve_name).to_js_value(global),
             );
             result.put(global, b"size", JSValue::js_number(f64::from(bits)));
         }
@@ -897,7 +897,7 @@ pub(super) fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResul
     if strings::eql(slice, b"http/1.1") {
         return BunString::static_("http/1.1").to_js(global);
     }
-    Ok(ZigString::from_utf8(slice).to_js(global))
+    Ok(BunString::borrow_utf8(slice).to_js_value(global))
 }
 
 pub(super) fn get_session(
@@ -1114,7 +1114,7 @@ extern "C" fn always_allow_ssl_verify_callback(
 #[cold]
 #[inline(never)]
 fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue {
-    let mut zig_str = ZigString::init(b"");
+    let mut zig_str = BunString::ascii(b"");
     let mut output_buf: [u8; 4096] = [0; 4096];
 
     output_buf[0] = 0;
@@ -1172,7 +1172,7 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
             use std::io::Write;
             let _ = write!(&mut formatted, "OpenSSL {}", ::bstr::BStr::new(message));
         }
-        // TODO(port): Zig leaks `formatted` into a global-marked ZigString; ownership semantics unclear.
+        // TODO(port): Zig leaks `formatted` into a global-marked String; ownership semantics unclear.
         // `Interned::leak_vec` makes the process-lifetime leak explicit (the
         // bytes are never reclaimed). NOTE: `mark_global()` below tells JSC the
         // bytes are mimalloc-owned and may be freed via `mi_free`, but
@@ -1180,9 +1180,9 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
         // mismatch if JSC ever adopts the buffer. `to_error_instance` clones
         // the string, so today the leaked bytes are simply never freed; the
         // `mark_global` is dead weight matching Zig 1:1 (see TODO below).
-        zig_str = ZigString::init(bun_ptr::Interned::leak_vec(formatted).as_bytes());
+        zig_str = BunString::ascii(bun_ptr::Interned::leak_vec(formatted).as_bytes());
         let mut encoded_str = zig_str.with_encoding();
-        encoded_str.mark_global();
+        encoded_str.0.mark_global();
         // TODO(port): Zig discards encoded_str and continues using zig_str — possible upstream bug; matching Zig 1:1.
         let _ = encoded_str;
 
@@ -1190,8 +1190,8 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
         boringssl::ERR_clear_error();
     }
 
-    if zig_str.len == 0 {
-        zig_str = ZigString::init(default_message);
+    if zig_str.length() == 0 {
+        zig_str = BunString::ascii(default_message);
     }
 
     // store the exception in here

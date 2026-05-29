@@ -1029,47 +1029,43 @@ pub mod wtf {
 pub enum Tag {
     Dead = 0,
     WTFStringImpl = 1,
-    ZigString = 2,
-    StaticZigString = 3,
+    StringView = 2,
+    StaticStringView = 3,
     Empty = 4,
 }
 
-// `ZigString` pointer-tag scheme (ZigString.zig:629) — single source of truth.
+// `StringView` pointer-tag scheme (ZigString.zig:629) — single source of truth.
 // Flag bits live in the POINTER's high byte; untagging truncates to 53 bits.
-pub const ZS_STATIC_BIT: usize = 1usize << 60;
-pub const ZS_UTF8_BIT: usize = 1usize << 61;
-pub const ZS_GLOBAL_BIT: usize = 1usize << 62;
-pub const ZS_16BIT_BIT: usize = 1usize << 63;
-pub const ZS_UNTAG_MASK: usize = (1usize << 53) - 1;
+const SV_STATIC_BIT: usize = 1usize << 60;
+const SV_UTF8_BIT: usize = 1usize << 61;
+const SV_GLOBAL_BIT: usize = 1usize << 62;
+const SV_16BIT_BIT: usize = 1usize << 63;
+const SV_UNTAG_MASK: usize = (1usize << 53) - 1;
 
-/// Port of `jsc.ZigString` — extern struct `{ ptr: [*]const u8, len: usize }`.
+/// Borrowed `{ptr, len}` view with encoding flags packed into the pointer's
+/// high bits. Port of `jsc.ZigString` — extern struct
+/// `{ ptr: [*]const u8, len: usize }`.
 ///
-/// **Canonical storage layout.** `bun_core::string::ZigString` is a
-/// `#[repr(transparent)]` newtype over this struct (so the FFI layout has ONE
-/// source of truth) and adds the encoding-aware/allocating methods via
-/// `Deref`/`DerefMut`. The pointer-tag accessors (`is_*` / `mark_*` /
-/// `untagged` / `slice` / `utf16_slice_aligned`) live HERE so the T0
-/// `bun_alloc::String` union and `WTFStringImplStruct::to_zig_string` can use
-/// them without an upward dep on `bun_core`. Higher-tier callers should name
-/// `bun_core::ZigString`; reaching the inherent methods through `Deref` is the
-/// intended path.
+/// Private to this crate: it is the payload of [`String`]'s
+/// `Tag::StringView` / `Tag::StaticStringView` variants. All callers go through
+/// [`String`] (`BunString` in C++).
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct ZigString {
+struct StringView {
     /// Tagged pointer — never dereference directly; use `untagged()`.
-    pub _unsafe_ptr_do_not_use: *const u8,
-    pub len: usize,
+    _unsafe_ptr_do_not_use: *const u8,
+    len: usize,
 }
 
-impl ZigString {
-    pub const EMPTY: ZigString = ZigString {
+impl StringView {
+    const EMPTY: StringView = StringView {
         _unsafe_ptr_do_not_use: b"".as_ptr(),
         len: 0,
     };
 
     #[inline]
-    pub const fn init(slice: &[u8]) -> ZigString {
-        ZigString {
+    const fn init(slice: &[u8]) -> StringView {
+        StringView {
             _unsafe_ptr_do_not_use: slice.as_ptr(),
             len: slice.len(),
         }
@@ -1078,23 +1074,16 @@ impl ZigString {
     /// Construct from an already-tagged pointer + length. `ptr` is stored
     /// verbatim — tag bits are not touched.
     #[inline]
-    pub const fn from_tagged_ptr(ptr: *const u8, len: usize) -> ZigString {
-        ZigString {
+    const fn from_tagged_ptr(ptr: *const u8, len: usize) -> StringView {
+        StringView {
             _unsafe_ptr_do_not_use: ptr,
             len,
         }
     }
 
-    /// Raw tagged pointer (top-bit flags intact). Pair with
-    /// [`from_tagged_ptr`]; do **not** dereference without [`untagged`].
     #[inline]
-    pub const fn tagged_ptr(&self) -> *const u8 {
-        self._unsafe_ptr_do_not_use
-    }
-
-    #[inline]
-    pub fn init_utf16(items: &[u16]) -> ZigString {
-        let mut out = ZigString {
+    fn init_utf16(items: &[u16]) -> StringView {
+        let mut out = StringView {
             _unsafe_ptr_do_not_use: items.as_ptr().cast(),
             len: items.len(),
         };
@@ -1103,68 +1092,61 @@ impl ZigString {
     }
 
     #[inline]
-    pub const fn length(&self) -> usize {
+    const fn length(&self) -> usize {
         self.len
-    }
-    #[inline]
-    pub const fn is_empty(&self) -> bool {
-        self.len == 0
     }
 
     #[inline]
-    pub fn is_16bit(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & ZS_16BIT_BIT != 0
+    fn is_16bit(&self) -> bool {
+        (self._unsafe_ptr_do_not_use as usize) & SV_16BIT_BIT != 0
     }
     #[inline]
-    pub fn is_utf8(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & ZS_UTF8_BIT != 0
+    fn is_utf8(&self) -> bool {
+        (self._unsafe_ptr_do_not_use as usize) & SV_UTF8_BIT != 0
     }
     #[inline]
-    pub fn is_globally_allocated(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & ZS_GLOBAL_BIT != 0
+    fn is_globally_allocated(&self) -> bool {
+        (self._unsafe_ptr_do_not_use as usize) & SV_GLOBAL_BIT != 0
     }
     #[inline]
-    pub fn is_static(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & ZS_STATIC_BIT != 0
+    fn is_static(&self) -> bool {
+        (self._unsafe_ptr_do_not_use as usize) & SV_STATIC_BIT != 0
     }
     #[inline]
-    pub fn mark_utf16(&mut self) {
+    fn mark_utf16(&mut self) {
         self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | ZS_16BIT_BIT) as *const u8;
+            ((self._unsafe_ptr_do_not_use as usize) | SV_16BIT_BIT) as *const u8;
     }
     #[inline]
-    pub fn mark_utf8(&mut self) {
+    fn mark_utf8(&mut self) {
         self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | ZS_UTF8_BIT) as *const u8;
+            ((self._unsafe_ptr_do_not_use as usize) | SV_UTF8_BIT) as *const u8;
     }
     #[inline]
-    pub fn mark_global(&mut self) {
+    fn mark_global(&mut self) {
         self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | ZS_GLOBAL_BIT) as *const u8;
+            ((self._unsafe_ptr_do_not_use as usize) | SV_GLOBAL_BIT) as *const u8;
     }
     #[inline]
-    pub fn mark_static(&mut self) {
+    fn mark_static(&mut self) {
         self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | ZS_STATIC_BIT) as *const u8;
+            ((self._unsafe_ptr_do_not_use as usize) | SV_STATIC_BIT) as *const u8;
     }
 
     /// Zig `untagged`: `@ptrFromInt(@as(u53, @truncate(@intFromPtr(ptr))))`.
     #[inline]
-    pub fn untagged(ptr: *const u8) -> *const u8 {
-        ((ptr as usize) & ZS_UNTAG_MASK) as *const u8
+    fn untagged(ptr: *const u8) -> *const u8 {
+        ((ptr as usize) & SV_UNTAG_MASK) as *const u8
     }
 
     /// 8-bit byte view (latin1 or utf8). Caller must ensure `!is_16bit()`.
     #[inline]
-    pub fn slice(&self) -> &[u8] {
+    fn slice(&self) -> &[u8] {
         if self.len == 0 {
             return &[];
         }
         // ZigString.zig:637 — only panics when `len > 0 and is16Bit()`.
-        debug_assert!(
-            !self.is_16bit(),
-            "ZigString::slice() on UTF-16 string; use to_slice()"
-        );
+        debug_assert!(!self.is_16bit(), "StringView::slice() on UTF-16 string");
         // SAFETY: constructor stored a valid ptr/len; flag bits stripped. Zig
         // caps at u32::MAX (ZigString.zig:642).
         unsafe {
@@ -1177,18 +1159,18 @@ impl ZigString {
 
     /// UTF-16 code-unit view. Caller must ensure `is_16bit()`.
     #[inline]
-    pub fn utf16_slice_aligned(&self) -> &[u16] {
+    fn utf16_slice_aligned(&self) -> &[u16] {
         if self.len == 0 {
             return &[];
         }
         // ZigString.zig:436 — only panics when `len > 0 and !is16Bit()`.
         debug_assert!(self.is_16bit());
         // SAFETY: 16-bit-tagged constructor stored a 2-byte-aligned ptr valid
-        // for `self.len` u16 units; flag bits stripped via `ZS_UNTAG_MASK`
+        // for `self.len` u16 units; flag bits stripped via `SV_UNTAG_MASK`
         // (inlined `untagged()` so the cast goes `usize → *const u16` directly).
         unsafe {
             core::slice::from_raw_parts(
-                ((self._unsafe_ptr_do_not_use as usize) & ZS_UNTAG_MASK) as *const u16,
+                ((self._unsafe_ptr_do_not_use as usize) & SV_UNTAG_MASK) as *const u16,
                 self.len,
             )
         }
@@ -1385,11 +1367,11 @@ impl WTFStringImplStruct {
         unsafe { Bun__WTFStringImpl__hasPrefix(self, text.as_ptr(), text.len()) }
     }
     #[inline]
-    pub fn to_zig_string(&self) -> ZigString {
+    fn to_string_view(&self) -> StringView {
         if self.is_8bit() {
-            ZigString::init(self.latin1_slice())
+            StringView::init(self.latin1_slice())
         } else {
-            ZigString::init_utf16(self.utf16_slice())
+            StringView::init_utf16(self.utf16_slice())
         }
     }
 }
@@ -1465,24 +1447,25 @@ pub mod StringImplAllocator {
     pub const VTABLE_PTR: &AllocatorVTable = &VTABLE;
 }
 
-/// Port of `bun.String.StringImpl` — `extern union`.
+/// Port of `bun.String.StringImpl` — `extern union`. Fields private; access
+/// goes through [`String`]'s constructors and accessors.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union StringImpl {
-    pub zig_string: ZigString,
-    pub wtf_string_impl: WTFStringImpl,
-    // .StaticZigString aliases .zig_string; .Dead/.Empty are zero-width.
+    view: StringView,
+    wtf_string_impl: WTFStringImpl,
+    // .StaticStringView aliases .view; .Dead/.Empty are zero-width.
 }
 
 /// Port of `bun.String` (a.k.a. `BunString` in C++).
 ///
-/// 5-variant tagged union over WTF-backed and Zig-slice-backed strings. NOT a
+/// 5-variant tagged union over WTF-backed and slice-backed strings. NOT a
 /// Rust `enum` because C++ mutates `tag` and `value` independently across FFI.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct String {
-    pub tag: Tag,
-    pub value: StringImpl,
+    tag: Tag,
+    value: StringImpl,
 }
 
 impl String {
@@ -1498,41 +1481,217 @@ impl String {
     pub const EMPTY: String = String {
         tag: Tag::Empty,
         value: StringImpl {
-            zig_string: ZigString::EMPTY,
+            view: StringView::EMPTY,
         },
     };
     pub const DEAD: String = String {
         tag: Tag::Dead,
         value: StringImpl {
-            zig_string: ZigString::EMPTY,
+            view: StringView::EMPTY,
         },
     };
 
+    #[inline]
+    pub const fn tag(&self) -> Tag {
+        self.tag
+    }
+    #[inline]
+    pub fn set_tag(&mut self, tag: Tag) {
+        self.tag = tag;
+    }
+
+    // -- StringView-tag constructors -----------------------------------------
+    #[inline]
+    const fn wrap(tag: Tag, view: StringView) -> String {
+        String {
+            tag,
+            value: StringImpl { view },
+        }
+    }
+    /// Borrow `slice` (latin1/ascii). Caller keeps `slice` alive.
+    #[inline]
+    pub const fn borrowed(slice: &[u8]) -> String {
+        Self::wrap(Tag::StringView, StringView::init(slice))
+    }
+    /// Borrow a `'static` slice; never freed.
+    #[inline]
+    pub const fn borrowed_static(slice: &'static [u8]) -> String {
+        Self::wrap(Tag::StaticStringView, StringView::init(slice))
+    }
+    /// Borrow `slice` and tag as UTF-8.
+    #[inline]
+    pub fn borrowed_utf8(slice: &[u8]) -> String {
+        let mut v = StringView::init(slice);
+        v.mark_utf8();
+        Self::wrap(Tag::StringView, v)
+    }
+    /// Borrow `slice` (UTF-16 code units).
+    #[inline]
+    pub fn borrowed_utf16(slice: &[u16]) -> String {
+        Self::wrap(Tag::StringView, StringView::init_utf16(slice))
+    }
+    /// Borrow a heap-owned slice the C++ side will free via `BunStringView__freeGlobal`.
+    #[inline]
+    pub fn borrowed_global(slice: &[u8]) -> String {
+        let mut v = StringView::init(slice);
+        v.mark_global();
+        Self::wrap(Tag::StringView, v)
+    }
+    /// Construct from an already pointer-tagged `(ptr, len)` pair (round-trips
+    /// [`tagged_view_ptr`]).
+    #[inline]
+    pub const fn borrowed_tagged(ptr: *const u8, len: usize) -> String {
+        Self::wrap(Tag::StringView, StringView::from_tagged_ptr(ptr, len))
+    }
+    /// Wrap a non-null `WTF::StringImpl*`. Does not bump the refcount.
+    #[inline]
+    pub fn from_wtf(impl_: WTFStringImpl) -> String {
+        debug_assert!(!impl_.is_null());
+        String {
+            tag: Tag::WTFStringImpl,
+            value: StringImpl {
+                wtf_string_impl: impl_,
+            },
+        }
+    }
+
+    // -- accessors -----------------------------------------------------------
     /// Borrow the live `WTF::StringImpl` backing this string.
     ///
-    /// Centralises the union-field read + raw-ptr deref that `to_zig_string` /
-    /// `length` / `is_8bit` each open-coded. Callers branch on
-    /// `self.tag == WTFStringImpl` first (debug-asserted).
+    /// Callers branch on `self.tag == WTFStringImpl` first (debug-asserted).
     #[inline(always)]
-    fn wtf_impl(&self) -> &WTFStringImplStruct {
+    pub fn wtf_impl(&self) -> &WTFStringImplStruct {
         debug_assert_eq!(self.tag, Tag::WTFStringImpl);
         // SAFETY: `tag == WTFStringImpl` ⇒ `wtf_string_impl` is the active
         // union field and a non-null, live `*mut WTFStringImplStruct`
         // (refcount ≥ 1 for the `String`'s lifetime).
         unsafe { &*self.value.wtf_string_impl }
     }
+    /// Raw `WTF::StringImpl*`. Null when `tag != WTFStringImpl`.
+    #[inline]
+    pub fn wtf_ptr(&self) -> WTFStringImpl {
+        if self.tag == Tag::WTFStringImpl {
+            // SAFETY: tag selects the active union field.
+            unsafe { self.value.wtf_string_impl }
+        } else {
+            core::ptr::null_mut()
+        }
+    }
+
+    /// Project to a borrowed view regardless of backing.
+    #[inline]
+    fn view(&self) -> StringView {
+        match self.tag {
+            Tag::StaticStringView | Tag::StringView => {
+                // SAFETY: `tag` is `StringView`/`StaticStringView` ⇒ `view`
+                // is the active union field.
+                unsafe { self.value.view }
+            }
+            Tag::WTFStringImpl => self.wtf_impl().to_string_view(),
+            _ => StringView::EMPTY,
+        }
+    }
+    /// Raw tagged pointer of the underlying view (encoding flags intact).
+    #[inline]
+    pub fn tagged_view_ptr(&self) -> (*const u8, usize) {
+        let v = self.view();
+        (v._unsafe_ptr_do_not_use, v.len)
+    }
+    #[inline]
+    pub fn untag_view_ptr(ptr: *const u8) -> *const u8 {
+        StringView::untagged(ptr)
+    }
 
     #[inline]
-    pub fn to_zig_string(&self) -> ZigString {
+    pub fn is_utf8(&self) -> bool {
+        matches!(self.tag, Tag::StringView | Tag::StaticStringView) && self.view().is_utf8()
+    }
+    #[inline]
+    pub fn is_globally_allocated(&self) -> bool {
+        matches!(self.tag, Tag::StringView | Tag::StaticStringView)
+            && self.view().is_globally_allocated()
+    }
+    #[inline]
+    pub fn view_is_static(&self) -> bool {
+        matches!(self.tag, Tag::StringView | Tag::StaticStringView) && self.view().is_static()
+    }
+    /// 8-bit byte view (latin1 or utf8). Caller must ensure `is_8bit()`.
+    #[inline]
+    pub fn latin1_or_utf8_slice(&self) -> &[u8] {
         match self.tag {
-            Tag::StaticZigString | Tag::ZigString => {
-                // SAFETY: `tag` is `ZigString`/`StaticZigString` ⇒ `zig_string`
-                // is the active union field.
-                unsafe { self.value.zig_string }
-            }
-            Tag::WTFStringImpl => self.wtf_impl().to_zig_string(),
-            _ => ZigString::EMPTY,
+            Tag::WTFStringImpl => self.wtf_impl().latin1_slice(),
+            // SAFETY: tag selects the active union field.
+            Tag::StringView | Tag::StaticStringView => unsafe { &self.value.view }.slice(),
+            _ => &[],
         }
+    }
+    /// UTF-16 code-unit view. Caller must ensure `!is_8bit()`.
+    #[inline]
+    pub fn utf16_slice(&self) -> &[u16] {
+        match self.tag {
+            Tag::WTFStringImpl => self.wtf_impl().utf16_slice(),
+            // SAFETY: tag selects the active union field.
+            Tag::StringView | Tag::StaticStringView => {
+                unsafe { &self.value.view }.utf16_slice_aligned()
+            }
+            _ => &[],
+        }
+    }
+    /// Raw byte view ignoring encoding (16-bit content as 2×len bytes).
+    #[inline]
+    pub fn raw_byte_slice(&self) -> &[u8] {
+        match self.tag {
+            Tag::WTFStringImpl => self.wtf_impl().byte_slice(),
+            Tag::StringView | Tag::StaticStringView => {
+                // SAFETY: tag selects the active union field.
+                let v = unsafe { &self.value.view };
+                if v.is_16bit() {
+                    let u = v.utf16_slice_aligned();
+                    // SAFETY: u16 slice reinterpreted as 2×len bytes.
+                    unsafe { core::slice::from_raw_parts(u.as_ptr().cast::<u8>(), u.len() * 2) }
+                } else {
+                    v.slice()
+                }
+            }
+            _ => &[],
+        }
+    }
+
+    // -- mutators (StringView arm only) --------------------------------------
+    #[inline]
+    pub fn mark_utf8(&mut self) {
+        debug_assert!(matches!(self.tag, Tag::StringView | Tag::StaticStringView));
+        // SAFETY: tag asserted; mutates flag bits in the active union field.
+        unsafe { self.value.view.mark_utf8() }
+    }
+    #[inline]
+    pub fn mark_utf16(&mut self) {
+        debug_assert!(matches!(self.tag, Tag::StringView | Tag::StaticStringView));
+        // SAFETY: tag asserted; mutates flag bits in the active union field.
+        unsafe { self.value.view.mark_utf16() }
+    }
+    #[inline]
+    pub fn mark_global(&mut self) {
+        debug_assert!(matches!(self.tag, Tag::StringView | Tag::StaticStringView));
+        // SAFETY: tag asserted; mutates flag bits in the active union field.
+        unsafe { self.value.view.mark_global() }
+    }
+    #[inline]
+    pub fn mark_static(&mut self) {
+        debug_assert!(matches!(self.tag, Tag::StringView | Tag::StaticStringView));
+        // SAFETY: tag asserted; mutates flag bits in the active union field.
+        unsafe { self.value.view.mark_static() }
+    }
+    /// Replace the underlying view's slice in place (keeps tag bits clear).
+    #[inline]
+    pub fn set_view_slice(&mut self, slice: &[u8]) {
+        debug_assert!(matches!(self.tag, Tag::StringView | Tag::StaticStringView));
+        self.value.view = StringView::init(slice);
+    }
+    #[inline]
+    pub fn set_view_len(&mut self, len: usize) {
+        debug_assert!(matches!(self.tag, Tag::StringView | Tag::StaticStringView));
+        self.value.view.len = len;
     }
 
     #[inline]
@@ -1540,7 +1699,7 @@ impl String {
         if self.tag == Tag::WTFStringImpl {
             self.wtf_impl().length() as usize
         } else {
-            self.to_zig_string().length()
+            self.view().length()
         }
     }
 
@@ -1553,10 +1712,10 @@ impl String {
     pub fn is_8bit(&self) -> bool {
         match self.tag {
             Tag::WTFStringImpl => self.wtf_impl().is_8bit(),
-            Tag::StaticZigString | Tag::ZigString => {
-                // SAFETY: `tag` is `ZigString`/`StaticZigString` ⇒ `zig_string`
+            Tag::StaticStringView | Tag::StringView => {
+                // SAFETY: `tag` is `StringView`/`StaticStringView` ⇒ `view`
                 // is the active union field.
-                unsafe { !self.value.zig_string.is_16bit() }
+                unsafe { !self.value.view.is_16bit() }
             }
             _ => true,
         }
@@ -1567,7 +1726,7 @@ impl String {
     /// version uses scalar `==` / widening compare. Re-route to
     /// `bun_core::strings` via inlining if it shows up on a hot path.
     pub fn eql_comptime(&self, other: &[u8]) -> bool {
-        let zs = self.to_zig_string();
+        let zs = self.view();
         if zs.is_16bit() {
             let u16s = zs.utf16_slice_aligned();
             if u16s.len() != other.len() {
@@ -1585,10 +1744,10 @@ impl String {
 
 impl core::fmt::Display for String {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Port of `ZigString.format`: utf8 → write bytes; utf16 → transcode;
+        // Port of `StringView.format`: utf8 → write bytes; utf16 → transcode;
         // latin1 → widen each byte to a Unicode scalar.
         // PERF(port): was `bun.fmt.formatUTF16Type` / `formatLatin1` (SIMD).
-        let zs = self.to_zig_string();
+        let zs = self.view();
         if zs.len == 0 {
             return Ok(());
         }

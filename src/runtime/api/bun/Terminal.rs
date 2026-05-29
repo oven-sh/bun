@@ -19,7 +19,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::node::StringOrBuffer;
 use crate::webcore::blob::ZigStringBlobExt;
 use bun_core::SignalCode;
-use bun_core::ZigString;
+use bun_core::String as BunString;
 use bun_io::Loop as AsyncLoop;
 use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(unix)]
@@ -296,7 +296,7 @@ impl Options {
 
 impl Drop for Options {
     fn drop(&mut self) {
-        // term_name: ZigString::Slice has its own Drop; reset to default afterward
+        // term_name: ZigStringSlice has its own Drop; reset to default afterward
         // matches Zig `this.* = .{}` but is unnecessary in Rust.
     }
 }
@@ -1757,7 +1757,7 @@ impl Terminal {
         let signal_value: JSValue = if let Some(s) = signal {
             // SignalCode derives Debug → "SIGTERM" etc.
             let name = format!("{:?}", s);
-            ZigString::init(name.as_bytes()).to_js(global_this)
+            BunString::ascii(name.as_bytes()).to_js_value(global_this)
         } else {
             JSValue::NULL
         };

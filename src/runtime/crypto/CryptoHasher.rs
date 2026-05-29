@@ -3,7 +3,7 @@ use core::cell::Cell;
 use core::ffi::c_char;
 
 use bun_boringssl_sys as boring_ssl;
-use bun_core::ZigString;
+use bun_core::String as BunString;
 use bun_jsc::{
     ArrayBuffer, CallFrame, ErrorCode, JSGlobalObject, JSObject, JSValue, JsCell, JsClass as _,
     JsError, JsResult,
@@ -245,7 +245,7 @@ impl CryptoHasher {
     /// `pub const hash = jsc.host_fn.wrapStaticMethod(CryptoHasher, "hash_", false);`
     ///
     /// Hand-expanded `wrapStaticMethod` decode for the parameter list
-    /// `(*JSGlobalObject, ZigString, Node.BlobOrStringOrBuffer, ?Node.StringOrBuffer)`.
+    /// `(*JSGlobalObject, BunString, Node.BlobOrStringOrBuffer, ?Node.StringOrBuffer)`.
     pub fn hash(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<3>();
         let mut i = 0usize;
@@ -259,7 +259,7 @@ impl CryptoHasher {
             }
         };
 
-        // ZigString
+        // BunString
         let algorithm = {
             let Some(string_value) = next_eat() else {
                 return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
@@ -427,7 +427,7 @@ impl CryptoHasher {
 
     pub fn hash_(
         global: &JSGlobalObject,
-        algorithm: ZigString,
+        algorithm: BunString,
         input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<JSValue> {
@@ -492,7 +492,7 @@ impl CryptoHasher {
 
         let algorithm = algorithm_name.get_zig_string(global)?;
 
-        if algorithm.len == 0 {
+        if algorithm.length() == 0 {
             return Err(global.throw_invalid_arguments(format_args!("Invalid algorithm name")));
         }
 
@@ -902,7 +902,7 @@ macro_rules! for_each_zig_algo {
 impl CryptoHasherZig {
     pub fn hash_by_name(
         global: &JSGlobalObject,
-        algorithm: &ZigString,
+        algorithm: &BunString,
         input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<Option<JSValue>> {
@@ -1018,7 +1018,7 @@ impl CryptoHasherZig {
         }
     }
 
-    fn constructor(algorithm: &ZigString) -> Option<Box<CryptoHasher>> {
+    fn constructor(algorithm: &BunString) -> Option<Box<CryptoHasher>> {
         macro_rules! arm {
             ($name:literal, $ty:ty, $alg:expr) => {
                 if $alg.eql_comptime($name) {

@@ -23,7 +23,7 @@ fn algorithm_from_js_case_insensitive(
     Ok(evp::lookup_ignore_case(slice.slice()))
 }
 
-/// `JSValue.getOptional(_, _, ZigString.Slice)` — local shim until `bun_jsc`
+/// `JSValue.getOptional(_, _, ZigStringSlice)` — local shim until `bun_jsc`
 /// grows a typed `get_optional`. Returns `None` for missing/null/undefined.
 fn get_optional_slice(
     target: JSValue,

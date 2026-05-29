@@ -170,7 +170,7 @@ impl ParsedShellScript {
             let keyslice = key.to_owned_slice();
             // errdefer free(keyslice) — Drop on early-return handles this.
             let value_str = value.get_zig_string(global)?;
-            // `ZigString::to_owned_slice` is infallible in the Rust port (global alloc
+            // `String::to_owned_slice` is infallible in the Rust port (global alloc
             // aborts on OOM); Zig wrapped in `bun.handleOom`.
             let slice = value_str.to_owned_slice();
             let keyref = EnvStr::init_ref_counted(&keyslice);

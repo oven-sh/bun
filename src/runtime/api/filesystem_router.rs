@@ -24,12 +24,12 @@ use core::cell::UnsafeCell;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_ast as Log;
-use bun_core::{ZigString, ZigStringSlice};
+use bun_core::{String as BunString, ZigStringSlice};
 use bun_jsc::js_object::ObjectInitializer;
 use bun_jsc::ref_string::RefString;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, LogJsc, StringJsc,
+    CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, LogJsc, StringJsc,
 };
 use bun_paths::{self as path, MAX_PATH_BYTES, PathBuffer};
 use bun_ptr::BackRef;
@@ -55,12 +55,9 @@ pub use crate::bake::framework_router::JSFrameworkRouter as FrameworkFileSystemR
 pub(crate) const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js"];
 
 // ── local shims ───────────────────────────────────────────────────────────
-// `to_js` lives on the `bun_jsc::ZigStringJsc` extension trait; `from_bytes`
-// auto-detects UTF-8.
-use bun_jsc::ZigStringJsc as _;
 #[inline]
 fn zs_to_js(bytes: &[u8], global: &JSGlobalObject) -> JSValue {
-    jsc::zig_string::ZigString::from_bytes(bytes).to_js(global)
+    BunString::ascii(bytes).with_encoding().to_js_value(global)
 }
 
 // ── ResolverLike bridge ───────────────────────────────────────────────────
@@ -673,12 +670,12 @@ impl FileSystemRouter {
         let router = this.router.get();
         let paths = router.get_entry_points();
         let names = router.get_names();
-        let mut name_strings: Vec<ZigString> = vec![ZigString::default(); names.len() * 2];
+        let mut name_strings: Vec<BunString> = vec![BunString::default(); names.len() * 2];
         // `defer free(name_strings)` → Drop
         let (name_strings_slice, paths_strings) = name_strings.split_at_mut(names.len());
         for (i, name) in names.iter().enumerate() {
-            name_strings_slice[i] = ZigString::from_bytes(name);
-            paths_strings[i] = ZigString::from_bytes(paths[i]);
+            name_strings_slice[i] = BunString::borrow_bytes(name);
+            paths_strings[i] = BunString::borrow_bytes(paths[i]);
         }
         Ok(JSValue::from_entries(
             global_this,
@@ -919,22 +916,22 @@ impl MatchedRoute {
                 // array lets inference tie the element lifetime to `iter` and dies with
                 // this frame.
                 let mut values_buf: [&[u8]; 256] = [b""; 256];
-                let mut refs_buf: [ZigString; 256] = [ZigString::EMPTY; 256];
+                let mut refs_buf: [BunString; 256] = [BunString::EMPTY; 256];
 
                 let mut iter = self.query.iter();
                 while let Some(entry) = iter.next(&mut values_buf) {
                     let entry_name = entry.name;
-                    let mut str = ZigString::from_bytes(entry_name);
+                    let mut str = BunString::borrow_bytes(entry_name);
 
                     debug_assert!(!entry.values.is_empty());
                     if entry.values.len() > 1 {
                         let values = &mut refs_buf[0..entry.values.len()];
                         for (i, value) in entry.values.iter().enumerate() {
-                            values[i] = ZigString::from_bytes(value);
+                            values[i] = BunString::borrow_bytes(value);
                         }
                         obj.put_record(global, &mut str, values)?;
                     } else {
-                        refs_buf[0] = ZigString::from_bytes(entry.values[0]);
+                        refs_buf[0] = BunString::borrow_bytes(entry.values[0]);
                         obj.put_record(global, &mut str, &mut refs_buf[0..1])?;
                     }
                 }

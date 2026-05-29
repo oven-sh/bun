@@ -4414,12 +4414,12 @@ unsafe fn get_hardcoded_module_hook(
 /// # Safety
 /// `global` is the live JS-thread `JSGlobalObject*`; `specifier_ptr` /
 /// `referrer_ptr` are valid `bun.String*` for the call's duration;
-/// `source_code` is a valid `ZigString*`; `ret` is a valid out-param.
+/// `source_code` is a valid `bun.String*`; `ret` is a valid out-param.
 unsafe fn transpile_virtual_module(
     global: *mut JSGlobalObject,
     specifier_ptr: *const bun_core::String,
     referrer_ptr: *const bun_core::String,
-    source_code: *mut bun_core::ZigString,
+    source_code: *mut bun_core::String,
     loader_: bun_options_types::schema::api::Loader,
     ret: *mut ErrorableResolvedSource,
 ) -> bool {
@@ -4439,7 +4439,7 @@ unsafe fn transpile_virtual_module(
     let specifier_slice = unsafe { &*specifier_ptr }.to_utf8();
     let specifier = specifier_slice.slice();
     // SAFETY: per fn contract.
-    let source_code_slice = unsafe { &*source_code }.to_slice();
+    let source_code_slice = unsafe { &*source_code }.to_utf8();
     // SAFETY: per fn contract.
     let referrer_slice = unsafe { &*referrer_ptr }.to_utf8();
 

@@ -4,10 +4,9 @@ use std::io::Write as _;
 use bun_ast::ImportKind;
 use bun_core::strings;
 
-use crate::zig_string::ZigString;
-use crate::{
-    CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _, ZigStringJsc as _,
-};
+use bun_core::String as BunString;
+
+use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. `msg` and
 // `referrer` are read-only after construction; only `logged` is mutated
@@ -229,18 +228,18 @@ impl ResolveMessage {
         {
             return global.throw_out_of_memory_value();
         }
-        let mut str = ZigString::init(&text);
+        let mut str = BunString::ascii(&text);
         str.set_output_encoding();
         if str.is_utf8() {
-            let out = str.to_js(global);
+            let out = str.to_js_value(global);
             drop(text);
             return out;
         }
 
         // TODO(port): `toExternalValue` transfers ownership of `text` to JSC; ensure
-        // `ZigString::to_external_value` consumes the Vec without double-free.
+        // `to_external_value` consumes the Vec without double-free.
         let leaked = text.into_boxed_slice();
-        let mut str = ZigString::init(bun_core::heap::release(leaked));
+        let mut str = BunString::ascii(bun_core::heap::release(leaked));
         str.set_output_encoding();
         str.to_external_value(global)
     }
@@ -321,23 +320,23 @@ impl ResolveMessage {
 
     #[crate::host_fn(getter)]
     pub fn get_message(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(ZigString::init(&this.msg.data.text).to_js(global))
+        Ok(BunString::ascii(&this.msg.data.text).to_js_value(global))
     }
 
     #[crate::host_fn(getter)]
     pub fn get_level(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(ZigString::init(this.msg.kind.string()).to_js(global))
+        Ok(BunString::ascii(this.msg.kind.string()).to_js_value(global))
     }
 
     #[crate::host_fn(getter)]
     pub fn get_specifier(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match &this.msg.metadata {
             bun_ast::Metadata::Resolve(resolve) => {
-                ZigString::init(resolve.specifier.slice(&this.msg.data.text)).to_js(global)
+                BunString::ascii(resolve.specifier.slice(&this.msg.data.text)).to_js_value(global)
             }
             // Unreachable in practice (ResolveMessage is only constructed for
             // `.resolve` metadata) — Zig accessed the union arm unchecked.
-            _ => ZigString::init(b"").to_js(global),
+            _ => BunString::ascii(b"").to_js_value(global),
         })
     }
 
@@ -345,16 +344,16 @@ impl ResolveMessage {
     pub fn get_import_kind(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match &this.msg.metadata {
             bun_ast::Metadata::Resolve(resolve) => {
-                ZigString::init(import_kind_label(resolve.import_kind)).to_js(global)
+                BunString::ascii(import_kind_label(resolve.import_kind)).to_js_value(global)
             }
-            _ => ZigString::init(b"").to_js(global),
+            _ => BunString::ascii(b"").to_js_value(global),
         })
     }
 
     #[crate::host_fn(getter)]
     pub fn get_referrer(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(if let Some(referrer) = &this.referrer {
-            ZigString::init(referrer).to_js(global)
+            BunString::ascii(referrer).to_js_value(global)
         } else {
             JSValue::NULL
         })

@@ -64,7 +64,7 @@ pub(crate) fn get_body_stream_or_bytes_for_wasm_streaming(
                 )
                 .throw());
         }
-        // `content_type_slice` drops here (Zig: `ZigString` is a borrow, no deinit needed).
+        // `content_type_slice` drops here (borrow, no deinit needed).
     }
 
     if !response.is_ok() {

@@ -10,7 +10,7 @@ use phf::phf_map;
 
 use bun_alloc::AllocError;
 use bun_collections::VecExt;
-use bun_core::ZigString;
+use bun_core::String as BunString;
 use bun_core::strings;
 
 use crate::{Expr, ExprNodeIndex, ExprNodeList, G, OptionalChain, Ref, StoreRef};
@@ -1802,11 +1802,11 @@ impl EString {
 
     // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
 
-    pub fn to_zig_string(&mut self, bump: &Bump) -> ZigString {
+    pub fn to_zig_string(&mut self, bump: &Bump) -> BunString {
         if self.is_utf8() {
-            ZigString::from_utf8(self.slice(bump))
+            BunString::borrow_utf8(self.slice(bump))
         } else {
-            ZigString::init_utf16(self.slice16())
+            BunString::borrow_utf16(self.slice16())
         }
     }
 }

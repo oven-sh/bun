@@ -15,7 +15,7 @@ use core::ptr::NonNull;
 use bun_boringssl as boringssl;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
-use bun_core::{ZigString, strings};
+use bun_core::{String as BunString, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader};
 use bun_io::KeepAlive;
 use bun_jsc::event_loop::EventLoop;
@@ -426,7 +426,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                         return;
                     }
                 };
-                let mut outstring;
+                let outstring;
                 if let Some(utf16) = utf16_bytes {
                     // Ownership of the UTF-16 buffer transfers to C++: with
                     // `clone=false` and the global tag set, `Zig::toString`
@@ -435,12 +435,11 @@ impl<const SSL: bool> WebSocket<SSL> {
                     // be a UAF + double-free. Mirrors websocket_client.zig
                     // which never frees `utf16` locally.
                     let utf16 = core::mem::ManuallyDrop::new(utf16);
-                    outstring = ZigString::from16_slice(&utf16);
-                    outstring.mark_global();
+                    outstring = BunString::borrow_utf16_global(&utf16);
                     jsc::mark_binding!();
                     out.did_receive_text(false, &outstring);
                 } else {
-                    outstring = ZigString::init(data);
+                    outstring = BunString::ascii(data);
                     jsc::mark_binding!();
                     out.did_receive_text(true, &outstring);
                 }
@@ -1552,7 +1551,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     // `extern "C"` entrypoint; pointers are valid by C++ contract (see SAFETY comments below).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub extern "C" fn write_string(this_ptr: *mut Self, str_: *const ZigString, op: u8) {
+    pub extern "C" fn write_string(this_ptr: *mut Self, str_: *const bun_core::String, op: u8) {
         // See write_binary_data() — tunnel.write() can re-enter fail().
         // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
         // bumps the intrusive refcount and derefs on Drop (after `this`'s last
@@ -1575,8 +1574,8 @@ impl<const SSL: bool> WebSocket<SSL> {
             let mut inline_buf = [0u8; STACK_FRAME_SIZE];
 
             // fast path: small frame, no backpressure, attempt to send without allocating
-            if !str.is_16bit() && str.len < STACK_FRAME_SIZE {
-                let bytes = Copy::Latin1(str.slice());
+            if !str.is_utf16() && str.length() < STACK_FRAME_SIZE {
+                let bytes = Copy::Latin1(str.latin1());
                 let mut byte_len: usize = 0;
                 let frame_size = bytes.len(&mut byte_len);
                 if !this.has_backpressure() && frame_size < STACK_FRAME_SIZE {
@@ -1590,8 +1589,8 @@ impl<const SSL: bool> WebSocket<SSL> {
                     return;
                 }
                 // max length of a utf16 -> utf8 conversion is 4 times the length of the utf16 string
-            } else if (str.len * 4) < STACK_FRAME_SIZE && !this.has_backpressure() {
-                let bytes = Copy::Utf16(str.utf16_slice_aligned());
+            } else if (str.length() * 4) < STACK_FRAME_SIZE && !this.has_backpressure() {
+                let bytes = Copy::Utf16(str.utf16());
                 let mut byte_len: usize = 0;
                 let frame_size = bytes.len(&mut byte_len);
                 debug_assert!(frame_size <= STACK_FRAME_SIZE);
@@ -1607,10 +1606,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
 
         let _ = this.send_data(
-            if str.is_16bit() {
-                Copy::Utf16(str.utf16_slice_aligned())
+            if str.is_utf16() {
+                Copy::Utf16(str.utf16())
             } else {
-                Copy::Latin1(str.slice())
+                Copy::Latin1(str.latin1())
             },
             !this.has_backpressure(),
             opcode,
@@ -1643,7 +1642,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     // `extern "C"` entrypoint; pointers are valid (or null where checked) by C++ contract.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub extern "C" fn close(this_ptr: *mut Self, code: u16, reason: *const ZigString) {
+    pub extern "C" fn close(this_ptr: *mut Self, code: u16, reason: *const bun_core::String) {
         // In tunnel mode, SSLWrapper.writeData() (via send_close_with_body →
         // enqueue_encoded_bytes → tunnel.write) can synchronously fire
         // onClose → ws.fail() → cancel() → clear_data() and free `this`
@@ -1659,17 +1658,17 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
         let mut close_reason_buf = [0u8; 128];
-        // SAFETY: reason is null or a valid *const ZigString from C++
+        // SAFETY: reason is null or a valid *const bun_core::String from C++
         if let Some(str) = unsafe { reason.as_ref() } {
             'inner: {
                 // Zig: FixedBufferAllocator + allocPrint("{f}", .{str}) — the
                 // `{f}` formatter writes the string in UTF-8 regardless of
-                // backing encoding. `ZigString` has no `Display` impl yet, so
-                // replicate the encoding switch directly: 8-bit copies bytes,
-                // 16-bit transcodes via `to_owned_slice()` (UTF-16 → UTF-8).
+                // backing encoding. Replicate the encoding switch directly:
+                // 8-bit copies bytes, 16-bit transcodes via `to_owned_slice()`
+                // (UTF-16 → UTF-8).
                 use std::io::Write;
                 let mut cursor = std::io::Cursor::new(&mut close_reason_buf[..]);
-                if str.is_16bit() {
+                if str.is_utf16() {
                     // Allocates; close-reason is bounded ≤125 bytes and this
                     // path is cold (close handshake).
                     let utf8 = str.to_owned_slice();
@@ -1678,7 +1677,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                     }
                 } else if str.is_utf8() {
                     // Already UTF-8-tagged: bytes are valid UTF-8 verbatim.
-                    if cursor.write_all(str.slice()).is_err() {
+                    if cursor.write_all(str.latin1()).is_err() {
                         break 'inner;
                     }
                 } else {
@@ -1689,8 +1688,8 @@ impl<const SSL: bool> WebSocket<SSL> {
                     // and terminate(InvalidUtf8) instead of sending the frame.
                     let pos = cursor.position() as usize;
                     let dst = &mut cursor.get_mut()[pos..];
-                    let result = strings::copy_latin1_into_utf8(dst, str.slice());
-                    if (result.read as usize) < str.slice().len() {
+                    let result = strings::copy_latin1_into_utf8(dst, str.latin1());
+                    if (result.read as usize) < str.latin1().len() {
                         // Mirrors Zig `error.NoSpaceLeft` from FixedBufferAllocator.
                         break 'inner;
                     }
@@ -2113,7 +2112,7 @@ macro_rules! export_websocket_client {
             WebSocket::<$ssl>::cancel(this)
         }
         #[unsafe(no_mangle)]
-        pub extern "C" fn $close(this: *mut WebSocket<$ssl>, code: u16, reason: *const ZigString) {
+        pub extern "C" fn $close(this: *mut WebSocket<$ssl>, code: u16, reason: *const bun_core::String) {
             WebSocket::<$ssl>::close(this, code, reason)
         }
         #[unsafe(no_mangle)]
@@ -2178,7 +2177,7 @@ macro_rules! export_websocket_client {
         #[unsafe(no_mangle)]
         pub extern "C" fn $write_string(
             this: *mut WebSocket<$ssl>,
-            str_: *const ZigString,
+            str_: *const bun_core::String,
             op: u8,
         ) {
             WebSocket::<$ssl>::write_string(this, str_, op)

@@ -1845,7 +1845,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 /// Decodes an array of BunString header name/value pairs to UTF-8 up front.
 ///
 /// The BunString values may be backed by 8-bit Latin1 or 16-bit UTF-16
-/// `WTFStringImpl`s. Calling `.slice()` on a ZigString wrapper that was built
+/// `WTFStringImpl`s. Calling `.latin1()` on a borrowed-view String built
 /// from a non-ASCII WTFStringImpl returns raw Latin1 or UTF-16 code units,
 /// which then corrupts the HTTP upgrade request and can cause heap corruption.
 ///

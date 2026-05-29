@@ -11,7 +11,7 @@ use crate::webcore::jsc::{
 };
 use bun_core::Output;
 use bun_core::{
-    OwnedString, String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice,
+    OwnedString, String as BunString, WTFStringImplExt as _, ZigStringSlice,
 };
 use bun_http_types::Method::Method;
 
@@ -583,14 +583,14 @@ impl Response {
 
 // ─── un-gated getters & header helpers ──────────────────────────────────────
 impl Response {
-    pub fn redirect_location(&self) -> Option<ZigString> {
+    pub fn redirect_location(&self) -> Option<BunString> {
         self.header(HTTPHeaderName::Location)
     }
 
-    pub fn header(&self, name: HTTPHeaderName) -> Option<ZigString> {
+    pub fn header(&self, name: HTTPHeaderName) -> Option<BunString> {
         // PORT NOTE: reshaped for borrowck — `FetchHeaders::fast_get` takes
         // `&mut self` (FFI writes through an out-param), so we return the
-        // owned `ZigString` instead of a borrowed slice. Callers do
+        // owned `BunString` instead of a borrowed slice. Callers do
         // `.slice()` themselves. R-2 escape hatch via `init_mut()`.
         self.init_mut().headers.as_mut()?.fast_get(name)
     }
@@ -668,7 +668,7 @@ impl Response {
         // does not re-enter JS.
         if let Some(headers) = self.init_mut().headers.as_mut() {
             if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
-                return Ok(Some(value.to_slice()));
+                return Ok(Some(value.to_utf8()));
             }
         }
 
@@ -1125,7 +1125,7 @@ impl Response {
             };
 
             let url_string_value = args.next_eat().unwrap_or(JSValue::ZERO);
-            let mut url_string = ZigString::init(b"");
+            let mut url_string = BunString::ascii(b"");
 
             if !url_string_value.is_empty() {
                 url_string = url_string_value.get_zig_string(global_this)?;

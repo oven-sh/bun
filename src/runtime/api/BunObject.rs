@@ -97,7 +97,7 @@ use bun_jsc::{
 };
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
-use bun_core::{String as BunString, ZigString, strings};
+use bun_core::{String as BunString, strings};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_paths::MAX_PATH_BYTES;
 #[cfg(not(windows))]
@@ -115,9 +115,9 @@ use crate::node;
 use crate::test_runner::jest::Jest;
 use crate::valkey_jsc::js_valkey::SubscriptionCtx;
 use bun_core::zig_string::Slice as ZigStringSlice;
-use bun_jsc::ZigStringJsc as _; // to_error_instance / to_type_error_instance
+use bun_jsc::StringJsc as _; // to_error_instance / to_type_error_instance
 use bun_jsc::call_frame::ArgumentsSlice;
-use bun_jsc::{StringJsc as _, bun_string_jsc};
+use bun_jsc::bun_string_jsc;
 
 /// Bindgen-generated option-structs for this module (`BunObject.bind.ts`).
 pub mod r#gen {
@@ -635,7 +635,7 @@ pub(crate) fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
         cwd_str.slice(),
         bin_str.slice(),
     ) {
-        return Ok(ZigString::init(bin_path).with_encoding().to_js(global_this));
+        return Ok(BunString::ascii(bin_path).with_encoding().to_js_value(global_this));
     }
 
     Ok(JSValue::NULL)
@@ -773,8 +773,8 @@ pub(crate) fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
 
     // we are going to always clone to keep things simple for now
     // the common case here will be stack-allocated, so it should be fine
-    let out = ZigString::init(&array).with_encoding();
-    let ret = out.to_js(global_this);
+    let out = BunString::ascii(&array).with_encoding();
+    let ret = out.to_js_value(global_this);
 
     Ok(ret)
 }
@@ -828,7 +828,7 @@ pub(crate) fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSVal
         2,
         Default::default(),
     );
-    let mut str = bun_core::ZigString::init(b"nodejs.util.inspect.custom");
+    let mut str = BunString::ascii(b"nodejs.util.inspect.custom");
     fun.put(
         global_object,
         b"custom",
@@ -891,12 +891,12 @@ pub(crate) fn register_macro(
 }
 
 pub(crate) fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    ZigString::init(bun_resolver::fs::FileSystem::get().top_level_dir).to_js(global_this)
+    BunString::ascii(bun_resolver::fs::FileSystem::get().top_level_dir).to_js_value(global_this)
 }
 
 pub(crate) fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
-    ZigString::init(VirtualMachine::get().origin.origin).to_js(global_this)
+    BunString::ascii(VirtualMachine::get().origin.origin).to_js_value(global_this)
 }
 
 pub(crate) fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -977,7 +977,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
             .unwrap_or(JSValue::ZERO);
     }
 
-    ZigString::init(vm.main()).to_js(global_this)
+    BunString::ascii(vm.main()).to_js_value(global_this)
 }
 
 // HOST_EXPORT(BunObject_setter_main, jsc)
@@ -1289,7 +1289,7 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
             owned.result_value, owned.query_string
         );
 
-        return Ok(ZigString::init_utf8(&arraylist).to_js(ctx));
+        return Ok(BunString::borrow_utf8(&arraylist).to_js_value(ctx));
     }
 
     owned.result_value.to_js(ctx)
@@ -2197,8 +2197,8 @@ pub mod environment_variables {
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__getEnvValue(
         global_object: &JSGlobalObject,
-        name: &ZigString,
-        value: &mut core::mem::MaybeUninit<ZigString>,
+        name: &BunString,
+        value: &mut core::mem::MaybeUninit<BunString>,
     ) -> bool {
         if let Some(val) = get_env_value(global_object, *name) {
             value.write(val);
@@ -2285,13 +2285,13 @@ pub mod environment_variables {
 
     pub(crate) fn get_env_value(
         global_object: &JSGlobalObject,
-        name: ZigString,
-    ) -> Option<ZigString> {
+        name: BunString,
+    ) -> Option<BunString> {
         // SAFETY: bun_vm() returns the live thread-local VM.
         let vm = global_object.bun_vm();
-        let sliced = name.to_slice();
+        let sliced = name.to_utf8();
         let value = vm.env_loader().get(sliced.slice())?;
-        Some(ZigString::init_utf8(value))
+        Some(BunString::borrow_utf8(value))
     }
 }
 
@@ -2536,7 +2536,7 @@ pub mod JSZlib {
                 if reader.read_all(true).is_err() {
                     let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
                     return Err(global_this
-                        .throw_value(ZigString::init(msg).to_error_instance(global_this)));
+                        .throw_value(BunString::ascii(msg).to_error_instance(global_this)));
                 }
                 // PORT NOTE: Zig moved `list` into the reader and freed via a
                 // dedicated finalizer. In Rust the reader *borrows* `list_ptr`,
@@ -2690,7 +2690,7 @@ pub mod JSZlib {
                 if reader.read_all().is_err() {
                     let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
                     return Err(global_this
-                        .throw_value(ZigString::init(msg).to_error_instance(global_this)));
+                        .throw_value(BunString::ascii(msg).to_error_instance(global_this)));
                 }
                 // PORT NOTE: see gunzip path — reader borrows `list`, so drop
                 // it before leaking `list` into the ArrayBuffer.

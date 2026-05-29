@@ -2028,13 +2028,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             let mut to_build = core::mem::take(&mut self.config.user_routes_to_build);
             let len = to_build.len();
             let _old = core::mem::replace(&mut self.user_routes, Vec::with_capacity(len));
-            // Scratch arrays for the C++ factory. `ZigString` borrows the
+            // Scratch arrays for the C++ factory. `BunString` borrows the
             // route-path heap bytes; those bytes move (by pointer) into
             // `self.user_routes` below and stay live across the FFI call.
-            let mut paths: Vec<bun_core::ZigString> = Vec::with_capacity(len);
+            let mut paths: Vec<bun_core::String> = Vec::with_capacity(len);
             let mut callbacks: Vec<JSValue> = Vec::with_capacity(len);
             for (i, builder) in to_build.iter_mut().enumerate() {
-                paths.push(bun_core::ZigString::init(builder.route.path.as_bytes()));
+                paths.push(bun_core::String::ascii(builder.route.path.as_bytes()));
                 callbacks.push(builder.callback.get());
                 self.user_routes.push(UserRoute {
                     id: i as u32,

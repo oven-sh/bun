@@ -310,7 +310,7 @@ pub(crate) fn bun_random_uuid_v5(
     let name_value = arguments.ptr[0];
     let namespace_value = arguments.ptr[1];
 
-    // `name` is a ZigString.Slice in Zig (borrow-or-own UTF-8). Port as bun_core::ZigStringSlice.
+    // `name` is a borrow-or-own UTF-8 slice in Zig. Port as bun_core::ZigStringSlice.
     let name: bun_core::ZigStringSlice = 'brk: {
         if name_value.is_string() {
             let name_str = bun_core::OwnedString::new(name_value.to_bun_string(global)?);

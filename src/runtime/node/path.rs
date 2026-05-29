@@ -4,7 +4,7 @@ use crate::jsc::{
 };
 use crate::node::validators::{validate_object, validate_string};
 use bun_collections::smallvec::SmallVec;
-use bun_core::{ZigString, ZigStringSlice, strings};
+use bun_core::{ZigStringSlice, strings};
 use bun_paths::{self, MAX_PATH_BYTES, Platform};
 use bun_sys;
 
@@ -12,7 +12,7 @@ use bun_sys;
 ///
 /// Zig's `createUTF8ForJS` only accepts `[]const u8`, but the `*JS_T` wrappers
 /// in path.zig are `comptime T`-generic. In practice every JS entry point
-/// converts to UTF-8 first (via `ZigString.toSlice`) and instantiates with
+/// converts to UTF-8 first (via `to_utf8`) and instantiates with
 /// `T = u8`, so the `u16` arm is never reached at runtime — but it must still
 /// type-check. Dispatch on `T::IS_U16` and route the cold u16 arm through
 /// `bun.String.cloneUTF16(...).toJS(...)` so the generic body unifies.
@@ -30,21 +30,6 @@ fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsRes
         // T == u8 when !IS_U16; bytemuck statically checks the layout.
         let s8: &[u8] = bytemuck::cast_slice::<T, u8>(s);
         bun_string_jsc::create_utf8_for_js(global, s8)
-    }
-}
-
-// ── Local extension shims for upstream types missing methods (cannot edit upstream crates).
-
-/// `ZigString.trunc(n)` — clamp `len` to `n` (ZigString.zig:580).
-trait ZigStringTruncExt {
-    fn trunc(&self, len: usize) -> ZigString;
-}
-impl ZigStringTruncExt for ZigString {
-    #[inline]
-    fn trunc(&self, len: usize) -> ZigString {
-        let mut out = *self;
-        out.len = out.len.min(len);
-        out
     }
 }
 
@@ -603,18 +588,18 @@ pub fn basename(
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
     let path_zstr = path_ptr.get_zig_string(global_object)?;
-    if path_zstr.len == 0 {
+    if path_zstr.length() == 0 {
         return Ok(path_ptr);
     }
 
     // PERF(port): was stack-fallback — profile if hot
-    let path_zslice = path_zstr.to_slice();
+    let path_zslice = path_zstr.to_utf8_without_ref();
 
     let mut suffix_zslice: Option<bun_core::ZigStringSlice> = None;
     if let Some(_suffix_ptr) = suffix_ptr {
         let suffix_zstr = _suffix_ptr.get_zig_string(global_object)?;
-        if suffix_zstr.len > 0 && suffix_zstr.len <= path_zstr.len {
-            suffix_zslice = Some(suffix_zstr.to_slice());
+        if suffix_zstr.length() > 0 && suffix_zstr.length() <= path_zstr.length() {
+            suffix_zslice = Some(suffix_zstr.to_utf8_without_ref());
         }
     }
     basename_js_t::<u8>(
@@ -820,12 +805,12 @@ pub(crate) fn dirname(
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
     let path_zstr = path_ptr.get_zig_string(global_object)?;
-    if path_zstr.len == 0 {
+    if path_zstr.length() == 0 {
         return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
     }
 
     // PERF(port): was stack-fallback — profile if hot
-    let path_zslice = path_zstr.to_slice();
+    let path_zslice = path_zstr.to_utf8_without_ref();
     dirname_js_t::<u8>(global_object, is_windows, path_zslice.slice())
 }
 
@@ -1065,12 +1050,12 @@ pub(crate) fn extname(
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
     let path_zstr = path_ptr.get_zig_string(global_object)?;
-    if path_zstr.len == 0 {
+    if path_zstr.length() == 0 {
         return Ok(path_ptr);
     }
 
     // PERF(port): was stack-fallback — profile if hot
-    let path_zslice = path_zstr.to_slice();
+    let path_zslice = path_zstr.to_utf8_without_ref();
     extname_js_t::<u8>(global_object, is_windows, path_zslice.slice())
 }
 
@@ -1309,20 +1294,20 @@ pub(crate) fn format(
     )
 }
 
-pub(crate) fn is_absolute_posix_zig_string(path_zstr: &ZigString) -> bool {
+pub(crate) fn is_absolute_posix_zig_string(path_zstr: &bun_core::String) -> bool {
     let path_zstr_trunc = path_zstr.trunc(1);
-    if path_zstr_trunc.len > 0 && path_zstr_trunc.is_16bit() {
-        is_absolute_posix_t::<u16>(path_zstr_trunc.utf16_slice_aligned())
+    if path_zstr_trunc.length() > 0 && path_zstr_trunc.is_utf16() {
+        is_absolute_posix_t::<u16>(path_zstr_trunc.utf16())
     } else {
-        is_absolute_posix_t::<u8>(path_zstr_trunc.slice())
+        is_absolute_posix_t::<u8>(path_zstr_trunc.latin1())
     }
 }
 
-pub(crate) fn is_absolute_windows_zig_string(path_zstr: &ZigString) -> bool {
-    if path_zstr.len > 0 && path_zstr.is_16bit() {
-        is_absolute_windows_t::<u16>(path_zstr.utf16_slice_aligned())
+pub(crate) fn is_absolute_windows_zig_string(path_zstr: &bun_core::String) -> bool {
+    if path_zstr.length() > 0 && path_zstr.is_utf16() {
+        is_absolute_windows_t::<u16>(path_zstr.utf16())
     } else {
-        is_absolute_windows_t::<u8>(path_zstr.slice())
+        is_absolute_windows_t::<u8>(path_zstr.latin1())
     }
 }
 
@@ -1341,7 +1326,7 @@ pub(crate) fn is_absolute(
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
     let path_zstr = path_ptr.get_zig_string(global_object)?;
-    if path_zstr.len == 0 {
+    if path_zstr.length() == 0 {
         return Ok(JSValue::FALSE);
     }
     if is_windows {
@@ -1604,10 +1589,10 @@ pub fn join(
             return Err(not_a_string(global_object, path_ptr, i));
         }
         let path_zstr = path_ptr.get_zig_string(global_object)?;
-        if path_zstr.len == 0 {
+        if path_zstr.length() == 0 {
             continue;
         }
-        owned.push(path_zstr.to_slice());
+        owned.push(path_zstr.to_utf8_without_ref());
     }
     // Derive the `&[u8]` views in a second pass once `owned` is fully built —
     // borrowck then sees `paths` as a plain reborrow of `owned` with no
@@ -2037,12 +2022,12 @@ pub(crate) fn normalize(
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validate_string(global_object, path_ptr, format_args!("path"))?;
     let path_zstr = path_ptr.get_zig_string(global_object)?;
-    let len = path_zstr.len;
+    let len = path_zstr.length();
     if len == 0 {
         return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
     }
 
-    let path_zslice = path_zstr.to_slice();
+    let path_zslice = path_zstr.to_utf8_without_ref();
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
     normalize_js_t::<u8>(global_object, pool, is_windows, path_zslice.slice())
 }
@@ -2408,12 +2393,12 @@ pub fn parse(
     crate::node::validators_impl::validate_string(global_object, path_ptr, format_args!("path"))?;
 
     let path_zstr = path_ptr.get_zig_string(global_object)?;
-    if path_zstr.len == 0 {
+    if path_zstr.length() == 0 {
         return PathParsed::<u8>::default().to_js_object(global_object);
     }
 
     // PERF(port): was stack-fallback — profile if hot
-    let path_zslice = path_zstr.to_slice();
+    let path_zslice = path_zstr.to_utf8_without_ref();
     parse_js_t::<u8>(global_object, is_windows, path_zslice.slice())
 }
 
@@ -2825,12 +2810,12 @@ pub(crate) fn relative(
 
     let from_zig_str = from_ptr.get_zig_string(global_object)?;
     let to_zig_str = to_ptr.get_zig_string(global_object)?;
-    if (from_zig_str.len + to_zig_str.len) == 0 {
+    if (from_zig_str.length() + to_zig_str.length()) == 0 {
         return Ok(from_ptr);
     }
 
-    let from_zig_slice = from_zig_str.to_slice();
-    let to_zig_slice = to_zig_str.to_slice();
+    let from_zig_slice = from_zig_str.to_utf8_without_ref();
+    let to_zig_slice = to_zig_str.to_utf8_without_ref();
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
     relative_js_t::<u8>(
         global_object,
@@ -3462,11 +3447,11 @@ pub(crate) fn resolve(
         validate_string(global_object, path, format_args!("paths[{}]", i))?;
         let path_zstr = path.get_zig_string(global_object)?;
 
-        if path_zstr.len == 0 {
+        if path_zstr.length() == 0 {
             continue;
         }
 
-        owned.push(path_zstr.to_slice());
+        owned.push(path_zstr.to_utf8_without_ref());
 
         if !is_windows {
             // `'/'` is ASCII, so byte-level check on the UTF-8 view matches `charAt(0)`.
@@ -3622,12 +3607,12 @@ pub(crate) fn to_namespaced_path(
         return Ok(path_ptr);
     }
     let path_zstr = path_ptr.get_zig_string(global_object)?;
-    let len = path_zstr.len;
+    let len = path_zstr.length();
     if len == 0 {
         return Ok(path_ptr);
     }
 
-    let path_zslice = path_zstr.to_slice();
+    let path_zslice = path_zstr.to_utf8_without_ref();
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
     to_namespaced_path_js_t::<u8>(global_object, pool, is_windows, path_zslice.slice())
 }

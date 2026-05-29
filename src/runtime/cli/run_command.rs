@@ -1083,7 +1083,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             if !tz.is_empty() {
                 let _ = vm
                     .global()
-                    .set_time_zone(&bun_jsc::zig_string::ZigString::init(tz));
+                    .set_time_zone(&bun_core::String::ascii(tz));
             }
         }
 

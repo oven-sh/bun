@@ -3,7 +3,7 @@
 
 // `bun_bundler::options` re-exports `Target`/`Loader` but not `Format`; pull it
 // from the lower-tier source crate directly.
-use bun_core::ZigString;
+use bun_core::String as BunString;
 use bun_jsc::ComptimeStringMapExt as _;
 use bun_options_types::compile_target::CompileTarget;
 
@@ -31,13 +31,13 @@ pub fn loader_from_js(
         return Err(global.throw_invalid_arguments(format_args!("loader must be a string")));
     }
 
-    let mut zig_str = ZigString::init(b"");
+    let mut zig_str = BunString::ascii(b"");
     loader.to_zig_string(&mut zig_str, global)?;
-    if zig_str.len == 0 {
+    if zig_str.length() == 0 {
         return Ok(None);
     }
 
-    let slice = zig_str.to_slice();
+    let slice = zig_str.to_utf8();
 
     let Some(v) = bun_ast::Loader::from_string(slice.slice()) else {
         return Err(global.throw_invalid_arguments(format_args!(

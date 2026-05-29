@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 
 use crate::{JSGlobalObject, JSValue, JsResult};
-use bun_core::ZigString;
+use bun_core::String as BunString;
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle to WebCore::DOMFormData (C++ side).
@@ -13,7 +13,7 @@ unsafe extern "C" {
     safe fn WebCore__DOMFormData__create(arg0: &JSGlobalObject) -> JSValue;
     safe fn WebCore__DOMFormData__createFromURLQuery(
         arg0: &JSGlobalObject,
-        arg1: &ZigString,
+        arg1: &BunString,
     ) -> JSValue;
     // safe: `DOMFormData` is an `opaque_ffi!` ZST handle (`&mut` is ABI-identical
     // to a non-null `*mut`); `arg1` is an opaque round-trip pointer C++ only
@@ -21,25 +21,25 @@ unsafe extern "C" {
     safe fn WebCore__DOMFormData__toQueryString(
         arg0: &mut DOMFormData,
         arg1: *mut c_void,
-        arg2: extern "C" fn(arg0: *mut c_void, arg1: *mut ZigString),
+        arg2: extern "C" fn(arg0: *mut c_void, arg1: *mut BunString),
     );
     safe fn WebCore__DOMFormData__fromJS(js_value0: JSValue) -> *mut DOMFormData;
     safe fn WebCore__DOMFormData__append(
         arg0: &mut DOMFormData,
-        arg1: &ZigString,
-        arg2: &ZigString,
+        arg1: &BunString,
+        arg2: &BunString,
     );
     // safe: `DOMFormData`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST
-    // handles; `&ZigString` is ABI-identical to non-null `*const ZigString` and
+    // handles; `&BunString` is ABI-identical to non-null `*const BunString` and
     // C++ only reads the named struct via `toStringCopy`. `arg3` is an opaque
     // `*Blob` C++ owns (never dereferenced as Rust data) — same round-trip
     // contract as `Zig__GlobalObject__resetModuleRegistryMap`'s `map` param.
     safe fn WebCore__DOMFormData__appendBlob(
         arg0: &mut DOMFormData,
         arg1: &JSGlobalObject,
-        arg2: &ZigString,
+        arg2: &BunString,
         arg3: *mut c_void,
-        arg4: &ZigString,
+        arg4: &BunString,
     );
     safe fn WebCore__DOMFormData__count(arg0: &mut DOMFormData) -> usize;
 
@@ -56,23 +56,23 @@ impl DOMFormData {
     /// (returns encoded `JSValue::ZERO` on throw) — wrap in a validation scope
     /// so JSC's `validateExceptionChecks` sees the check before the next scope.
     #[track_caller]
-    pub fn create_from_url_query(global: &JSGlobalObject, query: &ZigString) -> JsResult<JSValue> {
+    pub fn create_from_url_query(global: &JSGlobalObject, query: &BunString) -> JsResult<JSValue> {
         crate::from_js_host_call(global, || {
             WebCore__DOMFormData__createFromURLQuery(global, query)
         })
     }
 
-    // PORT NOTE: Zig's `comptime Ctx: type, ctx: Ctx, comptime callback: fn(Ctx, ZigString)`
-    // is Zig's spelling of a monomorphized closure. Reshaped to `FnMut(ZigString)` — the
+    // PORT NOTE: Zig's `comptime Ctx: type, ctx: Ctx, comptime callback: fn(Ctx, BunString)`
+    // is Zig's spelling of a monomorphized closure. Reshaped to `FnMut(BunString)` — the
     // closure environment IS the ctx, and the generic trampoline below is the `Wrapper.run`.
     pub fn to_query_string<F>(&mut self, callback: &mut F)
     where
-        F: FnMut(ZigString),
+        F: FnMut(BunString),
     {
-        extern "C" fn run<F: FnMut(ZigString)>(c: *mut c_void, str_: *mut ZigString) {
+        extern "C" fn run<F: FnMut(BunString)>(c: *mut c_void, str_: *mut BunString) {
             // SAFETY: `c` is the `&mut F` passed below.
             let cb = unsafe { bun_ptr::callback_ctx::<F>(c) };
-            // SAFETY: `str_` is a valid non-null *ZigString for the synchronous callback scope.
+            // SAFETY: `str_` is a valid non-null *BunString for the synchronous callback scope.
             cb(unsafe { *str_ });
         }
 
@@ -95,16 +95,16 @@ impl DOMFormData {
         (!p.is_null()).then(|| DOMFormData::opaque_mut(p))
     }
 
-    pub fn append(&mut self, name_: &ZigString, value_: &ZigString) {
+    pub fn append(&mut self, name_: &BunString, value_: &BunString) {
         WebCore__DOMFormData__append(self, name_, value_)
     }
 
     pub fn append_blob(
         &mut self,
         global: &JSGlobalObject,
-        name_: &ZigString,
+        name_: &BunString,
         blob: *mut c_void,
-        filename_: &ZigString,
+        filename_: &BunString,
     ) {
         WebCore__DOMFormData__appendBlob(self, global, name_, blob, filename_);
     }
@@ -123,22 +123,22 @@ impl DOMFormData {
     // borrow without `bun_jsc` ever seeing the layout.
     pub fn for_each<B, F>(&mut self, callback: &mut F)
     where
-        F: FnMut(ZigString, FormDataEntry<'_, B>),
+        F: FnMut(BunString, FormDataEntry<'_, B>),
     {
         extern "C" fn for_each_wrapper<B, F>(
             ctx_ptr: *mut c_void,
-            name_: *mut ZigString,
+            name_: *mut BunString,
             value_ptr: *mut c_void,
-            filename: *mut ZigString,
+            filename: *mut BunString,
             is_blob: u8,
         ) where
-            F: FnMut(ZigString, FormDataEntry<'_, B>),
+            F: FnMut(BunString, FormDataEntry<'_, B>),
         {
             // SAFETY: ctx_ptr is the `&mut F` passed below; Zig did `ctx_ptr.?` (unwrap non-null).
             let ctx_ = unsafe { bun_ptr::callback_ctx::<F>(ctx_ptr) };
             let value = if is_blob == 0 {
-                // SAFETY: when is_blob == 0, value_ptr points to a ZigString.
-                FormDataEntry::String(unsafe { *value_ptr.cast::<ZigString>() })
+                // SAFETY: when is_blob == 0, value_ptr points to a BunString.
+                FormDataEntry::String(unsafe { *value_ptr.cast::<BunString>() })
             } else {
                 FormDataEntry::File {
                     // SAFETY: when is_blob != 0, value_ptr points to a webcore
@@ -146,15 +146,15 @@ impl DOMFormData {
                     // scope (LIFETIMES.tsv: BORROW_PARAM). Caller picks `B`.
                     blob: unsafe { &*value_ptr.cast::<B>() },
                     filename: if filename.is_null() {
-                        ZigString::EMPTY
+                        BunString::EMPTY
                     } else {
-                        // SAFETY: non-null filename points to a valid ZigString for this call.
+                        // SAFETY: non-null filename points to a valid BunString for this call.
                         unsafe { *filename }
                     },
                 }
             };
 
-            // SAFETY: name_ is always a valid non-null *ZigString for the callback scope.
+            // SAFETY: name_ is always a valid non-null *BunString for the callback scope.
             ctx_(unsafe { *name_ }, value);
         }
 
@@ -171,17 +171,17 @@ impl DOMFormData {
 
 type ForEachFunction = extern "C" fn(
     ctx_ptr: *mut c_void,
-    name: *mut ZigString,
+    name: *mut BunString,
     value_ptr: *mut c_void,
-    filename: *mut ZigString, // nullable
+    filename: *mut BunString, // nullable
     is_blob: u8,
 );
 
 /// `B` is the caller's `webcore::Blob` type (lives in `bun_runtime`; see
 /// [`DOMFormData::for_each`]).
 pub enum FormDataEntry<'a, B> {
-    String(ZigString),
-    File { blob: &'a B, filename: ZigString },
+    String(BunString),
+    File { blob: &'a B, filename: BunString },
 }
 
 // ported from: src/jsc/DOMFormData.zig

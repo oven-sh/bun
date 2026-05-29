@@ -2,7 +2,7 @@ use core::ffi::{c_uint, c_void};
 use core::mem::ManuallyDrop;
 
 use crate::{JSCell, JSGlobalObject, JSValue, JsError, JsResult};
-use bun_core::{String as BunString, ZigString};
+use bun_core::String as BunString;
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
@@ -218,8 +218,8 @@ impl JSObject {
     pub fn put_record(
         &mut self,
         global: &JSGlobalObject,
-        key: &mut ZigString,
-        values: &mut [ZigString],
+        key: &mut BunString,
+        values: &mut [BunString],
     ) -> JsResult<()> {
         // Zig calls `bun.cpp.JSC__JSObject__putRecord` (`[[ZIG_EXPORT(check_slow)]]`).
         // SAFETY: pointers are valid for the duration of the call; C++ does not

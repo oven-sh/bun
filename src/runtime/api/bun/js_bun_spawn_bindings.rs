@@ -294,8 +294,7 @@ fn get_argv(
                     format_args!(
                         "The argument 'args[{}]' must be a string without null bytes. Received \"{}\"",
                         arg_index,
-                        arg.to_zig_string()
-                    ),
+                        arg                    ),
                 )
                 .throw());
         }
@@ -462,7 +461,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         if args.is_object() {
             if let Some(argv0_) = args.get_truthy(global_this, "argv0")? {
                 let argv0_str = argv0_.get_zig_string(global_this)?;
-                if argv0_str.len > 0 {
+                if argv0_str.length() > 0 {
                     let owned = argv0_str.to_owned_slice_z();
                     argv0 = Some(owned.as_ptr());
                     cstr_storage.push(owned);
@@ -472,7 +471,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             // need to update `cwd` before searching for executable with `Which.which`
             if let Some(cwd_) = args.get_truthy(global_this, "cwd")? {
                 let cwd_str = cwd_.get_zig_string(global_this)?;
-                if cwd_str.len > 0 {
+                if cwd_str.length() > 0 {
                     cwd_owned = cwd_str.to_owned_slice_z();
                     // `cwd_owned` is never mutated again, so this borrow is valid
                     // for every read of `cwd` below.
@@ -2026,8 +2025,8 @@ pub(crate) fn append_envp_from_js(
                     jsc::ErrorCode::INVALID_ARG_VALUE,
                     format_args!(
                         "The property 'options.env['{}']' must be a string without null bytes. Received \"{}\"",
-                        key.to_zig_string(),
-                        key.to_zig_string()
+                        key,
+                        key
                     ),
                 )
                 .throw());
@@ -2038,8 +2037,8 @@ pub(crate) fn append_envp_from_js(
                     jsc::ErrorCode::INVALID_ARG_VALUE,
                     format_args!(
                         "The property 'options.env['{}']' must be a string without null bytes. Received \"{}\"",
-                        key.to_zig_string(),
-                        value_bunstr.to_zig_string()
+                        key,
+                        value_bunstr
                     ),
                 )
                 .throw());
@@ -2049,7 +2048,7 @@ pub(crate) fn append_envp_from_js(
         // PERF(port): was arena bulk-free — profile if it shows up on a hot path.
         let line: ZBox = {
             let mut buf: Vec<u8> = Vec::new();
-            write!(&mut buf, "{}={}", key, value_bunstr.to_zig_string())
+            write!(&mut buf, "{}={}", key, value_bunstr)
                 .map_err(|_| JsError::OutOfMemory)?;
             ZBox::from_vec(buf)
         };

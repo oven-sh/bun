@@ -25,6 +25,32 @@ use bun_core::{self, StackCheck};
 
 pub struct YAML;
 
+/// Spec §5.2 byte-order-mark / null-byte encoding detection.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DetectedEncoding {
+    Utf8,
+    Utf16Le,
+    Utf16Be,
+    Utf32Le,
+    Utf32Be,
+}
+
+fn detect_encoding(bytes: &[u8]) -> DetectedEncoding {
+    use DetectedEncoding::*;
+    let b = |i: usize| bytes.get(i).copied().unwrap_or(0xFF);
+    match (b(0), b(1), b(2), b(3)) {
+        (0x00, 0x00, 0xFE, 0xFF) => Utf32Be,
+        (0xFF, 0xFE, 0x00, 0x00) => Utf32Le,
+        (0x00, 0x00, 0x00, _) => Utf32Be,
+        (_, 0x00, 0x00, 0x00) => Utf32Le,
+        (0xFE, 0xFF, ..) => Utf16Be,
+        (0xFF, 0xFE, ..) => Utf16Le,
+        (0x00, _, ..) => Utf16Be,
+        (_, 0x00, ..) => Utf16Le,
+        _ => Utf8,
+    }
+}
+
 impl YAML {
     pub fn parse(
         source: &bun_ast::Source,
@@ -34,12 +60,54 @@ impl YAML {
         // Zig: `bun.analytics.Features.yaml_parse += 1;`
         bun_core::analytics::Features::yaml_parse_inc();
 
-        let mut parser: Parser<Utf8> = Parser::init(bump, source.contents());
+        let bytes = source.contents();
+        match detect_encoding(bytes) {
+            DetectedEncoding::Utf8 => Self::parse_with::<Utf8>(source, bytes, log, bump),
+            enc @ (DetectedEncoding::Utf16Le | DetectedEncoding::Utf16Be) => {
+                let be = matches!(enc, DetectedEncoding::Utf16Be);
+                if bytes.len() % 2 != 0 {
+                    log.add_error(
+                        Some(source),
+                        bun_ast::Loc::EMPTY,
+                        b"UTF-16 input has odd byte length",
+                    );
+                    return Err(YamlParseError::SyntaxError);
+                }
+                // The Expr tree may hold slices into the input; allocate the
+                // transcoded buffer in the same arena so it shares its lifetime.
+                let units: &mut [u16] = bump.alloc_slice_fill_default(bytes.len() / 2);
+                for (i, c) in bytes.chunks_exact(2).enumerate() {
+                    units[i] = if be {
+                        u16::from_be_bytes([c[0], c[1]])
+                    } else {
+                        u16::from_le_bytes([c[0], c[1]])
+                    };
+                }
+                Self::parse_with::<Utf16>(source, units, log, bump)
+            }
+            DetectedEncoding::Utf32Le | DetectedEncoding::Utf32Be => {
+                log.add_error(
+                    Some(source),
+                    bun_ast::Loc::EMPTY,
+                    b"UTF-32 input is not supported",
+                );
+                Err(YamlParseError::SyntaxError)
+            }
+        }
+    }
+
+    fn parse_with<Enc: Encoding>(
+        source: &bun_ast::Source,
+        input: &[Enc::Unit],
+        log: &mut bun_ast::Log,
+        bump: &bun_alloc::Arena,
+    ) -> Result<Expr, YamlParseError> {
+        let mut parser: Parser<Enc> = Parser::init(bump, input);
 
         let stream = match parser.parse() {
             Ok(s) => s,
             Err(e) => {
-                let err = ParseResult::<Utf8>::fail(e, &parser);
+                let err = ParseResult::<Enc>::fail(e, &parser);
                 if let ParseResult::Err(err) = err {
                     err.add_to_log(source, log)?;
                 }
@@ -4605,9 +4673,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
 
                 0x23 /* '#' */ => {
-                    let prev = parser!().input[parser!().pos.sub(1).cast()];
-                    if parser!().pos == Pos::ZERO
-                        || matches!(Enc::wide(prev), 0x20 | 0x09 | 0x0D | 0x0A)
+                    if parser!().is_at_line_start()
+                        || matches!(
+                            Enc::wide(parser!().input[parser!().pos.sub(1).cast()]),
+                            0x20 | 0x09 | 0x0D | 0x0A
+                        )
                     {
                         return Ok(ctx.done());
                     }
@@ -5887,13 +5957,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
                 0x23 /* '#' */ => {
                     let start = self.pos;
-                    let prev = if start == Pos::ZERO { 0 } else { Enc::wide(self.input[start.cast() - 1]) };
-                    match prev {
-                        0 | 0x20 | 0x09 | 0x0A | 0x0D => {}
-                        _ => {
-                            // TODO: prove this is unreachable
-                            return Err(ParseError::UnexpectedCharacter);
-                        }
+                    if !self.is_at_line_start()
+                        && !matches!(
+                            Enc::wide(self.input[start.cast() - 1]),
+                            0x20 | 0x09 | 0x0A | 0x0D
+                        )
+                    {
+                        // TODO: prove this is unreachable
+                        return Err(ParseError::UnexpectedCharacter);
                     }
                     self.inc(1);
                     while !self.is_b_char_or_eof() {

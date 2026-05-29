@@ -1512,12 +1512,18 @@ folded: >
         });
 
         test("multiline JSON-style key check ordering", () => {
-          // [148] c-ns-flow-map-json-key-entry uses s-separate which spans
-          // lines; the FlowKey early-return now precedes the multiline check
-          // in all JSON-node arms (was only the Scalar arm).
+          // §7.4.2 prose says implicit keys are "restricted to a single
+          // line", but the official yaml-test-suite (4MUZ/*, 5MUD, 9SA2,
+          // K3WX, NJ66, UT92, VJP3/01) expects these to PARSE — the grammar
+          // ([148] s-separate spans lines) wins. js-yaml/PyYAML/ruamel reject
+          // (libyaml lookahead limit, not spec); eemeli/yaml accepts.
           expect(YAML.parse("{[1]\n:2}\n")).toEqual({ 1: 2 });
           expect(YAML.parse("{{k:1}\n:2}\n")).toEqual({ "[object Object]": 2 });
           expect(YAML.parse('{"a"\n:1}\n')).toEqual({ a: 1 });
+          // Block context ([150] s-separate-in-line) and flow-seq pairs
+          // ([151]/[150]) are still single-line.
+          expect(() => YAML.parse("[1]\n:2\n")).toThrow();
+          expect(() => YAML.parse("[[1]\n:2]\n")).toThrow("Multiline implicit key");
         });
 
         test("tab before block construct after `?`/`:` (Y79Y/008 family)", () => {

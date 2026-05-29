@@ -177,7 +177,11 @@ it("unsafe git .bun-tag is rejected only at version 2", async () => {
     await using proc = spawn({
       cmd: [bunExe(), "install", "--frozen-lockfile"],
       cwd: String(dir),
-      env,
+      env: {
+        ...env,
+        GIT_SSH_COMMAND: "ssh -oBatchMode=yes -oStrictHostKeyChecking=accept-new -oConnectTimeout=5",
+        GIT_TERMINAL_PROMPT: "0",
+      },
       stdout: "pipe",
       stderr: "pipe",
     });

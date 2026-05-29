@@ -268,6 +268,11 @@ it("rejects a binary lockfile whose git resolved tag contains path separators", 
   // bun.lockb (saveTextLockfile = false) without installing anything.
   const gitUrl = "git+ssh://git@127.0.0.1:0/example/repo.git";
   const sha = "aabbccddeeff00112233445566778899aabbccdd";
+  const installEnv = {
+    ...env,
+    GIT_SSH_COMMAND: "ssh -oBatchMode=yes -oStrictHostKeyChecking=accept-new -oConnectTimeout=5",
+    GIT_TERMINAL_PROMPT: "0",
+  };
 
   await write(
     packageJson,
@@ -298,7 +303,7 @@ it("rejects a binary lockfile whose git resolved tag contains path separators", 
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",
-      env,
+      env: installEnv,
     });
     const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
     const err = stderrForInstall(rawErr);
@@ -320,7 +325,7 @@ it("rejects a binary lockfile whose git resolved tag contains path separators", 
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",
-      env,
+      env: installEnv,
     });
     const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
     const err = stderrForInstall(rawErr);
@@ -348,7 +353,7 @@ it("rejects a binary lockfile whose git resolved tag contains path separators", 
     cwd: packageDir,
     stdout: "pipe",
     stderr: "pipe",
-    env,
+    env: installEnv,
   });
   const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
   const err = stderrForInstall(rawErr);

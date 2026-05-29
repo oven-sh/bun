@@ -2521,6 +2521,20 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     pub fn parse_stream(&mut self) -> Result<Stream<Enc>, ParseError> {
         let mut docs: Vec<Document> = Vec::new();
 
+        // [211] l-yaml-stream ::= l-document-prefix* l-any-document?
+        //   ( l-document-suffix+ l-document-prefix* l-any-document? | … )*
+        // The first `l-any-document?` is optional, so a leading `...`
+        // (l-document-suffix) does not imply a preceding null document.
+        // Consume any leading suffixes here so `parse_document` doesn't emit
+        // a spurious null root for them.
+        while matches!(self.token.data, TokenData::DocumentEnd) {
+            let document_end_line = self.token.line;
+            self.scan(ScanOptions::default())?;
+            if self.token.line == document_end_line && !matches!(self.token.data, TokenData::Eof) {
+                return Err(Self::unexpected_token());
+            }
+        }
+
         // we want one null document if eof, not zero documents.
         let mut first = true;
         while first || !matches!(self.token.data, TokenData::Eof) {
@@ -6178,6 +6192,20 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                     count_indentation = false;
                     self.inc(1);
+                    continue;
+                }
+                // [3] c-byte-order-mark — [202]/[211] admit BOM in
+                // l-document-prefix before each document, not just at
+                // stream-start (which `init()` handles). At line start, skip
+                // it like whitespace and advance `line_start_pos` so a
+                // following `---`/`...` is still recognized at column 0. A
+                // BOM not at line-start (or a non-BOM 0xEF lead byte) falls
+                // through to scan_plain_scalar via the `_` arm.
+                0xEF | 0xFEFF
+                    if self.is_at_line_start() && Enc::bom_len(self.remain()) > 0 =>
+                {
+                    self.inc(Enc::bom_len(self.remain()));
+                    self.line_start_pos = self.pos;
                     continue;
                 }
                 _ => {

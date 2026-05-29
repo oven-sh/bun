@@ -142,6 +142,22 @@ describe("zlib", () => {
     expect(got.length).toBe(expected.length);
     expect(got.equals(expected)).toBe(true);
   });
+
+  // The explicit { library: "libdeflate" } opt-in is single-shot; it must still
+  // decode every member of a concatenated stream (not just the first) and match
+  // the default zlib path.
+  it("Bun.gunzipSync({ library: 'libdeflate' }) decodes all members", () => {
+    const a = Buffer.from("first ");
+    const b = Buffer.from("second ");
+    const c = Buffer.from("third");
+    const multi = Buffer.concat([zlib.gzipSync(a), zlib.gzipSync(b), zlib.gzipSync(c)]);
+    const expected = Buffer.concat([a, b, c]);
+
+    expect(Buffer.from(gunzipSync(multi, { library: "libdeflate" }))).toEqual(expected);
+    // Trailing zero padding is ignored, like the default path.
+    const padded = Buffer.concat([zlib.gzipSync("ab"), zlib.gzipSync("cd"), Buffer.alloc(8)]);
+    expect(Buffer.from(gunzipSync(padded, { library: "libdeflate" })).toString()).toBe("abcd");
+  });
 });
 
 function* window(buffer, size, advance = size) {

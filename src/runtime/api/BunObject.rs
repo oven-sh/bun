@@ -2366,6 +2366,59 @@ pub mod JSZlib {
         }
     }
 
+    /// Decode every RFC 1952 §2.2 gzip member in `input` into `out` (appending),
+    /// driving libdeflate's single-member decoder in a loop so `cat a.gz b.gz`
+    /// decodes to `a + b` instead of just the first member. `result.read` is the
+    /// bytes consumed per member, so the cursor resumes from the unread portion.
+    /// After a member, a trailing zero byte is padding and stops the loop
+    /// (matching node:zlib); a non-`Success` status is returned as-is. `out` is
+    /// cleared first. Caps the output at 1 GiB (a decompression-bomb guard).
+    fn libdeflate_gzip_all_members(
+        decompressor: &mut bun_libdeflate::Decompressor,
+        input: &[u8],
+        out: &mut Vec<u8>,
+    ) -> bun_libdeflate::Status {
+        out.clear();
+        let mut offset = 0usize;
+        while offset < input.len() {
+            // A leading zero (offset == 0) is a bad header, not padding — let it
+            // through so libdeflate reports BadData.
+            if offset > 0 && input[offset] == 0 {
+                break;
+            }
+            let result = loop {
+                if out.spare_capacity_mut().is_empty() {
+                    if out.capacity() > 1024 * 1024 * 1024 {
+                        return bun_libdeflate::Status::InsufficientSpace;
+                    }
+                    let grow = out.capacity().max(4096);
+                    out.reserve(grow);
+                }
+                let result = decompressor.decompress_to_vec(
+                    &input[offset..],
+                    out,
+                    bun_libdeflate::Encoding::Gzip,
+                );
+                if result.status == bun_libdeflate::Status::InsufficientSpace
+                    && out.capacity() <= 1024 * 1024 * 1024
+                {
+                    let grow = out.capacity().max(4096);
+                    out.reserve(grow);
+                    continue;
+                }
+                break result;
+            };
+            if result.status != bun_libdeflate::Status::Success {
+                return result.status;
+            }
+            if result.read == 0 {
+                break;
+            }
+            offset += result.read;
+        }
+        bun_libdeflate::Status::Success
+    }
+
     // PORT NOTE: Zig's `list.allocatedSlice()` (the full `[0..capacity)` window)
     // was previously shimmed here as `&mut [u8]`, but materializing `&mut [u8]`
     // over uninitialized bytes is UB in Rust regardless of later `set_len`.
@@ -2569,18 +2622,24 @@ pub mod JSZlib {
                     // checked above; this guard is its sole owner and runs once.
                     unsafe { bun_libdeflate::Decompressor::destroy(p) }
                 });
-                let encoding = if is_gzip {
-                    bun_libdeflate::Encoding::Gzip
+                // gzip may be a concatenated multi-member stream (RFC 1952 §2.2);
+                // libdeflate decodes one member per call, so loop over the members
+                // using the per-member consumed count (`result.read`) to resume
+                // from the unread portion. A trailing zero byte (after a member)
+                // is padding and stops the loop; deflate is always single-member.
+                let status = if is_gzip {
+                    libdeflate_gzip_all_members(decompressor, compressed, &mut list)
                 } else {
-                    bun_libdeflate::Encoding::Deflate
+                    decompressor
+                        .decompress_to_vec_grow(
+                            compressed,
+                            &mut list,
+                            bun_libdeflate::Encoding::Deflate,
+                            1024 * 1024 * 1024,
+                        )
+                        .status
                 };
-                let result = decompressor.decompress_to_vec_grow(
-                    compressed,
-                    &mut list,
-                    encoding,
-                    1024 * 1024 * 1024,
-                );
-                match result.status {
+                match status {
                     bun_libdeflate::Status::Success => {}
                     bun_libdeflate::Status::InsufficientSpace => {
                         drop(list);
@@ -2590,7 +2649,7 @@ pub mod JSZlib {
                         drop(list);
                         return Err(global_this.throw(format_args!(
                             "libdeflate returned an error: {}",
-                            libdeflate_status_str(result.status),
+                            libdeflate_status_str(status),
                         )));
                     }
                 }

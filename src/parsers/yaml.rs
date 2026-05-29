@@ -4406,22 +4406,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         // PORT NOTE: labeled-switch loop
         let mut __c = Enc::wide(parser!().next());
-        // [203]/[204] c-directives-end / c-document-end are line-starting
-        // tokens. `line_indent == 0` alone is insufficient — that's the
-        // *line's* indent, true everywhere on a column-0 line. Track whether
-        // the previous loop iteration was the `\n` arm (i.e., we're at the
-        // first content char of a continuation line).
-        let mut at_line_start = false;
         loop {
-            let was_at_line_start = at_line_start;
-            at_line_start = false;
             match __c {
                 0 => {
                     return Ok(ctx.done());
                 }
 
                 0x2D /* '-' */ => {
-                    if was_at_line_start
+                    // [203] c-directives-end is line-starting at column 0.
+                    if parser!().is_at_line_start()
                         && parser!().line_indent == Indent::NONE
                         && parser!().remain_starts_with(Enc::literal(b"---"))
                         && parser!().is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
@@ -4444,7 +4437,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
 
                 0x2E /* '.' */ => {
-                    if was_at_line_start
+                    if parser!().is_at_line_start()
                         && parser!().line_indent == Indent::NONE
                         && parser!().remain_starts_with(Enc::literal(b"..."))
                         && parser!().is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
@@ -4574,7 +4567,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                     ctx.append_whitespace_n_times(Enc::ch(b'\n'), lines)?;
 
-                    at_line_start = true;
                     __c = Enc::wide(parser!().next());
                     continue;
                 }
@@ -5063,18 +5055,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // Phase 2: scan body
         // PORT NOTE: labeled-switch loop with nested `newlines:` switch
         let mut __c = first;
-        // [203]/[204] are line-starting tokens; see scan_plain_scalar.
-        let mut at_line_start = true;
         loop {
-            let was_at_line_start = at_line_start;
-            at_line_start = false;
             match __c {
                 0 => return Ok(ctx.done()?),
                 0x0D => {
                     if Enc::wide(self.peek(1)) == 0x0A {
                         self.inc(1);
                     }
-                    at_line_start = was_at_line_start;
                     __c = 0x0A;
                     continue;
                 }
@@ -5135,11 +5122,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                         }
                     }
-                    at_line_start = true;
                     continue;
                 }
                 0x2D /* '-' */ => {
-                    if was_at_line_start
+                    if self.is_at_line_start()
                         && self.line_indent == Indent::NONE
                         && self.remain_starts_with(Enc::literal(b"---"))
                         && self.is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
@@ -5155,7 +5141,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     continue;
                 }
                 0x2E /* '.' */ => {
-                    if was_at_line_start
+                    if self.is_at_line_start()
                         && self.line_indent == Indent::NONE
                         && self.remain_starts_with(Enc::literal(b"..."))
                         && self.is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
@@ -5678,7 +5664,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
                 0x2D /* '-' */ => {
                     let start = self.pos;
-                    if self.line_indent == Indent::NONE
+                    // [203] c-directives-end is line-starting at column 0.
+                    // `line_indent == 0` is the line's indent, true everywhere
+                    // on a column-0 line; check the previous byte to confirm
+                    // we are actually at the start of a line.
+                    if self.is_at_line_start()
+                        && self.line_indent == Indent::NONE
                         && self.remain_starts_with(Enc::literal(b"---"))
                         && self.is_s_white_or_b_char_or_eof_at(3)
                     {
@@ -5716,7 +5707,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
                 0x2E /* '.' */ => {
                     let start = self.pos;
-                    if self.line_indent == Indent::NONE
+                    if self.is_at_line_start()
+                        && self.line_indent == Indent::NONE
                         && self.remain_starts_with(Enc::literal(b"..."))
                         && self.is_s_white_or_b_char_or_eof_at(3)
                     {
@@ -6123,6 +6115,17 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         true
     }
 
+    /// True iff `self.pos` is at column 0 — i.e., start of input or
+    /// immediately after a b-break. Used by [203]/[204] doc-marker
+    /// recognition (which is line-starting, not just `line_indent == 0`).
+    fn is_at_line_start(&self) -> bool {
+        if self.pos == Pos::ZERO {
+            return true;
+        }
+        let prev = Enc::wide(self.input[self.pos.sub(1).cast()]);
+        prev == 0x0A || prev == 0x0D
+    }
+
     fn is_s_white_or_b_char_at(&self, n: usize) -> bool {
         let pos = self.pos.add(n);
         if pos.is_less_than(self.input.len()) {
@@ -6137,8 +6140,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         if pos.is_less_than(self.input.len()) {
             return values.as_ref().contains(&self.input[pos.cast()]);
         }
-        false
-        // PORT NOTE: Zig returns `false` for EOF here despite the name (matches source).
+        true
     }
 
     fn is_eof(&self) -> bool {

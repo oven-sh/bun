@@ -1558,11 +1558,100 @@ folded: >
         test("`---` inside a plain scalar (issue #25660)", () => {
           // [128] ns-plain-char admits `-`; a `---` not at column 0 (or not
           // followed by /[ \t\r\n]|$/) is content, not c-directives-end.
-          // Currently splits into [{"name":"some-text"},{"description":"x"}].
           expect(YAML.parse("name: some-text---\ndescription: x\n")).toEqual({
             name: "some-text---",
             description: "x",
           });
+        });
+      });
+
+      // [203]/[204] c-directives-end / c-document-end are line-starting
+      // tokens at column 0, followed by s-white/b-break/eof. Everywhere else
+      // `-` and `.` are ns-plain-char per [126]/[130]. Exhaustive over
+      // position × column × follower × count × scanner context. Each row
+      // verified against ≥2/3 of eemeli/yaml, js-yaml, PyYAML.
+      describe("`---`/`...` doc-marker recognition", () => {
+        const E = (msg = "Unexpected token") => ({ throws: msg });
+        test.each([
+          // Mid-line / end-of-line in a plain-scalar value (not at column 0)
+          ["trail-dash", "a: text---\n", { a: "text---" }],
+          ["trail-dot", "a: text...\n", { a: "text..." }],
+          ["mid-dash", "a: te---xt\n", { a: "te---xt" }],
+          ["mid-dot", "a: te...xt\n", { a: "te...xt" }],
+          ["lead-dash", "a: ---text\n", { a: "---text" }],
+          ["lead-dot", "a: ...text\n", { a: "...text" }],
+          ["only-dash-val", "a: ---\n", { a: "---" }],
+          ["only-dot-val", "a: ...\n", { a: "..." }],
+          ["git-diff-line", "line: --- a/file\n", { line: "--- a/file" }],
+          // Count: only exactly 3 with ws/eol after is a marker
+          ["2dash", "a: b--\n", { a: "b--" }],
+          ["4dash", "a: b----\n", { a: "b----" }],
+          ["5dash", "a: b-----\n", { a: "b-----" }],
+          ["2dot", "a: b..\n", { a: "b.." }],
+          ["4dot", "a: b....\n", { a: "b...." }],
+          // Follower: must be s-white/b-break/eof
+          ["col0-4dash", "a\n----\n", "a ----"],
+          ["col0-dash-noeol", "a\n---b\n", "a ---b"],
+          ["col0-dot-noeol", "a\n...b\n", "a ...b"],
+          // Top-level plain scalar (no key prefix)
+          ["top-trail", "text---\n", "text---"],
+          ["top-trail-dot", "text...\n", "text..."],
+          ["top-followed-eof", "text---", "text---"],
+          ["top-followed-sp", "text--- more\n", "text--- more"],
+          // Column 0 — IS a marker
+          ["col0-dash", "a\n---\nb\n", ["a", "b"]],
+          ["col0-dot", "a\n...\n", "a"],
+          ["col0-dash-sp", "a\n--- b\n", ["a", "b"]],
+          ["col0-dash-tab", "a\n---\tb\n", ["a", "b"]],
+          ["col0-dash-eof", "a\n---", ["a", null]],
+          ["col0-dash-crlf", "a\r\n---\r\nb\r\n", ["a", "b"]],
+          // Indented — NOT a marker
+          ["indent1-dash", "a\n ---\n", "a ---"],
+          ["indent1-dot", "a\n ...\n", "a ..."],
+          // Block scalar body
+          ["bs-mid", "|\nx\n  z---\n", "x\n  z---\n"],
+          ["bs-mid-dot", "|\nx\n  z...\n", "x\n  z...\n"],
+          ["bsf-mid", ">\nx\n  z---\n", "x\n  z---\n"],
+          ["bs-col0", "|\nx\n---\ny\n", ["x\n", "y"]],
+          ["bs-col0-dot", "|\nx\n...\n", "x\n"],
+          ["bs-first-mid", "|\n  z---\n", "z---\n"],
+          // Quoted scalars — always content
+          ["sq", "a: 'x---'\n", { a: "x---" }],
+          ["dq", 'a: "x---"\n', { a: "x---" }],
+          ["sq-dot", "a: 'x...'\n", { a: "x..." }],
+          // Flow context — always content
+          ["flow-seq", "[a---, b...]\n", ["a---", "b..."]],
+          ["flow-map", "{a: b---}\n", { a: "b---" }],
+          ["flow-only", "[---, ...]\n", ["---", "..."]],
+          // Nested
+          ["nested-trail", "k:\n  a: text---\n  b: y\n", { k: { a: "text---", b: "y" } }],
+          ["nested-col0", "k:\n  a: text\n---\nb\n", [{ k: { a: "text" } }, "b"]],
+          // Real-world text patterns
+          ["ellipsis", "msg: wait...\n", { msg: "wait..." }],
+          ["ellipsis-mid", "msg: wait... done\n", { msg: "wait... done" }],
+          ["range", "span: 2023--2025\n", { span: "2023--2025" }],
+          ["arrow", "dir: <--->\n", { dir: "<--->" }],
+          ["em-dash-ish", "a: foo --- bar\n", { a: "foo --- bar" }],
+          ["frontmatter", "---\ntitle: x\n---\n", [{ title: "x" }, null]],
+          // Mixed
+          ["dash-dot", "a: ---...\n", { a: "---..." }],
+          ["dot-dash", "a: ...---\n", { a: "...---" }],
+          // After --- on the same line: only flow node allowed
+          ["doc-sl-seq", "--- - x\n", E()],
+          ["doc-sl-seq-tab", "---\t- x\n", E()],
+          ["doc-sl-map", "--- a: b\n", E()],
+          ["doc-sl-qmark", "--- ? a\n", E()],
+          ["doc-sl-flow", "--- [a]\n", ["a"]],
+          ["doc-sl-flowmap", "--- {a: 1}\n", { a: 1 }],
+          ["doc-sl-scalar", "--- foo\n", "foo"],
+          ["doc-nl-seq", "---\n- x\n", ["x"]],
+          ["doc-nl-map", "---\na: b\n", { a: "b" }],
+        ] as const)("%s", (_id, input, expected) => {
+          if (typeof expected === "object" && expected && "throws" in expected) {
+            expect(() => YAML.parse(input)).toThrow(expected.throws as string);
+          } else {
+            expect(YAML.parse(input)).toEqual(expected);
+          }
         });
 
         test("JSON-adjacent does not apply in flow-map value position", () => {

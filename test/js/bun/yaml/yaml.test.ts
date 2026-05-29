@@ -1214,7 +1214,7 @@ folded: >
           expect(() => YAML.parse("!!str\n!!map\n: x\n")).toThrow("Multiple tags");
         });
 
-        test.todo("two anchors before e-node `:` (outer=mapping, inner=key) — pre-existing over-reject", () => {
+        test("two anchors before e-node `:` (outer=mapping, inner=key)", () => {
           // Valid per [200]/[193]: outer anchors the collection, inner the
           // e-node key. The Scalar-key analogue (`&outer\n&inner b: x`) is
           // accepted because that arm `return Ok(mapping)`, bypassing the
@@ -1501,12 +1501,11 @@ folded: >
           expect(() => YAML.parse("{? a: b: c}\n")).toThrow("Unexpected token");
         });
 
-        test.todo("flow-map value with multiline c-ns-properties before nested pair", () => {
-          // The cmi mechanism for [147] uses the first token's indent; when an
-          // anchor/tag is on a different line than the scalar, indents diverge
-          // and the cmi check is bypassed. Pre-existing.
-          expect(() => YAML.parse("{a: &x\n b: c}\n")).toThrow();
-          expect(() => YAML.parse("{a: !!str\n b: c}\n")).toThrow();
+        test("flow-map value with multiline c-ns-properties before nested pair", () => {
+          // [147] flow-map value is ns-flow-node; the Scalar arm returns the
+          // bare scalar in FlowIn when !flow_pair_allowed, regardless of cmi.
+          expect(() => YAML.parse("{a: &x\n b: c}\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("{a: !!str\n b: c}\n")).toThrow("Unexpected token");
         });
 
         test("flow-seq pair value on next line at column ≤ key indent", () => {
@@ -1727,13 +1726,13 @@ folded: >
           expect(() => YAML.parse("a\n...\n... b\n")).toThrow("Unexpected token");
         });
 
-        test.todo("BOM-prefixed `---` recognized as doc marker", () => {
-          // [202] l-document-prefix admits c-byte-order-mark before
-          // c-directives-end. is_at_line_start() is false after the BOM
-          // (pos != line_start_pos). Pre-existing differently-wrong (was a
-          // spurious BOM-only first doc); proper fix is BOM strip in
-          // l-document-prefix, not special-casing here.
+        test("BOM-prefixed `---` recognized as doc marker", () => {
+          // [206] l-document-prefix ::= c-byte-order-mark? l-comment*
           expect(YAML.parse("\uFEFF---\na: 1\n")).toEqual({ a: 1 });
+          expect(YAML.parse("\uFEFFa: 1\n")).toEqual({ a: 1 });
+          expect(YAML.parse("\uFEFF")).toEqual(null);
+          // BOM mid-stream is not stripped (only [206] document-prefix).
+          expect(YAML.parse("a: \uFEFFx\n")).toEqual({ a: "\uFEFFx" });
         });
       });
 

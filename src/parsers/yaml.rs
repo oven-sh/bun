@@ -463,6 +463,9 @@ pub trait Encoding: Copy + 'static {
     /// buffer (see `EncLit` doc for the const-generics rationale).
     fn literal(s: &'static [u8]) -> EncLit<Self::Unit>;
 
+    /// Number of leading units to skip if `input` starts with [3] c-byte-order-mark.
+    fn bom_len(input: &[Self::Unit]) -> usize;
+
     /// Reinterpret a `&[Unit]` slice as `&[u8]` for `StringHashMap` keying
     /// (`anchors` / `tag_handles`). Zig's `bun.StringHashMap` is keyed by
     /// `[]const u8`; calls like `tag_handles.put(handle.slice(self.input), {})`
@@ -523,6 +526,10 @@ impl Encoding for Latin1 {
         // Only reachable from `EncodingKind::Utf16`-gated arms.
         unreachable!("unit_from_u16 on Latin1")
     }
+    #[inline]
+    fn bom_len(_input: &[u8]) -> usize {
+        0
+    }
 }
 
 impl Encoding for Utf8 {
@@ -550,6 +557,14 @@ impl Encoding for Utf8 {
     fn unit_from_u16(_u: u16) -> u8 {
         // Only reachable from `EncodingKind::Utf16`-gated arms.
         unreachable!("unit_from_u16 on Utf8")
+    }
+    #[inline]
+    fn bom_len(input: &[u8]) -> usize {
+        if input.len() >= 3 && input[0] == 0xEF && input[1] == 0xBB && input[2] == 0xBF {
+            3
+        } else {
+            0
+        }
     }
 }
 
@@ -587,6 +602,14 @@ impl Encoding for Utf16 {
     #[inline]
     fn unit_from_u16(u: u16) -> u16 {
         u
+    }
+    #[inline]
+    fn bom_len(input: &[u16]) -> usize {
+        if input.first() == Some(&0xFEFF) {
+            1
+        } else {
+            0
+        }
     }
     #[inline]
     fn as_u16_slice(s: &[u16]) -> &[u16] {
@@ -2359,11 +2382,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     pub const MAX_ALIAS_EXPANSION: usize = 16 * 1024 * 1024;
 
     pub fn init(bump: &'i bun_alloc::Arena, input: &'i [Enc::Unit]) -> Self {
+        // [206] l-document-prefix ::= c-byte-order-mark? l-comment*
+        let start = Pos::from(Enc::bom_len(input));
         Self {
             input,
             bump,
-            pos: Pos::from(0),
-            line_start_pos: Pos::from(0),
+            pos: start,
+            line_start_pos: start,
             line_indent: Indent::NONE,
             tab_after_indent: false,
             line: Line::from(1),
@@ -3467,7 +3492,9 @@ impl<Enc: Encoding> NodeProperties<Enc> {
 
     pub fn set_anchor(&mut self, anchor_token: Token<Enc>) -> Result<(), ParseError> {
         if let Some(previous_anchor) = &self.has_anchor {
-            if previous_anchor.line == anchor_token.line {
+            if previous_anchor.line == anchor_token.line
+                || self.has_mapping_anchor.is_some()
+            {
                 return Err(ParseError::MultipleAnchors);
             }
             self.has_mapping_anchor = Some(previous_anchor.clone());
@@ -4234,14 +4261,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         self.anchors
                             .put(Enc::key_bytes(mapping_anchor.slice(self.input)), mapping)?;
                     }
-                    // Clear has_anchor so the post-loop fallback doesn't
-                    // re-register the inner anchor on the mapping. The
-                    // remaining fields reach the post-loop guards: this
-                    // matches main's behavior (rejects `!!a\n!!b\n: x` and
-                    // `&a\n&b\n&c : x`), but also over-rejects the valid
-                    // `&outer\n&inner : x` — pre-existing; the Scalar arm
-                    // avoids it via `return Ok`.
+                    // Anchors are fully consumed by implicit_key_anchors;
+                    // clear both so the post-loop fallback doesn't re-register
+                    // (or over-reject `&outer\n&inner : x` via the
+                    // has_mapping_anchor guard). Tag fields stay so the
+                    // has_mapping_tag guard still catches `!!a\n!!b\n: x`.
                     node_props.has_anchor = None;
+                    node_props.has_mapping_anchor = None;
                     break 'node mapping;
                 }
 
@@ -4323,6 +4349,22 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                     return Err(ParseError::MultilineImplicitKey);
                                 }
                             }
+                        }
+
+                        // [147] flow-map value is ns-flow-node, not a pair.
+                        // Return the bare scalar; the leftover `:` reaches the
+                        // caller's [140] check. The cmi==scalar_indent path
+                        // above already handles the same-line case; this
+                        // covers the multiline-property case where they
+                        // diverge.
+                        if self.context.get() == Context::FlowIn
+                            && !opts.flow_pair_allowed
+                        {
+                            break 'node scalar.data.to_expr(
+                                scalar_start,
+                                self.input,
+                                self.bump,
+                            );
                         }
 
                         let implicit_key = scalar.data.to_expr(scalar_start, self.input, self.bump);

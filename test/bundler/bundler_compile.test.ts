@@ -22,6 +22,34 @@ describe("bundler", () => {
     },
     run: { stdout: "Hello, world!" },
   });
+  // --footer/--banner are concatenated verbatim (UTF-8). Guard against the
+  // standalone module graph treating those bytes as Latin-1, which would
+  // print "rÃ©sumÃ©" / "ã\x81\x93ã\x82\x93..." (one Latin-1 char per UTF-8
+  // byte) instead of the original codepoints.
+  for (const [where, flag] of [["Footer", "--footer"], ["Banner", "--banner"]] as const) {
+    test(`compile/${where}NonAsciiUTF8`, async () => {
+      using dir = tempDir(`compile-${where.toLowerCase()}-nonascii`, {
+        "entry.ts": `export const x = 1;`,
+      });
+      const outfile = join(String(dir), isWindows ? "out.exe" : "out");
+      {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "--compile", flag, `console.log("résumé", "こんにちは");`, "./entry.ts", "--outfile", outfile],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+      }
+      await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("résumé こんにちは\n");
+      expect(exitCode).toBe(0);
+    });
+  }
   itBundled("compile/HelloWorldWithProcessVersionsBun", {
     compile: true,
     files: {

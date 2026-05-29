@@ -76,11 +76,7 @@ test("bun build --compile keeps the asset [dir] in Bun.embeddedFiles[].name (iss
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [runStdout, runStderr, runExit] = await Promise.all([
-    run.stdout.text(),
-    run.stderr.text(),
-    run.exited,
-  ]);
+  const [runStdout, runStderr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
   if (runExit !== 0) {
     console.error("run stdout:", runStdout);
     console.error("run stderr:", runStderr);

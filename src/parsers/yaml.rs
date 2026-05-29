@@ -792,6 +792,8 @@ pub enum ParseError {
     InvalidDirective,
     #[error("UnexpectedCharacter")]
     UnexpectedCharacter,
+    #[error("NonPrintableCharacter")]
+    NonPrintableCharacter,
     #[error("TabIndentation")]
     TabIndentation,
     #[error("UnresolvedTagHandle")]
@@ -819,6 +821,21 @@ pub enum ParseError {
 }
 
 bun_core::oom_from_alloc!(ParseError);
+
+/// [1] c-printable / [2] nb-json, ASCII range only. Tab is the only C0 char
+/// in either set; nb-json (quoted) admits DEL (`[#x20-#x10FFFF]`),
+/// c-printable does not. Multi-byte codepoints (C1/NEL/surrogates/FFFE) are
+/// not validated here — that requires UTF-8 decode.
+#[inline]
+fn check_printable_ascii(c: u32, nb_json: bool) -> Result<(), ParseError> {
+    match c {
+        0x01..=0x08 | 0x0B | 0x0C | 0x0E..=0x1F => {
+            Err(ParseError::NonPrintableCharacter)
+        }
+        0x7F if !nb_json => Err(ParseError::NonPrintableCharacter),
+        _ => Ok(()),
+    }
+}
 
 bun_core::named_error_set!(ParseError);
 
@@ -2241,6 +2258,7 @@ pub enum ParseResultError {
     UnexpectedToken { pos: Pos },
     UnexpectedCharacter { pos: Pos },
     TabIndentation { pos: Pos },
+    NonPrintableCharacter { pos: Pos },
     InvalidDirective { pos: Pos },
     UnresolvedTagHandle { pos: Pos },
     UnresolvedAlias { pos: Pos },
@@ -2277,6 +2295,13 @@ impl ParseResultError {
                     Some(source),
                     pos.loc(),
                     b"Tab characters cannot be used as indentation",
+                );
+            }
+            ParseResultError::NonPrintableCharacter { pos } => {
+                log.add_error(
+                    Some(source),
+                    pos.loc(),
+                    b"Non-printable character not allowed in YAML",
                 );
             }
             ParseResultError::InvalidDirective { pos } => {
@@ -2332,6 +2357,9 @@ impl<Enc: Encoding> ParseResult<Enc> {
             ParseError::UnexpectedEof => ParseResultError::UnexpectedEof {
                 pos: parser.token.start,
             },
+            ParseError::NonPrintableCharacter => {
+                ParseResultError::NonPrintableCharacter { pos: parser.pos }
+            }
             ParseError::TabIndentation => ParseResultError::TabIndentation {
                 pos: parser.token.start,
             },
@@ -4765,6 +4793,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
 
                 _ => {
+                    check_printable_ascii(__c, false)?;
                     let c = parser!().next();
                     if ctx.resolved || ctx.str_builder.len() != 0 {
                         let start = parser!().pos;
@@ -5087,6 +5116,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
 
             fn append(&mut self, c: Enc::Unit) -> Result<(), ParseError> {
+                check_printable_ascii(Enc::wide(c), false)?;
                 if self.text.is_empty() {
                     if !self.explicit_indent
                         && self.content_indent.is_less_than(self.max_leading_indent)
@@ -5464,7 +5494,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         },
                     }));
                 }
-                _ => {
+                c => {
+                    check_printable_ascii(c, true)?;
                     text.push(self.next());
                     self.inc(1);
                 }
@@ -5606,7 +5637,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                     self.inc(1);
                 }
-                _ => {
+                c => {
+                    check_printable_ascii(c, true)?;
                     text.push(self.next());
                     self.inc(1);
                 }

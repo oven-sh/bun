@@ -702,7 +702,7 @@ impl MultiPartUpload {
                 this.uploadid_buffer = response.body;
                 if this.upload_id.is_empty()
                     || this.upload_id.len() > Self::MAX_UPLOAD_ID_LEN
-                    || this.upload_id.iter().any(|b| b.is_ascii_control())
+                    || this.upload_id.iter().any(|b| !b.is_ascii() || b.is_ascii_control())
                 {
                     // Unknown type of response error from AWS
                     scoped_log!(

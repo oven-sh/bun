@@ -190,20 +190,22 @@ impl Stringifier {
     /// backfill), so stamping v2 on a lockfile that still carries such an entry
     /// would make the *next* parse reject it. Only stamp v2 when every package
     /// already satisfies the v2 invariants; otherwise stay at v1 so the file
-    /// round-trips (load → save → load) cleanly.
+    /// round-trips (load → save → load) cleanly — across machines too, since a
+    /// lockfile is committed and shared. The decision is therefore made without
+    /// consulting the writer's registry config: whether the *reader* will accept
+    /// the file must not depend on the writer's `~/.npmrc` / scoped registries.
     ///
     /// Walks the package tree the same way the writer does — only packages that
     /// are actually serialized are considered, not every entry in the in-memory
     /// `pkg_resolutions` buffer (migration can leave pruned/unreferenced entries
     /// there that never reach the written `packages` object).
-    fn version_to_write(lockfile: &BinaryLockfile, options: &PackageManagerOptions) -> Version {
+    fn version_to_write(lockfile: &BinaryLockfile) -> Version {
         let buf = lockfile.buffers.string_bytes.as_slice();
         let deps_buf = lockfile.buffers.dependencies.as_slice();
         let resolution_buf = lockfile.buffers.resolutions.as_slice();
         let pkgs = lockfile.packages.slice();
         let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
         let pkg_metas: &[Meta] = pkgs.items_meta();
-        let pkg_names: &[String] = pkgs.items_name();
 
         let mut iter = tree::Iterator::<'_, { tree::IteratorPathStyle::PkgPath }>::from_slices(
             lockfile.buffers.trees.as_slice(),
@@ -226,16 +228,19 @@ impl Stringifier {
                             continue;
                         }
                         // No supported integrity: only v2-clean if the tarball
-                        // URL is under the configured/default registry (mirrors
-                        // the parser's `npm_url_needs_integrity` computation).
+                        // URL is under the *default* registry, the one case the
+                        // writer normalizes to `""` (see the URL serialization
+                        // above). An empty URL never sets the parser's
+                        // `npm_url_needs_integrity`, so that round-trips for any
+                        // reader. A URL under a configured-but-not-default scope
+                        // is written verbatim and the parser's integrity check
+                        // is evaluated against the *reader's* scope config, so
+                        // it is not config-independent: a writer with a private
+                        // `@scope` registry could stamp v2 on a lockfile a
+                        // teammate without that scope then fails to parse. Stay
+                        // at v1 for those so the file keeps loading everywhere.
                         let url = res.npm().url.slice(buf);
-                        let configured_registry = options
-                            .scope_for_package_name(pkg_names[i].slice(buf))
-                            .url
-                            .href();
-                        let under_registry = url_is_under_registry(url, configured_registry)
-                            || url_is_under_registry(url, Npm::Registry::DEFAULT_URL.as_bytes());
-                        if !under_registry {
+                        if !url_is_under_registry(url, Npm::Registry::DEFAULT_URL.as_bytes()) {
                             return Version::V1;
                         }
                     }
@@ -336,7 +341,7 @@ impl Stringifier {
         writer.write_all(b"{\n")?;
         Self::inc_indent(writer, indent)?;
         {
-            let lockfile_version = Self::version_to_write(lockfile, options);
+            let lockfile_version = Self::version_to_write(lockfile);
             writeln!(writer, "\"lockfileVersion\": {},", lockfile_version as u32)?;
             Self::write_indent(writer, *indent)?;
 

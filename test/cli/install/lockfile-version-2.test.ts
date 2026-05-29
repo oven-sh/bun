@@ -268,3 +268,85 @@ it("re-saving a v1 off-registry lockfile keeps it at version 1", async () => {
   expect(after).toContain(`"lockfileVersion": 1,`);
   expect(exitCode).toBe(0);
 });
+
+// The version stamp must not depend on the writer's registry config. A lockfile
+// is committed and shared, so whether the *reader* accepts it cannot hinge on
+// the *writer*'s `~/.npmrc` / scoped registries. A v1 lockfile with a tarball
+// under a writer-only scoped registry (and no integrity hash) used to be stamped
+// v2 — matching the writer's own scope — which then failed to parse for a
+// teammate or CI that lacks that scope. It must round-trip as v1 so it keeps
+// loading regardless of the reader's config.
+it("re-saving keeps v1 for a tarball under a writer-only scoped registry", async () => {
+  // A scoped registry the writer knows about but a reader won't. `--lockfile-only`
+  // never fetches the tarball, so the host need not be reachable.
+  await using scopedRegistry = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch() {
+      return new Response("not found", { status: 404 });
+    },
+  });
+  const scopedRegistryUrl = `http://127.0.0.1:${scopedRegistry.port}/`;
+  const scopedTarball = `${scopedRegistryUrl}@myorg/foo/-/foo-1.0.0.tgz`;
+
+  const v1Lockfile = JSON.stringify({
+    lockfileVersion: 1,
+    configVersion: 1,
+    workspaces: { "": { name: "root", dependencies: { "@myorg/foo": "1.0.0" } } },
+    packages: {
+      // Off-registry tarball (under the scoped registry, not the default) with
+      // an empty integrity hash.
+      "@myorg/foo": ["@myorg/foo@1.0.0", scopedTarball, {}, ""],
+    },
+  });
+
+  // Writer: has the `@myorg` scope configured, so `scope_for_package_name`
+  // resolves the tarball URL to its registry. This is the config that used to
+  // make the writer consider the entry "v2-clean" and stamp v2.
+  using writerDir = tempDir("lockfile-scoped-writer", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { "@myorg/foo": "1.0.0" } }),
+    "bunfig.toml": `[install.scopes]\nmyorg = { url = "${scopedRegistryUrl}" }\n`,
+    "bun.lock": v1Lockfile,
+  });
+
+  await using writerProc = spawn({
+    cmd: [bunExe(), "install", "--lockfile-only"],
+    cwd: String(writerDir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, writerErr, writerExit] = await Promise.all([
+    writerProc.stdout.text(),
+    writerProc.stderr.text(),
+    writerProc.exited,
+  ]);
+
+  const rewritten = await file(join(String(writerDir), "bun.lock")).text();
+  expect(writerErr).toContain("Saved lockfile");
+  // Must stay v1: the tarball is not under the *default* registry, which is the
+  // only normalization the writer applies, so v2 can't be guaranteed to parse
+  // for a reader without the `@myorg` scope.
+  expect(rewritten).toContain(`"lockfileVersion": 1,`);
+  expect(writerExit).toBe(0);
+
+  // Reader: no `@myorg` scope. The re-saved lockfile must still load — if the
+  // writer had stamped v2, this would fail with the integrity error.
+  using readerDir = tempDir("lockfile-scoped-reader", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { "@myorg/foo": "1.0.0" } }),
+    "bun.lock": rewritten,
+  });
+
+  await using readerProc = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile", "--lockfile-only"],
+    cwd: String(readerDir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, readerErr] = await Promise.all([readerProc.stdout.text(), readerProc.stderr.text(), readerProc.exited]);
+
+  expect(readerErr).not.toContain(
+    "Missing integrity hash for npm package resolved to a tarball URL outside the configured registry",
+  );
+});

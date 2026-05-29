@@ -692,6 +692,29 @@ describe("HTTP client CONNECT", () => {
     }
   });
 
+  test("http.request CONNECT rejects a header block larger than maxHeaderSize", async () => {
+    // Oversized headers delivered complete (with the terminator) in one write
+    // must still be rejected, matching Node's llhttp byte counting.
+    const proxyServer = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.on("data", () => socket.write("HTTP/1.1 200 OK\r\nX: " + "a".repeat(20000) + "\r\n\r\n"));
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const { port } = proxyServer.address() as AddressInfo;
+
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "h:1", maxHeaderSize: 16384 });
+      req.on("connect", () => reject(new Error("unexpected connect on oversized headers")));
+      req.on("error", err => resolve((err as NodeJS.ErrnoException).code ?? err.message));
+      req.end();
+
+      expect(await promise).toBe("HPE_HEADER_OVERFLOW");
+    } finally {
+      await new Promise<void>(r => proxyServer.close(() => r()));
+    }
+  });
+
   test("http.request CONNECT resolves the proxy host with a custom lookup", async () => {
     const proxyServer = http.createServer();
     let proxySocket: net.Socket | undefined;

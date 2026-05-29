@@ -782,6 +782,14 @@ function ClientRequest(input, options, cb) {
         }
         return;
       }
+      // Reject an oversized header block even when it arrives complete (with its
+      // terminator) in a single read, so maxHeaderSize is honored the way Node's
+      // llhttp counts header bytes regardless of where \r\n\r\n lands.
+      if (headerEnd > maxHeaderSize) {
+        socket.destroy();
+        onError($HPE_HEADER_OVERFLOW("Header overflow"));
+        return;
+      }
 
       const headerText = buffer.toString("latin1", 0, headerEnd);
 

@@ -169,7 +169,7 @@ describe("zlib", () => {
     const got = Buffer.from(gunzipSync(multi, { library: "libdeflate" }));
     expect(got.length).toBe(big.length + 1);
     expect(got.equals(Buffer.concat([big, Buffer.from("x")]))).toBe(true);
-  }, 10_000);
+  });
 
   // A single highly-compressible member whose plaintext outgrows the initial
   // reserve also exercised the grow loop — it hung before the capacity-doubling
@@ -179,7 +179,7 @@ describe("zlib", () => {
     const got = Buffer.from(gunzipSync(zlib.gzipSync(big), { library: "libdeflate" }));
     expect(got.length).toBe(big.length);
     expect(got.equals(big)).toBe(true);
-  }, 10_000);
+  });
 
   // Empty input is not a valid gzip stream; the libdeflate opt-in must error
   // like the default zlib path and node:zlib (both reject it), not silently

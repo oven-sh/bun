@@ -367,7 +367,7 @@ describe("fetch() with a concatenated multi-member gzip body", () => {
     const got = Buffer.from(await res.arrayBuffer());
     expect(got.length).toBe(expected.length);
     expect(got.equals(expected)).toBe(true);
-  }, 10_000);
+  });
 
   it("decodes all members (chunked transfer, zlib slow path)", async () => {
     using server = Bun.serve({

@@ -20,6 +20,8 @@
 #include "ZigGlobalObject.h"
 #include "headers.h"
 #include "ErrorCode.h"
+#include "JSDOMConvertSequences.h"
+#include "JSDOMConvertStrings.h"
 
 #include "GeneratedNodeModuleModule.h"
 #include "ZigGeneratedClasses.h"
@@ -372,39 +374,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
                 return {};
             }
 
-            WTF::Vector<BunString> paths;
+            Vector<WTF::String> paths = convert<IDLSequence<IDLDOMString>>(*globalObject, pathsValue);
+            RETURN_IF_EXCEPTION(scope, {});
 
-            // Iterate through the array using forEachInIterable
-            size_t pathIndex = 0;
-            forEachInIterable(globalObject, pathsValue, [&](JSC::VM&, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue item) {
-                if (scope.exception())
-                    return;
+            WTF::Vector<BunString> bunPaths;
+            bunPaths.reserveInitialCapacity(paths.size());
+            for (auto& path : paths)
+                bunPaths.append(Bun::toStringRef(path));
 
-                if (!item.isString()) {
-                    Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, makeString("paths["_s, pathIndex, "]"_s), "string"_s, item);
-                    return;
-                }
-                pathIndex++;
-
-                WTF::String pathStr = item.toWTFString(lexicalGlobalObject);
-                if (scope.exception())
-                    return;
-
-                paths.append(Bun::toStringRef(pathStr));
-            });
-
-            if (scope.exception()) {
-                // Clean up on exception
-                for (auto& path : paths) {
-                    path.deref();
-                }
-                return {};
-            }
-
-            result = Bun__resolveSyncWithPaths(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true, paths.begin(), paths.size());
+            result = Bun__resolveSyncWithPaths(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true, bunPaths.begin(), bunPaths.size());
 
             // Clean up BunStrings to avoid leaking
-            for (auto& path : paths) {
+            for (auto& path : bunPaths) {
                 path.deref();
             }
 

@@ -200,23 +200,32 @@ test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths is no
   }).toThrow();
 });
 
-test("require.resolve throws ERR_INVALID_ARG_TYPE when options.paths contains a non-string", () => {
-  const codeOf = fn => {
-    let err;
-    try {
-      fn();
-    } catch (e) {
-      err = e;
-    }
-    return err && err.code;
-  };
+test("require.resolve coerces non-string options.paths entries without crashing", () => {
+  // options.paths is converted as a WebIDL sequence<DOMString>, so a non-string
+  // entry is coerced to a string rather than crashing the process (the original
+  // Fuzzilli bug). A number that does not name a real directory just misses.
+  expect(() => {
+    require.resolve("this-pkg-does-not-exist-zzz", { paths: [512] });
+  }).toThrow();
+  expect(() => {
+    require.resolve("this-pkg-does-not-exist-zzz", { paths: ["/abs", 512] });
+  }).toThrow();
 
-  // A number is coerced/absolutized to a bogus dir rather than validated unless
-  // the boundary rejects non-string entries; assert the code to pin that check.
-  expect(codeOf(() => require.resolve("this-pkg-does-not-exist-zzz", { paths: [512] }))).toBe("ERR_INVALID_ARG_TYPE");
-  expect(codeOf(() => require.resolve("this-pkg-does-not-exist-zzz", { paths: ["/abs", 512] }))).toBe(
-    "ERR_INVALID_ARG_TYPE",
-  );
+  // The coerced directory name is honored: 512 -> "512", anchored at cwd.
+  const { path: dir, cleanup } = createTempDir("require-resolve-coerced-paths", {
+    "512/node_modules/coerced-pkg/package.json": JSON.stringify({ name: "coerced-pkg", main: "index.js" }),
+    "512/node_modules/coerced-pkg/index.js": "module.exports = 'coerced-pkg';",
+  });
+  const prevCwd = process.cwd();
+  try {
+    process.chdir(dir);
+    expect(require.resolve("coerced-pkg", { paths: [512] })).toBe(
+      resolve(dir, "512/node_modules/coerced-pkg/index.js"),
+    );
+  } finally {
+    process.chdir(prevCwd);
+    cleanup();
+  }
 });
 
 test("require.resolve does not crash when options.paths contains a non-absolute path", () => {

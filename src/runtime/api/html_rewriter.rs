@@ -537,9 +537,9 @@ impl HTMLRewriterLoader {
         if self.finalized {
             return;
         }
-        // SAFETY: rewriter created via builder.build(); not yet freed.
-        unsafe { lolhtml::HTMLRewriter::destroy(self.rewriter) };
-        {
+        if !self.rewriter.is_null() {
+            // SAFETY: rewriter created via builder.build(); not yet freed.
+            unsafe { lolhtml::HTMLRewriter::destroy(self.rewriter) };
             let mut ctx = self.context.borrow_mut();
             ctx.active_rewriters -= 1;
             if ctx.active_rewriters == 0 {

@@ -697,7 +697,7 @@ describe("HTTP client CONNECT", () => {
     // must still be rejected, matching Node's llhttp byte counting.
     const proxyServer = net.createServer(socket => {
       socket.on("error", () => {});
-      socket.on("data", () => socket.write("HTTP/1.1 200 OK\r\nX: " + "a".repeat(20000) + "\r\n\r\n"));
+      socket.on("data", () => socket.write("HTTP/1.1 200 OK\r\nX: " + Buffer.alloc(20000, "a").toString() + "\r\n\r\n"));
     });
     await once(proxyServer.listen(0, "127.0.0.1"), "listening");
     const { port } = proxyServer.address() as AddressInfo;

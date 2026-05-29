@@ -49,7 +49,6 @@ impl fmt::Display for ComparatorDisplay {
 }
 
 impl Range {
-    /// *
     pub fn init_wildcard(version: Version, wildcard: Wildcard) -> Range {
         match wildcard {
             Wildcard::None => Range {

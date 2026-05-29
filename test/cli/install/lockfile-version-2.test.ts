@@ -5,8 +5,9 @@ import { bunExe, bunEnv as env, tempDir } from "harness";
 import { join } from "path";
 
 // These tests cover the text lockfile bump to version 2 and the parse-time
-// checks gated behind it. They use `file:` dependencies so they run fully
-// offline (no registry required).
+// checks gated behind it. They run fully offline — using `file:` deps or
+// loopback/unreachable endpoints — so no external network or registry is
+// required.
 
 it("a freshly written text lockfile defaults to version 2", async () => {
   using dir = tempDir("lockfile-v2-default", {

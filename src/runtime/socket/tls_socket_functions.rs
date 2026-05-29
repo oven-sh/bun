@@ -206,14 +206,22 @@ pub(super) mod ffi {
         // certificate once ClientHello processing has reached ALPN selection.
         pub(crate) fn SSL_CTX_get0_certificate(ctx: *const SSL_CTX) -> *mut core::ffi::c_void;
         pub(crate) fn SSL_CTX_get0_privatekey(ctx: *const SSL_CTX) -> *mut core::ffi::c_void;
-        pub(crate) fn SSL_use_certificate(ssl: *mut SSL, x509: *mut core::ffi::c_void)
-        -> core::ffi::c_int;
-        pub(crate) fn SSL_use_PrivateKey(ssl: *mut SSL, pkey: *mut core::ffi::c_void) -> core::ffi::c_int;
+        pub(crate) fn SSL_use_certificate(
+            ssl: *mut SSL,
+            x509: *mut core::ffi::c_void,
+        ) -> core::ffi::c_int;
+        pub(crate) fn SSL_use_PrivateKey(
+            ssl: *mut SSL,
+            pkey: *mut core::ffi::c_void,
+        ) -> core::ffi::c_int;
         pub(crate) fn SSL_CTX_get0_chain_certs(
             ctx: *const SSL_CTX,
             out_chain: *mut *mut core::ffi::c_void,
         ) -> core::ffi::c_int;
-        pub(crate) fn SSL_set1_chain(ssl: *mut SSL, chain: *mut core::ffi::c_void) -> core::ffi::c_int;
+        pub(crate) fn SSL_set1_chain(
+            ssl: *mut SSL,
+            chain: *mut core::ffi::c_void,
+        ) -> core::ffi::c_int;
         // Atomic refcount bump on a live `SSL_CTX*`; opaque-ZST ref ⇒ no
         // caller-side precondition (route via `SSL_CTX::opaque_ref`).
         pub(crate) safe fn SSL_CTX_up_ref(ctx: &SSL_CTX) -> c_int;
@@ -863,7 +871,11 @@ pub(super) fn get_tls_peer_finished_message(
 /// `tlsSocket.setKeyCert(secureContext)` - serve this connection's identity
 /// from the given context: SSL_set_SSL_CTX swaps the cert/key/chain used for
 /// the rest of the handshake (Node calls it from ALPNCallback / SNICallback).
-pub(crate) fn set_key_cert(this: &This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn set_key_cert(
+    this: &This,
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     if this.socket.get().is_detached() {
         return Ok(JSValue::UNDEFINED);
     }

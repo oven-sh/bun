@@ -1533,21 +1533,15 @@ folded: >
           expect(() => YAML.parse("?\t: x\n")).toThrow("Tab characters cannot be used as indentation");
         });
 
-        test.todo("block-scalar phase-2 mid-line `---`/`...` is content, not a doc marker", () => {
-          // The phase-2 body loop's `0x2D`/`0x2E` arms check for `---`/`...`
-          // and `line_indent == NONE`, but at content_indent==0 a more-indented
-          // `  z---` line still has line_indent set to 0 by the nested loop.
-          // ee/js both treat it as content. Pre-existing.
+        test("block-scalar phase-2 mid-line `---`/`...` is content, not a doc marker", () => {
           expect(YAML.parse("|\nx\n  z---\n")).toEqual("x\n  z---\n");
           expect(YAML.parse("|\nx\n  z...\n")).toEqual("x\n  z...\n");
         });
 
-        test.todo("block collection on the `---` line", () => {
+        test("block collection on the `---` line", () => {
           // [200] s-l+block-collection requires s-l-comments (a line break)
           // before l+block-sequence/mapping; same-line content after `---` is
-          // s-separate-in-line + ns-flow-node only. Not tab-specific (`--- - x`
-          // is equally invalid). ee rejects both; js-yaml only rejects the
-          // tab variant. Pre-existing.
+          // s-separate-in-line + ns-flow-node only.
           expect(() => YAML.parse("---\t- x\n")).toThrow();
           expect(() => YAML.parse("--- - x\n")).toThrow();
           // Same-line flow node IS valid.
@@ -1555,16 +1549,189 @@ folded: >
           expect(YAML.parse("---\tfoo\n")).toEqual("foo");
         });
 
-        test.todo("`---` inside a plain scalar (issue #25660)", () => {
+        test("`---` inside a plain scalar (issue #25660)", () => {
           // [128] ns-plain-char admits `-`; a `---` not at column 0 (or not
           // followed by /[ \t\r\n]|$/) is content, not c-directives-end.
-          // Currently splits into [{"name":"some-text"},{"description":"x"}].
           expect(YAML.parse("name: some-text---\ndescription: x\n")).toEqual({
             name: "some-text---",
             description: "x",
           });
         });
+      });
 
+      // [203]/[204] c-directives-end / c-document-end are line-starting
+      // tokens at column 0, followed by s-white/b-break/eof. Everywhere else
+      // `-` and `.` are ns-plain-char per [126]/[130]. Exhaustive over
+      // position × column × follower × count × scanner context. Each row
+      // verified against ≥2/3 of eemeli/yaml, js-yaml, PyYAML.
+      describe("`---`/`...` doc-marker recognition", () => {
+        const E = (msg = "Unexpected token") => ({ throws: msg });
+        test.each([
+          // Mid-line / end-of-line in a plain-scalar value (not at column 0)
+          ["trail-dash", "a: text---\n", { a: "text---" }],
+          ["trail-dot", "a: text...\n", { a: "text..." }],
+          ["mid-dash", "a: te---xt\n", { a: "te---xt" }],
+          ["mid-dot", "a: te...xt\n", { a: "te...xt" }],
+          ["lead-dash", "a: ---text\n", { a: "---text" }],
+          ["lead-dot", "a: ...text\n", { a: "...text" }],
+          ["only-dash-val", "a: ---\n", { a: "---" }],
+          ["only-dot-val", "a: ...\n", { a: "..." }],
+          ["git-diff-line", "line: --- a/file\n", { line: "--- a/file" }],
+          // Count: only exactly 3 with ws/eol after is a marker
+          ["2dash", "a: b--\n", { a: "b--" }],
+          ["4dash", "a: b----\n", { a: "b----" }],
+          ["5dash", "a: b-----\n", { a: "b-----" }],
+          ["2dot", "a: b..\n", { a: "b.." }],
+          ["4dot", "a: b....\n", { a: "b...." }],
+          // Follower: must be s-white/b-break/eof
+          ["col0-4dash", "a\n----\n", "a ----"],
+          ["col0-dash-noeol", "a\n---b\n", "a ---b"],
+          ["col0-dot-noeol", "a\n...b\n", "a ...b"],
+          // Top-level plain scalar (no key prefix)
+          ["top-trail", "text---\n", "text---"],
+          ["top-trail-dot", "text...\n", "text..."],
+          ["top-followed-eof", "text---", "text---"],
+          ["top-followed-sp", "text--- more\n", "text--- more"],
+          // Column 0 — IS a marker
+          ["col0-dash", "a\n---\nb\n", ["a", "b"]],
+          ["col0-dot", "a\n...\n", "a"],
+          ["col0-dash-sp", "a\n--- b\n", ["a", "b"]],
+          ["col0-dash-tab", "a\n---\tb\n", ["a", "b"]],
+          ["col0-dash-eof", "a\n---", ["a", null]],
+          ["col0-dash-crlf", "a\r\n---\r\nb\r\n", ["a", "b"]],
+          // Indented — NOT a marker
+          ["indent1-dash", "a\n ---\n", "a ---"],
+          ["indent1-dot", "a\n ...\n", "a ..."],
+          // Block scalar body
+          ["bs-mid", "|\nx\n  z---\n", "x\n  z---\n"],
+          ["bs-mid-dot", "|\nx\n  z...\n", "x\n  z...\n"],
+          ["bsf-mid", ">\nx\n  z---\n", "x\n  z---\n"],
+          ["bs-col0", "|\nx\n---\ny\n", ["x\n", "y"]],
+          ["bs-col0-dot", "|\nx\n...\n", "x\n"],
+          ["bs-first-mid", "|\n  z---\n", "z---\n"],
+          // Quoted scalars — always content
+          ["sq", "a: 'x---'\n", { a: "x---" }],
+          ["dq", 'a: "x---"\n', { a: "x---" }],
+          ["sq-dot", "a: 'x...'\n", { a: "x..." }],
+          // Flow context — always content
+          ["flow-seq", "[a---, b...]\n", ["a---", "b..."]],
+          ["flow-map", "{a: b---}\n", { a: "b---" }],
+          ["flow-only", "[---, ...]\n", ["---", "..."]],
+          // Nested
+          ["nested-trail", "k:\n  a: text---\n  b: y\n", { k: { a: "text---", b: "y" } }],
+          ["nested-col0", "k:\n  a: text\n---\nb\n", [{ k: { a: "text" } }, "b"]],
+          // Real-world text patterns
+          ["ellipsis", "msg: wait...\n", { msg: "wait..." }],
+          ["ellipsis-mid", "msg: wait... done\n", { msg: "wait... done" }],
+          ["range", "span: 2023--2025\n", { span: "2023--2025" }],
+          ["arrow", "dir: <--->\n", { dir: "<--->" }],
+          ["em-dash-ish", "a: foo --- bar\n", { a: "foo --- bar" }],
+          ["frontmatter", "---\ntitle: x\n---\n", [{ title: "x" }, null]],
+          // Mixed
+          ["dash-dot", "a: ---...\n", { a: "---..." }],
+          ["dot-dash", "a: ...---\n", { a: "...---" }],
+          // After --- on the same line: only flow node allowed
+          ["doc-sl-seq", "--- - x\n", E()],
+          ["doc-sl-seq-tab", "---\t- x\n", E()],
+          ["doc-sl-map", "--- a: b\n", E()],
+          ["doc-sl-qmark", "--- ? a\n", E()],
+          ["doc-sl-flow", "--- [a]\n", ["a"]],
+          ["doc-sl-flowmap", "--- {a: 1}\n", { a: 1 }],
+          ["doc-sl-scalar", "--- foo\n", "foo"],
+          ["doc-nl-seq", "---\n- x\n", ["x"]],
+          ["doc-nl-map", "---\na: b\n", { a: "b" }],
+          // ... immediately at EOF (no trailing newline)
+          ["dot-eof-plain", "abc\n...", "abc"],
+          ["dot-eof-seq", "- a\n...", ["a"]],
+          ["dot-eof-map", "a: 1\n...", { a: 1 }],
+          ["dot-eof-bs", "|\nx\n...", "x\n"],
+          ["dot-eof-only", "...", null],
+          ["dash-eof-only", "---", null],
+          // ── Nesting depth / structural variation ──────────────────────────
+          // Deep block-map nesting (--- at columns 8, 12)
+          ["deep-3-dash", "a:\n  b:\n    c: text---\n    d: y\n", { a: { b: { c: "text---", d: "y" } } }],
+          ["deep-3-dot", "a:\n  b:\n    c: text...\n    d: y\n", { a: { b: { c: "text...", d: "y" } } }],
+          ["deep-4", "a:\n  b:\n    c:\n      d: t---\n", { a: { b: { c: { d: "t---" } } } }],
+          // Block-seq nesting
+          ["seq-2", "- - text---\n", [["text---"]]],
+          ["seq-3", "- - - text...\n", [[["text..."]]]],
+          ["seq-map-seq", "- a:\n    - b---\n    - c\n", [{ a: ["b---", "c"] }]],
+          // Mixed block↔flow
+          ["block-flow-seq", "a:\n  - [text---, x]\n", { a: [["text---", "x"]] }],
+          ["block-flow-map", "a:\n  - {k: text...}\n", { a: [{ k: "text..." }] }],
+          ["flow-in-flow", "[[text---], {k: text...}]\n", [["text---"], { k: "text..." }]],
+          ["flow-nested-3", "[[[a---]]]\n", [[["a---"]]]],
+          // Block scalar inside nesting
+          ["nested-bs", "a:\n  b: |\n    text---\n  c: x\n", { a: { b: "text---\n", c: "x" } }],
+          ["nested-bs-fold", "a:\n  b: >\n    text...\n  c: x\n", { a: { b: "text...\n", c: "x" } }],
+          ["seq-bs", "- |\n  text---\n- y\n", ["text---\n", "y"]],
+          // Quoted inside nesting
+          ["nested-sq", "a:\n  b: 'text---'\n  c: x\n", { a: { b: "text---", c: "x" } }],
+          ["nested-dq", 'a:\n  b: "text..."\n  c: x\n', { a: { b: "text...", c: "x" } }],
+          // Key position (--- as part of a key)
+          ["key-dash", "text---: v\n", { "text---": "v" }],
+          ["key-dot", "text...: v\n", { "text...": "v" }],
+          ["nested-key", "a:\n  text---: v\n", { a: { "text---": "v" } }],
+          ["explicit-key", "? text---\n: v\n", { "text---": "v" }],
+          // After anchor/tag
+          ["anchor-val", "a: &x text---\nb: *x\n", { a: "text---", b: "text---" }],
+          ["tag-val", "a: !!str text---\n", { a: "text---" }],
+          ["anchor-tag-val", "a: &x !!str text...\n", { a: "text..." }],
+          // After flow indicator (, [ {)
+          ["flow-after-comma", "[a, text---, b]\n", ["a", "text---", "b"]],
+          ["flow-after-colon", "{a: text---, b: text...}\n", { a: "text---", b: "text..." }],
+          ["flow-map-key", "{text---: v}\n", { "text---": "v" }],
+          // Multi-doc with --- as content in a doc
+          ["multidoc-content", "---\na: text---\n---\nb: text...\n", [{ a: "text---" }, { b: "text..." }]],
+          // Multi-line plain with --- on continuation (column > 0)
+          ["fold-dash", "a: text\n  ---more\n", { a: "text ---more" }],
+          ["fold-dot", "a: text\n  ...more\n", { a: "text ...more" }],
+          ["fold-dash-end", "a: text\n  more---\n", { a: "text more---" }],
+          // Multi-line plain with --- on continuation at column 0 (IS marker)
+          ["fold-col0", "a: text\n---\nb\n", [{ a: "text" }, "b"]],
+          // Seq item that's just --- (column > 0)
+          ["seq-only-dash", "- ---\n- x\n", ["---", "x"]],
+          ["seq-only-dot", "- ...\n- x\n", ["...", "x"]],
+          // Compact `- -` prefix collision
+          ["compact-dash-val", "- - ---\n", [["---"]]],
+          // #23489: ellipsis inside quoted strings (the original case `nl` was added for)
+          ["i23489", `balance: "👛 لا تمتلك محفظة... !"\n`, { balance: "👛 لا تمتلك محفظة... !" }],
+          ["dq-dot-mid", 'a: "x ... y"\n', { a: "x ... y" }],
+          ["dq-dot-start", 'a: "... rest"\n', { a: "... rest" }],
+          ["dq-dot-end", 'a: "rest ..."\n', { a: "rest ..." }],
+          ["dq-dash-mid", 'a: "x --- y"\n', { a: "x --- y" }],
+        ] as const)("%s", (_id, input, expected) => {
+          if (typeof expected === "object" && expected && "throws" in expected) {
+            expect(() => YAML.parse(input)).toThrow(expected.throws as string);
+          } else {
+            expect(YAML.parse(input)).toEqual(expected);
+          }
+        });
+
+        test("multi-line quoted scalar: tab-prefixed `---`/`...` is content", () => {
+          // is_at_line_start() (prev byte == LF/CR) replaces the `nl &&
+          // line_indent==0` gate; after fold_lines() consumed `\n\t`, prev is
+          // tab, not at line start.
+          expect(YAML.parse("'foo\n\t--- x'\n")).toEqual("foo --- x");
+          expect(YAML.parse('"foo\n\t--- x"\n')).toEqual("foo --- x");
+          expect(() => YAML.parse("'foo\n--- x'\n")).toThrow("document start");
+        });
+
+        test("rejects content on the last `...` line of a multi-suffix run", () => {
+          expect(() => YAML.parse("a\n...\n... b\n")).toThrow("Unexpected token");
+        });
+
+        test.todo("BOM-prefixed `---` recognized as doc marker", () => {
+          // [202] l-document-prefix admits c-byte-order-mark before
+          // c-directives-end. is_at_line_start() is false after the BOM
+          // (pos != line_start_pos). Pre-existing differently-wrong (was a
+          // spurious BOM-only first doc); proper fix is BOM strip in
+          // l-document-prefix, not special-casing here.
+          expect(YAML.parse("\uFEFF---\na: 1\n")).toEqual({ a: 1 });
+        });
+      });
+
+      describe("flow over-accepts (locked-in behavior)", () => {
         test("JSON-adjacent does not apply in flow-map value position", () => {
           // [147] flow-map value is ns-flow-node, not ns-flow-pair. These are
           // pre-existing over-accepts on main (refs error); preserved as-is.

@@ -2395,16 +2395,22 @@ pub mod JSZlib {
             // A member's output lands in `cap - len` spare; `len` only advances
             // on Success, so the growth must double `capacity` — `reserve(cap)`
             // is relative to `len` and no-ops once `len < cap` (an infinite loop).
-            // Returns false once doubling would exceed the 1 GiB decompression-bomb
-            // cap. The cap is checked *after* growing, not on a fresh `capacity`,
-            // so a large input-justified initial reservation (the caller sizes
-            // `out` from the gzip ISIZE / `compressed.len()`) still decodes —
-            // matching the pre-loop `decompress_to_vec_grow`, which consulted the
-            // cap only after an `InsufficientSpace` doubling.
+            // The 1 GiB decompression-bomb cap is checked *before* doubling and
+            // returns false when the current capacity already exceeds it — so one
+            // doubling past 1 GiB (and a decode at that size) is still allowed,
+            // matching the pre-loop `decompress_to_vec_grow`, which doubles only
+            // while `capacity <= max_capacity`. The cap is consulted on grow, not
+            // on a fresh `capacity`, so a large input-justified initial reservation
+            // (the caller sizes `out` from the gzip ISIZE / `compressed.len()`)
+            // still decodes: on entry the spare is non-empty, so the first decode
+            // runs before any grow.
             let grow_to_double_capacity = |out: &mut Vec<u8>| -> bool {
+                if out.capacity() > 1024 * 1024 * 1024 {
+                    return false;
+                }
                 let target = out.capacity().max(4096).saturating_mul(2);
                 out.reserve(target.saturating_sub(out.len()));
-                out.capacity() <= 1024 * 1024 * 1024
+                true
             };
             let result = loop {
                 if out.spare_capacity_mut().is_empty() && !grow_to_double_capacity(out) {

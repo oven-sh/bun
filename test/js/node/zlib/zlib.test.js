@@ -191,26 +191,47 @@ describe("zlib", () => {
     expect(() => zlib.gunzipSync(Buffer.alloc(0))).toThrow();
   });
 
-  // Regression: a gzip stream whose compressed size exceeds 1 GiB sizes the
-  // output Vec from the input (`Vec::with_capacity(compressed.len())`, since the
-  // ISIZE hint is >= 256 MB), so the buffer enters the libdeflate loop already
-  // larger than the 1 GiB decompression-bomb cap. The cap must be checked only
-  // *after* the loop grows the buffer, not on a fresh input-justified capacity —
-  // otherwise this throws OutOfMemory before libdeflate ever runs, even though
-  // the whole output fits in the space the caller already reserved. Stored-block
-  // gzip (level 0) keeps compressed ~= input so the >1 GiB threshold is hit
-  // without a real compression pass; the payload is all zeros (fast to alloc).
-  // Allocates ~3 GiB peak, so skip on CI where runners are memory-constrained.
+  // Regression: the libdeflate opt-in shares the default path's 1 GiB
+  // decompression-bomb cap, but the cap must be consulted the way the underlying
+  // grow loop (decompress_to_vec_grow) does — on a grow and checked *before*
+  // doubling — so large-but-legitimate gzip streams still decode. The two cases
+  // below trip distinct code paths; both allocate multiple GiB, so they are
+  // skipped on CI (memory-constrained runners) and carry an explicit timeout
+  // because compressing ~1 GiB under the sanitizer-instrumented build exceeds
+  // the default, matching this file's other large-payload tests.
+
+  // A compressed stream larger than 1 GiB sizes the output Vec from the input
+  // (Vec::with_capacity(compressed.len()), since ISIZE >= 256 MB), so the buffer
+  // enters the loop already past the cap. Checking it on entry threw OutOfMemory
+  // before libdeflate ran, even though the output fits in the reservation.
+  // Stored-block gzip (level 0) keeps compressed ~= input, hitting the >1 GiB
+  // threshold without a real compression pass.
   it.skipIf(isCI)(
-    "Bun.gunzipSync({ library: 'libdeflate' }) decodes an input larger than the 1 GiB bomb cap",
+    "Bun.gunzipSync({ library: 'libdeflate' }) decodes a stream whose compressed size exceeds 1 GiB",
     () => {
-      const n = 1024 * 1024 * 1024 + 32 * 1024 * 1024; // 1.03 GiB: compressed is > 1 GiB
+      const n = 1024 * 1024 * 1024 + 32 * 1024 * 1024; // 1.03 GiB
       const compressed = zlib.gzipSync(Buffer.alloc(n), { level: 0 });
       expect(compressed.length).toBeGreaterThan(1024 * 1024 * 1024);
-      const got = gunzipSync(compressed, { library: "libdeflate" });
-      expect(got.length).toBe(n);
+      expect(gunzipSync(compressed, { library: "libdeflate" }).length).toBe(n);
     },
-    120_000,
+    15_000,
+  );
+
+  // A tiny compressed stream with a ~700 MB output forces the grow loop to
+  // double capacity past 1 GiB on its last step before the decode fits (from a
+  // sub-MB initial reservation the doublings land at ~696 MB < 700 MB, so the
+  // next double to ~1.39 GiB is required). The cap must allow that one doubling
+  // past 1 GiB and the decode at that size, like decompress_to_vec_grow which
+  // doubles while capacity <= max; rejecting it before the decode threw here.
+  it.skipIf(isCI)(
+    "Bun.gunzipSync({ library: 'libdeflate' }) decodes when the grow loop doubles past 1 GiB",
+    () => {
+      const n = 700 * 1000 * 1000;
+      const compressed = zlib.gzipSync(Buffer.alloc(n, 0x41)); // highly compressible
+      expect(compressed.length).toBeLessThan(1024 * 1024);
+      expect(gunzipSync(compressed, { library: "libdeflate" }).length).toBe(n);
+    },
+    15_000,
   );
 });
 

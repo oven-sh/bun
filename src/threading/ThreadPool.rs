@@ -662,18 +662,6 @@ impl ThreadPool {
         self.wait_group.wait();
     }
 
-    /// Wait for all tasks to complete, then shut down and deinit the thread pool.
-    ///
-    /// Takes `&mut self` (NOT by-value): worker threads hold `*const ThreadPool`
-    /// pointing at this struct's address; consuming `self` would move it to a new
-    /// stack slot and leave workers with dangling pointers (UAF + deadlock).
-    /// Zig `waitAndDeinit(self: *ThreadPool)` operates in place — match that.
-    pub fn wait_and_deinit(&mut self) {
-        self.wait_for_all();
-        self.shutdown();
-        self.join();
-    }
-
     fn force_spawn(&self) {
         // Try to notify a thread
         let is_waking = false;

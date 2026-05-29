@@ -7,8 +7,9 @@ use crate::values::percentage::{DimensionPercentage, Percentage};
 use crate::values::protocol;
 use crate::values::time::Time;
 // Bring the numeric-protocol traits into scope so their methods resolve via the
-// `CalcValue` supertrait bounds inside `impl<V: CalcValue> Calc<V>`.
-use crate::values::protocol::{IsCompatible, ToCss};
+// `CalcValue` supertrait bounds inside `impl<V: CalcValue> Calc<V>`. `TryOpTo`
+// is also needed for the concrete `Angle` reconciliation in `parse_atan2`.
+use crate::values::protocol::{IsCompatible, ToCss, TryOpTo};
 
 use core::cmp::Ordering;
 
@@ -70,6 +71,41 @@ impl CalcUnit {
             b"tan" => Some(Self::Tan),
             _ => None,
         }
+    }
+
+    /// Whether a failure to parse this function under an `<angle>`/`<number>`
+    /// type can never be rescued by re-parsing under a length/time/percentage
+    /// type — i.e. the function parses its arguments *independently of the
+    /// surrounding value type `V`*, so the failure is the same under every type.
+    ///
+    /// The trigonometric functions parse their argument as an `<angle>`
+    /// (`parse_trig`), and `pow()`/`log()`/`sqrt()`/`exp()` parse theirs as a
+    /// `<number>` (`parse_numeric`); `atan2()` probes fixed concrete types. None
+    /// of these depend on `V`, so a failure is terminal. The remaining functions
+    /// — `calc()`/`min()`/`max()`/`clamp()`/`round()`/`mod()`/`rem()`/`hypot()`
+    /// and, notably, `abs()`/`sign()` — parse their argument via `parse_sum`,
+    /// which *is* `V`-dependent (e.g. `sign(1px)` fails under `Calc<Angle>` but
+    /// succeeds under `Calc<Length>`), so they are excluded.
+    ///
+    /// Used by the `parse_value` math-function guard: recording a failure of one
+    /// of these functions is what lets `parse_atan2` skip the dimension parses
+    /// (and thereby the otherwise-exponential re-descent of nested `atan2()`)
+    /// without wrongly rejecting a dimension argument.
+    pub fn arg_parse_is_type_independent(self) -> bool {
+        matches!(
+            self,
+            Self::Sin
+                | Self::Cos
+                | Self::Tan
+                | Self::Asin
+                | Self::Acos
+                | Self::Atan
+                | Self::Atan2
+                | Self::Pow
+                | Self::Log
+                | Self::Sqrt
+                | Self::Exp
+        )
     }
 }
 
@@ -680,12 +716,23 @@ impl<V: CalcValue> Calc<V> {
                 // `Calc::parse` again, which makes deeply nested invalid
                 // arguments exponentially slow to reject.
                 let start = input.state();
-                let is_math_function = matches!(
-                    input.next(),
-                    Ok(css::Token::Function(name)) if CalcUnit::get_any_case(name).is_some()
-                );
+                let failed_unit = match input.next() {
+                    Ok(css::Token::Function(name)) => CalcUnit::get_any_case(name),
+                    _ => None,
+                };
                 input.reset(&start);
-                if is_math_function {
+                if let Some(unit) = failed_unit {
+                    // A function that parses its argument independently of the
+                    // value type (trig, `atan2()`, `pow()`, …) failed here, so no
+                    // length/time/percentage re-parse can succeed either: record
+                    // the failure so `parse_atan2` can skip re-descending such an
+                    // argument (nested `atan2()` is otherwise exponential).
+                    // Functions whose argument parse is type-dependent — `calc()`,
+                    // `abs()`, `sign()`, … — are not recorded, because the
+                    // dimension parses can still succeed on them.
+                    if unit.arg_parse_is_type_independent() {
+                        input.note_math_fn_parse_failure();
+                    }
                     return Err(e);
                 }
             }
@@ -791,10 +838,92 @@ impl<V: CalcValue> Calc<V> {
         ctx: C,
         parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
     ) -> CssResult<Angle> {
-        // atan2 supports arguments of any <number>, <dimension>, or <percentage>, even ones that wouldn't
-        // normally be supported by V. The only requirement is that the arguments be of the same type.
-        // Try parsing with each type, and return the first one that parses successfully.
+        // atan2 supports arguments of any <number>, <dimension>, or
+        // <percentage>, even ones that wouldn't normally be supported by V. The
+        // only requirement is that the arguments be of the same type.
         //
+        // The arguments — and any math functions nested in them — are parsed
+        // exactly once. The naive approach of re-parsing the whole argument
+        // subtree once per candidate value type is exponential as soon as
+        // `atan2()` nests inside its own arguments, because every ancestor
+        // re-parses each descendant once per type it probes.
+        //
+        // A math function always resolves to an <angle> or a <number>, never to
+        // a length/time/percentage. So parse the first argument as an <angle>/
+        // <number> expression first:
+        //
+        //   * On success it contains no length/time/percentage leaf, so parse
+        //     the second argument the same way and reconcile. A type mismatch is
+        //     a genuine error; the dimension parses below cannot rescue it.
+        //   * On failure, fall back to the dimension-typed parses only if the
+        //     failure was at a real dimension leaf. If instead a *nested math
+        //     function* failed (tracked by `math_fn_parse_failures`), no
+        //     dimension type can parse it either, so re-descending it — which is
+        //     what makes nested `atan2()` exponential — is skipped.
+        let angle_ident = move |c: C, ident: &[u8]| -> Option<Calc<Angle>> {
+            match parse_ident(c, ident)? {
+                Calc::Number(n) => Some(Calc::Number(n)),
+                _ => None,
+            }
+        };
+
+        let before_args = input.state();
+        let failures_before = input.math_fn_parse_failures();
+        // Returns true when a failed <angle>/<number> parse is unrecoverable —
+        // a nested type-independent function failed (no dimension re-parse can
+        // help) — versus failing at a plain dimension leaf (which the dimension
+        // parses below can handle). Compared against the count captured above.
+        let hit_unrecoverable = |input: &css::Parser| input.math_fn_parse_failures() != failures_before;
+
+        let reconcile = |input: &mut css::Parser, a: &Calc<Angle>, b: &Calc<Angle>| -> CssResult<Angle> {
+            if let (Calc::Value(av), Calc::Value(bv)) = (a, b) {
+                if let Some(v) = av.try_op_to(&**bv, (), |_, x, y| Angle::Rad(x.atan2(y))) {
+                    return Ok(v);
+                }
+            } else if let (Calc::Number(an), Calc::Number(bn)) = (a, b) {
+                return Ok(Angle::Rad(an.atan2(*bn)));
+            }
+            Err(input.new_custom_error(css::ParserError::invalid_value))
+        };
+
+        match Calc::<Angle>::parse_sum(input, ctx, angle_ident) {
+            Ok(a) => {
+                // A missing comma is a structural error the dimension parses
+                // cannot fix, so it stays terminal.
+                input.expect_comma()?;
+                match Calc::<Angle>::parse_sum(input, ctx, angle_ident) {
+                    Ok(b) => {
+                        if let Ok(v) = reconcile(input, &a, &b) {
+                            return Ok(v);
+                        }
+                        // Both arguments parsed as <angle>/<number> but are of
+                        // incompatible kinds — re-parsing under a dimension type
+                        // cannot help (neither has a dimension leaf).
+                        return Err(input.new_custom_error(css::ParserError::invalid_value));
+                    }
+                    Err(e) => {
+                        // The second argument failed. If it failed on a nested
+                        // type-independent function, the dimension parses can't
+                        // help either; otherwise it has a dimension leaf (e.g.
+                        // `sign(1px)`), so fall through to them.
+                        if hit_unrecoverable(input) {
+                            return Err(e);
+                        }
+                        input.reset(&before_args);
+                    }
+                }
+            }
+            Err(e) => {
+                if hit_unrecoverable(input) {
+                    // The first argument failed on a nested type-independent
+                    // function, so the dimension parses below cannot succeed
+                    // either. Don't re-descend it.
+                    return Err(e);
+                }
+                input.reset(&before_args);
+            }
+        }
+
         // blocked_on: values/length.rs un-gate — until Length is real,
         // `atan2(10px, 5px)` (and any other length-dimension pair) falls
         // through to the CSSNumber path below and errors with `invalid_value`,
@@ -805,9 +934,6 @@ impl<V: CalcValue> Calc<V> {
             return Ok(v);
         }
         if let Ok(v) = try_parse_atan2_args::<C, Percentage>(input, ctx) {
-            return Ok(v);
-        }
-        if let Ok(v) = try_parse_atan2_args::<C, Angle>(input, ctx) {
             return Ok(v);
         }
         if let Ok(v) = try_parse_atan2_args::<C, Time>(input, ctx) {

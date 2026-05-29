@@ -3745,6 +3745,20 @@ impl<'a> Parser<'a> {
         parse_nested_block(self, parsefn)
     }
 
+    /// Monotonic count of failed math-function parses. See
+    /// `ParserInput::math_fn_parse_failures`.
+    #[inline]
+    pub fn math_fn_parse_failures(&self) -> u64 {
+        self.input.math_fn_parse_failures
+    }
+
+    /// Record that a math function failed to parse. See
+    /// `ParserInput::math_fn_parse_failures`.
+    #[inline]
+    pub fn note_math_fn_parse_failure(&mut self) {
+        self.input.math_fn_parse_failures += 1;
+    }
+
     pub fn is_exhausted(&mut self) -> bool {
         self.expect_exhausted().is_ok()
     }
@@ -4288,6 +4302,15 @@ pub struct ParserInput<'a> {
     /// instead of re-scanning (and re-recursing through) the truncated
     /// suffix once per backtracking alternative per nesting level.
     unclosed_block_at_eof: Option<UnclosedBlockAtEof>,
+    /// Monotonic count of math functions (`calc()`, `atan2()`, `sin()`, …) that
+    /// failed to parse, bumped at the `parse_value` math-function guard. It
+    /// lets `Calc::parse_atan2` tell *why* parsing an argument failed: comparing
+    /// the count before and after reveals whether a nested math function failed
+    /// (no length/time/percentage re-parse can rescue that) versus a plain
+    /// dimension leaf (which the dimension-typed parses can). Skipping the
+    /// re-parse in the former case keeps nested `atan2()` from being
+    /// re-descended once per candidate type — exponential in the nesting depth.
+    math_fn_parse_failures: u64,
 }
 
 /// See `ParserInput::unclosed_block_at_eof`.
@@ -4315,6 +4338,7 @@ impl<'a> ParserInput<'a> {
             cached_token: None,
             nesting_depth: 0,
             unclosed_block_at_eof: None,
+            math_fn_parse_failures: 0,
         }
     }
 }

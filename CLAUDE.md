@@ -1,4 +1,4 @@
-This is the Bun repository - an all-in-one JavaScript runtime & toolkit designed for speed, with a bundler, test runner, and Node.js-compatible package manager. It's written primarily in Zig with C++ for JavaScriptCore integration, powered by WebKit's JavaScriptCore engine.
+This is the Bun repository - an all-in-one JavaScript runtime & toolkit designed for speed, with a bundler, test runner, and Node.js-compatible package manager. It's written primarily in Rust with C++ for JavaScriptCore integration, powered by WebKit's JavaScriptCore engine.
 
 ## Building and Running Bun
 
@@ -133,60 +133,55 @@ test("(multi-file test) my feature", async () => {
 
 ### Language Structure
 
-- **Zig code** (`src/*.zig`): Core runtime, JavaScript bindings, package manager
+- **Rust code** (`src/**/*.rs`): Core runtime, JavaScript bindings, bundler, package manager. This is what compiles and ships.
 - **C++ code** (`src/jsc/bindings/*.cpp`): JavaScriptCore bindings, Web APIs
 - **TypeScript** (`src/js/`): Built-in JavaScript modules with special syntax (see JavaScript Modules section)
-- **Generated code**: Many files are auto-generated from `.classes.ts` and other sources. Bun will automatically rebuild these files when you make changes to them.
+- **Generated code**: Many `.rs` and `.cpp` files are auto-generated from `.classes.ts` and other sources. The build regenerates them automatically when their inputs change.
+
+You will see `.zig` files alongside many `.rs` files (e.g. `fetch.zig` next to `fetch.rs`). These are the **original Zig implementation, kept only as a porting reference** — they are **not compiled** and **not shipped**. New code goes in `.rs`. When fixing a bug or porting a behavior, the `.zig` sibling is the source of truth for *intended semantics*: read it, then make the `.rs` match. Never add new behavior to a `.zig` file.
 
 ### Core Source Organization
 
+The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The key ones:
+
+#### Foundation crates
+
+- `src/bun_core/` - The `bun.*`-namespace foundation: strings/`String` (`string/`), formatting (`fmt.rs`), logging (`output.rs`), feature flags, env vars, allocator helpers
+- `src/sys/` - Cross-platform syscall wrappers (`file.rs`, `dir.rs`, `fd.rs`, `Error.rs`, `tmp.rs`) — the `bun.sys` equivalent
+- `src/collections/`, `src/threading/`, `src/paths/`, `src/semver/`, `src/sourcemap/` - shared utilities
+
 #### Runtime Core (`src/`)
 
-- `bun.zig` - Main entry point
-- `cli.zig` - CLI command orchestration
-- `js_parser.zig`, `js_lexer.zig`, `js_printer.zig` - JavaScript parsing/printing
-- `transpiler.zig` - Wrapper around js_parser with sourcemap support
-- `resolver/` - Module resolution system
-- `allocators/` - Custom memory allocators for performance
+- `src/bun_bin/` - Cargo entrypoint; produces `libbun_rust.a`, linked into the final binary
+- `src/runtime/cli/` - CLI argument parsing and command dispatch
+- `src/js_parser/`, `src/js_printer/` - JavaScript/TypeScript parsing and printing (each is its own crate; the lexer is `src/js_parser/lexer.rs`)
+- `src/transpiler/` - Wrapper around the parser/printer with sourcemap support
+- `src/resolver/` - Module resolution system
+- `src/ast/` - AST node types and arena allocation
 
 #### JavaScript Runtime (`src/jsc/` + `src/runtime/`)
 
-- `src/jsc/bindings/` - C++ JavaScriptCore bindings
-  - Generated classes from `.classes.ts` files
-  - Manual bindings for complex APIs
-- `src/runtime/api/` - Bun-specific APIs
-  - `server.zig` - HTTP server implementation
-  - `FFI.zig` - Foreign Function Interface
-  - `crypto.zig` - Cryptographic operations
-  - `glob.zig` - File pattern matching
-- `src/runtime/node/` - Node.js compatibility layer
-  - Module implementations (fs, path, crypto, etc.)
-  - Process and Buffer APIs
-- `src/runtime/webcore/` - Web API implementations
-  - `fetch.zig` - Fetch API
-  - `streams.zig` - Web Streams
-  - `Blob.zig`, `Response.zig`, `Request.zig`
-- `src/event_loop/` + `src/jsc/event_loop.zig` - Event loop and task management
+- `src/jsc/bindings/` - C++ JavaScriptCore bindings (generated classes from `.classes.ts` + manual bindings)
+- `src/jsc/` - Rust-side JSC glue (`VirtualMachine.rs`, `web_worker.rs`, `event_loop.rs`, FFI imports)
+- `src/runtime/api/` - Bun-specific JS-visible APIs (`BunObject.rs`, `JSBundler.rs`, `Glob`, `Archive`, …)
+- `src/runtime/server/` - `Bun.serve` HTTP/WebSocket server
+- `src/runtime/node/` - Node.js compatibility layer (fs, path, process, Buffer, …)
+- `src/runtime/crypto/` - WebCrypto + `node:crypto` (`EVP.rs`, `HMAC.rs`, `CryptoHasher.rs`, …)
+- `src/runtime/webcore/` - Web API implementations (`fetch.rs`, `streams.rs`, `Blob.rs`, `Response.rs`, `Request.rs`, …)
+- `src/event_loop/` - Event loop and task management
 
 #### Build Tools & Package Manager
 
-- `src/bundler/` - JavaScript bundler
-  - Advanced tree-shaking
-  - CSS processing
-  - HTML handling
-- `src/install/` - Package manager
-  - `lockfile/` - Lockfile handling
-  - `npm.zig` - npm registry client
-  - `lifecycle_script_runner.zig` - Package scripts
+- `src/bundler/` - JavaScript bundler (tree-shaking, CSS processing, HTML handling)
+- `src/install/` - Package manager (`lockfile/`, `npm.rs` registry client, `lifecycle_script_runner.rs`)
 
 #### Other Key Components
 
 - `src/shell/` - Cross-platform shell implementation
 - `src/css/` - CSS parser and processor
-- `src/http/` - HTTP client implementation
-  - `websocket_client/` - WebSocket client (including deflate support)
-- `src/sql/` - SQL database integrations
-- `src/bake/` - Server-side rendering framework
+- `src/http/` - HTTP client + `websocket_client/` (WebSocket, deflate)
+- `src/sql/` - SQL database integrations (Postgres, MySQL, SQLite)
+- `src/bake/` - Server-side rendering / dev server framework
 
 #### Vendored Dependencies (`vendor/`)
 
@@ -209,7 +204,7 @@ Third-party C/C++ libraries are vendored locally and can be read from disk (thes
 - `vendor/picohttpparser/` - PicoHTTPParser (HTTP parsing)
 - `vendor/tinycc/` - TinyCC (FFI JIT compiler, fork: oven-sh/tinycc)
 - `vendor/WebKit/` - WebKit/JavaScriptCore (JS engine)
-- `vendor/zig/` - Zig compiler/stdlib
+- `vendor/zig/` - Zig toolchain (legacy; not used by the Rust build)
 - `vendor/zlib/` - zlib-ng (compression, zlib-compat mode)
 - `vendor/zstd/` - Zstandard (compression)
 
@@ -226,18 +221,18 @@ When implementing JavaScript classes in C++:
 
 2. Define properties using HashTableValue arrays
 3. Add iso subspaces for classes with C++ fields
-4. Cache structures in ZigGlobalObject
+4. Cache structures in `ZigGlobalObject`
 
 ### Code Generation
 
 Code generation happens automatically as part of the build process. The main scripts are:
 
-- `src/codegen/generate-classes.ts` - Generates Zig & C++ bindings from `*.classes.ts` files
+- `src/codegen/generate-classes.ts` - Generates Rust & C++ bindings from `*.classes.ts` files
 - `src/codegen/generate-jssink.ts` - Generates stream-related classes
 - `src/codegen/bundle-modules.ts` - Bundles built-in modules like `node:fs`
 - `src/codegen/bundle-functions.ts` - Bundles global functions like `ReadableStream`
 
-In development, bundled modules can be reloaded without rebuilding Zig by running `bun run build`.
+In development, bundled JS modules can be reloaded without rebuilding native code by running `bun run build`.
 
 ## JavaScript Modules (`src/js/`)
 
@@ -264,9 +259,9 @@ Built-in JavaScript modules use special syntax and are organized as:
 5. **Create tests in the right folder** in `test/` and the test must end in `.test.ts` or `.test.tsx`
 6. **Use absolute paths** - Always use absolute paths in file operations
 7. **Avoid shell commands** - Don't use `find` or `grep` in tests; use Bun's Glob and built-in tools
-8. **Memory management** - In Zig code, be careful with allocators and use defer for cleanup
-9. **Cross-platform** - Run `bun run zig:check-all` to compile the Zig code on all platforms when making platform-specific changes
-10. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<scopeName>=1` to enable specific `Output.scoped(.${scopeName}, .visible)`s
+8. **Memory management** - Prefer RAII (`Drop`) over manual cleanup. Watch the arena edge case: values allocated in an arena (`Arena<T>`/`bumpalo`) do **not** run `Drop` when the arena is reset — if a type owns a heap allocation or a refcount, it must be freed/deref'd explicitly before the arena resets, mirroring the original Zig `deinit()` order.
+9. **Cross-platform** - Run `bun run rust:check-all` to compile across all targets (linux/macos/windows × x64/aarch64) when making platform-specific changes. `#[cfg(...)]`-gated code is not type-checked unless the matching target is built.
+10. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<SCOPE>=1` to enable a specific `bun_core::output` scoped logger
 11. **Be humble & honest** - NEVER overstate what you got done or what actually works in commits, PRs or in messages to the user.
 12. **Branch names must start with `claude/`** - This is a requirement for the CI to work.
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { gc as gcTrace, withoutAggressiveGC } from "harness";
+import { gc as gcTrace, isASAN, withoutAggressiveGC } from "harness";
 
 const getByteLength = str => {
   // returns the byte length of an utf8 string
@@ -654,5 +654,7 @@ it.each(["utf-16le", "utf-16be"])("TextDecoder(%s).decode() should not leak the 
   const after = process.memoryUsage.rss();
 
   const deltaMiB = (after - before) / 1024 / 1024;
-  expect(deltaMiB).toBeLessThan(48);
+  // ASAN's quarantine retains freed allocations (default 256 MB) so the delta
+  // runs higher under bun-asan even with the fix; widen the threshold there.
+  expect(deltaMiB).toBeLessThan(isASAN ? 128 : 48);
 });

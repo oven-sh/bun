@@ -542,4 +542,56 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(await exited).toBe(0);
     }, 10000);
   }
+
+  it("BunFile.name survives multiple file.write() calls + GC", async () => {
+    using dir = tempDir("bun-file-name-write-gc", {});
+    const filePath = join(String(dir), "out.txt");
+
+    const f = Bun.file(filePath);
+    expect(f.name).toBe(filePath);
+
+    await f.write("a");
+    await f.write("b");
+    await f.write("c");
+    await f.write("d");
+    Bun.gc(true);
+
+    expect(f.name).toBe(filePath);
+    expect(await f.text()).toBe("d");
+  });
+
+  it("BunFile.name survives multiple Bun.write() calls + GC", async () => {
+    using dir = tempDir("bun-file-name-bunwrite-gc", {});
+    const filePath = join(String(dir), "out.txt");
+
+    const f = Bun.file(filePath);
+    expect(f.name).toBe(filePath);
+
+    await Bun.write(f, "a");
+    await Bun.write(f, "b");
+    await Bun.write(f, "c");
+    await Bun.write(f, "d");
+    Bun.gc(true);
+
+    expect(f.name).toBe(filePath);
+    expect(await f.text()).toBe("d");
+  });
+
+  it("BunFile.name survives concurrent write() calls + GC", async () => {
+    using dir = tempDir("bun-file-name-concurrent-write-gc", {});
+    const filePath = join(String(dir), "out.txt");
+
+    const f = Bun.file(filePath);
+    f.name;
+
+    const writes = [];
+    for (let i = 0; i < 8; i++) {
+      writes.push(f.write("x").catch(() => {}));
+    }
+    Bun.gc(true);
+    await Promise.all(writes);
+    Bun.gc(true);
+
+    expect(f.name).toBe(filePath);
+  });
 });

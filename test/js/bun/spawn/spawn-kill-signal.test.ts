@@ -49,5 +49,37 @@ describe("subprocess.kill", () => {
         expect(proc.signalCode).toBe("SIGTERM");
       });
     }
+
+    test("invalid signal name lists the valid signal names", async () => {
+      const proc = Bun.spawn({
+        cmd: [shellExe(), "-c", "sleep 1000"],
+        stdio: ["inherit", "inherit", "inherit"],
+      });
+
+      let err: any;
+      try {
+        proc.kill("SIGGOD");
+      } catch (e) {
+        err = e;
+      }
+
+      expect(err).toBeInstanceOf(TypeError);
+      expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
+      // The message must enumerate the real signal names, not a static
+      // "the SignalCode names" placeholder (regressed in the Rust port).
+      expect(err.message).toContain("'SIGHUP'");
+      expect(err.message).toContain("'SIGTERM'");
+      expect(err.message).toContain("'SIGKILL'");
+      expect(err.message).toContain("or 'SIGSYS'");
+      expect(err.message).not.toContain("the SignalCode names");
+
+      const { promise, resolve, reject } = Promise.withResolvers();
+      proc.exited.then(resolve, reject);
+      proc.kill();
+      await promise;
+
+      expect(proc.exitCode).toBe(null);
+      expect(proc.signalCode).toBe("SIGTERM");
+    });
   });
 });

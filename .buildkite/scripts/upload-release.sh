@@ -222,6 +222,14 @@ function create_release() {
     bun-linux-x64-musl-profile.zip
     bun-linux-x64-musl-baseline.zip
     bun-linux-x64-musl-baseline-profile.zip
+    bun-linux-aarch64-android.zip
+    bun-linux-aarch64-android-profile.zip
+    bun-linux-x64-android.zip
+    bun-linux-x64-android-profile.zip
+    bun-freebsd-aarch64.zip
+    bun-freebsd-aarch64-profile.zip
+    bun-freebsd-x64.zip
+    bun-freebsd-x64-profile.zip
     bun-windows-x64.zip
     bun-windows-x64-profile.zip
     bun-windows-x64-baseline.zip

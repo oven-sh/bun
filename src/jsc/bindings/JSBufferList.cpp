@@ -1,5 +1,6 @@
 #include "JSBufferList.h"
 #include "JSBuffer.h"
+#include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/Lookup.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "ZigGlobalObject.h"
@@ -88,17 +89,24 @@ JSC::JSValue JSBufferList::join(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalO
         RELEASE_AND_RETURN(throwScope, JSC::jsEmptyString(vm));
     }
     const bool needSeq = seq->length() != 0;
-    const auto end = m_deque.end();
+
+    MarkedArgumentBuffer values;
+    values.ensureCapacity(m_deque.size());
+    for (auto& entry : m_deque)
+        values.append(entry.get());
+    if (values.hasOverflowed()) [[unlikely]]
+        return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
+
     JSRopeString::RopeBuilder<RecordOverflow> ropeBuilder(vm);
-    for (auto iter = m_deque.begin();;) {
-        auto str = iter->get().toString(lexicalGlobalObject);
+    for (size_t i = 0, size = static_cast<size_t>(values.size()); i < size; i++) {
+        auto str = values.at(i).toString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
         if (!ropeBuilder.append(str))
             return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
-        if (++iter == end)
-            break;
-        if (needSeq)
+        if (needSeq && i + 1 < size) {
             if (!ropeBuilder.append(seq))
                 return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
+        }
     }
     RELEASE_AND_RETURN(throwScope, ropeBuilder.release());
 }

@@ -24,7 +24,7 @@
 #include "JSDOMWrapper.h"
 #include <JavaScriptCore/DeferredWorkTimer.h>
 #include "NodeVM.h"
-#include "../../bake/BakeGlobalObject.h"
+#include "../../runtime/bake/BakeGlobalObject.h"
 #include "napi_handle_scope.h"
 #include "NativePromiseContext.h"
 

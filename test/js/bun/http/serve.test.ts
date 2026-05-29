@@ -1,13 +1,26 @@
 import { file, gc, Serve, serve, Server } from "bun";
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, dumpStats, isBroken, isIntelMacOS, isIPv4, isIPv6, isPosix, tls, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  dumpStats,
+  isBroken,
+  isIntelMacOS,
+  isIPv4,
+  isIPv6,
+  isPosix,
+  tempDir,
+  tls,
+  tmpdirSync,
+} from "harness";
 import { join, resolve } from "path";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
 import net from "node:net";
+import { networkInterfaces } from "node:os";
 import { tmpdir } from "os";
 
 let renderToReadableStream: any = null;
@@ -1107,6 +1120,45 @@ describe("status code text", () => {
   }
 });
 
+it("does not write body bytes for null body statuses", async () => {
+  for (const status of [204, 205, 304]) {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response("hey", { status });
+      },
+    });
+
+    const received: Buffer[] = [];
+    const { resolve, reject, promise } = Promise.withResolvers<void>();
+    await using connection = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        data(socket, data) {
+          received.push(data);
+        },
+        end() {
+          resolve();
+        },
+        error(socket, error) {
+          reject(error);
+        },
+        close() {
+          resolve();
+        },
+      },
+    });
+    connection.write(`GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
+    connection.flush();
+    await promise;
+    const raw = Buffer.concat(received).toString();
+    expect(raw).toStartWith(`HTTP/1.1 ${status} `);
+    expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("");
+  }
+});
+
 it("should support multiple Set-Cookie headers", async () => {
   await runTest(
     {
@@ -2188,4 +2240,159 @@ it.concurrent("#20283", async () => {
   const json = await response.json();
   // there should be no cookies and the clone should have succeeded
   expect(json).toEqual({ cookies: {}, clonedCookies: {} });
+});
+
+// Regression: hostname containing an interior NUL byte must not abort the process.
+// Zig reference: src/runtime/server/ServerConfig.zig — `bun.default_allocator.dupeZ(u8, host_str.slice())`
+// copies the raw bytes and the underlying C socket layer truncates at the first NUL, so
+// `"127.0.0.1\0ignored"` behaves like `"127.0.0.1"` (or at worst surfaces as a catchable JS error).
+// A port that uses CString::new(...).expect(...) would panic and crash the process instead.
+// TODO(zig-rust-divergence): Rust port currently panics on interior NUL;
+// see docs/ZIG_RUST_DIVERGENCE_AUDIT.md.
+it.todo("Bun.serve hostname with interior NUL byte does not crash the process", async () => {
+  const script = `
+    try {
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1\\0ignored",
+        fetch() { return new Response("ok"); },
+      });
+      console.log("listening:" + server.port);
+      server.stop(true);
+    } catch (e) {
+      // A catchable JS error is acceptable; a hard process crash is not.
+      console.log("caught:" + (e?.constructor?.name ?? "Error"));
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Zig behavior: either the server binds (C layer truncates at NUL) or a JS error is thrown
+  // and caught. In both cases the subprocess prints a marker line and exits 0. If the config
+  // parser hard-panics on the interior NUL, stdout is empty and the exit code is non-zero.
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: expect.stringMatching(/^(listening:\d+|caught:\w+)$/),
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
+});
+
+// The HTTP parser shares HttpParser.h between Bun.serve and node:http. When a request
+// handler tears the connection down from inside the request-body data callback, the
+// parser must stop consuming the rest of the TCP segment instead of routing a request
+// that was pipelined behind the body onto the already-closed socket.
+it("does not dispatch a pipelined request after the connection is destroyed inside the body data callback", async () => {
+  const script = `
+const http = require("node:http");
+const net = require("node:net");
+
+const seen = [];
+const server = http.createServer((req, res) => {
+  seen.push(req.url);
+  if (req.url === "/first") {
+    req.on("data", () => {
+      // Reject the upload: finish the response and tear down the socket,
+      // synchronously, from inside the request body data callback.
+      res.writeHead(400);
+      res.end();
+      req.socket.destroy();
+    });
+    return;
+  }
+  res.end("ok");
+});
+
+server.listen(0, "127.0.0.1", () => {
+  const port = server.address().port;
+  const socket = net.connect(port, "127.0.0.1", () => {
+    // One TCP segment: a POST with a body, immediately followed by a pipelined GET.
+    socket.write(
+      "POST /first HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nContent-Length: 5\\r\\n\\r\\nhello" +
+        "GET /second HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n",
+    );
+  });
+  socket.on("error", () => {});
+  socket.resume();
+  socket.on("close", async () => {
+    // A fresh connection must still get a normal response afterwards.
+    const res = await fetch("http://127.0.0.1:" + port + "/after");
+    await res.text();
+    console.log(JSON.stringify({ seen, after: res.status }));
+    server.close();
+    process.exit(0);
+  });
+});
+`;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  // "/second" arrived in the same TCP segment as the POST body, after the handler had
+  // already torn the connection down. It must never reach the request listener.
+  expect(stdout.trim()).toBe('{"seen":["/first","/after"],"after":200}');
+  expect(exitCode).toBe(0);
+});
+
+it("only serves /bun:info to loopback clients in development mode", async () => {
+  using server = Bun.serve({
+    port: 0,
+    hostname: "0.0.0.0",
+    development: true,
+    fetch() {
+      return new Response("handled by fetch");
+    },
+  });
+
+  // Loopback clients still get the runtime info JSON from the development route.
+  const loopbackRes = await fetch(`http://127.0.0.1:${server.port}/bun:info`);
+  const loopbackText = await loopbackRes.text();
+  expect(loopbackText).toContain("bun_version");
+  expect(loopbackRes.status).toBe(200);
+
+  // Connections arriving from a non-loopback interface must not be answered by the
+  // /bun:info route; the request falls through to the user's fetch handler instead.
+  const externalAddress = Object.values(networkInterfaces())
+    .flat()
+    .find(iface => iface && iface.family === "IPv4" && !iface.internal)?.address;
+  if (!externalAddress) {
+    // Machine has no non-loopback IPv4 interface; only the loopback case can be exercised here.
+    return;
+  }
+
+  const externalRes = await fetch(`http://${externalAddress}:${server.port}/bun:info`);
+  const externalText = await externalRes.text();
+  expect(externalText).toBe("handled by fetch");
+  expect(externalText).not.toContain("bun_version");
+  expect(externalRes.status).toBe(200);
+});
+
+it.if(isPosix)("serves /bun:info over a unix socket in development mode", async () => {
+  using dir = tempDir("info", {});
+  const unix = join(String(dir), "bun-info.sock");
+  using server = Bun.serve({
+    unix,
+    development: true,
+    fetch() {
+      return new Response("handled by fetch");
+    },
+  });
+
+  const res = await fetch("http://localhost/bun:info", { unix });
+  const text = await res.text();
+  expect(text).toContain("bun_version");
+  expect(res.status).toBe(200);
 });

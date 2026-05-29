@@ -1,0 +1,13 @@
+Drop staticlib/cdylib outputs — bun consumes lol_html_c_api as an rlib path-dep
+of bun_lolhtml_sys (its #[no_mangle] symbols end up inside libbun_rust.a). The
+extra crate-types waste a link step per build and break under -Clinker-plugin-lto
+when the system ld is BFD.
+--- a/c-api/Cargo.toml
++++ b/c-api/Cargo.toml
+@@ -25,5 +25,5 @@
+
+ [lib]
+ name = "lolhtml"
+-crate-type = ["staticlib", "cdylib", "rlib"]
++crate-type = ["rlib"]
+

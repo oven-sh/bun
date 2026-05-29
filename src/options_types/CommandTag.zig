@@ -178,8 +178,8 @@ pub const Tag = enum {
     /// Aliased here so existing `cmd.params()` / `cmd.printHelp()` call sites
     /// keep working; Zig's lazy decl resolution means `options_types/` does
     /// not compile-depend on `cli/` unless one of these is actually invoked.
-    pub const params = @import("../cli/cli.zig").Command.tagParams;
-    pub const printHelp = @import("../cli/cli.zig").Command.tagPrintHelp;
+    pub const params = @import("../runtime/cli/cli.zig").Command.tagParams;
+    pub const printHelp = @import("../runtime/cli/cli.zig").Command.tagPrintHelp;
 };
 
 const std = @import("std");

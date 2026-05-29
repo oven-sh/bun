@@ -41,6 +41,7 @@ beforeAll(async () => {
       "/redirect": () => Response.redirect("/hello", 302),
       "/head": () => new Response("should not appear", { headers: { "x-head": "1" } }),
       "/route/:id": req => new Response("id=" + req.params.id, { headers: { "x-route": "param" } }),
+      "/headers-echo": req => Response.json(Object.fromEntries(req.headers)),
 
       // Response body driven by pull — one chunk per consumer read.
       "/pull": () => {
@@ -336,6 +337,56 @@ describe("fetch protocol: http3", () => {
     const res = await fetch(`${base}${path}`, { ...h3, method: "POST", body: "x", headers });
     expect(res.status).toBe(200);
     expect(res.headers.get("x-recv-len")).toBe("1");
+  });
+
+  // Regression: src/uws_sys/quic/Header.zig defines `Qpack = enum(u8) { ... _ }`
+  // (non-exhaustive — any u8 is a valid value). The Rust port uses an exhaustive
+  // `#[repr(u8)] enum`, so the only safety net against discriminant drift / a UB
+  // `from_raw` is that every named index must equal its RFC 9204 Appendix A
+  // static-table entry. This pins that contract end-to-end: each header below
+  // hits `Qpack::classify` → `qpack_index` → lsqpack encode → wire → server
+  // decode. A wrong discriminant makes lsqpack emit the wrong static-table
+  // name (or garbage), so the echoed value disappears.
+  test("QPACK static-table indexed headers round-trip", async () => {
+    // Every `Class::Indexed` entry in Header.zig's classify map, minus
+    // content-length / accept-encoding (build_request rewrites those).
+    // Mixed case on a few to exercise the case-insensitive lookup.
+    const sent: Record<string, string> = {
+      "accept": "application/qpack-test",
+      "Accept-Language": "zz-ZZ",
+      "accept-ranges": "none",
+      "Authorization": "Bearer qpack-84",
+      "cache-control": "no-store",
+      "Content-Disposition": "inline",
+      "content-encoding": "identity",
+      "content-type": "text/plain",
+      "cookie": "qpack=5",
+      "date": "Mon, 01 Jan 2001 00:00:00 GMT",
+      "ETag": '"qpack-7"',
+      "forwarded": "for=127.0.0.1",
+      "If-Modified-Since": "Mon, 01 Jan 2001 00:00:00 GMT",
+      "if-none-match": '"qpack-9"',
+      "if-range": '"qpack-89"',
+      "last-modified": "Mon, 01 Jan 2001 00:00:00 GMT",
+      "link": "</a>; rel=preload",
+      "location": "/qpack-12",
+      "Origin": "https://qpack.test",
+      "range": "bytes=0-0",
+      "Referer": "https://qpack.test/13",
+      "server": "qpack-92",
+      "set-cookie": "k=v",
+      "User-Agent": "qpack-ua/95",
+      "vary": "qpack-59",
+      "X-Forwarded-For": "10.0.0.96",
+      // Not in the static table — exercises the `classify() == None` lowercase path.
+      "X-Unindexed-Probe": "fallthrough",
+    };
+    const res = await fetch(`${base}/headers-echo`, { ...h3, headers: sent });
+    expect(res.status).toBe(200);
+    const got: Record<string, string> = await res.json();
+    for (const [name, value] of Object.entries(sent)) {
+      expect(got[name.toLowerCase()]).toBe(value);
+    }
   });
 
   test("response consumed as blob / bytes", async () => {
@@ -647,4 +698,72 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
     expect(stdout).toMatch(/second status=200 sessions=0\n$/);
     expect(exitCode).toBe(0);
   });
+});
+
+// The HTTP/3 client cannot apply per-request TLS trust configuration (custom
+// ca / client cert+key / serverName): the QUIC context is created without it.
+// Such requests must be refused on the forced-h3 path and kept on TCP+TLS on
+// the Alt-Svc upgrade path, never connected with the options dropped.
+test("custom TLS trust options are rejected on protocol: http3 and excluded from Alt-Svc h3 upgrade", async () => {
+  // protocol: "http3" + a custom CA must reject up front (the CA cannot be
+  // honoured over QUIC), even though the connection would otherwise succeed
+  // with rejectUnauthorized: false.
+  await expect(
+    fetch(`${base}/hello`, {
+      protocol: "http3",
+      tls: { ca: tls.cert, rejectUnauthorized: false },
+    } as any),
+  ).rejects.toThrow();
+
+  // Same for an mTLS client certificate, which the h3 path would never present.
+  await expect(
+    fetch(`${base}/hello`, {
+      protocol: "http3",
+      tls: { cert: tls.cert, key: tls.key, rejectUnauthorized: false },
+    } as any),
+  ).rejects.toThrow();
+
+  // The plain h3 request shape (no trust customization) still works, so the
+  // rejections above are about the TLS options, not h3 being broken.
+  const ok = await fetch(`${base}/hello`, h3);
+  expect(await ok.text()).toBe("hello over h3");
+
+  // Alt-Svc path: with the experimental flag on, a request that carries a
+  // custom CA must keep using HTTP/1.1 over TCP (where the CA is applied)
+  // instead of upgrading onto a QUIC session that ignores it.
+  const fixture = `
+    import { fetchH3Internals } from "bun:internal-for-testing";
+    const { liveCounts } = fetchH3Internals;
+    const tlsOptions = ${JSON.stringify(tls)};
+    using server = Bun.serve({
+      port: 0,
+      tls: tlsOptions,
+      http3: true,
+      fetch: () => new Response("ok"),
+    });
+    const url = "https://127.0.0.1:" + server.port + "/";
+    const opts = { tls: { ca: tlsOptions.cert, rejectUnauthorized: false } };
+    {
+      const r = await fetch(url, opts);
+      await r.text();
+      console.log("first alt-svc=%s sessions=%d", r.headers.get("alt-svc") ?? "", liveCounts().sessions);
+    }
+    {
+      const r = await fetch(url, opts);
+      await r.text();
+      console.log("second status=%d sessions=%d", r.status, liveCounts().sessions);
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT: "1" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // Server still advertises Alt-Svc, but with a custom CA both fetches must
+  // stay off QUIC: the live h3 session count stays at 0 after the second fetch.
+  expect(stdout).toMatch(/^first alt-svc=h3=":\d+"; ma=\d+ sessions=0\n/);
+  expect(stdout).toMatch(/second status=200 sessions=0\n$/);
+  expect(exitCode).toBe(0);
 });

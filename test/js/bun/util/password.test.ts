@@ -1,11 +1,14 @@
-import { describe, expect, test } from "bun:test";
-
 import { password } from "bun";
-import { bunEnv, bunExe } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 const placeholder = "hey";
 
-describe("does not leak", () => {
+// argon2id iterates so slowly under debug/ASAN that the 60 000 warm-up
+// iterations blow past the 90 s test timeout before the leak check even
+// starts. The leak numbers are only meaningful on release anyway — skip
+// the whole suite on debug so the rest of the file can run.
+describe.skipIf(isDebug)("does not leak", () => {
   async function run(code: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--smol", "-e", code],
@@ -21,7 +24,7 @@ describe("does not leak", () => {
 
   test("hashSync", async () => {
     await run(/* js */ `
-        const opts = { algorithm: "argon2id", memoryCost: 4, timeCost: 1 };
+        const opts = { algorithm: "argon2id", memoryCost: 8, timeCost: 1 };
         // Large warm-up so the JSC heap and allocator arenas reach steady state
         // before we start measuring (debug/ASAN builds especially need this).
         for (let i = 0; i < 60000; i++) Bun.password.hashSync("hey", opts);
@@ -30,13 +33,16 @@ describe("does not leak", () => {
         for (let i = 0; i < 60000; i++) Bun.password.hashSync("hey", opts);
         Bun.gc(true);
         const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
-        if (growthMB > 4) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+        // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
+        // retention inflate RSS even when nothing is leaking.
+        const limit = ${isASAN ? 400 : 4};
+        if (growthMB > limit) throw new Error("leaked " + growthMB.toFixed(2) + "MB (limit " + limit + "MB)");
       `);
   }, 90_000);
 
   test("hash", async () => {
     await run(/* js */ `
-        const opts = { algorithm: "argon2id", memoryCost: 4, timeCost: 1 };
+        const opts = { algorithm: "argon2id", memoryCost: 8, timeCost: 1 };
         async function batch(n) {
           const promises = [];
           for (let i = 0; i < n; i++) promises.push(Bun.password.hash("hey", opts));
@@ -48,7 +54,10 @@ describe("does not leak", () => {
         for (let i = 0; i < 2000; i++) await batch(100);
         Bun.gc(true);
         const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
-        if (growthMB > 20) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+        // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
+        // retention inflate RSS even when nothing is leaking.
+        const limit = ${isASAN ? 400 : 20};
+        if (growthMB > limit) throw new Error("leaked " + growthMB.toFixed(2) + "MB (limit " + limit + "MB)");
       `);
   }, 90_000);
 });
@@ -100,6 +109,18 @@ describe("hash", () => {
             memoryCost: -1,
           }),
         ).toThrow();
+
+        // argon2 requires `memoryCost >= 8 * parallelism`; Bun hard-codes
+        // `parallelism = 1`, so anything below 8 must throw rather than be
+        // silently clamped (regression coverage for #30960).
+        for (const invalid of [1, 3, 7]) {
+          expect(() =>
+            hash(placeholder, {
+              algorithm: "argon2id",
+              memoryCost: invalid,
+            }),
+          ).toThrow("Memory cost must be at least 8");
+        }
 
         expect(() =>
           hash(placeholder, {
@@ -241,6 +262,19 @@ test("bcrypt pre-hashing does not break compatibility across Bun versions", asyn
   expect(await password.verify(secret, hash)).toBeTrue();
 });
 
+test("argon2 memoryCost at the 8 minimum is encoded faithfully (regression for #30960)", async () => {
+  const hashed = await password.hash("test", {
+    algorithm: "argon2id",
+    memoryCost: 8,
+    timeCost: 1,
+  });
+  // The encoded PHC string must reflect the user-provided memoryCost, not a
+  // silently clamped value. Before the fix, values below 8 were rounded up
+  // while still reporting `m=8`; this pins the minimum at 8 as advertised.
+  expect(hashed).toContain("m=8,t=1,p=1");
+  expect(await password.verify("test", hashed)).toBeTrue();
+});
+
 const defaultAlgorithm = "argon2id";
 const algorithms = [undefined, "argon2id", "bcrypt"];
 const argons = ["argon2i", "argon2id", "argon2d"];
@@ -265,9 +299,18 @@ for (let algorithmValue of algorithms) {
       return algorithmValue ? password.verifySync(pw, value, algorithmValue as any) : password.verifySync(pw, value);
     };
 
+    // Argon2 with the default `interactive_2id` params (64 MiB / 2 iter)
+    // is too slow under debug/ASAN to finish inside the per-test timeout;
+    // those invocations live in `password sync` (implicit default) and in
+    // the `runSlowTest` branch below (explicit default per algorithm). Gate
+    // them on release so the rest of the file still exercises the
+    // fast-path (bcrypt, arg-parsing, explicit `memoryCost: 8`).
+    const isArgonDefaults = algorithmValue === undefined || algorithmValue === "argon2id";
+    const skipSlowArgonOnDebug = isDebug && isArgonDefaults;
+
     for (let input of [placeholder, Buffer.from(placeholder)]) {
       describe(typeof input === "string" ? "string" : "buffer", () => {
-        test("password sync", () => {
+        test.skipIf(skipSlowArgonOnDebug)("password sync", () => {
           const hashed = hashSync(input);
           expect(hashed).toStartWith(prefix);
           expect(verifySync(input, hashed)).toBeTrue();
@@ -312,8 +355,10 @@ for (let algorithmValue of algorithms) {
             // these tests are very slow
             // run the hashing tests in parallel
             for (const a of argons) {
+              // `runSlowTest` uses default params; only `runSlowTestWithOptions`
+              // (memoryCost: 8) is fast enough for debug/ASAN.
               test(`${a}`, async () => {
-                await runSlowTest(a);
+                if (!isDebug) await runSlowTest(a);
                 await runSlowTestWithOptions(a);
               });
             }
@@ -334,7 +379,7 @@ for (let algorithmValue of algorithms) {
               await runSlowBCryptTest();
             });
           } else {
-            test("default", async () => {
+            test.skipIf(skipSlowArgonOnDebug)("default", async () => {
               await defaultTest();
             });
           }
@@ -343,3 +388,36 @@ for (let algorithmValue of algorithms) {
     }
   });
 }
+
+test("verify rejects encoded argon2 hashes with cost parameters above the supported maximums", async () => {
+  // Hash with small, fast parameters so this test stays cheap on debug builds.
+  const hashed = password.hashSync("correct horse", {
+    algorithm: "argon2id",
+    memoryCost: 8,
+    timeCost: 1,
+  });
+  expect(hashed).toContain("$m=8,t=1,p=1$");
+
+  // The untampered hash still verifies.
+  expect(password.verifySync("correct horse", hashed)).toBeTrue();
+
+  // A time cost far above the verification ceiling embedded in the encoded
+  // hash must be rejected up front instead of being honored.
+  const hugeTime = hashed.replace(",t=1,", ",t=100000,");
+  expect(hugeTime).not.toBe(hashed);
+  expect(() => password.verifySync("correct horse", hugeTime)).toThrow("WeakParameters");
+  await expect(password.verify("correct horse", hugeTime)).rejects.toThrow("WeakParameters");
+
+  // A memory cost above the ceiling is rejected before any allocation is
+  // sized from the encoded string.
+  const hugeMemory = hashed.replace("$m=8,", "$m=4294967294,");
+  expect(hugeMemory).not.toBe(hashed);
+  expect(() => password.verifySync("correct horse", hugeMemory)).toThrow("WeakParameters");
+  await expect(password.verify("correct horse", hugeMemory)).rejects.toThrow("WeakParameters");
+
+  // A parallelism value above the ceiling is rejected as well.
+  const hugeParallelism = hashed.replace(",p=1$", ",p=65$");
+  expect(hugeParallelism).not.toBe(hashed);
+  expect(() => password.verifySync("correct horse", hugeParallelism)).toThrow("WeakParameters");
+  await expect(password.verify("correct horse", hugeParallelism)).rejects.toThrow("WeakParameters");
+});

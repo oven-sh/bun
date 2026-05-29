@@ -3,6 +3,7 @@ import { define } from "../../codegen/class-definitions";
 export default [
   define({
     name: "SourceMap",
+    rustPath: "bun_sourcemap_jsc::JSSourceMap",
     JSType: "0b11101110",
     proto: {
       findOrigin: {

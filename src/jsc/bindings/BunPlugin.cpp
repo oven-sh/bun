@@ -160,7 +160,11 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
     if (moduleIdValue.isString()) {
         auto idIdent = JSC::Identifier::fromString(vm, asString(moduleIdValue)->value(globalObject));
         RETURN_IF_EXCEPTION(scope, {});
-        global->moduleLoader()->removeEntry(idIdent);
+        auto* moduleLoader = global->moduleLoader();
+        // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
+        // under cellLock(); take the same lock so the removal can't race it.
+        WTF::Locker locker { moduleLoader->cellLock() };
+        moduleLoader->removeEntry(idIdent);
     }
 
     return JSValue::encode(callframe->thisValue());
@@ -696,7 +700,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     }
 
     if (removeFromESM) {
-        globalObject->moduleLoader()->removeEntry(specifierIdent);
+        auto* moduleLoader = globalObject->moduleLoader();
+        WTF::Locker locker { moduleLoader->cellLock() };
+        moduleLoader->removeEntry(specifierIdent);
     }
 
     if (removeFromCJS) {
@@ -848,7 +854,7 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
                 return {};
             }
             case JSPromise::Status::Rejected: {
-                promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
+                promise->setFlags(static_cast<uint16_t>(JSC::JSPromise::Status::Fulfilled));
                 result = promise->result();
                 return JSValue::encode(result);
             }

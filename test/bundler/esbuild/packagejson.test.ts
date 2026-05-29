@@ -1987,3 +1987,54 @@ describe("bundler", () => {
     nodePaths: ["/usr/lib/pkg", "/lib/pkg", "/var/lib/pkg", "/tmp/pkg"],
   });
 });
+
+describe("bundler", () => {
+  // The wildcard match taken from the import specifier (the part substituted for "*"
+  // in an exports pattern) must be validated for ".", ".." and "node_modules" segments,
+  // including percent-encoded spellings, exactly like Node's PACKAGE_TARGET_RESOLVE does.
+  // "%2e%2e" percent-decodes to ".." after substitution, so without that validation the
+  // resolved target walks out of the package directory and loads /Users/user/project/escaped.js.
+  itBundled("packagejson/ExportsWildcardRejectsParentDirectorySegments", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import 'pkg1/inside.js'
+        import 'pkg1/%2e%2e/%2e%2e/escaped.js'
+      `,
+      "/Users/user/project/node_modules/pkg1/package.json": `{ "exports": { "./*": "./*" } }`,
+      "/Users/user/project/node_modules/pkg1/inside.js": `console.log('SUCCESS')`,
+      // Lives outside the package directory. It must never be reachable through pkg1's
+      // exports map; if the wildcard subpath is substituted unvalidated, resolution lands here.
+      "/Users/user/project/escaped.js": `console.log('FAILURE')`,
+    },
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [
+        `Could not resolve: "pkg1/%2e%2e/%2e%2e/escaped.js". Maybe you need to "bun install"?`,
+      ],
+    },
+  });
+});
+
+describe("bundler", () => {
+  // An exports pattern target may spell ".." as "..*": the literal segment passes the
+  // pre-substitution target validation because it is not exactly "..", and a specifier that
+  // equals the pattern base ("pkg1/x" against the key "./x*") substitutes an empty string
+  // for "*", turning "./..*/..*/outside.js" into "./../../outside.js". The resolved path must
+  // be re-validated after substitution so the import fails instead of loading a file that
+  // lives above the package directory. The plain "pkg1" import must keep working.
+  itBundled("packagejson/ExportsPatternTargetRejectsParentSegmentsAfterSubstitution", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import 'pkg1'
+        import 'pkg1/x'
+      `,
+      "/Users/user/project/node_modules/pkg1/package.json": `{ "exports": { ".": "./index.js", "./x*": "./..*/..*/outside.js" } }`,
+      "/Users/user/project/node_modules/pkg1/index.js": `console.log('SUCCESS')`,
+      // Lives two directories above the package. It must never be reachable through pkg1's
+      // exports map; if the substituted target is not re-validated, resolution lands here.
+      "/Users/user/project/outside.js": `console.log('FAILURE')`,
+    },
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "pkg1/x". Maybe you need to "bun install"?`],
+    },
+  });
+});

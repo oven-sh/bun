@@ -1781,6 +1781,37 @@ folded: >
         });
       });
 
+      describe("[10.2.1.4] Core schema number resolution", () => {
+        // The lexer loop accepted `+`/`-`/`e`/`.` at any position and
+        // wtf::parse_double prefix-parses, so `1+1` resolved as 1. Validation
+        // now requires the consumed slice to match the Core schema regex.
+        test.each([
+          ["1+1", "1+1"], ["1-1", "1-1"], ["++1", "++1"], ["--1", "--1"], ["+-1", "+-1"],
+          ["1e", "1e"], ["1e+", "1e+"], ["1e-", "1e-"], ["1E", "1E"],
+          ["1e1.5", "1e1.5"], ["1e.5", "1e.5"],
+          ["1.2.3", "1.2.3"], [".", "."], [".e5", ".e5"], ["-.e5", "-.e5"], ["e5", "e5"],
+        ] as const)("%s resolves as string", (input, expected) => {
+          expect(Bun.YAML.parse(input)).toBe(expected);
+        });
+        test.each([
+          ["1", 1], ["-1", -1], ["+1", 1], ["0", 0], ["-0", -0],
+          ["1.5", 1.5], [".5", 0.5], ["-.5", -0.5], ["+.5", 0.5], ["1.", 1],
+          ["1e5", 1e5], ["1e+5", 1e5], ["1e-5", 1e-5], ["1.5e10", 1.5e10],
+          [".5e2", 50], ["-.5e2", -50],
+          ["0x1f", 31], ["0o17", 15], ["-0x1f", -31],
+        ] as const)("%s resolves as number %p", (input, expected) => {
+          expect(Bun.YAML.parse(input)).toBe(expected);
+        });
+        test.each([".inf", "-.inf", "+.inf", ".Inf", ".INF"])("%s resolves as Infinity", input => {
+          expect(Math.abs(Bun.YAML.parse(input))).toBe(Infinity);
+        });
+        test(".nan resolves as NaN", () => {
+          expect(Bun.YAML.parse(".nan")).toBeNaN();
+          expect(Bun.YAML.parse(".NaN")).toBeNaN();
+          expect(Bun.YAML.parse(".NAN")).toBeNaN();
+        });
+      });
+
       describe("flow comma/separator placement", () => {
         test("JSON-adjacent does not apply in flow-map value position", () => {
           // [147] flow-map value is ns-flow-node, not ns-flow-pair; [140]

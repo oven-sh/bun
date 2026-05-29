@@ -1563,7 +1563,12 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         let mut minus = false;
         let mut hex = false;
 
-        if first_char != FirstChar::Negative && first_char != FirstChar::Positive {
+        // For Negative/Positive the sign was consumed by the caller; the first
+        // body char (digit or `.`) is at `pos`. For Other/Dot the caller left
+        // `pos` at the first body char too. Either way, advance past it so the
+        // loop starts at the second body char with the `decimal`/digit flags
+        // already reflecting the first.
+        if !matches!(first_char, FirstChar::Negative | FirstChar::Positive) || decimal {
             parser!().inc(1);
         }
 
@@ -1717,15 +1722,23 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
             return Ok(());
         }
 
+        let lexed = parser!().slice(start, end);
         let mut scalar: NodeScalar<Enc> = 'scalar: {
             if x || o || hex {
-                let unsigned = match parse_unsigned_radix0::<Enc>(parser!().slice(start, end)) {
+                let unsigned = match parse_unsigned_radix0::<Enc>(lexed) {
                     Ok(v) => v,
                     Err(_) => return Ok(()),
                 };
                 break 'scalar NodeScalar::Number(unsigned as f64);
             }
-            let float = match parse_double_generic::<Enc>(parser!().slice(start, end)) {
+            // [10.2.1.4] Core schema float/int regex. The lexer loop above is
+            // permissive (accepts `+`/`-`/`e`/`.` at any position) and
+            // `wtf::parse_double` prefix-parses, so `1+1` would resolve as 1.
+            // Validate the consumed slice matches the schema before parsing.
+            if !is_core_schema_number::<Enc>(lexed, first_char) {
+                return Ok(());
+            }
+            let float = match parse_double_generic::<Enc>(lexed) {
                 Ok(v) => v,
                 Err(_) => return Ok(()),
             };
@@ -1749,6 +1762,56 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         }
         Ok(())
     }
+}
+
+/// [10.2.1.4] Core schema int/float pattern. The slice may already have had a
+/// leading `.` or `+`/`-` consumed by the caller before `start` was captured;
+/// `first_char` carries that.
+///   `[-+]? ( \. [0-9]+ | [0-9]+ ( \. [0-9]* )? ) ( [eE] [-+]? [0-9]+ )?`
+fn is_core_schema_number<Enc: Encoding>(s: &[Enc::Unit], first_char: FirstChar) -> bool {
+    let mut i = 0usize;
+    let len = s.len();
+    let at = |j: usize| Enc::wide(s[j]);
+    let is_digit = |c: u32| (0x30..=0x39).contains(&c);
+
+    // Mantissa: \. [0-9]+  |  [0-9]+ ( \. [0-9]* )?
+    let saw_leading_dot = first_char == FirstChar::Dot
+        || (i < len && at(i) == 0x2E && { i += 1; true });
+    if saw_leading_dot {
+        if i >= len || !is_digit(at(i)) {
+            return false;
+        }
+        while i < len && is_digit(at(i)) {
+            i += 1;
+        }
+    } else {
+        if i >= len || !is_digit(at(i)) {
+            return false;
+        }
+        while i < len && is_digit(at(i)) {
+            i += 1;
+        }
+        if i < len && at(i) == 0x2E {
+            i += 1;
+            while i < len && is_digit(at(i)) {
+                i += 1;
+            }
+        }
+    }
+    // Optional exponent: [eE] [-+]? [0-9]+
+    if i < len && matches!(at(i), 0x65 | 0x45) {
+        i += 1;
+        if i < len && matches!(at(i), 0x2B | 0x2D) {
+            i += 1;
+        }
+        if i >= len || !is_digit(at(i)) {
+            return false;
+        }
+        while i < len && is_digit(at(i)) {
+            i += 1;
+        }
+    }
+    i == len
 }
 
 /// Port of `bun.jsc.wtf.parseDouble(slice)` over an encoding-generic slice.

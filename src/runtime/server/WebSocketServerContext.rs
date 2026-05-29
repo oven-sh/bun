@@ -259,10 +259,7 @@ static DECOMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
 // TODO(port): phf custom hasher — Zig used `.getWithEql(zig_string, eqlComptime)`,
 // which compares a (possibly UTF-16) string against the literal keys. Here we go through
 // `latin1()` and look up in the phf map; verify UTF-16-backed strings still match.
-fn lookup_zig_string(
-    table: &phf::Map<&'static [u8], i32>,
-    key: &bun_core::String,
-) -> Option<i32> {
+fn lookup_zig_string(table: &phf::Map<&'static [u8], i32>, key: &bun_core::String) -> Option<i32> {
     table.get(key.latin1()).copied()
 }
 

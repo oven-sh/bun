@@ -1966,7 +1966,8 @@ where
             }
             if let Some(ext) = head.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
                 _sec_websocket_extensions_owned = ext.to_slice_clone();
-                sec_websocket_extensions = BunString::ascii(_sec_websocket_extensions_owned.slice());
+                sec_websocket_extensions =
+                    BunString::ascii(_sec_websocket_extensions_owned.slice());
             }
         }
 

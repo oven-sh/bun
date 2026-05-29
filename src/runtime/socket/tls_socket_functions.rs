@@ -2,9 +2,7 @@ use core::ffi::{c_char, c_int, c_long, c_void};
 
 use bun_boringssl_sys as boringssl;
 use bun_core::{String as BunString, strings};
-use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _,
-};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
 
 use crate::api::bun_x509 as X509;
 
@@ -636,7 +634,11 @@ pub(super) fn get_cipher(
     } else {
         // SAFETY: SSL_CIPHER_get_name returns a static NUL-terminated C string.
         let s = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
-        result.put(global, b"name", BunString::borrow_utf8(s).to_js_value(global));
+        result.put(
+            global,
+            b"name",
+            BunString::borrow_utf8(s).to_js_value(global),
+        );
     }
 
     let standard_name = ffi::SSL_CIPHER_standard_name(cipher);
@@ -658,7 +660,11 @@ pub(super) fn get_cipher(
     } else {
         // SAFETY: SSL_CIPHER_get_version returns a static NUL-terminated C string.
         let s = unsafe { bun_core::ffi::cstr(version) }.to_bytes();
-        result.put(global, b"version", BunString::borrow_utf8(s).to_js_value(global));
+        result.put(
+            global,
+            b"version",
+            BunString::borrow_utf8(s).to_js_value(global),
+        );
     }
 
     Ok(result)

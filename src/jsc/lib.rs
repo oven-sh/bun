@@ -1293,10 +1293,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         code: u8,
     ) -> JSValue;
-    safe fn ZigString__toAtomicValue(
-        this: &bun_core::String,
-        global: &JSGlobalObject,
-    ) -> JSValue;
+    safe fn ZigString__toAtomicValue(this: &bun_core::String, global: &JSGlobalObject) -> JSValue;
     safe fn ZigString__external(
         this: &bun_core::String,
         global: &JSGlobalObject,

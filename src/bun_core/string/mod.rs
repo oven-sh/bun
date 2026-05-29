@@ -363,9 +363,8 @@ impl String {
         // `len`. `ptr` points at `len` writable bytes owned by the new WTF
         // impl; the `'static` lifetime mirrors Zig's `[]u8` return (lifetime
         // is actually tied to `s` — caller must not outlive it).
-        let buf = unsafe {
-            core::slice::from_raw_parts_mut(s.as_wtf().m_ptr.latin1.cast_mut(), len)
-        };
+        let buf =
+            unsafe { core::slice::from_raw_parts_mut(s.as_wtf().m_ptr.latin1.cast_mut(), len) };
         (s, buf)
     }
     pub fn create_uninitialized_utf16(len: usize) -> (Self, &'static mut [u16]) {
@@ -375,9 +374,8 @@ impl String {
         }
         debug_assert_eq!(s.as_wtf().ref_count(), 1);
         // SAFETY: see `create_uninitialized_latin1`.
-        let buf = unsafe {
-            core::slice::from_raw_parts_mut(s.as_wtf().m_ptr.utf16.cast_mut(), len)
-        };
+        let buf =
+            unsafe { core::slice::from_raw_parts_mut(s.as_wtf().m_ptr.utf16.cast_mut(), len) };
         (s, buf)
     }
 
@@ -648,7 +646,10 @@ impl String {
     /// StringView-tag → borrowed-or-owned UTF-8 (port of `ZigString.toSlice`).
     #[inline]
     fn view_to_utf8_slice(&self) -> ZigStringSlice {
-        debug_assert!(matches!(self.tag(), Tag::StringView | Tag::StaticStringView));
+        debug_assert!(matches!(
+            self.tag(),
+            Tag::StringView | Tag::StaticStringView
+        ));
         let len = self.length();
         if len == 0 {
             return ZigStringSlice::EMPTY;
@@ -953,7 +954,10 @@ impl String {
     /// variant).
     #[inline]
     pub fn utf8(&self) -> &[u8] {
-        debug_assert!(matches!(self.tag(), Tag::StringView | Tag::StaticStringView));
+        debug_assert!(matches!(
+            self.tag(),
+            Tag::StringView | Tag::StaticStringView
+        ));
         debug_assert!(self.can_be_utf8());
         self.latin1()
     }
@@ -1431,7 +1435,10 @@ impl String {
         // (global) allocator.
         unsafe {
             bun_alloc::default_alloc::free(
-                self.latin1().as_ptr().cast_mut().cast::<core::ffi::c_void>(),
+                self.latin1()
+                    .as_ptr()
+                    .cast_mut()
+                    .cast::<core::ffi::c_void>(),
             )
         };
     }

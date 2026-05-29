@@ -10,9 +10,7 @@ use crate::webcore::jsc::{
     JsResult, StringJsc as _,
 };
 use bun_core::Output;
-use bun_core::{
-    OwnedString, String as BunString, WTFStringImplExt as _, ZigStringSlice,
-};
+use bun_core::{OwnedString, String as BunString, WTFStringImplExt as _, ZigStringSlice};
 use bun_http_types::Method::Method;
 
 use super::blob::Internal as InternalBlob;

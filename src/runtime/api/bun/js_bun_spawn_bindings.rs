@@ -2048,8 +2048,7 @@ pub(crate) fn append_envp_from_js(
         // PERF(port): was arena bulk-free — profile if it shows up on a hot path.
         let line: ZBox = {
             let mut buf: Vec<u8> = Vec::new();
-            write!(&mut buf, "{}={}", key, value_bunstr)
-                .map_err(|_| JsError::OutOfMemory)?;
+            write!(&mut buf, "{}={}", key, value_bunstr).map_err(|_| JsError::OutOfMemory)?;
             ZBox::from_vec(buf)
         };
 

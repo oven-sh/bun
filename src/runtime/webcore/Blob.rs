@@ -16,9 +16,7 @@ use crate::webcore::jsc::{
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core as bun;
 use bun_core::Output;
-use bun_core::{
-    OwnedString, String as BunString, WTFStringImplExt as _, ZigStringSlice, strings,
-};
+use bun_core::{OwnedString, String as BunString, WTFStringImplExt as _, ZigStringSlice, strings};
 use bun_http_types::MimeType::MimeType;
 use bun_sys::{self, Fd};
 

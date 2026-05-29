@@ -10,8 +10,8 @@ use bstr::BStr;
 
 use crate::napi;
 use bun_collections::StringArrayHashMap;
-use bun_core::{ZBox, env_var, fmt as bun_fmt, zstr};
 use bun_core::{String as BunString, ZStr};
+use bun_core::{ZBox, env_var, fmt as bun_fmt, zstr};
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsCell, JsClass,
     JsError, JsResult, StringJsc, SystemError,

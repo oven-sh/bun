@@ -4372,8 +4372,9 @@ pub mod formatter {
                 value.to_zig_string(&mut bool_value, self.global_this)?;
 
                 if bool_name.latin1() != b"Boolean" {
-                    writer
-                        .add_for_new_line(bool_value.length() + bool_name.length() + "[Boolean (): ]".len());
+                    writer.add_for_new_line(
+                        bool_value.length() + bool_name.length() + "[Boolean (): ]".len(),
+                    );
                     writer.print(format_args!(
                         "{}[Boolean ({}): {}]{}",
                         pf!("<r><yellow>"),

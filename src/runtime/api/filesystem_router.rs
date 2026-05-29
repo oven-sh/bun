@@ -28,9 +28,7 @@ use bun_core::{String as BunString, ZigStringSlice};
 use bun_jsc::js_object::ObjectInitializer;
 use bun_jsc::ref_string::RefString;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, LogJsc, StringJsc,
-};
+use bun_jsc::{CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, LogJsc, StringJsc};
 use bun_paths::{self as path, MAX_PATH_BYTES, PathBuffer};
 use bun_ptr::BackRef;
 

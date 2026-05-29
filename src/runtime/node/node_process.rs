@@ -2,9 +2,9 @@
 
 use core::ffi::c_char;
 
+use bun_core::String as BunString;
 use bun_core::env_var::feature_flag;
 use bun_core::{self, Environment, Global};
-use bun_core::String as BunString;
 use bun_jsc::{JSGlobalObject, JSValue, StringJsc as _};
 
 // TODO(port): move to <area>_sys — extern decls colocated for now
@@ -127,9 +127,7 @@ mod _impl {
     use bun_core::env_var;
     use bun_core::{String as BunString, strings};
     use bun_jsc::bun_string_jsc;
-    use bun_jsc::{
-        JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker,
-    };
+    use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker};
     use bun_paths::{PathBuffer, SEP};
     use bun_sys as Syscall;
 
@@ -415,7 +413,9 @@ mod _impl {
     fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let mut buf = PathBuffer::uninit();
         match crate::node::path::get_cwd(&mut buf) {
-            bun_sys::Result::Ok(r) => Ok(BunString::ascii(r).with_encoding().to_js_value(global_object)),
+            bun_sys::Result::Ok(r) => Ok(BunString::ascii(r)
+                .with_encoding()
+                .to_js_value(global_object)),
             bun_sys::Result::Err(e) => Err(global_object.throw_value(e.to_js(global_object))),
         }
     }

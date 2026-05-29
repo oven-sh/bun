@@ -19,9 +19,9 @@ use bun_jsc::{
 // `bun_jsc::virtual_machine::VirtualMachine` — import that directly so the
 // name resolves as a type at `&mut VirtualMachine` annotations and as the
 // owner of the `on_quiet_unhandled_rejection_handler_capture_value` assoc fn.
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::String as BunString;
 use bun_jsc::StringJsc as _;
+use bun_jsc::virtual_machine::VirtualMachine;
 // PORT NOTE: there is no `bun_lolhtml` safe-wrapper crate yet — the safe
 // surface lives directly in `bun_lolhtml_sys::lol_html`. Code below references
 // both `lolhtml::Foo` (safe wrappers) and `lolhtml_sys::Foo` (raw opaque

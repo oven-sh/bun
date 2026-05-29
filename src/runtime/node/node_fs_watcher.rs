@@ -16,8 +16,8 @@ use bun_jsc::event_loop::EventLoop;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
     self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CallFrame, CommonAbortReason,
-    CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsResult, SysErrorJsc,
-    VirtualMachineRef as VirtualMachine, StringJsc as _,
+    CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc as _,
+    SysErrorJsc, VirtualMachineRef as VirtualMachine,
 };
 use bun_paths::resolve_path::{self as Path, platform};
 use bun_sys::{self, SystemErrno};

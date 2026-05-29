@@ -39,9 +39,9 @@ pub(crate) fn freemem() -> u64 {
 mod _impl {
     use super::*;
     use crate::node::ErrorCode;
+    use bun_core::String as BunString;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use bun_core::ZStr;
-    use bun_core::String as BunString;
     #[cfg(not(windows))]
     use bun_core::strings;
     use bun_core::{env_var, fmt as bun_fmt};
@@ -674,7 +674,9 @@ mod _impl {
             cpu.put(
                 global_this,
                 b"model",
-                BunString::ascii(model).with_encoding().to_js_value(global_this),
+                BunString::ascii(model)
+                    .with_encoding()
+                    .to_js_value(global_this),
             );
             cpu.put(
                 global_this,
@@ -841,7 +843,9 @@ mod _impl {
                 }
             }
 
-            return Ok(BunString::ascii(b"unknown").with_encoding().to_js_value(global));
+            return Ok(BunString::ascii(b"unknown")
+                .with_encoding()
+                .to_js_value(global));
         }
         #[cfg(not(windows))]
         {
@@ -1076,7 +1080,9 @@ mod _impl {
                     };
                     // The full cidr value is the address + the suffix
                     let cidr_str = &buf[start..start + addr_len + suffix_len];
-                    cidr = BunString::ascii(cidr_str).with_encoding().to_js_value(global_this);
+                    cidr = BunString::ascii(cidr_str)
+                        .with_encoding()
+                        .to_js_value(global_this);
                 }
 
                 interface.put(
@@ -1096,7 +1102,9 @@ mod _impl {
                 interface.put(
                     global_this,
                     b"netmask",
-                    BunString::ascii(str).with_encoding().to_js_value(global_this),
+                    BunString::ascii(str)
+                        .with_encoding()
+                        .to_js_value(global_this),
                 );
             }
 
@@ -1165,7 +1173,9 @@ mod _impl {
                         interface.put(
                             global_this,
                             b"mac",
-                            BunString::ascii(mac).with_encoding().to_js_value(global_this),
+                            BunString::ascii(mac)
+                                .with_encoding()
+                                .to_js_value(global_this),
                         );
                     } else {
                         let mac_buf = bun_fmt::mac_address_lower(
@@ -1174,7 +1184,9 @@ mod _impl {
                         interface.put(
                             global_this,
                             b"mac",
-                            BunString::ascii(&mac_buf).with_encoding().to_js_value(global_this),
+                            BunString::ascii(&mac_buf)
+                                .with_encoding()
+                                .to_js_value(global_this),
                         );
                     }
                 } else {
@@ -1182,7 +1194,9 @@ mod _impl {
                     interface.put(
                         global_this,
                         b"mac",
-                        BunString::ascii(mac).with_encoding().to_js_value(global_this),
+                        BunString::ascii(mac)
+                            .with_encoding()
+                            .to_js_value(global_this),
                     );
                 }
             }
@@ -1299,7 +1313,9 @@ mod _impl {
                     };
                     // The full cidr value is the address + the suffix
                     let cidr_str = &ip_buf[start..start + addr_len + suffix_len];
-                    cidr = BunString::ascii(cidr_str).with_encoding().to_js_value(global_this);
+                    cidr = BunString::ascii(cidr_str)
+                        .with_encoding()
+                        .to_js_value(global_this);
                 }
 
                 interface.put(
@@ -1328,7 +1344,9 @@ mod _impl {
                 interface.put(
                     global_this,
                     b"netmask",
-                    BunString::ascii(str).with_encoding().to_js_value(global_this),
+                    BunString::ascii(str)
+                        .with_encoding()
+                        .to_js_value(global_this),
                 );
             }
             // family
@@ -1350,7 +1368,9 @@ mod _impl {
                 interface.put(
                     global_this,
                     b"mac",
-                    BunString::ascii(&mac_buf).with_encoding().to_js_value(global_this),
+                    BunString::ascii(&mac_buf)
+                        .with_encoding()
+                        .to_js_value(global_this),
                 );
             }
 
@@ -1609,7 +1629,9 @@ mod _impl {
             result.put(
                 global_this,
                 b"username",
-                BunString::ascii(username).with_encoding().to_js_value(global_this),
+                BunString::ascii(username)
+                    .with_encoding()
+                    .to_js_value(global_this),
             );
             result.put(
                 global_this,

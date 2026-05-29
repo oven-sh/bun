@@ -116,8 +116,8 @@ use crate::test_runner::jest::Jest;
 use crate::valkey_jsc::js_valkey::SubscriptionCtx;
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_jsc::StringJsc as _; // to_error_instance / to_type_error_instance
-use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::bun_string_jsc;
+use bun_jsc::call_frame::ArgumentsSlice;
 
 /// Bindgen-generated option-structs for this module (`BunObject.bind.ts`).
 pub mod r#gen {
@@ -635,7 +635,9 @@ pub(crate) fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
         cwd_str.slice(),
         bin_str.slice(),
     ) {
-        return Ok(BunString::ascii(bin_path).with_encoding().to_js_value(global_this));
+        return Ok(BunString::ascii(bin_path)
+            .with_encoding()
+            .to_js_value(global_this));
     }
 
     Ok(JSValue::NULL)

@@ -1081,9 +1081,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `configure_defines` above, so `$TZ` set in one is honored.
         if let Some(tz) = vm.env_loader().get(b"TZ") {
             if !tz.is_empty() {
-                let _ = vm
-                    .global()
-                    .set_time_zone(&bun_core::String::ascii(tz));
+                let _ = vm.global().set_time_zone(&bun_core::String::ascii(tz));
             }
         }
 

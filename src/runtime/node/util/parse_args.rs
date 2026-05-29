@@ -886,11 +886,7 @@ impl<'a> ParseArgsState<'a> {
                         String::static_("index"),
                         JSValue::js_number(*index as f64),
                     );
-                    obj.put(
-                        global,
-                        String::static_("value"),
-                        value.as_js_value(global)?,
-                    );
+                    obj.put(global, String::static_("value"), value.as_js_value(global)?);
                 }
                 Token::OptionTerminator { index } => {
                     obj.put(

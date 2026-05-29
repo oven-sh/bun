@@ -6,8 +6,8 @@ use core::mem::size_of;
 use core::ptr::NonNull;
 
 use bun_boringssl_sys as boring_sys;
-use bun_io::KeepAlive;
 use bun_core::String as BunString;
+use bun_io::KeepAlive;
 use bun_jsc::StringJsc as _;
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;

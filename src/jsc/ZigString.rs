@@ -82,7 +82,9 @@ pub(crate) unsafe extern "C" fn BunStringView__free(
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn BunStringView__freeGlobal(ptr: *const u8, len: usize) {
     let _ = len;
-    let untagged = bun_alloc::String::untag_view_ptr(ptr).cast_mut().cast::<c_void>();
+    let untagged = bun_alloc::String::untag_view_ptr(ptr)
+        .cast_mut()
+        .cast::<c_void>();
     if bun_alloc::USE_MIMALLOC {
         // SAFETY: read-only heap-region probe.
         debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(untagged) });

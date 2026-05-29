@@ -2112,7 +2112,11 @@ macro_rules! export_websocket_client {
             WebSocket::<$ssl>::cancel(this)
         }
         #[unsafe(no_mangle)]
-        pub extern "C" fn $close(this: *mut WebSocket<$ssl>, code: u16, reason: *const bun_core::String) {
+        pub extern "C" fn $close(
+            this: *mut WebSocket<$ssl>,
+            code: u16,
+            reason: *const bun_core::String,
+        ) {
             WebSocket::<$ssl>::close(this, code, reason)
         }
         #[unsafe(no_mangle)]

@@ -2351,12 +2351,7 @@ impl JSValue {
     // ── Property access (JSValue.zig:328, 1578). ──────────────────────────
     /// `JSValue.putZigString` — `JSC__JSValue__put` keyed by an existing
     /// `bun_core::String` (avoids the temporary in [`JSValue::put`]).
-    pub fn put_zig_string(
-        self,
-        global: &JSGlobalObject,
-        key: &bun_core::String,
-        value: JSValue,
-    ) {
+    pub fn put_zig_string(self, global: &JSGlobalObject, key: &bun_core::String, value: JSValue) {
         JSC__JSValue__put(self, global, key, value)
     }
     /// `JSValue.getOwn` — own-property lookup (no prototype walk).
@@ -2689,10 +2684,8 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         out: &mut bun_core::String,
     );
-    safe fn JSC__JSValue__symbolFor(
-        global: &JSGlobalObject,
-        key: &mut bun_core::String,
-    ) -> JSValue;
+    safe fn JSC__JSValue__symbolFor(global: &JSGlobalObject, key: &mut bun_core::String)
+    -> JSValue;
     safe fn JSC__JSValue__getOwn(
         this: JSValue,
         global: &JSGlobalObject,

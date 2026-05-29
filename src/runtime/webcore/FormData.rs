@@ -5,8 +5,7 @@ use bun_collections::ArrayHashMap;
 use bun_core::{self, declare_scope, err, scoped_log};
 use bun_core::{String as BunString, ZigStringSlice, strings};
 use bun_jsc::{
-    AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult,
-    StringJsc as _,
+    AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _,
 };
 use bun_semver::{self, SlicedString};
 use core::ffi::c_void;

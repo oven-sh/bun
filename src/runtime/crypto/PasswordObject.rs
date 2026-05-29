@@ -9,10 +9,10 @@ use bun_jsc::{
 };
 // `bun_jsc::{AnyTask, ConcurrentTask, EventLoop}` are *modules* (re-exported from
 // `bun_event_loop`); pull the concrete types out by name.
-use bun_jsc::event_loop::EventLoop;
 use bun_jsc::AnyTask::{AnyTask, JsResult as AnyTaskJsResult};
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::StringJsc as _;
+use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{JSPromise, JSPromiseStrong};
 use bun_threading::work_pool::WorkPool;
 

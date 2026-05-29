@@ -141,12 +141,6 @@ impl ServerComponentsMode {
 
 // ─────────────────────────── Runtime.Names ───────────────────────────
 
-#[derive(Default, Clone, Copy)]
-pub struct Names;
-impl Names {
-    pub const ACTIVATE_FUNCTION: &'static [u8] = b"activate";
-}
-
 // ─────────────────────────── Runtime.Imports ───────────────────────────
 
 // If you change this, remember to update "runtime.js"
@@ -274,7 +268,6 @@ impl Imports {
     ];
 
     pub const NAME: &'static [u8] = b"bun:wrap";
-    pub const ALT_NAME: &'static [u8] = b"bun:wrap";
 
     /// Index → field. Expansion of Zig `@field(this, all[i])`.
     #[inline]

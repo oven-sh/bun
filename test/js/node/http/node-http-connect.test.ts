@@ -463,13 +463,16 @@ describe("HTTP client CONNECT", () => {
         echoed: string;
         socketIsTunnel: boolean;
         reqResIsRes: boolean;
+        upgrade: unknown;
       }>();
 
       const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "example.com:443" });
       req.on("connect", (res, socket, head) => {
-        // Node wires res.socket to the tunnel socket and req.res to the response.
+        // Node wires res.socket to the tunnel socket, req.res to the response,
+        // and marks res.upgrade === true.
         const socketIsTunnel = res.socket === socket;
         const reqResIsRes = req.res === res;
+        const upgrade = (res as any).upgrade;
         socket.on("error", () => {});
         socket.on("data", d => {
           resolve({
@@ -478,6 +481,7 @@ describe("HTTP client CONNECT", () => {
             echoed: d.toString(),
             socketIsTunnel,
             reqResIsRes,
+            upgrade,
           });
           socket.destroy();
         });
@@ -494,6 +498,7 @@ describe("HTTP client CONNECT", () => {
       expect(result.echoed).toBe("ping");
       expect(result.socketIsTunnel).toBe(true);
       expect(result.reqResIsRes).toBe(true);
+      expect(result.upgrade).toBe(true);
     } finally {
       proxySocket?.destroy();
       await new Promise<void>(r => proxyServer.close(() => r()));
@@ -562,6 +567,39 @@ describe("HTTP client CONNECT", () => {
     }
   });
 
+  test("http.request CONNECT folds duplicate proxy response headers like Node", async () => {
+    const proxyServer = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.on("data", () =>
+        socket.write(
+          "HTTP/1.1 200 OK\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 10\r\nContent-Length: 20\r\nX-Multi: p\r\nX-Multi: q\r\n\r\n",
+        ),
+      );
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const { port } = proxyServer.address() as AddressInfo;
+
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<Record<string, string | string[]>>();
+      const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "h:1" });
+      req.on("connect", (res, socket) => {
+        resolve(res.headers);
+        socket.destroy();
+      });
+      req.on("error", reject);
+      req.end();
+
+      const headers = await promise;
+      // set-cookie is always an array; singleton headers keep the first value;
+      // other duplicates are comma-joined.
+      expect(headers["set-cookie"]).toEqual(["a=1", "b=2"]);
+      expect(headers["content-length"]).toBe("10");
+      expect(headers["x-multi"]).toBe("p, q");
+    } finally {
+      await new Promise<void>(r => proxyServer.close(() => r()));
+    }
+  });
+
   test("http.request CONNECT delivers bytes received after the headers as 'head'", async () => {
     const proxyServer = net.createServer(socket => {
       socket.on("error", () => {});
@@ -594,25 +632,36 @@ describe("HTTP client CONNECT", () => {
     const { port } = tmp.address() as AddressInfo;
     await new Promise<void>(r => tmp.close(() => r()));
 
-    const { promise, resolve, reject } = Promise.withResolvers<{ code: string; events: string[] }>();
+    const { promise, resolve, reject } = Promise.withResolvers<{
+      code: string;
+      syscall: string;
+      address: string;
+      port: number;
+      events: string[];
+    }>();
     const events: string[] = [];
     const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "example.com:443" });
     req.on("connect", () => reject(new Error("unexpected connect")));
-    let code = "";
-    req.on("error", err => {
+    let err: NodeJS.ErrnoException | undefined;
+    req.on("error", e => {
       events.push("error");
-      code = (err as NodeJS.ErrnoException).code ?? err.message;
+      err = e as NodeJS.ErrnoException;
     });
     // Node emits 'close' on the request after a failed connection.
     req.on("close", () => {
       events.push("close");
-      resolve({ code, events });
+      resolve({ code: err?.code ?? "", syscall: err?.syscall ?? "", address: err?.address ?? "", port: err?.port ?? 0, events });
     });
     req.end();
 
     const result = await promise;
     expect(result.code).toBe("ECONNREFUSED");
     expect(result.events).toEqual(["error", "close"]);
+    // The net error is propagated verbatim (Node-shaped), so the diagnostic
+    // fields survive rather than being flattened to a bare Error.
+    expect(result.syscall).toBe("connect");
+    expect(result.address).toBe("127.0.0.1");
+    expect(result.port).toBe(port);
   });
 
   test("http.request CONNECT rejects a malformed proxy status line with 'error'", async () => {

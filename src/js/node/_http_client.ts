@@ -75,6 +75,29 @@ const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
 const INVALID_HOST_CHAR_REGEX = /[/\\?#@\t\n\r]/;
 const CONNECT_STATUS_LINE_REGEX = /^HTTP\/(\d)\.(\d) (\d{3})(?: (.*))?$/;
 const kEmptyBuffer = Buffer.alloc(0);
+// Headers Node's IncomingMessage._addHeaderLine treats as singletons: the first
+// occurrence wins and later duplicates are discarded (set-cookie is handled
+// separately as an array). Used when folding parsed CONNECT response headers.
+const kConnectSingletonHeaders = new Set([
+  "age",
+  "authorization",
+  "content-length",
+  "content-type",
+  "etag",
+  "expires",
+  "from",
+  "host",
+  "if-modified-since",
+  "if-unmodified-since",
+  "last-modified",
+  "location",
+  "max-forwards",
+  "proxy-authorization",
+  "referer",
+  "retry-after",
+  "server",
+  "user-agent",
+]);
 
 const { URL } = globalThis;
 
@@ -729,10 +752,8 @@ function ClientRequest(input, options, cb) {
       this[kClearTimeout]?.();
       // Abort is handled by onAbort → socketCloseListener, which emits 'close'.
       if (isAbortError(err)) return;
-      if (err?.code === "ECONNREFUSED" || err?.code === "ConnectionRefused") {
-        err = new Error("ECONNREFUSED");
-        err.code = "ECONNREFUSED";
-      }
+      // net/tls already produce a Node-shaped error (code/syscall/address/port),
+      // so propagate it verbatim like Node rather than flattening it.
       fetching = false;
       try {
         this.emit("error", err);
@@ -789,7 +810,7 @@ function ClientRequest(input, options, cb) {
       res[statusMessageSymbol] = statusMatch[4] || STATUS_CODES[statusMatch[3]] || "";
 
       const rawHeaders: string[] = [];
-      const parsedHeaders: Record<string, string> = {};
+      const parsedHeaders: Record<string, string | string[]> = {};
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const colon = line.indexOf(":");
@@ -804,9 +825,19 @@ function ClientRequest(input, options, cb) {
         const val = line.slice(start, end);
         $putByValDirect(rawHeaders, rawHeaders.length, key);
         $putByValDirect(rawHeaders, rawHeaders.length, val);
+        // Fold into headers with Node's _addHeaderLine rules: set-cookie is
+        // always an array, singleton headers keep the first value, everything
+        // else is comma-joined.
         const lowerKey = key.toLowerCase();
         const existing = parsedHeaders[lowerKey];
-        parsedHeaders[lowerKey] = existing === undefined ? val : `${existing}, ${val}`;
+        if (lowerKey === "set-cookie") {
+          if (existing === undefined) parsedHeaders[lowerKey] = [val];
+          else (existing as string[]).push(val);
+        } else if (existing === undefined) {
+          parsedHeaders[lowerKey] = val;
+        } else if (!kConnectSingletonHeaders.has(lowerKey)) {
+          parsedHeaders[lowerKey] = `${existing}, ${val}`;
+        }
       }
       res.headers = parsedHeaders;
       res.rawHeaders = rawHeaders;
@@ -818,8 +849,9 @@ function ClientRequest(input, options, cb) {
 
       // Point res.socket at the real tunnel socket and back-reference the
       // response from the request, matching Node (res.socket === socket,
-      // req.res === res). Node leaves res.req undefined for CONNECT, so we do
-      // too.
+      // req.res === res, res.upgrade === true). Node leaves res.req undefined
+      // for CONNECT, so we do too.
+      res.upgrade = true;
       res.socket = socket;
       this.res = res;
 

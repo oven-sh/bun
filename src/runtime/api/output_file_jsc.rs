@@ -68,8 +68,9 @@ impl SavedFile {
         // SAFETY: `bun_vm()` returns the live `*mut VirtualMachine` for a
         // Bun-owned global; we hold a unique `&mut` only for this call.
         let mime_type = global_this.bun_vm().as_mut().mime_type(path);
-        // `Store::drop` frees `PathLike::String` via `deinit_owned`, so the
-        // backing buffer must be owned by the store, not borrowed from `path`.
+        // An owned `PathLike::String` (a `CowSlice`) frees its buffer in
+        // `PathLike::drop`, so the backing buffer must be owned by the store,
+        // not borrowed from `path`.
         let store = BlobStore::init_file(
             PathOrFileDescriptor::Path(PathLike::String(bun_ptr::cow_slice::CowSlice::init_owned(
                 path.to_vec().into_boxed_slice(),

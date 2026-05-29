@@ -849,7 +849,9 @@ impl ExtractTarball {
                 .unwrap_or(false)
             {
                 // create an index storing each version of a package installed
-                if strings::index_of_char(basename, b'/').is_none() {
+                if strings::index_of_char(basename, b'/').is_none()
+                    && bun_install::dependency::is_safe_install_folder_name(name)
+                {
                     'create_index: {
                         let dest_name: &[u8] = match self.resolution.tag {
                             ResolutionTag::Github => &folder_name[b"@GH@".len()..],

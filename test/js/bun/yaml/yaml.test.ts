@@ -1534,10 +1534,6 @@ folded: >
         });
 
         test("block-scalar phase-2 mid-line `---`/`...` is content, not a doc marker", () => {
-          // The phase-2 body loop's `0x2D`/`0x2E` arms check for `---`/`...`
-          // and `line_indent == NONE`, but at content_indent==0 a more-indented
-          // `  z---` line still has line_indent set to 0 by the nested loop.
-          // ee/js both treat it as content. Pre-existing.
           expect(YAML.parse("|\nx\n  z---\n")).toEqual("x\n  z---\n");
           expect(YAML.parse("|\nx\n  z...\n")).toEqual("x\n  z...\n");
         });
@@ -1545,9 +1541,7 @@ folded: >
         test("block collection on the `---` line", () => {
           // [200] s-l+block-collection requires s-l-comments (a line break)
           // before l+block-sequence/mapping; same-line content after `---` is
-          // s-separate-in-line + ns-flow-node only. Not tab-specific (`--- - x`
-          // is equally invalid). ee rejects both; js-yaml only rejects the
-          // tab variant. Pre-existing.
+          // s-separate-in-line + ns-flow-node only.
           expect(() => YAML.parse("---\t- x\n")).toThrow();
           expect(() => YAML.parse("--- - x\n")).toThrow();
           // Same-line flow node IS valid.
@@ -1661,6 +1655,30 @@ folded: >
           }
         });
 
+        test("multi-line quoted scalar: tab-prefixed `---`/`...` is content", () => {
+          // is_at_line_start() (prev byte == LF/CR) replaces the `nl &&
+          // line_indent==0` gate; after fold_lines() consumed `\n\t`, prev is
+          // tab, not at line start.
+          expect(YAML.parse("'foo\n\t--- x'\n")).toEqual("foo --- x");
+          expect(YAML.parse('"foo\n\t--- x"\n')).toEqual("foo --- x");
+          expect(() => YAML.parse("'foo\n--- x'\n")).toThrow("document start");
+        });
+
+        test("rejects content on the last `...` line of a multi-suffix run", () => {
+          expect(() => YAML.parse("a\n...\n... b\n")).toThrow("Unexpected token");
+        });
+
+        test.todo("BOM-prefixed `---` recognized as doc marker", () => {
+          // [202] l-document-prefix admits c-byte-order-mark before
+          // c-directives-end. is_at_line_start() returns false after BOM
+          // (prev byte is BOM, not LF/CR). Pre-existing differently-wrong
+          // (was a spurious BOM-only first doc); proper fix is BOM strip in
+          // l-document-prefix, not special-casing here.
+          expect(YAML.parse("﻿---\na: 1\n")).toEqual({ a: 1 });
+        });
+      });
+
+      describe("? in flow context (continued)", () => {
         test("JSON-adjacent does not apply in flow-map value position", () => {
           // [147] flow-map value is ns-flow-node, not ns-flow-pair. These are
           // pre-existing over-accepts on main (refs error); preserved as-is.

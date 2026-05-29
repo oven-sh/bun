@@ -2604,11 +2604,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             TokenData::Eof => {}
             TokenData::DocumentStart => {}
             TokenData::DocumentEnd => {
-                let document_end_line = self.token.line;
+                let mut document_end_line = self.token.line;
                 self.scan(ScanOptions::default())?;
 
                 // consume all bare documents
                 while matches!(self.token.data, TokenData::DocumentEnd) {
+                    document_end_line = self.token.line;
                     self.scan(ScanOptions::default())?;
                 }
 
@@ -5203,7 +5204,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let scalar_indent = self.line_indent;
 
         let mut text: Vec<Enc::Unit> = Vec::new();
-        let mut nl = false;
 
         // PORT NOTE: labeled-switch loop
         loop {
@@ -5211,29 +5211,26 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             match c {
                 0 => return Err(ParseError::UnexpectedCharacter),
                 0x2E /* '.' */ => {
-                    if nl && self.line_indent == Indent::NONE
+                    if self.is_at_line_start()
                         && self.remain_starts_with(Enc::literal(b"..."))
                         && self.is_s_white_or_b_char_at(3)
                     {
                         return Err(ParseError::UnexpectedDocumentEnd);
                     }
-                    nl = false;
                     text.push(Enc::ch(b'.'));
                     self.inc(1);
                 }
                 0x2D /* '-' */ => {
-                    if nl && self.line_indent == Indent::NONE
+                    if self.is_at_line_start()
                         && self.remain_starts_with(Enc::literal(b"---"))
                         && self.is_s_white_or_b_char_at(3)
                     {
                         return Err(ParseError::UnexpectedDocumentStart);
                     }
-                    nl = false;
                     text.push(Enc::ch(b'-'));
                     self.inc(1);
                 }
                 0x0D | 0x0A => {
-                    nl = true;
                     self.newline();
                     self.inc(1);
                     match self.fold_lines() {
@@ -5251,7 +5248,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                 }
                 0x20 | 0x09 => {
-                    nl = false;
                     let off = self.pos;
                     self.inc(1);
                     self.skip_s_white();
@@ -5260,7 +5256,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                 }
                 0x27 /* '\'' */ => {
-                    nl = false;
                     self.inc(1);
                     if Enc::wide(self.next()) == 0x27 {
                         text.push(Enc::ch(b'\''));
@@ -5280,7 +5275,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }));
                 }
                 _ => {
-                    nl = false;
                     text.push(self.next());
                     self.inc(1);
                 }
@@ -5294,7 +5288,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let scalar_indent = self.line_indent;
         let mut text: Vec<Enc::Unit> = Vec::new();
 
-        let mut nl = false;
 
         // PORT NOTE: labeled-switch loop
         loop {
@@ -5302,24 +5295,22 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             match c {
                 0 => return Err(ParseError::UnexpectedCharacter),
                 0x2E /* '.' */ => {
-                    if nl && self.line_indent == Indent::NONE
+                    if self.is_at_line_start()
                         && self.remain_starts_with(Enc::literal(b"..."))
                         && self.is_s_white_or_b_char_at(3)
                     {
                         return Err(ParseError::UnexpectedDocumentEnd);
                     }
-                    nl = false;
                     text.push(Enc::ch(b'.'));
                     self.inc(1);
                 }
                 0x2D /* '-' */ => {
-                    if nl && self.line_indent == Indent::NONE
+                    if self.is_at_line_start()
                         && self.remain_starts_with(Enc::literal(b"---"))
                         && self.is_s_white_or_b_char_at(3)
                     {
                         return Err(ParseError::UnexpectedDocumentStart);
                     }
-                    nl = false;
                     text.push(Enc::ch(b'-'));
                     self.inc(1);
                 }
@@ -5339,10 +5330,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             return Err(ParseError::UnexpectedCharacter);
                         }
                     }
-                    nl = true;
                 }
                 0x20 | 0x09 => {
-                    nl = false;
                     let off = self.pos;
                     self.inc(1);
                     self.skip_s_white();
@@ -5365,7 +5354,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }));
                 }
                 0x5C /* '\\' */ => {
-                    nl = false;
                     self.inc(1);
                     match Enc::wide(self.next()) {
                         0x0D | 0x0A => {
@@ -5430,7 +5418,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.inc(1);
                 }
                 _ => {
-                    nl = false;
                     text.push(self.next());
                     self.inc(1);
                 }

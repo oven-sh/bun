@@ -42,11 +42,6 @@ pub unsafe fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Ta
         crate::linker_context_mod::crash_guard_for_part_range(c, chunk, &part_range.part_range)
     };
 
-    // CONCURRENCY: the CSS impl is read-only over `c`/`chunk` (the
-    // `bytesInOutput` bump goes through `&AtomicUsize`), so form `&` — never
-    // `&mut` — to avoid aliased exclusive borrows across peer worker tasks.
-    // The `&` borrows are scoped to the impl call so they do not overlap the
-    // raw slot write that follows.
     let result = {
         // SAFETY: `c_ptr` is the live `LinkerContext` returned by
         // `pending_part_range_prologue`; see its contract.
@@ -72,10 +67,6 @@ fn generate_compile_result_for_css_chunk_impl(
     let _trace = bun_core::perf::trace("Bundler.generateCodeForFileInChunkCss");
     // `defer trace.end()` — RAII; Drop ends the trace.
 
-    // `worker.arena` (= `BackRef` to `worker.heap`) is a disjoint field from
-    // `worker.temporary_arena` borrowed `&mut` below, so a direct shared
-    // borrow via `BackRef::get` is fine. The heap is pinned for the worker's
-    // lifetime; see `Worker::arena`.
     let arena = worker.arena.get();
     // PERF(port): was arena bulk-free (worker.temporary_arena.reset(.retain_capacity)).
     let _arena_reset = scopeguard::guard(&mut worker.temporary_arena, |arena| {

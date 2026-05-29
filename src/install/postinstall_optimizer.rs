@@ -1,12 +1,8 @@
 use bun_collections::VecExt;
 use std::sync::LazyLock;
 
-use bun_collections::ArrayHashMap;
-// PORT NOTE: `Expr` here is the T2 `bun_ast::Expr` (re-exported via
-// `crate::bun_json`), not the T4 `bun_ast::Expr`. The sole caller
-// (`lockfile::Package::parse_with_json`) holds a JSON-parsed `bun_json::Expr`,
-// so binding to the lower-tier type avoids a cross-tier mismatch.
 use bun_ast as js_ast;
+use bun_collections::ArrayHashMap;
 use bun_semver as semver;
 
 use crate::lockfile::package::Meta;
@@ -61,10 +57,6 @@ impl PostinstallOptimizer {
 
         while let Some(entry) = array.next() {
             if entry.is_string() {
-                // PORT NOTE: Zig `asString(allocator)` would convert UTF-16→UTF-8; JSON
-                // string literals are always UTF-8/non-rope, so `as_utf8_string_literal`
-                // suffices and avoids threading a bump arena.
-                // TODO(port): if a UTF-16 EString ever reaches here, route a `&Bump`.
                 let Some(str) = entry.as_utf8_string_literal() else {
                     continue;
                 };
@@ -132,10 +124,6 @@ impl PostinstallOptimizer {
     }
 }
 
-// TODO(port): Zig used `std.ArrayHashMapUnmanaged(PackageNameHash, PostinstallOptimizer,
-// install.ArrayIdentityContext.U64, false)` — i.e. an *identity* hash context (key is already
-// a hash). `bun_collections::ArrayHashMap` should be configured for identity hashing on u64 keys,
-// or expose a `ArrayHashMap<K, V, IdentityU64>` variant.
 pub type Map = ArrayHashMap<PackageNameHash, PostinstallOptimizer>;
 
 #[derive(Default)]
@@ -209,13 +197,6 @@ impl List {
             PostinstallOptimizer::NativeBinlink => {
                 // TODO: support hoisted.
                 (tree_id.is_none() || tree_id.unwrap() == 0)
-
-                    // It's not as simple as checking `get(name_hash) != null` because if the
-                    // specific versions of the package do not have optional
-                    // dependencies then we cannot do this optimization without
-                    // breaking the code.
-                    //
-                    // This shows up in test/integration/esbuild/esbuild.test.ts
                     && PostinstallOptimizer::get_native_binlink_replacement_package_id(
                         resolutions,
                         metas,

@@ -5,13 +5,6 @@ use bun_zlib as c; // bun.zlib — C zlib FFI (NodeMode, z_stream, ReturnCode, F
 
 use crate::node::node_zlib_binding::Error;
 
-// ─── gated: JsClass payload + host fns ────────────────────────────────────
-// `NativeZlib` carries `#[bun_jsc::JsClass]` and its methods are
-// `#[bun_jsc::host_fn]`s; field types (`Strong`, `WorkPoolTask`) are not yet
-// exported with the expected shapes. The pure-FFI `Context` (zlib state
-// machine) is hoisted below as the non-JSC body.
-// TODO(port): un-gate once bun_jsc Strong/JsClass + bun_threading::WorkPoolTask land.
-
 mod _impl {
     use super::*;
     use core::cell::Cell;
@@ -23,10 +16,6 @@ mod _impl {
     use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive};
     use crate::node::util::validators;
 
-    /// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
-    /// (see `CompressionStream::write` in node_zlib_binding.rs). Zig: `.callback = undefined`.
-    /// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
-    /// struct-init site; the body never dereferences the pointer.
     fn noop_task_callback(_task: *mut WorkPoolTask) {}
 
     // `mod js { write_callback_*, error_callback_*, dictionary_* }` is emitted by
@@ -53,13 +42,6 @@ mod _impl {
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
     }
-
-    // `const impl = CompressionStream(@This())` — Zig comptime mixin that injects
-    // write / runFromJSThread / writeSync / reset / close / setOnError / getOnError /
-    // finalize onto this type. In Rust these are provided as inherent methods on
-    // `CompressionStream::<NativeZlib>` in node_zlib_binding.rs (a generic mixin
-    // struct, not a trait).
-    // TODO(port): verify CompressionStream<T> surface matches the Zig mixin re-exports.
 
     impl NativeZlib {
         // NB: no `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]` derive emits

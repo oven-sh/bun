@@ -4,10 +4,6 @@ use bun_alloc::ArenaVecExt as _;
 pub use css::Error;
 use css::{CssResult as Result, PrintErr, Printer};
 
-// PORT NOTE: every leaf property module is currently a `handler_stub!` ZST in
-// properties/mod.rs (no-op `handle_property`/`finalize`). The real handler
-// bodies un-gate per-module as the values/ calc lattice lands; this file
-// composes over whichever surface is live.
 use crate::css_properties::align::AlignHandler;
 use crate::css_properties::background::BackgroundHandler;
 use crate::css_properties::border::BorderHandler;
@@ -28,14 +24,6 @@ use crate::css_properties::ui::ColorSchemeHandler;
 
 pub type DeclarationList<'bump> = bun_alloc::ArenaVec<'bump, css::Property>;
 
-/// A CSS declaration block.
-///
-/// Properties are separated into a list of `!important` declararations,
-/// and a list of normal declarations. This reduces memory usage compared
-/// with storing a boolean along with each property.
-///
-/// TODO: multiarraylist will probably be faster here, as it makes one allocation
-/// instead of two.
 pub struct DeclarationBlock<'bump> {
     /// A list of `!important` declarations in the block.
     pub important_declarations: DeclarationList<'bump>,
@@ -124,10 +112,6 @@ impl<'bump> DeclarationBlock<'bump> {
                 let handled = hndlr.handle_property(prop, ctx);
 
                 if !handled {
-                    // Zig: `hndlr.decls.append(prop.*); prop.* = .{ .all = .@"revert-layer" }`
-                    // — move the value out and overwrite the slot with a
-                    // non-allocating placeholder so the source list's drop is a
-                    // no-op.
                     hndlr
                         .decls
                         .push(core::mem::replace(prop, placeholder_property()));
@@ -222,16 +206,6 @@ impl<'bump> DeclarationBlock<'bump> {
     }
 }
 
-// ─── parse ────────────────────────────────────────────────────────────────
-//
-// PORT NOTE: every consumer (`StyleRule`, `Keyframe`, `PageRule`,
-// `StyleAttribute`, `NestedRuleParser`) stores `DeclarationBlock<'static>` —
-// the crate-wide `'bump`-erasure placeholder until `'bump` threads through
-// `CssRule`. `parse()` therefore lives on the `'static` instantiation and
-// erases the parser arena's lifetime at the boundary; this collapses together
-// with the lifetime cast in `rules/style.rs::minify` when `CssRule<'bump, R>`
-// lands.
-
 impl DeclarationBlock<'static> {
     pub fn parse(
         input: &mut css::Parser,
@@ -256,10 +230,6 @@ impl DeclarationBlock<'static> {
                     options.warn(&e);
                     continue;
                 }
-                // errdefer doesn't fire on `return .{ .err = ... }` — Result(T) is a tagged
-                // union, not an error union. Free any declarations accumulated so far.
-                // PORT NOTE: in Rust, `declarations`/`important_declarations` are bumpalo
-                // Vec<Property> and drop on early return; deepDeinit is implicit via Drop.
                 return Err(e);
             }
         }
@@ -270,13 +240,6 @@ impl DeclarationBlock<'static> {
         })
     }
 }
-
-// ─── hash / eql / deep_clone (gated) ──────────────────────────────────────
-// blocked_on: properties_generated — `Property` lacks `DeepClone`/`CssEql`
-// derives and `PropertyId` lacks a `hash(&mut Wyhash)` method. The bodies
-// below are the real manual unrolls of Zig's comptime-reflection helpers
-// (`implementEql`/`implementDeepClone`); they un-gate the moment the
-// per-variant trait impls land in `properties_generated.rs`.
 
 impl<'bump> DeclarationBlock<'bump> {
     pub fn hash_property_ids(&self, hasher: &mut bun_wyhash::Wyhash) {
@@ -432,11 +395,6 @@ pub fn parse_declaration<'bump>(
     )
 }
 
-// PORT NOTE: Zig `composes_ctx: anytype` — branches on
-// `comptime @TypeOf(composes_ctx) != void`. The Rust shape is a `ComposesCtx`
-// trait (defined in `css_parser.rs`); `NoComposesCtx` returns
-// `DisallowEntirely` so the `void` fast-path collapses into the match's
-// no-op arm.
 pub fn parse_declaration_impl<'bump, C>(
     name: &[u8],
     input: &mut css::Parser,
@@ -490,12 +448,6 @@ where
                     );
                 }
                 css::ComposesState::DisallowNotSingleClass(info) => {
-                    // blocked_on: ParserOptions::warn_fmt_with_notes
-                    // (`bun_ast::Log` notes-ownership API). Until that
-                    // lands the note ("The parent selector is not a single
-                    // class selector because of the syntax here:" at
-                    // `info.to_logger_location(options.filename)`) is dropped;
-                    // the primary warning still fires at the right location.
                     let _ = info;
                     options.warn_fmt(
                         format_args!("\"composes\" only works inside single class selectors"),
@@ -515,11 +467,6 @@ where
     Ok(())
 }
 
-/// Per-shorthand-group handler state used by `DeclarationBlock::minify`.
-///
-/// PORT NOTE: each `*Handler` is a `handler_stub!` ZST until its leaf module
-/// un-gates; `Direction` is the data-only `properties::text` enum. The struct
-/// shape is the real Zig layout — only the handler *bodies* are deferred.
 pub struct DeclarationHandler<'bump> {
     pub background: BackgroundHandler,
     pub border: BorderHandler,
@@ -545,10 +492,6 @@ impl<'bump> DeclarationHandler<'bump> {
         if let Some(direction) = self.direction.take() {
             self.decls.push(css::Property::Direction(direction));
         }
-        // if (this.unicode_bidi) |unicode_bidi| {
-        //     this.unicode_bidi = null;
-        //     this.decls.append(context.arena, css.Property{ .unicode_bidi = unicode_bidi }) catch |err| bun.handleOom(err);
-        // }
 
         self.background.finalize(&mut self.decls, context);
         self.border.finalize(&mut self.decls, context);

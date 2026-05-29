@@ -77,12 +77,6 @@ impl LinkerContext<'_> {
         // `worker.heap`; valid for the worker's lifetime.
         let arena: &Bump = worker.arena();
 
-        // ── raw SoA column pointers (root provenance) ─────────────────────
-        // `split_raw()` derives `*mut [T]` directly from the buffer base with
-        // no `&mut` intermediate, so per-row writes through these pointers are
-        // sound under Stacked Borrows even with N concurrent tasks. We index
-        // by raw `.add(id)` (never `(*col)[id]`, which would form a transient
-        // `&[T]` over the whole column and race with other rows' writes).
         let ast = c.graph.ast.split_raw();
         let meta = c.graph.meta.split_raw();
         macro_rules! row_mut {
@@ -246,15 +240,6 @@ impl LinkerContext<'_> {
         let our_imports_to_bind: &RefImportData = &imports_to_bind[id as usize];
         // SAFETY: see above.
         'outer: for (part_index, part) in unsafe { (*parts_slice).iter_mut().enumerate() } {
-            // Now that all files have been parsed, determine which property
-            // accesses off of imported symbols are inlined enum values and
-            // which ones aren't
-            // PORT NOTE: reshaped for borrowck — Zig iterates keys()/values() while
-            // holding a mutable getPtr into part.symbol_uses; collect refs first.
-            // PERF(port): the property-use map is empty for the overwhelming
-            // majority of parts (it only fills for `import * as ns`/enum
-            // property accesses); skip the `to_vec()` alloc-round-trip in
-            // that case.
             let prop_use_refs: Vec<Ref> = if part.import_symbol_property_uses.is_empty() {
                 Vec::new()
             } else {
@@ -303,44 +288,6 @@ impl LinkerContext<'_> {
 
             // TODO: inline function calls here
 
-            // TODO: Inline cross-module constants
-            // if (c.graph.const_values.count() > 0) {
-            //     // First, find any symbol usage that points to a constant value.
-            //     // This will be pretty rare.
-            //     const first_constant_i: ?usize = brk: {
-            //         for (part.symbol_uses.keys(), 0..) |ref, j| {
-            //             if (c.graph.const_values.contains(ref)) {
-            //                 break :brk j;
-            //             }
-            //         }
-            //
-            //         break :brk null;
-            //     };
-            //     if (first_constant_i) |j| {
-            //         var end_i: usize = 0;
-            //         // symbol_uses is an array
-            //         var keys = part.symbol_uses.keys()[j..];
-            //         var values = part.symbol_uses.values()[j..];
-            //         for (keys, values) |ref, val| {
-            //             if (c.graph.const_values.contains(ref)) {
-            //                 continue;
-            //             }
-            //
-            //             keys[end_i] = ref;
-            //             values[end_i] = val;
-            //             end_i += 1;
-            //         }
-            //         part.symbol_uses.entries.len = end_i + j;
-            //
-            //         if (part.symbol_uses.entries.len == 0 and part.can_be_removed_if_unused) {
-            //             part.tag = .dead_due_to_inlining;
-            //             part.dependencies.len = 0;
-            //             continue :outer;
-            //         }
-            //
-            //         part.symbol_uses.reIndex(arena) catch unreachable;
-            //     }
-            // }
             if false {
                 break 'outer;
             } // this `if` is here to preserve the unused
@@ -399,14 +346,6 @@ impl LinkerContext<'_> {
         }
     }
 
-    /// Spec: `linker_context/doStep5.zig:createExportsForFile`.
-    ///
-    /// WARNING: This method is run in parallel over all files. Do not mutate data
-    /// for other files within this method or you will create a data race.
-    ///
-    /// PORT NOTE: takes `&self` (read-only) plus the three SoA row cells it
-    /// mutates as explicit `&mut` params, so the parallel `do_step5` dispatch
-    /// never forms a concurrent `&mut LinkerContext` / whole-column `&mut [T]`.
     #[allow(clippy::too_many_arguments)]
     pub fn create_exports_for_file(
         &self,
@@ -420,10 +359,6 @@ impl LinkerContext<'_> {
         ast_flags: &mut AstFlags,
         ast_parts: &mut bun_ast::PartList,
     ) {
-        // PORT NOTE: Zig toggled `Stmt.Disabler`/`Expr.Disabler` (debug-only
-        // re-entrancy guards around the global Store). `Disabler::scope()`
-        // calls `disable()` and re-`enable()`s on drop — currently no-op stubs
-        // until the thread-local toggle lands (`js_parser/ast/mod.rs`).
         let _stmt_guard = bun_ast::stmt::Disabler::scope();
         let _expr_guard = bun_ast::expr::Disabler::scope();
 
@@ -451,14 +386,6 @@ impl LinkerContext<'_> {
             // + 1 if we need to do module.exports = __toCommonJS(exports)
             force_include_exports_for_entry_point as usize;
 
-        // PORT NOTE: Zig used `Stmt.Batcher` (preallocated arena slice +
-        // cursor). `Batcher::<T>::init` requires `T: Default` which `Stmt`
-        // doesn't satisfy, so we hand-roll the same shape: one arena slab of
-        // `stmts_count` `MaybeUninit<Stmt>`, sliced front-to-back. `eat1`
-        // becomes a `write` + sub-slice carve. The slab is held as a safe
-        // `&mut [MaybeUninit<Stmt>]` borrow of the arena allocation; each
-        // carve borrows it briefly and hands the result to `StoreSlice`
-        // (raw-ptr wrapper, no lifetime), so successive carves don't alias.
         let stmts_slab: &mut [MaybeUninit<Stmt>] =
             arena.alloc_slice_fill_with(stmts_count, |_| MaybeUninit::uninit());
         let mut stmts_head: usize = 0;
@@ -477,10 +404,6 @@ impl LinkerContext<'_> {
             let exp = resolved_exports.get_mut(alias).unwrap();
             let mut exp_data = exp.data;
 
-            // If this is an export of an import, reference the symbol that the import
-            // was eventually resolved to. We need to do this because imports have
-            // already been resolved by this point, so we can't generate a new import
-            // and have that be resolved later.
             if let Some(import_data) =
                 imports_to_bind[exp_data.source_index.get() as usize].get(&exp_data.import_ref)
             {
@@ -647,11 +570,6 @@ impl LinkerContext<'_> {
             ast_flags.insert(AstFlags::USES_EXPORTS_REF);
         }
 
-        // Decorate "module.exports" with the "__esModule" flag to indicate that
-        // we used to be an ES module. This is done by wrapping the exports object
-        // instead of by mutating the exports object because other modules in the
-        // bundle (including the entry point module) may do "import * as" to get
-        // access to the exports object and should NOT see the "__esModule" flag.
         if force_include_exports_for_entry_point {
             let to_common_js_ref = self.runtime_function(b"__toCommonJS");
             emit_export_stmt!(Stmt::assign(

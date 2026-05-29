@@ -52,19 +52,9 @@ pub struct ChromeProcess {
     process: NonNull<Process>,
 }
 
-// PORTING.md §Global mutable state: JS-thread-only singleton ptr → AtomicPtr.
-// Only accessed from the JS thread (exported fns are called from C++ on the
-// mutator thread; on_process_exit runs on the event loop thread which is the
-// same thread). Relaxed ordering matches the Zig non-atomic var.
 static INSTANCE: core::sync::atomic::AtomicPtr<ChromeProcess> =
     core::sync::atomic::AtomicPtr::new(ptr::null_mut());
 
-/// Called from WebView.closeAll() and dispatchOnExit. Chrome spawns its own
-/// renderer/gpu/utility children (the "process model" zygote tree) — tracked
-/// by Chrome's own ProcessSingleton, they exit when the browser process
-/// dies. SIGKILL here takes the browser process, the zygote tree follows.
-/// The C++ side doesn't touch JS state; EVFILT_PROC → Bun__Chrome__died →
-/// rejectAllAndMarkDead handles promise rejection on the next loop tick.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__Chrome__kill() {
     // SAFETY: JS-thread-only global; see INSTANCE decl.
@@ -182,16 +172,6 @@ bun_spawn::link_impl_ProcessExit! {
     }
 }
 
-/// Auto-detect the Chrome binary. chrome-headless-shell is the ~100MB
-/// stripped variant (no GPU compositor, no extensions) — ships with
-/// playwright installs. Falls through to the full app bundles.
-///
-/// Playwright registry layout (packages/playwright-core/src/server/registry):
-///   mac:   ~/Library/Caches/ms-playwright/chromium_headless_shell-<rev>/
-///            chrome-headless-shell-mac-<arch>/chrome-headless-shell
-///   linux: ~/.cache/ms-playwright/chromium_headless_shell-<rev>/
-///            chrome-headless-shell-linux64/chrome-headless-shell
-///            (arm64 non-cft builds use chrome-linux/headless_shell instead)
 #[cfg(not(windows))]
 fn find_chrome(explicit_path: Option<&CStr>) -> Option<ZBox> {
     // Precedence: backend.path > BUN_CHROME_PATH > $PATH > hardcoded > playwright.
@@ -224,12 +204,6 @@ fn find_chrome(explicit_path: Option<&CStr>) -> Option<ZBox> {
         }
     }
 
-    // Hardcoded absolute paths — macOS app bundles aren't in $PATH, and
-    // snap on Linux doesn't always export /snap/bin. Signed bundles before
-    // Playwright: enterprise endpoint-protection (Gatekeeper, Santa)
-    // allowlists notarized bundles but blocks unsigned binaries in cache
-    // dirs; Playwright's chrome-headless-shell is unsigned and SIGKILLs at
-    // exec on a locked-down dev machine while Chrome.app runs.
     #[cfg(target_os = "macos")]
     {
         let bundles: [&[u8]; 5] = [
@@ -412,13 +386,6 @@ fn spawn(
             bstr::BStr::new(chrome.as_bytes())
         );
 
-        // One socketpair. Parent keeps fds[0], child gets fds[1] dup'd to BOTH
-        // fd 3 and fd 4. Chrome read(3)'s commands and write(4)'s replies —
-        // both hit the same socket. Parent end nonblocking so usockets recv
-        // returns EAGAIN; child end BLOCKING for Chrome's dedicated-thread
-        // read loop. O_NONBLOCK lives on the open file description (shared
-        // across dup2), so set it on fds[0] only — fds[0] and fds[1] are two
-        // different descriptions (peer sockets), the flag isn't shared across.
         let fds: [Fd; 2] = bun_sys::socketpair(
             libc::AF_UNIX as i32,
             libc::SOCK_STREAM as i32,
@@ -431,19 +398,6 @@ fn spawn(
         });
         bun_sys::set_nonblocking(fds[0])?;
 
-        // Minimal flags. --remote-debugging-pipe is the one that matters;
-        // --headless works on both full Chrome (switches to headless mode) and
-        // chrome-headless-shell (no-op, it's already headless). --headless=new
-        // breaks chrome-headless-shell (it IS the new headless mode; =new is a
-        // full-Chrome-only switch). Playwright passes plain --headless
-        // (chromium.js:293).
-        //
-        // --user-data-dir MUST precede --remote-debugging-pipe in argv. Chrome's
-        // CommandLine::Init stops at the first -- after argv[0] on some builds;
-        // order-insensitive on most, but --user-data-dir-first is the defensive
-        // layout every headless harness uses. Without it, ProcessSingleton locks
-        // the default profile (~/Library/Application Support/Google/Chrome) and
-        // aborts if a real Chrome is already running.
         let data_dir: ZBox = if let Some(d) = user_data_dir {
             let d = d.to_bytes();
             let mut v = Vec::with_capacity(16 + d.len());
@@ -481,10 +435,6 @@ fn spawn(
             // may still load. --disable-background-networking shuts up GCM/update.
             c"--disable-extensions".as_ptr(),
             c"--disable-background-networking".as_ptr(),
-            // Throttling suite (playwright's chromiumSwitches.ts subset). These
-            // gate rAF/setTimeout firing when the tab thinks it's backgrounded.
-            // A headless target is "occluded" by definition; without these Chrome
-            // throttles timers to 1 Hz and pauses rAF entirely.
             c"--disable-background-timer-throttling".as_ptr(),
             c"--disable-backgrounding-occluded-windows".as_ptr(),
             c"--disable-renderer-backgrounding".as_ptr(),
@@ -495,10 +445,6 @@ fn spawn(
             // default about:blank. Saves one tab and the visual-complete wait.
             c"--no-startup-window".as_ptr(),
         ];
-        // User extras last so they can override built-in flags (Chrome's
-        // CommandLine last-wins for duplicate switches). Memory is the caller's
-        // CString Vector — lives until Bun__Chrome__ensure returns, after which
-        // posix_spawn has copied argv into the child.
         for a in extra_argv {
             argv.push(*a);
         }
@@ -535,10 +481,6 @@ fn spawn(
         let spawned =
             unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr().cast()) }??;
 
-        // PORT NOTE: reshaped for borrowck — Zig's errdefer stays armed past
-        // this point (and would re-close fds on the WatchFailed path below);
-        // we disarm here and close explicitly on that path instead.
-        // TODO(port): verify Zig errdefer double-close of fds[1] on WatchFailed is intentional/idempotent.
         let fds = scopeguard::ScopeGuard::into_inner(fds);
 
         // Parent doesn't need the child's end. POSIX_SPAWN_CLOEXEC_DEFAULT
@@ -592,32 +534,7 @@ unsafe extern "C" {
     fn Bun__Chrome__died(signo: i32);
 }
 
-// --- DevToolsActivePort discovery -------------------------------------------
-// Chrome writes <port>\n/devtools/browser/<id> to DevToolsActivePort in its
-// profile dir when remote debugging is on (via --remote-debugging-port OR
-// the chrome://inspect toggle). Sync file read — instant answer, no network.
-// The new chrome://inspect toggle does NOT expose /json/version (404), so
-// this file is the ONLY discovery mechanism for that mode. chrome-devtools-
-// mcp does the same.
-
-/// Read DevToolsActivePort from Chrome's default profile directory.
-/// Chrome writes this when --remote-debugging-port is set OR when the
-/// user flips the "Allow remote debugging" toggle in chrome://inspect.
-/// Two lines: port, then path (/devtools/browser/<id>). Returns the
-/// full ws:// URL in out_buf, or null if the file doesn't exist /
-/// is malformed / the profile dir is non-standard.
 fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
-    // Default profile locations. Multiple Chrome channels (stable/beta/
-    // canary) have distinct dirs; try each. Chromium and Edge also
-    // respond to the same debugging protocol.
-    // Windows roots under %LOCALAPPDATA%; POSIX under $HOME. The subdir
-    // names come from each browser's installer — hardcoded, not
-    // discoverable. Edge uses the same CDP + file format as Chrome.
-    // NB: do NOT route Windows through bun_core::getenv_z — it is stubbed to
-    // None on cfg(windows) (TODO(port) in bun_core/util.rs), which made
-    // this whole function dead on Windows. Zig's bun.getenvZ walks the env
-    // block case-insensitively and returns a real value; std::env::var is the
-    // working equivalent here (LOCALAPPDATA is always valid Unicode).
     #[cfg(windows)]
     let root_owned = std::env::var("LOCALAPPDATA").ok()?;
     #[cfg(windows)]

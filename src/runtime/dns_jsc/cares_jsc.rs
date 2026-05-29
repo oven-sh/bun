@@ -223,15 +223,6 @@ pub(crate) fn addr_info_to_js_array(
     Ok(array)
 }
 
-// ── shared count-then-walk → JS array helper ───────────────────────────────
-//
-// Every `struct_ares_*_reply` is an intrusive singly-linked list with a
-// `.next: *mut Self` field. Zig open-codes the same two-pass walk (count,
-// then `create_empty_array` + `put_index`) once per record type; here we do
-// it once generically. The trait is `unsafe` because impls promise `next()`
-// is either null or a valid pointer into the same c-ares-owned list.
-// PERF(port): each Zig caller used stack-fallback + arena bulk-free — profile if hot.
-
 /// SAFETY: impls must return null or a valid pointer into the same
 /// c-ares-owned linked list.
 unsafe trait CAresLinked {

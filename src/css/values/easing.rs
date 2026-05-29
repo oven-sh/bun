@@ -52,14 +52,6 @@ enum EasingKeyword {
     StepEnd,
 }
 
-/// Zig: `Map.getASCIIICaseInsensitive(ident)`.
-///
-/// PERF(port): was `phf::Map<&[u8], _>` + lowercase-into-stack-buf + `get`.
-/// 7 keys with near-unique lengths (only len 8 collides: `ease-out` /
-/// `step-end`), so a length-gated byte match is cheaper than phf's
-/// hash+displace+verify — one `usize` compare rejects almost every miss
-/// before any byte work, and hits resolve in a single slice compare. Same
-/// pattern as `clap::find_param` (12577e958d71).
 fn easing_map_get_any_case(ident: &[u8]) -> Option<EasingKeyword> {
     // Longest key is "ease-in-out" (11 bytes).
     let len = ident.len();
@@ -85,11 +77,6 @@ fn easing_map_get_any_case(ident: &[u8]) -> Option<EasingKeyword> {
 
 impl EasingFunction {
     pub fn parse(input: &mut css::Parser) -> Result<EasingFunction> {
-        // PORT NOTE: reshaped for borrowck — `try_parse(|i| i.expect_ident())`
-        // ties the returned slice to the closure's `&mut Parser` borrow, so the
-        // ident can't escape. Read the next token by value (Token slices are
-        // `'static` placeholders for the not-yet-threaded `'bump`) and dispatch
-        // on Ident vs Function in one go; on any other token, error.
         let location = input.current_source_location();
         let tok = input.next()?.clone();
         if let Token::Ident(ident) = tok {
@@ -258,14 +245,6 @@ enum StepPositionKeyword {
     JumpEnd,
 }
 
-/// Zig: `Map.getASCIIICaseInsensitive(ident)` — lowercase into a stack buffer,
-/// then a length-gated byte match.
-///
-/// PERF(port): was `phf::Map<&[u8], _>` (6 keys). phf hashes the whole slice
-/// before a single bucket compare; with 6 keys spread across 5 distinct
-/// lengths (3/5/8/9/9/10), gating on `len()` rejects every miss with one
-/// `usize` compare and resolves every hit with at most one slice compare
-/// (two at len 9). See `clap::find_param` for the same shape.
 fn step_position_map_get_any_case(ident: &[u8]) -> Option<StepPositionKeyword> {
     // Longest key is "jump-start" (10 bytes).
     let (buf, len) = bun_core::strings::ascii_lowercase_buf::<10>(ident)?;

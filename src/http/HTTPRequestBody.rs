@@ -1,12 +1,6 @@
 use crate::SendFile;
 use crate::ThreadSafeStreamBuffer;
 
-/// Request body payload. Parameterized over `'a` so callers can hand in
-/// stack-/arena-borrowed bytes without erasing the lifetime to `&'static`
-/// at every `AsyncHTTP::init` call site.
-// PORT NOTE: no `Owned(Vec<u8>)` variant — the body is bitwise-copied across
-// threads via `core::ptr::read` in `start_queued_task`, so every arm must be
-// trivially-droppable. Zig has only `bytes` / `sendfile` / `stream`.
 pub enum HTTPRequestBody<'a> {
     /// Borrowed bytes — caller guarantees they outlive the request.
     Bytes(&'a [u8]),
@@ -15,22 +9,11 @@ pub enum HTTPRequestBody<'a> {
 }
 
 pub struct Stream {
-    // PORT NOTE: ThreadSafeStreamBuffer carries an *intrusive* atomic refcount and
-    // is round-tripped as a raw pointer between the main thread and the HTTP
-    // thread, so per §Pointers we keep the intrusive form (raw `*mut T` + manual
-    // ref/deref) instead of `Arc<T>`.
     pub buffer: Option<core::ptr::NonNull<ThreadSafeStreamBuffer>>,
     pub ended: bool,
 }
 
 impl Stream {
-    /// Mutable access to the JS-side `ThreadSafeStreamBuffer` while attached.
-    ///
-    /// INVARIANT: while `buffer` is `Some`, this `Stream` holds an intrusive
-    /// ref on the `ThreadSafeStreamBuffer` (taken on attach, released in
-    /// `detach`); the buffer is a separate heap allocation that outlives the
-    /// returned borrow. HTTP-thread-only at the call sites, so the `&mut` is
-    /// the sole live borrow on this side of the lock.
     #[inline]
     pub fn buffer_mut(&mut self) -> Option<&mut ThreadSafeStreamBuffer> {
         // Route through the shared `from_attached` accessor (one centralised
@@ -47,11 +30,6 @@ impl Stream {
         }
     }
 }
-
-// No `Drop` for `Stream`: the body is bitwise-copied across threads
-// (`core::ptr::read` in `start_queued_task`), so auto-dropping the
-// JS-thread original would over-deref the shared buffer. Mirrors Zig,
-// where `HTTPRequestBody.deinit()` is explicit.
 
 impl<'a> HTTPRequestBody<'a> {
     pub const EMPTY: HTTPRequestBody<'static> = HTTPRequestBody::Bytes(b"");

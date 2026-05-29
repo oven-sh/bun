@@ -80,14 +80,6 @@ fn eval_literal(expr: &Expr, out: &mut String) -> Result<(), syn::Error> {
 
 use bun_output_tags::{RESET, color_for};
 
-/// 1:1 port of `prettyFmt` from output.zig, plus Zig→Rust format-spec rewrites
-/// (`{s}`/`{d}` → `{}`, `{any}`/`{?}` → `{:?}`).
-///
-/// Colour table lives in `bun_output_tags`; the state machine is kept duplicated
-/// vs `bun_core::output::pretty_fmt_runtime` because the two intentionally
-/// diverge in the `{` arm (this side rewrites Zig specs `{s}`→`{}` for the
-/// emitted `format_args!` template; runtime copies braces verbatim) and on
-/// unknown tags (this side `Err`→`compile_error!`; runtime emits `""`).
 fn rewrite(fmt: &str, is_enabled: bool) -> Result<String, String> {
     let bytes = fmt.as_bytes();
     let mut out = String::with_capacity(bytes.len() * 2);
@@ -167,10 +159,6 @@ fn rewrite(fmt: &str, is_enabled: bool) -> Result<String, String> {
     Ok(out)
 }
 
-/// `pretty_fmt!("<red>hi {s}<r>", true)` → `"\u{1b}[31mhi {}\u{1b}[0m"`
-/// `pretty_fmt!("<red>hi {s}<r>", false)` → `"hi {}"`
-///
-/// Expands to a string literal — valid in `format_args!` / `concat!` position.
 #[proc_macro]
 pub fn pretty_fmt(input: TokenStream) -> TokenStream {
     let PrettyFmtInput { fmt, enabled } = parse_macro_input!(input as PrettyFmtInput);
@@ -188,32 +176,6 @@ pub fn pretty_fmt(input: TokenStream) -> TokenStream {
         Err(msg) => syn::Error::new_spanned(&fmt, msg).to_compile_error().into(),
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// #[derive(CellRefCounted)] / #[derive(ThreadSafeRefCounted)]
-// ──────────────────────────────────────────────────────────────────────────
-//
-// Replaces the former `impl_cell_ref_counted` declarative macro and
-// the ~80 hand-written `ref_count: Cell<u32>` + `unsafe impl` pairs. The
-// derive locates the intrusive refcount field and emits the trait impl, the
-// `AnyRefCounted` bridge (so `RefPtr`/`ScopedRef` accept the type), and
-// inherent `ref_()`/`deref()` forwarders so existing call sites keep working
-// without importing the trait.
-//
-// Field selection (first match wins):
-//   1. a field annotated `#[ref_count]`
-//   2. a field literally named `ref_count`
-//
-// There is no type-based fallback. An earlier draft fell back on "the unique
-// field whose type's last path segment is `Cell`", but that matched any
-// `Cell<_>` (e.g. `Cell<bool>`), turning the helpful "no ref_count field
-// found" diagnostic into a buried type-mismatch inside generated code. The
-// Zig spec (`@FieldType(T, "ref_count")` in src/ptr/ref_count.zig) requires
-// the literal name anyway, so rules 1+2 are sufficient and exhaustive.
-//
-// Custom destructor: `#[ref_count(destroy = Self::deinit)]` on the struct
-// routes the trait's `destroy` to that path instead of the default
-// `drop(Box::from_raw(this))`.
 
 /// Locate the refcount field per the rules above.
 fn find_ref_count_field(fields: &Fields) -> Result<&syn::Ident, syn::Error> {
@@ -374,15 +336,6 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
     };
     expanded.into()
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// #[derive(Anchored)]
-// ──────────────────────────────────────────────────────────────────────────
-//
-// Locates the (unique) field of type `LiveMarker` / `bun_ptr::LiveMarker` /
-// `bun_ptr::parent_ref::LiveMarker` (or one annotated `#[live_marker]`) and
-// emits the trivial `Anchored` impl. Expands to `::bun_ptr::…` paths so the
-// canonical spelling is `#[derive(bun_ptr::Anchored)]`.
 
 fn find_live_marker_field(fields: &Fields) -> Result<&syn::Ident, syn::Error> {
     let named = match fields {
@@ -548,31 +501,6 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
     expanded.into()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// #[derive(RefCounted)]  — intrusive single-thread `RefCount<Self>` mixin
-// ──────────────────────────────────────────────────────────────────────────
-//
-// Third sibling of CellRefCounted / ThreadSafeRefCounted. Ports Zig's
-// `bun.ptr.RefCount(@This(), "ref_count", destructor, .{ .debug_name = … })`
-// comptime mixin (src/ptr/ref_count.zig:67) — the form taken by ~17 Rust
-// hand-rolls that all spell out `type DestructorCtx = (); get_ref_count =
-// &raw mut (*this).ref_count; destructor = drop(heap::take(this))`.
-//
-// Struct-level attribute:
-//   #[ref_count(destroy = <path>)]      — `unsafe fn(*mut Self)`; default is
-//                                         `drop(::bun_core::heap::take(this))`
-//   #[ref_count(debug_name = "Name")]   — overrides `RefCounted::debug_name()`
-//                                         (Zig `.{ .debug_name = … }` option)
-//
-// Field selection follows the shared `find_ref_count_field` rules (a
-// `#[ref_count]`-annotated field, else a field literally named `ref_count`).
-//
-// Unlike `CellRefCounted` this emits **no** inherent `ref_()`/`deref()`
-// forwarders and **no** `AnyRefCounted` impl: `bun_ptr::ref_count` already
-// provides a blanket `impl<T: RefCounted> AnyRefCounted for T`, and several
-// migrated structs keep their own bespoke `ref_`/`r#ref`/`deref` thin
-// wrappers — emitting inherent fns here would collide.
-
 /// Parse the struct-level `#[ref_count(destroy = …, debug_name = "…")]`
 /// attribute (both keys optional, either order).
 fn parse_ref_count_attrs(
@@ -663,35 +591,6 @@ pub fn derive_ref_counted(input: TokenStream) -> TokenStream {
     }
     .into()
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// #[derive(EnumTag)]
-// ──────────────────────────────────────────────────────────────────────────
-//
-// Rust port of Zig's `union(Tag)` / `std.meta.Tag(T)` language built-in.
-// Every Zig tagged-union ported to a Rust `enum` lost the implicit
-// data→discriminant projection and grew a hand-written
-// `fn tag(&self) -> Tag { match self { Self::A(..) => Tag::A, … } }` (14
-// copies, 160+ arms total — see ast/expr.rs, ast/stmt.rs, shell_parser, etc.;
-// stmt.rs:466 literally comments "Zig got this for free from `union(Tag)`").
-//
-// Two modes:
-//
-//   • `#[enum_tag(existing = path::to::Tag)]`  (PRIMARY — used by all 14
-//     migrated sites). Emits ONLY the inherent `const fn tag(&self) -> Tag`
-//     and `From<&Data> for Tag`. The tag type is left untouched — it may be a
-//     real `enum`, a `#[repr(transparent)] struct Tag(u8)` with sparse
-//     associated `pub const Variant: Tag`, or anything else that exposes a
-//     `Tag::Variant` per data variant. No `From<Tag> for &'static str`, no
-//     iterator — those belong on the existing tag type if needed.
-//
-//   • bare `#[derive(EnumTag)]` — also generates a fresh
-//     `pub enum <Name>Tag { … }` mirror (one fieldless variant per data
-//     variant). Unused by the current dedup but kept for future ports that
-//     don't already have a hand-written tag enum to point at.
-//
-// The emitted `tag()` is `pub const fn` and matches every variant shape
-// (unit / tuple / struct) by using `Self::V { .. }` arms.
 
 /// `#[derive(EnumTag)]` — see module comment above.
 #[proc_macro_derive(EnumTag, attributes(enum_tag))]

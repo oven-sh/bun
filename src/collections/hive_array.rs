@@ -6,24 +6,6 @@ use core::ptr::NonNull;
 
 use bun_core::asan;
 
-/// Fixed-width occupancy bitset for [`HiveArray`].
-///
-/// PORT NOTE: Zig's `std.bit_set.IntegerBitSet(N)` is backed by an exact-width
-/// `uN` integer (`u128`, `u256`, `u2048`, …). The Rust port's
-/// [`IntegerBitSet`](crate::bit_set::IntegerBitSet) is backed by a single
-/// `usize`, so for `N > 64` it silently held only 64 usable bits — every
-/// `HiveArray<_, 128/256/2048>` pool degraded to 64 effective slots and spilled
-/// to the heap fallback on the 65th in-flight item. Under HTTP load (the
-/// `Body::Value` 256-slot pool, the `RequestContext` 2048-slot pool) this turned
-/// every request into a `Box::new`.
-///
-/// We can't spell `[usize; (CAPACITY+63)/64]` without `generic_const_exprs`
-/// (which would virally add `where` bounds on every `HiveArray` consumer), so
-/// this uses a fixed `[Cell<usize>; 32]` backing array — 2048 bits, which is the
-/// largest in-tree `HiveArray` capacity. Only the first `ceil(CAPACITY/64)`
-/// words are touched, so smaller pools pay 256 B of dead storage (negligible
-/// next to `buffer`). The words are `Cell` so the bitset can be mutated through
-/// a `&self` pool, matching `HiveArray`'s interior-mutability model.
 #[repr(C)]
 pub struct HiveBitSet<const CAPACITY: usize> {
     masks: [Cell<usize>; HIVE_BITSET_WORDS],
@@ -65,10 +47,6 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
         (self.masks[index / WORD_BITS].get() >> (index % WORD_BITS)) & 1 != 0
     }
 
-    /// `pub(crate)` — toggling occupancy from outside `HiveArray` while a
-    /// `HiveSlot`/`HiveBox` for the same index is alive would let a
-    /// re-`claim()` alias it. Use [`HiveArray::claim`]/[`alloc`](HiveArray::alloc)/
-    /// [`put`](HiveArray::put)/[`box_at`](HiveArray::box_at).
     #[inline]
     pub(crate) fn set(&self, index: usize) {
         debug_assert!(index < CAPACITY);
@@ -121,10 +99,6 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
         self.iterator::<true, true>()
     }
 
-    /// Signature mirrors `IntegerBitSet::iterator` so existing
-    /// `hive.used.iterator::<true, true>()` callers compile unchanged. Only
-    /// the `<KIND_SET=true, DIR_FWD=true>` combination is implemented (the
-    /// only one used in-tree); other params assert.
     #[inline]
     pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(&self) -> HiveBitSetIter<CAPACITY> {
         const {
@@ -164,15 +138,6 @@ impl<const CAPACITY: usize> HiveBitSetIter<CAPACITY> {
     }
 }
 
-/// An array that efficiently tracks which elements are in use.
-/// The pointers are intended to be stable
-/// Sorta related to https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2021/p0447r15.html
-///
-/// All slot operations take `&self` and the buffer is `UnsafeCell` — slot
-/// pointers come from `UnsafeCell::get()` and so survive `&self` reborrows of
-/// the pool (the `bumpalo` / `typed-arena` shape). `HiveArray` is `!Sync`.
-// PORT NOTE: Zig's `capacity: u16` is widened to `usize` here because Rust array
-// lengths require a `usize` const generic on stable.
 pub struct HiveArray<T, const CAPACITY: usize> {
     buffer: UnsafeCell<[MaybeUninit<T>; CAPACITY]>,
     pub used: HiveBitSet<CAPACITY>,
@@ -277,15 +242,6 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         })
     }
 
-    /// Claim a slot and return a raw pointer to its **uninitialized** storage.
-    ///
-    /// Prefer [`get_init`](Self::get_init) / [`emplace`](Self::emplace) /
-    /// [`claim`](Self::claim), which encode the "a `used` slot is always
-    /// fully initialized" invariant in the type system. This entry point
-    /// hands out `*mut T` to garbage; forming `&mut T` over it is instant UB
-    /// when `T` has niche-bearing fields, and an early return between `get()`
-    /// and the caller's `ptr::write` leaves the slot claimed-but-uninit so a
-    /// later [`put`](Self::put) drops garbage.
     #[deprecated = "returns *mut T to uninitialized memory; use get_init / emplace / claim"]
     pub fn get(&self) -> Option<*mut T> {
         let index = self.used.find_first_unset()?;
@@ -295,19 +251,11 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         Some(ret)
     }
 
-    /// One-shot claim + write. Preferred entry point — no uninit window.
-    ///
-    /// Returns `None` (and does **not** consume `value`'s slot) if the hive
-    /// is full; on `None` the caller still owns `value` and must drop it.
     #[inline]
     pub fn get_init(&self, value: T) -> Option<NonNull<T>> {
         Some(self.claim()?.write(value))
     }
 
-    /// Claim + write where `T` is self-referential on its own slot address
-    /// (e.g. a struct that registers itself as a uws/libuv user-data pointer
-    /// inside its own constructor). `init` receives the slot's stable address
-    /// and must return the value to be stored there.
     #[inline]
     pub fn emplace(&self, init: impl FnOnce(NonNull<T>) -> T) -> Option<NonNull<T>> {
         let slot = self.claim()?;
@@ -315,10 +263,6 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         Some(slot.write(init(addr)))
     }
 
-    /// Low-level reservation. Only when [`get_init`](Self::get_init) /
-    /// [`emplace`](Self::emplace) are insufficient — typically when the caller
-    /// must interleave fallible work between claim and commit, or perform
-    /// `repr(C)` placement-new via [`HiveSlot::as_uninit`].
     pub fn claim(&self) -> Option<HiveSlot<'_, T, CAPACITY>> {
         let index = self.used.find_first_unset()?;
         self.used.set(index);
@@ -423,25 +367,6 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
 // HiveSlot
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Linear reservation token for a claimed-but-uninitialized hive slot.
-///
-/// `HiveArray` slots are `[MaybeUninit<T>; CAP]`. The legacy [`HiveArray::get`]
-/// contract was two-phase — claim a `*mut T` to garbage, then `ptr::write` it
-/// — which opened three UB hazards in the gap: (H1) early-return / `?` / panic
-/// leaves the slot claimed-uninit so a later `put()` drops garbage; (H2)
-/// `&mut *p` over uninit `T` is instant validity UB when `T` has niches; (H3)
-/// partial field-write then `assume_init_ref` on the whole slot.
-///
-/// `HiveSlot` encodes the invariant **"a `used` slot is always fully
-/// initialized"** in the type system: you cannot obtain the stable
-/// initialized `*mut T` without going through [`write`](Self::write) (or the
-/// `unsafe` [`assume_init`](Self::assume_init) escape hatch). If the token is
-/// dropped (early return, `?`, panic) the slot is released **without** running
-/// `T::drop` — it was never written.
-///
-/// Two-pointer-sized; `owner` discriminates release behavior:
-///   - non-null ⇒ `*const HiveArray<T, CAP>` (release = unset `used` bit + poison),
-///   - null     ⇒ heap `Box<MaybeUninit<T>>` (release = dealloc, no `T::drop`).
 #[must_use = "claimed hive slot is leaked if neither written nor dropped"]
 pub struct HiveSlot<'h, T, const CAPACITY: usize> {
     slot: NonNull<MaybeUninit<T>>,
@@ -528,13 +453,6 @@ impl<T, const CAPACITY: usize> Drop for HiveSlot<'_, T, CAPACITY> {
     }
 }
 
-/// Single-owner handle to an initialized [`HiveArray`] slot. `Box<T>`-shaped:
-/// `Drop` returns the slot to the pool, [`into_inner`](Self::into_inner)
-/// extracts the value. Single-owner (no `Clone`), so [`DerefMut`] is sound.
-///
-/// For pools whose tokens cross an opaque round-trip as a slot *index* (e.g.
-/// the c-ares callback context in `dns_jsc`), store [`index()`](Self::index)
-/// and recover via [`HiveArray::box_at`].
 pub struct HiveBox<'a, T, const CAPACITY: usize> {
     slot: NonNull<T>,
     owner: &'a HiveArray<T, CAPACITY>,
@@ -589,12 +507,6 @@ impl<T, const CAPACITY: usize> Drop for HiveBox<'_, T, CAPACITY> {
     }
 }
 
-// PORT NOTE: In Zig this was the nested type `HiveArray(T, capacity).Fallback`.
-// Rust cannot nest a generic struct that captures outer generics, so it lives at
-// module scope with the same parameters. The Zig field
-// `hive: if (capacity > 0) Self else void` is always materialized here; the
-// `CAPACITY > 0` checks below preserve the original gating.
-// PERF(port): zero-capacity case carried a zero-size hive in Zig — profile in Phase B.
 pub struct Fallback<T, const CAPACITY: usize> {
     pub hive: HiveArray<T, CAPACITY>,
     // PORT NOTE: `std.mem.Allocator param` dropped — global mimalloc.
@@ -620,22 +532,6 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
         unsafe { HiveArray::<T, CAPACITY>::init_in_place(core::ptr::addr_of_mut!((*out).hive)) };
     }
 
-    /// Heap-allocate an empty `Fallback` without materializing it on the
-    /// stack first.
-    ///
-    /// `Box::new(Self::init())` is the obvious spelling, but Rust has no
-    /// guaranteed result-location semantics: for the 2048-slot
-    /// `RequestContext` pool (`sizeof ≈ 816 KB`) LLVM emits the bitset
-    /// zeros into a stack temporary and then `memcpy`s the **full** 816 KB
-    /// into the heap allocation, committing both ~812 KB of stack pages and
-    /// ~812 KB of heap pages that are never read. This entry point allocates
-    /// raw heap storage and writes only the 256-byte `used` bitset via
-    /// [`init_in_place`](Self::init_in_place); the `[MaybeUninit<T>; CAPACITY]`
-    /// buffer is left untouched (uninitialized bytes are a valid bit-pattern
-    /// for `MaybeUninit`).
-    ///
-    /// The returned allocation is leaked — callers stash it in a per-thread
-    /// static for the process lifetime (Zig: `threadlocal var pool`).
     #[inline]
     pub fn new_boxed() -> NonNull<Self> {
         let mut boxed = Box::<Self>::new_uninit();
@@ -764,25 +660,6 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// HiveRef
-// ──────────────────────────────────────────────────────────────────────────
-//
-// PORT NOTE: ground truth is `bun.HiveRef` in src/bun.zig. It lives here (not
-// in the `bun` crate) because every consumer names it through
-// `bun_collections::HiveRef`, and its only collaborator is `Fallback` above.
-//
-// Zig defines `const HiveAllocator = HiveArray(@This(), capacity).Fallback`
-// inside the returned struct; Rust spells the self-referential pool type out
-// as `Fallback<HiveRef<T, CAPACITY>, CAPACITY>`. CAPACITY is `usize` (widened
-// from Zig's `u16`) to line up with `HiveArray`/`Fallback`'s const generic.
-
-/// Intrusive ref-counted slot allocated from a `HiveArray::Fallback` pool.
-/// `pool` is a BACKREF (LIFETIMES.tsv class) — the pool strictly outlives
-/// every `HiveRef` it hands out, so a raw pointer is the honest mapping.
-///
-/// Prefer [`HiveRefHandle`] in new code; the raw `init`/`ref_`/`unref` family
-/// remains for FFI ingress points that hold the slot as a `*mut HiveRef`.
 #[repr(C)]
 pub struct HiveRef<T, const CAPACITY: usize> {
     pub ref_count: Cell<u32>,
@@ -892,10 +769,6 @@ impl<T, const CAP: usize> HiveRefHandle<T, CAP> {
         self.ptr.as_ptr()
     }
 
-    /// Exclusive access to the payload. `None` if there are other live handles
-    /// — same shape as [`Rc::get_mut`](std::rc::Rc::get_mut). A blanket
-    /// `DerefMut` would be unsound: `Clone` takes `&self`, so a second handle
-    /// could be made while a `&mut T` from `deref_mut()` is outstanding.
     #[inline]
     pub fn get_mut(&mut self) -> Option<&mut T> {
         if self.slot().ref_count.get() != 1 {

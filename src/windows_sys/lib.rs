@@ -14,10 +14,6 @@ pub use externs::*;
 // externs crate and must stay leaf. The `bun.windows.libuv` alias lives in the
 // higher-tier `bun_sys::windows` module (`pub use bun_libuv_sys as libuv`).
 
-/// `std.os.windows.NTSTATUS` value namespace. The `NTSTATUS` newtype carries
-/// these as associated consts, but `bun_sys::windows` glob-imports them as
-/// bare match patterns (`use bun_windows_sys::ntstatus::*`); associated consts
-/// can't be glob-re-exported, so mirror them as free consts here.
 pub mod ntstatus {
     use super::externs::NTSTATUS;
     pub const SUCCESS: NTSTATUS = NTSTATUS::SUCCESS;

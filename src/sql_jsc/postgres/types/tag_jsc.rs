@@ -7,12 +7,6 @@ use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::types::tag::Tag;
 use bun_sql::shared::Data;
 
-// `comptime T: Tag` → const generic per PORTING.md. `Tag` in the Rust port is a
-// `#[repr(transparent)] struct Tag(Short)` with associated consts (non-exhaustive
-// OID space), so it can't be `ConstParamTy`. Demoted to a runtime arg; the body
-// is a plain match and the only caller (DataCell) computes the tag at runtime
-// anyway.
-// TODO(port): narrow error set (Zig inferred `error{UnsupportedArrayType}`).
 pub(crate) fn to_js_typed_array_type(t: Tag) -> Result<JSType, bun_core::Error> {
     match t {
         Tag::int4_array => Ok(JSType::Int32Array),

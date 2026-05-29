@@ -17,30 +17,14 @@ pub use bun_jsc::ipc::InternalMsgHolder;
 
 bun_output::declare_scope!(IPC, visible);
 
-// `JSGlobalObject` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>` — `&JSGlobalObject`
-// is ABI-identical to a non-null pointer with no `readonly`/`noalias`. Both
-// shims take only the global plus by-value `JSValue`s, so the validity proof
-// lives in the type signature.
 unsafe extern "C" {
     pub safe fn Bun__Process__queueNextTick1(global: &JSGlobalObject, f: JSValue, arg: JSValue);
     pub(crate) safe fn Process__emitErrorEvent(global: &JSGlobalObject, value: JSValue);
 }
 
-// TODO(port): `pub var` mutable global with !Sync fields (Strong). Only ever accessed on the
-// JS thread; wrap in a JS-thread-local cell or assert const-init of fields.
-// PORT NOTE: ArrayHashMap::new() is not const, so the global is lazily seeded on first
-// access via `child_singleton()`.
-// PORTING.md §Global mutable state: JS-thread-only singleton with `!Sync`
-// fields (`Strong`). RacyCell — single-thread access is the contract.
 pub(crate) static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>> =
     bun_core::RacyCell::new(None);
 
-/// `&mut` to the (lazily-initialized) JS-thread singleton.
-///
-/// Centralises the `RacyCell<Option<_>> → &mut InternalMsgHolder` deref so the
-/// three host-fn callers stay safe at the call site (PORTING.md §Global mutable
-/// state — same shape as `cron::vm_mut`). Callers must be on the JS thread and
-/// must not hold the borrow across a re-entrant `child_singleton()` call.
 #[inline]
 fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
     // SAFETY: only called on the single JS thread; mirrors Zig `pub var`
@@ -258,10 +242,6 @@ pub(crate) fn handle_internal_message_primary(
     if let Some(p) = message.get(global, "ack")? {
         if !p.is_undefined() {
             let ack = p.to_int32();
-            // PORT NOTE: reshaped for borrowck — Zig copied the Strong out of the
-            // entry, then `defer deinit()` + swapRemove. Here we peek the JSValue
-            // first (ending the immutable borrow), then swap_remove (which drops the
-            // Strong == `defer cbstrong.deinit()`).
             let entry = ipc_data
                 .internal_msg_queue
                 .callbacks

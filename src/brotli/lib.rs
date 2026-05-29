@@ -49,10 +49,6 @@ impl Default for DecoderOptions {
 
 pub struct BrotliReaderArrayList<'a> {
     pub input: &'a [u8],
-    // PORT NOTE: reshaped for borrowck — Zig kept a by-value copy of the
-    // ArrayListUnmanaged in `list` and wrote it back to `*list_ptr` on every
-    // `readAll` (defer). `Vec<u8>` is not `Copy`, so we operate on `list_ptr`
-    // directly and drop the redundant `list` + `list_allocator` fields.
     pub list_ptr: &'a mut Vec<u8>,
     pub brotli: *mut c::BrotliDecoder,
     pub state: ReaderState,
@@ -372,12 +368,6 @@ impl BrotliCompressionStream {
     }
 
     pub fn end(&mut self) -> Result<&[u8], Error> {
-        // TODO(port): narrow error set
-        // Zig: `defer this.state = .End` — runs on BOTH ok and error paths.
-        // PORT NOTE: reshaped for borrowck — `compress_stream`'s output borrows
-        // `&mut *self.brotli`, so we set `self.state` first and inline
-        // write/write_chunk("", true). Net state matches Zig (defer overrides
-        // any intermediate `Error` back to `End`).
         if matches!(self.state, CompressionState::End | CompressionState::Error) {
             self.state = CompressionState::End;
             return Ok(b"");

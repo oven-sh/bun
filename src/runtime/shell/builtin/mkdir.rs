@@ -36,12 +36,6 @@ pub struct Exec {
     /// the lifetime tied to the Cmd's argv without a self-reference).
     pub args_start: usize,
     pub err: Option<bun_sys::Error>,
-    /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
-    /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
-    /// directly (IOWriter.rs is out of scope here): `write_err`/`write_out`
-    /// push, `on_io_writer_chunk` pops and forwards to
-    /// `OutputTask::on_io_writer_chunk` so the box is reclaimed and the
-    /// writeErr→writeOut→onDone state machine runs (spec mkdir.zig:134/150).
     pub output_queue: std::collections::VecDeque<*mut OutputTask<Mkdir>>,
 }
 
@@ -198,11 +192,6 @@ impl OutputTaskVTable for Mkdir {
             exec.output_waiting += 1;
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            // TODO(port): IOWriter ChildPtr for OutputTask — needs a
-            // dedicated WriterTag once OutputTask is dispatchable. Until then
-            // stash `child` on `output_queue` so `on_io_writer_chunk` can
-            // route the completion back to the OutputTask state machine and
-            // reclaim the box (spec mkdir.zig:134 enqueues with childptr).
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.output_queue.push_back(child);
             }
@@ -366,10 +355,6 @@ impl bun_event_loop::Taskable for ShellMkdirTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMkdirTask;
 }
 
-/// Spec: mkdir.zig `MkdirVerboseVTable` — collects each created directory into
-/// `created_directories` (newline-separated) when `-v` is set. Passed by value
-/// to `NodeFS::mkdir_recursive_impl`; `on_create_dir` writes through the raw
-/// back-ref because the trait method takes `&self` (Zig: `*@This()`).
 struct MkdirVerboseVTable {
     inner: *mut Vec<u8>,
     active: bool,

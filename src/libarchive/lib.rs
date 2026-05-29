@@ -1,10 +1,5 @@
 // @link "../deps/libarchive.a"
 #![warn(unused_must_use)]
-// ──────────────────────────────────────────────────────────────────────────
-// Thin `extern "C"` wrappers over the libarchive C library live in `mod lib`
-// below; higher-level extraction logic (`Archiver`, `BufferReadStream`) sits
-// on top and uses `bun_sys` for I/O.
-// ──────────────────────────────────────────────────────────────────────────
 use core::ffi::{c_int, c_void};
 use core::ptr;
 
@@ -17,13 +12,6 @@ use bun_paths::{OSPathBuffer, OSPathChar, SEP, SEP_STR};
 use bun_sys::{self, Fd, FdExt};
 use bun_wyhash::hash;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Local libarchive C-API surface. Thin safe(ish) wrappers over the raw
-// `extern "C"` libarchive symbols, ported 1:1 from
-// `src/libarchive_sys/bindings.zig`. The opaque `Archive` / `Entry` types
-// here are layout-compatible with libarchive's `struct archive` /
-// `struct archive_entry` (zero-sized, `#[repr(C)]`, !Unpin).
-// ──────────────────────────────────────────────────────────────────────────
 #[allow(non_camel_case_types)]
 pub mod lib {
     use super::*;
@@ -34,10 +22,6 @@ pub mod lib {
     type time_t = isize;
 
     bun_opaque::opaque_ffi! {
-        /// Opaque libarchive `struct archive`. Always used behind `*mut Archive`.
-        /// Contains `UnsafeCell` so that `&Archive` does not assert immutability
-        /// (libarchive mutates through every call), making `&self -> *mut Self`
-        /// sound under Stacked Borrows.
         pub struct Archive;
         /// Opaque libarchive `struct archive_entry`. Always used behind `*mut Entry`.
         /// Contains `UnsafeCell` for the same reason as `Archive` — the C side
@@ -56,10 +40,6 @@ pub mod lib {
         Fatal = -30,
     }
 
-    // ── raw libarchive C FFI ───────────────────────────────────────────────
-    // Signatures match `vendor/libarchive/archive.h` /
-    // `src/libarchive_sys/bindings.zig` exactly. `Result` is `#[repr(i32)]`
-    // so it is ABI-compatible with the C `int` return values.
     unsafe extern "C" {
         // read side
         fn archive_read_new() -> *mut Archive;
@@ -151,10 +131,6 @@ pub mod lib {
         pub fn read_new() -> *mut Archive {
             // SAFETY: FFI call with no preconditions.
             let p = unsafe { archive_read_new() };
-            // libarchive's `archive_read_new()` returns NULL on calloc failure.
-            // Every caller immediately dereferences the result (forming
-            // `&Archive`), so fail loudly here instead of invoking UB at the
-            // first accessor call.
             assert!(!p.is_null(), "archive_read_new returned NULL (OOM)");
             p
         }
@@ -242,13 +218,6 @@ pub mod lib {
             Result::Ok
         }
 
-        /// Reads data from the archive and writes it to the given file
-        /// descriptor. This is a port of libarchive's
-        /// `archive_read_data_into_fd` with optimizations:
-        /// - Uses pwrite when possible to avoid needing lseek for sparse file handling
-        /// - Falls back to lseek + write if pwrite is not available
-        /// - Falls back to writing zeros if lseek is not available
-        /// - Truncates the file to the final size to handle trailing sparse holes
         pub fn read_data_into_fd(
             &self,
             fd: Fd,
@@ -500,12 +469,6 @@ pub mod lib {
         }
     }
 
-    // ── RAII owners ────────────────────────────────────────────────────────
-    //
-    // The raw `*mut Archive` / `*mut Entry` constructors above mirror the C
-    // API. These thin owners pair them with the matching `*_free` on `Drop`
-    // so callers stop hand-rolling `defer { (*archive).read_free() }`.
-
     /// Owns a `*mut Archive` opened with [`Archive::read_new`]; calls
     /// `archive_read_free` on drop. Derefs to `&Archive`.
     pub struct ReadArchive(core::ptr::NonNull<Archive>);
@@ -606,14 +569,6 @@ pub mod lib {
             unsafe { archive_entry_free(self.0.as_ptr()) };
         }
     }
-
-    // ── Archive::Iterator (port of `libarchive_sys/bindings.zig` Iterator) ─
-    //
-    // Thin streaming reader over a tar.gz blob: `init` opens the archive in
-    // memory, `next` yields one header at a time, `read_entry_data` slurps the
-    // current entry's payload, `close` tears down. Errors are surfaced as the
-    // libarchive `*mut Archive` plus a static message so callers can append
-    // `Archive::error_string`.
 
     /// Generic result type used by [`ArchiveIterator`] (Zig: `Iterator.Result(T)`).
     pub enum IteratorResult<T> {
@@ -872,11 +827,6 @@ pub mod lib {
         }
     }
 
-    // ── Archive::Iterator ──────────────────────────────────────────────────
-    // Port of `Archive.Iterator` (src/libarchive_sys/bindings.zig). Thin
-    // wrapper that opens a tarball from memory and yields one
-    // `IteratorEntry` per `next()`, used by `bun publish <tarball>`.
-
     /// Port of `Iterator.Result(T).err` payload.
     pub struct IteratorError {
         pub archive: *mut Archive,
@@ -908,10 +858,6 @@ pub mod lib {
             // libarchive guarantees it stays valid until the next header read.
             unsafe { &*self.entry }
         }
-        /// Port of `NextEntry.readEntryData` (bindings.zig). Allocates `size`
-        /// bytes and reads the current entry's data into it.
-        ///
-        /// `archive` is the live handle this entry was yielded from.
         pub fn read_entry_data(
             &self,
             archive: &Archive,
@@ -939,10 +885,6 @@ pub mod lib {
     /// Port of `Archive.Iterator` (src/libarchive_sys/bindings.zig).
     pub struct Iterator {
         pub archive: *mut Archive,
-        // PORT NOTE: Zig had a `filter: std.EnumSet(std.fs.File.Kind)` field
-        // that every caller leaves at `.initEmpty()` and never sets. Dropped
-        // here (would need `EnumSetType` on `FileKind`); re-add if a caller
-        // ever needs it.
     }
     impl Iterator {
         /// Borrow the underlying libarchive handle.
@@ -1134,24 +1076,12 @@ impl BufferReadStream {
     }
 
     pub fn open_read(&mut self) -> lib::Result {
-        // lib.archive_read_set_open_callback(this.archive, this.);
-        // _ = lib.archive_read_set_read_callback(this.archive, archive_read_callback);
-        // _ = lib.archive_read_set_seek_callback(this.archive, archive_seek_callback);
-        // _ = lib.archive_read_set_skip_callback(this.archive, archive_skip_callback);
-        // _ = lib.archive_read_set_close_callback(this.archive, archive_close_callback);
-        // // lib.archive_read_set_switch_callback(this.archive, this.archive_s);
-        // _ = lib.archive_read_set_callback_data(this.archive, this);
-
         let archive = self.archive();
 
         let _ = archive.read_support_format_tar();
         let _ = archive.read_support_format_gnutar();
         let _ = archive.read_support_filter_gzip();
 
-        // Ignore zeroed blocks in the archive, which occurs when multiple tar archives
-        // have been concatenated together.
-        // Without this option, only the contents of
-        // the first concatenated archive would be read.
         let _ = archive.read_set_options(c"read_concatenated_archives");
 
         // _ = lib.archive_read_support_filter_none(this.archive);
@@ -1264,37 +1194,6 @@ impl BufferReadStream {
             }
         }
     }
-
-    // pub fn archive_write_callback(
-    //     archive: *Archive,
-    //     ctx_: *anyopaque,
-    //     buffer: *const anyopaque,
-    //     len: usize,
-    // ) callconv(.c) lib.la_ssize_t {
-    //     var this = fromCtx(ctx_);
-    // }
-
-    // pub fn archive_close_callback(
-    //     archive: *Archive,
-    //     ctx_: *anyopaque,
-    // ) callconv(.c) c_int {
-    //     var this = fromCtx(ctx_);
-    // }
-    // pub fn archive_free_callback(
-    //     archive: *Archive,
-    //     ctx_: *anyopaque,
-    // ) callconv(.c) c_int {
-    //     var this = fromCtx(ctx_);
-    // }
-
-    // pub fn archive_switch_callback(
-    //     archive: *Archive,
-    //     ctx1: *anyopaque,
-    //     ctx2: *anyopaque,
-    // ) callconv(.c) c_int {
-    //     var this = fromCtx(ctx1);
-    //     var that = fromCtx(ctx2);
-    // }
 }
 
 impl Drop for BufferReadStream {
@@ -1304,13 +1203,6 @@ impl Drop for BufferReadStream {
     }
 }
 
-/// Validates that a symlink target doesn't escape the extraction directory.
-/// Returns true if the symlink is safe (target stays within extraction dir),
-/// false if it would escape (e.g., via ../ traversal or absolute path).
-///
-/// The check works by normalizing `symlink_dir/link_target` as a relative
-/// path with leading `..` preserved; the target is unsafe if the result
-/// climbs above the extraction root.
 #[cfg(unix)]
 fn is_symlink_target_safe(
     symlink_path: &[u8],
@@ -1342,10 +1234,6 @@ fn is_symlink_target_safe(
     let join_buf: &mut PathBuffer =
         symlink_join_buf.get_or_insert_with(bun_paths::path_buffer_pool::get);
 
-    // Normalize symlink_dir/link_target as a relative path. An absolute fake
-    // root cannot be used here: POSIX normalization clamps excess `..` at `/`,
-    // so a target like `../../../packages/x` would normalize back under any
-    // fake root that happens to match a real ancestor directory name.
     if symlink_dir.len() + 1 + link_target_bytes.len() >= join_buf.len() {
         return false;
     }
@@ -1370,11 +1258,6 @@ fn is_symlink_target_safe(
     !(strings::eql(resolved, b"..") || strings::has_prefix_comptime(resolved, b"../"))
 }
 
-/// Returns true if any leading component of `path` (including the full path)
-/// matches a symlink already created by this extraction. `is_symlink_target_safe`
-/// is purely lexical, so once a symlink is on disk the kernel will follow it
-/// during later `mkdirat`/`openat`/`symlinkat` calls — such entries must be
-/// rejected rather than resolved.
 #[cfg(unix)]
 pub fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>]) -> bool {
     if created_symlinks.is_empty() {
@@ -1401,13 +1284,6 @@ pub fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>])
     false
 }
 
-/// Port of `bun.MakePath.makePath(u16, dir, sub_path)` (bun.zig:2481) — the
-/// Windows arm calls `makeOpenPathAccessMaskW`, which component-iterates the
-/// wide path and `NtCreateFile`s each prefix with `FILE_OPEN_IF`, walking back
-/// on `FileNotFound` and forward again on success. This stays in WTF-16
-/// throughout (no UTF-8 round-trip — `bun_sys::make_path_w` is the *different*
-/// `bun.makePathW` helper which transcodes via `from_w_path` and would lose
-/// lone surrogates / skip `\??\` long-path prefixing).
 #[cfg(windows)]
 fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> Result<(), bun_core::Error> {
     use bun_sys::{E, WindowsOpenDirOp, WindowsOpenDirOptions, open_dir_at_windows};
@@ -1664,10 +1540,6 @@ impl Archiver {
 
                             let overwrite_entry = ctx.overwrite_list.get_or_put(path_to_use)?;
                             if !overwrite_entry.found_existing {
-                                // TODO(port): key ownership semantics — Zig stored the
-                                // appender-owned slice as the map key. StringArrayHashMap
-                                // already boxed `path_to_use` on insert; overwrite with the
-                                // appender-owned bytes to match Zig lifetime intent.
                                 *overwrite_entry.key_ptr = Box::from(appender.append(path_to_use)?);
                             }
                         }
@@ -1771,11 +1643,6 @@ impl Archiver {
                         // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L434
                     }
 
-                    // strip and normalize the path
-                    // TODO(port): std.mem.tokenizeScalar(OSPathChar, pathname, '/') + .rest()
-                    // `pathname_z` is `&ZStr` on POSIX (`as_bytes() → &[u8]`)
-                    // and `&WStr` on Windows (`as_slice() → &[u16]`); both
-                    // deref to `&[OSPathChar]`.
                     let pathname_slice: &[OSPathChar] = &pathname_z[..];
                     let mut remaining: &[OSPathChar] = pathname_slice;
                     {
@@ -1834,12 +1701,6 @@ impl Archiver {
                         continue;
                     }
 
-                    // Skip entries whose normalized path is absolute on Windows.
-                    // `openatWindows` ignores `dir_fd` for absolute inputs (drive
-                    // letter or UNC), so without this guard a tar entry could
-                    // resolve outside the extraction directory. On POSIX the
-                    // tokenize-on-'/' step already strips any leading separators,
-                    // so `normalizeBufT` cannot produce an absolute output.
                     #[cfg(windows)]
                     {
                         if bun_paths::is_absolute_windows_t::<u16>(path) {
@@ -1934,10 +1795,6 @@ impl Archiver {
                                 ) {
                                     Ok(()) => {}
                                     Err(err) => {
-                                        // It's possible for some tarballs to return a directory twice, with and
-                                        // without `./` in the beginning. So if it already exists, continue to the
-                                        // next entry.
-                                        // PORT NOTE: Zig matched error.PathAlreadyExists / error.NotDir.
                                         match err.get_errno() {
                                             bun_sys::E::EEXIST | bun_sys::E::ENOTDIR => continue,
                                             _ => {}
@@ -2006,12 +1863,6 @@ impl Archiver {
                             }
                         }
                         bun_sys::FileKind::File => {
-                            // first https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L65-L66
-                            // this.fmode = opts.fmode || 0o666
-                            //
-                            // then https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L402-L411
-                            //
-                            // we simplify and turn it into `entry.mode || 0o666` because we aren't accepting a umask or fmask option.
                             #[cfg(not(windows))]
                             let mode: bun_sys::Mode = bun_sys::Mode::try_from(
                                 // SAFETY: entry valid
@@ -2019,13 +1870,6 @@ impl Archiver {
                             )
                             .unwrap();
 
-                            // `path_traverses_created_symlink` is a lexical check: on
-                            // filesystems that alias differently-encoded names (Unicode
-                            // NFC/NFD normalization on APFS/HFS+), a path component can
-                            // reach a created symlink without byte-matching its recorded
-                            // path. Once this extraction has created any symlink, ask the
-                            // kernel to refuse to follow symlinks while opening file
-                            // entries. `NOFOLLOW_ANY` is 0 on non-Darwin targets.
                             #[cfg(unix)]
                             let flags = {
                                 let mut flags =
@@ -2044,10 +1888,6 @@ impl Archiver {
                                     Ok(fd) => fd,
                                     Err(e) => match e.get_errno() {
                                         bun_sys::E::EPERM | bun_sys::E::ENOENT => {
-                                            // Zig: `bun.Dirname.dirname(u16, path_slice) orelse
-                                            //        return bun.errnoToZigErr(e.errno)` —
-                                            // `std.fs.path.dirnameWindows` semantics (strips
-                                            // trailing separators), NOT `bun.path.dirnameW`.
                                             let Some(dirname) =
                                                 bun_paths::Dirname::dirname(path_slice)
                                             else {
@@ -2102,19 +1942,6 @@ impl Archiver {
                             let mut close_guard =
                                 scopeguard::guard((file_handle, false), |(fh, plucked)| {
                                     if options.close_handles && !plucked {
-                                        // On windows, AV hangs these closes really badly.
-                                        // 'bun i @mui/icons-material' takes like 20 seconds to extract
-                                        // mostly spend on waiting for things to close closing
-                                        //
-                                        // Using Async.Closer defers closing the file to a different thread,
-                                        // which can make the NtSetInformationFile call fail.
-                                        //
-                                        // Using async closing doesnt actually improve end user performance
-                                        // probably because our process is still waiting on AV to do it's thing.
-                                        //
-                                        // But this approach does not actually solve the problem, it just
-                                        // defers the close to a different thread. And since we are already
-                                        // on a worker thread, that doesn't help us.
                                         fh.close();
                                     }
                                 });

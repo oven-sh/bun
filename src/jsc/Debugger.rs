@@ -22,15 +22,6 @@ bun_core::declare_scope!(debugger, visible);
 bun_core::declare_scope!(TestReporterAgent, visible);
 bun_core::declare_scope!(LifecycleAgent, visible);
 
-// ──────────────────────────────────────────────────────────────────────────
-// Agent types. `HTTPServerAgent` is the real sibling definition (re-exported
-// so `Debugger.http_server_agent` carries `next_server_id` state).
-// `BunFrontendDevServerAgent` is defined HERE (the canonical definition) —
-// it carries `next_inspector_connection_id` state inline in `Debugger`, so
-// it must live in this crate. Spec source:
-// `src/runtime/server/InspectorBunFrontendDevServerAgent.zig`.
-// ──────────────────────────────────────────────────────────────────────────
-
 pub use crate::http_server_agent::HTTPServerAgent;
 
 bun_opaque::opaque_ffi! {
@@ -38,16 +29,6 @@ bun_opaque::opaque_ffi! {
     pub struct InspectorBunFrontendDevServerAgentHandle;
 }
 
-/// `BunFrontendDevServerAgent` — stored inline in `Debugger`. The two
-/// high-tier types the Zig spec referenced (`DevServer.RouteBundle.Index` in
-/// `notifyClientNavigated`, `DevServer.ConsoleLogKind` in `notifyConsoleLog`)
-/// are forward deps; both reduce to `i32` / `u8` at the C++ FFI boundary, so
-/// callers in `bun_runtime` resolve them before calling.
-///
-/// Both fields are `Copy`, so `Cell<T>` gives interior mutability with zero
-/// `unsafe` — every method takes `&self`, and callers reaching this through a
-/// shared `&Debugger` borrow no longer need `&mut` (or the `UnsafeCell` deref
-/// in `DevServer::inspector`).
 pub struct BunFrontendDevServerAgent {
     pub next_inspector_connection_id: Cell<i32>,
     pub handle: Cell<*mut InspectorBunFrontendDevServerAgentHandle>,
@@ -317,10 +298,6 @@ pub struct Debugger {
 
     pub test_reporter_agent: TestReporterAgent,
     pub lifecycle_reporter_agent: LifecycleAgent,
-    /// `UnsafeCell` because `DevServer::inspector()` hands out `&mut` to this
-    /// agent through a shared `&VirtualMachine` borrow (Zig spec: `*const
-    /// DevServer -> *BunFrontendDevServerAgent`, free aliasing). JS-thread
-    /// only; callers must not hold overlapping `&mut` borrows.
     pub frontend_dev_server_agent: UnsafeCell<BunFrontendDevServerAgent>,
     pub http_server_agent: HTTPServerAgent,
     pub must_block_until_connected: bool,
@@ -367,24 +344,7 @@ static FUTEX_ATOMIC: AtomicU32 = AtomicU32::new(0);
 pub(crate) static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
 
 impl Debugger {
-    /// `Debugger.waitForDebuggerIfNecessary(vm)` — block on the futex until
-    /// `start()` (debugger thread) signals, then run the wait-loop until a
-    /// frontend connects (`Debugger__didConnect`) or the deadline elapses.
-    ///
-    /// Spec `Debugger.zig:31` `waitForDebuggerIfNecessary`.
-    ///
-    /// PORT NOTE — aliasing: `this.debugger` is read through a raw pointer
-    /// with fresh short-lived borrows because `event_loop().tick()` /
-    /// `auto_tick_active()` re-enter JS, which calls `VirtualMachine::get()`
-    /// and may form independent `&mut VirtualMachine` borrows. Holding a
-    /// long-lived `&mut Debugger` (which borrows from `&mut VirtualMachine`)
-    /// across those calls is UB.
     pub fn wait_for_debugger_if_necessary(this: *mut VirtualMachine) {
-        // `this` is the live per-thread VM; same allocation as
-        // `VirtualMachine::get()` — route through the safe thread-local
-        // accessor instead of open-coding the backref deref. All subsequent
-        // accesses form short-lived `&mut`s under the single-JS-thread
-        // invariant via safe `&VirtualMachine` accessors.
         debug_assert!(core::ptr::eq(this, VirtualMachine::get_mut_ptr()));
         let _ = this; // release: param otherwise unused
         let this: &VirtualMachine = VirtualMachine::get();
@@ -439,10 +399,6 @@ impl Debugger {
 
         #[cfg(windows)]
         {
-            // Spec Debugger.zig:56-77: arm a one-shot libuv timer that unrefs
-            // `poll_ref` after the delay (Windows lacks a working
-            // `tickWithTimeout`). Per the original Zig comment ("TODO: remove
-            // this when tickWithTimeout actually works properly on Windows").
             use bun_sys::windows::libuv as uv;
             use bun_sys::windows::libuv::UvHandle as _;
             if wait == Wait::Shortly {
@@ -550,11 +506,6 @@ impl Debugger {
         }
     }
 
-    /// `Debugger.create(vm, global)` — first-time debugger setup: create the
-    /// JSC inspector context, spawn the debugger VM thread, and arm the
-    /// keep-alive on the parent loop.
-    ///
-    /// Spec `Debugger.zig:118` `create`.
     pub fn create(
         this: *mut VirtualMachine,
         global_object: &JSGlobalObject,
@@ -568,10 +519,6 @@ impl Debugger {
         // `#[unsafe(no_mangle)]` already prevents the linker from stripping
         // these exported symbols, so the keep-alive references are unnecessary.
 
-        // `this` is the live per-thread VM; same allocation as
-        // `VirtualMachine::get()` — route through the safe thread-local
-        // accessor. Safe accessors below form short-lived `&mut`s under the
-        // single-JS-thread invariant.
         debug_assert!(core::ptr::eq(this, VirtualMachine::get_mut_ptr()));
         let this_ref: &VirtualMachine = VirtualMachine::get();
         let dbg = this_ref
@@ -581,11 +528,6 @@ impl Debugger {
 
         if !this_ref.has_started_debugger {
             this_ref.as_mut().has_started_debugger = true;
-            // PORT NOTE: `std::thread::spawn` requires `Send`; raw `*mut
-            // VirtualMachine` is `!Send`. Wrap in a `Send` newtype — the
-            // pointer is only ever dereferenced on the debugger thread under
-            // `holdAPILock` (see `start_js_debugger_thread` doc), and the VM
-            // outlives the process.
             struct SendVmPtr(*mut VirtualMachine);
             // SAFETY: see PORT NOTE above — cross-thread access is mediated
             // by `holdAPILock` / the futex; the VM allocation is `'static`.
@@ -615,22 +557,7 @@ impl Debugger {
         Ok(())
     }
 
-    /// Debugger-thread entry: build a second `VirtualMachine`, hold the API
-    /// lock, run `start()`.
-    ///
-    /// Spec `Debugger.zig:143` `startJSDebuggerThread`.
-    ///
-    /// PORT NOTE: `other_vm` is the *parent thread's* VM. The parent thread
-    /// continues executing (and mutating that VM) concurrently with this
-    /// thread (Debugger.zig:131→134-138, then the wait-loop at zig:79-114).
-    /// Taking `&mut VirtualMachine` here would assert exclusive access we do
-    /// not have — UB. Spec uses a raw `*VirtualMachine`; we mirror that and
-    /// never materialize a `&`/`&mut VirtualMachine` to the foreign-thread VM.
     pub fn start_js_debugger_thread(other_vm: *mut VirtualMachine) {
-        // PORT NOTE: Zig `MimallocArena` + thread-local `DotEnv.Loader` are
-        // dropped per docs/PORTING.md §Allocators — the global allocator is
-        // mimalloc and `InitOptions` no longer carries `allocator`/`env_loader`
-        // (those are wired by `RuntimeHooks::init_runtime_state`).
         bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Debugger"));
         bun_core::scoped_log!(debugger, "startJSDebuggerThread");
         jsc::mark_binding();
@@ -663,34 +590,9 @@ impl Debugger {
             .hold_api_lock(other_vm.cast(), start_trampoline);
     }
 
-    /// Spec `Debugger.zig:182` `start` — runs inside `holdAPILock` on the
-    /// debugger thread. Publishes the inspector URL(s), wakes the futex the
-    /// parent VM is blocked on, then spins this thread's event loop forever.
-    ///
-    /// PORT NOTE — aliasing: every `VirtualMachine` / `EventLoop` access here
-    /// goes through a raw pointer with a fresh short-lived `&mut *p` formed at
-    /// the call site, never bound to a long-lived reference. Reasons:
-    ///
-    /// 1. `other_vm` is owned by the parent thread (see
-    ///    `start_js_debugger_thread` doc); after the futex wake the parent
-    ///    resumes its tick loop concurrently. Holding `&mut VirtualMachine`
-    ///    across that point is a data race on a `&mut`-covered allocation.
-    /// 2. `this.event_loop()` returns a self-pointer into the inline
-    ///    `regular_event_loop` field (VirtualMachine.rs:489), so a long-lived
-    ///    `&mut EventLoop` overlaps any later `&mut VirtualMachine` use.
-    /// 3. `Bun__startJSDebuggerThread` and `tick()` re-enter JS, which calls
-    ///    `VirtualMachine::get()` / `event_loop()` and mints fresh `&mut` to
-    ///    the same allocations — holding our own across those calls is UB.
-    ///
-    /// Spec Debugger.zig:185-187 holds raw `*VirtualMachine` / `*EventLoop`
-    /// (no exclusivity), which is what we mirror.
     fn start(other_vm: *mut VirtualMachine) {
         jsc::mark_binding();
 
-        // `this` is this thread's own VM (created in `start_js_debugger_thread`)
-        // — safe to hold as `&'static`. `other_vm` remains a raw pointer (see
-        // PORT NOTE above): the parent thread mutates it concurrently after the
-        // futex wake, so forming `&VirtualMachine` to it would be a data race.
         let this: &VirtualMachine = VirtualMachine::get();
         // SAFETY: `other_vm` is the parent-thread VM, live for process
         // lifetime. We read its `event_loop` self-pointer once *before* the
@@ -754,10 +656,6 @@ impl Debugger {
         // SAFETY: `other_loop` is the parent VM's event loop, live for process
         // lifetime; `wakeup()` takes `&self` and is thread-safe.
         unsafe { (*other_loop).wakeup() };
-        // Spec re-reads `this.eventLoop()` here (zig:219) rather than reusing
-        // the cached `loop` — `vm.event_loop` may have flipped between
-        // `regular_event_loop` and `macro_event_loop` inside the re-entrant JS
-        // above. `event_loop_mut()` re-reads the slot on every call.
         this.event_loop_mut().tick();
         // SAFETY: see above.
         unsafe { (*other_loop).wakeup() };
@@ -1015,13 +913,6 @@ pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
         bun_core::scoped_log!(TestReporterAgent, "enable");
         dbg.test_reporter_agent.handle = agent;
 
-        // Retroactively report any tests that were already discovered before
-        // the debugger connected.
-        //
-        // LAYERING: `retroactivelyReportDiscoveredTests` (spec
-        // Debugger.zig:351) reaches into `jsc.Jest.Jest.runner` /
-        // `bun_test.DescribeScope`, which live in `bun_runtime::test_runner`
-        // — a forward-dep cycle. Dispatched through [`RuntimeHooks`].
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: `handle` is the live C++ agent just stored above.
             unsafe {
@@ -1042,10 +933,6 @@ pub fn test_reporter_agent_disable(_agent: *mut TestReporterHandle) {
 }
 
 impl TestReporterAgent {
-    /// Safe `&mut TestReporterHandle` accessor — `handle` is a live C++
-    /// `Inspector::TestReporterAgent*` once the agent is enabled. Caller must
-    /// ensure `is_enabled()` (handle != null); the debug-assert mirrors the
-    /// Zig `agent.handle.?` unwrap.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     fn handle_mut(&self) -> &mut TestReporterHandle {

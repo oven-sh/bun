@@ -15,11 +15,6 @@ const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
 #[cfg(not(windows))]
 const NS_PER_MS: f64 = bun_core::time::NS_PER_MS as f64;
 
-// Equivalent to `toUnixTimestamp`
-//
-// Node.js docs:
-// > Values can be either numbers representing Unix epoch time in seconds, Dates, or a numeric string like '123456789.0'.
-// > If the value can not be converted to a number, or is NaN, Infinity, or -Infinity, an Error will be thrown.
 pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<Option<TimeLike>> {
     // Number is most common case
     if value.is_number() {
@@ -96,25 +91,6 @@ fn from_now() -> TimeLike {
 
 #[cfg(not(windows))]
 fn from_now() -> TimeLike {
-    // Permissions requirements
-    //        To set both file timestamps to the current time (i.e., times is
-    //        NULL, or both tv_nsec fields specify UTIME_NOW), either:
-    //
-    //        •  the caller must have write access to the file;
-    //
-    //        •  the caller's effective user ID must match the owner of the
-    //           file; or
-    //
-    //        •  the caller must have appropriate privileges.
-    //
-    //        To make any change other than setting both timestamps to the
-    //        current time (i.e., times is not NULL, and neither tv_nsec field
-    //        is UTIME_NOW and neither tv_nsec field is UTIME_OMIT), either
-    //        condition 2 or 3 above must apply.
-    //
-    //        If both tv_nsec fields are specified as UTIME_OMIT, then no file
-    //        ownership or permission checks are performed, and the file
-    //        timestamps are not modified, but other error conditions may still
     libc::timespec {
         tv_sec: 0,
         #[cfg(any(target_os = "linux", target_os = "android"))]

@@ -11,48 +11,14 @@ pub use thread_lock::{ThreadLock, ThreadLockGuard};
 
 pub mod thread_id;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Allocator-identity registry (storage moved DOWN — data, not fn-ptrs).
-//
-// Low-tier `bun_safety` cannot name higher-tier allocator types
-// (`MimallocArena`, `LinuxMemFdAllocator`, `MaxHeapAllocator`,
-// `CachedBytecode`, `bundle_v2`, `heap_breakdown::Zone`)
-// directly. Instead of an erased fn-ptr hook, those crates push their
-// `&'static AllocatorVTable` addresses here at init; `alloc::has_ptr` then
-// does a plain pointer-equality scan. This is the same predicate Zig's
-// `is_instance` checks compute (vtable identity), just with the *data* moved
-// down rather than the *code* called up.
-// ──────────────────────────────────────────────────────────────────────────
-
 use core::ptr::null_mut;
 use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
-/// Vtable addresses of allocators whose `StdAllocator.ptr` is meaningful
-/// (i.e. distinct instances have distinct `.ptr`). Registered by higher-tier
-/// crates at startup via [`register_alloc_vtable`].
-///
-/// Lock-free fixed-capacity array: writes happen once at init, reads sit on
-/// `has_ptr()` (called from `CheckedAllocator` on debug paths). The Zig spec
-/// is a chain of inline `ptr_eq` against compile-time-known vtable addresses,
-/// so a Relaxed scan over ≤16 words matches that cost profile.
 const KNOWN_ALLOC_CAP: usize = 16;
 static KNOWN_ALLOC_VTABLES: [AtomicPtr<()>; KNOWN_ALLOC_CAP] =
     [const { AtomicPtr::new(null_mut()) }; KNOWN_ALLOC_CAP];
 static KNOWN_ALLOC_LEN: AtomicUsize = AtomicUsize::new(0);
 
-/// Register a higher-tier allocator's vtable so `alloc::has_ptr` recognizes it.
-/// Called from `bun_runtime::allocators::register_safety_vtables` (and any
-/// other crate that owns a `StdAllocator` vtable above this tier).
-///
-/// **Registration is single-threaded at startup** (`bun_bin::main` step 6,
-/// before reader threads spawn), so cross-thread ordering is provided by the
-/// thread-spawn happens-before edge — *not* by these atomics. All accesses are
-/// therefore `Relaxed`; a `Release` on `fetch_add` would be dead weight (it
-/// would publish `len` *before* the slot store, synchronizing nothing). The
-/// slot index is claimed via `fetch_add` anyway so accidental concurrent
-/// registration is at least slot-safe (no clobber); a reader racing the
-/// `fetch_add → slot.store` window would see a null slot, which is a harmless
-/// no-match (`needle` is always a non-null vtable address).
 pub fn register_alloc_vtable(vtable: &'static bun_alloc::AllocatorVTable) {
     let p = std::ptr::from_ref(vtable) as *mut ();
     let i = KNOWN_ALLOC_LEN.fetch_add(1, Ordering::Relaxed);

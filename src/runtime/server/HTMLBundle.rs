@@ -37,12 +37,6 @@ mod debug_scope {
 }
 use debug_scope::HTMLBundle as debug;
 
-// .classes.ts codegen wires toJS/fromJS/fromJSDirect via #[bun_jsc::JsClass].
-// HTMLBundle can be owned by JavaScript as well as any number of Server instances,
-// hence the ref count alongside the JS wrapper.
-// PORT NOTE (§Pointers): `*mut HTMLBundle` is the m_ctx payload of a
-// `.classes.ts` wrapper — FFI rule says intrusive `RefPtr`.
-// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(debug_name = "HTMLBundle")]
 pub struct HTMLBundle {
@@ -52,17 +46,7 @@ pub struct HTMLBundle {
     pub path: Box<[u8]>,
 }
 
-// `jsc.Codegen.JSHTMLBundle` — hand-expansion of what the `#[bun_jsc::JsClass]`
-// derive would emit. Symbol names match generate-classes.ts
-// (`${typeName}__fromJS` / `__fromJSDirect` / `__create` / `__getConstructor`).
-// Hand-written (rather than `#[bun_jsc::JsClass]`) because HTMLBundle has a
-// custom `finalize` that derefs an intrusive refcount instead of Box-dropping.
 const _: () = {
-    // `*mut HTMLBundle` is opaque to C++ (linked by symbol name only); the
-    // pointee's Rust layout is irrelevant to the FFI boundary, but HTMLBundle
-    // lacks `#[repr(C)]` so rustc lints anyway.
-    // `safe fn` to match `generated_classes.rs` / the `#[bun_jsc::JsClass]`
-    // macro (avoids `clashing_extern_declarations`).
     bun_jsc::jsc_abi_extern! {
         #[allow(improper_ctypes)]
         {
@@ -85,14 +69,6 @@ const _: () = {
             if p.is_null() { None } else { Some(p) }
         }
         fn to_js(self, _global: &JSGlobalObject) -> JSValue {
-            // HTMLBundle is *only* constructed via `init()` → `IntrusiveRc::new`
-            // (heap-boxed, intrusive-refcounted) and wrapped via the inherent
-            // `HTMLBundle::to_js(*mut Self, …)` below. The Zig codegen `toJS`
-            // wraps the *existing* `*HTMLBundle` allocation; re-boxing a
-            // by-value `self` here would split the allocation from its refcount
-            // and make `finalize`'s `deref` target the wrong heap block. No
-            // code path holds an owned by-value `HTMLBundle`, so this trait
-            // method is genuinely unreachable.
             unreachable!("HTMLBundle::to_js: use the inherent *mut Self overload")
         }
         // `noConstructor: true` — no `HTMLBundle__getConstructor` export; trait default applies.
@@ -139,16 +115,6 @@ impl HTMLBundle {
 /// Deprecated: use Route instead.
 pub(crate) type HTMLBundleRoute = Route;
 
-/// An HTMLBundle can be used across multiple server instances, an
-/// HTMLBundle.Route can only be used on one server, but is also
-/// reference-counted because a server can have multiple instances of the same
-/// html file on multiple endpoints.
-// R-2 (host-fn re-entrancy): every uws/event-loop-reachable method takes
-// `&self`; per-field interior mutability via `Cell` (Copy) / `JsCell`
-// (non-Copy). `*mut Route` is recovered from uws userdata and the
-// `JSBundleCompletionTask` backref while a prior `&Route` may still be on the
-// stack — `&mut self` would alias (UB); `&self` + `UnsafeCell` is sound.
-// `bun.ptr.RefCount(Route, "ref_count", Route.deinit, .{ .debug_name = "HTMLBundleRoute" })`
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(debug_name = "HTMLBundleRoute")]
 pub struct Route {
@@ -189,13 +155,6 @@ pub enum State {
     Html(*mut StaticRoute),
 }
 
-// PORT NOTE: Zig's `State.deinit` is *only* invoked from `Route.deinit` and the
-// dev-mode reset in `onAnyRequest`; ordinary `this.state = ...` overwrites in
-// `onComplete`/`onPluginsResolved`/etc. do NOT run it. Mapping it to `impl Drop`
-// would fire on every assignment — in particular `on_complete`'s
-// `self.state = State::Err/Html` would spuriously cancel and double-deref the
-// completion task (whose matching deref is the caller's `defer this.deref()` in
-// `JSBundleCompletionTask.onComplete`). So `deinit` stays an explicit method.
 impl State {
     pub(crate) fn deinit(&mut self) {
         match mem::replace(self, State::Pending) {
@@ -290,10 +249,6 @@ impl Route {
                 // but stay defensive.
                 match req {
                     AnyRequest::H1(h1) => {
-                        // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
-                        // R-2: pass the raw `this` (not `route: &Route`) so
-                        // DevServer's `*mut Route` userdata path doesn't alias
-                        // a live shared borrow.
                         bun_core::handle_oom(dev.respond_for_html_bundle(
                             this,
                             bun_opaque::opaque_deref_mut(h1),
@@ -308,10 +263,6 @@ impl Route {
                 return;
             }
 
-            // Simpler development workflow which rebundles on every request.
-            // R-2: swap the state out *before* running its destructor so no
-            // `&mut State` borrow into `route.state` is live across the
-            // `StaticRoute::deref_` / `JSBundleCompletionTask::deref` calls.
             if matches!(route.state.get(), State::Html(_) | State::Err(_)) {
                 route.state.replace(State::Pending).deinit();
             }
@@ -483,10 +434,6 @@ impl Route {
 
         if let Some(define) = &cli.args.serve_define {
             debug_assert_eq!(define.keys.len(), define.values.len());
-            // PORT NOTE: Zig bulk-set `entries.len` + `@memcpy` + `reIndex` against
-            // `StringArrayHashMap`; Rust `StringMap` exposes only put/insert. Same
-            // result, slightly more hash work.
-            // PERF(port): was bulk reIndex — profile if hot.
             for (k, v) in define.keys.iter().zip(define.values.iter()) {
                 config.define.put(k, v)?;
             }
@@ -549,10 +496,6 @@ impl Route {
                 // `this.state = .{ .err = ... }` then mutated `this.state.err`.
                 if let Some(server) = self.server.get() {
                     if server.config().is_development() {
-                        // `Output.errorWriterBuffered()` → process-global writer;
-                        // `Log::print` accepts it via the `*mut io::Writer`
-                        // `IntoLogWrite` adapter and dispatches on
-                        // `enable_ansi_colors_stderr` internally.
                         let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
                         let _ = log.print(writer);
                         bun_output::flush();
@@ -591,13 +534,6 @@ impl Route {
                     bun_output::flush();
                 }
 
-                // PORT NOTE: reshaped for borrowck — Zig appended every route in
-                // iteration order then mutably called `html_route.clone()` through
-                // a raw ptr aliasing the route table. `AnyRoute::Static` carries
-                // an intrusive `*mut StaticRoute` here; defer appending the HTML
-                // entry-point until after cloning so we retain the sole owner for
-                // the `clone()` mutable borrow. Static routes are keyed by
-                // `dest_path`, so registration order is immaterial.
                 let mut this_html_route: Option<(core::ptr::NonNull<StaticRoute>, Box<[u8]>)> =
                     None;
 
@@ -788,10 +724,6 @@ impl Drop for Route {
     fn drop(&mut self) {
         // pending responses keep a ref to the route
         debug_assert!(self.pending_responses.get().is_empty());
-        // `pending_responses` (Vec) and `bundle` (IntrusiveRc) auto-drop.
-        // `state` has no `Drop` glue for the intrusive-pointer variants — release
-        // them explicitly (mirrors Zig `Route.deinit` calling `this.state.deinit()`).
-        // `with_mut` is fine here — refcount==0 so no other `&Route` exists.
         self.state.with_mut(|s| s.deinit());
         // `bun.destroy(this)` handled by IntrusiveRc dealloc.
     }

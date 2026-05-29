@@ -13,11 +13,6 @@ use crate::dependency as Dependency;
 use crate::hosted_git_info;
 use crate::install::{self as Install, ExtractData, PackageManager};
 
-// TODO(port): bun.ThreadlocalBuffers — Zig returns a raw pointer into thread-local
-// storage so callers can return slices that outlive the access. Rust thread_local!
-// closures cannot express this without unsafe. TODO(refactor): either (a) make
-// try_ssh/try_https take an out-buffer, or (b) wrap in a type that hands out
-// a raw `*mut PathBuffer` via UnsafeCell with documented single-use invariant.
 struct TlBufs {
     final_path_buf: PathBuffer,
     ssh_path_buf: PathBuffer,
@@ -72,13 +67,6 @@ fn tl_bufs() -> *mut TlBufs {
 }
 
 impl TlBufs {
-    // Per-field projection accessors. Each returns `&'static mut` over a
-    // disjoint thread-local `PathBuffer`; see [`tl_bufs`] for the
-    // Stacked-Borrows rationale (forming `&mut TlBufs` over the whole struct
-    // would invalidate live slices into sibling fields). Callers must not hold
-    // a returned borrow across a re-entry into the *same* accessor — the same
-    // single-thread non-reentrant-scratch contract the prior inline raw-ptr
-    // field projections imposed, now centralised here.
     #[inline]
     fn ssh_path_buf() -> &'static mut PathBuffer {
         // SAFETY: see `tl_bufs()` — thread-local leaked alloc; per-field
@@ -217,29 +205,12 @@ impl SloppyGlobalGitConfig {
     }
 }
 
-// MOVE_DOWN: data struct + Default + buffer-relative `order`/`count`/`clone`/
-// `eql` now live in `bun_install_types::resolver_hooks` so the resolver and
-// `Resolution.Value`/`Dependency.Version.Value` can name a real type. The
-// install-tier behaviour below (parsing, formatting, git CLI, download/
-// checkout) is provided as an extension trait so existing
-// `repo.method(...)` / `Repository::method(...)` call sites keep resolving
-// once `RepositoryExt` is in scope.
 pub use bun_install_types::resolver_hooks::Repository;
 
 pub(crate) struct SharedEnv {
     env: Option<bun_dotenv::Map>,
 }
 
-// PORT NOTE: Zig's `pub var shared_env` is a process-global anon-struct whose
-// `get()` lazily clones `other.map` once and returns the `DotEnv.Map` handle by
-// value (Zig struct copy — both copies alias the same backing storage). Rust's
-// `Map` owns its storage and is not `Copy`, so we hand out a `&'static Map` into
-// the global instead; callers (`GitCloneRequest.env`, `GitCheckoutRequest.env`)
-// store the reference. The map is written exactly once on first call from the
-// main install thread and never freed, matching Zig's lifetime.
-// PORTING.md §Global mutable state: lazy-init on the install main thread,
-// then `&'static`-read from worker threads. RacyCell — the install enqueue
-// path is single-threaded at the write point (Zig parity).
 pub(crate) static SHARED_ENV: bun_core::RacyCell<SharedEnv> =
     bun_core::RacyCell::new(SharedEnv { env: None });
 
@@ -252,12 +223,6 @@ impl SharedEnv {
         unsafe {
             let this = &mut *SHARED_ENV.get();
             if this.env.is_none() {
-                // Note: currently if the user sets this to some value that causes
-                // a prompt for a password, the stdout of the prompt will be masked
-                // by further output of the rest of the install process.
-                // A value can still be entered, but we need to find a workaround
-                // so the user can see what is being prompted. By default the settings
-                // below will cause no prompt and throw instead.
                 let mut cloned = bun_core::handle_oom(other.map.clone_with_allocator());
 
                 if cloned.get(b"GIT_ASKPASS").is_none() {
@@ -284,10 +249,6 @@ impl SharedEnv {
     }
 }
 
-/// Zig: `Repository.Hosts` (a `ComptimeStringMap`). Length-gated match beats
-/// `phf::Map` for 3 entries — phf hashes the full key + does a confirming
-/// memcmp; this rejects on a single `usize` compare for everything that isn't
-/// 6 or 9 bytes (the common case: real hostnames like `git.company.io`).
 #[inline]
 pub(crate) fn host_tld(host: &[u8]) -> Option<&'static [u8]> {
     match host.len() {
@@ -301,11 +262,6 @@ pub(crate) fn host_tld(host: &[u8]) -> Option<&'static [u8]> {
     }
 }
 
-/// `resolved` is the `.bun-tag` value persisted to the lockfile (a commit SHA for
-/// `git`, or `<owner>-<repo>-<sha>` for `github`). It is concatenated into a cache
-/// directory name and passed to `git checkout`, so it must be a single safe path
-/// component: no separators, no NUL, and no leading `-` that git would parse as an
-/// option.
 pub(crate) fn is_safe_resolved_tag(resolved: &[u8]) -> bool {
     !resolved.is_empty()
         && resolved.len() <= 256
@@ -317,11 +273,6 @@ pub(crate) fn is_safe_resolved_tag(resolved: &[u8]) -> bool {
             .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
-/// Install-tier `Repository` behaviour (parsing, formatting, git CLI exec,
-/// download/checkout). Data struct + buffer-relative `order`/`count`/`clone`/
-/// `eql` are inherent on [`Repository`] (defined in `bun_install_types`).
-/// Re-exported from `bun_install::repository` so existing
-/// `Repository::method(...)` / `repo.method(...)` call sites resolve via UFCS.
 pub trait RepositoryExt: Sized {
     fn parse_append_git(input: &[u8], buf: &mut StringBuf<'_>) -> Result<Repository, AllocError>;
     fn parse_append_github(input: &[u8], buf: &mut StringBuf<'_>)
@@ -376,11 +327,6 @@ fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
     let std_map = env.std_env_map()?;
     // TODO(port): narrow error set
 
-    // Zig used `std.process.Child.run` on both Windows and POSIX (identical
-    // arms). `bun_spawn::run` is its Rust port — POSIX argv/envp marshalling
-    // + `process::sync::spawn`. On Windows it supplies the thread's
-    // `MiniEventLoop` (idempotent `init_global` — same handle PackageManager
-    // already published) so `spawn_process_windows` has a real `uv_loop_t*`.
     let result = bun_spawn::run(bun_spawn::RunOptions {
         argv,
         env_map: std_map.get(),
@@ -405,10 +351,6 @@ fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
         _ => {}
     }
 
-    // Surface git's own diagnostics — the "git fetch/clone failed" log messages
-    // at the call sites only mention the package name, which leaves CI failures
-    // (auth, ssh, signal) opaque. Mirror git's stderr to ours and report the
-    // termination kind so the actual cause is visible.
     {
         let term = match result.term {
             bun_spawn::Term::Exited(code) => format!("exit code {code}"),
@@ -570,11 +512,6 @@ impl RepositoryExt for Repository {
         }
 
         if url.starts_with(b"ssh://") {
-            // TODO(markovejnovic): This is a stop-gap. One of the problems with the implementation
-            // here is that we should integrate hosted_git_info more thoroughly into the codebase
-            // to avoid the allocation and copy here. For now, the thread-local buffer is a good
-            // enough solution to avoid having to handle init/deinit.
-
             // Fix malformed ssh:// URLs with colons using hosted_git_info.correctUrl
             // ssh://git@github.com:user/repo -> ssh://git@github.com/user/repo
             let pair = hosted_git_info::UrlProtocolPair {
@@ -998,11 +935,6 @@ impl RepositoryExt for Repository {
             }
         };
 
-        // Zig defers `json_file.close()` / `package_dir.close()` across the
-        // `try ...append(json_path)` below. `json_path` lives in the thread-local
-        // `json_path_buf` (not in `json_file`), and `json_buf` is an owned alloc,
-        // so both fds are dead here — close before the fallible append so the
-        // `?`-propagation path doesn't leak them.
         let _ = json_file.close(); // close error is non-actionable (Zig parity: discarded)
         package_dir.close();
 

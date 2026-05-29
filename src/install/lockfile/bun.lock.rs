@@ -14,6 +14,13 @@ use bun_semver::semver_string::{
 };
 use bun_semver::{self as Semver, ExternalString, String};
 
+use crate::bin_real::ToJsonStyle;
+use crate::config_version::ConfigVersion;
+use crate::extract_tarball as ExtractTarball;
+use crate::integrity::Integrity;
+use crate::npm::Negatable;
+use crate::package_manager_real::Options as PackageManagerOptions;
+use crate::repository::RepositoryExt as _;
 use crate::{
     DependencyID, Npm, Origin, PackageID, PackageManager, PackageNameHash, Repository, Resolution,
     TruncatedPackageNameHash,
@@ -25,17 +32,6 @@ use crate::{
     invalid_package_id,
     resolution::Tag as ResolutionTag,
 };
-// Canonical `Dependency.Version.Tag` — `crate::dependency::Tag` is a duplicate
-// enum (different nominal type) that does not unify with the
-// `bun_install_types::DependencyVersion::tag` field; use the install_types one
-// so assignments at the two `.tag = Workspace` sites type-check.
-use crate::bin_real::ToJsonStyle;
-use crate::config_version::ConfigVersion;
-use crate::extract_tarball as ExtractTarball;
-use crate::integrity::Integrity;
-use crate::npm::Negatable;
-use crate::package_manager_real::Options as PackageManagerOptions;
-use crate::repository::RepositoryExt as _;
 use bun_install_types::DependencyVersionTag;
 // PORT NOTE: this file is `crate::lockfile_real::bun_lock`; `super` is the
 // real `Lockfile` module, distinct from the `crate::lockfile` stub.
@@ -67,23 +63,12 @@ fn string_array_hash_context(buf: &[u8]) -> bun_semver::string::ArrayHashContext
     }
 }
 
-/// `true` if `url` points at a resource under `registry`: the registry href
-/// (sans trailing slash) must be an exact prefix and the byte after it must be
-/// a path separator, so `https://registry.example.com.evil.com/x.tgz` does not
-/// count as being under a `https://registry.example.com` registry.
 pub(crate) fn url_is_under_registry(url: &[u8], registry: &[u8]) -> bool {
     let registry = strings::without_trailing_slash(registry);
     strings::has_prefix(url, registry)
         && (url.len() == registry.len() || url[registry.len()] == b'/')
 }
 
-// PORT NOTE: reshaped for borrowck. Zig keeps a single `var string_buf =
-// lockfile.stringBuf()` for the whole parser, but in Rust that locks out every
-// other `lockfile.*` access (the `string_buf()` method borrows the whole
-// receiver). Construct a fresh `Buf` at each append site so the disjoint
-// `buffers.string_bytes` / `string_pool` borrows end immediately and the
-// borrow checker can see that catalog/workspace/package mutations touch
-// different fields. Mirrors `src/install/pnpm.rs::sbuf!`.
 macro_rules! sbuf {
     ($lockfile:expr) => {
         StringBuf {
@@ -109,14 +94,6 @@ pub enum Version {
     /// fixed unnecessary listing of workspace dependencies
     V1 = 1,
 
-    /// Stricter parsing that rejects, rather than accepts, lockfiles the
-    /// earlier versions tolerated. Gated here so an already-written v0/v1
-    /// lockfile keeps loading:
-    /// - an npm package resolved to a tarball URL outside the configured
-    ///   registry must carry a supported integrity hash
-    /// - a git `.bun-tag` must be a safe path/checkout component (the same
-    ///   check on a `github` tag is enforced at every version, since its
-    ///   download path has no checkout-time re-validation)
     V2 = 2,
 }
 
@@ -183,22 +160,6 @@ impl Stringifier {
         Self::save_from_binary_inner(lockfile, load_result, options, writer)
     }
 
-    /// Pick the `lockfileVersion` to stamp. `Version::CURRENT` (v2) adds
-    /// parse-time checks that reject entries older versions tolerated: an
-    /// off-registry npm tarball without a supported integrity hash, and an
-    /// unsafe git `.bun-tag`. The writer emits those fields verbatim (no
-    /// backfill), so stamping v2 on a lockfile that still carries such an entry
-    /// would make the *next* parse reject it. Only stamp v2 when every package
-    /// already satisfies the v2 invariants; otherwise stay at v1 so the file
-    /// round-trips (load → save → load) cleanly — across machines too, since a
-    /// lockfile is committed and shared. The decision is therefore made without
-    /// consulting the writer's registry config: whether the *reader* will accept
-    /// the file must not depend on the writer's `~/.npmrc` / scoped registries.
-    ///
-    /// Walks the package tree the same way the writer does — only packages that
-    /// are actually serialized are considered, not every entry in the in-memory
-    /// `pkg_resolutions` buffer (migration can leave pruned/unreferenced entries
-    /// there that never reach the written `packages` object).
     fn version_to_write(lockfile: &BinaryLockfile) -> Version {
         let buf = lockfile.buffers.string_bytes.as_slice();
         let deps_buf = lockfile.buffers.dependencies.as_slice();
@@ -227,29 +188,12 @@ impl Stringifier {
                         if pkg_metas[i].integrity.tag.is_supported() {
                             continue;
                         }
-                        // No supported integrity: only v2-clean if the tarball
-                        // URL is under the *default* registry, the one case the
-                        // writer normalizes to `""` (see the npm URL
-                        // serialization in `save_from_binary_inner`). An empty
-                        // URL never sets the parser's `npm_url_needs_integrity`,
-                        // so that round-trips for any reader. A URL under a
-                        // configured-but-not-default scope is written verbatim,
-                        // and the parser's integrity check is evaluated against
-                        // the *reader's* scope config, so it is not
-                        // config-independent: a writer with a private `@scope`
-                        // registry could stamp v2 on a lockfile a teammate
-                        // without that scope then fails to parse. Stay at v1 for
-                        // those so the file keeps loading everywhere.
                         let url = res.npm().url.slice(buf);
                         if !url_is_under_registry(url, Npm::Registry::DEFAULT_URL.as_bytes()) {
                             return Version::V1;
                         }
                     }
                     ResolutionTag::Git => {
-                        // An unsafe git `.bun-tag` is only rejected at v2, so
-                        // staying at v1 keeps it loading. (A `github` tag is
-                        // rejected at every version, so no lockfile version can
-                        // round-trip an unsafe one — nothing to gate here.)
                         if !crate::repository::is_safe_resolved_tag(
                             res.repository().resolved.slice(buf),
                         ) {
@@ -751,16 +695,6 @@ impl Stringifier {
 
                     // INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
 
-                    // first index is resolution for each type of package
-                    // npm         -> [ "name@version", registry (TODO: remove if default), INFO, integrity]
-                    // symlink     -> [ "name@link:path", INFO ]
-                    // folder      -> [ "name@file:path", INFO ]
-                    // workspace   -> [ "name@workspace:path" ] // workspace is only path
-                    // tarball     -> [ "name@tarball", INFO ]
-                    // root        -> [ "name@root:", { bin, binDir } ]
-                    // git         -> [ "name@git+repo", INFO, .bun-tag string (TODO: remove this) ]
-                    // github      -> [ "name@github:user/repo", INFO, .bun-tag string (TODO: remove this) ]
-
                     match res.tag {
                         ResolutionTag::Root => {
                             write!(
@@ -1042,11 +976,6 @@ impl Stringifier {
         relative_path: &[u8],
         path_buf: &mut [u8],
     ) -> Result<(), WriteError> {
-        // TODO(port): narrow error set to { OutOfMemory, WriteFailed }
-        // PORT NOTE: Zig `defer optional_peers_buf.clearRetainingCapacity()` moved to fn tail.
-        // Error path (`?` on writer) aborts the whole save in the caller, so skipping the
-        // clear on early-return cannot leak stale entries into a subsequent call.
-
         writer.write_byte(b'{')?;
 
         let mut any = false;
@@ -1143,15 +1072,6 @@ impl Stringifier {
             writer.write_all(b" \"bundled\": true")?;
         }
 
-        // TODO(dylan-conway)
-        // if (meta.libc != .all) {
-        //     try writer.writeAll(
-        //         \\"libc": [
-        //     );
-        //     try Negatable(Npm.Libc).toJson(meta.libc, writer);
-        //     try writer.writeAll("], ");
-        // }
-
         if meta.os != Npm::OperatingSystem::ALL {
             if any {
                 writer.write_byte(b',')?;
@@ -1220,11 +1140,6 @@ impl Stringifier {
         relative_path: &[u8],
         path_buf: &mut [u8],
     ) -> Result<(), WriteError> {
-        // TODO(port): narrow error set to { OutOfMemory, WriteFailed }
-        // PORT NOTE: Zig `defer optional_peers_buf.clearRetainingCapacity()` moved to fn tail.
-        // Error path (`?` on writer) aborts the whole save in the caller, so skipping the
-        // clear on early-return cannot leak stale entries into a subsequent call.
-
         // any - have any properties been written
         let mut any = false;
 
@@ -2150,11 +2065,6 @@ pub fn parse_into_binary_lockfile(
     let mut workspace_pkgs_len: u32 = 0;
 
     if lockfile_version != Version::V0 {
-        // these are the `workspaceOnly` packages
-        // PORT NOTE: snapshot the workspace-path handles up front so the loop
-        // body can take `&mut *lockfile` (`parse_append_dependencies`,
-        // `append_package_dedupe`) without conflicting with the
-        // `workspace_paths.values()` iterator borrow. `String` is `Copy`.
         let workspace_path_snapshot: Vec<String> = lockfile.workspace_paths.values().to_vec();
         'workspaces: for workspace_path in &workspace_path_snapshot {
             for prop in workspaces_obj
@@ -2253,18 +2163,6 @@ pub fn parse_into_binary_lockfile(
             return Err(ParseError::InvalidPackagesObject);
         }
 
-        // find the bundle roots.
-        //
-        // Resolving bundled dependencies:
-        // bun.lock marks package keys with { bundled: true } if they originate
-        // from a bundled dependency. Transitive dependencies of bundled dependencies
-        // will not have a bundled property, and `bun install` expects them to not
-        // have bundled behavior set. In order to resolve these dependencies correctly,
-        // first loop through each key here and add the key to a map if it's bundled.
-        // Then when parsing the dependencies, lookup the package key + dep name from
-        // the bundled map, and mark the dependency bundled if it exists. This works
-        // because package's direct bundled dependencies can only exist at the top
-        // level of it's node_modules.
         for prop in pkgs_expr
             .data
             .e_object()
@@ -2473,22 +2371,6 @@ pub fn parse_into_binary_lockfile(
                                 ));
                             }
 
-                            // found the workspace this key belongs to. for example both `pkg1` and `another-pkg1` should map
-                            // to the same package id:
-                            //
-                            // "workspaces": {
-                            //   "": {},
-                            //   "packages/pkg1": {
-                            //     "name": "pkg1",
-                            //   },
-                            // },
-                            // "overrides": {
-                            //   "some-pkg": "workspace:packages/pkg1",
-                            // },
-                            // "packages": {
-                            //   "pkg1": "workspace:packages/pkg1",
-                            //   "another-pkg1": "workspaces:packages/pkg1",
-                            // },
                             *entry.value_ptr = workspace_pkg_id;
                             continue 'next_pkg_key;
                         }
@@ -2577,10 +2459,6 @@ pub fn parse_into_binary_lockfile(
                                 pkg.meta.arch =
                                     Npm::negatable_from_json::<Npm::Architecture>(&arch)?;
                             }
-                            // TODO(dylan-conway)
-                            // if (os_cpu_libc_obj.get("libc")) |libc| {
-                            //     pkg.meta.libc = Negatable(Npm.Libc).fromJson(allocator, libc);
-                            // }
                         }
                     }
                     ResolutionTag::Root => {
@@ -2629,11 +2507,6 @@ pub fn parse_into_binary_lockfile(
 
                     pkg.meta.integrity = Integrity::parse(integrity_str);
                     if !integrity_str.is_empty() && !pkg.meta.integrity.tag.is_supported() {
-                        // Surface — don't fail — for npm parity (`npm install`
-                        // proceeds on a malformed lockfile integrity, treating
-                        // it as absent). The download path still applies any
-                        // registry-supplied integrity, so this only loses the
-                        // *lockfile* pin.
                         log.add_warning(
                             Some(source),
                             integrity_expr.loc,
@@ -2642,13 +2515,6 @@ pub fn parse_into_binary_lockfile(
                         pkg.meta.integrity = Integrity::default();
                     }
 
-                    // Fail closed: otherwise a tampered lockfile could redirect
-                    // the tarball URL off-registry and install arbitrary content
-                    // under a trusted package name with verification disabled.
-                    //
-                    // Only enforced for v2+. Older lockfiles predate this check
-                    // and may legitimately omit integrity for an off-registry
-                    // tarball; rejecting them would break existing installs.
                     if lockfile_version.at_least(Version::V2)
                         && npm_url_needs_integrity
                         && !pkg.meta.integrity.tag.is_supported()
@@ -2693,14 +2559,6 @@ pub fn parse_into_binary_lockfile(
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
-                    // Reject an unsafe `.bun-tag`. For `git`, `Repository::checkout`
-                    // re-validates with the same guard before building any cache
-                    // path or invoking `git`, so this parse-time check is gated to
-                    // v2+ — older git lockfiles keep loading without reopening the
-                    // checkout hole. For `github` there is no such re-validation
-                    // (the tarball-download path feeds the tag straight into the
-                    // cache folder name), so the check must stay unconditional to
-                    // keep the path-traversal guard intact at every version.
                     let enforce_safe_tag =
                         tag == ResolutionTag::Github || lockfile_version.at_least(Version::V2);
                     if enforce_safe_tag && !crate::repository::is_safe_resolved_tag(bun_tag_str) {
@@ -2767,11 +2625,6 @@ pub fn parse_into_binary_lockfile(
         // is chosen (dev -> optional -> prod -> peer)
         let mut seen_deps: bun_collections::StringArrayHashMap<()> = Default::default();
 
-        // PORT NOTE: Zig grabs `pkgs.items(.meta)` / `.items(.resolution)` as
-        // mutable column slices, writes index 0, then keeps the resolution slice
-        // for read-only lookups. In Rust the two `[0]` writes are done first via
-        // sequential `&mut` accessors so the loops can take all column views
-        // immutably without overlapping exclusive borrows or `unsafe`.
         lockfile.packages.items_resolution_mut()[0] =
             Resolution::init(crate::resolution::TaggedValue::Root);
         lockfile.packages.items_meta_mut()[0].origin = Origin::Local;
@@ -2781,10 +2634,6 @@ pub fn parse_into_binary_lockfile(
         let pkg_names = pkgs.items_name();
         let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
 
-        // Disjoint-field split of `lockfile.buffers` so each loop body can hold
-        // `&mut dependencies[i]` and `&mut resolutions[i]` together with a shared
-        // `string_bytes` view (Zig's `*Dependency` / `lockfile.buffers.*.items`
-        // accesses freely alias the same struct).
         let buffers = &mut lockfile.buffers;
         let string_buf: &[u8] = buffers.string_bytes.as_slice();
         let dependencies: &mut [Dependency] = buffers.dependencies.as_mut_slice();
@@ -2979,11 +2828,6 @@ pub fn parse_into_binary_lockfile(
     Ok(())
 }
 
-// PORT NOTE: Zig signature takes `*BinaryLockfile` plus a `*Dependency` that
-// points into `lockfile.buffers.dependencies` — fine in Zig, illegal aliasing in
-// Rust. The function only touches `buffers.resolutions[dep_id]` and reads
-// `text_lockfile_version`, so accept those disjoint pieces directly and let the
-// caller split-borrow `lockfile.buffers`.
 fn map_dep_to_pkg(
     dep: &mut Dependency,
     dep_id: DependencyID,
@@ -3056,12 +2900,6 @@ fn dependency_resolution_failure(
     Ok(())
 }
 
-// PORT NOTE: Zig threaded `string_buf: *String.Buf` separately from `lockfile`.
-// In Rust the `Buf` borrows the same `lockfile.buffers.string_bytes` /
-// `string_pool` fields, so the two parameters alias. The `buf` parameter is
-// dropped and each append constructs a fresh `sbuf!(lockfile)` so the borrow
-// checker can see the disjoint field accesses against `buffers.dependencies`
-// and `workspace_paths`.
 fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>(
     lockfile: &mut BinaryLockfile,
     obj: &Expr,

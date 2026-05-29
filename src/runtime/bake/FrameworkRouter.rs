@@ -37,37 +37,8 @@ pub struct FrameworkRouter {
     /// Keys are full URL, with leading /, no trailing /
     /// Value is Route Index
     pub static_routes: StaticRouteMap,
-    /// A flat list of all dynamic patterns.
-    ///
-    /// Used to detect routes that have the same effective URL. Examples:
-    /// - `/hello/[foo]/bar` and `/hello/[baz]/bar`
-    /// - `/(one)/abc/def` and `/(two)/abc/def`
-    ///
-    /// Note that file that match to the same exact route are already caught as
-    /// errors since the Route cannot store a list of files. Examples:
-    /// - `/about/index.tsx` and `/about.tsx` with style `.nextjs-pages`
-    /// Key in this map is EncodedPattern.
-    ///
-    /// Root files are not caught using this technique, since every route tree has a
-    /// root. This check is special cased.
-    // TODO: no code to sort this data structure
     pub dynamic_routes: DynamicRouteMap,
 
-    /// Arena allocator for pattern strings.
-    ///
-    /// This should be passed into `EncodedPattern::init_from_parts` or should be the
-    /// allocator used to allocate `StaticRoute.route_path`.
-    ///
-    /// Q: Why use this and not just free the strings for `EncodedPattern` and
-    ///    `StaticRoute` manually?
-    ///
-    /// A: Inside `fr.insert(...)` we iterate over `EncodedPattern/StaticRoute`,
-    ///    turning them into a bunch of `Route.Part`s, and we discard the original
-    ///    `EncodePattern/StaticRoute` structure.
-    ///
-    ///    In this process it's too easy to lose the original base pointer and
-    ///    length of the entire allocation. So we'll just allocate everything in
-    ///    this arena to ensure that everything gets freed.
     pub pattern_string_arena: Arena,
 
     /// Dead-code in the Zig source (`newEdge` references `fr.edges`/`fr.freed_edges`/`Route.Edge`
@@ -223,10 +194,6 @@ impl FrameworkRouter {
     pub fn memory_cost(&self) -> usize {
         let mut cost: usize = size_of::<FrameworkRouter>();
         cost += self.routes.capacity() * size_of::<Route>();
-        // TODO(port): StaticRouteMap/DynamicRouteMap DataList::capacity_in_bytes equivalent
-        // (`bun_collections::ArrayHashMap` does not yet expose capacity_in_bytes; approximate as 0).
-        // cost += self.static_routes.capacity_in_bytes();
-        // cost += self.dynamic_routes.capacity_in_bytes();
         let _ = (&self.static_routes, &self.dynamic_routes);
         cost
     }
@@ -647,14 +614,6 @@ pub enum Style {
     JavascriptDefined(Strong),
 }
 
-// PORT NOTE: Zig copies `Style` by value (bitwise), which for the
-// `.javascript_defined` arm shallow-copies the `jsc.Strong.Optional` pointer —
-// both copies alias the same C++ StrongRef and only one `deinit()` is ever
-// called. In Rust `Strong` has `Drop`, so a bitwise copy would double-free.
-// The built-in styles are trivially copyable; the JS-defined arm is an
-// unimplemented feature in the Zig source as well (`Style.parse` does
-// `@panic("TODO: customizable Style")`), so cloning it is unreachable today.
-// Mirror the Zig `@panic` message instead of inventing unsafe aliasing.
 impl Clone for Style {
     fn clone(&self) -> Self {
         match self {
@@ -1059,12 +1018,6 @@ pub enum InsertPattern {
 }
 
 impl FrameworkRouter {
-    /// Insert a new file, potentially creating a Route for that file.
-    /// Moves ownership of EncodedPattern into the FrameworkRouter.
-    ///
-    /// This function is designed so that any insertion order will create an
-    /// equivalent routing tree, but it does not guarantee that route indices
-    /// would match up if a different insertion order was picked.
     pub fn insert(
         &mut self,
         ty: TypeIndex,
@@ -1473,10 +1426,6 @@ fn writer_splat_bytes_all(
     Ok(())
 }
 
-/// Interface for connecting FrameworkRouter to another codebase
-// PORT NOTE: Zig's `InsertionContext` was an `*anyopaque` + `*const VTable` pair, with `wrap()`
-// generating a comptime vtable per concrete type. Per LIFETIMES.tsv this is BORROW_PARAM →
-// `&mut dyn InsertionHandler`. The trait below replaces the manual vtable.
 pub trait InsertionHandler {
     fn get_file_id_for_router(
         &mut self,
@@ -1495,23 +1444,10 @@ pub trait InsertionHandler {
     ) -> Result<(), AllocError>;
 }
 
-/// Port of Zig `bun.StringHashMapContext` (`std.hash.Wyhash` final4, seed 0).
-///
-/// `scan_inner` walks `DirEntry.data` to discover routes; the resulting child
-/// order is the map's iteration order. In Zig that map is a
-/// `std.HashMapUnmanaged([]const u8, *Entry, StringHashMapContext, 80)`, whose
-/// linear-probe bucket walk is what `test/bake/framework-router.test.ts`
-/// snapshots. The Rust `EntryMap` is a `std::collections::HashMap`, which has
-/// a different layout, so we rebuild into a `zig_hash_map` keyed/hashed
-/// identically before iterating.
 struct ZigStringHashContext;
 impl bun_collections::zig_hash_map::HashContext<Box<[u8]>> for ZigStringHashContext {
     #[inline]
     fn ctx_hash(key: &Box<[u8]>) -> u64 {
-        // Zig: `std.hash.Wyhash.hash(0, s)` — `bun_wyhash::hash` is the final4
-        // variant with seed 0. (Don't route through `auto_hash`/`OneShotHasher`
-        // here: Rust's `<[u8] as Hash>` mixes in a length prefix, which would
-        // shift the bucket layout the snapshot below depends on.)
         bun_wyhash::hash(key)
     }
     #[inline]
@@ -1556,15 +1492,6 @@ impl FrameworkRouter {
         let fs_impl = unsafe { core::ptr::addr_of_mut!((*fs).fs) };
 
         if let Some(entries) = dir_info.get_entries_const() {
-            // PORT NOTE: `entries.data` is backed by `std::collections::HashMap`,
-            // whose iteration order differs from Zig's `std.HashMapUnmanaged`.
-            // The route-tree child order is this iteration order (see `insert`),
-            // and `test/bake/framework-router.test.ts` snapshots it. Rebuild into
-            // a Zig-layout map (same wyhash/seed/probe) so the walk matches the
-            // spec. Absent hash collisions (the common case for small dirs) the
-            // bucket order is fully determined by the hash, so re-insertion order
-            // is irrelevant; with collisions it may diverge from Zig's readdir-
-            // order placement, but no test exercises that today.
             let mut zig_order: bun_collections::zig_hash_map::HashMap<
                 Box<[u8]>,
                 *mut bun_resolver::fs::Entry,
@@ -1650,11 +1577,6 @@ impl FrameworkRouter {
                         };
 
                         let mut log = TinyLog::empty();
-                        // Spec FrameworkRouter.zig: `defer arena_state.reset(
-                        // .retain_capacity)`. Handled at the end of every arm
-                        // via `reset_retain_with_limit(8M)` — keep the
-                        // `mi_heap` warm between directory entries instead of
-                        // paying `mi_heap_destroy + mi_heap_new` per file.
                         let parse_result =
                             t.style
                                 .parse(rel_path, ext, &mut log, t.allow_layouts, arena_state);
@@ -2105,11 +2027,6 @@ pub(crate) fn parse_route_pattern(global: &JSGlobalObject, frame: &CallFrame) ->
 
 use bun_core::fmt::VecWriter as ByteFmtWriter;
 
-// PORT NOTE: reshaped for borrowck. Zig's `InsertionContext.wrap(JSFrameworkRouter, jsfr)`
-// needs `&mut jsfr.router` (for `scan`) and `&mut *jsfr` (as the handler) simultaneously.
-// The handler only touches `files` / `stored_parse_errors`, so we split-borrow those two
-// fields into a dedicated context struct instead of implementing the trait on
-// `JSFrameworkRouter` itself.
 struct JSFrameworkRouterScanCtx<'a> {
     files: &'a mut Vec<bun_core::String>,
     stored_parse_errors: &'a mut Vec<StoredParseError>,

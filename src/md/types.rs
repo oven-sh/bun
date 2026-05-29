@@ -131,12 +131,6 @@ pub struct WikilinkDetail<'a> {
     pub target: Attribute<'a>,
 }
 
-/// Renderer interface. The parser calls these methods to produce output.
-//
-// PORT NOTE: Zig's `*anyopaque + *const VTable` manual fat-pointer is collapsed
-// into `&mut dyn RendererImpl`. LIFETIMES.tsv classified `ptr` as
-// `&'a mut dyn RendererImpl` (BORROW_PARAM) and `vtable` as `&'static VTable`
-// (STATIC); the trait object encodes both.
 pub struct Renderer<'a> {
     pub ptr: &'a mut dyn RendererImpl,
 }
@@ -326,10 +320,6 @@ pub struct Container {
     pub block_byte_off: u32,
 }
 
-/// Block flags stored in MD_BLOCK.
-// PORT NOTE: Zig `packed struct(u32)` with bool fields + u28 padding. Not every
-// field is `bool` (padding), so per PORTING.md this is a transparent newtype
-// with manual shift accessors rather than `bitflags!`.
 #[repr(transparent)]
 #[derive(Copy, Clone, Default, Eq, PartialEq)]
 pub struct BlockFlags(pub u32);
@@ -521,10 +511,6 @@ impl Default for OpenerStack {
 pub const CODESPAN_MARK_MAXLEN: u32 = 255;
 pub const TABLE_MAXCOLCOUNT: u32 = 128;
 
-/// Reference definition used for link resolution.
-// TODO(port): `label_needs_free`/`title_needs_free` indicate sometimes-owned
-// data (normalized label vs. source slice). Consider `Cow<'a, [u8]>` and drop
-// the bool flags.
 pub struct RefDef<'a> {
     pub label: &'a [u8],
     pub title: Attribute<'a>,

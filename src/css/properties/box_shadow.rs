@@ -28,10 +28,6 @@ pub struct BoxShadow {
     pub inset: bool,
 }
 
-// PORT NOTE: `SmallList::{deep_clone,eql,is_compatible}` are bounded on the
-// `generics::{DeepClone,CssEql,IsCompatible}` traits. Wire BoxShadow into all
-// three so the handler can use `SmallList<BoxShadow,1>` directly without
-// hand-rolling per-field loops.
 impl<'bump> css::generic::DeepClone<'bump> for BoxShadow {
     #[inline]
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
@@ -277,10 +273,6 @@ impl BoxShadowHandler {
                 fallbacks.insert(shadow.color.get_necessary_fallbacks(&context.targets));
             }
 
-            // PORT NOTE: Zig used `initCapacity(len)` + `setLen(len)` + per-index field
-            // writes via `inline for std.meta.fields(BoxShadow)` skipping `color`. That
-            // pattern would observe partially-uninit `BoxShadow` values in Rust, so we
-            // build each fully-formed `BoxShadow` and `append`. Behavior is identical.
             macro_rules! build_color_fallback {
                 ($conv:ident) => {{
                     let mut out: SmallList<BoxShadow, 1> =

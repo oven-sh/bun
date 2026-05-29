@@ -90,10 +90,6 @@ fn get_dependency_type_priority(dep_type: DependencyType) -> u8 {
     }
 }
 
-// PORT NOTE: Zig signature was `fn(void, a, b) bool` (lessThan for std.sort).
-// Kept bool-returning lessThan semantics; call sites wrap into a total Ordering
-// (Less if a<b, Greater if b<a, else Equal — required since Rust 1.81 sort_by
-// panics on non-total comparators).
 fn compare_dependents(a: &DependentInfo, b: &DependentInfo) -> bool {
     let a_specificity = get_specifier_specificity(&a.spec);
     let b_specificity = get_specifier_specificity(&b.spec);
@@ -337,12 +333,6 @@ impl WhyCommand {
         package_pattern: &[u8],
         top_only: bool,
     ) -> Result<(), bun_core::Error> {
-        // PORT NOTE: reshaped for borrowck — Zig calls
-        // `pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true)` which aliases
-        // `*PackageManager` with `*Lockfile`. Detach the `Box<Lockfile>` from `pm`
-        // so `load_from_cwd` can take `Option<&mut PackageManager>` without
-        // overlapping the `&mut self` lockfile borrow. `pm.options.depth` is read
-        // up front so we never need `pm` again once `lockfile` is borrowed.
         let depth_opt = pm.options.depth;
         let log_level = pm.options.log_level;
         // SAFETY: CLI dispatch is single-threaded and `log`'s last use is the
@@ -384,10 +374,6 @@ impl WhyCommand {
 
         let glob = GlobPattern::init(package_pattern);
 
-        // PORT NOTE: Zig `MultiArrayList<Package>.get(pkg_idx)` returns a row
-        // copy. The Rust column-backed `PackageList` exposes
-        // `items_name()` / `items_dependencies()` / … directly, so we read
-        // columns by index instead of materialising a `Package` row.
         let pkg_names = packages.items_name();
         let _pkg_dependencies = packages.items_dependencies();
         let _pkg_resolutions = packages.items_resolutions();

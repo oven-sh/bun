@@ -19,12 +19,6 @@ pub mod x509 {
     pub fn is_safe_alt_name(name: &[u8], utf8: bool) -> bool {
         for &c in name {
             match c {
-                // These mess with encoding rules.
-                // Commas make it impossible to split the list of subject
-                // alternative names unambiguously, which is why we escape.
-                // Single quotes are unlikely to appear in any legitimate values,
-                // but they could be used to make a value look like it was escaped
-                // (i.e., enclosed in single/double quotes).
                 b'"' | b'\\' | b',' | b'\'' => return false,
                 _ => {
                     if utf8 {
@@ -74,12 +68,6 @@ pub fn load() {
         }
     }}
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Extra FFI surface not yet exposed by `bun_boringssl_sys` (hand-curated
-// subset). Ground truth: src/boringssl_sys/boringssl.zig + openssl/ssl.h.
-// Remove once the bindgen pipeline lands these in the sys crate.
-// ──────────────────────────────────────────────────────────────────────────
 
 /// `enum ssl_verify_result_t` is `BORINGSSL_ENUM_INT`-backed; `ssl_verify_ok == 0`.
 #[allow(non_camel_case_types)]
@@ -166,10 +154,6 @@ pub fn init_client() -> *mut boring::SSL {
         }
         let ctx = CTX_STORE
             .get_or_init(|| {
-                // Zig: `SSL_CTX.init()` — see boringssl.zig:19197. Three steps:
-                //   1. SSL_CTX_new(TLS_with_buffers_method())
-                //   2. setCustomVerify(noop_custom_verify) → SSL_CTX_set_custom_verify(ctx, 0, cb)
-                //   3. setup() → CRYPTO_BUFFER_POOL_new + set0_buffer_pool + set_cipher_list("ALL")
                 let ctx = boring::SSL_CTX_new(boring::TLS_with_buffers_method());
                 SSL_CTX_set_custom_verify(ctx, 0, Some(noop_custom_verify));
                 ssl_ctx_setup(ctx);
@@ -190,25 +174,6 @@ pub fn init_client() -> *mut boring::SSL {
 // void*, OPENSSL_memory_alloc, (size_t size)
 // void, OPENSSL_memory_free, (void *ptr)
 // size_t, OPENSSL_memory_get_size, (void *ptr)
-
-// The following three functions can be defined to override default heap
-// allocation and freeing. If defined, it is the responsibility of
-// |OPENSSL_memory_free| to zero out the memory before returning it to the
-// system. |OPENSSL_memory_free| will not be passed NULL pointers.
-//
-// WARNING: These functions are called on every allocation and free in
-// BoringSSL across the entire process. They may be called by any code in the
-// process which calls BoringSSL, including in process initializers and thread
-// destructors. When called, BoringSSL may hold pthreads locks. Any other code
-// in the process which, directly or indirectly, calls BoringSSL may be on the
-// call stack and may itself be using arbitrary synchronization primitives.
-//
-// As a result, these functions may not have the usual programming environment
-// available to most C or C++ code. In particular, they may not call into
-// BoringSSL, or any library which depends on BoringSSL. Any synchronization
-// primitives used must tolerate every other synchronization primitive linked
-// into the process, including pthreads locks. Failing to meet these constraints
-// may result in deadlocks, crashes, or memory corruption.
 
 #[unsafe(no_mangle)]
 pub extern "C" fn OPENSSL_memory_alloc(size: usize) -> *mut c_void {

@@ -138,11 +138,6 @@ impl KeepAlive {
         event_loop_ctx.loop_ref();
     }
 
-    /// Allow a poll to keep the process alive.
-    ///
-    /// Raw-identifier alias of [`KeepAlive::ref_`] matching the Zig method name
-    /// `ref` exactly (per PORTING.md "same fn names" rule). Downstream ports
-    /// call both spellings; this keeps them source-compatible.
     #[inline]
     pub fn r#ref(&mut self, event_loop_ctx: EventLoopCtx) {
         self.ref_(event_loop_ctx)

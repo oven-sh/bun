@@ -28,15 +28,6 @@ pub struct ZigStackFrame {
 }
 
 impl ZigStackFrame {
-    /// Explicit deref of owned strings.
-    ///
-    /// Intentionally NOT `Drop`: this `#[repr(C)]` extern struct lives both in
-    /// C++-populated buffers (`ZigStackTrace.frames_ptr`) and in the Rust-owned
-    /// `Holder.frames: [ZigStackFrame; 32]` array. `Holder::deinit()` calls
-    /// `ZigException::deinit()` → `frame.deinit()` to release the strings, but
-    /// the array elements are then later dropped by Rust when `Holder` itself
-    /// drops. A `Drop` impl would deref the same `WTF::StringImpl` a second
-    /// time (UAF). Match the Zig spec: explicit `deinit` only.
     pub fn deinit(&mut self) {
         self.function_name.deref();
         self.source_url.deref();
@@ -53,13 +44,6 @@ impl ZigStackFrame {
         let mut frame: api::StackFrame = api::StackFrame::default();
         if !self.function_name.is_empty() {
             let slicer = self.function_name.to_utf8();
-            // Zig: `(try slicer.cloneIfBorrowed(allocator)).slice()` — clone-if-borrowed then leak
-            // the slice into `frame.function_name`. `Box::from(slice)` always copies, which is the
-            // semantic equivalent now that the field owns its bytes (drops the Zig leak).
-            // TODO: Memory leak? `frame.function_name` may have just been allocated by this
-            // function, but it doesn't seem like we ever free it. Changing to `toUTF8Owned` would
-            // make the ownership clearer, but would also make the memory leak worse without an
-            // additional free.
             frame.function_name = Box::<[u8]>::from(slicer.slice());
         }
 

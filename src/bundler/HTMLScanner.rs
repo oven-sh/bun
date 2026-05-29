@@ -266,13 +266,6 @@ pub(crate) const TAG_HANDLERS: [TagHandler; 16] = [
 
 const SELECTOR_CAP: usize = TAG_HANDLERS.len() + 3;
 
-// ── lol-html DirectiveCallback / OutputSink adapters ──────────────────────
-// `lol_html::DirectiveCallback<Container>` allows one impl per (UserData,
-// Container) pair, but Zig registered 16 distinct comptime fn-values against
-// the same `*T`. We instead allocate one user-data record *per selector*
-// holding `(*mut T, tag_index)`; the trait body is `generateHandlerForTag`'s
-// body with `tag_info` looked up at runtime via the index.
-
 struct TagUserData<T> {
     this: *mut T,
     tag_index: usize,
@@ -481,10 +474,6 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
             // Zig: defer last_error.deinit()
             let _last_error_guard = scopeguard::guard(last_error, |e| e.deinit());
             if last_error.len > 0 {
-                // The rewriter (sole user of `this_ptr`-derived aliases) was
-                // destroyed when the inner closure returned; reasserting the
-                // original `&mut T` borrow here is sound and avoids the raw
-                // deref entirely.
                 this.on_html_parse_error(last_error.slice());
             }
         }

@@ -456,10 +456,6 @@ pub fn generate_slug<'a>(
         out_len -= 1;
     }
 
-    // Deduplicate via slug_counts
-    // TODO(port): exact bun_collections::StringHashMap entry/get_or_put API — Zig used getOrPut
-    // with a borrowed key then duped it on first insert. Here we look up first, then insert an
-    // owned key on miss; map is assumed to own its keys (so Drop frees them).
     if let Some(value) = slug_counts.get_mut(&text_buf[..out_len]) {
         // Already seen — append -N suffix
         let count = *value + 1;

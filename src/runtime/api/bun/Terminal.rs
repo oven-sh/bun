@@ -38,10 +38,6 @@ use bun_sys::windows;
 
 bun_output::declare_scope!(Terminal, hidden);
 
-// Generated bindings — `jsc.Codegen.JSTerminal`. The `.classes.ts` codegen
-// emits `crate::generated_classes::js_Terminal` with `from_js`/`to_js` and the
-// cached-value accessors; re-export here so callers continue to spell `js::*`
-// (matching Zig's `js.toJS`/`js.gc.set(.data, …)`).
 pub use self::js::{from_js, from_js_direct, to_js};
 pub mod js {
     pub use crate::generated_classes::js_Terminal::{
@@ -86,28 +82,6 @@ pub mod js {
     pub use gc::GcValue;
 }
 
-/// Reference counting for Terminal.
-/// Refs are held by:
-/// 1. JS side (released in finalize)
-/// 2. Reader (released in onReaderDone/onReaderError)
-/// 3. Writer (released in onWriterClose)
-///
-// `bun.ptr.RefCount` is intrusive single-thread → `bun_ptr::IntrusiveRc<Terminal>`.
-// Never `Rc`/`Arc` here: `*mut Terminal` crosses FFI as the `.classes.ts` m_ctx
-// payload and is recovered by raw pointer in finalize/host fns. (LIFETIMES.tsv
-// marks CreateResult.terminal as SHARED, but the RefCount→IntrusiveRc rule wins;
-// the TSV row is for plain `*T` fields, not intrusive mixins.)
-//
-// `no_construct, no_finalize`: this class uses `constructNeedsThis: true` (3-arg
-// constructor) and intrusive refcounting (finalize → deref, not heap::take),
-// neither of which the macro's default hooks support. The C-ABI shims live in
-// `mod js` above and `extern "C" fn finalize` below.
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut Terminal` — `&mut T` auto-derefs to `&T`
-// so the impls below compile against either. The
-// BufferedReader/StreamingWriter parent-vtable thunks deref `*mut Self` as
-// `&*this` (shared); all field mutation routes through the cells.
 #[bun_jsc::JsClass(no_construct, no_finalize)]
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = deinit_and_destroy)]
@@ -143,10 +117,6 @@ pub struct Terminal {
     /// Event loop handle for callbacks. Read-only after construction.
     event_loop_handle: EventLoopHandle,
 
-    /// Global object reference. Read-only after construction.
-    // PORT NOTE: LIFETIMES.tsv says JSC_BORROW → `&JSGlobalObject`, but Terminal
-    // is a heap-allocated `.classes.ts` m_ctx payload and cannot carry a lifetime
-    // param. Stored as a `BackRef`; deref via `self.global()`.
     global_this: bun_ptr::BackRef<JSGlobalObject>,
 
     /// Writer for sending data to the terminal
@@ -174,10 +144,6 @@ bitflags::bitflags! {
         const CONNECTED      = 1 << 4;
         const READER_DONE    = 1 << 5;
         const WRITER_DONE    = 1 << 6;
-        /// Set when an inline-created terminal has been attached to a subprocess
-        /// via spawn; prevents reusing the same inline terminal for a second
-        /// spawn (which on Windows would be silently killed by ClosePseudoConsole
-        /// when the first subprocess exits, and on POSIX has no slave_fd left).
         const INLINE_SPAWNED = 1 << 7;
     }
 }
@@ -215,11 +181,6 @@ impl Default for Options {
     }
 }
 
-// Local extension shims for `JSValue.getOptional` (Terminal.zig). Typed
-// `getOptional` is not yet a single inherent generic on `bun_jsc::JSValue`;
-// these wrap `get` + the per-type coercion. `withAsyncContextIfNeeded` is the
-// inherent `JSValue::with_async_context_if_needed` in `bun_jsc` — call sites
-// resolve to that directly, no shim here.
 trait JSValueTerminalExt {
     fn get_optional_i32(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<i32>>;
     fn get_optional_value(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<JSValue>>;
@@ -357,27 +318,11 @@ impl Terminal {
         self.flags.set(v);
     }
 
-    /// `self`'s address as `*mut Self` for intrusive backref / refcount slots.
-    /// Callers deref it as `&*const` (shared) — see the `BufferedReaderParent`
-    /// / `*StreamingWriterParent` thunks below — so no write provenance is
-    /// required; the `*mut` spelling is purely to match the C-shaped vtable
-    /// signatures. All field mutation routes through `Cell`/`JsCell`.
     #[inline]
     fn as_ctx_ptr(&self) -> *mut Self {
         std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
-    /// Recover `&Terminal` from the parent back-pointer stashed via
-    /// [`as_ctx_ptr`](Self::as_ctx_ptr) in `init_terminal` (handed to
-    /// `reader.set_parent` / `writer.parent`). Centralises the set-once
-    /// `*mut Self → &Self` deref so the I/O-vtable trampolines below stay
-    /// safe at the call site (one `unsafe` here, N safe callers).
-    ///
-    /// Only valid for the `BufferedReaderParent` /
-    /// `{Posix,Windows}StreamingWriterParent` thunks where `this` is the
-    /// registered BACKREF — do NOT call from `WindowsWriterParent::ref_` /
-    /// `deref` (those run while a `&mut self.writer` borrow is live and must
-    /// avoid forming `&Terminal`; see Stacked-Borrows note there).
     #[inline]
     fn from_parent_ptr<'a>(this: *mut Self) -> &'a Self {
         // SAFETY: `this` is the BACKREF set via `reader.set_parent` /
@@ -482,12 +427,6 @@ impl Terminal {
         {
             sys::Result::Ok(()) => terminal.ref_(),
             sys::Result::Err(_) => {
-                // POSIX: writer.start() may have allocated a poll holding write_fd
-                // before registerWithFd failed; closeInternal → writer.close()
-                // frees the poll and closes write_fd. Windows: writer.start()
-                // failure leaves source==null so writer.close() is a no-op; close
-                // write_fd directly. Pre-set writer_done so onWriterClose's deref
-                // is skipped and the struct isn't freed mid-closeInternal.
                 terminal.update_flags(|f| f.insert(Flags::WRITER_DONE));
                 terminal.read_fd.get().close();
                 terminal.read_fd.set(Fd::INVALID);
@@ -567,11 +506,6 @@ impl Terminal {
         })
     }
 
-    /// Constructor for Terminal - called from JavaScript
-    /// With constructNeedsThis: true, we receive the JSValue wrapper directly.
-    /// Thunk emitted by `.classes.ts` codegen (`TerminalClass__construct` in
-    /// `generated_classes.rs`); the `JsClass(no_construct)` attribute suppresses
-    /// the macro's 2-arg default.
     pub(crate) fn constructor(
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -646,12 +580,6 @@ impl Terminal {
         self.flags.get().contains(Flags::INLINE_SPAWNED)
     }
 
-    /// Spawn-side error-path teardown for a terminal created via
-    /// `create_from_spawn` whose subprocess never started. Downgrades the
-    /// JSRef so the wrapper is GC-eligible, marks `finalized` so
-    /// `on_reader_done` skips the JS exit callback, and runs `close_internal`.
-    /// Mirrors the `defer { terminal_info.? }` block in
-    /// `js_bun_spawn_bindings.zig`.
     pub(crate) fn abandon_from_spawn(&self) {
         self.this_value.with_mut(|v| v.downgrade());
         self.update_flags(|f| f.insert(Flags::FINALIZED));
@@ -677,10 +605,6 @@ impl Terminal {
         }
     }
 
-    /// Windows: close only the ConPTY handle so conhost releases its pipe ends and
-    /// our reader observes EOF. Leaves the Terminal itself open (closed=false),
-    /// matching POSIX semantics where child exit delivers EOF without closing the
-    /// master fd.
     #[allow(dead_code)]
     pub(crate) fn close_pseudoconsole(&self) {
         #[cfg(windows)]
@@ -689,12 +613,6 @@ impl Terminal {
         }
     }
 
-    /// On Windows < 11 24H2, ClosePseudoConsole blocks until the output pipe is
-    /// drained. Our reader runs on the event-loop thread, so calling it there
-    /// deadlocks. Fire from a detached thread so the event loop keeps draining;
-    /// conhost completes its flush and our reader sees the final data then EOF.
-    /// hpcon is passed to the thread by value so the Terminal struct may be freed
-    /// before the thread completes.
     #[cfg(windows)]
     fn close_pseudoconsole_off_thread(&self, hpcon: windows::HPCON) {
         // PORT NOTE: Zig used `std.Thread.spawn(.{}, fn, .{hpcon})` then
@@ -710,12 +628,6 @@ impl Terminal {
                 // detached: JoinHandle dropped without join → thread runs to completion.
             }
             Err(_) => {
-                // CreateThread failed — the process is in a bad state. Close the
-                // reader so onReaderDone fires next loop tick (releasing the reader
-                // ref) instead of hanging on an EOF that will never come. Leak hpcon;
-                // calling ClosePseudoConsole here would deadlock since reader.close()
-                // is async (uv_close) and the pipe HANDLE is still open. Conhost sees
-                // broken-pipe once libuv's deferred close runs.
                 let flags = self.flags.get();
                 if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
                     self.reader.with_mut(|r| r.close());
@@ -901,10 +813,6 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
         Ok(termios) => {
             let mut t = termios;
 
-            // Input flags: standard terminal input processing
-            // PORT NOTE: Zig used struct-literal flag init on std.posix tc_iflag_t;
-            // Rust libc termios uses raw tcflag_t bitfields, so these are bit-ORs
-            // of the libc constants (identical values).
             t.c_iflag = libc::ICRNL // Map CR to NL on input
                 | libc::IXON // Enable XON/XOFF flow control on output
                 | libc::IXANY // Any character restarts output
@@ -1019,10 +927,6 @@ pub(crate) struct PipePair {
     pub client: windows::HANDLE,
 }
 
-/// Create one end of a pipe pair as an overlapped named pipe (server) and the
-/// other as a synchronous client. Returns both raw HANDLEs. Caller closes
-/// both on error. The "server" end is suitable for libuv (uv_pipe_open) and
-/// the "client" end is suitable for ConPTY (which uses synchronous I/O).
 #[cfg(windows)]
 fn create_overlapped_pipe_pair(
     // PIPE_ACCESS_INBOUND: server reads, client writes.
@@ -1110,11 +1014,6 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
     let mut in_client: Option<windows::HANDLE> = None;
     let mut hpcon: Option<windows::HPCON> = None;
 
-    // errdefer block: scopeguard captures &mut to all of the above.
-    // PORT NOTE: reshaped for borrowck — using a single closure that reads the
-    // Option cells at drop-time would require interior mutability. Instead,
-    // inline the cleanup at each early-return point. This matches the Zig
-    // errdefer semantics exactly (cleanup runs on every `return Err`).
     macro_rules! cleanup {
         () => {
             // SAFETY: every Some(h) is a valid open Win32 handle still owned by
@@ -1190,11 +1089,6 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
         let _ = windows::CloseHandle(out_client.take().unwrap());
     }
 
-    // Wrap server (overlapped) ends as libuv-owned FDs so they can be passed
-    // to BufferedReader/StreamingWriter.start() which calls uv_pipe_open.
-    // Do not .take() until after success — on Err the cleanup! must still see
-    // Some(h) so the HANDLE isn't leaked (matches Zig: `out_server = null` only
-    // after the fallible call succeeds).
     let read_fd = match Fd::from_system(out_server.unwrap()).make_libuv_owned() {
         Ok(fd) => {
             out_server = None;
@@ -1596,10 +1490,6 @@ impl Terminal {
         global_object: &JSGlobalObject,
         _f: &CallFrame,
     ) -> JsResult<JSValue> {
-        // After dispose the caller must not see further data/exit callbacks.
-        // closeInternal on Windows leaves the reader draining off-thread, so
-        // suppress callbacks and downgrade the JSRef so the wrapper is
-        // GC-eligible once the caller's reference is dropped.
         self.this_value.with_mut(|v| v.downgrade());
         self.update_flags(|f| f.insert(Flags::FINALIZED));
         self.close_internal();
@@ -1623,10 +1513,6 @@ impl Terminal {
 
         #[cfg(windows)]
         {
-            // Dispatch ClosePseudoConsole off-thread (it blocks until the output
-            // pipe is drained on Windows < 11 24H2) and leave the reader open so
-            // the event loop can keep draining; conhost flushes the final frame,
-            // closes its pipe end, and the reader observes EOF → onReaderDone.
             if let Some(hpcon) = self.hpcon.take() {
                 self.close_pseudoconsole_off_thread(hpcon);
             }
@@ -1704,12 +1590,6 @@ impl Terminal {
     // IOReader callbacks
     pub(crate) fn on_reader_done(&self) {
         bun_output::scoped_log!(Terminal, "onReaderDone");
-        // R-2: `&self` (no `noalias`) + `Cell<Flags>` makes the prior
-        // `black_box`-launder unnecessary — the post-`call_exit_callback`
-        // `flags` load is a fresh `Cell::get()` that LLVM cannot fold across
-        // the re-entrant JS call (UnsafeCell suppresses the alias assumption).
-        // EOF from master - downgrade to weak ref to allow GC
-        // Skip JS interactions if already finalized (happens when close() is called during finalize)
         if !self.flags.get().contains(Flags::FINALIZED) {
             self.update_flags(|f| f.remove(Flags::CONNECTED));
             self.this_value.with_mut(|v| v.downgrade());
@@ -1725,10 +1605,6 @@ impl Terminal {
 
     pub(crate) fn on_reader_error(&self, err: &sys::Error) {
         bun_output::scoped_log!(Terminal, "onReaderError: {:?}", err);
-        // R-2: see `on_reader_done` — `&self` + `Cell<Flags>` replaces the
-        // prior `black_box` launder.
-        // Error - downgrade to weak ref to allow GC
-        // Skip JS interactions if already finalized
         if !self.flags.get().contains(Flags::FINALIZED) {
             self.update_flags(|f| f.remove(Flags::CONNECTED));
             self.this_value.with_mut(|v| v.downgrade());
@@ -1799,10 +1675,6 @@ impl Terminal {
         };
 
         let global_this = self.global();
-        // allocator.dupe(u8, chunk) — Zig recovered from OOM here (logged + `return true`
-        // to keep reading). Replicate with try_reserve so a transient OOM on a large
-        // chunk doesn't abort the process.
-        // PERF(port): was explicit dupe + MarkedArrayBuffer.fromBytes; preserving.
         let mut v: Vec<u8> = Vec::new();
         if v.try_reserve_exact(chunk.len()).is_err() {
             bun_output::scoped_log!(
@@ -1852,13 +1724,6 @@ impl Terminal {
     }
 }
 
-/// `deinit` — NOT mapped to `impl Drop` because Terminal is an intrusive-refcounted
-/// `.classes.ts` m_ctx payload: destruction is driven by `deref_()` reaching zero,
-/// and the body calls `bun.destroy(this)` (frees its own allocation). Drop cannot
-/// express that. Kept as a free fn called from `deref_()`.
-///
-/// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-/// whose generated trait `destructor` upholds the sole-owner contract.
 fn deinit_and_destroy(this: *mut Terminal) {
     bun_output::scoped_log!(Terminal, "deinit");
     // SAFETY: caller is `deref_()` with ref_count == 0; `this` was heap-allocated.
@@ -1896,10 +1761,6 @@ impl BufferedReaderParent for Terminal {
         Self::from_parent_ptr(this).on_reader_error(&err)
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        // Delegate to the inherent `Terminal::loop_()` which is cfg-split:
-        // on Windows it projects `.uv_loop()` (the `*mut uv_loop_t` field of
-        // `WindowsLoop`), NOT a raw cast of the `bun_uws::Loop` wrapper —
-        // matching Terminal.zig `loop()` (`this.event_loop_handle.loop().uv_loop`).
         Self::from_parent_ptr(this).loop_().cast()
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {

@@ -24,17 +24,6 @@ use crate::css_values::resolution::Resolution;
 type CSSNumber = f32;
 type CSSInteger = i32;
 
-// ───────────────────────── QueryCondition trait ─────────────────────────
-// Implementors: MediaCondition, StyleQuery, ContainerCondition.
-// NOT SupportsCondition — its variant set {Not, And(Vec), Or(Vec), Declaration,
-// Selector, Unknown} and its `needs_parens(&Self)` / `b" not "` contract are
-// structurally different and must stay hand-rolled.
-//
-// `deep_clone` is intentionally NOT on this trait. The Zig precedent is ONE
-// reflective `css.implementDeepClone` (generics.zig); the Rust equivalent is
-// `#[derive(DeepClone)]` (generics.rs). The hand-expansions in callers exist
-// only because of derive blockers — fix the derive, not the trait.
-
 /// Trait modeling Zig's `ValidQueryCondition` comptime interface check.
 /// Any type that can appear as a node in a query-condition tree.
 pub trait QueryCondition: Sized + ToCss {
@@ -43,11 +32,6 @@ pub trait QueryCondition: Sized + ToCss {
     type Feature;
 
     fn parse_feature(input: &mut Parser) -> Result<Self>;
-    /// `parse_feature` with `ParserOptions` threaded — needed for the
-    /// `env()` arm of `MediaFeatureValue::parse_unknown`. Default impl
-    /// drops `options` so out-of-tree implementors (e.g.
-    /// `rules::container::{ContainerCondition,StyleQuery}`) keep compiling
-    /// until they opt in.
     fn parse_feature_with_options(
         input: &mut Parser,
         _options: &css::ParserOptions,
@@ -185,10 +169,6 @@ pub enum MediaType {
     Custom(*const [u8]),
 }
 
-// PORT NOTE: hand-rolled — derived PartialEq on `*const [u8]` compares
-// address+len, not byte content. Spec `MediaType.eql` compares slice bytes
-// (via `css.implementEql`); adjacent-@media merging (rules.zig) depends on
-// content equality across distinct arena offsets.
 impl PartialEq for MediaType {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -295,10 +275,6 @@ pub enum QueryFeature<FeatureId: FeatureIdTrait> {
     },
 }
 
-/// Comparison operator in a range media feature.
-// PORT NOTE: discriminants are power-of-two bitflags — Zig media_query.zig
-// bitwise-ORs `@intFromEnum(start_operator) | @intFromEnum(end_operator)` to
-// validate interval operator pairs. Do NOT use implicit 0..=4.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
 pub enum MediaFeatureComparison {
@@ -314,10 +290,6 @@ pub enum MediaFeatureComparison {
     LessThanEqual = 16,
 }
 
-/// [media feature value](https://drafts.csswg.org/mediaqueries/#typedef-mf-value).
-// PORT NOTE: `Debug` hand-rolled below — `Length` (calc tree) does not derive
-// `Debug`, but the `MediaCondition`/`QueryFeature` chain wants it for
-// diagnostics.
 #[derive(Clone)]
 pub enum MediaFeatureValue {
     /// A length value.
@@ -726,11 +698,6 @@ impl MediaQuery {
 
         match &self.media_type {
             MediaType::All => {
-                // We need to print "all" if there's a qualifier, or there's
-                // just an empty list of expressions.
-                //
-                // Otherwise, we'd serialize media queries like "(min-width:
-                // 40px)" in "all (min-width: 40px)", which is unexpected.
                 if self.qualifier.is_some() || self.condition.is_none() {
                     dest.write_str("all")?;
                 }
@@ -988,11 +955,6 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
         }
     }
 
-    /// Parses a media feature name. Returns `(name, legacy_comparator)` —
-    /// `legacy_comparator` is `Some` when the ident carried a `min-`/`max-`
-    /// prefix (lowered to `>=`/`<=`).
-    ///
-    /// Zig: `MediaFeatureName.parse`.
     pub(crate) fn parse(input: &mut Parser) -> Result<(Self, Option<MediaFeatureComparison>)> {
         use bun_core::strings;
         let ident = input.expect_ident_cloned()?;
@@ -1021,13 +983,6 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
                 None
             };
 
-        // PORT NOTE: Zig `allocPrint("-webkit-{s}", .{name})` then
-        // `parse_utility.parseString(.., FeatureId.parse)` — the re-tokenize is
-        // only to feed `DefineEnumProperty.parse` an ident token. Here
-        // `FeatureIdTrait::from_str` does the same case-insensitive table lookup
-        // directly, so a stack buffer suffices and the temp string is freed
-        // immediately (Zig asserts `FeatureId` is an enum for the same reason).
-        // PERF: stack buffer here?
         let mut webkit_buf: [u8; 64] = [0; 64];
         let final_name: &[u8] = if is_webkit {
             let len = 8 + name.len();
@@ -1212,10 +1167,6 @@ impl MediaFeatureValue {
             return Ok(MediaFeatureValue::Resolution(res));
         }
 
-        // PORT NOTE: Zig `input.tryParse(EnvironmentVariable.parse, .{})` left
-        // `options`/`depth` undefined (tryParse builds `ArgsTuple` and only
-        // fills index 0) — UB. Fixed here by threading the real `ParserOptions`
-        // down from `QueryFeature::parse` and passing `depth = 0`.
         if let Ok(env) = input.try_parse(|i| EnvironmentVariable::parse(i, options, 0)) {
             return Ok(MediaFeatureValue::Env(env));
         }
@@ -1265,18 +1216,6 @@ fn write_min_max<FeatureId: FeatureIdTrait>(
 
     dest.write_char(b')')
 }
-
-// ───────────────────────── deep_clone ─────────────────────────
-// Arena-aware `deep_clone` — port of Zig's per-type `deepClone(arena)`
-// bodies. Un-gated this round so `rules::dc::{media_list,query_feature}` can
-// route through real impls instead of `#[derive(Clone)]` passthroughs.
-//
-// PORT NOTE: written as **inherent** methods (not `#[derive(DeepClone)]`) to
-// match the Zig hand-written bodies exactly: Zig copies `name`/`qualifier`/
-// `media_type`/`operator` fields by value (they are `Copy`/arena-slice types
-// under the generics.zig "const strings" rule) and only recurses into the
-// allocating payloads (`Vec`, `Box`, `MediaFeatureValue`). The derive would
-// instead add a spurious `FeatureId: DeepClone<'bump>` where-bound.
 
 impl MediaList {
     /// Zig: `MediaList.deepClone` — element-wise clone of `media_queries`.
@@ -1408,10 +1347,6 @@ impl MediaFeatureValue {
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         use MediaFeatureValue as V;
         match self {
-            // Zig: `l.deepClone(arena)` — real `values::length::Length`
-            // owns a calc tree. The local `value_shims::Length` stand-in is a
-            // unit struct, so `Clone` is faithful until the calc lattice
-            // un-gates and the shim is replaced.
             V::Length(l) => V::Length(l.clone()),
             V::Number(n) => V::Number(*n),
             V::Integer(i) => V::Integer(*i),
@@ -1539,10 +1474,6 @@ impl MediaCondition {
     }
 }
 
-/// Parse a single query condition.
-///
-/// Forwarder kept for callers that don't yet thread `ParserOptions`
-/// (e.g. `rules::container`); routes through `ParserOptions::default(None)`.
 #[inline]
 pub fn parse_query_condition<C: QueryCondition>(
     input: &mut Parser,
@@ -1663,12 +1594,6 @@ fn parse_paren_block<C: QueryCondition>(
 }
 
 impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
-    /// Parse a media/container feature inside `(` `)`.
-    ///
-    /// Zig: `QueryFeature.parse` (media_query.zig:945).
-    ///
-    /// Forwarder kept for callers that don't yet thread `ParserOptions`
-    /// (e.g. `rules::container::ContainerCondition::parse_feature`).
     #[inline]
     pub(crate) fn parse(input: &mut Parser) -> Result<Self> {
         Self::parse_with_options(input, &css::ParserOptions::default(None))
@@ -1737,11 +1662,6 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
     ) -> Result<Self> {
         // We need to find the feature name first so we know the type.
         let start = input.state();
-        // PORT NOTE: Zig loops `MediaFeatureName.parse` then checks
-        // `isExhausted()` — but `expectIdent` does not advance on error, so
-        // the literal Zig body would spin on a non-ident token. The intent
-        // (matching lightningcss) is to *skip* tokens until the name is
-        // found; advance one token per failed attempt.
         let name: MediaFeatureName<FeatureId> = loop {
             if let Ok((name, legacy_op)) = input.try_parse(MediaFeatureName::<FeatureId>::parse) {
                 if legacy_op.is_some() {
@@ -1817,10 +1737,6 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
     }
 }
 
-/// Consumes an operation or a colon, or returns an error.
-///
-/// Zig: `consumeOperationOrColon` (media_query.zig:1103). Returns `Ok(None)`
-/// when a colon was consumed (and `allow_colon`); `Ok(Some(op))` for `<`/`>`/`=`.
 fn consume_operation_or_colon(
     input: &mut Parser,
     allow_colon: bool,

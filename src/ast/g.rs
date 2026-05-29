@@ -142,15 +142,6 @@ impl Default for ClassStaticBlock {
 }
 
 pub struct Property {
-    /// This is used when parsing a pattern that uses default values:
-    ///
-    ///   [a = 1] = [];
-    ///   ({a = 1} = {});
-    ///
-    /// It's also used for class fields:
-    ///
-    ///   class Foo { a = 1 }
-    ///
     pub initializer: Option<ExprNodeIndex>,
     pub kind: PropertyKind,
     pub flags: flags::PropertySet,
@@ -195,10 +186,6 @@ impl Property {
         self.class_static_block.as_deref()
     }
 
-    /// Mutable sibling of [`class_static_block_ref`]. Routes through
-    /// `StoreRef::DerefMut` (same arena contract: callers must not hold an
-    /// overlapping `&`/`&mut` to the same `ClassStaticBlock` — upheld by the
-    /// single-threaded visitor pass).
     #[inline]
     pub fn class_static_block_mut(&mut self) -> Option<&mut ClassStaticBlock> {
         self.class_static_block.as_deref_mut()

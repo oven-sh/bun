@@ -141,16 +141,8 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
     let mut response_buf = MutableString::init(1024)?;
 
-    // `print_buf` stays live on this frame until after `req.send_sync()`
-    // returns (Zig: `defer print_buf.deinit()`, npm.zig:25). `init_sync`
-    // borrows the URL/header buffers for the duration of the synchronous
-    // request only.
     let url = URL::parse(&print_buf);
 
-    // `headers.allocate()` set `content.ptr` to a valid `content.len`-byte
-    // allocation; `headers` outlives `req`. `written_slice()` is the safe
-    // nonnull-asref accessor over the set-once `Option<NonNull<u8>>` (returns
-    // `&[]` when unallocated, matching the previous `None => b""` arm).
     let header_buf: &[u8] = headers.content.written_slice();
 
     let mut req = AsyncHTTP::init_sync(
@@ -275,20 +267,10 @@ pub fn response_error<const OTP_RESPONSE: bool>(
 pub mod registry {
     use super::*;
 
-    // Single source of truth lives in `bun_install_types` (lower-tier crate so
-    // `ini`/`options_types` can read it without depending on the full package
-    // manager). Re-exported here as the same surface (`&str` const + `LazyLock`)
-    // so existing `Npm::Registry::DEFAULT_URL` / `*DEFAULT_URL_HASH` callers are
-    // untouched.
     pub const DEFAULT_URL: &str = bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL;
     pub static DEFAULT_URL_HASH: std::sync::LazyLock<u64> =
         std::sync::LazyLock::new(bun_install_types::NodeLinker::npm::Registry::default_url_hash);
 
-    // Zig: `ObjectPool(MutableString, MutableString.init2048, true, 8)`.
-    // `MutableString: ObjectPoolType` (init = init2048) is provided in
-    // bun_string; the `object_pool!` macro generates the per-monomorphization
-    // thread-local storage so `BodyPool::get()` doesn't hit `UnwiredStorage`'s
-    // `unreachable!()`.
     bun_collections::object_pool!(pub BodyPool: MutableString, threadsafe, 8);
 
     #[derive(Default, Clone)]
@@ -297,11 +279,6 @@ pub mod registry {
         // https://github.com/npm/npm-registry-fetch/blob/main/lib/auth.js#L96
         // base64("${username}:${password}")
         pub auth: Box<[u8]>,
-        // URL may contain these special suffixes in the pathname:
-        //  :_authToken
-        //  :username
-        //  :_password
-        //  :_auth
         pub url: OwnedURL,
         pub url_hash: u64,
         pub token: Box<[u8]>,
@@ -344,10 +321,6 @@ pub mod registry {
                 }
             }
 
-            // PORT NOTE: Zig's `URL.parse(registry.url)` borrows the input
-            // `[]const u8`; here `url` borrows the owned `registry_url` buffer
-            // for the duration of parsing. The final href is moved into
-            // `Scope.url: OwnedURL` (owned `Box<[u8]>`).
             let registry_url: Box<[u8]> = core::mem::take(&mut registry.url);
             let mut url = URL::parse(&registry_url);
             let mut auth: &[u8] = b"";
@@ -618,14 +591,6 @@ impl ExternVersionMap {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// MOVE_DOWN: `Negatable` / `NegatableEnum` / `NegatableExt` / `OperatingSystem`
-// / `Libc` / `Architecture` (and their name maps) now live in
-// `bun_install_types::resolver_hooks` so `bun_resolver` and `bun_install`
-// share ONE nominal type per name. Re-export the canonical definitions; only
-// `negatable_from_json` (which depends on `bun_ast::Expr`) stays here.
-// ──────────────────────────────────────────────────────────────────────────
-
 pub use bun_install_types::resolver_hooks::{
     Architecture, Libc, Negatable, NegatableEnum, NegatableExt, OperatingSystem,
 };
@@ -659,12 +624,6 @@ pub struct PackageVersion {
     // Splitting this into it's own array ends up increasing the final size a little bit.
     pub integrity: Integrity,
 
-    // Explicit padding so this struct has no implicit (uninitialized) padding
-    // bytes — `Serializer::write_array` reinterprets the whole slice as `&[u8]`,
-    // and reading uninitialized padding as `u8` is UB. With explicit `[u8; N]`
-    // fields, `Default` zero-fills them and every byte of the struct is
-    // initialized. Layout (size=240, align=8) is unchanged; see the
-    // `offset_of!` asserts below and `padding_checker.rs` for the contract.
     pub _padding_after_integrity: [u8; 3],
 
     /// "dependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#dependencies)
@@ -766,22 +725,12 @@ impl PackageVersion {
     }
 }
 
-// Layout pin (mirrors Zig `comptime { if (@sizeOf(Npm.PackageVersion) != 240) @compileError(...) }`).
-// `PackageVersion` is `std.mem.sliceAsBytes`-serialised into the on-disk
-// `.npm` manifest cache, so its size and field offsets are an ABI contract
-// with every Zig-built Bun that wrote a cache entry. A mismatch here means a
-// cross-runtime cache read will mis-slice — fail loudly at compile time
-// instead. (Full per-type asserts live in `padding_checker::layout_asserts`.)
 const _: () = assert!(
     core::mem::size_of::<PackageVersion>() == 240,
     "Npm.PackageVersion layout drifted from Zig spec (expected 240 bytes); \
      bump PackageManifest::Serializer::VERSION if intentional",
 );
 
-// Compile-time proof that the explicit `_padding_*` fields above leave no
-// implicit padding gaps in `PackageVersion` (so `&[PackageVersion] as &[u8]`
-// in `Serializer::write_array` reads only initialized bytes). Mirrors the
-// `NpmPackage` checks below and `padding_checker.rs`.
 const _: () = {
     use core::mem::{offset_of, size_of};
     // gap between `integrity` (size 65, align 1) and `dependencies` (align 4 → 68)
@@ -825,12 +774,6 @@ pub struct NpmPackage {
     /// "modified" in the JSON
     pub modified: SemverString,
     pub public_max_age: u32,
-    // Explicit padding so this struct has no implicit (uninitialized) padding
-    // bytes — `Serializer::write` reinterprets the whole struct as `&[u8]`,
-    // and reading uninitialized padding as `u8` is UB. With explicit `[u8; N]`
-    // fields, `Default` zero-fills them and every byte of the struct is
-    // initialized. Layout (size=120, align=8) is unchanged; see the
-    // `offset_of!` asserts below and `padding_checker.rs` for the contract.
     pub _padding_after_max_age: [u8; 4],
 
     pub name: ExternalString,
@@ -847,10 +790,6 @@ pub struct NpmPackage {
     pub _padding_tail: [u8; 7],
 }
 
-// Compile-time proof that the explicit `_padding_*` fields above leave no
-// implicit padding gaps in `NpmPackage` (so `&NpmPackage as &[u8]` reads only
-// initialized bytes). Mirrors the per-field-gap check documented in
-// `padding_checker.rs`.
 const _: () = {
     use core::mem::{offset_of, size_of};
     // gap between `public_max_age` (u32, ends at 28) and `name` (align 8 → 32)
@@ -909,11 +848,6 @@ pub mod package_manifest {
     pub struct Serializer;
 
     impl Serializer {
-        // - v0.0.3: added serialization of registry url. it's used to invalidate when it changes
-        // - v0.0.4: fixed bug with cpu & os tag not being added correctly
-        // - v0.0.5: added bundled dependencies
-        // - v0.0.6: changed semver major/minor/patch to each use u64 instead of u32
-        // - v0.0.7: added version publish times and extended manifest flag for minimum release age
         pub const VERSION: &'static str = "bun-npm-manifest-cache-v0.0.7\n";
         const HEADER_BYTES: &'static str =
             concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.7\n");
@@ -1048,14 +982,6 @@ pub mod package_manifest {
             // PERF(port): was stack-fallback alloc — profile if hot.
             let mut buffer: Vec<u8> = Vec::with_capacity(this.byte_length(scope) + 64);
             Serializer::write(this, scope, &mut buffer)?;
-            // --- Perf Improvement #1 ----
-            // Do not forget to buffer writes!
-            //
-            // (benchmark output elided — see npm.zig)
-            // --- Perf Improvement #2 ----
-            // GetFinalPathnameByHandle is very expensive if called many times
-            // We skip calling it when we are giving an absolute file path.
-            // This needs many more call sites, doesn't have much impact on this location.
             let mut realpath_buf = bun_paths::PathBuffer::uninit();
             // SAFETY: `crate::package_manager::get()` returns the live
             // singleton; `get_temporary_directory` only mutates its
@@ -1144,10 +1070,6 @@ pub mod package_manifest {
                         &mut realpath2_buf[..],
                         &[cache_dir_abs, outpath.as_bytes()],
                     );
-                // Zig spec discards the close error too — the renameat
-                // immediately below surfaces a usable error if the temp
-                // file is in a bad state, and on POSIX the close cannot
-                // fail for a regular-file fd we just wrote.
                 let _ = file.close();
                 bun_sys::renameat(
                     Fd::cwd(),
@@ -1183,14 +1105,6 @@ pub mod package_manifest {
                             let _ = bun_sys::unlinkat(tmpdir, tmp_path);
                         }
 
-                        // Zig (npm.zig:1128) matches `.OPNOTSUPP`, which on
-                        // Darwin is errno **45** (collapsed with NOTSUP). The
-                        // Rust `Errno::EOPNOTSUPP` resolves to 102 on Darwin,
-                        // so match `ENOTSUP` as well to keep the macOS
-                        // `renameat2(.exchange)` fallback reachable. On
-                        // Linux/FreeBSD the two names alias the same value,
-                        // so compare by equality (a `matches!` pattern would
-                        // flag the alias as unreachable).
                         let errno = err.get_errno();
                         if errno == bun_sys::Errno::EEXIST
                             || errno == bun_sys::Errno::ENOTEMPTY
@@ -1223,12 +1137,6 @@ pub mod package_manifest {
             Ok(())
         }
 
-        /// We save into a temporary directory and then move the file to the cache directory.
-        /// Saving the files to the manifest cache doesn't need to prevent application exit.
-        /// It's an optional cache.
-        /// Therefore, we choose to not increment the pending task count or wake up the main thread.
-        ///
-        /// This might leave temporary files in the temporary directory that will never be moved to the cache directory. We'll see if anyone asks about that.
         pub fn save_async(
             this: &PackageManifest,
             scope: &registry::Scope,
@@ -1255,14 +1163,6 @@ pub mod package_manifest {
                     Box::new(init)
                 }
 
-                // Safe-fn: only ever invoked by `ThreadPool` via the `callback`
-                // fn-pointer with the `*mut PoolTask` we registered below
-                // (`heap::into_raw(SaveTask { task: .. })`). The thread-pool
-                // contract — not the Rust caller — guarantees `task` is live
-                // and points at `SaveTask.task`, so the precondition is
-                // discharged locally (matches `HardLinkWindowsInstallTask::
-                // run_from_thread_pool` in PackageInstall.rs). Safe `fn`
-                // coerces to the `unsafe fn(*mut Task)` field type.
                 pub(crate) fn run(task: *mut PoolTask) {
                     use bun_threading::IntrusiveWorkTask as _;
                     let _tracer = bun_core::perf::trace("PackageManifest.Serializer.save");
@@ -1969,19 +1869,8 @@ impl PackageManifest {
         public_max_age: u32,
         is_extended_manifest: bool,
     ) -> Result<Option<PackageManifest>, Error> {
-        // TODO(port): narrow error set
-        // `bun_ast::Source::init_path_string` accepts borrowed `&[u8]` via
-        // `IntoStr`; the Source only lives for the duration of this function,
-        // so pass the caller's buffers through directly without manufacturing
-        // `'static` references here (PORTING.md §Forbidden lifetime extension).
         let source = bun_ast::Source::init_path_string(expected_name, json_buffer);
         initialize_store();
-        // TODO(port): bun.ast.Stmt.Data.Store.memory_allocator.?.pop() — Zig
-        // pushed/popped the AST arena around the parse so the JSON AST is
-        // bulk-freed on return. `initialize_mini_store` already does the push;
-        // the pop is handled by resetting on the next call. Wire an explicit
-        // RAII guard once `ASTMemoryAllocator::pop` is exposed.
-        // PERF(port): was arena bulk-free — profile if hot.
         let bump = bun_alloc::Arena::new();
         let json = match JSON::parse_utf8(&source, log, &bump) {
             Ok(j) => j,
@@ -2250,10 +2139,6 @@ impl PackageManifest {
                     }
                 }
 
-                // pnpm/yarn synthesise an implicit `"*"` optional peer for
-                // entries that appear in `peerDependenciesMeta` but not in
-                // `peerDependencies`. Reserve space for them; the build
-                // pass below appends them after the declared peer deps.
                 if let Some(meta) = prop
                     .value
                     .as_ref()
@@ -2379,18 +2264,6 @@ impl PackageManifest {
         string_builder.cap *= 2;
 
         string_builder.allocate()?;
-
-        // PORT NOTE: Zig zeroed the freshly allocated buffer for determinism;
-        // `Builder::allocate` already produces a zeroed `Box<[u8]>`.
-        //
-        // Zig kept a single `string_buf` slice over the builder's backing
-        // allocation for the rest of the function. In Rust that would alias a
-        // `&[u8]` across the `&mut self` borrows taken by every `append` below
-        // (Stacked Borrows UB even though the allocation never moves). Instead
-        // we re-borrow `string_builder.allocated_slice()` at each read site —
-        // `Builder::append*` only writes in-place and never grows/replaces
-        // `ptr`, so the slice contents are stable, and NLL releases each
-        // short-lived borrow before the next `append`.
 
         // Using `expected_name` instead of the name from the manifest. Custom registries might
         // have a different name than the dependency name in package.json.
@@ -2572,13 +2445,6 @@ impl PackageManifest {
                                         };
                                         let mut group_i: u32 = 0;
 
-                                        // PORT NOTE: Zig wrote through a raw `*[len]ExternalString`
-                                        // sub-pointer. The boxed slice is fully initialised
-                                        // (`vec![Default; n].into_boxed_slice()` in the counting
-                                        // pass) and `ExternalString: Copy`, so plain absolute
-                                        // indexing at `group_start + group_i` is the safe
-                                        // equivalent — no `from_raw_parts`/`.add()` needed, and
-                                        // the `prev` read at a disjoint index needs no split.
                                         for bin_prop in obj.properties.slice() {
                                             let Some(k) = bin_prop
                                                 .key
@@ -2689,13 +2555,6 @@ impl PackageManifest {
                         .expect("infallible: prop has value")
                         .as_property(b"directories")
                     {
-                        // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#directoriesbin
-                        // Because of the way the bin directive works,
-                        // specifying both a bin path and setting
-                        // directories.bin is an error. If you want to
-                        // specify individual files, use bin, and for all
-                        // the files in an existing bin directory, use
-                        // directories.bin.
                         if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
                             if let Some(str_) = bin_prop.expr.as_string(&bump) {
                                 if !str_.is_empty() {
@@ -2769,18 +2628,6 @@ impl PackageManifest {
                 // PERF(port): was comptime monomorphization (`inline for`) — profile if hot.
                 for (group_idx, pair) in DEPENDENCY_GROUPS.iter().enumerate() {
                     let is_peer = pair.prop == b"peerDependencies";
-                    // For peer deps, fall through with an empty `items`
-                    // slice when `peerDependencies` is absent so that
-                    // `peerDependenciesMeta`-only entries (synthesised
-                    // below) still get a build pass. The fallthrough must
-                    // stay scoped to packages that actually have a
-                    // `peerDependenciesMeta`: the body sets
-                    // `package_version.bundled_dependencies` from this
-                    // iteration's slice of `bundled_deps_buf`, so an
-                    // unconditional empty pass would clobber the value the
-                    // `dependencies` iteration just produced.
-                    // PORT NOTE: hoist `versioned_deps` so the borrowed
-                    // `obj.properties.slice()` outlives the labelled block.
                     let versioned_deps = prop
                         .value
                         .as_ref()
@@ -2955,11 +2802,6 @@ impl PackageManifest {
                         }
 
                         if is_peer {
-                            // Append meta-only optional peers (declared
-                            // in `peerDependenciesMeta` but not in
-                            // `peerDependencies`) as `"*"` versions.
-                            // pnpm/yarn do this; webpack relies on it
-                            // to make `webpack-cli` reachable.
                             if let Some(meta) = prop
                                 .value
                                 .as_ref()
@@ -3025,23 +2867,10 @@ impl PackageManifest {
                         }
 
                         let count = i;
-                        // The peer slice was over-reserved by the
-                        // number of `peerDependenciesMeta` entries (so
-                        // meta-only synthesised peers had room); trim
-                        // to what was actually written before the
-                        // ExternalStringList offsets are computed.
                         let this_names = &all_extern_strings[names_base..names_base + count];
                         let this_versions =
                             &version_extern_strings[values_base..values_base + count];
 
-                        // Bundled deps are matched against the
-                        // `dependencies`/`optionalDependencies` groups
-                        // only; the peer pass never adds to
-                        // `bundled_deps_buf`. With the meta-only
-                        // synthesis above the peer body now runs even
-                        // when `peerDependencies` is absent, so writing
-                        // here would clobber the value the dependencies
-                        // pass already produced with an empty slice.
                         if !is_peer {
                             if bundle_all_deps {
                                 package_version.bundled_dependencies =
@@ -3241,18 +3070,6 @@ impl PackageManifest {
             .len()
             .max(all_prerelease_versions_range.len());
 
-        // Sort the list of packages in a deterministic order
-        // Usually, npm will do this for us.
-        // But, not always.
-        // See https://github.com/oven-sh/bun/pull/6611
-        //
-        // The tricky part about this code is we need to sort two different arrays.
-        // To do that, we create a 3rd array, containing indices into the other 2 arrays.
-        // Creating a 3rd array is expensive! But mostly expensive if the size of the integers is large
-        // Most packages don't have > 65,000 versions
-        // So instead of having a hardcoded limit of how many packages we can sort, we ask
-        //    > "How many bytes do we need to store the indices?"
-        // We decide what size of integer to use based on that.
         let how_many_bytes_to_store_indices: usize = match max_versions_count {
             // log2(0) == Infinity
             0 => 0,
@@ -3285,13 +3102,6 @@ impl PackageManifest {
                     let indices = &mut all_indices[..len];
                     let cloned_packages = &mut all_cloned_packages[..len];
                     let cloned_versions = &mut all_cloned_versions[..len];
-                    // `ExternalSlice` offsets index into `versioned_packages` /
-                    // `all_semver_versions`, both fully-initialised `Box<[T]>`s
-                    // (created via `vec![Default; n].into_boxed_slice()` above) —
-                    // safe slice indexing replaces the `from_raw_parts_mut`
-                    // reconstruction Zig's `@constCast(release.values.get(..))`
-                    // forced. The two boxes are distinct allocations so the two
-                    // `&mut` borrows do not overlap.
                     let versioned_packages_ =
                         &mut versioned_packages[release.values.off as usize..][..len];
                     let semver_versions_ =
@@ -3328,10 +3138,6 @@ impl PackageManifest {
 
                     if cfg!(debug_assertions) {
                         if cloned_versions.len() > 1 {
-                            // Sanity check:
-                            // When reading the versions, we iterate through the
-                            // list backwards to choose the highest matching
-                            // version
                             let first = semver_versions_[0];
                             let second = semver_versions_[1];
                             let order = second.order(first, string_bytes, string_bytes);
@@ -3357,10 +3163,6 @@ impl PackageManifest {
         if extern_strings_remaining + tarball_urls_count > 0 {
             let src_len = tarball_url_strings_cursor;
             if src_len > 0 {
-                // `ExternalString` is `Copy` POD — Zig used `@memcpy` over
-                // `sliceAsBytes` views here; an element-wise `copy_from_slice`
-                // is bit-identical and lets us drop the `from_raw_parts`
-                // byte-view reconstruction over the same boxed slices.
                 debug_assert!(all_extern_strings.len() - extern_strings_cursor >= src_len);
                 all_extern_strings[extern_strings_cursor..extern_strings_cursor + src_len]
                     .copy_from_slice(&all_tarball_url_strings[..src_len]);

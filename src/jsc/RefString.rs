@@ -55,10 +55,6 @@ impl RefString {
         self.leak()
     }
 
-    /// Single audited deref of the set-once `impl_` backref so `ref_` /
-    /// `deref` below are safe callers. `impl_` is assigned at construction
-    /// from a live refcounted `WTF::StringImpl*` and remains valid until
-    /// `destroy` consumes `self`.
     #[inline]
     fn wtf_impl(&self) -> &bun_core::WTFStringImplStruct {
         // SAFETY: `impl_` is a live `WTF::StringImpl*` for the lifetime of
@@ -105,11 +101,6 @@ impl RefString {
                 on_before_deinit((*this).ctx.unwrap().as_ptr(), this);
             }
 
-            // `allocator.free(this.leak())` — reconstitute the owned byte slice
-            // and drop it. Build the fat `*mut [u8]` as a raw pointer (no `&mut`
-            // materialized — the WTF::StringImpl finalizer may still hold a
-            // shared view at this instant, so forming `&mut [u8]` would assert
-            // exclusivity we cannot prove).
             drop(bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(
                 (*this).ptr.cast_mut(),
                 (*this).len,

@@ -5,10 +5,6 @@
 // Minimal hand-stubbed `api` namespace so Context.rs / BundleEnums.rs
 // struct fields type-check. Full body arrives when peechy emits .rs.
 
-/// Port of `schema.Writer(WritableStream)` (schema.zig:169) specialised to a
-/// `Vec<u8>` sink — the only instantiation reachable from Rust today
-/// (`js_parser::runtime::Base64FallbackMessage::fmt`). The full generic shape
-/// arrives with the peechy-generated body.
 pub struct Writer<'a> {
     writable: &'a mut Vec<u8>,
 }
@@ -114,25 +110,6 @@ pub mod api {
         };
     }
 
-    /// schema.zig:1639 — peechy `message TransformOptions`. Full field set,
-    /// hand-expanded so `bundler::options::BundleOptions::from_api` and the
-    /// bunfig/CLI parsers can un-gate. Field order mirrors the Zig struct
-    /// exactly so side-by-side diff stays readable.
-    ///
-    /// Type map (matches the convention block below):
-    ///   `?T`                  → `Option<T>`
-    ///   `[]const u8`          → `Box<[u8]>`
-    ///   `?[]const u8`         → `Option<Box<[u8]>>`
-    ///   `[]const []const u8`  → `Vec<Box<[u8]>>`
-    ///   `?[:0]const u8`       → `Option<Box<[u8]>>`   (sentinel re-derived
-    ///                            at use-site; see Context.rs `// TODO(port):
-    ///                            owned ZStr repr` precedent)
-    ///
-    /// `Default` ⇔ `std.mem.zeroes(TransformOptions)` — every Option `None`,
-    /// every slice empty, every scalar `0`/`false`.
-    ///
-    /// LIFECYCLE: `BundleOptions::from_api` parks this in an `Arc` whose final ref
-    /// lives on the process-lifetime `Transpiler` (LSan-rooted in build_command.rs).
     #[derive(Clone, Debug, Default)]
     pub struct TransformOptions {
         /// jsx
@@ -234,10 +211,6 @@ pub mod api {
     }
 
     impl NpmRegistry {
-        /// `NpmRegistry.dupe(allocator)` — Zig packs all five strings into one
-        /// contiguous allocation and reslices. Rust can't hand back five
-        /// `Box<[u8]>` views into one buffer without leaking, so this is a
-        /// plain field-wise clone. PERF(port): could pack into a single buffer.
         #[inline]
         pub fn dupe(&self) -> NpmRegistry {
             self.clone()
@@ -258,17 +231,8 @@ pub mod api {
         List(Box<[Box<[u8]>]>),
     }
 
-    /// `NodeLinker` / `PnpmMatcher` are canonical in `bun_install_types`
-    /// (lower crate). Re-export so `BunInstall.node_linker` /
-    /// `BunInstall.hoist_pattern` and `bun_ini`'s callers all name the
-    /// same type.
     pub use bun_install_types::NodeLinker::{NodeLinker, PnpmMatcher};
 
-    /// schema.zig:2973 — `api.BunInstall`. Full field set, order-faithful.
-    /// `Default` ⇔ `std.mem.zeroes(Api.BunInstall)` (every field `None`/empty).
-    ///
-    /// No `Debug`/`Clone` derive: `NpmRegistryMap` wraps `StringArrayHashMap`
-    /// which currently provides neither.
     #[derive(Default)]
     pub struct BunInstall {
         /// default_registry
@@ -447,22 +411,6 @@ pub mod api {
         url = 7,
         internal = 8,
     }
-
-    // ─── peechy batch 2: hand-expanded for downstream wfs ────────────────
-    // Jsx / JsxRuntime / StringMap / EnvConfig / LoadedEnvConfig /
-    // LoadedRouteConfig / RouteConfig / FrameworkEntryPoint{,Type,Map,Message} /
-    // PackagesMode / CssInJsBehavior / LoaderMap / LoadedFramework.
-    //
-    // String mapping (matches Context.rs convention — proc-lifetime borrows
-    // ported as owned heap):
-    //   `[]const u8`          → `Box<[u8]>`
-    //   `[]const []const u8`  → `Vec<Box<[u8]>>`  (or `Box<[Box<[u8]>]>` where
-    //                            downstream `.clone()` target requires it)
-    //
-    // Enum variant names are PascalCase (idiomatic Rust, matches downstream
-    // callers in bundler/options.rs + router/lib.rs); `_none` retained as the
-    // zero-tag default where the Zig schema has it. Full peechy `.rs` emit
-    // will replace this block wholesale.
 
     /// schema.zig:771 — `enum(u8)` (open). Kept closed.
     #[repr(u8)]

@@ -71,20 +71,6 @@ const PX_PER_Q: f32 = PX_PER_CM / 40.0;
 const PX_PER_PT: f32 = PX_PER_IN / 72.0;
 const PX_PER_PC: f32 = PX_PER_IN / 6.0;
 
-// ──────────────────────────────────────────────────────────────────────────
-// LengthValue
-//
-// The Zig original is a `union(enum)` with ~50 variants, each carrying a single
-// `CSSNumber` (f32). Nearly every method iterates `std.meta.fields(@This())` /
-// `bun.meta.EnumFields(@This())` to dispatch by tag — Zig comptime reflection.
-//
-// Per PORTING.md §"Comptime reflection": >8 variants → small macro generator.
-// `define_length_units!` generates the enum plus the handful of per-variant
-// dispatch helpers (`value()`, `unit()`, `from_unit_ci()`, `map_value()`,
-// `try_same_unit_op()`, `feature()`); all higher-level methods are then written
-// in terms of those, keeping the logic 1:1 with the Zig.
-// ──────────────────────────────────────────────────────────────────────────
-
 macro_rules! define_length_units {
     (
         $(
@@ -650,12 +636,6 @@ impl Length {
     }
 }
 
-// ─── protocol-trait impls for the calc lattice ────────────────────────────
-// These wire `LengthValue`/`Angle` into `DimensionPercentage<D>`'s bound set
-// (`protocol::{Zero,MulF32,TryAdd,TrySign,TryMap,TryOp,PartialCmp,Parse,
-// ToCss,IsCompatible}`). All forward to the inherent methods above; once
-// `crate::generics::parse_tocss_numeric_gated` un-gates these collapse into
-// blanket impls there.
 impl protocol::Zero for LengthValue {
     #[inline]
     fn zero() -> Self {
@@ -699,11 +679,6 @@ impl protocol::TryMap for LengthValue {
 impl protocol::TryOp for LengthValue {
     #[inline]
     fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
-        // PORT NOTE: `LengthValue::try_op` takes a 2-arg closure (ctx folded
-        // in by caller); the `protocol::TryOp` shape passes `C` by-value with
-        // no `Copy` bound, so we can't capture `ctx` in an `Fn` closure that
-        // might be called more than once. Inline the same-unit + px-convert
-        // dispatch here so `f` is invoked exactly once on the chosen path.
         if core::mem::discriminant(self) == core::mem::discriminant(rhs) {
             let v = f(ctx, self.value(), rhs.value());
             return Some(self.map_value(|_| v));

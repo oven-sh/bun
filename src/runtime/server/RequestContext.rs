@@ -14,16 +14,6 @@ use crate::webcore::{
     Request, Response, blob::SizeType as BlobSizeType, body, readable_stream, request, response,
 };
 
-/// Q: Why is this needed?
-/// A: The dev server needs to attach its own callback when the request is
-///    aborted.
-///
-/// Q: Why can't the dev server just call `.setAbortHandler(...)` then?
-/// A: It can't, because that is *already* called by the RequestContext, setting
-///    the callback and the user data context pointer.
-///
-///    If it did, it would *overwrite* the user data context pointer (this
-///    is what it did before), causing segfaults.
 pub struct AdditionalOnAbortCallback {
     pub cb: fn(*mut c_void),
     pub data: NonNull<c_void>,
@@ -36,18 +26,6 @@ impl AdditionalOnAbortCallback {
     }
 }
 
-// PORT NOTE (transport selection): Zig `NewRequestContext` is a comptime
-// type-function over `(ssl_enabled, debug_mode, ThisServer, http3)` and picks
-// `Resp = uws.H3.Response | uws.NewApp(ssl).Response` / `Req = uws.H3.Request |
-// uws.Request` at comptime. Stable Rust cannot drive an associated type from a
-// const-generic `bool` without specialization, and an early `Transport`
-// helper-trait approach forced `where TransportFor<SSL,H3>: Transport` bounds
-// onto every generic that named `RequestContext` (which Rust then *cannot*
-// discharge for a generic `const SSL: bool` — only the four concrete combos
-// have impls). So instead the `resp` field stores `uws::AnyResponse` (a Copy
-// enum over the three concrete handles) and dispatches at runtime — same shape
-// as `AnyRequestContext` / `AnyServer`. The const params still pick which
-// variant `create()` constructs and gate H3-specific code paths.
 pub type Req<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
 pub type Resp<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
 
@@ -97,10 +75,6 @@ impl AnyResponseExt for uws::AnyResponse {
     }
 }
 
-/// Back-reference to a stack-local "should this RequestContext defer its
-/// deinit until the JS callback returns" flag. The dispatching frame owns the
-/// `Cell<bool>`; `RequestContext` stores a `BackRef` to it (cleared before the
-/// frame unwinds), so reads/writes are safe `Cell` ops — no raw `*mut bool`.
 pub type DeferDeinitFlag = bun_ptr::BackRef<core::cell::Cell<bool>>;
 
 // `jsc.WebCore.HTTPServerWritable(ssl_enabled, http3)` — comptime type fn.
@@ -142,12 +116,6 @@ pub struct RequestContext<
     // TODO(port): allocator field deleted — global mimalloc per PORTING.md §Allocators.
     pub req: Option<*mut Req<SSL_ENABLED, HTTP3>>,
     pub request_weakref: request::WeakRef,
-    // PORT NOTE: Zig `?*AbortSignal`. `Arc<AbortSignal>` was wrong —
-    // `AbortSignal` is an opaque ZST FFI handle; an `Arc` of a ZST never owns
-    // the C++ allocation. Store the raw pointer. The request holds TWO counts:
-    // the intrusive C++ `RefPtr` (+1 from `AbortSignal::new()`/`ref_()`) and a
-    // pending-activity count for GC visibility. Both are released together via
-    // `shim::signal_release` in `on_abort`/`finalize_without_deinit`.
     pub signal: Option<NonNull<AbortSignal>>,
     pub method: Method,
     /// Owned `+1` ref on a C++ `CookieMap` (taken in `set_cookies`, released
@@ -158,20 +126,9 @@ pub struct RequestContext<
 
     pub upgrade_context: Option<*mut WebSocketUpgradeContext>,
 
-    /// We can only safely free once the request body promise is finalized
-    /// and the response is rejected
-    // TODO(port): bare JSValue heap field — kept alive via manual protect()/unprotect()
-    // (response_protected flag); revisit bun_jsc::Strong in Phase B.
     pub response_jsvalue: JSValue,
     pub ref_count: u8,
 
-    /// Weak: for plain Blob/InternalBlob bodies the Response JSValue is
-    /// not protected (hot path), so GC may finalize it while we're parked
-    /// on tryEnd() backpressure. onAbort / handleResolveStream /
-    /// handleRejectStream only use this for best-effort readable-stream
-    /// cleanup and safely observe null instead of UAF. File/.Locked
-    /// bodies still protect() response_jsvalue, so the pointer stays
-    /// valid for renderMetadata() on those paths.
     pub response_weakref: response::WeakRef,
     pub blob: AnyBlob,
 
@@ -201,12 +158,6 @@ pub struct RequestContext<
     /// When the response body is a temporary value
     pub response_buf_owned: Vec<u8>,
 
-    /// Defer finalization until after the request handler task is completed?
-    ///
-    /// BORROW_PARAM: points at a `Cell<bool>` on the dispatching frame's
-    /// stack. `BackRef` encodes the outlives-holder invariant (the field is
-    /// always cleared before that frame returns) so reads/writes are safe
-    /// `Cell::get`/`set` instead of raw `*mut bool` deref.
     pub defer_deinit_until_callback_completes: Option<DeferDeinitFlag>,
 
     pub additional_on_abort: Option<AdditionalOnAbortCallback>,
@@ -240,10 +191,6 @@ where
     }
 }
 
-// ─── per-request state machine bodies ────────────────────────────────────────
-// Everything below until the helper structs at the bottom is the request
-// state machine: render(), on_abort(), on_resolve(), do_render_*, sendfile,
-// stream handling, error handling.
 use bun_collections::VecExt;
 use bun_core::Output;
 use bun_http_types as HTTP;
@@ -280,13 +227,6 @@ use crate::webcore::blob::BlobExt as _;
 use crate::webcore::{Blob, ReadableStream, body as Body, s3 as S3};
 use bun_jsc::SysErrorJsc as _;
 
-/// RAII: releases one intrusive ref on a [`RequestContext`] at scope exit.
-///
-/// Replaces the Zig `defer ctx.deref()` pattern in promise-callback host
-/// functions — `NativePromiseContext::take` hands back a +1 ref, and the
-/// callback must drop it on every exit path. Holds the raw pointer (not
-/// `&mut`) so the body can keep using its own `&mut Self` view without
-/// borrowck conflict; the `&mut` is formed only at drop time.
 struct RequestContextRef<ThisServer, const SSL: bool, const DBG: bool, const H3: bool>(
     *mut RequestContext<ThisServer, SSL, DBG, H3>,
 )
@@ -329,10 +269,6 @@ unsafe fn as_response(value: JSValue) -> Option<&'static mut Response> {
     })
 }
 
-// ─── sibling-subtree shims ───────────────────────────────────────────────────
-// These forward to methods that exist in webcore/ but are currently inside
-// impl blocks that fail to compile (codegen gc-slot stubs, opaque AbortSignal,
-// duplicate InternalJSEventCallback). Adapt on this side per phase-d rules.
 mod shim {
     use super::*;
 
@@ -349,10 +285,6 @@ mod shim {
     }
     #[inline]
     pub(super) fn signal_aborted(s: NonNull<AbortSignal>) -> bool {
-        // `signal` is kept alive by the intrusive C++ refcount (+1 from
-        // `AbortSignal::new()` / `ref_()`) plus `pending_activity_ref()` until
-        // `signal_release` drops both — satisfies the `BackRef` outlives-holder
-        // invariant for the duration of this call.
         bun_ptr::BackRef::from(s).aborted()
     }
     #[inline]
@@ -364,11 +296,6 @@ mod shim {
         // See `signal_aborted` — counted ref keeps pointee live.
         bun_ptr::BackRef::from(s).signal(g, r)
     }
-    /// Release BOTH refcounts the request holds on its AbortSignal, mirroring
-    /// the Zig `defer { signal.pendingActivityUnref(); signal.unref(); }` pair.
-    /// `pending_activity_unref()` drops the GC-visibility count and `unref()`
-    /// drops the intrusive C++ `RefPtr` count taken at creation. `s` must not
-    /// be dereferenced after this call.
     #[inline]
     pub(super) fn signal_release(s: NonNull<AbortSignal>) {
         // See `signal_aborted`. Order matches Zig: pending-activity first,
@@ -412,31 +339,14 @@ mod shim {
     }
     #[inline]
     pub(super) fn byte_stream_unpipe(s: NonNull<ByteStream>) {
-        // The lone caller has just `take()`n the pointer out of
-        // `self.byte_stream`; the allocation is kept alive by
-        // `response_body_readable_stream_ref` (BackRef invariant: pointee
-        // outlives this temporary). R-2: `unpipe_without_deref` takes `&self`
-        // (interior-mutable `JsCell<Pipe>`), so shared deref is sufficient.
         bun_ptr::BackRef::from(s).unpipe_without_deref()
     }
 }
-// `Api::FallbackMessageContainer`/`JsException`/`Problems`/`Fallback::render_backend`
-// live in `bun_options_types::schema::api` + `bun_ast::runtime`; both are
-// still being filled in by concurrent ports. The DEBUG_MODE error-page paths
-// that use them stay ``-gated below.
 
 use bun_options_types::schema::api as Api;
 
 use bun_js_parser::parser::Runtime::Fallback;
 
-/// PORT NOTE: `Api.JsException` is split across two crates in the Rust port —
-/// `bun_jsc::schema_api::JsException` (carries `stack`, used by
-/// `VirtualMachine::run_error_handler`) and `bun_options_types::schema::api::
-/// JsException` (peechy-encodable, `stack` omitted to break the dep cycle). In
-/// Zig these are the *same* struct, so `runErrorHandler` populates the list and
-/// `Problems.exceptions` consumes it directly. Bridge the two here so the
-/// fallback page actually carries the captured exceptions instead of an empty
-/// array (react-response.test.ts asserts `exceptions[0].message`).
 fn jsc_exceptions_to_api(list: jsc::ExceptionList) -> Vec<Api::JsException> {
     list.into_iter()
         .map(|ex| Api::JsException {
@@ -455,20 +365,6 @@ bun_core::declare_scope!(ReadableStream, visible);
 macro_rules! ctx_log { ($($t:tt)*) => { bun_core::scoped_log!(RequestContext, $($t)*) }; }
 macro_rules! stream_log { ($($t:tt)*) => { bun_core::scoped_log!(ReadableStream, $($t)*) }; }
 
-/// Per-monomorphization C-ABI shim table for the four promise-reaction host
-/// fns. Zig's `toJSHostFn(onResolve)` mints a fresh `extern fn` per comptime
-/// instantiation **and `@export`s the same pointer**, so the value passed to
-/// `then_with_value` is identical to the `Bun__HTTPRequestContext*__on*`
-/// symbol that C++'s `GlobalObject::promiseHandlerID` compares against.
-///
-/// In Rust the `#[no_mangle]` exports cannot live on a generic fn, so they are
-/// emitted as concrete wrappers by `request_ctx_exports!` below. The trait
-/// impls — also emitted by that macro — point at those *exported* wrappers
-/// (not the inner generic shims), so `Self::ON_RESOLVE` and the C++ side agree
-/// on the function-pointer identity and `promiseHandlerID` resolves.
-///
-/// PORT NOTE (layering): expressed as a trait (not inherent consts) so
-/// downstream `where`-clauses that already name it keep type-checking.
 pub trait RequestContextHostFns {
     const ON_RESOLVE: bun_jsc::JSHostFn;
     const ON_REJECT: bun_jsc::JSHostFn;
@@ -476,10 +372,6 @@ pub trait RequestContextHostFns {
     const ON_REJECT_STREAM: bun_jsc::JSHostFn;
 }
 
-// Plain safe Rust helpers — only ever called Rust→Rust by the `#[no_mangle]`
-// ABI wrappers in `request_ctx_exports!`, so they need no `extern` ABI and
-// have no caller preconditions (bodies use safe `opaque_deref`). The wrappers
-// carry `#[bun_jsc::host_call]` for the C++-visible symbol.
 fn host_on_resolve<ThisServer, const SSL: bool, const DBG: bool, const H3: bool>(
     g: *mut JSGlobalObject,
     f: *mut CallFrame,
@@ -546,14 +438,6 @@ impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> RequestContex
 where
     ThisServer: ServerLike + 'static,
 {
-    // These consts must resolve to the *exported* `#[no_mangle]` symbols
-    // (`Bun__HTTPRequestContext*__on*`), not the inner generic
-    // `host_on_*::<..>` shims: the function-pointer value is what C++'s
-    // `GlobalObject::promiseHandlerID` compares against (ZigGlobalObject.cpp),
-    // and the exported wrapper has a different address from the generic it
-    // forwards to. The Zig spec gets this for free because `@export` re-labels
-    // the existing fn; in Rust we route through a const-fn lookup keyed on the
-    // (SSL, DEBUG, H3) tuple so the blanket impl can name concrete exports.
     const ON_RESOLVE: bun_jsc::JSHostFn = exported_host_fns(SSL, DBG, H3).0;
     const ON_REJECT: bun_jsc::JSHostFn = exported_host_fns(SSL, DBG, H3).1;
     const ON_RESOLVE_STREAM: bun_jsc::JSHostFn = exported_host_fns(SSL, DBG, H3).2;
@@ -567,17 +451,6 @@ where
 {
     const RESP_KIND: uws::ResponseKind = uws::ResponseKind::from(SSL_ENABLED, HTTP3);
 
-    /// Reborrow the owning server. `server` is a BACKREF (LIFETIMES.tsv): set
-    /// at construction in `init()` from the `NewServer` that owns the request
-    /// pool, never null while the `RequestContext` is live, and the server
-    /// outlives every `RequestContext` it allocates. Centralises the
-    /// per-call-site backref deref behind the `bun_ptr::BackRef` field.
-    ///
-    /// Returned lifetime is **decoupled** from `&self` (unbounded `'r`): the
-    /// server is not a sub-field of `RequestContext` (it owns the pool the
-    /// context lives in), so callers may hold `&ThisServer` across `&mut self`
-    /// reborrows of disjoint `RequestContext` fields — exactly the pattern the
-    /// raw `*const ThisServer` field was used for.
     #[inline]
     pub fn server<'r>(&self) -> &'r ThisServer {
         // SAFETY: BACKREF — `server` is `Some(non-null)` after `init()` and
@@ -587,12 +460,6 @@ where
         unsafe { &*self.server.expect("infallible: server bound").as_ptr() }
     }
 
-    /// Mutably borrow the pooled request-body slot, if attached.
-    ///
-    /// Returns an unbounded `&'r mut` because the slot is a separate
-    /// `HiveArray` allocation, **not** a sub-field of `*self`, so callers may
-    /// hold it across disjoint `&self`/`&mut self` reborrows of other
-    /// `RequestContext` fields (same pattern as [`server()`]).
     #[inline]
     fn request_body_mut<'r>(&mut self) -> Option<&'r mut Body::Value> {
         // SAFETY: R-2 invariant — the slot is shared with `Request.body` but
@@ -777,15 +644,6 @@ where
     }
 
     pub fn should_render_missing(&self) -> bool {
-        // If we did not respond yet, we should render missing
-        // To allow this all the conditions above should be true:
-        // 1 - still has a response (not detached)
-        // 2 - not aborted
-        // 3 - not marked completed
-        // 4 - not marked pending
-        // 5 - is the only reference of the context
-        // 6 - is not waiting for request body
-        // 7 - did not call sendfile
         ctx_log!(
             "RequestContext(0x{:x}).shouldRenderMissing {} {} {} {} {} {} {}",
             std::ptr::from_ref(self) as usize,
@@ -1330,10 +1188,6 @@ where
         // `RequestContext` user-data pointer registered with uWS.
         let this = unsafe { &mut *this };
         debug_assert!(this.resp.is_some());
-        // An HTTP/3 stream is destroyed once both sides FIN, so this also
-        // fires after a successful end(). HTTP/1 sockets persist for
-        // keep-alive, so the equivalent never happens there. Drop the
-        // pointer; everything else cleans up via the resolve/reject path.
         if HTTP3 {
             // SAFETY: FFI handle
             if resp.has_responded() {
@@ -1474,14 +1328,6 @@ where
             shim::signal_release(signal);
         }
 
-        // Case 1:
-        // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
-        // but we received nothing or the connection was aborted
-        // the promise is pending
-        // Case 2:
-        // User ignored the body and the connection was aborted or ended
-        // Case 3:
-        // Stream was not consumed and the connection was aborted or ended
         let _ = self.end_request_streaming(); // TODO: properly propagate exception upwards
 
         if let Some(stream) = self.byte_stream.take() {
@@ -1579,11 +1425,6 @@ where
         let write_offset: usize = write_offset_ as usize;
         debug_assert!(self.resp.is_some());
 
-        // The bytes always come from `self.response_buf_owned`; reading them
-        // through `&mut self` here (instead of taking a `&[u8]` parameter that
-        // aliases the same Vec) avoids holding a live shared borrow of the
-        // buffer across the `clear()` below — which would be UB under
-        // Stacked Borrows even though the slice is not read after the clear.
         let close_connection = self.should_close_connection();
         let total_len = self.response_buf_owned.len();
         let bytes = &self.response_buf_owned[total_len.min(write_offset)..];
@@ -1741,16 +1582,6 @@ where
                 .saturating_sub(self.sendfile.offset);
         }
 
-        // Honor an incoming Range: header for whole-file responses. We
-        // don't compose Range with a user-supplied .slice() because the
-        // Content-Range arithmetic gets ambiguous; the slice path keeps
-        // its existing slice-as-range behavior. `offset == 0` alone is
-        // insufficient — `Bun.file(p).slice(0, n)` has offset 0 — so we
-        // also check the size: an unsliced blob has either the unset-size
-        // sentinel or, if JS already read `.size`, the stat'd size; a
-        // `.slice(0, n)` blob has `n < stat_size`. Skip if the user
-        // already set Content-Range or a non-200 status — they're
-        // managing partial responses themselves.
         let user_handles_range = if let Some(r) = self.response_weakref.get() {
             r.status_code() != 200
                 || r.get_init_headers_mut()
@@ -1824,10 +1655,6 @@ where
             return;
         }
 
-        // FileResponseStream registers its own onAborted/onWritable with itself
-        // as userData. uWS keeps a single shared userData slot per response, so
-        // any later setAbortHandler()/onWritable() from this RequestContext would
-        // stomp it and hand FileResponseStream's callbacks a *RequestContext.
         self.flags.set_has_sendfile_ctx(true);
         self.flags.set_has_abort_handler(true);
         self.flags.set_has_marked_pending(true);
@@ -1905,10 +1732,6 @@ where
         Self::handle_first_stream_write(unsafe { bun_ptr::callback_ctx::<Self>(ctx) });
     }
 
-    /// Tear down a heap `ResponseStreamJSSink` allocated by `do_render_stream`.
-    /// Mirrors Zig `response_stream.detach(); response_stream.sink.destroy()` —
-    /// JSSink<T> is `repr(transparent)` so the inner-ptr free matches the
-    /// outer allocation.
     fn destroy_sink(ptr: NonNull<ResponseStreamJSSink<SSL_ENABLED, HTTP3>>) {
         // `ptr` was `heap::alloc`'d in do_render_stream and is being consumed
         // exactly once here. `JSSink<T>` is repr(transparent), so the inner
@@ -2027,13 +1850,6 @@ where
             return;
         }
 
-        // A fully-synchronous ReadableStream can drain through writeBytes
-        // and reach endFromJS() inside assignToStream(). If tryEnd() then
-        // hits transport backpressure (common on QUIC right after the
-        // HEADERS frame), the sink parks a pending_flush promise and
-        // registers onWritable, but assignToStream() itself returns
-        // undefined. Surface that promise here so the request waits for
-        // the drain instead of falling through to the cancel path below.
         let mut effective_result = assignment_result;
         if effective_result.is_empty_or_undefined_or_null() {
             if let Some(flush) = response_stream.sink.pending_flush {
@@ -2373,10 +2189,6 @@ where
                 if let Some(transfer_encoding) =
                     headers.fast_get(jsc::HTTPHeaderName::TransferEncoding)
                 {
-                    // fastGet() borrows the header map's StringImpl; renderMetadata() ->
-                    // doWriteHeaders() calls fastRemove(.TransferEncoding) and derefs the
-                    // FetchHeaders, freeing that StringImpl before we write it. Clone so
-                    // the bytes outlive renderMetadata().
                     let transfer_encoding_str = transfer_encoding.to_slice_clone();
                     this.render_metadata();
                     resp.write_header(b"transfer-encoding", transfer_encoding_str.slice());
@@ -2476,16 +2288,6 @@ where
         }
     }
 
-    // Each HTTP request or TCP socket connection is effectively a "task".
-    //
-    // However, unlike the regular task queue, we don't drain the microtask
-    // queue at the end.
-    //
-    // Instead, we drain it multiple times, at the points that would
-    // otherwise "halt" the Response from being rendered.
-    //
-    // - If you return a Promise, we drain the microtask queue once
-    // - If you return a streaming Response, we drain the microtask queue (possibly the 2nd time this task!)
     pub fn on_response(
         &mut self,
         this: &ThisServer,
@@ -2500,10 +2302,6 @@ where
         if ctx.is_aborted_or_ended() {
             return;
         }
-        // if you return a Response object or a Promise<Response>
-        // but you upgraded the connection to a WebSocket
-        // just ignore the Response object. It doesn't do anything.
-        // it's better to do that than to throw an error
         if ctx.did_upgrade_web_socket() {
             return;
         }
@@ -2573,10 +2371,6 @@ where
                     return;
                 }
                 jsc::PromiseResult::Fulfilled(fulfilled_value) => {
-                    // if you return a Response object or a Promise<Response>
-                    // but you upgraded the connection to a WebSocket
-                    // just ignore the Response object. It doesn't do anything.
-                    // it's better to do that than to throw an error
                     if ctx.did_upgrade_web_socket() {
                         return;
                     }
@@ -2715,11 +2509,6 @@ where
         if let Some(wrapper) = req.sink_mut() {
             let wrapper_ptr = req.sink.take().expect("infallible: sink_mut returned Some");
             if let Some(prom) = wrapper.sink.pending_flush.take() {
-                // The promise value was protected when pending_flush was
-                // assigned (flushFromJS / endFromJS). Drop that root before
-                // abandoning the pointer, otherwise it leaks for the
-                // lifetime of the VM.
-                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe deref.
                 bun_opaque::opaque_deref_mut(prom).to_js().unprotect();
             }
             wrapper.sink.done = true;
@@ -2922,10 +2711,6 @@ where
                         }
 
                         readable_stream::Source::Bytes(byte_stream_ptr) => {
-                            // BACKREF: `Source::Bytes` stores a live non-null
-                            // `*mut ByteStream` (the JS wrapper's `m_ctx` heap
-                            // payload, kept alive by `stream`). R-2: all touched
-                            // ByteStream methods/fields are `&self`/interior-mutable.
                             let byte_stream_nn = NonNull::new(byte_stream_ptr)
                                 .expect("Source::Bytes payload is non-null");
                             let byte_stream = bun_ptr::BackRef::from(byte_stream_nn);
@@ -3058,11 +2843,6 @@ where
     }
 
     pub fn do_render_blob(&mut self) {
-        // We are not corked
-        // The body is small
-        // Faster to do the memcpy than to do the two network calls
-        // We are not streaming
-        // This is an important performance optimization
         if self.flags.has_abort_handler() && self.blob.fast_size() < 16384 - 1024 {
             if let Some(resp) = self.resp {
                 resp.run_corked_with_type(|ctx| Self::do_render_blob_corked(ctx), self);
@@ -3094,10 +2874,6 @@ where
         if self.is_aborted_or_ended() {
             return;
         }
-        // PORT NOTE: WeakPtr::get borrows `&mut self`, and `do_render_with_body`
-        // also needs `&mut self` plus a `&mut BodyValue` from the response. The
-        // response lives in a separate allocation (held by the WeakRef) so the
-        // borrows are disjoint at runtime; route through a raw ptr to express that.
         let response: *mut Response = self.response_weakref.get().unwrap();
         // SAFETY: BACKREF
         let global_this = self.server().global_this();
@@ -3268,10 +3044,6 @@ where
                 ); // TODO: properly propagate exception upwards
             }
             jsc::PromiseResult::Fulfilled(fulfilled_value) => {
-                // if you return a Response object or a Promise<Response>
-                // but you upgraded the connection to a WebSocket
-                // just ignore the Response object. It doesn't do anything.
-                // it's better to do that than to throw an error
                 if ctx.did_upgrade_web_socket() {
                     return;
                 }
@@ -3327,10 +3099,6 @@ where
         // `AnyResponse` is a `Copy` handle; methods take `self` by value.
         let Some(resp) = self.resp else { return };
 
-        // For plain in-memory bodies this runs synchronously from
-        // render() before any backpressure gap, so the Response is
-        // always live here. File / stream bodies that call this after
-        // an async hop keep the Response rooted via response_protected.
         let response: &mut Response = self.response_weakref.get().unwrap();
         let mut status = response.status_code();
         let mut needs_content_range = self.flags.needs_content_range()
@@ -3373,10 +3141,6 @@ where
 
             self.do_write_status(status);
             self.do_write_headers(&mut headers_);
-            // Zig: `defer headers_.deref()`. `HeadersRef` is RAII — its Drop
-            // already calls `WebCore__FetchHeaders__deref`, so an explicit
-            // `.deref()` here would resolve (via DerefMut) to the inherent
-            // `FetchHeaders::deref` and double-free the C++ object.
             drop(headers_);
         } else if needs_content_range {
             status = 206;
@@ -3412,10 +3176,6 @@ where
             resp.write_header(b"content-type", &content_type.value);
         }
 
-        // Advertise the QUIC endpoint on H1/H2 responses so browsers can
-        // discover it (RFC 7838). Multiple Alt-Svc fields are valid, so a
-        // user-supplied one composes rather than conflicts.
-        // TODO(port): `@hasDecl(ThisServer, "h3AltSvc")` — model as optional trait method.
         if !HTTP3 {
             // SAFETY: BACKREF
             if let Some(alt) = self.server().h3_alt_svc() {
@@ -3462,10 +3222,6 @@ where
         if needs_content_range && !has_content_range {
             let mut crbuf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
             let end = self.sendfile.offset + self.sendfile.remain.saturating_sub(1);
-            // `total > 0` ⇒ we resolved an incoming Range header against the
-            // stat'd size, so the full size is meaningful. Otherwise this is a
-            // `.slice()`-driven range — omit the full size (it can change
-            // between requests and may leak PII).
             let header_value = RangeRequest::format_content_range(
                 &mut crbuf,
                 RangeRequest::Result::Satisfiable {
@@ -3680,11 +3436,6 @@ where
 
         // This is the start of a task, so it's a good time to drain
         if let Some(body) = this.request_body_mut() {
-            // The up-front maxRequestBodySize check in server.zig only
-            // sees Content-Length. HTTP/3 (and H1 chunked) bodies may
-            // omit it, so cap accumulated bytes here too — otherwise a
-            // single CL-less stream can grow request_body_buf without
-            // bound.
             if this.request_body_buf.len().saturating_add(chunk.len())
                 > server.config().max_request_body_size
             {
@@ -3693,11 +3444,6 @@ where
                 this.flags.set_is_waiting_for_request_body(false);
 
                 let _exit = vm.enter_event_loop_scope();
-                // Reject the pending body first so endRequestStreaming()
-                // below (via this.endWithoutBody) doesn't substitute a
-                // generic ConnectionClosed. toErrorInstance handles
-                // .Locked itself (rejects the promise, deinits the
-                // readable, calls onReceiveValue).
                 let _ = body.to_error_instance(
                     Body::ValueError::Message(BunString::static_(
                         "Request body exceeded maxRequestBodySize",
@@ -3731,16 +3477,6 @@ where
 
                 let total = bytes.len() + chunk.len();
                 'getter: {
-                    // if (total <= jsc.WebCore.InlineBlob.available_bytes) {
-                    //     if (total == 0) {
-                    //         body.value = .{ .Empty = {} };
-                    //         break :getter;
-                    //     }
-                    //
-                    //     body.value = .{ .InlineBlob = jsc.WebCore.InlineBlob.concat(bytes.items, chunk) };
-                    //     this.request_body_buf.clearAndFree(this.allocator);
-                    // } else {
-                    // TODO(port): ensureTotalCapacityPrecise can OOM in Zig; Rust Vec aborts.
                     bytes.reserve_exact(total.saturating_sub(bytes.len()));
                     bytes.extend_from_slice(chunk);
                     debug_assert_eq!(bytes.len(), total);
@@ -3802,11 +3538,6 @@ where
     pub fn on_start_buffering(&mut self) {
         if let Some(server) = self.server {
             ctx_log!("onStartBuffering");
-            // TODO: check if is someone calling onStartBuffering other than onStartBufferingCallback
-            // if is not, this should be removed and only keep protect + setAbortHandler
-            // HTTP/3 (RFC 9114): Content-Length is optional; the body is
-            // delimited by stream FIN, so the H1 "no CL + no TE ⇒ empty"
-            // shortcut would drop it.
             if !HTTP3 && !self.flags.is_transfer_encoding() && self.request_body_content_len == 0 {
                 // no content-length or 0 content-length
                 // no transfer-encoding
@@ -3896,11 +3627,6 @@ where
 
 const MAX_REQUEST_BODY_PREALLOCATE_LENGTH: usize = 1024 * 256;
 
-// Trap host fn for the `(false, _, true)` arms of `exported_host_fns`. Those
-// `RequestContext` monomorphs (plain-HTTP/3) are type-reachable via the
-// blanket H3 impls but never serve requests at runtime — HTTP/3 always
-// implies TLS. If a future refactor ever routes a promise reaction through
-// one, fail loudly here instead of silently mismatching `promiseHandlerID`.
 bun_jsc::jsc_host_abi! {
     #[cold]
     unsafe fn unreachable_host_fn(_g: *mut JSGlobalObject, _f: *mut CallFrame) -> JSValue {
@@ -3908,15 +3634,6 @@ bun_jsc::jsc_host_abi! {
     }
 }
 
-// ─── per-monomorphization C-ABI exports ──────────────────────────────────────
-// Zig: `comptime { @export(&jsc.toJSHostFn(onResolve), .{ .name = export_prefix ++ "__onResolve" }); ... }`
-// where `export_prefix = "Bun__HTTPRequestContext" ++ (debug ? "Debug" : "") ++ (h3 ? "H3" : ssl ? "TLS" : "")`.
-// Rust generics cannot own `#[no_mangle]` symbols, so each of the 6 concrete
-// instantiations × 4 callbacks is spelled out via `request_ctx_exports!`. The
-// generic body lives on the `impl<ThisServer, ..> RequestContext` block above
-// (`on_resolve` / `on_reject` / `on_resolve_stream` / `on_reject_stream`); each
-// shim is the `toJSHostFn` result-mapping (`JsResult<JSValue>` → raw `JSValue`,
-// `.zero` on error) over the monomorphic associated fn.
 macro_rules! request_ctx_exports {
     ($(
         ($srv:ty, $ssl:literal, $dbg:literal, $h3:literal) =>
@@ -3947,15 +3664,6 @@ macro_rules! request_ctx_exports {
         }
     )*
 
-    /// Map the `(SSL, DEBUG, H3)` const-generic tuple to the concrete
-    /// `#[no_mangle]` promise-reaction exports above. Used by the blanket
-    /// `RequestContextHostFns` impl so `Self::ON_*` resolves to the *same*
-    /// address C++'s `GlobalObject::promiseHandlerID` compares against.
-    ///
-    /// Only the six instantiations spelled out in `request_ctx_exports!` are
-    /// ever constructed; the remaining `(false, _, true)` arms (plain-HTTP/3
-    /// without TLS) are unreachable and fall back to the generic shims so the
-    /// const-eval has a value of the right type.
     const fn exported_host_fns(
         ssl: bool,
         debug: bool,
@@ -3975,11 +3683,6 @@ macro_rules! request_ctx_exports {
                     $on_reject_stream,
                 ),
             )*
-            // `(false, _, true)` — plain-HTTP/3 — is type-instantiated by the
-            // blanket H3 impls in server_body.rs but never reaches the promise
-            // path at runtime (HTTP/3 requires TLS). We can't const-panic here
-            // because rustc evaluates this assoc const for every monomorph; a
-            // runtime trap keeps the failure loud without breaking the build.
             _ => (
                 unreachable_host_fn,
                 unreachable_host_fn,
@@ -4100,10 +3803,6 @@ pub struct SendfileContext {
     pub total: BlobSizeType,
 }
 
-// `NewFlags(comptime debug_mode: bool)` — packed struct(u16). All fields are bool
-// (with two debug-conditional ones), so `bitflags!` over u16 works. The Zig void/padding
-// fields collapse to absent bits in release; here we keep all bits and just gate the
-// `is_web_browser_navigation` / `has_finalized` accessors on the const params.
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy)]
     pub struct FlagsBits: u16 {

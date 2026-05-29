@@ -43,12 +43,6 @@ use super::websocket_proxy::WebSocketProxy;
 use super::websocket_proxy_tunnel::WebSocketProxyTunnel;
 use crate::websocket_client::ErrorCode;
 
-// LAYERING: SSLConfig was MOVE_DOWN'd from bun_runtime::api::server_config →
-// bun_http::ssl_config (data + as_usockets/for_client_verification). The
-// JSC-dependent `from_js` constructor stays in bun_runtime; the C-ABI
-// `Bun__WebSocket__parseSSLConfig` export therefore lives in
-// bun_runtime::socket::SSLConfig and bridges to this lower-tier type via
-// `into_http()`.
 use bun_http::ssl_config::SSLConfig;
 
 bun_core::define_scoped_log!(log, WebSocketUpgradeClient, visible);
@@ -88,11 +82,6 @@ enum State {
     Done,
 }
 
-/// `NewHTTPUpgradeClient(comptime ssl: bool) type` — generic over `SSL`.
-///
-/// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive single-thread
-/// refcount; `ref_count` field below, `ref()`/`deref()` inherent methods, `deinit`
-/// runs when count hits 0.
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct HTTPClient<const SSL: bool> {
@@ -119,39 +108,15 @@ pub struct HTTPClient<const SSL: bool> {
     /// TLS options (full SSLConfig for complete TLS customization)
     ssl_config: Option<Box<SSLConfig>>,
 
-    /// `us_ssl_ctx_t` built from `ssl_config` when it carries a custom CA.
-    /// Heap-allocated because ownership transfers to the connected
-    /// `WebSocket` after the upgrade completes (so the `SSL_CTX` outlives
-    /// this struct).
-    // TODO(port): Zig held a strong `SslCtxRef` (RAII over `SSL_CTX_up_ref`/
-    // `SSL_CTX_free`). No such wrapper exists in `bun_uws` yet; store the raw
-    // retained pointer and release in `clear_data`/Drop callers.
     secure: Option<*mut SslCtx>,
 
     /// Expected Sec-WebSocket-Accept value for handshake validation per RFC 6455 §4.2.2.
     /// This is base64(SHA-1(Sec-WebSocket-Key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")).
     expected_accept: [u8; 28],
 
-    /// Whether the upgrade request offered `permessage-deflate`. When this is
-    /// false (opt-out via `perMessageDeflate: false`) and the server responds
-    /// with a `Sec-WebSocket-Extensions` header anyway, `processResponse`
-    /// fails the handshake per RFC 6455 §9.1 — matching upstream `ws`.
     offered_permessage_deflate: bool,
 }
 
-// Handler set referenced by `dispatch.zig` (kind = `.ws_client_upgrade[_tls]`).
-// The `register()` C++ round-trip that previously installed these on a
-// shared `us_socket_context_t` is gone — sockets are stamped with the
-// kind at connect time and routed here statically.
-//
-// TODO(port): expose these as a `uws::SocketHandlerSet` const for the dispatch
-// table; in Zig these were `pub const onOpen = handleOpen;` etc.
-//
-// These take `*mut Self` (not `&mut Self`) because uSockets dispatches them
-// from the raw userdata pointer and several of them can free `Self` (via
-// `deref` reaching zero) or be re-entered synchronously by `tcp.close()` /
-// C++ callbacks. Holding a `&mut Self` function-argument across either of
-// those is UB under Stacked Borrows (argument protectors / aliased `&mut`).
 impl<const SSL: bool> HTTPClient<SSL> {
     pub const ON_OPEN: unsafe fn(*mut Self, Socket<SSL>) = Self::handle_open;
     pub const ON_CLOSE: unsafe fn(*mut Self, Socket<SSL>, c_int, *mut c_void) = Self::handle_close;
@@ -233,11 +198,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         debug_assert!(vm.event_loop_handle.is_some());
 
-        // Decode all BunString inputs into UTF-8 slices. The underlying
-        // JavaScript strings may be Latin1 or UTF-16; `String.to_utf8()` either
-        // borrows the 8-bit ASCII backing (no allocation) or allocates a
-        // UTF-8 copy. All slices live until end of scope (Drop).
-
         let host_slice = host.to_utf8();
         let pathname_slice = pathname.to_utf8();
         let client_protocol_slice = client_protocol.to_utf8();
@@ -279,11 +239,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
         };
         let body = request_result.body;
 
-        // Build proxy state if using proxy.
-        // The CONNECT request is built using local variables for proxy_authorization and proxy_headers
-        // which are freed immediately after building the request (not stored on the client).
-        // Ownership of `body` moves into the proxy (matching Zig); the CONNECT
-        // request becomes the initial input_body_buf instead.
         let (proxy_state, input_body_buf): (Option<WebSocketProxy>, Vec<u8>) = if using_proxy {
             // Parse proxy authorization (temporary, freed after building CONNECT request)
             let proxy_auth_decoded: Option<Utf8Slice> =
@@ -403,14 +358,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
         } else {
             SocketKind::WsClientUpgrade
         };
-        // Default-TLS shares the VM-wide client SSL_CTX; a custom CA
-        // builds a per-connection one that the connected WebSocket
-        // inherits so it isn't rebuilt on adopt.
-        //
-        // §Dispatch (cycle-break): `RareData.defaultClientSslCtx()` and
-        // `RareData.sslCtxCache().getOrCreateOpts()` reach
-        // `RuntimeState.ssl_ctx_cache` (high-tier `bun_runtime`); routed
-        // through `RuntimeHooks` so this crate stays below `bun_runtime`.
         let secure_ptr: Option<*mut uws::SslCtx> = if SSL {
             let hooks =
                 bun_jsc::virtual_machine::runtime_hooks().expect("RuntimeHooks not installed");
@@ -431,11 +378,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
                             )
                         };
                         let Some(ctx) = ctx else {
-                            // Do NOT fall through to the default trust store — the
-                            // user passed an explicit CA/cert and BoringSSL
-                            // rejected it. Swapping in system roots would let the
-                            // connection succeed against a host the user didn't
-                            // trust. The C++ caller emits an `error` event on null.
                             log!("createSSLContext failed for WebSocket: {:?}", err);
                             // SAFETY: `vm_ptr` is the live per-thread VM.
                             client_ref.poll_ref.unref(unsafe { vm_loop_ctx(vm_ptr) });
@@ -487,12 +429,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
                     if SSL {
-                        // SNI uses the URL host (defaulted to "localhost" in
-                        // C++ when absent), mirroring the TCP path below. A
-                        // user-supplied Host header does NOT affect SNI; use
-                        // `tls: { checkServerIdentity }` or put the hostname
-                        // in the URL (wss+unix://name/path) to verify against
-                        // a specific certificate name.
                         if !host_slice.slice().is_empty() {
                             client_ref.hostname = ZBox::from_bytes(host_slice.slice());
                         }
@@ -614,11 +550,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // SAFETY: short-lived `&mut` for clear_data; ends before any reentrant call.
         unsafe { (*this.as_ptr()).clear_data() };
 
-        // Either of the below two operations - closing the TCP socket or clearing the C++ reference could trigger a deref
-        // Therefore, we need to make sure the `this` pointer is valid until the end of the function.
-        // Bumps the intrusive refcount and derefs on Drop (after `tcp.close`
-        // below), which may free `this` — no `&`/`&mut Self` is live at that
-        // point.
         let _guard = this.ref_guard();
 
         // The C++ end of the socket is no longer holding a reference to this, so we must clear it.
@@ -630,14 +561,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         // Copy `tcp` out so no `&mut Self` spans the close.
         let tcp = this.tcp;
-        // Clear the socket's ext slot before closing. `us_socket_close` on a
-        // SEMI_SOCKET (TCP connect still in flight — the common case when
-        // `ws.close()` is called synchronously after `new WebSocket()`) skips
-        // dispatch entirely, so we cannot rely on `handle_close` /
-        // `handle_connect_error` to release the socket-userdata ref taken in
-        // `connect()`. Take it back here and deref it ourselves; any callback
-        // that does fire sees `ext == None` and no-ops via the
-        // `RawPtrHandler` guard.
         let had_socket_ref = tcp
             .ext::<Option<core::ptr::NonNull<Self>>>()
             // SAFETY: ext slot is the `Option<NonNull<Self>>` written in
@@ -1514,11 +1437,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
             }
         }
 
-        // if (!visited_version) {
-        //     this.terminate(ErrorCode.invalid_websocket_version);
-        //     return;
-        // }
-
         if upgrade_header
             .name()
             .len()
@@ -1572,15 +1490,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
-        // Ownership transfer: `overflow` is HANDED OFF across FFI —
-        // `WebSocket__didConnect` → `Bun__WebSocketClient__init`/`_initWithTunnel`
-        // adopts the raw `(ptr, len)` into an `InitialDataHandler` queued as a
-        // microtask, which reclaims it via `Box::<[u8]>::from_raw` when the
-        // microtask runs. Allocate as `Box<[u8]>` and `heap::alloc` it so the
-        // alloc/free pair through the SAME Rust global allocator (mimalloc).
-        // Do NOT keep a `Vec`/`Box` binding past the FFI call — it would drop
-        // at scope exit and leave the queued microtask with a dangling pointer
-        // (UAF on read in `handle_data`, then double-free on drop).
         let overflow_len = remain_buf.len();
         let overflow_ptr: *mut u8 = if overflow_len > 0 {
             let mut v: Vec<u8> = Vec::new();
@@ -1603,10 +1512,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // SAFETY: short-lived `&mut` for the proxy borrow.
         if let Some(p) = unsafe { &mut (*this).proxy } {
             if let Some(tunnel) = p.get_tunnel() {
-                // wss:// through HTTP proxy: use tunnel mode
-                // For tunnel mode, the upgrade client STAYS ALIVE to forward socket data to the tunnel.
-                // The socket continues to call handle_data on the upgrade client, which forwards to tunnel.
-                // The tunnel forwards decrypted data to the WebSocket client.
                 bun_jsc::mark_binding!();
                 // SAFETY: short-lived reads.
                 let tcp = unsafe { (*this).tcp };
@@ -1842,21 +1747,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
     }
 }
 
-/// Decodes an array of BunString header name/value pairs to UTF-8 up front.
-///
-/// The BunString values may be backed by 8-bit Latin1 or 16-bit UTF-16
-/// `WTFStringImpl`s. Calling `.slice()` on a ZigString wrapper that was built
-/// from a non-ASCII WTFStringImpl returns raw Latin1 or UTF-16 code units,
-/// which then corrupts the HTTP upgrade request and can cause heap corruption.
-///
-/// Using `bun_core::String::to_utf8()` either borrows the 8-bit ASCII backing
-/// (no allocation) or allocates a UTF-8 copy. The resulting slices are stored
-/// here so build_request_body / build_connect_request can index them by &[u8].
-///
-// PORT NOTE: reshaped for borrowck — Zig stored parallel `name_slices` /
-// `value_slices` arrays of `[]const u8` borrowing into `slices`. That is
-// self-referential in Rust; instead store only the `Utf8Slice` array (len =
-// 2*count, names at even indices, values at odd) and yield pairs via `iter()`.
 struct Headers8Bit<'a> {
     slices: Vec<Utf8Slice>,
     _marker: core::marker::PhantomData<&'a BunString>,
@@ -2184,23 +2074,6 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
     let _ = bun_base64::encode(&mut result, &hash);
     result
 }
-
-// LAYERING: `Bun__WebSocket__parseSSLConfig` / `Bun__WebSocket__freeSSLConfig`
-// live in `bun_runtime::socket::ssl_config` (src/runtime/socket/SSLConfig.rs).
-// `SSLConfig::from_js` walks Blob/JSCArrayBuffer/node_fs values (tier-6) and
-// `bun_runtime → bun_http_jsc`, so the C-ABI export is hosted upstream where
-// `from_js` is defined. The result is bridged to `bun_http::ssl_config::SSLConfig`
-// (the type `connect()` consumes) via `into_http()` before boxing. C++ links by
-// symbol name; crate of origin is irrelevant at link time.
-
-// ──────────────────────────────────────────────────────────────────────────
-// extern "C" export shims for the generic `connect`/`cancel`/`memoryCost`.
-// Zig's `exportAll()` does `@export(&connect, .{ .name = ... })` per `ssl`.
-// Rust cannot `#[no_mangle]` a generic, so monomorphize both here.
-// TODO(port): full C-ABI parameter mapping for `connect` (Option<&T> niche,
-// Option<Box<T>> niche, raw `*const BunString` arrays). Verify against the
-// C++ caller in JSWebSocket.cpp / WebSocket.cpp.
-// ──────────────────────────────────────────────────────────────────────────
 
 macro_rules! export_http_client {
     ($ssl:literal, $connect:ident, $cancel:ident, $memory_cost:ident) => {

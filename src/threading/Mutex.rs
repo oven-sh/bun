@@ -67,11 +67,6 @@ impl Mutex {
         self.impl_.unlock()
     }
 
-    /// Debug-only check that the calling thread already holds this mutex.
-    /// Intended for `debug_assert!`-ing a "caller must hold the lock" contract
-    /// (e.g. `Watcher::flush_evictions`). In release builds the locking-thread
-    /// id is not tracked, so this just returns `true` to make the assert a
-    /// no-op there.
     #[inline]
     pub fn is_held_by_current_thread(&self) -> bool {
         #[cfg(debug_assertions)]
@@ -84,19 +79,6 @@ impl Mutex {
         }
     }
 
-    /// Acquires the mutex and returns an RAII guard that releases it on `Drop`.
-    ///
-    /// This is the idiomatic Rust spelling of Zig's `m.lock(); defer m.unlock();`
-    /// — prefer it over a bare [`lock`]/[`unlock`] pair so the critical section
-    /// is released on every return path (including `?`).
-    ///
-    /// The returned [`MutexGuard`] holds the mutex by raw pointer rather than a
-    /// borrowed `&'a Mutex`, so holding the guard does **not** keep a borrow of
-    /// the owning struct alive. This matches the Zig pattern where the mutex is
-    /// a plain field and the rest of `self` remains freely accessible while
-    /// locked. Caller must ensure the `Mutex` outlives the guard (trivially
-    /// true for `'static`/singleton mutexes and for guards that drop before the
-    /// owning `self` does).
     #[inline]
     #[must_use = "the mutex unlocks immediately if the guard is dropped"]
     pub fn lock_guard(&self) -> MutexGuard {
@@ -108,13 +90,6 @@ impl Mutex {
     }
 }
 
-/// RAII guard returned by [`Mutex::lock_guard`]. Unlocks on `Drop`.
-///
-/// Stores a [`BackRef<Mutex>`] (lifetime-erased `&Mutex`) so it does not hold
-/// a borrow of the mutex's owner — see [`Mutex::lock_guard`] for the rationale.
-/// The `BackRef` invariant (pointee outlives holder) is the caller contract on
-/// `lock_guard()`: the mutex outlives this guard (always true when the guard
-/// is a local that drops before the owning struct).
 pub struct MutexGuard {
     mutex: bun_ptr::BackRef<Mutex>,
     // Preserve the previous `!Send`/`!Sync` auto-trait surface (the field was
@@ -219,14 +194,6 @@ unsafe impl Sync for WindowsImpl {}
 #[cfg(windows)]
 unsafe impl Send for WindowsImpl {}
 
-// `&UnsafeCell<SRWLOCK>` is ABI-identical to kernel32's `PSRWLOCK` (thin
-// non-null pointer to a `#[repr(C)]` word; `UnsafeCell` is
-// `#[repr(transparent)]`). The reference type encodes the only pointer-validity
-// precondition; acquire on an unowned lock blocks (recursive acquire deadlocks
-// — not UB), so `safe fn` discharges the link-time proof for the acquire pair.
-// `ReleaseSRWLockExclusive` keeps the raw-pointer `bun_sys` extern: MSDN
-// documents "results are undefined" when called without ownership (unlike
-// `os_unfair_lock_unlock`, which aborts), so that one retains its block.
 #[cfg(windows)]
 #[link(name = "kernel32")]
 unsafe extern "system" {
@@ -282,12 +249,6 @@ pub(crate) struct OsUnfairLock {
     _opaque: u32,
 }
 
-// TODO(port): move to bun_sys (darwin libc externs)
-// `&UnsafeCell<OsUnfairLock>` is ABI-identical to `os_unfair_lock_t` (thin
-// non-null pointer to a `#[repr(C)]` u32; `UnsafeCell` is `#[repr(transparent)]`).
-// The type encodes the only pointer-validity precondition, and Apple's runtime
-// detects misuse (recursive lock / unowned unlock) by aborting — which is safe
-// — so `safe fn` discharges the link-time proof and callers need no `unsafe`.
 #[cfg(target_vendor = "apple")]
 unsafe extern "C" {
     safe fn os_unfair_lock_trylock(lock: &core::cell::UnsafeCell<OsUnfairLock>) -> bool;
@@ -377,28 +338,12 @@ impl FutexImpl {
             Futex::wait_forever(&self.state, Self::CONTENDED);
         }
 
-        // Try to acquire the lock while also telling the existing lock holder that there are threads waiting.
-        //
-        // Once we sleep on the Futex, we must acquire the mutex using `contended` rather than `locked`.
-        // If not, threads sleeping on the Futex wouldn't see the state change in unlock and potentially deadlock.
-        // The downside is that the last mutex unlocker will see `contended` and do an unnecessary Futex wake
-        // but this is better than having to wake all waiting threads on mutex unlock.
-        //
-        // Acquire barrier ensures grabbing the lock happens before the critical section
-        // and that the previous lock holder's critical section happens before we grab the lock.
         while self.state.swap(Self::CONTENDED, Ordering::Acquire) != Self::UNLOCKED {
             Futex::wait_forever(&self.state, Self::CONTENDED);
         }
     }
 
     fn unlock(&self) {
-        // Unlock the mutex and wake up a waiting thread if any.
-        //
-        // A waiting thread will acquire with `contended` instead of `locked`
-        // which ensures that it wakes up another thread on the next unlock().
-        //
-        // Release barrier ensures the critical section happens before we let go of the lock
-        // and that our critical section happens before the next lock holder grabs the lock.
         let state = self.state.swap(Self::UNLOCKED, Ordering::Release);
         debug_assert!(state != Self::UNLOCKED);
 

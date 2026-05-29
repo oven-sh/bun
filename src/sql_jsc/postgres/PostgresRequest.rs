@@ -16,10 +16,6 @@ use crate::shared::QueryBindingIterator;
 
 bun_core::declare_scope!(Postgres, visible);
 
-/// Zig: `comptime MessageType: @Type(.enum_literal)` — the set of backend
-/// message tags `PostgresSQLConnection.on()` dispatches over. Defined here
-/// (the dispatch site) rather than in `bun_sql::postgres::protocol` because
-/// it is purely a compile-time switch tag in Zig with no wire encoding.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
 pub enum MessageType {
     DataRow,
@@ -72,12 +68,6 @@ pub fn write_bind<Context: WriterContext>(
 
     let len: u16 = u16::try_from(parameter_fields.len()).expect("int cast");
 
-    // The number of parameter format codes that follow (denoted C
-    // below). This can be zero to indicate that there are no
-    // parameters or that the parameters all use the default format
-    // (text); or one, in which case the specified format code is
-    // applied to all parameters; or it can equal the actual number
-    // of parameters.
     writer.short(len)?;
 
     let mut iter = QueryBindingIterator::init(values_array, columns_value, global)
@@ -105,11 +95,6 @@ pub fn write_bind<Context: WriterContext>(
                 });
 
         if force_text {
-            // If they pass a value as a string, let's avoid attempting to
-            // convert it to the binary representation. This minimizes the room
-            // for mistakes on our end, such as stripping the timezone
-            // differently than what Postgres does when given a timestamp with
-            // timezone.
             writer.short(0)?;
             continue;
         }
@@ -127,13 +112,6 @@ pub fn write_bind<Context: WriterContext>(
     while let Some(value) = iter.next().map_err(js_error_to_postgres)? {
         let tag: types::Tag = 'brk: {
             if i >= len as usize {
-                // parameter in array but not in parameter_fields
-                // this is probably a bug a bug in bun lets return .text here so the server will send a error 08P01
-                // with will describe better the error saying exactly how many parameters are missing and are expected
-                // Example:
-                // SQL error: PostgresError: bind message supplies 0 parameters, but prepared statement "PSELECT * FROM test_table WHERE id=$1 .in$0" requires 1
-                // errno: "08P01",
-                // code: "ERR_POSTGRES_SERVER_ERROR"
                 break 'brk types::Tag::text;
             }
             let parameter_field = parameter_fields[i];
@@ -154,11 +132,6 @@ pub fn write_bind<Context: WriterContext>(
         }
         bun_core::scoped_log!(Postgres, "  -> {}", tag.tag_name().unwrap_or("(unknown)"));
 
-        // If they pass a value as a string, let's avoid attempting to
-        // convert it to the binary representation. This minimizes the room
-        // for mistakes on our end, such as stripping the timezone
-        // differently than what Postgres does when given a timestamp with
-        // timezone.
         let effective_tag = if tag.is_binary_format_supported() && value.is_string() {
             types::Tag::text
         } else {
@@ -351,11 +324,6 @@ pub(crate) fn bind_and_execute<Context: WriterContext>(
     Ok(())
 }
 
-/// Atomically sends Parse + [Describe] + Bind + Execute + Flush + Sync as a single message batch.
-/// This is required for unnamed prepared statements to work correctly with connection poolers
-/// like PgBouncer in transaction mode, which may reassign server connections between protocol
-/// round-trips. Without this, Parse and Bind+Execute could be routed to different backend
-/// connections, causing queries to execute against the wrong prepared statement.
 pub fn parse_and_bind_and_execute<Context: WriterContext>(
     global: &JSGlobalObject,
     query: &[u8],

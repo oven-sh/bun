@@ -165,12 +165,6 @@ where
         css::implement_deep_clone(self, arena)
     }
 
-    /// Deep-clone into a `GenericBorder` with a different const-generic
-    /// discriminant `Q`. The fields are identical regardless of `P`; this is
-    /// the Rust equivalent of Zig coercing one anonymous struct literal into
-    /// multiple `Border*` aliases. Needed when one logical value must be
-    /// emitted as two distinct physical `Property` variants (e.g.
-    /// inline-start → BorderLeft + BorderRight).
     pub(crate) fn clone_as<const Q: u8>(&self, arena: &Bump) -> GenericBorder<S, Q> {
         let cloned = self.deep_clone(arena);
         GenericBorder {
@@ -251,12 +245,6 @@ impl BorderSideWidth {
 }
 crate::css_eql_partialeq!(BorderSideWidth);
 
-// ──────────────────────────────────────────────────────────────────────────
-// ImplFallbacks (Zig: `pub fn ImplFallbacks(comptime T: type) type`)
-// ──────────────────────────────────────────────────────────────────────────
-// TODO(port): Zig used `inline for (std.meta.fields(T))` reflection. We expand
-// the field list at macro invocation. All fields are `CssColor`.
-// Hoisted here because `macro_rules!` is order-sensitive.
 macro_rules! impl_fallbacks {
     ($T:ty; $($field:ident),+) => {
         impl $T {
@@ -299,12 +287,6 @@ macro_rules! impl_fallbacks {
         }
     };
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Rect shorthand structs (top/right/bottom/left)
-// ──────────────────────────────────────────────────────────────────────────
-// `define_rect_shorthand!` lives in `properties/mod.rs` (shared with
-// `margin_padding.rs`).
 
 // TODO: fallbacks
 define_rect_shorthand! {
@@ -634,12 +616,6 @@ pub struct BorderHandler {
 mod border_handler_body {
     use super::*;
     use crate::generics::{CssEql, DeepClone};
-    // ──────────────────────────────────────────────────────────────────────────
-    // FlushContext + flush_category! (Zig: nested struct with inline fns and
-    // extensive comptime string-dispatch)
-    // ──────────────────────────────────────────────────────────────────────────
-    // PORT NOTE: hoisted above `impl BorderHandler` — macro_rules! is order-
-    // sensitive and the flush_category!() callsites in `flush()` need these.
 
     // Route the large `Property` enum construction through a non-inlined
     // callee so each temporary lives in the helper's frame, not in
@@ -674,11 +650,6 @@ mod border_handler_body {
     // PORT NOTE: `$val` is evaluated *before* reborrowing `$f` so callers may pass
     // expressions that read `f.arena` without tripping E0502.
     macro_rules! fc_logical_prop {
-        // PORT NOTE: the `GenericBorder` shorthand pairs carry distinct const-generic
-        // discriminants per side (BorderLeft = P=3, BorderRight = P=1), so a single
-        // `__val` cannot `deep_clone()` into both `Property` variants. Recast via
-        // `clone_as::<Q>()` instead. Callers always pass a `to_border()` result here,
-        // so the `__val` annotation drives `P` inference for that call.
         ($f:expr, BorderLeft, BorderRight, $val:expr) => {{
             let __val: BorderLeft = $val;
             let f = &mut *$f;
@@ -714,10 +685,6 @@ mod border_handler_body {
         }};
     }
 
-    // `f.push(p, val)`
-    // PORT NOTE: Zig's `@field(BorderProperty, p)` keyed both Property and BorderProperty
-    // off one kebab string. Here `$p` is the PascalCase Property/PropertyIdTag variant;
-    // the bitflags const is derived via try_from_property_id so a single ident suffices.
     macro_rules! fc_push {
         ($f:expr, $p:ident, $val:expr) => {{
             let __val = $val;

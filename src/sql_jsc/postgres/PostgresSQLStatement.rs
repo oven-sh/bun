@@ -86,11 +86,6 @@ impl Status {
 }
 
 impl PostgresSQLStatement {
-    /// Zig `.ref_count = .initExactRefs(n)` — set the initial intrusive
-    /// refcount at construction time, before any `ref_()`/`deref()`. The
-    /// `ref_count` field is private (refcount invariant), so callers building
-    /// a statement with >1 owner (query + connection-map entry) go through
-    /// this instead of writing the field directly.
     #[inline]
     pub fn init_exact_refs(&mut self, n: u32) {
         debug_assert!(n > 0);
@@ -115,11 +110,6 @@ impl PostgresSQLStatement {
             let field: &mut protocol::FieldDescription = &mut self.fields[remaining];
             match &field.name_or_index {
                 ColumnIdentifier::Name(name) => {
-                    // PORT NOTE: reshaped for borrowck — compute `found_existing`
-                    // before mutating `field.name_or_index`.
-                    // TODO(port): Zig `getOrPut` keys on the borrowed slice;
-                    // StringHashMap clones to an owned `Box<[u8]>` key. Fine for
-                    // a transient dedup set; revisit if profiling flags it.
                     let found_existing = seen_fields
                         .get_or_put(name.slice())
                         .expect("OOM")
@@ -177,12 +167,6 @@ impl Drop for PostgresSQLStatement {
         bun_core::scoped_log!(Postgres, "PostgresSQLStatement deinit");
 
         debug_assert_eq!(self.ref_count.get(), 0, "ref_count.assertNoRefs()");
-
-        // `fields` (Vec<FieldDescription>): each element's Drop runs, then the buffer frees.
-        // `parameters` (Box<[int4]>): freed by Drop.
-        // `cached_structure`, `error_response`, `signature`: Drop.
-        // `bun.default_allocator.destroy(this)`: handled by `bun_ptr::IntrusiveRc` dealloc,
-        // not here — Drop must not free `self`'s storage.
     }
 }
 

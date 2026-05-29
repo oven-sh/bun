@@ -1,9 +1,4 @@
 #![warn(unused_must_use)]
-// ──────────────────────────────────────────────────────────────────────────
-// Pieces that transitively need the JS-AST (`Expr`/`E::Object`/`Rope`) or the
-// schema (`BunInstall`/`NpmRegistry`) are gated behind `// TODO(port):`
-// markers pointing at the missing lower-tier symbol.
-// ──────────────────────────────────────────────────────────────────────────
 use core::fmt;
 
 use bun_alloc::AllocError;
@@ -26,13 +21,6 @@ impl Default for Options {
         }
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Pure-byte helpers (lifted from `Parser` so they compile without the
-// Expr-carrying struct). The Zig has these as methods on `Parser` but they
-// touch no parser state — exposing them as free fns lets the logic stay
-// un-gated and unit-testable while the AST-dependent body is blocked.
-// ──────────────────────────────────────────────────────────────────────────
 
 #[inline]
 pub(crate) fn should_skip_line(line: &[u8]) -> bool {
@@ -210,21 +198,6 @@ pub enum ScopeError {
     NoValue,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Re-gated items + shadow stubs
-//
-// `Parser::parse` / `Parser::prepare_str` (unquoted path) / `ConfigIterator`
-// now compile against the live `bun_js_parser::{Expr, ExprData, E::*}` surface.
-// Remaining gates are blocked on schema/API types only:
-// ──────────────────────────────────────────────────────────────────────────
-
-// TODO(port): bun_api::BunInstall
-// TODO(port): bun_api::NpmRegistry
-// TODO(port): bun_api::NpmRegistryMap
-// TODO(port): bun_api::npm_registry::Parser
-// TODO(port): bun_api::Ca
-// TODO(port): bun_install_types::NodeLinker::PnpmMatcher::from_expr
-
 pub use draft::{
     ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter, load_npmrc,
     load_npmrc_config,
@@ -256,11 +229,6 @@ mod draft {
 
     type OOM<T> = Result<T, AllocError>;
 
-    /// Hard cap on dot-separated segments in a section-header rope. The rope is
-    /// consumed by `E::Object::get_or_put_object`, which recurses once per
-    /// `rope.next` link, so an unbounded header overflows the stack. Past the
-    /// cap the remainder of the header (dots included) becomes the final
-    /// segment. Mirrors `MAX_DOTTED_KEY_SEGMENTS` in the TOML parser.
     const MAX_SECTION_ROPE_SEGMENTS: usize = 512;
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -277,15 +245,6 @@ mod draft {
         pub env: &'a mut DotEnvLoader<'a>,
     }
 
-    // PORT NOTE: Zig `prepareStr` switches its *return type* on a comptime enum
-    // param (`.section -> *Rope`, `.key -> []const u8`, `.value -> Expr`). Rust
-    // const generics cannot select a return type, so we keep a single
-    // `prepare_str::<USAGE>()` body for diffability and wrap the result in
-    // `PrepareResult`. Callers unwrap with `.into_*()`.
-    //
-    // PORT NOTE: `#[derive(ConstParamTy)]` requires nightly `adt_const_params`.
-    // Dropped to a runtime arg (the body never uses USAGE in a type position).
-    // PERF(port): was comptime monomorphization.
     #[derive(PartialEq, Eq, Clone, Copy)]
     enum Usage {
         Section,
@@ -307,11 +266,6 @@ mod draft {
 
     impl<'a> Parser<'a> {
         pub fn init(path: &[u8], src: &'a [u8], env: &'a mut DotEnvLoader<'a>) -> Parser<'a> {
-            // TODO(port): bun_ast::Source<'bump> — `Source::init_path_string`
-            // currently takes `Str = &'static [u8]`; once the lower tier threads a
-            // lifetime through `Source`, pass `path`/`src` directly. They outlive
-            // the `Parser` and its `Source`/`Expr` tree (arena-freed in lockstep),
-            // so no wrong value is produced today.
             let path_s: &'static [u8] = path.into_str();
             let src_s: &'static [u8] = src.into_str();
             Parser {
@@ -404,37 +358,6 @@ mod draft {
                             Ok(v) => v,
                             Err(E::SetError::OutOfMemory) => return Err(AllocError),
                             Err(E::SetError::Clobber) => {
-                                // We're in here if key exists but it is not an object
-                                //
-                                // This is possible if someone did:
-                                //
-                                // ```ini
-                                // foo = 'bar'
-                                //
-                                // [foo]
-                                // hello = 420
-                                // ```
-                                //
-                                // In the above case, `this.out[section]` would be a string.
-                                // So what should we do in that case?
-                                //
-                                // npm/ini's will chug along happily trying to assign keys to the string.
-                                //
-                                // In JS assigning keys to string does nothing.
-                                //
-                                // Technically, this would have an effect if the value was an array:
-                                //
-                                // ```ini
-                                // foo[] = 0
-                                // foo[] = 1
-                                //
-                                // [foo]
-                                // 0 = 420
-                                // ```
-                                //
-                                // This would result in `foo` being `[420, 1]`.
-                                //
-                                // To be honest this is kind of crazy behavior so we're just going to skip this for now.
                                 skip_until_next_section = true;
                                 break 'treat_as_key;
                             }
@@ -471,21 +394,7 @@ mod draft {
                         line_offset,
                     )?
                     .into_key();
-                let is_array: bool = {
-                    key_raw.len() > 2 && bun_core::ends_with(key_raw, b"[]")
-                    // Commenting out because options are not supported but we might
-                    // support them.
-                    // if (this.opts.bracked_array) {
-                    //     break :brk key_raw.len > 2 and bun.strings.endsWith(key_raw, "[]");
-                    // } else {
-                    //     // const gop = try duplicates.getOrPut(allocator, key_raw);
-                    //     // if (gop.found_existing) {
-                    //     //     gop.value_ptr.* = 1;
-                    //     // } else gop.value_ptr.* += 1;
-                    //     // break :brk gop.value_ptr.* > 1;
-                    //     @panic("We don't support this right now");
-                    // }
-                };
+                let is_array: bool = { key_raw.len() > 2 && bun_core::ends_with(key_raw, b"[]") };
 
                 let key = if is_array && bun_core::ends_with(key_raw, b"[]") {
                     &key_raw[..key_raw.len() - 2]
@@ -588,14 +497,6 @@ mod draft {
                         };
                         offset += 1;
                     }
-                    // `bun_parsers::json::parse_utf8_impl` returns the T2
-                    // value-subset `bun_ast::Expr`; lift it into the T4
-                    // `bun_ast::Expr` (via the `From` impl in
-                    // `bun_ast::expr`) so the rest of this body works
-                    // against a single `ExprData`.
-                    // `Str = &'static [u8]` lifetime erasure (see PORTING.md
-                    // §Allocators / `Parser::init` above). `val` is a sub-slice
-                    // of `self.src` and outlives the temporary `Source`.
                     let val_s: &'static [u8] = val.into_str();
                     let src = Source::init_path_string(self.source.path.text, val_s);
                     let mut log = Log::init();
@@ -641,26 +542,12 @@ mod draft {
                     }
 
                     if usage == Usage::Value {
-                        // Spec ini.zig:247: `if (comptime usage == .value) return json_val;`
-                        // — the parsed Expr is returned as-is, preserving
-                        // `E.Array`/`E.Object` tags so downstream `.e_array`/
-                        // `.e_object` checks (e.g. ini.zig:178/192, loadNpmrc
-                        // `ca`/`omit`/`include`) fire. `json_val` was lifted to T4
-                        // at the parse site above.
                         return Ok(PrepareResult::Value(Expr {
                             loc: Loc { start: offset },
                             data: json_val.data,
                         }));
                     }
 
-                    // unfortunately, we need to match npm/ini behavior here,
-                    // which requires us to turn these into a string,
-                    // same behavior as doing this:
-                    // ```
-                    // let foo = {}
-                    // const json_val = { hi: 'hello' }
-                    // foo[json_val] = 'nice'
-                    // ```
                     match &json_val.data {
                         ExprData::EObject(_) => {
                             if usage == Usage::Section {
@@ -672,10 +559,6 @@ mod draft {
                             return Ok(PrepareResult::Key(b"[Object object]"));
                         }
                         _ => {
-                            // PERF(port): was std.fmt.allocPrint into arena. Cold
-                            // npm-quirk path (JSON array/number used as a section
-                            // header or key); format to a temp `String` then copy
-                            // into the arena.
                             let s = format!("{}", ToStringFormatter { d: &json_val.data });
                             let str_ = bump.alloc_slice_copy(s.as_bytes());
                             if usage == Usage::Section {
@@ -890,13 +773,6 @@ mod draft {
             Ok(PrepareResult::Section(Self::str_to_rope(ropealloc, val)?))
         }
 
-        /// Expands ${VAR} and ${VAR?} environment variable substitutions in a string.
-        /// Used for quoted values after JSON parsing has already handled escape sequences.
-        ///
-        /// Behavior (same as unquoted):
-        /// - ${VAR} - if VAR is undefined, leave as "${VAR}" (no expansion)
-        /// - ${VAR?} - if VAR is undefined, expand to empty string
-        /// - Backslash escaping is already handled by JSON parsing
         fn expand_env_vars(&mut self, bump: &'a Arena, val: &[u8]) -> OOM<&'a [u8]> {
             // Quick check if there are any env vars to expand
             if bun_core::index_of(val, b"${").is_none() {
@@ -948,14 +824,6 @@ mod draft {
             Ok(result.into_bump_slice())
         }
 
-        /// Returns index to skip or null if not an env substitution
-        /// Invariants:
-        /// - `i` must be an index into `val` that points to a '$' char
-        ///
-        /// npm/ini uses a regex pattern that will select the inner most ${...}
-        /// Supports ${VAR} and ${VAR?} syntax:
-        /// - ${VAR} - if undefined, returns null (leaves as-is)
-        /// - ${VAR?} - if undefined, expands to empty string
         fn parse_env_substitution(
             &mut self,
             val: &[u8],
@@ -1364,10 +1232,6 @@ mod draft {
         // SAFETY: arena outlives all bump-allocated slices used below.
         let bump: &Arena = unsafe { &*bump_ptr };
         parser.parse(bump)?;
-        // Need to be very, very careful here with strings.
-        // They are allocated in the Parser's arena, which of course gets
-        // deinitialized at the end of the scope.
-        // We need to dupe all strings
         let out = &parser.out;
 
         if let Some(query) = out.as_property(b"registry") {
@@ -1571,10 +1435,6 @@ mod draft {
                 count
             };
 
-            // PORT NOTE: Zig's `defer install.scoped = registry_map;` is a shallow
-            // write-back at scope end while later code keeps mutating `registry_map`.
-            // Reshaped for borrowck: the single write-back happens at the bottom of
-            // `load_npmrc` after the registry-configuration block.
             registry_map.scopes.ensure_unused_capacity(scope_count)?;
 
             iter.prop_idx = 0;
@@ -1608,10 +1468,6 @@ mod draft {
                 break 'out;
             }
 
-            // PORT NOTE: `URL<'a>` borrows its input. The Zig `default_registry_url`
-            // points into `install.default_registry.url` while the loop below
-            // mutates that same field; copy the two fields we compare against so
-            // the borrow ends before the `install.default_registry` mutation.
             let (default_registry_host, default_registry_pathname): (Box<[u8]>, Box<[u8]>) = 'brk: {
                 if let Some(dr) = &install.default_registry {
                     let u = URL::parse(&dr.url);
@@ -1638,10 +1494,6 @@ mod draft {
             // The line that sets the auth token should only apply to the @myorg scope
             // The line that sets the username would apply to both @myorg and @another
             let url_map = {
-                // PERF(port): was StringArrayHashMap<URL> on parser.arena. `URL<'a>`
-                // borrows `v.url` (inside `registry_map.scopes`), which would alias the
-                // `values_mut()` iteration below. Store the owned URL bytes instead and
-                // re-parse per lookup (URL::parse is a cheap slice scan).
                 let mut url_map: ArrayHashMap<Box<[u8]>, Box<[u8]>> =
                     ArrayHashMap::with_capacity(registry_map.scopes.keys().len());
 
@@ -1666,13 +1518,6 @@ mod draft {
 
             while let Some(val) = iter.next() {
                 if let Some(conf_item_) = val.get() {
-                    // `conf_item` will look like:
-                    //
-                    // - localhost:4873/
-                    // - somewhere-else.com/myorg/
-                    //
-                    // Scoped registries are set like this:
-                    // - @myorg:registry=https://somewhere-else.com/myorg
                     let conf_item: &ConfigItem = &conf_item_;
                     match conf_item.optname {
                         ConfigOpt::Certfile | ConfigOpt::Keyfile => {
@@ -1749,10 +1594,6 @@ mod draft {
                     }
                 }
 
-                // PORT NOTE: Zig iterated `registry_map.scopes` and looked up `url_map[k]`
-                // by key. In Rust `keys()`/`values_mut()` on the same map alias; since
-                // `url_map` was filled in lockstep with `registry_map.scopes` (same
-                // ArrayHashMap insertion order), zip its values directly instead.
                 for (url_bytes, v) in url_map
                     .values()
                     .iter()
@@ -1821,14 +1662,6 @@ mod draft {
         PnpmMatcher, create_matcher,
     };
 
-    /// Port of `PnpmMatcher.fromExpr` (src/install/PnpmMatcher.zig) operating on
-    /// `bun_ast::Expr` instead of the lower-tier `bun_ast::Expr`.
-    ///
-    /// `bun_install_types` (T2) cannot depend on `bun_js_parser` (T4),
-    /// and the two `ExprData` enums are distinct (closed Rust enums; only the leaf
-    /// `E::*` payloads are shared). `bun_ini` depends on both, so the T4-typed
-    /// overload lives here. The matcher construction is delegated to the shared
-    /// `create_matcher` helper in `bun_install_types::NodeLinker`.
     fn pnpm_matcher_from_expr(
         expr: &Expr,
         log: &mut Log,

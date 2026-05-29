@@ -88,10 +88,6 @@ pub struct PEFile {
     pub last_va_end: u32,
 }
 
-// PE/COFF on-disk header structs are byte-packed (no padding) per spec, and may
-// live at arbitrary byte offsets inside a `Vec<u8>` image, so `align_of` must be 1
-// for it to be sound to materialize references/pointers to them from the buffer
-// (the Zig original used `*align(1) const T`).
 #[repr(C, packed)]
 #[derive(Copy, Clone)]
 pub(crate) struct DOSHeader {
@@ -201,10 +197,6 @@ const IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY: u16 = 0x0080;
 // Section name constant for exact comparison
 const BUN_SECTION_NAME: [u8; 8] = [b'.', b'b', b'u', b'n', 0, 0, 0, 0];
 
-// Safe access helpers for unaligned views.
-// All header structs are `#[repr(C, packed)]` (align 1), so a bounds-checked byte
-// pointer into the image can be cast and dereferenced directly — equivalent to the
-// Zig original's `*align(1) const T`.
 fn view_at_const<T>(buf: &[u8], off: usize) -> Result<*const T, Error> {
     if off + size_of::<T>() > buf.len() {
         return Err(Error::OutOfBounds);
@@ -880,10 +872,6 @@ impl PEFile {
     }
 }
 
-// External C interface declarations - these are implemented in C++ bindings
-// (src/jsc/bindings/c-bindings.cpp). The C++ code uses Windows PE APIs to
-// directly access the .bun section from the current process memory without
-// loading the entire executable.
 unsafe extern "C" {
     pub fn Bun__getStandaloneModuleGraphPELength() -> u64;
     pub fn Bun__getStandaloneModuleGraphPEData() -> *mut u8;

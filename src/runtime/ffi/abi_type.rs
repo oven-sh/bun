@@ -69,10 +69,6 @@ pub enum ABIType {
     Buffer = 20,
 }
 
-/// Zig `ABIType.label` — string-to-tag lookup table for `args:`/`returns:`
-/// option parsing. Associated `static` items aren't allowed in Rust, so the
-/// table lives at module scope and is re-exposed as `ABIType::LABEL` so callers
-/// can keep using `ABIType::LABEL.get(...)` (auto-deref handles the `&phf::Map`).
 pub static ABI_TYPE_LABEL: phf::Map<&'static [u8], ABIType> = phf::phf_map! {
     b"bool" => ABIType::Bool,
     b"c_int" => ABIType::Int32T,
@@ -117,14 +113,6 @@ pub static ABI_TYPE_LABEL: phf::Map<&'static [u8], ABIType> = phf::phf_map! {
     b"napi_env" => ABIType::NapiEnv,
     b"napi_value" => ABIType::NapiValue,
 };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Per-variant string table — single source of truth for the four exhaustive
-// matches that previously lived in typename_label / param_typename_label /
-// ToCFormatter / ToJSFormatter. Indexed by `self as usize` (discriminants are
-// contiguous 0..=20). Zig has no equivalent table; this is a Rust-side
-// deduplication of ffi.zig:2145-2324.
-// ─────────────────────────────────────────────────────────────────────────────
 
 struct AbiRow {
     /// C type name for return/decl position (`typename_label`).

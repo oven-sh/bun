@@ -10,16 +10,6 @@
 // Scope name distinct from the macro-generated `struct Store`.
 ::bun_core::declare_scope!(STORE_LOG, hidden);
 
-/// Zig: `pub fn NewStore(comptime types: []const type, comptime count: usize) type`
-///
-/// Rust cannot take a slice of types as a generic parameter, and the body
-/// derives array sizes and alignment from that list (which would require
-/// `generic_const_exprs`). Per PORTING.md this falls under the
-/// `macro_rules!` type-generator exception: heterogeneous type-list
-/// iteration that determines struct layout.
-///
-/// Usage: `new_store!(ExprStore, [EArray, EBinary, /* ... */], 256);`
-/// emits `pub mod ExprStore { pub struct Store { ... } /* Block, ... */ }`.
 #[macro_export]
 macro_rules! new_store {
     ($mod_name:ident, [$($T:ty),+ $(,)?], $count:expr) => {
@@ -60,33 +50,12 @@ macro_rules! new_store {
             // (declared once at crate level: `bun_output::declare_scope!(Store, hidden);`)
 
             pub struct Store {
-                /// Lazily-allocated head of the block chain — `None` until the
-                /// first [`Store::allocate`]. Owns the entire `Box<Block>`
-                /// `next`-linked list; `Store`'s `Drop` walks it iteratively.
-                ///
-                /// PERF(port): Zig co-allocated `Store` + the first `Block` in a
-                /// single `PreAlloc` so `create()` always paid one `~BLOCK_SIZE`
-                /// malloc. Splitting them lets a store that is `create()`d but
-                /// never written to (e.g. the `Stmt` store during
-                /// `Transpiler::configure_defines`, which only emits `E::String`
-                /// expression nodes for `--define` / `NODE_ENV`) cost nothing
-                /// beyond this small header.
                 head: Option<Box<Block>>,
-                /// Bump-pointer target for the active block. Null iff `head` is
-                /// `None` (no allocation has happened on this thread yet);
-                /// otherwise points into the `head` chain and stays valid until
-                /// `destroy()`.
                 current: *mut Block,
                 #[cfg(debug_assertions)]
                 debug_lock: ::core::cell::Cell<bool>,
             }
 
-            /// Zig: `pub const Block = struct { ... }`
-            // PORT NOTE: `buffer` needs `align(LARGEST_ALIGN)` but `#[repr(align(N))]`
-            // requires a literal. Over-approximate with align(16) — every AST payload
-            // type is `<= 16` aligned (asserted below). Switch to a
-            // `#[repr(C)] union AlignUnion { $($T),+ }` element type if a >16-aligned
-            // payload is ever introduced.
             const _: () = assert!(LARGEST_ALIGN <= 16, "NewStore payload type with align>16; bump Block repr(align)");
             /// Zig: `pub const size = largest_size * count * 2;`
             pub(crate) const BLOCK_SIZE: usize = LARGEST_SIZE * $count * 2;
@@ -161,10 +130,6 @@ macro_rules! new_store {
             // Zig: `pub const Size = std.math.IntFittingRange(0, size + largest_size);`
             type BlockSize = u32;
 
-            /// `Store` owns its `Box<Block>` chain (`head` → `next` → …). The
-            /// derived drop glue for `Box<Block>` is recursive (`Block.next:
-            /// Option<Box<Block>>`); a long parse can build a deep chain, so
-            /// dismantle it iteratively here to keep `Drop` O(1)-stack.
             impl Drop for Store {
                 fn drop(&mut self) {
                     let mut it = self.head.take();
@@ -190,11 +155,6 @@ macro_rules! new_store {
             impl Store {
                 pub fn init() -> *mut Store {
                     /* scoped_log elided — debug_logs feature only */
-                    // PERF(port): the first `Block`'s ~`BLOCK_SIZE` heap buffer
-                    // is *not* allocated here — only the small `Store` header.
-                    // `allocate()` lazily mallocs the first `Block` on the first
-                    // `append()` (see the `head` field doc). Box aborts on OOM
-                    // (matches Zig `bun.handleOom`).
                     bun_core::heap::into_raw(Box::new(Store {
                         head: None,
                         current: ::core::ptr::null_mut(),
@@ -340,28 +300,6 @@ macro_rules! new_store {
     };
 }
 
-// ───────────────────────────────────────────────────────────────────────────
-// thread_local_ast_store! — the per-thread *front-end* wrapper around a
-// `new_store!`-generated slab.
-//
-// `Expr` and `Stmt` each need three `#[thread_local]` slots (instance ptr,
-// optional `ASTMemoryAllocator` override, `disable_reset` flag) plus the
-// twelve identical accessor/lifecycle fns. The two hand-written copies in
-// expr.rs / stmt.rs were byte-for-byte twins modulo the backing type and the
-// "Expr"/"Stmt" panic-string label — and so are the Zig originals
-// (expr.zig:3117-3196 vs stmt.zig:300-382). This macro stamps out one
-// `pub mod Store { … }` per call site so the duplication lives here once.
-//
-// Why a macro and not a generic struct: `#[thread_local] static` cannot be
-// generic over `T`, so a `struct Front<B>` with `static INSTANCE: Cell<*mut B>`
-// is rejected; the storage must be monomorphised at the item level.
-//
-// Usage (inside `pub mod data { use super::*; … }`):
-//   crate::thread_local_ast_store!(expr_store::Store, "Expr");
-//
-// Expects in scope via `use super::*;`: the `$Backing` path and a
-// `type Disabler = DebugOnlyDisabler<…>;` alias for the debug re-entrancy
-// guard called from `append()`.
 #[macro_export]
 macro_rules! thread_local_ast_store {
     ($Backing:path, $label:literal) => {
@@ -371,19 +309,8 @@ macro_rules! thread_local_ast_store {
             use ::core::cell::Cell;
             type Backing = $Backing;
 
-            // `#[thread_local]` (bare `__thread` slot) — `memory_allocator()` is
-            // read on every node `alloc` (the hottest TLS in the parser), and
-            // the `thread_local!` macro's `LocalKey` wrapper showed up in
-            // next-lint profiles. All three are `Cell<ptr|bool>` (no destructor,
-            // const init); matches Zig `threadlocal var`.
             #[thread_local]
             pub(crate) static INSTANCE: Cell<*mut Backing> = Cell::new(::core::ptr::null_mut());
-            /// Back-reference to the `ASTMemoryAllocator` installed by the
-            /// enclosing `ASTMemoryAllocatorScope` stack frame. Stored as
-            /// `Option<BackRef>` (vs. raw `*mut`) so `append()` can read it via
-            /// safe `Deref`; the back-reference invariant (pointee outlives every
-            /// copy) is upheld by `ASTMemoryAllocatorScope::{enter,exit}`, which
-            /// always restores the previous value before its frame returns.
             #[thread_local]
             pub(crate) static MEMORY_ALLOCATOR: Cell<
                 Option<::bun_ptr::BackRef<$crate::ASTMemoryAllocator>>,

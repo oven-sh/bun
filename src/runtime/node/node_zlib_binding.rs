@@ -21,13 +21,6 @@ bun_output::declare_scope!(zlib, hidden);
 
 // ─── type defs ────────────────────────────────────────────────────────────
 
-/// Zig: `fn CompressionStream(comptime T: type) type { return struct { ... } }`
-/// This is a mixin: methods all take `this: *T` and access fields on `T`
-/// (write_in_progress, pending_close, pending_reset, closed, stream, this_value,
-/// write_result, task, poll_ref, globalThis) plus `T.js.*` codegen accessors and
-/// `T.ref()/deref()`.
-// PORT NOTE: expressed as a marker struct + trait bound. Field accesses on
-// `T` go through the [`CompressionStreamImpl`] trait below.
 pub(crate) struct CompressionStream<T>(PhantomData<T>);
 
 #[derive(Default)]
@@ -196,11 +189,6 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     )))
 }
 
-// ─── CompressionStream mixin trait ────────────────────────────────────────
-// Zig's `CompressionStream(T)` reaches into `T`'s fields directly (comptime
-// duck-typing). Rust can't, so each `Native{Zlib,Brotli,Zstd}` implements this
-// trait to expose its fields + per-class codegen accessors.
-
 /// Backing-stream surface used by [`CompressionStream`] (zlib / brotli / zstd
 /// `Context` types). Mirrors the Zig `this.stream.*` calls.
 pub(crate) trait CompressionContext {
@@ -219,10 +207,6 @@ pub(crate) trait CompressionContext {
 pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     type Stream: CompressionContext;
 
-    // Field accessors (interior-mutability cells; all `&self`).
-    /// JSC_BORROW backref — the global outlives this m_ctx payload.
-    /// Implementations store a `BackRef<JSGlobalObject>`; the single unsafe
-    /// deref lives in `BackRef::get`, so callers and impls are safe.
     fn global_this(&self) -> &JSGlobalObject;
     fn stream(&self) -> &JsCell<Self::Stream>;
     fn write_result_ptr(&self) -> Option<*mut u32>;
@@ -465,10 +449,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // (R-2). `ParentRef` Deref collapses the per-site raw deref.
         let this_ref = ParentRef::from(NonNull::new(this).expect("async_job_run: this"));
         let global_this: &JSGlobalObject = this_ref.global_this();
-        // Zig: `bunVMConcurrently()` — thread-safe accessor (skips the
-        // JS-thread debug assert; same backing pointer as `bun_vm()`).
-        // BACKREF — `bun_vm_concurrently()` never returns null for a Bun-owned
-        // global; wrap once so the `event_loop()` read below is safe Deref.
         let vm = ParentRef::from(
             NonNull::new(global_this.bun_vm_concurrently()).expect("bun_vm_concurrently"),
         );
@@ -716,10 +696,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     }
 
     fn reset_internal(this: &T, global_this: &JSGlobalObject, this_value: JSValue) {
-        // reset() destroys and re-creates the brotli/zstd encoder state (or
-        // mutates the z_stream). Doing so while an async write is running on
-        // the threadpool would be a use-after-free / data race, so defer it
-        // until the in-flight write completes (mirrors pending_close).
         if this.write_in_progress().get() {
             this.pending_reset().set(true);
             return;
@@ -793,20 +769,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this_value: JSValue,
         err_: Error,
     ) {
-        // R-2: `&T` over `Cell`/`JsCell`-backed fields — the onerror
-        // `run_callback` below runs user JS which can re-enter via a fresh
-        // `&T` from the wrapper's `m_ctx` (e.g. `write()` flips
-        // `write_in_progress` / `pending_*`). Interior mutability makes the
-        // re-entry sound and the post-callback reads observe the updated
-        // values without `noalias`-laundering.
-
-        // Clear write_in_progress *before* invoking the onerror callback.
-        // The callback may re-enter write(), which sets write_in_progress=true
-        // and schedules a WorkPool task. If we cleared the flag after the
-        // callback, we would clobber that state and closeInternal()/resetInternal()
-        // below could free the native zlib/brotli/zstd state while a task is
-        // still queued, leading to a use-after-free when the worker thread
-        // runs doWork().
         this.write_in_progress().set(false);
 
         // Zig: `std.mem.sliceTo(err_.msg, 0) orelse ""`.
@@ -868,21 +830,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     }
 }
 
-/// Expose the [`CompressionStream<T>`] mixin entry points as inherent
-/// associated fns on `T` so the per-class C-ABI thunks emitted by
-/// `generated_classes.rs` (which call `T::write(&mut *this, …)` etc.) resolve.
-///
-/// This is the Rust spelling of Zig's
-/// ```zig
-/// const impl = CompressionStream(@This());
-/// pub const write = impl.write;
-/// pub const writeSync = impl.writeSync;
-/// pub const reset = impl.reset;
-/// pub const close = impl.close;
-/// pub const setOnError = impl.setOnError;
-/// pub const getOnError = impl.getOnError;
-/// pub const finalize = impl.finalize;
-/// ```
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __compression_stream_mixin_reexports {
@@ -974,20 +921,6 @@ pub(crate) fn native_zstd(global: &JSGlobalObject) -> JSValue {
     jsc::codegen::js::get_constructor::<crate::node::zlib::native_zstd::NativeZstd>(global)
 }
 
-/// Implements [`CompressionContext`] for a `Context` type and
-/// [`CompressionStreamImpl`] for its owning `Native*` struct by delegating to
-/// the inherent methods / fields that already exist on each (mirrors Zig's
-/// comptime duck-typed `CompressionStream(T)` mixin).
-///
-/// All three `Native{Zlib,Brotli,Zstd}` structs share the exact field layout
-/// (`global_this`, `stream`, `write_result`, `poll_ref`, `this_value`,
-/// `write_in_progress`, `pending_close`, `pending_reset`, `closed`, `task`,
-/// `ref_count`), so the macro can stamp the impls uniformly.
-///
-/// `$type_name` is the C++-side class name (matches `.classes.ts`); the macro
-/// emits a `pub mod js { … }` with the cached-property accessors
-/// (`writeCallback` / `errorCallback` / `dictionary`) wired to the
-/// `${TypeName}Prototype__${prop}{Get,Set}CachedValue` extern symbols.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __impl_compression_stream {
@@ -1036,10 +969,6 @@ macro_rules! __impl_compression_stream {
                 unsafe { ::bun_core::from_field_ptr!(Self, task, task) }
             }
 
-            // All three `Native*` structs `#[derive(bun_ptr::CellRefCounted)]`
-            // with their own `#[ref_count(destroy = …)]` (or the default
-            // `Box::from_raw` drop) — delegate so the macro doesn't hard-code
-            // a `Self::deinit(*mut Self)` signature that only one of them has.
             #[inline] fn ref_(&self) { <Self as ::bun_ptr::CellRefCounted>::ref_(self) }
             #[inline] unsafe fn deref(this: *mut Self) {
                 // SAFETY: forwarded trait contract — `this` is live; the

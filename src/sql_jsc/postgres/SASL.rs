@@ -55,22 +55,12 @@ fn hmac(password: &[u8], data: &[u8]) -> Option<[u8; 32]> {
 }
 
 impl SASL {
-    // PORT NOTE: reshaped for borrowck — Zig passed `*PostgresSQLConnection` but
-    // only read `connection.password`. Taking `&mut PostgresSQLConnection` here
-    // would alias the `&mut self.authentication_state` borrow live at the call
-    // site in `PostgresSQLConnection::on`. Caller dereferences the
-    // self-referential `*const [u8]` and passes the slice directly.
     pub fn compute_salted_password(
         &mut self,
         salt_bytes: &[u8],
         iteration_count: u32,
         password: &[u8],
     ) -> Result<(), bun_core::Error> {
-        // Zig: `jsc.API.Bun.Crypto.EVP.pbkdf2` (src/runtime/api/crypto.zig).
-        // PORT NOTE: `bun_runtime::crypto::EVP::pbkdf2` is a thin wrapper over
-        // BoringSSL's `PKCS5_PBKDF2_HMAC` with `EVP_sha256`. Inlined here to
-        // avoid the `bun_runtime` dep (which would create a cycle through
-        // `bun_jsc`); `bun_boringssl_sys` is already a direct dependency.
         use bun_boringssl_sys as boringssl;
         use core::ffi::c_uint;
 

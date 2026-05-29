@@ -6,7 +6,10 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_alloc::Arena as Bump;
+use bun_ast::Loc;
+use bun_ast::{self, E, Expr, expr as js_expr};
 use bun_collections::StringHashMap;
+use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
@@ -22,17 +25,8 @@ use bun_install::{
 };
 use bun_install_types::DependencyGroup;
 use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter, PrintJsonOptions};
-use bun_resolver::fs::FileSystem;
-// PORT NOTE (layering): `Expr`/`E` here are the *lower-tier* `bun_ast::js_ast`
-// types, NOT `bun_js_parser`. `WorkspacePackageJsonCacheEntry.root` is the
-// logger-tier `Expr` (see WorkspacePackageJSONCache.rs), so the catalog-edit
-// helpers below must operate on that type. The earlier draft imported
-// `bun_ast::Expr`, which is a distinct struct and would not unify
-// with `MapEntry.root`.
-use bun_ast::Loc;
-use bun_ast::{self, E, Expr, expr as js_expr};
-use bun_core::strings;
 use bun_paths::{self as path, PathBuffer};
+use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, SlicedString};
 
 use crate::Command;
@@ -83,18 +77,6 @@ struct OutdatedPackage {
     workspace_name: Box<[u8]>,
     behavior: Behavior,
     use_latest: bool,
-    /// Snapshot of `manager.options.scope.url_hash == DEFAULT_URL_HASH &&
-    /// manager.scope_for_package_name(name).url_hash == DEFAULT_URL_HASH`.
-    ///
-    /// PORT NOTE: Zig stores `*PackageManager` here and reads
-    /// `pkg.manager.options.scope` / `scopeForPackageName(pkg.name)` at render
-    /// time. In Rust the caller's exclusive `&mut PackageManager` in
-    /// `update_interactive` is live across the prompt loop, so any
-    /// `&PackageManager` derived from a stored back-pointer would alias an
-    /// outstanding `&mut` (Stacked-Borrows UB). Both reads are pure
-    /// `Options`-derived `u64` comparisons that cannot change between
-    /// construction and render, so snapshot the boolean at construction and
-    /// drop the back-pointer entirely.
     uses_default_registry: bool,
     is_catalog: bool,
     catalog_name: Option<Box<[u8]>>,
@@ -172,13 +154,6 @@ impl UpdateInteractiveCommand {
         }
     }
 
-    // Helper to update a catalog entry at a specific path in the package.json AST
-    // PORT NOTE: Zig threads `*PackageManager` only for `manager.allocator`;
-    // the Rust port has no per-manager allocator, so the parameter is dropped.
-    // This also avoids overlapping `&mut PackageManager` with the live
-    // `&mut MapEntry` borrow of `manager.workspace_package_json_cache` at the
-    // call sites (which the previous draft laundered via raw pointers — UB
-    // under Stacked Borrows).
     fn save_package_json(
         package_json: &mut WorkspacePackageJsonCacheEntry,
         package_json_path: &[u8],
@@ -194,11 +169,6 @@ impl UpdateInteractiveCommand {
         buffer_writer.append_newline = preserve_trailing_newline;
         let mut package_json_writer = BufferPrinter::init(buffer_writer);
 
-        // PORT NOTE (layering): `MapEntry.root` is the T2 `bun_ast::Expr`;
-        // `js_printer::print_json` consumes the T4 `bun_ast::Expr`. Lift via
-        // the existing `From<T2> for T4` deep-rebuild (same as
-        // `updatePackageJSONAndInstall` / pnpm migration). The T2 entry is not
-        // re-read — only `source.contents` is written back below.
         if let Err(err) = js_printer::print_json(
             &mut package_json_writer,
             package_json.root,
@@ -216,10 +186,6 @@ impl UpdateInteractiveCommand {
         let new_package_json_source: Box<[u8]> =
             Box::from(package_json_writer.ctx.written_without_trailing_zero());
 
-        // Write the updated package.json
-        // PORT NOTE: Zig used `std.fs.cwd().createFile(path).writeAll(..)`; the
-        // Rust port routes through `bun_sys::File::write_file` (cwd-relative
-        // open + write + close) per src/CLAUDE.md.
         let mut path_zbuf = PathBuffer::uninit();
         let path_z = path::resolve_path::z(package_json_path, &mut path_zbuf);
         if let Err(err) =
@@ -232,12 +198,6 @@ impl UpdateInteractiveCommand {
             return Err(err.into());
         }
 
-        // Update the cache so installWithManager sees the new package.json
-        // This is critical - without this, installWithManager will use the cached old version
-        //
-        // PORT NOTE: cached `root` AST slices still borrow the *old*
-        // `source.contents`; stash it instead of `mem::forget`-ing so it's
-        // freed when the entry drops (`PackageManager::deinit_caches()`).
         let old = core::mem::replace(
             &mut package_json.source.contents,
             Cow::Owned(new_package_json_source.into_vec()),
@@ -305,10 +265,6 @@ impl UpdateInteractiveCommand {
             let package_json_path =
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
 
-            // Load and parse the package.json
-            // PORT NOTE: reshaped for borrowck — `log_mut()` returns a borrow
-            // decoupled from `&self`, so it can overlap the disjoint
-            // `workspace_package_json_cache` field borrow below.
             let log = manager.log_mut();
             let package_json: &mut WorkspacePackageJsonCacheEntry =
                 match manager.workspace_package_json_cache.get_with_path(
@@ -364,15 +320,6 @@ impl UpdateInteractiveCommand {
                 let version_with_prefix =
                     preserve_version_prefix(original_version, &update.target_version)?;
 
-                // Update the version using hash map put
-                // PORT NOTE: Zig `Expr.init(E.String, …).clone(allocator)` —
-                // the `.clone(manager.allocator)` re-allocates the `E.String`
-                // *node* outside the resettable Store. `Expr::init` would put
-                // it in the Store, which `install_with_manager` resets via
-                // `initialize_store()` before re-reading this cached `root`.
-                // Allocate into the entry's own `json_arena` instead so the
-                // node lives as long as the cached AST. The string *bytes* go
-                // through the CLI arena (matches PackageJSONEditor `leak_str`).
                 let interned: &'static [u8] = crate::cli::cli_dupe(&version_with_prefix);
                 let new_expr = Expr::allocate(
                     &package_json.json_arena,
@@ -901,13 +848,6 @@ impl UpdateInteractiveCommand {
         manager: &mut PackageManager,
         workspace_pkg_ids: &[PackageID],
     ) -> Result<Vec<OutdatedPackage>, bun_core::Error> {
-        // PORT NOTE: reshaped for borrowck — Zig threads `*PackageManager`
-        // into `manifests.byNameAllowExpired`, freely aliasing the receiver.
-        // Hoist the four scalars that path reads into a by-value
-        // `DiskCacheCtx` so the loop body holds only disjoint field borrows
-        // (`&mut manager.manifests` against `&manager.lockfile` /
-        // `&manager.options`). The returned `OutdatedPackage`s do *not*
-        // borrow from `manager`, so the caller may keep using it afterwards.
         let cache_ctx = manager.manifest_disk_cache_ctx();
         let min_age_ms = manager.options.minimum_release_age_ms;
         let needs_extended = min_age_ms.is_some();
@@ -1585,11 +1525,6 @@ impl UpdateInteractiveCommand {
                             pkg.dependency_type.len()
                         };
 
-                        // The padding should align with the first character of package names
-                        // Package names start at: "    " (4 spaces) + "□ " (2 chars) = 6 chars from left
-                        // Headers start at: "  " (2 spaces) + dep_type_text
-                        // We need the headers to align where the current version column starts
-                        // That's at: 6 (start of names) + max_name_len + 2 (spacing after names) - 2 (header indent) - dep_type_text_len
                         let total_offset = 6 + state.max_name_len + 2;
                         let header_start = 2 + dep_type_text_len;
                         let padding_to_current = if header_start >= total_offset {
@@ -2249,30 +2184,15 @@ fn dep_type_priority(dep_type: &[u8]) -> u8 {
     }
 }
 
-/// Dupe a byte buffer into the process-lifetime CLI arena to obtain a
-/// `'static` slice for storage in `E::EString.data` (the AST `Str` alias is
-/// `&'static [u8]` until `'bump` is threaded through). Mirrors Zig's
-/// `allocator.dupe(u8, ...)` against the singleton `manager.allocator`.
 #[inline]
 fn leak_dup(bytes: &[u8]) -> &'static [u8] {
     crate::cli::cli_dupe(bytes)
 }
 
-/// Edit catalog definitions in package.json
-// PORT NOTE: Zig threads `manager` only for `manager.allocator`; the Rust port
-// uses a local `Bump` (`E::Object::put` ignores its allocator arg), so the
-// parameter is dropped to keep `update_catalog_definitions` borrowck-clean.
 pub(crate) fn edit_catalog_definitions(
     updates: &mut [CatalogUpdateRequest],
     current_package_json: &mut Expr,
 ) -> Result<(), bun_core::Error> {
-    // using data store is going to result in undefined memory issues as
-    // the store is cleared in some workspace situations. the solution
-    // is to always avoid the store
-    // PORT NOTE: `Expr.Disabler` is a debug-only guard around the T4
-    // `bun_js_parser` Store; the lower-tier `bun_ast::js_ast` `Expr` used
-    // here boxes via its own thread-local `DATA_STORE` (see js_ast.rs), so
-    // toggling the parser-tier disabler is a no-op for these allocations.
     let bump = Bump::new();
 
     for update in updates.iter() {
@@ -2336,19 +2256,6 @@ fn update_default_catalog(
     package_name: &[u8],
     new_version: &[u8],
 ) -> Result<(), bun_core::Error> {
-    // Get or create the catalog object
-    // First check if catalog is under workspaces.catalog
-    // PORT NOTE: reshaped — Zig copies `data.e_object.*` (struct bytes,
-    // aliasing the `Vec` ptr) and writes the mutated copy back via
-    // `parent.put("catalog", Expr.allocate(obj))`. Rust `Vec<T>` has a
-    // `Drop` that frees its buffer, so a shallow copy would double-free.
-    // Instead mutate the existing `StoreRef<E::Object>` in place (`StoreRef`
-    // is `Copy + DerefMut`). Crucially, Zig's *placement* check is looser
-    // than its lookup: it puts under `workspaces.<key>` whenever that key
-    // *exists* (any type), even when the lookup fell back to the root-level
-    // object. Track the lookup source so the in-place fast path is taken only
-    // when source == placement; otherwise re-`put` the mutated arena slot at
-    // the Zig-mandated location.
     let mut fresh_obj = E::Object::default();
     let (existing, source) = find_catalog_object(package_json, b"catalog");
     {
@@ -2427,10 +2334,6 @@ fn update_named_catalog(
     package_name: &[u8],
     new_version: &[u8],
 ) -> Result<(), bun_core::Error> {
-    // Get or create the catalogs object
-    // First check if catalogs is under workspaces.catalogs (newer structure)
-    // PORT NOTE: reshaped — see `update_default_catalog` for the
-    // shallow-copy-vs-in-place + lookup-vs-placement rationale.
     let mut fresh_catalogs = E::Object::default();
     let (existing_catalogs, source) = find_catalog_object(package_json, b"catalogs");
     {

@@ -41,11 +41,6 @@ impl IniTestingAPIs {
         // (all `allocator.create`/`toOwnedSlice` below now use the global mimalloc)
 
         let envjs = frame.argument(1);
-        // PORT NOTE: reshaped for borrowck — Zig returned either a VM-owned *Loader or
-        // an arena-allocated *Loader from a labeled block. Per PORTING.md §Forbidden
-        // (`Box::leak` is banned), keep both `Map` and `Loader` owned in fn-scope
-        // `Option`s and hand out a raw `*mut Loader` uniformly. Both drop at fn
-        // return — same lifetime as the original arena.
         let mut map_storage: Option<Box<dotenv::Map>>;
         let mut env_storage: Option<dotenv::Loader<'_>>;
         let env: *mut dotenv::Loader<'static> = if envjs.is_empty_or_undefined_or_null() {
@@ -92,10 +87,6 @@ impl IniTestingAPIs {
             // return, mirroring the Zig arena's bulk-free.
             let map_ref: &mut dotenv::Map = map_storage.as_deref_mut().unwrap();
             env_storage = Some(dotenv::Loader::init(map_ref));
-            // `Loader<'a>` is invariant in `'a` (holds `&'a mut Map`); erase to `'static`
-            // via raw-pointer `.cast()` so both `if` arms unify on a single pointer type.
-            // The borrow does not escape this function — `load_npmrc` only reads through
-            // it and both `env_storage` / `map_storage` drop at fn return.
             std::ptr::from_mut(env_storage.as_mut().unwrap()).cast::<dotenv::Loader<'static>>()
         };
 
@@ -143,11 +134,6 @@ impl IniTestingAPIs {
         };
         // `defer { *.deref() }` deleted — bun_core::String impls Drop.
 
-        // PORT NOTE: `jsc.JSObject.create(.{ .field = val, ... }, global)` reflects over
-        // an anon struct's fields at comptime. Rust has no field reflection; mirror with
-        // a local `PojoFields` impl (the bun_jsc-convention until `#[derive(PojoFields)]`
-        // lands) so each `bun.String → JSValue` encoding interleaves with `put()` and
-        // stays on the stack for JSC's conservative scan.
         struct Pojo {
             default_registry_url: BunString,
             default_registry_token: BunString,

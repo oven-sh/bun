@@ -28,13 +28,6 @@ pub enum RegularExpressionError {
 
 bun_core::named_error_set!(RegularExpressionError);
 
-// TODO(port): move to bun_jsc_sys
-//
-// `RegularExpression` is an opaque `UnsafeCell`-backed ZST handle, so
-// `&RegularExpression` is ABI-identical to a non-null `*const` and C++ mutating
-// internal Yarr state through it is interior mutation invisible to Rust. The
-// query/compile shims are therefore declared `safe fn`; only `deinit` (which
-// frees the allocation) keeps a raw `*mut` and stays `unsafe`.
 unsafe extern "C" {
     safe fn Yarr__RegularExpression__init(pattern: BunString, flags: u16)
     -> *mut RegularExpression;
@@ -70,11 +63,6 @@ impl RegularExpression {
         Yarr__RegularExpression__isValid(self)
     }
 
-    // Reserving `match` for a full match result.
-    // #[inline]
-    // pub fn r#match(&mut self, str: BunString, start_from: i32) -> MatchResult {
-    // }
-
     /// Simple boolean matcher
     #[inline]
     pub fn matches(&mut self, str: BunString) -> bool {
@@ -98,15 +86,6 @@ impl RegularExpression {
         unsafe { Yarr__RegularExpression__deinit(this) }
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// `bun_install_types::NodeLinker` / `bun_install::PnpmMatcher` extern impls.
-//
-// Those lower-tier crates cannot name `jsc::RegularExpression`. Zig
-// (`PnpmMatcher.zig`) called `bun.jsc.RegularExpression.init` inline after
-// `bun.jsc.initialize(false)`. The bodies live here as `#[no_mangle]` Rust-ABI
-// fns, declared `extern "Rust"` on the low-tier side; link-time resolved.
-// ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_regex_compile(pattern: BunString) -> Option<core::ptr::NonNull<()>> {

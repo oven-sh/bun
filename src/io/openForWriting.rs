@@ -3,11 +3,6 @@ use bun_core::ZStr;
 use bun_sys::FdExt;
 use bun_sys::{self, Fd, Mode};
 
-// PORT NOTE: Zig's `input_path: anytype` type-switches on `@TypeOf(input_path)` between
-// `bun.webcore.PathOrFileDescriptor` and `[:0]const u8` / `[:0]u8`. Rust has no type-switch,
-// so this is expressed as a sealed trait whose impls encode each `switch (PathT)` arm.
-// TODO(port): verify callers — if only one input type is ever used per call site, consider
-// monomorphizing into two free fns instead of the trait.
 pub trait OpenForWritingInput {
     fn open_for_writing_result(
         &self,
@@ -153,11 +148,6 @@ where
                 *is_socket = bun_sys::S::ISSOCK(stat.st_mode as Mode);
 
                 if force_sync || isatty {
-                    // Prevents interleaved or dropped stdout/stderr output for terminals.
-                    // As noted in the following reference, local TTYs tend to be quite fast and
-                    // this behavior has become expected due historical functionality on OS X,
-                    // even though it was originally intended to change in v1.0.2 (Libuv 1.2.1).
-                    // Ref: https://github.com/nodejs/node/pull/1771#issuecomment-119351671
                     let _ = bun_sys::update_nonblocking(fd, false);
                     is_nonblocking = false;
                     // this.force_sync = true;

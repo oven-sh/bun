@@ -9,14 +9,6 @@ use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, DescribeScope};
 use crate::test_runner::bun_test::js_fns::{Signature, GetActiveCfg};
 use crate::test_runner::jest;
 
-// `group_log` wraps `test_runner::debug::group` (a begin/end/log tracer) as an RAII guard
-// so call sites read `let _g = group_log::begin();` and drop calls `end()`. The underlying
-// `group` module exposes `begin_msg`/`end`/`log` taking `fmt::Arguments`.
-//
-// Zig `groupLog.begin(@src())` (debug.zig) emits the call-site `file:line:col: fn_name` so
-// each scope is traceable in BUN_DEBUG output. `begin()` is `#[track_caller]` and forwards
-// `core::panic::Location::caller()` so each call site logs its own source location instead
-// of collapsing to a single static string.
 mod group_log {
     use crate::test_runner::debug::group;
 
@@ -49,13 +41,6 @@ pub enum Mode {
     Test,
 }
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. All three
-// fields are written exactly once in `create_unbound` and never mutated again,
-// so no `Cell`/`JsCell` wrapping is needed — the type is read-only after
-// construction. `generic_if`/`generic_extend`/`fn_each`/`call_as_function` all
-// re-enter JS (create_bound → to_js / JSFunction::create / bind), which can
-// form fresh `&ScopeFunctions` to the same wrapper; aliased `&Self` is sound,
-// aliased `&mut Self` would not be.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct ScopeFunctions {
     pub mode: Mode,
@@ -208,13 +193,6 @@ pub(crate) fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> Js
                 break;
             }
 
-            // PORT NOTE: Zig keeps a parallel `ArrayList(Strong)` to root each element across
-            // the format_label/bind allocations below. `bun_jsc::MarkedArgumentBuffer` only
-            // exposes a scoped-closure constructor (no `as_slice`/`len`), so for Phase D we
-            // use a plain `Vec<JSValue>` mirroring Zig's `args_list_raw`. The outer `iter`
-            // keeps `this.each` alive; per-element rooting is a TODO once Strong<JSValue>
-            // lands in bun_jsc.
-            // TODO(port): root args via Strong / MarkedArgumentBuffer once upstream surface exists.
             let mut args_list: Vec<JSValue> = Vec::new();
 
             if item.is_array() {
@@ -755,16 +733,6 @@ pub fn parse_arguments(
     Ok(result)
 }
 
-// Codegen bridge — `#[bun_jsc::JsClass]` derive provides `to_js`/`from_js`/`from_js_direct`.
-// `js::each_set_cached` is the codegen'd setter for the C++ `m_each` WriteBarrier
-// (see jest.classes.ts `values: ["each"]`).
-//
-// Hand-expansion of what `src/codegen/generate-classes.ts` emits into
-// `ZigGeneratedClasses.zig` for `pub const JSScopeFunctions = struct { ... }`:
-// `eachSetCached` / `eachGetCached` thin-wrap the C++-side
-// `ScopeFunctionsPrototype__each{Set,Get}CachedValue` shims, which write/read the
-// `JSC::WriteBarrier<Unknown> m_each` slot on the JSCell wrapper so the GC visits
-// the `.each(arr)` argument between construction and the trailing `("name", cb)` call.
 pub mod js {
     bun_jsc::codegen_cached_accessors!("ScopeFunctions"; each);
 }
@@ -824,10 +792,6 @@ pub(crate) fn bind(value: JSValue, global: &JSGlobalObject, name: BunString) -> 
     Ok(bound)
 }
 
-/// Local shim for `JSValue::setPrototypeDirect` (not yet on `bun_jsc::JSValue`).
-/// Mirrors Zig `bun.cpp.Bun__JSValue__setPrototypeDirect` — `[[ZIG_EXPORT(check_slow)]]`,
-/// so we manually surface any pending exception as `JsError::Thrown`.
-// TODO(port): land as inherent `JSValue::set_prototype_direct` in bun_jsc.
 #[track_caller]
 fn set_prototype_direct(value: JSValue, prototype: JSValue, global: &JSGlobalObject) -> JsResult<()> {
     // `[[ZIG_EXPORT(check_slow)]]`. C++ side reads `value.getObject()` so

@@ -14,10 +14,6 @@
 use crate::shell::interpreter::{Interpreter, NodeId, ShellTask};
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 
-/// Task payload for [`ShellAsync`](crate::shell::states::r#async::Async)'s
-/// bounce back to the main thread. In Zig the `Async` state struct *is* the
-/// task; in the Rust NodeId-arena port the state lives in `interp.nodes`, so
-/// the enqueued payload is `(interp, node)`.
 #[repr(C)]
 pub(crate) struct ShellAsyncTask {
     pub interp: *mut Interpreter,
@@ -243,11 +239,6 @@ impl ShellGlobTask {
     }
 }
 
-/// Spec: `Interpreter.Builtin.Rm.ShellRmTask.DirTask`. A child node in the
-/// recursive rm tree-walk; posts back to main when its subtree is empty.
-/// Re-export: the real DirTask lives in `builtins::rm` (full recursive
-/// tree-walk node). `dispatch.rs` calls `ShellRmDirTask::run_from_main_thread`
-/// for the verbose-write bounce-back.
 pub use crate::shell::builtins::rm::DirTask as ShellRmDirTask;
 
 // ported from: src/shell/interpreter.zig

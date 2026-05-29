@@ -32,10 +32,6 @@ use bun_sys::FdExt as _;
 
 use crate::api::bun_process::sync as spawn_sync;
 
-// `json_mod::parse_utf8` returns `bun_ast::Expr` (the value-shaped
-// JSON-only `Expr`), not `bun_ast::Expr`, so `Expr::get_string_cloned`
-// can't be applied. Mirror the lookup as a free fn over the JSON `Expr` using
-// its own `as_property` / `as_string_cloned` surface.
 #[inline]
 fn json_get_string_cloned<'b>(
     expr: &bun_ast::Expr,
@@ -91,10 +87,6 @@ type SHA512Digest = [u8; sha::SHA512::DIGEST];
 
 pub(crate) struct PublishCommand;
 
-// TODO(port): Zig used `if (directory_publish) ?[]const u8 else void` for the script fields
-// and `if (directory_publish) *DotEnv.Loader else void` for script_env. Rust const generics
-// cannot vary field types; we keep them as Option<> in both instantiations and rely on
-// invariants (always None / never used when DIRECTORY_PUBLISH == false).
 pub struct Context<'a, const DIRECTORY_PUBLISH: bool> {
     pub manager: &'a mut PackageManager,
     pub command_ctx: Command::Context<'a>,
@@ -458,15 +450,6 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         })
     }
 
-    /// `bun publish` without a tarball path. Automatically pack the current workspace and get
-    /// information required for publishing
-    // PORT NOTE: Zig declares this on the comptime-generic `Context(directory_publish)`
-    // but only ever instantiates it as `Context(true).fromWorkspace`; lazy comptime
-    // evaluation hid the `pack(true) -> Context(true)` mismatch for the unused
-    // `false` branch. Rust type-checks all monomorphisations, so pin the return
-    // type to the only valid shape. `'static` matches `pack::pack`'s return —
-    // the embedded `&mut PackageManager` / `Command::Context` are process-
-    // lifetime singletons reborrowed through raw pointers there.
     pub fn from_workspace(
         ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
@@ -723,10 +706,6 @@ impl PublishCommand {
                 .put(b"npm_command", b"publish")
                 .map_err(|_| err!(OutOfMemory))?;
 
-            // PORT NOTE: reshaped for borrowck — `command_ctx: &mut ContextData`
-            // is held by `context`; `run_package_script_foreground` needs
-            // `&mut ContextData` too. Re-derive from the raw pointer (mirrors
-            // Zig's freely-aliased `Command.Context`).
             let cmd_ctx_ptr: *mut crate::cli::command::ContextData = context.command_ctx;
 
             if let Some(publish_script) = &context.publish_script {
@@ -935,10 +914,6 @@ impl PublishCommand {
             return Ok(());
         }
 
-        // PORT NOTE: `AsyncHTTP::init_sync` requires `&'static [u8]` for the
-        // request body (Zig had no lifetimes). Single-shot CLI path — adopt the
-        // already-owned `Box<[u8]>` (base64-encoded tarball; can be multi-MB)
-        // into the process-lifetime side-table. Zero-copy.
         let publish_req_body: &'static [u8] = crate::cli::cli_adopt(
             Self::construct_publish_request_body::<DIRECTORY_PUBLISH>(ctx)?,
         );

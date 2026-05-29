@@ -45,20 +45,6 @@ pub unsafe extern "C" fn mi_free_bytes(bytes: *mut c_void, _ctx: *mut c_void) {
 // Zone-tagged thunks
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Expands a set of `extern "C"` allocator thunks bound to a named
-/// heap-breakdown zone. When `heap_breakdown::ENABLED` is false (release /
-/// non-macOS) the thunks fall straight through to the default allocator.
-///
-/// Generated items:
-/// - `malloc_size(_, len: usize) -> *mut c_void` — brotli-shape, non-zeroing.
-///   Safe `extern "C" fn` (opaque cookie ignored; body is all-safe).
-/// - `calloc_items(_, items: c_uint, len: c_uint) -> *mut c_void` — zlib-shape,
-///   zeroing. Safe `extern "C" fn` (same rationale).
-/// - `free(_, ptr: *mut c_void)` — paired with either alloc. `unsafe`
-///   (precondition: `ptr` was allocated by this zone / the default allocator).
-///
-/// Intended to be invoked inside a `mod XxxAllocator { … }` so call sites can
-/// keep referring to `XxxAllocator::alloc` / `::free` via a local `pub use`.
 #[macro_export]
 macro_rules! c_thunks_for_zone {
     ($name:literal) => {

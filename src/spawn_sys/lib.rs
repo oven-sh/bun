@@ -35,16 +35,6 @@ pub mod posix_spawn;
 #[path = "spawn_process.rs"]
 pub mod spawn_process;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Canonical FFI type aliases — Zig `?[*:0]const u8` ↔ Rust `*const c_char`
-//
-// **Never** spell these as `Option<*const c_char>`: raw pointers are already
-// nullable, and `Option<*const T>` does *not* enjoy the null-pointer-niche
-// guarantee that `Option<&T>`/`Option<NonNull<T>>` do — its layout is
-// implementation-defined. Passing `Vec<Option<*const c_char>>::as_ptr()` to
-// `execve` is the bug class that produced the EFAULT fixed in 813ccdb7622.
-// ──────────────────────────────────────────────────────────────────────────
-
 /// `[*:null]?[*:0]const u8` — null-terminated array of NUL-terminated C
 /// strings (the `argv` shape `posix_spawn`/`execve` accept). Build as
 /// `Vec<*const c_char>` with a trailing `core::ptr::null()`, then `.as_ptr()`.
@@ -71,11 +61,6 @@ const _: () = assert!(
     core::mem::size_of::<Option<core::ptr::NonNull<c_char>>>() == core::mem::size_of::<usize>()
 );
 
-// ──────────────────────────────────────────────────────────────────────────
-// Signal-forwarding / no-orphans FFI surface — moved down from
-// `bun_spawn::process::sync` so the decls live next to `posix_spawn_bun`.
-// `bun_spawn::sync` consumes these via `bun_spawn_sys::ffi::*`.
-// ──────────────────────────────────────────────────────────────────────────
 pub mod ffi {
     use core::ffi::c_int;
 
@@ -96,11 +81,6 @@ pub mod ffi {
         pub safe fn Bun__noOrphans_onFork();
         pub safe fn Bun__noOrphans_onExit(pid: pid_t);
 
-        /// The PID to forward signals to. Set to 0 when unregistering.
-        ///
-        /// C++ declares this as plain `int64_t`; `AtomicI64` is `#[repr(C)]`
-        /// with the same size/align, and the C side only does word-sized
-        /// loads/stores from the signal handler, so `Relaxed` here matches.
         pub safe static Bun__currentSyncPID: core::sync::atomic::AtomicI64;
 
         /// Race condition: a signal could be sent before `spawn_process_posix`
@@ -109,11 +89,6 @@ pub mod ffi {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Waiter-thread fallback flag — owned here so `spawn_process_posix` /
-// `PosixSpawnResult::pifd_from_pid` can flip it without depending on
-// `bun_threading`. `bun_spawn::WaiterThread` reads/writes through these.
-// ──────────────────────────────────────────────────────────────────────────
 pub mod waiter_thread_flag {
     use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -130,15 +105,6 @@ pub mod waiter_thread_flag {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// `PR_SET_PDEATHSIG` default — `spawn_process_posix` consults this when
-// `PosixSpawnOptions::linux_pdeathsig` is `None`. Storage lives here (lowest
-// tier that reads it); `bun_io::ParentDeathWatchdog::enable()` flips it on
-// from the main thread. `PR_SET_PDEATHSIG` is *thread*-scoped in the kernel,
-// so the default only applies when spawning from the same thread that armed
-// the watchdog (a `Bun.spawn` from a JS Worker would otherwise kill the child
-// on `worker.terminate()`).
-// ──────────────────────────────────────────────────────────────────────────
 pub mod pdeathsig {
     use core::sync::atomic::{AtomicBool, Ordering};
     use std::sync::OnceLock;
@@ -163,12 +129,6 @@ pub mod pdeathsig {
         DEFAULT_PDEATHSIG_ON_LINUX.load(Ordering::Acquire) && is_arming_thread()
     }
 
-    /// True iff the calling thread is the one that called `set_default(true)`
-    /// (i.e. the main thread that ran `ParentDeathWatchdog::enable()`). The
-    /// no-orphans `spawnSync` machinery — `PR_SET_CHILD_SUBREAPER`,
-    /// signalfd(SIGCHLD), `wait4(-1)` orphan-reaping — is only sound from that
-    /// thread; off-thread callers (install's threadpool `git` clones) would
-    /// race the process-wide subreaper flag and reap each other's children.
     #[inline]
     pub fn is_arming_thread() -> bool {
         INSTALL_THREAD.get().copied() == Some(std::thread::current().id())

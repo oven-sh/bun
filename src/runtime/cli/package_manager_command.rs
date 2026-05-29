@@ -135,11 +135,6 @@ impl PackageManagerCommand {
     }
 
     pub fn print_help() {
-        // the output of --help uses the following syntax highlighting
-        // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
-        // use [foo] for multiple arguments or flags for foo.
-        // use <bar> to emphasize 'bar'
-
         const INTRO_TEXT: &str = "\n\
 <b>Usage<r>: <b><green>bun pm<r> <cyan>[flags]<r> <blue>[\\<command\\>]<r>\n\
 \n\
@@ -190,10 +185,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
     }
 
     pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
-        // PORT NOTE: Zig `std.process.argsAlloc(ctx.allocator)[1..]` → collect
-        // process-static argv (already skips argv[0] internally? no — `Argv`
-        // includes argv[0]) into a borrowed-slice Vec so `&[&[u8]]` callers
-        // (TrustCommand/UntrustedCommand, `left_has_any_in_right`) keep their shape.
         let args_vec: Vec<&'static [u8]> = bun_core::argv().into_iter().skip(1).collect();
         let args: &[&[u8]] = &args_vec;
 
@@ -235,10 +226,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         let mut subcommand: &[u8] = if is_direct_whoami {
             b"whoami"
         } else {
-            // PORT NOTE: Zig `getSubcommand(&pm.options.positionals)` defer-writes the
-            // advanced slice back into the field; downstream branches (cache rm, view,
-            // version/why/pkg) index `positionals[1]/[2]` *after* that advance. Pass the
-            // field itself by `&mut` so the reslice persists.
             Self::get_subcommand(&mut pm.options.positionals)
         };
 
@@ -629,11 +616,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 }
             }
             let log_level = pm.options.log_level;
-            // PORT NOTE: reshaped for borrowck — Zig
-            // `migration.detectAndLoadOtherLockfile(&pm.lockfile, .cwd(), pm, ctx.log)`
-            // is a self-referential split borrow. Derive both halves through
-            // `pm` (not the raw `pm_ptr`) so the outer borrow stays on the
-            // Stacked-Borrows stack.
             let pm_raw: *mut PackageManager = pm;
             // SAFETY: `pm.lockfile` is `Box<Lockfile>` whose pointee lives in a
             // separate heap allocation; `&mut Lockfile` and `&mut PackageManager`
@@ -655,11 +637,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 Global::exit(1);
             }
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
-            // PORT NOTE: reshaped for borrowck — `save_to_disk` needs
-            // `&mut Lockfile` (self) and `&LoadResult` simultaneously, but
-            // `LoadResultOk.lockfile` already holds the only `&mut` into the
-            // boxed lockfile. Project that field to a raw pointer (no second
-            // Box-deref) so both arguments share one Stacked-Borrows lineage.
             let lf: *mut Lockfile = &raw mut *load_lockfile.ok_mut().lockfile;
             // SAFETY: `load_lockfile` is `Ok` (errors exited above). `lf` is a
             // reborrow of `ok.lockfile`; `save_to_disk` reads `load_result` only

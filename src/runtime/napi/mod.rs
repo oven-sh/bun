@@ -20,11 +20,6 @@ bun_opaque::opaque_ffi! {
     pub(crate) struct NapiEnv;
 }
 
-// ─── opaque type surface ─────────────────────────────────────────────────────
-// TODO(blocked): bun_jsc::EventLoop (method surface)
-// TODO(blocked): bun_jsc::c_api::ExceptionRef
-// TODO(blocked): bun_collections::LinearFifo
-// TODO(blocked): bun_threading::Condvar
 pub struct ThreadsafeFunction(());
 
 // ported from: src/napi/napi.zig

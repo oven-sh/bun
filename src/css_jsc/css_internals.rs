@@ -59,11 +59,6 @@ pub fn _test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     testing_impl(global, frame, TestKind::Normal, TestCategory::Normal)
 }
 
-/// Shared arg-validation for the test-only CSS internals: pulls the next arg,
-/// throws "{fn_name}: expected {expected_n} arguments, got {got_n}" if absent,
-/// throws "{fn_name}: expected {arg_label} to be a string" if not a string,
-/// otherwise returns the +1-ref BunString wrapped in `OwnedString` for RAII deref.
-/// Caller does `.to_utf8()` (borrows the OwnedString, so can't be returned here).
 fn eat_string_arg(
     arguments: &mut bun_jsc::ArgumentsSlice<'_>,
     global: &JSGlobalObject,
@@ -256,17 +251,6 @@ fn parser_options_from_js(
             return Err(global.throw(format_args!("flags must be an array")));
         }
     }
-
-    // if (try jsobj.getTruthy(globalThis, "css_modules")) |val| {
-    //     opts.css_modules = bun.css.css_modules.Config{
-    //
-    //     };
-    //     if (val.isObject()) {
-    //         if (try val.getTruthy(globalThis, "pure")) |pure_val| {
-    //             opts.css_modules.pure = pure_val.toBoolean();
-    //         }
-    //     }
-    // }
 
     Ok(())
 }

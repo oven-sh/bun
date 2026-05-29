@@ -90,11 +90,6 @@ where
         }
     }
 
-    /// Zig: `pub fn case(comptime str: []const u8) T`
-    ///
-    /// Runtime variant. For const-position (Zig's comptime use in `switch`
-    /// arms), use the [`exact_case!`] macro below — `const fn` cannot call
-    /// the non-const trait method `read_le` on stable.
     #[inline(always)]
     pub fn case(str: &'static [u8]) -> <Self as ExactSizeInt<MAX_BYTES>>::T {
         // if (str.len < max_bytes) { zero-pad } else if (== max_bytes) { read } else { @compileError }
@@ -114,11 +109,6 @@ where
     }
 }
 
-/// Const-position equivalent of `ExactSizeMatcher::<N>::case(b"..")` for the
-/// common N (1/2/4/8/16). Expands to a `<uN>::from_le_bytes` of a zero-padded
-/// literal, which IS const-evaluable.
-///
-/// Usage: `match ExactSizeMatcher::<4>::r#match(s) { exact_case!(4, b"foo") => .., _ => .. }`
 #[macro_export]
 macro_rules! exact_case {
     (1,  $s:expr) => {{

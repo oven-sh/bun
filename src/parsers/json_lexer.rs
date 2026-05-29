@@ -149,17 +149,6 @@ impl Default for IndentInfo {
     }
 }
 
-/// JSON-only lexer. Field layout mirrors the Zig `LexerType` for the fields
-/// the JSON parser reads directly (`token`, `number`, `has_newline_before`,
-/// `source`, `end`, `is_ascii_only`, `identifier`, `indent_info`).
-///
-/// PORT NOTE — borrowck/Stacked Borrows: Zig stored `log: *logger.Log` on
-/// both the lexer *and* the parser (json.zig:103,119). The Rust port keeps a
-/// single `*mut Log` here as the sole provenance chain; the parser does **not**
-/// hold its own `&mut Log` (that would alias this pointer and any parser-side
-/// `&mut` deref would invalidate the lexer's SharedReadWrite tag — UB the next
-/// time the lexer reports an error). Parser-side log writes go through
-/// `log_mut()`. Matches the toml lexer's shape.
 pub struct Lexer<'a, 'bump> {
     // PORT NOTE: raw ptr — see struct doc.
     log: *mut bun_ast::Log,
@@ -188,12 +177,6 @@ pub struct Lexer<'a, 'bump> {
     /// Only used for JSON stringification when bundling.
     pub is_ascii_only: bool,
 
-    /// Runtime copy of the comptime `JSONOptions`. The cold-path flags
-    /// (`allow_comments`, `guess_indentation`, `ignore_leading_escape_sequences`)
-    /// stay runtime; the hot per-byte string loop is monomorphised over
-    /// `const QUOTE: u8` and reads `is_json` as compile-time `true` (this
-    /// module is the is_json slice — see file header), so nothing in
-    /// `parse_string_literal_inner` loads through this field.
     opts: JSONOptions,
     pub indent_info: IndentInfo,
 }
@@ -270,10 +253,6 @@ where
         }
     }
 
-    /// Zig: `init` — `NewLexer(opts).init`. The parser's 8 const-generic bools
-    /// are flattened back into a runtime `JSONOptions` here; the JSON token
-    /// loop is small enough that the comptime specialisation buys nothing at
-    /// this layer (the full JS lexer is where it mattered).
     pub(crate) fn init(
         log: &mut bun_ast::Log,
         source: &'a bun_ast::Source,
@@ -437,15 +416,6 @@ where
         }
     }
 
-    /// Zig: `parseStringLiteral(comptime quote)` with `is_json = true`,
-    /// template-literal (`\``) and `$`-substitution arms removed. `QUOTE == 0`
-    /// is the implicit (.env auto-quote) string.
-    ///
-    /// PERF: `QUOTE` is a const generic mirroring Zig's `comptime quote:
-    /// CodePoint` so the per-byte `match` folds to a guard-free jump table and
-    /// the `QUOTE == 0` / SIMD-gate checks const-propagate away. `is_json` is
-    /// hard-wired `true` (this module *is* the is_json slice — see file header)
-    /// so the `< 0x20` control-char check is branchless on the option load.
     fn parse_string_literal_inner<const QUOTE: u8>(&mut self) -> LexResult {
         self.token = T::TStringLiteral;
         // quote is 0 when parsing JSON from .env — values may be unquoted.
@@ -555,11 +525,6 @@ where
         self.string_literal_start = self.start;
         self.is_ascii_only = self.is_ascii_only && !needs_decode;
 
-        // Spec lexer.zig:775-779 gates the "JSON strings must use double quotes"
-        // error on `if (comptime !FeatureFlags.allow_json_single_quotes)`, and
-        // feature_flags.zig:24 sets `allow_json_single_quotes = true`, so the
-        // spec NEVER emits this error.
-
         Ok(())
     }
 
@@ -599,13 +564,6 @@ where
         Ok(res)
     }
 
-    /// Zig: `decodeEscapeSequences`. Ported for the `is_json = true` arm only —
-    /// legacy-octal, template `\r\n` normalization and tagged-template raw
-    /// preservation are JS-only and dropped.
-    // TODO(port): JSON spec only permits `\" \\ \/ \b \f \n \r \t \uXXXX`; the
-    // Zig path additionally accepts `\0` `\v` `\x` `\u{…}` etc. and then errors
-    // post-hoc via `is_json` checks. Mirror that once the surrogate-pair
-    // handling in `bun_str` is wired.
     fn decode_escape_sequences(
         &mut self,
         _start: usize,
@@ -697,11 +655,6 @@ where
 
     // ── numeric literal ──────────────────────────────────────────────────
 
-    /// Zig: `parseNumericLiteralOrDot`. Spec lexer.zig:2736-2998 has NO is_json
-    /// gate on the radix-prefix integer-literal path (`0x…/0b…/0o…`/legacy
-    /// octal) or underscore separators, so they are accepted here too. Only the
-    /// bigint `'n'` token is JS-only and left to the trailing
-    /// `is_identifier_start` syntax error.
     fn parse_numeric_literal_or_dot(&mut self) -> LexResult {
         let first = self.code_point;
         self.step();
@@ -982,11 +935,6 @@ where
 
     // ── identifier with escapes ──────────────────────────────────────────
 
-    /// Zig: `scanIdentifierWithEscapes(.normal)` (lexer.zig:875). Minimal port
-    /// for the JSON keyword set: scans `\uXXXX` / `\u{…}` escapes interleaved
-    /// with identifier-continue codepoints, decodes via
-    /// `decode_escape_sequences`, and maps the result to
-    /// `t_true`/`t_false`/`t_null`/`t_identifier`.
     fn scan_identifier_with_escapes(&mut self) -> LexResult {
         // First pass: scan over the identifier to see how long it is.
         loop {
@@ -1283,26 +1231,6 @@ where
                 cp if cp == '~' as CodePoint => {
                     return self.add_unsupported_syntax_error("~ is not allowed in JSON");
                 }
-                // `?`, `*`, `(` and `)` deliberately do NOT raise. The JS
-                // lexer in JSON mode tokenizes them (TQuestion/TAsterisk/
-                // TOpenParen/TCloseParen) without erroring, which lets
-                // `JSONLikeParser::parse_expr`'s auto-quote fallback rescue an
-                // unquoted value that starts with one — e.g. a `Bun.build`
-                // `define:` whose value is a raw minified CSS string starting
-                // with `*{...}` (`bake-codegen.ts`'s `OVERLAY_CSS`). Erroring
-                // here aborts `Lexer::init` before `parse_env_json` gets a
-                // chance to auto-quote.
-                //
-                // They get a dedicated arm (not the catch-all) because the spec
-                // arms (lexer.zig `'('`/`')'`/`'?'`/`'*'`) all `step()` past the
-                // char, while the catch-all leaves `code_point` on `contents[0]`.
-                // The auto-quote retry rebuilds the lexer (same state) and then
-                // calls `parse_string_literal_inner::<0>()`, whose leading
-                // `step()` must land on `contents[2]` so `contents[1]` is *not*
-                // inspected by the loop's `\n`/`\r`/`\\`/control arms — exactly
-                // as the spec lexer leaves it. Without the `step()` here,
-                // `"(\nrest"` truncates to `"("` and `"(\z"` triggers a spurious
-                // decode error, where the spec accepts both raw.
                 cp if cp == '?' as CodePoint
                     || cp == '*' as CodePoint
                     || cp == '(' as CodePoint

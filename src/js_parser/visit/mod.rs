@@ -152,11 +152,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .expect("unreachable");
 
         if self.options.features.react_fast_refresh {
-            // PORT NOTE: react_refresh.hook_ctx_storage is `Option<NonNull<Option<HookContext>>>`
-            // pointing at a stack-local on the visitStmt caller frame (Zig: `*?Hook`).
-            // `ReactRefresh::hook_ctx_mut` centralises the raw-pointer deref and returns a
-            // borrow detached from `self` (the storage is on the caller's stack frame), so
-            // it can be held across the `&mut self` method call below.
             let hook_ctx = self
                 .react_refresh
                 .hook_ctx_mut()
@@ -204,10 +199,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
         }
 
-        // Section 15.1.1 Static Semantics: Early Errors: "Multiple occurrences of
-        // the same BindingIdentifier in a FormalParameterList is only allowed for
-        // functions which have simple parameter lists and which are not defined in
-        // strict mode code."
         if opts.is_unique_formal_parameters
             || strict_loc.is_some()
             || !has_simple_args
@@ -262,10 +253,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let prev_require_to_convert_count = self.imports_to_convert_from_require.len();
                 let prev_macro_call_count = self.macro_call_count;
                 let orig_dead = self.is_control_flow_dead;
-                // PORT NOTE: `replacement` is a `BackRef` (Zig `?*ReplaceableExport`) so the
-                // borrow of `self.options` does not survive across `visit_expr_in_out(&mut self)`.
-                // `BackRef` invariant: `self.options.features.replace_exports` is never mutated
-                // during the visit pass, so the entry strictly outlives this loop body.
                 let mut replacement: Option<
                     bun_ptr::BackRef<crate::parser::Runtime::ReplaceableExport>,
                 > = None;
@@ -819,21 +806,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.enclosing_class_keyword = class.class_keyword;
         self.vis_scope()
             .recursive_set_strict_mode(StrictModeKind::ImplicitStrictModeClass);
-        // PORT NOTE: `FnOnlyDataVisit::class_name_ref` is `Option<&'a Cell<Ref>>`, so the
-        // shadow ref must outlive the parser borrow. Allocate it in the bump arena (Zig kept
-        // it on the stack and passed `&shadow_ref` — Rust's `'a` bound on the field forbids
-        // that). `Cell` lets us hand out a shared `&'a Cell<Ref>` to nested frames while
-        // still reading/writing it here, with no raw-pointer `unsafe`.
         let shadow_ref: &'a core::cell::Cell<Ref> =
             core::cell::Cell::from_mut(self.arena.alloc(Ref::NONE));
 
-        // Insert a shadowing name that spans the whole class, which matches
-        // JavaScript's semantics. The class body (and extends clause) "captures" the
-        // original value of the name. This matters for class statements because the
-        // symbol can be re-assigned to something else later. The captured values
-        // must be the original value of the name, not the re-assigned value.
-        // Use "const" for this symbol to match JavaScript run-time semantics. You
-        // are not allowed to assign to this symbol (it throws a TypeError).
         if let Some(name) = class.class_name {
             let name_ref = name.ref_.expect("infallible: ref bound");
             shadow_ref.set(name_ref);
@@ -1041,11 +1016,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // note: our version assumes useDefineForClassFields is true
             if Self::IS_TYPESCRIPT_ENABLED {
                 if let Some(mut constructor) = constructor_function {
-                    // `constructor` is a `StoreRef<E::Function>` arena slot captured from
-                    // `class.properties[i].value.data` above; arena-owned for 'a, and the
-                    // per-property `&mut [Property]` borrow has been released. Moving the
-                    // `Property` structs below does not invalidate this pointer (it points to
-                    // a separate Store allocation, not into the Property slice itself).
                     let func_args: bun_ast::StoreSlice<G::Arg> = constructor.func.args;
                     let mut to_add: usize = 0;
                     for arg in func_args.iter() {
@@ -1091,10 +1061,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             old_props_len + to_add,
                             self.arena,
                         );
-                        // PORT NOTE: Zig `fromOwnedSlice` adopts the existing buffer in-place.
-                        // Rust BumpVec can't adopt a foreign arena slice, so move each element
-                        // out by `ptr::read` (G::Property has no Drop; old slice becomes dead
-                        // arena bytes).
                         for i in 0..old_props_len {
                             // SAFETY: in-bounds; arena-owned; no Drop on Property.
                             unsafe {
@@ -1146,12 +1112,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             };
                             stmts.insert(insert_at, Stmt::assign(dot, arg_ident));
 
-                            // O(N)
-                            // Zig: `class_body.items.len += 1; bun.copy(...)` — open a 1-slot
-                            // gap at j and write the new field. `Vec::insert` is the same
-                            // memmove + write.
-                            // Copy the argument name symbol to prevent the class field
-                            // declaration from being renamed but not the constructor argument.
                             let field_symbol_ref = self
                                 .declare_symbol(SymbolKind::Other, bind_loc, name)
                                 .unwrap_or(id_ref);
@@ -1233,14 +1193,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut before: ListManaged<'a, Stmt> = ListManaged::new_in(p.arena);
             let mut after: ListManaged<'a, Stmt> = ListManaged::new_in(p.arena);
 
-            // Preprocess TypeScript enums to improve code generation. Otherwise
-            // uses of an enum before that enum has been declared won't be inlined:
-            //
-            //   console.log(Foo.FOO) // We want "FOO" to be inlined here
-            //   const enum Foo { FOO = 0 }
-            //
-            // The TypeScript compiler itself contains code with this pattern, so
-            // it's important to implement this optimization.
             let mut preprocessed_enums: ListManaged<'a, &'a [Stmt]> = ListManaged::new_in(p.arena);
             if p.scopes_in_order_for_enum.count() > 0 {
                 for stmt in stmts.iter_mut() {
@@ -1249,10 +1201,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // save/restore matches the Zig slice-copy directly.
                         let old_scopes_in_order = p.scope_order_to_visit;
 
-                        // `Loc` lacks `Hash` (logger crate) so `ArrayHashMap::get`
-                        // is unavailable; linear scan over `keys()`/`values()`
-                        // (enums are rare).
-                        // TODO(port): switch to `.get(&stmt.loc)` once `Loc: Hash`.
                         p.scope_order_to_visit =
                             scopes_for_enum_at(&p.scopes_in_order_for_enum, stmt.loc);
 
@@ -1267,11 +1215,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if p.current_scope == p.module_scope {
-                // TODO(port): `MacroState::prepend_stmts` is `&'a mut Vec<Stmt>` but
-                // `before` is a `BumpVec<'a, Stmt>` — type-shape divergence in
-                // parser.rs. Zig: `p.macro.prepend_stmts = &before;`. The macro
-                // expansion path is gated; this BACKREF is restored when MacroState
-                // switches to `BumpVec` / `NonNull`.
                 let _ = &mut before;
             }
 
@@ -1280,10 +1223,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ListManaged::with_capacity_in(stmts.len(), p.arena);
 
             let prev_nearest_stmt_list = p.nearest_stmt_list;
-            // PORT NOTE: BACKREF — `before` outlives this block; raw NonNull avoids
-            // the `&'a mut` borrow conflict. Derive via `addr_of_mut!` (no intermediate
-            // `&mut`) so the pointer shares the local's base tag and survives the
-            // direct `&mut before` reborrows in the loop below (Stacked Borrows).
             p.nearest_stmt_list = NonNull::new(core::ptr::addr_of_mut!(before));
 
             let mut preprocessed_enum_i: usize = 0;
@@ -1346,15 +1285,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 for stmt in before.iter().copied() {
                     match stmt.data {
                         StmtData::SFunction(mut data) => {
-                            // This transformation of function declarations in nested scopes is
-                            // intended to preserve the hoisting semantics of the original code. In
-                            // JavaScript, function hoisting works differently in strict mode vs.
-                            // sloppy mode code. We want the code we generate to use the semantics of
-                            // the original environment, not the generated environment. However, if
-                            // direct "eval" is present then it's not possible to preserve the
-                            // semantics because we need two identifiers to do that and direct "eval"
-                            // means neither identifier can be renamed to something else. So in that
-                            // case we give up and do not preserve the semantics of the original code.
                             let name = data.func.name.unwrap();
                             let name_ref = name.ref_.expect("infallible: ref bound");
                             // SAFETY: current_scope is a valid arena ptr for the parse.
@@ -1492,14 +1422,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if kind != StmtsKind::SwitchStmt && p.should_lower_using_declarations(stmts.as_slice()) {
             let mut ctx = LowerUsingDeclarationsContext::init(p)?;
             ctx.scan_stmts(p, stmts.as_mut_slice());
-            // PORT NOTE: Zig's `stmts.* = ctx.finalize(p, stmts.items, ...)`
-            // overwrote the ArrayList struct without freeing the old buffer.
-            // `finalize` stores a sub-slice of that buffer as the lowered
-            // S.Try `body`, so the buffer must outlive the assignment. Leak
-            // the old buffer into the 'a arena via `into_bump_slice_mut`
-            // (reclaimed on arena reset) before installing the new list —
-            // dropping the old `Vec<_, &MimallocArena>` would `mi_free` it
-            // and leave the S.Try body dangling.
             let arena = p.arena;
             let raw = core::mem::replace(stmts, ListManaged::new_in(arena)).into_bump_slice_mut();
             // SAFETY: current_scope is a valid arena ptr for the parse.
@@ -1517,11 +1439,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // SAFETY: current_scope is a valid arena ptr for the parse.
         if p.current_scope().parent.is_some() && !p.current_scope().contains_direct_eval {
-            // Remove inlined constants now that we know whether any of these statements
-            // contained a direct eval() or not. This can't be done earlier when we
-            // encounter the constant because we haven't encountered the eval() yet.
-            // Inlined constants are not removed if they are in a top-level scope or
-            // if they are exported (which could be in a nested TypeScript namespace).
             if p.const_values.count() > 0 {
                 let items: &mut [Stmt] = stmts.as_mut_slice();
                 for stmt in items.iter_mut() {
@@ -1532,11 +1449,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         | StmtData::SDebugger(_)
                         | StmtData::STypeScript(_) => continue,
                         StmtData::SLocal(mut local) => {
-                            // "using" / "await using" declarations have disposal
-                            // side-effects on scope exit. Their refs can end up in
-                            // `const_values` via the macro path in `visitDecl`
-                            // (`could_be_macro`), so skip them here to avoid
-                            // silently dropping the declaration.
                             if local.kind.is_using() {
                                 continue;
                             }
@@ -1612,28 +1524,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // use count may be greater than 1.
             // SAFETY: current_scope is a valid arena ptr for the parse.
             if p.current_scope != p.module_scope && !p.current_scope().contains_direct_eval {
-                // Keep inlining variables until a failure or until there are none left.
-                // That handles cases like this:
-                //
-                //   // Before
-                //   let x = fn();
-                //   let y = x.prop;
-                //   return y;
-                //
-                //   // After
-                //   return fn().prop;
-                //
                 'inner: while output.len() > 0 {
-                    // Ignore "var" declarations since those have function-level scope and
-                    // we may not have visited all of their uses yet by this point. We
-                    // should have visited all the uses of "let" and "const" declarations
-                    // by now since they are scoped to this block which we just finished
-                    // visiting.
                     let prev_idx = output.len() - 1;
-                    // PORT NOTE: reshaped for borrowck — Zig held `&mut output[..]`
-                    // across `p.substitute...` (which borrows `&mut p`). We read the
-                    // `StoreRef` (Copy) first, then re-borrow `output` only when
-                    // truncating.
                     let StmtData::SLocal(mut local) = output[prev_idx].data else {
                         break;
                     };
@@ -1654,10 +1546,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let last: &mut Decl = &mut local.decls.slice_mut()[last_idx];
                     let Some(replacement) = last.value else { break };
 
-                    // The binding must be an identifier that is only used once.
-                    // Ignore destructuring bindings since that's not the simple case.
-                    // Destructuring bindings could potentially execute side-effecting
-                    // code which would invalidate reordering.
                     let BData::BIdentifier(ident_ptr) = last.binding.data else {
                         break;
                     };
@@ -1711,15 +1599,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_stmt = &mut output[prev_idx];
                         if let StmtData::SLocal(mut prev_local) = prev_stmt.data {
                             if local.can_merge_with(&prev_local) {
-                                // PORT NOTE: `Vec::append_slice` requires `T: Clone`
-                                // but `G::Decl` lacks the derive (its fields are all
-                                // `Copy`). Per-element bitwise copy matches Zig
-                                // `appendSlice` semantics.
-                                //
-                                // The parse pass allocates `decls` in the bump arena
-                                // (`from_bump_slice` → `Origin::Borrowed`); promote to a
-                                // global-heap buffer before growing it. In Zig both ends
-                                // are mimalloc so `appendSlice` just reallocs in place.
                                 for d in local.decls.slice() {
                                     // SAFETY: Decl is field-wise Copy (Binding, Option<Expr>).
                                     prev_local.decls.push(unsafe { core::ptr::read(d) });
@@ -1747,14 +1626,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 continue;
                             }
                         } else if let StmtData::SLocal(prev_local) = prev_stmt.data {
-                            //
-                            // Input:
-                            //      var f;
-                            //      f = 123;
-                            // Output:
-                            //      var f = 123;
-                            //
-                            // This doesn't handle every case. Only the very simple one.
                             if let ExprData::EBinary(bin_assign) = s_expr.value.data {
                                 if prev_local.decls.len_u32() == 1
                                     && bin_assign.op == OpCode::BinAssign
@@ -1882,11 +1753,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-/// `p.scopes_in_order_for_enum.get(loc)` workaround: `bun_ast::Loc` lacks
-/// `Hash`, so `ArrayHashMap::get` (gated on `ArrayHashContext<K>`) is
-/// unavailable. Linear scan over the (small) parallel key/value slices.
-// TODO(port): replace with `.get(&loc).unwrap()` once `Loc: Hash` lands in
-// bun_logger (cross-crate; out of scope here).
 fn scopes_for_enum_at<'a>(
     map: &bun_collections::ArrayHashMap<bun_ast::Loc, &'a [ScopeOrder<'a>]>,
     loc: bun_ast::Loc,

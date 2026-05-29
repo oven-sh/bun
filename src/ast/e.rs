@@ -16,11 +16,6 @@ use bun_core::strings;
 use crate::{Expr, ExprNodeIndex, ExprNodeList, G, OptionalChain, Ref, StoreRef};
 use bun_alloc::ArenaVecExt as _;
 
-// In Zig: `const string = []const u8;`
-// AST string fields are arena-owned (bulk-freed via Store/arena reset; never
-// individually freed). `StoreStr` is `StoreRef`'s `[u8]` sibling: a thin
-// lifetime-erased pointer with safe construction (no `transmute`) and
-// `Deref<Target=[u8]>` under the same valid-until-arena-reset contract.
 pub use crate::StoreStr as Str;
 
 /// This represents an internal property name that can be mangled. The symbol
@@ -63,10 +58,6 @@ impl Default for Array {
         }
     }
 }
-// TODO(port): Array methods call `Vec::init_capacity(bump, n)`
-// (signature mismatch: Vec takes only `n`; AST-crate variant with bump
-// arena pending) and `Expr::Data::*` deep matches. Un-gate with parser round.
-// Live subset of `Array` accessors needed by downstream crates.
 impl Array {
     pub const EMPTY: Array = Array {
         items: bun_alloc::AstAlloc::vec(),
@@ -97,12 +88,6 @@ impl Array {
         _bump: &Bump,
         estimated_count: usize,
     ) -> Result<ExprNodeList, AllocError> {
-        // This over-allocates a little but it's fine
-        // PERF(port): Zig allocated in arena; this Vec uses the global arena.
-        // `Expr.data` is an enum (validity invariant), so the Zig
-        // `expandToCapacity` + index-walk pattern would form `&mut [Expr]`
-        // over invalid bit patterns. Push into reserved capacity instead —
-        // same allocation profile (one upfront `with_capacity`), no uninit.
         let mut out: ExprNodeList =
             ExprNodeList::init_capacity(estimated_count + self.items.len_u32() as usize);
         // PORT NOTE: reshaped for borrowck — iterate items via index so the &mut
@@ -158,38 +143,8 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     #[repr(transparent)]
     pub struct UnaryFlags: u8 {
-        /// The expression "typeof (0, x)" must not become "typeof x" if "x"
-        /// is unbound because that could suppress a ReferenceError from "x".
-        ///
-        /// Also if we know a typeof operator was originally an identifier, then
-        /// we know that this typeof operator always has no side effects (even if
-        /// we consider the identifier by itself to have a side effect).
-        ///
-        /// Note that there *is* actually a case where "typeof x" can throw an error:
-        /// when "x" is being referenced inside of its TDZ (temporal dead zone). TDZ
-        /// checks are not yet handled correctly by Bun, so this possibility is
-        /// currently ignored.
         const WAS_ORIGINALLY_TYPEOF_IDENTIFIER = 1 << 0;
 
-        /// Similarly the expression "delete (0, x)" must not become "delete x"
-        /// because that syntax is invalid in strict mode. We also need to make sure
-        /// we don't accidentally change the return value:
-        ///
-        /// ```text
-        /// Returns false:
-        ///   "var a; delete (a)"
-        ///   "var a = Object.freeze({b: 1}); delete (a.b)"
-        ///   "var a = Object.freeze({b: 1}); delete (a?.b)"
-        ///   "var a = Object.freeze({b: 1}); delete (a['b'])"
-        ///   "var a = Object.freeze({b: 1}); delete (a?.['b'])"
-        ///
-        /// Returns true:
-        ///   "var a; delete (0, a)"
-        ///   "var a = Object.freeze({b: 1}); delete (true && a.b)"
-        ///   "var a = Object.freeze({b: 1}); delete (false || a?.b)"
-        ///   "var a = Object.freeze({b: 1}); delete (null ?? a?.['b'])"
-        ///   "var a = Object.freeze({b: 1}); delete (true ? a['b'] : a['b'])"
-        /// ```
         const WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS = 1 << 1;
     }
 }
@@ -281,14 +236,6 @@ pub struct Call {
     pub is_direct_eval: bool,
     pub close_paren_loc: crate::Loc,
 
-    /// True if there is a comment containing "@__PURE__" or "#__PURE__" preceding
-    /// this call expression. This is an annotation used for tree shaking, and
-    /// means that the call can be removed if it's unused. It does not mean the
-    /// call is pure (e.g. it may still return something different if called twice).
-    ///
-    /// Note that the arguments are not considered to be part of the call. If the
-    /// call itself is removed due to this annotation, the arguments must remain
-    /// if they have side effects.
     pub can_be_unwrapped_if_unused: CallUnwrap,
 
     /// Used when printing to generate the source prop on the fly
@@ -416,22 +363,6 @@ pub struct Function {
     pub func: G::Fn,
 }
 
-/// 8-byte identifier expression payload. The three side-effect flags are packed
-/// into `Ref`'s user-bit lane (bits 28..31, masked out of `Ref` identity) so
-/// this — the most common `expr::Data` variant — fits in a single word, which
-/// is what pulls `expr::Data` down to 16 bytes / `Expr` to 24. The Zig layout
-/// stores them as discrete bools (16B with padding); the Rust port exploits
-/// `noalias` + smaller nodes for the structural perf win.
-///
-/// `ref_` remains a public field so the ~100 existing `id.ref_` /
-/// `Identifier { ref_, ..Default::default() }` sites stay untouched; flag
-/// access goes through the accessor methods below.
-///
-/// **Hazard:** assigning a fresh `Ref` to `ref_` *clears the flags*. This is
-/// fine for `visit_expr`'s `e_identifier` (sets `ref_` first then re-derives
-/// the flags), but any port of Zig `id.ref = new_ref` that expects the
-/// surrounding bool fields to survive must instead write
-/// `id.ref_ = new_ref.with_user_bits_from(id.ref_)` — see `handle_identifier`.
 #[derive(Clone, Copy)]
 pub struct Identifier {
     pub ref_: Ref,
@@ -460,10 +391,6 @@ impl Identifier {
         self.ref_.set_user_bit(0, v);
     }
 
-    /// If true, this identifier is known to not have a side effect (i.e. to not
-    /// throw an exception) when referenced. If false, this identifier may or may
-    /// not have side effects when referenced. This is used to allow the removal
-    /// of known globals such as "Object" if they aren't used.
     #[inline]
     pub const fn can_be_removed_if_unused(self) -> bool {
         self.ref_.user_bit(1)
@@ -507,27 +434,6 @@ impl Identifier {
     }
 }
 
-/// This is similar to an `Identifier` but it represents a reference to an ES6
-/// import item.
-///
-/// Depending on how the code is linked, the file containing this EImportIdentifier
-/// may or may not be in the same module group as the file it was imported from.
-///
-/// If it's the same module group than we can just merge the import item symbol
-/// with the corresponding symbol that was imported, effectively renaming them
-/// to be the same thing and statically binding them together.
-///
-/// But if it's a different module group, then the import must be dynamically
-/// evaluated using a property access off the corresponding namespace symbol,
-/// which represents the result of a require() call.
-///
-/// It's stored as a separate type so it's not easy to confuse with a plain
-/// identifier. For example, it'd be bad if code trying to convert "{x: x}" into
-/// "{x}" shorthand syntax wasn't aware that the "x" in this case is actually
-/// "{x: importedNamespace.x}". This separate type forces code to opt-in to
-/// doing this instead of opt-out.
-/// 8-byte import-identifier payload — `was_originally_identifier` rides in
-/// `Ref` user bit 0 (see `Identifier` doc for the packing rationale).
 #[derive(Clone, Copy)]
 pub struct ImportIdentifier {
     pub ref_: Ref,
@@ -560,12 +466,6 @@ impl ImportIdentifier {
     }
 }
 
-/// This is a dot expression on exports, such as `exports.<ref>`. It is given
-/// it's own AST node to allow CommonJS unwrapping, in which this can just be
-/// the identifier in the Ref
-/// 8-byte CJS-export-identifier payload — `base` rides in `Ref` user bit 0
-/// (`Exports` = 0, `ModuleDotExports` = 1; see `Identifier` doc for packing
-/// rationale).
 #[derive(Clone, Copy)]
 pub struct CommonJSExportIdentifier {
     pub ref_: Ref,
@@ -598,12 +498,6 @@ impl CommonJSExportIdentifier {
     }
 }
 
-/// The original variant of the dot expression must be known so that in the case that we
-/// - fail to convert this to ESM
-/// - ALSO see an assignment to `module.exports` (commonjs_module_exports_assigned_deoptimized)
-/// It must be known if `exports` or `module.exports` was written in source
-/// code, as the distinction will alter behavior. The fixup happens in the printer when
-/// printing this node.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CommonJSExportIdentifierBase {
     Exports,
@@ -618,36 +512,7 @@ pub struct PrivateIdentifier {
     pub ref_: Ref,
 }
 
-/// In development mode, the new JSX transform has a few special props
-/// - `React.jsxDEV(type, arguments, key, isStaticChildren, source, self)`
-/// - `arguments`:
-///      `{ ...props, children: children, }`
-/// - `source`: https://github.com/babel/babel/blob/ef87648f3f05ccc393f89dea7d4c7c57abf398ce/packages/babel-plugin-transform-react-jsx-source/src/index.js#L24-L48
-///   ```text
-///   {
-///      fileName: string | null,
-///      columnNumber: number | null,
-///      lineNumber: number | null,
-///   }
-///   ```
-/// - `children`:
-///     - static the function is React.jsxsDEV, "jsxs" instead of "jsx"
-///     - one child? the function is React.jsxDEV,
-///     - no children? the function is React.jsxDEV and children is an empty array.
-/// `isStaticChildren`: https://github.com/facebook/react/blob/4ca62cac45c288878d2532e5056981d177f9fdac/packages/react/src/jsx/ReactJSXElementValidator.js#L369-L384
-///     This flag means children is an array of JSX Elements literals.
-///     The documentation on this is sparse, but it appears that
-///     React just calls Object.freeze on the children array.
-///     Object.freeze, historically, is quite a bit slower[0] than just not doing that.
-///     Given that...I am choosing to always pass "false" to this.
-///     This also skips extra state that we'd need to track.
-///     If React Fast Refresh ends up using this later, then we can revisit this decision.
-///  [0]: https://github.com/automerge/automerge/issues/177
 pub struct JSXElement {
-    /// JSX tag name
-    /// `<div>` => E.String.init("div")
-    /// `<MyComponent>` => E.Identifier{.ref = symbolPointingToMyComponent }
-    /// null represents a fragment
     pub tag: Option<ExprNodeIndex>,
 
     /// JSX props
@@ -687,13 +552,6 @@ pub enum JSXSpecialProp {
     Any,
 }
 impl JSXSpecialProp {
-    // PERF(port): Zig used `ComptimeStringMap` (length-prefix lookup, all
-    // resolved at comptime). A `phf::Map` here would compute a full SipHash +
-    // index + slice compare on every JSX prop name even though the
-    // overwhelming majority of inputs (`className`, `onClick`, `style`, ...)
-    // miss. With only 4 keys at 3 distinct lengths, a length-gated `match`
-    // rejects almost every miss on a single `usize` compare and never hashes.
-    // See clap::find_param (12577e958d71) for the same pattern.
     #[inline]
     pub fn from_bytes(s: &[u8]) -> Option<Self> {
         match s.len() {
@@ -737,11 +595,6 @@ const NEG_DOUBLE_DIGIT: [&[u8]; 101] = [
 ];
 
 impl Number {
-    /// String concatenation with numbers is required by the TypeScript compiler for
-    /// "constant expression" handling in enums. We can match the behavior of a JS VM
-    /// by calling out to the APIs in WebKit which are responsible for this operation.
-    ///
-    /// This can return `None` in wasm builds to avoid linking JSC
     pub fn to_string(self, bump: &Bump) -> Option<Str> {
         Self::to_string_from_f64(self.value, bump)
     }
@@ -874,24 +727,12 @@ impl Default for Object {
     }
 }
 
-/// used in TOML parser to merge properties.
-///
-/// Node types are lifetime-free, so `next` is a raw `*mut Rope`
-/// into the bump arena (Zig: `next: ?*Rope`). Segments are bulk-freed at
-/// arena reset.
 pub struct Rope {
     pub head: Expr,
     pub next: *mut Rope,
 }
 impl Rope {
     pub fn append(&mut self, expr: Expr, bump: &Bump) -> Result<*mut Rope, AllocError> {
-        // Walk to the tail iteratively: recursing once per node overflows the
-        // native stack on adversarially deep ropes (e.g. an `.npmrc` section
-        // header with thousands of dot-separated segments).
-        //
-        // Arena-allocated Rope nodes are uniquely owned by the chain at this
-        // point; route through `StoreRef::DerefMut` (the arena-backed handle
-        // whose deref is centralised in `nodes.rs`).
         let mut tail = StoreRef::from_bump(self);
         while let Some(next) = core::ptr::NonNull::new(tail.next).map(StoreRef::from_non_null) {
             tail = next;
@@ -904,10 +745,6 @@ impl Rope {
         Ok(rope)
     }
 
-    /// Re-borrow `next` as `Option<&Rope>`. Same `StoreRef` arena contract:
-    /// the pointee is a bump allocation valid until arena reset. Centralises
-    /// the one `unsafe` so the `set_rope`/`get_or_put_*`/`get_rope` walkers
-    /// don't repeat `if !next.is_null() { unsafe { &*next } }` at every hop.
     #[inline]
     pub fn next_ref<'a>(&self) -> Option<&'a Rope> {
         // SAFETY: `next` is either null or a bump-arena allocation valid until
@@ -1353,10 +1190,6 @@ pub struct Spread {
 
 /// JavaScript string literal type
 pub struct EString {
-    // A version of this where `utf8` and `value` are stored in a packed union, with len as a single u32 was attempted.
-    // It did not improve benchmarks. Neither did converting this from a heap-allocated type to a stack-allocated type.
-    // TODO: change this to *const anyopaque and change all uses to either .slice8() or .slice16()
-    // TODO(port): arena-owned slice
     pub data: Str,
     pub prefer_template: bool,
 
@@ -1437,17 +1270,7 @@ impl EString {
             ..Default::default()
         }
     }
-    /// Construct from a UTF-16 slice (arena-owned). The `data` slice's `.len()`
-    /// stores the **u16 element count** (not byte count) — Zig:
-    /// `@ptrCast(value.ptr)[0..value.len]`. `slice16()` and friends rely on
-    /// this. The pointer is reinterpreted to `*const u8` for storage only.
     pub fn init_utf16(data: &[u16]) -> Self {
-        // `Str::new` only records `(ptr, len)`; we want the original `*const u16`
-        // (reinterpreted as bytes) and the **u16 element count**. Safe-cast the
-        // full `2*len` byte view, then reslice to the first `len` bytes — same
-        // pointer/length pair as the old raw-slice construction, without an
-        // `unsafe` block. Consumers must check `is_utf16` and re-slice via
-        // `slice16`.
         let bytes = &bytemuck::cast_slice::<u16, u8>(data)[..data.len()];
         Self {
             data: Str::new(bytes),
@@ -1483,10 +1306,6 @@ impl EString {
     }
 }
 
-// ── live EString accessor surface ──────────────────────────────────────────
-// Subset of the gated impl below adapted to the current `bun_core` API
-// (`eql_long::<CHECK_LEN>`, no bump-arena `to_utf8_alloc`). Heavy
-// transcode/rope-clone paths stay gated.
 impl EString {
     #[inline]
     pub fn len(&self) -> usize {
@@ -1687,10 +1506,6 @@ impl EString {
         }
     }
 
-    /// Shallow field-wise copy. `EString` is structurally `Copy` (slice ref +
-    /// `Option<NonNull>` rope links + scalars) but does not derive it to keep
-    /// rope-ownership intent explicit; Zig sites that did `.* = other.*` use
-    /// this instead.
     #[inline]
     pub fn shallow_clone(&self) -> EString {
         EString {
@@ -1714,11 +1529,6 @@ impl EString {
         }
     }
 
-    /// Zig `E.String.push` — link `other` onto this string's rope tail.
-    ///
-    /// `other` MUST be Store/arena-allocated (callers pass
-    /// `Expr::init(EString, ...).data.e_string_mut()` or a freshly
-    /// `Store::append`ed node); its address is captured as a `StoreRef`.
     pub fn push(&mut self, other: &mut EString) {
         debug_assert!(self.is_utf8());
         debug_assert!(other.is_utf8());
@@ -1755,10 +1565,6 @@ impl EString {
     pub fn clone_rope_nodes(s: &EString) -> EString {
         let mut root = s.shallow_clone();
         if let Some(first) = root.next {
-            // Clone the first link, then walk the freshly-cloned chain via
-            // `StoreRef` (safe `Deref`/`DerefMut`) instead of a raw `*mut`
-            // cursor. Each cloned node's `next` still points at the original
-            // chain (shallow clone), so re-clone link-by-link.
             let mut tail: StoreRef<EString> =
                 crate::expr::data::Store::append(first.get().shallow_clone());
             root.next = Some(tail);
@@ -1851,10 +1657,6 @@ pub struct TemplatePart {
 
 pub struct Template {
     pub tag: Option<ExprNodeIndex>,
-    /// Arena-owned mutable slice (Zig: `[]TemplatePart`). Stored as a
-    /// `StoreSlice` so writers (`substitute_single_use_symbol_in_expr`, the
-    /// visit pass, `foldStringAddition`) retain mutable provenance. Use
-    /// `parts()` / `parts_mut()` for ergonomic access; never null.
     pub parts: crate::StoreSlice<TemplatePart>,
     pub head: TemplateContents,
 }
@@ -2089,12 +1891,6 @@ pub struct RegExp {
     // TODO(port): arena-owned slice
     pub value: Str,
 
-    /// This exists for JavaScript bindings
-    /// The RegExp constructor expects flags as a second argument.
-    /// We want to avoid re-lexing the flags, so we store them here.
-    /// This is the index of the first character in a flag, not the "/"
-    /// /foo/gim
-    ///      ^
     pub flags_offset: Option<u16>,
 }
 impl RegExp {
@@ -2104,10 +1900,6 @@ impl RegExp {
     };
 
     pub fn pattern(&self) -> &[u8] {
-        // rewind until we reach the /foo/gim
-        //                               ^
-        // should only ever be a single character
-        // but we're being cautious
         if let Some(i_) = self.flags_offset {
             let mut i = i_;
             while i > 0 && self.value[i as usize] != b'/' {
@@ -2121,10 +1913,6 @@ impl RegExp {
     }
 
     pub fn flags(&self) -> &[u8] {
-        // rewind until we reach the /foo/gim
-        //                               ^
-        // should only ever be a single character
-        // but we're being cautious
         if let Some(i) = self.flags_offset {
             return &self.value[i as usize..];
         }
@@ -2180,15 +1968,6 @@ pub struct Import {
     pub expr: ExprNodeIndex,
     pub options: ExprNodeIndex,
     pub import_record_index: u32,
-    // TODO:
-    // Comments inside "import()" expressions have special meaning for Webpack.
-    // Preserving comments inside these expressions makes it possible to use
-    // esbuild as a TypeScript-to-JavaScript frontend for Webpack to improve
-    // performance. We intentionally do not interpret these comments in esbuild
-    // because esbuild is not Webpack. But we do preserve them since doing so is
-    // harmless, easy to maintain, and useful to people. See the Webpack docs for
-    // more info: https://webpack.js.org/api/module-methods/#magic-comments.
-    // leading_interior_comments: []G.Comment = &([_]G.Comment{}),
 }
 impl Import {
     pub fn is_import_record_null(&self) -> bool {

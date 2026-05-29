@@ -83,11 +83,6 @@ pub enum YamlParseError {
 bun_core::oom_from_alloc!(YamlParseError);
 
 impl From<YamlParseError> for bun_core::Error {
-    // PORT NOTE: Zig `YAML.ParseError` is an `error{...}` set, so callers
-    // (e.g. `try YAML.parse(...)` in `ParseTask.getAST`) coerce it into the
-    // wider inferred error union. Mirror that by mapping each variant to its
-    // Zig-tag string via `bun.err!`, the same shape `json5::ExternalError`
-    // uses one file over.
     fn from(e: YamlParseError) -> Self {
         match e {
             YamlParseError::OutOfMemory => bun_core::err!("OutOfMemory"),
@@ -111,12 +106,6 @@ pub fn parse<Enc: Encoding>(bump: &bun_alloc::Arena, input: &[Enc::Unit]) -> Par
 }
 
 pub fn print<Enc: Encoding, W: fmt::Write>(stream: Stream<Enc>, writer: &mut W) -> fmt::Result {
-    // Zig body (yaml.zig:44-53) constructs `Parser(encoding).Printer(@TypeOf(writer))`
-    // and calls `printer.print()`. The `Printer` type is commented out in the spec
-    // (yaml.zig:4927-5250) and operates on the removed `Node` enum, so any Zig
-    // call to `print()` is a compile error on instantiation. Rust eagerly checks
-    // generics, so we cannot mirror that; instead this is a hard panic on the
-    // (currently unreachable — `rg yaml::print src/` has no callers) path.
     let _ = (stream, writer);
     panic!(
         "yaml::print: Printer is commented out in yaml.zig (dead-by-spec; uses removed Node type)"
@@ -407,12 +396,6 @@ pub enum EncodingKind {
     Utf16,
 }
 
-/// Stack buffer for an ASCII literal widened to `Enc::Unit`. Replaces Zig's
-/// `enc.literal("...")` (a `comptime` utf8→utf16 transcode via
-/// `std.unicode.utf8ToUtf16LeStringLiteral`). Rust cannot do const transcoding
-/// behind a trait method, so the literal is widened at the call site into this
-/// inline buffer instead. All call sites in this file pass ≤4-byte ASCII; the
-/// cap of 8 leaves headroom for new literals.
 #[derive(Clone, Copy)]
 pub struct EncLit<U: Copy + Default> {
     buf: [U; 8],
@@ -466,27 +449,10 @@ pub trait Encoding: Copy + 'static {
     /// Number of leading units to skip if `input` starts with [3] c-byte-order-mark.
     fn bom_len(input: &[Self::Unit]) -> usize;
 
-    /// Reinterpret a `&[Unit]` slice as `&[u8]` for `StringHashMap` keying
-    /// (`anchors` / `tag_handles`). Zig's `bun.StringHashMap` is keyed by
-    /// `[]const u8`; calls like `tag_handles.put(handle.slice(self.input), {})`
-    /// only type-check there for `unit() == u8` thanks to lazy generic
-    /// instantiation. Rust eagerly checks generics, so we route through this
-    /// method — identity for `u8` encodings, byte-reinterpret (`len * 2`) for
-    /// `Utf16`. Byte-reinterpret preserves key uniqueness; do **not** use this
-    /// for text (see `NodeScalar::to_expr` for the encoding-aware string path).
     fn key_bytes(s: &[Self::Unit]) -> &[u8];
 
-    /// Construct a Unit from a `u16` code unit. Only meaningful for `Utf16`
-    /// (identity); the `u8` encodings mark this `unreachable!()` because every
-    /// call site is gated on `Enc::KIND == EncodingKind::Utf16`. Mirrors Zig's
-    /// `text.append(@intCast(cp))` paths in `scanDoubleQuotedScalar` /
-    /// `decodeHexCodePoint` where `unit() == u16`.
     fn unit_from_u16(u: u16) -> Self::Unit;
 
-    /// Reinterpret `&[Unit]` as `&[u16]`. Identity for `Utf16`; the `u8`
-    /// encodings keep this default `unreachable!()` because every call site is
-    /// gated on `Enc::KIND == EncodingKind::Utf16` (same pattern as
-    /// `unit_from_u16`). Feeds [`bun_core::strings::narrow_ascii_u16`].
     #[inline]
     fn as_u16_slice(_s: &[Self::Unit]) -> &[u16] {
         unreachable!("as_u16_slice on u8 encoding")
@@ -909,11 +875,6 @@ impl<Enc: Encoding> YamlString<Enc> {
 // drives scanning). We keep a raw pointer with SAFETY notes.
 // TODO(port): refactor whitespace_buf out of Parser or pass &mut explicitly.
 pub struct StringBuilder<'a, Enc: Encoding> {
-    // PORT NOTE: a `&'a mut Parser<'a, Enc>` field would tie the borrow lifetime
-    // to Parser's input lifetime (invariant under &mut), which both fails
-    // borrowck at `string_builder()` and is exactly the aliasing the Zig already
-    // had. Use a raw backref (the LIFETIMES.tsv BACKREF resolution).
-    // Private — invariant-bearing raw backref; reach via `parser()`/`parser_mut()`.
     parser: *mut Parser<'a, Enc>,
     pub str: YamlString<Enc>,
 }
@@ -1150,10 +1111,6 @@ pub enum FirstChar {
     Other,
 }
 
-// PORT NOTE: Zig defined this inline inside scanPlainScalar. Hoisted to module
-// scope so methods can be `impl`'d. `parser` is `*mut` because the outer
-// `&mut self` in scan_plain_scalar drives scanning concurrently — see
-// LIFETIMES.tsv BACKREF.
 pub struct ScalarResolverCtx<'i, Enc: Encoding> {
     pub str_builder: StringBuilder<'i, Enc>,
 
@@ -1495,11 +1452,6 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         let mut minus = false;
         let mut hex = false;
 
-        // For Negative/Positive the sign was consumed by the caller; the first
-        // body char (digit or `.`) is at `pos`. For Other/Dot the caller left
-        // `pos` at the first body char too. Either way, advance past it so the
-        // loop starts at the second body char with the `decimal`/digit flags
-        // already reflecting the first.
         if !matches!(first_char, FirstChar::Negative | FirstChar::Positive) || decimal {
             parser!().inc(1);
         }
@@ -1510,13 +1462,6 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         let mut __c = Enc::wide(parser!().next());
         let (end, valid): (Pos, bool) = 'end: loop {
             match __c {
-                // can only be valid if it ends on:
-                // - ' '
-                // - '\t'
-                // - eof
-                // - '\n'
-                // - '\r'
-                // - ':'
                 0x20 | 0x09 | 0 | 0x0A | 0x0D | 0x3A => {
                     if first && (first_char == FirstChar::Positive || first_char == FirstChar::Negative) {
                         break 'end (parser!().pos, false);
@@ -1663,10 +1608,6 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                 };
                 break 'scalar NodeScalar::Number(unsigned as f64);
             }
-            // [10.2.1.4] Core schema float/int regex. The lexer loop above is
-            // permissive (accepts `+`/`-`/`e`/`.` at any position) and
-            // `wtf::parse_double` prefix-parses, so `1+1` would resolve as 1.
-            // Validate the consumed slice matches the schema before parsing.
             if !is_core_schema_number::<Enc>(lexed, first_char) {
                 return Ok(());
             }
@@ -1696,10 +1637,6 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
     }
 }
 
-/// [10.2.1.4] Core schema int/float pattern. The slice may already have had a
-/// leading `.` or `+`/`-` consumed by the caller before `start` was captured;
-/// `first_char` carries that.
-///   `[-+]? ( \. [0-9]+ | [0-9]+ ( \. [0-9]* )? ) ( [eE] [-+]? [0-9]+ )?`
 fn is_core_schema_number<Enc: Encoding>(s: &[Enc::Unit], first_char: FirstChar) -> bool {
     let mut i = 0usize;
     let len = s.len();
@@ -1749,11 +1686,6 @@ fn is_core_schema_number<Enc: Encoding>(s: &[Enc::Unit], first_char: FirstChar) 
     i == len
 }
 
-/// Port of `bun.jsc.wtf.parseDouble(slice)` over an encoding-generic slice.
-/// `bun_core::wtf::parse_double` takes `&[u8]`; for `Utf8`/`Latin1` we narrow
-/// via `Enc::key_bytes` (identity). For `Utf16` the lexer guarantees the
-/// slice is ASCII-only, so it is narrowed via
-/// [`bun_core::strings::narrow_ascii_u16`].
 fn parse_double_generic<Enc: Encoding>(s: &[Enc::Unit]) -> Result<f64, ()> {
     match Enc::KIND {
         EncodingKind::Utf8 | EncodingKind::Latin1 => {
@@ -1768,10 +1700,6 @@ fn parse_double_generic<Enc: Encoding>(s: &[Enc::Unit]) -> Result<f64, ()> {
     }
 }
 
-/// Port of `std.fmt.parseUnsigned(u64, slice, 0)` over an encoding-generic
-/// slice. Radix 0 = auto-detect `0x`/`0X` (hex), `0o`/`0O` (oct), `0b`/`0B`
-/// (bin), else decimal; `_` is a digit separator. Utf8/Latin1 narrow via
-/// `Enc::key_bytes`; Utf16 narrows via [`bun_core::strings::narrow_ascii_u16`].
 fn parse_unsigned_radix0<Enc: Encoding>(s: &[Enc::Unit]) -> Result<u64, ()> {
     match Enc::KIND {
         EncodingKind::Utf8 | EncodingKind::Latin1 => {
@@ -1843,20 +1771,6 @@ impl<Enc: Encoding> NodeScalar<Enc> {
             NodeScalar::Boolean(value) => Expr::init(E::Boolean { value: *value }, pos.loc()),
             NodeScalar::Number(value) => Expr::init(E::Number { value: *value }, pos.loc()),
             NodeScalar::String(value) => {
-                // Zig: `.init(E.String, .{ .data = value.slice(input) }, pos.loc())`.
-                // `E.String.data` is `[]const u8`, so the Zig source only
-                // type-checks for `unit() == u8`. For `Utf16` we route through
-                // `E::String::init_utf16` instead of mirroring the Zig compile
-                // error (Rust eagerly monomorphizes).
-                //
-                // LIFETIME: Zig's `String.list` is `array_list.Managed` backed
-                // by `parser.allocator` (the bump arena), so `list.items`
-                // outlives the scalar token. The Rust port uses a global-alloc
-                // `Vec` that is dropped with the local `scalar` immediately
-                // after this returns — the resulting `EString.data` would
-                // dangle. Dupe `.list` bytes into the bump arena to recover the
-                // Zig lifetime; `.range` already borrows `input` (source text)
-                // which outlives the Expr → JS conversion.
                 let s: &[Enc::Unit] = match value {
                     YamlString::Range(range) => range.slice(input),
                     YamlString::List(list) => bump.alloc_slice_copy(list.as_slice()),
@@ -2401,19 +2315,10 @@ pub struct Parser<'i, Enc: Encoding> {
     /// recently consumed `\n`/`\r`). Set in `newline()`.
     pub line_start_pos: Pos,
     pub line_indent: Indent,
-    /// A tab was seen between the line's s-indent (or post-indicator
-    /// additional_parent_indent position) and the current token's content.
-    /// [62]/[63] s-indent is spaces only; tab here is s-separate-in-line, valid
-    /// before [197] flow-in-block content but not before a [185] compact
-    /// construct or a sibling block entry. Reset on newline().
     pub tab_after_indent: bool,
     pub line: Line,
     pub token: Token<Enc>,
 
-    /// Zig `parser.allocator`. Growable buffers in this port use the global
-    /// allocator (and `Drop`); the arena is threaded for the few places that
-    /// must hand a borrowed slice into the long-lived `Expr` tree (see
-    /// `NodeScalar::to_expr`).
     pub bump: &'i bun_alloc::Arena,
 
     pub context: ContextStack,
@@ -2435,12 +2340,6 @@ pub struct Parser<'i, Enc: Encoding> {
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
-    /// Total number of nodes that may be reached through alias expansion in a
-    /// single document. Repeated merges of the same anchor (`<<: [*a, *a, ...]`)
-    /// charge the anchor's full subtree per occurrence even though merge keys
-    /// deduplicate, so this needs enough headroom for legitimate documents that
-    /// reuse a large anchor many times while still rejecting exponential
-    /// (billion-laughs style) expansion.
     pub const MAX_ALIAS_EXPANSION: usize = 16 * 1024 * 1024;
 
     pub fn init(bump: &'i bun_alloc::Arena, input: &'i [Enc::Unit]) -> Self {
@@ -2720,12 +2619,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         Ok(Document { root, directives })
     }
 
-    /// [149] c-ns-flow-map-json-key-entry — when a JSON-style key (quoted
-    /// scalar, flow sequence, flow mapping) appears in flow context, the scan
-    /// for a following `:` is in `flow-key` (per [150] c-s-implicit-json-key),
-    /// so an adjacent `:` with no separation is recognized. Returns true iff
-    /// FlowKey was pushed; the caller must then `unset_json_key()` once after
-    /// the relevant scan, regardless of its result.
     fn maybe_set_json_key(&mut self, allowed: bool) -> Result<bool, ParseError> {
         if allowed && self.context.get() == Context::FlowIn {
             self.context.set(Context::FlowKey)?;
@@ -2740,10 +2633,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
     }
 
-    /// [142]/[143] Consume the `?` and parse the flow explicit-entry key.
-    /// Returns e-node `null` when nothing precedes `,` / `}` / `]` / `:`.
-    /// The caller (parse_flow_mapping / parse_flow_sequence) then handles the
-    /// optional `:` and value with its normal entry path.
     fn parse_flow_explicit_key(&mut self) -> Result<Expr, ParseError> {
         debug_assert!(matches!(self.token.data, TokenData::MappingKey));
         let start = self.token.start;
@@ -2770,10 +2659,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             return Err(Self::unexpected_token());
         }
 
-        // Consume c-ns-properties here (still in flow-in) so the post-property
-        // re-scan tokenizes `:b` as ns-plain-first per [126], same as the
-        // first scan above. The FlowKey wrap is only for the content parse so
-        // a JSON-style key early-returns at the trailing `:`.
         let mut scanned_tag: Option<Token<Enc>> = None;
         let mut scanned_anchor: Option<Token<Enc>> = None;
         loop {
@@ -2828,10 +2713,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         self.context.set(Context::FlowIn)?;
 
-        // PORT NOTE: Zig `defer self.context.unset(.flow_in)` — capture the
-        // fallible body's result and unset on EVERY exit (including `?` paths).
-        // The post-`]` scan happens AFTER `.flow_in` is popped (yaml.zig:771),
-        // so only the loop body lives inside the closure.
         let result: Result<(), ParseError> = (|| {
             self.scan(ScanOptions::default())?;
             while !matches!(self.token.data, TokenData::SequenceEnd) {
@@ -2847,11 +2728,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         ) {
                             Expr::init(E::Null {}, self.token.start.loc())
                         } else {
-                            // [147] the value is ns-flow-node; threading the
-                            // value's own indent as current_mapping_indent
-                            // makes the Scalar arm's cmi==scalar_indent check
-                            // return the bare scalar instead of consuming a
-                            // trailing `: …` as a nested mapping.
                             self.parse_node(ParseNodeOptions {
                                 current_mapping_indent: Some(self.token.indent),
                                 ..Default::default()
@@ -2914,10 +2790,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         self.context.set(Context::FlowIn)?;
 
-        // PORT NOTE: Zig `defer self.context.unset(.flow_in)` — capture the
-        // fallible body's result and unset on EVERY exit (including `?` paths).
-        // The post-`}` scan happens AFTER `.flow_in` is popped (yaml.zig:852),
-        // so only the loop body lives inside the closure.
         let result: Result<(), ParseError> = (|| {
             {
                 // Zig `defer self.context.unset(.flow_key)` — unset before propagating.
@@ -2986,11 +2858,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         ..Default::default()
                     })?;
                 } else {
-                    // [147] the value is ns-flow-node; threading the value's
-                    // own indent as current_mapping_indent makes the Scalar
-                    // arm's cmi==scalar_indent check return the bare scalar
-                    // instead of consuming a trailing `: …` as a nested
-                    // mapping (`{a: b: c}`).
                     let value = self.parse_node(ParseNodeOptions {
                         current_mapping_indent: Some(self.token.indent),
                         ..Default::default()
@@ -3158,11 +3025,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
         }
 
-        // The block_indents stack drives scan()'s flow-context indent guard
-        // (continuation lines in a flow collection must be at indent > the
-        // enclosing block's). When reached via the implicit-pair path from a
-        // flow collection (`["a": b]`), the key's column is not a block
-        // boundary — pushing it would reject `["a":\nb]` per [149]/[80].
         let pushed_block_indent = !matches!(self.context.get(), Context::FlowIn | Context::FlowKey);
         if pushed_block_indent {
             self.block_indents.push(mapping_indent)?;
@@ -3592,10 +3454,6 @@ impl<Enc: Encoding> NodeProperties<Enc> {
         implicit_key_line: Line,
     ) -> Result<ImplicitKeyAnchors, ParseError> {
         if let Some(mapping_anchor) = &self.has_mapping_anchor {
-            // Two anchors recorded: the outer anchors the [200] block
-            // collection; the inner anchors the implicit first key. The key's
-            // c-ns-properties are in BLOCK-KEY context (s-separate-in-line),
-            // so the inner anchor must share the key's line.
             let inner = self.has_anchor.as_ref();
             if inner.is_some_and(|t| t.line != implicit_key_line) {
                 return Err(ParseError::MultipleAnchors);
@@ -3764,15 +3622,6 @@ enum BlockIndentedKind {
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
-    /// [185] `s-l+block-indented(n, c)` dispatch shared by the block-mapping
-    /// value (`:`), explicit key (`?`), and block-sequence item (`-`) paths.
-    /// The current token is the post-indicator token.
-    ///
-    /// Owns the property loop: anchor/tag tokens are consumed here so the
-    /// indent rules below re-run on what follows ([161] c-ns-properties may
-    /// stand alone as e-scalar when the next token belongs to the parent).
-    /// A second anchor or tag falls through to `_` so parse_node's
-    /// mapping-anchor split applies ([200] collection vs first-key).
     fn parse_block_indented(
         &mut self,
         n: Indent,
@@ -3783,20 +3632,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let mut value_tag: Option<Token<Enc>> = None;
         let mut value_anchor: Option<Token<Enc>> = None;
 
-        // The [196] indent dispatch below is block-semantics; in flow context
-        // ([149]/[80] s-separate(n,FLOW-IN) = s-separate-lines, any indent on
-        // a continuation line) it does not apply. Reached via the
-        // implicit-pair fallthrough when `parse_block_mapping` is entered
-        // from a flow-seq item (`["a":\nb]`).
         let in_flow = matches!(self.context.get(), Context::FlowIn | Context::FlowKey);
 
         loop {
-            // [196] s-l+block-node(n) reaches content via [197] flow-in-block
-            // (s-separate-lines(n+1)) or [200] block-collection. Either way a
-            // token on a later line at indent ≤ n belongs to the parent —
-            // properties collected so far attach to e-scalar per [161].
-            // [201] seq-space: a nested block sequence may sit at indent n in
-            // BLOCK-OUT, but needs n+1 in BLOCK-IN.
             if !in_flow && self.token.line != indicator_line {
                 let belongs_to_parent = if matches!(self.token.data, TokenData::SequenceEntry)
                     && kind != BlockIndentedKind::SeqEntry
@@ -3806,16 +3644,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.token.indent.is_less_than_or_equal(n)
                 };
                 if belongs_to_parent {
-                    // The post-property re-scan baked `value_tag` into a plain
-                    // scalar's resolution (`ScanOptions.tag`); if that scalar
-                    // is now abandoned to the parent, rewind to its start and
-                    // re-scan tag-neutral so the sibling key resolves under
-                    // the default schema. Only plain single-line scalars are
-                    // tag-resolved at scan time; quoted scalars ignore
-                    // ScanOptions.tag (and their token.start is past the
-                    // opening quote, so rewind would be wrong); multiline
-                    // plain scalars may have advanced parser state across
-                    // lines that a positional rewind cannot fully restore.
                     if value_tag.is_some()
                         && matches!(
                             &self.token.data,
@@ -3829,10 +3657,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         self.pos = self.token.start;
                         self.line = self.token.line;
                         self.line_indent = self.token.indent;
-                        // tab_after_indent is preserved: the original scan
-                        // recorded it for this token's leading whitespace,
-                        // and the re-scan (in_indent_position=false) won't
-                        // re-detect it since pos is already past the tab.
                         self.scan(ScanOptions::default())?;
                     }
                     return self.props_to_e_node(&value_tag, &value_anchor, indicator_start.loc());
@@ -3846,10 +3670,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 TokenData::Tag(_) if value_tag.is_none() => {
                     value_tag = Some(self.token.clone());
                 }
-                // [185] a compact construct on the indicator's line must be at
-                // indent ≥ n+1 via s-indent (spaces only); tab separation
-                // either leaves the token at the line's natural indent (≤ n)
-                // or, when spaces preceded the tab, taints tab_after_indent.
                 TokenData::SequenceEntry | TokenData::MappingKey
                     if self.token.line == indicator_line
                         && (self.token.indent.is_less_than_or_equal(n)
@@ -4043,10 +3863,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         if self.context.get() == Context::FlowKey {
                             return Ok(copy);
                         }
-                        // [154] ns-s-implicit-yaml-key uses s-separate-in-line
-                        // (same line only); [145] in flow-map uses s-separate
-                        // (spans lines, per yaml-test-suite 4MUZ etc.),
-                        // handled by the FlowKey return above.
                         if alias_line != self.token.line && !opts.explicit_mapping_key {
                             return Err(ParseError::MultilineImplicitKey);
                         }
@@ -4246,11 +4062,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                 TokenData::MappingKey => {
                     if matches!(self.context.get(), Context::FlowIn | Context::FlowKey) {
-                        // Only reachable when a flow `?` appears in a position
-                        // where ns-flow-pair is not allowed (e.g. as a flow-map
-                        // value, or after another `?`). Both parse_flow_mapping
-                        // and parse_flow_sequence intercept `?` themselves for
-                        // the legitimate paths.
                         return Err(Self::unexpected_token());
                     }
                     // [195] each `?` sits at s-indent(n) (spaces only).
@@ -4306,10 +4117,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             break 'node Expr::init(E::Null {}, self.token.start.loc());
                         }
                     }
-                    // [200]/[193] split: a property on the `:` line is the
-                    // e-node key's (`!!str : x` → key ""); on a prior line
-                    // it is the [200] block-collection's. Only the key's tag
-                    // affects resolution.
                     let colon_line = self.token.line;
                     let key_tag = if node_props.tag_line() == Some(colon_line) {
                         node_props.take_tag()
@@ -4336,11 +4143,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         self.anchors
                             .put(Enc::key_bytes(mapping_anchor.slice(self.input)), mapping)?;
                     }
-                    // Anchors are fully consumed by implicit_key_anchors;
-                    // clear both so the post-loop fallback doesn't re-register
-                    // (or over-reject `&outer\n&inner : x` via the
-                    // has_mapping_anchor guard). Tag fields stay so the
-                    // has_mapping_tag guard still catches `!!a\n!!b\n: x`.
                     node_props.has_anchor = None;
                     node_props.has_mapping_anchor = None;
                     break 'node mapping;
@@ -4389,11 +4191,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             // `? sky\n: blue`). This scalar is not a key.
                             break 'node scalar.data.to_expr(scalar_start, self.input, self.bump);
                         }
-                        // [192] ns-l-block-map-implicit-entry: the key is at
-                        // s-indent(n) (spaces only). A tab between s-indent
-                        // and the key means it cannot be a sibling block-map
-                        // entry; in compact position ([185]) it cannot be the
-                        // compact mapping's first key either.
                         if scalar_tab_after_indent
                             && matches!(self.context.get(), Context::BlockOut | Context::BlockIn)
                         {
@@ -4426,12 +4223,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                         }
 
-                        // [147] flow-map value is ns-flow-node, not a pair.
-                        // Return the bare scalar; the leftover `:` reaches the
-                        // caller's [140] check. The cmi==scalar_indent path
-                        // above already handles the same-line case; this
-                        // covers the multiline-property case where they
-                        // diverge.
                         if self.context.get() == Context::FlowIn && !opts.flow_pair_allowed {
                             break 'node scalar.data.to_expr(scalar_start, self.input, self.bump);
                         }
@@ -4547,19 +4338,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
         }
     }
-
-    // ── scanPlainScalar ─────────────────────────────────────────────────────
-    //
-    // This is the largest function in the file: a labeled-switch state machine
-    // with an inner local struct `ScalarResolverCtx` that holds `*Parser` AND a
-    // `StringBuilder` that ALSO holds `*Parser`. Both are BACKREF in
-    // LIFETIMES.tsv → modeled as raw `*mut Parser` here.
-    //
-    // TODO(port): borrowck reshape — TODO(port): either (a) move
-    // `whitespace_buf` out of Parser, or (b) restructure ctx to take `&mut self`
-    // per call instead of storing it. The raw-pointer aliasing below is sound
-    // because `ctx` never outlives `&mut self` and never re-enters Parser
-    // methods that re-borrow `whitespace_buf`/`input` concurrently.
 
     fn scan_plain_scalar(&mut self, opts: ScanOptions) -> Result<Token<Enc>, ParseError> {
         let parser: *mut Parser<'i, Enc> = self;
@@ -5014,14 +4792,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
     }
 
-    // ── scanAutoIndentedLiteralScalar ───────────────────────────────────────
-    //
-    // TODO(port): Another large labeled-switch state machine (yaml.zig:2703-2979)
-    // with an inner `LiteralScalarCtx` struct. The two-phase loop (find
-    // content_indent, then scan body) with `ctx.append`/`ctx.done` and chomp
-    // handling is preserved structurally below; verify the nested `newlines:`
-    // switch translation against the Zig original.
-
     fn scan_auto_indented_literal_scalar(
         &mut self,
         indent_indicator: IndentIndicator,
@@ -5050,11 +4820,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         impl<Enc: Encoding> LiteralScalarCtx<Enc> {
             fn done(mut self) -> Result<Token<Enc>, AllocError> {
-                // [165] b-chomped-last(CLIP|KEEP) ::= b-as-line-feed | <end-of-input>
-                // When the last content line ends at EOF without a break, treat
-                // the EOF as an implicit final break so Clip and Keep agree.
-                // This matches the official test suite (L24T/01) and the 1.2.2
-                // reference parsers eemeli/yaml + js-yaml.
                 if !self.text.is_empty() && self.leading_newlines == 0 {
                     self.leading_newlines = 1;
                 }
@@ -5819,10 +5584,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     fn scan(&mut self, opts: ScanOptions) -> Result<(), ParseError> {
         // ScanCtx state inlined
         let mut count_indentation = opts.first_scan || opts.additional_parent_indent.is_some();
-        // Tracks whether we are still in leading whitespace (after a newline
-        // or after an indicator with additional_parent_indent), so a tab at
-        // this position can taint `tab_after_indent`. Unlike count_indentation
-        // it stays true through the space arm.
         let mut in_indent_position = count_indentation;
         if in_indent_position {
             self.tab_after_indent = false;
@@ -5842,10 +5603,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
                 0x2D /* '-' */ => {
                     let start = self.pos;
-                    // [203] c-directives-end is line-starting at column 0.
-                    // `line_indent == 0` is the line's indent, true everywhere
-                    // on a column-0 line; is_at_line_start() (pos ==
-                    // line_start_pos) confirms we are at the actual start.
                     if self.is_at_line_start()
                         && self.line_indent == Indent::NONE
                         && self.remain_starts_with(Enc::literal(b"---"))
@@ -6037,11 +5794,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             let indicator_indent = self.line_indent;
                             self.inc(1);
                             let mut tok = self.scan_literal_scalar()?;
-                            // Token.indent for a block scalar is the
-                            // indicator's s-indent, not the auto-detected
-                            // content indent — keeps belongs_to_parent and
-                            // other indent comparisons consistent across
-                            // scalar kinds.
                             tok.indent = indicator_indent;
                             break 'next tok;
                         }
@@ -6128,14 +5880,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         return Err(ParseError::TabIndentation);
                     }
                     if in_indent_position {
-                        // [63] s-indent is spaces only. A tab here is
-                        // s-separate-in-line — valid before [197]
-                        // flow-in-block content, but not before a [185]
-                        // compact construct or a sibling block entry. The
-                        // parser-side checks distinguish; here we record the
-                        // taint and drop additional_parent_indent (so the
-                        // resulting token's indent is what the *spaces*
-                        // reached, not column-based).
                         self.tab_after_indent = true;
                         additional_parent_indent = None;
                     }
@@ -6428,12 +6172,5 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 fn eq_ascii<Enc: Encoding>(s: &[Enc::Unit], lit: &[u8]) -> bool {
     s.len() == lit.len() && s.iter().zip(lit).all(|(a, b)| Enc::wide(*a) == *b as u32)
 }
-
-// ───────────────────────────────────────────────────────────────────────────
-// Omitted: large commented-out blocks from yaml.zig
-//   - `Node` struct (lines 4758-4881) — commented out in source
-//   - `Printer` fn   (lines 4927-5248) — commented out in source
-// These were not active code; intentionally not ported.
-// ───────────────────────────────────────────────────────────────────────────
 
 // ported from: src/interchange/yaml.zig

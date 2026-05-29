@@ -60,12 +60,6 @@ pub struct FlexFlow {
     pub wrap: FlexWrap,
 }
 
-// (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"flex-flow", PropertyFieldMap);
-// TODO(port): PropertyFieldMap / VendorPrefixMap are comptime shorthand metadata consumed by
-// css::DefineShorthand reflection. Port as part of the shorthand derive.
-//   PropertyFieldMap = { direction: PropertyIdTag::FlexDirection, wrap: PropertyIdTag::FlexWrap }
-//   VendorPrefixMap  = { direction: true, wrap: true }
-
 impl FlexFlow {
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<Self> {
         let mut direction: Option<FlexDirection> = None;
@@ -122,11 +116,6 @@ pub struct Flex {
     /// The flex basis.
     pub basis: LengthPercentageOrAuto,
 }
-
-// (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.flex, PropertyFieldMap);
-// TODO(port): PropertyFieldMap / VendorPrefixMap shorthand metadata — see FlexFlow note.
-//   PropertyFieldMap = { grow: PropertyIdTag::FlexGrow, shrink: PropertyIdTag::FlexShrink, basis: PropertyIdTag::FlexBasis }
-//   VendorPrefixMap  = { grow: true, shrink: true, basis: true }
 
 impl Flex {
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<Self> {
@@ -227,10 +216,6 @@ impl Flex {
     }
 }
 
-/// A value for the legacy (prefixed) [box-orient](https://www.w3.org/TR/2009/WD-css3-flexbox-20090723/#orientation) property.
-/// Partially equivalent to `flex-direction` in the standard syntax.
-/// A value for the legacy (prefixed) [box-orient](https://www.w3.org/TR/2009/WD-css3-flexbox-20090723/#orientation) property.
-/// Partially equivalent to `flex-direction` in the standard syntax.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum BoxOrient {
     /// Items are laid out horizontally.
@@ -255,10 +240,6 @@ pub enum BoxDirection {
 
 pub(crate) type FlexAlign = BoxAlign;
 
-/// A value for the legacy (prefixed) [box-align](https://www.w3.org/TR/2009/WD-css3-flexbox-20090723/#alignment) property.
-/// Equivalent to the `align-items` property in the standard syntax.
-/// A value for the legacy (prefixed) [box-align](https://www.w3.org/TR/2009/WD-css3-flexbox-20090723/#alignment) property.
-/// Equivalent to the `align-items` property in the standard syntax.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum BoxAlign {
     /// Items are aligned to the start.
@@ -295,10 +276,6 @@ impl BoxAlign {
     }
 }
 
-/// A value for the legacy (prefixed) [box-pack](https://www.w3.org/TR/2009/WD-css3-flexbox-20090723/#packing) property.
-/// Equivalent to the `justify-content` property in the standard syntax.
-/// A value for the legacy (prefixed) [box-pack](https://www.w3.org/TR/2009/WD-css3-flexbox-20090723/#packing) property.
-/// Equivalent to the `justify-content` property in the standard syntax.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum BoxPack {
     /// Items are justified to the start.
@@ -335,10 +312,6 @@ impl BoxPack {
     }
 }
 
-/// A value for the legacy (prefixed) [box-lines](https://www.w3.org/TR/2009/WD-css3-flexbox-20090723/#multiple) property.
-/// Equivalent to the `flex-wrap` property in the standard syntax.
-/// A value for the legacy (prefixed) [box-lines](https://www.w3.org/TR/2009/WD-css3-flexbox-20090723/#multiple) property.
-/// Equivalent to the `flex-wrap` property in the standard syntax.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum BoxLines {
     /// Items are laid out in a single line.
@@ -357,11 +330,6 @@ impl BoxLines {
     }
 }
 
-// Old flex (2012): https://www.w3.org/TR/2012/WD-css3-flexbox-20120322/
-/// A value for the legacy (prefixed) [flex-pack](https://www.w3.org/TR/2012/WD-css3-flexbox-20120322/#flex-pack) property.
-/// Equivalent to the `justify-content` property in the standard syntax.
-/// A value for the legacy (prefixed) [flex-pack](https://www.w3.org/TR/2012/WD-css3-flexbox-20120322/#flex-pack) property.
-/// Equivalent to the `justify-content` property in the standard syntax.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum FlexPack {
     /// Items are justified to the start.
@@ -403,10 +371,6 @@ impl FlexPack {
     }
 }
 
-/// A value for the legacy (prefixed) [flex-item-align](https://www.w3.org/TR/2012/WD-css3-flexbox-20120322/#flex-align) property.
-/// Equivalent to the `align-self` property in the standard syntax.
-/// A value for the legacy (prefixed) [flex-item-align](https://www.w3.org/TR/2012/WD-css3-flexbox-20120322/#flex-align) property.
-/// Equivalent to the `align-self` property in the standard syntax.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum FlexItemAlign {
     /// Equivalent to the value of `flex-align`.
@@ -446,10 +410,6 @@ impl FlexItemAlign {
     }
 }
 
-/// A value for the legacy (prefixed) [flex-line-pack](https://www.w3.org/TR/2012/WD-css3-flexbox-20120322/#flex-line-pack) property.
-/// Equivalent to the `align-content` property in the standard syntax.
-/// A value for the legacy (prefixed) [flex-line-pack](https://www.w3.org/TR/2012/WD-css3-flexbox-20120322/#flex-line-pack) property.
-/// Equivalent to the `align-content` property in the standard syntax.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum FlexLinePack {
     /// Content is aligned to the start.
@@ -558,10 +518,6 @@ impl FlexHandler {
             ($prop:ident, $val:expr, $vp:expr) => {{
                 maybe_flush!($prop, $val, $vp);
 
-                // Otherwise, update the value and add the prefix
-                // PORT NOTE: Zig threaded `context.arena` into `css.generic.deepClone`;
-                // every payload here is `Clone` (Copy enums / f32 / i32 / LengthPercentageOrAuto),
-                // so `.clone()` is the faithful equivalent.
                 if let Some(field) = &mut self.$prop {
                     field.0 = ($val).clone();
                     field.1.insert(*$vp);
@@ -851,10 +807,6 @@ impl FlexHandler {
                 }
             }};
         }
-        // TODO(port): single_property! macro encodes Zig's comptime `prop_2009`/`prop_2012` branches.
-        // The Zig version gates the entire 2009 block on `comptime prop_2009 != null`; here the macro
-        // arms with `prop_2009 = None` pass a no-op closure, so the `prefix.contains(NONE)` check
-        // still runs but has no effect. Verify this matches behavior exactly.
 
         single_property!(
             FlexDirection,

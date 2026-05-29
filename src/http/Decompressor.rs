@@ -6,16 +6,6 @@ use bun_brotli::BrotliReaderArrayList;
 use bun_zlib::ZlibReaderArrayList;
 use bun_zstd::ZstdReaderArrayList;
 
-// PORT NOTE: the `*ReaderArrayList<'a>` types carry a `&'a mut Vec<u8>` borrow
-// of the output buffer (and a `&'a [u8]` of the input). The Zig held them by
-// value with the `ArrayListUnmanaged` aliased into the reader (raw ptr/len/cap
-// triple). In Rust we erase the borrow to `'static` and uphold the same
-// invariant the Zig code relied on: the reader never outlives the
-// `body_out_str`/`buffer` it was constructed with — both are owned by the
-// surrounding `HTTPClient` request lifecycle and the `Decompressor` is dropped
-// (or reset to `None`) in `InternalState::deinit` before either buffer is
-// freed. All construction goes through `update_buffers`, which is the single
-// place the lifetime is erased.
 #[derive(Default)]
 pub enum Decompressor {
     Zlib(Box<ZlibReaderArrayList<'static>>),
@@ -60,11 +50,6 @@ unsafe fn seat<'a>(input: &'a [u8], out: &'a mut Vec<u8>) -> (&'static [u8], &'s
 const MAX_DECOMPRESSED_BODY_SIZE: usize = 1024 * 1024 * 1024;
 
 impl Decompressor {
-    // PORT NOTE: Zig `deinit` called `that.deinit()` on the active reader and
-    // reset to `.none`. The boxed readers' `Drop` impls call `end()`, so an
-    // explicit `Drop` is unnecessary. Callers that want a mid-lifecycle reset
-    // assign `*self = Decompressor::None`.
-
     // TODO(port): narrow error set
     pub fn update_buffers(
         &mut self,
@@ -88,10 +73,6 @@ impl Decompressor {
                         // PORT NOTE: Zig passed `body_out_str.allocator` and
                         // `bun.http.default_allocator`; dropped per §Allocators.
                         bun_zlib::Options {
-                            // zlib.MAX_WBITS = 15
-                            // to (de-)compress deflate format, use wbits = -zlib.MAX_WBITS
-                            // to (de-)compress deflate format with headers we use wbits = 0 (we can detect the first byte using 120)
-                            // to (de-)compress gzip format, use wbits = zlib.MAX_WBITS | 16
                             window_bits: if encoding == Encoding::Gzip {
                                 bun_zlib::MAX_WBITS | 16
                             } else if buffer.len() > 1 && buffer[0] == 120 {
@@ -139,16 +120,6 @@ impl Decompressor {
                 reader.zlib.avail_in = buffer.len() as u32;
 
                 let initial = body_out_str.list.len();
-                // PORT NOTE: Zig `expandToCapacity()` set `len = capacity` so the
-                // zlib output pointers could write into the spare region while
-                // `read_all` later truncated back to `total_out`. `read_all`'s
-                // grow-on-avail_out==0 path reads `list_ptr.len()` to compute the
-                // resume offset, so this `set_len(capacity)` is load-bearing —
-                // skipping it leaves `len == initial` and the next grow rewinds
-                // `next_out` to `ptr + initial`, overwriting freshly-inflated
-                // bytes (observed as mid-stream gzip/deflate corruption when a
-                // streamed body chunk decompresses past the reused buffer's
-                // capacity).
                 if body_out_str.list.capacity() == initial {
                     body_out_str.list.reserve(4096);
                 }

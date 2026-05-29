@@ -175,11 +175,6 @@ impl Default for Query {
     }
 }
 
-// ───────────────────────────────────────────────────────────────────────────
-// ── live Expr accessor surface ─────────────────────────────────────────────
-// Subset of the gated impl below; bodies adapted to the live `E::Object` /
-// `E::EString` surface in `e.rs`. The full set/get_path/rope helpers
-// stay gated.
 impl Expr {
     #[inline]
     pub fn is_array(&self) -> bool {
@@ -282,12 +277,6 @@ impl Expr {
     }
 }
 
-// Expr — property/object/string accessor methods.
-// TODO(port): these call into `E::Object::as_property` / `EString`
-// methods that need `bun_core::utf16_eql_string`/`to_utf8_alloc` (track-A
-// blocked_on) and `Vec::deep_clone`. Types are real; bodies un-gate with
-// the parser round once those land.
-
 impl Expr {
     pub fn has_any_property_named(&self, names: &'static [&'static [u8]]) -> bool {
         let Data::EObject(obj) = &self.data else {
@@ -368,18 +357,6 @@ impl Expr {
         }
     }
 
-    /// This supports lookups like:
-    /// - `foo`
-    /// - `foo.bar`
-    /// - `foo[123]`
-    /// - `foo[123].bar`
-    /// - `foo[123].bar[456]`
-    /// - `foo[123].bar[456].baz`
-    /// - `foo[123].bar[456].baz.qux` // etc.
-    ///
-    /// This is not intended for use by the transpiler, instead by pretty printing JSON.
-    // PORT NOTE: Zig passed `bun.default_allocator` to getByIndex; Rust threads the arena
-    // explicitly because get_by_index allocates an E.String slice into &Bump.
     pub fn get_path_may_be_index(&self, bump: &Bump, name: &[u8]) -> Option<Expr> {
         if name.is_empty() {
             return None;
@@ -429,10 +406,6 @@ impl Expr {
         self.get(name)
     }
 
-    /// Don't use this if you care about performance.
-    ///
-    /// Sets the value of a property, creating it if it doesn't exist.
-    /// `self` must be an object.
     pub fn set(&mut self, _bump: &Bump, name: &[u8], value: Expr) -> Result<(), AllocError> {
         debug_assert!(self.is_object());
         let Data::EObject(obj) = &mut self.data else {
@@ -467,10 +440,6 @@ impl Expr {
         Ok(())
     }
 
-    /// Don't use this if you care about performance.
-    ///
-    /// Sets the value of a property to a string, creating it if it doesn't exist.
-    /// `expr` must be an object.
     pub fn set_string(
         expr: &mut Expr,
         _bump: &Bump,
@@ -707,11 +676,6 @@ impl ArrayIterator {
     }
 }
 
-// PORT NOTE: earlier drafts of `as_array`/`is_string`/`as_utf8_string_literal`/
-// `as_string`/`as_string_cloned`/`as_bool`/`as_number` duplicated the live `&self`
-// implementations above (lines ~231-315) with worse signatures (`expr: &Expr`,
-// raw-ptr returns). Those drafts were dropped; only the methods without a live
-// counterpart remain.
 impl Expr {
     #[inline]
     pub fn as_string_literal<'b>(&self, bump: &'b Bump) -> Option<&'b [u8]> {
@@ -771,16 +735,6 @@ pub enum EFlags {
 
 // `is_missing` lives in the `init`/`allocate` impl block below.
 impl Expr {
-    /// The goal of this function is to "rotate" the AST if it's possible to use the
-    /// left-associative property of the operator to avoid unnecessary parentheses.
-    ///
-    /// When using this, make absolutely sure that the operator is actually
-    /// associative. For example, the "-" operator is not associative for
-    /// floating-point numbers.
-    //
-    // PERF(port): Zig took `comptime op: Op.Code`. `Op::Code` does not derive
-    // `ConstParamTy` (Op.rs owns the enum); pass at runtime here. Revisit once
-    // `Code` gains `ConstParamTy` — call sites are a handful of literal ops.
     pub fn join_with_left_associative_op(op: Op::Code, a: Expr, b: Expr) -> Expr {
         Self::join_with_left_associative_op_with_check(op, a, b, bun_core::StackCheck::init())
     }
@@ -977,20 +931,8 @@ impl Expr {
 // Static state
 // ───────────────────────────────────────────────────────────────────────────
 
-// Zig: `pub var icount: usize = 0;` — a plain non-atomic global, never read
-// (debug counter). Kept for parity but **debug-only**: in release the
-// `lock xadd` per node was a contended cache line bouncing across the bundler
-// worker pool on every Expr allocation. Zig's increment is a non-atomic store
-// (i.e. racy garbage under threads) so a debug-gated atomic is strictly more
-// faithful than the old unconditional one.
 #[cfg(debug_assertions)]
 pub(crate) static ICOUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
-
-// PORT NOTE: Zig `expr.zig` declares `true_bool`/`false_bool`/`bool_values`
-// statics but never references them — `E.Boolean` is stored by value in
-// `Data.e_boolean` (both `allocate` and `init` arms), not as a pointer to a
-// pooled singleton. Dropped here; the comment "We don't need to dynamically
-// allocate booleans" already holds because `E::Boolean` is inline in `Data`.
 
 // ───────────────────────────────────────────────────────────────────────────
 // Expr::allocate / Expr::init — comptime-type dispatch → trait
@@ -1250,10 +1192,6 @@ pub enum Tag {
     EPrivateIdentifier,
     ECommonjsExportIdentifier,
     EBoolean,
-    /// Like e_boolean, but produced by `feature()` from `bun:bundle`.
-    /// This tag ensures feature() can only be used directly in conditional
-    /// contexts (if statements, ternaries). Invalid usage is caught during
-    /// the visit phase when this expression appears outside a branch condition.
     EBranchBoolean,
     ENumber,
     EBigInt,
@@ -1487,10 +1425,6 @@ impl Expr {
         Expr::init(t, self.loc)
     }
 
-    // Wraps the provided expression in the "!" prefix operator. The expression
-    // will potentially be simplified to avoid generating unnecessary extra "!"
-    // operators. For example, calling this with "!!x" will return "!x" instead
-    // of returning "!!!x".
     pub fn not(&self, bump: &Bump) -> Expr {
         self.maybe_simplify_not(bump).unwrap_or_else(|| {
             Expr::init(
@@ -1514,11 +1448,6 @@ impl Expr {
         self.has_value_for_this_in_call()
     }
 
-    /// The given "expr" argument should be the operand of a "!" prefix operator
-    /// (i.e. the "x" in "!x"). This returns a simplified expression for the
-    /// whole operator (i.e. the "!x") if it can be simplified, or false if not.
-    /// It's separate from "Not()" above to avoid allocation on failure in case
-    /// that is undesired.
     pub fn maybe_simplify_not(&self, bump: &Bump) -> Option<Expr> {
         let expr = self;
         match expr.data {
@@ -1550,14 +1479,6 @@ impl Expr {
                 }
             }
             Data::EBinary(mut ex) => {
-                // TODO: evaluate whether or not it is safe to do this mutation since it's modifying in-place.
-                // Make sure that these transformations are all safe for special values.
-                // For example, "!(a < b)" is not the same as "a >= b" if a and/or b are
-                // NaN (or undefined, or null, or possibly other problem cases too).
-                //
-                // PORT: Zig captured `*E.Binary` and wrote through it; `StoreRef` is a
-                // `Copy` `NonNull` handle, so copying it out of the (immutable) `Data`
-                // and `DerefMut`-ing reaches the same arena slot.
                 match ex.op {
                     crate::OpCode::BinLooseEq => {
                         // "!(a == b)" => "a != b"
@@ -1698,11 +1619,6 @@ impl PrimitiveType {
 // Data
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Tagged union of expression payloads. Pointer variants are arena-allocated
-/// `StoreRef<E::*>` (thin `NonNull` into `expr::data::Store` / a bump arena);
-/// inline variants are stored by value. `StoreRef` is `Copy` + `Deref`, so
-/// `Data` is `Copy` and `let Data::EBinary(b) = data; b.op` works (matching
-/// Zig's `data.e_binary.op`).
 #[derive(Clone, Copy, bun_core::EnumTag)]
 #[enum_tag(existing = Tag)]
 pub enum Data {
@@ -1764,19 +1680,6 @@ pub enum Data {
     ENameOfSymbol(StoreRef<E::NameOfSymbol>),
 }
 
-// ── Layout guards ─────────────────────────────────────────────────────────
-// Zig: `bun.assert_eql(@sizeOf(Data), 24)` (Expr.zig:2189). Rust packs the
-// identifier-family flags into `Ref`'s spare bits (see `E::Identifier` doc),
-// so every inline payload is ≤ 8 bytes; with the repr(Rust) discriminant
-// that rounds to 16. `Expr` = `Data` (16, align 8) + `Loc` (i32) → 20 → 24
-// after tail padding — 25% smaller than the Zig layout, which is the
-// structural noalias-shrink win this port targets.
-//
-// The `Option<Data>` assert proves Rust's niche optimization fires: the enum
-// has spare discriminant values (47 variants < 256, and every pointer variant
-// contributes a NonNull niche), so `None` packs into an unused bit-pattern
-// rather than adding a word. If a future variant adds `#[repr(C)]`/`#[repr(u32)]`
-// or a nullable `*mut T` payload, this assert catches the size regression.
 const _: () = assert!(core::mem::size_of::<Data>() == 16); // Do not increase the size of Expr
 const _: () = assert!(core::mem::size_of::<Expr>() == 24);
 const _: () = assert!(
@@ -1900,10 +1803,6 @@ impl Data {
         matches!(self, Data::ENumber(_))
     }
 
-    // ── Remaining StoreRef<E::*> field-style accessors ──────────────────
-    // visitExpr / maybe.rs port from Zig's `data.e_dot.*` etc., which are
-    // unchecked union field reads. Rust callers `.unwrap()` (or pattern-match)
-    // — the `Option` is the cheapest sound encoding of Zig's UB-on-mismatch.
     #[inline]
     pub fn e_unary(&self) -> Option<StoreRef<E::Unary>> {
         if let Data::EUnary(v) = *self {
@@ -2304,22 +2203,7 @@ impl Data {
     }
 }
 
-// ───────────────────────────────────────────────────────────────────────────
-// Data — heavy transform/analysis methods (clone/deep_clone/fold/etc).
-// TODO(port): these reference `Vec::deep_clone`/`E::*::Clone`
-// surfaces, `bun_core::write_any_to_hasher`, and parser-state types that land
-// with `P.rs`/`Parser.rs`. The *types* (`Data`/`Expr`/`Tag`/`Store`) are real;
-// only these method bodies wait.
-
 impl Data {
-    /// Shallow clone: re-allocate the boxed payload (so the caller owns a fresh
-    /// arena slot) but don't recurse into children. Zig: `Data.clone`.
-    ///
-    /// PORT NOTE: the `E::*` payloads do not derive `Clone` (they hold raw arena
-    /// pointers / `Vec`). Zig copied struct bytes (`el.*`); we mirror that
-    /// with a `core::ptr::read` of the payload, which is sound because every
-    /// payload is `Copy`-shaped (no `Drop`, no owned heap state — `Vec`
-    /// stores a raw pointer + len/cap into the arena).
     pub fn clone_in(this: Data, bump: &Bump) -> Result<Data, bun_core::Error> {
         // TODO(port): narrow error set
         macro_rules! shallow {
@@ -2359,17 +2243,6 @@ impl Data {
         }
     }
 
-    /// Deep-clone this subtree into `bump`.
-    ///
-    /// Nodes go into `bump`; embedded `AstVec`s (`items`/`properties`/…)
-    /// allocate via `AstAlloc`, which reads the thread's active allocation
-    /// state. If a per-parse `ASTMemoryAllocator` scope is active that state
-    /// is bulk-freed while the cloned tree (e.g. `WorkspacePackageJSONCache`)
-    /// still references the buffers — UAF. This entry point installs a
-    /// [`DetachAstHeap`] guard so
-    /// those vecs land on global mimalloc. The guard is installed once here
-    /// and at [`Expr::deep_clone`]; the recursive body goes through
-    /// `*_no_detach` so we don't pay 3 TLS ops per node.
     pub fn deep_clone(&self, bump: &Bump) -> Result<Data, AllocError> {
         let _g = bun_alloc::ast_alloc::DetachAstHeap::new();
         self.deep_clone_no_detach(bump)
@@ -2615,24 +2488,11 @@ impl Data {
 } // end `impl Data` (clone_in/deep_clone)
 
 impl Data {
-    /// `hasher` should be something with `fn update(&[u8])`;
-    /// symbol table is passed to serialize `Ref` as identifier names instead of nondeterministic numbers.
-    ///
-    /// Port of `Expr.Data.writeToHasher`. Zig fed raw bytes of anonymous tuples
-    /// (`std.mem.asBytes(&.{a, b, c})`) — including padding, which is undefined
-    /// in both languages. The Rust port hashes each scalar individually so the
-    /// output is deterministic (this is only consumed by React Refresh signature
-    /// generation; byte-for-byte parity with Zig is not required, only stability).
     pub fn write_to_hasher<H, S>(&self, hasher: &mut H, symbol_table: &mut S)
     where
         H: bun_core::Hasher + ?Sized,
         S: crate::base::SymbolTable + ?Sized,
     {
-        // Local mirror of `bun.writeAnyToHasher` for padding-free POD —
-        // `bun_core::write_any_to_hasher` is bound by `AsBytes` (ints only) and
-        // we cannot extend that trait from this crate-file scope. `NoUninit`
-        // bound lets `bytemuck::bytes_of` view the value's bytes safely
-        // (mirrors Zig `hasher.update(std.mem.asBytes(&thing))`).
         #[inline(always)]
         fn raw<H: bun_core::Hasher + ?Sized, T: bytemuck::NoUninit>(h: &mut H, v: T) {
             h.update(bytemuck::bytes_of(&v));
@@ -2801,10 +2661,6 @@ impl Data {
     /// outside of a module wrapper (__esm/__commonJS).
     pub fn can_be_moved(&self) -> bool {
         match self {
-            // TODO: identifiers can be removed if unused, however code that
-            // moves expressions around sometimes does so incorrectly when
-            // doing destructures. test case: https://github.com/oven-sh/bun/issues/14027
-            // Data::EIdentifier(id) => id.can_be_removed_if_unused,
             Data::EClass(class) => class.can_be_moved(),
 
             Data::EArrow(_)
@@ -3118,12 +2974,6 @@ pub struct Equality {
     pub equal: bool,
     pub ok: bool,
 
-    /// This extra flag is unfortunately required for the case of visiting the expression
-    /// `require.main === module` (and any combination of !==, ==, !=, either ordering)
-    ///
-    /// We want to replace this with the dedicated import_meta_main node, which:
-    /// - Stops this module from having p.require_ref, allowing conversion to ESM
-    /// - Allows us to inline `import.meta.main`'s value, if it is known (bun build --compile)
     pub is_require_main_and_module: bool,
 }
 
@@ -3162,10 +3012,6 @@ impl EqlKindT for StrictEql {
     const STRICT: bool = true;
 }
 
-/// Minimal parser surface needed by `Data::eql` — Zig wrote `p: anytype` and
-/// touched only `p.arena` + `p.module_ref`. Kept separate from
-/// `ast::p::ParserLike` so this file does not grow that trait (out of scope);
-/// blanket-impl'd for every `P<...>` instantiation below.
 pub trait EqlParser {
     fn arena(&self) -> &Bump;
     fn module_ref(&self) -> Ref;
@@ -3413,11 +3259,6 @@ pub use data::Store;
 // ───────────────────────────────────────────────────────────────────────────
 // StoredData / helpers
 // ───────────────────────────────────────────────────────────────────────────
-
-// Zig: `pub fn StoredData(tag: Tag) type` — comptime type-level function.
-// Rust cannot return types from runtime tags. Callers should match on `Data`
-// directly.
-// TODO(port): if needed, expose as a macro mapping Tag → payload type.
 
 fn string_to_equivalent_number_value(str: &[u8]) -> f64 {
     // +"" -> 0

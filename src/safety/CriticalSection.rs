@@ -203,28 +203,15 @@ impl State {
         // we currently hold a lock.
         let owner_id = self.thread_id.load(Ordering::Relaxed);
 
-        // It's possible for this thread to be the owner (`owner_id == current_id`) and for
-        // `owned_count` to be 0, if this thread originally wasn't the owner, but became the owner
-        // when the original owner released all of its locks. In this case, some of the lock count
-        // for this thread is still in `self.count` rather than `self.owned_count`.
         if owner_id == current_id && self.owned_count > 0 {
             self.owned_count -= 1;
             if self.owned_count == 0 {
-                // Relaxed is okay because:
-                // * If this succeeds, it means the current thread holds an exclusive lock, so
-                //   concurrent access would be an error.
-                // * If this fails, we don't care about the value.
                 let _ = self.count.compare_exchange(
                     Self::EXCLUSIVE,
                     0,
                     Ordering::Relaxed,
                     Ordering::Relaxed,
                 );
-                // Relaxed is okay because another thread that loads `thread_id` should not rely
-                // on that load to synchronize-with the update to `self.count` above; other
-                // synchronization should have already been performed. (This type is not meant to
-                // provide its own synchronization, but rather assert that such synchronization has
-                // already been provided.)
                 self.thread_id.store(INVALID_THREAD_ID, Ordering::Relaxed);
             }
         } else {

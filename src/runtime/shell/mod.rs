@@ -145,15 +145,6 @@ pub use bun_shell_parser::{
     needs_escape_utf8_ascii_latin1, needs_escape_utf16,
 };
 
-// ─── AST surface (lifetime-erased aliases over `bun_shell_parser::ast`) ──────
-// State nodes hold `*const ast::*` raw pointers into the bumpalo-allocated AST
-// (`ShellArgs::__arena`). The arena outlives every state node, so the `'arena`
-// lifetime on `bun_shell_parser::ast::*<'arena>` carries no information the
-// interpreter can use — threading it through `Interpreter`/`Node`/every state
-// struct would be pure noise. Instead we erase it to `'static` here and store
-// raw pointers; `ShellArgs::set_script_ast` performs the single
-// lifetime-widening slice cast (`Script<'a>` → `Script<'static>`, identical
-// layout) at the arena/state-machine boundary.
 pub mod ast {
     pub use bun_shell_parser::parse::SmolList;
     use bun_shell_parser::parse::ast as p;
@@ -186,14 +177,6 @@ pub type Result<T, E = ShellErr> = core::result::Result<T, E>;
 
 pub use parsed_shell_script::ParsedShellScript;
 
-/// Re-export of the JS-exposed `Bun.spawn` Subprocess class. The
-/// `generate-classes.ts` resolver walks `lib.rs` in declaration order and
-/// `mod shell` precedes `mod api`, so `generated_classes.rs` currently routes
-/// the `Subprocess` codegen thunks through `crate::shell::Subprocess`. Point
-/// it at the real implementation (lifetime erased to `'static` for the C-ABI
-/// `*mut Subprocess` thunk signatures — the JS wrapper outlives any borrow).
-/// Distinct from [`ShellSubprocess`](subproc::ShellSubprocess), the shell
-/// interpreter's internal process node.
 pub type Subprocess = crate::api::bun::subprocess::Subprocess<'static>;
 
 // ported from: src/shell/shell.zig

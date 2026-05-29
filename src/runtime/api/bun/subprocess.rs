@@ -62,10 +62,6 @@ pub use js_bun_spawn_bindings::{spawn, spawn_sync};
 bun_output::declare_scope!(Subprocess, visible);
 bun_output::declare_scope!(IPC, visible);
 
-// `toJS`/`fromJS`/`fromJSDirect` are wired manually below (the `#[bun_jsc::JsClass]`
-// proc-macro doesn't support generic structs); cached-property accessors
-// (exitedPromiseGetCached, stdinGetCached, …) from `jsc.Codegen.JSSubprocess` are
-// emitted here via `codegen_cached_accessors!`.
 pub mod js {
     bun_jsc::codegen_cached_accessors!(
         "Subprocess";
@@ -107,29 +103,9 @@ pub enum ObservableGetter {
 
 pub use bun_spawn::process::StdioKind;
 
-// PORT NOTE: `#[bun_jsc::JsClass]` does not yet handle generic structs (it emits the
-// bare ident in extern signatures). The `JsClass` impl + finalize/construct C-ABI
-// hooks are hand-expanded below for `Subprocess<'_>`.
-//
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). Host-fn bodies re-enter
-// JS (`run_callback`, promise resolve, getters that materialise streams) and a
-// live `&mut Self` across those calls would alias the fresh `&mut Self` the
-// codegen shim hands to whichever method JS calls next. `UnsafeCell`-backed
-// fields suppress `noalias` on the outer `&Subprocess`, making the miscompile
-// structurally impossible.
-// Intrusive ref-count: bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
-// `RefPtr<Subprocess>` provides ref/deref and frees the Box when ref_count → 0.
 #[derive(bun_ptr::RefCounted)]
 pub struct Subprocess<'a> {
     pub ref_count: RefCount<Subprocess<'a>>,
-    /// Intrusively-refcounted `Process` (Zig: `*Process`). Allocated via
-    /// `heap::alloc` in `Process::init_posix`/`init_windows`; the +1 ref
-    /// from construction is released in [`Subprocess::finalize`] via
-    /// `Process::deref()`. Not `Arc` — `Process` carries its own
-    /// `ThreadSafeRefCount` and crosses the `ProcessAutoKiller`/waiter-thread
-    /// boundary by raw identity, so wrapping in `Arc` would double-count and
-    /// (worse) `Arc::from_raw` on a `Box` allocation is UB.
     pub process: bun_ptr::BackRef<Process>,
     pub stdin: JsCell<Writable<'a>>,
     pub stdout: JsCell<Readable>,
@@ -158,10 +134,6 @@ pub struct Subprocess<'a> {
     pub abort_signal: Cell<Option<NonNull<AbortSignal>>>,
 
     pub event_loop_timer_refd: Cell<bool>,
-    /// Intrusive timer node. `JsCell` so `&self` can hand `*mut EventLoopTimer`
-    /// to the timer heap; `JsCell` is `#[repr(transparent)]` so
-    /// `from_field_ptr!(Subprocess, event_loop_timer, t)` in
-    /// `dispatch.rs` still recovers the correct container address.
     pub event_loop_timer: JsCell<EventLoopTimer>,
     pub kill_signal: SignalCode,
 
@@ -178,25 +150,10 @@ bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_t
 
 pub type SubprocessRc<'a> = RefPtr<Subprocess<'a>>;
 
-// ── manual `#[bun_jsc::JsClass]` expansion (generic struct) ──────────────────
-// Routes through the codegen'd `crate::generated_classes::js_Subprocess`
-// wrappers (which are typed against `Subprocess<'static>`) so the extern
-// symbols are declared exactly once.
 const _: () = {
     use crate::generated_classes::js_Subprocess as js;
 
     impl<'a> Subprocess<'a> {
-        /// Wrap an already-heap-allocated `Subprocess` (via `heap::alloc`) in
-        /// its JS cell. `Bun.spawn` boxes early so address-dependent
-        /// back-pointers (`stdin.pipe.signal`, MaxBuf owner, IPC owner) can be
-        /// wired before `subprocess.toJS(globalThis)` runs; this is the raw-ptr
-        /// entrypoint that avoids re-boxing.
-        ///
-        /// `ptr` must come from `heap::alloc(Box::new(Subprocess { .. }))` and
-        /// not yet be owned by any JS wrapper; ownership transfers to the C++
-        /// side (released via `SubprocessClass__finalize`). Thin forwarder to
-        /// the (already safe) generated `js_Subprocess::to_js`, which
-        /// encapsulates the FFI `__create` call internally.
         #[inline]
         pub fn to_js_from_ptr(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
             // The codegen wrapper is monomorphized at `'static`; the lifetime
@@ -207,11 +164,6 @@ const _: () = {
     }
 
     bun_jsc::impl_js_class_via_generated!(for<'a> Subprocess<'a> => crate::generated_classes::js_Subprocess, no_constructor);
-
-    // `SubprocessClass__finalize` / `SubprocessClass__construct` are now emitted
-    // by `generateRust()` (`build/*/codegen/generated_classes.rs`); the
-    // hand-expanded copies that used to live here collided at link time and
-    // have been removed.
 };
 
 impl<'a> Subprocess<'a> {
@@ -224,20 +176,11 @@ impl<'a> Subprocess<'a> {
         }
     }
 
-    /// Borrow the intrusively-refcounted `Process`. Zig stores `*Process` and
-    /// reads/mutates freely; every access site is single-threaded on the JS
-    /// mutator, so projecting `&`/`&mut` through the raw pointer mirrors the
-    /// original semantics.
     #[inline]
     pub fn process(&self) -> &Process {
         self.process.get()
     }
 
-    /// Mutably borrow the owned [`Process`].
-    ///
-    /// Centralises the `BackRef<Process> → &mut Process` projection so callers
-    /// (including `js_bun_spawn_bindings`) stay safe. Caller must be on the
-    /// owning JS thread with no other live `&mut Process`.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(super) fn process_mut(&self) -> &mut Process {
@@ -255,10 +198,6 @@ impl<'a> Subprocess<'a> {
         self.global_this.get()
     }
 
-    /// `self`'s address as `*mut Self` for C-callback ctx slots / abort-signal
-    /// native bindings. Callbacks deref it as `&*const` (shared) — see the
-    /// `*_c` thunks below — so no write provenance is required; the `*mut`
-    /// spelling is purely to match the C signature.
     #[inline]
     pub fn as_ctx_ptr(&self) -> *mut Self {
         std::ptr::from_ref::<Self>(self).cast_mut()
@@ -373,13 +312,6 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 impl Subprocess<'_> {
-    /// Shared borrow of the attached `AbortSignal`, if any.
-    ///
-    /// `abort_signal` holds a +1 C++-intrusive ref taken in
-    /// `spawn_maybe_sync`; the pointee is therefore live for as long as the
-    /// cell is `Some` (it is `take`n *before* `unref()` in
-    /// [`clear_abort_signal`](Self::clear_abort_signal)) — i.e. the
-    /// owner-outlives-holder `BackRef` invariant holds.
     #[inline]
     pub fn abort_signal_ref(&self) -> Option<bun_ptr::BackRef<AbortSignal>> {
         self.abort_signal.get().map(bun_ptr::BackRef::from)
@@ -427,13 +359,6 @@ impl Subprocess<'_> {
     }
 
     pub fn compute_has_pending_activity(&self) -> bool {
-        // `ipc_data` is never set back to `None` after init, so checking only
-        // for `is_some()` would keep the JSSubprocess strongly referenced for the
-        // lifetime of the VM. The IPC side contributes pending activity until
-        // `_onAfterIPCClosed` has actually run: gating on `close_event_sent`
-        // (rather than `socket != .closed`) keeps the wrapper Strong across the
-        // window where the socket is already `.closed` but the task holding a
-        // raw `*SendQueue` into `ipc_data` is still queued.
         if let Some(ipc) = self.ipc_data.get() {
             if !ipc.close_event_sent {
                 return true;
@@ -495,10 +420,6 @@ impl Subprocess<'_> {
                     // centralised `pipe_sink` accessor suffices for `with_mut`.
                     Writable::pipe_sink(pipe).signal.with_mut(|s| s.clear());
                     *stdin = Writable::Ignore;
-                    // `Writable::Pipe` owns one intrusive ref; release it now
-                    // that the variant has been overwritten. Ordered after the
-                    // assignment so any re-entrant `on_stdin_destroyed` from
-                    // `deinit` observes `.Ignore`.
                     Writable::pipe_release(pipe);
                 }
                 Writable::Buffer(_) => {
@@ -539,11 +460,6 @@ impl Subprocess<'_> {
             }
         }
 
-        // When the process exits before its stdout/stderr pipes have finished
-        // draining, onProcessExit's deferred updateHasPendingActivity() observes
-        // the pipe as still pending and keeps `this_value` Strong. When the pipe
-        // later completes and reaches here, we must re-evaluate so the JsRef can
-        // be downgraded and the JSSubprocess + buffered output become collectable.
         self.update_has_pending_activity();
     }
 
@@ -919,11 +835,6 @@ impl Subprocess<'_> {
         let is_sync = self.flags.get().contains(Flags::IS_SYNC);
         self.clear_abort_signal();
 
-        // defer this.deref();
-        // defer this.disconnectIPC(true);
-        // R-2: now that both take `&self`, scopeguard would no longer alias —
-        // kept explicit at the tail for now (no early returns in this body).
-
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             Self::timer_all().remove(self.event_loop_timer.as_ptr());
         }
@@ -937,10 +848,6 @@ impl Subprocess<'_> {
 
         #[cfg(windows)]
         if self.flags.get().contains(Flags::OWNS_TERMINAL) {
-            // POSIX gets EOF on the master when the child (last slave_fd holder)
-            // exits. ConPTY's conhost stays alive after the child exits, so close
-            // the pseudoconsole now to deliver EOF and fire the terminal's exit
-            // callback. Leaves the Terminal itself open to match POSIX.
             if let Some(terminal) = self.terminal.get() {
                 // `BackRef` invariant holds: the terminal is owned by (or
                 // borrowed from a JS wrapper kept live by) this subprocess and
@@ -1021,23 +928,8 @@ impl Subprocess<'_> {
             self.weak_file_sink_stdin_ptr.set(None);
             self.update_flags(|f| f.insert(Flags::HAS_STDIN_DESTRUCTOR_CALLED));
 
-            // `pipe_ptr` came from a live FileSink (either `self.stdin.pipe`'s
-            // +1-intrusive ref or the cached JS sink kept live by GC) and
-            // outlives this scope on the single mutator thread — `BackRef`
-            // invariant. Shared deref via `BackRef::Deref`; the one mutable
-            // call below stays unsafe.
             let pipe = bun_ptr::BackRef::from(pipe_ptr);
 
-            // `onAttachedProcessExit()` → `writer.close()` → `FileSink.onClose`
-            // fires `pipe.signal` synchronously on POSIX. When the signal still
-            // targets `&self.stdin` (the user never read `.stdin`, or did and
-            // `Writable.toJS` left it wired), that would re-enter
-            // `Writable.onClose` → `pipe.deref()` while `onAttachedProcessExit`
-            // is still running on `pipe`. Detach the signal first and drive the
-            // `onStdinDestroyed()` deref ourselves instead; this also leaves
-            // `self.stdin` as `.pipe` so reading `.stdin` after exit still
-            // returns the sink. (Signal back-pointer is the `*mut Subprocess`,
-            // not `&self.stdin` — see `SignalHandler for Subprocess`.)
             if pipe.signal.get().ptr.map(|p| p.as_ptr().cast_const())
                 == Some(std::ptr::from_ref::<Self>(self).cast::<c_void>())
             {
@@ -1159,13 +1051,6 @@ impl Subprocess<'_> {
         }
         self.closed.set(self.closed.get() | io);
 
-        // If you never referenced stdout/stderr, they won't be garbage collected.
-        //
-        // That means:
-        //   1. We need to stop watching them
-        //   2. We need to free the memory
-        //   3. We need to halt any pending reads (1)
-
         let getter = match io {
             StdioKind::Stdin => ObservableGetter::Stdin,
             StdioKind::Stdout => ObservableGetter::Stdout,
@@ -1219,10 +1104,6 @@ impl Subprocess<'_> {
         #[cfg(windows)]
         for item in self.stdio_pipes.replace(Vec::new()) {
             if let StdioResult::Buffer(buffer) = item {
-                // `uv_close` is async — the pipe must outlive this scope until
-                // `on_pipe_close` runs and reclaims the allocation. Hand the
-                // `Box` back to libuv as a raw pointer (Zig keeps `*uv.Pipe`
-                // and `clearAndFree` only frees the slice of pointers).
                 Box::leak(buffer).close(on_pipe_close);
             }
         }
@@ -1269,19 +1150,6 @@ impl Subprocess<'_> {
         );
         this.finalize_streams();
 
-        // `Writable::init()` took a +1 (`subprocess.ref_()`, guarded by
-        // `DEREF_ON_STDIN_DESTROYED`) for the stdin pipe back-pointer. The
-        // balancing `deref()` lives in `on_stdin_destroyed()`, reached either
-        // via the FileSink's signal (which `Writable::finalize` — called from
-        // `close_io` above when the `.stdin` getter never ran — clears *before*
-        // releasing the pipe) or via the JSFileSink's `m_onDestroy` callback
-        // (only installed when the getter ran). When the getter never ran there
-        // is no JSFileSink and the signal is now gone, so nothing will call
-        // `on_stdin_destroyed()`; release the stranded ref here so the box can
-        // reach zero. When the getter *did* run we must leave the ref in place:
-        // the JSFileSink may be swept after us in the same
-        // `lastChanceToFinalize` pass and would otherwise call
-        // `on_stdin_destroyed()` against a freed Box.
         if this.flags.get().contains(Flags::DEREF_ON_STDIN_DESTROYED)
             && !this.has_called_getter(ObservableGetter::Stdin)
         {
@@ -1314,12 +1182,6 @@ impl Subprocess<'_> {
         this.stderr_maxbuf.set(mb);
 
         if let Some(ipc_data) = this.ipc_data.replace(None) {
-            // In normal operation the socket is already `.closed` by the time we
-            // get here (that is what allowed `computeHasPendingActivity` to drop
-            // to false and let GC collect us). `disconnectIPC` would be a no-op
-            // in that state and would leak the SendQueue's buffers; deinit it
-            // instead. `SendQueue.deinit` handles the VM-shutdown case where the
-            // socket is still open.
             drop(ipc_data);
         }
 
@@ -1517,15 +1379,6 @@ pub extern "C" fn on_pipe_close(this: *mut bun_sys::windows::libuv::Pipe) {
 pub mod testing_apis {
     use super::*;
 
-    /// Inject a synthetic read error into a subprocess's stdout/stderr
-    /// PipeReader, as if the underlying read() syscall (Posix) or libuv read
-    /// callback (Windows) had failed with EBADF. Used by tests to exercise
-    /// the onReaderError cleanup path, which is otherwise very hard to
-    /// trigger deterministically — on Windows in particular, peer death on
-    /// a named pipe maps to UV_EOF rather than an error.
-    ///
-    /// Returns true if an error was injected, false if the given stdio is
-    /// not (or no longer) a buffered pipe reader.
     #[bun_jsc::host_fn]
     pub fn inject_stdio_read_error(
         global_this: &JSGlobalObject,

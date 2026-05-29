@@ -13,10 +13,6 @@ use bun_core::{self, Error, err};
 mod zig_std_debug {
     pub(super) use bun_core::debug::{StackIterator, frame_address};
 
-    // ── SelfInfo (vendor/zig/lib/std/debug/SelfInfo.zig) ─────────────────
-    // D104: relocated to `bun_crash_handler::debug` (lower-tier crate, also
-    // needed by the crash handler's stack-trace printer). Re-export so the
-    // in-file callers below compile unchanged.
     pub(super) use bun_crash_handler::debug::{
         Module, SelfInfo, SourceLocation, SymbolInfo, get_self_debug_info,
     };
@@ -24,29 +20,14 @@ mod zig_std_debug {
 #[cfg(debug_assertions)]
 use zig_std_debug::{Module, SelfInfo, SourceLocation, StackIterator, SymbolInfo};
 
-// Port of the subset of `std.io.tty.{Config,Color,detectConfig}` used by btjs.zig
-// (vendor/zig/lib/std/Io/tty.zig). The `windows_api` variant is omitted because
-// btjs writes to an in-memory `Vec<u8>` returned to lldb, not to the live console
-// handle, so `SetConsoleTextAttribute` would colour the wrong stream.
 #[cfg(debug_assertions)]
 mod tty {
-    // D089: `Config`/`Color`/`set_color` deduped to the canonical port in
-    // `bun_crash_handler::debug` (lower-tier crate; `Vec<u8>` already impls
-    // `bun_io::Write` so the generic `set_color` covers btjs's in-memory sink).
-    // `detect_config_stdout` stays LOCAL — it ports a *different* Zig call
-    // site (`detectConfig(stdout())` with NO_COLOR/CLICOLOR_FORCE/isatty) than
-    // crash_handler's `detect_tty_config_stderr()` (Output::ENABLE_ANSI_COLORS_STDERR).
     pub(super) use bun_crash_handler::debug::{Color, TtyConfig as Config};
 
     /// Port of `process.hasNonEmptyEnvVarConstant`.
     fn has_non_empty_env_var(name: &core::ffi::CStr) -> bool {
         #[cfg(windows)]
         {
-            // Zig spec (vendor/zig/lib/std/process.zig:435-446) reads the Win32
-            // environment via `getenvW`, NOT MSVCRT `getenv`. The CRT keeps its
-            // own narrow-string env cache that is not updated by
-            // `SetEnvironmentVariableW`, which is how Bun mutates env vars at
-            // runtime — so `libc::getenv` would silently miss those.
             unsafe extern "system" {
                 fn GetEnvironmentVariableW(
                     lpName: *const u16,
@@ -98,11 +79,6 @@ mod tty {
             return Config::NoColor;
         }
 
-        // `file.getOrEnableAnsiEscapeSupport()` — on POSIX this is `isatty(fd)`;
-        // on Windows it tries to enable VT processing on the console handle.
-        // PORT NOTE: btjs writes into a `Vec<u8>` returned to lldb, so the
-        // `.windows_api` variant (which calls `SetConsoleTextAttribute` mid-write)
-        // cannot apply; fall through to escape_codes / no_color.
         if bun_sys::isatty(bun_sys::Fd::stdout()) {
             return Config::EscapeCodes;
         }
@@ -175,11 +151,6 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
     let mut it = StackIterator::init(zig_std_debug::frame_address());
 
     while let Some(return_address) = it.next() {
-        // On arm64 macOS, the address of the last frame is 0x0 rather than 0x1 as on x86_64 macOS,
-        // therefore, we do a check for `return_address == 0` before subtracting 1 from it to avoid
-        // an overflow. We do not need to signal `StackIterator` as it will correctly detect this
-        // condition on the subsequent iteration and return `null` thus terminating the loop.
-        // same behaviour for x86-windows-msvc
         let address = return_address.saturating_sub(1);
         let _ = print_source_at_address(debug_info, w, address, tty_config, it.fp);
     }
@@ -387,11 +358,6 @@ fn print_line_from_file_any_os(
         unreachable!();
     }
 
-    // Need this to always block even in async I/O mode, because this could potentially
-    // be called from e.g. the event loop code crashing.
-    // TODO(port): Zig used std.fs.cwd().openFile directly (bypassing bun.sys). PORTING.md
-    // forbids std::fs; using bun_sys here. Confirm bun_sys::File is safe to call
-    // from inside a crash handler / lldb (must not re-enter event loop).
     let f = bun_sys::File::open_at(
         bun_sys::Fd::cwd(),
         &source_location.file_name,
@@ -465,10 +431,6 @@ fn replace_scalar(slice: &mut [u8], from: u8, to: u8) {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Thin forwarders to the `zig_std_debug` port — keep the call-site shape
-// matching the Zig (`std.debug.getSelfDebugInfo()`, `it.getLastError()`, …).
-// ──────────────────────────────────────────────────────────────────────────
 #[cfg(debug_assertions)]
 #[inline]
 fn get_self_debug_info() -> Result<*mut SelfInfo, Error> {

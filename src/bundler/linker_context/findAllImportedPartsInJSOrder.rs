@@ -70,13 +70,6 @@ pub fn find_imported_parts_in_js_order(
     let with_code_splitting = this.graph.code_splitting;
     let with_scb = this.graph.is_scb_bitset.bit_length > 0;
 
-    // PORT NOTE: the Zig visitor holds a *LinkerContext alongside SoA column slices
-    // borrowed from it, and mutates one column (`entry_point_chunk_index`). Rust
-    // borrowck forbids the latter through a shared `&LinkerContext`, so cache that
-    // single mutable column as a raw `*mut [u32]` (provenance via the
-    // `MultiArrayList.bytes: *mut u8` raw-pointer field — see
-    // `scanImportsAndExports.rs` for the same pattern). All other `c.*` accesses
-    // are read-only.
     let entry_point_chunk_indices: *mut [u32] =
         this.graph.files.slice().split_raw().entry_point_chunk_index;
 

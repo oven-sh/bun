@@ -10,10 +10,6 @@ impl Expect {
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let this = self;
-        // Zig: `defer this.postMatch(globalThis);`
-        // PORT NOTE: reshaped for borrowck (was `defer this.postMatch`) — wrap the
-        // body in an inner closure and call `post_match` after it returns, so every
-        // exit path (incl. `?` early-returns) is covered without a raw `*mut Expect`.
         let result = (|| -> JsResult<JSValue> {
         let this_value = frame.this();
         let value: JSValue = this.get_value(global, this_value, "toBeObject", "")?;

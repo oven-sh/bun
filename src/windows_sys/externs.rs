@@ -73,14 +73,6 @@ pub struct FILETIME {
     pub dwHighDateTime: DWORD,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Win32 POD structs shared by `bun_libuv_sys` (uv/win.h embeds) and
-// `bun_sys::windows`. Single source of truth ≙ Zig's `std.os.windows`.
-// All derive Clone+Copy: libuv embeds them in `uv_req_s`/`uv_tty_s`/
-// `uv_fs_s` which themselves derive Copy, so non-Copy here would break
-// the derive chain.
-// ──────────────────────────────────────────────────────────────────────────
-
 /// `OVERLAPPED` (`minwinbase.h`) — 32 bytes / align 8 on x64.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -178,10 +170,6 @@ pub struct INPUT_RECORD {
     pub Event: INPUT_RECORD_Event,
 }
 
-// Layout pins: a typo in any of the above is a silent ABI break across the
-// libuv embed boundary; assert the authoritative Windows-x64 sizes. Gated on
-// `windows` (not just pointer width) because `DWORD = c_ulong` is 4 bytes
-// under LLP64 but 8 under LP64, so the sizes differ on a Linux cross-check.
 #[cfg(all(windows, target_pointer_width = "64"))]
 const _: () = {
     assert!(core::mem::size_of::<OVERLAPPED>() == 32);
@@ -525,10 +513,6 @@ pub mod ntdll {
         ) -> NTSTATUS;
         pub fn NtClose(Handle: HANDLE) -> NTSTATUS;
 
-        // ── futex (`WaitOnAddress`) — used by `bun_threading::Futex` ──
-        // Linked from ntdll instead of `API-MS-Win-Core-Synch-l1-2-0.dll`
-        // because ntdll is autoloaded into every process; the Rtl* wrappers
-        // forward to the same kernel objects.
         pub fn RtlWaitOnAddress(
             Address: *const c_void,
             CompareAddress: *const c_void,
@@ -756,10 +740,6 @@ pub unsafe fn WaitForSingleObject(handle: HANDLE, ms: DWORD) -> Result<DWORD, Wi
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// NTSTATUS — Zig `std.os.windows.NTSTATUS` is `enum(u32) { ..., _ }`.
-// Ported as a transparent newtype so unmapped codes round-trip.
-// ──────────────────────────────────────────────────────────────────────────
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct NTSTATUS(pub u32);
@@ -858,11 +838,6 @@ pub mod ws2_32 {
         pub fn WSAStartup(wVersionRequested: u16, lpWSAData: *mut WSADATA) -> c_int;
     }
 
-    /// `WSADATA` (`winsock2.h`, **`_WIN64` layout** — on 64-bit Windows
-    /// `iMaxSockets`/`iMaxUdpDg`/`lpVendorInfo` come *before* the
-    /// `szDescription`/`szSystemStatus` arrays; the 32-bit header swaps that
-    /// order). Only ever read back from `WSAStartup`; callers zero-initialise
-    /// and never project fields beyond `wVersion`.
     #[repr(C)]
     #[derive(Copy, Clone)]
     pub struct WSADATA {
@@ -1064,13 +1039,6 @@ pub mod ws2_32 {
 }
 pub use ws2_32::WSAGetLastError;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Win32Error — Zig `enum(u16) { ..., _ }`. Ported as a transparent newtype
-// with associated consts so unmapped codes round-trip and `match` on consts
-// works (structural equality). Only the subset referenced by lower-tier
-// crates (errno) is named here; the full 1188-variant table can be extended
-// without ABI change.
-// ──────────────────────────────────────────────────────────────────────────
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Win32Error(pub u16);
@@ -1255,11 +1223,6 @@ impl Win32Error {
     pub fn from_nt_status(status: NTSTATUS) -> Win32Error {
         Self::from_ntstatus(status)
     }
-
-    // NOTE: `toSystemErrno()` is intentionally NOT defined here — it returns
-    // `errno::SystemErrno`, a higher-tier type. The mapping lives in
-    // `errno::SystemErrno::init_win32_error`; callers in `errno` should invoke
-    // that directly (T0 must not depend on T1).
 }
 
 pub type LPDWORD = *mut DWORD;
@@ -1390,11 +1353,6 @@ unsafe extern "C" {
     pub fn GetUserNameW(lpBuffer: LPWSTR, pcbBuffer: LPDWORD) -> BOOL;
 }
 
-// ── Job Object structures (`winnt.h`) ─────────────────────────────────────
-// NOTE: These are the SINGLE canonical definitions. bun_sys::windows and
-// bun_core re-export / impl-Zeroable against these types directly; do NOT
-// re-declare them downstream.
-
 /// `JOBOBJECTINFOCLASS::JobObjectAssociateCompletionPortInformation` (`winnt.h`).
 pub const JobObjectAssociateCompletionPortInformation: DWORD = 7;
 /// `JOBOBJECTINFOCLASS::JobObjectExtendedLimitInformation` (`winnt.h`).
@@ -1426,11 +1384,6 @@ pub struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
     pub SchedulingClass: DWORD,
 }
 
-// winnt.h _IO_COUNTERS — out-param of GetProcessIoCounters / embedded in
-// JOBOBJECT_EXTENDED_LIMIT_INFORMATION. All-zero is the valid initial state
-// (Win32 zero-inits before fill), so `Default` is sound and lets callers write
-// `IO_COUNTERS::default()` instead of `unsafe { zeroed_unchecked() }`.
-// Zeroable impl lives in bun_core/lib.rs (orphan-rule home).
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
 pub struct IO_COUNTERS {
@@ -1496,16 +1449,6 @@ pub struct PROCESS_INFORMATION {
     pub dwThreadId: DWORD,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// TEB → PEB → RTL_USER_PROCESS_PARAMETERS chain (`winternl.h` / phnt).
-// Mirrors `std.os.windows.{teb, peb, TEB, PEB, RTL_USER_PROCESS_PARAMETERS,
-// CURDIR}` so the three former duplicators (`bun_core::windows_sys`,
-// `bun_sys::windows`, the freestanding `bun_shim_impl` shim) all re-export
-// from this tier-0 leaf. Only fields actually dereferenced by Bun are
-// modelled; `offset_of!` asserts pin them to the documented x64 offsets so a
-// typo in a padding array fails at compile time, not at runtime.
-// ──────────────────────────────────────────────────────────────────────────
-
 /// `CURDIR` (`winternl.h` / phnt) — `RTL_USER_PROCESS_PARAMETERS.CurrentDirectory`.
 #[repr(C)]
 pub struct CURDIR {
@@ -1525,10 +1468,6 @@ pub struct RTL_USER_PROCESS_PARAMETERS {
     pub hStdInput: HANDLE,
     pub hStdOutput: HANDLE,
     pub hStdError: HANDLE,
-    /// `CURDIR` — `{ UNICODE_STRING DosPath; HANDLE Handle; }`. The handle
-    /// is what Zig's `std.fs.cwd().fd` returns on Windows; `Fd::cwd()` reads
-    /// it so `openat(Fd::cwd(), …)` resolves relative paths against the live
-    /// process cwd via `NtCreateFile`'s `RootDirectory`.
     pub CurrentDirectory: CURDIR,
     pub DllPath: UNICODE_STRING,
     pub ImagePathName: UNICODE_STRING,
@@ -1584,12 +1523,6 @@ pub struct TEB {
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(core::mem::offset_of!(TEB, ProcessEnvironmentBlock) == 0x60);
 
-/// `std.os.windows.teb()` — `gs:[0x30]` (x64) / `x18` (ARM64).
-///
-/// Safe fn: the only precondition — that the segment register / `x18`
-/// reservation is the OS thread-block pointer — is guaranteed by the Windows
-/// ABI for every thread, so there is no caller-side obligation. The deref
-/// obligation lives with the caller of the returned `*mut TEB`.
 #[inline(always)]
 pub fn teb() -> *mut TEB {
     #[cfg(target_arch = "x86_64")]
@@ -1610,12 +1543,6 @@ pub fn teb() -> *mut TEB {
     }
 }
 
-/// `std.os.windows.peb()` — reads `gs:[0x60]` (x64) / `TEB+0x60` (ARM64).
-///
-/// Returns a raw pointer (NOT `&'static PEB`): the PEB is owned and mutated
-/// by the OS/CRT behind Rust's back (`SetStdHandle`, debugger toggling
-/// `BeingDebugged`, …). Materializing a `&'static` to it would be UB under
-/// Rust's aliasing rules. Callers must read fields through raw-pointer deref.
 #[inline(always)]
 pub fn peb() -> *const PEB {
     #[cfg(target_arch = "x86_64")]

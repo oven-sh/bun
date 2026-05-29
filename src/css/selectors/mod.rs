@@ -25,11 +25,6 @@ pub mod selector;
 
 pub use parser::{Component, PseudoClass, PseudoElement, Selector, SelectorList};
 
-/// Our implementation of the `SelectorImpl` interface — the Rust-shaped
-/// equivalent of Zig's `selector.impl.Selectors`. Defined in the hub (not in
-/// `selector.rs`) to break the parser↔selector dependency cycle: `parser.rs`
-/// needs `impl_::Selectors` to instantiate `Component`/`Selector`/
-/// `SelectorList`, and `selector.rs` needs those instantiations.
 pub mod impl_ {
     use crate::VendorPrefix;
     use crate::css_values::ident::{Ident, IdentOrRef};

@@ -26,15 +26,6 @@
 //!                      everything. This means that we potentially scan through envp a lot of
 //!                      times, even though we could only do it once.
 
-// TODO(port): The Zig original uses comptime type-returning functions (`New`, `PlatformSpecificNew`)
-// that take comptime string keys + option structs and return a unique type per env var with an
-// embedded `static` cache. Rust cannot parameterize a generic type on `&'static str` + a struct
-// value in stable, so this port models `New`/`PlatformSpecificNew` as `macro_rules!` that emit a
-// module per env var. In Zig the declarations come first and the type-generator fns come last;
-// here the macros must be defined (or `#[macro_use]`d) before the declarations. The macro
-// definitions could move into a sibling `env_var_impl.rs` and be `#[macro_use]`d to restore Zig
-// declaration order in this file.
-
 use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 
 // MOVE_DOWN: bun_core::ZStr → bun_core (move-in pass).
@@ -49,16 +40,7 @@ new!(pub BUN_AGENT_RULE_DISABLED: boolean, "BUN_AGENT_RULE_DISABLED", { default:
 new!(pub BUN_COMPILE_TARGET_TARBALL_URL: string, "BUN_COMPILE_TARGET_TARBALL_URL", {});
 new!(pub BUN_CONFIG_DISABLE_COPY_FILE_RANGE: boolean, "BUN_CONFIG_DISABLE_COPY_FILE_RANGE", { default: false });
 new!(pub BUN_CONFIG_DISABLE_ioctl_ficlonerange: boolean, "BUN_CONFIG_DISABLE_ioctl_ficlonerange", { default: false });
-// TODO(markovejnovic): Legacy usage had the default at 30, even though a the attached comment
-// quoted: Amazon Web Services recommends 5 seconds:
-// https://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/jvm-ttl-dns.html
-//
-// It's unclear why this was done.
 new!(pub BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: unsigned, "BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS", { default: 30 });
-// Idle timeout for HTTP client sockets (fetch / `bun install`), in seconds.
-// The timer is armed when the socket opens and re-armed on every read/write;
-// if it fires the request fails with `error.Timeout`. Covers the TLS
-// handshake through the response body. 0 disables. See `src/http/lib.rs`.
 new!(pub BUN_CONFIG_HTTP_IDLE_TIMEOUT: unsigned, "BUN_CONFIG_HTTP_IDLE_TIMEOUT", { default: 300 });
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
 new!(pub BUN_DEBUG: string, "BUN_DEBUG", {});
@@ -77,10 +59,6 @@ new!(pub BUN_DEV_SERVER_TEST_RUNNER: string, "BUN_DEV_SERVER_TEST_RUNNER", {});
 // renaming (`src/js_printer/renamer.zig`). Presence-checked, value ignored.
 new!(pub BUN_DUMP_SYMBOLS: string, "BUN_DUMP_SYMBOLS", {});
 new!(pub BUN_ENABLE_CRASH_REPORTING: boolean, "BUN_ENABLE_CRASH_REPORTING", {});
-// Opt-in: when truthy, Bun watches its original parent pid and exits as soon
-// as that process dies (even if the parent was SIGKILLed and couldn't forward
-// a signal), and on its own clean exit recursively SIGKILLs every descendant
-// so nothing it spawned outlives it. See `src/ParentDeathWatchdog.zig`.
 new!(pub BUN_FEATURE_FLAG_NO_ORPHANS: boolean, "BUN_FEATURE_FLAG_NO_ORPHANS", { default: false });
 new!(pub BUN_FEATURE_FLAG_DUMP_CODE: string, "BUN_FEATURE_FLAG_DUMP_CODE", {});
 // TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior
@@ -92,10 +70,6 @@ new!(pub BUN_INSPECT_PRELOAD: string, "BUN_INSPECT_PRELOAD", {});
 new!(pub BUN_INSTALL: string, "BUN_INSTALL", {});
 new!(pub BUN_INSTALL_BIN: string, "BUN_INSTALL_BIN", {});
 new!(pub BUN_INSTALL_GLOBAL_DIR: string, "BUN_INSTALL_GLOBAL_DIR", {});
-// Minimum response `Content-Length` (in bytes) for `bun install` to
-// stream a tarball directly into libarchive instead of buffering the
-// whole body first. Smaller tarballs stay on the buffered path where
-// the fixed overhead of the resumable state machine isn't worth it.
 new!(pub BUN_INSTALL_STREAMING_MIN_SIZE: unsigned, "BUN_INSTALL_STREAMING_MIN_SIZE", { default: 2 * 1024 * 1024 });
 new!(pub BUN_NEEDS_PROC_SELF_WORKAROUND: boolean, "BUN_NEEDS_PROC_SELF_WORKAROUND", { default: false });
 new!(pub BUN_OPTIONS: string, "BUN_OPTIONS", {});
@@ -168,10 +142,6 @@ new!(pub TMUX: string, "TMUX", {});
 new!(pub TODIUM: string, "TODIUM", {});
 platform_specific_new!(pub USER: string, posix = "USER", windows = "USERNAME", {});
 new!(pub WANTS_LOUD: boolean, "WANTS_LOUD", { default: false });
-// The same as system_root.
-// Note: Do not use this variable directly -- use os.zig's implementation instead.
-// TODO(markovejnovic): Perhaps we could add support for aliases in the library, so you could
-//                      specify both WINDIR and SYSTEMROOT and the loader would check both?
 platform_specific_new!(pub WINDIR: string, posix = None, windows = "WINDIR", {});
 // XDG Base Directory Specification variables.
 // For some reason, legacy usage respected these even on Windows. To avoid compatibility issues,
@@ -226,10 +196,6 @@ pub mod feature_flag {
     // server selects it. Off by default while the client implementation
     // matures. `--experimental-http2-fetch` is the CLI equivalent.
     new_feature_flag!(pub BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT, "BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT", {});
-    // Honor `Alt-Svc: h3` from fetch() responses: subsequent requests to the
-    // same origin go over QUIC/HTTP-3 instead of TCP. Off by default while
-    // the client implementation matures. `--experimental-http3-fetch` is the
-    // CLI equivalent.
     new_feature_flag!(pub BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT, "BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_IO_POOL, "BUN_FEATURE_FLAG_FORCE_IO_POOL", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS, "BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", {});
@@ -266,20 +232,6 @@ pub(crate) struct CacheConfiguration<O> {
     pub opts: O,
 }
 
-/// Structure which encodes the different types of environment variables supported.
-///
-/// This requires the following static members:
-///
-///   - `ValueType`: The underlying environment variable type if one is set. For
-///                              example, a string `$PATH` ought return a `[]const u8` when set.
-///   - `Cache`: A struct implementing the following methods:
-///       - `get_cached() -> CacheOutput<ValueType>`: Retrieve the cached value of the
-///                                                               environment variable, if any.
-///       - `deser_and_invalidate(raw_env: Option<&[u8]>) -> Option<ValueType>`
-///   - `CtorOptions`: A struct containing the options passed to the constructor of the environment
-///                 variable definition.
-///
-/// This type will communicate with the common logic via the `CacheOutput` type.
 pub(crate) mod kind {
     use super::*;
 
@@ -337,11 +289,6 @@ pub(crate) mod kind {
                 &self,
                 raw_env: Option<&'static [u8]>,
             ) -> Option<ValueType> {
-                // The implementation is racy and allows two threads to both set the value at
-                // the same time, as long as the value they are setting is the same. This is
-                // difficult to write an assertion for since it requires the DEV path take a
-                // .swap() path rather than a plain .store().
-
                 if let Some(ev) = raw_env {
                     self.ptr_value
                         .store(ev.as_ptr().cast_mut(), Ordering::Relaxed);
@@ -457,23 +404,12 @@ pub(crate) mod kind {
             }
         }
 
-        /// Control how deserializing and deserialization errors are handled.
-        ///
-        /// Note that deserialization errors cannot panic. If you need more robust means of
-        /// handling inputs, consider not using environment variables.
         #[derive(Clone, Copy, PartialEq, Eq)]
         pub(crate) enum ErrorHandling {
             /// debug_warn on deserialization errors.
             DebugWarn,
             /// Ignore deserialization errors and treat the variable as not set.
             NotSet,
-            /// Formatting errors are treated as truthy values.
-            ///
-            /// If this library fails to parse the value as an integer and truthy cast is
-            /// enabled, truthy values will be set to 1 or 0.
-            ///
-            /// Note: Most values are considered truthy, except for "", "0", "false", "no",
-            /// and "off".
             TruthyCast,
         }
 
@@ -615,15 +551,6 @@ pub(crate) mod kind {
     }
 }
 
-/// Create a new environment variable definition.
-///
-/// The resulting type has methods for interacting with the environment variable.
-///
-/// Technically, none of the operations here are thread-safe, so writing to environment variables
-/// does not guarantee that other threads will see the changes. You should avoid writing to
-/// environment variables.
-// Zig: `fn New(comptime VariantType: type, comptime key: [:0]const u8, comptime opts) type`
-//      → `PlatformSpecificNew(VariantType, key, key, opts)`
 #[macro_export]
 #[doc(hidden)]
 macro_rules! new {
@@ -635,20 +562,9 @@ macro_rules! new {
 }
 pub(crate) use new;
 
-/// Identical to new, except it allows you to specify different keys for POSIX and Windows.
-///
-/// If the current platform does not have a key specified, all methods that attempt to read the
-/// environment variable will fail at compile time, except for `platform_get` and `platform_key`,
-/// which will return None instead.
-// Zig: `fn PlatformSpecificNew(comptime VariantType, comptime posix_key: ?[:0]const u8,
-//                              comptime windows_key: ?[:0]const u8, comptime opts) type`
 #[macro_export]
 #[doc(hidden)]
 macro_rules! platform_specific_new {
-    // TODO(port): this macro is a draft of the Zig comptime type-generator. It expands to a
-    // `pub mod $name { pub fn get() / key() / platform_get() / ... }` so call sites read
-    // `env_var::HOME::get()` like Zig's `env_var.HOME.get()`. The opts-parsing arms below cover
-    // exactly the option shapes used in this file; harden / generalize if new shapes appear.
     (
         $vis:vis $name:ident : $kind:ident,
         posix = $posix:tt, windows = $windows:tt,
@@ -669,10 +585,6 @@ macro_rules! platform_specific_new {
                 $kind, $crate::env_var::__first_key!($posix, $windows), { $($opts)* }
             );
 
-            // Zig computed `DefaultType`/`ReturnType` at comptime from whether `opts.default` is
-            // set. We expose the default + a const HAS_DEFAULT and always return Option<ValueType>;
-            // a thin `pub fn get() -> ValueType` wrapper that `.unwrap()`s is added when a default
-            // exists. TODO(port): restore the non-nullable `get()` return type for defaulted vars.
             pub(crate) const DEFAULT: Option<K::ValueType> =
                 $crate::env_var::__default_opt!($kind, { $($opts)* });
 
@@ -782,13 +694,6 @@ macro_rules! platform_specific_new {
                 None
             }
 
-            /// Fetch the default value of this environment variable, if any.
-            ///
-            /// It is safe to compare the result of .get() to default to test if the variable is set to
-            /// its default value.
-            // Zig: `pub const default: DefaultType = if (opts.default) |d| d else {};`
-            // Exposed above as `DEFAULT: Option<ValueType>`.
-
             /// Unit value so call sites read `env_var::FOO.get()` (matching Zig
             /// `bun.env_var.FOO.get()`). The module-path form `FOO::get()` also works.
             pub struct Accessor;
@@ -802,10 +707,6 @@ macro_rules! platform_specific_new {
             }
 
             fn assert_platform_supported() {
-                // Zig: `@compileError` when the current platform's key is null.
-                // TODO(port): Rust cannot `compile_error!` from inside a const-evaluated `if cfg!`
-                // without separate macro arms per (posix=None / windows=None) combination. Could
-                // split the macro so e.g. `posix = None` emits `#[cfg(unix)] compile_error!`.
                 debug_assert!(
                     platform_key().is_some(),
                     concat!(

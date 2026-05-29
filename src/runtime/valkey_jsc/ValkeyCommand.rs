@@ -6,11 +6,6 @@ use super::protocol_jsc::{ToJSOptions, resp_value_to_js_with_options};
 
 type Slice = bun_core::ZigStringSlice;
 
-// PORT NOTE: callers in `js_valkey_functions.rs` construct
-// `Vec<crate::node::types::BlobOrStringOrBuffer>` directly, so `Args::Args` must accept
-// that exact type. The upstream `bun_jsc::Node::BlobOrStringOrBuffer` re-export is a
-// stub; use the real in-crate definition (which already provides `slice()` /
-// `byte_length()`).
 type BlobOrStringOrBuffer = crate::node::types::BlobOrStringOrBuffer;
 
 // PORT NOTE: `Command` is a transient view struct (Zig `deinit` is a no-op); fields
@@ -164,12 +159,6 @@ impl Default for Meta {
     }
 }
 
-// PERF(port): was `phf::Set<&[u8]>`. 16 entries spread across 9 distinct
-// lengths (max 4 per bucket), so a length-gated match beats the phf hash:
-// the outer `usize` compare rejects almost everything before any byte
-// compare, and within a bucket the known-equal-length lets LLVM lower the
-// `==` to a single wide load/compare. See clap::find_param (12577e958d71)
-// for the reference pattern.
 #[inline]
 fn is_not_allowed_autopipeline_command(cmd: &[u8]) -> bool {
     match cmd.len() {

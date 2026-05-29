@@ -38,24 +38,8 @@ impl CookieMap {
             CookieMap__write(self, global_this, kind, uws_http_response)
         })
     }
-
-    // NOTE: no inherent `ref`/`deref` on `CookieMap` — `CookieMapRef` is the
-    // sanctioned owner of the intrusive C++ refcount. Exposing bare refcount
-    // mutators on the pointee would let `&mut *cookie_map_ref` corrupt the
-    // count relative to the ref's owned `+1` (double-unref / UAF on Drop),
-    // mirroring how `RefPtr` discourages bare `ref`/`deref` on its pointee.
 }
 
-/// Intrusive smart pointer over a C++-refcounted `CookieMap`.
-///
-/// Owns exactly one strong ref: `new_ref` bumps it (for a borrowed handle)
-/// and `Drop` releases it. Mirrors `AbortSignalRef` — a raw FFI handle (opaque
-/// C++ object) cannot live inside `Box`/`Arc`, so this newtype is the
-/// sanctioned owning representation.
-///
-/// (A `+1`-transfer constructor — adopting an already-bumped raw pointer
-/// without a fresh `ref()` — is deliberately omitted until a caller needs it;
-/// every construction site in the tree goes through `new_ref`.)
 #[repr(transparent)]
 pub struct CookieMapRef(NonNull<CookieMap>);
 

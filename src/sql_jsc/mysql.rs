@@ -26,12 +26,6 @@ pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Submodule tree (files use PascalCase basenames, mirroring the Zig sources;
-// wired via `#[path]`). Heavy modules remain ``-gated until their lower-
-// tier deps land — see per-module `TODO(port)` markers.
-// ──────────────────────────────────────────────────────────────────────────
-
 #[path = "mysql/MySQLContext.rs"]
 pub mod my_sql_context;
 
@@ -64,17 +58,6 @@ pub mod js_my_sql_connection;
 
 #[path = "mysql/MySQLConnection.rs"]
 pub mod my_sql_connection;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Module-name aliases.
-//
-// Downstream consumers (`MySQLConnection.rs`, `MySQLRequestQueue.rs`,
-// `MySQLQuery.rs`, `JSMySQLConnection.rs`, `JSMySQLQuery.rs`) import via the
-// `js_mysql_{connection,query}` spelling (matching `crate::jsc::codegen`).
-// Re-export the file-backed modules under those names so there is exactly one
-// type hierarchy — previously a parallel inline stub pair shadowed the real
-// implementations and every method body panicked.
-// ──────────────────────────────────────────────────────────────────────────
 
 pub use js_my_sql_connection as js_mysql_connection;
 pub use js_my_sql_query as js_mysql_query;

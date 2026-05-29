@@ -44,17 +44,6 @@ pub trait VecExt<T>: Sized {
     /// a double-drop (PTR_AUDIT.md class #1: bitwise-copy of Drop-carrying
     /// type while source is still live).
     unsafe fn from_bump_slice(items: &mut [T]) -> Self;
-    /// Safe sibling of [`from_bump_slice`] for `T: Copy` — the
-    /// "source must never be element-dropped again" precondition holds
-    /// vacuously (`Copy` ⇒ no `Drop`), so the bitwise move degenerates to a
-    /// plain copy and needs no `unsafe` at the call site. Takes `&[T]`
-    /// (read-only) since nothing is logically moved out.
-    ///
-    /// Covers the dominant js_parser pattern
-    /// `arena.alloc_slice_copy(&[a, b]) → unsafe { from_bump_slice(..) }`
-    /// (invariant: bump arena outlives the AST). Callers may pass the bump
-    /// slice directly, or skip the intermediate bump alloc entirely and pass
-    /// the stack array — both compile to one memcpy into the global heap.
     fn from_arena_slice(items: &[T]) -> Self
     where
         T: Copy;
@@ -73,10 +62,6 @@ pub trait VecExt<T>: Sized {
     /// Arena pre-reservation: `Vec` cannot allocate from a bump arena, so this
     /// becomes a global-allocator `with_capacity`.  The arena is ignored.
     fn init_capacity_in(_arena: &bun_alloc::Arena, cap: usize) -> Self;
-    /// Wrap a borrowed slice as a `Vec<T>` that **must not be dropped or
-    /// grown**.  Same hazard as the original — callers wrap in `ManuallyDrop`.
-    /// Kept only for the `StreamResult::Temporary*` pattern; new code should
-    /// take `&[T]` instead.
     unsafe fn from_borrowed_slice_dangerous(items: &[T]) -> ManuallyDrop<Self>;
 
     // ── accessors ─────────────────────────────────────────────────────────
@@ -139,11 +124,6 @@ pub trait VecExt<T>: Sized {
     /// to *exactly* `len + additional`. Use when the buffer is the final
     /// single-shot blob (sourcemap finalize, etc.).
     unsafe fn writable_slice_exact(&mut self, additional: usize) -> &mut [T];
-    /// Reserves `additional` and returns the first `additional` slots of
-    /// spare capacity as `MaybeUninit<T>`. Safe sibling of [`writable_slice`]:
-    /// caller writes some prefix then calls `set_len` (or [`uv_commit`] for
-    /// `Vec<u8>`) to commit. Unlike `spare_capacity_mut()` the returned slice
-    /// is exactly `additional` long, not `capacity - len`.
     fn reserve_spare(&mut self, additional: usize) -> &mut [core::mem::MaybeUninit<T>];
     /// `reserve(additional)` then [`expand_to_capacity`], returning the
     /// freshly-exposed tail as a raw `(ptr, len)` pair — i.e.
@@ -189,11 +169,6 @@ pub trait VecExt<T>: Sized {
         E: From<AllocError>;
 }
 
-// Generic over `A` so the impl serves both `Vec<T>` (Global) and
-// `Vec<T, AstAlloc>` (AST-arena lists — `ExprNodeList`/`DeclList`/
-// `PropertyList`). `A: Default` lets every constructor produce the right
-// allocator without a value in hand; both `Global` and `AstAlloc` are ZSTs
-// with `Default`, so `A::default()` is free.
 impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     #[inline]
     fn init_capacity(n: usize) -> Self {
@@ -468,11 +443,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     #[inline]
     fn move_to_list(&mut self) -> Vec<T> {
         let taken = core::mem::replace(self, Vec::new_in(A::default()));
-        // Fast path: `Vec<T, Global>` → `Vec<T>` is a pointer move, not a
-        // realloc+memcpy. Restores zero-copy behavior on the HTTP streaming
-        // paths (`RequestContext::response_buf`, `ByteStream`); the copying
-        // path is still required for `AstAlloc` etc. where the buffer must
-        // migrate heaps.
         if core::any::TypeId::of::<A>() == core::any::TypeId::of::<std::alloc::Global>() {
             let mut taken = core::mem::ManuallyDrop::new(taken);
             // SAFETY: `A == Global`, so `Vec<T, A>` and `Vec<T>` have the
@@ -576,12 +546,6 @@ pub trait ByteVecExt {
     fn write_utf16(&mut self, str: &[u16]) -> Result<u32, AllocError>;
     fn write_type_as_bytes_assume_capacity<Int: Copy>(&mut self, int: Int);
 
-    /// libuv `uv_alloc_cb`-style: ensure **at least** `suggested` bytes of
-    /// spare capacity past `len()`, then return the *full* spare-capacity
-    /// slice (`len == capacity - len()`, which may exceed `suggested`).
-    ///
-    /// Callers that must hand libuv exactly `suggested` bytes slice the
-    /// result themselves: `&mut v.uv_alloc_spare(n)[..n]`.
     fn uv_alloc_spare(&mut self, suggested: usize) -> &mut [core::mem::MaybeUninit<u8>];
     /// As [`uv_alloc_spare`] but typed `&mut [u8]` so the result can be used
     /// directly as a `uv_buf_t` / `read(2)` target without a per-site cast.
@@ -719,20 +683,6 @@ impl OffsetByteList {
     }
 }
 
-/// Bitwise-move every element of `src` to the **front** of `dst`, shifting
-/// `dst`'s existing contents right by `src.len()`. `src` is left empty
-/// (capacity retained). This is the mirror of std [`Vec::append`], which
-/// moves to the back.
-///
-/// Free function (not a `VecExt` method) so it is generic over *any*
-/// `A: Allocator` — the `VecExt` blanket impl carries an
-/// `A: Default + 'static` bound that `&'a MimallocArena` (i.e.
-/// [`bun_alloc::ArenaVec`]) does not satisfy. `src` and `dst` may use
-/// distinct allocators.
-///
-/// Ports the open-coded `reserve → ptr::copy(shift) → copy_nonoverlapping →
-/// set_len` pattern that translated Zig's `bun.copy`/`@memcpy` splice for
-/// non-`Copy` element types.
 pub fn prepend_from<T, A: Allocator, B: Allocator>(dst: &mut Vec<T, A>, src: &mut Vec<T, B>) {
     let src_len = src.len();
     if src_len == 0 {

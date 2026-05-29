@@ -19,13 +19,6 @@ use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, Wor
 use crate::event_loop::ConcurrentTask;
 use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
 
-/// Per-job payload trait. Implementors own the off-thread work body and the
-/// JS-thread completion; the surrounding heap/queue/keep-alive plumbing is
-/// supplied by [`AnyTaskJob`].
-///
-/// `Drop` on the implementor is the deinit path — it runs on the JS thread
-/// (from `run_from_js`'s `heap::take`) on every exit, including the
-/// `is_shutting_down` early-out and `init` failure.
 pub trait AnyTaskJobCtx: Sized {
     /// Optional fallible JS-thread setup, run after heap allocation but before
     /// `schedule`. On error the job is freed (running `Drop`). Default: no-op.
@@ -45,10 +38,6 @@ pub trait AnyTaskJobCtx: Sized {
     fn then(&mut self, global: &JSGlobalObject) -> JsResult<()>;
 }
 
-/// Heap-allocated `{WorkPoolTask, AnyTask, KeepAlive, ctx}` bundle. Created
-/// via [`Self::create`] / [`Self::create_and_schedule`]; freed in
-/// `run_from_js` (or on `init` failure). `ctx` is `pub` so callers can read
-/// e.g. a `JSPromiseStrong` field after scheduling.
 pub struct AnyTaskJob<C> {
     vm: bun_ptr::BackRef<VirtualMachine>,
     task: WorkPoolTask,
@@ -69,10 +58,6 @@ impl<C> Drop for AnyTaskJob<C> {
 }
 
 impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
-    /// Heap-allocate, wire the intrusive `WorkPoolTask`/`AnyTask`, and run
-    /// [`AnyTaskJobCtx::init`]. On `init` error the allocation is freed
-    /// (running `Drop for C`). The returned pointer is owned by the caller
-    /// until handed to [`Self::schedule`].
     pub fn create(global: &JSGlobalObject, ctx: C) -> JsResult<*mut Self> {
         let vm = bun_ptr::BackRef::new(global.bun_vm());
         let job = bun_core::heap::into_raw(Box::new(Self {
@@ -131,13 +116,6 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         Ok(())
     }
 
-    /// `WorkPoolTask` callback — runs OFF the JS thread.
-    ///
-    /// Reachable only via the `WorkPoolTask::callback` fn-ptr slot (safe fn
-    /// coerces into it) for the `task` field initialised in [`Self::create`]; the
-    /// WorkPool calls back with exactly that field, so `from_task_ptr`
-    /// recovers the live heap `Self` parent (owned until `run_from_js`
-    /// reclaims it). Mirrors [`crate::WorkTask::run_from_thread_pool`].
     fn run_task(task: *mut WorkPoolTask) {
         // SAFETY: only reachable via the `WorkPoolTask::callback` slot wired
         // in `create`; `task` points to `Self.task` and the job is live until
@@ -145,11 +123,6 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         let job = unsafe { &mut *Self::from_task_ptr(task) };
         let vm = job.vm;
         job.ctx.run(vm.global);
-        // Mirror Zig `defer vm.enqueueTaskConcurrent(...)` — there is no early
-        // return between the body and the enqueue, so the `defer` reduces to a
-        // trailing call.
-        // `ConcurrentTask::create` heap-allocates a fresh task; the queue takes
-        // ownership of it.
         vm.event_loop_shared()
             .enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
     }

@@ -1,13 +1,5 @@
 #![allow(unexpected_cfgs)] // `bun_codegen_embed` is set via RUSTFLAGS (scripts/build/rust.ts) for release/CI builds.
 
-// REFACTOR_BUN_AST: this module holds only the data-shaped pieces of
-// `runtime.zig` that the AST crate (and `bun_js_printer::Options`) need:
-// `Runtime::source_code`, `Imports`, `ReplaceableExport*`, `ServerComponentsMode`.
-// The `Features` struct (carries `&mut RuntimeTranspilerCache`) and
-// `Fallback` HTML rendering (needs `bun_options_types::schema`, `bun_io`,
-// `bun_base64`) live in `bun_js_parser::parser::Runtime` to avoid the
-// `bun_options_types → bun_ast → bun_options_types` cycle.
-
 use bun_collections::StringArrayHashMap;
 use bun_wyhash::Wyhash11;
 
@@ -44,18 +36,8 @@ impl ReplaceableExport {
     }
 }
 
-/// Zig: `bun.StringArrayHashMapUnmanaged(ReplaceableExport)`.
-///
-/// Newtype (not a bare alias) so we can hang `get_ptr` (Zig spelling for
-/// `getPtr`, which borrows immutably) and expose a `.entries` accessor that
-/// satisfies the `replace_exports.entries.len` shape `visitStmt` ported
-/// verbatim from Zig's `ArrayHashMap.entries`.
 #[derive(Default)]
 pub struct ReplaceableExportMap {
-    /// Backing map. Named `entries` so `replace_exports.entries.len()` —
-    /// the literal Zig spelling — resolves (Zig's `ArrayHashMap.entries`
-    /// is a `MultiArrayList` with `.len`; here `StringArrayHashMap` derefs
-    /// to `ArrayHashMap` which has `.len()`).
     pub entries: StringArrayHashMap<ReplaceableExport>,
 }
 
@@ -78,10 +60,6 @@ impl ReplaceableExportMap {
     pub fn count(&self) -> usize {
         self.entries.count()
     }
-    /// Zig `getPtr` returns `?*V` from a `*const Self` — i.e. immutable
-    /// lookup yielding a (logically-mutable) pointer. Rust splits this into
-    /// `get_ptr` (`&V`) and `get_ptr_mut` (`&mut V`); call sites in the
-    /// visitor only read through it.
     #[inline]
     pub fn get_ptr(&self, key: &[u8]) -> Option<&ReplaceableExport> {
         self.entries.get(key)

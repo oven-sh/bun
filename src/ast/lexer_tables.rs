@@ -158,19 +158,6 @@ impl T {
     }
 }
 
-/// Pack `N <= 16` bytes into a native-endian `u128` (zero-padded). `const` so
-/// the literal arms in the `by_len!` macros below fold to integer immediates
-/// at compile time; the runtime call (post-monomorphization, fixed `N`) lowers
-/// to one or two unaligned loads.
-///
-/// The `N <= 8` branch routes through a `u64` and widens with `as u128` so the
-/// upper half is the *literal* `0` rather than a stack-buffer read — LLVM
-/// InstCombine then narrows the resulting `icmp eq i128 (zext %lo), C` back to
-/// a single `i64` compare. This is the codegen Zig's `ComptimeStringMap` emits
-/// (`mov (%rsi),%rax; movabs $imm,%rcx; cmp %rcx,%rax`). Matching on
-/// `&[u8; N]` directly does **not** get this: rustc lowers array patterns to a
-/// per-byte `cmpb`+`jne` decision tree (8 branches for `b"function"`), which
-/// is what the previous revision of `by_len!` produced.
 #[inline(always)]
 const fn kw_pack<const N: usize>(arr: &[u8; N]) -> u128 {
     assert!(N <= 16);
@@ -198,32 +185,8 @@ const fn kw_pack<const N: usize>(arr: &[u8; N]) -> u128 {
     }
 }
 
-/// Hot-path keyword classifier — called once per identifier in the lexer.
-///
-/// Replaces the `phf::Map` lookup for `KEYWORDS` (which hashes through
-/// SipHash13 and showed up as ~4% self-time under `phf_shared::hash` in
-/// `perf record` on the three.js bundle). Mirrors Zig's `ComptimeStringMap`
-/// strategy: bucket by length, then load the candidate once as a wide integer
-/// and compare against const-folded immediates — one `cmp` per candidate, no
-/// hash, no bounds checks, no `memcmp`, no per-byte ladder.
-///
-/// All JS keywords are 2..=10 ASCII bytes; the length dispatch rejects the
-/// overwhelming majority of identifiers (which are not keywords) with one
-/// branch when `len > 10`.
 #[inline]
 pub fn keyword(s: &[u8]) -> Option<T> {
-    /// View `s` as `&[u8; $n]` (length already proven by the outer
-    /// `match s.len()`), pack it into a single native-endian integer via
-    /// [`kw_pack`], and compare against const-folded integer immediates. Each
-    /// arm is one wide `cmp`. (Matching on `&[u8; N]` directly lowers to a
-    /// per-byte `cmpb` chain — see [`kw_pack`] doc.)
-    ///
-    /// Spelled as an `if`/`else` chain rather than a `match`: inline-`const`
-    /// in *pattern* position is unstable (`inline_const_pat`), but in
-    /// *expression* position it has been stable since 1.79 and forces the RHS
-    /// to a compile-time immediate. The lowered IR is identical — a `match`
-    /// over scattered `u128` constants is a sequential `cmp`+`je` ladder
-    /// either way (no jump table for sparse 128-bit keys).
     macro_rules! by_len {
         ($n:literal: $($lit:literal => $tok:expr,)*) => {{
             let arr: &[u8; $n] = s.try_into().unwrap();
@@ -288,10 +251,6 @@ pub fn keyword(s: &[u8]) -> Option<T> {
     }
 }
 
-// Strict-mode reserved-word table sunk to `bun_core::lexer_tables` (single
-// source of truth shared with `MutableString::ensure_valid_identifier`).
-// `STRICT_MODE_RESERVED_WORDS` is now `[&[u8]; 9]` — `.len()`/`.iter()`-
-// compatible with the former `phf::Set` callers (renamer.rs).
 pub use bun_core::lexer_tables::{
     STRICT_MODE_RESERVED_WORDS, is_strict_mode_reserved_word, strict_mode_reserved_word_remap,
 };
@@ -369,12 +328,6 @@ impl PropertyModifierKeyword {
         b"static" => PropertyModifierKeyword::PStatic,
     };
 
-    /// Hot path: queried in `parse_property` once per identifier-keyed
-    /// property (every method/field name in a class body). Same length-bucket
-    /// strategy as [`keyword`] — avoids the SipHash round-trip inside
-    /// `phf::Map::get`. All entries are 3..=9 ASCII bytes; class-heavy inputs
-    /// like three.js have property names that are overwhelmingly *not* in this
-    /// set, so the `match s.len()` rejects most lookups in one branch.
     #[inline]
     pub fn find(s: &[u8]) -> Option<PropertyModifierKeyword> {
         macro_rules! by_len {
@@ -415,10 +368,6 @@ impl PropertyModifierKeyword {
     }
 }
 
-/// TypeScript "parameter property" modifier check (constructor args). Same
-/// strategy as [`is_strict_mode_reserved_word`]: length-bucketed fixed-array
-/// compare to avoid the SipHash inside `phf::Set::contains`. All entries are
-/// 6..=9 ASCII bytes and lengths are unique except 8 (override/readonly).
 #[inline]
 pub fn is_type_script_accessibility_modifier(s: &[u8]) -> bool {
     macro_rules! by_len {
@@ -601,12 +550,6 @@ pub enum TypescriptStmtKeyword {
 }
 
 impl TypescriptStmtKeyword {
-    /// Length-gated match. Same strategy as [`keyword`]: 7 entries, max 2 per
-    /// length bucket, so gating on `len()` first lets LLVM lower each inner
-    /// compare to a fixed-width integer compare instead of phf's SipHash +
-    /// index + slice-compare. Almost every miss (every non-TS-keyword
-    /// identifier at statement position) falls out on the single `usize`
-    /// compare without touching bytes.
     #[inline]
     pub fn from_bytes(s: &[u8]) -> Option<Self> {
         macro_rules! by_len {
@@ -1009,10 +952,6 @@ pub fn is_latin1_identifier<B: AsRef<[u8]>>(name: B) -> bool {
     true
 }
 
-/// `JSLexer.isLatin1Identifier(comptime []const u16, name)` — UTF-16 overload
-/// of [`is_latin1_identifier`]. Walks code units exactly as the Zig generic
-/// does (no narrowing/alloc): any unit `> 0xFF` fails the predicate, otherwise
-/// the byte rules apply.
 pub fn is_latin1_identifier_u16(name: &[u16]) -> bool {
     if name.is_empty() {
         return false;

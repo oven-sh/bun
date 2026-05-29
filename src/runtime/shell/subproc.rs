@@ -69,12 +69,6 @@ fn arc_as_mut_ptr<T>(a: &Arc<T>) -> *mut T {
     Arc::as_ptr(a).cast_mut()
 }
 
-// Compile-time thread-confinement proof: `PipeReader`'s raw-pointer fields
-// make it (and hence `Arc<PipeReader>`) `!Send + !Sync`, so the "Arc clone
-// reaches another thread" data-race is structurally impossible. Stable Rust
-// has no negative trait bounds, so this is the auto-trait-ambiguity trick:
-// if `Arc<PipeReader>` ever gains `Send`/`Sync`, both blanket impls apply
-// and `_NOT_SEND`/`_NOT_SYNC` fail to compile with "conflicting impls".
 mod __pipe_reader_thread_confined {
     use super::{Arc, PipeReader};
     trait _NotSendCheck<A> {
@@ -132,11 +126,6 @@ pub type StdioResult = WindowsStdioResult;
 #[cfg(not(windows))]
 pub type StdioResult = Option<Fd>;
 
-/// RAII handle owning one intrusive ref on a heap `FileSink` (Zig's
-/// `Writable.pipe: *FileSink`). `FileSink` carries its own
-/// `#[derive(CellRefCounted)]` refcount and is allocated via `Box::into_raw`
-/// in `FileSink::create*`, so it cannot live behind an `Arc`. Drop derefs
-/// (and frees on last ref), matching Zig's `pipe.deref()` on teardown.
 pub struct FileSinkPtr(core::ptr::NonNull<FileSink>);
 
 impl FileSinkPtr {
@@ -209,12 +198,6 @@ pub struct ShellIO {
     pub stderr: Option<Arc<IOWriter>>,
 }
 
-// PORT NOTE: Zig's `ShellIO.ref/deref` bumped intrusive IOWriter refcounts
-// without producing a handle. With `Arc<IOWriter>` the only correct way to
-// retain is to *clone the Arc and keep it*; a freestanding `ref()` that
-// discards the clone is a no-op. Callers hold their own `Arc` clones and
-// `ShellIO`'s `Drop` releases them — no explicit ref/deref methods.
-
 // ───────────────────────────────────────────────────────────────────────────
 // ShellSubprocess
 // ───────────────────────────────────────────────────────────────────────────
@@ -223,15 +206,6 @@ pub type Subprocess = ShellSubprocess;
 
 pub const DEFAULT_MAX_BUFFER_SIZE: u32 = 1024 * 1024 * 4;
 
-/// Backref from a heap-allocated [`ShellSubprocess`] to its owning `Cmd`.
-///
-/// Spec stores `cmd_parent: *ShellCmd` directly. In the NodeId-arena port the
-/// `Cmd` lives **inline** in `Interpreter::nodes: Vec<Node>`, so a raw `*mut
-/// Cmd` taken at spawn time dangles the moment a later `alloc_node` grows the
-/// `Vec` (long pipelines hit this — every piped command pushes new Expansion /
-/// Cmd nodes while earlier subprocesses' PipeReaders are still registered in
-/// epoll). Store `(interp, NodeId)` instead and resolve through the arena at
-/// each use site.
 #[derive(Clone, Copy)]
 pub struct CmdHandle {
     pub interp: bun_ptr::ParentRef<Interpreter>,
@@ -264,10 +238,6 @@ impl CmdHandle {
 pub struct ShellSubprocess {
     pub cmd_parent: CmdHandle,
 
-    /// Intrusively ref-counted process (`bun_ptr::ThreadSafeRefCount`).
-    /// Stored raw because `Process` methods take `&mut self` and `RefPtr`
-    /// only implements `Deref`; the shell is single-threaded so raw mutable
-    /// access mirrors the Zig `*Process` pattern.
     pub process: *mut Process,
 
     pub stdin: Writable,
@@ -301,18 +271,6 @@ impl Drop for ShellSubprocess {
         log!("Deinit");
     }
 }
-
-// pub const Pipe = struct {
-//     writer: Writer = Writer{},
-//     parent: *Subprocess,
-//     src: WriterSrc,
-//
-//     writer: ?CapturedBufferedWriter = null,
-//
-//     status: Status = .{
-//         .pending = {},
-//     },
-// };
 
 pub type StaticPipeWriter = JscSubprocess::NewStaticPipeWriter<ShellSubprocess>;
 
@@ -440,13 +398,6 @@ impl ShellSubprocess {
         log!("close IO {}", <&'static str>::from(io));
         self.closed.insert(io);
 
-        // If you never referenced stdout/stderr, they won't be garbage collected.
-        //
-        // That means:
-        //   1. We need to stop watching them
-        //   2. We need to free the memory
-        //   3. We need to halt any pending reads (1)
-        // if (!self.hasCalledGetter(io)) {
         match io {
             StdioKind::Stdin => self.stdin.finalize(),
             StdioKind::Stdout => self.stdout.finalize(),
@@ -497,12 +448,6 @@ impl ShellSubprocess {
                     StdioKind::Stdin => unreachable!(),
                 };
                 if let Readable::Pipe(pipe) = core::mem::replace(out, Readable::Ignore) {
-                    // The only callers reach here from inside
-                    // `PipeReader::on_reader_done`/`on_reader_error`, which still
-                    // hold a raw `*mut PipeReader` to this same allocation.
-                    // Route every read/write through `Arc::as_ptr` (no `Deref`)
-                    // so we never materialise a `&PipeReader` that would alias
-                    // those callers' access; see `PipeReader::take_done_buffer`.
                     let pp = Arc::as_ptr(&pipe).cast_mut();
                     // SAFETY: `pp` projects from the Arc allocation's NonNull;
                     // raw place read of the discriminant + raw-ptr write
@@ -525,14 +470,6 @@ impl ShellSubprocess {
         }
     }
 
-    /// Tear down a subprocess whose stdio start() failed. Marks pending pipe readers as
-    /// errored so PipeReader.deinit's done-assert passes, drops the exit handler so a
-    /// later onProcessExit doesn't touch the freed Subprocess, then deinits.
-    ///
-    /// Windows: PipeReader.deinit asserts the libuv source is closed. Whether the source
-    /// is uv-initialized depends on how far startWithCurrentPipe got, so a blind close or
-    /// destroy is unsafe. Fall back to leaking the Subprocess (pre-existing behavior)
-    /// rather than risk closing an uninitialized handle.
     fn abort_after_failed_start(this: *mut Self) {
         #[cfg(windows)]
         {
@@ -546,11 +483,6 @@ impl ShellSubprocess {
             let mut subproc = unsafe { bun_core::heap::take(this) };
             for r in [&mut subproc.stdout, &mut subproc.stderr] {
                 if let Readable::Pipe(pipe) = r {
-                    // `start()` failed before any reader callback registered,
-                    // so the `Arc` is expected to be uniquely held. Write
-                    // unconditionally (matching Zig spec) rather than via
-                    // `Arc::get_mut`, which would silently skip the state
-                    // transition if a future change bumped the strong count.
                     debug_assert_eq!(Arc::strong_count(pipe), 1);
                     // SAFETY: single-threaded shell; no other borrow live.
                     let p = unsafe { &mut *Arc::as_ptr(pipe).cast_mut() };
@@ -573,11 +505,6 @@ impl ShellSubprocess {
         shellio: &mut ShellIO,
         spawn_args_: SpawnArgs<'_>,
         cmd_parent: CmdHandle,
-        // We have to use an out pointer because this function may invoke callbacks that expect a
-        // fully initialized parent object. Writing to this out pointer may be the last step needed
-        // to initialize the object. Raw (not `&mut`) so the caller can pass an
-        // address inside the `Cmd` arena slot without holding a `&mut` borrow
-        // across this re-entrant call.
         out: *mut *mut Self,
         notify_caller_process_already_exited: &mut bool,
     ) -> sh::Result<()> {
@@ -612,10 +539,6 @@ impl ShellSubprocess {
     ) -> sh::Result<()> {
         const IS_SYNC: bool = false;
 
-        // Owns the `K=V\0` storage when inheriting the parent env. Zig used the
-        // spawn-local arena freed at function exit; here the struct keeps the
-        // buffers alive until after `spawn_process` returns (the raw pointers
-        // pushed into `env_array` borrow `inherited_env_storage.storage`).
         let inherited_env_storage: Option<bun_dotenv::NullDelimitedEnvMap> =
             if !spawn_args.override_env && spawn_args.env_array.is_empty() {
                 // spawn_args.env_array.items = jsc_vm.transpiler.env.map.createNullDelimitedEnvMap(allocator);
@@ -719,11 +642,6 @@ impl ShellSubprocess {
             )
         } {
             Err(err) => {
-                // Zig: `spawn_options.deinit()`. WindowsSpawnOptions has no Drop
-                // (its Stdio::Buffer/Ipc carry FFI-owned `*mut uv::Pipe` already
-                // `uv_pipe_init`ed by spawn_process_windows before uv_spawn fails),
-                // so an implicit `drop(spawn_options)` is a no-op and leaks the
-                // pipe handles open in the uv loop. POSIX deinit is a no-op.
                 #[cfg(windows)]
                 {
                     spawn_options.stdin.deinit();
@@ -769,10 +687,6 @@ impl ShellSubprocess {
         let spawn_stdout = spawn_result.stdout.take();
         let spawn_stderr = spawn_result.stderr.take();
 
-        // Two-phase init: allocate the Subprocess slot first so the stable
-        // `*mut Subprocess` is available to `Writable::init` / `Readable::init`
-        // (they store it on StaticPipeWriter / PipeReader as a backref). Zig
-        // does `allocator.create()` then assigns the struct literal in place.
         let mut slot = Box::<Subprocess>::new_uninit();
         let subprocess: *mut Subprocess = slot.as_mut_ptr();
         // SAFETY: `out_subproc` points at the `SubprocExec.child` slot inside
@@ -846,13 +760,6 @@ impl ShellSubprocess {
         });
         let _ = scopeguard::ScopeGuard::into_inner(stdio_guard);
 
-        // Spec: `subprocess.stdin.pipe.signal = Signal.init(&subprocess.stdin)`.
-        // Wire the FileSink's close-signal back to the enclosing `Writable` so
-        // `Writable::on_close` (drops the `Arc<FileSink>`) runs when the sink
-        // finishes. `stdin` lives inside the Box-allocated `Subprocess` at a
-        // stable address, so the self-referential raw pointer is sound for the
-        // life of the subprocess. Only reachable on Windows (POSIX
-        // `Writable::init` never returns `Pipe` for shell stdio).
         {
             // Derive `stdin_ptr` from the raw heap pointer (`subprocess`), not
             // the local `subproc: &mut` reborrow — the pointer is stored
@@ -1085,10 +992,6 @@ impl Writable {
                 }
 
                 Stdio::Blob(_) => {
-                    // E0509: `Stdio` impls `Drop`, so the payload cannot be
-                    // destructure-moved out. Take ownership via ManuallyDrop +
-                    // ptr::read; the wrapper suppresses the Stdio destructor so
-                    // the blob is moved exactly once.
                     let old =
                         core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
                     // SAFETY: `old` is Blob (matched above) and ManuallyDrop
@@ -1142,10 +1045,6 @@ impl Writable {
                 }
 
                 Stdio::Blob(_) => {
-                    // E0509: `Stdio` impls `Drop`, so the payload cannot be
-                    // destructure-moved out. Take ownership via ManuallyDrop +
-                    // ptr::read; the wrapper suppresses the Stdio destructor so
-                    // the blob is moved exactly once.
                     let old =
                         core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
                     let blob = match &*old {
@@ -1170,12 +1069,6 @@ impl Writable {
                 Stdio::Memfd(memfd) => {
                     debug_assert!(memfd.is_valid());
                     let fd = *memfd;
-                    // Ownership of the fd transfers to `Writable::Memfd` (Zig
-                    // sets `stdio_consumed = true` to suppress `Stdio.deinit`).
-                    // Swap in `Ignore` and suppress the old value's destructor
-                    // so `Stdio::Drop` doesn't close the fd we just took
-                    // (`stdio = Stdio::Ignore` alone would drop+close the old
-                    // `Stdio::Memfd`).
                     let _ =
                         core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
                     Ok(Writable::Memfd(fd))
@@ -1192,22 +1085,7 @@ impl Writable {
         }
     }
 
-    // PORT NOTE: `Writable::toJS` from the Zig spec is intentionally **not**
-    // ported. It references `subprocess.flags.has_stdin_destructor_called` and
-    // `subprocess.weak_file_sink_stdin_ptr`, neither of which exist on
-    // `ShellSubprocess` — the function is dead under Zig's lazy compilation
-    // (copy-pasted from the JSC `Subprocess`, never instantiated). The shell
-    // never exposes its stdin Writable to JS.
-
     pub fn finalize(&mut self) {
-        // PORT NOTE: Zig recovered `*Subprocess` via `container_of` to gate on
-        // `subprocess.this_jsvalue != .zero`. That field is never assigned on
-        // ShellSubprocess (dead code path under Zig lazy compilation) and was
-        // dropped from the port, so the parent-pointer recovery is unnecessary.
-        // Computing it would also require materialising a `&Subprocess` while
-        // `&mut self` (== `&mut subprocess.stdin`) is live — an aliasing
-        // violation under Stacked Borrows even if never read.
-
         match self {
             Writable::Pipe(_) => {
                 // deref via drop-on-reassign
@@ -1263,10 +1141,6 @@ pub enum Readable {
 }
 
 impl Readable {
-    /// If this is a `Pipe`, start its `BufferedReader` against `process` and
-    /// (when `eager`) immediately drain it. Factors out the per-stream
-    /// stdout/stderr start blocks in `spawn_maybe_sync_impl` so the
-    /// `arc_as_mut_ptr` invariant is localised once.
     fn start_pipe_reader(
         &mut self,
         process: *mut ShellSubprocess,
@@ -1304,12 +1178,6 @@ impl Readable {
             unsafe { &mut *arc_as_mut_ptr(pipe) }.update_ref(false);
         }
     }
-
-    // PORT NOTE: `Readable::toSlice` from the Zig spec is intentionally **not**
-    // ported. Its `.pipe` arm writes `this.pipe.buffer.fifo.close_on_empty_read`,
-    // a field that does not exist on `PipeReader` (pre-BufferedReader-rewrite
-    // leftover) — the function is dead under Zig's lazy compilation and has no
-    // callers. Subprocess output is read via `PipeReader::buffered_output`.
 
     #[allow(clippy::too_many_arguments)]
     pub fn init(
@@ -1375,10 +1243,6 @@ impl Readable {
                 Stdio::Blob(_) => Readable::Ignore,
                 Stdio::Memfd(memfd) => {
                     let fd = *memfd;
-                    // Ownership of the fd transfers to `Readable::Memfd` (Zig sets
-                    // `stdio_consumed = true` to suppress `Stdio.deinit`). Swap in
-                    // `Ignore` and suppress the old value's destructor so
-                    // `Stdio::Drop` doesn't close the fd we just took.
                     let _ =
                         core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
                     Readable::Memfd(fd)
@@ -1462,17 +1326,7 @@ pub struct SpawnArgs<'a> {
     /// (being `Copy`) lets `fill_env` hand back `&'a [u8]` slices without
     /// the unsafe pointer round-trip the `&'a mut Arena` reborrow forced.
     pub arena: &'a Arena,
-    /// `[*:null]?[*:0]const u8` argv view for `spawn_process`. Built by the
-    /// caller from `Cmd.args` (each `Vec<u8>` NUL-terminated) so this struct
-    /// never needs to borrow the `Cmd` arena slot — passing the whole `Cmd`
-    /// would alias the `out_subproc` write into `cmd.exec.subproc.child`.
-    /// Must include the trailing null sentinel.
     pub argv: Vec<*const c_char>,
-    /// Backref so [`PipeReader`] async-I/O callbacks can drive
-    /// [`Yield::run`]. Zig threaded the interpreter implicitly via
-    /// `Base.interpreter`; the NodeId-arena port drops that field, so the
-    /// spawning `Cmd` passes it explicitly here and it is plumbed through
-    /// `Readable::init` → `PipeReader::create`.
     pub interp: *mut crate::shell::interpreter::Interpreter,
 
     pub override_env: bool,
@@ -1668,11 +1522,6 @@ pub struct PipeReader {
     /// `IOWriter::interp` / `IOReader::interp` for the same pattern. Wired
     /// from `Cmd::interp` at `PipeReader::create` time.
     pub interp: *mut crate::shell::interpreter::Interpreter,
-    // ref_count: handled by Arc<PipeReader> per LIFETIMES.tsv.
-    // TODO(port): Zig uses intrusive bun.ptr.RefCount and recovers *PipeReader via
-    // `container_of` from CapturedWriter — incompatible with Arc's header layout.
-    // Should switch to bun_ptr::IntrusiveRc<PipeReader> + Cell<u32> ref_count
-    // and update Readable::Pipe accordingly.
 }
 
 pub enum BufferedOutput {
@@ -1934,10 +1783,6 @@ impl PipeReader {
         Self::run_yield_with(interp, y);
     }
 
-    /// Drive a `Yield` from inside an async I/O callback. Mirrors
-    /// `IOWriter::run_yield` / `IOReader::run_yield`. `interp` is wired at
-    /// `create` time from the spawning `Cmd`; the null guard is a defensive
-    /// debug-assert for tests that construct a PipeReader without a Cmd.
     pub(crate) fn run_yield(&self, y: Yield) {
         Self::run_yield_with(self.interp, y);
     }
@@ -1966,16 +1811,6 @@ impl PipeReader {
         out_type: OutKind,
         interp: *mut crate::shell::interpreter::Interpreter,
     ) -> Arc<PipeReader> {
-        // Allocate directly into the Arc so the address is stable BEFORE we
-        // hand it to `reader.set_parent` / `container_of` consumers.
-        // `Arc::from(Box<T>)` would reallocate into a new ArcInner and leave
-        // every BufferedReader callback with a dangling parent pointer.
-        //
-        // `PipeReader` is deliberately `!Send + !Sync` (raw `*mut Interpreter`
-        // / `*mut ShellSubprocess` fields); thread confinement is enforced at
-        // compile time by `__pipe_reader_thread_confined`, so the `Arc` is the
-        // Zig intrusive-refcount shape, not a cross-thread handle. `Rc` would
-        // change the `pub fn create -> Arc<PipeReader>` ABI.
         #[allow(clippy::arc_with_non_send_sync)]
         let arc = Arc::new(PipeReader {
             process: Some(process),
@@ -2005,11 +1840,6 @@ impl PipeReader {
 
         #[cfg(windows)]
         {
-            // Zig aliases the same `*uv.Pipe` heap pointer in both
-            // `stdio_result.buffer` and `reader.source.pipe`. With
-            // `Box<uv::Pipe>` we cannot alias, so ownership transfers to
-            // `reader.source` (`stdio_result` is never read again on Windows —
-            // `start()` goes through `start_with_current_pipe`).
             this.reader.source = match core::mem::take(&mut this.stdio_result) {
                 StdioResult::Buffer(buf) => Some(bun_io::Source::Pipe(buf)),
                 StdioResult::BufferFd(fd) => {
@@ -2125,17 +1955,6 @@ impl PipeReader {
         }
     }
 
-    /// Tail shared by [`on_reader_done`] / [`on_reader_error`]: signal the
-    /// owning `Cmd`, drive its `Yield`, then notify the `ShellSubprocess` to
-    /// drop its `Readable::Pipe` handle. `guard` keeps `self` alive across
-    /// the latter. No `&`/`&mut PipeReader` is held across the re-entrant
-    /// `try_signal_done_to_cmd` / `run_yield_with` calls — both reach back
-    /// into this same allocation via the `Readable::Pipe` `Arc` clone.
-    ///
-    /// NOTE: this does **not** gate on `is_done()` — Zig spec
-    /// `onReaderError` (subproc.zig:1369) runs unconditionally. The
-    /// `is_done()` early-return is `onReaderDone`-only and lives in
-    /// [`on_reader_done`].
     fn finish_after_state_set(guard: &Arc<Self>) {
         let me = arc_as_mut_ptr(guard);
         // Snapshot `interp` *before* the Cmd call: `try_signal_done_to_cmd`
@@ -2364,10 +2183,6 @@ impl PipeReader {
     pub fn to_buffer(&mut self, global_this: &JSGlobalObject) -> JSValue {
         match &mut self.state {
             PipeReaderState::Done(bytes) => {
-                // `MarkedArrayBuffer::from_bytes` adopts the allocation (freed
-                // by the JSC ArrayBuffer destructor). `heap::release` names that
-                // FFI hand-off — it is `Box::leak` under the hood; the JSC
-                // ArrayBuffer destructor is the reclaim, not this scope.
                 let slice: &'static mut [u8] = bun_core::heap::release(core::mem::take(bytes));
                 MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)
                     .to_node_buffer(global_this)
@@ -2422,17 +2237,6 @@ impl PipeReader {
         }
     }
 
-    // Helper accessor used above to paper over Arc<PipeReader> interior mutability.
-    // TODO(port): remove once IntrusiveRc + Cell-wrapped fields land.
-    //
-    // Takes `*mut Self` (not `&self`) because `Arc<PipeReader>` only yields
-    // `&Self`, and casting `&Self as *const Self as *mut Self` to write through is
-    // immediate UB — shared-ref provenance is read-only. Callers obtain the pointer
-    // via `Arc::as_ptr(&arc).cast_mut()`, which projects from the Arc allocation's
-    // original `NonNull` without materializing a `&Self`, mirroring Zig's intrusive
-    // `*PipeReader` (bun.ptr.RefCount) which is freely mutated through any alias.
-    // The JS-thread single-mutator invariant means no live `&`/`&mut` to these
-    // fields exists when this runs.
     unsafe fn take_done_buffer(this: *mut Self) -> Box<[u8]> {
         // SAFETY: see block comment above. Mirrors onCloseIO:
         //   out.* = .{ .buffer = pipe.state.done }; pipe.state = .{ .done = &.{} };

@@ -6,11 +6,6 @@ pub struct RowDescription {
     pub fields: Box<[FieldDescription]>,
 }
 
-// `pub fn deinit` → `impl Drop`: the Zig body only loops `field.deinit()` then
-// `default_allocator.free(this.fields)`. With `fields: Box<[FieldDescription]>`,
-// Rust drops each element then frees the slice automatically — no explicit Drop
-// needed.
-
 impl RowDescription {
     // PORT NOTE: out-param constructor (`this.* = .{...}`) reshaped to return `Result<Self, _>`.
     // TODO(port): narrow error set

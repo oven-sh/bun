@@ -2,15 +2,6 @@ use bun_core::fmt as bun_fmt;
 use bun_core::strings;
 use bun_core::{Error, Global, err, pretty_errorln};
 
-// Zig: `pub fn ColonListType(comptime t: type, comptime value_resolver: anytype) type`
-//
-// The Zig type-generator takes (a) the value type and (b) a comptime resolver fn,
-// and also branches on `comptime t == bun.schema.api.Loader`. Rust cannot take a
-// fn value as a const generic, so both params collapse into one trait that the
-// value type implements. Each `T` declares its own resolver and whether it is the
-// schema Loader.
-// TODO(port): if a single `T` ever needs two distinct resolvers, split this back
-// into `<T, R: ValueResolver<T>>` with a PhantomData marker.
 pub(crate) trait ColonListValue: Sized {
     /// Mirrors `comptime value_resolver(str)`.
     fn resolve_value(input: &[u8]) -> Result<Self, Error>;

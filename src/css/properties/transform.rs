@@ -12,10 +12,6 @@ use crate::{
     DeclarationList, Parser, PrintErr, Printer, PropertyHandlerContext, Result, Token, VendorPrefix,
 };
 
-/// A value for the [transform](https://www.w3.org/TR/2019/CR-css-transforms-1-20190214/#propdef-transform) property.
-// PORT NOTE: was `BumpVec<'bump, Transform>`; downgraded to `Vec` so the
-// `Property` enum (properties_generated.rs) stays lifetime-free. Re-thread
-// `'bump` through `Property<'a>` crate-wide in a later pass (see line :1096).
 #[derive(Clone, PartialEq, Default)]
 pub struct TransformList {
     pub v: Vec<Transform>,
@@ -61,12 +57,6 @@ impl TransformList {
             return dest.write_str("none");
         }
 
-        // TODO: Re-enable with a better solution
-        //       See: https://github.com/parcel-bundler/lightningcss/issues/288
-        // PORT NOTE: Zig's minify branch built a sub-`Printer` writing into a temp
-        // buffer then `dest.writeStr(base)` — observably identical to writing
-        // directly into `dest` while `dest.minify` is set (the original
-        // lightningcss size-comparison was already disabled upstream). Collapsed.
         self.to_css_base(dest)
     }
 
@@ -1002,10 +992,6 @@ impl TransformHandler {
                 let transform_val = &val.0;
                 let vp = val.1;
 
-                // If two vendor prefixes for the same property have different
-                // values, we need to flush what we have immediately to preserve order.
-                // PORT NOTE: reshaped for borrowck — Zig held &self.transform across
-                // self.flush(); compute the predicate first, then act.
                 let needs_flush = if let Some(current) = &self.transform {
                     current.0 != *transform_val && !current.1.contains(vp)
                 } else {

@@ -21,31 +21,12 @@ use crate::bun_progress::Node as ProgressNode;
 use super::options::{self, Enable, LogLevel};
 use super::{Command, Options, PackageManager, ProgressStrings, Subcommand};
 
-// ───────────────────────────── method wrappers ───────────────────────────────
-// Thin `&mut self` shims so call sites can use Zig's method-style spelling
-// (`pm.getCacheDirectory()` / `pm.getTemporaryDirectory()`). The bodies live
-// in the free functions below to keep them callable without an `impl` path.
-
 impl PackageManager {
-    /// Borrowed view of the cached cache-directory fd. Returns `Fd` (not `Dir`)
-    /// because the descriptor is owned by `self.cache_directory_` — handing out
-    /// an owning `Dir` would close the cached fd when the caller drops it.
-    /// Callers that need `Dir` methods should use `Dir::borrow(&fd)`.
     #[inline]
     pub fn get_cache_directory(&mut self) -> Fd {
         get_cache_directory(self)
     }
 
-    /// Snapshot the four `PackageManager` scalars
-    /// `PackageManifestMap::by_name_hash_allow_expired`'s disk-fallback path
-    /// reads. Captured by value so the loop body can hold `&mut self.manifests`
-    /// alongside `&self.lockfile` / `&self.options` without aliasing the whole
-    /// `&mut self` (Stacked-Borrows UB the Zig `*PackageManager` pattern is
-    /// immune to).
-    ///
-    /// The cache directory is opened lazily here only when
-    /// `options.enable.manifest_cache` is set (the only branch that reads it),
-    /// matching the Zig `byNameHashAllowExpired` gating.
     pub fn manifest_disk_cache_ctx(&mut self) -> crate::package_manifest_map::DiskCacheCtx {
         let enable_manifest_cache = self.options.enable.manifest_cache();
         crate::package_manifest_map::DiskCacheCtx {
@@ -132,10 +113,6 @@ impl PackageManager {
 
 // ───────────────────────────── cache directory ────────────────────────────────
 
-/// Returns a borrowed view (`Fd`) of the lazily-opened cache directory. The
-/// descriptor is owned by `PackageManager::cache_directory_` (closed only if
-/// the singleton is ever dropped). Callers must not close the returned `Fd`;
-/// use `Dir::borrow(&fd)` to call `&self` `Dir` methods on it.
 #[inline]
 pub fn get_cache_directory(this: &mut PackageManager) -> Fd {
     // SAFETY: `&mut PackageManager` is exclusive over every field the raw
@@ -205,11 +182,6 @@ const _: fn() = || {
     assert::<TemporaryDirectory>();
 };
 
-// We need a temporary directory that can be rename()
-// This is important for extracting files.
-//
-// However, we want it to be reused! Otherwise a cache is silly.
-//   Error RenameAcrossMountPoints moving react-is to cache dir:
 static GET_TEMPORARY_DIRECTORY_ONCE: std::sync::OnceLock<TemporaryDirectory> =
     std::sync::OnceLock::new();
 
@@ -486,28 +458,6 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
     }
 }
 
-// ─────────────────────── cached folder name printers ──────────────────────────
-//
-// PERF(port): the Zig originals lean on `std.fmt.bufPrint{,Z}`, which the
-// straight port mapped to `core::fmt::write` over a `format_args!` of
-// `bun_fmt::s` / `CacheVersionFormatter` / `PatchHashFmt` / `hex_int_*`
-// pieces. In Rust that is *dynamic* dispatch — every `{}` argument is a
-// `&dyn Display` whose vtable lives in `.data.rel.ro`, and every
-// `core::fmt::write` call drags in `Formatter` padding/alignment machinery
-// plus a panic-format landing pad for the trailing `.expect("unreachable")`.
-// Profiling `install/create-next` showed those vtable + panic-format pages
-// getting faulted on the per-package hot path (this runs once per cache
-// lookup / extract). Rewrite as straight-line byte copies into the caller's
-// buffer: no `dyn`, no `Result`, no panic-format `.text`, no `Location`
-// relocs.
-
-/// Append-only cursor over a caller-owned `&mut [u8]`. All writers are
-/// infallible: the destination is always a `PathBuffer` (`MAX_PATH_BYTES`,
-/// asserted ≥ 1024 elsewhere) and the longest possible payload here —
-/// `name@u64.u64.u64-16hex+16HEX@@@<ver>_patch_hash=16hex\0` plus an
-/// `@@host__16hex` scope suffix — is bounded well under that. Debug builds
-/// keep the bounds check; release elides it so no panic-format code is
-/// reachable from this module.
 struct ByteCursor<'a> {
     buf: &'a mut [u8],
     at: usize,
@@ -522,10 +472,6 @@ impl<'a> ByteCursor<'a> {
     #[inline(always)]
     fn put(&mut self, bytes: &[u8]) {
         let end = self.at + bytes.len();
-        // `buf` is a `PathBuffer`-sized slice; the maximum formatted length
-        // (see type doc) cannot exceed it. Safe slice indexing replaces the
-        // raw `as_mut_ptr().add()` write — the bounds check is statically
-        // unreachable and LLVM elides it after inlining the fixed-size callers.
         self.buf[self.at..end].copy_from_slice(bytes);
         self.at = end;
     }
@@ -841,10 +787,6 @@ pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) ->
     Ok(())
 }
 
-/// Returns a borrowed view (`Fd`) of the lazily-opened global link directory.
-/// The descriptor is owned by `PackageManager::global_link_dir` (closed only if
-/// the singleton is ever dropped). Callers must not close the returned `Fd`;
-/// use `Dir::borrow(&fd)` to call `&self` `Dir` methods on it.
 pub fn global_link_dir(this: &mut PackageManager) -> Fd {
     if let Some(d) = this.global_link_dir.as_ref() {
         return d.fd();
@@ -1202,10 +1144,6 @@ pub fn save_lockfile(
         return Ok(());
     }
 
-    // PORT NOTE: Zig held `*Progress.Node` across the body; `Progress::start`
-    // returns `&mut Node` borrowing `this.progress`, which would conflict with
-    // the `&mut this` reborrows below. Stash as a raw pointer (mirrors Zig's
-    // non-exclusive `*Node`; the node lives inside `this.progress.root`).
     let mut save_node: *mut ProgressNode = core::ptr::null_mut();
 
     if log_level.show_progress() {
@@ -1404,13 +1342,6 @@ fn verbose_install() -> bool {
     PackageManager::verbose_install()
 }
 
-/// Thread-local cached folder-name buffer accessor. Zig used a plain
-/// `threadlocal var [bun.MAX_PATH_BYTES]u8`. PORTING.md §Global mutable state:
-/// single-threaded install, non-reentrant scratch — the `&'static mut [u8]`
-/// is the unique live borrow at every call site. Callers must not hold the
-/// result across a call that re-enters this accessor (per-statement reborrow
-/// shape — same contract the prior `*mut [u8]` API imposed, now centralized
-/// here so the 6 call sites drop their `unsafe` block).
 #[inline]
 fn cached_package_folder_name_buf() -> &'static mut [u8] {
     // SAFETY: single-threaded usage (install runs on one thread); the

@@ -52,10 +52,6 @@ pub type Socket<const SSL: bool> = NewSocketHandler<SSL>;
 const STACK_FRAME_SIZE: usize = 1024;
 /// Minimum message size to compress (RFC 7692 recommendation)
 const MIN_COMPRESS_SIZE: usize = 860;
-/// Maximum buffered inbound message size (128 MB). A server that declares a
-/// larger frame, or whose continuation fragments accumulate past this, fails
-/// the connection with close code 1009 instead of growing `receive_buffer`
-/// without bound.
 const MAX_RECEIVE_MESSAGE_LENGTH: usize = 128 * 1024 * 1024;
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
@@ -103,21 +99,8 @@ pub struct WebSocket<const SSL: bool> {
     /// Track compression state of the entire message (across fragments)
     pub message_is_compressed: bool,
 
-    /// `us_ssl_ctx_t` inherited from the upgrade client when it was built
-    /// with a custom CA. The socket's `SSL*` references the `SSL_CTX`
-    /// inside, so this must outlive the connection. None when the upgrade
-    /// used the shared default context.
     pub secure: Option<*mut SslCtx>,
 
-    /// Proxy tunnel for wss:// through HTTP proxy.
-    /// When set, all I/O goes through the tunnel (TLS encryption/decryption).
-    /// The tunnel handles the TLS layer, so this is used with ssl=false.
-    ///
-    /// PORT NOTE: intrusive refcount is hand-rolled on `WebSocketProxyTunnel`
-    /// (`ref_()`/`deref()`); stored as `NonNull` rather than `RefPtr` because
-    /// the tunnel does not (yet) implement `bun_ptr::RefCounted`. Ownership
-    /// semantics match `RefPtr`: assigning here implies a held ref, released
-    /// in `clear_data` via `WebSocketProxyTunnel::deref`.
     pub proxy_tunnel: Option<NonNull<WebSocketProxyTunnel>>,
 }
 
@@ -159,18 +142,6 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         true
     }
-
-    // Handler set referenced by `dispatch.zig` (kind = `.ws_client[_tls]`).
-    // Replaces the C++→`register()`→`us_socket_context_on_*` round-trip.
-    // In Rust: these are aliased via the dispatch table; expose the handle_* fns directly.
-    // pub const onClose = handleClose; → see handle_close
-    // pub const onData = handleData; → see handle_data
-    // pub const onWritable = handleWritable; → see handle_writable
-    // pub const onTimeout = handleTimeout; → see handle_timeout
-    // pub const onLongTimeout = handleTimeout; → see handle_timeout
-    // pub const onConnectError = handleConnectError; → see handle_connect_error
-    // pub const onEnd = handleEnd; → see handle_end
-    // pub const onHandshake = handleHandshake; → see handle_handshake
 
     pub fn clear_data(&mut self) {
         log!("clearData");
@@ -245,13 +216,6 @@ impl<const SSL: bool> WebSocket<SSL> {
             this.tcp.close(uws::CloseKind::Failure);
         }
 
-        // In tunnel mode tcp is .detached so close() above is a no-op and
-        // handle_close() never fires. Mirror what handle_close() does for
-        // the non-tunnel path: drop the C++ ref (if still held) via
-        // dispatch_abrupt_close so e.g. ws.terminate() — which calls
-        // cancel() then sets m_connectedWebSocketKind = None, bypassing
-        // the destructor's finalize() — does not leak. When reached via
-        // fail(), outgoing_websocket is already None and this is a no-op.
         if had_tunnel {
             this.dispatch_abrupt_close(ErrorCode::Ended);
         }
@@ -428,12 +392,6 @@ impl<const SSL: bool> WebSocket<SSL> {
                 };
                 let mut outstring;
                 if let Some(utf16) = utf16_bytes {
-                    // Ownership of the UTF-16 buffer transfers to C++: with
-                    // `clone=false` and the global tag set, `Zig::toString`
-                    // adopts the allocation into a `WTF::ExternalStringImpl`
-                    // which `mi_free`s it later. Dropping the Vec here would
-                    // be a UAF + double-free. Mirrors websocket_client.zig
-                    // which never frees `utf16` locally.
                     let utf16 = core::mem::ManuallyDrop::new(utf16);
                     outstring = ZigString::from16_slice(&utf16);
                     outstring.mark_global();
@@ -485,12 +443,6 @@ impl<const SSL: bool> WebSocket<SSL> {
                 self.receive_pending_chunk_len = 0;
                 self.receive_body_remain = 0;
                 if is_final {
-                    // Decompress the complete message
-                    // PORT NOTE: take ownership of the fifo so the readable
-                    // slice does not alias `&mut self` while dispatching
-                    // (PORTING.md §Forbidden: aliased-&mut). `dispatch_*` may
-                    // call `terminate → clear_data → clear_receive_buffers(true)`
-                    // which would drop the Vec backing a laundered `&[u8]`.
                     let buf = core::mem::replace(
                         &mut self.receive_buffer,
                         LinearFifo::<u8, DynamicBuffer<u8>>::init(),
@@ -644,33 +596,10 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         let mut header_bytes = [0u8; size_of::<usize>()];
 
-        // In the WebSocket specification, control frames may not be fragmented.
-        // However, the frame parser should handle fragmented control frames nonetheless.
-        // Whether or not the frame parser is given a set of fragmented bytes to parse is subject
-        // to the strategy in which the client buffers and coalesces received bytes.
-
         loop {
             log!("onData ({})", <&'static str>::from(receive_state));
 
             match receive_state {
-                // 0                   1                   2                   3
-                // 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-                // +-+-+-+-+-------+-+-------------+-------------------------------+
-                // |F|R|R|R| opcode|M| Payload len |    Extended payload length    |
-                // |I|S|S|S|  (4)  |A|     (7)     |             (16/64)           |
-                // |N|V|V|V|       |S|             |   (if payload len==126/127)   |
-                // | |1|2|3|       |K|             |                               |
-                // +-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - +
-                // |     Extended payload length continued, if payload len == 127  |
-                // + - - - - - - - - - - - - - - - +-------------------------------+
-                // |                               |Masking-key, if MASK set to 1  |
-                // +-------------------------------+-------------------------------+
-                // | Masking-key (continued)       |          Payload Data         |
-                // +-------------------------------- - - - - - - - - - - - - - - - +
-                // :                     Payload Data continued ...                :
-                // + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
-                // |                     Payload Data continued ...                |
-                // +---------------------------------------------------------------+
                 ReceiveState::NeedHeader => {
                     if data.len() < 2 {
                         debug_assert!(!data.is_empty());
@@ -768,14 +697,6 @@ impl<const SSL: bool> WebSocket<SSL> {
                         self.receiving_compressed = self.message_is_compressed;
                     }
 
-                    // Handle when the payload length is 0, but it is a message
-                    //
-                    // This should become
-                    //
-                    // - ArrayBuffer(0)
-                    // - ""
-                    // - Buffer(0) (etc)
-                    //
                     if receive_body_remain == 0
                         && receive_state == ReceiveState::NeedBody
                         && is_final
@@ -884,11 +805,6 @@ impl<const SSL: bool> WebSocket<SSL> {
                         break;
                     }
 
-                    // PORT NOTE: copy the ≤125-byte payload to a stack array so
-                    // the slice does not alias `&mut self` across `dispatch_data`
-                    // (PORTING.md §Forbidden: aliased-&mut). `dispatch_data` may
-                    // call `terminate → clear_data` which mutates `ping_frame_bytes`'
-                    // bookkeeping while the laundered `&[u8]` would still be live.
                     let mut ping_data_buf = [0u8; 125];
                     ping_data_buf[..ping_len]
                         .copy_from_slice(&self.ping_frame_bytes[6..][..ping_len]);
@@ -1059,11 +975,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.send_close_with_body(1000, None, 0);
     }
 
-    // PORT NOTE: Zig passed `socket` by value (a copy of `this.tcp`). Every
-    // Rust caller would have passed `self.tcp`, and threading a `&Socket<SSL>`
-    // alongside `&mut self` is a Stacked-Borrows hazard (the receiver retag
-    // covers `self.tcp` and invalidates any prior `&self.tcp`-derived pointer
-    // before the argument is even retagged). Read `self.tcp` directly instead.
     fn enqueue_encoded_bytes(&mut self, bytes: &[u8]) -> bool {
         // For tunnel mode, write through the tunnel instead of direct socket
         if let Some(tunnel) = &self.proxy_tunnel {
@@ -1236,13 +1147,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         true
     }
 
-    // PORT NOTE: renamed from `sendBuffer` to avoid clash with `send_buffer`
-    // field. Reshaped to take no slice argument: every caller in the Zig
-    // passed `this.send_buffer.readableSlice(0)`, and laundering that slice
-    // through `from_raw_parts` while holding `&mut self` is aliased-&mut UB
-    // (PORTING.md §Forbidden). Instead, take ownership of the fifo, write its
-    // readable region, then restore. The Zig pointer-equality check becomes
-    // unconditional `discard`.
     fn send_buffer_out(&mut self) -> bool {
         let mut buf = core::mem::replace(
             &mut self.send_buffer,
@@ -1322,11 +1226,6 @@ impl<const SSL: bool> WebSocket<SSL> {
             let to_mask = &mut tail[..ping_len];
             // SAFETY: input and output point to the same memory; Mask::fill supports in-place
             Mask::fill_in_place(&self.global_this, mask_buf, to_mask);
-            // PORT NOTE: copy the ≤(6+125)-byte frame to a stack array so the
-            // slice does not alias `&mut self` across `enqueue_encoded_bytes`
-            // (PORTING.md §Forbidden: aliased-&mut). `enqueue_encoded_bytes`
-            // may call `terminate → clear_data` while the laundered slice into
-            // `self.ping_frame_bytes` would still be live.
             let frame_len = 6 + ping_len;
             let mut frame_buf = [0u8; 6 + 125];
             frame_buf[..frame_len].copy_from_slice(&self.ping_frame_bytes[..frame_len]);
@@ -1509,11 +1408,6 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         let opcode = Opcode::from_raw(op);
 
-        // Cast the JSValue to a Blob.
-        // PORT NOTE: `bun_jsc::webcore::Blob` is an opaque C-ABI shim (real
-        // layout lives in `bun_runtime::webcore::Blob`, a higher-tier crate).
-        // `from_js`/`shared_view` trampoline through extern fns to avoid the
-        // dep cycle — see `bun_jsc::webcore::Blob` impl block.
         if let Some(blob) = blob_value.as_::<bun_jsc::webcore::Blob>() {
             // Get the shared view of the blob data
             // SAFETY: `as_` returned a live `*mut Blob` owned by the JS heap;
@@ -1662,11 +1556,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: reason is null or a valid *const ZigString from C++
         if let Some(str) = unsafe { reason.as_ref() } {
             'inner: {
-                // Zig: FixedBufferAllocator + allocPrint("{f}", .{str}) — the
-                // `{f}` formatter writes the string in UTF-8 regardless of
-                // backing encoding. `ZigString` has no `Display` impl yet, so
-                // replicate the encoding switch directly: 8-bit copies bytes,
-                // 16-bit transcodes via `to_owned_slice()` (UTF-16 → UTF-8).
                 use std::io::Write;
                 let mut cursor = std::io::Cursor::new(&mut close_reason_buf[..]);
                 if str.is_16bit() {
@@ -1682,11 +1571,6 @@ impl<const SSL: bool> WebSocket<SSL> {
                         break 'inner;
                     }
                 } else {
-                    // 8-bit Latin-1. Spec websocket_client.zig:1224 routes
-                    // through `ZigString.format` → `bun.fmt.formatLatin1`,
-                    // transcoding Latin-1 → UTF-8. Writing raw Latin-1 bytes
-                    // here would fail the UTF-8 check in `send_close_with_body`
-                    // and terminate(InvalidUtf8) instead of sending the frame.
                     let pos = cursor.position() as usize;
                     let dst = &mut cursor.get_mut()[pos..];
                     let result = strings::copy_latin1_into_utf8(dst, str.slice());
@@ -1882,12 +1766,6 @@ impl<const SSL: bool> WebSocket<SSL> {
             NonNull::new(p).expect("extern-C contract: tunnel_ptr is non-null")
         };
 
-        // ref_count starts at 1: this is the I/O-layer ref, owned by the
-        // tunnel connection (analogous to the adopted-socket ref in init()
-        // that handle_close() releases). It is released in clear_data() when
-        // proxy_tunnel is detached. The ws.ref() below adds the C++ ref
-        // paired with m_connectedWebSocket.
-        // outlives this call.
         let vm = global_this.bun_vm().as_mut();
         let ws = bun_core::heap::into_raw(Box::new(WebSocket::<SSL> {
             ref_count: Cell::new(1),
@@ -2085,13 +1963,6 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// exportAll() — comptime @export with name concat
-// ──────────────────────────────────────────────────────────────────────────
-// TODO(port): Zig's `@export(&fn, .{.name = "Bun__" ++ name ++ "__fn"})` with
-// comptime string concat cannot be expressed generically in Rust (no_mangle
-// requires a literal). Emit two monomorphized #[no_mangle] shims per fn via macro.
-
 // PORT NOTE: avoids the `paste` crate by passing the nine fully-qualified
 // `#[no_mangle]` idents at the call site (declare-site macro). Zig's
 // comptime `++` concat has no Rust equivalent for `#[no_mangle]` literals.
@@ -2238,10 +2109,6 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
         // SAFETY: `adopted` is a backref to a live WebSocket (heap::alloc
         // provenance); raw field write of a `Copy`-sized `Option<NonNull<_>>`.
         unsafe { core::ptr::addr_of_mut!((*ws_ptr).initial_data_handler).write(None) };
-        // Zig: `defer ws.unref()` — RAII: take the owned ref so it drops at
-        // scope exit. Paired with the `adopted.take()` above so the ref is
-        // released exactly once even when this fn is later re-called with
-        // `adopted == None` (early return leaves `ws` already `None`).
         let _ws_ref = self.ws.take();
 
         // For tunnel mode, tcp is detached but connection is still active through the tunnel
@@ -2398,24 +2265,6 @@ fn parse_websocket_header(
     is_final: &mut bool,
     need_compression: &mut bool,
 ) -> ReceiveState {
-    // 0                   1                   2                   3
-    // 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-    // +-+-+-+-+-------+-+-------------+-------------------------------+
-    // |F|R|R|R| opcode|M| Payload len |    Extended payload length    |
-    // |I|S|S|S|  (4)  |A|     (7)     |             (16/64)           |
-    // |N|V|V|V|       |S|             |   (if payload len==126/127)   |
-    // | |1|2|3|       |K|             |                               |
-    // +-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - +
-    // |     Extended payload length continued, if payload len == 127  |
-    // + - - - - - - - - - - - - - - - +-------------------------------+
-    // |                               |Masking-key, if MASK set to 1  |
-    // +-------------------------------+-------------------------------+
-    // | Masking-key (continued)       |          Payload Data         |
-    // +-------------------------------- - - - - - - - - - - - - - - - +
-    // :                     Payload Data continued ...                :
-    // + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
-    // |                     Payload Data continued ...                |
-    // +---------------------------------------------------------------+
     let header = WebsocketHeader::from_slice(bytes);
     let payload = header.len() as usize;
     *payload_length = payload;

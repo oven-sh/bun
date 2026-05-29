@@ -32,12 +32,6 @@ pub use crate::crypto;
 pub use crate::napi;
 pub use crate::node;
 
-// ─── BuildMessage / ResolveMessage ───────────────────────────────────────────
-// Zig: `pub const {Build,Resolve}Message = @import("../jsc/{Build,Resolve}Message.zig").…;`
-// Canonical defs live in `bun_jsc` (with `#[bun_jsc::JsClass]` derives wiring
-// the C++ `${T}__create`/`__fromJS`/`__finalize` symbols). `bun_runtime` already
-// depends on `bun_jsc`, so this is a plain downstream re-export — no cycle.
-// Exactly one Rust type backs each C++ `m_ctx` pointer.
 pub use bun_jsc::BuildMessage;
 pub use bun_jsc::ResolveMessage;
 
@@ -89,16 +83,6 @@ pub mod unsafe_object;
 #[path = "api/YAMLObject.rs"]
 pub mod yaml_object;
 
-// ─── api/bun/ core (process / spawn / pty / h2) ──────────────────────────────
-// `#[path]` is relative to the dir containing this file (`src/runtime/`); the
-// inline `mod bun { }` below is a re-export façade only — module bodies are
-// declared flat to avoid the non-mod-rs nested-path resolution rules.
-
-// process.rs — Process struct + posix_spawn/uv_spawn machinery. §Dispatch
-// vtable applied for ProcessExitHandler; structs + non-JSC methods un-gated.
-// spawn_process_{posix,windows} bodies + waiter-thread dispatch loop + sync
-// mod remain re-gated inside the file (depend on sibling `spawn` posix_spawn
-// wrappers and bun_io FilePoll method surface).
 #[path = "api/bun/process.rs"]
 pub mod bun_process;
 
@@ -155,10 +139,6 @@ pub mod bun {
         /// downstream callers (`Subprocess.terminal`, spawn bindings) hold the
         /// concrete type directly — no opaque-ZST cast layer.
         pub use crate::api::bun_terminal_body::Terminal;
-        // `Terminal.PtyResult`, `Winsize`, `OpenPtyFn`, `CreatePtyError` —
-        // pure FFI handles with no JSC. Canonical defs live in
-        // `api/bun/Terminal.rs`; re-exported here so callers can name them via
-        // `api::Terminal::*` exactly as in the Zig (`Terminal.PtyResult` etc.).
         pub use crate::api::bun_terminal_body::{
             CreatePtyError, OpenPtyFn, OpenPtyTermios, PtyResult, Winsize,
         };
@@ -167,11 +147,6 @@ pub mod bun {
 
     pub mod h2_frame_parser {
         pub use crate::api::h2_frame_parser_body::ErrorCode;
-        /// Re-export the full struct now that `h2_frame_parser_body` is
-        /// un-gated; `socket::NativeCallbacks::H2(IntrusiveRc<H2FrameParser>)`
-        /// and the `set_native_socket` attach path now share one concrete
-        /// type — no opaque-ZST cast layer. The body provides the real
-        /// `RefCounted` impl + `on_native_{read,writable,close}` bodies.
         pub use crate::api::h2_frame_parser_body::H2FrameParser;
         // js2native thunks (`$zig(h2_frame_parser.zig, …)` in generated_js2native.rs).
         pub use crate::api::h2_frame_parser_body::h2_frame_parser_constructor;
@@ -227,18 +202,6 @@ pub use bun_sql_jsc::postgres as Postgres;
 pub use crate::webview::chrome_process as ChromeProcess;
 pub use crate::webview::host_process as WebViewHostProcess;
 
-// ─── shared scaffold for Bun.{TOML,JSONC,JSON5,YAML}.parse ───────────────────
-//
-// All four host fns repeat: Arena + ASTMemoryAllocator scope + Log +
-// frame.argument(0) → bytes → Source::init_path_string. They diverge on
-// (a) whether nullish input throws, (b) whether Blob/Buffer is accepted, and
-// (c) parse-error class + Expr→JS tail — so this helper owns ONLY the scaffold
-// and hands `(&arena, &mut log, &source)` to a per-format closure that does the
-// format-specific parse, error match (StackOverflow / OOM / SyntaxError vs
-// log.to_js), and tail conversion.
-//
-// Zig has no shared helper (four open-coded copies); this is net-new cleanup of
-// a faithfully-ported duplication.
 pub(crate) fn with_text_format_source<R>(
     global: &bun_jsc::JSGlobalObject,
     frame: &bun_jsc::CallFrame,

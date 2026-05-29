@@ -26,11 +26,6 @@ fn raw_str(s: &'static [u8]) -> js_ast::StoreStr {
 }
 
 impl<'a> ImportScanner<'a> {
-    // TODO(port): narrow error set
-    // PORT NOTE: `<P>` unbounded generic → concrete `P<'a, TS, SCAN>`.
-    // TODO(port): the Zig also accepts `bun.bundle_v2.AstBuilder` as P (comptime
-    //   `P != AstBuilder` check). Only the parser P is handled here; the AstBuilder
-    //   path needs a `ParserLike` trait or a separate monomorphization.
     pub(crate) fn scan<
         'p,
         const TYPESCRIPT: bool,
@@ -67,11 +62,6 @@ impl<'a> ImportScanner<'a> {
                     let st: &mut S::Import = &mut *import_ptr;
 
                     let import_record_index = st.import_record_index;
-                    // PORT NOTE: reshaped for borrowck — Zig held `record: *ImportRecord`
-                    // for the whole arm; Rust can't keep a long-lived &mut alongside
-                    // other `p.*` borrows. We take a raw pointer once and unsafe-deref
-                    // at each use site (no operation below grows `p.import_records`, so
-                    // the pointer stays valid for this iteration).
                     let record: *mut ImportRecord =
                         &raw mut p.import_records.items_mut()[import_record_index as usize];
                     macro_rules! record {
@@ -89,62 +79,6 @@ impl<'a> ImportScanner<'a> {
                         continue;
                     }
 
-                    // The official TypeScript compiler always removes unused imported
-                    // symbols. However, we deliberately deviate from the official
-                    // TypeScript compiler's behavior doing this in a specific scenario:
-                    // we are not bundling, symbol renaming is off, and the tsconfig.json
-                    // "importsNotUsedAsValues" setting is present and is not set to
-                    // "remove".
-                    //
-                    // This exists to support the use case of compiling partial modules for
-                    // compile-to-JavaScript languages such as Svelte. These languages try
-                    // to reference imports in ways that are impossible for esbuild to know
-                    // about when esbuild is only given a partial module to compile. Here
-                    // is an example of some Svelte code that might use esbuild to convert
-                    // TypeScript to JavaScript:
-                    //
-                    //   <script lang="ts">
-                    //     import Counter from './Counter.svelte';
-                    //     export let name: string = 'world';
-                    //   </script>
-                    //   <main>
-                    //     <h1>Hello {name}!</h1>
-                    //     <Counter />
-                    //   </main>
-                    //
-                    // Tools that use esbuild to compile TypeScript code inside a Svelte
-                    // file like this only give esbuild the contents of the <script> tag.
-                    // These tools work around this missing import problem when using the
-                    // official TypeScript compiler by hacking the TypeScript AST to
-                    // remove the "unused import" flags. This isn't possible in esbuild
-                    // because esbuild deliberately does not expose an AST manipulation
-                    // API for performance reasons.
-                    //
-                    // We deviate from the TypeScript compiler's behavior in this specific
-                    // case because doing so is useful for these compile-to-JavaScript
-                    // languages and is benign in other cases. The rationale is as follows:
-                    //
-                    //   * If "importsNotUsedAsValues" is absent or set to "remove", then
-                    //     we don't know if these imports are values or types. It's not
-                    //     safe to keep them because if they are types, the missing imports
-                    //     will cause run-time failures because there will be no matching
-                    //     exports. It's only safe keep imports if "importsNotUsedAsValues"
-                    //     is set to "preserve" or "error" because then we can assume that
-                    //     none of the imports are types (since the TypeScript compiler
-                    //     would generate an error in that case).
-                    //
-                    //   * If we're bundling, then we know we aren't being used to compile
-                    //     a partial module. The parser is seeing the entire code for the
-                    //     module so it's safe to remove unused imports. And also we don't
-                    //     want the linker to generate errors about missing imports if the
-                    //     imported file is also in the bundle.
-                    //
-                    //   * If identifier minification is enabled, then using esbuild as a
-                    //     partial-module transform library wouldn't work anyway because
-                    //     the names wouldn't match. And that means we're minifying so the
-                    //     user is expecting the output to be as small as possible. So we
-                    //     should omit unused imports.
-                    //
                     let mut did_remove_star_loc = false;
                     let keep_unused_imports = !p.options.features.trim_unused_imports;
                     // TypeScript always trims unused imports. This is important for
@@ -192,15 +126,6 @@ impl<'a> ImportScanner<'a> {
                                 is_unused_in_typescript = false;
                             }
 
-                            // Remove the symbol if it's never used outside a dead code region.
-                            //
-                            // Never strip the namespace binding from an `import defer`
-                            // statement: the grammar requires `* as ns`, so dropping
-                            // it would force the printer to emit a bare side-effect
-                            // import — eagerly evaluating a module the user asked to
-                            // defer. Keeping the binding preserves the intended
-                            // semantics (the module is linked but never evaluated,
-                            // since nothing touches `ns` at runtime).
                             if symbol.use_count_estimate == 0 && !st.phase_defer {
                                 // Make sure we don't remove this if it was used for a property
                                 // access while bundling
@@ -259,29 +184,6 @@ impl<'a> ImportScanner<'a> {
                             st.items.truncate(items_end);
                         }
 
-                        // -- Original Comment --
-                        // Omit this statement if we're parsing TypeScript and all imports are
-                        // unused. Note that this is distinct from the case where there were
-                        // no imports at all (e.g. "import 'foo'"). In that case we want to keep
-                        // the statement because the user is clearly trying to import the module
-                        // for side effects.
-                        //
-                        // This culling is important for correctness when parsing TypeScript
-                        // because a) the TypeScript compiler does this and we want to match it
-                        // and b) this may be a fake module that only exists in the type system
-                        // and doesn't actually exist in reality.
-                        //
-                        // We do not want to do this culling in JavaScript though because the
-                        // module may have side effects even if all imports are unused.
-                        // -- Original Comment --
-
-                        // jarred: I think, in this project, we want this behavior, even in JavaScript.
-                        // I think this would be a big performance improvement.
-                        // The less you import, the less code you transpile.
-                        // Side-effect imports are nearly always done through identifier-less imports
-                        // e.g. `import 'fancy-stylesheet-thing/style.css';`
-                        // This is a breaking change though. We can make it an option with some guardrail
-                        // so maybe if it errors, it shows a suggestion "retry without trimming unused imports"
                         if (is_typescript_enabled
                             && found_imports
                             && is_unused_in_typescript
@@ -339,10 +241,6 @@ impl<'a> ImportScanner<'a> {
                             .chain(star_binding)
                             .chain(item_bindings)
                         {
-                            // Only report source-level re-declarations: `ReplaceWithNew`
-                            // links the import to the symbol that took over the scope
-                            // member, while generated symbols (e.g. JSX runtime imports)
-                            // link the other way.
                             let symbol = &p.symbols[name_ref.inner_index() as usize];
                             let mut link = symbol.link.get();
                             if !link.is_valid() {
@@ -401,12 +299,6 @@ impl<'a> ImportScanner<'a> {
                             strings::sort_desc(&mut sorted);
                             handle_oom(p.named_imports.ensure_unused_capacity(sorted.len()));
 
-                            // Create named imports for these property accesses. This will
-                            // cause missing imports to generate useful warnings.
-                            //
-                            // It will also improve bundling efficiency for internal imports
-                            // by still converting property accesses off the namespace into
-                            // bare identifiers even if the namespace is still needed.
                             for alias in &sorted {
                                 let item: LocRef = *existing.get(alias).unwrap();
                                 handle_oom(p.named_imports.put(
@@ -512,12 +404,6 @@ impl<'a> ImportScanner<'a> {
                             );
                         }
                     } else {
-                        // ESM requires live bindings
-                        // CommonJS does not require live bindings
-                        // We load ESM in browsers & in Bun.js
-                        // We have to simulate live bindings for cases where the code is bundled
-                        // We do not know at this stage whether or not the import statement is bundled
-                        // This keeps track of the `namespace_alias` incase, at printing time, we determine that we should print it with the namespace
                         for item in st_items.iter() {
                             // SAFETY: `item.alias` is an arena-owned slice valid for 'p.
                             if strings::eql_comptime(item.alias.slice(), b"default") {
@@ -706,12 +592,6 @@ impl<'a> ImportScanner<'a> {
                     // capture default_name now and run the record after the body below.
                     let deferred_default_name = st.default_name;
 
-                    // Rewrite this export to be:
-                    // exports.default =
-                    // But only if it's anonymous
-                    // PORT NOTE: comptime `P != bun.bundle_v2.AstBuilder` check elided —
-                    // this monomorphization is the parser `P` only (see fn-level TODO).
-                    // blocked_on: P::module_exports gated (reconciler-6 re-gate in P.rs)
                     if !HOT_MODULE_RELOADING_TRANSFORMATIONS && will_transform_to_common_js {
                         let expr = core::mem::take(&mut st.value).to_expr();
                         // Arena allocation that persists in the AST.

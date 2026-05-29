@@ -19,11 +19,6 @@
 //! see `EMBEDDED_EXECUTABLE_DATA` (it would `include_bytes!` its own output).
 //! Everything host-side is gated `#[cfg(not(feature = "shim_standalone"))]`.
 
-/// Random numbers are chosen for validation purposes
-/// These arbitrary numbers will probably not show up in the other fields.
-/// This will reveal off-by-one mistakes.
-// Zig: `enum(u13)` non-exhaustive (`_`). Rust has no `u13`, and the `_` makes it
-// open-ended, so model as a transparent u16 newtype holding a 13-bit value.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct VersionFlag(u16);
@@ -102,13 +97,6 @@ impl Flags {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Host-side encoding / embedding. None of this is compiled into the
-// standalone shim PE — the doc header says "The latter exe does not include
-// this code", and including `EMBEDDED_EXECUTABLE_DATA` here would make the
-// shim crate `include_bytes!` its own output. Gate via inner module +
-// `pub use` so one `#[cfg]` covers the lot and visibility is preserved.
-// ──────────────────────────────────────────────────────────────────────────
 #[cfg(not(feature = "shim_standalone"))]
 pub use host::*;
 
@@ -126,32 +114,11 @@ mod host {
         a == b
     }
 
-    // `@embedFile("bun_shim_impl.exe")` — the shim PE is built as a separate
-    // artifact by the Windows build before this crate is compiled, then embedded
-    // here. It is only ever consumed from `#[cfg(windows)]` code paths
-    // (`bin::Linker::create_windows_shim`), so on non-Windows hosts there is no
-    // artifact to embed and the data is never read.
     #[cfg(windows)]
     pub const EMBEDDED_EXECUTABLE_DATA: &[u8] = include_bytes!("bun_shim_impl.exe");
     #[cfg(not(windows))]
     pub const EMBEDDED_EXECUTABLE_DATA: &[u8] = &[];
 
-    /// Guard against the placeholder/empty artifact slipping through: a 0-byte
-    /// embed would silently make `bun install` write 0-byte `.exe` shims into
-    /// `node_modules/.bin/` and break every package binary. This is a runtime
-    /// guard (not `const _: () = assert!(..)`) so `cargo check` on Windows can
-    /// type-check the install crate before the separate `bun_shim_impl` build step
-    /// has produced the PE — but any actual *use* of the data still fails loudly.
-    /// Call this from every site that writes `EMBEDDED_EXECUTABLE_DATA` to disk.
-    ///
-    /// PORT NOTE: this MUST be a process exit, not `panic!()`. The only caller
-    /// (`bin::Linker::create_windows_shim`) runs on the parallel-install thread
-    /// pool; the workspace is `panic = "unwind"`, so a `panic!()` here unwinds
-    /// and kills the worker thread — the main install loop's pending-task counter
-    /// never decrements and `bun install` hangs until the CI 180s timeout, then
-    /// retries forever. Zig has no equivalent guard (build.zig provides the embed
-    /// via `addAnonymousImport` so it can never be empty); until the Rust port
-    /// wires the standalone-shim build step, fail the *process* fast instead.
     #[inline]
     #[track_caller]
     pub fn embedded_executable_data() -> &'static [u8] {
@@ -173,10 +140,6 @@ mod host {
         RunWithPowershell,
     }
 
-    // Zig used `std.StaticStringMap` keyed by the UTF-16LE *byte* reinterpretation of
-    // each extension (via `wU8`). Here we match directly on the `&[u16]` extension
-    // using `bun_core::w!` literals — semantically identical, drops the byte cast.
-    // PERF(port): was comptime StaticStringMap (perfect hash) — profile if hot.
     fn bun_extensions_get(ext: &[u16]) -> Option<ExtensionType> {
         use ExtensionType::*;
         macro_rules! w {
@@ -266,11 +229,6 @@ mod host {
         /// https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw#parameters
         pub const MAX_SHEBANG_INPUT_LENGTH: usize = 32766 + b"#!".len();
 
-        /// Given the start of a file, parse the shebang
-        /// Output contains slices that point into the input buffer
-        ///
-        /// Since a command line cannot be longer than 32766 characters,
-        /// this function does not accept inputs longer than `MAX_SHEBANG_INPUT_LENGTH`
         pub fn parse(
             contents_maybe_overflow: &'a [u8],
             bin_path: &[u16],
@@ -368,11 +326,6 @@ mod host {
             debug_assert!(buf.len() == self.encoded_length());
             debug_assert!(self.bin_path[0] != b'/' as u16);
 
-            // Zig used `@alignCast` here. `bytemuck::cast_slice_mut` performs the same
-            // runtime alignment + size-multiple check and panics on mismatch — no
-            // `unsafe` needed. (The sole caller, `bin.rs`, passes a stack `[u8; 65536]`
-            // whose Rust-guaranteed alignment is 1; it should be changed to a `[u16; N]`
-            // buffer to make alignment a compile-time guarantee — tracked separately.)
             let mut wbuf: &mut [u16] = bytemuck::cast_slice_mut(buf);
 
             wbuf[0..self.bin_path.len()].copy_from_slice(self.bin_path);

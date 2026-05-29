@@ -52,11 +52,6 @@ struct PoolStats {
     tasks: AtomicU64,
     /// Times a worker entered the futex sleep path in `idle_event.wait()`.
     sleeps: AtomicU64,
-    /// Monotonic timestamp of the last `dump_stats` call (or pool init), so
-    /// the per-phase wall-clock can be reported alongside the worker sums.
-    /// Lets the dump distinguish "workers idle while the orchestrator runs
-    /// serial work" (busy_ns ≪ wall × workers, but busy_ns ≈ wall × N for
-    /// some N) from "wake-chain too slow".
     last_dump_ns: AtomicU64,
 }
 
@@ -83,12 +78,6 @@ enum SyncState {
 }
 
 impl Sync {
-    // Bit layout (LSB-first, matching Zig packed struct field order):
-    //   idle:     u14  bits 0..14
-    //   spawned:  u14  bits 14..28
-    //   unused:   bool bit  28
-    //   notified: bool bit  29
-    //   state:    u2   bits 30..32
     const IDLE_MASK: u32 = 0x3FFF;
     const SPAWNED_SHIFT: u32 = 14;
     const SPAWNED_MASK: u32 = 0x3FFF << Self::SPAWNED_SHIFT;
@@ -182,17 +171,6 @@ impl AtomicSync {
 
 pub struct ThreadPool {
     pub sleep_on_idle_network_thread: bool,
-    /// When `true` (default), each worker calls
-    /// [`Output::Source::configure_named_thread`] on startup, which initializes
-    /// the WTF `StackBounds` thread-local via `Bun__StackCheck__initialize`.
-    /// Pools whose tasks never recurse through `StackCheck` (e.g. the package
-    /// manager's network/extract pool, the HTTP client) should clear this so
-    /// their workers use the `_no_js` variant and avoid faulting in the
-    /// otherwise-cold WTF/JSC `.text` pages on paths like `bun install`.
-    ///
-    /// Left as a public field (not in [`Config`]) so existing
-    /// `Config { max_threads, stack_size }` literals keep compiling; callers
-    /// flip it after [`ThreadPool::init`].
     pub needs_stack_bounds: bool,
     pub stack_size: u32,
     pub max_threads: u32,
@@ -273,11 +251,6 @@ impl ThreadPool {
         } else {
             0.0
         };
-        // Effective parallelism over the wall-clock window: how many CPUs the
-        // pool kept busy on average. This is the number to compare against
-        // `perf stat`'s "CPUs utilized" — `util` alone is misleading because
-        // a worker that is futex-asleep while the orchestrator does serial
-        // work is correctly counted as 100% idle.
         let wall = if last == 0 { 0 } else { now.wrapping_sub(last) };
         let eff = if wall > 0 {
             busy as f64 / wall as f64
@@ -338,10 +311,6 @@ pub struct Task {
 unsafe impl Send for Task {}
 
 impl Default for Task {
-    /// Placeholder for fields where the callback is installed later
-    /// (e.g. by [`crate::work_pool::WorkPool::schedule_owned`]). The
-    /// `unreachable` callback panics if scheduled un-initialized — same
-    /// failure mode as Zig's `.callback = undefined`.
     #[inline]
     fn default() -> Self {
         // Body has no unsafe op; a safe fn item coerces to the `callback`
@@ -363,11 +332,6 @@ impl Task {
         unsafe { bun_core::from_field_ptr!(Task, node, node) }
     }
 
-    /// Project `NonNull<Task>` → `NonNull<Node>` for the intrusive `node` field.
-    ///
-    /// `node` is the first field of `#[repr(C)] Task`, so the pointer cast is
-    /// address-preserving and needs no `unsafe` deref. Single safe accessor for
-    /// the recurring `addr_of_mut!((*task.as_ptr()).node)` pattern.
     #[inline]
     fn node_of(task: NonNull<Task>) -> NonNull<Node> {
         const _: () = assert!(core::mem::offset_of!(Task, node) == 0);
@@ -473,15 +437,6 @@ where
 }
 
 impl ThreadPool {
-    /// Loop over an array of tasks and invoke `run_fn` on each one in a different thread.
-    /// **Blocks the calling thread** until all tasks are completed.
-    ///
-    /// This function does not shut down or deinit the thread pool.
-    ///
-    /// `V: Send` is required because each `values[i]` is handed (by copy or by
-    /// `*mut V`) to an arbitrary worker thread; the raw-pointer round-trip
-    /// through the intrusive `Task` callback would otherwise smuggle `!Send`
-    /// data across threads with no compiler check (Zig's `anytype` had none).
     pub fn each<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
     where
         // TODO(port): narrow bounds — Zig used `anytype` + comptime fn
@@ -492,10 +447,6 @@ impl ThreadPool {
         self.each_impl(ctx, ByValue(run_fn), values);
     }
 
-    /// Like `each`, but calls `run_fn` with a pointer to the value.
-    ///
-    /// `V: Send` — see [`each`](Self::each); the `*mut V` is dereferenced on a
-    /// worker thread, which is a cross-thread move of the pointee.
     pub fn each_ptr<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
     where
         F: Fn(&Ctx, *mut V, usize) + core::marker::Sync,
@@ -594,15 +545,6 @@ impl ThreadPool {
             tail: Task::node_of(tail.unwrap()),
         };
 
-        // .monotonic access is okay because:
-        //
-        // * If the thread pool hasn't started yet, no thread could concurrently set
-        //   `is_running` to true, because thread pool initialization should only
-        //   happen on one thread.
-        //
-        // * If the thread pool is running, the current thread could be one of the threads
-        //   in the thread pool, but `is_running` was necessarily set to true before the
-        //   thread was created.
         if self.is_running.load(Ordering::Relaxed) {
             self.wait_group.add(len);
         } else {
@@ -619,10 +561,6 @@ impl ThreadPool {
             let Some(current) = NonNull::new(Thread::current()) else {
                 break 'blk ptr::null_mut();
             };
-            // Make sure thread is part of this thread pool, not a different one.
-            // `current` is the calling worker's own stack-local `Thread` (set in
-            // `ThreadRegistration::new`); BackRef invariant — pointee outlives
-            // this read — holds for the `thread_pool` field load.
             if bun_ptr::BackRef::from(current)
                 .thread_pool
                 .as_ptr()
@@ -673,11 +611,6 @@ impl ThreadPool {
         // Fast path to check the Sync state to avoid calling into notify_slow().
         // If we're waking, then we need to update the state regardless
         if !is_waking {
-            // Must be an RMW, not a load: an RMW participates in `sync`'s modification
-            // order, so if we observe notified=true here, the worker's later acquire-CAS
-            // that clears it synchronizes-with this release and will see the task we just
-            // pushed. A plain load (even .seq_cst) allows "we see stale notified=true AND
-            // worker sees run_queue empty" → task stranded
             let sync = self.sync.fetch_or(Sync::zero(), Ordering::Release);
             if sync.notified() {
                 return;
@@ -693,19 +626,6 @@ pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
     const DEFAULT: u32 = 4 * 1024 * 1024;
     #[cfg(windows)]
     {
-        // PORT NOTE: Zig's `std.Thread.spawn` on Windows calls `CreateThread`
-        // with `dwCreationFlags = 0`, so `dwStackSize` sets the *commit* size
-        // and the thread inherits the executable's *reserve* size from the PE
-        // header (`/STACK:0x1200000` = 18 MB — see scripts/build/flags.ts).
-        // Rust's `std::thread::Builder::stack_size` instead passes
-        // `STACK_SIZE_PARAM_IS_A_RESERVATION`, so the value here *is* the
-        // reserve. Passing 4 MB therefore gave Rust worker threads 4 MB of
-        // stack vs Zig's 18 MB, and the deeply-nested-AST stress tests
-        // (`lots-of-for-loop.js`, 15k nested `for`) overflow on the 4 MB
-        // worker stack before the parser's `StackCheck` can fire (each
-        // `parse_stmt`→`t_for` cycle is small enough that 15k levels fit, but
-        // the visit/print passes that follow do not). Match Zig parity by
-        // reserving the same 18 MB the PE header would have given us.
         let _ = DEFAULT;
         0x1200000
     }
@@ -727,13 +647,6 @@ pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
         size
     }
 };
-
-// NOTE: a `prewarm_mimalloc_numa()` helper was tried here to call
-// `_mi_os_numa_node_count()` once on the spawning thread so workers don't race
-// the `/sys/devices/system/node/node%u` slow path, but mimalloc is built as
-// `-x c++` (see scripts/build/deps/mimalloc.ts `lang: "cxx"`) so that internal
-// symbol is C++-mangled (`_Z22_mi_os_numa_node_countv`) and not reachable via
-// `extern "C"`. Left for a follow-up that adds an `extern "C"` shim.
 
 impl ThreadPool {
     /// Warm the thread pool up to the given number of threads.
@@ -996,11 +909,6 @@ impl ThreadPool {
         let Some(thread) = NonNull::new(maybe_thread) else {
             return;
         };
-        // `maybe_thread` is the calling worker's own stack-local `Thread`
-        // (set in `ThreadRegistration::new`); it lives on this OS thread's
-        // stack and outlives the entire `unregister` call. BackRef invariant
-        // — pointee outlives holder — covers the `join_event.wait()` and
-        // `.next` reads below.
         let thread = bun_ptr::BackRef::from(thread);
         thread.join_event.wait();
 
@@ -1027,10 +935,6 @@ impl ThreadPool {
         debug_assert!(sync.state() == SyncState::Shutdown);
         debug_assert!(sync.spawned() == 0);
 
-        // If there are threads, start off the chain sending it the shutdown signal.
-        // The thread receives the shutdown signal and sends it to the next thread, and the next..
-        // Use swap (not load) so join() is idempotent: a second call sees null and
-        // returns instead of touching freed worker stack memory.
         let Some(thread) = NonNull::new(self.threads.swap(ptr::null_mut(), Ordering::Acquire))
         else {
             return;
@@ -1048,12 +952,6 @@ enum WaitError {
     Shutdown,
 }
 
-// `repr(C)` pins field order to match the Zig layout: the work-steal loop in
-// `Thread::pop` chases `(*target).next`, and keeping `next`/`target` at offsets
-// 0/8 means that load hits the same cache line that already holds the
-// `run_queue` header it reads immediately after. With the default `repr(Rust)`
-// the compiler is free to reorder fields (the 4-byte `Event` invites it),
-// which profiled ~43% hotter on the steal traversal vs the Zig build.
 #[repr(C)]
 pub struct Thread {
     next: *mut Thread,
@@ -1069,12 +967,6 @@ thread_local! {
     static CURRENT: Cell<*mut Thread> = const { Cell::new(ptr::null_mut()) };
 }
 
-/// RAII scope for a worker thread's active lifetime: publishes `thread` as
-/// `CURRENT` and registers it with `pool` on construction; on drop, unregisters
-/// from the pool and clears `CURRENT` (matching the Zig `defer` order).
-///
-/// `pool` is a [`BackRef`]: the pool's `join()` blocks on every registered
-/// worker, so it strictly outlives this guard.
 struct ThreadRegistration {
     pool: bun_ptr::BackRef<ThreadPool>,
     thread: *mut Thread,
@@ -1109,10 +1001,6 @@ fn now_ns() -> u64 {
     // CLOCK_MONOTONIC nanoseconds; only used when `stats_enabled()`.
     #[cfg(unix)]
     {
-        // `&mut libc::timespec` is ABI-identical to libc's `struct timespec *`
-        // (thin non-null pointer to a `#[repr(C)]` struct); the type encodes
-        // the only pointer-validity precondition, so `safe fn` discharges the
-        // link-time proof and the call needs no `unsafe` block.
         unsafe extern "C" {
             safe fn clock_gettime(
                 clk_id: libc::clockid_t,
@@ -1185,12 +1073,6 @@ impl Thread {
                     bun_core::ZStr::from_raw(c"Bun Pool".as_ptr().cast(), 8)
                 }
             };
-            // Pools whose tasks never consult `StackCheck` (install, HTTP) opt
-            // out via `needs_stack_bounds = false` so we don't pull in
-            // `Bun__StackCheck__initialize` → `WTF::StackBounds` and fault the
-            // JSC `.text` pages on the `bun install` cold path. Bundler/parser
-            // pools leave it `true` (the parser's recursion guard reads the
-            // WTF stack-end this initializes).
             if thread_pool.get().needs_stack_bounds {
                 Output::Source::configure_named_thread(named);
             } else {
@@ -1280,13 +1162,6 @@ impl Thread {
         }
     }
 
-    /// Try to dequeue a Node/Task from the ThreadPool.
-    /// Spurious reports of dequeue() returning empty are allowed.
-    ///
-    /// Takes `&ThreadPool` (not `*const`) — the sole caller (`run()`) has
-    /// already proved liveness once (`join()` waits on every registered
-    /// worker), so the per-access raw-pointer derefs that the `*const`
-    /// signature forced are gone.
     pub fn pop(&mut self, thread_pool: &ThreadPool) -> Option<node::Stole> {
         // Check our local buffer first
         if let Some(node) = self.run_buffer.pop() {
@@ -1418,13 +1293,6 @@ impl Event {
                 }
             }
 
-            // Wait on the event until a notify() or shutdown().
-            // If we wake up to a notification, we must acquire it with WAITING instead of EMPTY
-            // since there may be other threads sleeping on the Futex who haven't been woken up yet.
-            //
-            // Acquiring to WAITING will make the next notify() or shutdown() wake a sleeping futex thread
-            // who will either exit on SHUTDOWN or acquire with WAITING again, ensuring all threads are awoken.
-            // This unfortunately results in the last notify() or shutdown() doing an extra futex wake but that's fine.
             let timeout_ns: Option<u64> = if !has_shrunk_memory {
                 Some(10_000_000_000) // std.time.ns_per_s * 10
             } else {
@@ -1492,10 +1360,6 @@ pub mod node {
     /// An unbounded multi-producer-(non blocking)-multi-consumer queue of Node pointers.
     pub(crate) struct Queue {
         stack: AtomicUsize,
-        // PORT NOTE: Zig's plain `?*Node` is mutated through `&self` while
-        // `IS_CONSUMING` is held. `Cell` gives interior mutability without an
-        // atomic — the `stack` Acquire/Release barriers order accesses, and the
-        // `unsafe impl Sync` below is where that synchronization promise lives.
         cache: core::cell::Cell<*mut Node>,
     }
 
@@ -1615,12 +1479,6 @@ pub mod node {
         }
     }
 
-    /// RAII handle for the `IS_CONSUMING` bit on a [`Queue`]. Owns the local
-    /// cache pointer (Zig's `var consumer: ?*Node`) directly so the hot
-    /// `pop()` fast path is a plain field read/write that LLVM can keep in a
-    /// register — the previous `scopeguard::guard` + `&mut *consumer` pattern
-    /// forced the cache pointer through a stack slot via `DerefMut` on every
-    /// iteration of `Buffer::consume`'s fill loop.
     pub(super) struct Consumer<'a> {
         queue: &'a Queue,
         cache: *mut Node,
@@ -1678,10 +1536,6 @@ pub mod node {
     const _: () = assert!(Index::MAX as usize >= CAPACITY);
     const _: () = assert!(CAPACITY.is_power_of_two());
 
-    /// A bounded single-producer, multi-consumer ring buffer for node pointers.
-    // `repr(C)` keeps `head`/`tail` in the first cache line ahead of the 2 KB
-    // `array`, matching the Zig layout the steal/consume fast paths were tuned
-    // against. `repr(Rust)` is free to reorder these.
     #[repr(C)]
     pub(crate) struct Buffer {
         head: AtomicU32,
@@ -1923,10 +1777,6 @@ pub mod node {
                         .store(node, Ordering::Relaxed);
                 }
 
-                // Try to commit the steal from the target buffer using:
-                // - an Acquire barrier to ensure that we only interact with the stolen Nodes after the steal was committed.
-                // - a Release barrier to ensure that the Nodes are copied above prior to the committing of the steal
-                //   because if they're copied after the steal, the could be getting rewritten by the target's push().
                 match buffer.head.compare_exchange(
                     buffer_head,
                     buffer_head.wrapping_add(steal_size),

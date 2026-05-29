@@ -1,26 +1,17 @@
 use bun_collections::VecExt;
 use core::cmp::Ordering;
 
+use crate::bun_json::{E, Expr, ExprData};
 use bun_alloc::AllocError;
+use bun_ast::{Log, Source};
 use bun_collections::ArrayHashMap;
 use bun_collections::array_hash_map::ArrayHashAdapter;
 use bun_install::dependency::DependencyExt as _;
 use bun_install::lockfile::{Buffers, StringBuilder};
 use bun_install::{Dependency, Lockfile, PackageManager};
-// PORT NOTE (layering): Zig `bun.ast.Expr` resolves to the full T4 parser AST,
-// but every install-side caller (Package.rs / pnpm.rs) parses JSON/YAML into
-// the lower-tier `bun_ast::js_ast` shape (re-exported via `crate::bun_json`).
-// Importing `bun_js_parser` here forced a higher-tier dep and produced
-// distinct-`Expr`-type errors at every call site, so use the T2 type directly.
-use crate::bun_json::{E, Expr, ExprData};
-use bun_ast::{Log, Source};
 use bun_semver::String;
 use bun_semver::string::{ArrayHashContext, Buf as StringBuf, Builder as StringBuilderNs};
 
-// `Map` is keyed by `bun_semver::String` whose hash/eq depend on an external
-// string buffer. The default `AutoContext` cannot satisfy `String: Hash`, so
-// every lookup/insert goes through the `*_adapted` methods with an explicit
-// `ArrayHashContext` carrying the `arg_buf`/`existing_buf` pair.
 pub type Map = ArrayHashMap<String, Dependency>;
 
 #[derive(Default)]
@@ -68,11 +59,6 @@ impl CatalogMap {
         group.get_adapted(&dep_name, &ctx(buf)).cloned()
     }
 
-    /// PORT NOTE: Zig took `lockfile: *Lockfile` but only reads its string
-    /// buffer for the hash context. Narrow to `buf: &[u8]` so callers can hold
-    /// `&mut lockfile.catalogs` while only borrowing `buffers.string_bytes`
-    /// (disjoint field), instead of forcing a whole-`Lockfile` borrow that
-    /// conflicts with the `&mut self` receiver.
     pub fn get_or_put_group(
         &mut self,
         buf: &[u8],
@@ -165,11 +151,6 @@ impl CatalogMap {
         }
     }
 
-    /// PORT NOTE: Zig threaded `lockfile: *Lockfile` for `.allocator` and
-    /// `.buffers.string_bytes`. The allocator is dropped (global mimalloc) and
-    /// `builder` already holds `&mut string_bytes`, so read the buffer through
-    /// `builder` and drop the `lockfile` param — otherwise call sites would
-    /// alias `&mut lockfile.catalogs` against `&mut lockfile`.
     pub fn parse_append(
         &mut self,
         pm: &mut PackageManager,
@@ -300,12 +281,6 @@ impl CatalogMap {
         Ok(found_any)
     }
 
-    // PORT NOTE: reshaped for borrowck — Zig threads `*Lockfile` through, but
-    // the only field this body touches is `lockfile.catalogs`, and the call
-    // site in `pnpm.rs` must simultaneously hold `&mut StringBuf` (which
-    // already borrows `lockfile.buffers.string_bytes` + `lockfile.string_pool`).
-    // Taking `&mut Lockfile` here would alias those borrows, so narrow to
-    // `&mut CatalogMap` and let the caller split the disjoint fields.
     pub fn from_pnpm_lockfile(
         catalogs: &mut CatalogMap,
         log: &mut Log,
@@ -339,11 +314,6 @@ impl CatalogMap {
         Ok(())
     }
 
-    // PORT NOTE: Zig took `lockfile: *const Lockfile` but only reads its
-    // string buffer. Narrow to `buffers: &Buffers` so the call site can hold
-    // `&mut lockfile.catalogs` while only borrowing `lockfile.buffers`
-    // immutably (disjoint fields), instead of forcing a whole-`Lockfile`
-    // shared borrow that conflicts with the `&mut self` receiver.
     pub fn sort(&mut self, buffers: &Buffers) {
         let buf = buffers.string_bytes.as_slice();
         let dep_less_than = |_: &[String], deps: &[Dependency], l: usize, r: usize| -> bool {
@@ -387,12 +357,6 @@ impl CatalogMap {
         }
     }
 
-    /// PORT NOTE: Zig also passed `*Lockfile new`, but `builder` already
-    /// borrows `new.buffers.string_bytes` — read the new-side buffer through
-    /// it instead so the call site doesn't alias `&mut new` twice.
-    /// `pm` is generic over `NpmAliasRegistry` (was `&mut PackageManager`) so a
-    /// caller already holding `&mut manager.lockfile` can pass
-    /// `&mut manager.known_npm_aliases` instead of the whole manager.
     pub fn clone<PM: crate::dependency::NpmAliasRegistry>(
         &self,
         pm: &mut PM,
@@ -405,11 +369,6 @@ impl CatalogMap {
             .default
             .ensure_total_capacity(self.default.count())?;
 
-        // Zig re-reads `new.buffers.string_bytes.items` at every
-        // `putAssumeCapacityContext` call. Mirror that here: per insert,
-        // finish the `&mut builder` appends FIRST, then snapshot the buffer
-        // for the hash/eql closures. Snapshotting once up-front would freeze
-        // the slice length pre-append and OOB-panic on any non-inline key.
         for (dep_name, dep) in self.default.keys().iter().zip(self.default.values()) {
             let new_key = builder.append::<String>(dep_name.slice(old_buf));
             let new_val = dep.clone_in(pm, old_buf, builder)?;

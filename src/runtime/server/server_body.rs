@@ -63,12 +63,6 @@ pub(super) use super::server_config::{self as server_config, ServerConfig};
 pub(super) use super::server_web_socket::ServerWebSocket;
 pub(super) use super::static_route::StaticRoute;
 
-// ─── RequestCtx trait ────────────────────────────────────────────────────────
-// PORT NOTE: Zig's `NewRequestContext` exposes `Req`/`Resp`/`http3` as comptime
-// associated decls on the generated type. Stable Rust has no inherent
-// associated types, so the per-monomorphization handle types are surfaced via
-// this local trait. Only `IS_H3` is consumed for control flow; `Req`/`Resp`
-// are erased to `c_void` to match `super::request_context::{Req, Resp}`.
 pub trait RequestCtx: super::any_request_context::CtxKind {
     type Req: ReqLike;
     type Resp: RespLike;
@@ -93,10 +87,6 @@ where
     const IS_H3: bool = true;
 }
 
-/// Field/method surface needed on the generic `Ctx` so the bodies of
-/// `handle_request_for` / `prepare_js_request_context_for` / `on_saved_request`
-/// can be written without naming the concrete `RequestContext<_, SSL, DBG, H3>`
-/// type. Implemented via blanket impl below for every `NewRequestContext<..>`.
 #[allow(clippy::too_many_arguments)]
 pub trait RequestCtxOps: RequestCtx {
     type Server;
@@ -217,10 +207,6 @@ where
     }
     #[inline]
     fn set_signal(&mut self, sig: *mut AbortSignal) {
-        // `AbortSignal::new` returns a raw +1 ref to a C++-refcounted opaque;
-        // `RequestContext.signal` stores it as `Option<NonNull<AbortSignal>>`
-        // and pairs the unref in RequestContext cleanup (`shim::signal_release`,
-        // which drops both the pending-activity count and the intrusive ref).
         self.signal = NonNull::new(sig);
     }
     #[inline]
@@ -284,10 +270,6 @@ where
     }
 }
 
-// PORT NOTE: local request/response trait so generic `Ctx::Req` / `Ctx::Resp`
-// call sites can dispatch to either uWS HTTP/1 or HTTP/3 handle types without
-// touching `bun_uws_sys`. Only the surface `prepare_js_request_context_for`
-// actually needs is exposed.
 pub trait ReqLike {
     fn header(&mut self, name: &[u8]) -> Option<&[u8]>;
     fn method(&mut self) -> &[u8];
@@ -409,13 +391,6 @@ pub(super) type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
 pub(super) type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
     NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, true>;
 
-// ─── BunInfo (moved from bun_core::Global) ───────────────────────────────────
-// Spec: src/bun_core/Global.zig:195-210. `generate()` builds the struct and
-// hands it to `JSON.toAST`, which reflects over fields at comptime. Rust has no
-// `@typeInfo`, so this is the hand-expanded reflection output (cf.
-// `bun_parsers::json::ToAst` derive sketch, json.rs:808-824): an `E.Object`
-// with `bun_version` (string) + `platform` (nested `E.Object` of `os`/`arch`/
-// `version`, enums emitted as `@tagName` strings).
 pub mod BunInfo {
     use bun_analytics::generate_header::generate_platform;
     use bun_analytics::schema::analytics::{Architecture, OperatingSystem, Platform};
@@ -502,10 +477,6 @@ pub mod BunInfo {
     }
 }
 
-// ─── AnyRoute ────────────────────────────────────────────────────────────────
-// PORT NOTE: enum + `memory_cost`/`set_server`/`ref_`/`deref_` live in
-// `super` (mod.rs). The `impl` block below adds the JS-facing constructors
-// (`from_js`/`from_options`/…) on the same type — same crate, split by file.
 pub(super) use super::AnyRoute;
 
 impl AnyRoute {
@@ -533,13 +504,6 @@ impl AnyRoute {
         path_string.deref();
         // path is dropped at scope end
 
-        // Construct the route by stripping paths above the root.
-        //
-        //    "./index-abc.js" -> "/index-abc.js"
-        //    "../index-abc.js" -> "/index-abc.js"
-        //    "/index-abc.js" -> "/index-abc.js"
-        //    "index-abc.js" -> "/index-abc.js"
-        //
         let path_slice = path.path().slice();
         let cwd: &[u8] = if StandaloneModuleGraph::is_bun_standalone_file_path(path_slice) {
             // Zig: targetBasePublicPath(Environment.os, "root/") — comptime concat,
@@ -642,12 +606,6 @@ impl AnyRoute {
         let blob = <Blob as BlobExt>::find_or_create_file_from_path(path, global, false);
 
         if blob.needs_to_read_file() {
-            // Throw a more helpful error upfront if the file does not exist.
-            //
-            // In production, you do NOT want to find out that all the assets
-            // are 404'ing when the user goes to the route. You want to find
-            // that out immediately so that the health check on startup fails
-            // and the process exits with a non-zero status code.
             if let Some(store) = blob.store.get().as_deref() {
                 if let Some(store_path) = store.get_path() {
                     // PORT NOTE: `sys::exists_at_type` takes `&ZStr`; the store
@@ -766,13 +724,6 @@ impl AnyRoute {
                     )));
                 }
 
-                // trim the /*
-                // PORT NOTE: `FileSystemRouterType` fields are `Cow<'static,[u8]>`.
-                // Zig stored a borrow into the route key (arena-backed). Rather
-                // than erasing the lifetime through a raw-pointer round-trip
-                // (banned per PORTING.md), copy the prefix bytes here — the
-                // route table is built once at server startup, so the extra
-                // allocation is cold.
                 use std::borrow::Cow;
                 let prefix: Cow<'static, [u8]> = if path.len() == 2 {
                     Cow::Borrowed(b"/")
@@ -875,11 +826,6 @@ pub enum GetOrStartLoadResult<'a> {
 
 #[derive(Clone, Copy)]
 pub enum ServePluginsCallback<'a> {
-    /// Raw `*mut` because the route is stored in
-    /// `ServePluginsState::Pending.html_bundle_routes` and later resolved via
-    /// `on_plugins_resolved`/`on_plugins_rejected`. R-2: those now take `&self`
-    /// (mutation goes through `Cell`/`JsCell`), so the `*mut` spelling is
-    /// signature-only; callers pass `Route::as_ctx_ptr(&self)`.
     HtmlBundleRoute(*mut html_bundle::Route),
     DevServer(&'a DevServer),
 }
@@ -990,12 +936,6 @@ impl ServePlugins {
         let bunfig_folder: &[u8] = bun_paths::resolve_path::dirname::<
             bun_paths::resolve_path::platform::Auto,
         >(bunfig_path);
-
-        // NOTE: the keep-alive ref/deref pair (Zig: `this.ref(); defer this.deref()`)
-        // lives in the caller (`get_or_load_plugins`), which holds the heap-allocated
-        // `*mut ServePlugins` directly. Deriving the guard's pointer from `&mut self`
-        // here would give it a tag that is invalidated by the writes to `self.state`
-        // below (Stacked Borrows), making the eventual `heap::take` in `deref_` UB.
 
         let plugin = JSBundler::Plugin::create(global, bun_jsc::BunPluginTarget::Browser);
         // SAFETY: `Plugin::create` returns a freshly-boxed `*mut Plugin` (single owner).
@@ -1150,14 +1090,6 @@ impl ServePlugins {
     }
 }
 
-/// RAII owner of one counted reference to a [`ServePlugins`]. Drops the
-/// reference via [`ServePlugins::deref_`] on scope exit — the Rust spelling of
-/// Zig's `defer this.deref()`.
-///
-/// Holds the raw `*mut` from [`ServePlugins::init`] so the final `heap::take`
-/// has write/dealloc provenance over the whole allocation. Never construct this
-/// from a pointer derived through `&ServePlugins` — that yields a SharedReadOnly
-/// tag under Stacked Borrows and freeing through it is UB.
 struct ServePluginsRef(*mut ServePlugins);
 
 impl ServePluginsRef {
@@ -1229,10 +1161,6 @@ fn fetch_headers_from_js(value: JSValue, global: &JSGlobalObject) -> Option<*mut
     FetchHeaders::cast_(value, global.vm()).map(|p| p.as_ptr())
 }
 
-/// Per-process latch for the dev-mode idle-timeout warning. The Zig source
-/// declares a `var` per-monomorphization static inside `NewServer`, but the
-/// warning is gated on `DEBUG && !silent` and only fires once globally, so a
-/// single shared `AtomicBool` matches user-visible behavior.
 #[inline]
 fn did_send_idletimeout_warning_once() -> &'static core::sync::atomic::AtomicBool {
     static FLAG: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
@@ -1260,23 +1188,11 @@ pub enum PluginsResult<'a> {
     Err,
 }
 
-// ─── NewServer ───────────────────────────────────────────────────────────────
-// ─── NewServer (canonical type lives in mod.rs) ──────────────────────────────
-// PORT NOTE (unification): the struct, `ServerFlags`, `UserRoute`,
-// `CreateJsRequest`, `PreparedRequest`, `SavedRequest`, `SavedRequestUnion`,
-// `ServerAllConnectionsClosedTask`, `AnyServer` and the four type aliases are
-// defined once in `super` (mod.rs). This file contributes additional inherent
-// methods on the same type — there is no separate Phase-A struct.
 pub(super) use super::{
     CreateJsRequest, DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer, NewServer,
     SavedRequest, ServerFlags, UserRoute,
 };
 
-/// `fn PreparedRequestFor(comptime Ctx: type) type` — generic over the
-/// per-transport `RequestContext` so the same body serves HTTP/1 and HTTP/3.
-/// `super::PreparedRequest<SSL,DEBUG>` is the HTTP/1-concrete instantiation
-/// used by the bake/saved-request path; the generic form here is only reached
-/// from the `_for<Ctx>` dispatch helpers below.
 pub struct PreparedRequestFor<'a, Ctx> {
     pub js_request: JSValue,
     pub request_object: &'a mut Request,
@@ -1364,10 +1280,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// server is running (`self.app` set in `listen()`).
     #[inline]
     fn app_mut(&self) -> &mut uws_sys::NewApp<SSL> {
-        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref via
-        // const-asserted `bun_opaque::opaque_deref_mut`. `self.app` is `Some`
-        // for the lifetime of any JS-reachable `Server` (set in `listen()`,
-        // freed in `deinit()` after the JS wrapper is gone).
         bun_opaque::opaque_deref_mut(self.app.expect("server not listening"))
     }
 
@@ -1379,11 +1291,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             bun_core::hint::cold();
             if let Some(debugger) = &self.vm().as_mut().debugger {
                 bun_core::hint::cold();
-                // PORT NOTE (layering): `HTTPServerAgent.notifyServerStopped`
-                // takes `AnyServer` in Zig and unpacks `inspector_server_id`
-                // itself. The Rust port hoists that wrapper to
-                // `super::http_server_agent` so this crate-tier call doesn't
-                // re-declare the C ABI.
                 super::http_server_agent::notify_server_stopped(
                     &debugger.http_server_agent,
                     self.as_any_server(),
@@ -1399,11 +1306,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
 impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG>
 where
-    // PORT NOTE (const-generic dispatch): `RequestContextHostFns` (the host-fn
-    // export table) is blanket-impl'd per (SSL,DBG,H3) tuple in
-    // `RequestContext.rs` for `ThisServer: ServerLike`; restating it here lets
-    // method bodies name `<NewRequestContext<..> as RequestContextHostFns>::ON_*`
-    // without each method repeating the bound.
     NewRequestContext<Self, SSL, DEBUG, false>: super::request_context::RequestContextHostFns,
     NewRequestContext<Self, SSL, DEBUG, true>: super::request_context::RequestContextHostFns,
 {
@@ -1420,17 +1322,6 @@ where
         }
     }
 
-    // PORT NOTE: `getPluginsAsync` is referenced from `AnyServer.loadAndResolvePlugins`
-    // (server.zig:3440-3447) but never defined on `ThisServer`. Zig's lazy
-    // compilation means the dispatch arm is dead. The Rust port omits both the
-    // method and the `AnyServer` dispatcher rather than guess a contract that
-    // would silently change behavior if a caller is later wired up. The live
-    // HTMLBundle path goes through `get_or_load_plugins`.
-
-    /// Returns:
-    /// - .ready if no plugin has to be loaded
-    /// - .err if there is a cached failure. Currently, this requires restarting the entire server.
-    /// - .pending if `callback` was stored. It will call `onPluginsResolved` or `onPluginsRejected` later.
     pub fn get_or_load_plugins(
         &mut self,
         callback: ServePluginsCallback<'_>,
@@ -1488,16 +1379,6 @@ where
             self.app_mut().num_subscribers(topic.slice()),
         )))
     }
-
-    // ── host_fn.wrapInstanceMethod hand-expansions ───────────────────────
-    //
-    // PORT NOTE: Zig's `host_fn.wrapInstanceMethod(ThisServer, "name", false)`
-    // is a comptime type-directed argument decoder (see host_fn.zig:493-648).
-    // The `#[bun_jsc::host_fn(method)]` proc-macro that will eventually
-    // replace it hasn't landed, so the per-type decode arms used by the
-    // server (`ZigString`, `JSValue`, `?JSValue`, `*WebCore.Request`) are
-    // open-coded here. They mirror the Zig branches exactly: same error
-    // messages, same undefined/null handling, same eat order.
 
     /// `pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false)`
     #[bun_jsc::host_fn(method)]
@@ -1721,11 +1602,6 @@ where
             let js_string = message_value.to_js_string(global)?;
             let view = js_string.view(global);
             let slice = view.to_slice();
-            // Spec keeps `js_string` alive (server.zig:748), not `message_value`:
-            // when the input was not already a JSString, `to_js_string` allocates
-            // a fresh GC cell that is *not* reachable from `message_value`, so a
-            // GC during `publish_with_options` could otherwise reclaim the bytes
-            // `slice` borrows.
             let buffer = slice.slice();
             let result = (AnyWebSocket::publish_with_options(
                 SSL,
@@ -1793,10 +1669,6 @@ where
             let mut sec_websocket_protocol = ZigString::EMPTY;
             let mut sec_websocket_extensions = ZigString::EMPTY;
 
-            // Owned backing storage for the above when they come from options.headers.
-            // fastGet returns a ZigString that borrows from the header map entry's
-            // StringImpl, which fastRemove then frees — so we must copy the bytes
-            // before removing the entry.
             let mut _sec_websocket_protocol_owned = ZigStringSlice::EMPTY;
             let mut _sec_websocket_extensions_owned = ZigStringSlice::EMPTY;
 
@@ -1974,13 +1846,6 @@ where
         // SAFETY: upgrader_ptr is live (ref_() above)
         let upgrader = unsafe { &mut *upgrader_ptr };
         if let Some(req_ptr) = upgrader.req {
-            // PORT NOTE: `RequestContext.req` is type-erased to `*mut c_void`
-            // (RequestContext.rs:82). `server.upgrade()` is HTTP/1-only — H3
-            // contexts have a distinct generic param and `request_context.get`
-            // above would have returned None — so the concrete `Req` is always
-            // `uws_sys::Request` here.
-            // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref
-            // (BACKREF; live while RequestContext.req is Some).
             let r = bun_opaque::opaque_deref_mut(req_ptr.cast::<uws_sys::Request>());
             if sec_websocket_key_str.len == 0 {
                 sec_websocket_key_str =
@@ -2152,22 +2017,12 @@ where
             sec_websocket_key_str.slice(),
             proto_str.slice(),
             ext_str.slice(),
-            // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe
-            // deref (`upgrade_ctx` checked non-null / non-sentinel above,
-            // server.zig:899; the uWS HttpContext owns it for the request's
-            // duration).
             Some(bun_opaque::opaque_deref_mut(upgrade_ctx)),
         );
 
         Ok(JSValue::TRUE)
     }
 
-    /// `server.zig:onReloadFromZig`. Swaps the live server's mutable
-    /// configuration (handlers, websocket, routes) with `new_config` and
-    /// re-registers routes on the uws app(s). Ownership of moved-in fields
-    /// transfers to `self.config`; the caller's `new_config` is left in a
-    /// valid-but-emptied state (`ServerConfig`'s `Drop` then frees whatever
-    /// was *not* taken — e.g. a websocket block we declined to adopt).
     pub fn on_reload_from_zig(&mut self, new_config: &mut ServerConfig, global: &JSGlobalObject) {
         httplog!("onReload");
 
@@ -2189,11 +2044,6 @@ where
         {
             self.config.on_request = new_config.on_request.take();
         }
-        // Zig server.zig:1108: `if (this.config.onNodeHTTPRequest != new_config.onNodeHTTPRequest)`
-        // — swap on any change, *including* clearing to `.zero` when the reload
-        // config omits the handler, so subsequent `on_web_socket_upgrade` /
-        // `set_routes` stop routing through the node:http path. `take()` yields
-        // `None` when the new config omitted it; assignment drops the old Strong.
         if self.config.on_node_http_request.as_ref().map(Strong::get)
             != new_config.on_node_http_request.as_ref().map(Strong::get)
         {
@@ -2372,10 +2222,6 @@ where
 
             let mut url = URL::parse(temp_url_str);
 
-            // `bun.String.cloneUTF8(url.href)` below makes its own copy, so the
-            // joined buffer only needs to live through this block. The else arm
-            // borrows `temp_url_str` (kept alive by `url_zig_str`) instead of
-            // duping it just to satisfy a uniform `defer free` like the Zig did.
             let owned_url_buf: std::borrow::Cow<'_, [u8]> = if url.hostname.is_empty() {
                 std::borrow::Cow::Owned(
                     strings::append(&self.base_url_string_for_joining, url.pathname).into_vec(),
@@ -2457,11 +2303,6 @@ where
             );
         };
 
-        // Zig: `var request = Request.new(existing_request)` → raw
-        // `*Request` (TrivialNew). `Request::to_js` stores `self as *mut
-        // Request` into the JS wrapper, which adopts ownership and frees the
-        // allocation in its GC finalizer. Relinquish the `Box` here so the
-        // local going out of scope does not also drop it (double-free / UAF).
         let request: *mut Request = bun_core::heap::into_raw(existing_request);
 
         debug_assert!(self.config.on_request.is_some()); // confirmed above
@@ -2962,12 +2803,6 @@ where
     ) -> Option<PreparedRequestFor<'_, Ctx>> {
         jsc::mark_binding!();
 
-        // We need to register the handler immediately since uSockets will not buffer.
-        //
-        // We first validate the self-reported request body length so that
-        // we avoid needing to worry as much about what memory to free.
-        // RFC 9114 §4.2: an HTTP/3 message containing a transfer-encoding
-        // header field is malformed.
         if Ctx::IS_H3 {
             if ReqLike::header(req, b"transfer-encoding").is_some() {
                 RespLike::write_status(resp, b"400 Bad Request");
@@ -3109,10 +2944,6 @@ where
             unsafe { &mut *bun_core::heap::into_raw(request_object_box) };
         ctx.set_request_weakref(request_object);
 
-        // The lazy `getRequest()` path that backs Request.url / .headers
-        // is `*uws.Request`-typed; for HTTP/3 we populate both eagerly so
-        // the rest of the pipeline never needs to know which transport
-        // delivered the bytes.
         if Ctx::IS_H3 {
             // SAFETY: create_from_h3 returns a +1-ref FetchHeaders; adopt into RAII wrapper.
             request_object.set_fetch_headers(Some(unsafe {
@@ -3120,10 +2951,6 @@ where
                     std::ptr::from_mut(req).cast::<c_void>(),
                 ))
             }));
-            // PORT NOTE: `ReqLike::{url,header}` both borrow `&mut req`; the
-            // returned slices alias the same uWS-owned header buffer. Format
-            // the `https://{host}` prefix while `host` is borrowed so the
-            // second `&mut req` borrow for `url` is unconflicted.
             let prefix: Option<Vec<u8>> = ReqLike::header(req, b"host").map(|host| {
                 let fmt = bun_fmt::HostFormatter {
                     is_https: true,
@@ -3418,10 +3245,6 @@ where
                 break 'brk false;
             };
 
-            // The loopback source-IP check below is not enough on its own: a
-            // DNS-rebound origin connects from 127.0.0.1 but presents the
-            // attacker's hostname in `Host`. Apply the same Host allowlist as
-            // the `/_bun/*` routes before disclosing the project root path.
             if !bake::is_allowed_dev_host(dev_server, req) {
                 break 'brk false;
             }
@@ -3467,12 +3290,6 @@ where
         hash_bytes[8..].copy_from_slice(&second_hash_segment);
         let uuid = UUID::init_with(&hash_bytes);
 
-        // interface DevToolsJSON {
-        //   workspace?: {
-        //     root: string,
-        //     uuid: string,
-        //   }
-        // }
         let mut json_string = Vec::new();
         write!(
             &mut json_string,
@@ -3561,17 +3378,6 @@ where
     // `impl NewServer` in mod.rs; do not redefine them here.
 }
 
-// JsClass impls for the four server monomorphizations. Forward into the
-// canonical `crate::generated_classes::js_$ty` wrappers (emitted by
-// `generate-classes.ts`) instead of redeclaring the `${T}__fromJS`/
-// `${T}__create` externs locally — the codegen module is the single owner of
-// those FFI signatures, so going through it avoids `clashing_extern_declarations`
-// and keeps the ABI definition in one place.
-//
-// `get_constructor` is intentionally omitted: `server.classes.ts` sets
-// `noConstructor: true` for all four variants, so no `${T}__getConstructor`
-// symbol is exported by C++ and the trait default (`JSValue::UNDEFINED`) is
-// the spec-correct answer.
 bun_jsc::impl_js_class_via_generated!(HTTPServer => crate::generated_classes::js_HTTPServer, no_constructor);
 bun_jsc::impl_js_class_via_generated!(HTTPSServer => crate::generated_classes::js_HTTPSServer, no_constructor);
 bun_jsc::impl_js_class_via_generated!(DebugHTTPServer => crate::generated_classes::js_DebugHTTPServer, no_constructor);
@@ -3764,16 +3570,6 @@ pub(super) fn server_set_max_http_header_size_(
     Ok(JSValue::UNDEFINED)
 }
 
-// `host_fn.wrap{3,4}` C-ABI shims: each forwards through `to_js_host_call`
-// (= `host_fn::to_js_host_fn_result`) so a `JsError` becomes `.zero` with the
-// exception left on the global. Signatures match the C++ callers in
-// `node:http`/`node:https` (`bindings/NodeHTTP.cpp`).
-//
-// NOTE: these are plain `extern "C"` (NOT `#[bun_jsc::host_call]` / sysv64).
-// Zig's `wrap{3,4}` emits `callconv(.c)` and the C++ declarations in
-// NodeHTTP.cpp are bare `extern "C"` with no `SYSV_ABI`, so on Windows the
-// caller uses Win64 ABI. Using `host_call` here forced sysv64 on the Rust
-// side, scrambling the `server` argument and tripping the `is_object()` guard.
 #[unsafe(export_name = "Server__setAppFlags")]
 extern "C" fn server_set_app_flags_shim(
     global: &JSGlobalObject,
@@ -3816,11 +3612,6 @@ extern "C" fn server_set_max_http_header_size_shim(
     )
 }
 
-// ─── Externs ─────────────────────────────────────────────────────────────────
-// C++-implemented (bindings/BunServer.cpp). Declared here (not `bun_jsc`)
-// because the signatures name `bun_runtime` types (`NodeHTTPResponse`,
-// `uws::Request`) — moving them down would create a forward dependency.
-// Pointee types lack #[repr(C)] but are only passed by pointer.
 #[allow(improper_ctypes)]
 unsafe extern "C" {
     // NodeHTTPServer__onRequest_{http,https} live in `mod.rs::ffi` (sole user

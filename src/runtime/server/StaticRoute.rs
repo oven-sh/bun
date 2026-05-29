@@ -20,17 +20,8 @@ use crate::webcore::body::Value as BodyValue;
 use crate::webcore::headers_ref::any_blob_content_type;
 use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 
-// bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — single-thread refcount.
-// PORT NOTE (§Pointers): `*StaticRoute` is also passed as uws onAborted/
-// onWritable userdata; the intrusive `ref_count` Cell + `*mut Self` receivers
-// preserve write provenance through the FFI userdata round-trip so the eventual
-// `heap::take` in `deref_` is sound.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct StaticRoute {
-    // TODO: Remove optional. StaticRoute requires a server object or else it will
-    // not ensure it is alive while sending a large blob.
-    // `pub(super)` so sibling route modules (HTMLBundle) can construct directly
-    // (Zig `bun.new(StaticRoute, .{ .ref_count = .init(), ... })`).
     pub(super) ref_count: Cell<u32>,
     pub server: Cell<Option<AnyServer>>,
     pub status_code: u16,
@@ -75,11 +66,6 @@ impl StaticRoute {
         unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
     }
 
-    /// Ownership of `blob` is transferred to this function.
-    // PORT NOTE: Zig takes `*const AnyBlob` and bit-copies (`blob.*`) into the
-    // route, relying on no-auto-drop. Rust `AnyBlob` has drop glue (e.g.
-    // `InternalBlob.bytes: Vec<u8>`), so a `&AnyBlob` + `ptr::read` would alias
-    // and double-free when the caller's value drops. Take by value instead.
     pub fn init_from_any_blob(
         blob: AnyBlob,
         options: InitFromBytesOptions<'_>,
@@ -396,11 +382,6 @@ impl StaticRoute {
     }
 
     fn do_render_blob(&self, resp: AnyResponse, did_finish: &mut bool) {
-        // We are not corked
-        // The body is small
-        // Faster to do the memcpy than to do the two network calls
-        // We are not streaming
-        // This is an important performance optimization
         if self.blob.fast_size() < 16384 - 1024 {
             resp.corked(|| self.do_render_blob_corked(resp, did_finish));
         } else {

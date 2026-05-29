@@ -92,18 +92,6 @@ pub fn if_none_match(
     false // Condition is true, continue with normal processing
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// Headers — moved from bun_http.
-// Source: src/http/Headers.zig
-//
-// Core struct + tier-safe methods only. The following stay in `bun_http`
-// (T5) as they pull in higher-tier or sibling deps that http_types (T3)
-// must not name:
-//   - `Options` / `from()`       — FetchHeaders + Blob (T6, vtabled in bun_http)
-//   - `from_pico_http_headers()` — bun_picohttp (kept beside its only caller)
-//   - `to_fetch_headers`         — extension-trait in bun_http_jsc
-// ═══════════════════════════════════════════════════════════════════════
-
 /// `bun.schema.api.StringPointer` — canonical definition lives in `bun_core`
 /// (T0, already a dep). Re-exported so `HeaderEntry`'s field type and
 /// `bun_http::headers::api::StringPointer` keep resolving.
@@ -117,11 +105,6 @@ pub struct HeaderEntry {
 
 pub type HeaderEntryList = bun_collections::MultiArrayList<HeaderEntry>;
 
-/// Column accessors for `HeaderEntry` MultiArrayList storage.
-///
-/// `header_entries.slice().items_name()` was a Zig MultiArrayList convenience.
-/// Returns a normal `&self`-tied borrow; `StringPointer` is `Copy` so callers
-/// that need to mutate `header_entries` afterwards copy the index out first.
 pub trait HeaderEntryColumns {
     fn items_name(&self) -> &[StringPointer];
     fn items_value(&self) -> &[StringPointer];
@@ -231,18 +214,8 @@ impl Headers {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// wtf::writeHTTPDate — moved from bun_jsc.
-// Source: src/jsc/WTF.zig (writeHTTPDate only — the rest of `wtf` is
-// string-builder/date-parse machinery that stays jsc-side).
-// ═══════════════════════════════════════════════════════════════════════
-
 pub mod wtf {
     unsafe extern "C" {
-        // Implemented in C++ (bindings). The only precondition is "buffer points to
-        // ≥`length` writable bytes"; encoding that as `&mut [u8; 32]` (thin pointer,
-        // ABI-identical to `*mut u8`) plus a fixed `length = 32` discharges it at the
-        // type level, so the declaration is `safe fn`.
         safe fn Bun__writeHTTPDate(
             buffer: &mut [u8; 32],
             length: usize,

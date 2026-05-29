@@ -12,18 +12,8 @@ use crate::{BundleV2, Transpiler};
 #[cfg(windows)]
 pub(crate) extern "C" fn timer_callback(_: *mut bun_sys::windows::libuv::Timer) {}
 
-/// Port of `std.Thread.ResetEvent` — single-shot manual-reset event used to
-/// block `spawn()` until the bundle thread has initialized its `Waker`.
-// PORT NOTE: re-export `bun_threading::ResetEvent` (futex-backed); the local
-// `wait()`/`set()`/`Default` API is identical, and the futex impl preserves
-// the "set-before-wait does not deadlock" property the parking_lot draft had.
 pub use bun_threading::ResetEvent;
 
-/// Result of a `Bun.build` invocation handed back to the JS thread.
-// PORT NOTE: mirrors `BundleV2.JSBundleCompletionTask.Result` (bundle_v2.zig).
-// Defined here (not re-exported from `bundle_v2`) because the un-gated
-// `bundle_v2` module keeps the draft body private; T6 (`bundler_jsc`) consumes
-// this via the `CompletionStruct` trait.
 pub struct BuildResult {
     pub output_files: Vec<crate::options::OutputFile>,
     pub metafile: Option<Box<[u8]>>,
@@ -36,17 +26,6 @@ pub enum BundleV2Result {
     Value(BuildResult),
 }
 
-/// Originally, bake.DevServer required a separate bundling thread, but that was
-/// later removed. The bundling thread's scheduling logic is generalized over
-/// the completion structure.
-///
-/// CompletionStruct's interface:
-///
-/// - `configureBundler` is used to configure `Bundler`.
-/// - `completeOnBundleThread` is used to tell the task that it is done.
-// PORT NOTE: trait bound lives on the `impl` (not the struct) so the
-// `singleton` static can name `BundleThread<JSBundleCompletionTask>` before T6
-// provides the `CompletionStruct` impl for the forward-decl.
 pub struct BundleThread<C: Node> {
     pub waker: Async::Waker,
     pub ready_event: ResetEvent,
@@ -56,20 +35,7 @@ pub struct BundleThread<C: Node> {
     pub generation: bun_core::Generation,
 }
 
-/// Trait capturing the interface the Zig `CompletionStruct: type` parameter
-/// must satisfy.
-///
-/// Zig used comptime duck typing and additionally asserted (via `@compileError`)
-/// that the *only* valid instantiation is `BundleV2.JSBundleCompletionTask`.
-/// The body of `generateInNewThread` directly touched JSBundleCompletionTask
-/// fields (`.result`, `.log`, `.plugins`, `.config.files`, `.transpiler`); in
-/// Rust those become trait accessors so the generic `BundleThread<C>` stays
-/// layout-agnostic. The concrete impl lives in T6 (`bun_bundler_jsc`).
 pub trait CompletionStruct: Node + Send + 'static {
-    /// Zig: `completion.configureBundler(transpiler, arena)` — `arena`
-    /// is the per-build mimalloc heap that backs `transpiler`, so the two
-    /// share lifetime `'a` (option fields like `optimize_imports: &'a StringSet`
-    /// borrow from `bump`).
     fn configure_bundler<'a>(
         &mut self,
         transpiler: &mut Transpiler<'a>,
@@ -88,43 +54,14 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// Zig: `if (completion.config.files.map.count() > 0) &completion.config.files else null`
     /// — folded into a single accessor so the opaque `FileMap` layout stays in T6.
     fn file_map(&mut self) -> Option<NonNull<FileMap>>;
-    /// Zig: `switch (CompletionStruct) { BundleV2.JSBundleCompletionTask => completion, … }`
-    /// — the comptime type-switch collapses to a §Dispatch handle (erased
-    /// owner + `&'static` vtable) the impl provides, so the bundler can read
-    /// `result == .err` / `jsc_event_loop.enqueueTaskConcurrent` without
-    /// naming the concrete struct.
     fn as_js_bundle_completion_task(&mut self) -> dispatch::CompletionHandle;
 
-    /// Zig: `const transpiler = try arena.create(bun.Transpiler);` followed by
-    /// `try completion.configureBundler(transpiler, arena);` — Zig left the
-    /// `Transpiler` `undefined` and let `configureBundler` initialize it in place.
-    /// Rust's `Transpiler<'a>` has borrow-carrying fields (`arena: &'a Arena`,
-    /// `resolver: Resolver<'a>`) that cannot be zero-init'd, so the allocate +
-    /// configure pair is folded into one trait call returning the
-    /// arena-allocated, fully-configured transpiler.
-    // The returned `&'a mut Transpiler<'a>` is arena-allocated via `bump.alloc(...)`
-    // (bumpalo `Bump`), which hands out `&mut` from `&self` through interior
-    // mutability — the standard arena pattern `mut_from_ref` cannot see through.
     #[allow(clippy::mut_from_ref)]
     fn create_and_configure_transpiler<'a>(
         &mut self,
         bump: &'a Arena,
     ) -> Result<&'a mut Transpiler<'a>, bun_core::Error>;
 
-    /// Zig: `try BundleV2.init(transpiler, null, arena, jsc.AnyEventLoop.init(arena),
-    /// false, jsc.WorkPool.get(), heap)` → wire `this.{plugins,completion,file_map}`
-    /// from `self` → `completion.transpiler = this` → `this.runFromJSInNewThread(...)`
-    /// → on success `self.set_result(Value(..))` → `this.deinitWithoutFreeingArena()`;
-    /// on error drain `this.linker.source_maps.*_wait_group` then deinit.
-    ///
-    /// PORT NOTE: the `BundleV2` impl does not yet expose `init` /
-    /// `run_from_js_in_new_thread` (pending the linker pipeline). The Zig
-    /// `@compileError` already
-    /// proves this body is `JSBundleCompletionTask`-specific, so the
-    /// construction + run is delegated to the trait impl in T6, which has
-    /// access to the concrete event-loop / work-pool wiring. The shared
-    /// scaffolding (arena, AST arena push/pop, log copy,
-    /// `completeOnBundleThread`) stays in `generate_in_new_thread` below.
     fn init_and_run<'a>(
         &mut self,
         transpiler: &'a mut Transpiler<'a>,
@@ -137,14 +74,6 @@ pub trait CompletionStruct: Node + Send + 'static {
 }
 
 impl<C: CompletionStruct> BundleThread<C> {
-    /// To initialize, put this somewhere in memory, and then call `spawn()`
-    // PORT NOTE: Zig `uninitialized` left `waker` as `undefined`. We can't use
-    // `mem::zeroed()` here — on macOS `Waker` holds a `Box<[u8]>` and on
-    // Windows a `&'static` loop, both of which have a NonNull validity
-    // invariant (zeroing them is *language-level* UB even if never read).
-    // `placeholder()` yields a fully-initialized inert value instead.
-    // `ready_event.wait()` in `spawn()` blocks until `thread_main` overwrites
-    // it via `ptr::write`, so the placeholder is never observed live.
     pub fn uninitialized() -> Self {
         Self {
             #[cfg(unix)]
@@ -225,12 +154,6 @@ impl<C: CompletionStruct> BundleThread<C> {
         // SAFETY: raw-ptr field projection; spawning thread is blocked in `ready_event.wait()`.
         unsafe { (*instance).ready_event.set() };
 
-        // PORT NOTE: libuv Timer lives on stack for the lifetime of this never-returning fn.
-        // It MUST be declared at function scope (not inside the `#[cfg(windows)] { ... }`
-        // block below) because `timer.init()`/`timer.start()` register `&timer`'s address
-        // into the uv loop's intrusive handle queue / timer min-heap, and `waker.wait()`
-        // (→ `uv_run`) in the `loop {}` below dereferences that address. Matches Zig spec
-        // (BundleThread.zig:77) which hoists `var timer` to `threadMain` scope.
         #[cfg(windows)]
         let mut timer: bun_sys::windows::libuv::Timer = bun_core::ffi::zeroed();
         #[cfg(windows)]
@@ -307,11 +230,6 @@ impl<C: CompletionStruct> BundleThread<C> {
 
         transpiler.resolver.generation = generation;
 
-        // Zig: `const this = try BundleV2.init(transpiler, null, arena,
-        //       jsc.AnyEventLoop.init(arena), false, jsc.WorkPool.get(), heap);`
-        // followed by field wiring + `runFromJSInNewThread`. Delegated — see
-        // `init_and_run` doc. Reborrow `transpiler` through a raw ptr so
-        // `completion` can be borrowed again below (Zig stored `*Transpiler`).
         let transpiler_ptr: *mut Transpiler<'_> = transpiler;
         let run = completion.init_and_run(
             // SAFETY: `transpiler` lives in `bump` for the duration of `heap`.
@@ -322,13 +240,6 @@ impl<C: CompletionStruct> BundleThread<C> {
             std::ptr::from_ref(bun_threading::work_pool::WorkPool::get()).cast_mut(),
         );
 
-        // PORT NOTE: Zig's overlapping `defer { ast_memory_store.pop();
-        // this.deinitWithoutFreeingArena(); }` + `errdefer { wait_groups; copy log }`
-        // captured ≥2 disjoint &mut borrows. Restructured as straight-line: log copy
-        // runs on both paths; `completeOnBundleThread` only on success (the error
-        // path's `set_result(Err)` + complete happens in `thread_main`). The
-        // `deinitWithoutFreeingArena` + wait-group drain live inside `init_and_run`
-        // (it owns `this`).
         let mut out_log = bun_ast::Log::init();
         // SAFETY: `transpiler.log` is the arena-allocated `*mut Log` set up by
         // `configure_bundler`; valid for the lifetime of `heap`. Raw deref so the
@@ -373,23 +284,9 @@ impl<C: CompletionStruct> BundleThread<C> {
     }
 }
 
-/// Lazily-initialized singleton. This is used for `Bun.build` since the
-/// bundle thread may not be needed.
-// PORT NOTE: Zig had a per-monomorphization `singleton` struct with
-// `static var instance`. Rust forbids generic statics, so the storage is
-// type-erased (`*mut ()`) and the accessor functions are generic over `C`.
-// The Zig source already `@compileError`s for any `CompletionStruct` other than
-// `JSBundleCompletionTask`, so in practice exactly one `C` is ever used and the
-// erased static is sound. T6 (`bun_bundler_jsc`) calls these with its concrete
-// completion-task type.
 pub mod singleton {
     use super::*;
 
-    /// `Send + Sync` newtype around the leaked `BundleThread` allocation so it
-    /// can sit inside a `OnceLock`. Type-erased because Rust forbids generic
-    /// statics; see module comment. Stored as a raw pointer (not `&'static`)
-    /// because the bundle thread mutates `*self` concurrently — callers must
-    /// only ever project fields via raw-pointer access.
     struct Instance(NonNull<()>);
     // SAFETY: the allocation is a leaked `Box<BundleThread<C>>` valid for
     // `'static`; cross-thread access is mediated entirely through

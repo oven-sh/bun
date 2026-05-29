@@ -156,10 +156,6 @@ impl Cat {
                     let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                     return Builtin::done(interp, cmd, 0);
                 }
-                // Spec: `this.bltn().stdin.fd.addReader(this); return ...start()`.
-                // PORT NOTE: reshaped for borrowck — clone the `Arc<IOReader>`
-                // out of `stdin` so we hold no borrow of `interp` across
-                // `start()` (which may re-enter via the raw interp backref).
                 let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 let reader = match &Builtin::of(interp, cmd).stdin {
                     BuiltinInput::Fd(r) => Arc::clone(r),

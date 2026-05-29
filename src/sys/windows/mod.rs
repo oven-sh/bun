@@ -22,10 +22,6 @@ pub use bun_windows_sys::kernel32::GetLastError;
 pub use bun_windows_sys::ntdll;
 pub use bun_windows_sys::ws2_32;
 
-/// `std.os.windows.kernel32` — re-exports the tier-0 `bun_windows_sys::kernel32`
-/// surface and layers the additional externs higher-tier crates reach for
-/// (`ReadDirectoryChangesW`, IOCP, SRW locks, `CreateProcessW`, …). Declared
-/// locally so adding an extern doesn't require touching `bun_windows_sys`.
 pub mod kernel32 {
     use super::{
         BOOL, CONDITION_VARIABLE, DWORD, FileNotifyChangeFilter, HANDLE, LPCWSTR, LPOVERLAPPED,
@@ -202,16 +198,6 @@ pub use bun_core::windows_sys::{
     GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
 };
 
-/// `std.os.windows.fromSysTime` — convert a 64-bit Windows `FILETIME`
-/// (100-ns intervals since 1601-01-01 UTC, as projected in
-/// `FILE_BASIC_INFORMATION`'s `LARGE_INTEGER` time fields) into nanoseconds
-/// since the **POSIX epoch** (1970-01-01 UTC), matching the clock
-/// `bun_core::time::nano_timestamp()` reports.
-///
-/// Spec (vendor/zig std/os/windows.zig `fromSysTime`):
-/// `(hns + epoch.windows * (ns_per_s/100)) * 100` where `epoch.windows` is
-/// `-11_644_473_600` seconds (1601→1970 shift). The shift is required:
-/// `nano_timestamp()` uses `SystemTime::UNIX_EPOCH`, not raw FILETIME.
 #[inline]
 #[allow(dead_code)]
 pub const fn from_sys_time(nt_time: i64) -> i128 {
@@ -251,11 +237,6 @@ pub use bun_paths::WPathBuffer;
 
 pub use bun_windows_sys::HANDLE;
 pub use bun_windows_sys::HMODULE;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Additional Win32 typedefs / constants surfaced for `bun_watcher`,
-// `bun_crash_handler`, `bun_threading`, `bun_install`.
-// ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_windows_sys::ULONG_PTR;
 /// `HRESULT` — 32-bit signed result code.
@@ -297,10 +278,6 @@ impl Default for CONDITION_VARIABLE {
     }
 }
 
-// `ntdll` is re-exported from `bun_windows_sys` above; the futex primitives
-// (`RtlWaitOnAddress` / `RtlWakeAddress*`) live there so this crate doesn't
-// shadow the canonical module.
-/// `S_OK` — success `HRESULT`.
 pub const S_OK: HRESULT = 0;
 /// Extract the Win32 facility code from an `HRESULT` (`winerror.h` macro).
 #[inline]
@@ -326,14 +303,6 @@ pub const FILE_ACTION_RENAMED_OLD_NAME: DWORD = 0x0000_0004;
 pub const FILE_ACTION_RENAMED_NEW_NAME: DWORD = 0x0000_0005;
 
 bitflags::bitflags! {
-    /// `std.os.windows.FileNotifyChangeFilter` — `dwNotifyFilter` for
-    /// `ReadDirectoryChangesW` (`winnt.h` `FILE_NOTIFY_CHANGE_*`).
-    ///
-    /// `#[repr(transparent)]` is required: this newtype is passed by value
-    /// across the `extern "system"` boundary as the `dwNotifyFilter: DWORD`
-    /// parameter of `ReadDirectoryChangesW`. bitflags 2.x does NOT add a repr
-    /// automatically; without it the struct has Rust's default (unspecified)
-    /// layout and is improper_ctypes / UB at the FFI boundary.
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct FileNotifyChangeFilter: DWORD {
@@ -425,25 +394,12 @@ pub const FILE_TYPE_PIPE: DWORD = 0x0003;
 pub const FILE_TYPE_REMOTE: DWORD = 0x8000;
 
 pub use SetCurrentDirectoryW as SetCurrentDirectory;
-/// Each process has a single current directory made up of two parts:
-///
-/// - A disk designator that is either a drive letter followed by a colon, or a server name and share name (\\servername\sharename)
-/// - A directory on the disk designator
-///
-/// The current directory is shared by all threads of the process: If one thread changes the current directory, it affects all threads in the process. Multithreaded applications and shared library code should avoid calling the SetCurrentDirectory function due to the risk of affecting relative path calculations being performed by other threads. Conversely, multithreaded applications and shared library code should avoid using relative paths so that they are unaffected by changes to the current directory performed by other threads.
-///
-/// Note that the current directory for a process is locked while the process is executing. This will prevent the directory from being deleted, moved, or renamed.
 pub use bun_windows_sys::externs::SetCurrentDirectoryW;
 
 pub use bun_windows_sys::externs::RtlNtStatusToDosError;
 
 pub use bun_windows_sys::externs::SaferiIsExecutableFileType;
 
-/// Codes from <https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/18d8fbe8-a967-4f1c-ae50-99ca8e491d2d>.
-/// Canonical newtype lives in `bun_windows_sys` (tier-0); re-exported here so
-/// `bun_sys::windows::Win32Error` and `bun_errno::Win32Error` are one nominal
-/// type. The full MS-ERREF const table below is parked behind `#[cfg(any())]`
-/// — only the subset on `bun_windows_sys::Win32Error` is referenced.
 pub use bun_windows_sys::Win32Error;
 
 /// `to_system_errno()` / `to_e()` — extension trait from `bun_errno` (the
@@ -470,12 +426,6 @@ impl Win32ErrorUnwrap for Win32Error {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// DEAD: full 1188-variant MS-ERREF const table from Zig std. Kept gated for
-// reference; move individual consts up into `bun_windows_sys::Win32Error`
-// if a new caller needs one. (Inherent impl on a foreign type is illegal,
-// so this block cannot be un-gated as-is.)
-// ──────────────────────────────────────────────────────────────────────────
 #[cfg(any())]
 mod _win32error_full_table {
     use super::Win32Error;
@@ -1138,17 +1088,7 @@ mod _win32error_full_table {
         pub const TIMER_RESOLUTION_NOT_SET: Win32Error = Win32Error(607);
         /// There is insufficient account information to log you on.
         pub const INSUFFICIENT_LOGON_INFO: Win32Error = Win32Error(608);
-        /// {Invalid DLL Entrypoint} The dynamic link library %hs is not written correctly.
-        /// The stack pointer has been left in an inconsistent state.
-        /// The entrypoint should be declared as WINAPI or STDCALL.
-        /// Select YES to fail the DLL load. Select NO to continue execution.
-        /// Selecting NO may cause the application to operate incorrectly.
         pub const BAD_DLL_ENTRYPOINT: Win32Error = Win32Error(609);
-        /// {Invalid Service Callback Entrypoint} The %hs service is not written correctly.
-        /// The stack pointer has been left in an inconsistent state.
-        /// The callback entrypoint should be declared as WINAPI or STDCALL.
-        /// Selecting OK will cause the service to continue operation.
-        /// However, the service process may operate incorrectly.
         pub const BAD_SERVICE_ENTRYPOINT: Win32Error = Win32Error(610);
         /// There is an IP address conflict with another system on the network.
         pub const IP_ADDRESS_CONFLICT1: Win32Error = Win32Error(611);
@@ -2014,11 +1954,6 @@ mod _win32error_full_table {
         pub const INVALID_CRUNTIME_PARAMETER: Win32Error = Win32Error(1288);
         /// The operation occurred beyond the valid data length of the file.
         pub const BEYOND_VDL: Win32Error = Win32Error(1289);
-        /// The service start failed since one or more services in the same process have an incompatible service SID type setting.
-        /// A service with restricted service SID type can only coexist in the same process with other services with a restricted SID type.
-        /// If the service SID type for this service was just configured, the hosting process must be restarted in order to start this service.
-        /// On Windows Server 2003 and Windows XP, an unrestricted service cannot coexist in the same process with other services.
-        /// The service with the unrestricted service SID type must be moved to an owned process in order to start this service.
         pub const INCOMPATIBLE_SERVICE_SID_TYPE: Win32Error = Win32Error(1290);
         /// The process hosting the driver for this device has been terminated.
         pub const DRIVER_PROCESS_TERMINATED: Win32Error = Win32Error(1291);
@@ -3377,10 +3312,6 @@ pub fn get_last_error_tag() -> impl core::fmt::Display {
 /// `bun.windows.Error` — Zig alias for `Win32Error`.
 pub type Error = Win32Error;
 
-/// `bun.windows.translateNTStatusToErrno` — thin wrapper over the canonical
-/// table in `bun_errno::windows::translate_ntstatus_to_errno`. This crate only
-/// adds the debug-build `Output::debug_warn` diagnostics (which `bun_errno`
-/// cannot emit without an upward dep).
 pub fn translate_nt_status_to_errno(err: NTSTATUS) -> E {
     // Both `NTSTATUS` newtypes are `#[repr(transparent)] (pub u32)`; round-trip
     // via the raw value so the lower-tier crate owns the only mapping table.
@@ -3421,11 +3352,6 @@ pub fn GetCurrentProcessId() -> DWORD {
     GetCurrentProcessId()
 }
 
-/// `CONTEXT` (winnt.h) — full processor context captured by
-/// `RtlCaptureContext`. Declared as an arch-sized opaque aligned blob so this
-/// crate doesn't need to mirror the (large, arch-specific) field layout; the
-/// consumer (`bun_runtime::test_runner::harness::recover`) treats it as opaque
-/// storage and passes `*mut CONTEXT` straight back to ntdll.
 #[repr(C, align(16))]
 pub struct CONTEXT {
     // x64: 1232 bytes; ARM64: 912 bytes. Use the larger so the buffer is
@@ -3459,18 +3385,6 @@ pub use bun_windows_sys::externs::{
 
 pub use bun_windows_sys::externs::SetInformationJobObject;
 
-// Found experimentally:
-// #include <stdio.h>
-// #include <windows.h>
-//
-// int main() {
-//         printf("%ld\n", JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO);
-//         printf("%ld\n", JOB_OBJECT_MSG_EXIT_PROCESS);
-// }
-//
-// Output:
-// 4
-// 7
 #[allow(dead_code)]
 pub const JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO: DWORD = 4;
 #[allow(dead_code)]
@@ -3641,20 +3555,9 @@ pub fn win_sock_error_to_zig_error(
 }
 
 pub fn WSAGetLastError() -> Option<E> {
-    // Spec note (windows.zig:3303): Zig returns `?SystemErrno`; this port
-    // intentionally re-types to `Option<E>` because all Rust callers consume
-    // `E`. The `as u32` cast mirrors Zig's infallible `@intFromEnum` —
-    // `WSAGetLastError()` is documented to return non-negative values, so a
-    // checked `try_from().expect()` would only add a panic path the spec
-    // never had.
     SystemErrno::init(win32::ws2_32::WSAGetLastError() as u32).map(SystemErrno::to_e)
 }
 
-// BOOL CreateDirectoryExW(
-//   [in]           LPCWSTR               lpTemplateDirectory,
-//   [in]           LPCWSTR               lpNewDirectory,
-//   [in, optional] LPSECURITY_ATTRIBUTES lpSecurityAttributes
-// );
 pub use bun_windows_sys::externs::CreateDirectoryExW;
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
@@ -3729,12 +3632,6 @@ pub fn get_module_handle_from_address(addr: usize) -> Option<HMODULE> {
     // SAFETY: addr cast to LPCWSTR per Win32 docs when FROM_ADDRESS flag set
     let rc = unsafe {
         externs::GetModuleHandleExW(
-            // UNCHANGED_REFCOUNT: per MSDN, GetModuleHandleExW increments the
-            // module's reference count unless this flag is set. Callers only
-            // inspect the returned HMODULE (crash-handler symbolication) and
-            // never FreeLibrary it, so omitting the flag leaks one refcount
-            // per call. (The Zig spec at windows.zig:3355 has the same
-            // omission — fixed here intentionally.)
             GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
             // Docs: when FROM_ADDRESS is set, lpModuleName is "an address in
             // the module" — typed as LPCWSTR but really an opaque pointer.
@@ -3803,11 +3700,6 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         windows::FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT // would we ever want to delete the target instead?
     };
 
-    // UNICODE_STRING.Length is `u16` (bytes). Zig's `@intCast` here
-    // (windows.zig:3402) is unchecked-in-release; in Rust the equivalent
-    // `try_from().expect()` would panic on any path ≥ 32768 wide chars.
-    // Surface NAMETOOLONG instead so NtCreateFile's caller gets a recoverable
-    // error rather than an abort.
     let path_len_bytes = match u16::try_from(sub_path_w.len() * 2) {
         Ok(n) => n,
         Err(_) => return bun_sys::Result::errno(E::NAMETOOLONG, bun_sys::Tag::open),
@@ -3819,11 +3711,6 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         Buffer: sub_path_w.as_ptr().cast_mut().cast::<u16>(),
     };
 
-    // Guard len ≥ 2: Zig's `sub_path_w[0] == '.' and sub_path_w[1] == 0`
-    // (windows.zig:3410) is unguarded and reads garbage in ReleaseFast for
-    // len < 2; Rust would hard-panic on the bounds check instead. In practice
-    // callers pass converted NT paths (always ≥ 2 elems), but make the
-    // contract explicit so release-build behavior matches.
     if sub_path_w.len() >= 2 && sub_path_w[0] == b'.' as u16 && sub_path_w[1] == 0 {
         // Windows does not recognize this, but it does work with empty string.
         nt_name.Length = 0;
@@ -3864,14 +3751,6 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         bun_core::fmt::fmt_path_u16(sub_path_w, Default::default()),
         rc
     );
-    // Zig stdlib `std.os.windows.DeleteFile` (which this is documented as a copy
-    // of) treats `STATUS_DELETE_PENDING`/`STATUS_FILE_DELETED` from the open as
-    // success — the target is already (being) deleted, which is what the caller
-    // wanted. `zigDeleteTree` (node_fs) goes through the stdlib `Dir.deleteFile`
-    // in Zig but through this function (via `Syscall::unlinkat`) in the Rust
-    // port, so without this short-circuit recursive `rmSync` on Windows fails
-    // with `EBUSY`/`UNKNOWN`→`EFAULT` whenever it races a still-open handle
-    // (e.g. node test `tmpdir.refresh()` after a stream-heavy test).
     if rc == windows::ntstatus::DELETE_PENDING || rc == windows::ntstatus::FILE_DELETED {
         return bun_sys::Result::success();
     }
@@ -3883,11 +3762,6 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         let _ = externs::CloseHandle(h);
     });
 
-    // FileDispositionInformationEx (and therefore FILE_DISPOSITION_POSIX_SEMANTICS and FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE)
-    // are only supported on NTFS filesystems, so the version check on its own is only a partial solution. To support non-NTFS filesystems
-    // like FAT32, we need to fallback to FileDispositionInformation if the usage of FileDispositionInformationEx gives
-    // us INVALID_PARAMETER.
-    // The same reasoning for win10_rs5 as in os.renameatW() applies (FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE requires >= win10_rs5).
     let mut need_fallback = true;
     // Deletion with posix semantics if the filesystem supports it.
     let mut info = windows::FILE_DISPOSITION_INFORMATION_EX {
@@ -3976,10 +3850,6 @@ pub struct EXCEPTION_POINTERS {
     pub ContextRecord: *mut core::ffi::c_void,
 }
 
-/// Zig `windows_c.zig::detectRuntimeVersion` — best-effort `major.build`
-/// string from `RtlGetVersion`. Zig writes into a static buffer (zero-alloc);
-/// mirror that with a `OnceLock<String>` so the per-call allocation goes away
-/// after the first call.
 pub fn detect_runtime_version() -> &'static str {
     #[repr(C)]
     struct OSVERSIONINFOW {
@@ -4058,10 +3928,6 @@ pub fn edit_win32_binary_subsystem(
     {
         return Err(bun_core::err!("Win32Error"));
     }
-    // Zig: `fd.reader().readInt(u32, .little)` — std.io.Reader loops until
-    // exactly 4 bytes are read (read-exact semantics). Use `read_all` (which
-    // retries on short reads) rather than a single `read()` syscall, so a
-    // short read isn't mis-reported as EndOfStream.
     let mut off_bytes = [0u8; 4];
     let n = fd.read_all(&mut off_bytes).map_err(bun_core::Error::from)?;
     if n != 4 {
@@ -4077,10 +3943,6 @@ pub fn edit_win32_binary_subsystem(
     {
         return Err(bun_core::err!("Win32Error"));
     }
-    // Zig: `fd.writer().writeInt(u16, ..., .little)` — std.io.Writer loops
-    // until all bytes are written (write-all semantics). Use `write_all`
-    // rather than a single `write()` + length check so a short write is
-    // retried instead of failing.
     let sub_bytes = (subsystem as u16).to_le_bytes();
     fd.write_all(&sub_bytes).map_err(bun_core::Error::from)?;
     Ok(())
@@ -4325,13 +4187,6 @@ pub fn update_stdio_mode_flags(
     Ok(original_mode)
 }
 
-/// RAII guard: applies [`update_stdio_mode_flags`] to **stdin** on construction
-/// and restores the original console mode on `Drop`. Replaces the Zig
-/// `defer SetConsoleMode(stdin, original_mode)` pattern at call sites.
-///
-/// If the underlying `GetConsoleMode`/`SetConsoleMode` fails (e.g. stdin is not
-/// a console), the guard is inert and `Drop` is a no-op — matching the Zig
-/// callers' `catch null` behaviour.
 pub struct StdinModeGuard {
     original: Option<DWORD>,
 }
@@ -4420,14 +4275,6 @@ pub fn become_watcher_manager() -> ! {
         if let Err(err) = spawn_watcher_child(&mut procinfo, job) {
             bun_core::handle_error_return_trace(err);
             if err == bun_core::err!("Win32Error") {
-                // Zig (windows.zig:3721): `@tagName(GetLastError())`. Note:
-                // this read is best-effort — Drop guards inside
-                // `spawn_watcher_child` (FreeEnvironmentStringsW, Vec drops
-                // via HeapFree) may have clobbered the thread's last-error
-                // before we get here. The Zig spec has the same ordering
-                // hazard (`defer` runs before `catch`); a proper fix would
-                // thread the captured Win32 code through the error payload,
-                // which requires changing `spawn_watcher_child`'s return type.
                 let last = Win32Error(GetLastError() as u16);
                 bun_core::Output::panic(format_args!("Failed to spawn process: {:?}\n", last));
             }
@@ -4604,11 +4451,6 @@ pub fn spawn_watcher_child(
     Ok(())
 }
 
-/// Returns null on error. Use windows API to lookup the actual error.
-/// The reason this function is in zig is so that we can use our own utf16-conversion functions.
-///
-/// Using characters16() does not seem to always have the sentinel. or something else
-/// broke when I just used it. Not sure. ... but this works!
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__LoadLibraryBunString(str_: &bun_core::String) -> *mut c_void {
     #[cfg(not(windows))]
@@ -4683,38 +4525,16 @@ pub fn delete_opened_file(fd: Fd) -> bun_sys::Result<()> {
     }
 }
 
-/// With an open file source_fd, move it into the directory new_dir_fd with the name new_path_w.
-/// Does not close the file descriptor.
-///
-/// For this to succeed
-/// - source_fd must have been opened with access_mask=w.DELETE
-/// - new_path_w must be the name of a file. it cannot be a path relative to new_dir_fd. see moveOpenedFileAtLoose
 pub fn move_opened_file_at(
     src_fd: Fd,
     new_dir_fd: Fd,
     new_file_name: &[u16],
     replace_if_exists: bool,
 ) -> bun_sys::Result<()> {
-    // FILE_RENAME_INFORMATION_EX and FILE_RENAME_POSIX_SEMANTICS require >= win10_rs1,
-    // but FILE_RENAME_IGNORE_READONLY_ATTRIBUTE requires >= win10_rs5. We check >= rs5 here
-    // so that we only use POSIX_SEMANTICS when we know IGNORE_READONLY_ATTRIBUTE will also be
-    // supported in order to avoid either (1) using a redundant call that we can know in advance will return
-    // STATUS_NOT_SUPPORTED or (2) only setting IGNORE_READONLY_ATTRIBUTE when >= rs5
-    // and therefore having different behavior when the Windows version is >= rs1 but < rs5.
-    // TODO(port): comptime bun.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
-
     if cfg!(debug_assertions) {
         debug_assert!(!new_file_name.contains(&(b'/' as u16))); // Call moveOpenedFileAtLoose
     }
 
-    // Zig (windows.zig:3933) sizes this against `bun.MAX_PATH_BYTES`
-    // (≈98 KB on Windows: PATH_MAX_WIDE*3+1, the UTF-8 worst case). The
-    // FileName tail here is UTF-16, so the correct cap is `PATH_MAX_WIDE * 2`
-    // bytes — using the UTF-8 multiplier just wastes ~32 KB of stack on a
-    // function called from already-deep install/bundler call chains. This
-    // intentionally diverges from the Zig constant (which has the same
-    // over-allocation) without shrinking the accepted path length: any
-    // `new_file_name.len() <= PATH_MAX_WIDE` still fits.
     const STRUCT_BUF_LEN: usize =
         size_of::<win32::FILE_RENAME_INFORMATION_EX>() + (bun_paths::PATH_MAX_WIDE * 2 - 1);
     #[repr(align(8))] // align_of FILE_RENAME_INFORMATION_EX
@@ -4824,12 +4644,6 @@ pub fn move_opened_file_at_loose(
             new_path
         };
 
-    // Search the *stripped* path for the directory separator. The Zig spec
-    // (windows.zig:3987) searches `new_path` here, which for input ".\\foo"
-    // finds the leading-dot-slash backslash and yields dirname="." → rejected
-    // by NtCreateFile. Searching `without_leading_dot_slash` lets ".\\foo"
-    // fall through to the easy-mode branch below as intended. (Upstream Zig
-    // has the same latent bug; fixed here intentionally.)
     if let Some(last_slash) = without_leading_dot_slash
         .iter()
         .rposition(|&c| c == b'\\' as u16)
@@ -4923,11 +4737,6 @@ mod kernel32_2 {
             lpBuffer: *mut WCHAR,
             nSize: DWORD,
         ) -> DWORD;
-        // safe: by-value `HANDLE`/`DWORD` only; bad handle → BOOL 0 +
-        // GetLastError, never UB. Out-param is `&mut DWORD` (non-null, valid
-        // for write). Local `safe fn` re-decls so in-crate callers drop the
-        // per-site `unsafe { }`; the `bun_windows_sys::externs` raw decls stay
-        // re-exported for out-of-crate callers.
         pub(super) safe fn GetConsoleMode(hConsoleHandle: HANDLE, lpMode: &mut DWORD) -> BOOL;
         pub(super) safe fn SetConsoleMode(hConsoleHandle: HANDLE, dwMode: DWORD) -> BOOL;
         pub(super) safe fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: &mut DWORD) -> BOOL;
@@ -4938,10 +4747,6 @@ mod kernel32_2 {
             hJob: HANDLE,
             result: &mut BOOL,
         ) -> BOOL;
-        // safe: by-value `HANDLE`/`i64`/`DWORD`; out-param is
-        // `Option<&mut i64>` (FFI-safe via the null-pointer niche →
-        // ABI-identical to a nullable `PLARGE_INTEGER`). Bad handle → BOOL 0
-        // + GetLastError, never UB.
         #[allow(dead_code)]
         pub(super) safe fn SetFilePointerEx(
             hFile: HANDLE,

@@ -5,19 +5,6 @@ use core::ptr::NonNull;
 
 use crate::JSValue;
 
-// PORT NOTE: This file is a Zig file-level struct. In Zig it is referenced as
-// `jsc.Strong.Deprecated` (see bottom-of-file alias `const Strong = jsc.Strong.Deprecated`).
-// Ported here as `DeprecatedStrong`.
-//
-// PORT NOTE: Zig `deinit` → `impl Drop`. The manual `ref()`/`unref()` path
-// overlaps teardown; to avoid Drop double-`unprotect`ing after a final `unref`,
-// `unref()` zeroes `raw` and clears `_safety` when it frees (debug builds), so
-// Drop becomes a no-op (`unprotect` on ZERO is a no-op; `_safety == None` skips
-// the canary free).
-// TODO(port): release builds have no ref_count, so a caller that does the final
-// `unref()` and then lets Drop fire would double-unprotect — audit call sites
-// (Zig contract: ref/unref pairs are balanced, deinit is the release).
-
 // Zig: `enable_safety = bun.Environment.ci_assert`.
 #[cfg(debug_assertions)]
 macro_rules! enable_safety {
@@ -39,11 +26,6 @@ type Safety = ();
 
 #[cfg(debug_assertions)]
 struct SafetyData {
-    // PORT NOTE: raw pointer (not Box) — this is a heap canary for UAF detection;
-    // owning it via Box would change the semantics (Drop would recurse / hide UAF).
-    // Backing allocation is `Box<ManuallyDrop<DeprecatedStrong>>` (repr(transparent))
-    // so freeing does NOT run DeprecatedStrong::drop on the sentinel value; the
-    // pointer is stored cast to the inner type for ergonomic field access.
     ptr: NonNull<DeprecatedStrong>,
     // PORT NOTE: `gpa: std.mem.Allocator` dropped — global mimalloc.
     ref_count: u32,

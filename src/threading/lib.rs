@@ -47,14 +47,6 @@ pub use wait_group::WaitGroup;
 pub use work_pool::Task as WorkPoolTask;
 pub use work_pool::{IntrusiveWorkTask, OwnedTask, WorkPool};
 
-/// Port of `std.Thread.getCurrentId()` — returns a non-zero OS thread id.
-/// Used by `Mutex` debug deadlock detection and `Condition` (Windows).
-///
-/// Delegates to the spec-faithful tier-0 implementation in
-/// [`bun_safety::thread_id::current`] (which uses `pthread_threadid_np` on
-/// Darwin / `pthread_getthreadid_np` on FreeBSD / `gettid` on Linux, matching
-/// Zig `std.Thread.getCurrentId()`), widened to `u64` so callers can store it
-/// in an `AtomicU64` regardless of the platform's native `ThreadId` width.
 #[inline]
 pub fn current_thread_id() -> u64 {
     bun_safety::thread_id::current() as u64

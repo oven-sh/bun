@@ -123,15 +123,6 @@ pub(crate) fn is_option_like_value(value: &String) -> bool {
     value.length() > 1 && value.has_prefix_comptime(b"-")
 }
 
-/// Find the long option associated with a short option. Looks for a configured
-/// `short` and returns the short option itself if a long option is not found.
-/// Example:
-/// ```zig
-/// findOptionByShortName('a', {}) // returns 'a'
-/// findOptionByShortName('b', {
-///   options: { bar: { short: 'b' } }
-/// }) // returns "bar"
-/// ```
 pub(crate) fn find_option_by_short_name(
     short_name: &String,
     options: &[OptionDefinition],

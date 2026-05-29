@@ -23,11 +23,6 @@ pub fn expr_to_js(this: &Expr, global: &JSGlobalObject) -> Result<JSValue, ToJSE
     data_to_js(&this.data, global)
 }
 
-/// Extension trait providing `Expr.toJS` / `Expr::Data.toJS` as method syntax.
-/// `Expr` lives in `bun_js_parser` (lower tier, no JSC dep), so an inherent
-/// `impl Expr { fn to_js }` is forbidden by orphan rules. Mirrors the
-/// `StringJsc` pattern in `bun_jsc` — callers `use bun_js_parser_jsc::ExprJsc`
-/// (or the crate prelude) and write `expr.to_js(global)`.
 pub trait ExprJsc {
     fn to_js(&self, global: &JSGlobalObject) -> Result<JSValue, ToJSError>;
 }
@@ -143,22 +138,9 @@ pub(crate) fn object_to_js(
     Ok(obj)
 }
 
-/// `E.String.toJS` (src/js_parser_jsc/expr_jsc.zig:79).
-///
-/// Stamps the body for both `EString` nominal types: the full T4
-/// `bun_ast::E::String` (used by `data_to_js` / macros) and the
-/// value-subset T2 `bun_ast::E::EString` (used by the YAML / JSON5
-/// interchange parsers, which build the cycle-broken tree). The two are
-/// field-identical for everything `stringToJS` touches; the T4 type carries
-/// extra lexer-dependent methods that prevent unifying the structs themselves.
 macro_rules! impl_string_to_js {
     ($name:ident, $ty:ty) => {
         pub fn $name(s: &$ty, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
-            // TODO(port): Zig mutates `s` via `resolveRopeIfNeeded(allocator)`;
-            // callers only have `&` and there is no bump arena in scope here.
-            // Either thread a bump arena + interior-mut rope or resolve ropes
-            // before reaching here. For now, assert non-rope (current callers
-            // feed resolved literals).
             debug_assert!(
                 s.next.is_none(),
                 "string_to_js: rope EString reached without resolveRopeIfNeeded; thread a bump arena"

@@ -12,25 +12,9 @@ use bun_event_loop::EventLoopTimer::{
 };
 
 bun_opaque::opaque_ffi! {
-    /// Opaque FFI handle to WebCore::AbortSignal (C++ side owns layout & refcount).
-    ///
-    /// The `UnsafeCell` field makes this `!Freeze`: every method takes `&self` but
-    /// the C++ side mutates internal state (refcount, listener list, abort flag),
-    /// so `&AbortSignal` must not carry a `noalias readonly` assumption when
-    /// lowered to `*mut AbortSignal` for FFI. A real `UnsafeCell` (not just
-    /// `PhantomData<UnsafeCell<_>>`, which is still `Freeze`) is required so that
-    /// `as_mut_ptr` can soundly derive a write-capable pointer from `&self`.
     pub struct AbortSignal;
 }
 
-// TODO(port): move to jsc_sys
-//
-// `AbortSignal` and `JSGlobalObject` are opaque `UnsafeCell`-backed ZST
-// handles, so `&AbortSignal` is ABI-identical to a non-null `AbortSignal*`
-// and C++ mutating through it (refcount, listener list, abort flag) is
-// interior mutation invisible to Rust. Shims that take only such handles +
-// scalars are declared `safe fn`; those that take an opaque `*mut c_void` ctx
-// or out-param keep raw pointers and stay `unsafe fn`.
 unsafe extern "C" {
     safe fn WebCore__AbortSignal__aborted(arg0: &AbortSignal) -> bool;
     safe fn WebCore__AbortSignal__abortReason(arg0: &AbortSignal) -> JSValue;
@@ -71,10 +55,6 @@ unsafe extern "C" {
     safe fn WebCore__AbortSignal__new(arg0: &JSGlobalObject) -> *mut AbortSignal;
 }
 
-/// Trait expressing the Zig `comptime cb: *const fn (*Context, JSValue) void`
-/// monomorphization for `listen`. Implement on your context type.
-// TODO(port): Zig used a comptime fn-pointer param; Rust has no const fn-ptr
-// generics, so callers implement this trait instead.
 pub trait AbortListener {
     fn on_abort(&mut self, reason: JSValue);
 }
@@ -180,15 +160,6 @@ impl AbortSignal {
         WebCore__AbortSignal__new(global)
     }
 
-    /// Returns a borrowed handle to the internal Timeout, or null.
-    ///
-    /// Lifetime: owned by AbortSignal; may become invalid if the timer fires/cancels.
-    ///
-    /// Thread-safety: not thread-safe; call only on the owning thread/loop.
-    ///
-    /// Usage: if you need to operate on the Timeout (run/cancel/deinit), hold a ref
-    /// to `this` for the duration (e.g., `this.ref_(); defer this.unref();`) and avoid
-    /// caching the pointer across turns.
     pub fn get_timeout(&self) -> Option<&Timeout> {
         // TODO(port): lifetime — callers that run/cancel/deinit need `*mut`; revisit
         // whether `&mut Timeout` (or raw ptr) is the right shape once call sites port.
@@ -220,20 +191,9 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for AbortSignal {
     }
 }
 
-/// Intrusive smart pointer over a C++-refcounted `WebCore::AbortSignal`.
-///
-/// `Clone` bumps the C++ refcount via `ref()`; `Drop` decrements via `unref()`.
-/// Replaces the broken `Arc<AbortSignal>` pattern (an `Arc` of an opaque ZST
-/// cannot own a C++-allocated object — its payload address is not the C++
-/// object address). Mirrors Zig `?*AbortSignal` + manual `ref()`/`unref()`.
 pub type AbortSignalRef = bun_ptr::ExternalShared<AbortSignal>;
 
 impl AbortSignal {
-    /// Downcast a JS value, ref the underlying signal, and wrap. Returns
-    /// `None` if `value` is not a JS `AbortSignal`.
-    ///
-    /// (Was `AbortSignalRef::from_js` when that was a hand-rolled newtype;
-    /// moved here because inherent impls cannot be added to a type alias.)
     #[inline]
     pub fn ref_from_js(value: JSValue) -> Option<AbortSignalRef> {
         AbortSignal::from_js(value).map(|p| {
@@ -257,24 +217,7 @@ impl AbortReason {
             AbortReason::Js(value) => value,
         }
     }
-
-    // PORT NOTE (phase-d): `to_body_value_error` reaches into
-    // `bun_runtime::webcore::body::value::ValueError` (forward dep on
-    // `bun_runtime`). The conversion is trivial and is reconstructed at the
-    // call-site in `bun_runtime` once that tier un-gates.
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// `AbortSignal.Timeout` — port of `src/jsc/AbortSignal.zig:Timeout`.
-//
-// LAYERING: `EventLoopTimer` + `TimerFlags` live in `bun_event_loop` (lower
-// tier). The per-VM timer heap (`Timer::All`) lives in `bun_runtime` (higher
-// tier) and is reached through `RuntimeHooks::{timer_insert,timer_remove}` —
-// see `VirtualMachine::timer_insert/remove`. C++ only ever sees `*mut Timeout`
-// as an opaque token round-tripped through `create`/`run`/`deinit`, so the
-// concrete layout is private to Rust; `repr(C)` is here so `offset_of!` is
-// well-defined for the `container_of` recovery in `bun_runtime::dispatch`.
-// ──────────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
 pub struct Timeout {
@@ -283,11 +226,6 @@ pub struct Timeout {
     /// this field, so it must stay at a fixed offset (hence `#[repr(C)]`).
     pub event_loop_timer: EventLoopTimer,
 
-    /// The `Timeout`'s lifetime is owned by the AbortSignal.
-    /// But this does have a ref count increment.
-    // PORT NOTE: AbortSignal is an opaque C++ type with intrusive WebCore
-    // refcounting (ref/unref) that crosses FFI — PORTING.md §Pointers: never
-    // Arc here. Kept as raw `*mut` with manual unref (matches Zig).
     pub signal: *mut AbortSignal,
 
     /// "epoch" is reused.
@@ -388,10 +326,6 @@ impl Timeout {
         // drop even if `signal` unwinds, and holds the raw VM-owned pointer so
         // borrowck doesn't see two live `&mut EventLoop` across re-entrant JS.
         let _guard = vm.enter_event_loop_scope();
-        // signalAbort() releases the extra ref from timeout() after all
-        // abort work completes, so we must not unref here.
-        // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
-        // centralised non-null deref proof (held alive by the extra ref above).
         AbortSignal::opaque_ref(signal_ptr).signal(vm.global(), CommonAbortReason::Timeout);
     }
 

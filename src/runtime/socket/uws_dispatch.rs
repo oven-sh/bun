@@ -10,10 +10,6 @@
 use core::ffi::{c_int, c_void};
 
 use bun_uws::NewSocketHandler;
-// `SocketKind` / `us_bun_verify_error_t` must come from `bun_uws_sys` — that's
-// what `us_socket_t::kind()` and the `VTable` callback signatures use. The
-// `bun_uws` crate defines its own (distinct) mirrors of both; mixing them is a
-// type error.
 use bun_uws_sys::socket_group::VTable;
 use bun_uws_sys::{ConnectingSocket, SocketKind, us_bun_verify_error_t, us_socket_t, vtable};
 
@@ -23,21 +19,6 @@ use super::uws_handlers as handlers;
 // keep the exports in the link even if nothing in Zig calls them. Rust links
 // every `#[no_mangle] pub extern "C"` symbol unconditionally, so it is dropped.)
 
-/// kind → vtable. Rust kinds get a comptime-generated `Trampolines<H>` vtable
-/// (so the call is *still* indirect by one pointer, but the table itself is
-/// `.rodata` and there's exactly one per kind — not one per connection). C++
-/// kinds use the per-group vtable since the handler closure differs per App.
-///
-/// `Invalid` is intentionally null so a missed `kind` stamp crashes here
-/// instead of dispatching into the wrong handler.
-// PERF(port): Zig built this at comptime into .rodata. `LazyLock` adds a
-// once-init branch; once `vtable::make` is `const fn`, switch to a plain
-// `static`/`const`.
-//
-// PORT NOTE: Zig used `std.EnumArray(SocketKind, ?*const VTable)`. `SocketKind`
-// is `#[repr(u8)]` with dense 0..N discriminants (see uws/lib.rs), so a plain
-// array indexed by `kind as usize` is the exact equivalent — no `enum_map`
-// derive needed on the upstream type.
 const SOCKET_KIND_COUNT: usize = SocketKind::UwsWsTls as usize + 1;
 
 static TABLES: std::sync::LazyLock<[Option<&'static VTable>; SOCKET_KIND_COUNT]> =
@@ -126,10 +107,6 @@ fn vtc(c: *mut ConnectingSocket) -> &'static VTable {
     }
 }
 
-/// Stamps `#[no_mangle] extern "C"` shims that look up an `Option<fn>` in a
-/// vtable and tail-call it (or return a fallback). The callback arg list is
-/// spelled separately from the fn param list so a row can append extras the C
-/// ABI doesn't pass us (e.g. handshake's trailing null userdata).
 macro_rules! us_dispatch_shims {
     ($(
         fn $name:ident($recv:ident: *mut $Recv:ty $(, $a:ident: $t:ty)* $(,)?) -> $ret:ty

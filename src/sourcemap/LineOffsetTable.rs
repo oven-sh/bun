@@ -7,42 +7,14 @@ use bun_collections::MultiArrayList;
 use bun_core::strings;
 use smallvec::SmallVec;
 
-/// The source map specification is very loose and does not specify what
-/// column numbers actually mean. The popular "source-map" library from Mozilla
-/// appears to interpret them as counts of UTF-16 code units, so we generate
-/// those too for compatibility.
-///
-/// We keep mapping tables around to accelerate conversion from byte offsets
-/// to UTF-16 code unit counts. However, this mapping takes up a lot of memory
-/// and takes up a lot of memory. Since most JavaScript is ASCII and the
-/// mapping for ASCII is 1:1, we avoid creating a table for ASCII-only lines
-/// as an optimization.
-///
-/// Generic over `A` so the bundler can put both the SoA slab and every
-/// `columns_for_non_ascii` payload into the per-worker AST heap (`AstAlloc`)
-/// and bulk-free them on `mi_heap_destroy` instead of walking
-/// `LinkerGraph.files` in `deinit_without_freeing_arena`. Non-bundler callers
-/// (`CodeCoverage`, the runtime printer's lazy table) keep the `Global`
-/// default and free normally.
 pub struct LineOffsetTable<A: Allocator = Global> {
     pub columns_for_non_ascii: Box<[i32], A>,
-    /// Byte offset of the first non-ASCII byte on this line, or `i32::MAX as u32`
-    /// when the line is entirely ASCII (so no `columns_for_non_ascii` table exists).
-    /// The sentinel can't be `0` because a line can legitimately start with a
-    /// non-ASCII byte at offset 0. `i32::MAX` lets `add_source_mapping` skip the
-    /// `columns_for_non_ascii` SoA load on the (overwhelmingly common) ASCII path
-    /// with a single column comparison.
     pub byte_offset_to_first_non_ascii: u32,
     pub byte_offset_to_start_of_line: u32,
 }
 
 pub type List<A = Global> = MultiArrayList<LineOffsetTable<A>, A>;
 
-/// Typed SoA column accessors on [`List`] (= `MultiArrayList<LineOffsetTable>`).
-///
-/// Mirrors Zig `list.items(.byte_offset_to_start_of_line)`. Can't be an
-/// inherent impl (orphan rules — `MultiArrayList` lives in `bun_collections`),
-/// so it's an extension trait; same pattern as `mapping::MappingColumns`.
 pub trait LineOffsetTableColumns {
     fn items_byte_offset_to_start_of_line(&self) -> &[u32];
     fn items_byte_offset_to_first_non_ascii(&self) -> &[u32];
@@ -86,27 +58,12 @@ impl LineOffsetTable {
         i32::try_from(original_line).expect("int cast") - 1
     }
 
-    /// `find_line` with an O(1) fast path for the printer's monotone access
-    /// pattern. `add_source_mapping` is called once per printed AST node in
-    /// (mostly) source order, so the result is almost always `hint`, `hint+1`,
-    /// or `hint+2`. Perf on next-lint showed `find_line` at 0.85% self-time
-    /// (≈90-120M cycles) doing a fresh bounds-checked binary search every
-    /// call; this short-circuits to a couple of compares for the common case
-    /// and falls back to the binary search otherwise.
-    ///
-    /// Zig spec (`LineOffsetTable.zig:20`) only has the binary search; this is
-    /// a deliberate divergence — strictly cheaper, identical result.
     #[inline]
     pub fn find_line_with_hint(offsets: &[u32], loc: Loc, hint: u32) -> i32 {
         debug_assert!(loc.start > -1);
         let loc_start = loc.start as u32;
         let len = offsets.len();
         let h = hint as usize;
-        // The answer is `i` iff `offsets[i] <= loc_start && (i+1 == len || loc_start < offsets[i+1])`.
-        // Probe `hint` and the next two lines (covers same-line tokens, single
-        // newline, and the `stmt;\n\nstmt` blank-line gap). Anything further
-        // apart is either a backwards jump (hoisted decl) or a large forward
-        // skip — let the binary search handle those.
         if h < len && offsets[h] <= loc_start {
             if h + 1 == len || loc_start < offsets[h + 1] {
                 return hint as i32;
@@ -157,11 +114,6 @@ impl LineOffsetTable {
         Self::generate_in::<Global>(contents, approximate_line_count)
     }
 
-    // PORT NOTE: Zig threaded `std.mem.Allocator` through MultiArrayList/Vec.
-    // Callers in Zig pass mixed allocators (printer/bundler arenas vs VM default
-    // allocator in CodeCoverage.zig); the bundler routes `A = AstAlloc` so the
-    // table bulk-frees with the per-worker AST heap, everyone else uses
-    // [`generate`] (`A = Global`).
     pub fn generate_in<A: Allocator + Copy + Default + 'static>(
         contents: &[u8],
         approximate_line_count: i32,
@@ -176,16 +128,6 @@ impl LineOffsetTable {
         let mut column_byte_offset: u32 = 0;
         let mut line_byte_offset: u32 = 0;
 
-        // the idea here is:
-        // we want to avoid re-allocating this array _most_ of the time
-        // when lines _do_ have unicode characters, they probably still won't be longer than 255 much
-        // PERF(port): Zig used `std.heap.stackFallback(@sizeOf(i32)*256)` — a 256-slot stack
-        // buffer with heap spill. The direct Rust equivalent is `SmallVec<[i32; 256]>`: inline
-        // storage stays on-stack, `into_vec()` at hand-over does the same "dupe if stack-owned,
-        // move if spilled" branch Zig does, and `mem::take` resets to a fresh inline buffer
-        // (zero alloc). Previously this was a heap `Vec::with_capacity(120)` re-primed via
-        // `mem::replace` per non-ASCII line, which showed up as one mi_malloc(480) per such
-        // line under `generate` (2× self-time vs Zig on lint/create-vite).
         let mut columns_for_non_ascii: SmallVec<[i32; 256]> = SmallVec::new();
 
         // Hoist the base pointer so per-iteration offset math is a single sub + truncate,
@@ -196,11 +138,6 @@ impl LineOffsetTable {
         while !remaining.is_empty() {
             let b0 = remaining[0];
             let len_ = strings::wtf8_byte_sequence_length_with_invalid(b0);
-            // Zig passes `remaining.ptr[0..4]` (unchecked 4-byte view) to decodeWTF8RuneT,
-            // which only reads `len_` bytes. After the SIMD skip below lands, the loop head
-            // is overwhelmingly an ASCII '\r'/'\n' or a non-ASCII lead byte, so keep the
-            // 1-byte path branch-only and confine the zero+min+copy pad to the cold
-            // multibyte arm.
             let c: i32 = if len_ == 1 {
                 b0 as i32
             } else {
@@ -265,11 +202,6 @@ impl LineOffsetTable {
                         continue;
                     }
 
-                    // Zig used a stack-fallback allocator and duped onto `allocator` only when
-                    // stack-owned, then reset the fixed buffer. The SmallVec scratch reuses its
-                    // inline storage across lines; copy out into an `A`-backed box only when a
-                    // line had non-ASCII bytes. ASCII-only lines (almost all of them) store an
-                    // empty dangling box and leave the scratch untouched.
                     let owned: Box<[i32], A> = if columns_for_non_ascii.is_empty() {
                         empty_box()
                     } else {
@@ -324,13 +256,6 @@ impl LineOffsetTable {
             })?;
         }
 
-        // `shrink_and_free` has no realloc-in-place fast path — it always does a fresh
-        // aligned_alloc + full SoA row copy + free. `grow_capacity` overshoots a single
-        // bulk reservation by at most ~50%, so when the lexer's line-count hint was
-        // roughly right (the common case) the slack isn't worth a multi-MB memcpy.
-        // Only trim when capacity exceeds 1.5x length, which catches pathological
-        // mismatches (wrong loader, wildly off hint) while skipping the routine ~20%
-        // overshoot.
         if list.capacity() > list.len() + (list.len() >> 1) {
             list.shrink_and_free(list.len());
         }

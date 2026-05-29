@@ -10,10 +10,6 @@ bun_opaque::opaque_ffi! {
     pub struct Socket;
 }
 
-// `Socket` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so `&mut Socket` is
-// ABI-identical to a non-null `*mut Socket` with no `noalias`/`readonly`
-// attribute. Shims taking only the handle + value types are `safe fn`; the
-// (ptr,len) writer keeps a raw signature.
 unsafe extern "C" {
     safe fn us_quic_socket_make_stream(s: &mut Socket);
     safe fn us_quic_socket_streams_avail(s: &mut Socket) -> c_uint;

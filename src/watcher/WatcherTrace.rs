@@ -6,11 +6,6 @@ use bun_threading::Guarded;
 
 use crate::watcher_impl::{ChangedFilePath, WatchEvent, WatchList};
 
-/// Optional trace file for debugging watcher events.
-// PORTING.md §Concurrency: Zig used a bare `var trace_file: ?File = null` plus
-// the implicit single-threaded init/watcher-thread/deinit ordering. Rust
-// `static mut` is forbidden — wrap in `bun_threading::Guarded` (cheap when
-// uncontended; only the watcher thread touches this after init).
 static TRACE_FILE: Guarded<Option<File>> = Guarded::new(None);
 
 /// Initialize trace file if BUN_WATCHER_TRACE env var is set.
@@ -52,10 +47,6 @@ pub fn write_events(
     // `defer buffered.flush() catch |err| { Output.err(...) }`
     let mut writer = scopeguard::guard(buffered, |mut w| {
         if let Err(err) = w.flush() {
-            // PORT NOTE: Zig passed the error-union tag (`@errorName`). The
-            // BufWriter wrapper surfaces a `std::io::Error`; print its display
-            // as the tag — same observable text minus the `error.` prefix.
-            // TODO(port): map io::Error → bun_sys::Error once a helper exists.
             let mut name_buf = [0u8; 64];
             let name = {
                 use std::io::Write as _;
@@ -122,10 +113,6 @@ pub fn write_events(
             return;
         }
 
-        // Write array of event types.
-        // PORT NOTE: Zig walks `std.meta.fields(Op)` (lowercase field names).
-        // bitflags `iter_names()` yields SCREAMING_CASE const names; use the
-        // shared lowercase OP_NAMES table so trace JSON matches Zig exactly.
         let mut first = true;
         for &(flag, name) in crate::watcher_impl::OP_NAMES {
             if !event.op.contains(flag) {

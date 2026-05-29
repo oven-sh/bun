@@ -115,10 +115,6 @@ impl All {
         };
         let mut warning_type_string =
             BunString::create_atom_if_possible(<&'static str>::from(warning_type).as_bytes());
-        // Emitting a warning should never interrupt execution, but the emit path calls
-        // into user-observable JS (process.nextTick, getters, etc.) which can throw.
-        // Swallowing error.JSError alone leaves the exception pending on the VM and
-        // trips assertExceptionPresenceMatches in the host-call wrapper, so clear it.
         let warning_js = match warning_string.transfer_to_js(global_this) {
             Ok(v) => v,
             Err(_) => {
@@ -335,20 +331,7 @@ impl All {
                 // SAFETY: t is a valid TimeoutObject pointer
                 break 'brk Some(unsafe { core::ptr::addr_of_mut!((*t).internals) });
             } else if timer_id_value.is_string_literal() {
-                // Primitive string only (JSType::String) — boxed `new String(..)`
-                // must fall through to `from_js` below and be a no-op, matching
-                // Node.js array-index semantics.
-                // RAII for Zig's `defer string.deref()` — `to_bun_string` returns
-                // a +1 ref and there are several early `return Ok(())` exits below.
                 let string = bun_core::OwnedString::new(timer_id_value.to_bun_string(global_this)?);
-                // Custom parseInt logic. I've done this because Node.js is very strict about string
-                // parameters to this function: they can't have leading whitespace, trailing
-                // characters, signs, or even leading zeroes. None of the readily-available string
-                // parsing functions are this strict. The error case is to just do nothing (not
-                // clear any timer).
-                //
-                // The reason is that in Node.js this function's parameter is used for an array
-                // lookup, and array[0] is the same as array['0'] in JS but not the same as array['00'].
                 let parsed: i32 = {
                     let mut accumulator: i32 = 0;
                     // We can handle all encodings the same way since the only permitted characters
@@ -442,17 +425,6 @@ impl All {
     }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// Method bodies on canonical sibling types (`mod.rs` definitions).
-// Ported from DateHeaderTimer.zig.
-// ════════════════════════════════════════════════════════════════════════════
-
-// `TimeoutObject::{init, from_js}` and `ImmediateObject::{init, from_js}` now
-// live in `super::{timeout_object, immediate_object}` (canonical ports of
-// `TimeoutObject.zig` / `ImmediateObject.zig`); the inherent `init` constructor
-// and the `JsClass`-derived `from_js` are re-exported via
-// `super::{TimeoutObject, ImmediateObject}`.
-
 impl DateHeaderTimer {
     /// Schedule the "Date" header timer.
     ///
@@ -512,16 +484,6 @@ pub fn drain_timers_export(vm: *mut VirtualMachine) {
     unsafe { (*all).drain_timers(vm.cast::<()>()) };
 }
 
-// Zig used `jsc.host_fn.wrapN(...)` + `@export` to generate these C-ABI shims.
-// `wrapN` reflects on the Zig fn signature and emits an `extern "C" fn` that
-// forwards through `toJSHostCall` (ExceptionValidationScope + JsResult→JSValue
-// normalization). Rust has no signature reflection; `generate-host-exports.ts`
-// scrapes the `// HOST_EXPORT` markers below and emits the seven thunks into
-// `generated_host_exports.rs`, each routing through `host_fn::host_fn_result`.
-//
-// C++ callers (`src/jsc/bindings/node/NodeTimers.cpp`, `BunObject.cpp`) declare
-// these in `headers.h` as `(JSGlobalObject*, EncodedJSValue…) -> EncodedJSValue`.
-
 // HOST_EXPORT(Bun__Timer__setImmediate, c)
 pub fn set_immediate_export(
     global: &JSGlobalObject,
@@ -578,17 +540,6 @@ pub fn clear_interval_export(global: &JSGlobalObject, id: JSValue) -> JsResult<J
 pub mod internal_bindings {
     use super::*;
 
-    /// Node.js has some tests that check whether timers fire at the right time. They check this
-    /// with the internal binding `getLibuvNow()`, which returns an integer in milliseconds. This
-    /// works because `getLibuvNow()` is also the clock that their timers implementation uses to
-    /// choose when to schedule timers.
-    ///
-    /// I've tried changing those tests to use `performance.now()` or `Date.now()`. But that always
-    /// introduces spurious failures, because neither of those functions use the same clock that the
-    /// timers implementation uses (for Bun this is `bun.timespec.now()`), so the tests end up
-    /// thinking that the timing is wrong (this also happens when I run the modified test in
-    /// Node.js). So the best course of action is for Bun to also expose a function that reveals the
-    /// clock that is used to schedule timers.
     #[bun_jsc::host_fn]
     pub(crate) fn timer_clock_ms(
         global_this: &JSGlobalObject,

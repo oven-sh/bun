@@ -56,10 +56,6 @@ impl UntrustedCommand {
         ));
         Output::flush();
 
-        // PORT NOTE: reshaped for borrowck — `LoadResult` returned by
-        // `load_lockfile_from_cwd` mutably borrows `pm.lockfile`, so all
-        // subsequent `pm` access goes through `pm_raw`. Same singleton pattern
-        // as `package_manager_command.rs::print_hash`.
         let pm_raw: *mut PackageManager = pm;
         let log_level = pm.options.log_level;
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
@@ -116,11 +112,6 @@ impl UntrustedCommand {
         let mut node_modules_path = AutoAbsPath::init_top_level_dir();
 
         while let Some(node_modules) = tree_iterator.next(None) {
-            // PORT NOTE: Zig `node_modules_path.save()/.restore()` — `ResetScope`
-            // exclusively borrows the path in Rust, so save/restore the length
-            // explicitly. Restored at end of each iteration; the inner-loop
-            // `continue`/`return` paths only need the inner `folder_saved`
-            // restore (done immediately after `get_list`).
             let nm_saved = node_modules_path.len();
             let _ = node_modules_path.append(node_modules.relative_path.as_bytes());
 
@@ -461,10 +452,6 @@ impl TrustCommand {
             }
         }
 
-        // PORT NOTE: `scripts_at_depth.values()` is taken twice (run, then
-        // print). Rust can't move `scripts_list: List` out for
-        // `spawn_package_lifecycle_scripts` and still print it later, so clone
-        // the `List` per spawn (matches the by-value Zig pass).
         for entry in scripts_at_depth.values().iter().rev() {
             for info in entry.iter() {
                 if info.skip {

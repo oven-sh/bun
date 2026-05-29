@@ -12,16 +12,6 @@ use bun_picohttp as picohttp;
 
 bun_core::declare_scope!(h2_client, hidden);
 
-// `stream_mut` is the shared `*mut Stream` → `&mut Stream` upgrade centralised
-// in `client_session` (same INVARIANT: heap-allocated entries owned by
-// `session.streams`, freed only via `drop_stream`/`on_close`, disjoint from
-// `&mut ClientSession`). Re-used here so the raw deref lives in one place.
-
-/// Dispatch every complete frame in `buf` and return the number of bytes
-/// consumed. The caller spills the unconsumed tail (a partial frame) into
-/// `read_buffer`. Operating on a borrowed slice lets `onData` parse
-/// straight from the socket chunk in the common case where no partial
-/// frame is carried over, saving one memcpy of every body byte.
 pub fn parse_frames(session: &mut ClientSession, buf: &[u8]) -> usize {
     let mut consumed: usize = 0;
     loop {
@@ -104,10 +94,6 @@ pub(crate) fn dispatch_frame(
         session.fatal_error = Some(err!(HTTP2ProtocolError));
         return;
     }
-    // RFC 9113 §3.4: the server connection preface is a SETTINGS frame and
-    // MUST be the first frame. Without this, GOAWAY-before-SETTINGS leaves
-    // coalesced waiters in `pending_attach` forever (drainPending is gated
-    // on settings_received and maybeRelease won't run while it's non-empty).
     if !session.settings_received && frame_type != FT_SETTINGS {
         session.fatal_error = Some(err!(HTTP2ProtocolError));
         return;
@@ -145,11 +131,6 @@ pub(crate) fn dispatch_frame(
                 let uvalue = { unit.value };
                 match utype {
                     ST_MAX_FRAME_SIZE => {
-                        // RFC 9113 §6.5.2: values outside [16384, 2^24-1]
-                        // are a connection PROTOCOL_ERROR. Without the
-                        // lower bound, a 0 here makes writeHeaderBlock /
-                        // writeDataWindowed spin forever emitting empty
-                        // frames.
                         if uvalue < wire::DEFAULT_MAX_FRAME_SIZE || uvalue > wire::MAX_FRAME_SIZE {
                             session.fatal_error = Some(err!(HTTP2ProtocolError));
                             return;
@@ -160,11 +141,6 @@ pub(crate) fn dispatch_frame(
                         session.remote_max_concurrent_streams = uvalue;
                     }
                     ST_HEADER_TABLE_SIZE => {
-                        // RFC 9113 §4.3.1 / RFC 7541 §4.2: encoder MUST
-                        // acknowledge a reduced limit with a Dynamic Table
-                        // Size Update at the start of the next header
-                        // block. Track the minimum seen so a reduce-then-
-                        // raise between two blocks still signals the dip.
                         session.pending_hpack_enc_capacity = Some(
                             session
                                 .pending_hpack_enc_capacity
@@ -297,21 +273,10 @@ pub(crate) fn dispatch_frame(
             let mut fragment = payload;
             let maybe_stream = session.streams.get(&stream_id).copied();
             if maybe_stream.is_none() {
-                // RFC 9113 §5.1/§5.1.1: HEADERS on a stream we never
-                // opened (idle: id >= next_stream_id, or even: server-
-                // initiated while push is disabled) is a connection
-                // PROTOCOL_ERROR. Only odd ids we already used can be a
-                // legitimate "RST crossed an in-flight HEADERS" orphan.
                 if stream_id == 0 || stream_id & 1 == 0 || stream_id >= session.next_stream_id {
                     session.fatal_error = Some(err!(HTTP2ProtocolError));
                     return;
                 }
-                // Stream we no longer track (RST_STREAM crossed an
-                // in-flight HEADERS). The block must still be HPACK-
-                // decoded so the connection-level dynamic table stays in
-                // sync with the server's encoder, and CONTINUATION must
-                // be tracked so a follow-up frame doesn't fatal the whole
-                // connection.
                 if flags & wire::HeadersFrameFlags::PADDED as u8 != 0 {
                     fragment = match strip_padding(fragment) {
                         Some(f) => f,
@@ -434,10 +399,6 @@ pub(crate) fn dispatch_frame(
                 stream.fatal_error = Some(err!(HTTP2ProtocolError));
                 return;
             }
-            // §5.1: DATA on a half-closed(remote) or reset stream is
-            // STREAM_CLOSED. Without this, frames in the same TCP read as
-            // END_STREAM would be appended to body_buffer before the
-            // deliver loop swaps the stream out.
             if stream.remote_closed() {
                 stream
                     .fatal_error
@@ -485,10 +446,6 @@ pub(crate) fn dispatch_frame(
             stream.rst_done = true;
             stream.state = StreamState::Closed;
             let code: u32 = wire::u32_from_bytes(&payload[0..4]);
-            // RFC 9113 §8.1: RST_STREAM(NO_ERROR) is the server's "stop
-            // uploading, I've already sent the full response" signal —
-            // valid only if END_STREAM had already arrived. Otherwise the
-            // body is truncated and must surface as an error.
             stream.fatal_error = match code {
                 x if x == wire::ErrorCode::NO_ERROR.0 => {
                     if had_response {
@@ -560,10 +517,6 @@ pub fn decode_discard_orphan(session: &mut ClientSession) {
     session.orphan_header_block.clear();
 }
 
-/// HPACK-decode the buffered header block at parse time. Runs for every
-/// END_HEADERS so the dynamic table stays in sync regardless of how many
-/// HEADERS frames arrive in one read. 1xx and trailers are decoded then
-/// dropped; the final response is stored on the stream for delivery.
 pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
     // PORT NOTE: reshaped for borrowck (was `defer stream.header_block.clearRetainingCapacity()`)
     // — `.clear()` is inlined before each return below.
@@ -572,10 +525,6 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
     let start_len = stream.decoded_bytes.len();
     let mut seen_regular = false;
     let mut seen_status = false;
-    // Stream-level malformations seen mid-decode. The loop MUST consume the
-    // whole block regardless — the dynamic table is connection-scoped, so
-    // bailing early would desync it for every sibling stream. The error is
-    // applied once decoding completes.
     let mut malformed = false;
 
     let mut offset: usize = 0;
@@ -583,11 +532,6 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
         let result = match session.hpack.decode(&stream.header_block[offset..]) {
             Ok(r) => r,
             Err(_) => {
-                // The decoder has already committed earlier fields from this
-                // block to the connection-level dynamic table; the table is
-                // now out of sync with the server's encoder. RFC 9113 §4.3:
-                // a decoding error MUST be treated as a connection error of
-                // type COMPRESSION_ERROR.
                 session.fatal_error = Some(err!(HTTP2CompressionError));
                 stream.header_block.clear();
                 return;
@@ -652,10 +596,6 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
         return;
     }
 
-    // Trailers: status_code already set by an earlier HEADERS. RFC 9113
-    // §8.1 — the trailers HEADERS MUST carry END_STREAM; otherwise the
-    // server could interleave DATA → HEADERS → DATA and the second DATA
-    // would be appended to the body.
     if stream.status_code != 0 {
         if !stream.headers_end_stream {
             stream.fatal_error = Some(err!(HTTP2ProtocolError));
@@ -685,10 +625,6 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
     stream.status_code = status;
     stream.headers_ready = true;
     if stream.awaiting_continue {
-        // Final status without a preceding 100: server has decided without
-        // seeing the body. Half-close our side with an empty DATA so the
-        // response can finish normally; Content-Length was already stripped
-        // on this path so 0 bytes is not a §8.1.1 mismatch.
         stream.awaiting_continue = false;
         session.write_frame(
             wire::FrameType::HTTP_FRAME_DATA,
@@ -774,20 +710,11 @@ pub(crate) fn is_malformed_response_field(name: &[u8]) -> bool {
     )
 }
 
-/// RFC 9113 §8.2.1: a field value MUST NOT contain NUL (0x00), LF (0x0a), or
-/// CR (0x0d). HPACK is length-prefixed so these would otherwise pass through
-/// verbatim, breaking the no-CR/LF invariant the HTTP/1.1 parser provides and
-/// enabling header injection when values are forwarded downstream.
 pub fn is_malformed_response_value(value: &[u8]) -> bool {
     value.iter().any(|&c| c == 0 || c == b'\r' || c == b'\n')
 }
 
 pub fn error_code_for(err: bun_core::Error) -> wire::ErrorCode {
-    // PORT NOTE: bun_core::Error is a NonZeroU16 interned tag; `err!()` yields
-    // a const Error per name once the link-time table lands. Until then all
-    // arms compare equal to `Error::TODO`, so this degrades to the first arm —
-    // no worse than the prior unconditional INTERNAL_ERROR, and correct once
-    // interning is wired.
     match err {
         e if e == err!(HTTP2ProtocolError) => wire::ErrorCode::PROTOCOL_ERROR,
         e if e == err!(HTTP2FrameSizeError) => wire::ErrorCode::FRAME_SIZE_ERROR,

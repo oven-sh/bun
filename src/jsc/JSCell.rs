@@ -11,21 +11,10 @@ impl JSCell {
     /// Statically cast a cell to a JSObject. Returns null for non-objects.
     /// Use `to_object` to mutate non-objects into objects.
     pub fn get_object(&self) -> Option<&JSObject> {
-        // TODO(port): jsc.markMemberBinding(JSCell, @src()) — comptime binding marker, likely drop
-        // `JSObject` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
-        // centralised non-null-ZST deref proof. Nullable per the C++ contract
-        // (non-object cells return null).
         let p = JSC__JSCell__getObject(self);
         (!p.is_null()).then(|| JSObject::opaque_ref(p))
     }
 
-    /// Convert a cell to a JSObject.
-    ///
-    /// Statically casts cells that are already objects, otherwise mutates them
-    /// into objects.
-    ///
-    /// ## References
-    /// - [ECMA-262 §7.1.18 ToObject](https://tc39.es/ecma262/#sec-toobject)
     pub fn to_object<'a>(&'a self, global: &'a JSGlobalObject) -> &'a JSObject {
         // TODO(port): jsc.markMemberBinding(JSCell, @src()) — comptime binding marker, likely drop
         // `JSObject` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
@@ -45,10 +34,6 @@ impl JSCell {
     }
 
     pub fn get_getter_setter(&self) -> &GetterSetter {
-        // TODO(port): bun_jsc::JSValue::is_getter_setter (debug_assert dropped while JSValue.rs gated)
-        // Caller-asserted invariant — this cell's JSType is GetterSetter.
-        // `GetterSetter` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
-        // centralised non-null-ZST deref proof (`self` is non-null).
         GetterSetter::opaque_ref(std::ptr::from_ref::<JSCell>(self).cast::<GetterSetter>())
     }
 
@@ -66,18 +51,9 @@ impl JSCell {
     }
 }
 
-// TODO(port): move to jsc_sys
-//
-// `JSCell`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles, so
-// `&T` is ABI-identical to a non-null `*const T` and C++ mutating cell state
-// through it is interior mutation invisible to Rust.
 unsafe extern "C" {
     safe fn JSC__JSCell__getObject(this: &JSCell) -> *mut JSObject;
     safe fn JSC__JSCell__toObject(this: &JSCell, global: &JSGlobalObject) -> *mut JSObject;
-    // NOTE: this function always returns a JSType, but by using `u8` then
-    // casting it via `@enumFromInt` we can ensure our `JSType` enum matches
-    // WebKit's. This protects us from possible future breaking changes made
-    // when upgrading WebKit.
     safe fn JSC__JSCell__getType(this: &JSCell) -> u8;
 }
 
@@ -87,32 +63,6 @@ unsafe extern "C" {
 // JsCell<T> — single-JS-thread interior mutability
 // ════════════════════════════════════════════════════════════════════════════
 
-/// `JsCell<T>` is a `#[repr(transparent)]` wrapper over `UnsafeCell<T>` that
-/// hands out `&mut T` from `&self`. It is the load-bearing primitive that lets
-/// `VirtualMachine::get()` / `JSGlobalObject::bun_vm()` return a *safe*
-/// `&'static VirtualMachine` while still permitting field mutation.
-///
-/// ## Soundness model
-///
-/// Bun runs **one** `VirtualMachine` per JS thread. JavaScript is
-/// single-threaded and reentrant: a host function may call back into JS, which
-/// may call back into Rust, but always on the *same* OS thread. There is no
-/// true concurrent aliasing — only stacked, same-thread reentrancy. The Zig
-/// source models this with raw `*VirtualMachine` everywhere; `JsCell` is the
-/// Rust spelling of that contract.
-///
-/// `get_mut()` is therefore *not* sound under arbitrary `Sync` semantics — the
-/// `unsafe impl Sync` below is a lie to the type system that we discharge by
-/// the thread-affinity invariant: a `JsCell` embedded in `VirtualMachine` (or
-/// any JS-heap-adjacent struct) is only ever touched from its owning JS
-/// thread. Cross-thread access goes through `ConcurrentTask` /
-/// `enqueueTaskConcurrent`, which never hands out a `&JsCell`.
-///
-/// This is morally `Cell<T>` with a `get_mut`-from-`&self` escape hatch and
-/// no `T: Copy` bound. [`Self::with_mut`] is the safe entry point (the
-/// `&mut T` is closure-scoped and cannot escape); [`Self::get_mut`] is
-/// `unsafe` and requires the caller to uphold the no-alias invariant
-/// explicitly.
 #[repr(transparent)]
 pub struct JsCell<T>(core::cell::UnsafeCell<T>);
 
@@ -163,12 +113,6 @@ impl<T> JsCell<T> {
         unsafe { &mut *self.0.get() }
     }
 
-    /// Closure-scoped mutable access. The `&mut T` cannot escape `f`, so the
-    /// only way to violate the aliasing invariant is for `f` itself to
-    /// re-enter a path that touches this same cell — which the
-    /// single-JS-thread model already forbids for the duration of a field
-    /// mutation. This is the **safe** spelling of `get_mut`; use it whenever
-    /// the mutation does not need to outlive a single expression.
     #[inline(always)]
     pub fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
         // SAFETY: single-JS-thread invariant (see type docs); the `&mut T`

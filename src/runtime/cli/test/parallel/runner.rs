@@ -46,12 +46,6 @@ macro_rules! format_bytes {
 /// module load alone can exceed the production 5ms threshold.
 pub(crate) const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
 
-/// Owns the coordinator-side per-run worker temp directory path bytes;
-/// recursively removes it on drop. Mirrors the Zig
-/// `defer if (worker_tmpdir) |d| bun.FD.cwd().deleteTree(d) catch {}`.
-/// Zig stored a `[:0]const u8` whose `.len` excludes the sentinel; here we
-/// store the bare path with no trailing NUL so `path()`/Drop hand the exact
-/// same bytes to `delete_tree` that `make_path` created.
 struct WorkerTmpdir(Option<Box<[u8]>>);
 
 impl WorkerTmpdir {
@@ -100,10 +94,6 @@ pub fn run_as_coordinator(
 
     // PERF(port): was arena bulk-free (std.heap.ArenaAllocator).
 
-    // Owned path bytes (Zig: `[:0]const u8` from allocPrintSentinel — the
-    // sentinel was for C interop only, `.len` excluded it). ZStr is a borrow
-    // header; we must own the backing storage here. Drop recursively removes
-    // the directory once the run finishes.
     let mut worker_tmpdir = WorkerTmpdir(None);
     // Workers' stderr is a pipe; have them format with ANSI when we will be
     // rendering to a color terminal so streamed lines match serial output.
@@ -148,11 +138,6 @@ pub fn run_as_coordinator(
         }
         worker_tmpdir.0 = Some(dir);
     }
-    // Each worker gets a unique JEST_WORKER_ID / BUN_TEST_WORKER_ID (1-indexed,
-    // matching Jest) so tests can pick distinct ports/databases. Serialize the
-    // env map once per worker after .put() — appending after the fact would
-    // create duplicate entries when the parent already has the variable set,
-    // and POSIX getenv() returns the first match.
     let mut envps: Vec<bun_dotenv::NullDelimitedEnvMap> = Vec::with_capacity(k as usize);
     for i in 0..k {
         let mut id = Vec::new();
@@ -163,20 +148,12 @@ pub fn run_as_coordinator(
     }
     let argv = build_worker_argv(ctx)?;
 
-    // Sort lexicographically so adjacent indices share parent directories.
-    // Each worker owns a contiguous chunk; co-located files share imports, so
-    // this keeps each worker's isolation SourceProvider cache hot. --randomize
-    // explicitly opts out of locality (the caller already shuffled).
     let mut sorted: Vec<PathString> = files.to_vec();
     if !ctx.test_options.randomize {
         sorted.sort_by(|a, b| bun_core::order(a.slice(), b.slice()));
     }
 
     let mut workers: Vec<Worker> = Vec::with_capacity(k as usize);
-    // TODO(port): Zig allocates uninitialized then assigns in-place; Rust pushes
-    // constructed values. Populate fully BEFORE constructing Coordinator so it
-    // can hold `&mut [Worker]` without aliasing the push loop. The `coord`
-    // backref is null here and patched once Coordinator's address is fixed.
     for i in 0..k {
         let idx: u32 = i;
         workers.push(Worker {
@@ -289,13 +266,6 @@ pub fn run_as_coordinator(
     Ok(true)
 }
 
-/// Build the argv used for every worker (re)spawn. Forwards every `bun test`
-/// flag that affects how tests *execute inside* a worker, plus `--dots` and
-/// `--only-failures` since the worker formats result lines and the coordinator
-/// prints them verbatim. Coordinator-only concerns — file discovery
-/// (`--path-ignore-patterns`, `--changed`), `--reporter`/`--reporter-outfile`,
-/// `--pass-with-no-tests`, `--parallel` itself — are intentionally not
-/// forwarded.
 fn build_worker_argv(
     ctx: &Command::ContextData,
 ) -> Result<Box<[bun_spawn::CStrPtr]>, bun_core::Error> {
@@ -352,10 +322,6 @@ fn build_worker_argv(
     if let Some(seed) = opts.seed {
         argv.push(print_z(format_args!("--seed={}", seed))?);
     }
-    // --bail is intentionally NOT forwarded: workers Global.exit(1) on bail
-    // (test_command.zig handleTestCompleted), which the coordinator would
-    // misread as a crash. Cross-worker bail is handled at file granularity by
-    // the coordinator instead.
     if opts.repeat_count > 0 {
         argv.push(print_z(format_args!("--rerun-each={}", opts.repeat_count))?);
     }
@@ -516,13 +482,6 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
     }
 }
 
-/// Event-loop-driven coordinator ↔ worker channel. The worker pumps
-/// `vm.event_loop()` between files instead of sitting in a blocking read(), so
-/// any post-swap cleanup the loop owns (timers the generation guard let
-/// through, async dispose, etc.) gets to run, and on macOS — where there's no
-/// PDEATHSIG — coordinator death surfaces as channel close. Same `Channel`
-/// abstraction as the coordinator side: usockets over the socketpair on POSIX,
-/// `uv.Pipe` over the inherited duplex named-pipe on Windows.
 pub struct WorkerCommands {
     pub vm: *mut VirtualMachine,
     // TODO(port): Channel(WorkerCommands, "channel") — second comptime arg is

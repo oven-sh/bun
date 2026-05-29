@@ -5,11 +5,6 @@
 #![allow(clippy::disallowed_types)]
 #![feature(arbitrary_self_types_pointers)]
 #![feature(allocator_api)]
-// `#[thread_local]` (vs the `thread_local!` macro) compiles to a bare
-// `__thread` slot — single `mov reg, fs:[OFFSET]` access, no `LocalKey`
-// `__getit()` wrapper, no lazy-init flag check, no dtor-registration probe.
-// Used for the per-allocation hot-path TLS in `ast_alloc::AST_ALLOC`; matches
-// Zig's `threadlocal var` semantics exactly.
 #![feature(thread_local)]
 
 use core::fmt::Write as _;
@@ -44,12 +39,6 @@ impl Alignment {
     }
 }
 
-// ── `std.c.max_align_t` alignment ─────────────────────────────────────────
-// The `libc` crate does not expose `max_align_t` on every target Bun ships
-// (missing on Windows MSVC and on FreeBSD aarch64), so those targets carry a
-// local mirror of the Zig definition. Remaining non-Windows targets keep
-// `libc::max_align_t` (which carries `long double`, align 16 on x86_64/aarch64;
-// the {f64,i64,*const ()} fallback would silently downgrade to 8).
 #[cfg(windows)]
 #[repr(C)]
 struct MaxAlignT {
@@ -59,10 +48,6 @@ struct MaxAlignT {
 }
 #[cfg(windows)]
 pub const MAX_ALIGN_T: usize = core::mem::align_of::<MaxAlignT>();
-// Zig: `extern struct { a: c_longlong, b: c_longdouble }` — on AArch64
-// AAPCS64 `long double` is IEEE binary128, 16-byte aligned. The `libc` crate
-// only defines `max_align_t` for FreeBSD on x86_64, so hardcode the ABI value
-// for the aarch64 port.
 #[cfg(all(target_os = "freebsd", target_arch = "aarch64"))]
 pub const MAX_ALIGN_T: usize = 16;
 #[cfg(not(any(windows, all(target_os = "freebsd", target_arch = "aarch64"))))]
@@ -75,11 +60,6 @@ pub struct AllocatorVTable {
     pub free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
 }
 impl AllocatorVTable {
-    /// `alloc` impl that always fails. For vtables that only ever `free` an
-    /// externally-produced buffer (mmap region, plugin-owned memory, refcounted
-    /// foreign string) and never allocate or grow it. Zig has no `std.mem.
-    /// Allocator.noAlloc`; every Zig site hand-rolls `fn alloc(...) ?[*]u8 {
-    /// return null; }`. This is the Rust-side improvement.
     pub const NO_ALLOC: unsafe fn(*mut core::ffi::c_void, usize, Alignment, usize) -> *mut u8 =
         |_, _, _, _| core::ptr::null_mut();
     pub const NO_RESIZE: unsafe fn(
@@ -258,25 +238,12 @@ impl<'a> FixedBufferAllocator<'a> {
     }
 }
 
-// PORTING.md §Allocators: AST crates thread an `Arena`; non-AST use Vec/Box
-// (global mimalloc). `Arena` is now the real per-heap `MimallocArena` (matching
-// Zig's `bun.allocators.MimallocArena`) — unlike `bumpalo::Bump`, it supports
-// per-allocation free + realloc, so `ArenaVec` no longer leaks on grow.
-//
-// `bumpalo::Bump` is kept as `Bump` for genuinely bump-only scratch (parser
-// node stores that are never resized and where the no-op `deallocate` is the
-// point).
 pub use mimalloc_arena::MimallocArena;
 pub type Arena = MimallocArena;
 /// `bumpalo::Bump` — kept for genuinely bump-only scratch that's never resized.
 pub type Bump = bumpalo::Bump;
 mod baby_vec;
 pub use baby_vec::BabyVec;
-/// Arena-backed `Vec` with `u32` length/capacity — port of Zig's
-/// `BabyList(T)`. 24 B (vs 32 B for `Vec<T, &'a MimallocArena>`); the
-/// allocator handle is kept inline for lifetime checking. Growth/free route
-/// through `<&MimallocArena as Allocator>` (= `mi_heap_realloc_aligned` /
-/// `mi_free`); reclaimed on arena `reset`/`Drop`.
 pub type ArenaVec<'a, T> = BabyVec<'a, T>;
 pub use mimalloc_arena::{ArenaString, ArenaVecExt};
 
@@ -293,23 +260,6 @@ where
     v
 }
 
-/// Re-tag an [`ArenaVec`]'s allocator handle to `dst` without copying data.
-///
-/// Zig parity: `BabyList.transferOwnership` (collections/baby_list.zig). Zig's
-/// `BabyList` is allocator-erased — the linker passes a different allocator at
-/// each `append(allocator, ..)` call site; the Rust port stores `&'a Arena` in
-/// the `Vec`, so the equivalent is swapping that field.
-///
-/// Sound because `<&MimallocArena as Allocator>` is heap-agnostic on the
-/// existing buffer:
-/// - `deallocate` → `mi_free(ptr)`: looks up the owning heap from the pointer's
-///   page metadata; works from any thread on any heap's allocation.
-/// - `grow`/`shrink` → `mi_heap_realloc_aligned(dst, ptr, ..)`: returns `ptr`
-///   in-place if it fits (read-only `mi_usable_size`), else allocs on `dst`,
-///   `memcpy`s, then `mi_free(ptr)`.
-///
-/// The original arena is never `mi_heap_malloc`-ed from again via this `Vec`,
-/// so the [`MimallocArena`] single-thread-alloc contract is preserved.
 #[inline]
 pub fn transfer_arena<'a, T>(v: &mut ArenaVec<'a, T>, dst: &'a MimallocArena) {
     v.set_allocator(dst);
@@ -330,27 +280,6 @@ macro_rules! arena_format {
 /// `bun.use_mimalloc` — false under ASAN, where the global allocator is `std::alloc::System`.
 pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 
-// ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
-//
-// These modelled Zig's `std.mem.Allocator` vtable. With `#[global_allocator]`
-// + `Arena = bumpalo::Bump`, most callers should drop the allocator param
-// PORTING.md §Forbidden) so the .zig↔.rs diff pass has a real body to compare;
-// callers are migrated incrementally.
-//
-//   MimallocArena            → prefer `bun_alloc::Arena` (= bumpalo::Bump)
-//   NullableAllocator        → prefer `Option<&Arena>` or drop the param
-//   MaxHeapAllocator         → debug-only cap (single-allocation arena)
-//   BufferFallbackAllocator  → PORTING.md "StackFallbackAllocator → just use the heap"
-//   fallback                 → libc-malloc + zeroing wrapper (Zig std.heap.c_allocator)
-//   maybe_owned              → prefer `std::borrow::Cow` / `bun_ptr::Owned`
-//   heap_breakdown           → macOS malloc_zone_* per-tag heaps (debug builds)
-//   basic                    → `impl GlobalAlloc for Mimalloc` above is the canonical impl
-//
-//   LinuxMemFdAllocator, MimallocArena (the vtable impl)
-//   import bun_core/sys/runtime/collections and so live in
-//   `bun_runtime::allocators`; callers import from
-//   there directly.
-//
 #[path = "BufferFallbackAllocator.rs"]
 pub mod buffer_fallback_allocator;
 pub mod fallback;
@@ -430,11 +359,6 @@ pub mod default_alloc {
         if ptr.is_null() {
             return 0;
         }
-        // Under `bun_asan` the global allocator is `std::alloc::System`, so the
-        // size must come from libc, not mimalloc — and the symbol differs per
-        // OS (`malloc_usable_size` on Linux, `malloc_size` on macOS). `bun_asan`
-        // is only ever set on Linux or macOS, so the catch-all (non-asan, every
-        // `check-all` target including Windows) stays on mimalloc.
         #[cfg(all(bun_asan, target_os = "linux"))]
         return unsafe { libc::malloc_usable_size(ptr.cast_mut()) };
         #[cfg(all(bun_asan, target_os = "macos"))]
@@ -537,11 +461,6 @@ mod hashbrown_bridge;
 /// `allocator-api2`.
 pub use allocator_api2::alloc::Allocator as HashbrownAllocator;
 
-// ── tier-0 local primitives ───────────────────────────────────────────────
-// Real, self-contained helpers used by the BSS containers below. These are the
-// canonical tier-0 definitions, re-exported by higher tiers (`bun_paths::SEP_STR`,
-// `bun_core::strings::trim_right`, `bun_core::strings::trim_right`).
-
 /// Zig: `std.fs.path.sep_str` — `"\\"` on Windows, `"/"` elsewhere.
 /// Canonical tier-0 definition; re-exported by `bun_paths::SEP_STR`.
 pub const SEP_STR: &str = if cfg!(windows) { "\\" } else { "/" };
@@ -579,17 +498,6 @@ pub fn trim<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
     trim_right(trim_left(s, chars), chars)
 }
 
-// ─── ascii-lowercase helpers ──────────────────────────────────────────────
-// Sunk from bun_core::strings so bun_alloc::BSSList::append_lower_case can call
-// it without a dep cycle (bun_core → bun_alloc, not the reverse). bun_core
-// re-exports both names so all existing callers of
-// `bun_core::strings::copy_lowercase` / `bun_core::immutable::copy_lowercase`
-// keep compiling unchanged.
-
-/// Zig: `strings.copyLowercase` (src/string/immutable.zig). ASCII-lowercase
-/// `in_` into `out` (which must be at least `in_.len()`), returning the
-/// written prefix. Memcpy-runs + per-uppercase-byte fixup; identical output
-/// to a byte-at-a-time `to_ascii_lowercase` zip.
 pub fn copy_lowercase<'a>(in_: &[u8], out: &'a mut [u8]) -> &'a [u8] {
     let mut in_slice = in_;
     // PORT NOTE: reshaped for borrowck — track output offset instead of reslicing &mut.
@@ -614,11 +522,6 @@ pub fn copy_lowercase<'a>(in_: &[u8], out: &'a mut [u8]) -> &'a [u8] {
     &out[0..in_.len()]
 }
 
-/// Zig: `strings.copyLowercaseIfNeeded` (src/string/immutable.zig:664). If
-/// `in_` contains no ASCII uppercase byte, returns `in_` unchanged and leaves
-/// `out` UNTOUCHED. Otherwise identical to [`copy_lowercase`]: writes the
-/// lowercased bytes into `out[..in_.len()]` and returns that prefix. Both
-/// borrows share `'a` so the return may alias either.
 pub fn copy_lowercase_if_needed<'a>(in_: &'a [u8], out: &'a mut [u8]) -> &'a [u8] {
     if in_.iter().any(u8::is_ascii_uppercase) {
         copy_lowercase(in_, out)
@@ -627,10 +530,6 @@ pub fn copy_lowercase_if_needed<'a>(in_: &'a [u8], out: &'a mut [u8]) -> &'a [u8
     }
 }
 
-/// Lowercase `input` into a fresh `[u8; N]` stack buffer, returning
-/// `Some((buf, input.len()))` or `None` if `input.len() > N`. The unused tail
-/// of `buf` is zero-filled. Covers the ubiquitous "lowercase a short key into
-/// a stack buffer, then look it up in a phf/length-gated map" pattern.
 #[inline]
 pub fn ascii_lowercase_buf<const N: usize>(input: &[u8]) -> Option<([u8; N], usize)> {
     if input.len() > N {
@@ -654,12 +553,6 @@ pub(crate) fn alloc_result<T>(
         .ok_or(core::alloc::AllocError)
 }
 
-/// Port of `std.fmt.count`: number of bytes the formatted args would produce.
-///
-/// Drives a discarding `fmt::Write` that only sums `s.len()` — no allocation,
-/// no UTF-8 validation beyond what the formatter already did. Lives here in
-/// T0 so higher tiers (`bun_core::fmt::count` re-exports this) and `bun_alloc`
-/// itself can share the single implementation.
 #[inline]
 pub fn fmt_count(args: core::fmt::Arguments<'_>) -> usize {
     struct Discarding(usize);
@@ -677,13 +570,6 @@ pub fn fmt_count(args: core::fmt::Arguments<'_>) -> usize {
     w.0
 }
 
-/// `core::fmt::Write` adapter over a borrowed `&mut [u8]` — the engine behind
-/// [`buf_print`] / [`buf_print_len`] (and `bun_core::fmt::buf_print_z`).
-///
-/// This is the single port of Zig `std.fmt.bufPrint`'s internal cursor. It
-/// lives at T0 so `bun_alloc` itself can use it (`BSSStringList::print`); T1
-/// `bun_core::fmt` re-exports it and adds an `io::Write` impl so the same
-/// struct also serves as Zig's `std.io.fixedBufferStream` for write-only sites.
 pub struct SliceCursor<'a> {
     pub buf: &'a mut [u8],
     pub at: usize,
@@ -731,18 +617,6 @@ pub fn buf_print_len(
     Ok(c.at)
 }
 
-// ── RAII Mutex ────────────────────────────────────────────────────────────
-// Zig's `bun.Mutex` exposes bare `lock()`/`unlock()` (no guard). The BSS
-// containers below need to hold the lock across `&mut self` method calls, so
-// the returned [`MutexGuard`] deliberately erases its borrow of `self` — it
-// stores the `std::sync::MutexGuard` lifetime-extended to `'static` (lifetimes
-// are erased at codegen, so this is a layout no-op). This is sound because
-// every `Mutex` here lives inside a `'static` BSS singleton (see `instance()`
-// below), so the pointee always outlives the guard.
-//
-// LAYERING: `bun_alloc` is below `bun_threading` in the crate graph, so the
-// futex-backed `bun_threading::Mutex` is unavailable here; `std::sync` (itself
-// futex-backed since Rust 1.62) is the dependency-free stand-in.
 pub struct Mutex(std::sync::Mutex<()>);
 impl Mutex {
     pub const fn new() -> Self {
@@ -805,15 +679,6 @@ macro_rules! oom_from_alloc {
     )+ };
 }
 
-/// The mimalloc-backed `#[global_allocator]` payload.
-///
-/// Per PORTING.md "Prereq for every crate":
-/// `#[global_allocator] static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;`
-/// must be set at the binary root before any `Box`/`Rc`/`Arc`/`Vec` mapping is valid.
-///
-/// Mirrors `src/bun_alloc/basic.zig` `c_allocator` vtable, using mimalloc's
-/// `MI_MAX_ALIGN_SIZE` (16) fast-path: alignments ≤16 go through `mi_malloc`,
-/// larger through `mi_malloc_aligned`. `mi_free` handles both.
 pub struct Mimalloc;
 
 use mimalloc::MI_MAX_ALIGN_SIZE;
@@ -916,16 +781,6 @@ pub fn usable_size(ptr: *const u8) -> usize {
 // Symbols hoisted DOWN into T0 so higher tiers can re-import without cycles.
 // ──────────────────────────────────────────────────────────────────────────
 
-// ── out_of_memory ─────────────────────────────────────────────────────────
-// Source: src/bun.zig `outOfMemory()` → `crash_handler.crashHandler(.out_of_memory, ..)`.
-//
-// `bun_alloc` is T0 and cannot depend on `bun_crash_handler`, so the upward
-// call is routed through a link-time `extern "Rust"` symbol defined by
-// `bun_crash_handler`. Resolved at link time → the target lives in read-only
-// `.text`, so memory corruption cannot redirect it (the previous `AtomicPtr`
-// slot was writable). Under `cfg(test)` (this crate's standalone test binary
-// does not link `bun_crash_handler`) the fallback is a direct abort.
-
 #[cold]
 #[inline(never)]
 pub fn out_of_memory() -> ! {
@@ -967,10 +822,6 @@ pub fn page_size() -> usize {
         }
         #[cfg(windows)]
         {
-            // Local `#[repr(C)]` mirror so this crate stays leaf (no
-            // `windows-sys` dep — see PORTING.md §Crate map). Only
-            // `dwPageSize` is read; the rest is opaque padding sized to
-            // `sizeof(SYSTEM_INFO)` (48 bytes on both x86 and x64).
             #[repr(C)]
             struct SystemInfo {
                 _w_processor_architecture: u16,
@@ -980,10 +831,6 @@ pub fn page_size() -> usize {
                 _ints: [u32; 5],
             }
             unsafe extern "system" {
-                // `&mut SystemInfo` is ABI-identical to `LPSYSTEM_INFO` (thin
-                // non-null pointer to a `#[repr(C)]` struct); kernel32 fully
-                // initialises every field. No other preconditions, so `safe fn`
-                // discharges the link-time proof and the caller needs no `unsafe`.
                 safe fn GetSystemInfo(lpSystemInfo: &mut SystemInfo);
             }
             let mut info = SystemInfo {
@@ -1016,13 +863,6 @@ pub mod wtf {
     }
 }
 
-// ── String (bun.String) — TYPE_ONLY landing ───────────────────────────────
-// Source: src/string/string.zig + src/jsc/ZigString.zig + src/string/wtf.zig.
-// Layout-only (#[repr(C)]) so T0/T1 crates can name the type; rich methods
-// (toJS, toUTF8, WTF refcounting) remain in bun_str via extension traits.
-// PORTING.md: "#[repr(C)] struct { tag: u8, value: StringValue } — NOT a Rust
-// enum (C++ mutates tag and value independently across FFI)."
-
 /// Port of `bun.String.Tag`.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1042,17 +882,6 @@ pub const ZS_GLOBAL_BIT: usize = 1usize << 62;
 pub const ZS_16BIT_BIT: usize = 1usize << 63;
 pub const ZS_UNTAG_MASK: usize = (1usize << 53) - 1;
 
-/// Port of `jsc.ZigString` — extern struct `{ ptr: [*]const u8, len: usize }`.
-///
-/// **Canonical storage layout.** `bun_core::string::ZigString` is a
-/// `#[repr(transparent)]` newtype over this struct (so the FFI layout has ONE
-/// source of truth) and adds the encoding-aware/allocating methods via
-/// `Deref`/`DerefMut`. The pointer-tag accessors (`is_*` / `mark_*` /
-/// `untagged` / `slice` / `utf16_slice_aligned`) live HERE so the T0
-/// `bun_alloc::String` union and `WTFStringImplStruct::to_zig_string` can use
-/// them without an upward dep on `bun_core`. Higher-tier callers should name
-/// `bun_core::ZigString`; reaching the inherent methods through `Deref` is the
-/// intended path.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ZigString {
@@ -1195,15 +1024,6 @@ impl ZigString {
     }
 }
 
-/// Port of `WTFStringImplStruct` — must match WebKit's `WTF::StringImpl` layout.
-///
-/// `m_ref_count` / `m_hash_and_flags` are `Cell<u32>` (not bare `u32`) because
-/// `r#ref`/`deref`/`ensure_hash` hand a `*const Self` derived from `&self` to
-/// C++ FFI that **writes** those fields. Without `UnsafeCell` the struct is
-/// `Freeze`, the `&self` borrow asserts the whole pointee is read-only, and
-/// the FFI write is a Stacked-Borrows violation (LLVM may also CSE the
-/// pre-/post-FFI `ref_count()` loads). `Cell<u32>` is `repr(transparent)` over
-/// `UnsafeCell<u32>`, so the C ABI layout is unchanged.
 #[repr(C)]
 pub struct WTFStringImplStruct {
     pub m_ref_count: core::cell::Cell<u32>,
@@ -1267,27 +1087,12 @@ impl WTFStringImplStruct {
         // WTF::StringImpl::hasAtLeastOneRef
         self.m_ref_count.get() > 0
     }
-    /// Atomic view of `m_ref_count`. The C++ field is
-    /// `std::atomic<uint32_t> m_refCount` (StringImpl.h:163); we model it as
-    /// `Cell<u32>` for the read-only accessors above but `ref`/`deref` must
-    /// issue real atomic RMWs to match `WTF::StringImpl::ref`/`deref` exactly.
-    /// `Cell<u32>` is `repr(transparent)` over `UnsafeCell<u32>` and
-    /// `AtomicU32` is `repr(C, align(4))` over `UnsafeCell<u32>`: same size,
-    /// same alignment (`m_ref_count` is the first field of a `#[repr(C)]`
-    /// struct so it is 4-aligned), so the in-place reborrow is sound.
     #[inline(always)]
     fn ref_count_atomic(&self) -> &AtomicU32 {
         // SAFETY: layout-compatible reborrow of `UnsafeCell<u32>` as
         // `AtomicU32`; see doc comment above.
         unsafe { AtomicU32::from_ptr(self.m_ref_count.as_ptr()) }
     }
-    /// Inline port of `WTF::StringImpl::ref()` (StringImpl.h:1181).
-    ///
-    /// Cross-language LTO does not inline the `Bun__WTFStringImpl__ref` C++
-    /// shim into Rust callers (2151 out-of-line `callq` sites in the release
-    /// binary vs 0 in the Zig build), so the one-instruction body is
-    /// reimplemented here. `Relaxed` matches WebKit's
-    /// `m_refCount.fetch_add(s_refCountIncrement, std::memory_order_relaxed)`.
     #[inline]
     pub fn r#ref(&self) {
         let old = self
@@ -1301,14 +1106,6 @@ impl WTFStringImplStruct {
         );
         let _ = old;
     }
-    /// Inline port of `WTF::StringImpl::deref()` (StringImpl.h:1193).
-    ///
-    /// Hot path is a single `lock xadd`; only the last-ref branch crosses FFI
-    /// to `StringImpl::destroy`. `Relaxed` matches WebKit's
-    /// `m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_relaxed)`;
-    /// WTF relies on the static-string flag bit (0x1) to keep static strings'
-    /// counters from ever equalling `s_refCountIncrement`, so no separate
-    /// `isStatic()` check is needed.
     #[inline]
     pub fn deref(&self) {
         let old = self
@@ -1331,10 +1128,6 @@ impl WTFStringImplStruct {
             vtable: StringImplAllocator::VTABLE_PTR,
         }
     }
-    /// Borrow `len` raw bytes from `m_ptr`. The `latin1` arm of the `repr(C)`
-    /// union is a valid byte pointer regardless of encoding (both arms share
-    /// the same offset). Centralises the `from_raw_parts(m_ptr.latin1, …)` used
-    /// by `byte_slice` / `latin1_slice` / `utf8_slice`.
     #[inline(always)]
     pub fn raw_bytes(&self, len: usize) -> &[u8] {
         // SAFETY: `m_ptr.latin1` points at the impl's character buffer for the
@@ -1395,14 +1188,6 @@ impl WTFStringImplStruct {
 }
 
 unsafe extern "C" {
-    // `&WTFStringImplStruct` is ABI-identical to the C++ `StringImpl*` (thin
-    // non-null pointer to a `#[repr(C)]` struct). C++-side mutation lands in
-    // `m_ref_count` / `m_hash_and_flags`, both `Cell<u32>`, so writes through
-    // a `&`-derived pointer are sound. The type encodes the only validity
-    // precondition, so `safe fn` discharges the link-time proof.
-    // `ref`/`deref` are inlined in Rust above; only the cold last-ref
-    // `destroy` path crosses FFI. `*const` + `unsafe`: it frees the
-    // allocation backing the pointer.
     pub fn Bun__WTFStringImpl__destroy(this: *const WTFStringImplStruct);
     // Kept for Zig callers (`src/string/wtf.zig`); Rust no longer calls these.
     pub safe fn Bun__WTFStringImpl__ref(this: &WTFStringImplStruct);
@@ -1416,13 +1201,6 @@ unsafe extern "C" {
     ) -> bool;
 }
 
-/// Port of `bun.String.StringImplAllocator` (src/string/wtf.zig).
-///
-/// A `std.mem.Allocator` vtable whose `ptr` is a `WTFStringImpl`; `alloc` bumps
-/// the refcount, `free` derefs. Hoisted into `bun_alloc` (which already owns
-/// `AllocatorVTable` and the `WTFStringImplStruct` layout) so the
-/// `is_wtf_allocator` vtable-identity check is a local pointer compare — no
-/// upward dependency on `bun_string` and no runtime fn-ptr hook.
 #[allow(non_snake_case)] // Zig namespace `bun.String.StringImplAllocator`
 pub mod StringImplAllocator {
     use super::{Alignment, AllocatorVTable, WTFStringImplStruct};
@@ -1474,10 +1252,6 @@ pub union StringImpl {
     // .StaticZigString aliases .zig_string; .Dead/.Empty are zero-width.
 }
 
-/// Port of `bun.String` (a.k.a. `BunString` in C++).
-///
-/// 5-variant tagged union over WTF-backed and Zig-slice-backed strings. NOT a
-/// Rust `enum` because C++ mutates `tag` and `value` independently across FFI.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct String {
@@ -1508,11 +1282,6 @@ impl String {
         },
     };
 
-    /// Borrow the live `WTF::StringImpl` backing this string.
-    ///
-    /// Centralises the union-field read + raw-ptr deref that `to_zig_string` /
-    /// `length` / `is_8bit` each open-coded. Callers branch on
-    /// `self.tag == WTFStringImpl` first (debug-asserted).
     #[inline(always)]
     fn wtf_impl(&self) -> &WTFStringImplStruct {
         debug_assert_eq!(self.tag, Tag::WTFStringImpl);
@@ -1562,10 +1331,6 @@ impl String {
         }
     }
 
-    /// Zig `eqlComptime` — compare against a (typically literal) byte slice.
-    /// PERF(port): Zig dispatched to SIMD `bun.strings.eqlComptime*`; this T0
-    /// version uses scalar `==` / widening compare. Re-route to
-    /// `bun_core::strings` via inlining if it shows up on a hot path.
     pub fn eql_comptime(&self, other: &[u8]) -> bool {
         let zs = self.to_zig_string();
         if zs.is_16bit() {
@@ -1664,13 +1429,6 @@ pub unsafe fn default_free(ptr: *mut u8, len: usize) {
     basic::C_ALLOCATOR.raw_free(buf, Alignment::from_byte_units(1), 0);
 }
 
-/// Zig: `bun.default_allocator.dupe(u8, src)` for raw `[]u8` not owned by a
-/// `Vec`/`Box` — symmetric with [`default_free`]. Returns a `&'static [u8]`
-/// view onto a fresh mimalloc allocation; caller is responsible for pairing
-/// with `default_free(ptr, len)`.
-///
-/// Empty input borrows the static empty slice (no allocation; `default_free`
-/// no-ops on `len == 0`).
 pub fn default_dupe(src: &[u8]) -> &'static [u8] {
     if src.is_empty() {
         return b"";
@@ -1708,13 +1466,6 @@ pub unsafe fn secure_zero(p: *mut u8, len: usize) {
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
-/// Memory is typically not decommitted immediately when freed. Sensitive
-/// information kept in memory can be read until the OS decommits it or the
-/// allocator reuses it. Zero it before dropping.
-///
-/// Zig used `std.crypto.secureZero` then `allocator.free`; Rust drops the
-/// allocator param (global mimalloc) and uses [`secure_zero`] so the zeroing
-/// cannot be elided by the optimizer.
 pub fn free_sensitive<T: Copy>(mut slice: Box<[T]>) {
     // SAFETY: `slice` is exclusively owned; writing `size_of_val` zero bytes
     // over its storage is sound for `T: Copy` (no drop glue, no invariants on
@@ -1747,11 +1498,6 @@ pub unsafe fn free_sensitive_cstr(p: *const core::ffi::c_char) {
         crate::default_alloc::free(p as *mut core::ffi::c_void);
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// IndexType — `packed struct(u32) { index: u31, is_overflow: bool = false }`
-// Zig packed-struct fields are LSB-first: bits 0..=30 = index, bit 31 = is_overflow.
-// ──────────────────────────────────────────────────────────────────────────
 
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -1795,63 +1541,16 @@ pub enum ItemStatus {
     NotFound,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// BSSList / BSSStringList / BSSMapInner — real method bodies follow below.
-// Per-monomorphization statics are emitted at the declare site via the
-// `bss_list!` / `bss_string_list!` / `bss_map_inner!` / `bss_map!` macros
-// (`SyncUnsafeCell<MaybeUninit<Self>>` + `Once` + `init_at`). `init()` is a
-// thin heap-allocating wrapper for callers that manage their own once-guard.
-// ──────────────────────────────────────────────────────────────────────────
-
-// ──────────────────────────────────────────────────────────────────────────
-// `bun.allocators` namespace shim
-//
-// Zig exposed this file as `bun.allocators.*`; downstream crates were ported
-// against that path (`use bun_alloc::allocators;`). Re-export the crate root
-// so `allocators::IndexType`, `allocators::BSSMapInner`, etc. resolve without
-// rewriting every callsite.
-// ──────────────────────────────────────────────────────────────────────────
 pub mod allocators {
     pub use super::*;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Per-monomorphization singleton macros
-//
-// Zig defines `pub var instance: *Self = undefined; pub var loaded = false;`
-// *inside* the generic type, giving one static per instantiation. Rust forbids
-// generic statics, so the storage is emitted at the *declare site* instead:
-//
-//   bss_string_list! { pub dirname_store: 4096, 129 }
-//   // → static STORAGE: SyncUnsafeCell<MaybeUninit<BSSStringList<4096,129>>>
-//   //   pub fn dirname_store() -> *mut BSSStringList<4096,129>
-//
-// The accessor lazily field-initializes via `init_at` under `std::sync::Once`.
-// Returning `&'static mut` is the same aliasing contract as Zig's global
-// `instance` pointer — callers must not hold overlapping unique borrows.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Emit a process-lifetime singleton accessor for any type with an
-/// `unsafe fn init_at(*mut Self)` in-place initializer. Storage is a single
-/// `AtomicPtr` (8 bytes) per declare site; the value itself is heap-allocated
-/// on first call (Zig spec: `default_allocator.create(Self)`).
 #[macro_export]
 macro_rules! bss_singleton {
     ($(#[$m:meta])* $vis:vis fn $name:ident() -> $ty:ty) => {
         $(#[$m])*
         #[inline(always)]
         $vis fn $name() -> *mut $ty {
-            // Zig's spec is `default_allocator.create(Self)` on first access
-            // (heap, process-lifetime). Store an 8-byte heap pointer and
-            // allocate on first call, matching the spec.
-            //
-            // Hot path: this accessor is hit per-append/get from the resolver
-            // (`DirnameStore::append`, `EntriesMap::get`, …). Zig reads a
-            // plain `*Self` global; the previous `Once::call_once` fast-path
-            // is an Acquire load + cmp + branch + Relaxed load that *cannot*
-            // inline across crates (it's a call into `std::sys::sync::once`).
-            // Open-code the double-checked-init so the post-init path is one
-            // Acquire load + null-test inlined into every caller.
             static STORAGE: ::core::sync::atomic::AtomicPtr<$ty> =
                 ::core::sync::atomic::AtomicPtr::new(::core::ptr::null_mut());
             let p = STORAGE.load(::core::sync::atomic::Ordering::Acquire);
@@ -1865,11 +1564,6 @@ macro_rules! bss_singleton {
             #[inline(never)]
             fn slow() -> *mut $ty {
                 let p = $crate::bss_heap_init::<$ty>(<$ty>::init_at).as_ptr();
-                // Race: two threads may both reach here. The mmap'd region is
-                // process-lifetime and never freed, so the loser is leaked
-                // (≤ one per declare site, which in practice is single-threaded
-                // — `FileSystem::init` runs once on the main thread). The CAS
-                // is the publication barrier.
                 match STORAGE.compare_exchange(
                     ::core::ptr::null_mut(),
                     p,
@@ -1885,12 +1579,6 @@ macro_rules! bss_singleton {
     };
 }
 
-/// Heap-allocate a fresh `T` via mimalloc and run its in-place `init_at` initializer.
-///
-/// Shared body of the `BSSList`/`BSSStringList`/`BSSMapInner`/`BSSMap` `init()` shims —
-/// Zig's `default_allocator.create(Self)` followed by field-init. The once-guard
-/// (Zig's `loaded` flag) is the *caller's* responsibility; use the `bss_*!` macros
-/// for the canonical per-monomorphization singleton.
 #[doc(hidden)] // Public only for the `bss_singleton!` macro expansion in dependent crates.
 #[inline]
 pub fn bss_heap_init<T>(init_at: unsafe fn(*mut T)) -> NonNull<T> {
@@ -1904,29 +1592,6 @@ pub fn bss_heap_init<T>(init_at: unsafe fn(*mut T)) -> NonNull<T> {
     ptr
 }
 
-/// Reserve `size` bytes of demand-zero-faulted, process-lifetime storage.
-///
-/// On unix this carves a sub-range out of a single process-wide
-/// `mmap(MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE)` arena: pages are not
-/// committed until first written to, so a 532 KiB `BSSStringList` backing
-/// buffer that only ever sees a handful of filenames touches one or two pages
-/// instead of all 130. On Windows this falls back to `mi_zalloc_aligned`
-/// (eager commit, but still all-zeros so callers may rely on that uniformly).
-///
-/// The mapping is **never freed** — these are Zig-port `.bss`-semantics
-/// singletons. Do not call from code paths that need to release the storage.
-///
-/// **Coalesced arena.** In Zig these singletons are linker-adjacent `.bss`
-/// globals: one VMA, demand-faulted page-by-page. The original Rust port
-/// `mmap`ed each one separately, costing 6 `mmap` syscalls + 6 VMAs on the
-/// `bun run <npm-script>` path (≈2 MiB total across `entry_store_backing`,
-/// `dirname_store_backing`, `hash_map_instance`, …) before any user code
-/// runs. We instead bump-allocate every request out of one lazily-mapped
-/// [`BSS_ARENA_SIZE`] region, restoring the single-VMA `.bss` locality and
-/// dropping the syscall count to 1. Requests that overflow the arena (none
-/// today; the headroom is ~2×) fall through to a dedicated `mmap`.
-///
-/// Returned pointer is `align`-aligned (`align ≤ 4096`).
 #[doc(hidden)]
 #[inline]
 pub fn bss_lazy_bytes(size: usize, align: usize) -> NonNull<u8> {
@@ -1937,30 +1602,13 @@ pub fn bss_lazy_bytes(size: usize, align: usize) -> NonNull<u8> {
         bss_arena_bump(size, align)
     };
     #[cfg(not(unix))]
-    let ptr = {
-        // Windows: `VirtualAlloc(MEM_RESERVE)`-only would require commit-on-touch
-        // plumbing through a guard-page handler. The largest singleton is ~1.3 MiB
-        // and Windows already faults `.bss` eagerly per-page on first write anyway,
-        // so the simpler eager allocation is kept. Use `mi_zalloc_aligned` (not
-        // `mi_malloc`) so callers can uniformly rely on all-zeros — `init_at`
-        // bodies skip writing zero-valued fields.
-        mimalloc::mi_zalloc_aligned(size, align).cast::<u8>()
-    };
+    let ptr = { mimalloc::mi_zalloc_aligned(size, align).cast::<u8>() };
     NonNull::new(ptr).expect("OOM")
 }
 
-/// Size of the shared demand-zero arena backing every `bss_*!` singleton on
-/// unix. Sum of all live monomorphizations on the `bun run` path is ≈2 MiB
-/// (`entry_store_backing` 1,216,560 B + `dirname_store_backing` 528,384 B +
-/// `hash_map_instance` 229,440 B + slice/key buffers); 4 MiB leaves ~2×
-/// headroom. `MAP_NORESERVE` means the unused tail costs only address space.
 #[cfg(unix)]
 const BSS_ARENA_SIZE: usize = 4 * 1024 * 1024;
 
-/// Bump-allocate `size` bytes at `align` out of the process-wide `.bss` arena,
-/// mapping it on first call. Returns a pointer into a `MAP_ANONYMOUS|MAP_NORESERVE`
-/// region (zero-on-read, demand-faulted). Falls back to a dedicated `mmap` if
-/// the arena is exhausted. Never returns null.
 #[cfg(unix)]
 fn bss_arena_bump(size: usize, align: usize) -> *mut u8 {
     use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
@@ -1968,10 +1616,6 @@ fn bss_arena_bump(size: usize, align: usize) -> *mut u8 {
     static BASE: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
     static CURSOR: AtomicUsize = AtomicUsize::new(0);
 
-    // Resolve the arena base. Fast path is one Acquire load; the cold path
-    // maps the 4 MiB region once and publishes via CAS. A losing racer's
-    // mapping is leaked (≤ one per process; `MAP_NORESERVE` so it costs no
-    // committed memory) — same race policy as `bss_singleton!`.
     let mut base = BASE.load(Ordering::Acquire);
     if base.is_null() {
         #[cold]
@@ -1991,10 +1635,6 @@ fn bss_arena_bump(size: usize, align: usize) -> *mut u8 {
         };
     }
 
-    // Bump the cursor: round up to `align`, reserve `size`. CAS loop because
-    // alignment padding makes the increment input-dependent. Contention is
-    // ~nil (called a handful of times from `Transpiler::init` on the main
-    // thread); the loop is for correctness, not throughput.
     let mut cur = CURSOR.load(Ordering::Relaxed);
     loop {
         let aligned = (cur + align - 1) & !(align - 1);
@@ -2046,12 +1686,6 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
     if p == libc::MAP_FAILED {
         crate::out_of_memory();
     }
-    // LSan only scans data/BSS, stacks, and malloc-tracked heap for live
-    // pointers. This anonymous mapping is none of those, so any `Box`/`Vec`
-    // whose owning pointer lives inside a `bss_*!` singleton (e.g. the
-    // resolver's `EntriesOption` cache) is reported as a leak — which then
-    // forces every subprocess to spend ~5s in llvm-symbolizer matching the
-    // suppression. Register the mapping as a root region so LSan walks it.
     #[cfg(bun_asan)]
     {
         unsafe extern "C" {
@@ -2062,11 +1696,6 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
     p.cast::<u8>()
 }
 
-/// Reserve `count` elements of `T` as a lazy-faulted slice. See [`bss_lazy_bytes`].
-///
-/// Returns `NonNull<[MaybeUninit<T>]>`: bytes are zero-on-read but treated as
-/// logically uninitialized — callers must gate reads on a separate `used`
-/// counter (Zig leaves the array `undefined` and never reads past `used`).
 #[doc(hidden)]
 #[inline]
 pub fn bss_lazy_slice<T>(count: usize) -> NonNull<[MaybeUninit<T>]> {
@@ -2116,13 +1745,6 @@ mod __bss_macro_smoke {
     crate::bss_map! { _m  : u32, 4, 8, false }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// heap_breakdown — macOS `malloc_zone_*` per-tag heaps (debug-only)
-//
-// Full port lives in `heap_breakdown.rs`. It compiles on all targets: on
-// non-macOS the FFI surface is `unreachable!()` behind `ENABLED == false`.
-// ──────────────────────────────────────────────────────────────────────────
-
 #[path = "heap_breakdown.rs"]
 pub mod heap_breakdown;
 
@@ -2143,11 +1765,6 @@ macro_rules! get_zone {
         })
     }};
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// IndexMap / Result
-// (`IndexType`, `ItemStatus`, `NOT_FOUND`, `UNASSIGNED` defined above.)
-// ──────────────────────────────────────────────────────────────────────────
 
 type HashKeyType = u64;
 
@@ -2414,24 +2031,6 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
 // BSSList<ValueType, _COUNT>
 // ──────────────────────────────────────────────────────────────────────────
 
-/// "Formerly-BSSList"
-/// It's not actually BSS anymore.
-///
-/// We do keep a pointer to it globally, but because the data is not zero-initialized, it ends up
-/// taking space in the object file. We don't want to spend 1-2 MB on these structs.
-///
-/// TODO(port): const-generic arithmetic (`COUNT = _COUNT * 2`) and per-monomorphization
-/// a raw mutable INSTANCE static are not expressible on stable Rust. Instantiate per use-site
-/// via `macro_rules!` or pin concrete `COUNT` constants.
-///
-/// `#[repr(C)]` with the small mutated scalars (`mutex`, `head`, `used`,
-/// `tail`'s header) laid out *before* the giant `backing_buf` array. Storage
-/// comes from [`bss_lazy_bytes`] (anonymous mmap, demand-zero), so each page
-/// faults only on first write. With default repr rustc placed `used: u32`
-/// *after* `backing_buf` (~1.2 MB into the largest instantiation), so
-/// `init_at`'s startup writes faulted tail pages Zig never touches. With this
-/// layout every startup write lands in page 0 of the mapping; subsequent pages
-/// fault only as `append` actually fills them.
 #[repr(C)]
 pub struct BSSList<ValueType, const COUNT: usize /* = _COUNT * 2 */> {
     pub mutex: Mutex,
@@ -2453,17 +2052,8 @@ unsafe impl<ValueType: Send, const COUNT: usize> Sync for BSSList<ValueType, COU
 
 const BSS_LIST_CHUNK_SIZE: usize = 256;
 
-/// Fixed overflow-block capacity for `BSSStringList` / `BSSMapInner`.
-/// Zig uses `count / 4`; stable Rust cannot express const-generic arithmetic
-/// (`generic_const_exprs`), so use a nonzero stand-in until the
-/// per-instantiation value is threaded through. A value of 0 here would make
-/// `OverflowListBlock::is_full` always true and `at_index`'s `idx % COUNT` panic.
 pub const BSS_OVERFLOW_BLOCK_SIZE: usize = 64;
 
-/// `#[repr(C)]` with `prev` before `data` so the inline `BSSList::tail` block's
-/// scalar fields cluster at the front of the singleton mapping (see the layout
-/// note on [`BSSList`]). Heap-allocated overflow blocks don't care about page
-/// locality; the constraint is on the inline-tail instance.
 #[repr(C)]
 pub struct BSSListOverflowBlock<ValueType> {
     pub used: AtomicU16,
@@ -2522,14 +2112,6 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     pub const CHUNK_SIZE: usize = BSS_LIST_CHUNK_SIZE;
     const MAX_INDEX: usize = COUNT - 1;
 
-    // Zig: `pub var instance: *Self = undefined; pub var loaded = false;`
-    // Rust cannot define generic statics, so the per-monomorphization storage is
-    // emitted at the *declare site* via `bss_list! { name: T, N }` (see macro
-    // below), which owns a `SyncUnsafeCell<MaybeUninit<Self>>` + `Once` and
-    // calls `init_at` on first access. `init()` is kept for callers that manage
-    // their own once-guard (e.g. `dir_info::hash_map_instance`); it heap-allocs
-    // a fresh instance each call.
-
     #[inline]
     pub fn block_index(index: u32 /* u31 */) -> usize {
         index as usize / BSS_LIST_CHUNK_SIZE
@@ -2575,10 +2157,6 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     }
 
     pub fn exists(&self, value: &[u8]) -> bool {
-        // Zig: `isSliceInBuffer(value, &instance.backing_buf)` — pointer-range check
-        // against the backing storage as raw bytes. Done with addresses rather
-        // than forming a `&[u8]` over `MaybeUninit<T>` storage (which would
-        // assert byte-validity of uninitialized memory).
         let base = self.backing_buf.as_ptr() as usize;
         let end = base + core::mem::size_of_val(&self.backing_buf);
         let p = value.as_ptr() as usize;
@@ -2697,11 +2275,6 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
 
 impl<ValueType, const COUNT: usize> Drop for BSSList<ValueType, COUNT> {
     fn drop(&mut self) {
-        // Zig `deinit`: `self.head.deinit()` walks `prev` and frees each heap block.
-        // The inline `self.tail` is not Boxed and must not be Box-dropped; the
-        // `prev: Option<Box<..>>` chain stops at `None` before reaching it
-        // (see `append_overflow_uninit`). Singleton `loaded = false` reset belongs to the
-        // `bss_list!` singleton wrapper, not here.
         if let Some(head) = self.head.take() {
             let tail_ptr: *const BSSListOverflowBlock<ValueType> = core::ptr::addr_of!(self.tail);
             if !core::ptr::eq(head.as_ptr().cast_const(), tail_ptr) {
@@ -2723,26 +2296,10 @@ pub struct BSSListPair<ValueType> {
 // BSSStringList<_COUNT, _ITEM_LENGTH>
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Append-only list.
-/// Stores an initial count in .bss section of the object file.
-/// Overflows to heap when count is exceeded.
-///
-/// TODO(port): same const-generic-arithmetic and per-type-static caveats as `BSSList`.
 pub struct BSSStringList<
     const COUNT: usize,       /* = _COUNT * 2 */
     const ITEM_LENGTH: usize, /* = _ITEM_LENGTH + 1 */
 > {
-    // Zig keeps both arrays *inline* in the struct (`[count*item_length]u8`,
-    // `[count][]const u8`) so they live in the same demand-faulted allocation
-    // as the rest of the singleton and `init()` writes only the four scalar
-    // fields — pages are committed lazily as `append` writes bytes. Stable
-    // Rust can't spell `[u8; COUNT*ITEM_LENGTH]` without `generic_const_exprs`,
-    // so we store fat pointers to *separate* `bss_lazy_bytes` mappings instead.
-    // Same laziness guarantee (MAP_NORESERVE), same lifetime (process-static,
-    // never freed), no eager memset.
-    //
-    // `MaybeUninit` because Zig leaves both arrays `undefined`; only
-    // `[..backing_buf_used]` / `[..slice_buf_used]` are ever read.
     pub backing_buf: NonNull<[MaybeUninit<u8>]>, // len == COUNT * ITEM_LENGTH
     pub backing_buf_used: u64,
     // TODO(port): Overflow = OverflowList<&'static [u8], COUNT / 4> (generic_const_exprs).
@@ -2914,19 +2471,6 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         this: *mut Self,
         args: core::fmt::Arguments<'_>,
     ) -> core::result::Result<&'a [u8], AllocError> {
-        // Zig's `std.fmt.count` + `std.fmt.bufPrint` are both comptime-expanded
-        // straight-line writes, so the count-then-write double pass is free
-        // there. Rust's `core::fmt::write` drives a `dyn fmt::Write` vtable per
-        // argument piece, so a literal port pays that dispatch *twice* — the
-        // dominant cost in `extract_tarball::build_url`, which is called once
-        // per lockfile package with 6+ args.
-        //
-        // Single-pass instead: format into a stack scratch (one `core::fmt`
-        // drive), then memcpy the exact bytes into the store via `append`
-        // (which adds the trailing NUL itself, matching the original `len + 1`
-        // reservation). 512 B covers every current caller (npm tarball URLs,
-        // interned dirnames); longer outputs fall through to the original
-        // count-then-reserve path below.
         const STACK: usize = 512;
         let mut scratch = [MaybeUninit::<u8>::uninit(); STACK];
         // SAFETY: `SliceCursor::write_str` only *writes* into `buf[at..end]`
@@ -3009,10 +2553,6 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // SAFETY: inner mutex held ⇒ this thread has exclusive access.
         let this_ref = unsafe { &mut *this };
 
-        // `do_append` only reads `slice` via `BSSAppendable::copy_into` (copies
-        // into `self.backing_buf` / a fresh heap alloc) and returns raw parts
-        // pointing at that owned storage, not at `slice` — so the scratch
-        // buffer's borrow does not escape.
         let (ptr, len) = if value.len() <= 256 {
             let mut scratch = [0u8; 256];
             this_ref.do_append(&crate::copy_lowercase(value, &mut scratch[..value.len()]))?
@@ -3034,11 +2574,6 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         Ok(unsafe { core::slice::from_raw_parts(ptr, len) })
     }
 
-    /// Returns `(ptr, len)` of the freshly-appended payload (excluding the trailing NUL),
-    /// where `ptr` carries write provenance (`out.as_mut_ptr()`). Callers reconstruct a
-    /// `&[u8]` (`append`) or `&mut [u8]` (`append_mutable`) from it; returning raw parts
-    /// avoids the `&self.backing_buf` ↔ `&mut self.slice_buf` borrowck conflict and the
-    /// `&[u8] → &mut [u8]` provenance laundering Zig's `@constCast` would imply.
     #[inline]
     fn do_append<A: BSSAppendable>(
         &mut self,
@@ -3069,10 +2604,6 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 
             (out_ptr, out_len) = (dst.as_mut_ptr(), value_len - 1);
         } else {
-            // Zig: `var value_buf = try self.allocator.alloc(u8, value_len);` — propagate OOM.
-            // Route through mimalloc directly (PORTING.md forbids `Box::leak`). BSSStringList
-            // never frees overflow allocations (matches Zig); the singleton lives for
-            // process lifetime.
             let ptr = mimalloc::mi_malloc(value_len).cast::<u8>();
             if ptr.is_null() {
                 return Err(AllocError);
@@ -3129,12 +2660,6 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 // BSSMap<ValueType, COUNT, STORE_KEYS, ESTIMATED_KEY_LENGTH, REMOVE_TRAILING_SLASHES>
 // ──────────────────────────────────────────────────────────────────────────
 
-// Zig returns one of two *different* struct types depending on `comptime store_keys: bool`.
-// Rust cannot return different types from one generic; we expose both:
-//   - `BSSMapInner<V, COUNT, RM_SLASH>` (the `store_keys = false` shape)
-//   - `BSSMap<V, COUNT, EST_KEY_LEN, RM_SLASH>` (the `store_keys = true` wrapper)
-// TODO(port): callers that passed `store_keys=false` should name `BSSMapInner` directly.
-
 pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool> {
     pub index: IndexMap,
     // TODO(port): Overflow = OverflowList<ValueType, COUNT / 4> (generic_const_exprs).
@@ -3183,10 +2708,6 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         instance.backing_buf_used as usize >= COUNT
     }
 
-    /// Normalize `denormalized_key` per `REMOVE_TRAILING_SLASHES` and hash it.
-    /// Shared prelude of `get_or_put` / `get` / `remove`; the trimmed slice itself
-    /// is never needed by callers, only the hash. `#[inline(always)]` + the
-    /// const-generic branch fold to identical codegen at each monomorphization.
     #[inline(always)]
     fn key_hash(denormalized_key: &[u8]) -> u64 {
         let key = if REMOVE_TRAILING_SLASHES {
@@ -3231,10 +2752,6 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
 
     pub fn get(&mut self, denormalized_key: &[u8]) -> Option<&mut ValueType> {
         let _key = Self::key_hash(denormalized_key);
-        // Hold the lock across `at_index` (Zig: `defer self.mutex.unlock()` at fn scope) —
-        // a concurrent `put()` could otherwise mutate `overflow_list`/`backing_buf` while
-        // we dereference `index`. `MutexGuard` holds a raw pointer (see [`Mutex`] docs),
-        // so it does not conflict with the `&mut self` borrow in `at_index`.
         let _guard = self.mutex.lock();
         let index = self.index.get(&_key).copied()?;
         self.at_index(index)
@@ -3325,11 +2842,6 @@ pub struct BSSMap<
     const ESTIMATED_KEY_LENGTH: usize,
     const REMOVE_TRAILING_SLASHES: bool,
 > {
-    // Inner map lives in its own `bss_heap_init` mapping (lazy-faulted; its
-    // inline `[MaybeUninit<ValueType>; COUNT]` + 32 KiB overflow ptrs stay
-    // uncommitted until written). Process-lifetime → never freed → raw
-    // `NonNull` rather than `Box` (avoids tying mmap storage to the global
-    // allocator's `dealloc`).
     map: NonNull<BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES>>,
     // Same lazy-fault treatment as `BSSStringList::backing_buf` — see the
     // struct-level comment there. Zig keeps these inline; we map separately
@@ -3337,10 +2849,6 @@ pub struct BSSMap<
     pub key_list_buffer: NonNull<[MaybeUninit<u8>]>, // len == COUNT * ESTIMATED_KEY_LENGTH
     pub key_list_buffer_used: usize,
     pub key_list_slices: NonNull<[MaybeUninit<&'static [u8]>]>, // len == COUNT
-    // TODO(port): Zig declares this as `OverflowList([]u8, count / 4)` but then calls
-    // `.items[...]` and `.append(allocator, slice)` on it — those are `std.ArrayListUnmanaged`
-    // methods, NOT `OverflowList` methods. Likely dead code or a latent bug upstream.
-    // Ported as `Vec<&'static [u8]>` to match the *called* API.
     pub key_list_overflow: Vec<&'static [u8]>,
 }
 
@@ -3489,10 +2997,6 @@ impl<
             // SAFETY: points into self.key_list_buffer (singleton-static lifetime).
             slice = unsafe { core::slice::from_raw_parts(dst.as_ptr(), dst.len()) };
         } else {
-            // Zig: `slice = try self.map.allocator.dupe(u8, key);` — propagate OOM. Route
-            // through mimalloc directly (PORTING.md forbids `Box::leak`) so the
-            // size-agnostic `mi_free` below stays valid even after `trim_right` shortens
-            // the stored slice.
             let ptr = mimalloc::mi_malloc(key.len().max(1)).cast::<u8>();
             if ptr.is_null() {
                 return Err(AllocError);
@@ -3562,29 +3066,6 @@ impl<
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Allocator-trait surface — OBSOLETE per PORTING.md §Allocators
-// ──────────────────────────────────────────────────────────────────────────
-//
-// Zig's `std.mem.Allocator` / `GenericAllocator` interface threaded an allocator
-// param through every fn because Zig has no global allocator. Rust does
-// (`#[global_allocator] = Mimalloc` above), so per PORTING.md:
-//
-//   - Non-AST crates: DELETE the `allocator` param. `Box`/`Vec`/`String` use
-//     global mimalloc.
-//   - AST crates: thread `&'bump bumpalo::Bump` (= `Arena`) directly.
-//
-// The trait below is kept ONLY as an empty marker so downstream code that
-// still says `&dyn bun_alloc::Allocator` continues to parse. Do not implement
-// it; do not add methods. Callers should be rewritten to drop the param
-// entirely.
-
-/// Marker trait standing in for Zig `std.mem.Allocator`. See module note.
-///
-/// Provides a `type_id()` hook so `is_instance`-style checks (Zig:
-/// `allocator.vtable == &vtable`) can be expressed as concrete-type identity
-/// on the trait object — every implementor gets a default `type_id()` that
-/// returns its monomorphized `TypeId`.
 pub trait Allocator: 'static {
     #[inline]
     fn type_id(&self) -> core::any::TypeId {
@@ -3593,24 +3074,12 @@ pub trait Allocator: 'static {
 }
 
 impl dyn Allocator {
-    /// Is the concrete type behind this `&dyn Allocator` exactly `T`?
-    ///
-    /// Zig's `allocator.vtable == &T.vtable` check, expressed as `TypeId`
-    /// identity via the trait's `type_id()` hook (dynamic dispatch on the
-    /// dyn receiver — NOT `Any::type_id`). All per-type
-    /// `Foo::is_instance(alloc)` associated fns delegate here.
     #[inline]
     pub fn is<T: Allocator>(&self) -> bool {
         Allocator::type_id(self) == core::any::TypeId::of::<T>()
     }
 }
 
-/// Checks whether `allocator` is the default allocator.
-///
-/// Zig: `return allocator.vtable == c_allocator.vtable;` — compare identity
-/// against the global mimalloc-backed allocator. With `#[global_allocator] =
-/// Mimalloc`, the Rust default is `DefaultAlloc`; vtable-identity becomes a
-/// `TypeId` comparison.
 #[inline]
 pub fn is_default(alloc: &dyn Allocator) -> bool {
     alloc.is::<DefaultAlloc>()
@@ -3624,19 +3093,10 @@ impl Allocator for DefaultAlloc {}
 
 static DEFAULT_ALLOC: DefaultAlloc = DefaultAlloc;
 
-/// Zig: `bun.default_allocator` — global mimalloc-backed allocator. With
-/// `#[global_allocator] = Mimalloc`, this is a marker handle; callers that
-/// thread it should be rewritten to use `Box`/`Vec` directly. Kept so ported
-/// call sites that still pass an `&dyn Allocator` resolve.
 #[inline]
 pub fn default_allocator() -> &'static dyn Allocator {
     &DEFAULT_ALLOC
 }
-
-// `GenericAllocator` / `Borrowed<A>` / `Nullable<A>` are dropped — they modelled
-// Zig's allocator-borrowing discipline (avoid double-deinit), which Rust's
-// ownership already enforces. Drafts that referenced them are gated under
-// `` and will be rewritten to drop the param when un-gated.
 
 // ──────────────────────────────────────────────────────────────────────────
 // `basic` module selection

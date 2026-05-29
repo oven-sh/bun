@@ -39,10 +39,6 @@ impl JSUint8Array {
         unsafe { bun_core::ffi::slice_mut(self.ptr(), self.len()) }
     }
 
-    /// `bytes` must come from `bun.default_allocator` (the global mimalloc allocator);
-    /// ownership is transferred to the returned JS Uint8Array.
-    // PORT NOTE: Zig took `[]u8` + a doc comment requiring default_allocator provenance.
-    // In Rust the global allocator IS mimalloc, so `Box<[u8]>` encodes that ownership.
     pub fn from_bytes(global: &JSGlobalObject, bytes: Box<[u8]>) -> JSValue {
         let len = bytes.len();
         let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();

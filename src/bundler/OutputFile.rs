@@ -13,11 +13,6 @@ use bun_sys::Fd;
 
 use crate::bun_fs::RealFS;
 
-// Instead of keeping files in-memory, we:
-// 1. Write directly to disk
-// 2. (Optional) move the file to the destination
-// This saves us from allocating a buffer
-
 pub struct OutputFile {
     pub loader: Loader,
     pub input_loader: Loader,
@@ -122,11 +117,6 @@ pub struct BakeExtra {
 pub type Index = bun_core::GenericIndex<u32, OutputFile>;
 pub type IndexOptional = bun_core::GenericIndexOptional<u32, OutputFile>;
 
-// Depending on:
-// - The target
-// - The number of open file handles
-// - Whether or not a file of the same name exists
-// We may use a different system call
 #[derive(Clone)]
 pub struct FileOperation {
     // TODO(port): lifetime — Zig never frees `pathname`; may be borrowed from
@@ -203,11 +193,6 @@ pub enum Value {
     Saved(SavedFile),
 }
 
-// Zig `bun.copy(OutputFile, dst, src)` is a bitwise memcpy used to splice
-// finished output files into the final list. The `Pending` arm is never present
-// at that stage (only `buffer`/`copy`/`saved` are produced by `init`), so its
-// clone is intentionally unreachable rather than forcing `resolver::Result` to
-// be `Clone`.
 impl Clone for Value {
     fn clone(&self) -> Self {
         match self {
@@ -238,13 +223,6 @@ impl Value {
                 if bytes.is_empty() {
                     return BunString::EMPTY;
                 }
-                // Use ExternalStringImpl to avoid cloning the string, at
-                // the cost of allocating space to remember the arena.
-                //
-                // Zig boxed a `FreeContext { arena }` and passed an `extern "C"`
-                // callback that frees the slice via that arena then destroys the
-                // context. With the global arena, the context collapses to the
-                // (ptr, len) pair already passed to the callback.
                 extern "C" fn on_free(_ctx: *mut c_void, buffer: *mut c_void, len: usize) {
                     // SAFETY: `buffer`/`len` were produced by `heap::alloc` on a
                     // `Box<[u8]>` below; reconstructing and dropping is sound.
@@ -275,17 +253,6 @@ impl Value {
         }
     }
 
-    /// Borrowing variant of [`Self::to_bun_string`]: wraps the buffer in a
-    /// `WTF::ExternalStringImpl` that aliases `bytes` with a **no-op** free
-    /// callback (zero-copy). Caller guarantees `self` outlives every use of the
-    /// returned string.
-    ///
-    /// This is the faithful port of Zig's `Value.toBunString` as called from
-    /// `bake/production.zig` (`pt.bundled_outputs[i].value.toBunString()`): Zig
-    /// passes the union by value so the slice is aliased in place, and
-    /// `PerThread.bundled_outputs` owns the bytes for the entire prerender
-    /// phase. The consuming [`Self::to_bun_string`] cannot be used there
-    /// because the Rust `Vec<OutputFile>` is only borrowed.
     pub fn to_bun_string_ref(&self) -> BunString {
         match self {
             Value::Noop => BunString::EMPTY,
@@ -327,10 +294,6 @@ pub struct SavedFile {
 
 impl OutputFile {
     pub fn init_pending(loader: Loader, pending: bun_resolver::Result) -> OutputFile {
-        // PORT NOTE: Zig copied the whole `Fs.Path` struct (`pending.pathConst().?.*`).
-        // The Rust `bun_paths::fs::Path<'static>` and `bun_resolver::fs::Path<'static>` are
-        // distinct nominal types with identical layout; re-init from `text` (the
-        // resolver path borrows arena/static memory, so the `'static` bound holds).
         let src_path = fs::Path::init(pending.path_const().expect("path").text);
         OutputFile {
             loader,
@@ -542,10 +505,5 @@ impl OutputFile {
         }
     }
 }
-
-// Zig: `pub const toJS = @import("../bundler_jsc/output_file_jsc.zig").toJS;`
-// Zig: `pub const toBlob = @import("../bundler_jsc/output_file_jsc.zig").toBlob;`
-// Deleted per PORTING.md — `to_js` / `to_blob` become extension-trait methods that
-// live in `bun_bundler_jsc`; the base type carries no jsc reference.
 
 // ported from: src/bundler/OutputFile.zig

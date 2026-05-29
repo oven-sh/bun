@@ -24,11 +24,6 @@ use crate::h3_client::h3_client;
 
 #[derive(bun_ptr::CellRefCounted)]
 pub struct ClientSession {
-    /// Ref holders: the `ClientContext.sessions` registry while listed (1), the
-    /// `quic.Socket` ext slot while connected (1, transferred from the registry
-    /// add via `connect`), and one per entry in `pending`. `PendingConnect` holds
-    /// an extra ref while DNS is in flight.
-    // Intrusive refcount — see `bun_ptr::IntrusiveRc<ClientSession>`.
     ref_count: Cell<u32>,
     /// Null while DNS is in flight; set once `us_quic_connect_addr` returns.
     // FFI handle that becomes dangling after onConnClose; raw is intentional.
@@ -70,13 +65,6 @@ impl ClientSession {
             && strings::eql_long(&self.hostname, hostname, true)
     }
 
-    /// Mutable access to the live lsquic connection handle.
-    ///
-    /// INVARIANT: `qsocket` is set by `ClientContext::connect` once
-    /// `us_quic_connect_addr` returns and remains valid until
-    /// `callbacks::on_conn_close` (which sets `closed = true`). The
-    /// `quic::Socket` is an FFI-owned allocation distinct from `self`, so the
-    /// returned `&mut` does not alias `self`. HTTP-thread-only.
     #[inline]
     pub(super) fn qsocket_mut<'s>(&self) -> Option<&'s mut quic::Socket> {
         // Route through the shared [`quic_socket_mut`] accessor; see INVARIANT.
@@ -90,10 +78,6 @@ impl ClientSession {
         let Some(qs) = self.qsocket_mut() else {
             return self.pending.len() < 64;
         };
-        // After handshake every pending entry has had make_stream called, so
-        // lsquic's n_avail_streams already accounts for them — comparing
-        // against pending.len would double-subtract. Before handshake nothing
-        // is counted yet, so cap optimistically at the default MAX_STREAMS.
         if !self.handshake_done {
             return self.pending.len() < 64;
         }
@@ -153,11 +137,6 @@ impl ClientSession {
         let request_body_done = st.request_body_done;
         if let Some(qs) = st.qstream_mut() {
             *qs.ext::<Stream>() = None;
-            // The success path can reach here while the request body is still
-            // being written (server responded early). FIN would be a
-            // content-length violation; RESET_STREAM(H3_REQUEST_CANCELLED)
-            // is the correct "I'm abandoning this send half" so lsquic reaps
-            // the stream instead of leaking it on the pooled session.
             if !request_body_done {
                 qs.reset();
             }
@@ -184,17 +163,7 @@ impl ClientSession {
         }
     }
 
-    /// A stream closed before any response headers arrived. If the request
-    /// hasn't been retried yet and the body wasn't a JS stream (which may
-    /// already be consumed), re-enqueue it on a fresh session — this is the
-    /// standard h2/h3 client behavior for the GOAWAY / stateless-reset /
-    /// port-reuse race where a pooled session goes stale between the
-    /// `matches()` check and the first stream open.
     pub fn retry_or_fail(&mut self, stream: *mut Stream, err: bun_core::Error) {
-        // PORT NOTE: reshaped for Stacked Borrows like `fail` below — `detach()`
-        // re-derives `&mut HTTPClient` from the same raw ptr to null `h3`, which
-        // would invalidate any `&mut HTTPClient` held across it. Hold the raw
-        // `client_ptr` across `detach` and only form `&mut` afterward.
         let st = stream_mut(stream);
         let Some(client_ptr) = st.client else {
             return self.fail(stream, err);
@@ -234,10 +203,6 @@ impl ClientSession {
     }
 
     pub fn abort_by_http_id(&mut self, async_http_id: u32) -> bool {
-        // PORT NOTE: Zig iterates `pending.items` and calls `this.fail` (which
-        // mutates `pending`) mid-loop. Rust borrowck forbids reborrowing
-        // `&mut self` while the iterator holds `&self.pending`, and only one
-        // entry can match — so locate first via raw-ptr reads, then act.
         let mut found: *mut Stream = core::ptr::null_mut();
         for &stream_ptr in self.pending.iter() {
             // pending entries are live until detach(); `stream_ref` reads the
@@ -259,10 +224,6 @@ impl ClientSession {
         false
     }
 
-    /// Runs from inside lsquic's process_conns via on_stream_{headers,data,close}.
-    /// `done` = the lsquic stream is gone; deliver whatever is buffered then
-    /// detach. Mirrors H2's `ClientSession.deliverStream` so the HTTPClient state
-    /// machine sees the same call sequence regardless of transport.
     pub fn deliver(&mut self, stream: *mut Stream, done: bool) {
         let st = stream_mut(stream);
         let Some(client_ptr) = st.client else {
@@ -271,10 +232,6 @@ impl ClientSession {
             }
             return;
         };
-        // NB: `detach()` writes `client.h3 = None` through this same raw
-        // backref, which pops this `&mut`'s Unique tag under Stacked Borrows —
-        // so every `self.detach(stream)` below that is followed by further
-        // `client` use re-derives a fresh `&mut` from `client_ptr` first.
         let client = client_mut(client_ptr);
 
         if client.signals.get(Signal::Aborted) {
@@ -365,84 +322,34 @@ impl ClientSession {
     }
 }
 
-/// Upgrade a `Stream.client` backref to `&mut HTTPClient`.
-///
-/// INVARIANT: every `NonNull<HTTPClient>` reaching here came from a live
-/// `Stream.client` — an `as_erased_ptr()` of the `HTTPClient` embedded in its
-/// `AsyncHTTP`, which strictly outlives the `Stream`. All h3 callbacks run on
-/// the HTTP thread, so the returned `&mut` is the sole live borrow. Per the
-/// Stacked-Borrows notes in `deliver`/`retry_or_fail`, callers re-derive a
-/// fresh `&mut` here after each `detach()` (which writes `client.h3 = None`
-/// through this same raw backref) rather than holding one across it.
-/// Routes through the crate-wide [`HTTPClient::from_erased_backref`] accessor
-/// (also used by `encode.rs` / `PendingConnect.rs` for the same backref).
 #[inline]
 pub(super) fn client_mut<'a>(p: NonNull<HTTPClient<'static>>) -> &'a mut HTTPClient<'static> {
     HTTPClient::from_erased_backref(p)
 }
 
-/// Upgrade a non-null `*mut quic::Socket` lsquic FFI handle to `&mut`.
-///
-/// INVARIANT: every caller passes a non-null `quic::Socket` that lsquic owns
-/// and keeps live for the borrow's duration — either an `extern "C"` callback
-/// argument (live for the callback), or a `ClientSession.qsocket` field (set
-/// by `ClientContext::connect`, valid until `on_conn_close`). The handle is an
-/// FFI-owned allocation distinct from any Rust struct holding it. All access
-/// is HTTP-thread-only, so the returned `&mut` is the sole live borrow.
-/// Centralises the raw `&mut *qs` upgrade shared by `callbacks::qsocket_arg`
-/// and `ClientSession::qsocket_mut`.
 #[inline(always)]
 pub(super) fn quic_socket_mut<'a>(qs: *mut quic::Socket) -> &'a mut quic::Socket {
     // SAFETY: see INVARIANT above.
     unsafe { &mut *qs }
 }
 
-/// Upgrade a non-null `*mut quic::Stream` lsquic FFI handle to `&mut`.
-///
-/// Same INVARIANT as [`quic_socket_mut`] — lsquic-owned, live for the
-/// borrow's duration (callback argument, or `Stream.qstream` set in
-/// `on_stream_open` and nulled in `on_stream_close` / `detach`), FFI
-/// allocation distinct from any Rust holder, HTTP-thread-only.
 #[inline(always)]
 pub(super) fn quic_stream_mut<'a>(s: *mut quic::Stream) -> &'a mut quic::Stream {
     // SAFETY: see [`quic_socket_mut`] INVARIANT.
     unsafe { &mut *s }
 }
 
-/// Upgrade a `*mut Stream` (a `self.pending` entry, or one just removed from
-/// it) to `&mut Stream`. Entries are heap-allocated by `Stream::new` and live
-/// until `detach()` reclaims them; HTTP-thread only, so the `&mut` is the sole
-/// live borrow.
 #[inline]
 pub(super) fn stream_mut<'a>(p: *mut Stream) -> &'a mut Stream {
     // SAFETY: see fn doc.
     unsafe { &mut *p }
 }
 
-/// Shared-borrow a `*mut Stream` (a live `session.pending` entry) to read
-/// `Copy` fields without forming `&mut Stream`. Same liveness invariant as
-/// [`stream_mut`]; used where the caller holds an iterator over `pending` and
-/// only needs a read.
-///
-/// Returns a [`bun_ptr::ParentRef`] (the session owns the stream ⇒ it
-/// outlives the handle) so the shared deref goes through the safe `Deref`
-/// impl instead of an open-coded raw-ptr reborrow.
 #[inline]
 pub(super) fn stream_ref(p: *mut Stream) -> bun_ptr::ParentRef<Stream> {
     bun_ptr::ParentRef::from(NonNull::new(p).expect("pending entry is non-null"))
 }
 
-/// Upgrade a `*mut ClientSession` (a `ClientContext.sessions` registry entry,
-/// or a freshly `ClientSession::new`-allocated handle) to `&mut ClientSession`.
-///
-/// INVARIANT: the registry only holds live intrusive-refcounted sessions
-/// (removed via `ClientContext::unregister` before destroy); a fresh `new()`
-/// result is the sole reference to its allocation. Either way the session is a
-/// `heap::into_raw`-boxed allocation disjoint from `ClientContext`, and all
-/// access is HTTP-thread-only, so the returned `&mut` is the sole live borrow
-/// for its scope. Mirrors [`client_mut`]/[`stream_mut`] — centralises the
-/// `unsafe { &mut *p }` backref upgrade repeated across `ClientContext` /
-/// `PendingConnect`.
 #[inline]
 pub(super) fn session_mut<'a>(p: *mut ClientSession) -> &'a mut ClientSession {
     // SAFETY: see INVARIANT above.

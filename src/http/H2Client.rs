@@ -10,23 +10,10 @@
 
 use core::sync::atomic::AtomicI32;
 
-/// Advertised as SETTINGS_INITIAL_WINDOW_SIZE; replenished via WINDOW_UPDATE
-/// once half has been consumed.
-// PORT NOTE: Zig type was `u31` (HTTP/2 window sizes are 31-bit); Rust has no
-// `u31`, so widen to `u32`. Value `1 << 24` is well within range.
 pub(crate) const LOCAL_INITIAL_WINDOW_SIZE: u32 = 1 << 24;
 
-/// Advertised as SETTINGS_MAX_HEADER_LIST_SIZE and enforced as a hard cap on
-/// both the wire header block (HEADERS + CONTINUATION accumulation) and the
-/// decoded header list, so a CONTINUATION flood or HPACK-amplification bomb
-/// can't OOM the process. RFC 9113 §6.5.2 makes the setting advisory, so the
-/// cap is checked locally regardless of what the server honors.
 pub(crate) const LOCAL_MAX_HEADER_LIST_SIZE: u32 = 256 * 1024;
 
-/// `write_buffer` high-water mark. `writeDataWindowed` stops queueing once the
-/// userland send buffer crosses this even if flow-control window remains, so a
-/// large grant doesn't duplicate the whole body in memory before the first
-/// `flush()`. `onWritable → drainSendBodies` resumes once the socket drains.
 pub const WRITE_BUFFER_HIGH_WATER: usize = 256 * 1024;
 
 /// Abandon the connection (ENHANCE_YOUR_CALM) if queued control-frame replies
@@ -34,13 +21,6 @@ pub const WRITE_BUFFER_HIGH_WATER: usize = 256 * 1024;
 /// stalled — caps the PING-reflection growth at a fixed budget instead of OOM.
 pub const WRITE_BUFFER_CONTROL_LIMIT: usize = 1024 * 1024;
 
-/// Live-object counters for the leak test in fetch-http2-leak.test.ts.
-/// Incremented at allocation, decremented in deinit. Read from the JS thread
-/// via TestingAPIs.liveCounts so they must be atomic.
-// PORT NOTE: Zig names are `live_sessions`/`live_streams` (snake_case module
-// vars). Kept verbatim so cross-crate readers (`bun_http_jsc`) and the gated
-// submodules see the same identifier the Zig uses; SCREAMING_SNAKE aliases
-// preserved for the existing internal references.
 #[allow(non_upper_case_globals)]
 pub static live_sessions: AtomicI32 = AtomicI32::new(0);
 #[allow(non_upper_case_globals)]
@@ -70,16 +50,6 @@ pub use stream::Stream;
 // — a `*_jsc` alias. Deleted per PORTING.md: `to_js`/host-fn surfaces live in the
 // `*_jsc` crate via extension traits; the base crate has no mention of jsc.
 
-// ═══════════════════════════════════════════════════════════════════════
-// Thin `h2_*` forwarders on HTTPClient / HTTPContext that the h2_client
-// modules call. The real bodies live in lib.rs
-// (`register_abort_tracker` … `progress_update`) and HTTPContext.rs
-// (`register_h2` / `unregister_h2`); these now monomorphize the const-generic
-// `<IS_SSL>` callees to `<true>` (HTTP/2 is TLS-only) and erase the
-// `picohttp::Request<'_>` borrow back to `'static` so ClientSession can keep
-// using `client` after building the request. Kept as inherent methods so the
-// many call sites in `h2_client/*.rs` need no churn.
-// ═══════════════════════════════════════════════════════════════════════
 pub(crate) mod bridge {
     use crate::http_context::HTTPSocket;
     use crate::{HTTPClient, NewHTTPContext};

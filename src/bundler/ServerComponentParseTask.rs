@@ -60,16 +60,6 @@ pub struct ClientEntryWrapper {
     pub path: Box<[u8]>,
 }
 
-/// Raw thread-pool callback. Recovers `&mut ServerComponentParseTask` from the
-/// intrusive `task` field and dispatches the parse, then posts the result back
-/// to the owning event loop.
-// CONCURRENCY: thread-pool callback — runs on worker threads, one task per
-// `ServerComponentParseTask` (heap-allocated, scheduled exactly once). Writes:
-// own fields + `Log` (local) + result is posted via
-// `ctx.loop_.enqueue_task_concurrent` (MPSC). Reads `ctx: &BundleV2` shared.
-// `ServerComponentParseTask` is `Send` because `ctx: *mut BundleV2` is a
-// backref to a `Send` type and `Source`/`Data` payloads are bundle-arena
-// slices.
 fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     // SAFETY: `thread_pool_task` points to the `task` field of a heap-allocated
     // `ServerComponentParseTask` enqueued by BundleV2; offset_of recovers the parent.
@@ -107,15 +97,6 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     });
     let result = bun_core::heap::into_raw(result);
 
-    // Zig matched `worker.ctx.loop().*` on `AnyEventLoop::{js, mini}`.
-    // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); the BACKREF deref
-    // of `linker.r#loop` is centralised in `LinkerContext::any_loop_mut`.
-    //
-    // Zig `worker.ctx.loop().*` is non-optional (.zig:52) — `BundleV2::init`
-    // always sets `linker.r#loop` before scheduling any ServerComponentParseTask.
-    // Running `on_complete` inline on the worker thread would violate
-    // `BundleV2::on_parse_task_complete`'s threading contract (it mutates the
-    // bundler graph, which is owned by the main/bundler thread).
     match worker
         .ctx
         .linker
@@ -266,11 +247,6 @@ fn generate_client_reference_proxy(
         b.add_import_stmt(runtime_import.slice(), [register_ref.slice()])?[0];
 
     let module_path = b.new_expr(E::String::init(
-        // In development, the path loaded is the source file: Easy!
-        //
-        // In production, the path here must be the final chunk path, but
-        // that information is not yet available since chunks are not
-        // computed. The unique_key replacement system is used here.
         if ctx.transpiler().options.has_dev_server() {
             b.bump.alloc_slice_copy(data.other_source.path.pretty)
         } else {
@@ -340,11 +316,6 @@ fn generate_client_reference_proxy(
             ..Default::default()
         });
 
-        // registerClientReference(
-        //   () => { throw new Error(...) },
-        //   "src/filepath.tsx",
-        //   "Comp"
-        // );
         let throw_stmt = b.new_stmt(S::Throw { value: err_msg });
         let arrow_body_stmts: &mut [Stmt] = b.bump.alloc_slice_copy(&[throw_stmt]);
         let value = b.new_expr(E::Call {

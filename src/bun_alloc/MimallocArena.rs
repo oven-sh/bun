@@ -27,11 +27,6 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::mimalloc;
 
-// ── Debug-only mi_heap accounting ─────────────────────────────────────────
-//
-// Tracks `mi_heap_new`/`mi_heap_destroy` calls so leak tests can assert the
-// live-heap count is bounded. Gated on `debug_assertions` (zero cost in
-// release); nothing reads these counters in production.
 #[cfg(debug_assertions)]
 pub(crate) static HEAP_NEW_COUNT: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
@@ -39,45 +34,16 @@ pub(crate) static HEAP_NEW_COUNT: core::sync::atomic::AtomicUsize =
 pub(crate) static HEAP_DESTROY_COUNT: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
 
-// ── Debug-only thread-ownership guard (Zig: `bun.safety.ThreadLock`) ──────
-//
-// `bun_alloc` sits below `bun_core` in the crate graph, so we cannot reuse
-// `bun_core::ThreadLock`. This is the minimal subset needed to mirror Zig's
-// `ci_assert` same-thread check on the `mi_heap_*` allocation paths: a per-
-// thread monotone id stamped at `MimallocArena::new()` and asserted on every
-// alloc/realloc. `mi_free` is documented thread-safe and is left unchecked.
-
 #[cfg(debug_assertions)]
 #[inline]
 fn debug_thread_stamp() -> u64 {
-    // Intentionally NOT `bun_threading::current_thread_id()` /
-    // `bun_safety::thread_id::current()`: `bun_alloc` is tier-0 and sits below
-    // both in the crate graph (they depend on us), so routing there would
-    // create a cycle. The contract here is only "any nonzero per-thread-unique
-    // u64 for an ownership debug-assert", which a counter satisfies.
-    //
-    // Portable thread-unique id without `ThreadId::as_u64` (unstable) or
-    // platform syscalls: each thread takes a fresh nonzero counter value the
-    // first time it asks.
     static NEXT: AtomicU64 = AtomicU64::new(1);
     std::thread_local!(static ID: u64 = NEXT.fetch_add(1, Ordering::Relaxed));
     ID.with(|id| *id)
 }
 
-/// A mimalloc heap. Owns a `mi_heap_t`; all allocations are bulk-freed on
-/// `Drop` (Zig: `MimallocArena.deinit` → `mi_heap_destroy`).
-///
-/// Implements [`core::alloc::Allocator`] for `&MimallocArena`, so it can back
-/// `Vec<T, &MimallocArena>` / `Box<T, &MimallocArena>` with real per-allocation
-/// free + realloc — the thing `bumpalo::Bump` cannot do.
 pub struct MimallocArena {
     heap: NonNull<mimalloc::Heap>,
-    /// `true` when `heap` came from `mi_heap_new()` and must be
-    /// `mi_heap_destroy`ed on `Drop`/`reset()`. `false` when borrowing the
-    /// process-wide `mi_heap_main()` (see [`Self::borrowing_default`]) — Drop
-    /// is then a no-op and allocations live for the process lifetime, matching
-    /// Zig's `default_allocator` shape for callers that just need an `&Arena`
-    /// without paying `mi_heap_new` + `mi_heap_destroy`.
     owns: bool,
     /// Zig: `thread_lock: bun.safety.ThreadLock` (debug-only). Stamped on
     /// `new()`/`reset()`; asserted on every `mi_heap_*` alloc/realloc path.
@@ -126,16 +92,6 @@ impl MimallocArena {
         }
     }
 
-    /// Borrow the process-wide default mimalloc heap (`mi_heap_main()`) instead
-    /// of creating a fresh one. `Drop` is a no-op; `reset()` is forbidden.
-    /// Allocations made through this arena are equivalent to global
-    /// `mi_malloc`/`mi_free` and live until individually freed (or process
-    /// exit for `into_bump_slice`-style leaks).
-    ///
-    /// Use this where Zig threads `bun.default_allocator` through an
-    /// `Allocator`-shaped parameter and the Rust port needs an `&Arena` but
-    /// the `mi_heap_new` + `mi_heap_destroy` pair is measurable overhead on a
-    /// hot, short-lived path (e.g. `Bunfig::parse` on `bun -e ''` startup).
     #[inline]
     pub fn borrowing_default() -> Self {
         // SAFETY: FFI call with no preconditions; `mi_heap_main()` returns the
@@ -153,10 +109,6 @@ impl MimallocArena {
         }
     }
 
-    /// Zig: `Borrowed.assertThreadLock()` — debug-only check that the calling
-    /// thread is the one that constructed (or last `reset()`) this arena.
-    /// Guards every `mi_heap_*` allocation path so the over-broad `Sync` impl
-    /// cannot silently corrupt mimalloc's per-heap free lists.
     #[inline(always)]
     fn assert_owning_thread(&self) {
         #[cfg(debug_assertions)]
@@ -199,17 +151,6 @@ impl MimallocArena {
         self.heap.as_ptr()
     }
 
-    /// Destroy the current heap (bulk-freeing all live allocations) and
-    /// allocate a fresh one. Mirrors `bumpalo::Bump::reset` semantics for
-    /// callers that reuse one arena per work item.
-    ///
-    /// Any pointers previously returned by this arena are invalidated.
-    ///
-    /// `#[cold]` + `#[inline(never)]`: `mi_heap_destroy` does per-page
-    /// free-list/bitmap teardown (and, when mimalloc's stats are compiled in,
-    /// an `_mi_stats_merge_from` walk over `mi_stats_t`), so this is the slow
-    /// path. The hot path is `reset_retain_with_limit`'s retain branch — keep
-    /// that lean by not letting this body inline up into it.
     #[cold]
     #[inline(never)]
     pub fn reset(&mut self) {
@@ -230,76 +171,14 @@ impl MimallocArena {
         // SAFETY: FFI call with no preconditions.
         let heap = unsafe { mimalloc::mi_heap_new() };
         self.heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
-        // `&mut self` proves exclusive access; re-stamp the debug thread-lock
-        // so an arena `Send`-moved to a worker and then reset there may
-        // allocate on that worker (Zig has no equivalent because its
-        // `MimallocArena` is not moved post-init).
         #[cfg(debug_assertions)]
         self.owning_thread
             .store(debug_thread_stamp(), Ordering::Relaxed);
     }
 
-    /// Zig: `std.heap.ArenaAllocator.reset(.{.retain_with_limit = limit})`.
-    ///
-    /// Retains the warm heap while its in-use footprint is `<= limit`, and
-    /// only then falls back to a full [`Self::reset`] (`mi_heap_destroy` +
-    /// `mi_heap_new`). Returns `true` when the heap was retained, `false` when
-    /// it was recycled — mirroring `ArenaAllocator.reset`'s "reuse succeeded"
-    /// boolean.
-    ///
-    /// **Why this isn't a no-op-or-full-reset.** Zig's `std.heap.ArenaAllocator`
-    /// is a bump allocator: `.retain_with_limit` rewinds the bump cursor to
-    /// offset 0 (logically freeing every allocation) but keeps up to `limit`
-    /// bytes of *backing buffer* committed, so the next cycle's allocations
-    /// reuse those warm pages instead of faulting in (and zeroing) fresh ones.
-    /// A `mi_heap_t` has no "free all blocks but keep the pages" primitive —
-    /// the only bulk-free is `mi_heap_destroy`, which also hands the pages back
-    /// to mimalloc (which may purge/decommit them). So the faithful mapping is
-    /// "keep the *whole* heap — blocks and all — while it is still small;
-    /// recycle it once it grows past `limit`". The retained blocks are dead
-    /// (arena callers never `mi_free`; `AstAlloc::deallocate` is a no-op by
-    /// design), so they *are* garbage — but `limit` bounds that garbage, and
-    /// in exchange the per-cycle `mi_heap_destroy` + `mi_heap_new` (and the
-    /// re-commit + memset its first allocation pays when mimalloc has since
-    /// purged the arena page) is amortised away for the common case of many
-    /// small cycles. `limit` is the RSS/CPU knob: a tighter cap trades warm
-    /// pages for lower steady-state RSS; a looser one does the reverse.
-    ///
-    /// (An earlier port made this an unconditional `reset()` on the theory
-    /// that mimalloc's per-thread segment cache already keeps pages warm
-    /// across `mi_heap_destroy`/`mi_heap_new`. In practice, with a lower RSS
-    /// ceiling and mimalloc's purge timer, the recycled page is often already
-    /// decommitted by the time the next cycle touches it, so the round-trip
-    /// re-commits and re-zeroes it — exactly the cost `.retain_with_limit`
-    /// exists to avoid. Hence the cap-gated retain.)
-    ///
-    /// **Why `mi_heap_collect` is not an alternative to the cap.** When the
-    /// caller's allocations are individually freed before the cycle ends (most
-    /// `Vec<T, &MimallocArena>` users — the bundler, renamer, installer), the
-    /// heap footprint is already near zero at this point, so the limit is never
-    /// hit and the heap is retained for free. The one caller where the limit
-    /// *does* fire is the transpiler's per-module AST arena (`jsc_hooks`): it
-    /// also backs `AstAlloc`, whose `deallocate` is a deliberate no-op (the AST
-    /// graph is abandoned, not freed), so that heap's footprint only ever
-    /// grows. `mi_heap_collect(force=true)` cannot reclaim it — it returns only
-    /// *empty* pages, and the dead AST blocks pin every page. The only bulk
-    /// reclaim is `mi_heap_destroy` (the `reset()` path). So for that caller the
-    /// `limit` is purely a "how much dead AST do we tolerate before paying a
-    /// `mi_heap_destroy`" knob; raising it trades steady-state RSS for fewer
-    /// destroys per transpile batch.
     #[inline]
     pub fn reset_retain_with_limit(&mut self, limit: usize) -> bool {
-        // `borrowing_default()` arenas (`!owns`) wrap `mi_heap_main()`, whose
-        // footprint is the whole process — they always fall through to
-        // `reset()`, which debug-asserts `owns` (recycling the main heap is a
-        // bug). `allocated_bytes()` walks heap *areas* (O(areas)), so the
-        // check is cheap.
         if self.owns && self.allocated_bytes() <= limit {
-            // `&mut self` proves exclusive access; re-stamp the debug
-            // thread-lock so an arena `Send`-moved to a worker and then
-            // retain-reset there may keep allocating on that worker — same as
-            // the full-reset path below (`reset()` re-stamps after
-            // `mi_heap_new`).
             #[cfg(debug_assertions)]
             self.owning_thread
                 .store(debug_thread_stamp(), Ordering::Relaxed);
@@ -359,10 +238,6 @@ impl MimallocArena {
         total
     }
 
-    /// Zig: `MimallocArena.ownsPtr()` → `mi_heap_contains(heap, p)`.
-    /// `mi_heap_contains` only tests address-range membership and never
-    /// dereferences `addr`, so this takes the address as `usize` (not a raw
-    /// pointer — there is no caller precondition to uphold).
     #[inline]
     pub fn owns_ptr(&self, addr: usize) -> bool {
         // SAFETY: `self.heap` is a live heap; `addr` is only range-tested.
@@ -400,12 +275,6 @@ impl MimallocArena {
                 .cast()
         }
     }
-
-    // ── bumpalo-compatible surface ───────────────────────────────────────
-    // These exist so `pub type Arena = MimallocArena` is source-compatible
-    // with the previous `Arena = bumpalo::Bump` alias. They allocate from
-    // this heap and hand back `&'arena mut` borrows; memory is reclaimed on
-    // `reset()`/`Drop` (or earlier via the `Allocator` impl's `deallocate`).
 
     /// `bumpalo::Bump::alloc_layout` parity.
     #[inline]
@@ -526,11 +395,6 @@ impl MimallocArena {
     /// the Zig-style allocator handle.
     #[inline]
     pub fn std_allocator(&self) -> crate::StdAllocator {
-        // `ctx` is `*const MimallocArena` (not the inner `*mut Heap`) so the
-        // vtable thunks can reach `assert_owning_thread()`. They load
-        // `heap_ptr()` from it on every call; this is one extra indirection vs
-        // Zig (`ctx == heap`). The only consumer of `ctx` is this vtable;
-        // `is_instance()` compares the *vtable* pointer, not `ctx`.
         crate::StdAllocator {
             ptr: ptr::from_ref(self).cast_mut().cast(),
             vtable: &HEAP_ALLOCATOR_VTABLE,
@@ -545,10 +409,6 @@ impl MimallocArena {
             || core::ptr::eq(alloc.vtable, &raw const GLOBAL_MIMALLOC_VTABLE)
     }
 
-    /// Zig: `MimallocArena.getThreadLocalDefault()` — a `StdAllocator` that
-    /// routes through the process-wide `mi_malloc`/`mi_free` (no per-heap ctx).
-    /// In mimalloc v3 these are already thread-local-fast, so there is no
-    /// separate per-thread default heap to cache.
     #[inline]
     pub fn get_thread_local_default() -> crate::StdAllocator {
         crate::StdAllocator {
@@ -575,12 +435,6 @@ impl Drop for MimallocArena {
         unsafe { mimalloc::mi_heap_destroy(self.heap_ptr()) };
     }
 }
-
-// ── core::alloc::Allocator ────────────────────────────────────────────────
-//
-// Implemented on `&MimallocArena` (not the owned value) so that
-// `Vec<T, &'a MimallocArena>` borrows the arena for `'a` — matching
-// `bumpalo`'s `&'bump Bump: Allocator` shape and the `ArenaVec<'a, T>` alias.
 
 /// Wrap a raw mimalloc pointer in the `Result<NonNull<[u8]>, AllocError>` shape
 /// the `Allocator` trait wants. `#[inline(always)]` keeps codegen identical to

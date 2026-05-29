@@ -18,24 +18,11 @@ pub enum Format {
     /// This is the default format
     Esm,
 
-    /// Immediately-invoked function expression
-    /// (function(){
-    ///     ...
-    /// })();
     Iife,
 
     /// CommonJS
     Cjs,
 
-    /// Bake uses a special module format for Hot-module-reloading. It includes a
-    /// runtime payload, sourced from src/bake/hmr-runtime-{side}.ts.
-    ///
-    /// ((unloadedModuleRegistry, config) => {
-    ///   ... runtime code ...
-    /// })({
-    ///   "module1.ts": ...,
-    ///   "module2.ts": ...,
-    /// }, { ...metadata... });
     InternalBakeDev,
 }
 
@@ -97,11 +84,6 @@ pub type BundlePackageMap = bun_collections::StringArrayHashMap<BundlePackage>;
 
 // ─── move-in: TYPE_ONLY from bun_bundler::options ─────────────────────────
 
-/// `bundler/options.zig:1815` `BundleOptions.ForceNodeEnv`.
-///
-/// Set by the process environment to override the JSX configuration. When
-/// `Unspecified`, tsconfig.json drives the choice between "react-jsx" and
-/// "react-jsx-dev-runtime".
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
 pub enum ForceNodeEnv {

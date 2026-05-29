@@ -5,22 +5,11 @@ use core::ptr::NonNull;
 use bun_sys::{self as sys, Fd};
 
 use crate::{EventLoopHandle, FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
-// `bun.Async.Loop` — on POSIX the uws `us_loop_t`, on Windows the embedded
-// `uv_loop_t` (`bun_io::Loop` is the cfg-aliased nominal that picks the
-// right one). `BufferedReaderParent::loop_` returns this so callers in T3+
-// can hand it to libuv/uws without a cross-crate cast.
-//
-// Public so trait implementors in `bun_runtime` can name the same type in
-// their `loop_` signature without duplicating the cfg-split.
 #[cfg(not(windows))]
 pub type Loop = bun_uws_sys::Loop;
 #[cfg(windows)]
 pub type Loop = bun_sys::windows::libuv::Loop;
 
-/// `bun_io::poll_tag::BUFFERED_READER` — every `FilePoll` allocated by this
-/// module stores a `*mut BufferedReader` (erased) as its owner; the per-tag
-/// dispatch in `bun_runtime::dispatch::__bun_run_file_poll` recovers the type
-/// from this constant. T2 cannot name `bun_io`, so the value is mirrored.
 use crate::max_buf::MaxBuf;
 use crate::pipes::{FileType, PollOrFd, ReadState};
 #[cfg(windows)]
@@ -121,10 +110,6 @@ impl BufferedReaderVTable {
         self.link().has_on_read_chunk()
     }
 
-    /// When the reader has read a chunk of data
-    /// and hasMore is true, it means that there might be more data to read.
-    ///
-    /// Returning false prevents the reader from reading more data.
     pub(crate) fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
         self.link().on_read_chunk(chunk, has_more)
     }
@@ -329,10 +314,6 @@ impl PosixBufferedReader {
     pub fn final_buffer(&mut self) -> &mut Vec<u8> {
         if self.flags.contains(PosixFlags::MEMFD) {
             if let PollOrFd::Fd(fd) = self.handle {
-                // PORT NOTE: Zig `defer this.handle.close(null, {})` — close after
-                // the read regardless of result. `self.handle` owns the fd;
-                // borrow a non-owning `File` view so the temporary doesn't
-                // close it on drop (handle.close() below does).
                 let result = sys::File::borrow(&fd)
                     .read_to_end_with_array_list(&mut self._buffer, sys::SizeHint::UnknownSize);
                 self.handle.close(None, None::<fn(*mut c_void)>);
@@ -610,20 +591,6 @@ impl PosixBufferedReader {
         _size_hint: isize,
         received_hup_initially: bool,
     ) {
-        // PORT_NOTES_PLAN R-2: `&mut parent` carries LLVM `noalias`, but
-        // `vtable.on_read_chunk` below re-enters JS (e.g.
-        // `FileReader::on_read_chunk` resolves a promise → drains microtasks)
-        // and user code can reach this reader via a fresh
-        // `&mut PosixBufferedReader` from the parent's intrusive `reader`
-        // field, writing `self.flags` / `self._buffer` / `self.handle`. Not
-        // currently ASM-cached (noalias-hunt SUSPECT), but one inlining change
-        // away from caching `flags`/`_buffer.{ptr,cap}` across the call so the
-        // next loop iteration's `_buffer.capacity()` / `IS_DONE` check / poll
-        // re-arm operate on stale state. Launder so `parent` is derived from
-        // an opaque pointer that LLVM must assume the vtable dispatch may
-        // write through; mirrors the cork fix at b818e70e1c57. Stacked-Borrows
-        // is still violated by the re-entrant `&mut` alias regardless — this
-        // addresses the codegen hazard only.
         let this: *mut PosixBufferedReader = core::hint::black_box(core::ptr::from_mut(parent));
         // SAFETY: `this` aliases the live `&mut parent`; single JS thread.
         // Shadow-rebind so the local `parent` is no longer the `noalias` arg
@@ -747,30 +714,10 @@ impl PosixBufferedReader {
                 return;
             }
 
-            // We have received HUP. Normally that means all writers are gone
-            // and draining the buffer will eventually hit EOF (read() == 0),
-            // so we loop locally instead of re-arming the poll (HUP is
-            // level-triggered and would fire again immediately).
-            //
-            // But `received_hup` is a snapshot from when the epoll/kqueue
-            // event fired. `onReadChunk` above re-enters JS (resolves the
-            // pending read, drains microtasks, fires the 'data' event), and
-            // user code there can open a new writer on the same FIFO — after
-            // which the pipe is no longer hung up. Looping again would then
-            // either spin forever on EAGAIN (if the fd is O_NONBLOCK) or
-            // block the event loop in read() (if the fd is blocking and
-            // RWF_NOWAIT is unavailable — Linux named FIFOs return
-            // EOPNOTSUPP for it, unlike anonymous pipes).
-            //
-            // An explicit EAGAIN proves the HUP is stale, so re-arm.
             if got_retry {
                 parent.register_poll();
                 return;
             }
-            // Otherwise we just returned from user JS; re-poll the fd to see
-            // whether HUP still holds before committing to another blocking
-            // read. This is one extra poll() per chunk only on the HUP path
-            // (i.e. while draining the final buffered bytes), not per read.
             match bun_core::is_readable(fd) {
                 bun_core::Pollable::Hup => {
                     // Still hung up; keep draining towards EOF.
@@ -802,20 +749,6 @@ impl PosixBufferedReader {
         received_hup: bool,
         sys_fn: impl Fn(Fd, &mut [u8], usize) -> sys::Result<usize>,
     ) {
-        // PORT_NOTES_PLAN R-2: `&mut parent` carries LLVM `noalias`, but
-        // `vtable.on_read_chunk` below re-enters JS (resolves the pending
-        // read, drains microtasks, fires `'data'`) and user code can reach
-        // this reader via a fresh `&mut PosixBufferedReader` from the parent's
-        // intrusive `reader` field, writing `self._buffer` / `self.flags` /
-        // `self.handle`. Not currently ASM-cached (noalias-hunt SUSPECT), but
-        // one inlining change away from caching `_buffer.{ptr,len,cap}` across
-        // the call so the post-call `_buffer.clear()` / `capacity()` / inner-
-        // loop `set_len` operate on a stale Vec header (UAF if re-entry
-        // reallocated). Launder so `parent` is derived from an opaque pointer
-        // that LLVM must assume the vtable dispatch may write through; mirrors
-        // the cork fix at b818e70e1c57. Stacked-Borrows is still violated by
-        // the re-entrant `&mut` alias regardless — this addresses the codegen
-        // hazard only.
         let this: *mut PosixBufferedReader = core::hint::black_box(core::ptr::from_mut(parent));
         // SAFETY: `this` aliases the live `&mut parent`; single JS thread.
         // Shadow-rebind so the local `parent` is no longer the `noalias` arg
@@ -862,20 +795,6 @@ impl PosixBufferedReader {
 
                             // Keep reading as much as we can
                             if (stack_buffer_len - head_start) < stack_buffer_cutoff {
-                                // PORT NOTE: `&& !received_hup` mirrors the
-                                // after-inner-loop flush below (line ~855).
-                                // Without it, a peer close (HUP) with >cutoff
-                                // bytes still buffered makes a parent that
-                                // returns `false` on `.eof` (e.g. shell
-                                // `PipeReader::on_read_chunk`) early-return
-                                // here with data left in the kernel and no
-                                // `register_poll`/`done()` → 90s hang in
-                                // shell-blocking-pipe.test.ts. The Zig spec
-                                // has the same asymmetry (PipeReader.zig:605)
-                                // but the Rust port hits the timing window
-                                // far more often; once HUP is set the kernel
-                                // returns the remaining bytes then 0, so
-                                // draining to `bytes_read == 0` is bounded.
                                 if !parent.vtable.on_read_chunk(
                                     &event_loop.pipe_read_buffer_mut()[..head_start],
                                     if received_hup {
@@ -1166,12 +1085,6 @@ impl WindowsBufferedReader {
 
         other.flags.insert(WindowsFlags::IS_DONE);
         other._offset = 0;
-        // other._buffer / other.source already cleared by mem::take above.
-        // Zig spec (PipeReader.zig:825-831) re-inits `to.*` with a struct literal,
-        // which resets every unlisted field — including `maxbuf` — to its default
-        // (`null`) BEFORE `transferToPipereader`. The field-by-field assigns above
-        // leave `self.maxbuf` untouched, so drop any prior owner-count first to
-        // avoid leaking a MaxBuf ref when the destination already held one.
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
         MaxBuf::transfer_to_pipereader(&mut other.maxbuf, &mut self.maxbuf);
         self.set_parent(parent);
@@ -1278,16 +1191,6 @@ impl WindowsBufferedReader {
             self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
             return true;
         }
-        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
-        // `vtable.on_read_chunk` re-enters JS and user code can reach this
-        // reader via a fresh `&mut WindowsBufferedReader` from the parent's
-        // intrusive `reader` field, writing `self.flags` (e.g. via `pause` /
-        // `start_reading`). Not currently ASM-cached (noalias-hunt SUSPECT),
-        // but one inlining change away from caching `self.flags` across the
-        // call so the trailing `.remove(HAS_INFLIGHT_READ)` RMWs the stale
-        // pre-call value, clobbering any re-entrant flag change. Launder so
-        // the post-call RMW reloads through an opaque pointer; mirrors the
-        // cork fix at b818e70e1c57.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` aliases the live `&mut self`; single JS thread. The
         // reader struct is an inline field of its parent (never freed
@@ -1430,10 +1333,6 @@ impl WindowsBufferedReader {
         // NOTE: pipes/tty need to call stopReading on errors (yeah)
         match nread_int {
             0 => {
-                // EAGAIN or EWOULDBLOCK or canceled  (buf is not safe to access here)
-                // With libuv 1.51.0+, calling onRead(.drained) here causes a race condition
-                // where subsequent reads return truncated data (see logs showing 6024 instead
-                // of 74468 bytes). Just ignore 0-byte reads and let libuv continue.
                 return;
             }
             v if v == uv::UV_EOF as i64 => {
@@ -1535,14 +1434,6 @@ impl WindowsBufferedReader {
                 // PORT NOTE: defer block inlined after body — see below.
                 let len: usize = usize::try_from(nread_int).expect("int cast");
                 this._offset += len;
-                // we got some data lets get the current iov
-                //
-                // BORROW_PARAM (raw-ptr break): `on_read` takes `&mut self`
-                // *and* a slice borrowed from `self.source.File.iov`; under
-                // Stacked Borrows that's a self-mut + field-shared conflict.
-                // The boxed `File` lives in its own heap allocation, so a
-                // `*mut File` snapshot is provenance-disjoint from `&mut self`
-                // — same as the Zig `*File` pointer the original kept.
                 let file_raw: *mut crate::source::File = match this.source.as_mut() {
                     Some(Source::File(f)) => f.as_mut() as *mut _,
                     _ => core::ptr::null_mut(),
@@ -1601,10 +1492,6 @@ impl WindowsBufferedReader {
                                     Some(Self::on_file_read),
                                 )
                             }
-                            // PORT NOTE: Zig PipeReader.zig:1113 tags this `.write` even
-                            // though the syscall is `uv_fs_read` (a Zig bug). Match the
-                            // spec for now so user-visible `error.syscall` stays
-                            // bit-identical; fix upstream in Zig first.
                             .to_error(sys::Tag::write)
                             {
                                 file.complete(false);
@@ -1628,10 +1515,6 @@ impl WindowsBufferedReader {
             return sys::Result::Ok(());
         }
         self.flags.remove(WindowsFlags::IS_PAUSED);
-        // BORROW_PARAM (raw-ptr break): the body needs `&mut self` (for
-        // `get_read_buffer_…`/`flags`) while also holding `&mut File` borrowed
-        // out of `self.source`. The boxed `File` is its own heap allocation, so
-        // a `*mut File` snapshot is provenance-disjoint from `&mut self`.
         let self_ptr = self as *mut Self as *mut c_void;
         let Some(source) = self.source.as_mut() else {
             return sys::Result::Err(sys::Error::from_code(sys::E::BADF, sys::Tag::read));
@@ -1674,10 +1557,6 @@ impl WindowsBufferedReader {
                         Some(Self::on_file_read),
                     )
                 }
-                // PORT NOTE: Zig PipeReader.zig:1163 tags this `.write` even though the
-                // syscall is `uv_fs_read` (a Zig bug). Match the spec for now so
-                // user-visible `error.syscall` stays bit-identical; fix upstream in
-                // Zig first.
                 .to_error(sys::Tag::write)
                 {
                     file.complete(false);
@@ -1743,12 +1622,6 @@ impl WindowsBufferedReader {
         if let Some(source) = self.source.take() {
             match source {
                 Source::SyncFile(file) | Source::File(file) => {
-                    // Detach - file will close itself after operation completes.
-                    // Hand the Box off to libuv: detach() leaves either an
-                    // in-flight uv_fs_read (on_file_read) or a scheduled
-                    // uv_fs_close (on_close_complete) pending; the callback
-                    // reclaims the allocation via heap::take. Dropping the
-                    // Box here would free the uv_fs_t out from under libuv.
                     let raw = bun_core::heap::into_raw(file);
                     // SAFETY: raw is a live heap File*; the pending fs callback
                     // is the sole reclaimer (heap::take in on_close_complete).
@@ -1826,13 +1699,6 @@ impl WindowsBufferedReader {
             return;
         };
         if !source.is_closed() {
-            // closeImpl will take care of freeing the source.
-            // PORT NOTE: Zig nulls `source` *before* calling closeImpl, which
-            // makes that call a no-op (latent Zig leak). We cannot mirror that
-            // verbatim: in Zig nulling a `?*Pipe` leaks; in Rust dropping
-            // `Box<Pipe>` frees a uv_pipe_t still linked into the loop's
-            // handle queue → UAF. Restore the source so close_impl can do the
-            // proper take + hand-off to libuv (into_raw + uv_close).
             self.source = Some(source);
             self.close_impl::<false>();
         } else {
@@ -1854,10 +1720,6 @@ impl WindowsBufferedReader {
 
     #[cfg(windows)]
     extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
-        // `close_impl` set `handle.data = handle` and called `uv_close(handle)`;
-        // libuv passes the same pointer back, so `handle` *is* the tty ptr.
-        // Caller already gates on `!is_stdin_tty` before scheduling close, so
-        // `handle` is heap-allocated (open_tty heap::alloc). Reclaim and drop.
         debug_assert!(!crate::source::stdin_tty::is_stdin_tty(handle));
         // SAFETY: non-stdin tty is heap-allocated; sole owner after uv_close.
         drop(unsafe { bun_core::heap::take(handle) });
@@ -1896,18 +1758,6 @@ impl WindowsBufferedReader {
 
         let should_continue = self._on_read_chunk(slice, has_more);
 
-        // PORT NOTE: Spec parents that stream (IOReader.zig:161,
-        // shell/subproc.zig:1230) call `this.reader.startWithCurrentPipe()`
-        // from inside their `onReadChunk` callback on Windows. The Rust
-        // shell IOReader port cannot re-derive `&mut Self` from inside the
-        // vtable callback (Stacked-Borrows; see shell/IOReader.rs PORT NOTE),
-        // so the call is omitted there. The re-arm half of that call is
-        // already handled by `on_file_read`'s defer block / `uv_read_start`,
-        // but its other side effect — `buffer().clearRetainingCapacity()`
-        // (PipeReader.zig:949) — is load-bearing: without it `_buffer.len`
-        // grows by `amount_result` every chunk and never resets, so a 1 GB
-        // `cat` holds 1 GB resident instead of ~64 KB. Clear it here, after
-        // the streaming consumer has finished with `slice`.
         if should_continue && has_more != ReadState::Eof && self.vtable.is_streaming_enabled() {
             self._buffer.clear();
         }
@@ -1941,14 +1791,6 @@ impl WindowsBufferedReader {
 impl Drop for WindowsBufferedReader {
     fn drop(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
-        // Do NOT take() source here and let it drop: Box<Pipe>/Box<File> own
-        // live uv handles registered with the loop. Let close_impl perform the
-        // take + into_raw hand-off so the uv close callback reclaims them.
-        // PORT NOTE: Zig `WindowsBufferedReader.deinit` (PipeReader.zig:979)
-        // skips closeImpl when `source.isClosed()` — a uv_close is already
-        // pending on that allocation, so closing again would double-close and
-        // freeing the Box would UAF the handle libuv still references. Mirror
-        // deinit(): leak the already-closing handle (Zig parity).
         if let Some(source) = self.source.take() {
             if !source.is_closed() {
                 self.source = Some(source);

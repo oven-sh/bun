@@ -426,12 +426,6 @@ impl CompileTarget {
     }
 
     pub fn define_values(&self) -> &'static [&'static [u8]] {
-        // PERF(port): was comptime monomorphization (inline else over os/arch/libc returning
-        // anonymous struct const). Could generate static tables via macro_rules! or
-        // const_format::concatcp! over OperatingSystem::name_string().
-        // TODO(port): this needs a static [&[u8]; 3] per (os, arch, libc) combo — the os
-        // string is `"\"" ++ os.nameString() ++ "\""` and the version is
-        // `"\"" ++ Global.package_json_version ++ "\""`, both comptime in Zig.
         macro_rules! table {
             ($platform:literal, $arch:literal) => {{
                 const VALUES: &[&[u8]] = &[

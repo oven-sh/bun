@@ -15,19 +15,6 @@ use bun_sourcemap::{
 type LinesHits = Vec<u32>;
 type Bitset = DynamicBitSet;
 
-/// Our code coverage currently only deals with lines of code, not statements or branches.
-/// JSC doesn't expose function names in their coverage data, so we don't include that either :(.
-/// Since we only need to store line numbers, our job gets simpler
-///
-/// We can use two bitsets to store code coverage data for a given file
-/// 1. executable_lines
-/// 2. lines_which_have_executed
-///
-/// Not all lines of code are executable. Comments, whitespace, empty lines, etc. are not executable.
-/// It's not a problem for anyone if comments, whitespace, empty lines etc are not executed, so those should always be omitted from coverage reports
-///
-/// We use two bitsets since the typical size will be decently small,
-/// bitsets are simple and bitsets are relatively fast to construct and query
 pub struct Report {
     pub source_url: ZigStringSlice,
     pub executable_lines: Bitset,
@@ -119,11 +106,6 @@ impl Report {
 
 pub mod text {
     use super::*;
-    // PORT NOTE: Zig `Output.prettyFmt(fmt, comptime bool)` is a comptime string
-    // rewrite. The `pretty_fmt!` macro only accepts literal `true`/`false` today,
-    // so call the runtime rewriter for the `ENABLE_COLORS` const-generic sites.
-    // PERF(port): runtime `pretty_fmt` allocates a small Vec per call — if hot,
-    // hoist into `const` once the proc-macro lands.
     use bun_core::output::pretty_fmt;
 
     pub fn write_format_with_values<const ENABLE_COLORS: bool>(
@@ -163,15 +145,6 @@ pub mod text {
         }
 
         write!(writer, "{:>7.2}", vals.functions * 100.0)?;
-        // writer.write_all(&pretty_fmt("<r><d> | <r>", ENABLE_COLORS))?;
-        // if ENABLE_COLORS {
-        //     // if vals.stmts < failing.stmts {
-        //     writer.write_all(&pretty_fmt("<d>", true))?;
-        //     // } else {
-        //     //     writer.write_all(&pretty_fmt("<d>", true))?;
-        //     // }
-        // }
-        // write!(writer, "{:>8.2}", vals.stmts * 100.0)?;
         writer.write_all(&pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>"))?;
 
         if ENABLE_COLORS {
@@ -329,16 +302,8 @@ pub mod lcov {
             report.functions_which_have_executed.count()
         )?;
 
-        // ** Track all executable lines **
-        // Executable lines that were not hit should be marked as 0
-        // PORT NOTE: Zig cloned the bitset before iterating; `DynamicBitSet::iterator`
-        // borrows `&self` so the clone is unnecessary.
         let mut iter = report.executable_lines.iterator::<true, true>();
 
-        // ** Branch coverage not supported yet, since JSC does not support those yet. ** //
-        // BRDA: line, block, (expressions,count)+
-        // BRF: branches found
-        // BRH: branches hit
         let line_hits = report.line_hits.slice();
         while let Some(line) = iter.next() {
             // DA: line number, hit count
@@ -383,10 +348,6 @@ impl<'a> Generator<'a> {
         // SAFETY: `this` was passed as &mut Generator to CodeCoverage__withBlocksAndFunctions
         // and is valid for the duration of this synchronous callback.
         let this = unsafe { &mut *this };
-        // The C++ side (CodeCoverage.cpp) invokes this callback with `(nullptr, 0, 0)` when
-        // basicBlocks is empty. `core::slice::from_raw_parts` requires a non-null, aligned
-        // pointer even for zero-length slices, so we must bail before constructing the slice
-        // (matches the Zig spec, which early-returns on `blocks.len == 0`).
         if blocks_len == 0 {
             return;
         }
@@ -434,11 +395,6 @@ pub struct ByteRangeMapping {
 pub type ByteRangeMappingHashMap = bun_collections::HashMap<u64, ByteRangeMapping>;
 
 thread_local! {
-    // Lazily-initialized per-thread map. Stored behind `Box` so the address of the
-    // `HashMap` is stable for the lifetime of the thread (extern "C" fns return
-    // `*mut ByteRangeMapping` pointing into it). The Box is **owned** by the
-    // thread-local — it is dropped on thread exit, never leaked (PORTING.md
-    // §Forbidden: no Box::leak).
     static MAP: UnsafeCell<Option<Box<ByteRangeMappingHashMap>>> =
         const { UnsafeCell::new(None) };
 }
@@ -469,14 +425,6 @@ fn thread_map_opt() -> Option<NonNull<ByteRangeMappingHashMap>> {
 }
 
 impl ByteRangeMapping {
-    /// Zig: `pub threadlocal var map: ?*HashMap = null;` — read-only accessor
-    /// for the per-thread `ByteRangeMappingHashMap`. Returns `None` if no
-    /// coverage data was recorded on this thread.
-    ///
-    /// The pointer borrows the thread-local `Box`, which is pinned for the
-    /// thread's lifetime and never re-entered while the caller holds it
-    /// (single-threaded CLI report path). Callers reborrow per-access —
-    /// PORTING.md §Global mutable state.
     pub fn map() -> Option<NonNull<ByteRangeMappingHashMap>> {
         thread_map_opt()
     }
@@ -496,11 +444,6 @@ impl ByteRangeMapping {
 
         let mut executable_lines: Bitset;
         let mut lines_which_have_executed: Bitset;
-        // PORT NOTE: Zig's `SavedSourceMap.get` returns a `?*ParsedSourceMap` with a +1
-        // intrusive ref (Zig: `defer if (parsed_mappings_) |p| p.deref()`). The Rust port
-        // models this as `Option<Arc<ParsedSourceMap>>`, so the +1 is released
-        // automatically when `parsed_mappings_` drops at scope exit — no explicit guard
-        // is required.
         let parsed_mappings_: Option<std::sync::Arc<ParsedSourceMap>> =
             // SAFETY: `VirtualMachine::get()` returns the live singleton `*mut VirtualMachine`
             // with full write provenance; dereference to call the `&mut self` accessor.
@@ -944,10 +887,6 @@ pub(crate) extern "C" fn ByteRangeMapping__findExecutedLines(
     v
 }
 
-// move-out: TYPE_ONLY → bun_options_types::code_coverage_options::Fraction.
-// Lifted into options_types so the CLI tier can hold `CodeCoverageOptions.fractions`
-// without depending on tier-6 sourcemap_jsc; re-exported here so coverage report
-// writers and the test runner share one definition.
 pub use bun_options_types::code_coverage_options::Fraction;
 
 #[derive(Clone, Copy, Default)]

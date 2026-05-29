@@ -190,21 +190,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// This is a spot where the TypeScript grammar is highly ambiguous. Here are
-    /// some cases that are valid:
-    ///
-    ///     let x = (y: any): (() => {}) => { };
-    ///     let x = (y: any): () => {} => { };
-    ///     let x = (y: any): (y) => {} => { };
-    ///     let x = (y: any): (y[]) => {};
-    ///     let x = (y: any): (a | b) => {};
-    ///
-    /// Here are some cases that aren't valid:
-    ///
-    ///     let x = (y: any): (y) => {};
-    ///     let x = (y: any): (y) => {return 0};
-    ///     let x = (y: any): asserts y is (y) => {};
-    ///
     pub fn skip_type_script_paren_or_fn_type<const GET_METADATA: bool>(
         &mut self,
         result: Option<&mut Metadata>,
@@ -229,10 +214,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    // PORT NOTE: Zig signature is `result: if (get_metadata) *TypeScript.Metadata else void`.
-    // Rust cannot express a const-generic-dependent param type on stable; we use
-    // `Option<&mut Metadata>` and require callers to pass `Some` iff `GET_METADATA == true`.
-    // The const generic is kept so `if GET_METADATA { ... }` branches monomorphize away.
     pub fn skip_type_script_type_with_opts<const GET_METADATA: bool>(
         &mut self,
         level: Level,
@@ -422,14 +403,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         TsIdentKind::PrefixKeyof => {
                             self.lexer.next()?;
 
-                            // Valid:
-                            //   "[keyof: string]"
-                            //   "{[keyof: string]: number}"
-                            //   "{[keyof in string]: number}"
-                            //
-                            // Invalid:
-                            //   "A extends B ? keyof : string"
-                            //
                             if (self.lexer.token != T::TColon && self.lexer.token != T::TIn)
                                 || (!opts.contains(SkipTypeOptions::IsIndexSignature)
                                     && !opts.contains(SkipTypeOptions::AllowTupleLabels))
@@ -469,10 +442,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         TsIdentKind::Infer => {
                             self.lexer.next()?;
 
-                            // "type Foo = Bar extends [infer T] ? T : null"
-                            // "type Foo = Bar extends [infer T extends string] ? T : null"
-                            // "type Foo = Bar extends [infer T extends string ? infer T : never] ? T : null"
-                            // "type Foo = { [infer in Bar]: number }"
                             if (self.lexer.token != T::TColon && self.lexer.token != T::TIn)
                                 || (!opts.contains(SkipTypeOptions::IsIndexSignature)
                                     && !opts.contains(SkipTypeOptions::AllowTupleLabels))
@@ -866,11 +835,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 T::TExclamation => {
-                    // A postfix "!" is allowed in JSDoc types in TypeScript, which are only
-                    // present in comments. While it's not valid in a non-comment position,
-                    // it's still parsed and turned into a soft error by the TypeScript
-                    // compiler. It turns out parsing this is important for correctness for
-                    // "as" casts because the "!" token must still be consumed.
                     if self.lexer.has_newline_before {
                         return Ok(());
                     }
@@ -1162,10 +1126,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if invalid_modifier_range.len == 0
                         && !flags.contains(TypeParameterFlag::ALLOW_CONST_MODIFIER)
                     {
-                        // Valid:
-                        //   "class Foo<const T> {}"
-                        // Invalid:
-                        //   "interface Foo<const T> {}"
                         invalid_modifier_range = self.lexer.range();
                     }
 
@@ -1181,11 +1141,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             || has_in
                             || has_out)
                     {
-                        // Valid:
-                        //   "type Foo<in T> = T"
-                        // Invalid:
-                        //   "type Foo<in in T> = T"
-                        //   "type Foo<out in T> = T"
                         invalid_modifier_range = self.lexer.range();
                     }
 
@@ -1200,11 +1155,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if invalid_modifier_range.len == 0
                         && !flags.contains(TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS)
                     {
-                        // Valid:
-                        //   "type Foo<out T> = T"
-                        // Invalid:
-                        //   "type Foo<out out T> = T"
-                        //   "type Foo<in out T> = T"
                         invalid_modifier_range = r;
                     }
 
@@ -1213,15 +1163,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && has_out
                         && (self.lexer.token == T::TIn || self.lexer.token == T::TIdentifier)
                     {
-                        // Valid:
-                        //   "type Foo<out T> = T"
-                        //   "type Foo<out out> = T"
-                        //   "type Foo<out out, T> = T"
-                        //   "type Foo<out out = T> = T"
-                        //   "type Foo<out out extends T> = T"
-                        // Invalid:
-                        //   "type Foo<out out in T> = T"
-                        //   "type Foo<out out T> = T"
                         invalid_modifier_range = r;
                     }
                     has_out = true;
@@ -1407,14 +1348,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(true)
     }
 
-    // ───────────────────────── Backtracking ─────────────────────────
-    // Zig defines `pub const Backtracking = struct { ... }` with comptime-reflective
-    // `lexerBacktracker` / `lexerBacktrackerWithArgs` that branch on `bun.meta.ReturnOf(func)`.
-    // Rust cannot inspect a closure's return type at compile time, so we split into two
-    // concrete helpers covering the actual call patterns:
-    //   - `lexer_backtracker_bool`   — fn returns Result<()>/Result<bool>, helper returns bool
-    //   - `lexer_backtracker_result` — fn returns Result<SkipTypeParameterResult>
-
     #[inline]
     fn lexer_backtracker_bool<F, R>(&mut self, func: F) -> bool
     where
@@ -1560,16 +1493,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         flags: SkipTypeOptionsBitset,
     ) -> bool {
-        // The outcome of this attempt depends only on the position of the `extends`
-        // token and on whether conditional types are allowed, so an attempt that
-        // already backtracked here can be skipped. Each backtracked constraint gets
-        // re-parsed by the caller as the `extends` clause of a conditional type,
-        // which repeats the attempts nested inside it; without the memo that's
-        // exponential for deeply nested `infer X extends` constraints inside
-        // template literal types (found by fuzzing).
-        //
-        // Token offsets fit in 31 bits (`Loc` is an `i32`), so the offset and the
-        // flag bit pack into a `u32`.
         debug_assert!(self.lexer.start <= (u32::MAX >> 1) as usize);
         let memo_key = ((self.lexer.start as u32) << 1)
             | flags.contains(SkipTypeOptions::DisallowConditionalTypes) as u32;

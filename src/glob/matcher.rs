@@ -25,11 +25,6 @@
 use bun_collections::BoundedArray;
 use bun_core::strings;
 
-/// used in matchBrace to determine the size of the stack buffer used in the stack fallback allocator
-/// that is created for handling braces
-/// One such stack buffer is created recursively for each pair of braces
-/// therefore this value should be tuned to use a sane amount of memory even at the highest allowed brace depth
-/// and for arbitrarily many non-nested braces (i.e. `{a,b}{c,d}`) while reducing the number of allocations.
 #[derive(Copy, Clone)]
 struct Brace {
     open_brace_idx: u32,
@@ -37,10 +32,6 @@ struct Brace {
 }
 type BraceStack = BoundedArray<Brace, 10>;
 
-/// Upper bound on brace-branch alternatives explored per `match` call. Sequential
-/// brace groups multiply (`{a,b}{c,d}` = 4 alternatives), so without a cap an
-/// adversarial pattern of ten sequential 10-way groups would explore 10^10
-/// alternatives. Patterns that exceed this budget fail to match.
 const BRACE_BRANCH_BUDGET: u32 = 10_000;
 
 // PORT NOTE: made `pub` — Zig leaks this private type through `pub fn match`; Rust forbids private-in-public.
@@ -107,35 +98,6 @@ struct Wildcard {
     brace_depth: u8,
 }
 
-/// This function checks returns a boolean value if the pathname `path` matches
-/// the pattern `glob`.
-///
-/// The supported pattern syntax for `glob` is:
-///
-/// "?"
-///     Matches any single character.
-/// "*"
-///     Matches zero or more characters, except for path separators ('/' or '\').
-/// "**"
-///     Matches zero or more characters, including path separators.
-///     Must match a complete path segment, i.e. followed by a path separator or
-///     at the end of the pattern.
-/// "[ab]"
-///     Matches one of the characters contained in the brackets.
-///     Character ranges (e.g. "[a-z]") are also supported.
-///     Use "[!ab]" or "[^ab]" to match any character *except* those contained
-///     in the brackets.
-/// "{a,b}"
-///     Match one of the patterns contained in the braces.
-///     Any of the wildcards listed above can be used in the sub patterns.
-///     Braces may be nested up to 10 levels deep.
-/// "!"
-///     Negates the result when at the start of the pattern.
-///     Multiple "!" characters negate the pattern multiple times.
-/// "\"
-///     Used to escape any of the special characters above.
-// TODO: consider just taking arena and resetting to initial state,
-// all usages of this function pass in Arena.arena()
 pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
     let mut state = State::default();
 
@@ -615,12 +577,6 @@ fn decode_wtf8_rune_at(bytes: &[u8], idx: usize) -> (u32, u8) {
     (cp, len)
 }
 
-/// Unescapes the character if needed
-///
-/// Then decodes and returns the character
-///
-/// `c` must point to a u32 initialized to `glob[glob_index]`
-/// `clen` must point to a u8 initialized to 1
 #[inline(always)]
 fn get_unicode(c: &mut u32, clen: &mut u8, glob: &[u8], glob_index: &mut u32) -> bool {
     debug_assert!(*clen == 1);

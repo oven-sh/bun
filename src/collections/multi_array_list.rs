@@ -57,23 +57,6 @@ use std::alloc::{Allocator, Global};
 
 use bun_alloc::AllocError;
 
-/// Declares typed column-accessor extension traits for a `MultiArrayList<$T>`
-/// element struct, mirroring Zig's `list.items(.field)` calling convention.
-///
-/// ```ignore
-/// multi_array_columns! {
-///     pub trait FooColumns for Foo {
-///         a: u32,
-///         b: Bar,
-///     }
-/// }
-/// // → list.items_a(): &[u32], list.items_a_mut(): &mut [u32], …
-/// //   on both MultiArrayList<Foo> and Slice<Foo>.
-/// ```
-///
-/// Each generated method calls `items::<"field", $ty>()`, so the field name
-/// and type are checked against `$T`'s reflected layout at compile time —
-/// a typo or type mismatch is a const-eval error, not UB.
 #[macro_export]
 macro_rules! multi_array_columns {
     // Non-generic form.
@@ -110,13 +93,6 @@ macro_rules! multi_array_columns {
         $( $field:ident : $ty:ty, )*
     }) => {
         $crate::__mal_paste! {
-            /// Simultaneous `&mut` view of every column. Returned by
-            /// [`split_mut`]($trait::split_mut); columns are physically
-            /// disjoint (SoA layout — each occupies a distinct
-            /// `[COLUMN_OFFSET_PER_CAP[i]*cap ..)` byte range in the single
-            /// backing allocation), so holding all of them mutably at once is
-            /// sound. This is the safe replacement for the `items_raw` +
-            /// per-site `unsafe { &mut * }` pattern.
             #[allow(dead_code, non_snake_case)]
             $vis struct [<$trait Mut>] <'__mal, $($decl)*> {
                 $( pub $field: &'__mal mut [$ty], )*
@@ -124,16 +100,6 @@ macro_rules! multi_array_columns {
                 pub __mal: ::core::marker::PhantomData<&'__mal mut $elem>,
             }
 
-            /// Raw `*mut [T]` view of every column. Returned by
-            /// [`split_raw`]($trait::split_raw). Unlike [`split_mut`], the
-            /// pointers are derived directly from the SoA buffer's raw `bytes`
-            /// base (root/SharedRW provenance) with **no `&mut` intermediate**,
-            /// so they remain valid under Stacked Borrows even when interleaved
-            /// with other column accessors on the same list — the use case
-            /// `split_mut` cannot serve. Dereferencing is the caller's
-            /// responsibility (per-site `unsafe`); columns are physically
-            /// disjoint by `COLUMN_OFFSET_PER_CAP`, so distinct-column derefs
-            /// never alias. Invalidated by any reallocation of the list.
             #[allow(dead_code, non_snake_case)]
             $vis struct [<$trait Raw>] <$($decl)*> {
                 $( pub $field: *mut [$ty], )*
@@ -242,10 +208,6 @@ macro_rules! __mal_column_impl {
     };
 }
 
-/// Upper bound on struct field count. The reflected per-field metadata is
-/// cached in fixed-size `[_; MAX_FIELDS]` arrays so `Slice<T>` can be a plain
-/// value type without a `where [(); field_count::<T>()]:` bound propagating to
-/// every caller.
 pub(crate) const MAX_FIELDS: usize = 32;
 
 // ──────────────────────── const-eval reflection helpers ───────────────────
@@ -274,24 +236,6 @@ pub(crate) const fn field_count<T>() -> usize {
     fields_of::<T>().len()
 }
 
-/// Column-layout sort key for a field of `size` bytes within a struct of
-/// alignment `struct_align`.
-///
-/// The reflection API does not expose `align`, and recursing through nested
-/// `TypeId::info()` to reconstruct it ICEs on types containing
-/// const-expression array lengths (rustc `type_info` MVP limitation). Instead
-/// we compute a key with these properties:
-///
-///   * `key` is a power of two,
-///   * `key` divides `size` (since size is a multiple of true alignment, the
-///     largest power-of-two factor of `size` is ≥ true alignment),
-///   * `key ≤ struct_align` (a field's alignment never exceeds its parent's),
-///   * therefore `true_align ≤ key`.
-///
-/// Sorting columns by `key` descending then packs them as `Σ size[j] * cap`;
-/// because each `size[j]` is a multiple of `key[j] ≥ key[k]`, every column
-/// start is a multiple of `key[k] ≥ true_align[k]`, so all columns are
-/// correctly aligned without knowing their exact alignment.
 const fn align_sort_key(size: usize, struct_align: usize) -> usize {
     if size == 0 {
         return 1;
@@ -436,14 +380,6 @@ impl<T> Reflected<T> {
         panic!("MultiArrayList: no such field");
     }
 
-    /// Const-panics unless field `NAME` exists and has type `F`.
-    ///
-    /// The type check is `TypeId` equality with a fallback to size equality:
-    /// the experimental reflection intrinsic occasionally produces a distinct
-    /// `TypeId` for the same nominal type when reached through an inherent
-    /// associated type alias (e.g. `EntryPoint::Kind` vs `entry_point::Kind`),
-    /// so a size match is accepted when ids differ. Size mismatch is always
-    /// rejected.
     const fn check<const NAME: &'static str, F>() -> usize {
         let fields = fields_of::<T>();
         let mut i = 0;
@@ -466,13 +402,6 @@ impl<T> Reflected<T> {
 
 // ───────────────────────── column primitives ─────────────────────────
 
-/// Base pointer of column `fi` within a buffer of `cap` elements.
-///
-/// **Module invariant** (`INVARIANT:column_base`): `bytes` is either
-/// `Reflected::<T>::DANGLING` with `cap == 0`, or the start of a live
-/// allocation of `ELEM_BYTES * cap` bytes at `align_of::<T>()` alignment.
-/// Under that invariant the result is `T`-aligned for `cap == 0` and aligned
-/// to field `fi`'s true alignment for `cap > 0` (see [`align_sort_key`]).
 #[inline(always)]
 fn column_base<T>(bytes: NonNull<u8>, cap: usize, fi: usize) -> NonNull<u8> {
     debug_assert!(fi < Reflected::<T>::COUNT);
@@ -493,10 +422,6 @@ struct Col<'a, F> {
 }
 
 impl<'a, F> Col<'a, F> {
-    /// **Module invariant** (`INVARIANT:col`): only fed `(ptr, len)` where
-    /// `ptr` is non-null, aligned for `F`, and either dangling with `len == 0`
-    /// or pointing into a column holding `≥ len` initialized `F`s valid for
-    /// `'a`. Upheld by every internal caller; not exposed.
     #[inline(always)]
     fn new(ptr: NonNull<F>, len: usize) -> Self {
         Self {
@@ -555,21 +480,6 @@ pub struct MultiArrayList<T, A: Allocator = Global> {
 
 // SAFETY: `bytes` is uniquely owned; the only shared state is the allocator.
 unsafe impl<T: Send, A: Allocator + Send> Send for MultiArrayList<T, A> {}
-// NOTE: deliberately not `Sync`. `slice(&self)` hands out an owned, `Copy`
-// `Slice<T>` whose safe `items_mut`/`set` mutate the shared backing buffer, so
-// two threads holding `&MultiArrayList` could race through `slice()`. Revisit
-// once `Slice<T>` no longer exposes mutation from a shared-derived handle.
-
-/// A `MultiArrayList::Slice` contains cached start pointers for each field in
-/// the list. These pointers are not normally stored to reduce the size of the
-/// list in memory. If you are accessing multiple fields, call `slice()` first
-/// to compute the pointers, and then get the field arrays from the slice.
-///
-/// **Known soundness gap**: `Slice<T>: Copy` lets a caller hold two copies and
-/// call `items_mut` / `set` on both, aliasing `&mut`. Removing `Copy` breaks a
-/// large number of `.slice()` snapshot sites that intentionally exploit it for
-/// borrowck (see `LinkerGraph::load`, `bundle_v2`). Tracked separately; treat
-/// `Slice<T>` as a raw-pointer set and avoid overlapping mutable views.
 pub struct Slice<T> {
     /// Indexed by declaration-order field index.
     ptrs: [NonNull<u8>; MAX_FIELDS],
@@ -622,11 +532,6 @@ impl<T> Slice<T> {
         self.len == 0
     }
 
-    /// Typed column base for field `fi`. Substitutes a properly-aligned
-    /// dangling pointer when `F` is a ZST (the computed column offset is not
-    /// guaranteed `align_of::<F>()`-aligned for over-aligned ZSTs). For
-    /// `cap == 0` no substitution is needed: `ptrs[fi]` is
-    /// `Reflected::<T>::DANGLING`, which is already aligned for every field.
     #[inline(always)]
     fn col_ptr<F>(&self, fi: usize) -> NonNull<F> {
         if core::mem::size_of::<F>() == 0 {
@@ -635,10 +540,6 @@ impl<T> Slice<T> {
         self.ptrs[fi].cast::<F>()
     }
 
-    /// Returns the column slice for field `NAME` typed as `&[F]`.
-    ///
-    /// Compile-time checked: a const-eval assertion verifies that `T` has a
-    /// field named `NAME` and that its type is exactly `F`.
     #[inline]
     pub fn items<const NAME: &'static str, F>(&self) -> &[F] {
         let fi = const { Reflected::<T>::check::<NAME, F>() };
@@ -652,15 +553,6 @@ impl<T> Slice<T> {
         ColMut::new(self.col_ptr::<F>(fi), self.len).as_mut_slice()
     }
 
-    /// Raw column pointer for callers that need simultaneous mutable access to
-    /// multiple distinct columns (which `items_mut`'s `&mut self` borrow would
-    /// otherwise forbid). Compile-time type-checked like `items`.
-    ///
-    /// Obtaining the pointer is always sound — it is computed by raw `add` on
-    /// the heap buffer base with no `&`/`&mut` intermediate, so it carries the
-    /// allocation's root provenance. The returned pointer is valid for
-    /// `self.len()` reads/writes; the caller must not create overlapping
-    /// `&mut` references to the same column when *dereferencing* it.
     #[inline]
     pub fn items_raw<const NAME: &'static str, F>(&self) -> *mut F {
         let fi = const { Reflected::<T>::check::<NAME, F>() };
@@ -710,13 +602,6 @@ impl<T> Slice<T> {
         self.scatter(index, elem);
     }
 
-    /// Gather a `T` by per-field `ptr::read` from each column.
-    ///
-    /// The returned value is a **bitwise copy** — the SoA storage retains
-    /// ownership of every field. Dropping the gathered struct would free
-    /// columns the storage still owns (double-free on next `get` / `Drop`),
-    /// so it is wrapped in `ManuallyDrop`. Zig has no destructors so the
-    /// by-value copy is harmless there.
     pub fn get(&self, index: usize) -> ManuallyDrop<T> {
         assert!(
             index < self.len,
@@ -939,10 +824,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         column_base::<T>(self.bytes, self.capacity, fi).cast::<F>()
     }
 
-    /// Get the shared slice of values for field `NAME`.
-    ///
-    /// Compile-time checked: const-eval verifies `NAME` is a field of `T` and
-    /// `F` is exactly its type.
     #[inline]
     pub fn items<const NAME: &'static str, F>(&self) -> &[F] {
         let fi = const { Reflected::<T>::check::<NAME, F>() };
@@ -970,10 +851,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         s.set(index, elem);
     }
 
-    /// Obtain all the data for one array element.
-    ///
-    /// Returns `ManuallyDrop<T>` because the gathered struct is a bitwise
-    /// copy of column storage that the list still owns; see [`Slice::get`].
     pub fn get(&self, index: usize) -> ManuallyDrop<T> {
         self.slice().get(index)
     }
@@ -1030,10 +907,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         Some(ManuallyDrop::into_inner(val))
     }
 
-    /// Inserts an item into an ordered list. Shifts all elements
-    /// after and including the specified index back by one and
-    /// sets the given index to the specified element. May reallocate
-    /// and invalidate iterators.
     pub fn insert(&mut self, index: usize, elem: T) -> Result<(), AllocError> {
         self.ensure_unused_capacity(1)?;
         self.insert_assume_capacity(index, elem);
@@ -1123,18 +996,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         self.capacity = 0;
     }
 
-    /// Run every element's destructor, then reset to empty (`len = 0`,
-    /// capacity retained).
-    ///
-    /// `Drop` for this type is **slab-only** — it frees the SoA backing buffer
-    /// but never runs column destructors (see the `Drop` impl for why: bitwise
-    /// [`clone`] aliasing). When `T` has fields that own global-heap resources
-    /// and the list is the unique owner, call this before the list goes out of
-    /// scope or those payloads leak. No-op when `!needs_drop::<T>()`.
-    ///
-    /// Elements are dropped by gathering each row's column bytes back into a
-    /// stack `T` (the inverse of [`scatter`]) and letting it drop, so every
-    /// field — not just one named column — is destructed.
     pub fn drop_elements(&mut self) {
         if core::mem::needs_drop::<T>() && self.len != 0 {
             let s = self.slice();
@@ -1248,12 +1109,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         }
     }
 
-    /// Free the current backing allocation (if any) and reset `capacity` so a
-    /// repeat call is a no-op. Safe: `bytes`/`capacity` are private and every
-    /// constructor/mutator upholds the invariant that when
-    /// `layout_for::<T>(self.capacity)` is `Some(layout)`, `self.bytes` is a
-    /// live allocation from `self.alloc` with exactly `layout` (see
-    /// [`aligned_alloc`] / [`set_capacity`]).
     fn free_allocated_bytes(&mut self) {
         if let Some(layout) = layout_for::<T>(self.capacity) {
             // SAFETY: type invariant above — `self.bytes` was allocated by
@@ -1278,18 +1133,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
 
 impl<T, A: Allocator> Drop for MultiArrayList<T, A> {
     fn drop(&mut self) {
-        // Zig `deinit(self, gpa)`: `gpa.free(self.allocatedBytes())` — slab
-        // only, no per-element destructors. This is **intentionally preserved**:
-        // [`clone`] is a bitwise SoA memcpy (Zig semantics), so two live lists
-        // can alias the same column heap pointers — see `bundle_v2.rs`
-        // `clone_ast` / `deinit_without_freeing_arena`, which drains exactly
-        // one alias and relies on the other dropping slab-only. Running
-        // element destructors here would double-free that side.
-        //
-        // For lists that *do* uniquely own heap-backed columns (e.g.
-        // `LineOffsetTable.columns_for_non_ascii: Box<[i32]>`), call
-        // [`MultiArrayList::drop_elements`] before letting this run, or the
-        // column payloads leak.
         self.free_allocated_bytes();
     }
 }

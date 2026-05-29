@@ -2,11 +2,6 @@ use crate::expr::{Data, PrimitiveType, data};
 use crate::{E, Expr, StoreRef, e};
 use bun_alloc::Arena; // bumpalo::Bump re-export
 
-// ── local rope helpers ─────────────────────────────────────────────────────
-// `EString::push` / `EString::clone_rope_nodes` are still gated in E.rs
-// (round-C draft); inline the minimal surface here so this file can un-gate
-// without touching E.rs. These mirror the Zig bodies 1:1.
-
 #[inline]
 fn store_append_string(s: E::EString) -> StoreRef<E::EString> {
     data::Store::append(s)
@@ -46,10 +41,6 @@ fn estring_push(lhs: &mut E::EString, mut other: StoreRef<E::EString>) {
 fn clone_rope_nodes(s: &E::EString) -> E::EString {
     let mut root = s.shallow_clone();
     if let Some(first) = root.next {
-        // Clone the first link, then walk the freshly-cloned chain via
-        // `StoreRef` (safe `Deref`/`DerefMut`) instead of a raw `*mut`
-        // cursor. Each cloned node's `next` still points at the original
-        // chain (shallow clone), so re-clone link-by-link.
         let mut tail: StoreRef<E::EString> = store_append_string(first.get().shallow_clone());
         root.next = Some(tail);
         while let Some(next) = tail.next {
@@ -62,43 +53,17 @@ fn clone_rope_nodes(s: &E::EString) -> E::EString {
     root
 }
 
-/// Concatenate two `E::String`s, mutating BOTH inputs
-/// unless `has_inlined_enum_poison` is set.
-///
-/// Currently inlined enum poison refers to where mutation would cause output
-/// bugs due to inlined enum values sharing `E::String`s. If a new use case
-/// besides inlined enums comes up to set this to true, please rename the
-/// variable and document it.
 fn join_strings(
     left: &E::EString,
     right: &E::EString,
     has_inlined_enum_poison: bool,
 ) -> E::EString {
     let mut new = if has_inlined_enum_poison {
-        // Inlined enums can be shared by multiple call sites. In
-        // this case, we need to ensure that the ENTIRE rope is
-        // cloned. In other situations, the lhs doesn't have any
-        // other owner, so it is fine to mutate `lhs.data.end.next`.
-        //
-        // Consider the following case:
-        //   const enum A {
-        //     B = "a" + "b",
-        //     D = B + "d",
-        //   };
-        //   console.log(A.B, A.D);
         clone_rope_nodes(left)
     } else {
         left.shallow_clone()
     };
 
-    // Similarly, the right side has to be cloned for an enum rope too.
-    //
-    // Consider the following case:
-    //   const enum A {
-    //     B = "1" + "2",
-    //     C = ("3" + B) + "4",
-    //   };
-    //   console.log(A.B, A.C);
     let rhs_clone = store_append_string(if has_inlined_enum_poison {
         clone_rope_nodes(right)
     } else {
@@ -111,10 +76,6 @@ fn join_strings(
     new
 }
 
-/// `std.mem.concat(arena, E.TemplatePart, &.{a, b})` — concat into the bump
-/// arena. `TemplatePart` is POD-shaped (no Drop) but not `Copy` because
-/// `EString` opted out; mirror `Template::fold`'s field-wise copy via
-/// `shallow_clone` instead of raw `copy_nonoverlapping`.
 fn concat_parts(
     bump: &Arena,
     a: &[e::TemplatePart],
@@ -237,13 +198,6 @@ pub fn fold_string_addition(
                     // `foo${bar}` + "baz" => `foo${bar}baz`
                     Data::EString(right) => {
                         if right.is_utf8() {
-                            // Mutation of this node is fine because it will be not
-                            // be shared by other places. Note that e_template will
-                            // be treated by enums as strings, but will not be
-                            // inlined unless they could be converted into
-                            // .e_string.
-                            // `parts` is `StoreSlice<T>` (arena-owned, mutable
-                            // provenance) — write through `parts_mut()`.
                             if !left.parts().is_empty() {
                                 let i = left.parts().len() - 1;
                                 let last_tail = &left.parts()[i].tail;

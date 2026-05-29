@@ -82,14 +82,6 @@ pub type Ctx = ___tracy_c_zone_context;
 
 #[inline]
 pub fn trace(srcloc: &'static ___tracy_source_location_data) -> Ctx {
-    // TODO(port): Zig signature is `trace(comptime src: std.builtin.SourceLocation)`
-    // and synthesizes a per-monomorphization `static holder.srcloc`. Rust cannot
-    // create a fresh static per generic-value instantiation without a macro, so this
-    // fn takes the already-built static directly. TODO(port): provide a `tracy_trace!()`
-    // macro that emits a per-callsite
-    // `static SRCLOC: ___tracy_source_location_data { function: concat!(module_path!(),"\0"),
-    // file: concat!(file!(),"\0"), line: line!(), .. }` and calls this — do NOT
-    // reintroduce an intermediate SourceLocation struct.
     if !enable() {
         return Ctx::default();
     }
@@ -103,10 +95,6 @@ pub fn trace(srcloc: &'static ___tracy_source_location_data) -> Ctx {
 
 #[inline]
 pub fn trace_named(srcloc: &'static ___tracy_source_location_data) -> Ctx {
-    // TODO(port): Zig `traceNamed(comptime src, comptime name)` — same
-    // per-callsite-static issue as `trace`. The `name` is folded into the
-    // caller-provided static `srcloc.name`. TODO(port): add a
-    // `tracy_trace_named!("name")` macro.
     if !enable() {
         return Ctx::default();
     }
@@ -122,16 +110,6 @@ pub fn tracy_allocator() -> TracyAllocator {
     TracyAllocator::init()
 }
 
-/// Zig: `fn TracyAllocator(comptime name: ?[:0]const u8) type { return struct { ... } }`
-///
-/// In Zig this is a `std.mem.Allocator` vtable wrapper around a parent allocator.
-/// Per PORTING.md §Allocators, `src/perf/` is not an AST crate, so the
-/// `std.mem.Allocator` parameter is deleted and the parent is implicitly the
-/// global mimalloc (`#[global_allocator]`).
-// TODO(port): re-express as a `core::alloc::GlobalAlloc` shim over
-// `bun_alloc::Mimalloc` that emits tracy alloc/free hooks (alloc/alloc_named/
-// free/free_named below). Only relevant if `ENABLE_ALLOCATION` is flipped on —
-// it is `false` today, so this is dead in practice.
 pub struct TracyAllocator {}
 
 impl TracyAllocator {
@@ -505,11 +483,6 @@ impl Default for ___tracy_source_location_data {
     }
 }
 
-// PORT NOTE: Zig defined `Handle` as a per-instantiation local struct inside
-// `dlsym`, giving each (Type, symbol) pair its own static handle. That is
-// wasteful (re-dlopens libtracy per symbol) and not expressible in Rust without
-// const-generic strings. Use a single shared handle instead — dlopen on the
-// same path is refcounted so behavior is equivalent.
 static HANDLE: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 
 fn handle_getter() -> Option<*mut c_void> {

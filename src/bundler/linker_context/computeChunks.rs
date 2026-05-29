@@ -63,17 +63,8 @@ pub fn compute_chunks(
     // link step. Raw deref (not `this.parse_graph()`) because the loop below
     // needs disjoint `&mut this.graph.*` borrows while `parse_graph` is held.
     let parse_graph = unsafe { &*this.parse_graph };
-    // `bump` is a `BackRef` into `BundleV2.graph.arena`, valid for the link step.
-    // Hoisted so the loop can hold disjoint &mut borrows into `this.graph`.
-    // PORT NOTE: `BundlerStyleSheet::empty()` no longer takes an arena in Rust; kept for
-    // when arena threading lands.
     let _arena: &Arena = this.graph.arena();
 
-    // PORT NOTE: borrowck escape hatch — the SoA column slices below hold disjoint
-    // immutable borrows into `this.graph` while several helpers (and the BundleV2
-    // back-pointer recovery) still want `&mut LinkerContext`. The Zig original
-    // freely aliases; TODO(refactor): thread split borrows through `LinkerGraph`
-    // instead of laundering through a raw pointer.
     let this_ptr: *mut LinkerContext = this;
 
     let entry_source_indices = this.graph.entry_points.items_source_index();
@@ -102,11 +93,6 @@ pub fn compute_chunks(
 
         let has_html_chunk = loaders[source_index as usize] == Loader::Html;
 
-        // For code splitting, entry point chunks should be keyed by ONLY the entry point's
-        // own bit, not the full entry_bits. This ensures that if an entry point file is
-        // reachable from other entry points (e.g., via re-exports), its content goes into
-        // a shared chunk rather than staying in the entry point's chunk.
-        // https://github.com/evanw/esbuild/blob/cd832972927f1f67b6d2cc895c06a8759c1cf309/internal/linker/linker.go#L3882
         let mut entry_point_chunk_bits = AutoBitSet::init_empty(this.graph.entry_points.len())?;
         entry_point_chunk_bits.set(entry_bit as usize);
 
@@ -212,12 +198,6 @@ pub fn compute_chunks(
         };
 
         {
-            // If this JS entry point has an associated CSS entry point, generate it
-            // now. This is essentially done by generating a virtual CSS file that
-            // only contains "@import" statements in the order that the files were
-            // discovered in JS source order, where JS source order is arbitrary but
-            // consistent for dynamic imports. Then we run the CSS import order
-            // algorithm to determine the final CSS file order for the chunk.
             let css_source_indices =
                 find_imported_css_files_in_js_order(this, temp, Index::init(source_index));
             if css_source_indices.len() > 0 {
@@ -228,10 +208,6 @@ pub fn compute_chunks(
                     css_source_indices.slice(),
                 );
 
-                // Always use content-based hashing for CSS chunk deduplication.
-                // This ensures that when multiple JS entry points import the
-                // same CSS files, they share a single CSS output chunk rather
-                // than producing duplicates that collide on hash-based naming.
                 let hash_to_use = {
                     let mut hasher = Wyhash::init(5);
                     bun_core::write_any_to_hasher(&mut hasher, order.len());
@@ -331,10 +307,6 @@ pub fn compute_chunks(
                                 .contains(chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
                             && ast_targets[source_index.get() as usize] == Target::Browser
                         {
-                            // If any file in the chunk has browser target, mark the whole chunk as browser.
-                            // This handles the case where a lazy-loaded chunk (code splitting chunk, not entry point)
-                            // contains browser-targeted files but was first created by a non-browser file.
-                            // We only apply this to non-entry-point chunks to preserve the correct side for server entry points.
                             js_chunk_entry
                                 .value_ptr
                                 .flags
@@ -540,11 +512,6 @@ pub fn compute_chunks(
     let unique_key_item_len = chunk::UNIQUE_KEY_LEN;
     let mut unique_key_builder =
         bun_core::StringBuilder::init_capacity(unique_key_item_len * chunks.len());
-    // PORT NOTE: in Zig `unique_key_buf` aliases the builder's backing buffer and
-    // every `chunk.unique_key` is a slice into it. Mirror that: the builder never
-    // reallocates after `init_capacity`, so each `fmt()` returns a stable subslice
-    // that we detach to `&'static [u8]` (BACKREF) and transfer ownership of the
-    // single allocation into `this.unique_key_buf` afterwards.
     let prefix_len = chunk::UNIQUE_KEY_PREFIX_LEN;
 
     // SAFETY: `this` points to LinkerContext which is the `linker` field of BundleV2.
@@ -691,10 +658,6 @@ pub fn compute_chunks(
         }
     }
 
-    // Transfer ownership of the single backing buffer; every `chunk.unique_key`
-    // above borrows into it. (Zig's `errdefer` freed the builder and cleared
-    // `unique_key_buf`; in Rust the builder `Drop`s on error and `unique_key_buf`
-    // is only assigned here on success, so no rollback guard is needed.)
     this.unique_key_buf = unique_key_builder.move_to_slice();
 
     Ok(sorted_chunks.to_owned_slice())

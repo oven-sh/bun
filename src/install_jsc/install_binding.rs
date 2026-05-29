@@ -102,20 +102,11 @@ pub mod bun_install_js_bindings {
             LoadResult::Ok(_) => {}
         }
 
-        // Zig: `std.fmt.allocPrint("{f}", .{ std.json.fmt(lockfile, .{...}) })` —
-        // drives `Lockfile.jsonStringify` through a `std.json.WriteStream` with
-        // the given options. Port: feed the lockfile through the in-crate
-        // `WriteStream` (lockfile_json_stringify_for_debugging.rs) into a
-        // `Vec<u8>`. OOM is `bun.handleOom` in Zig → infallible `Vec` growth here.
         let mut w = WriteStream::new(WriteStreamOptions {
             indent: 2,
             emit_null_optional_fields: true,
             emit_nonportable_numbers_as_strings: true,
         });
-        // `jsonStringify` only surfaces the underlying writer's error; the
-        // `Vec<u8>` writer is infallible. Zig wraps the whole `allocPrint` in
-        // `bun.handleOom` (crash on the impossible alloc failure) — mirror that
-        // with an `expect` rather than swallowing.
         json_stringify(&lockfile_, &mut w).expect("Vec<u8> JSON writer is infallible");
         let stringified = w.into_bytes();
 

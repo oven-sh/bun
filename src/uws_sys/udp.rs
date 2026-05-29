@@ -173,10 +173,6 @@ unsafe extern "C" {
         socket: &mut Socket,
         iface: &sockaddr_storage,
     ) -> c_int;
-    // `Option<&sockaddr_storage>` is FFI-safe (null-pointer niche → `*const`);
-    // the C side reads through `iface` only when non-null. With every pointer
-    // arg either a reference or a niche-optimized `Option<&T>`, the validity
-    // proof is in the type signature — no remaining preconditions, so `safe fn`.
     safe fn us_udp_socket_set_membership(
         socket: &mut Socket,
         address: &sockaddr_storage,

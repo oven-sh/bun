@@ -68,10 +68,6 @@ pub(crate) fn to_have_property(
         return Ok(JSValue::UNDEFINED);
     }
 
-    // handle failure
-    // PORT NOTE: Zig shares one `*Formatter` across both `to_fmt` calls; in Rust each `to_fmt`
-    // takes `&mut Formatter`, so use a second formatter for the second value (matches toBe.rs /
-    // toInclude.rs / toStartWith.rs).
     let mut formatter = super::make_formatter(global);
     let mut formatter2 = super::make_formatter(global);
     // `defer formatter.deinit()` — handled by Drop.

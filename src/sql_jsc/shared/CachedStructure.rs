@@ -31,18 +31,6 @@ impl CachedStructure {
         self.fields = fields;
     }
 
-    /// Populate this `CachedStructure` from a column-identifier sequence —
-    /// the shared body of `{Postgres,MySQL}SQLStatement::structure()`.
-    ///
-    /// Builds an `ExternColumnIdentifier` array on the stack when the
-    /// non-duplicate count fits in `JSObject::max_inline_capacity()` (then
-    /// bakes it into a JSC `Structure`), otherwise heap-allocates and stores
-    /// the boxed slice on `self.fields`. Duplicates are skipped. Callers must
-    /// have already run their `check_for_duplicate_fields()` pass so that
-    /// `ColumnIdentifier::Duplicate` tags are present.
-    ///
-    /// `columns` is iterated twice (count + build), hence the `Clone` bound;
-    /// `slice.iter().map(..)` satisfies it without allocation.
     pub fn build_from_columns<'a, I>(
         &mut self,
         global_object: &JSGlobalObject,
@@ -131,11 +119,5 @@ impl CachedStructure {
         }
     }
 }
-
-// PORT NOTE: Zig `deinit` only freed owned fields:
-//   - `structure.deinit()`  → handled by `impl Drop for StrongOptional`
-//   - per-element `name.deinit()` + `default_allocator.free(fields)`
-//     → handled by `Drop` on `Box<[ExternColumnIdentifier]>` (each element drops itself)
-// so no explicit `impl Drop` body is needed.
 
 // ported from: src/sql_jsc/shared/CachedStructure.zig

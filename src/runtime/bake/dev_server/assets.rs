@@ -16,11 +16,6 @@ pub(crate) type EntryIndex = bun_core::GenericIndex<u32, AssetsMarker>;
 
 #[derive(Default)]
 pub struct Assets {
-    /// Keys are absolute paths, sharing memory with `IncrementalGraph(.client)`
-    /// key storage in Zig (`replacePath` writes `stable_abs_path` back into
-    /// `key_ptr`). PORT NOTE: `StringArrayHashMap` stores owned `Box<[u8]>`
-    /// keys; the borrow-from-graph optimization is dropped.
-    // PERF(port): keys aliased IncrementalGraph storage in Zig.
     pub path_map: StringArrayHashMap<EntryIndex>,
     /// Content-addressable store. Multiple paths can point to the same content
     /// hash, tracked by `refs`. One ref held to each `StaticRoute` while stored
@@ -45,11 +40,6 @@ impl Assets {
             .map(|idx| self.files.keys()[idx.get_usize()])
     }
 
-    /// When an asset is overwritten, it receives a new URL to get around
-    /// browser caching. The old URL is immediately revoked.
-    ///
-    /// `abs_path` is not allocated. Ownership of `contents` is transferred to
-    /// this function (Zig: `Ownership is transferred`).
     pub fn replace_path(
         &mut self,
         abs_path: &[u8],
@@ -93,12 +83,6 @@ impl Assets {
         };
 
         if !found_existing {
-            // Locate a stable pointer for the file path.
-            // PORT NOTE: in Zig, `path_map` keys borrow `client_graph`'s interned key storage
-            // (the `gop.key_ptr.* = stable_abs_path` write shared the slice). Rust
-            // `StringArrayHashMap` owns its keys as `Box<[u8]>`, and `get_or_put` already
-            // boxed `abs_path` on insert, so the reassignment is a no-op here — we still call
-            // `insert_empty` for its side effect of registering the file in `client_graph`.
             let owner = self.owner_mut();
             // SAFETY: accessing disjoint field `client_graph` via parent ptr; `assets` (self) is
             // not touched through `owner` for the duration of this borrow.
@@ -208,12 +192,6 @@ impl Assets {
             unsafe { StaticRoute::deref_(self.files.values()[index.get_usize()]) };
             self.files.swap_remove_at(index.get_usize());
             self.refs.swap_remove(index.get_usize());
-            // `swap_remove` moved the entry that was at the old last index into
-            // `index`'s slot. Any `path_map` value that still points at the old
-            // last index (now equal to `files.count()`) must be patched to point
-            // at the new slot, otherwise the next lookup for that path would read
-            // past the end of `files`/`refs`, or alias an unrelated asset if a
-            // new entry is appended afterwards.
             let moved_from = u32::try_from(self.files.count()).expect("int cast");
             if moved_from != index.get() {
                 for entry_index in self.path_map.values_mut() {

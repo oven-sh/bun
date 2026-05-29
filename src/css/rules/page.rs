@@ -4,15 +4,7 @@ use crate::{DeclarationBlock, PrintErr, Printer};
 
 use super::ArrayList;
 
-/// A [page selector](https://www.w3.org/TR/css-page-3/#typedef-page-selector)
-/// within a `@page` rule.
-///
-/// Either a name or at least one pseudo class is required.
 pub struct PageSelector {
-    /// An optional named page type.
-    // PORT NOTE: arena-owned slice borrowed from parser input; `&'static` per
-    // PORTING.md §AST crates / rules/mod.rs lifetime-erasure note.
-    // TODO(port): re-thread `'bump`.
     pub name: Option<&'static [u8]>,
     /// A list of page pseudo classes.
     pub pseudo_classes: ArrayList<PagePseudoClass>,
@@ -310,10 +302,6 @@ pub(crate) struct PageRuleParser<'a> {
     pub options: &'a css::ParserOptions<'a>,
 }
 
-// PORT NOTE: Zig modeled DeclarationParser/AtRuleParser/QualifiedRuleParser/
-// RuleBodyItemParser as nested `pub const Foo = struct { ... }` namespaces with
-// methods taking `*This`. In Rust these become trait impls on PageRuleParser;
-// associated `pub const X = T` → `type X = T`.
 const _: () = {
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,

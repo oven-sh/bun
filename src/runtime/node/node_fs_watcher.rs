@@ -33,14 +33,6 @@ use super::path_watcher;
 #[cfg(windows)]
 use super::win_watcher as path_watcher;
 
-// TODO: make this a top-level struct
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `&mut Self`
-// carried LLVM `noalias`, so a host-fn that re-entered JS while holding it let
-// the optimiser cache `self.closed` etc. across the FFI call — the `*mut Self`
-// dance in the old `emit_abort`/`emit_error` was a manual workaround for
-// exactly that. With `Cell`/`JsCell` (UnsafeCell-backed) the miscompile is
-// structurally impossible and those methods are now plain `&self`.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct FSWatcher {
     // codegen: jsc.Codegen.JSFSWatcher provides toJS/fromJS/fromJSDirect
@@ -96,17 +88,9 @@ impl FSWatcher {
     /// the caller releases ownership of; the concurrent queue takes ownership
     /// and frees it on the JS thread after dispatch.
     pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTask>) {
-        // `vm()` is the BACKREF accessor; `event_loop_shared()` is the audited
-        // safe `&EventLoop` accessor. `enqueue_task_concurrent` is the
-        // documented cross-thread entry point and only touches the lock-free
-        // queue.
         self.vm().event_loop_shared().enqueue_task_concurrent(task);
     }
 
-    /// `self`'s address as `*mut Self` for path-watcher / abort-signal /
-    /// rare-data ctx slots. Callbacks deref it as `&*const` (shared) — all
-    /// mutation goes through `Cell`/`JsCell` — so no write provenance is
-    /// required; the `*mut` spelling is purely to match the C signature.
     #[inline]
     fn as_ctx_ptr(&self) -> *mut Self {
         std::ptr::from_ref::<Self>(self).cast_mut()
@@ -126,11 +110,6 @@ pub type FSWatchTask = FSWatchTaskWindows;
 #[cfg(not(windows))]
 pub type FSWatchTask = FSWatchTaskPosix;
 
-// Zig only references `FSWatchTaskPosix` from posix paths, so its lazy
-// compilation never type-checks the body on Windows. Rust type-checks
-// unconditionally, and `Event::Rename`/`Change` carry `StringOrBytesToDecode`
-// on Windows which does not coerce to the `&[u8]` `emit()` expects — gate the
-// whole posix task to keep the Windows build sound.
 #[cfg(not(windows))]
 pub struct FSWatchTaskPosix {
     /// `None` only during `FSWatcher::init` two-phase construction (the task is
@@ -161,10 +140,6 @@ impl FSWatchTaskPosix {
     }
 
     fn ctx(&self) -> &FSWatcher {
-        // BACKREF — `ctx` is the live owning FSWatcher (set right after
-        // boxing in `init`); FSWatcher outlives all its tasks.
-        // R-2: `ParentRef: Deref<Target=FSWatcher>` yields `&FSWatcher`; all
-        // FSWatcher host-fns take `&self` (Cell/JsCell-backed).
         self.ctx.as_ref().expect("FSWatchTask.ctx unset").get()
     }
 
@@ -357,13 +332,6 @@ pub enum StringOrBytesToDecode {
     BytesToFree(Box<[u8]>),
 }
 
-// Zig: `StringOrBytesToDecode.deinit()` (node_fs_watcher.zig:199-207). The
-// `String` arm wraps `bun_core::String`, which is `#[derive(Copy)]` and has NO
-// `Drop` of its own (src/string/lib.rs), so without this impl dropping the
-// enum would silently leak the WTF::StringImpl ref taken by
-// `BunString::clone_utf8` in `win_watcher.rs::emit()`. The `BytesToFree` arm's
-// `Box<[u8]>` already frees via its own `Drop`, mirroring the Zig
-// `default_allocator.free(this.bytes_to_free)`.
 impl Drop for StringOrBytesToDecode {
     fn drop(&mut self) {
         if let Self::String(s) = self {
@@ -372,10 +340,6 @@ impl Drop for StringOrBytesToDecode {
     }
 }
 
-// Zig: `StringOrBytesToDecode{ .bytes_to_free = try default_allocator.dupe(u8, path) }`.
-// `PathWatcher::emit` and `Event::dupe` take a borrowed `&[u8]` rel-path and box
-// it into the owned `bytes_to_free` arm so the Windows task can carry it across
-// the thread hop (matches `FSWatchTaskWindows.run`'s `default_allocator.free`).
 impl From<&[u8]> for StringOrBytesToDecode {
     #[inline]
     fn from(bytes: &[u8]) -> Self {
@@ -421,11 +385,6 @@ impl FSWatchTaskWindows {
 
     /// this runs on JS Context Thread
     pub fn run(&mut self) {
-        // BACKREF — `self.ctx` is the live owning FSWatcher (set at
-        // construction), outliving every task it enqueues. R-2: all FSWatcher
-        // methods below take `&self`, so a single `&FSWatcher` held across the
-        // match is sound (aliased shared borrows are fine; the old `*mut Self`
-        // re-derive dance is no longer needed). `ParentRef` Derefs to `&T`.
         let ctx: &FSWatcher = &self.ctx.expect("FSWatchTask.ctx unset");
         match &mut self.event {
             Event::Rename(path) => Self::run_path::<{ EventType::Rename }>(ctx, path),
@@ -446,12 +405,6 @@ impl FSWatchTaskWindows {
                 // TODO(port): Zig accesses `path.string` unconditionally here
                 unreachable!()
             };
-            // PORT NOTE (spec divergence): Zig's `catch return` here
-            // (node_fs_watcher.zig:237) returns from `run()` itself, skipping
-            // `ctx.unrefTask()` at zig:256 and leaving `pending_activity_count`
-            // permanently elevated on a `transferToJS` failure. Returning from
-            // this helper instead lets `run()` fall through to `unref_task()`,
-            // which is the intended fix — the Zig behavior is a refcount leak.
             let Ok(js) = s.transfer_to_js(&ctx.global_this) else {
                 return;
             };
@@ -488,12 +441,6 @@ impl FSWatchTaskWindows {
 }
 
 impl FSWatcher {
-    /// Recover `&FSWatcher` from the `*mut c_void` userdata stashed in `init`.
-    ///
-    /// Centralises the set-once `Option<*mut c_void> → &FSWatcher` deref so the
-    /// three watcher-backend callbacks (`on_path_update_*`, `on_update_end`)
-    /// stay safe at the call site. R-2: deref as shared — all `FSWatcher`
-    /// mutation goes through `Cell`/`JsCell`.
     #[inline]
     fn from_ctx<'a>(ctx: Option<*mut c_void>) -> &'a FSWatcher {
         // SAFETY: ctx was registered as `*mut FSWatcher` cast to `*mut c_void`
@@ -655,11 +602,6 @@ impl<'a> Arguments<'a> {
                     if let Some(signal_obj) = AbortSignal::from_js(signal_) {
                         // Keep it alive
                         signal_.ensure_still_alive();
-                        // `signal_obj` is the live C++ AbortSignal owned by
-                        // `signal_` (kept reachable for the duration of the call
-                        // by `ensure_still_alive`). `AbortSignal` is an
-                        // `opaque_ffi!` ZST handle; `opaque_ref` is the
-                        // centralised deref proof.
                         signal = Some(AbortSignal::opaque_ref(signal_obj));
                     } else {
                         return Err(ctx.throw_invalid_arguments(format_args!(
@@ -774,13 +716,6 @@ impl FSWatcher {
         }
     }
 
-    /// R-2: `&self` + `Cell<bool>` for `closed` makes the old `*mut Self`
-    /// re-derive dance unnecessary. `listener.call_with_global_this(...)`
-    /// re-enters JS, which can call `watcher.close()` on this same object via
-    /// the wrapper's `m_ptr` — setting `closed = true` and `detach()`-ing.
-    /// `Cell::get()` after the callback observes that write because
-    /// `UnsafeCell` suppresses `noalias` on `&Self`; the trailing
-    /// `self.close()` then no-ops as in Zig.
     pub fn emit_abort(&self, err: JSValue) {
         if self.closed.get() {
             return;
@@ -924,12 +859,6 @@ impl FSWatcher {
     // this can be called from Watcher Thread or JS Context Thread
     pub fn ref_task(&self) -> bool {
         let _guard = self.mutex.lock_guard();
-        // R-2: `closed: Cell<bool>` is `!Sync`, but `FSWatcher` itself is
-        // `!Sync` (raw-pointer fields, no `unsafe impl Sync`); cross-thread
-        // access goes through `*mut FSWatcher` in `FSWatchTask.ctx` exactly as
-        // before. The mutex serialises this read against the JS-thread
-        // `close()` write — same soundness profile as the bare `bool` it
-        // replaced.
         if self.closed.get() {
             return false;
         }
@@ -992,10 +921,6 @@ impl FSWatcher {
         }
 
         if let Some(watcher) = self.path_watcher.take() {
-            // Both backends expose `detach` as an associated fn over `*mut PathWatcher`
-            // (it self-destroys via `heap::take` on the last handler, so it cannot
-            // soundly take `&mut self`). `watcher` is the live pointer returned by
-            // `path_watcher::watch`.
             path_watcher::PathWatcher::detach(watcher, ctx_ptr);
         }
 
@@ -1089,11 +1014,6 @@ impl FSWatcher {
         ctx_ref
             .path_watcher
             .set(if args.signal.is_none_or(|s| !s.aborted()) {
-                // PORT NOTE: Zig passes `comptime callback` / `comptime updateEnd`
-                // and both backends `@compileError` if they aren't exactly
-                // `onPathUpdateFn` / `onUpdateEndFn`. The Windows port dropped
-                // those parameters (only one valid value each), so the call is
-                // cfg-split by arity.
                 #[cfg(windows)]
                 let r = path_watcher::watch(vm_ref, file_path, args.recursive, ctx as *mut c_void);
                 #[cfg(not(windows))]

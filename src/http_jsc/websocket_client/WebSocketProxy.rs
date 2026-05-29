@@ -2,10 +2,6 @@ use core::ptr::NonNull;
 
 use super::WebSocketProxyTunnel;
 
-/// WebSocketProxy encapsulates proxy state for WebSocket connections through HTTP/HTTPS proxies.
-/// This struct holds only the fields needed after the initial CONNECT request.
-/// Fields like proxy_port, proxy_authorization, and proxy_headers are used
-/// only during connect() and freed immediately after building the CONNECT request.
 pub(crate) struct WebSocketProxy {
     /// Target hostname for SNI during TLS handshake
     target_host: Box<[u8]>,

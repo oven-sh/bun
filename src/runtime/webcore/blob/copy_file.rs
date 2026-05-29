@@ -174,11 +174,6 @@ impl<'a> CopyFile<'a> {
         let close_output = !matches!(self.source_file_store.pathlike, PathOrFileDescriptor::Fd(_))
             && self.source_fd != Fd::INVALID;
 
-        // Apply destination mode using fchmod before closing (for POSIX platforms)
-        // This ensures mode is applied even when overwriting existing files, since
-        // open()'s mode argument only affects newly created files.
-        // On macOS clonefile path, chmod is called separately after clonefile.
-        // On Windows, this is handled via async uv_fs_chmod.
         #[cfg(not(windows))]
         {
             if let Some(mode) = self.destination_mode {
@@ -471,10 +466,6 @@ impl<'a> CopyFile<'a> {
                         }
                     }
 
-                    // If the Linux machine doesn't support
-                    // copy_file_range or the file descriptor is
-                    // incompatible with the chosen syscall, fall back
-                    // to a read/write loop
                     if total_written == 0 {
                         // TODO: this should use non-blocking I/O.
                         match node_fs::NodeFS::copy_file_using_read_write_loop(
@@ -550,11 +541,6 @@ impl<'a> CopyFile<'a> {
         ) {
             bun_sys::Result::Err(errno) => {
                 match errno.get_errno() {
-                    // If the file type doesn't support seeking, it may return EBADF
-                    // Example case:
-                    //
-                    // bun test bun-write.test | xargs echo
-                    //
                     bun_sys::E::EBADF => {
                         let mut total_written: u64 = 0;
 
@@ -591,11 +577,6 @@ impl<'a> CopyFile<'a> {
         let mut dest_buf = PathBuffer::uninit();
 
         loop {
-            // PORT NOTE: reshaped for borrowck — `slice_z(&'a self, &'a mut buf)`
-            // ties the returned `&ZStr` to `self`, which would conflict with
-            // the `&mut self` borrow `mkdir_if_not_exists` needs below. The
-            // bytes live in `dest_buf`, so capture the length and re-borrow
-            // from the buffer (not `self`) after dropping the first borrow.
             let dest_len = self
                 .destination_file_store
                 .pathlike
@@ -740,10 +721,6 @@ impl<'a> CopyFile<'a> {
                                     return;
                                 }
                                 Err(_) => {
-                                    // this may still fail, in which case we just continue trying with fcopyfile
-                                    // it can fail when the input file already exists
-                                    // or if the output is not a directory
-                                    // or if it's a network volume
                                     self.system_error = None;
                                 }
                             }
@@ -1046,11 +1023,6 @@ impl Default for ReadWriteLoop {
     }
 }
 
-// PORT NOTE: Zig defines `ReadWriteLoop.start/read` taking both `*ReadWriteLoop` and
-// `*CopyFileWindows`, but in Rust the former is a subobject of the latter, so passing
-// both as `&mut` is aliasing UB. These are hoisted onto `CopyFileWindows` so the
-// borrow checker can see `self.read_write_loop` / `self.io_request` / `self.event_loop`
-// as disjoint field accesses through a single `&mut self`.
 #[cfg(windows)]
 impl<'a> CopyFileWindows<'a> {
     fn read_write_loop_start(&mut self) -> bun_sys::Result<()> {
@@ -1428,13 +1400,6 @@ impl<'a> CopyFileWindows<'a> {
 
         let mut pathbuf1 = PathBuffer::uninit();
         let mut pathbuf2 = PathBuffer::uninit();
-        // PORT NOTE: capture the raw `self` pointer before borrowing the file
-        // stores. `slice_z` ties the returned `&ZStr` lifetime to `&self`, so
-        // `new_path`/`old_path` keep `self.{destination,source}_file_store`
-        // borrowed across the `uv_fs_copyfile` call below; taking
-        // `core::ptr::from_mut(self)` there would require an exclusive reborrow
-        // of all of `*self` and conflict. The pointer is only stored in
-        // `io_request.data` for the libuv callback to recover `self`.
         let this_ptr: *mut c_void = core::ptr::from_mut(self).cast::<c_void>();
         let destination_file_store = &mut self.destination_file_store.data.as_file();
         let source_file_store = &mut self.source_file_store.data.as_file();
@@ -1600,12 +1565,6 @@ impl<'a> CopyFileWindows<'a> {
             ) {
                 self.written_bytes = written;
                 let mut pathbuf = PathBuffer::uninit();
-                // PORT NOTE (borrowck): `slice_z` ties the returned `&ZStr` to
-                // `&self.destination_file_store`, which would conflict with the
-                // `core::ptr::from_mut(self)` below. Capture the raw C pointer now —
-                // it points either into the stack-local `pathbuf` or into the
-                // Arc-held `destination_file_store` path bytes, both of which outlive
-                // the `uv_fs_chmod` call (libuv `strdup`s the path internally).
                 let path_ptr = self
                     .destination_file_store
                     .data
@@ -1633,12 +1592,6 @@ impl<'a> CopyFileWindows<'a> {
                     )
                 };
 
-                // chmod failed to start - reject the promise to report the error.
-                // PORT NOTE: previously `transmute::<c_int, SystemErrno>(errno)` — wrong on
-                // two counts: `errno` is `u16` (size mismatch with `c_int`), and libuv
-                // negative codes are NOT `SystemErrno` discriminants on Windows. Route
-                // through `Error::from_uv_rc` so `from_libuv` is set and translation is
-                // deferred to display, matching the other libuv error paths in this file.
                 if let Some(mut err) = bun_sys::Error::from_uv_rc(rc, bun_sys::Tag::chmod) {
                     let destination = &self.destination_file_store.data.as_file();
                     if let PathOrFileDescriptor::Path(p) = &destination.pathlike {

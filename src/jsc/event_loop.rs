@@ -19,11 +19,6 @@ use crate::js_promise::Status as PromiseStatus;
 use crate::virtual_machine::VirtualMachine;
 use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 
-// ──────────────────────────────────────────────────────────────────────────
-// Re-exports (thin re-exports of sibling/neighbor modules — do NOT inline
-// bodies). Kept so downstream `bun_jsc::event_loop::Foo` paths match the
-// Zig namespace shape (`jsc.EventLoop.Foo` re-exports at file tail).
-// ──────────────────────────────────────────────────────────────────────────
 pub use bun_event_loop::AnyTask;
 pub use bun_event_loop::AnyTaskWithExtraContext;
 pub use bun_event_loop::ConcurrentTask::{
@@ -54,20 +49,6 @@ pub type Queue =
 pub struct EventLoop {
     pub tasks: Queue,
 
-    /// setImmediate() gets it's own two task queues
-    /// When you call `setImmediate` in JS, it queues to the start of the next tick
-    /// This is confusing, but that is how it works in Node.js.
-    ///
-    /// So we have two queues:
-    ///   - next_immediate_tasks: tasks that will run on the next tick
-    ///   - immediate_tasks: tasks that will run on the current tick
-    ///
-    /// Having two queues avoids infinite loops creating by calling `setImmediate` in a `setImmediate` callback.
-    ///
-    /// PORT NOTE (§Dispatch): payload is `*mut ()` — the real
-    /// `bun_runtime::timer::ImmediateObject` lives in the higher-tier crate
-    /// (cycle). Low tier stores the erased pointer; the high-tier hook
-    /// (link-time `__bun_run_immediate_task`) casts it back.
     pub immediate_tasks: Vec<*mut ()>,
     pub next_immediate_tasks: Vec<*mut ()>,
 
@@ -89,20 +70,9 @@ pub struct EventLoop {
     pub debug: Debug,
     pub entered_event_loop_count: isize,
     pub concurrent_ref: AtomicI32,
-    /// `std.atomic.Value(?*Timer.WTFTimer)` — atomic nullable pointer.
-    ///
-    /// PORT NOTE (§Dispatch): payload is `*mut ()` — the real
-    /// `bun_runtime::timer::WTFTimer` lives in the higher-tier crate (cycle).
-    /// Low tier stores the erased pointer; the high-tier hook installed via
-    /// (link-time `__bun_run_wtf_timer`) casts it back.
     pub imminent_gc_timer: AtomicPtr<()>,
 
     #[cfg(unix)]
-    /// Boxed `PosixSignalHandle` ring buffer, leaked once by
-    /// `Bun__ensureSignalHandler` and live for the process lifetime. Stored as
-    /// a [`bun_ptr::BackRef`] so the per-tick `drain()` / signal-context
-    /// `enqueue()` reads go through the single audited `BackRef::deref`
-    /// instead of an open-coded `NonNull::as_ref` `unsafe` at each site.
     pub signal_handler: Option<bun_ptr::BackRef<PosixSignalHandle>>,
     #[cfg(not(unix))]
     pub signal_handler: (),
@@ -180,10 +150,6 @@ impl Debug {
     pub fn exit(&mut self) {}
 }
 
-/// RAII pairing for [`Debug::enter`] / [`Debug::exit`] — the Rust spelling of
-/// Zig's `loop.debug.enter(); defer loop.debug.exit();`. Holds the raw pointer
-/// (not `&mut`) so re-entrant JS callbacks that touch the same loop while the
-/// guard is live don't alias a long-lived mutable borrow.
 #[must_use = "dropping immediately exits the debug scope"]
 pub struct DebugEnterGuard {
     debug: *mut Debug,
@@ -217,10 +183,6 @@ mod drain_result {
     pub(super) const JS_TERMINATED: u8 = 1;
 }
 
-// TODO(port): move to jsc_sys
-//
-// `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; C++ mutating
-// the microtask queue through it is interior mutation invisible to Rust.
 unsafe extern "C" {
     safe fn JSC__JSGlobalObject__drainMicrotasks(global: &JSGlobalObject) -> u8;
 }
@@ -240,15 +202,6 @@ impl From<JsTerminated> for bun_core::Error {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// §Dispatch hot-path — `tick_queue_with_count` is the per-tick dispatch over
-// `Task { tag, ptr }`. Per PORTING.md, the *high tier owns the match loop*:
-// `bun_runtime` registers the real dispatcher at init; this crate only stores
-// `(tag, ptr)` and the hook. The dispatch match lives in
-// `bun_runtime::dispatch::run_tasks` (every arm names a `bun_runtime` type).
-// ──────────────────────────────────────────────────────────────────────────
-// The hook receives the specific `EventLoop` to drain (which may be the
-// isolated `SpawnSyncEventLoop`, not `vm.event_loop()`) plus the VM.
 unsafe extern "Rust" {
     /// `bun_runtime::dispatch::tick_queue_with_count` — the real per-task
     /// match loop (Zig `tickQueueWithCount`). Link-time resolved.
@@ -267,14 +220,6 @@ unsafe extern "Rust" {
     /// `WTFTimer::run` — `timer` is an erased `*mut bun_runtime::timer::WTFTimer`.
     /// Defined in `bun_runtime::dispatch`. Link-time resolved.
     fn __bun_run_wtf_timer(timer: *mut (), vm: *mut VirtualMachine);
-    /// Tag-specific shutdown release for a queued-but-never-run task. Called
-    /// from `release_queued_tasks_for_shutdown` (after `shutdown_for_exit`,
-    /// before `destructOnExit`) for every entry left in `self.tasks`.
-    /// Returns `true` iff the tag was consumed; `false` means the entry
-    /// must be left in the queue (it stays reachable from the static-rooted
-    /// VM box, which is the pre-`532a5411961b` behaviour for tags that don't
-    /// own JSC handles or whose callback isn't safe to no-op-dispatch).
-    /// Defined in `bun_runtime::dispatch`. Link-time resolved.
     fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool;
 }
 
@@ -289,12 +234,6 @@ fn tick_queue_with_count(
     unsafe { __bun_tick_queue_with_count(el, vm, counter) }
 }
 
-/// RAII pairing for [`EventLoop::enter`] / [`EventLoop::exit`].
-///
-/// Holds the raw `*mut EventLoop` (not `&mut`) so re-entrant JS callbacks that
-/// touch the same loop while the guard is live don't alias a long-lived mutable
-/// borrow — the `&mut` is formed only at the enter/exit call sites. Construct
-/// via [`EventLoop::enter_scope`].
 #[must_use = "dropping immediately exits the event loop scope"]
 pub struct EventLoopEnterGuard {
     loop_: *mut EventLoop,
@@ -311,13 +250,6 @@ impl Drop for EventLoopEnterGuard {
 }
 
 impl EventLoop {
-    /// Before your code enters JavaScript at the top of the event loop, call
-    /// `loop.enter()`. If running a single callback, prefer `runCallback` instead.
-    ///
-    /// When we call into JavaScript, we must drain process.nextTick & microtasks
-    /// afterwards (so that promises run). We must only do that once per task in the
-    /// event loop. To make that work, we count enter/exit calls and once that
-    /// counter reaches 0, we drain the microtasks.
     #[inline]
     pub fn enter(&mut self) {
         bun_core::scoped_log!(EventLoop, "enter() = {}", self.entered_event_loop_count);
@@ -423,10 +355,6 @@ impl EventLoop {
         self.deferred_tasks.run();
         vm.is_inside_deferred_task_queue.set(false);
 
-        // PORT NOTE: spec event_loop.zig:144-146 guards on `event_loop_handle != null`
-        // but then calls `this.virtual_machine.uwsLoop().drainQuicIfNecessary()`.
-        // On Windows `uwsLoop()` returns `uws.Loop.get()` (NOT `event_loop_handle`,
-        // which is the libuv loop). Mirror that here.
         if vm.event_loop_handle.is_some() {
             vm.uws_loop_mut().drain_quic_if_necessary();
         }
@@ -468,16 +396,6 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) {
-        // R-2 noalias mitigation (see PORT_NOTES_PLAN R-2; precedent
-        // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` carries LLVM
-        // `noalias`, and `callback.call()` receives nothing derived from
-        // `self`, so LLVM is licensed to forward `self.entered_event_loop_count`
-        // (written by `enter()`) across the JS call into `exit()`. JS re-enters
-        // via host-fns that reach this same `EventLoop` through
-        // `vm.event_loop()` and may run nested `enter()/exit()` pairs (or call
-        // `drain_microtasks` directly), making the cached count stale. ASM-
-        // verified PROVEN_CACHED. Launder `self` so the post-call access goes
-        // through an opaque pointer LLVM can't prove is in the noalias scope.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` is the unique live `EventLoop` (a value field of the
         // process-lifetime `VirtualMachine`); short-lived `&mut` only.
@@ -554,10 +472,6 @@ impl EventLoop {
         #[cfg(unix)]
         {
             if let Some(signal_handler) = self.signal_handler {
-                // `signal_handler` is a `BackRef` to the leaked process-lifetime
-                // `PosixSignalHandle` (see field doc); the ring-buffer backing is
-                // disjoint from `*self`, so the `&PosixSignalHandle` materialised
-                // by `BackRef::deref` does not alias the `&mut self` passed here.
                 signal_handler.drain(self);
             }
         }
@@ -643,11 +557,6 @@ impl EventLoop {
         }
     }
 
-    /// Walk `self.virtual_machine.event_loop_handle` via raw-pointer
-    /// projection without materializing a `&VirtualMachine` (the VM may be
-    /// mutably borrowed elsewhere on the JS thread when libuv completion
-    /// callbacks reach for the loop). Mirrors Zig
-    /// `this.event_loop.virtual_machine.event_loop_handle.?`.
     #[inline]
     pub fn uv_loop(&self) -> *mut crate::PlatformEventLoop {
         let vm = self.virtual_machine.expect("virtual_machine").as_ptr();
@@ -687,10 +596,6 @@ impl EventLoop {
         crate::top_scope!(scope, self.global_ref());
         self.entered_event_loop_count += 1;
         self.debug.enter();
-        // PORT NOTE: reshaped for borrowck — Zig
-        //   `defer scope.deinit(); defer { entered_event_loop_count -= 1; debug.exit() }`
-        // is inlined at each return site below (a scopeguard closure would
-        // alias `&mut self`).
 
         let ctx = self.vm();
         self.tick_concurrent();
@@ -755,13 +660,6 @@ impl EventLoop {
         let _ = self.tasks.write_item(task);
     }
 
-    /// Drain `concurrent_tasks` without running them and `delete` any
-    /// `EventLoopTask*` payloads so their captured `Ref<>`s drop. Called from
-    /// `global_exit` after `terminate_all_workers_and_wait` (every worker has
-    /// posted its close task by then) and before `destructOnExit` (so
-    /// `~Worker` runs during the final GC sweep with the JSC VM still alive).
-    /// Without this, the last worker's close-task lambda — and the
-    /// `WebWorker` box reachable through its `protectedThis` — leak.
     pub fn drop_concurrent_cpp_tasks(&mut self) {
         unsafe extern "C" {
             fn Bun__deleteEventLoopTask(task: *mut CppTask);
@@ -794,29 +692,6 @@ impl EventLoop {
         }
     }
 
-    /// Release queued-but-never-run tasks that own a ref the dispatch path
-    /// would have dropped. Called from `global_exit` after `shutdown_for_exit`
-    /// (HTTP daemon parked, no further cross-thread posts) and before
-    /// `destructOnExit` (JSC still live, so `FetchTasklet::deinit` can drop
-    /// its `Strong`/`Weak` handles). Re-runs `drop_concurrent_cpp_tasks` first
-    /// so any task the HTTP thread posted after the earlier drain — its
-    /// `is_shutting_down()` read is non-atomic and can lag — is forwarded into
-    /// `self.tasks` for the per-tag release below.
-    ///
-    /// `ManagedTask` entries are deliberately re-queued rather than freed:
-    /// owners (e.g. `SendQueue.close_next_tick` / `after_close_task`) keep raw
-    /// back-pointers that they `cancel()` from `Drop`, and those `Drop`s fire
-    /// during `destructOnExit` (`Subprocess::finalize` → `SendQueue::drop`).
-    /// Freeing the box here would leave those pointers dangling and make
-    /// `cancel()` a heap-use-after-free. `deinit()` runs after `destructOnExit`
-    /// — every owner has cancelled and cleared its pointer by then — so it is
-    /// the correct teardown point for `ManagedTask`s.
-    ///
-    /// Tags `__bun_release_task_at_shutdown` doesn't claim are likewise
-    /// re-queued so they remain reachable from the static-rooted VM box (the
-    /// pre-`532a5411961b` state). Consuming them silently here unhooked that
-    /// root and surfaced the boxes as direct leaks (e.g. `AnyTaskJob<_>`); the
-    /// definer can't safely dispatch every `AnyTask` callback at shutdown.
     pub fn release_queued_tasks_for_shutdown(&mut self) {
         self.drop_concurrent_cpp_tasks();
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
@@ -836,15 +711,6 @@ impl EventLoop {
     }
 
     pub fn deinit(&mut self) {
-        // Free (don't run — running could re-enter the dying VM) queued
-        // ManagedTask boxes. Other tags are left in place: they were re-queued
-        // by `release_queued_tasks_for_shutdown` because their callback can't
-        // be no-op-dispatched safely (`AnyTask` callbacks call into JS) and
-        // their box may be aliased by the originator. Keeping them in
-        // `self.tasks` (a field of the static-rooted `VirtualMachine` box that
-        // is never `dealloc`'d) leaves the chain reachable to LSan — the same
-        // visibility they had via `concurrent_tasks` before
-        // `drop_concurrent_cpp_tasks` drained it.
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
         while let Some(task) = self.tasks.read_item() {
             if task.tag == bun_event_loop::task_tag::ManagedTask {
@@ -896,17 +762,6 @@ impl EventLoop {
     /// # Safety
     /// `virtual_machine` must be the live per-thread VM that owns this `EventLoop`.
     pub unsafe fn tick_immediate_tasks(&mut self, virtual_machine: *mut VirtualMachine) {
-        // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
-        // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` is `noalias`, and
-        // the only thing reaching the `__bun_run_immediate_task` extern call is
-        // `virtual_machine` — a *separate* pointer parameter that LLVM is told
-        // does NOT alias `*self` (even though `EventLoop` is a value field of
-        // `*virtual_machine`). JS re-enters via `setImmediate` →
-        // `enqueue_immediate_task` and pushes onto `self.next_immediate_tasks`.
-        // Without the launder, LLVM may forward the post-`take` empty
-        // `next_immediate_tasks` past the loop into the `.capacity() > 0`
-        // recursion check and the trailing `= to_run_now` store, dropping any
-        // immediates JS queued during this tick. ASM-verified PROVEN_CACHED.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` is the unique live `EventLoop`; each access below is a
         // short-lived `&mut` that does not overlap re-entry.
@@ -979,12 +834,6 @@ impl EventLoop {
                 self.uws_loop = NonNull::new(uws::Loop::get());
             }
         }
-        // PORT NOTE: `EventLoopHandle` lives in `bun_event_loop` (lower tier),
-        // which cannot name `jsc::EventLoop`, so it stores `*mut ()`. The
-        // typed `set_parent_event_loop` extension trait in `bun_uws` expects
-        // a `ParentEventLoopHandle` impl, but `EventLoopHandle` already
-        // exposes `into_tag_ptr()` — go straight to the sys-level setter.
-        // `self` is the live per-thread `jsc::EventLoop` (mut ref) — non-null.
         let self_ptr = core::ptr::from_mut(self).cast::<()>();
         let (tag, ptr) = EventLoopHandle::init(self_ptr).into_tag_ptr();
         // SAFETY: `uws::Loop::get()` returns the live process-global uws loop.
@@ -1008,11 +857,6 @@ impl EventLoop {
         self.vm_ref().as_mut().auto_tick();
     }
 
-    /// `eventLoop().autoTickActive()` — like [`auto_tick`](Self::auto_tick) but
-    /// only sleeps in the uSockets loop while it has active handles
-    /// (spec event_loop.zig:455-493). Dispatches through
-    /// `VirtualMachine::auto_tick_active` → `RuntimeHooks::auto_tick_active`
-    /// (body lives in `bun_runtime::jsc_hooks` — needs `Timer::All`).
     #[inline]
     pub fn auto_tick_active(&mut self) {
         self.vm_ref().as_mut().auto_tick_active();
@@ -1047,10 +891,6 @@ impl EventLoop {
         }
         #[cfg(not(windows))]
         {
-            // Route through the single audited `platform_loop_opt()` accessor
-            // (set-once `Option<*mut>` deref) instead of open-coding the raw
-            // `(*event_loop_handle).wakeup()` here. Same `&mut Loop` is formed
-            // either way (autoref), so no soundness change vs the prior code.
             if let Some(loop_) = self.vm_ref().platform_loop_opt() {
                 loop_.wakeup();
             }
@@ -1081,29 +921,11 @@ impl EventLoop {
         self.wakeup();
     }
 
-    // ──────────── private helpers (port-only; not in Zig) ────────────
-    // TODO(port): lifetime — these unwrap NonNull backrefs; replace with
-    // proper borrow plumbing.
-    //
-    // PORT NOTE: returns a raw pointer, NOT `&mut VirtualMachine`. `EventLoop`
-    // is a value field of `VirtualMachine`, so materializing `&mut VM` while a
-    // `&EventLoop`/`&mut EventLoop` is live would alias (PORTING.md §Forbidden).
-    // Callers must dereference per-field at use sites.
     #[inline(always)]
     fn vm(&self) -> *mut VirtualMachine {
         // SAFETY: see `vm_ref` below — set in `VirtualMachine::init()`, never None.
         unsafe { self.virtual_machine.unwrap_unchecked().as_ptr() }
     }
-    /// Safe `&'static VirtualMachine` accessor for the owning VM. The VM is the
-    /// per-thread singleton (see [`VirtualMachine::get`]); `EventLoop` is a
-    /// value field of it, so the pointer is non-null and live for the VM
-    /// lifetime. Prefer this over `unsafe { &*self.vm() }` for read-only field
-    /// access; whole-struct mutation goes through [`VirtualMachine::as_mut`].
-    ///
-    /// node:http perf showed the `Option::unwrap` (vs Zig's bare `vm.*` field
-    /// load) was one of ~200 diffuse ~15-insn idiom-tax sites contributing the
-    /// residual +3.3k insn/req. Force-inline so the unwrap collapses to one
-    /// load+test; hot loops that straddle FFI calls hoist it to a local.
     #[inline(always)]
     fn vm_ref(&self) -> &'static VirtualMachine {
         // SAFETY: `virtual_machine` is set in `VirtualMachine::init()` to the
@@ -1339,18 +1161,6 @@ pub fn event_loop_exit(global: &JSGlobalObject) {
     global.bun_vm().event_loop_mut().exit();
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// `bun_event_loop::any_event_loop::js` extern impls
-//
-// `AnyEventLoop` / `EventLoopHandle` live in the lower-tier `bun_event_loop`
-// crate and cannot name `jsc::EventLoop`. Zig (`src/event_loop/AnyEventLoop.zig`,
-// `src/jsc/EventLoopHandle.zig`) calls these inline because Zig has no crate
-// boundaries. Rather than a runtime-registered vtable, the low tier declares
-// these as `extern "Rust"` and the bodies live here, resolved at link time —
-// hardcoded, single consumer. Each slot casts the erased `*mut ()` owner back
-// to `*mut EventLoop` and forwards to the real method.
-// ──────────────────────────────────────────────────────────────────────────
-
 /// SAFETY: vtable contract — `owner` was erased from a live `*mut EventLoop`.
 #[inline(always)]
 fn el_ref<'a>(owner: *mut ()) -> &'a mut EventLoop {
@@ -1421,17 +1231,6 @@ pub(crate) fn __bun_js_event_loop_current() -> *mut () {
     // `event_loop()` returns the live `*mut EventLoop` self-pointer.
     VirtualMachine::get().as_mut().event_loop().cast()
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// `bun_event_loop::SpawnSyncEventLoop` extern impls
-//
-// `SpawnSyncEventLoop` lives in the lower-tier `bun_event_loop` crate and
-// cannot name `jsc::EventLoop` / `jsc::VirtualMachine`. Zig
-// (`SpawnSyncEventLoop.zig`) did inline field access. The bodies live here as
-// `#[no_mangle]` Rust-ABI fns, declared `extern "Rust"` on the low-tier side
-// and resolved at link time. Each erased `*mut ()` is a `*mut VirtualMachine`
-// or `*mut EventLoop`; cast back and forward to the real method/field.
-// ──────────────────────────────────────────────────────────────────────────
 
 /// Recover `&mut VirtualMachine` from the erased SpawnSync vtable `vm`.
 /// Private — every caller is a `#[no_mangle]` trampoline whose contract

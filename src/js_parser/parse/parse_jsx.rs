@@ -124,10 +124,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     ..Default::default()
                                 });
                             }
-                            // This implements
-                            //  <div {foo} />
-                            //  ->
-                            //  <div foo={foo} />
                             T::TIdentifier => {
                                 can_be_inlined = false;
 
@@ -185,12 +181,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     ..Default::default()
                                 });
                             }
-                            // This implements
-                            //  <div {"foo"} />
-                            //  <div {'foo'} />
-                            //  ->
-                            //  <div foo="foo" />
-                            // note: template literals are not supported, operations on strings are not supported either
                             T::TStringLiteral => {
                                 let key_loc = p.lexer.loc();
                                 let key_str = p.lexer.to_e_string()?;
@@ -235,19 +225,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // People sometimes try to use the output of "JSON.stringify()" as a JSX
-        // attribute when automatically-generating JSX code. Doing so is incorrect
-        // because JSX strings work like XML instead of like JS (since JSX is XML-in-
-        // JS). Specifically, using a backslash before a quote does not cause it to
-        // be escaped:
-        //
-        //   JSX ends the "content" attribute here and sets "content" to 'some so-called \\'
-        //                                          v
-        //         <Button content="some so-called \"button text\"" />
-        //                                                      ^
-        //       There is no "=" after the JSX attribute "text", so we expect a ">"
-        //
-        // This code special-cases this error to provide a less obscure error message.
         if p.lexer.token == T::TSyntaxError
             && p.lexer.raw() == b"\\"
             && previous_string_with_backslash_loc.start > 0
@@ -334,10 +311,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         children.push(child);
                         // PERF(port): was `catch unreachable` on append — Vec::push is infallible
 
-                        // The call to parseJSXElement() above doesn't consume the last
-                        // TGreaterThan because the caller knows what Next() function to call.
-                        // Use NextJSXElementChild() here since the next token is an element
-                        // child.
                         p.lexer.next_jsx_element_child()?;
                         continue;
                     }

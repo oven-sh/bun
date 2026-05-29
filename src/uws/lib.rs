@@ -4,32 +4,11 @@ use core::ffi::{c_char, c_void};
 
 use bun_core::ZStr;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Thin re-exports from uws_sys / runtime
-// ──────────────────────────────────────────────────────────────────────────
-// FFI types (`us_bun_verify_error_t`, `Opcode`, `SendStatus`, `SocketKind`,
-// `SocketGroup`, `ConnectResult`, listen-flag constants) are re-exported from
-// `bun_uws_sys` so this crate and `_sys` name the SAME `#[repr(C)]` types —
-// callers no longer shim-convert between two layout-identical structs.
-//
-// Safe raw-pointer wrappers (`NewSocketHandler`/`SocketTCP`/`SocketTLS`,
-// `InternalSocket`, `AnySocket`, `ConnectError`, `CloseKind`, owned
-// `SocketAddress`) stay defined here; `bun_uws_sys::socket` has lifetime-
-// bearing variants of the same names that are not yet reconciled.
-//
-// `bun_runtime::*` items (dispatch, WindowsNamedPipe, UpgradedDuplex) are
-// upward refs into a higher tier and intentionally remain local stub modules.
-
 pub use bun_uws_sys::{
     AnyWebSocket, BodyReaderMixin, ConnectingSocket, ListenSocket, NewApp, RawWebSocket, Request,
     Timer, WebSocketBehavior, us_socket_stream_buffer_t, us_socket_t, uws_res,
 };
 
-/// `#[uws_callback]` — wraps a `&self`/`&mut self` method in an `extern "C"`
-/// thunk that recovers `Self` from `*mut c_void` and lowers `&[T]` params to
-/// `(ptr, len)` pairs. See `bun_jsc_macros::uws_callback` for the full
-/// contract. With `panic = "abort"` Rust panics terminate in the crash-handler
-/// hook, so no `catch_unwind` wrapper is emitted.
 pub use bun_jsc_macros::uws_callback;
 pub use bun_uws_sys::response::State;
 pub use bun_uws_sys::{h3 as H3, quic, udp, vtable};
@@ -41,17 +20,8 @@ pub mod dispatch {}
 pub mod WindowsNamedPipe {}
 pub mod UpgradedDuplex {}
 
-/// Bare BoringSSL `SSL_CTX`. `SSL_CTX_up_ref`/`SSL_CTX_free` is the refcount;
-/// policy (verify mode, reneg limits) is encoded on the SSL_CTX itself via
-/// `us_ssl_ctx_from_options`, so there's no wrapper struct. `Option<*mut SslCtx>`
-/// is what listen/connect/adopt take.
 pub type SslCtx = bun_boringssl::c::SSL_CTX;
 
-/// uWS C++ `WebSocketContext<SSL,true,UserData>*`. Only ever produced by the
-/// upgrade-handler thunk and round-tripped to `uws_res_upgrade`; Rust never
-/// dereferences it. Re-exported from `bun_uws_sys` so the trait
-/// `bun_uws_sys::web_socket::WebSocketUpgradeServer` and higher-tier callers
-/// (`bun_runtime::server`, `bake::dev_server`) all name the *same* opaque.
 pub use bun_uws_sys::WebSocketUpgradeContext;
 
 /// Recovers the concrete uWS response type from `*mut c_void` across the
@@ -161,16 +131,6 @@ pub fn get_default_ciphers() -> &'static ZStr {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// MOVE-IN: ssl_wrapper (MOVE_DOWN bun_runtime::socket::ssl_wrapper → bun_uws)
-// Ground truth: src/runtime/socket/ssl_wrapper.zig
-// Requested by: http_jsc
-// ═══════════════════════════════════════════════════════════════════════════
-// `bun_boringssl_sys` is currently empty (bindgen not yet run), so every fn
-// body that calls a BoringSSL symbol is re-gated below; the
-// type/struct surface compiles against opaque `SSL`/`SSL_CTX` from
-// `bun_boringssl::c`. `init_from_options` additionally needs
-// `bun_uws_sys::socket_context::BunSocketContextOptions` (gated in lower tier).
 pub mod ssl_wrapper {
     use core::ffi::{c_int, c_void};
     use core::ptr::NonNull;
@@ -196,39 +156,11 @@ pub mod ssl_wrapper {
 
     bun_core::define_scoped_log!(log, SSLWrapper, hidden);
 
-    // Mimics the behavior of openssl.c in uSockets, wrapping data that can be
-    // received from anywhere (network, DuplexStream, etc).
-    //
-    // receive_data() is called when we receive data from the network
-    // (encrypted data that will be decrypted by SSLWrapper). write_data() is
-    // called when we want to send data to the network (unencrypted data that
-    // will be encrypted by SSLWrapper).
-    //
-    // After init we need to call start() to start the SSL handshake. This
-    // triggers the on_open callback before the handshake starts and the
-    // on_handshake callback after the handshake completes. on_data and write
-    // callbacks are triggered when we have data to read or write
-    // respectively. on_data passes the decrypted data that we received from
-    // the network. write passes the encrypted data that we want to send to
-    // the network. on_close is triggered when we want the network connection
-    // to be closed (remember to flush before closing).
-    //
-    // Notes:
-    //   SSL_read()  reads unencrypted data which is stored in the input BIO.
-    //   SSL_write() writes unencrypted data into the output BIO.
-    //   BIO_write() writes encrypted data into the input BIO.
-    //   BIO_read()  reads encrypted data from the output BIO.
-
     /// 64kb nice buffer size for SSL reads and writes, should be enough for
     /// most cases. In reads we loop until we have no more data to read and in
     /// writes we loop until we have no more data to write/backpressure.
     const BUFFER_SIZE: usize = 65536;
 
-    /// Cap on peer-initiated TLS renegotiations per
-    /// [`MAX_RENEGOTIATION_WINDOW`]. Mirrors the `us_reneg_policy` defaults in
-    /// the uSockets C path (openssl.c) and Node's
-    /// `CLIENT_RENEG_LIMIT`/`CLIENT_RENEG_WINDOW`. Unbounded renegotiation is
-    /// a CPU DoS (CVE-2011-1473).
     const MAX_RENEGOTIATIONS: u8 = 3;
     /// See [`MAX_RENEGOTIATIONS`].
     const MAX_RENEGOTIATION_WINDOW: core::time::Duration = core::time::Duration::from_secs(600);
@@ -246,25 +178,10 @@ pub mod ssl_wrapper {
     /// snake_case→CamelCase rewriter (e.g. `http_jsc`).
     pub type SslWrapper<T> = SSLWrapper<T>;
 
-    /// `Cell`-backed bitfield so the R-2 noalias-laundered self-backref (see
-    /// [`SSLWrapper::r`]) can read AND write flags through a shared `&Self`
-    /// borrow — collapses the `unsafe { (*this).flags.set_X(..) }` pattern in
-    /// `shutdown` / `update_handshake_state` / `handle_writing` into safe
-    /// `Self::r(this).flags.set_X(..)` field-projection calls. The wrapper
-    /// is single-JS-thread (`!Sync` already via `NonNull<SSL>`), so `Cell`
-    /// adds no auto-trait churn.
     #[repr(transparent)]
     #[derive(Default)]
     pub struct Flags(core::cell::Cell<u8>);
 
-    // packed struct(u8) layout (Zig packs LSB-first):
-    //   bits 0-1: handshake_state (u2)
-    //   bit  2:   received_ssl_shutdown
-    //   bit  3:   sent_ssl_shutdown
-    //   bit  4:   is_client
-    //   bit  5:   authorized
-    //   bit  6:   fatal_error
-    //   bit  7:   closed_notified
     impl Flags {
         const HANDSHAKE_MASK: u8 = 0b0000_0011;
         const RECEIVED_SSL_SHUTDOWN: u8 = 1 << 2;
@@ -286,10 +203,6 @@ pub mod ssl_wrapper {
 
         #[inline]
         pub fn handshake_state(&self) -> HandshakeState {
-            // bits 0-1 are always written via set_handshake_state with a valid
-            // discriminant in range 0..=2; the 4th bit-state traps (matches
-            // Zig's safety-checked `@enumFromInt`) rather than silently
-            // folding bitfield corruption to a valid variant.
             match self.bits() & Self::HANDSHAKE_MASK {
                 0 => HandshakeState::HandshakePending,
                 1 => HandshakeState::HandshakeCompleted,
@@ -420,31 +333,11 @@ pub mod ssl_wrapper {
             // SAFETY: ssl is valid for the duration of this block; all calls are simple property setters.
             unsafe {
                 if is_client {
-                    // Set the renegotiation mode to explicit so that we can
-                    // renegotiate on the client side if needed (better
-                    // performance than ssl_renegotiate_freely). BoringSSL:
-                    // Renegotiation is only supported as a client in TLS and
-                    // the HelloRequest must be received at a quiet point in
-                    // the application protocol. This is sufficient to support
-                    // the common use of requesting a new client certificate
-                    // between an HTTP request and response in (unpipelined)
-                    // HTTP/1.1.
                     boring_sys::SSL_set_renegotiate_mode(
                         ssl.as_ptr(),
                         boring_sys::ssl_renegotiate_explicit,
                     );
                     boring_sys::SSL_set_connect_state(ssl.as_ptr());
-                    // Mirror `us_internal_ssl_attach`: a SecureContext is
-                    // mode-neutral, so a `tls.connect()` without
-                    // `ca`/`requestCert` hands us a CTX with VERIFY_NONE and
-                    // no trust store. Clients must always run verification so
-                    // `verify_error` is real for the JS-side
-                    // `rejectUnauthorized` decision; load the shared system
-                    // roots per-SSL so a server using the same CTX never sees
-                    // CertificateRequest. (Pre-redesign this happened by
-                    // accident: net.ts forced `requestCert: true` after
-                    // `[buntls]` and `SSLConfig.fromJS` rebuilt the CTX with
-                    // roots from that.)
                     if boring_sys::SSL_CTX_get_verify_mode(ctx.as_ptr())
                         == boring_sys::SSL_VERIFY_NONE
                     {
@@ -461,12 +354,6 @@ pub mod ssl_wrapper {
                         }
                     }
                 } else {
-                    // Set the renegotiation mode to never so that we can't
-                    // renegotiate on the server side (security reasons).
-                    // BoringSSL: There is no support for renegotiation as a
-                    // server. (Attempts by clients will result in a fatal
-                    // alert so that ClientHello messages cannot be used to
-                    // flood a server and escape higher-level limits.)
                     boring_sys::SSL_set_renegotiate_mode(
                         ssl.as_ptr(),
                         boring_sys::ssl_renegotiate_never,
@@ -512,11 +399,6 @@ pub mod ssl_wrapper {
             })
         }
 
-        /// Tier-neutral form of Zig `init(ssl_options: jsc.API.ServerConfig.SSLConfig, ...)`.
-        /// Higher-tier callers convert their `SSLConfig` via `.as_usockets()` and pass the
-        /// resulting `BunSocketContextOptions` here, so this crate stays free of the
-        /// `jsc`/`http_types` dependency. The original `SSLConfig`-taking `init` lives as
-        /// an extension in the higher tier.
         pub fn init_from_options(
             ctx_opts: &crate::SocketContext::BunSocketContextOptions,
             is_client: bool,
@@ -563,12 +445,6 @@ pub mod ssl_wrapper {
             self.handlers.on_data = dummy_on_data::<T>;
         }
 
-        /// Shutdown the write direction of the SSL and returns if we are
-        /// completed closed or not. We cannot assume that the read part will
-        /// remain open after we sent a shutdown, the other side will probably
-        /// complete the 2-step shutdown ASAP. Caution: never reuse a socket if
-        /// fast_shutdown = true, this will also fully close both read and
-        /// write directions.
         pub fn shutdown(&mut self, fast_shutdown: bool) -> bool {
             // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
             // `trigger_handshake_callback` / `trigger_close_callback` invoke
@@ -983,10 +859,6 @@ pub mod ssl_wrapper {
                             Self::r(this)
                                 .flags
                                 .set_handshake_state(HandshakeState::HandshakeRenegotiationPending);
-                            // An over-limit renegotiation request is treated
-                            // like a failed SSL_renegotiate(). The count
-                            // resets each MAX_RENEGOTIATION_WINDOW, matching
-                            // the C path's `us_reneg_policy`.
                             let now = std::time::Instant::now();
                             match Self::r(this).renegotiation_window_start {
                                 Some(start)
@@ -1154,20 +1026,11 @@ pub mod ssl_wrapper {
         }
     }
 
-    /// `us_verify_callback` equivalent — let the handshake complete regardless of
-    /// verify result so JS reads `authorizationError` and `rejectUnauthorized`
-    /// decides, instead of BoringSSL aborting mid-flight.
-    // Body is a constant `1` with no preconditions; the safe fn item still
-    // coerces to the `SSL_verify_cb` fn-pointer type at the `Some(..)` site.
     extern "C" fn always_continue_verify(_: c_int, _: *mut boring_sys::X509_STORE_CTX) -> c_int {
         1
     }
 
     unsafe extern "C" {
-        /// Process-wide bundled root store from `root_certs.cpp` — built once and
-        /// up_ref'd per consumer so the ~150-cert load happens once total, not per
-        /// CTX. Returns null if root loading fails (treated as "no roots").
-        // safe: no args; idempotent lazy init reading a process global — no preconditions.
         safe fn us_get_shared_default_ca_store() -> *mut boring_sys::X509_STORE;
         /// Zig `BoringSSL.SSL.getVerifyError` — implemented in uSockets C; reads
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
@@ -1177,19 +1040,6 @@ pub mod ssl_wrapper {
     // ported from: src/runtime/socket/ssl_wrapper.zig
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Loop / InternalLoopData
-// ═══════════════════════════════════════════════════════════════════════════
-// Mirrors `struct us_internal_loop_data_t` (packages/bun-usockets/src/internal/
-// loop_data.h) and `struct us_loop_t` (epoll_kqueue.h / libuv.h). Defined here
-// rather than re-exported from bun_uws_sys because that crate currently gates
-// every module and only exposes opaques — and we cannot `impl` foreign opaques.
-// When bun_uws_sys un-gates, collapse these into `pub use bun_uws_sys::loop_::*`.
-
-// bun_uws_sys provides the real Loop/PosixLoop/WindowsLoop/InternalLoopData/
-// SocketGroup. Re-export them here so `bun_uws::Loop` and `bun_uws_sys::Loop`
-// are the SAME type (bun_io's EventLoopCtxVTable is typed against the uws_sys
-// version).
 pub use bun_uws_sys::loop_::{LoopHandler, us_wakeup_loop};
 pub use bun_uws_sys::{InternalLoopData, Loop, PosixLoop, Timespec, WindowsLoop};
 
@@ -1227,14 +1077,6 @@ impl InternalLoopDataExt for InternalLoopData {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// SocketGroup
-// ═══════════════════════════════════════════════════════════════════════════
-// Re-exported from `bun_uws_sys` so this crate and `_sys` name the SAME
-// `#[repr(C)]` mirror of `struct us_socket_group_t`. The previous duplicate
-// definition forced callers (e.g. `socket_body.rs` start_tls) to
-// `.cast::<bun_uws_sys::SocketGroup>()` between two layout-identical types.
-
 /// Alias for the per-group C vtable struct under its pre-merge name.
 pub use bun_uws_sys::socket_group::VTable as SocketGroupVTable;
 pub use bun_uws_sys::{ConnectResult, SocketGroup};
@@ -1243,11 +1085,6 @@ pub use bun_uws_sys::{ConnectResult, SocketGroup};
 // SocketContext::BunSocketContextOptions
 // ═══════════════════════════════════════════════════════════════════════════
 pub mod SocketContext {
-    /// `#[repr(C)]` mirror of `us_bun_socket_context_options_t`. What
-    /// `SSLConfig.asUSockets()` produces and `us_ssl_ctx_from_options` consumes.
-    /// The struct body, `Default`, `digest()` and `create_ssl_context()` live in
-    /// `bun_uws_sys`; re-exported so this crate and `_sys` share one definition
-    /// (callers in higher tiers pass values to `_sys` constructors directly).
     pub use bun_uws_sys::BunSocketContextOptions;
 }
 /// Snake-case module alias for the porting tooling that lowercases Zig namespaces.
@@ -1276,22 +1113,11 @@ pub use bun_uws_sys::CloseCode;
 /// `FastShutdown` associated-const aliases).
 pub type CloseKind = CloseCode;
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Socket handlers (NewSocketHandler / SocketHandler / AnySocket)
-// ═══════════════════════════════════════════════════════════════════════════
-// Re-exported from `bun_uws_sys::socket` — that is the ONE canonical port of
-// `socket.zig`. Do NOT add a parallel `InternalSocket` / `NewSocketHandler`
-// here again; an earlier "thin placeholder" that grew full bodies has been
-// deleted.
 pub use bun_uws_sys::socket::{
     AnySocket, ConnectError, InternalSocket, NewSocketHandler, SocketHandler, SocketTCP, SocketTLS,
     SocketTcp, SocketTls,
 };
 
-/// Runtime-tagged TCP/TLS socket with a `None` arm for the "no active socket"
-/// state. Used by proxy-tunnel layers (HTTP `ProxyTunnel`, WebSocket
-/// `WebSocketProxyTunnel`) where the inner socket may be either transport and
-/// may be detached. Distinct from [`AnySocket`] which has no `None` variant.
 pub enum MaybeAnySocket {
     Tcp(SocketTCP),
     Ssl(SocketTLS),
@@ -1299,10 +1125,6 @@ pub enum MaybeAnySocket {
 }
 
 impl MaybeAnySocket {
-    /// Convert a const-generic `NewSocketHandler<IS_SSL>` to the runtime-tagged
-    /// enum. `NewSocketHandler<true>` and `<false>` are layout-identical
-    /// (`#[derive(Copy)]` over a single `InternalSocket` field); only the const
-    /// generic differs.
     #[inline]
     pub fn from_generic<const IS_SSL: bool>(socket: NewSocketHandler<IS_SSL>) -> Self {
         // `assume_ssl`/`assume_tcp` are safe field moves with a matching
@@ -1337,26 +1159,10 @@ impl MaybeAnySocket {
 // AnyRequest / AnyResponse
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Transport-agnostic request handle. Static/file routes take this so the same
-/// handler body serves HTTP/1.1 and HTTP/3. Re-exported from `bun_uws_sys` —
-/// the sys-crate version already carries `header`/`method`/`url`/`set_yield`,
-/// so route handlers need no local extension trait.
-/// Variants: `H1(*mut Request)`, `H3(*mut H3::Request)` (same field types as
-/// the previous local enum — both crates name `bun_uws_sys::{Request, h3::Request}`).
 pub use bun_uws_sys::AnyRequest;
 
-/// `uws::Response<SSL>` — re-exported from `bun_uws_sys` so callers get the full
-/// method surface (`write`/`end`/`try_end`/`on_aborted`/`on_writable`/...) without
-/// a separate local opaque. Both are `#[repr(C)]` zero-sized handles, so this is
-/// a pure namespace reconciliation.
 pub type Response<const SSL: bool> = bun_uws_sys::response::Response<SSL>;
 
-/// Transport-agnostic response handle. Re-exported from `bun_uws_sys` — the
-/// sys-crate version already carries the full dispatch impl (`write`, `end`,
-/// `try_end`, `on_aborted`, `on_writable`, `corked`, `write_status`,
-/// `write_header`, `end_stream`, `clear_*`, `timeout`, `state`, `upgrade`, ...).
-/// Variants: `SSL(*mut Response<true>)`, `TCP(*mut Response<false>)`,
-/// `H3(*mut H3::Response)`.
 pub use bun_uws_sys::AnyResponse;
 
 pub use bun_uws_sys::response::WriteResult;

@@ -20,10 +20,6 @@ use crate::npm::{self};
 use crate::resolution::{self, Resolution, TaggedValue};
 use crate::{DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager};
 
-// PORT NOTE: reshaped for borrowck. Zig keeps a single `var string_buf =
-// lockfile.stringBuf()` for the whole function, but in Rust that locks out
-// every other `lockfile.*` access. Construct a fresh `Buf` per append so the
-// mutable borrow ends immediately.
 macro_rules! sbuf {
     ($lockfile:expr) => {
         semver::string::Buf {
@@ -33,13 +29,6 @@ macro_rules! sbuf {
     };
 }
 
-// PORT NOTE: Zig freely passes `lockfile.buffers.string_bytes.items` alongside
-// `&mut lockfile`. In Rust we keep the borrows field-disjoint instead — every
-// concurrent mutation in this file touches `buffers.dependencies`,
-// `buffers.resolutions`, `packages`, etc., never `string_bytes` itself, so a
-// plain `lockfile.buffers.string_bytes.as_slice()` at the use site is sound
-// and checked. The one exception (`append_package_dedupe` taking `&mut self`)
-// reads the slice from `self` internally.
 macro_rules! string_bytes {
     ($lockfile:expr) => {
         $lockfile.buffers.string_bytes.as_slice()
@@ -241,13 +230,6 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     crate::initialize_store();
     bun_core::analytics::Features::pnpm_migration_inc(1);
 
-    // The YAML parser allocates `Expr::Data` nodes into the thread-local
-    // `Store` (via `Expr::init`). Later `workspace_package_json_cache.get_with_path`
-    // calls (with default `init_reset_store: true`) invoke `initialize_store()`,
-    // which `Store::reset()`s — invalidating every `StoreRef` in the parsed
-    // YAML tree. Mirror Zig's `deepClone(allocator)`: clone the tree out of
-    // the Store into `yaml_arena` (which lives for the whole function) so
-    // `root` survives those resets.
     let yaml_source = bun_ast::Source::init_path_string(b"pnpm-lock.yaml", data);
     let yaml_arena = bun_alloc::Arena::new();
     let _root: Expr = match bun_parsers::yaml::YAML::parse(&yaml_source, log, &yaml_arena) {
@@ -640,10 +622,6 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         for _pkg_id in 0..workspace_pkgs_end {
             let pkg_id: PackageID = u32::try_from(_pkg_id).expect("int cast");
 
-            // PORT NOTE: own the bytes — the `'next_dep` loop body mutates
-            // `lockfile.buffers.string_bytes` (via `sbuf!`) and takes
-            // `&mut *lockfile` (`append_package_dedupe`), so a borrow that
-            // spans the loop would conflict.
             let workspace_path_buf: Vec<u8>;
             let workspace_path: &[u8] = if pkg_id == 0 {
                 b"."
@@ -1792,16 +1770,6 @@ fn update_package_json_after_migration(
 
     match sys::File::read_from(Fd::cwd(), b"pnpm-workspace.yaml") {
         Ok(contents) => 'read_pnpm_workspace_yaml: {
-            // Zig: `readFrom(..., allocator)` heap-allocates with the long-
-            // lived default allocator and never frees, so YAML scalar
-            // `EString.data` slices that borrow from these source bytes stay
-            // valid for the rest of the program. The Rust `Vec<u8>` would drop
-            // at the end of this arm while the `Expr`s it backs (catalog/
-            // catalogs/overrides/patchedDependencies below) escape into `json`
-            // and the `workspace_package_json_cache`. Intern the bytes into
-            // the same thread-local `DATA_STORE` that owns the surrounding
-            // `Expr` nodes — arena ownership, not a leak (bulk-freed on
-            // `Expr::data_store_reset`).
             let contents: &'static [u8] = js_ast::data_store_dupe_str(&contents);
             let yaml_source = bun_ast::Source::init_path_string(b"pnpm-workspace.yaml", contents);
             let arena = bun_alloc::Arena::new();
@@ -1814,12 +1782,6 @@ fn update_package_json_after_migration(
                     let mut paths: Vec<&'static [u8]> = Vec::new();
                     for package_path in packages.array.items.slice() {
                         if let Some(package_path_str) = as_string(package_path) {
-                            // Intern (vs. the prior `Box<[u8]>`) so the
-                            // `EString` nodes built from these paths below do
-                            // not dangle once this function returns and the
-                            // boxes drop — they are stored into
-                            // `root_pkg_json.root` which is cached in
-                            // `manager.workspace_package_json_cache`.
                             paths.push(js_ast::data_store_dupe_str(package_path_str));
                         }
                     }
@@ -2032,12 +1994,6 @@ fn update_package_json_after_migration(
                     bstr::BStr::new(&**res_str)
                 )
                 .map_err(|_| AllocError)?;
-                // Zig: `allocator.dupe(u8, join_buf.items)` with the long-lived
-                // default allocator. The rewritten key ends up inside
-                // `root_pkg_json.root` (Store-backed, cached in
-                // `workspace_package_json_cache`), so it must outlive this
-                // function — intern into the thread-local `DATA_STORE` that
-                // backs the surrounding `Expr` nodes, NOT the local `bump`.
                 let interned: &[u8] = js_ast::data_store_dupe_str(join_buf.as_slice());
                 prop.key = Some(Expr::init(E::EString::init(interned), bun_ast::Loc::EMPTY));
             }

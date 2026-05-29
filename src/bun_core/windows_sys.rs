@@ -35,13 +35,6 @@ pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PEB access (`std.os.windows.peb()`). `bun_core::output::windows_stdio`
-// reads `ProcessParameters.hStd{Input,Output,Error}` to snapshot the console
-// handles before libuv touches them. Canonical structs/asm live in the tier-0
-// `bun_windows_sys` leaf and are re-exported here for the
-// `crate::windows_sys::*` path used by callers.
-// ──────────────────────────────────────────────────────────────────────────
 pub use bun_windows_sys::UNICODE_STRING as UnicodeString;
 pub use bun_windows_sys::{
     CURDIR, Curdir, PEB, PebView, ProcessParameters, RTL_USER_PROCESS_PARAMETERS, TEB, peb, teb,

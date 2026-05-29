@@ -3,10 +3,6 @@
 pub mod boringssl;
 pub use boringssl::*;
 
-/// Constant-time byte-slice equality via BoringSSL `CRYPTO_memcmp`.
-///
-/// Returns `false` when lengths differ (the length comparison itself is NOT
-/// constant-time — matches all existing call sites, which already early-out on len).
 #[inline]
 pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {

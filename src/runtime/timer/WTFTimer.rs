@@ -45,10 +45,6 @@ pub struct WTFTimer {
     // FFI handle into WebKit's RunLoop::TimerBase; owned by C++.
     run_loop_timer: NonNull<RunLoopTimer>,
     pub event_loop_timer: EventLoopTimer,
-    // Backref into `vm.eventLoop().imminent_gc_timer`. Low tier stores
-    // `AtomicPtr<()>` (PORTING.md §Dispatch); `self` is cast to `*mut ()` at
-    // each compare_exchange (the hook in `dispatch.rs` casts back to
-    // `*mut WTFTimer`).
     imminent: bun_ptr::BackRef<AtomicPtr<()>>,
     repeat: bool,
     lock: Mutex,

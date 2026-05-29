@@ -25,12 +25,6 @@ pub struct ServerConfig {
     pub address: Address,
     pub idle_timeout: u8, // TODO: should we match websocket default idleTimeout of 120?
     pub has_idle_timeout: bool,
-    // TODO: use webkit URL parser instead of bun's
-    // PORT NOTE: Zig stores `base_url: URL` borrowing into `base_uri: []const u8`
-    // (self-referential). Rust keeps only the owned buffer; callers parse on
-    // demand via [`ServerConfig::base_url`] so the borrow lifetime is tied to
-    // `&self` instead of erased to `'static` (PORTING.md §Forbidden — lifetime
-    // extension).
     pub base_uri: Box<[u8]>,
 
     pub ssl_config: Option<SSLConfig>,
@@ -40,11 +34,6 @@ pub struct ServerConfig {
     pub development: DevelopmentOption,
     pub broadcast_console_log_from_browser_to_server_for_bake: bool,
 
-    /// Enable automatic workspace folders for Chrome DevTools
-    /// https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
-    /// https://github.com/ChromeDevTools/vite-plugin-devtools-json/blob/76080b04422b36230d4b7a674b90d6df296cbff5/src/index.ts#L60-L77
-    ///
-    /// If HMR is not enabled, then this field is ignored.
     pub enable_chrome_devtools_automatic_workspace_folders: bool,
 
     pub on_error: Option<Strong>,
@@ -146,10 +135,6 @@ impl ServerConfig {
         self.development.is_development()
     }
 
-    /// Parsed view over [`Self::base_uri`]. Replaces the Zig `base_url: URL`
-    /// field, which borrowed self-referentially into `base_uri`.
-    // PERF(port): re-parses on each call. The only out-of-module reader takes
-    // `href` (== `base_uri`) directly; in-module reads happen once in `from_js`.
     #[inline]
     pub fn base_url(&self) -> URL<'_> {
         URL::parse(&self.base_uri)
@@ -253,29 +238,12 @@ impl ServerConfig {
             }
         }
 
-        // sort the cloned static routes by name for determinism
-        // PORT NOTE: Zig `std.mem.sort` takes a strict-weak `lessThan(a,b)` and
-        // tolerates `false`/`false` for equal elements; Rust `sort_by` requires
-        // a total `Ordering`. `is_less_than` ≡ `strings::order(a,b) == Greater`
-        // (descending by path), so the 3-way equivalent is `order(b, a)`.
         list.sort_by(|a, b| strings::order(&b.path, &a.path));
 
         Ok(())
     }
 
     pub fn clone_for_reloading_static_routes(&mut self) -> Result<ServerConfig, bun_core::Error> {
-        // Zig: `var that = this.*` (bitwise copy) then nulls ONLY {ssl_config,
-        // sni, address, websocket, bake} on `this`, leaving `this` aliasing
-        // every other heap field with `that`. The sole caller is
-        // `self.config = self.config.clone_for_reloading_static_routes()?;`, so
-        // the residual `self` is overwritten by `that` on success without
-        // running `deinit`, and the aliasing is benign.
-        //
-        // Rust cannot alias owned Vec/Box/Strong; instead move every owning
-        // field into `that` and leave the Copy scalars in place on `self` —
-        // matching Zig's observable post-state for `self` (idle_timeout,
-        // development, reuse_port, http1/http3, etc. retained; resources gone) and
-        // ensuring the assignment-drop of the residual `self` is a no-op.
         let mut that = ServerConfig {
             address: core::mem::take(&mut self.address),
             idle_timeout: self.idle_timeout,
@@ -327,11 +295,6 @@ impl ServerConfig {
         Ok(())
     }
 }
-
-// PORT NOTE: Zig `applyStaticRoute` used comptime closures over (ssl, T) passed
-// as C-style fn pointers to uws app.head/any/method. Rust monomorphizes free
-// `extern "C"` fns per `<SSL, T>` and registers them via the raw
-// `c::uws_method_handler` overload — equivalent to the Zig `handler_wrap` struct.
 
 /// # Safety
 /// `entry` must be a live route pointer that outlives `app` — it is registered
@@ -473,11 +436,6 @@ pub(crate) fn apply_static_route_h3<T>(
     }
 }
 
-/// Per-route trait that `apply_static_route{,_h3}` monomorphizes over —
-/// expresses Zig's `comptime T: type` (`StaticRoute`/`FileRoute`/`HTMLBundle.Route`).
-/// Receivers are raw `*mut Self` because the route is registered as the uWS
-/// userdata pointer and the inherent impls (`StaticRoute::on_request` etc.) need
-/// `*mut` to mutate state and stash `self` into onAborted callbacks.
 pub(crate) trait StaticRouteLike<const SSL: bool>: 'static {
     /// SAFETY: `this` is a live route pointer for the lifetime of the app.
     unsafe fn set_server(this: *mut Self, server: AnyServer);
@@ -496,10 +454,6 @@ pub(crate) trait StaticRouteLike<const SSL: bool>: 'static {
     );
 }
 
-// PORT NOTE (layering): the original `RequestUnion`/`ResponseUnion` placeholders
-// were duplicates of `bun_uws_sys::AnyRequest`/`AnyResponse` (which already
-// model Zig's `.{ .h1 = req }` / `.{ .SSL = resp }`). Re-export the real types
-// so any straggler reference resolves to the canonical opaque.
 pub use bun_uws_sys::AnyRequest as RequestUnion;
 pub use bun_uws_sys::AnyResponse as ResponseUnion;
 
@@ -660,23 +614,11 @@ fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<J
     Ok(None)
 }
 
-/// Bridge `crate::bake::FileSystemRouterType` (Cow-backed, populated by
-/// `server_body::AnyRoute::from_js`) into `bake_body::FileSystemRouterType`
-/// (`&'static [u8]`-backed, consumed by `Framework::auto`). Both mirror Zig's
-/// single `bake.Framework.FileSystemRouterType`; the duplication is a
-/// layering wart and this conversion stands in for an arena-dupe until the two
-/// structs unify. All bytes are duped into `arena` so the resulting `&'static`
-/// slices live as long as `UserOptions.arena`.
 fn convert_file_system_router_type(
     arena: &bun_alloc::Arena,
     src: crate::bake::FileSystemRouterType,
 ) -> crate::bake::bake_body::FileSystemRouterType {
     use crate::bake::bake_body as bb;
-    // PORT NOTE: `bb::arena_erase` is the single sanctioned `'bump → 'static`
-    // erasure for the `UserOptions.arena` self-referential pattern; bake_body's
-    // own `Framework::from_js` / `resolve` use it identically.
-    // TODO(refactor): thread a real `'bump` through `bb::Framework`/
-    // `bb::FileSystemRouterType` and remove this together with `arena_erase`.
     fn dupe(arena: &bun_alloc::Arena, bytes: &[u8]) -> &'static [u8] {
         bb::arena_erase(arena.alloc_slice_copy(bytes))
     }
@@ -868,10 +810,6 @@ impl ServerConfig {
                 global,
             };
             let init_ctx = &mut init_ctx_;
-            // errdefer { init_ctx.arena.deinit(); init_ctx.framework_router_list.deinit(); }
-            // — arena/Vec are owned locals; drop on `?` automatically. Ownership
-            // transfers to args.bake on the success path via mem::take below.
-            // (dedupe_html_bundle_map is unused on the success path; drops at scope end.)
 
             // errdefer { for static_routes |r| r.deinit(); clearAndFree() }
             // — Vec<StaticRouteEntry> drops elements (which deref route) automatically on error.
@@ -1026,11 +964,6 @@ impl ServerConfig {
                     use crate::bake::bake_body as bb;
                     use bun_options_types::schema::api::DotEnvBehavior;
 
-                    // PORT NOTE: Zig threaded `init_ctx.arena` from
-                    // `ServerInitContext`; the Rust `ServerInitContext` dropped
-                    // that field, so the arena is created here and moved into
-                    // `UserOptions` (same lifetime: lives until `args.bake`
-                    // is dropped).
                     let arena = bun_alloc::Arena::new();
 
                     let root = bb::arena_dupe_z(
@@ -1038,10 +971,6 @@ impl ServerConfig {
                         bun_paths::fs::FileSystem::instance().top_level_dir(),
                     );
 
-                    // Convert `crate::bake::FileSystemRouterType` (Cow-backed)
-                    // into `bake_body::FileSystemRouterType` (`&'static` slices)
-                    // by duping every string into the arena. Type
-                    // duplication; remove once the two structs unify.
                     let router_types: Vec<bb::FileSystemRouterType> =
                         core::mem::take(&mut init_ctx.framework_router_list)
                             .into_iter()
@@ -1069,10 +998,6 @@ impl ServerConfig {
 
                     match o.serve_env_behavior {
                         DotEnvBehavior::prefix => {
-                            // PORT NOTE: `serve_env_prefix` is `Option<Box<[u8]>>`
-                            // owned by the long-lived `transform_options`; dupe
-                            // into the arena so the `&'static [u8]` field is
-                            // backed by `UserOptions.arena`.
                             user_options.bundler_options.client.env_prefix = o
                                 .serve_env_prefix
                                 .as_deref()

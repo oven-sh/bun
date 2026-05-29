@@ -24,12 +24,6 @@ pub(crate) trait FileJsc {
 impl FileJsc for File {
     fn file_blob(&mut self, global: &JSGlobalObject) -> &mut Blob {
         if self.cached_blob.is_none() {
-            // Spec: `Store.init(@constCast(this.contents), bun.default_allocator)`.
-            // `contents` is a `'static` slice into the embedded executable
-            // section — borrow it directly (no copy) and hand it to a `Bytes`
-            // store with the default allocator. The leaked extra `ref_()` below
-            // pins the refcount ≥ 1 forever, so `Store::deref` never runs and
-            // the (otherwise UB) free of a static slice is unreachable.
             let contents = self.contents.as_bytes();
             // SAFETY: `contents` is `'static` and never freed (see above);
             // `@constCast` mirrors Zig — Blob consumers only read via
@@ -92,11 +86,6 @@ impl FileJsc for File {
                 b.name.set(bstring::String::clone_utf8(self.name));
             }
 
-            // Zig: `Blob{...}.new()` — heap-promote and stash the raw pointer.
-            // The standalone graph (and thus this Blob) lives for the process.
-            // `cached_blob` is typed against the lower crate's opaque `Blob`
-            // newtype (it cannot name `webcore::Blob` without a dep cycle), so
-            // erase via `.cast()` here and back below.
             self.cached_blob = Some(
                 NonNull::new(Blob::new(b))
                     .expect("Blob::new returned null")

@@ -26,31 +26,6 @@ use bun_uws;
 // (`IPCSerialize` / `IPCParse`) are declared once in `crate::cpp` and called
 // through that module's safe wrappers; no local extern block needed.
 
-// ──────────────────────────────────────────────────────────────────────────
-// SendQueue ownership (§Layering / Dispatch).
-//
-// In Zig, `SendQueue.owner` is a tagged union over `*Subprocess` (parent side)
-// and `*VirtualMachine` (child side). `Subprocess` lives in `bun_runtime`
-// (tier-6), so the concrete type cannot be named here. Instead of a hand-
-// rolled fn-pointer table, the owner is stored as a raw `*mut dyn` trait
-// object: `IPCInstance` (this crate) and `Subprocess` (`bun_runtime`) both
-// impl [`SendQueueOwner`], and the SendQueue is embedded inline in each, so
-// the pointer is a BACKREF (cleared before the owner drops).
-//
-// The JS host fns that need the concrete `Subprocess` / `Listener` types
-// (`do_send`, `emit_handle_ipc_message`, `Bun__Process__send`) live in
-// `bun_runtime::ipc_host`, which can name those types directly without a
-// runtime-registered hook table.
-// ──────────────────────────────────────────────────────────────────────────
-
-// TODO: rewrite this code.
-/// Queue for messages sent between parent and child processes in an IPC environment. node:cluster sends json serialized messages
-/// to describe different events it performs. It will send a message with an incrementing sequence number and then call a callback
-/// when a message is received with an 'ack' property of the same sequence number.
-///
-/// PORT NOTE: moved down from `bun_runtime::node::node_cluster_binding` (cycle-break per
-/// docs/PORTING.md) — `SendQueue` stores one inline so the struct must live at this tier.
-/// All field accesses + dispatch methods need only `bun_jsc`/`bun_collections` symbols.
 pub struct InternalMsgHolder {
     pub seq: i32,
 
@@ -103,10 +78,6 @@ impl InternalMsgHolder {
         if let Some(p) = message.get(global, "ack")? {
             if !p.is_undefined() {
                 let ack = p.to_int32();
-                // PORT NOTE: reshaped for borrowck — Zig copied the Strong out of the
-                // entry, then conditionally deinit+swapRemove. Here we peek the JSValue
-                // first (ending the immutable borrow), then swap_remove (which drops the
-                // Strong == `defer cbstrong.deinit()`).
                 let entry = self.callbacks.get(&ack).map(|s| s.get());
                 if let Some(callback_opt) = entry {
                     if let Some(callback) = callback_opt {
@@ -139,14 +110,6 @@ impl InternalMsgHolder {
 
     pub fn flush(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         debug_assert!(self.is_ready());
-        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
-        // `dispatch_unsafe` → `event_loop.run_callback` runs the JS IPC
-        // listener which can re-enter via a fresh `&mut Self` from the
-        // owner's `m_ctx` and write `self.cb` / `self.worker` /
-        // `self.callbacks`. With the loop body inlined, LLVM was hoisting the
-        // `self.cb`/`self.worker` reads (at the top of `dispatch_unsafe`) out
-        // of the loop — ASM-verified PROVEN_CACHED. Launder so each iteration
-        // re-reads through an opaque pointer.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` aliases the live `&mut self`; single JS thread.
         let messages = core::mem::take(unsafe { &mut (*this).messages });
@@ -357,11 +320,6 @@ mod advanced {
             x if x == IPCMessageType::SerializedMessage as u8
                 || x == IPCMessageType::SerializedInternalMessage as u8 =>
             {
-                // `header_length + message_len` would be evaluated as u32; a peer-controlled
-                // `message_len >= 0xFFFFFFFB` wraps the sum to a small value and defeats the
-                // bounds check. Compare against the remaining bytes instead — `data.len >=
-                // header_length` is already established above, so the subtraction cannot
-                // underflow.
                 if data.len() - HEADER_LENGTH < message_len as usize {
                     log!(
                         "Not enough bytes to decode IPC message body of len {}, have {} bytes",
@@ -461,11 +419,6 @@ mod json {
         b"{\"cmd\":\"NODE_HANDLE_NACK\"}\n"
     }
 
-    // In order to not have to do a property lookup internal messages sent from Bun will have a single u8 prepended to them
-    // to be able to distinguish whether it is a regular json message or an internal one for cluster ipc communication.
-    // 2 is internal
-    // ["[{\d\.] is regular
-
     pub(super) fn decode_ipc_message(
         data: &[u8],
         global_this: &JSGlobalObject,
@@ -528,12 +481,6 @@ mod json {
             BunString::borrow_utf8(json_data)
         };
 
-        // Zig: `defer { str.deref(); if (is_ascii && !was_ascii_string_freed) @panic(...) }`.
-        // `bun_core::String` is `Copy` (no `Drop`), so the +1 ref taken by
-        // `create_external` / `borrow_utf8` must be released explicitly. The
-        // ASCII-path free callback (`json_ipc_data_string_free_cb`) only fires
-        // when the WTFStringImpl refcount hits zero — i.e. *during* `deref()` —
-        // so the freed-flag check must follow it on every exit path.
         let mut str = str;
         let parsed = crate::bun_string_jsc::to_js_by_parse_json(&mut str, global_this);
         str.deref();
@@ -579,10 +526,6 @@ mod json {
                 JsError::Terminated => IPCSerializationError::JSTerminated,
                 JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
             })?;
-        // Zig: `defer out.deref()`. `bun_core::String` is `Copy` (no `Drop`),
-        // so the +1 ref written by `json_stringify_fast` is wrapped in
-        // `OwnedString` immediately so every exit path (Dead, OOM in
-        // `ensure_unused_capacity`, success) releases it.
         let out = bun_core::OwnedString::new(out);
 
         if out.tag() == bun_core::Tag::Dead {
@@ -792,10 +735,6 @@ impl WindowsWrite {
 #[derive(Default)]
 pub struct WindowsState {
     pub is_server: bool,
-    /// Non-owning raw pointer (matches Zig `?*WindowsWrite`). The allocation
-    /// is `heap::alloc`'d in `_write` and freed exactly once by
-    /// `_windows_on_write_complete` via `WindowsWrite::destroy`. Nulling this
-    /// field never frees.
     pub windows_write: Option<*mut WindowsWrite>,
     pub try_close_after_write: bool,
 }
@@ -842,18 +781,9 @@ pub struct SendQueue {
     pub incoming_fd: Option<Fd>,
 
     pub socket: SocketUnion,
-    /// BACKREF to the embedding owner (`Subprocess` or `IPCInstance`). The
-    /// SendQueue is stored inline in its owner, so this is a self-referential
-    /// raw pointer; never reborrow as `&mut dyn` while a `&mut SendQueue` is
-    /// live (every access goes through `unsafe { &mut *self.owner }` at the
-    /// call site, mirroring the Zig union dispatch).
     pub owner: *mut dyn SendQueueOwner,
 
     pub close_next_tick: Option<Task>,
-    /// Set while an `_onAfterIPCClosed` task is queued. Cleared when the task
-    /// runs. Tracked so `deinit` can cancel it; the task captures a raw
-    /// `*SendQueue` into the owner's inline storage, which is freed right
-    /// after `deinit` returns.
     pub after_close_task: Option<Task>,
     pub write_in_progress: bool,
     pub close_event_sent: bool,
@@ -861,11 +791,6 @@ pub struct SendQueue {
     pub windows: WindowsState,
 }
 
-/// Dispatch surface for the SendQueue's embedding object — either a
-/// `Subprocess` (parent side, `bun_runtime`) or a `VirtualMachine::IPCInstance`
-/// (child side, this crate). Replaces the Zig `union(enum) { subprocess,
-/// virtual_machine }` switch with a trait object so the concrete `Subprocess`
-/// type need not be named here.
 pub trait SendQueueOwner {
     fn global_this(&self) -> *const JSGlobalObject;
     fn handle_ipc_close(&mut self);
@@ -893,13 +818,6 @@ pub enum SocketUnion {
 }
 
 impl SendQueue {
-    /// Safe `&dyn SendQueueOwner` accessor — wraps the per-use raw deref +
-    /// autoref for `&self`-taking trait methods (`kind`, `this_jsvalue`,
-    /// `global_this`). The owner embeds this
-    /// `SendQueue` inline, so the formed `&Owner` overlaps `self` — but the
-    /// caller already holds at most `&SendQueue` here (shared/shared), so
-    /// there is no exclusive alias. NOT for `handle_ipc_*` (those take
-    /// `&mut dyn`; see field doc).
     #[inline]
     fn owner_ref(&self) -> &dyn SendQueueOwner {
         // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it;
@@ -997,11 +915,6 @@ impl SendQueue {
         self.keep_alive.disable();
         let was_open = matches!(self.socket, SocketUnion::Open(_));
         self.socket = SocketUnion::Closed;
-        // Only enqueue the close notification for the open→closed transition.
-        // `closeSocket` (via `SendQueue.deinit` during the owner's finalizer)
-        // can reach this path again with the socket already `.closed`; the
-        // owner is about to free the memory that backs `this`, so scheduling
-        // a task that points back into it would use-after-free.
         if was_open && self.after_close_task.is_none() {
             // PORT NOTE: `bun_event_loop::JsResult` erases the error to `*mut ()`;
             // adapt the jsc-crate `JsResult` via a non-capturing closure (coerces to fn ptr).
@@ -1010,13 +923,6 @@ impl SendQueue {
                 Ok(())
             });
             self.after_close_task = Some(task);
-            // Spec ipc.zig:589 calls `bunVM().enqueueTask(...)` on a raw
-            // `*VirtualMachine`. Do NOT materialize `&mut VirtualMachine` from
-            // `bun_vm()`'s shared `&VirtualMachine` (Stacked-Borrows UB —
-            // `&mut T` while other `&T` exist). Route through the safe
-            // `event_loop_mut(&self)` accessor (single audited deref), which
-            // mirrors `VirtualMachine::enqueue_task`'s body without the
-            // `&mut self` receiver.
             self.get_global_this()
                 .bun_vm()
                 .event_loop_mut()
@@ -1109,11 +1015,6 @@ impl SendQueue {
         #[cfg(debug_assertions)]
         debug_assert!(self.has_written_version == 1);
 
-        // optimal case: appending a message without a handle to the end of the queue when the last message also doesn't have a handle and isn't ack/nack
-        // this is rare. it will only happen if messages stack up after sending a handle, or if a long message is sent that is waiting for writable
-        // PORT NOTE: reshaped for borrowck (NLL limitation: early-return of
-        // `&mut self.queue[..]` would otherwise extend the borrow across the
-        // fallback push). Compute the predicate first, then re-borrow.
         let use_last = if handle.is_none() && !self.queue.is_empty() {
             let len = self.queue.len();
             let last = &self.queue[len - 1];
@@ -1421,12 +1322,6 @@ impl SendQueue {
         }
     }
 
-    /// starts a write request. on posix, this always calls _onWriteComplete immediately. on windows, it may
-    /// call _onWriteComplete later.
-    ///
-    /// The outbound bytes are read from `self.queue[0]` *inside* this method so
-    /// the caller never passes a slice that borrows `self` into a `&mut self`
-    /// receiver (which would violate Stacked Borrows).
     fn _write(&mut self, fd: Option<Fd>) {
         if self.get_socket().is_none() {
             self._on_write_complete(-1);
@@ -1474,26 +1369,10 @@ impl SendQueue {
                     (*pipe).as_stream(),
                     &(*write_req).write_buffer,
                     write_req,
-                    // `write()` stores a *Rust* fn pointer (`fn(*mut T, ReturnCode)`)
-                    // and thunks it through libuv. The callback receives the
-                    // raw `*mut WindowsWrite` (NOT `&mut`) because
-                    // `_windows_on_write_complete` deallocates the request via
-                    // `WindowsWrite::destroy`; holding a live `&mut WindowsWrite`
-                    // across that free would dangle the reference (UB) and the
-                    // `Box::from_raw` would carry the `&mut`-reborrow tag instead
-                    // of the original allocation root. Matches Zig's raw-pointer
-                    // pass-through (libuv.zig `uvWriteCb`).
                     |req: *mut WindowsWrite, rc| SendQueue::_windows_on_write_complete(req, rc),
                 )
             };
             if result.to_error(bun_sys::Tag::write).is_some() {
-                // Synchronous-error path: do NOT call `_windows_on_write_complete`
-                // here — that helper rebuilds `&mut SendQueue` from the raw
-                // `write_req.owner` backref, which would alias the `&mut self`
-                // already live in this frame (and in `continue_send` above it).
-                // Inline the same cleanup through `self` instead. The async
-                // libuv-callback path still uses `_windows_on_write_complete`
-                // (sound there: no `&mut self` is live when libuv fires it).
                 WindowsWrite::destroy(write_req);
                 self.windows.windows_write = None;
                 // SAFETY: pipe is live (socket == .open); pairs with the
@@ -1568,12 +1447,6 @@ impl SendQueue {
         // Zig: `defer vm.eventLoop().exit()` — handled by `_scope` drop.
     }
     fn get_global_this(&self) -> crate::GlobalRef {
-        // PORT NOTE: lifetime detached from `&self` so callers can hold the
-        // global across `&mut self` borrows (Zig passes `*JSGlobalObject` by
-        // raw pointer everywhere). The owner (Subprocess / IPCInstance)
-        // outlives this SendQueue and the JSGlobalObject is heap-allocated by
-        // JSC for the VM's lifetime. `opaque_ref` is the safe ZST-handle deref
-        // (panics on null) — see `bun_opaque::opaque_deref`.
         crate::GlobalRef::from(JSGlobalObject::opaque_ref(self.owner_ref().global_this()))
     }
 
@@ -1680,10 +1553,6 @@ impl SendQueue {
     }
 }
 
-/// Adapter from `UvStream::read_start_ctx` to the `IPCHandlers::WindowsNamedPipe`
-/// callbacks. Zig passed the three fns as `comptime` pointers; Rust bakes them
-/// into the trait impl so the `extern "C"` trampoline is monomorphised over
-/// `SendQueue` with zero per-handle storage.
 #[cfg(windows)]
 impl uv::StreamReader for SendQueue {
     #[inline]
@@ -1699,13 +1568,6 @@ impl uv::StreamReader for SendQueue {
     }
     #[inline]
     unsafe fn on_read(this: *mut Self, data: &[u8]) {
-        // `data` points into `(*this).incoming` (it was returned from
-        // `on_read_alloc`). Forming `&mut *this` would retag every byte of
-        // `*this` Unique and pop the SharedRW tag `data`'s provenance descends
-        // from — any later read through `data` is UB under Stacked Borrows
-        // *regardless* of write order. Capture the only thing we need (length)
-        // while `data` is still valid, drop it, then reborrow `*this`; the
-        // callee re-derives the just-written tail from `incoming` itself.
         let nread = data.len();
         let _ = data;
         // SAFETY: `this` is the live `SendQueue` stashed in `handle.data` by
@@ -1736,10 +1598,6 @@ impl Drop for SendQueue {
                 unsafe { &mut *(close_next_tick_task.ptr.cast::<ManagedTask>()) };
             managed.cancel();
         }
-        // Same for the close-notification task. `closeSocket` above may have
-        // just enqueued this (VM-shutdown path with the socket still open),
-        // or it may be left over from an earlier `_socketClosed` that hasn't
-        // drained yet; either way the owner is about to free our storage.
         if let Some(after_close_task) = self.after_close_task {
             // SAFETY: see above.
             let managed: &mut ManagedTask =
@@ -1765,12 +1623,6 @@ fn handle_ipc_message(
 ) {
     #[cfg(debug_assertions)]
     {
-        // PORT NOTE: Zig formats the JSValue via ConsoleObject.Formatter for
-        // the scoped log; the Rust `Formatter` has no `Default` and threading
-        // it through here pulls in the full table-printer machinery for a
-        // debug-only log line. Log the variant tag instead.
-        // TODO(port): wire `console_object::Formatter::new(global_this)` once
-        // its construction stabilises.
         let _ = global_this;
         match &message {
             DecodedIPCMessage::Version(version) => {
@@ -1867,10 +1719,6 @@ fn handle_ipc_message(
                 }
                 drop(_scope);
 
-                // ipc_parse will call the callback which calls handleIPCMessage()
-                // we have sent the ack already so the next message could arrive at any time. maybe even before
-                // parseHandle calls emit(). however, node does this too and its messages don't end up out of order.
-                // so hopefully ours won't either.
                 return;
             }
             IPCCommand::Ack => {
@@ -1896,10 +1744,6 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
     // the vm is freed before the socket closes.
     let global_this = send_queue.get_global_this();
 
-    // Decode the message with just the temporary buffer, and if that
-    // fails (not enough bytes) then we allocate to .ipc_buffer
-    // PORT NOTE: reshaped for borrowck — match on raw discriminant pointer to allow
-    // calling &mut self methods on send_queue inside arms.
     match &mut send_queue.incoming {
         IncomingBuffer::Json(_) => {
             // JSON mode: append to buffer (scans only new data for newline),
@@ -2053,13 +1897,6 @@ pub mod IPCHandlers {
 
         pub fn on_open(_: *mut c_void, _: Socket) {
             log!("onOpen");
-            // it is NOT safe to use the first argument here because it has not been initialized yet.
-            // ideally we would call .ipc.writeVersionPacket() here, and we need that to handle the
-            // theoretical write failure, but since the .ipc.outgoing buffer isn't available, that
-            // data has nowhere to go.
-            //
-            // therefore, initializers of IPC handlers need to call .ipc.writeVersionPacket() themselves
-            // this is covered by an assertion.
         }
 
         pub fn on_close(send_queue: &mut SendQueue, _: Socket, _: c_int, _: Option<*mut c_void>) {
@@ -2151,11 +1988,6 @@ pub mod IPCHandlers {
             send_queue.close_socket_next_tick(true);
         }
 
-        /// `nread` is the byte count libuv reported into the slice handed out
-        /// by `on_read_alloc` (i.e. the tail of `send_queue.incoming` past its
-        /// current `len`). The slice itself is *not* passed through because it
-        /// aliases `send_queue.incoming`; see the `StreamReader::on_read`
-        /// trampoline for the Stacked-Borrows rationale.
         pub fn on_read(send_queue: &mut SendQueue, nread: usize) {
             log!("NewNamedPipeIPCHandler#onRead {}", nread);
             let global_this = send_queue.get_global_this();
@@ -2171,11 +2003,6 @@ pub mod IPCHandlers {
                         unreachable!()
                     };
                     debug_assert!(json_buf.data.len() + nread <= json_buf.data.capacity());
-                    // libuv wrote `nread` bytes at `data[old_len..]` via the
-                    // slice returned from `on_read_alloc`. Only the *count*
-                    // is forwarded — re-deriving a `&[u8]` over that region
-                    // and handing it to a `&mut self` method would alias
-                    // `json_buf.data`, undoing the Stacked-Borrows fix above.
                     json_buf.notify_written(nread);
 
                     // Process complete messages using next() - avoids O(n²) re-scanning
@@ -2278,10 +2105,6 @@ pub mod IPCHandlers {
 
         pub fn on_close(send_queue: &mut SendQueue) {
             log!("NewNamedPipeIPCHandler#onClose\n");
-            // Currently unreferenced (only onReadAlloc/onReadError/onRead are
-            // wired into readStart), but route through `_socketClosed` so any
-            // future wiring tracks the `_onAfterIPCClosed` task for `deinit`
-            // to cancel, matching every other close path.
             send_queue._socket_closed();
         }
     }

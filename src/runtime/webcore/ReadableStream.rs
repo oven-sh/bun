@@ -243,10 +243,6 @@ impl ReadableStream {
         self.done(global_this);
     }
 
-    /// Cancel the stream and forward `reason` verbatim to the underlying source's
-    /// cancel algorithm (the spec's ReadableStreamCancel). Unlike `cancel()`,
-    /// this does not synthesize a DOMException — fetch() uses it to surface
-    /// `AbortSignal.reason` to the request body's cancel callback.
     pub fn cancel_with_reason(&self, global_this: &JSGlobalObject, reason: JSValue) {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
         ReadableStream__cancelWithReason(self.value, global_this, reason);
@@ -511,11 +507,6 @@ pub enum Tag {
     Bytes = 4,
 }
 
-// `ReadableStreamTag__tagged` (C++ `webcore/ReadableStream.cpp:387`) returns
-// raw `int32_t`; the extern decl above types it as `Tag`, so an out-of-range
-// value would be immediate UB. Lock the discriminant width and every variant
-// value so a C++-side addition that Rust hasn't mirrored fails the build here
-// instead of materialising an invalid enum.
 bun_core::assert_ffi_discr!(
     Tag, i32;
     Invalid = -1, JavaScript = 0, Blob = 1, File = 2, Direct = 3, Bytes = 4,
@@ -543,17 +534,6 @@ pub enum Source {
 }
 
 impl Source {
-    /// Shared borrow of the `Bytes` payload as a [`BackRef`](bun_ptr::BackRef).
-    ///
-    /// The pointer is the JS wrapper's `m_ctx` heap allocation returned by
-    /// `ReadableStreamTag__tagged` and is non-null and live while the owning
-    /// `ReadableStream` JSValue is rooted (caller's `Strong`/stack root) — the
-    /// BACKREF outlives-holder invariant. R-2: every `ByteStream` field touched
-    /// through this borrow is `Cell`/`JsCell`-backed, so re-entrant JS that
-    /// re-derives a fresh `&ByteStream` from `m_ctx` aliases shared-only.
-    ///
-    /// Centralises the per-site raw-pointer deref so call sites are
-    /// unsafe-free; the one audited deref lives in [`bun_ptr::BackRef::get`].
     #[inline]
     pub fn bytes(self) -> Option<bun_ptr::BackRef<ByteStream>> {
         match self {
@@ -564,13 +544,6 @@ impl Source {
         }
     }
 
-    /// Shared borrow of the `File` payload as a [`BackRef`](bun_ptr::BackRef).
-    ///
-    /// Same invariant as [`bytes`](Self::bytes): the pointer is the JS
-    /// wrapper's `m_ctx` heap allocation, non-null and live while the owning
-    /// `ReadableStream` JSValue is rooted. R-2: every `FileReader` field
-    /// touched through this borrow is `Cell`/`JsCell`-backed, so re-entrant JS
-    /// that re-derives a fresh `&FileReader` from `m_ctx` aliases shared-only.
     #[inline]
     pub fn file(self) -> Option<bun_ptr::BackRef<FileReader>> {
         match self {
@@ -582,16 +555,6 @@ impl Source {
     }
 }
 
-// ─── NewSource ───────────────────────────────────────────────────────────────
-//
-// Zig: `pub fn NewSource(comptime Context: type, comptime name_: []const u8,
-//                        comptime onStart, onPull, onCancel, deinit_fn,
-//                        setRefUnrefFn?, drainInternalBuffer?, memoryCostFn?,
-//                        toBufferedValue?) type { return struct {...} }`
-//
-// Rust: the comptime fn-pointer bundle becomes a trait `SourceContext` that
-// each `Context` type implements; `NewSource<C>` is the generic struct.
-
 /// Trait capturing the comptime fn params of Zig's `NewSource(...)`.
 pub trait SourceContext: Sized {
     /// `name_` — used to look up `jsc.Codegen.JS{NAME}InternalReadableStreamSource`.
@@ -599,11 +562,6 @@ pub trait SourceContext: Sized {
     /// `setRefUnrefFn != null`
     const SUPPORTS_REF: bool = false;
 
-    // ─── codegen accessors (`.classes.ts` → `generated_classes.rs`) ───────────
-    // Zig: `js = @field(jsc.Codegen, "JS" ++ name ++ "InternalReadableStreamSource")`.
-    // Each context binds its per-type codegen module via `source_context_codegen!`.
-    /// `js_${NAME}InternalReadableStreamSource::to_js` — `ptr` is the
-    /// type-erased `*mut NewSource<Self>` (cast inside the macro impl).
     fn js_create(ptr: *mut c_void, global: &JSGlobalObject) -> JSValue;
     /// `js_${NAME}InternalReadableStreamSource::pending_promise_set_cached`
     fn js_pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
@@ -615,11 +573,6 @@ pub trait SourceContext: Sized {
     fn on_start(&mut self) -> streams::Start;
     fn on_pull(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result;
     fn on_cancel(&mut self);
-    /// Per-context teardown side-effects (unref pollers, flush pending callbacks,
-    /// release handles). **Must NOT free the enclosing `NewSource<Self>` allocation** —
-    /// that is done by the caller ([`NewSource::decrement_count`]) *after* this
-    /// returns, via `Box::from_raw`, which then runs `Drop` on every field. Freeing
-    /// here would deallocate the storage backing the live `&mut self` borrow (UAF).
     fn deinit_fn(&mut self);
 
     fn finalize_detach(&mut self) -> bool {
@@ -659,15 +612,6 @@ pub trait SourceContext: Sized {
     fn set_flowing(&mut self, _flag: bool) {}
 }
 
-// TODO(port): #[bun_jsc::JsClass] — codegen name is "JS{C::NAME}InternalReadableStreamSource".
-// The Zig `js = @field(jsc.Codegen, ...)` + toJS/fromJS/fromJSDirect aliases are wired by the
-// derive; cached-property accessors (pendingPromiseSetCached, onDrainCallback{Get,Set}Cached)
-// are emitted by the .classes.ts generator.
-//
-// `repr(C)` keeps `context` at offset 0: C++ `wrapped()` returns `*mut NewSource<C>` and
-// [`ReadableStream::from_js`] casts that straight to `*mut C` (matching Zig, where `context`
-// is the first field). With Rust's default repr the field is reordered and the cast reads
-// adjacent fields as the loader, returning empty bodies.
 #[repr(C)]
 pub struct NewSource<C: SourceContext> {
     pub context: C,
@@ -713,13 +657,6 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
     }
 }
 
-// ─── per-type codegen accessors ──────────────────────────────────────────────
-// Zig: `js = @field(jsc.Codegen, "JS" ++ name ++ "InternalReadableStreamSource")`
-// resolves to a *per-type* generated module; in Rust there is no inherent
-// associated-module syntax, so each `SourceContext` impl carries the codegen
-// extern symbols as associated consts (bound via `source_context_codegen!`).
-// The `.classes.ts` → `.rs` generator (when re-run with Rust output) is expected
-// to emit those `const JS_*` bindings directly.
 pub(crate) trait NewSourceCodegen {
     fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue;
     fn pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
@@ -727,12 +664,6 @@ pub(crate) trait NewSourceCodegen {
     fn on_drain_callback_get_cached(this: JSValue) -> Option<JSValue>;
 }
 
-/// Binds the four `SourceContext::js_*` accessors to the codegen'd
-/// `crate::generated_classes::js_${Name}InternalReadableStreamSource` module
-/// (one per `.classes.ts` entry: `Blob`, `File`, `Bytes`). The extern symbols
-/// are declared exactly once inside that module — no local `extern "C"` block.
-///
-/// Invoke *inside* an `impl SourceContext for Foo { ... }` block.
 #[macro_export]
 macro_rules! source_context_codegen {
     ($gen:ident) => {
@@ -795,10 +726,6 @@ const _: () = assert!(core::mem::offset_of!(NewSource<ByteStream>, context) == 0
 const _: () = assert!(core::mem::offset_of!(NewSource<FileReader>, context) == 0);
 
 impl<C: SourceContext> NewSource<C> {
-    /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global_this`
-    /// back-pointer. `global_this` is stored from a live `&JSGlobalObject` at
-    /// construction (or reassigned in `start()` from a fresh live one); the
-    /// VM-owned global outlives every `NewSource` it owns.
     #[inline]
     pub fn global_this(&self) -> &JSGlobalObject {
         self.global_this
@@ -807,27 +734,10 @@ impl<C: SourceContext> NewSource<C> {
             .get()
     }
 
-    /// `bun.TrivialNew(@This())` — heap-allocate and hand back the raw pointer.
-    ///
-    /// Ownership is **not** retained by Rust: the returned pointer is intended to
-    /// be installed as the JS wrapper's `m_ctx` via [`Self::to_readable_stream`]
-    /// (or [`NewSourceCodegen::to_js`]), after which the GC finalizer drives
-    /// teardown through [`Self::decrement_count`] → context `deinit_fn` →
-    /// [`Self::deinit`]. Dropping a `Box` here would free the allocation while
-    /// the JS cell still points at it (UAF), so this mirrors Zig's `TrivialNew`
-    /// exactly and returns `*mut Self`.
     pub fn new(init: Self) -> *mut Self {
         bun_core::heap::into_raw(Box::new(init))
     }
 
-    /// [`Self::new`] returning the leaked allocation as an unbounded `&mut`.
-    ///
-    /// Every call site of `new()` immediately did `unsafe { &mut *p }` to set
-    /// up the context and then handed ownership to the JS wrapper via
-    /// [`Self::to_readable_stream`]. Centralising that deref here (one
-    /// audited `unsafe`, N safe callers) — the allocation is fresh, non-null,
-    /// uniquely owned, and outlives the returned borrow because the JS GC
-    /// finalizer (not Rust `Drop`) reclaims it via [`Self::decrement_count`].
     #[inline]
     pub fn new_mut<'a>(init: Self) -> &'a mut Self {
         // SAFETY: `heap::into_raw(Box::new(..))` is non-null, aligned, and the
@@ -899,10 +809,6 @@ impl<C: SourceContext> NewSource<C> {
         }
     }
 
-    /// `JSReadableStreamSource.onClose` — invoked via `close_handler` when the
-    /// JS side registered an `onclose` callback. Stored *directly* in
-    /// `close_handler` by [`Self::set_on_close_from_js`] so the fn-pointer
-    /// identity check above matches.
     fn on_js_close(ptr: Option<*mut c_void>) {
         // SAFETY: ptr was set to `self as *mut NewSource<C>` in on_close()/set_on_close_from_js.
         let this = unsafe { &mut *(ptr.unwrap().cast::<NewSource<C>>()) };
@@ -1002,17 +908,8 @@ impl<C: SourceContext> NewSource<C> {
     pub fn memory_cost(&self) -> usize {
         self.context.memory_cost_fn() + core::mem::size_of::<Self>()
     }
-
-    // `bun.TrivialDeinit(@This())` is folded into [`Self::decrement_count`]'s
-    // zero-refcount path. A `&mut self` deinit here would free the storage
-    // backing the live `self` borrow (dangling UAF), so the drop is performed
-    // there via raw `*mut Self` instead.
 }
 
-// ─── codegen-facing inherent methods ─────────────────────────────────────────
-// Zig: `pub const drainFromJS = JSReadableStreamSource.drain;` etc. — the
-// `.classes.ts` → `generated_classes.rs` thunks call these by exact name on
-// `NewSource<C>` (aliased as `{Blob,Bytes,File}InternalReadableStreamSource`).
 impl<C: SourceContext> NewSource<C> {
     pub fn pull_from_js(
         &mut self,
@@ -1064,11 +961,6 @@ impl<C: SourceContext> NewSource<C> {
                 streams::StreamError::Error(e) => {
                     Err(global_this.throw_value(e.to_js(global_this)))
                 }
-                // Zig's else arm reads `err.JSValue` directly — implicitly assumes only
-                // `.Error`/`.JSValue` reach `processResult` (would safety-panic on
-                // `.WeakJSValue`/`.AbortReason`). Preserve the intent (always throw on
-                // `.err`) defensively via `to_js_weak`, which handles all four variants
-                // and reports whether the value was strong-protected (needs `unprotect()`).
                 _ => {
                     let (js_err, was_strong) = err.to_js_weak(global_this);
                     js_err.ensure_still_alive();
@@ -1221,10 +1113,6 @@ impl<C: SourceContext> NewSource<C> {
         self.this_jsvalue = call_frame.this();
         let mut list = self.drain();
         if list.len() > 0 {
-            // Ownership of the buffer transfers to JSC: `to_js` installs
-            // `MarkedArrayBuffer_deallocator` which `mi_free`s on GC. Suppress
-            // `Vec::Drop` so the same allocation isn't freed twice (once
-            // here on scope exit, once by the GC). Mirrors `streams::Start::to_js`.
             let ab = jsc::ArrayBuffer::from_bytes(list.slice_mut(), jsc::JSType::Uint8Array);
             let _ = core::mem::ManuallyDrop::new(list);
             return ab.to_js(global_this);

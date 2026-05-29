@@ -4,13 +4,6 @@
     clippy::disallowed_types,
     clippy::disallowed_macros
 )]
-//! Generates the sorted `DEFAULT_TRUSTED_DEPENDENCIES_LIST` slice from
-//! `default-trusted-dependencies.txt`.
-//!
-//! Zig builds this at comptime via `@embedFile` + tokenize + sort
-//! (see `src/install/lockfile.zig`). Rust cannot tokenize/sort at const time
-//! without a build script, so we emit a `&[&[u8]]` literal here and `include!`
-//! it from `lockfile.rs`.
 
 use std::env;
 use std::fmt::Write as _;
@@ -61,20 +54,6 @@ fn main() {
     fs::write(out_dir.join("default_trusted_dependencies_list.rs"), out)
         .expect("write default_trusted_dependencies_list.rs");
 
-    // ── Windows .bin/ shim PE ───────────────────────────────────────────────
-    // `BinLinkingShim.rs` does `include_bytes!("bun_shim_impl.exe")` on
-    // Windows. The real PE is produced by a separate `cargo build -p
-    // bun_shim_impl` step (scripts/build/rust.ts) *before* this crate compiles
-    // — but a bare `cargo check` run outside the build system has no such step,
-    // and the file is git-ignored. Create a 0-byte placeholder so compilation
-    // succeeds; `embedded_executable_data()` asserts non-empty at runtime so a
-    // placeholder can never silently ship.
-    //
-    // `rerun-if-changed` is the load-bearing line: it makes cargo recompile
-    // this crate when the build system overwrites the placeholder with the
-    // real PE (rustc's dep-info would also catch it, but build.rs's own
-    // `rerun-if-changed` set replaces the default "rerun on any source change"
-    // heuristic, so we must list it explicitly).
     if env::var("CARGO_CFG_WINDOWS").is_ok() {
         let exe = manifest.join("windows-shim").join("bun_shim_impl.exe");
         if !exe.exists() {

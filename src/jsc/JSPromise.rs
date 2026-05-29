@@ -26,15 +26,6 @@ pub enum Status {
     Rejected = 2,
 }
 
-// TODO(port): move to jsc_sys
-//
-// `JSPromise` and `JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles
-// (so `&T` is ABI-identical to non-null `*const T` and C++ mutating through
-// the pointer is interior mutation invisible to Rust). The shims that take
-// only such handles + scalars are declared `safe fn`. `JSC__JSPromise__wrap`'s
-// `ctx` is an opaque round-trip pointer C++ only forwards to `call` (never
-// dereferenced as Rust data); the `*mut JSPromise`-returning constructors stay
-// raw (caller derefs).
 unsafe extern "C" {
     safe fn JSC__JSPromise__create(arg0: &JSGlobalObject) -> *mut JSPromise;
     safe fn JSC__JSPromise__rejectedPromise(
@@ -67,11 +58,6 @@ unsafe extern "C" {
     safe fn JSC__JSPromise__result(this: &mut JSPromise, vm: &VM) -> JSValue;
     safe fn JSC__JSPromise__isHandled(this: &JSPromise) -> bool;
     safe fn JSC__JSPromise__setHandled(this: &mut JSPromise);
-    // These three are `void` on the C side (bindings.cpp). The Zig `bun.cpp.*`
-    // wrappers (build/debug/codegen/cpp.zig) call the void extern and then do
-    // `Bun__RETURN_IF_EXCEPTION(global)` to surface `error.JSError` — there is
-    // no bool sentinel on the wire. Mirror that by checking `global.has_exception()`
-    // after the call.
 }
 
 // ───────────────────────────── JSPromise.Weak(T) ─────────────────────────────
@@ -128,14 +114,6 @@ impl<T> Weak<T> {
         }
     }
 
-    /// Borrow the GC-rooted `JSPromise` cell. Panics if the weak slot is empty
-    /// or no longer a promise.
-    ///
-    /// Safe because `JSPromise` is an `opaque_ffi!` ZST handle: a `&mut` to it
-    /// covers zero bytes (see [`bun_opaque::opaque_deref_mut`] for the proof),
-    /// so two callers cannot alias any Rust-visible memory. The pointer comes
-    /// from the JSValue payload (not derived from `&self`) and the weak ref
-    /// keeps the cell observable while held.
     pub fn get(&self) -> &mut JSPromise {
         JSPromise::opaque_mut(self.weak.get().unwrap().as_promise().unwrap())
     }
@@ -229,11 +207,6 @@ impl Strong {
         self.reject(global, Ok(val))
     }
 
-    // Zig: `pub const rejectOnNextTick = @compileError("...")`
-    // TODO(port): @compileError poison-decl has no direct Rust equivalent. Relying on
-    // the method simply not existing; callers will fail to compile. A
-    // `#[deprecated(note = "...")]` shim could be added if migration error messages are needed.
-
     pub fn resolve(&mut self, global: &JSGlobalObject, val: JSValue) -> Result<(), JsTerminated> {
         self.swap().resolve(global, val)
     }
@@ -262,12 +235,6 @@ impl Strong {
         self.strong.set(global, value);
     }
 
-    /// Wrap an existing promise `JSValue` in a fresh Strong handle.
-    /// PORT NOTE: Zig copies `JSPromise.Strong` by value (HandleSlot ptr is
-    /// shared); Rust `Strong` owns its slot, so a literal copy would
-    /// double-free. Callers that need a second owner of the same promise
-    /// (e.g. `bake::DevServer::PromiseEnsureRouteBundledCtx::ensurePromise`)
-    /// allocate a second slot here instead.
     pub fn from_value(value: JSValue, global: &JSGlobalObject) -> Self {
         // No `as_promise()` debug-check here: this is reached from finalizers
         // (Server::deinit_if_we_can) where JSCell::classInfo() would assert.
@@ -276,14 +243,6 @@ impl Strong {
         }
     }
 
-    /// Borrow the GC-rooted `JSPromise` cell. Panics if the strong slot is
-    /// empty (use [`has_value`] to check first).
-    ///
-    /// Safe because `JSPromise` is an `opaque_ffi!` ZST handle: a `&mut` to it
-    /// covers zero bytes (see [`bun_opaque::opaque_deref_mut`] for the proof),
-    /// so the resolver-style accessor cannot alias any Rust-visible memory.
-    /// The pointer is the JSValue payload (not derived from `&self`) and the
-    /// `Strong` root keeps the cell alive for the borrow's lifetime.
     pub fn get(&self) -> &mut JSPromise {
         JSPromise::opaque_mut(self.strong.get().unwrap().as_promise().unwrap())
     }
@@ -331,16 +290,6 @@ impl JSPromise {
         JSValue::from_cell(self)
     }
 
-    /// Wrap a fallible host call in a Promise: if `f` throws, the promise is
-    /// rejected; otherwise it resolves with the returned value.
-    ///
-    /// Zig signature took `comptime Function: anytype` + `args: ArgsTuple(@TypeOf(Function))`
-    /// and built a `callconv(.c)` trampoline via `jsc.toJSHostCall`. That is the
-    /// host-fn reflection pattern — in Rust it collapses to a monomorphized closure
-    /// + extern-C trampoline.
-    // TODO(port): proc-macro — the Zig version threads `@src()` and uses
-    // `jsc.toJSHostCall` for exception-scope plumbing. Verify the
-    // closure form below is ABI-equivalent or replace with `#[bun_jsc::host_fn]`.
     pub fn wrap<F>(global: &JSGlobalObject, f: F) -> Result<JSValue, JsTerminated>
     where
         F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
@@ -408,11 +357,6 @@ impl JSPromise {
         }
     }
 
-    /// Safe `status()` for the common `*mut JSPromise`-stored case
-    /// (`vm.pending_internal_promise` etc.). `JSPromise` is a GC-managed JSC
-    /// heap cell; pointers to it are kept alive by the VM's strong-ref slots,
-    /// not by Rust ownership. Centralizes the per-call-site
-    /// `unsafe { (*p).status() }` deref so callers don't open-code it.
     #[inline]
     pub fn status_ptr(p: *mut JSPromise) -> Status {
         // `p` is a non-null GC-managed cell tracked by the VM (caller obtained
@@ -455,10 +399,6 @@ impl JSPromise {
         JSPromise::opaque_mut(JSC__JSPromise__rejectedPromise(global, value))
     }
 
-    /// **DEPRECATED** use `rejected_promise` instead.
-    ///
-    /// Create a new rejected promise without notifying the VM. Unhandled
-    /// rejections created this way will not trigger unhandled rejection handling.
     pub fn dangerously_create_rejected_promise_value_without_notifying_vm(
         global: &JSGlobalObject,
         value: JSValue,
@@ -535,10 +475,6 @@ impl JSPromise {
             .map_err(|_| JsTerminated::JSTerminated)
     }
 
-    /// Like `reject` but first attaches async stack frames from this promise's
-    /// await chain to the error. Use when rejecting from native code at the top
-    /// of the event loop (threadpool callback) where the error would otherwise
-    /// have an empty stack trace.
     pub fn reject_with_async_stack(
         &mut self,
         global: &JSGlobalObject,
@@ -552,10 +488,6 @@ impl JSPromise {
         self.reject(global, Ok(err))
     }
 
-    /// Create a new pending promise.
-    ///
-    /// Note: You should use `resolved_promise` or `rejected_promise` if you want
-    /// to create a promise that is already resolved or rejected.
     pub fn create(global: &JSGlobalObject) -> &mut JSPromise {
         // FFI returns a non-null GC-managed cell tied to `global`'s VM.
         JSPromise::opaque_mut(JSC__JSPromise__create(global))

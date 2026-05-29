@@ -13,12 +13,6 @@ use bun_sys::{self, Fd};
 use crate::cli as CLI;
 use bun_bundler::options;
 
-// ──────────────────────────────────────────────────────────────────────────
-// RadioChoice trait — replaces Zig's comptime enum reflection in
-// `processRadioButton`. In Zig the function takes `comptime Choices: type`
-// and uses `bun.meta.EnumFields(Choices)` + `@enumFromInt` + the `fmt()`
-// method; in Rust the choice enums implement this trait by hand.
-// ──────────────────────────────────────────────────────────────────────────
 pub(crate) trait RadioChoice: Copy + Sized {
     const COUNT: usize;
     const DEFAULT: Self;
@@ -104,12 +98,6 @@ impl InitCommand {
         // Zig: `std.fs.File.stdin().readerStreaming(&stdin_b)` then `takeByte()`.
         let mut stdin = bun_core::output::stdin_reader();
 
-        // The Zig has `errdefer reprint_menu = false;` followed by a `defer { ... }`
-        // that uses `reprint_menu`. We model both with a single guard whose state we
-        // mutate, and flip `reprint_menu = false` on the error paths before returning.
-        // PORT NOTE: reshaped for borrowck — can't both borrow `selected`/`initial_draw`
-        // in a scopeguard closure and mutate them in the loop. Instead inline the
-        // cleanup at every return point.
         macro_rules! finish {
             ($reprint:expr, $sel:expr) => {{
                 if !initial_draw {
@@ -972,11 +960,6 @@ impl Assets {
     pub const README_MD: &'static [u8] = include_bytes!("init/README.default.md");
     pub const README2_MD: &'static [u8] = include_bytes!("init/README2.default.md");
 
-    /// Create a new asset file, overriding anything that already exists. Known
-    /// assets will have their contents pre-populated; otherwise the file will be empty.
-    ///
-    /// PORT NOTE: Zig looked up `asset_name` via `@hasDecl`/`@field` reflection.
-    /// Rust takes the asset bytes directly; `asset_name` is the filename.
     fn create(
         asset_name: &[u8],
         asset: &'static [u8],
@@ -1566,11 +1549,6 @@ impl Template {
 
             #[cfg(not(windows))]
             {
-                // if we did create the CLAUDE.md, then symlinks the
-                // .cursor/rules/*.mdc -> CLAUDE.md so it's easier to keep them in
-                // sync if you change it locally. we use a symlink for the cursor
-                // rule in this case so that the github UI for CLAUDE.md (which may
-                // appear prominently in repos) doesn't show a file path.
                 if result.is_ok() && create_claude_md {
                     'symlink_cursor_rule: {
                         create_claude_md = false;
@@ -1636,12 +1614,6 @@ impl Template {
 
         #[cfg(windows)]
         {
-            // Zig: `bun.getenvZAnyCase("USER")` walks `std.os.environ` (bun.zig:913).
-            // `bun_core::getenv_z_any_case` is a TODO stub on Windows that always
-            // returns None (bun_core/util.rs), so calling it here makes the probe
-            // dead code. Use `std::env::var`, which on Windows goes through
-            // `GetEnvironmentVariableW` (inherently case-insensitive) — matching
-            // the Zig any-case semantics.
             if let Ok(user) = std::env::var("USER") {
                 let mut pathbuf = path_buffer_pool::get();
                 // Zig: `std.fmt.bufPrintZ(..) catch { return false; }` —
@@ -1775,11 +1747,6 @@ impl Template {
         Ok(())
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Template file lists (Zig: nested `ReactBlank`/`ReactTailwind`/`ReactShadcn`
-// structs containing `files` consts)
-// ──────────────────────────────────────────────────────────────────────────
 
 static REACT_BLANK_FILES: &[TemplateFile] = &[
     TemplateFile::new(

@@ -20,19 +20,7 @@ impl Default for HTTPCertError {
 }
 
 impl HTTPCertError {
-    /// Build from the uSockets verify-error struct delivered to `on_handshake`.
-    ///
-    /// Centralises the two `cstr → ZStr` upgrades so each handshake handler
-    /// (outer-TLS in `HTTPContext::Handler::on_handshake`, inner-TLS in
-    /// `ProxyTunnel::on_handshake`) doesn't repeat the raw deref.
-    ///
-    /// Mirrors http.zig: `reason` is gated on `code` being non-null (the
-    /// uSockets API populates both together or neither).
     pub fn from_verify_error(ssl_error: bun_uws::us_bun_verify_error_t) -> Self {
-        /// Borrow a NUL-terminated C string from uSockets as `&'static ZStr`.
-        /// The string is owned by the long-lived SSL session and outlives the
-        /// `on_handshake` dispatch; widened to `'static` to match the field
-        /// type (see TODO above re: ownership).
         #[inline]
         fn zstr(p: *const core::ffi::c_char) -> &'static ZStr {
             // SAFETY: (`bun_ptr::Interned`-style audit — Population A,

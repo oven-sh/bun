@@ -38,10 +38,6 @@ use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_cares_sys::c_ares_draft as c_ares;
 
-// `sockaddr_storage` / `addrinfo` / `AF_*` / `AI_*` are absent from `libc` on
-// the MSVC target; route through a single `netc` shim so call sites stay
-// target-agnostic. Windows values come from ws2def.h via the libuv-sys mirror
-// (layout-identical: `ADDRINFOA`, 128-byte 8-aligned `sockaddr_storage`).
 #[cfg(not(windows))]
 pub(crate) mod netc {
     pub(crate) use bun_dns::AI_ADDRCONFIG;
@@ -65,14 +61,6 @@ type SockaddrStorage = netc::sockaddr_storage;
 type AddrInfo = netc::addrinfo;
 type Sockaddr = netc::sockaddr;
 
-/// Helper: fetch the per-VM global DNS resolver (port of
-/// `RareData::globalDNSResolver`). The storage is
-/// [`crate::jsc_hooks::RuntimeState::global_dns_data`] — concrete
-/// `Option<Box<GlobalData>>`, freed by `deinit_runtime_state` on VM teardown.
-///
-/// R-2: returns `&Resolver` (shared). All Resolver mutation routes through
-/// `Cell` / `JsCell` fields, so a shared borrow is sufficient and avoids the
-/// `noalias` hazard when c-ares callbacks re-enter on the same global resolver.
 #[inline]
 pub(crate) fn global_resolver(global_this: &JSGlobalObject) -> &Resolver {
     let gd = crate::jsc_hooks::global_dns_data().get_or_init(|| {
@@ -127,11 +115,6 @@ const IANA_DNS_PORT: i32 = 53;
 pub(super) mod lib_info {
     use super::*;
 
-    // static int32_t (*getaddrinfo_async_start)(mach_port_t*, const char*, const char*,
-    //                                           const struct addrinfo*, getaddrinfo_async_callback, void*);
-    // static int32_t (*getaddrinfo_async_handle_reply)(void*);
-    // static void (*getaddrinfo_async_cancel)(mach_port_t);
-    // typedef void getaddrinfo_async_callback(int32_t, struct addrinfo*, void*)
     pub(crate) type GetaddrinfoAsyncStart = unsafe extern "C" fn(
         *mut mach_port,
         node: *const c_char,
@@ -254,10 +237,6 @@ pub(super) mod lib_info {
             // SAFETY: request is exclusively owned; freed below via heap::take.
             unsafe {
                 if (*request).cache.pending_cache() {
-                    // Release the pending-cache slot. `getOrPutIntoPendingCache` already
-                    // set the `used` bit, so failing to unset it here permanently orphans
-                    // the slot and leaves `buffer[pos].lookup` pointing at the request we
-                    // are about to free (UAF on the next `.inflight` hit).
                     let pos = (*request).cache.pos_in_pending();
                     this.pending_host_cache_native.with_mut(|c| {
                         let slot = c.ptr_at(pos as usize);
@@ -394,10 +373,6 @@ pub(super) mod lib_uv_backend {
 
         let holder = bun_core::heap::into_raw(Box::new(Holder {
             uv_info,
-            // Zig: `.task = undefined`. `AnyTask.callback` is a non-nullable
-            // `fn` pointer, so `MaybeUninit::zeroed().assume_init()` would be
-            // instant UB regardless of the overwrite below; use the trapping
-            // Default and overwrite in place.
             task: jsc::AnyTask::AnyTask::default(),
         }));
         // SAFETY: holder is a valid heap allocation
@@ -473,11 +448,6 @@ pub(super) mod lib_uv_backend {
                     .map_or(ptr::null(), |h| (h as *const AddrInfo).cast()),
             );
             if rc.int() < 0 {
-                // uv_getaddrinfo can fail synchronously before it queues any work
-                // (e.g. UV_EINVAL from the 256-byte IDNA buffer for long hostnames,
-                // or UV_ENOMEM). Route the error through the same path the async
-                // completion would have taken so the pending-cache slot is released
-                // and the promise is rejected with a DNSException.
                 if let Some(resolver) = (*request).resolver_for_caching {
                     if (*request).cache.pending_cache() {
                         (*resolver).drain_pending_host_native(
@@ -582,10 +552,6 @@ pub trait CAresRecordType: Sized {
     const CACHE_FIELD: PendingCacheField;
     /// `@field(NSType, "ns_t_" ++ TYPE_NAME)` — the DNS RR type passed to `ares_query`.
     const NS_TYPE: c_ares::NSType;
-    /// `cares_type.callbackWrapper(TYPE_NAME, ResolveInfoRequest(..), onCaresComplete)` —
-    /// the `ares_callback` thunk that parses raw reply bytes for this record type
-    /// and forwards to `ResolveInfoRequest<Self>::on_cares_complete`. Used as
-    /// `ResolveHandler::raw_callback` for the generic `Channel::resolve` dispatch.
     const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int);
     fn to_js_response(
         &mut self,
@@ -715,10 +681,6 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
     }
 }
 
-// Wires `ResolveInfoRequest<T>` into `Channel::resolve` — the per-record
-// `T::RAW_CALLBACK` parses the raw DNS reply and calls back into
-// `on_cares_complete`. Zig: `channel.resolve(name, type_name, ResolveInfoRequest(..),
-// request, cares_type, onCaresComplete)`.
 impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
     const LOOKUP_NAME: &'static [u8] = T::TYPE_NAME.as_bytes();
     const NS_TYPE: c_ares::NSType = T::NS_TYPE;
@@ -1504,10 +1466,6 @@ impl GetAddrInfoRequest {
         // SAFETY: WorkTask invokes `then` on the JS thread with the heap request it
         // was created from; `resolver_for_caching` (if set) is the live ctx ref.
         unsafe {
-            // Take the backend by value: `Success` holds a `Vec<GetAddrInfoResult>`
-            // (not `Clone`) that we move into `GetAddrInfoResultAny::List`. The
-            // request is consumed/freed on every path below, so the `CAres`
-            // placeholder left behind owns no resources.
             let backend =
                 core::mem::replace(&mut (*this).backend, get_addr_info_request::Backend::CAres);
             match backend {
@@ -1608,15 +1566,6 @@ impl GetAddrInfoRequest {
                 }
             }
 
-            // On Windows, libuv's `uv_getaddrinfo` calls `GetAddrInfoW` then
-            // re-packs the wide result into a single ANSI block allocated via
-            // `uv__malloc`; that block must be released with `uv_freeaddrinfo`
-            // (== `uv__free`). `GetAddrInfoResultAny::Addrinfo`'s `Drop` calls
-            // `ws2_32!freeaddrinfo`, which is the wrong allocator here and
-            // would corrupt the heap. The Zig spec never frees it on this path
-            // (leak). Convert to an owned `List` immediately, free the libuv
-            // buffer with the correct deallocator, and pass `List` downstream
-            // so `ResultAny::Drop` never sees libuv-owned memory.
             let addrinfo = (*uv_info).addrinfo;
             let result_any = if addrinfo.is_null() {
                 GetAddrInfoResultAny::Addrinfo(ptr::null_mut())
@@ -2184,10 +2133,6 @@ pub mod internal {
 
     // ───────────── Request ─────────────
 
-    // PORT NOTE: Zig stored a borrowed `[:0]const u8` here and only allocated in
-    // `toOwned()`. We keep a raw borrow on the stack key (constructed in `init`) and
-    // allocate in `to_owned()` before storing on the heap `Request`.
-    // TODO(port): lifetime — model the borrow with `<'a>` once ZStr ownership is settled.
     pub struct RequestKey {
         pub host: Option<*const ZStr>, // BORROW until to_owned(); never freed via this field
         /// Used for getaddrinfo() to avoid glibc UDP port 0 bug, but NOT included in hash
@@ -2519,13 +2464,6 @@ pub mod internal {
     fn default_hints() -> AddrInfo {
         let mut h: AddrInfo = bun_core::ffi::zeroed();
         h.ai_family = netc::AF_UNSPEC;
-        // If the system is IPv4-only or IPv6-only, then only return the corresponding address family.
-        // https://github.com/nodejs/node/commit/54dd7c38e507b35ee0ffadc41a716f1782b0d32f
-        // https://bugzilla.mozilla.org/show_bug.cgi?id=467497
-        // https://github.com/adobe/chromium/blob/cfe5bf0b51b1f6b9fe239c2a3c2f2364da9967d7/net/base/host_resolver_proc.cc#L122-L241
-        // https://github.com/nodejs/node/issues/33816
-        // https://github.com/aio-libs/aiohttp/issues/5357
-        // https://github.com/libuv/libuv/issues/2225
         #[cfg(unix)]
         {
             h.ai_flags = netc::AI_ADDRCONFIG;
@@ -2947,20 +2885,6 @@ pub mod internal {
                         break 'retry;
                     }
 
-                    // Each getaddrinfo_async_start() call allocates a fresh receive
-                    // port via mach_port_allocate(MACH_PORT_RIGHT_RECEIVE) inside
-                    // libinfo's si_async_workunit_create() (si_module.c) — it is NOT
-                    // the per-thread MIG reply port and is not reused across calls.
-                    // libinfo's "async" API is just a libdispatch worker running sync
-                    // getaddrinfo and signalling completion via a send-once right on
-                    // this port; getaddrinfo_async_handle_reply() then destroys the
-                    // receive right after invoking us. So by the time we are here:
-                    //   - the first request's port is already dead (no leak, no need
-                    //     to mach_port_deallocate it ourselves), and
-                    //   - its kqueue knote is gone (it was EV_ONESHOT, and EVFILT_
-                    //     MACHPORT knotes are dropped when the receive right dies).
-                    // Store the new port and re-register the existing FilePoll on it,
-                    // otherwise we'd never see the retry's reply.
                     #[cfg(target_os = "macos")]
                     {
                         (*req).libinfo.machport = machport;
@@ -3378,14 +3302,6 @@ pub enum PendingCacheField {
     PendingNameinfoCacheCares,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// CAresRecordType impls — Zig instantiated `ResolveInfoRequest(cares_type, type_name)`
-// per (struct, "tag") pair via comptime; Rust models the (struct, tag) tuple as a
-// trait impl. ns/ptr/cname share `struct_hostent` and a/aaaa share
-// `hostent_with_ttls`, so those get `#[repr(transparent)]` newtype wrappers to
-// keep the per-record monomorphizations (and pending caches) distinct.
-// ──────────────────────────────────────────────────────────────────────────
-
 macro_rules! impl_cares_record_type {
     (
         $ty:ty, $tag:literal, $syscall:literal, $field:ident, $ns_type:ident,
@@ -3683,13 +3599,6 @@ type PollType = FilePoll;
 
 type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). c-ares
-// completion callbacks re-enter this Resolver (e.g. `request_completed`,
-// `drain_pending_*`) while a `&self` borrow is live in `on_dns_poll` /
-// `check_timeouts`; UnsafeCell-backed fields suppress `noalias` so LLVM cannot
-// cache them across re-entrant FFI calls (the proper fix for the
-// PROVEN_CACHED ref_count miscompile previously laundered with `black_box`).
 #[bun_jsc::JsClass(name = "DNSResolver")]
 pub struct Resolver {
     pub ref_count: bun_ptr::RefCount<Resolver>, // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — already Cell-backed
@@ -3803,13 +3712,6 @@ impl<R: HasPendingCacheKey> Copy for LookupCacheHit<R> {}
 pub trait HasPendingCacheKey {
     type PendingCacheKey;
 
-    /// Return `&mut @field(resolver, cache_name)` — the per-request-type pending HiveArray.
-    /// `field` is the runtime tag of the comptime field name (some request types are reachable
-    /// via more than one field, e.g. `pending_host_cache_{cares,native}`).
-    ///
-    /// R-2: takes `&Resolver` and projects `&mut` via the field's `JsCell`.
-    /// Callers hold the borrow only for a short, non-reentrant window
-    /// (slot read/claim/unset).
     #[allow(clippy::mut_from_ref)]
     fn pending_cache(
         resolver: &Resolver,
@@ -3821,12 +3723,6 @@ pub trait HasPendingCacheKey {
     /// `key.len`
     fn key_len(key: &Self::PendingCacheKey) -> u16;
     fn key_name(key: &Self::PendingCacheKey) -> &[u8];
-    /// Construct a fully-initialized `PendingCacheKey { hash, len, lookup: null }`
-    /// for `HiveArray::get_init`. `lookup` is filled in later by `*Request::init`
-    /// once the request has been heap-allocated; until then it is a defined null
-    /// rather than uninit garbage, so the `iter_set` loop in
-    /// `get_or_put_into_resolve_pending_cache` can safely materialise
-    /// `&mut PendingCacheKey` over the slot.
     fn key_new(key: &Self::PendingCacheKey) -> Self::PendingCacheKey;
 }
 
@@ -3938,10 +3834,6 @@ pub enum ChannelResult<'a> {
     Result(&'a mut c_ares::Channel), // BORROW_FIELD — returns this.channel.?
 }
 
-// Canonical enum + parser live in `bun_dns` (lower tier so `cli` can parse
-// `--dns-result-order` without depending on the runtime). Re-export for
-// existing `crate::dns_jsc::Order` callers; `to_js` stays here as a tier-6
-// extension since it needs JSC.
 pub use bun_dns::Order;
 
 pub(super) trait OrderJscExt {
@@ -4102,11 +3994,6 @@ impl Resolver {
 
     // ─── R-2 interior-mutability helpers ────────────────────────────────────
 
-    /// `self`'s address as `*mut Self` for c-ares / `FilePoll` / `IntrusiveRc`
-    /// ctx slots and `Self::deref`. Callbacks deref it as `&*const` (shared) —
-    /// see `on_dns_poll`, `on_cares_complete` — so no write provenance is
-    /// required; the `*mut` spelling is purely to match the C signature. All
-    /// mutation routes through `Cell` / `JsCell` (UnsafeCell-backed).
     #[inline]
     pub fn as_ctx_ptr(&self) -> *mut Self {
         std::ptr::from_ref::<Self>(self).cast_mut()
@@ -4123,10 +4010,6 @@ impl Resolver {
             nsec: now.nsec,
         };
         let uws_loop = vm.uws_loop();
-        // R-2: `&self` carries no `noalias`, and every field touched below is
-        // UnsafeCell-backed, so the re-entrant `ares_process_fd` callbacks
-        // (`request_completed`, `drain_pending_*`) may freely re-derive
-        // `&Resolver` from their stored ctx without aliasing UB.
         let deref_this = self.as_ctx_ptr();
         scopeguard::defer! {
             // PORT NOTE (jsc/runtime crate cycle): low-tier `VirtualMachine.timer` is `()`;
@@ -4251,12 +4134,6 @@ impl Resolver {
 
     // ───────────── pending-cache helpers ─────────────
 
-    /// Dispatch to the GetAddrInfo PendingCache by field enum.
-    ///
-    /// R-2: returns `&mut` from `&self` via `JsCell::get_mut`. Callers hold
-    /// the borrow only for the duration of a slot read/claim/unset and never
-    /// across a re-entrant call (the c-ares callback path that re-enters the
-    /// resolver runs *after* the borrow is dropped).
     #[allow(clippy::mut_from_ref)]
     fn pending_host_cache(&self, field: PendingCacheField) -> &mut PendingCache {
         // SAFETY: single-JS-thread invariant; caller holds the borrow only for
@@ -4272,13 +4149,6 @@ impl Resolver {
         }
     }
 
-    /// Dispatch to a typed ResolveInfoRequest cache by record type.
-    // PORT NOTE: Zig used `@field(this, "pending_{TYPE_NAME}_cache_cares")` with a comptime
-    // string. Each per-record cache is a distinct monomorphization of
-    // `HiveArray<resolve_info_request::PendingCacheKey<_>, 32>`; `PendingCacheKey<T>` is
-    // layout-identical for all `T` (only the `*mut ResolveInfoRequest<T>` payload's pointee
-    // type differs), so reinterpreting the field reference at the caller's `T` is sound when
-    // `T::CACHE_FIELD` selects the matching field.
     #[allow(clippy::mut_from_ref)]
     fn pending_cache_for<T: CAresRecordType>(
         &self,
@@ -4828,17 +4698,6 @@ impl Resolver {
         UvDnsPoll::destroy(poll);
     }
 
-    /// POSIX `FilePoll` callback (kqueue/epoll). Windows drives c-ares via
-    /// libuv (`on_dns_poll_uv`) instead, and the only caller
-    /// (`dispatch::__bun_run_file_poll`) is itself `#[cfg(not(windows))]`.
-    ///
-    /// R-2: `&self` (no `noalias`). `Channel::process` (== `ares_process_fd`)
-    /// synchronously fires c-ares completion callbacks which re-enter this
-    /// Resolver via a fresh `&Resolver` (e.g. `request_completed`,
-    /// `drain_pending_*`, `ref_`/`deref`). With every mutable field
-    /// UnsafeCell-backed, LLVM cannot cache `ref_count` across the FFI call —
-    /// the structural fix for the previously ASM-verified PROVEN_CACHED
-    /// miscompile that needed `black_box` laundering under `&mut self`.
     #[cfg(not(windows))]
     pub fn on_dns_poll(&self, poll: &mut FilePoll) {
         let vm = self.vm();
@@ -4965,21 +4824,10 @@ impl Resolver {
             // previously-initialized live FilePoll hive slot); JS-thread exclusive.
             let poll = unsafe { &mut **poll_entry.value_ptr };
 
-            // c-ares reports the full desired (readable, writable) set for this
-            // fd; sync the poll's registration to match. FilePoll now supports
-            // both directions on one poll (epoll: combined mask via CTL_MOD;
-            // kqueue: two filters on the same ident, both EV_DELETEd on
-            // unregister).
             let have_readable = poll.flags.contains(Async::PollFlag::PollReadable);
             let have_writable = poll.flags.contains(Async::PollFlag::PollWritable);
 
             if (have_readable && !readable) || (have_writable && !writable) {
-                // Dropping a direction. FilePoll has no per-direction
-                // unregister (epoll CTL_DEL removes both; a targeted kqueue
-                // EV_DELETE would need a new API), and leaving the unwanted
-                // direction armed would busy-loop on level-triggered writable
-                // once the socket connects. Full resync is the simplest
-                // correct path and c-ares DNS fds are short-lived.
                 let _ = poll.unregister(loop_, false);
                 if readable {
                     let _ = poll.register(loop_, Async::PollKind::Readable, false);
@@ -4988,10 +4836,6 @@ impl Resolver {
                     let _ = poll.register(loop_, Async::PollKind::Writable, false);
                 }
             } else {
-                // Only adding directions (or no change). register() issues a
-                // single CTL_MOD on epoll that preserves the other direction;
-                // on kqueue EV_ADD creates a separate (ident, filter) knote
-                // without disturbing the existing one.
                 if readable && !have_readable {
                     let _ = poll.register(loop_, Async::PollKind::Readable, false);
                 }
@@ -5247,10 +5091,6 @@ impl Resolver {
         options: GetAddrInfoOptions,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
-        // The system backends copy the hostname into a fixed `bun.PathBuffer` on the
-        // stack before null-terminating it. Reject anything that cannot fit so we never
-        // index past that buffer. RFC 1035 caps hostnames at 253 octets and NI_MAXHOST
-        // is 1025, so this never rejects a name that could have resolved.
         if name.len() >= MAX_PATH_BYTES || name.contains(&0) {
             let mut promise = JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
@@ -5572,10 +5412,6 @@ impl Resolver {
         while !cur.is_null() {
             // SAFETY: `cur` is non-null (loop guard) and walks the c-ares-allocated list.
             let current = unsafe { &*cur };
-            // Formatting reference: https://nodejs.org/api/dns.html#dnsgetservers
-            // Brackets '[' and ']' consume 2 bytes, used for IPv6 format (e.g., '[2001:4860:4860::8888]:1053').
-            // Port range is 6 bytes (e.g., ':65535').
-            // Null terminator '\0' uses 1 byte.
             let mut buf = [0u8; INET6_ADDRSTRLEN + 2 + 6 + 1];
             let family = current.family;
 
@@ -5600,10 +5436,6 @@ impl Resolver {
 
             // size = strlen(buf+1) + 1
             let size = ip.len() + 1;
-            // PORT NOTE: `bun_core::ZigString` lacks `with_encoding`/`to_js` (those live
-            // on `bun_jsc::zig_string::ZigString`). The formatted bytes here are pure
-            // ASCII (IP address + optional port), so `with_encoding()` would be a no-op
-            // anyway — borrow as a `bun_core::String` and hand to JS.
             use jsc::StringJsc as _;
             if port == IANA_DNS_PORT {
                 values.put_index(
@@ -5965,10 +5797,6 @@ impl Resolver {
         Ok(JSValue::UNDEFINED)
     }
 
-    // Resolves the given address and port into a host name and service using the operating system's underlying getnameinfo implementation.
-    // If address is not a valid IP address, a TypeError will be thrown. The port will be coerced to a number.
-    // If it is not a legal port, a TypeError will be thrown.
-    // FFI shim emitted by `export_host_fn!` below.
     pub fn global_lookup_service(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -6085,10 +5913,6 @@ impl Resolver {
     }
 }
 
-// ───────── JS host-fn FFI exports (Zig: comptime { @export(...) }) ─────────
-// The #[host_fn] attribute emits the JSC-ABI shim under the Rust function name;
-// re-export each under its `Bun__DNS__*` link name. Mirrors the proc-macro's
-// shim body (see `bun_jsc_macros::host_fn`, `HostFnKind::Free`).
 macro_rules! export_host_fn {
     ($scope:ident :: $f:ident, $name:literal) => {
         const _: () = {

@@ -7,15 +7,6 @@ use bun_sql::shared::Data;
 // re-exports it as `WTFStringImpl = *mut WTFStringImplStruct`.
 use bun_core::wtf::WTFStringImpl;
 
-// PORT NOTE: This entire type is `extern struct` in Zig and is passed by pointer
-// across FFI to C++ (`JSC__constructObjectFromDataCell`). Field layout is
-// load-bearing. LIFETIMES.tsv classifies several pointer fields as owned/shared/
-// borrowed (Vec / RefPtr / &[u8]), but those Rust types either change size
-// (fat slice ptrs) or add Drop semantics that a `#[repr(C)] union` cannot host
-// without `ManuallyDrop`. Raw thin pointers are kept for FFI fidelity; ownership
-// semantics from LIFETIMES.tsv are noted per-field below and enforced in
-// `deinit`. TODO(refactor): revisit once the C++ side is ported.
-
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct SQLDataCell {
@@ -169,10 +160,6 @@ impl Default for Raw {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct TypedArray {
-    // LIFETIMES.tsv: BORROW_PARAM → Option<&'a [u8]>. Kept as thin raw ptr for
-    // #[repr(C)] FFI layout (a Rust slice ref is a fat pointer). free_value=0
-    // for typed_array producers, so deinit's free path is effectively dead for
-    // borrowed buffers.
     pub head_ptr: *mut u8,
     // LIFETIMES.tsv: BORROW_FIELD → sub-slice of head_ptr; same rationale.
     pub ptr: *mut u8,
@@ -181,18 +168,7 @@ pub struct TypedArray {
     pub type_: JSType, // `type` is a Rust keyword
 }
 
-// PORT NOTE: Zig's `slice()`/`byteSlice()` accessors are intentionally not
-// ported as `&mut [u8]` getters. `len` is the typed-array *element* count
-// (consumed by SQLClient.cpp), not a byte length, so a `&mut [u8; len]` view
-// would be wrong for elements wider than u8; and the only Rust caller of
-// `byteSlice()` was `deinit`, which now builds the fat pointer with the safe
-// `ptr::slice_from_raw_parts_mut` directly (no intermediate `&mut` reference).
-
 impl SQLDataCell {
-    // PORT NOTE: kept as an explicit method, not `impl Drop` — this type is
-    // #[repr(C)], lives inside a C union, is bulk-passed to C++ by pointer, and
-    // freeing is gated on `free_value`. See PORTING.md §Idiom map (FFI types
-    // keep explicit destroy).
     pub fn deinit(&mut self) {
         if self.free_value == 0 {
             return;
@@ -295,21 +271,10 @@ impl SQLDataCell {
         count: u32,
         flags: Flags,
         result_mode: u8,
-        // Zig: `?[*]ExternColumnIdentifier` — nullable many-pointer. Accepts
-        // both a raw `*mut` (null == None) and an explicit `Option<*mut _>` so
-        // callers can mirror the Zig optional directly; collapsed to a raw
-        // pointer for the FFI call below.
         names_ptr: impl Into<Option<*mut ExternColumnIdentifier>>,
         names_count: u32,
     ) -> JsResult<JSValue> {
         let names_ptr: *mut ExternColumnIdentifier = names_ptr.into().unwrap_or(ptr::null_mut());
-        // Zig spec gates this on `bun.Environment.ci_assert`: open an
-        // `ExceptionValidationScope` so the C++ `DECLARE_THROW_SCOPE` inside
-        // SQLClient.cpp's `toJS` (depth 0 → depth 1) has its post-call
-        // `m_needExceptionCheck` satisfied here instead of tripping the next
-        // `DECLARE_TOP_EXCEPTION_SCOPE` constructor's verifier. The macro is a
-        // no-op in release (matches the Zig non-ci_assert branch) and a real
-        // C++ scope under debug/ASAN.
         bun_jsc::validation_scope!(scope, global_object);
 
         let value = JSC__constructObjectFromDataCell(
@@ -375,12 +340,6 @@ bitflags::bitflags! {
 
 // TODO(port): move to sql_jsc_sys
 unsafe extern "C" {
-    // `&JSGlobalObject` is ABI-identical to a non-null `*const JSGlobalObject`;
-    // remaining params are by-value scalars + raw (ptr,len) slice pairs that
-    // the C++ side bounds-checks against `count`/`names_count`. The sole call
-    // site is the safe `construct_object_from_data_cell` wrapper above, which
-    // already accepts the same raw-pointer shape from safe code, so the
-    // memory-validity contract is identical → `safe fn`.
     pub(crate) safe fn JSC__constructObjectFromDataCell(
         global: &JSGlobalObject,
         encoded_array_value: JSValue,

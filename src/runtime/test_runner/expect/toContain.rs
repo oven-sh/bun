@@ -105,10 +105,6 @@ impl Expect {
             return Ok(JSValue::UNDEFINED);
         }
 
-        // handle failure
-        // PORT NOTE: Zig shares one Formatter across both `to_fmt` calls; in Rust each
-        // `to_fmt` borrows `&mut Formatter` for the lifetime of the returned wrapper, so
-        // create a second Formatter (cheap struct init, no shared state) to satisfy borrowck.
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         if not {

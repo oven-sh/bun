@@ -46,14 +46,6 @@ use bun_wyhash::Wyhash;
 use crate::generics::{CssEql, CssHash, DeepClone};
 use bun_alloc::Arena;
 
-// ─── External-gate shims ───────────────────────────────────────────────────
-// `TokenList::{parse,to_css}` bottom out on a handful of leaf fns that still
-// carry `` in *other* files (`values/{url,ident}.rs`,
-// `css_modules.rs`). Those gates are stale — every dependency they cite now
-// exists — but this round's edit scope is `custom.rs` + `css_parser.rs` only.
-// To un-gate the TokenList hub without touching those files, the leaf bodies
-// are inlined here verbatim. Once `url.rs`/`ident.rs` un-gate, callers below
-// can swap back to the canonical methods and this module drops.
 mod ext {
     use super::*;
     use crate::dependencies;
@@ -182,14 +174,6 @@ mod ext {
     }
 }
 
-// ─── Token protocol impls ──────────────────────────────────────────────────
-// `Token` / `Num` / `Dimension` are defined data-only at crate root (lib.rs);
-// their `eql`/`hash` bodies in css_parser.rs forward to `generic::implement_*`
-// which bound on these traits — provide them here so the cycle closes and
-// `#[derive(CssEql/CssHash/DeepClone)]` on `TokenOrValue` resolves the
-// `Token(Token)` arm. Hand-written (not derived) because `Token` carries
-// `&'static [u8]` payloads (arena-lifetime placeholder) and named-field
-// variants whose layout lives outside this module's edit scope.
 impl CssEql for crate::Num {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
@@ -828,10 +812,6 @@ pub type TokenListFns = TokenList;
 
 pub(crate) type Fallbacks = (SupportsCondition, TokenList);
 
-/// A color value with an unresolved alpha value (e.g. a variable).
-/// These can be converted from the modern slash syntax to older comma syntax.
-/// This can only be done when the only unresolved component is the alpha
-/// since variables can resolve to multiple tokens.
 #[derive(CssEql, CssHash, DeepClone)]
 pub enum UnresolvedColor {
     /// An rgb() color.
@@ -1014,11 +994,6 @@ impl UnresolvedColor {
     }
 }
 
-// `ComponentParser::parse_relative` is generic over `C: LightDarkOwned` so the
-// `from light-dark(...)` relative-color path can rebuild a `light-dark()` of
-// whatever output type the caller is producing. Zig duck-types this via
-// `lightDarkOwned` on both `CssColor` and `UnresolvedColor`; in Rust the trait
-// lives in `values::color` and we wire `UnresolvedColor` into it here.
 impl css_values::color::LightDarkOwned for UnresolvedColor {
     #[inline]
     fn light_dark_owned(light: Self, dark: Self) -> Self {
@@ -1190,10 +1165,6 @@ impl EnvironmentVariableName {
     }
 }
 
-/// A UA-defined environment variable name.
-// PORT NOTE: Zig `css.DefineEnumProperty(@This())` provides eql/hash/parse/
-// to_css/deep_clone via comptime reflection over @tagName. Replaced by an
-// `EnumProperty` impl below (kebab-case match) — same protocol surface.
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, CssHash)]
 pub enum UAEnvironmentVariable {
     /// The safe area inset from the top of the viewport.
@@ -1331,15 +1302,6 @@ impl TokenOrValue {
     }
 }
 
-// ─── Clone / Debug shims ───────────────────────────────────────────────────
-// `selectors::parser::PseudoElement` / `PseudoClass` derive `Clone` over a
-// `TokenList` payload, and `media_query::MediaFeatureValue` derives
-// `Debug + Clone` over an `EnvironmentVariable` payload. The leaf value types
-// (`Url`, `CustomIdent`, …) don't all `#[derive(Clone)]` yet, so hand-roll
-// the structural clone here. PORT NOTE: Zig had no `Clone` distinction —
-// shallow struct copy was implicit; arena-slice payloads (`*const [u8]`) are
-// `Copy`, and the only owning fields are `Vec<TokenOrValue>` / `Vec<i32>`.
-
 impl Clone for TokenList {
     fn clone(&self) -> Self {
         TokenList { v: self.v.clone() }
@@ -1430,11 +1392,6 @@ impl core::fmt::Debug for EnvironmentVariable {
     }
 }
 
-/// A known property with an unparsed value.
-///
-/// This type is used when the value of a known property could not
-/// be parsed, e.g. in the case css `var()` references are encountered.
-/// In this case, the raw tokens are stored instead.
 pub struct UnparsedProperty {
     /// The id of the property.
     pub property_id: css::properties::PropertyId,

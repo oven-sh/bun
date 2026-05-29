@@ -30,14 +30,6 @@ use core::mem::MaybeUninit;
 
 use crate::{JSCArrayBuffer, JSGlobalObject, JSValue, JsResult};
 
-// ──────────────────────────────────────────────────────────────────────────
-// Generic accessor wrappers.
-//
-// The Zig bindgen emits per-field newtypes with `.get()` (optional) /
-// `.items()` (array). Dependents pattern-match on these without naming the
-// wrapper type directly, so a pair of generic carriers covers every field.
-// ──────────────────────────────────────────────────────────────────────────
-
 /// Optional-value accessor: `field.get() -> Option<T>`.
 #[derive(Debug, Default)]
 pub struct GenOpt<T>(Option<T>);
@@ -84,35 +76,11 @@ pub mod bun_object {
     }
 }
 
-// Shorthand for the bindgen string payload. The real generator hands back a
-// `bun.String` / `WTFStringImpl`; downstream code only calls `.length()` /
-// `.to_utf8()` / `.to_owned_slice_z()` on it, all of which `bun_core::String`
-// already provides.
 pub type GenString = bun_core::String;
 
-/// `bun.bun_js.jsc.JSCArrayBuffer.Ref` — adopted `*mut JSC::ArrayBuffer` (refcount
-/// already +1 from C++); deref via `JSC__ArrayBuffer__deref` on drop.
-// TODO(port): wrap in `bun_ptr::ExternalShared<JSCArrayBuffer>` once that crate
-// exposes `adopt(*mut T)`. Raw ptr for now (leaks on drop).
 pub type GenArrayBuffer = *mut JSCArrayBuffer;
 
-/// `bun.bun_js.webcore.Blob.Ref` — adopted `*mut Blob` (the codegen `m_ctx`
-/// payload). LAYERING: `webcore::Blob` lives in `bun_runtime` (a dependent of
-/// this crate); the bindgen extern struct only ever stores the raw pointer
-/// (filled by C++ `bindgenConvertJSTo*`), so it stays erased as `*mut c_void`
-/// here and is cast to `*mut bun_runtime::webcore::Blob` by the consumer in
-/// `bun_runtime::api::bun::spawn::stdio::convert_from_extern`.
 pub type GenBlob = *mut core::ffi::c_void;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Extern-ABI helper layouts (mirror `src/jsc/bindgen.zig`).
-//
-// `ExternTaggedUnion(&.{T0, T1, ...})` in Zig is `extern struct { data:
-// extern union { @"0": T0, ... }, tag: u8 }`. Rust has no variadic
-// `#[repr(C)] union`, so we hand-roll the few arities the bindgen actually
-// emits for the structs below. All extern types are `Copy` POD; the
-// `convert_from_extern` step takes ownership of any embedded heap refs.
-// ──────────────────────────────────────────────────────────────────────────
 
 type RawWTFStringImpl = *mut bun_core::WTFStringImplStruct;
 
@@ -145,10 +113,6 @@ impl<T: Copy> ExternOptional<T> {
     }
 }
 
-/// `bindgen.ExternArrayList(T)` — `extern struct { data: ?[*]T, length: c_uint,
-/// capacity: c_uint }`.
-// Clone/Copy: bitwise OK — FFI mirror of a C++ buffer; Rust treats it as a
-// borrowed view and adopts ownership exactly once at the call site.
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct ExternArrayList<T> {
@@ -215,10 +179,6 @@ struct ExternSocketConfigHandlers {
     binary_type: SocketConfigHandlersBinaryType,
 }
 
-// safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-// ABI-identical to non-null `*mut`); `&mut MaybeUninit<T>` is ABI-identical to
-// non-null `*mut T` (`MaybeUninit<T>` is layout-transparent over `T`). The C++
-// side fully initializes `*result` iff it returns `true`.
 unsafe extern "C" {
     safe fn bindgenConvertJSToSocketConfigHandlers(
         global: &JSGlobalObject,
@@ -244,10 +204,6 @@ impl SocketConfigHandlers {
     }
 
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
-        // Zig wraps this in an `ExceptionValidationScope` for the
-        // `assertExceptionPresenceMatches(!success)` check; the scope must exist
-        // *before* the FFI call so the C++ ThrowScope's `simulateThrow()` is
-        // satisfied under `validateExceptionChecks=1`.
         let mut ext = MaybeUninit::<ExternSocketConfigHandlers>::uninit();
         crate::call_false_is_throw(global, || {
             bindgenConvertJSToSocketConfigHandlers(global, value, &mut ext)
@@ -302,25 +258,6 @@ pub struct SSLConfig {
     pub client_renegotiation_limit: u32,
     pub client_renegotiation_window: u32,
 }
-
-// ── refcount release on drop ──────────────────────────────────────────────
-//
-// `adopt_string` adopts a +1 `WTF::StringImpl` ref into a `GenString`
-// (= `bun_core::String`), which is `Copy` and has no `Drop`. The Zig
-// bindgen output instead types these fields as `bun.string.WTFString.Optional`
-// — an RAII `WTF::Ref`-alike whose `deinit()` derefs — and the generated
-// struct's `deinit()` calls `bun.memory.deinit(&field)` on each. We replicate
-// that here by deref-ing every owned string field from the container's `Drop`
-// (matches `bindgen_generated.SSLConfig.deinit` in ssl_config.zig).
-//
-// `GenArrayBuffer` / `GenBlob` raw-pointer payloads likewise carry an adopted
-// +1 ref (C++ `ExternTraits<RefPtr<T>>::convertToExtern` calls `leakRef()`);
-// released here via the matching `ExternalSharedDescriptor::ext_deref`.
-//
-// `.get()` on `GenOpt` / `GenVal` returns a *bitwise* `Clone` of the
-// `bun_core::String` (the derived `Clone`, not the inherent `clone()` which
-// bumps), so it does not take an additional ref — the single adopted ref stays
-// owned by the field and is released exactly once below.
 
 #[inline]
 fn release_gen_opt_string(s: &GenOpt<GenString>) {
@@ -715,60 +652,12 @@ impl SocketConfig {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Per-class cached-accessor modules (`jsc.Codegen.JS*` in Zig).
-//
-// Each `JS${Type}` module exposes the C++-side hooks the `.classes.ts`
-// generator emits: `from_js` / `from_js_direct` / `to_js` / `get_constructor`
-// plus one `${name}_get_cached` / `${name}_set_cached` pair per
-// `cache: true` property. The bodies are filled in by
-// `bun_jsc::codegen_cached_accessors!` — see that macro for the extern-symbol
-// contract.
-// ──────────────────────────────────────────────────────────────────────────
-
-// ──────────────────────────────────────────────────────────────────────────
-// Thin host-fn forwarders for `cache: true` properties.
-//
-// `js_class_module!` / `generate-classes.ts` already emit
-// `${prop}_get_cached`/`${prop}_set_cached` (and a `Gc` enum) per cached prop.
-// Several JS classes (MySQLConnection, PostgresSQLConnection, RedisClient)
-// then hand-write the *other* half — the `get_*`/`set_*` host-fns that the
-// `.classes.ts` getter/setter thunks dispatch to — as pure forwarding shims.
-// This macro stamps those out so the per-class `impl` block is one line per
-// prop instead of ~10.
-//
-// `($get, $set => $prop)` maps the codegen-expected host-fn idents (snake-
-// cased from the `.classes.ts` getter/setter names, e.g. `get_on_connect`)
-// to the cached-accessor prop ident (`onconnect`). The two namings are NOT
-// derivable from each other (`on_connect` vs `onconnect`), hence the explicit
-// mapping. `lazy_array($get => $prop)` covers the `queries`-style getter that
-// lazily seeds the slot with an empty `JSArray` on first read.
-//
-// The emitted setter returns `()` — `host_fn_setter_this[_shared]` accepts
-// that via `IntoHostSetterReturn for ()` (≡ `true` at the ABI), so this is
-// drop-in for both `sharedThis` and `&mut`-receiver classes.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Stamp out trivial cached-prop getter/setter host-fns inside an `impl` block.
-///
-/// ```ignore
-/// bun_jsc::cached_prop_hostfns! {
-///     crate::jsc::codegen::JSPostgresSQLConnection;
-///     lazy_array(get_queries => queries),
-///     (get_on_connect, set_on_connect => onconnect),
-///     (get_on_close,   set_on_close   => onclose),
-/// }
-/// ```
 #[macro_export]
 macro_rules! cached_prop_hostfns {
     ($gen:path; $($rest:tt)*) => {
         $crate::cached_prop_hostfns!(@loop $gen; $($rest)*);
     };
     (@loop $gen:path;) => {};
-    // lazy-array getter (seeds an empty `JSArray` on first read).
-    // `$gc/$sc` are the codegen'd `${prop}_get_cached`/`${prop}_set_cached`
-    // free fns in `$gen` — passed explicitly because `macro_rules!` can't
-    // camelCase→snake_case the prop ident.
     (@loop $gen:path; lazy_array($get:ident => $gc:ident, $sc:ident) $(, $($rest:tt)*)?) => {
         pub fn $get(
             _this: &Self,
@@ -808,14 +697,6 @@ macro_rules! cached_prop_hostfns {
     };
 }
 
-/// Stamp out the `do_ref`/`do_unref` host-fn pair that forwards to a
-/// `JsCell<KeepAlive>`-shaped field. Expands inside an `impl` block.
-///
-/// ```ignore
-/// bun_jsc::poll_ref_hostfns!(field = poll_ref, ctx = vm_ctx);
-/// bun_jsc::poll_ref_hostfns!(field = poll_ref, ctx = vm_ctx,
-///     after = |this: &Self| this.update_has_pending_activity());
-/// ```
 #[macro_export]
 macro_rules! poll_ref_hostfns {
     (field = $field:ident, ctx = $ctx:ident $(, after = $after:expr)? $(,)?) => {
@@ -842,21 +723,6 @@ macro_rules! poll_ref_hostfns {
     };
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// `impl_js_class_via_generated!` — single-source `JsClass` impl that delegates
-// to a per-type generated accessor module (any module exposing the standard
-// `from_js` / `from_js_direct` / `to_js` [/ `get_constructor`] free-fn surface:
-// `crate::generated_classes::js_$T` from generate-classes.ts, the
-// `js_class_module!` expansions in this file, or `bun_sql_jsc::jsc::codegen`).
-//
-// The three generators disagree on `from_js`'s return shape
-// (`Option<NonNull<T>>` vs `Option<*mut T>` vs `Option<*mut ()>`); the
-// [`IntoRawMut`] adapter erases that difference with a single `.cast()`, so
-// one macro body compiles against all three. `to_js` uniformly takes
-// `*mut <gen-payload>`, which `.cast()` reaches from `*mut Self` regardless of
-// whether the payload is `Self`, `Self<'static>`, or type-erased `()`.
-// ──────────────────────────────────────────────────────────────────────────
-
 /// Adapter erasing the `from_js` return-type difference between accessor-module
 /// generators (`NonNull<U>` vs `*mut U`). Used by
 /// [`impl_js_class_via_generated!`]; not part of the public API.
@@ -879,24 +745,6 @@ impl<T, U> IntoRawMut<T> for *mut U {
     }
 }
 
-/// `impl JsClass for $T` that boxes `self` into the GC-owned `m_ctx` slot and
-/// routes every method through `$gen` (a `js_$T`-shaped accessor module).
-///
-/// # Forms
-/// ```ignore
-/// impl_js_class_via_generated!(Foo => crate::generated_classes::js_Foo);
-/// impl_js_class_via_generated!(Foo => path::to::JSFoo, no_constructor);
-/// impl_js_class_via_generated!(for<'a> Foo<'a> => js_Foo, no_constructor);
-/// ```
-///
-/// `no_constructor` skips `get_constructor` (the `.classes.ts` `noConstructor:
-/// true` case — no `${T}__getConstructor` C++ export); the trait default
-/// (`JSValue::UNDEFINED`) applies.
-///
-/// **Do not use** when `to_js` carries side-effects beyond box-and-hand-off
-/// (e.g. `Request` runs `calculate_estimated_byte_size` + body-stream GC
-/// migration) or when the payload is intrusively refcounted and never held
-/// by-value (e.g. `HTMLBundle`).
 #[macro_export]
 macro_rules! impl_js_class_via_generated {
     // `for<…>` arms FIRST: a leading `for` would otherwise feed into the `:ty`
@@ -929,10 +777,6 @@ macro_rules! impl_js_class_via_generated {
             #[inline]
             fn to_js(self, g: &$crate::JSGlobalObject) -> $crate::JSValue {
                 use $gen as __g;
-                // Ownership of the boxed payload transfers to the C++ wrapper
-                // (freed via `${T}Class__finalize`). `.cast()` erases any
-                // payload-type / lifetime mismatch between `Self` and the
-                // accessor module's monomorphized pointee.
                 __g::to_js($crate::heap::into_raw(::std::boxed::Box::new(self)).cast(), g)
             }
             $(
@@ -947,28 +791,6 @@ macro_rules! impl_js_class_via_generated {
     };
 }
 
-/// Expands to a `pub mod $mod` containing the standard `.classes.ts` codegen
-/// surface for a JS wrapper class: `from_js` / `from_js_direct` / `from_js_ref`
-/// / `to_js` / `to_js_unchecked` / `dangerously_set_ptr` / `get_constructor`,
-/// plus a cached-accessor pair per listed property.
-///
-/// Mirrors Zig `jsc.Codegen.JS${T}` (one impl, generated once — see
-/// `src/codegen/generate-classes.ts:2428`). All extern symbols use
-/// `JSC_CALLCONV` (= sysv64 on win-x64, C otherwise).
-///
-/// `$Payload` is the native `m_ctx` payload type. When the payload struct is
-/// defined in (or below) this crate — e.g. `webcore_types::Blob` — pass it so
-/// the extern signatures here unify with that file's typed declarations
-/// (avoids `clashing_extern_declarations`). When the payload lives in a
-/// dependent crate (`bun_runtime`), pass `()` (type-erased; the dependent
-/// crate casts).
-///
-/// # Forms
-/// ```ignore
-/// js_class_module!(JSFoo = "Foo" { propA, propB });                 // Payload = ()
-/// js_class_module!(JSFoo = "Foo" as super::Foo { propA });          // typed Payload
-/// js_class_module!(JSFoo = "Foo" as super::Foo, impl_js_class {});  // + impl JsClass for Foo
-/// ```
 #[macro_export]
 macro_rules! js_class_module {
     // Shorthand: payload erased to `()` (lives in a higher crate).
@@ -996,24 +818,6 @@ macro_rules! js_class_module {
 
             type Payload = $Payload;
 
-            // `${TypeName}__fromJS` / `__fromJSDirect` / `__create` /
-            // `__getConstructor` — implemented in C++ by
-            // `src/codegen/generate-classes.ts` (`symbolName(typeName, name)`
-            // ⇒ `${typeName}__${name}`). All use `JSC_CALLCONV` (= sysv64 on
-            // win-x64, C otherwise).
-            //
-            // `improper_ctypes`: when `$Payload` is a real Rust struct (e.g.
-            // `Blob`) the lint recurses through its fields and flags
-            // non-`#[repr(C)]` interiors. The pointer is opaque to C++ — only
-            // Rust dereferences it — so the lint is a false positive here.
-            // `safe fn`: `JSValue` is a by-value tagged i64 and `JSGlobalObject`
-            // is an opaque `UnsafeCell`-backed ZST handle (`&` is ABI-identical
-            // to a non-null `*mut`). `__from_js*` only type-check the encoded
-            // value and return the stored `m_ctx` pointer (or null) — the C++
-            // side never dereferences `Payload`, so there is no Rust-side
-            // precondition. `__dangerously_set_ptr` keeps `unsafe`
-            // because it installs `ptr` into a GC cell whose finalizer will
-            // later free it (deferred deref → ownership precondition).
             $crate::jsc_abi_extern! {
                 #[allow(improper_ctypes)]
                 {
@@ -1046,11 +850,6 @@ macro_rules! js_class_module {
                 if ptr.is_null() { None } else { Some(ptr) }
             }
 
-            /// [`from_js`] as a [`ParentRef`](::bun_ptr::ParentRef) — wraps the
-            /// raw `m_ctx` backref deref. The payload is GC-rooted by the
-            /// caller's `CallFrame` for the duration of the host call, so the
-            /// `ParentRef` invariant (pointee outlives holder) holds for any
-            /// stack-scoped use.
             #[inline]
             pub fn from_js_ref(v: JSValue) -> ::core::option::Option<::bun_ptr::ParentRef<Payload>> {
                 from_js(v)
@@ -1066,10 +865,6 @@ macro_rules! js_class_module {
                 __create(global.as_ptr(), ptr)
             }
 
-            /// Zig-compat alias for [`to_js`] with `(global, ptr)` argument
-            /// order — matches `jsc.Codegen.JS${T}.toJSUnchecked` so ported
-            /// `Response::to_js` / `Request::to_js` call sites resolve without
-            /// reordering.
             #[inline]
             pub fn to_js_unchecked(global: &JSGlobalObject, ptr: *mut Payload) -> JSValue {
                 to_js(ptr, global)

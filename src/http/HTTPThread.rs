@@ -33,25 +33,12 @@ struct SslContextCacheEntry {
 }
 
 impl SslContextCacheEntry {
-    /// Mutable access to the cached `NewHttpContext`.
-    ///
-    /// INVARIANT: `ctx` is set once at insert (in `connect`) to a fresh
-    /// `heap::release`-boxed `NewHttpContext` on which the cache holds one
-    /// strong intrusive ref; it stays live until eviction's `deref` drops it.
-    /// The map and all callers are HTTP-thread-only, so the returned `&mut`
-    /// is the sole live borrow. Centralises the `Option<NonNull>`-style
-    /// `(*entry.ctx.as_ptr()).…` raw deref repeated at every lookup.
     #[inline]
     fn ctx_mut<'a>(&self) -> &'a mut NewHttpContext<true> {
         // SAFETY: see INVARIANT above.
         unsafe { &mut *self.ctx.as_ptr() }
     }
 
-    /// Release the strong intrusive ref the cache holds on `ctx` (taken at
-    /// insert in `connect`). Consumes the entry; `config_ref`'s `Drop` releases
-    /// the SSLConfig ref. Centralises the raw
-    /// `NewHttpContext::deref(entry.ctx.as_ptr())` open-coded at both eviction
-    /// paths so the set-once `NonNull` is dereferenced in one place.
     fn release(self) {
         // SAFETY: same INVARIANT as [`ctx_mut`] — `ctx` is a
         // `heap::release`-boxed `NewHttpContext` on which the cache holds one
@@ -68,12 +55,6 @@ const SSL_CONTEXT_CACHE_TTL_NS: u64 = 30 * (60 * 1_000_000_000); // 30 * std.tim
 static CUSTOM_SSL_CONTEXT_MAP: bun_core::RacyCell<
     Option<ArrayHashMap<*const SSLConfig, SslContextCacheEntry>>,
 > = bun_core::RacyCell::new(None);
-/// Borrow the (lazily-initialized) SSL-context cache. PORTING.md §Global
-/// mutable state: only ever accessed from the single HTTP client thread after
-/// `on_start`, so the `&'static mut` is the unique live borrow at every call
-/// site (callers must not hold the result across a call that re-enters this
-/// accessor; the prior `*mut` API enforced the same per-statement reborrow
-/// shape).
 fn custom_ssl_context_map() -> &'static mut ArrayHashMap<*const SSLConfig, SslContextCacheEntry> {
     // SAFETY: HTTP-thread-only; initialized on first call. Every call site is
     // a per-statement reborrow (audited in r3), so no two `&mut` overlap.
@@ -84,42 +65,16 @@ use bun_event_loop::MiniEventLoop as mini_event_loop;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 
 pub struct HttpThread {
-    /// Per-thread `MiniEventLoop` singleton — published by
-    /// `MiniEventLoop::init_global()` in [`on_start`]; outlives the thread
-    /// (Zig: `bun.http.http_thread.loop = bun.jsc.MiniEventLoop.initGlobal(null, null)`,
-    /// HTTPThread.zig:228+235).
     pub loop_: *const MiniEventLoop<'static>,
     /// The raw uSockets loop inside `loop_.loop` — split out so HTTPContext
     /// can `SocketGroup::init` without naming MiniEventLoop.
     pub uws_loop: *mut uws::Loop,
     pub http_context: NewHttpContext<false>,
     pub https_context: NewHttpContext<true>,
-    /// Stashed `InitOpts` for the default HTTPS context. When the user passed
-    /// no explicit CA config, `on_start` defers
-    /// `https_context.init_with_thread_opts` (which calls
-    /// `us_ssl_ctx_from_options` → `us_get_default_ca_store`, ~0.7 ms CPU +
-    /// ~400 KB heap to parse the bundled root certs) until the first SSL
-    /// connect actually arrives via [`HttpThread::connect`]`::<true>`. A
-    /// fully-cached `bun install` never makes one, so the cost is skipped
-    /// entirely. If `--cafile` / `--ca` *was* passed, `on_start` still runs
-    /// init eagerly so a bad CA file crashes at thread start (the long-standing
-    /// test contract) and this stays `None`. HTTP-thread-only after `on_start`;
-    /// `Option::take` is the once-guard (no atomics needed — `connect` is never
-    /// reentrant).
     lazy_https_init: Option<InitOpts>,
 
     pub queued_tasks: Queue,
-    /// Tasks popped from `queued_tasks` that couldn't start because
-    /// `active_requests_count >= max_simultaneous_requests`. Kept in FIFO order
-    /// and processed before `queued_tasks` on the next `drainEvents`. Owned by
-    /// the HTTP thread; never accessed concurrently.
     pub deferred_tasks: Vec<NonNull<AsyncHttp<'static>>>,
-    /// Set by `drainQueuedShutdowns` when a shutdown's `async_http_id` wasn't in
-    /// `socket_async_http_abort_tracker` — the request is either not yet started
-    /// (still in `queued_tasks`/`deferred_tasks`) or already done. `drainEvents`
-    /// uses this to decide whether it must scan the queued/deferred lists for
-    /// aborted tasks when `active >= max`; without it the common at-capacity
-    /// path stays O(1). Owned by the HTTP thread.
     pub has_pending_queued_abort: bool,
 
     pub queued_shutdowns: Vec<ShutdownMessage>,
@@ -139,21 +94,10 @@ pub struct HttpThread {
     pub lazy_libdeflater: Option<Box<LibdeflateState>>,
     pub lazy_request_body_buffer: Option<Box<HeapRequestBodyBuffer>>,
 
-    /// Every `ThreadlocalAsyncHTTP` box currently in flight on this thread.
-    /// Inserted by [`start_queued_task`] right after `heap::release`; removed
-    /// by `AsyncHTTP::on_async_http_callback_raw` immediately before its
-    /// `std::alloc::dealloc`. HTTP-thread-only. Exists so
-    /// [`shutdown_for_exit`] can reclaim each clone-owned box at process exit
-    /// — the request socket never reaches a terminal state once the JS thread
-    /// stops driving the world, so the box would otherwise strand.
     pub in_flight: Vec<NonNull<crate::ThreadlocalAsyncHttp<'static>>>,
 }
 
 impl HttpThread {
-    /// Mirror of Zig `initOnce`'s `bun.http.http_thread = .{ ... }` field-init
-    /// list (HTTPThread.zig:195-206). `loop_`/`uws_loop` are filled in by
-    /// `on_start` on the spawned thread; `timer` is started on the calling
-    /// thread per spec.
     fn new() -> Self {
         Self {
             loop_: core::ptr::null(),
@@ -252,10 +196,6 @@ impl RequestBodyBuffer {
     }
 
     pub(crate) fn to_array_list(&mut self) -> Vec<u8> {
-        // TODO(port): Zig built an ArrayList over self.arena()/self.allocated_slice() with len=0.
-        // Rust Vec cannot adopt a foreign allocator+buffer; expose a cursor type instead.
-        // PERF(port): was FixedBufferAllocator/StackFallback (allocator() accessor
-        // dropped per PORTING.md non-AST rule; callers should write into allocated_slice() directly).
         let mut arraylist = Vec::with_capacity(self.allocated_slice().len());
         arraylist.clear();
         arraylist
@@ -297,15 +237,6 @@ pub struct LibdeflateState {
 unsafe impl bun_core::Zeroable for LibdeflateState {}
 
 impl LibdeflateState {
-    /// Mutable access to the libdeflate decompressor handle.
-    ///
-    /// INVARIANT: `decompressor` is set once in [`HttpThread::deflater`] from
-    /// `libdeflate_alloc_decompressor` (panics on null) and is never freed
-    /// until thread teardown. The handle is a separate C heap allocation
-    /// disjoint from `self`, so the returned `&mut` does not alias
-    /// `shared_buffer`. HTTP-thread-only — sole live borrow. Centralises the
-    /// raw `&mut *deflater.decompressor` upgrade repeated at every
-    /// `decompress` call site.
     #[inline]
     pub(crate) fn decompressor_mut<'a>(
         &self,
@@ -400,14 +331,6 @@ impl HttpThread {
         self.uws_loop
     }
 
-    /// Mutable access to the live uSockets event loop.
-    ///
-    /// INVARIANT: `uws_loop` is set once in [`on_start`] (published via the
-    /// `has_awoken` Release store) and outlives the HTTP thread. The loop is a
-    /// separate C heap allocation disjoint from `self`. HTTP-thread-only at
-    /// every caller — `wakeup()` is the sole cross-thread entry and uses the
-    /// raw FFI call instead. Centralises the raw `&mut *self.uws_loop`
-    /// upgrade repeated in `process_events`.
     #[inline]
     fn uws_loop_mut<'a>(&self) -> &'a mut uws::Loop {
         // SAFETY: see INVARIANT above.
@@ -466,11 +389,6 @@ impl HttpThread {
         }
     }
 
-    /// One-shot lazy init of the default HTTPS context. See
-    /// [`HttpThread::lazy_https_init`] for rationale. Called on the HTTP
-    /// thread from [`HttpThread::connect`]`::<true>` only; the `Option::take`
-    /// is the once-guard. On failure, `on_init_error` diverges (matching the
-    /// eager-init crash semantics from Zig `onStart`).
     #[inline]
     fn ensure_https_context_init(&mut self) {
         if let Some(opts) = self.lazy_https_init.take() {
@@ -492,17 +410,8 @@ impl HttpThread {
 // TODO(port): narrow error set
     {
         if IS_SSL {
-            // First SSL connect: materialize the default HTTPS `SSL_CTX` +
-            // socket group now (deferred from `on_start`). Runs once; every
-            // SSL request — including unix-socket and proxy paths below —
-            // funnels through here before touching `https_context.{group,secure}`.
             self.ensure_https_context_init();
         }
-        // PORT NOTE: borrowck — `slice()` borrows `client`; capture into a
-        // `bun_ptr::RawSlice` (encapsulated outlives-holder invariant) so the
-        // borrow of `client` ends before we hand `&mut client` to
-        // `connect_socket`. Backing storage is `client.unix_socket_path`, which
-        // `connect_socket` does not touch.
         let unix_path = bun_ptr::RawSlice::new(client.unix_socket_path.slice());
         if !unix_path.is_empty() {
             return self
@@ -697,10 +606,6 @@ impl HttpThread {
                         }
                     }
                 } else {
-                    // No socket for this id. It may be a request coalesced onto a
-                    // leader's in-flight h2 TLS connect (parked in `pc.waiters`
-                    // with no abort-tracker entry); scan those first so the abort
-                    // doesn't wait for the leader's connect to resolve.
                     if self.abort_pending_h2_waiter(http.async_http_id) {
                         continue;
                     }
@@ -709,11 +614,6 @@ impl HttpThread {
                     if h3::ClientContext::abort_by_http_id(http.async_http_id) {
                         continue;
                     }
-                    // Otherwise the request either hasn't started yet (still in
-                    // `queued_tasks`/`deferred_tasks`) or has already completed.
-                    // Flag it so `drainEvents` knows to scan the queue for
-                    // aborted-but-unstarted tasks even when `active >= max`
-                    // would otherwise short-circuit.
                     self.has_pending_queued_abort = true;
                 }
             }
@@ -894,36 +794,10 @@ impl HttpThread {
         let mut active = ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed);
         let max = MAX_SIMULTANEOUS_REQUESTS.load(Ordering::Relaxed);
 
-        // Fast path: at capacity and no queued/deferred task could possibly be
-        // aborted. A queued task can only become aborted via `scheduleShutdown`,
-        // which we just drained — `drainQueuedShutdowns` sets
-        // `has_pending_queued_abort` for any id it couldn't find in the socket
-        // tracker. If that's clear, there's nothing to fail-fast and nothing can
-        // start, so don't walk the lists.
         if active >= max && !self.has_pending_queued_abort {
             return;
         }
 
-        // Deferred tasks are ones we previously popped from the MPSC queue but
-        // couldn't start because we were at max. They stay in FIFO order ahead of
-        // anything still in `queued_tasks`.
-        //
-        // Already-aborted tasks are started regardless of `max`: `start_()` will
-        // observe the `aborted` signal and fail immediately with
-        // `error.AbortedBeforeConnecting`, and `onAsyncHTTPCallback` decrements
-        // `active_requests_count` in the same turn — so they never hold a slot.
-        // Without this, an aborted fetch that was queued behind `max` would sit
-        // there until some unrelated request completed; if every active request
-        // is itself hung, the aborted one never settles and its promise hangs
-        // forever even though the user called `controller.abort()`.
-        //
-        // `startQueuedTask` can re-enter `onAsyncHTTPCallback` synchronously (for
-        // aborted tasks, or when connect() fails immediately), which reads both
-        // `active_requests_count` and `deferred_tasks.items.len` to decide whether
-        // to wake the loop. To keep those reads accurate we swap the deferred list
-        // out before iterating so the field reflects only tasks still waiting, and
-        // reload `active` from the atomic after every start rather than tracking
-        // it locally.
         self.has_pending_queued_abort = false;
         {
             let pending = core::mem::take(&mut self.deferred_tasks);
@@ -1025,18 +899,6 @@ impl HttpThread {
         self.wakeup();
     }
 
-    /// Called from [`crate::shutdown_for_exit`] on the HTTP thread once
-    /// `SHUTDOWN_REQUESTED` is observed. Reclaims every clone-owned
-    /// `ThreadlocalAsyncHTTP` box by mirroring the teardown
-    /// `on_async_http_callback_raw` performs (drop the clone-only fields,
-    /// then raw-dealloc the storage — NOT `Box::drop`, since the remaining
-    /// fields are bitwise-shared with the JS-thread original). The full
-    /// result callback is not invoked (the JS thread is parked in
-    /// `global_exit()` waiting on us and will not process the completion);
-    /// only `release_at_shutdown` runs so the owner can drop the ref it
-    /// took for the in-flight callback — without it the `ctx` ⇄
-    /// `Box<AsyncHTTP>` cycle is unreachable from any root and LSan reports
-    /// the whole chain as indirect leaks.
     fn dealloc_in_flight_for_exit(&mut self) {
         bun_core::scoped_log!(
             HTTPThread,
@@ -1052,12 +914,6 @@ impl HttpThread {
             // `client`, but the loop below never ticks again (we park
             // forever after this returns).
             unsafe {
-                // Snapshot before tearing down `client` — `release_at_shutdown`
-                // must run after the clone-only fields drop (it may park `ctx`
-                // for JS-thread `deinit`, which frees the original
-                // `Box<AsyncHTTP>` whose bitwise-shared fields those clone
-                // fields alias) but before the raw `dealloc` (so `ctx` is
-                // observed once per in-flight entry).
                 let release = (*nn.as_ptr()).async_http.result_callback;
                 let client = &mut (*nn.as_ptr()).async_http.client;
                 drop(core::mem::take(&mut client.redirect));
@@ -1082,10 +938,6 @@ impl HttpThread {
     }
 
     pub fn wakeup(&self) {
-        // Acquire (not Relaxed): pairs with the Release store in `on_start`
-        // so the read of `self.uws_loop` (a non-atomic field set there)
-        // observes the published value. This is the canonical "Relaxed gives
-        // no happens-before for the init it guards" case.
         if self.has_awoken.load(Ordering::Acquire) {
             // SAFETY: uws_loop is the live HTTP-thread loop set in on_start.
             // Call the raw extern (not `Loop::wakeup(&mut self)`) — this runs
@@ -1095,21 +947,10 @@ impl HttpThread {
         }
     }
 
-    /// Enqueue a batch of `AsyncHttp` tasks for the HTTP thread. Safe to
-    /// call from any thread: only touches the lock-free `queued_tasks` MPSC
-    /// queue and `wakeup()` (atomic load + raw FFI call). This is the
-    /// **only** cross-thread entry point — every other `HttpThread` method
-    /// is HTTP-thread-only via [`http_thread()`](crate::http_thread).
     pub fn schedule(batch: bun_threading::thread_pool::Batch) {
         if batch.len == 0 {
             return;
         }
-        // Release-mode guard: `HttpThread` has niche-bearing fields, so
-        // dereffing `as_mut_ptr()` below on an uninitialized static is UB.
-        // The "every caller goes through `init`" invariant was unenforced
-        // (e.g. `async_http::preconnect` did not), so check it here. The
-        // `Acquire` load pairs with `init_once`'s `Release` store to publish
-        // the `HTTP_THREAD.write(..)` to this thread.
         assert!(
             crate::HTTP_THREAD_INIT.load(Ordering::Acquire),
             "HTTPThread::schedule() called before HTTPThread::init()"
@@ -1172,10 +1013,6 @@ fn start_queued_task(
     let cloned = bun_core::heap::release(cloned);
     in_flight.push(NonNull::from(&*cloned).cast::<crate::ThreadlocalAsyncHttp<'static>>());
     cloned.async_http.real = NonNull::new(http);
-    // Clear stale queue pointers - the clone inherited http.next and http.task.node.next
-    // which may point to other AsyncHTTP structs that could be freed before the callback
-    // copies data back to the original. If not cleared, retrying a failed request would
-    // re-queue with stale pointers causing use-after-free.
     cloned.async_http.next.clear();
     cloned.async_http.task.node.next = core::ptr::null_mut();
     cloned.async_http.on_start();
@@ -1190,30 +1027,11 @@ fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> {
 
 use core::cell::Cell;
 
-// ═══════════════════════════════════════════════════════════════════════════
-// init / on_start / process_events — depends on `bun_event_loop::MiniEventLoop`
-// (higher-tier) for `loop_.loop_.{tick,inc,dec,num_polls}`. The wakeup path
-// above uses the raw `*mut uws::Loop` directly so the rest of the thread
-// machinery compiles; the actual event-loop drive stays gated until the tier
-// boundary is resolved.
-// TODO(port): MiniEventLoop is in bun_event_loop (not in bun_http deps).
-// ═══════════════════════════════════════════════════════════════════════════
-
 mod _event_loop_draft {
     use super::*;
     use std::sync::Once;
 
     static INIT_ONCE: Once = Once::new();
-    // PORT NOTE: Zig `std.Thread.spawn` + `.detach()` allocates nothing on the
-    // heap. Rust's `Builder::spawn` allocates an `Arc<thread::Inner>` (48 B)
-    // shared between the `JoinHandle` and the new thread's TLS `current()`.
-    // Dropping the handle leaves the only strong ref inside the spawned
-    // thread's TLS, which LSAN does not scan as a root — so when the main
-    // thread reaches `Global::exit` *before* the HTTP thread has installed
-    // that TLS slot, LSAN reports the Arc as a direct leak and (with CI's
-    // `abort_on_error=1`) the process SIGABRTs (exit 134). Park the handle in
-    // a process-lifetime static so the Arc is always reachable from a global
-    // root, matching the Zig semantics of "detach" without the false positive.
     static HTTP_THREAD_HANDLE: std::sync::OnceLock<std::thread::JoinHandle<()>> =
         std::sync::OnceLock::new();
 
@@ -1250,15 +1068,6 @@ mod _event_loop_draft {
         Output::Source::configure_named_thread(bun_core::zstr!("HTTP Client"));
         // PERF(port): was MimallocArena bulk-free for bun.http.default_allocator.
 
-        // uSockets' long-timeout counter is `% 240` minutes (see
-        // `us_socket_long_timeout` in packages/bun-usockets/src/socket.c), so
-        // values above 239 min wrap around and fire early. Clamp here — it's the
-        // only assignment — so the underlying timer can't wrap, and round values
-        // above 240s up to a whole minute so `socket.set_timeout`'s floor-to-
-        // minute long-timer path never yields a timeout *shorter* than requested.
-        // Normalising once here keeps the h1 (`HTTPClient::set_timeout`) and h2
-        // (`ClientSession::rearm_timeout`) paths identical without duplicating the
-        // math at each call site.
         let raw: u64 = bun_core::env_var::BUN_CONFIG_HTTP_IDLE_TIMEOUT
             .get()
             .unwrap_or(300)
@@ -1272,13 +1081,6 @@ mod _event_loop_draft {
             core::sync::atomic::Ordering::Relaxed,
         );
 
-        // Zig: `const loop = bun.jsc.MiniEventLoop.initGlobal(null, null)`
-        // (HTTPThread.zig:228). Critical side effect: `init_global` calls
-        // `internal_loop_data.set_parent_raw(2 /* mini */, mini_ptr)` on this
-        // thread's uSockets loop. Without it, the macOS DNS cache-miss path
-        // (`dns::getaddrinfo` → `(*loop).internal_loop_data.get_parent()`)
-        // panics with `Parent loop not set - pointer is null`, which aborts
-        // the process — `bun install` SIGABRT on the first uncached lookup.
         let loop_ = mini_event_loop::init_global(None, None);
         // `init_global` returns the heap-allocated thread-local singleton (never
         // null); this thread owns it for the thread lifetime. `loop_ptr()` reads
@@ -1290,12 +1092,6 @@ mod _event_loop_draft {
 
         #[cfg(windows)]
         {
-            // `getenv_w` forwards `name.as_ptr()` directly to Win32
-            // `GetEnvironmentVariableW`, which expects a NUL-terminated LPCWSTR.
-            // `bun_core::w!` does NOT append a sentinel on its own (see
-            // src/sys/windows/mod.rs WATCHER_CHILD_ENV_Z note), so embed `\0`
-            // in the literal — Zig's `bun.strings.w("SystemRoot")` returns
-            // `[:0]const u16`, this matches that spec (HTTPThread.zig:231).
             if bun_sys::windows::getenv_w(bun_core::w!("SystemRoot\0")).is_none() {
                 Output::err_generic(
                     "The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.",
@@ -1309,20 +1105,7 @@ mod _event_loop_draft {
         thread.loop_ = loop_;
         thread.uws_loop = uws_loop;
         thread.http_context.init();
-        // `https_context.init_with_thread_opts` eagerly builds the BoringSSL
-        // `SSL_CTX` and parses the bundled root-CA store
-        // (`us_get_default_ca_store`, root_certs.cpp:210), costing ~0.7 ms CPU
-        // and ~400 KB heap whether or not an HTTPS request ever happens. When
-        // there is no user-supplied CA config we stash `opts` and let the first
-        // `connect::<true>` call run it (see `HttpThread::lazy_https_init`) — a
-        // fully-cached `bun install` (which makes zero network requests) then
-        // skips the cost entirely.
         if !opts.abs_ca_file_name.is_empty() || !opts.ca.is_empty() {
-            // User passed --cafile / --ca: validate now so a bad CA file fails
-            // the process at thread start (test contract:
-            // bun-install-registry.test.ts "non-existent --cafile" /
-            // "invalid cafile"), even if the registry is plain HTTP and no SSL
-            // connect would ever happen.
             if let Err(err) = thread.https_context.init_with_thread_opts(&opts) {
                 (opts.on_init_error)(err, &opts);
             }
@@ -1399,20 +1182,12 @@ unsafe impl Send for ShutdownReclaim {}
 static SHUTDOWN_RECLAIMS: bun_threading::Guarded<Vec<ShutdownReclaim>> =
     bun_threading::Guarded::new(Vec::new());
 
-/// Park `(ctx, drop_fn)` until [`shutdown_for_exit`] has waited the HTTP
-/// thread out of its loop. The drop is applied on the JS thread once the
-/// daemon is parked, so callers can hand off allocations whose teardown is
-/// not safe while a `tick()` is still on the HTTP-thread stack.
 pub fn defer_shutdown_reclaim(ctx: *mut c_void, drop_fn: unsafe fn(*mut c_void)) {
     SHUTDOWN_RECLAIMS
         .lock()
         .push(ShutdownReclaim { ctx, drop_fn });
 }
 
-/// Called from `bun_jsc::VirtualMachine::global_exit()` on the JS thread,
-/// before `~VM`. Asks the HTTP daemon thread to reclaim every in-flight
-/// `ThreadlocalAsyncHTTP` box and waits (with a short timeout) for it to ack.
-/// No-op if the HTTP thread was never started.
 pub fn shutdown_for_exit() {
     if !crate::HTTP_THREAD_INIT.load(Ordering::Acquire) {
         return;
@@ -1471,10 +1246,6 @@ pub fn shutdown_for_exit() {
 // dispatch_deps bridge removed — real impls now live in
 // h3_client/ClientContext.rs (abort_by_http_id / stream_body_by_http_id).
 
-/// Module-level bridge for `HTTPThread::init`. The real body lives in
-/// `_event_loop_draft` below (depends on `bun_event_loop::MiniEventLoop`,
-/// which is outside this crate's dep set). Call sites in AsyncHTTP.rs hit
-/// this until that tier boundary is resolved.
 pub fn init(opts: &InitOpts) {
     _event_loop_draft::init(opts)
 }

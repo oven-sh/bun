@@ -7,10 +7,6 @@ use crate::shared::data::Data;
 
 bun_core::declare_scope!(MySQLQuery, visible);
 
-// PORT NOTE: Execute is a transient builder that borrows query/params/param_types
-// from the caller for the duration of a single write() call. Most protocol
-// message structs avoid lifetime params; this one carries an explicit `'a`
-// because none of Box / &'static / raw fit a borrow-only message builder.
 pub struct Execute<'a> {
     pub query: &'a [u8],
     /// Parameter values to bind to the prepared statement
@@ -18,11 +14,6 @@ pub struct Execute<'a> {
     /// Types of each parameter in the prepared statement
     pub param_types: &'a [Param],
 }
-
-// PORT NOTE: Zig `deinit` iterated `params` and called `param.deinit()` on each.
-// In Rust, `Data` owns its resources via `Drop`, and `Execute` only borrows the
-// slice, so the slice owner is responsible for cleanup. No `Drop` impl here.
-// TODO(port): verify caller of Execute handles Data cleanup after write.
 
 impl<'a> Execute<'a> {
     // TODO(port): narrow error set
@@ -90,10 +81,6 @@ impl<'a> Execute<'a> {
         Ok(())
     }
 
-    // Zig: `pub const write = writeWrap(Execute, writeInternal).write;`
-    // PORT NOTE: Zig's `writeWrap` constructs a `NewWriter` around a raw context
-    // and calls `write_internal`. Here `writer` is already wrapped, so forward
-    // directly — `write_wrap`'s only job (the wrapping) is done by the caller.
     pub fn write<C: WriterContext>(&self, writer: NewWriter<C>) -> Result<(), bun_core::Error> {
         self.write_internal(writer)
     }

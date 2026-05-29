@@ -78,13 +78,6 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
     JSArgument::from_js_maybe_file(global, value, false)
 }
 
-/// Shim around `protocol::valkey_error_to_js` that:
-/// 1. accepts whatever error type `JSValkeyClient::send` currently returns
-///    (presently `bun_core::Error`; the Zig spec uses an open `!` set) and
-///    converts it to `RedisError` so the user-visible error code matches the
-///    real failure variant, and
-/// 2. wraps the resulting `JSValue` in `Ok` for use in `JsResult<JSValue>`
-///    host functions.
 #[inline]
 fn send_err_to_js<E>(global: &JSGlobalObject, message: &str, err: E) -> JsResult<JSValue>
 where
@@ -100,16 +93,6 @@ fn promise_to_js(p: *mut JSPromise) -> JSValue {
     JSPromise::opaque_ref(p).to_js()
 }
 
-/// Shared epilog for every Valkey prototype method: build a `Command`,
-/// `this.send()` it, and convert the result to a `JsResult<JSValue>` —
-/// `Ok(promise.toJS())` on success, a JS-side Redis error value on failure.
-///
-/// All 7 `cmd_*!` macros and ~24 hand-written methods (`get`, `getBuffer`,
-/// `set`, `incr`, `decr`, `exists`, `expire`, `ttl`, `srem`, `sadd`,
-/// `sismember`, `hmget`, `hincrby`, `hset`, `smove`, `publish`,
-/// `send_unsubscribe_request_and_cleanup`, …) duplicated this 15-line block
-/// byte-identically; the only per-caller variation is the args slice, the
-/// `meta` flags, and the error-message prefix.
 #[inline]
 fn send_cmd(
     this: &JSValkeyClient,
@@ -161,17 +144,6 @@ pub(crate) mod compile {
         }
     }
 }
-
-// PORT NOTE: The Zig `compile.@"(...)"(...)` comptime type-generators take
-// `comptime []const u8` params (not expressible as Rust const generics on
-// stable). Each generator is ported as a `macro_rules!` that emits a
-// `#[bun_jsc::host_fn(method)]` inside the `impl JSValkeyClient` block.
-// Names: @"()"→cmd_noargs!, @"(key: RedisKey)"→cmd_key!,
-// @"(key: RedisKey, ...args: RedisKey[])"→cmd_key_varargs!,
-// @"(key: RedisKey, value: RedisValue)"→cmd_key_value!,
-// @"(key: RedisKey, value: RedisValue, value2: RedisValue)"→cmd_key_value_value2!,
-// @"(...strings: string[])"→cmd_strings_varargs!,
-// @"(key: RedisKey, value: RedisValue, ...args: RedisValue)"→cmd_key_value_varargs!
 
 macro_rules! cmd_noargs {
     ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
@@ -1717,12 +1689,6 @@ impl JSValkeyClient {
                 // PERF(port): was assume_capacity
                 redis_channels.push(channel);
 
-                // What we do here is add our receive handler. Notice that this doesn't really do anything until the
-                // "SUBSCRIBE" command is sent to redis and we get a response.
-                //
-                // TODO(markovejnovic): This is less-than-ideal, still, because this assumes a happy path. What happens if
-                //                      the SUBSCRIBE command fails? We have no way to roll back the addition of the
-                //                      handler.
                 this._subscription_ctx.get().upsert_receive_handler(
                     global,
                     channel_arg,
@@ -1847,11 +1813,6 @@ impl JSValkeyClient {
                 ));
             }
 
-            // Populate the redis_channels list with the single channel to
-            // unsubscribe from. This s important since this list is used to send
-            // the UNSUBSCRIBE command to redis. Without this, we would end up
-            // unsubscribing from all channels.
-            // PERF(port): was assume_capacity
             let Some(ch) = from_js(global, channel)? else {
                 return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
             };
@@ -1977,16 +1938,6 @@ impl JSValkeyClient {
 
         Ok(JSPromise::resolved_promise_value(global, new_client_js))
     }
-
-    // script(subcommand: "LOAD", script: RedisValue)
-    // select(index: number | string)
-    // spublish(shardchannel: RedisValue, message: RedisValue)
-    // smove(source: RedisKey, destination: RedisKey, member: RedisValue)
-    // substr(key: RedisKey, start: number, end: number)` // Deprecated alias for getrang
-    // hstrlen(key: RedisKey, field: RedisValue)
-    // zrank(key: RedisKey, member: RedisValue)
-    // zrevrank(key: RedisKey, member: RedisValue)
-    // zscore(key: RedisKey, member: RedisValue)
 
     // cluster(subcommand: "KEYSLOT", key: RedisKey)
 }

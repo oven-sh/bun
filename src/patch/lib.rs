@@ -27,11 +27,6 @@ const PAGE_SIZE: usize = 16384;
 // PatchFilePart / PatchFile
 // ──────────────────────────────────────────────────────────────────────────
 
-/// All strings point to the original patch file text
-// PORT NOTE: lifetime — every `&'a [u8]` in this module borrows from the
-// original patch file text. The port generally avoids struct lifetimes, but
-// this parser's whole output is borrowed; raw `*const [u8]` everywhere would
-// be worse.
 pub enum PatchFilePart<'a> {
     FilePatch(Box<FilePatch<'a>>),
     FileDeletion(Box<FileDeletion<'a>>),
@@ -140,12 +135,6 @@ impl<'a> PatchFile<'a> {
                     let mode = file_creation.mode;
 
                     if !filedir.is_empty() {
-                        // PORT NOTE: Zig calls `NodeFS.mkdirRecursive` with the bare relative
-                        // `filedir` (resolved against process CWD), then immediately `openat`s
-                        // the same path against `patch_dir`. That is internally inconsistent
-                        // when `patch_dir != cwd`. We intentionally diverge and create the
-                        // directory under `patch_dir` so the subsequent `openat` succeeds.
-                        // Consider back-porting this fix to patch.zig.
                         if let sys::Result::Err(e) =
                             sys::mkdir_recursive_at_mode(patch_dir, filedir, mode.to_bun_mode())
                         {
@@ -260,14 +249,6 @@ impl<'a> PatchFile<'a> {
     }
 }
 
-/// Invariants:
-/// - Hunk parts are ordered by first to last in file
-/// - The original starting line and the patched starting line are equal in the first hunk part
-///
-/// TODO: this is a very naive and slow implementation which works by creating a list of lines
-/// we can speed it up by:
-/// - If file size <= PAGE_SIZE, read the whole file into memory. memcpy/memmove the file contents around will be fast
-/// - If file size > PAGE_SIZE, rather than making a list of lines, make a list of chunks
 fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> sys::Result<()> {
     // PERF(port): was arena.arena().dupeZ — profile if hot.
     let file_path = ZBox::from_vec_with_nul(patch.path.to_vec());
@@ -296,12 +277,6 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     #[cfg(unix)]
     let _ = state; // suppress unused on posix
 
-    // Purposefully use `bun.default_allocator` here because if the file size is big like
-    // 1gb we don't want to have 1gb hanging around in memory until arena is cleared
-    //
-    // But if the file size is small, like less than a single page, it's probably ok
-    // to use the arena
-    // PERF(port): was arena vs default_allocator selection — profile if hot.
     let _use_arena: bool = stat.st_size as usize <= PAGE_SIZE;
     // TODO(port): Zig used `patch_dir.stdDir().readFileAlloc(...)` (std.fs). Replace with bun_sys::File::read_from.
     let filebuf: Vec<u8> = match read_file_alloc(patch_dir, &file_path, 1024 * 1024 * 1024 * 4) {
@@ -447,11 +422,6 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
 }
 
 fn read_file_alloc(dir: Fd, path: &ZStr, max: usize) -> sys::Result<Vec<u8>> {
-    // PORT NOTE: Zig's `std.fs.Dir.readFileAlloc` opens, fstats, allocates
-    // `min(size, max)` and errors `error.FileTooBig` past `max`. Enforce the
-    // same cap so a pathological multi-GiB target file errors instead of
-    // allocating unboundedly. (`error.FileTooBig` would surface as `.INVAL` at
-    // the only call site anyway, so we map it to EINVAL here.)
     let stat = sys::fstatat(dir, path)?;
     if stat.st_size as u64 > max as u64 {
         return sys::Result::Err(
@@ -689,22 +659,6 @@ pub(crate) enum PatchFilePartKind {
     FileRename,
     FileModeChange,
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// json_fmt — JSON `Display` adapter for `PatchFile`
-//
-// Port of Zig's `std.json.fmt(patchfile, .{})` (used only by the testing
-// bindings in `src/patch_jsc/testing.zig`). The output shape is dictated by
-// Zig's default `std.json.stringify` rules, so it must match exactly for the
-// snapshot tests in `test/js/bun/patch/patch.test.ts` to pass:
-//   - struct           → `{"field":...}` in field-declaration order
-//   - `ArrayListUnmanaged` (our `Vec<T>`) → `{"items":[...],"capacity":N}`
-//   - `[]const u8`     → JSON string
-//   - `enum`           → `"tag_name"`
-//   - `union(enum)`    → `{"tag_name":payload}`
-//   - `?T`             → `null` or value
-//   - `*T`             → serialized as the pointee
-// ──────────────────────────────────────────────────────────────────────────
 
 /// Returns a `Display` adapter that serializes `patchfile` as JSON, matching
 /// the output of Zig's `std.json.fmt(patchfile, .{})`.
@@ -1240,10 +1194,6 @@ impl<'a> PatchLinesParser<'a> {
                         if self.current_file_patch.diff_line_from_path.is_some() {
                             self.commit_file_patch();
                         }
-                        // Equivalent to:
-                        // const match = line.match(/^diff --git a\/(.*?) b\/(.*?)\s*$/)
-                        // currentFilePatch.diffLineFromPath = match[1]
-                        // currentFilePatch.diffLineToPath = match[2]
                         let m = parse_diff_line_paths(line).ok_or(
                             // TODO: store line somewhere
                             ParseErr::bad_diff_line,
@@ -1646,11 +1596,6 @@ fn parse_diff_line_paths(line: &[u8]) -> Option<(&[u8], &[u8])> {
         let start_of_b_part = strings::index_of_char(&rest[i..], b'b')? as usize;
         i += start_of_b_part;
         if i > 0 && rest[i - 1] == b' ' && i + 1 < rest.len() && rest[i + 1] == b'/' {
-            // diff --git a/banana.ts b/banana.ts
-            //                       ^  ^
-            //                       |  |
-            //    a_path_end_index   +  |
-            //    b_path_start_index    +
             a_path_end_index = i - 1;
             b_path_start_index = i + 2;
             break;
@@ -1670,11 +1615,6 @@ fn parse_diff_line_paths(line: &[u8]) -> Option<(&[u8], &[u8])> {
 // spawnOpts / diffPostProcess / gitDiff*
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: Zig returns `bun.spawn.sync.Options` with `argv`/`envp` allocated on
-// `bun.default_allocator` and freed by the caller. `bun_spawn::sync::Options` owns
-// `argv` (`Vec<Box<[u8]>>`) but borrows `envp` (`Option<*const *const c_char>`), so
-// the null-terminated envp array is returned alongside as the second tuple element —
-// caller must keep it alive while `Options` is in use (no `Box::leak`, §Forbidden).
 pub fn spawn_opts(
     old_folder: &[u8],
     new_folder: &[u8],
@@ -1907,11 +1847,6 @@ pub fn git_diff_internal(
         stderr: bun_spawn::sync::Stdio::Buffer,
         envp: Some(envp_buf.as_ptr()),
         argv,
-        // PORT NOTE: Zig used `std.process.Child` (no uv loop). The Rust port
-        // routes through `bun_spawn::sync::spawn`, whose Windows path
-        // unconditionally derefs `windows.loop_` (process.rs spawn_windows_*).
-        // `WindowsOptions::default()` is `zeroed_unchecked()`, so leaving this
-        // defaulted is a null deref on Windows — supply the caller's loop.
         #[cfg(windows)]
         windows: bun_spawn::sync::WindowsOptions {
             loop_: bun_event_loop::AnyEventLoop::as_handle(loop_),
@@ -1941,31 +1876,6 @@ pub fn git_diff_internal(
     Ok(Ok(stdout))
 }
 
-/// Now we need to do the equivalent of these regex subtitutions.
-///
-/// Assume that:
-///   aFolder = old_folder = "the_old_folder"
-///   bFolder = new_folder = "the_new_folder"
-///
-/// We use the --src-prefix=a/ and --dst-prefix=b/ options with git diff,
-/// so the paths end up looking like so:
-///
-/// - a/the_old_folder/package.json
-/// - b/the_old_folder/package.json
-/// - a/the_older_folder/src/index.js
-/// - b/the_older_folder/src/index.js
-///
-/// We need to strip out all references to "the_old_folder" and "the_new_folder":
-/// - a/package.json
-/// - b/package.json
-/// - a/src/index.js
-/// - b/src/index.js
-///
-/// The operations look roughy like the following sequence of substitutions and regexes:
-///   .replace(new RegExp(`(a|b)(${escapeStringRegexp(`/${removeTrailingAndLeadingSlash(aFolder)}/`)})`, "g"), "$1/")
-///   .replace(new RegExp(`(a|b)${escapeStringRegexp(`/${removeTrailingAndLeadingSlash(bFolder)}/`)}`, "g"), "$1/")
-///   .replace(new RegExp(escapeStringRegexp(`${aFolder}/`), "g"), "")
-///   .replace(new RegExp(escapeStringRegexp(`${bFolder}/`), "g"), "");
 fn git_diff_postprocess(
     stdout: &mut Vec<u8>,
     old_folder: &[u8],
@@ -2007,10 +1917,6 @@ fn git_diff_postprocess(
     let mut saw_b_folder: Option<usize> = None;
     let mut line_idx: u32 = 0;
 
-    // PORT NOTE: reshaped for borrowck — Zig mutated `stdout` while iterating
-    // `std.mem.splitScalar` over it (relying on the iterator's by-value buffer
-    // pointer staying valid because replaceRange only shrinks). In Rust we
-    // re-implement the cursor manually so we can mutate `stdout` between lines.
     let mut cursor: usize = 0;
     while cursor <= stdout.len() {
         // Compute current line [line_start, line_end) and the index AFTER its delimiter.
@@ -2097,30 +2003,6 @@ fn git_diff_postprocess(
     Ok(())
 }
 
-/// We need to remove occurrences of "a/" and "b/" and "$old_folder/" and
-/// "$new_folder/" but we don't want to remove them from the actual patch
-/// content (maybe someone had a/$old_folder/foo.txt in the changed files).
-///
-/// To do that we have to skip the lines in the patch file that correspond
-/// to changes.
-///
-/// ```patch
-///
-/// diff --git a/numbers.txt b/banana.txt
-/// old mode 100644
-/// new mode 100755
-/// similarity index 96%
-/// rename from numbers.txt
-/// rename to banana.txt
-/// index fbf1785..92d2c5f
-/// --- a/numbers.txt
-/// +++ b/banana.txt
-/// @@ -1,4 +1,4 @@
-/// -one
-/// +ne
-///
-///  two
-/// ```
 fn should_skip_line(line: &[u8]) -> bool {
     line.is_empty()
         || (matches!(line[0], b' ' | b'-' | b'+')

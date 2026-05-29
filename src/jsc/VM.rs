@@ -2,25 +2,10 @@ use core::ffi::c_void;
 
 use crate::{Exception, JSGlobalObject, JSValue, JsError};
 
-// TODO(port): move to <jsc>_sys
-//
-// All JSC__VM__* shims take only a `JSC::VM*` (and at most a
-// `JSGlobalObject*` / `JSC::Exception*` / scalar). `VM` and `JSGlobalObject`
-// are opaque `UnsafeCell`-backed ZST handles, so `&VM` is ABI-identical to a
-// non-null `VM*` and the C++ side mutating through it does not violate Rust
-// aliasing (interior mutability; zero Rust-visible bytes). Declaring the
-// params as references and the fns as `safe fn` moves the validity proof into
-// the type signature and removes the per-call-site `unsafe { }` wrappers.
-// `holdAPILock` keeps a raw `*mut c_void` ctx (opaque round-trip; C++ never
-// dereferences it as Rust data) so it stays `unsafe fn`.
 unsafe extern "C" {
     safe fn JSC__VM__deinit(vm: &VM, global_object: &JSGlobalObject);
     safe fn JSC__VM__setControlFlowProfiler(vm: &VM, enabled: bool);
     safe fn JSC__VM__hasExecutionTimeLimit(vm: &VM) -> bool;
-    // safe: `VM` is an opaque `UnsafeCell`-backed ZST handle (`&` is ABI-identical
-    // to non-null `*const`); `ctx` is an opaque round-trip pointer C++ only forwards
-    // to `callback` (never dereferenced as Rust data) — same contract as
-    // `JSC__JSGlobalObject__queueMicrotaskCallback`.
     safe fn JSC__VM__holdAPILock(
         this: &VM,
         ctx: *mut c_void,
@@ -96,11 +81,6 @@ impl VM {
         JSC__VM__getAPILock(self);
         Lock { vm: self }
     }
-
-    // PORT NOTE: `JSC__VM__deferGC` was removed from bindings.cpp in the
-    // WebKit-bump that introduced `JSC::DeferGC` RAII; the Zig `deferGC`
-    // wrapper is dead code. Callers should use `holdAPILock`/`DeferGC` on the
-    // C++ side instead.
 
     pub fn report_extra_memory(&self, size: usize) {
         crate::mark_binding!();

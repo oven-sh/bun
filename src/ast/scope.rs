@@ -7,19 +7,8 @@ use crate::nodes::StoreRef;
 use crate::symbol::{self, Symbol};
 use crate::ts::TSNamespaceScope;
 
-/// Backed by `AstAlloc` so the table allocation *and* the per-key boxes land
-/// in the thread-local AST `mi_heap` and are reclaimed by the same
-/// `mi_heap_destroy` that frees the arena-allocated `Scope` holding the map.
-/// In Zig this was `bun.StringHashMapUnmanaged(Member)` whose backing array
-/// lived in the parser arena; the original Rust port placed both on the
-/// global heap, and since `Scope` itself sits in an arena slot whose `Drop`
-/// never runs, every member map leaked.
 pub(crate) type MemberHashMap = StringHashMap<Member, AstAlloc>;
 
-// PORT NOTE: Zig `Scope` is a value type — `Ast.module_scope` / `BundledAst.module_scope`
-// hold it by value and `toAST` / `init` bitwise-copy it (`this.module_scope`). Vec no
-// longer derives `Clone` (private `origin` field); callers that need a shallow copy must
-// `core::mem::take` or `core::ptr::read` instead.
 pub struct Scope {
     pub id: usize,
     pub kind: Kind,
@@ -58,14 +47,6 @@ pub struct Scope {
 }
 
 impl Scope {
-    /// All-empty `Scope` as a `const`. Used with struct-update syntax in the
-    /// parser's per-scope allocation hot path (`push_scope_for_parse_pass`
-    /// runs once per `{}` / function / class body) so the unspecified fields
-    /// are filled by a compile-time bit pattern instead of the runtime
-    /// `Default::default()` chain — i.e. no temporary `Scope` is constructed
-    /// and partially dropped, and `members`/`children`/`generated` come from a
-    /// const-folded zero header rather than three out-of-line `default()`
-    /// calls. `AstAlloc::vec` and `StringHashMap::new_in` are both `const fn`.
     pub const EMPTY: Self = Self {
         id: 0,
         kind: Kind::Block,
@@ -91,10 +72,6 @@ impl Default for Scope {
 }
 
 impl Scope {
-    // Must agree with `StringHashMap`'s `BuildHasher` (`bun_wyhash::BuildHasher`,
-    // i.e. `BuildHasherDefault<OneShotHasher>`) so the precomputed hash can be
-    // fed to `get_hashed` without a rehash per scope level. If the map's hasher
-    // ever changes, this must change with it (the debug_assert below catches it).
     pub fn get_member_hash(name: &[u8]) -> u64 {
         bun_wyhash::auto_hash::<[u8]>(name)
     }
@@ -148,11 +125,6 @@ impl Scope {
         Self::can_merge_symbol_kinds::<IS_TYPESCRIPT_ENABLED>(self.kind, existing, new)
     }
 
-    /// Associated-fn form of [`can_merge_symbols`] taking the scope's [`Kind`]
-    /// by value instead of `&self`. Lets the parser hold a single-probe
-    /// `members.entry()` borrow across the merge decision without re-borrowing
-    /// the whole `Scope` (which would alias the live entry under Stacked
-    /// Borrows). The method body only ever read `self.kind`.
     pub fn can_merge_symbol_kinds<const IS_TYPESCRIPT_ENABLED: bool>(
         scope_kind: Kind,
         existing: symbol::Kind,
@@ -165,12 +137,6 @@ impl Scope {
         }
 
         if IS_TYPESCRIPT_ENABLED {
-            // In TypeScript, imports are allowed to silently collide with symbols within
-            // the module. Presumably this is because the imports may be type-only:
-            //
-            //   import {Foo} from 'bar'
-            //   class Foo {}
-            //
             if existing == Sk::Import {
                 return SymbolMergeResult::ReplaceWithNew;
             }
@@ -196,10 +162,6 @@ impl Scope {
             }
         }
 
-        // "var foo; var foo;"
-        // "var foo; function foo() {}"
-        // "function foo() {} var foo;"
-        // "function *foo() {} function *foo() {}" but not "{ function *foo() {} function *foo() {} }"
         if Symbol::is_kind_hoisted_or_function(new)
             && Symbol::is_kind_hoisted_or_function(existing)
             && (scope_kind == Kind::Entry

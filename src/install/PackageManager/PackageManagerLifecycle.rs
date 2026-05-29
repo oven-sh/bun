@@ -35,10 +35,6 @@ pub struct LifecycleScriptTimeLog {
 }
 
 pub struct LifecycleScriptTimeLogEntry {
-    // PORT NOTE: Zig borrowed the lockfile string buffer (`string`). The Rust
-    // `LifecycleScriptSubprocess.package_name` is owned (`Box<[u8]>`) and freed
-    // on `destroy`, so the log entry must own its copy to avoid a dangling
-    // borrow. The list is at most a few dozen entries per install.
     pub package_name: Box<[u8]>,
     pub script_id: u8,
     /// nanosecond duration
@@ -103,12 +99,6 @@ impl PackageManager {
         let _ = offset; // PORT NOTE: resize already fills [offset..] with Unknown
     }
 
-    /// PORT NOTE: Zig `setPreinstallState(this, package_id, lockfile, value)` — the
-    /// separate `lockfile` parameter only feeds `lockfile.packages.len` into
-    /// `ensurePreinstallStateListCapacity`. Every Rust caller passes
-    /// `self.lockfile` (or an alias of it), which would alias `&mut self`; the
-    /// parameter is dropped here and `self.lockfile` is read directly to keep
-    /// borrowck happy.
     pub fn set_preinstall_state(&mut self, package_id: PackageID, value: PreinstallState) {
         let count = self.lockfile.packages.len();
         self.ensure_preinstall_state_list_capacity(count);
@@ -122,10 +112,6 @@ impl PackageManager {
         self.preinstall_state[package_id as usize]
     }
 
-    /// PORT NOTE: Zig `determinePreinstallState(manager, pkg, lockfile, …)` — the
-    /// separate `lockfile` parameter is always `manager.lockfile` at every call
-    /// site in the Rust port; collapsed onto `self.lockfile` to avoid the
-    /// `&mut self` / `&self.lockfile` aliasing borrowck rejects.
     pub fn determine_preinstall_state(
         &mut self,
         pkg: &Package,
@@ -230,14 +216,6 @@ impl PackageManager {
                     return PreinstallState::Done;
                 }
 
-                // If the package is patched, then `folder_path` looks like:
-                // is-even@1.0.0_patch_hash=abc8s6dedhsddfkahaldfjhlj
-                //
-                // If that's not in the cache, we need to put it there:
-                // 1. extract the non-patched pkg in the cache
-                // 2. copy non-patched pkg into temp dir
-                // 3. apply patch to temp dir
-                // 4. rename temp dir to `folder_path`
                 if patch_hash.is_some() {
                     let idx = strings::index_of(folder_path.as_bytes(), b"_patch_hash=")
                         .unwrap_or_else(|| {
@@ -281,10 +259,6 @@ impl PackageManager {
     pub fn sleep(&mut self) {
         self.report_slow_lifecycle_scripts();
         Output::flush();
-        // PORT NOTE: see `tick_lifecycle_scripts` — `is_done` callback reborrows
-        // `self` (the struct that owns `event_loop`), so use the raw-pointer
-        // `tick_raw` variant which only holds `&mut event_loop` between
-        // `is_done` calls.
         let ctx = std::ptr::from_mut::<PackageManager>(self).cast::<core::ffi::c_void>();
         let event_loop = core::ptr::addr_of_mut!(self.event_loop);
         // SAFETY: `event_loop` is valid for the duration; `is_done` reborrows
@@ -454,12 +428,6 @@ impl PackageManager {
         path.append(original_path.as_slice())?;
         script_env.put(b"PATH", path.slice())?;
 
-        // Zig: `try script_env.createNullDelimitedEnvMap(this.allocator)` —
-        // allocated with the manager-lifetime allocator and never freed in this
-        // scope; ownership transfers to `LifecycleScriptSubprocess`, which
-        // re-uses it across every `spawn_next_script` in the chain. Move the
-        // owning `NullDelimitedEnvMap` by value so its `K=V\0` buffers outlive
-        // this stack frame (freed by the subprocess's `Drop`).
         let envp = script_env.create_null_delimited_env_map()?;
 
         let shell_bin: Option<&ZStr> = 'shell_bin: {
@@ -571,14 +539,6 @@ fn add_dependencies_to_set(
 }
 
 use bun_install::LogLevel;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Free-function re-export surface — Zig declares these at file scope with an
-// explicit `*PackageManager` first param. The `impl PackageManager` bodies
-// above are the canonical port; these thin shims keep the
-// `pub use lifecycle::{...}` re-exports in `PackageManager.rs` resolving the
-// same way `PackageManagerDirectories.rs` / `PackageManagerEnqueue.rs` do.
-// ──────────────────────────────────────────────────────────────────────────
 
 #[inline]
 pub fn ensure_preinstall_state_list_capacity(this: &mut PackageManager, count: usize) {

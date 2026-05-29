@@ -40,10 +40,6 @@ impl<SemverInt: VersionInt> Default for ResolutionType<SemverInt> {
     }
 }
 
-/// Rust-side equivalent of `bun.meta.Tagged(Value, Tag)` — a tagged view of `Value`
-/// used by [`ResolutionType::init`] / [`value_init`] to construct a zero-padded union.
-// `Tag` is a `#[repr(transparent)] struct Tag(u8)` with sparse `pub const`
-// associated values; the derive maps `Self::Variant` → `Tag::Variant` by name.
 #[derive(Clone, Copy, bun_core::EnumTag)]
 #[enum_tag(existing = Tag)]
 pub enum TaggedValue<SemverInt: VersionInt> {
@@ -61,11 +57,6 @@ pub enum TaggedValue<SemverInt: VersionInt> {
 }
 
 impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
-    /// Const-evaluable zeroed sentinel. Mirrors `Default::default()` but usable
-    /// in `const` / `static` position (e.g. dummy `&'static Resolution` returns).
-    /// Only the tag/padding are guaranteed zero — the union payload is the
-    /// `uninitialized` variant, which is the only field a `Tag::Uninitialized`
-    /// reader may legally access.
     pub const ZEROED: Self = Self {
         tag: Tag::Uninitialized,
         _padding: [0; 7],
@@ -94,10 +85,6 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         Self::init(TaggedValue::Symlink(s))
     }
 
-    // ── Tag-checked union accessors ────────────────────────────────────────
-    // Every `Value` payload is `Copy` (`String` handles, `Repository`,
-    // `VersionedURLType`) and the union is zero-initialized, so reading the
-    // wrong variant is well-defined garbage — the macro debug-asserts the tag.
     bun_core::extern_union_accessors! {
         tag: tag as Tag, value: value;
         Npm              => npm: VersionedURLType<SemverInt>, mut npm_mut;
@@ -205,11 +192,6 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
             dependency::VersionTag::Symlink => Err(FromTextLockfileError::UnexpectedResolution),
             dependency::VersionTag::Folder => Err(FromTextLockfileError::UnexpectedResolution),
 
-            // even though it's a dependency type, it's not
-            // possible for 'catalog:' to be written to the
-            // lockfile for any resolution because the install
-            // will fail it it's not successfully replaced by
-            // a version
             dependency::VersionTag::Catalog => Err(FromTextLockfileError::UnexpectedResolution),
 
             // should not happen
@@ -552,14 +534,6 @@ pub struct URLFormatter<'a, SemverInt: VersionInt> {
 }
 
 impl<'a, SemverInt: VersionInt> URLFormatter<'a, SemverInt> {
-    /// Byte-exact port of Zig `URLFormatter.format` (`writer.writeAll` / `{s}`).
-    ///
-    /// Prefer this over the `Display` impl whenever the output is persisted to
-    /// disk (yarn.lock, lockfile JSON): `core::fmt::Display` routes through
-    /// `&str` and the `BStr` adapter is *lossy* on non-UTF-8 bytes (a Linux
-    /// folder/tarball path under a Latin-1 directory would emit U+FFFD instead
-    /// of the original byte). `write_to` mirrors Zig's `writeAll(slice)` and
-    /// pushes the lockfile string-buffer bytes through unchanged.
     pub(crate) fn write_to<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
     where
         W: bun_core::io::Write + ?Sized,
@@ -581,10 +555,6 @@ impl<'a, SemverInt: VersionInt> URLFormatter<'a, SemverInt> {
             ),
             Tag::Folder => writer.write_all(res.folder().slice(buf)),
             Tag::RemoteTarball => writer.write_all(res.remote_tarball().slice(buf)),
-            // PORT NOTE: `Repository::format_as` still goes through `fmt::Write`
-            // (and uses `BStr` internally); git/github URLs are ASCII in
-            // practice so byte-exactness is preserved. A follow-up shard owns
-            // `repository.rs` if that ever needs a byte-level path too.
             Tag::Git => write!(writer, "{}", res.git().fmt("git+", buf)),
             Tag::Github => write!(writer, "{}", res.github().fmt("github:", buf)),
             Tag::Workspace => {
@@ -604,10 +574,6 @@ impl<'a, SemverInt: VersionInt> URLFormatter<'a, SemverInt> {
     }
 }
 
-// PORT NOTE: kept for the ~dozen call sites that interpolate into
-// `format_args!` for terminal/log output (Output::err, pretty_errorln, …),
-// where lossy U+FFFD on the rare non-UTF-8 byte is acceptable. File-producing
-// callers MUST use [`URLFormatter::write_to`] instead.
 impl<'a, SemverInt: VersionInt> fmt::Display for URLFormatter<'a, SemverInt> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         let buf = self.buf;
@@ -653,10 +619,6 @@ pub struct Formatter<'a, SemverInt: VersionInt> {
 }
 
 impl<'a, SemverInt: VersionInt> Formatter<'a, SemverInt> {
-    /// Byte-exact port of Zig `Formatter.format`. See [`URLFormatter::write_to`]
-    /// for rationale — `Display` is lossy on non-UTF-8 path bytes; this writes
-    /// the lockfile string-buffer slices verbatim via `write_all`, matching
-    /// Zig's `writer.writeAll` / `{s}`.
     pub fn write_to<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
     where
         W: bun_core::io::Write + ?Sized,
@@ -841,14 +803,6 @@ impl<'a, SemverInt: VersionInt> fmt::Display for DebugFormatter<'a, SemverInt> {
     }
 }
 
-/// Re-export of the lower-tier `#[repr(C)]` union — `bun_install_types` owns the
-/// data definition so the resolver-side `hooks::Resolution` and the install-side
-/// [`ResolutionType`] share the SAME nominal `value` type. Sharing the nominal
-/// type (rather than a layout-identical local duplicate) lets
-/// `auto_installer::resolution_from_hooks` copy `value` by plain assignment
-/// instead of `transmute`. Constructors that need the install-side
-/// zero-padded-init contract live below as free fns ([`value_zero`] /
-/// [`value_init`]) since inherent impls on a foreign type are forbidden.
 pub type Value<SemverInt> = bun_install_types::resolver_hooks::ResolutionValue<SemverInt>;
 
 #[inline]
@@ -878,11 +832,6 @@ pub(crate) fn value_init<SemverInt: VersionInt>(field: TaggedValue<SemverInt>) -
     value
 }
 
-// Zig `enum(u8) { ..., _ }` is non-exhaustive — values outside the named set are
-// valid (lockfile bytes may carry unknown tags, and every `switch` has an `else`
-// arm). A `#[repr(u8)] enum` would be UB for such values, so Tag is a transparent
-// u8 newtype with associated consts. Const patterns (structural `PartialEq`) keep
-// `match tag { Tag::Npm => ... }` working, and the `_` arms in callers stay live.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, core::marker::ConstParamTy)]
 pub struct Tag(pub u8);
@@ -913,23 +862,6 @@ impl Tag {
 
     pub const RemoteTarball: Tag = Tag(80);
 
-    // This is a placeholder for now.
-    // But the intent is to eventually support URL imports at the package manager level.
-    //
-    // There are many ways to do it, but perhaps one way to be maximally compatible is just removing the protocol part of the URL.
-    //
-    // For example, bun would transform this input:
-    //
-    //   import _ from "https://github.com/lodash/lodash/lodash.min.js";
-    //
-    // Into:
-    //
-    //   import _ from "github.com/lodash/lodash/lodash.min.js";
-    //
-    // github.com would become a package, with it's own package.json
-    // This is similar to how Go does it, except it wouldn't clone the whole repo.
-    // There are more efficient ways to do this, e.g. generate a .bun file just for all URL imports.
-    // There are questions of determinism, but perhaps that's what Integrity would do.
     pub const SingleFileModule: Tag = Tag(100);
 }
 

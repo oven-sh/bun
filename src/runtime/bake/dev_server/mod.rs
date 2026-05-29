@@ -42,11 +42,6 @@ pub(crate) mod memory_cost_body;
 #[path = "../DevServer/WatcherAtomics.rs"]
 pub(crate) mod watcher_atomics_body;
 
-// NOTE: the `DevServer` scoped-log static (`ScopedLogger`) is declared in
-// `dev_server_body` (`bun_output::declare_scope!(DevServer, visible)`) and
-// re-exported via the `pub use` block below alongside the `struct DevServer`
-// type. Declaring it again here would collide in the value namespace.
-
 pub const INTERNAL_PREFIX: &str = "/_bun";
 pub const ASSET_PREFIX: &str = "/_bun/asset";
 pub const CLIENT_PREFIX: &str = "/_bun/client";
@@ -54,11 +49,6 @@ pub const CLIENT_PREFIX: &str = "/_bun/client";
 /// `bun.jsc.Debugger.DevServerId`.
 pub type DebuggerId = jsc::DebuggerId;
 
-// LAYERING: the 4.8 kL of method bodies live in `../DevServer.rs` (mounted as
-// `super::dev_server_body`). The struct definitions are owned there so impl
-// blocks and `container_of` submodules name a single type. Re-export so
-// `crate::bake::dev_server::DevServer` (the public path used by `server/`,
-// `dispatch.rs`, …) resolves to that one struct.
 pub use super::dev_server_body::{
     CacheEntry, CurrentBundle, DeferredPromise, DeferredRequest, DevServer, EntryPointList,
     HTMLRouter, Magic, NextBundle, Options, PluginState, RouteIndexAndRecurseFlag, TestingBatch,
@@ -306,10 +296,6 @@ pub use route_bundle::RouteBundle;
 pub use serialized_failure::SerializedFailure;
 pub use source_map_store::SourceMapStore;
 
-/// Local stand-in for the unported `bun_uws::ResponseLike` trait — Zig's
-/// `resp: anytype` modeled as a generic bound. Method shapes mirror
-/// `bun_uws_sys::Response<SSL>` so the `R`-generic bodies type-check.
-// TODO(port): replace with `bun_uws::ResponseLike` once it lands upstream.
 pub trait ResponseLike {
     fn write_status(&mut self, status: &[u8]);
     fn end(&mut self, data: &[u8], close_connection: bool);
@@ -325,10 +311,6 @@ pub trait ResponseLike {
     );
 }
 
-// `AnyResponse` already type-erases SSL/TCP/H3 — it satisfies `resp: anytype`
-// trivially. The trait methods take `&mut self` (matching `Response<SSL>`'s
-// shape); `AnyResponse` is `Copy`, so the inherent by-value methods are called
-// on `*self`.
 impl ResponseLike for bun_uws::AnyResponse {
     fn write_status(&mut self, status: &[u8]) {
         (*self).write_status(status)
@@ -396,12 +378,6 @@ impl HmrSocket {
     }
 }
 
-/// `DevServer.HotReloadEvent` — produced by the watcher thread.
-// PORT NOTE: Zig's `_: u0 align(std.atomic.cache_line) = 0` first-field trick gives the whole
-// struct cache-line alignment so each inline `WatcherAtomics.events: [3]` element occupies its
-// own cache line, avoiding false sharing on `contention_indicator` between watcher and dev-server
-// threads. 128 matches `std.atomic.cache_line` on x86_64/aarch64 (Bun's tier-1 targets) and
-// absorbs Intel adjacent-line prefetch.
 #[repr(align(128))]
 pub struct HotReloadEvent {
     /// BACKREF (LIFETIMES.tsv): inline element of `WatcherAtomics.events: [3]`.
@@ -443,11 +419,6 @@ impl HotReloadEvent {
         (self.files.count() + self.dirs.count()) == 0
     }
 
-    /// Debug-asserts that the owning [`DevServer`]'s watcher thread-lock is
-    /// held. Centralises the back-ref deref so the four call sites in
-    /// `watcher_acquire_event` / `watcher_release_and_submit_event` (both the
-    /// `WatcherAtomics` impl here and the duplicate in
-    /// `DevServer/WatcherAtomics.rs`) stay safe.
     #[inline]
     pub fn assert_watcher_thread_locked(&self) {
         // SAFETY: BACKREF — `owner` is the DevServer whose
@@ -512,11 +483,6 @@ impl HotReloadEvent {
                             .is_ok();
 
                         if resolved {
-                            // this resolution result is not preserved as passing it
-                            // into BundleV2 is too complicated. the resolution is
-                            // cached, anyways.
-                            // PORT NOTE: inlined `append_file` body for disjoint borrow
-                            // (`self.dirs.keys()` is held immutably across this loop).
                             bun_core::handle_oom(self.files.get_or_put(source_file_path.slice()));
                             dev.directory_watchers.free_dependency_index(index);
                         } else {
@@ -745,11 +711,6 @@ impl HotReloadEvent {
 /// rotated between the watcher thread and the main thread.
 pub struct WatcherAtomics {
     pub events: [HotReloadEvent; 3],
-    /// `next_event: std.atomic.Value(NextEvent)` — encodes the `NextEvent`
-    /// `enum(u8) { 0..3 = event index, .waiting, .done }`.
-    // TODO(port): Zig had `align(std.atomic.cache_line)` on this field; Rust cannot align
-    // individual fields — wrap in a `#[repr(align(128))]` newtype if false sharing
-    // shows up in profiles.
     pub next_event: core::sync::atomic::AtomicU8,
     /// Watcher-thread-only; index into `events` currently being processed.
     pub current_event: Option<u8>,
@@ -762,10 +723,6 @@ pub struct WatcherAtomics {
     pub dbg_server_event: Option<*mut HotReloadEvent>,
 }
 
-/// Stored in `WatcherAtomics::next_event` (an `AtomicU8`). Modeled as a
-/// transparent newtype rather than a `#[repr(u8)] enum` because Zig used an
-/// open enum (`_`) where any other value is an index into the `events` array,
-/// and Rust enums cannot hold unlisted discriminants.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct NextEvent(pub u8);
@@ -843,11 +800,6 @@ impl WatcherAtomics {
         Some(event)
     }
 
-    /// Atomically get a `*mut HotReloadEvent` that is not in use by the
-    /// DevServer thread. Call `watcher_release_and_submit_event` when it is
-    /// filled with files.
-    ///
-    /// Called from watcher thread.
     pub fn watcher_acquire_event(&mut self) -> *mut HotReloadEvent {
         let mut available = [true; 3];
         if let Some(i) = self.current_event {
@@ -929,10 +881,6 @@ impl WatcherAtomics {
 
         #[cfg(debug_assertions)]
         {
-            // PORT NOTE: Zig asserted `ev.timer` was not the 0xAA debug-undefined
-            // fill pattern. Rust has no such fill (uninitialized memory is never
-            // observed through a typed place), so the byte-scan is dropped — it
-            // could not fire and reading struct padding is itself UB.
             ev_ref.debug_mutex.unlock();
         }
 
@@ -1010,10 +958,6 @@ pub struct DirectoryWatchStore {
     pub dependencies_free_list: Vec<u32>,
 }
 impl DirectoryWatchStore {
-    /// Intrusive backref: recover `*mut DevServer`.
-    /// Returns a raw ptr (not `&mut DevServer`) because `&mut self` is live;
-    /// callers must scope their borrow of fields disjoint from
-    /// `directory_watchers` to avoid aliasing UB.
     #[inline]
     fn owner(&mut self) -> *mut DevServer {
         // SAFETY: `DirectoryWatchStore` is only ever the `directory_watchers`
@@ -1110,11 +1054,6 @@ pub mod directory_watch_store {
     /// `DirectoryWatchStore.Dep` — one resolution-failure to retry on dir change.
     pub struct Dep {
         pub next: Option<u32>,
-        /// The file used. BORROWED slice into `IncrementalGraph.bundled_files`
-        /// key storage; compared by *pointer identity* (Zig:
-        /// `dep.source_file_path.ptr == file_path.ptr`). The graph calls
-        /// `removeDependenciesForFile` before freeing the key, so the slice
-        /// outlives every read — `RawSlice` invariant.
         pub source_file_path: bun_ptr::RawSlice<u8>,
         /// The specifier that failed. Allocated memory.
         pub specifier: Box<[u8]>,
@@ -1434,14 +1373,6 @@ impl DirectoryWatchStore {
             }
         });
 
-        // `add_directory::<true>` so the `WatchItem` owns its path: the watcher
-        // retains the path until eviction runs (deferred onto `evict_list` and
-        // drained later in `flush_evictions`), but `dir_name_to_watch` is a
-        // transient `dirname()` view of a thread-local path buffer. A borrowed
-        // (`::<false>`) `Cow` would dangle once `insert` returns — well before
-        // the watcher reads it on a file event. Owning the copy also lets the
-        // map keep its own boxed key independently, so no extra intermediate
-        // `Box` is needed here.
         let watch_index = match self.dev_bun_watcher().add_directory::<true>(
             fd,
             dir_name_to_watch,
@@ -1483,11 +1414,6 @@ impl DirectoryWatchStore {
         }
     }
 
-    /// `DirectoryWatchStore.removeDependenciesForFile` — DirectoryWatchStore.zig:233.
-    /// Removes all dependencies whose `source_file_path` is the exact slice
-    /// `file_path`, compared by *pointer identity* since the slice is shared
-    /// with `IncrementalGraph.bundled_files`. Called before IncrementalGraph
-    /// frees a file's key string so no `Dep` is left holding a dangling pointer.
     pub fn remove_dependencies_for_file(&mut self, file_path: &[u8]) {
         if self.watches.count() == 0 {
             return;

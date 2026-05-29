@@ -11,11 +11,6 @@ use bun_semver::String as SemverString;
 use bun_semver::string::Builder as SemverBuilder;
 
 use super::{StringBuilder, package::Package};
-// LAYERING NOTE: package.json is parsed by `bun_parsers::json` which
-// produces the T2 value-shaped `bun_ast::Expr` (aliased as
-// `crate::bun_json::Expr`), NOT the full T4 `bun_ast::Expr`. JSON parse
-// is always UTF-8, so `as_utf8_string_literal()` is the allocator-free port of
-// Zig's `asString(lockfile.allocator)`.
 use crate::bun_json::{Expr, ExprData};
 
 declare_scope!(OverrideMap, visible);
@@ -28,12 +23,6 @@ pub struct OverrideMap {
 }
 
 impl OverrideMap {
-    /// In the future, this `get` function should handle multi-level resolutions. This is difficult right
-    /// now because given a Dependency ID, there is no fast way to trace it to its package.
-    ///
-    /// A potential approach is to add another buffer to the lockfile that maps Dependency ID to Package ID,
-    /// and from there `OverrideMap.map` can have a union as the value, where the union is between "override all"
-    /// and "here is a list of overrides depending on the package that imported" similar to PackageIndex above.
     pub(crate) fn get(&self, name_hash: PackageNameHash) -> Option<dependency::Version> {
         scoped_log!(OverrideMap, "looking up override for {:x}", name_hash);
         if self.map.count() == 0 {
@@ -60,11 +49,6 @@ impl OverrideMap {
         }
     }
 
-    /// PORT NOTE: Zig also passed `*Lockfile new`, but it was unused —
-    /// the new-side buffer lives inside `new_builder`. Dropped to avoid the alias.
-    /// `pm` is generic over `NpmAliasRegistry` (was `&mut PackageManager`) so a
-    /// caller already holding `&mut manager.lockfile` can pass
-    /// `&mut manager.known_npm_aliases` instead of the whole manager.
     pub(crate) fn clone<PM: crate::dependency::NpmAliasRegistry>(
         &self,
         pm: &mut PM,
@@ -85,10 +69,6 @@ impl OverrideMap {
 
     // the rest of this struct is expression parsing code:
 
-    // PORT NOTE: Zig passed `lockfile: *Lockfile` solely for `lockfile.allocator`
-    // (string transcode); JSON strings are already UTF-8 here, so the parameter
-    // is dropped — also avoids the `&mut lockfile.overrides` / `&mut lockfile`
-    // alias at the only call site.
     pub(crate) fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
         if let Some(overrides) = expr.as_property(b"overrides") {
             let ExprData::EObject(obj) = &overrides.expr.data else {
@@ -423,10 +403,6 @@ impl OverrideMap {
 // Only used in warning-message formatting, so runtime &'static str is fine.
 pub fn parse_override_value(
     field: &'static str,
-    // PORT NOTE: Zig took `*Lockfile` but only read `buffers.dependencies` and
-    // `buffers.string_bytes`. Callers hold a live `StringBuilder` (which owns
-    // `&mut string_bytes`), so accept the dependency slice directly and read
-    // string-bytes through `builder.string_bytes`.
     lockfile_dependencies: &[Dependency],
     package_manager: &mut PackageManager,
     root_package: &Package,
@@ -442,10 +418,6 @@ pub fn parse_override_value(
         return Ok(None);
     }
 
-    // "Overrides may also be defined as a reference to a spec for a direct dependency
-    // by prefixing the name of the package you wish the version to match with a `$`"
-    // https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides
-    // This is why a `*Lockfile.Package` is needed here.
     if value[0] == b'$' {
         let ref_name = &value[1..];
         // This is fine for this string to not share the string pool, because it's only used for .eql()

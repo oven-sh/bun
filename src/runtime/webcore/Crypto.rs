@@ -4,10 +4,6 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsClass, JsResul
 
 use crate::node::Encoding;
 
-// `.classes.ts`-backed type: the C++ JSCell wrapper stays generated C++.
-// This struct is the `m_ctx` payload. `toJS`/`fromJS`/`fromJSDirect` are
-// provided by the attribute macro — do not hand-port the `pub const js = jsc.Codegen.JSCrypto`
-// alias block.
 #[bun_jsc::JsClass]
 #[derive(Default)]
 pub struct Crypto {}
@@ -24,10 +20,6 @@ impl Crypto {
         crate::node::crypto::timing_safe_equal(global, callframe)
     }
 
-    // DOMJIT fast path — non-standard signature (typed-array args unwrapped by codegen).
-    // TODO(port): Zig return type is bare `JSValue` but the error branch returns
-    // `ERR(..).throw()` (a `bun.JSError`). Mirroring as JsResult<JSValue> here; verify
-    // DOMJIT shim expectations.
     pub fn timing_safe_equal_without_type_checks(
         &self,
         global: &JSGlobalObject,

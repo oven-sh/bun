@@ -739,10 +739,6 @@ fn parse_array(
     })
 }
 
-// Helper: typed-array binary path shared by .int4_array / .float4_array.
-// PORT NOTE: Zig used `inline ... => |tag|` to capture the comptime tag and call
-// `tag.toJSTypedArrayType()` / `tag.byteArrayType()` / `tag.pgArrayType()` in type
-// position. Those return types, so we monomorphize over the element type here.
 fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
     tag: types::Tag,
     bytes: &[u8],
@@ -784,11 +780,6 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
         });
     }
 
-    // dimensions == 1 here. The 1-D binary array header is 20 bytes:
-    // ndim(4) + flags(4) + elemtype(4) + len(4) + lbound(4), followed by
-    // `len` elements each prefixed by a 4-byte length. `len` is
-    // server-controlled, so validate it against bytes.len before
-    // slice() iterates to avoid reading/writing past the buffer.
     if bytes.len() < 20 {
         return Err(AnyPostgresError::InvalidBinaryData);
     }
@@ -806,14 +797,6 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
         return Err(AnyPostgresError::InvalidBinaryData);
     }
 
-    // Zig: `tag.pgArrayType().init(bytes).slice()` byte-swaps the wire
-    // header and elements in place inside the recv buffer. The Rust port
-    // cannot soundly mutate through a pointer derived from `bytes: &[u8]`
-    // — the `readonly` LLVM parameter attribute lets the optimizer elide
-    // those writes, which in the release-asan build left the header `len`
-    // un-byte-swapped (3 → 0x03000000) and produced a 192MB OOB memcpy in
-    // SQLClient.cpp. Parse into an owned buffer instead; freed via
-    // `free_value = 1` after C++ has copied it into the JS typed array.
     let array_len = array_len as usize;
     let elem_size = size_of::<Elem>();
     let out_bytes = array_len * elem_size;
@@ -826,11 +809,6 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
             // supports (int4/float4): [elem_size length prefix][elem_size value]
             // — same stride `slice()` walks in the Zig spec.
             let src_off = 20 + i * element_stride + (element_stride - elem_size);
-            // `bytes.len() >= 20 + array_len*element_stride` was validated
-            // above; `out` has `array_len*elem_size` bytes. The trait's
-            // `from_unaligned_ne_bytes`/`write_unaligned_ne_bytes` are safe
-            // `from_ne_bytes`/`to_ne_bytes` round-trips (bounds-checked), so
-            // the per-element POD cast needs no raw-pointer access.
             let val: Elem = Elem::from_unaligned_ne_bytes(&bytes[src_off..src_off + elem_size])
                 .wire_byte_swap();
             val.write_unaligned_ne_bytes(&mut out[i * elem_size..(i + 1) * elem_size]);
@@ -1349,13 +1327,6 @@ fn parse_binary_numeric<'a>(
             idx += 1;
         }
     }
-    // If requested, output a decimal point and all the digits that follow it.
-    // We initially put out a multiple of DEC_DIGITS (4) digits, then truncate.
-    //
-    // This mirrors Postgres' get_str_from_var: two independent counters —
-    // `d` walks base-10000 digits (advances by 1), `i` counts decimal places
-    // emitted (advances by DEC_DIGITS). Conflating them drops leading-zero
-    // groups when weight <= -3 and shifts significant digits left.
     if dscale > 0 {
         result.push(b'.');
         let end: usize = result.len() + usize::try_from(dscale).expect("int cast");
@@ -1579,11 +1550,6 @@ impl<'a> Putter<'a> {
 // External C++ formatting functions
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    // `&mut [u8; N]` is ABI-identical to `*mut u8` (thin pointer to a `Sized`
-    // array == pointer to its first element); the reference type discharges the
-    // "valid for `buffer_size` bytes" precondition, so → `safe fn`. The C++
-    // side never writes past `buffer_size`, and the only two callers pass
-    // exactly these fixed-size stack arrays.
     safe fn Postgres__formatTime(
         microseconds: i64,
         buffer: &mut [u8; 32],

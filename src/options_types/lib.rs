@@ -13,23 +13,11 @@ pub mod schema;
 
 pub use jsx as JSX;
 
-// ─── crate-root re-exports for dependents ────────────────────────────────
-// `ImportKind` / `ImportRecord` / `Loader` / `Target` / `Index` / `SideEffects`
-// are now canonical in `bun_ast` — callers import from there directly.
-// Only the `schema::api`-coupled extension traits and option-only types
-// (`Format`, `ModuleType`, …) are surfaced from this crate.
 pub use bundle_enums::{
     BuiltInModule, BundlePackage, ForceNodeEnv, Format, ImportKindExt, LOADER_API_NAMES, LoaderExt,
     LoaderOptionalExt, ModuleType, TargetExt, WindowsOptions,
 };
 
-/// Compiled-standalone-binary virtual filesystem path prefix + predicate.
-///
-/// MOVE_DOWN from `bun_standalone_graph` (which sits above `bun_resolver` via
-/// `bun_bundler`) so the resolver can test "is this an embedded module path"
-/// without an upward dependency edge. The full graph type stays in
-/// `bun_standalone_graph`; only the path-prefix constants and the pure
-/// `is_bun_standalone_file_path` check live here.
 pub mod standalone_path {
     /// `/$bunfs/` (POSIX) — 8 bytes for one u64 compare; `$` avoids colliding
     /// with a real path. Windows uses a drive-letter form so file URLs validate.

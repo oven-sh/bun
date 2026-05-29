@@ -12,16 +12,6 @@ bun_opaque::opaque_ffi! {
     pub struct FetchHeaders;
 }
 
-// TODO(port): move to jsc_sys
-//
-// `FetchHeaders`/`JSGlobalObject`/`VM` are opaque `UnsafeCell`-backed ZST
-// handles, so `&T` is ABI-identical to a non-null `*const T` and C++ mutating
-// header storage / VM state through them is interior mutation invisible to
-// Rust. `ZigString` is a plain `#[repr(C)]` POD; `&ZigString`/`&mut ZigString`
-// at the FFI boundary are sound (C++ reads/writes only the named struct).
-// Shims that traffic only in such refs + scalars are declared `safe fn`; those
-// that take raw `*mut c_void` / unsized `*mut StringPointer` arrays / `deref`
-// (which may free) keep their `unsafe fn` body.
 unsafe extern "C" {
     safe fn WebCore__FetchHeaders__append(
         arg0: &FetchHeaders,
@@ -133,15 +123,6 @@ impl FetchHeaders {
         unsafe { WebCore__FetchHeaders__createValue(global, names, values, buf, count_) }
     }
 
-    /// Construct a `Headers` object from a JSValue.
-    ///
-    /// This can be:
-    /// -  Array<[String, String]>
-    /// -  Record<String, String>.
-    ///
-    /// Throws an exception if invalid.
-    ///
-    /// If empty, returns null.
     pub fn create_from_js(
         global: &JSGlobalObject,
         value: JSValue,
@@ -348,10 +329,6 @@ impl FetchHeaders {
     }
 }
 
-// Canonical enum lives in `bun_http_types::Method::HeaderName` (same 92
-// `#[repr(u8)]` discriminants mirroring WebCore's `HTTPHeaderNames.in`). The
-// `WebCore__FetchHeaders__put` extern decl above and the `fast_*` methods take
-// it by value, so the re-export is ABI-transparent.
 pub use bun_http_types::Method::HeaderName as HTTPHeaderName;
 
 // ported from: src/jsc/FetchHeaders.zig

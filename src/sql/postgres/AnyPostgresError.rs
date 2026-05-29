@@ -49,10 +49,6 @@ bun_core::impl_tag_error!(AnyPostgresError);
 
 bun_core::named_error_set!(AnyPostgresError);
 
-// Reverse of the above: `bun_core::Error` is just an interned name; recover the
-// matching variant by name (or `JSError` as a catch-all). Needed because the
-// protocol `write_internal` helpers were widened to `bun_core::Error` while
-// callers (e.g. `PostgresRequest`) still propagate `AnyPostgresError`.
 impl From<bun_core::Error> for AnyPostgresError {
     fn from(e: bun_core::Error) -> Self {
         e.name().parse().unwrap_or(AnyPostgresError::JSError)
@@ -105,10 +101,5 @@ impl Default for PostgresErrorOptions<'_> {
         }
     }
 }
-
-// Zig re-exported `createPostgresError` / `postgresErrorToJS` from
-// `src/sql_jsc/postgres/error_jsc.zig` here. Per PORTING.md, `*_jsc` alias
-// re-exports are deleted: in Rust those live as extension-trait methods in
-// the `bun_sql_jsc` crate and the base crate has no mention of jsc.
 
 // ported from: src/sql/postgres/AnyPostgresError.zig

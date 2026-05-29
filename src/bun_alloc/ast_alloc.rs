@@ -35,12 +35,6 @@ use core::ptr::NonNull;
 
 use crate::{MimallocArena, mimalloc};
 
-// The parser builds thousands of tiny `AstVec`s; allocations `<= BUMP_MAX` are
-// carved from a 16 KB buffer stored inline in the state (mirroring Zig's
-// `StackFallbackAllocator`), so the small case never touches mimalloc. The
-// cursor, the buffer, and the spill target live in one struct, so none of them
-// can outlive the others.
-
 /// Largest allocation served from the inline bump chunk; above this, requests
 /// go straight to the spill heap.
 const BUMP_MAX: usize = 512;
@@ -49,17 +43,9 @@ const BUMP_MAX: usize = 512;
 /// through to the spill heap.
 const BUMP_CHUNK: usize = 16 * 1024;
 
-/// Per-scope allocation state for [`AstAlloc`]. Owned by whichever component
-/// opened the AST allocation scope and moved into the [`AST_ALLOC`]
-/// thread-local while the scope is active; the owner decides when the
-/// contents are bulk-freed.
 pub struct AstAllocState {
     /// Offset of the next free byte in `bump_chunk`.
     bump_cursor: usize,
-    /// Spill target for allocations the chunk can't serve. Set by the
-    /// installing scope from its own arena ([`Self::set_spill_heap`]); the
-    /// installer guarantees the heap outlives the installed window. Null when
-    /// the installer has no arena — `owned_spill` is then created lazily.
     spill: *mut mimalloc::Heap,
     /// Backing storage for `spill` when no borrowed target was provided.
     owned_spill: Option<MimallocArena>,
@@ -151,18 +137,9 @@ impl AstAllocState {
 
 // ── Thread-local active state ────────────────────────────────────────────────
 
-/// The active [`AstAllocState`], or `None` when no AST scope is installed
-/// (allocations then fall back to global mimalloc).
-///
-/// `#[thread_local]` (not `thread_local!`): read on every `AstAlloc`
-/// allocation, so it must stay a bare `__thread` slot.
 #[thread_local]
 static AST_ALLOC: Cell<Option<Box<AstAllocState>>> = Cell::new(None);
 
-// One-slot recycler so a per-job `acquire_state`/`release_state` pair doesn't
-// pay a 16 KB malloc each time. Uses `thread_local!` (unlike `AST_ALLOC`) so
-// the destructor frees a parked box at thread exit; only touched on scope
-// entry/exit, never on the allocation hot path.
 std::thread_local! {
     static AST_ALLOC_SPARE: Cell<Option<Box<AstAllocState>>> = const { Cell::new(None) };
 }
@@ -230,14 +207,6 @@ pub fn set_active_spill_heap(heap: *mut mimalloc::Heap) {
     }
 }
 
-/// RAII guard: for its lifetime, [`AstAlloc`] allocates on **global** mimalloc
-/// instead of the active per-parse state. Use when constructing
-/// `AstVec`/`StoreRef` data that must outlive the current parse arena
-/// (e.g. `Expr::deep_clone` for `WorkspacePackageJSONCache`). Without this,
-/// the next `ASTMemoryAllocator::reset()` frees buffers the cache still holds.
-///
-/// Restores the prior state on drop, so it nests correctly inside an
-/// `ASTMemoryAllocator` scope.
 pub struct DetachAstHeap(Option<Box<AstAllocState>>);
 impl DetachAstHeap {
     #[inline]
@@ -282,11 +251,6 @@ impl ScopedAstAlloc {
         }
     }
 
-    /// Uninstall the scope's state and return it **without** bulk-freeing it,
-    /// restoring the previous occupant exactly as `drop` would. For callers
-    /// that hand the parsed AST to an async consumer: small `AstVec`s live in
-    /// the state's inline chunk, so the returned box must be kept alive until
-    /// the consumer is done with the AST.
     #[inline]
     pub fn take_state(self) -> Option<Box<AstAllocState>> {
         let mut this = core::mem::ManuallyDrop::new(self);
@@ -316,12 +280,6 @@ impl Drop for ScopedAstAlloc {
     }
 }
 
-/// Zero-sized `Allocator` that routes to the active [`AstAllocState`] when one
-/// is installed, else to global mimalloc. `deallocate` is a no-op (the state's
-/// owner reclaims everything in bulk).
-///
-/// Use as `Vec<T, AstAlloc>` (see [`AstVec`]). The ZST means the `Vec` stays
-/// 24 bytes — same size as `Vec<T>` — so AST node layouts are unchanged.
 #[derive(Clone, Copy, Default)]
 pub struct AstAlloc;
 
@@ -337,11 +295,6 @@ fn heap_alloc(layout: Layout) -> *mut u8 {
         // `size == 0` (unique non-null pointer), so no special-casing.
         return mimalloc::mi_malloc_auto_align(layout.size(), layout.align()).cast();
     };
-    // Small, normally-aligned requests: carve from the state's inline chunk so
-    // a burst of tiny `AstVec`s costs zero mallocs (and stays out of
-    // `_mi_malloc_generic`). Zero-size layouts and over-aligned ones (no AST
-    // list type needs `> MI_MAX_ALIGN_SIZE`) fall through to mimalloc, which
-    // handles both.
     if layout.size() != 0
         && layout.size() <= BUMP_MAX
         && layout.align() <= mimalloc::MI_MAX_ALIGN_SIZE
@@ -400,11 +353,6 @@ unsafe impl Allocator for AstAlloc {
 
     #[inline]
     fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        // `mi_*zalloc` lets mimalloc skip the `memset` for blocks carved from
-        // freshly-`mmap`ed (already-zero) OS pages, which the default
-        // `allocate` + `ptr::write_bytes(0)` cannot. Never bump-carved (the
-        // chunk is uninitialised); same lifetime semantics as `heap_alloc`.
-        // Mirrors `MimallocArena::allocate_zeroed`.
         let p: *mut u8 = match active_state() {
             None => mimalloc::mi_zalloc_auto_align(layout.size(), layout.align()).cast(),
             // SAFETY: `heap_ptr` returns the live spill heap owned by the
@@ -433,25 +381,6 @@ unsafe impl Allocator for AstAlloc {
         old: Layout,
         new: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        // Fast path: mimalloc rounds every allocation up to a size class, so the
-        // block behind `ptr` frequently already has room for `new.size()`.
-        // `mi_expand` reports that (and fixes up mimalloc's own padding
-        // bookkeeping) *without* moving the block — so it stays in whatever heap
-        // owns it and never thrashes the `heap → theap` TLS lookup. When it
-        // succeeds there is no allocation, no `memcpy`, and no abandoned block,
-        // matching `MimallocArena`'s `resize_in_place` (Zig's arena `remap` is
-        // `mi_expand`-then-`mi_realloc`).
-        //
-        // Gated on:
-        //  - `old.size() > BUMP_MAX`: smaller blocks may be bump-chunk interior
-        //    pointers (see `heap_alloc`), and `mi_expand` on those would treat
-        //    the *whole chunk* as the block — corrupting its bookkeeping. A
-        //    `> BUMP_MAX` block always came straight from
-        //    `mi_[heap_]malloc[_aligned]`, so this is the only safe slice to
-        //    use it.
-        //  - `new.align() <= old.align()`: the block was aligned for `old`,
-        //    `mi_expand` cannot raise that, and for `Vec<T>` (the only `AstVec`
-        //    shape) the alignment never changes across grows.
         if old.size() > BUMP_MAX && new.align() <= old.align() {
             // SAFETY: `ptr` is a live block from this allocator (the `grow`
             // contract) and — given `old.size() > BUMP_MAX` — a real mimalloc
@@ -492,13 +421,6 @@ unsafe impl Allocator for AstAlloc {
     }
 }
 
-// ── AstVec construction helpers ──────────────────────────────────────────
-// `Vec<T, A>` has no `Default` / `From<&[T]>` for non-`Global` `A`, so the
-// 81 `DeclList::default()` / `::from_slice()` etc. call sites need these.
-// Kept as free fns (not a trait) so `bun_collections::VecExt` can add a
-// blanket `impl<T> VecExt<T> for Vec<T, AstAlloc>` that forwards here without
-// a `bun_alloc → bun_collections` cycle.
-
 impl AstAlloc {
     /// `Vec::new()` parity. `const` so it is usable in `Default` impls.
     #[inline]
@@ -520,10 +442,6 @@ impl AstAlloc {
         v
     }
 
-    /// Move `items` element-wise into a fresh AST-heap allocation. Replaces
-    /// both `VecExt::from_owned_slice` (`Box<[T]>` → `Vec`) and
-    /// `VecExt::from_bump_slice` (leaked `&mut [T]` → `Vec`): in either case
-    /// the source storage is on the wrong heap, so a copy is unavoidable.
     #[inline]
     pub fn vec_from_iter<T, I: IntoIterator<Item = T>>(iter: I) -> AstVec<T> {
         let iter = iter.into_iter();
@@ -534,10 +452,6 @@ impl AstAlloc {
     }
 }
 
-// NOTE: `impl<T> Default for Vec<T, AstAlloc>` is rejected by orphan rules
-// (`T` is an uncovered type param appearing before the local `AstAlloc` in
-// `Vec`'s parameter list). `core::mem::take` therefore cannot be used on
-// `AstVec<T>`; call [`AstAlloc::take`] instead.
 impl AstAlloc {
     /// `core::mem::take` for [`AstVec`] (whose `Default` impl is blocked by
     /// orphan rules). Replaces `*v` with an empty vec and returns the old

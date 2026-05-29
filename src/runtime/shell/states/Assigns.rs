@@ -127,10 +127,6 @@ impl Assigns {
         let label = node.slice()[*idx as usize].label;
         *idx += 1;
 
-        // Join multi-word expansions with a single space (Spec: Assigns.zig
-        // childDone). `ExpansionOut` stores all words contiguously in `buf`
-        // with `bounds` marking inter-word offsets, so the merged value is
-        // `buf` with a space inserted at each boundary.
         let value: Vec<u8> = if out.bounds.is_empty() {
             out.buf
         } else {

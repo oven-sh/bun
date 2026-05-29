@@ -2,25 +2,9 @@ use enum_map::{Enum, EnumMap};
 
 use crate::SystemErrno;
 
-/// This map is derived off of uv.h's definitions, and is what Node.js uses in printing errors.
-//
-// PORT NOTE: Zig builds this at comptime via a labeled block + `@hasField`/`@field` reflection
-// over `SystemErrno` (whose variant set differs per target OS). Rust has no comptime enum-variant
-// reflection, so the per-OS `@hasField` filter is expressed as `#[cfg]` guards on the few entries
-// whose variants are not present on every target. The `EAI_*` and `UNKNOWN` rows from uv.h are
-// dropped: no `SystemErrno` on any target carries them, so Zig's `@hasField` skipped them too.
-//
-// Built at const-eval time so the whole `[&str; N]` payload lives in `.rodata` with no `Once`
-// guard or init code on the startup path (matches Zig `std.EnumArray` comptime init).
 pub(crate) static LIBUV_ERROR_MAP: EnumMap<SystemErrno, &'static str> = build_libuv_error_map();
 
 const fn build_libuv_error_map() -> EnumMap<SystemErrno, &'static str> {
-    // std.EnumMap(SystemErrno, [:0]const u8).initFull("unknown error")
-    //
-    // Indexing relies on `SystemErrno`'s dense `0..N` discriminants matching the `enum_map::Enum`
-    // declaration-order index for every variant referenced below (true on all four targets — see
-    // `bun_errno::*_errno`). The Windows `UV_*` tail variants are never written here; their slots
-    // keep the "unknown error" fill.
     let mut arr: [&str; <SystemErrno as Enum>::LENGTH] =
         ["unknown error"; <SystemErrno as Enum>::LENGTH];
 

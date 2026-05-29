@@ -4,23 +4,12 @@ use crate::host_fn::to_js_host_call;
 use crate::js_promise::{Status, UnwrapMode, Unwrapped};
 use crate::{JSGlobalObject, JSInternalPromise, JSPromise, JSValue, JsResult, JsTerminated, VM};
 
-/// `jsc.AnyPromise` — `JSPromise | JSInternalPromise` (AnyPromise.zig).
-///
-/// Variants hold raw `*mut` (mirroring Zig's `*JSPromise`): the pointee is a
-/// GC-managed JSC heap cell whose lifetime is governed by the VM, not by a
-/// Rust borrow. Callers must keep the cell reachable (e.g. via `Strong` or an
-/// on-stack `JSValue`) for as long as the `AnyPromise` is used.
 #[derive(Debug, Clone, Copy)]
 pub enum AnyPromise {
     Normal(*mut JSPromise),
     Internal(*mut JSInternalPromise),
 }
 
-// S012: every method body is `match self { Variant(p) => (*p).foo() }` over a
-// ZST opaque (`JSPromise` is `bun_opaque::opaque_ffi!`). Route the per-variant
-// `*mut → &mut` deref through the const-asserted `opaque_deref_mut` so the
-// dispatch site is `unsafe`-free; the soundness proof lives once in
-// `bun_opaque`.
 macro_rules! any_promise_dispatch {
     ($self:expr, |$p:ident| $body:expr) => {
         match $self {
@@ -75,10 +64,6 @@ impl AnyPromise {
         any_promise_dispatch!(self, |p| p.reject(global_this, Ok(value)))
     }
 
-    /// Like `reject` but first attaches async stack frames from this promise's
-    /// await chain to the error. Use when rejecting from native code at the
-    /// top of the event loop. JSInternalPromise subclasses JSPromise in C++,
-    /// so both variants are handled.
     #[inline]
     pub fn reject_with_async_stack(
         self,
@@ -121,16 +106,6 @@ impl AnyPromise {
         }
     }
 
-    /// `AnyPromise.wrap` (AnyPromise.zig:76) — run `f` through the host-call
-    /// wrapper so a thrown exception (or returned `ErrorInstance`) is converted
-    /// into a rejection of this existing promise; otherwise resolve with the
-    /// result. The C++ side (`JSC__AnyPromise__wrap`, bindings.cpp) owns the
-    /// resolve/reject decision.
-    ///
-    /// Zig used `std.meta.ArgsTuple(@TypeOf(Function))` to forward arbitrary
-    /// argument tuples through a `callconv(.c)` trampoline. Rust has no
-    /// compile-time fn-signature reflection, so this takes a closure that
-    /// captures those arguments instead.
     pub fn wrap<F>(self, global_object: &JSGlobalObject, f: F) -> Result<(), JsTerminated>
     where
         F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
@@ -176,10 +151,6 @@ impl AnyPromise {
 }
 
 unsafe extern "C" {
-    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to a non-null `*mut` and C++ mutation is interior to the cell);
-    // `ctx` is an opaque round-trip pointer C++ only forwards to `f` (never
-    // dereferenced as Rust data).
     safe fn JSC__AnyPromise__wrap(
         global: &JSGlobalObject,
         promise: JSValue,

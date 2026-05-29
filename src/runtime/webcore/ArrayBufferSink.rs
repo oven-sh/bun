@@ -15,10 +15,6 @@ pub struct ArrayBufferSink {
     // allocator field dropped — global mimalloc (non-AST crate, see PORTING.md §Allocators)
     pub done: bool,
     pub signal: Signal,
-    // PORT NOTE: Zig `?Sink` stores a `*anyopaque` (raw, manually-managed
-    // lifetime). The Rust `Sink<'a>` was ported with a borrow; using `'static`
-    // here recovers the Zig semantics (caller is responsible for the pointee
-    // outliving every dispatch). No call site sets `next` to non-`None` today.
     pub next: Option<Sink<'static>>,
     pub streaming: bool,
     pub as_uint8array: bool,

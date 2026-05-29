@@ -35,11 +35,6 @@ pub union union_EncodedJSValue {
 }
 pub(crate) type EncodedJSValue = union_EncodedJSValue;
 
-// PORTING.md §Global mutable state: never mutated → would be `const`, but kept
-// as `#[no_mangle] static` to preserve the exported symbol for TinyCC-compiled
-// FFI stubs. `RacyCell` is `repr(transparent)` so the symbol's bytes are
-// identical to a bare `EncodedJSValue`; the wrapper only satisfies `Sync`
-// (the union contains `*mut c_void`).
 #[unsafe(no_mangle)]
 pub(crate) static ValueUndefined: bun_core::RacyCell<EncodedJSValue> =
     bun_core::RacyCell::new(EncodedJSValue {
@@ -69,11 +64,6 @@ pub fn uint64_to_jsvalue_slow(global_object: &JSGlobalObject, val: u64) -> JSVal
 unsafe extern "C" {
     pub fn JSFunctionCall(globalObject: *mut c_void, callFrame: *mut c_void) -> *mut c_void;
 }
-
-// PORT NOTE: ~390 lines of translate-c compiler-builtin macro definitions
-// (`__block`, `__INTMAX_C_SUFFIX__`, `__clang_major__`, `__SIZEOF_*`,
-// `__ARM_FEATURE_*`, `__APPLE__`, …) from FFI.zig:121-509 intentionally
-// dropped — they are clang predefined-macro spew with no callers.
 
 pub(crate) const DOUBLE_ENCODE_OFFSET_BIT: c_int = 49;
 pub(crate) const DOUBLE_ENCODE_OFFSET: c_longlong = (1 as c_longlong) << DOUBLE_ENCODE_OFFSET_BIT;

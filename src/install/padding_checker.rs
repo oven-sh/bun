@@ -31,16 +31,6 @@
 //! There is one other way to introduce undefined memory into a struct, which this does not check for, and that is
 //! a union with unequal size fields.
 
-// TODO(port): The Zig implementation is pure `comptime` reflection over `@typeInfo(T)` —
-// it walks struct/union/array/optional/pointer field trees, recurses into children, and
-// `@compileError`s on any gap between `@offsetOf(T, field) + @sizeOf(field)` and the next
-// field's offset (and between the last field's end and `@sizeOf(T)`).
-//
-// Rust has no `@typeInfo` equivalent. TODO(port): provide this as a proc-macro derive
-// (`#[derive(AssertNoUninitializedPadding)]`) that emits the `const _: () = assert!(...)`
-// checks below per-field, plus a marker trait so `assert_no_uninitialized_padding::<T>()`
-// is bounded on it. The free function here is kept as the call-site-compatible entry point.
-
 /// Marker trait asserting that `Self` is `#[repr(C)]` (or `#[repr(transparent)]`/packed),
 /// contains no pointer fields, and has no implicit padding bytes anywhere in its layout
 /// (recursively). Implemented by `#[derive(AssertNoUninitializedPadding)]`.
@@ -50,66 +40,12 @@
 /// compile-time checks. Only do so for primitives and manually-audited `#[repr(C)]` types.
 pub unsafe trait AssertNoUninitializedPadding {}
 
-/// Assertion that `T` has no uninitialized padding. See module docs.
-///
-/// In Zig this walked `@typeInfo(T)` at comptime and emitted `@compileError` on gaps,
-/// with an `else => return` arm that silently accepted any non-aggregate type and a
-/// `.pointer => |ptr| assertNoUninitializedPadding(ptr.child)` arm so callers could
-/// pass `@TypeOf(slice)` directly.
-///
-/// In Rust the actual layout checking lives in `#[derive(AssertNoUninitializedPadding)]`
-/// on each serialized struct; this function is a zero-cost call-site marker that
-/// documents intent. It takes a type-witness value so call sites can mirror the Zig
-/// `assertNoUninitializedPadding(@TypeOf(value))` pattern (pass any value of `T` —
-/// or name `T` explicitly via turbofish and reference the fn item without calling).
-///
-/// The trait bound is intentionally *not* applied here: Zig's `else => return` accepts
-/// all leaf types, and bounding the generic would force every `write_array<T>` caller
-/// to propagate `T: AssertNoUninitializedPadding` before the derive exists.
 #[inline(always)]
 #[allow(dropping_copy_types, clippy::needless_pass_by_value)]
 pub fn assert_no_uninitialized_padding<T>(_type_witness: T) {
     // Body intentionally empty — the derive on `T` is the check. Matches Zig's
     // runtime behaviour (the Zig version is `comptime`-only and codegens nothing).
 }
-
-// TODO(port): proc-macro — the derive should expand roughly to the following per type
-// (shown as a declarative helper for reference; not invoked anywhere yet):
-//
-// For each adjacent field pair (prev, field) in declaration order:
-//   const _: () = assert!(
-//       core::mem::offset_of!(T, field)
-//           == core::mem::offset_of!(T, prev) + core::mem::size_of::<PrevTy>(),
-//       concat!(
-//           "Expected no possibly uninitialized bytes of memory in '", stringify!(T),
-//           "', but found a byte gap between fields '", stringify!(prev), "' and '",
-//           stringify!(field), "'. This can be fixed by adding a padding field to the ",
-//           "struct like `_padding: [u8; N] = [0; N],` between these fields. For more ",
-//           "information, look at `padding_checker.rs`",
-//       ),
-//   );
-//
-// And for the trailing gap:
-//   const _: () = assert!(
-//       core::mem::offset_of!(T, last) + core::mem::size_of::<LastTy>()
-//           == core::mem::size_of::<T>(),
-//       concat!(
-//           "Expected no possibly uninitialized bytes of memory in '", stringify!(T),
-//           "', but found a byte gap at the end of the struct. This can be fixed by ",
-//           "adding a padding field to the struct like `_padding: [u8; N] = [0; N],` ",
-//           "at the end. For more information, look at `padding_checker.rs`",
-//       ),
-//   );
-//
-// Recursion rules (mirroring the Zig `switch (@typeInfo(...))`):
-//   - struct / union field  → require `FieldTy: AssertNoUninitializedPadding`
-//   - [T; N] field          → require `T: AssertNoUninitializedPadding`
-//   - Option<T> field       → require `T: AssertNoUninitializedPadding`
-//   - pointer field         → compile_error!("Expected no pointer types in ...")
-//   - anything else         → ok
-//
-// Unions: recurse into field types but skip the offset-gap scan (matches Zig's
-// `if (info_ == .@"union") return;` before the offset loop).
 
 // Blanket impls for leaf types the Zig version's `else => return` arm accepted.
 // SAFETY: u8 is a single value byte; no padding by definition.
@@ -144,23 +80,6 @@ unsafe impl<T: AssertNoUninitializedPadding, const N: usize> AssertNoUninitializ
 {
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Cross-runtime layout pins
-//
-// Every type below is `std.mem.sliceAsBytes`-serialised into either `bun.lockb`
-// (the binary lockfile) or the `.npm` manifest cache. Their sizes/alignments
-// are therefore an ABI contract with Zig-built Bun: a Zig-written lockfile
-// must round-trip through this build and vice versa. The expected values are
-// computed by hand from the `extern struct` declarations in the corresponding
-// `.zig` files (no `@typeInfo` available in Rust). If any assert fires the
-// on-disk format has drifted — either fix the Rust `#[repr(C)]` layout or
-// bump the relevant format version (`bun.lockb` `format_version` /
-// `PackageManifest::Serializer::VERSION`).
-//
-// The asserts are gated to 64-bit little-endian targets because that is the
-// only ABI the binary formats are defined for (Zig hard-codes `.little` and
-// `@alignOf([*]u8) == 8` in the lockfile header).
-// ──────────────────────────────────────────────────────────────────────────
 #[cfg(all(target_pointer_width = "64", target_endian = "little"))]
 pub mod layout_asserts {
     use core::mem::{align_of, size_of};
@@ -201,10 +120,6 @@ pub mod layout_asserts {
     pin!(crate::bin::Bin, size = 20, align = 4);
     pin!(bun_semver::Version, size = 56, align = 8); // 3×u64 + Tag(2×ExternalString)
 
-    // ── bun.lockb package-table columns (Package.Serializer) ─────────────
-    // Iterated in declaration order by `MultiArrayList::Slice::column_bytes_mut`;
-    // each column is written as a raw byte slab, so per-column `size_of` is the
-    // load-bearing contract — see `lockfile/Package.rs::serializer::sizes()`.
     pin!(crate::resolution::Value<u64>, size = 64, align = 8); // union: VersionedURL | Repository | String
     pin!(crate::resolution::Resolution, size = 72, align = 8); // u8 tag + [7]u8 + Value
     pin!(crate::lockfile::package::Meta, size = 88, align = 4);

@@ -12,19 +12,6 @@ use crate::values::position::{
 use crate::{PrintErr, Printer, VendorPrefix};
 use bun_alloc::Arena;
 
-// `'bump` arena threading dropped for now: `BumpVec<'bump,_>` →
-// `Vec<_>` (matches `Parser::parse_comma_separated → Vec<T>`); re-thread once
-// `Parser<'bump,'_>` two-lifetime arity lands and `arena()` returns
-// `&'bump Bump`. The generic `D` bound (`LengthPercentage` / `AnglePercentage`)
-// is expressed via the local `GradientPosition` trait below — replaces the
-// gated `crate::generic::{Parse,ToCss,DeepClone}` set so the monomorphized
-// `parse_items<D>` / `serialize_items<D>` / `GradientItem<D>` bodies type-
-// check against the two concrete `DimensionPercentage<_>` instantiations.
-
-/// Protocol for the `D` type parameter in `GradientItem<D>` / `ColorStop<D>` /
-/// `parse_items<D>` / `serialize_items<D>`. Only ever instantiated at
-/// `LengthPercentage` (= `DimensionPercentage<LengthValue>`) and
-/// `AnglePercentage` (= `DimensionPercentage<Angle>`).
 pub trait GradientPosition: Sized + Clone + PartialEq {
     fn parse(input: &mut Parser) -> Result<Self>;
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>;
@@ -33,10 +20,6 @@ pub trait GradientPosition: Sized + Clone + PartialEq {
     fn is_percentage_with_value(&self, v: f32) -> bool;
 }
 
-// Only two `D` instantiations exist (`LengthValue` / `Angle`); both already
-// satisfy `DimensionPercentage<D>: CalcValue` in `calc.rs`. A blanket impl
-// would need to re-state that bound; concrete impls are simpler and match
-// the Zig monomorphization sites exactly.
 macro_rules! impl_gradient_position {
     ($ty:ty) => {
         impl GradientPosition for $ty {
@@ -1019,10 +1002,6 @@ impl LineDirection {
     }
 }
 
-/// Either a color stop or interpolation hint within a gradient.
-///
-/// This type is generic, and items may be either a [LengthPercentage](super::length::LengthPercentage)
-/// or [Angle](super::angle::Angle) depending on what type of gradient it is within.
 #[derive(Clone, PartialEq)]
 pub enum GradientItem<D> {
     /// A color stop.
@@ -1255,10 +1234,6 @@ impl WebKitColorStop {
     }
 }
 
-/// A [`<color-stop>`](https://www.w3.org/TR/css-images-4/#color-stop-syntax) within a gradient.
-///
-/// This type is generic, and may be either a [LengthPercentage](super::length::LengthPercentage)
-/// or [Angle](super::angle::Angle) depending on what type of gradient it is within.
 #[derive(Clone, PartialEq)]
 pub struct ColorStop<D> {
     /// The color of the color stop.

@@ -8,11 +8,6 @@ bun_opaque::opaque_ffi! {
     pub struct DOMURL;
 }
 
-// TODO(port): move to jsc_sys
-//
-// `DOMURL`/`VM` are opaque `UnsafeCell`-backed ZST handles; `ZigString`/`c_int`
-// out-params are plain `#[repr(C)]` PODs whose `&mut` is exclusive for the
-// call → `safe fn`.
 unsafe extern "C" {
     safe fn WebCore__DOMURL__cast_(value: JSValue, vm: &VM) -> *mut DOMURL;
     safe fn WebCore__DOMURL__fileSystemPath(this: &DOMURL, error_code: &mut c_int) -> bstr::String;

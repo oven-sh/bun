@@ -22,16 +22,6 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 /// server's source-map store and makes `POWERS_OF_TWO` true.
 type ProbeFifo = LinearFifo<i32, StaticBuffer<i32, 16>>;
 
-/// Builds a wrapped `LinearFifo` for the requested scenario, removes one item,
-/// and returns the live items (FIFO order) as a JS `number[]`.
-///
-/// Scenarios mirror issue #31563:
-///   0 — tail sub-branch (`index >= head`), `head < count`:
-///       write 12, read 8, write 10 → head=8 count=14, remove offset 6.
-///   1 — wrapped-prefix sub-branch (`index < head`), `head > count`:
-///       write 12, read 12, write 8 → head=12 count=8, remove offset 5.
-///
-/// Any other scenario value returns an empty array.
 pub fn ordered_remove_probe(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let scenario = frame.argument(0).to_int32();
 

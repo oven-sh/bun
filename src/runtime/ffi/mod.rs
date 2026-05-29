@@ -24,11 +24,6 @@ pub use host_fns::{generate_symbol_for_function, generate_symbols};
 #[path = "ffi_body.rs"]
 mod ffi_body; // port of FFI.zig
 
-/// `js2native` codegen resolves `$zig(ffi.zig, Bun__FFI__cc)` to
-/// `crate::ffi::ffi::bun__ffi__cc`; the module name maps the `.zig` basename.
-/// `FFI::bun_ffi_cc` lives in `ffi_body` (the full port) — re-export it under
-/// the codegen-expected path so the dispatch table links without forcing the
-/// generator to special-case `ffi/ffi.zig`.
 pub mod ffi {
     pub use super::ffi_body::bun__ffi__cc;
 }
@@ -39,13 +34,6 @@ pub mod ffi_object_draft;
 // TODO(port): bun_tcc_sys::State (compile/relocate/add_symbol/define_symbol)
 pub mod ffi_object {}
 
-// ─── DOMCall slowpath C-ABI exports ──────────────────────────────────────────
-// Zig: `host_fn.DOMCall(class, Container, fn, effect)` emits a `comptime
-// @export(&slowpath, .{ .name = class ++ "__" ++ fn ++ "__slowpath" })` where
-// `slowpath(global, this, args_ptr, args_len)` calls `toJSHostCall(global,
-// @src(), Container.fn, .{ global, this, args[0..len] })`. The bodies live in
-// `ffi_object_draft::reader::*` / `ffi_object_draft::ptr` (already ported);
-// these shims are the missing `@export` wrappers.
 mod dom_call_slowpath {
     use super::ffi_object_draft as ffi_object;
     use crate::jsc::{JSGlobalObject, JSValue};
@@ -106,20 +94,12 @@ mod dom_call_slowpath {
     }
 }
 
-// ─── TinyCC handle stub ──────────────────────────────────────────────────────
-// `bun_tcc_sys` currently exposes only an opaque marker; the method-ful
-// `State` (compile_string/relocate/add_symbol/…) is gated. Model the handle
-// as an opaque pointer so `Function`/`FFI` field shapes are real.
 #[allow(non_snake_case)]
 mod TCC {
     bun_opaque::opaque_ffi! {
         /// `TCCState*` — Nomicon opaque-FFI pattern.
         pub struct State;
     }
-    // Raw extern so the handle can be freed even while the method-ful
-    // `bun_tcc_sys::State` API stays gated. Keep this predicate in sync with
-    // `bun_tcc_sys::tcc_externs!` / `cfg.tinycc` in `scripts/build/config.ts`.
-    // TODO(port): move to <area>_sys
     #[cfg(not(any(
         target_os = "android",
         target_os = "freebsd",
@@ -138,15 +118,6 @@ mod TCC {
     }
 }
 
-/// Get the last dynamic-library loading error message in a cross-platform way.
-/// On POSIX systems, this calls `dlerror()`.
-/// On Windows, this uses `GetLastError()` and formats the error code.
-/// Returns an owned byte string (heap-copied since `dlerror()`'s storage is
-/// not stable across calls).
-///
-/// Note: never fails — the Zig `![]const u8` was allocator-fallible only;
-/// `Vec` write! is infallible and the POSIX path is unconditional, so the
-/// `Result` wrapper has been dropped.
 pub(crate) fn get_dl_error() -> Box<[u8]> {
     #[cfg(windows)]
     {
@@ -171,12 +142,6 @@ pub(crate) fn get_dl_error() -> Box<[u8]> {
         Box::<[u8]>::from(msg)
     }
 }
-
-// ═════════════════════════════════════════════════════════════════════════════
-// FFI — `.classes.ts` payload (the C++ JSCell wrapper stays generated; this is
-// `m_ctx`). The codegen `FFIPrototype__*` thunks resolve to `crate::ffi::FFI`,
-// so this MUST be the same type that `to_js()` boxes into the wrapper.
-// ═════════════════════════════════════════════════════════════════════════════
 
 pub use ffi_body::FFI;
 

@@ -32,11 +32,6 @@ pub enum AlignContent {
     ContentPosition(AlignContentContentPosition),
 }
 
-// Zig: anonymous payload struct carrying `pub fn __generateToCss() void {}` —
-// the marker telling `DeriveToCss` to auto-generate the field-sequence printer.
-// In Rust the equivalent is `#[derive(css::ToCss)]` on the lifted named-field
-// struct (see `css_derive::expand_derive_to_css` struct branch); the enum arm's
-// `__inner.to_css(dest)` then resolves to this generated inherent.
 #[derive(Clone, PartialEq, Eq, css::ToCss)]
 #[css(generate_to_css)]
 pub struct AlignContentContentPosition {
@@ -983,13 +978,6 @@ pub struct AlignHandler {
     pub column_gap: Option<GapValue>,
     pub has_any: bool,
 }
-
-// ─── helper macros (Zig used `comptime prop: []const u8` + `@field` / `@unionInit`) ───
-//
-// TODO(port): the Zig source threads field names as comptime strings into helper fns
-// and uses @field/@unionInit for reflection. Rust cannot pass field names as values, so
-// these are macro_rules! that expand at each call site; a small proc-macro could dedupe
-// if maintenance burden is high.
 
 macro_rules! handle_property_maybe_flush {
     ($this:expr, $dest:expr, $context:expr, $field:ident, $val:expr, $vp:expr) => {{

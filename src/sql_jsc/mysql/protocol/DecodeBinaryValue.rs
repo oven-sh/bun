@@ -322,10 +322,6 @@ pub fn decode_binary_value<Context: ReaderContext>(
             _ => Err(bun_core::err!("InvalidBinaryValue")),
         },
 
-        // NEWDECIMAL is always sent as an ASCII decimal string regardless of the
-        // column's BINARY flag / charset. Computed decimals (SUM/AVG/arithmetic/CAST)
-        // carry the BINARY flag and charset 63, so the binary-charset heuristic in the
-        // string/blob arm below would wrongly return them as a Buffer.
         FieldType::MYSQL_TYPE_NEWDECIMAL => {
             if raw {
                 let data = reader.encode_len_string()?;
@@ -363,10 +359,6 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 return Ok(SQLDataCell::raw(Some(&data)));
             }
             let string_data = reader.encode_len_string()?;
-            // Only treat as binary if character_set indicates the binary pseudo-charset.
-            // The BINARY flag alone is insufficient because VARCHAR/CHAR columns
-            // with _bin collations (e.g., utf8mb4_bin) also have the BINARY flag set,
-            // but should return strings, not buffers.
             if binary && character_set == BINARY_CHARSET {
                 return Ok(SQLDataCell::raw(Some(&string_data)));
             }

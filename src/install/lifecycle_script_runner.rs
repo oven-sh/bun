@@ -21,19 +21,8 @@ use bun_spawn::SpawnResultExt as _;
 use bun_spawn::{Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, Status};
 #[cfg(unix)]
 use bun_sys::Fd;
-// PORT NOTE: `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
-// `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
-// on Windows. `AnyEventLoop::native_loop()` projects through the uws wrapper
-// (`WindowsLoop::uv_loop`) on Windows so both paths hand back the same shape
-// `BufferedReaderParent::loop_` expects.
 
 bun_output::declare_scope!(Script, visible);
-
-// ──────────────────────────────────────────────────────────────────────────
-// Shared by `bun run` and lifecycle scripts. `bun_install` is the lower crate
-// (bun_runtime depends on bun_install), so the canonical impl lives here and
-// `RunCommand::replace_package_manager_run` is a thin re-export.
-// ──────────────────────────────────────────────────────────────────────────
 
 const BUN_BIN_NAME: &[u8] = if cfg!(debug_assertions) {
     b"bun-debug"
@@ -43,12 +32,6 @@ const BUN_BIN_NAME: &[u8] = if cfg!(debug_assertions) {
 // `BUN_BIN_NAME ++ " run"` / `" x "` — kept as separate writes below since
 // const byte concat is awkward in Rust.
 
-/// Yarn built-in subcommands (union of v1 + v2.3 sets).
-/// Port of `src/cli/list-of-yarn-commands.zig::all_yarn_commands` (deduped).
-// PERF(port): Zig used `bun.ComptimeStringMap(void, .{...})` (length-bucketed,
-// comptime-sorted). The Rust `comptime_string_map!` macro currently returns a
-// Lazy with inferred const generics that can't be named in a `static` item, so
-// use a sorted slice + binary_search for now. ~50 entries → <7 comparisons.
 struct YarnCommands;
 static YARN_COMMANDS: YarnCommands = YarnCommands;
 impl YarnCommands {
@@ -114,18 +97,6 @@ impl YarnCommands {
     }
 }
 
-/// Look for invocations of any: `yarn run` / `yarn $cmd` / `pnpm run` /
-/// `pnpm dlx` / `pnpx` / `npm run` / `npx` and replace them with `bun run`
-/// / `bun x` so that lifecycle scripts re-enter Bun instead of spawning
-/// another package manager.
-///
-/// Port of `RunCommand.replacePackageManagerRun` (src/cli/run_command.zig).
-///
-/// `#[cold]`: only reached when actually executing a package.json script /
-/// lifecycle script — never on plain `bun foo.js` startup. Forcing it into
-/// `.text.unlikely.*` keeps the byte-scanning loop out of the hot
-/// fault-around windows the startup/dot benches page in (belt-and-suspenders
-/// alongside `startup.order` regen — survives mangling-hash drift).
 #[cold]
 pub fn replace_package_manager_run(
     copy_script: &mut Vec<u8>,
@@ -267,15 +238,7 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub stdout: OutputReader,
     pub stderr: OutputReader,
     pub has_called_process_exit: bool,
-    /// Zig: `manager: *PackageManager`. Stored as `BackRef` (not `&'a`) so
-    /// callbacks may mutate manager state (`active_lifecycle_scripts`,
-    /// `progress`, `scripts_node`) through the long-lived backref without
-    /// asserting unique-borrow over the whole `PackageManager`.
     pub manager: bun_ptr::BackRef<PackageManager>,
-    /// Zig: `envp: [:null]?[*:0]const u8` — allocated with `manager.allocator`
-    /// (manager-lifetime) and never freed there. Ownership is moved into this
-    /// struct so the `K=V\0` buffers stay alive across every async
-    /// `spawn_next_script` for the script chain; freed by `Drop`/`destroy`.
     pub envp: bun_dotenv::NullDelimitedEnvMap,
     pub shell_bin: Option<&'a ZStr>,
 
@@ -316,10 +279,6 @@ impl<'a> InstallCtx<'a> {
     }
 }
 
-// PORT NOTE: Zig's `Intrusive(T, Context, less)` takes the comparator as a comptime
-// fn-pointer. The Rust `io_heap::Intrusive` folds it into `HeapContext::less` on the
-// `Context` type instead, so `sort_by_started_at` is provided via a trait impl on a
-// ZST `StartedAtCtx` (the Zig context arg `*PackageManager` is unused by `less`).
 #[derive(Default, Clone, Copy)]
 pub struct StartedAtCtx;
 pub type List<'a> = io_heap::Intrusive<LifecycleScriptSubprocess<'a>, StartedAtCtx>;
@@ -596,11 +555,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 bstr::BStr::new(combined_script.as_bytes())
             );
 
-            // `[_]?[*:0]const u8` argv array with trailing null. Element type MUST be
-            // bare `*const c_char` (null sentinel), never `Option<*const c_char>` —
-            // raw pointers are already nullable, and `Option<*const T>` is a 2-word
-            // (tag, ptr) pair, not niche-optimized. Casting a `[Option<*const c_char>; N]`
-            // to `Argv` would interleave discriminant words and EFAULT in the kernel.
             let mut argv: [*const c_char; 4] = if (*this).shell_bin.is_some() && !cfg!(windows) {
                 [
                     (*this).shell_bin.unwrap().as_ptr().cast::<c_char>(),
@@ -620,20 +574,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 core::mem::size_of::<[*const c_char; 4]>() == 4 * core::mem::size_of::<usize>()
             );
 
-            // PORT NOTE / OWNERSHIP: Zig allocates the libuv pipes
-            // (`bun.new(uv.Pipe, zeroes)`), stashes the *non-owning* `*uv.Pipe`
-            // in `this.stdout.source.?.pipe`, and reuses the same heap pointer for
-            // `SpawnOptions.{stdout,stderr} = .{ .buffer = pipe }`. In Rust,
-            // `bun_io::Source::Pipe` owns a `Box<uv::Pipe>` AND
-            // `spawn_process_windows` does `heap::take(ptr)` on the
-            // `Stdio::Buffer` pointer to produce a SECOND `Box<uv::Pipe>` in
-            // `WindowsStdioResult::Buffer` — pre-stashing here would create two
-            // `Box`es over one allocation (UAF + double-free when `spawned`
-            // drops). Instead allocate the raw heap pipe inline in the
-            // `Stdio::Buffer` arm below (so it is only allocated when actually
-            // passed to libuv) and take SOLE ownership from
-            // `spawned.stdout/stderr` after spawn — see the `#[cfg(windows)]`
-            // block below and `filter_run.rs` for the canonical pattern.
             let spawn_options = SpawnOptions {
                 stdin: if (*this).foreground {
                     bun_spawn::Stdio::Inherit
@@ -712,17 +652,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     // `!Maybe(Spawned)`. Modeled here as `Result<bun_sys::Result<Spawned>, _>`.
                     #[cfg(windows)]
                     {
-                        // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
-                        // raw `*mut uv::Pipe` allocations on the SUCCESS path; on every
-                        // error return (uv_pipe_init failure, uv_spawn failure) ownership
-                        // stays with the caller. `WindowsStdio` has no `Drop`, so reclaim
-                        // and `uv_close`+free them explicitly here — otherwise the heap
-                        // `uv::Pipe`s leak (and, if already `uv_pipe_init`'d, remain
-                        // linked in the libuv loop's handle queue forever). Zig avoided
-                        // this by stashing the pipes in `this.{stdout,stderr}.source`
-                        // BEFORE building `SpawnOptions` (lifecycle_script_runner.zig:190);
-                        // the Rust ordering moved allocation inline (see PORT NOTE above)
-                        // and must therefore handle the error path explicitly.
                         let mut spawn_options = spawn_options;
                         spawn_options.stdout.deinit();
                         spawn_options.stderr.deinit();
@@ -771,14 +700,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
             #[cfg(windows)]
             {
-                // `spawn_process_windows` has already `heap::take`n the raw pipe
-                // pointers out of `Stdio::Buffer` into `spawned.{stdout,stderr}`
-                // as `WindowsStdioResult::Buffer(Box<uv::Pipe>)`. Take that Box
-                // out *here* (sole owner) and stash it in `source` BEFORE
-                // `start_with_current_pipe` (which reads `source.?.pipe`) and
-                // BEFORE `spawned` drops — otherwise the `Box<uv::Pipe>` is freed
-                // while libuv still has the handle queued (UAF) and the later
-                // `close_impl`→`on_pipe_close`→`heap::take` double-frees.
                 if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stdout.take() {
                     (*this).stdout.source = Some(bun_io::Source::Pipe(pipe));
                     (*this).stdout.set_parent(this.cast::<c_void>());
@@ -820,14 +741,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
     pub fn print_output(&mut self) {
         if !self.manager().options.log_level.is_verbose() {
-            // Reuse the memory
-            // PORT NOTE: reshaped for borrowck — Zig evaluated all three clauses
-            // (`stdout.len==0 && stdout.cap>0 && stderr.buffer().cap==0`) before
-            // the swap, holding two `*ArrayList(u8)` simultaneously. Evaluate
-            // the stderr-capacity check first (immutable), then take the
-            // disjoint `stdout` mutable borrow, so `core::mem::take` only fires
-            // when the full Zig guard would — otherwise stdout's buffer is left
-            // in place for the `stdout.items.len +| stderr.items.len` check.
             if self.stderr.buffer().capacity() == 0 {
                 let stdout = self.stdout.final_buffer();
                 if stdout.is_empty() && stdout.capacity() > 0 {
@@ -923,11 +836,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     if self.manager().finished_installing.load(Ordering::Relaxed) {
                         scripts_node.complete_one();
                     } else {
-                        // .monotonic because this is what `completeOne` does. This is the same
-                        // as `completeOne` but doesn't update the parent.
-                        // TODO(port): Zig used `@atomicRmw(usize, &node.unprotected_completed_items, .Add, 1, .monotonic)`;
-                        // the stub `bun_progress::Node` is non-atomic & has no parent, so the
-                        // detached-parent path collapses to `complete_one()` until the real
+                        // Detached-parent path: collapses to `complete_one()` until the real
                         // `std.Progress` port lands.
                         scripts_node.complete_one();
                     }
@@ -935,10 +844,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
                 if let Some(nanos) = maybe_duration {
                     if nanos > MIN_MILLISECONDS_TO_LOG * bun_core::time::NS_PER_MS {
-                        // PORT NOTE: Zig passed `manager.lockfile.allocator`; allocator param
-                        // dropped per §Allocators (non-AST crate). Zig borrowed the lockfile
-                        // string buffer for `package_name`; we own a `Box<[u8]>` that drops on
-                        // `destroy`, so the log entry takes its own owned copy.
                         let entry = LifecycleScriptTimeLogEntry {
                             package_name: self.package_name.clone(),
                             script_id: self.current_script_index,
@@ -1036,10 +941,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     signal_code.fmt(Output::enable_ansi_colors_stderr()),
                 ));
 
-                // `Status::signal_code()` range-checks 1..=31 (`bun_core::SignalCode` is
-                // exhaustive); RT signals (>31) fall back to SIGTERM so the diverging
-                // `raise_ignoring_panic_handler` path is preserved. Zig's `SignalCode` is a
-                // non-exhaustive `enum(u8)` so it had no such constraint.
                 Global::raise_ignoring_panic_handler(
                     Status::Signaled(signal)
                         .signal_code()
@@ -1140,10 +1041,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 break 'try_delete_dir;
             };
             let basename = bun_paths::basename(self.scripts.cwd.as_bytes());
-            // PORT NOTE: Zig (lifecycle_script_runner.zig:533-534) leaks this fd
-            // too — fixed here since this path returns to the install loop without
-            // exiting, so the HANDLE/fd would otherwise persist for the rest of
-            // the install on every failed optional-dependency lifecycle script.
             let Ok(dir) = bun_sys::Dir::open(dirname) else {
                 break 'try_delete_dir;
             };
@@ -1188,12 +1085,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             heap: io_heap::IntrusiveField::default(),
         });
 
-        // `new` returned a freshly boxed non-null ptr; we hold the only
-        // reference. Wrap once as `ParentRef` so the read-only field accesses
-        // below go through safe `Deref` instead of three per-site raw-deref
-        // blocks. The shared borrow ends (NLL) before `spawn_next_script` takes
-        // the raw `*mut` for exclusive access. Safe `From<NonNull>`
-        // construction — `Self::new` returns `Box::into_raw`, never null.
         let lss = bun_ptr::ParentRef::<Self>::from(
             core::ptr::NonNull::new(lifecycle_subprocess).expect("Box::into_raw is non-null"),
         );
@@ -1249,15 +1140,6 @@ bun_spawn::link_impl_ProcessExit! {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// BufferedReaderParent — wires the stdout/stderr OutputReaders back to
-// `on_reader_done`/`on_reader_error` via the type-erased vtable.
-// ──────────────────────────────────────────────────────────────────────────
-
-// Zig: no `onReadChunk` decl — output is consumed only in `final_buffer`.
-// `manager.event_loop` is an `AnyEventLoop`; convert through
-// `EventLoopHandle::from_any` so the by-value `EventLoopCtx` carries the right
-// `kind`.
 bun_io::impl_buffered_reader_parent! {
     LifecycleScript for LifecycleScriptSubprocess<'a>;
     has_on_read_chunk = false;

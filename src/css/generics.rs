@@ -15,12 +15,6 @@ use core::cmp::Ordering;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::VecExt;
-// Zig `std.hash.Wyhash` (iterative) → `bun_wyhash::Wyhash` (the final4 variant
-// matching upstream `std.hash.Wyhash`; NOT `Wyhash11`, which is a legacy v0.11
-// variant kept only for on-disk lockfile compat — different digest).
-// Re-exported `pub` so `#[derive(CssHash)]` (in `bun_css_derive`) can name the
-// hasher type as `::bun_css::generics::Wyhash` without depending on `bun_wyhash`
-// directly.
 pub use bun_wyhash::Wyhash;
 
 use crate::SmallList;
@@ -45,20 +39,10 @@ pub type ArrayList<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
 // DeepClone
 // ───────────────────────────────────────────────────────────────────────────────
 
-/// Arena-aware deep clone. Equivalent of Zig's `deepClone(T, *const T, Allocator) T`.
-///
-/// Per-struct/-enum impls come from `#[derive(DeepClone)]`;
-/// the Zig `implementDeepClone` body is the spec for that derive (field-wise /
-/// variant-wise recursion).
 pub trait DeepClone<'bump>: Sized {
     fn deep_clone(&self, bump: &'bump Arena) -> Self;
 }
 
-/// `#[derive(DeepClone)]` — field-wise / variant-wise port of Zig's
-/// `css.implementDeepClone`. See `src/css_derive/lib.rs` for the expansion
-/// rules. Re-exported here so `use crate::generics::DeepClone;` brings both
-/// the trait and the derive into scope (same-name trait+derive is the std
-/// idiom, cf. `Clone`).
 pub use bun_css_derive::DeepClone;
 
 #[inline]
@@ -69,12 +53,6 @@ pub fn implement_deep_clone<'bump, T: DeepClone<'bump>>(this: &T, bump: &'bump A
     this.deep_clone(bump)
 }
 
-// Alias: in Zig `deepClone` (structural type-dispatch entry) and
-// `implementDeepClone` (field-reflection body) are distinct, but in Rust both
-// collapse to `T::deep_clone` because the structural dispatch lives in the
-// blanket impls below and the field-reflection lives in `#[derive(DeepClone)]`.
-// Kept as a re-export so generated code (`properties_generated.rs`) and
-// hand-written callers can use either name.
 pub use implement_deep_clone as deep_clone;
 
 // Blanket impls covering the structural cases the Zig switch handled inline.
@@ -145,10 +123,6 @@ macro_rules! deep_clone_copy {
         }
     )*};
 }
-// `u8` is intentionally omitted: a `DeepClone for u8` impl would make the
-// generic `&'bump [T]` impl below overlap the explicit `&'bump [u8]` impl
-// (Rust has no stable specialization). Bytes only appear as `[u8]` slices in
-// the CSS AST, never as standalone values.
 deep_clone_copy!(f32, f64, i32, u32, i64, u64, usize, isize, u16, bool);
 
 impl<'bump> DeepClone<'bump> for &'bump [u8] {
@@ -186,18 +160,10 @@ impl<'bump> DeepClone<'bump> for bun_ast::Loc {
 // Eql
 // ───────────────────────────────────────────────────────────────────────────────
 
-/// `lhs.eql(&rhs)` for CSS types. This is the equivalent of doing
-/// `#[derive(PartialEq)]` in Rust — and most impls could be exactly that.
-/// Kept as a separate trait because some CSS types want structural
-/// equality that differs from `PartialEq` (e.g. `VendorPrefix`, idents).
 pub trait CssEql {
     fn eql(&self, other: &Self) -> bool;
 }
 
-/// `#[derive(CssEql)]` — field-wise / variant-wise port of Zig's
-/// `css.implementEql`. See `src/css_derive/lib.rs` for the expansion rules.
-/// Re-exported here so `use crate::generics::CssEql;` brings both trait and
-/// derive into scope (same-name idiom, cf. `Clone`).
 pub use bun_css_derive::CssEql;
 
 #[inline]
@@ -291,21 +257,6 @@ macro_rules! eql_simple {
 // `u8` omitted to avoid `[T]`/`[u8]` overlap — see deep_clone_copy! note.
 eql_simple!(f32, f64, i32, u32, i64, u64, usize, isize, u16, bool);
 
-/// Stamp `impl CssEql for $T` forwarding to `PartialEq::eq`.
-///
-/// Exported sibling of `eql_simple!` for crate-defined types whose
-/// inherent `pub fn eql(&self, other) { self == other }` was a pure `PartialEq`
-/// forwarder (Zig `css.implementEql(@This())` leakage).
-///
-/// Unlike `#[derive(CssEql)]` (field-wise `.eql()` walk), this does **not**
-/// require every field type to itself impl `CssEql`; it bridges
-/// `PartialEq` → `CssEql` wholesale. Prefer `#[derive(CssEql)]` only when a
-/// field's `CssEql` is intentionally *different* from its `PartialEq` (e.g.
-/// `Ident`, `Url`).
-///
-/// REJECTED alternative: `impl<T: PartialEq> CssEql for T {}` blanket — would
-/// overlap the existing `Option<T>`/`Vec<T>`/`[T]`/`Box<T>` blanket impls
-/// above (coherence).
 #[macro_export]
 macro_rules! css_eql_partialeq {
     ($($t:ty),+ $(,)?) => {$(
@@ -394,16 +345,6 @@ mod ident_eql {
     ident_eql_impl!(CustomIdent, DashedIdent, Ident);
 }
 
-// ───────────────────────────────────────────────────────────────────────────────
-// Bridge inherent eql/hash/deep_clone → trait impls
-//
-// Many CSS value types carry hand-rolled inherent `eql`/`hash`/`deep_clone`
-// (ported verbatim from the Zig `implementEql`/`implementHash`/
-// `implementDeepClone` bodies — usually because a field is a raw `*const [u8]`
-// arena slice that the derive can't see through). The `#[derive(CssEql/…)]`
-// expansion on *containing* types dispatches via UFCS trait paths, so those
-// inherent methods alone don't satisfy the bound. These thin forwarding impls
-// close the gap without duplicating logic.
 mod inherent_bridge {
     use super::{Arena, CssEql, CssHash, DeepClone, Wyhash};
 
@@ -481,12 +422,6 @@ mod inherent_bridge {
     // CssHash for WebKitScrollbarPseudoElement — via #[derive(CssHash)] on the enum.
     bridge_hash!(ViewTransitionPartName);
     bridge_deep_clone_copy!(WebKitScrollbarPseudoElement, ViewTransitionPartName);
-
-    // ───────────────────────────────────────────────────────────────────────
-    // Property value-type bridges — `Property::deep_clone`/`eql` dispatch via
-    // `css::generic::deep_clone`/`eql` (trait bounds), but most leaf types
-    // only carry inherent methods or `derive(Clone, PartialEq)`. Bridge them.
-    // ───────────────────────────────────────────────────────────────────────
 
     /// Forward `CssEql` to `PartialEq`.
     macro_rules! bridge_eql_partialeq {
@@ -885,10 +820,6 @@ pub trait CssHash {
     fn hash(&self, hasher: &mut Wyhash);
 }
 
-/// `#[derive(CssHash)]` — field-wise / variant-wise port of Zig's
-/// `css.implementHash`. See `src/css_derive/lib.rs` for the expansion rules.
-/// Re-exported here so `use crate::generics::CssHash;` brings both trait and
-/// derive into scope.
 pub use bun_css_derive::CssHash;
 
 #[inline]
@@ -950,11 +881,6 @@ impl<T: CssHash> CssHash for [T] {
 
 impl<T: CssHash, const N: usize> CssHash for [T; N] {
     fn hash(&self, hasher: &mut Wyhash) {
-        // Zig: `bun.writeAnyToHasher(hasher, list.len)` — feeds the raw bytes
-        // of `usize` into the hasher. `bun_core::write_any_to_hasher` exists
-        // but is `H: Hasher`-generic and routes through `Hasher::write`, which
-        // for `Wyhash11` calls `update` — so inlining the `usize` byte-feed
-        // here is byte-identical and avoids the trait hop.
         hasher.update(&self.len().to_ne_bytes());
         for item in self {
             item.hash(hasher);
@@ -1086,11 +1012,6 @@ pub trait IsCompatible {
     fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool;
 }
 
-/// `#[derive(IsCompatible)]` — field-wise / variant-wise port of the
-/// hand-written `isCompatible` pattern (struct → AND of fields, enum → unit
-/// variants `true` / payload variants delegate). See `src/css_derive/lib.rs`.
-/// Re-exported here so `use crate::generics::IsCompatible;` brings both trait
-/// and derive into scope.
 pub use bun_css_derive::IsCompatible;
 
 #[inline]
@@ -1151,10 +1072,6 @@ impl<T: IsCompatible> IsCompatible for Vec<T> {
     }
 }
 
-// The Zig original blanket-impls over "any list container". A Rust blanket
-// `impl<L: ListContainer>` conflicts with the `&T` impl above (coherence can't
-// prove `&T` never impls `ListContainer`), so spell out the three concrete
-// container types instead.
 macro_rules! is_compatible_container {
     ($(($($gen:tt)*) $ty:ty),* $(,)?) => {$(
         impl<$($gen)*> IsCompatible for $ty
@@ -1177,35 +1094,11 @@ is_compatible_container!(
     (T, const N: usize) SmallList<T, N>,
 );
 
-// ───────────────────────────────────────────────────────────────────────────────
-// Parse / ParseWithOptions
-// ───────────────────────────────────────────────────────────────────────────────
-// Zig's `generic.parse(T, input)` / `generic.parseWithOptions(T, input, opts)`
-// dispatch via `@hasDecl(T, "parse"[WithOptions])`. In Rust each leaf value
-// type either hand-writes an inherent `parse(&mut Parser) -> CssResult<Self>`
-// or derives one via `#[derive(Parse)]` / `#[derive(DefineEnumProperty)]`; the
-// trait below is the uniform bound that `Property::parse` and the container
-// blanket impls (`SmallList`/`Vec`/`Option`/`Size2D`/`Rect`) need.
-//
-// `Parse` is intentionally lifetime-free: every value-type parser takes
-// `&mut Parser<'_>` (the borrowed source slice) and returns an owned value.
-// TODO(refactor): `'bump` arena threading is a follow-up; until then the parser
-// holds the arena and arena-backed lists go through `from_list(Vec)`.
-
 /// `T::parse(&mut Parser) -> CssResult<T>`.
 pub trait Parse: Sized {
     fn parse(input: &mut Parser) -> CssResult<Self>;
 }
 
-/// `T::parse_with_options(&mut Parser, &ParserOptions) -> CssResult<T>`.
-///
-/// Zig falls through to `parse` when a type has no `parseWithOptions` decl.
-/// PORT NOTE: Rust can't express that as a `where Self: Parse` default method
-/// — the bound becomes part of the *method signature*, so the free
-/// `parse_with_options::<T>` below would require `T: Parse` even for impls
-/// that override the body. Instead the fallthrough lives in
-/// `impl_pwo_via_parse!`/`impl_parse_tocss_via_inherent!` and the container
-/// impls; every `ParseWithOptions` impl provides the method explicitly.
 pub trait ParseWithOptions: Sized {
     fn parse_with_options(input: &mut Parser, options: &ParserOptions) -> CssResult<Self>;
 }
@@ -1446,20 +1339,6 @@ impl ToCss for Ident {
     }
 }
 
-// ── leaf-type forwarding macros ──────────────────────────────────────────────
-// Every CSS leaf value type carries inherent `parse` / `to_css` (hand-written
-// or derived). `Property::{parse,value_to_css}` dispatch through the
-// `generic::{Parse,ToCss,ParseWithOptions}` *traits*, so each leaf must impl
-// them.
-//
-// Two sources of the trait impl:
-//   1. `#[derive(ToCss/Parse/DefineEnumProperty)]`
-//      (bun_css_derive) — emits the trait impl directly.
-//   2. Hand-written leaves — list them under `impl_parse_tocss_via_inherent!`
-//      to forward the trait to the inherent.
-//
-// A type must use exactly one of the two; listing a derive-carrying type in
-// the macro is an E0119 coherence conflict.
 #[macro_export]
 macro_rules! impl_parse_tocss_via_inherent {
     ($($ty:ty),+ $(,)?) => {$(
@@ -1609,12 +1488,6 @@ impl PartialCmp for CSSInteger {
         Some(Ord::cmp(self, rhs))
     }
 }
-
-// ───────────────────────────────────────────────────────────────────────────────
-// Zero / MulF32 / TryAdd — numeric protocol traits used by `DimensionPercentage<D>`
-// and the `CalcValue` supertrait set. Formerly duplicated in `values::protocol`;
-// that module now re-exports from here.
-// ───────────────────────────────────────────────────────────────────────────────
 
 /// `D::zero()` / `d.is_zero()` — additive identity.
 pub trait Zero: Sized {

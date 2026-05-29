@@ -11,16 +11,6 @@ bun_opaque::opaque_ffi! {
     pub struct JSString;
 }
 
-// TODO(port): move to jsc_sys
-//
-// NOTE: Zig declares several of these params as `*JSString` / `*JSGlobalObject`
-// (mutable), but the C ABI does not distinguish `*const T` from `*mut T`. We
-// intentionally declare them `*const` here — matching the convention in
-// JSGlobalObject.rs / JSValue.rs — so that callers can pass `&self` / `&global`
-// directly without an `as *const _ as *mut _` cast. `JSString` and
-// `JSGlobalObject` are opaque zero-sized handles in Rust, so a shared `&` borrow
-// covers zero bytes and C++ mutating the underlying GC cell does not violate
-// Rust's aliasing rules.
 unsafe extern "C" {
     safe fn JSC__JSString__toObject(this: &JSString, global: &JSGlobalObject) -> *mut JSObject;
     safe fn JSC__JSString__toZigString(
@@ -74,24 +64,11 @@ impl JSString {
         str.to_slice()
     }
 
-    // Spec (JSString.zig:44-52): `str.toSliceClone(allocator)` always allocates
-    // an owned UTF-8 copy so the result outlives the GC'd JSString. Returning
-    // `to_slice()` here (a borrow that may alias JSC-owned memory) would hand
-    // callers a use-after-free once the cell is collected.
-    // TODO(port): un-gate once `bun_core::ZigString::to_slice_clone` is
-    // ported; gated so wrong-semantics fallback cannot be called.
-
     pub fn to_slice_clone(&self, global: &JSGlobalObject) -> JsResult<ZigStringSlice> {
         let mut str = ZigString::init(b"");
         self.to_zig_string(global, &mut str);
         Ok(str.to_slice_clone())
     }
-
-    // Spec (JSString.zig:54-62): `str.toSliceZ(allocator)` guarantees a `[:0]`
-    // sentinel. `to_slice()` is not NUL-terminated; passing it to a C API that
-    // expects one reads past the buffer end.
-    // TODO(port): un-gate once `bun_core::ZigString::to_slice_z` is
-    // ported; gated so wrong-semantics fallback cannot be called.
 
     pub fn to_slice_z(&self, global: &JSGlobalObject) -> ZigStringSlice {
         let mut str = ZigString::init(b"");
@@ -138,18 +115,6 @@ pub struct Iterator {
 }
 
 impl Iterator {
-    /// Raw type-erased user-data pointer (Zig: `data: ?*anyopaque`).
-    ///
-    /// This is the sole accessor for the `data` field. A `&T`-returning
-    /// accessor is intentionally **not** provided: `data` is an opaque
-    /// `*mut c_void` whose concrete pointee type is known only to the caller
-    /// that constructed the `Iterator`, and that pointee is mutated by the
-    /// append/write callbacks while C++ holds `*mut Iterator` re-entrantly.
-    /// Callers must cast and dereference under their own `unsafe` block.
-    ///
-    /// Invariant: may be null (Zig spec declares it optional). When set by
-    /// `iter()`-style constructors it points to a stack-local context struct
-    /// that outlives the `JSC__JSString__iterator` call.
     #[inline]
     pub fn data_ptr(&self) -> *mut c_void {
         self.data

@@ -38,21 +38,11 @@ use bun_sys::windows::libuv as uv;
 
 use super::frame;
 
-/// The Zig version is `fn Channel(comptime Owner: type, comptime owner_field:
-/// []const u8) type`. Rust cannot take a field-name string as a const generic,
-/// so the owner instead implements [`bun_core::IntrusiveField<Channel<Self>>`]
-/// (via `bun_core::intrusive_field!`) plus the two callbacks the Zig called
-/// as `owner().onChannelFrame` / `onChannelDone`.
 pub trait ChannelOwner: bun_core::IntrusiveField<Channel<Self>> {
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>);
     fn on_channel_done(&mut self);
 }
 
-// PORT NOTE: the struct itself carries no `ChannelOwner` bound so that owners
-// (Worker, WorkerCommands) can embed `Channel<Self>` as a field before their
-// `impl ChannelOwner` is in scope. Method impls that recover the owner via
-// `IntrusiveField::OFFSET` keep the bound. (Rust also forbids a stricter bound
-// on `Drop` than on the struct, so Drop/Default below are unbounded too.)
 pub struct Channel<Owner> {
     /// Incoming bytes that don't yet form a complete frame.
     // PORT NOTE: Zig field name is `in`, a Rust keyword — kept via raw ident
@@ -117,18 +107,7 @@ impl Default for PosixBackend {
 
 #[cfg(not(windows))]
 impl<Owner: ChannelOwner> Channel<Owner> {
-    /// Shared embedded group for this channel. Uses `.dynamic` kind +
-    /// per-Owner vtable because the test-parallel channel is an internal-only
-    /// one-off whose ext type (`*mut Self`) varies by Owner — not worth a
-    /// `SocketKind` value of its own. The per-file isolation swap skips
-    /// `rare.test_parallel_ipc_group` so the coordinator link survives.
     fn ensure_posix_group(vm: &mut VirtualMachine) -> &mut uws::SocketGroup {
-        // PORT NOTE: borrowck split — `rare_data()` mutably borrows `vm`, but
-        // the group accessor needs `vm` again for `uws_loop()`. The two touch
-        // disjoint storage (the `Box<RareData>` payload vs the loop pointer
-        // field), so a raw-pointer reborrow is sound here. Mirrors Zig's
-        // `vm.rareData().testParallelIpcGroup(vm)` which has no such aliasing
-        // restriction.
         let rd: *mut bun_jsc::rare_data::RareData = vm.rare_data();
         // SAFETY: `rd` points into `vm`'s boxed RareData, which outlives this
         // call; the accessor only reads `vm.uws_loop()` (a separate field).
@@ -137,11 +116,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         // separate processes so there's never more than one Owner type sharing
         // this group.
         if g.vtable.is_none() {
-            // PORT NOTE: cannot use `uws::vtable::make::<PosixHandlers<Owner>>()`
-            // because `bun_uws_sys::vtable::Handler` requires `Self: 'static`
-            // and one owner (`WorkerCommands<'a>`) carries a lifetime. The
-            // hand-rolled `PosixHandlers::<Owner>::VTABLE` const below mirrors
-            // exactly what `vtable::make` would produce.
             g.vtable = Some(&PosixHandlers::<Owner>::VTABLE);
         }
         g
@@ -179,15 +153,6 @@ impl Default for WindowsBackend {
 // -- adopt -------------------------------------------------------------------
 
 impl<Owner: ChannelOwner> Channel<Owner> {
-    /// Adopt a duplex fd into the channel and start reading. POSIX: the
-    /// socketpair end. Windows: the inherited named-pipe end (worker side).
-    // PORT NOTE: callers (`runner.rs`, `Worker.rs`) only hold `&VirtualMachine`;
-    // the upstream `rare_data()` / `test_parallel_ipc_group()` accessors require
-    // `&mut`. Take a raw `*const` (matches Zig `*jsc.VirtualMachine`) and cast
-    // away const locally — single-threaded init path. A `&VirtualMachine`
-    // parameter would trip `invalid_reference_casting` on the `&T → &mut T`
-    // promotion; the raw-pointer route sidesteps that lint while keeping both
-    // call sites (which pass `&`/`&mut` and coerce) unchanged.
     pub fn adopt(&mut self, vm: *const VirtualMachine, fd: Fd) -> bool {
         // PORT NOTE — VM is process-singleton and accessed only from the main
         // thread here; route through the safe singleton accessor.
@@ -195,13 +160,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         let vm: &mut VirtualMachine = VirtualMachine::get().as_mut();
         #[cfg(windows)]
         {
-            // ipc=true matches ipc.zig windowsConfigureClient. With ipc=true
-            // libuv wraps reads/writes in its own framing; both ends use it so
-            // the wrapping is transparent and our payload bytes pass through
-            // unchanged. With ipc=false the parent end (created by uv_spawn for
-            // the .ipc stdio container, which always inits with ipc=true) and
-            // child end disagree on framing and the channel never delivers a
-            // frame.
             let mut pipe = Box::new(bun_core::ffi::zeroed::<uv::Pipe>());
             if let Some(e) = pipe
                 .init(uv::Loop::get(), true)
@@ -254,17 +212,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         }
     }
 
-    /// Windows-only: adopt a `uv::Pipe` already initialized by spawn (the
-    /// `.ipc` extra-fd parent end, or the worker's just-opened pipe). Starts
-    /// reading. On failure the caller still owns `pipe`.
-    ///
-    /// Unlike ipc.zig's windowsConfigureServer/Client we keep the pipe ref'd:
-    /// the worker (and the coordinator before workers register process exit
-    /// handles) has nothing else keeping `uv_loop_alive()` true, so unref'ing
-    /// here makes autoTick() take the tickWithoutIdle (NOWAIT) path and never
-    /// block for the peer's first frame. The pipe is closed explicitly in
-    /// `close()` / `Drop`, and both sides exit via Global.exit / drive()
-    /// returning, so the extra ref never holds the process open.
     #[cfg(windows)]
     pub fn adopt_pipe(&mut self, _vm: *const VirtualMachine, pipe: *mut uv::Pipe) -> bool {
         // PORT NOTE: Zig's `pipe.readStart(self, onAlloc, onError, onRead)`
@@ -330,13 +277,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         let Some(pipe) = self.backend.pipe.as_mut() else {
             return;
         };
-        // Try a synchronous write first. uv_try_write on a Windows
-        // UV_NAMED_PIPE always returns EAGAIN (vendor/libuv/src/win/stream.c),
-        // so this currently always falls through to submit_windows_write —
-        // kept because EBADF/EPIPE here mean the pipe is dead and must not
-        // silently drop the frame.
-        // PORT NOTE: Zig `pipe.tryWrite([]const u8) Maybe(usize)` is inlined
-        // here against the low-level `UvStream::try_write(&[uv_buf_t])`.
         let buf = uv::uv_buf_t::init(frame_bytes);
         let rc = pipe.try_write(core::slice::from_ref(&buf));
         let w: usize = match rc.to_error(bun_sys::Tag::try_write) {
@@ -542,11 +482,6 @@ impl<Owner> Drop for Channel<Owner> {
 
 // -- platform callbacks ------------------------------------------------------
 
-/// `vtable.make()` shape: `(ext: **Self, *us_socket_t, …)`. Hand-rolled here
-/// instead of `uws::vtable::make::<PosixHandlers<Owner>>()` because the
-/// upstream `bun_uws_sys::vtable::Handler` trait is `'static`-bounded and one
-/// owner (`WorkerCommands<'a>`) carries a lifetime. The trampolines below are
-/// the exact shape `vtable::make` would have produced.
 #[cfg(not(windows))]
 pub(crate) struct PosixHandlers<Owner: ChannelOwner>(PhantomData<Owner>);
 
@@ -660,10 +595,6 @@ impl<Owner: ChannelOwner> WindowsHandlers<Owner> {
     }
 }
 
-/// Adapter from `UvStream::read_start_ctx` to `WindowsHandlers` — Zig's
-/// `pipe.readStart(self, onAlloc, onError, onRead)` captures the three
-/// callbacks at comptime; Rust expresses that as this trait impl so the
-/// `extern "C"` trampoline stays zero-alloc.
 #[cfg(windows)]
 impl<Owner: ChannelOwner> uv::StreamReader for Channel<Owner> {
     #[inline]
@@ -677,11 +608,6 @@ impl<Owner: ChannelOwner> uv::StreamReader for Channel<Owner> {
     }
     #[inline]
     unsafe fn on_read(this: *mut Self, data: &[u8]) {
-        // `data` points into `(*this).backend.read_chunk` (returned from
-        // `on_read_alloc`). Forming `&mut *this` retags every byte Unique and
-        // pops `data`'s SharedRW tag, so capture the length, drop `data`, then
-        // re-derive the bytes from the freshly-retagged `this` via a disjoint
-        // field split (read_chunk → r#in).
         let n = data.len();
         let _ = data;
         // SAFETY: `this` is the live `Channel` stashed in `handle.data` by

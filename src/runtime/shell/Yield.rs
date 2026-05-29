@@ -10,13 +10,6 @@ use core::cell::Cell;
 use crate::shell::interpreter::{Interpreter, NodeId, StateKind, log};
 use crate::shell::states::pipeline::Pipeline;
 
-/// A "continuation" of the shell interpreter. Shell state-machine functions
-/// return a `Yield`; `Yield::run(&Interpreter)` is the trampoline that
-/// drives execution without blowing up the call stack.
-///
-/// Variants name the *next state to step* by `NodeId`. The trampoline looks
-/// up the node and matches on its kind (hoisted dispatch — see
-/// `Interpreter::next_node`).
 #[derive(strum::IntoStaticStr)]
 // OnIoWriterChunk's `err` is constructed inline at several sites in IOWriter.rs;
 // boxing it would add an allocation to the synchronous-write fast path for no win.
@@ -104,12 +97,6 @@ impl Yield {
         let tag: &'static str = (&self).into();
         let _depth = DbgDepthGuard::enter(tag);
 
-        // A pipeline starts multiple "threads" of execution (`cmd1 | cmd2 | cmd3`).
-        // We start cmd1, return to the pipeline, start cmd2, etc. — so we keep
-        // a small stack of pipeline NodeIds to resume.
-        //
-        // PERF(port): was stack-fallback alloc (4 inline) — profile if hot;
-        // smallvec::SmallVec<[NodeId; 4]> is the right shape.
         let mut pipeline_stack: Vec<NodeId> = Vec::with_capacity(4);
 
         // Zig used a labelled `state: switch` as a tail-call trampoline. Rust

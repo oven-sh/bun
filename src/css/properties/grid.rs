@@ -17,10 +17,6 @@ pub enum TrackSizing {
     Tracklist(TrackList),
 }
 
-/// A [`<track-list>`](https://drafts.csswg.org/css-grid-2/#typedef-track-list) value,
-/// as used in the `grid-template-rows` and `grid-template-columns` properties.
-///
-/// See [TrackSizing](TrackSizing).
 pub struct TrackList {
     /// A list of line names.
     pub line_names: Vec<CustomIdentList>,
@@ -400,11 +396,6 @@ fn parse_line_names(input: &mut Parser) -> css::Result<CustomIdentList> {
     })
 }
 
-/// A [`<repeat-count>`](https://drafts.csswg.org/css-grid-2/#typedef-track-repeat) value,
-/// used in the `repeat()` function.
-///
-/// See [TrackRepeat](TrackRepeat).
-// TODO(port): css.DeriveParse / css.DeriveToCss → #[derive(Parse, ToCss)] proc-macro
 #[derive(PartialEq, Eq)]
 pub enum RepeatCount {
     /// The number of times to repeat.
@@ -472,10 +463,6 @@ impl GridTemplateAreas {
         let mut row: u32 = 0;
         let mut columns: u32 = 0;
 
-        // PORT NOTE: `expect_string` returns a slice borrowing `&mut self`, which
-        // `try_parse`'s `R` type param can't carry. Erase the lifetime through a
-        // raw pointer inside the closure; the slice lives in the input arena and
-        // outlives this parse.
         if let Ok(s) = input.try_parse(|i| i.expect_string().map(std::ptr::from_ref::<[u8]>)) {
             // SAFETY: `s` points to a slice returned by `expect_string`, which is backed by the
             // parser's input arena and remains valid for the duration of this parse.

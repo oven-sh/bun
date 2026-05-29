@@ -63,17 +63,9 @@ pub struct PackageJSON {
     _pinned: core::marker::PhantomPinned,
 }
 
-/// Manual vtable for resolver→watcher directory-watch callbacks.
-/// Was `bun_resolver::AnyResolveWatcher` (T5); defined here so the low-tier
-/// crate owns the shape and `bun_resolver` re-imports it (move-in pass).
-// PERF(port): was inline switch (Zig comptime ResolveWatcher generator).
 #[derive(Clone, Copy)]
 pub struct AnyResolveWatcher {
     pub context: *mut (),
-    // Safe fn-pointer: the callback has no caller-side preconditions — it
-    // receives exactly the `context` it was paired with at construction (a
-    // closure-style invariant upheld by this struct), and the body discharges
-    // its own type-recovery `unsafe` internally.
     pub callback: fn(*mut (), dir_path: &[u8], dir_fd: Fd),
 }
 
@@ -89,10 +81,6 @@ impl AnyResolveWatcher {
 // ideally, the constants above can be inlined
 pub(crate) type Platform = platform::Platform;
 
-/// `?[:0]u8` — name of a changed file inside a watched directory, borrowed
-/// from the platform's event buffer (inotify event names / kqueue udata).
-/// Ownership stays with the platform buffer for the duration of one
-/// `on_file_update` callback; the slot is cleared next cycle.
 pub type ChangedFilePath = Option<&'static ZStr>;
 
 // ─── Watcher ──────────────────────────────────────────────────────────────
@@ -110,13 +98,6 @@ pub struct Watcher {
     pub watched_count: usize,
     pub mutex: Mutex,
 
-    // PORT NOTE: Zig stored `fs: *Fs.FileSystem` but only ever read
-    // `fs.top_level_dir`. Storing the slice directly avoids a forward-decl
-    // dependency on the higher-tier `bun_resolver::fs::FileSystem` type.
-    // allocator field dropped — global mimalloc (see §Allocators)
-    /// Whether `thread_main` is running. Written by the watcher thread, read
-    /// by `start`/`shutdown` on the main thread. The actual `ThreadId` value
-    /// was never read — only `is_some()`/`is_none()` — so this is a `bool`.
     pub watchloop_handle: bun_core::AtomicCell<bool>,
     pub cwd: &'static [u8],
     pub thread: Option<std::thread::JoinHandle<()>>,
@@ -154,21 +135,6 @@ pub trait WatcherContext {
 }
 
 impl Watcher {
-    /// Initializes a watcher. Each watcher is tied to some context type, which
-    /// receives watch callbacks on the watcher thread. This function does not
-    /// actually start the watcher thread.
-    ///
-    ///     let watcher = Watcher::init(instance_of_t, fs)?;
-    ///     // on error: watcher.shutdown(false);
-    ///     watcher.start()?;
-    ///
-    /// To integrate a started watcher into module resolution:
-    ///
-    ///     transpiler.resolver.watcher = watcher.get_resolve_watcher();
-    ///
-    /// To integrate a started watcher into bundle_v2:
-    ///
-    ///     bundle_v2.bun_watcher = watcher;
     pub fn init<T: WatcherContext>(
         ctx: *mut T,
         top_level_dir: &'static [u8],
@@ -338,19 +304,6 @@ impl Watcher {
         if self.evict_list_i == 0 {
             return;
         }
-        // The close+swap_remove below must be serialized against (a) the JS
-        // thread's `ImportWatcher::snapshot_fd_and_package_json` lookup and
-        // (b) the JS thread's `append_file_maybe_lock<true>` re-add — both of
-        // which take `self.mutex`. Otherwise there's a window between pass 1
-        // (`close(fd)`) and pass 2 (`swap_remove`) where the JS thread reads
-        // the still-present entry's now-closed fd → `EBADF reading "<path>"`.
-        //
-        // We do NOT lock here: the only callers are deferred from
-        // `WatcherContext::on_file_update`, which is itself invoked while the
-        // platform watcher already holds `self.mutex` (KEventWatcher.rs:138,
-        // INotifyWatcher.rs:555, WindowsWatcher.rs). `bun_threading::Mutex` is
-        // non-recursive — re-locking here is `os_unfair_lock` SIGILL on darwin
-        // and self-deadlock on Linux/Windows.
         debug_assert!(
             self.mutex.is_held_by_current_thread(),
             "flush_evictions: caller must hold self.mutex (platform watcher holds it around on_file_update)",
@@ -399,10 +352,6 @@ impl Watcher {
             }
             self.watchlist.swap_remove(item as usize);
 
-            // swapRemove put a different entry at `item`, but its kqueue registration still
-            // carries its old `udata` (= pre-swap index). Rewrite it so subsequent kevents
-            // route to the right module; EV_ADD on an existing (ident, filter) replaces in
-            // place. See #29524.
             #[cfg(any(target_os = "macos", target_os = "freebsd"))]
             {
                 if (item as usize) < self.watchlist.len() {
@@ -427,18 +376,6 @@ impl Watcher {
         Ok(())
     }
 
-    /// Register a file descriptor with kqueue on macOS without validation.
-    ///
-    /// Preconditions (caller must ensure):
-    /// - `fd` is a valid, open file descriptor
-    /// - `watchlist_id` matches the entry's index in the watchlist
-    ///
-    /// Safe to call on an already-registered `fd`: `EV_ADD` on an existing
-    /// `(ident, filter)` replaces the registration in place, which `flush_evictions`
-    /// relies on to rewrite `udata` after `swap_remove`. Adding a
-    /// skip-if-registered guard here silently reintroduces #29524.
-    ///
-    /// Does not propagate kevent registration errors.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub fn add_file_descriptor_to_kqueue_without_checks(&mut self, fd: Fd, watchlist_id: usize) {
         // TODO(port): move to watcher_sys
@@ -507,10 +444,6 @@ impl Watcher {
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         let watchlist_id = self.watchlist.len();
 
-        // Zig: `if (clone_file_path) bun.asByteSlice(bun.handleOom(allocator.dupeZ(u8, file_path))) else file_path`.
-        // `WatchItem.file_path` is now an owning `Cow<'static, [u8]>` column so the
-        // CLONE_FILE_PATH=true arm heap-dups (matching Zig's `dupeZ`) instead of
-        // dangling once the caller's buffer is freed.
         let file_path_: Cow<'static, [u8]> = if CLONE_FILE_PATH {
             Cow::Owned(file_path.to_vec())
         } else {
@@ -524,11 +457,6 @@ impl Watcher {
         self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let eventlist_index = {
-            // Zig builds the `[:0]const u8` from `file_path_` (the dupeZ'd copy when
-            // clone_file_path=true), guaranteeing a trailing NUL for inotify. When
-            // CLONE_FILE_PATH is true the caller's `file_path` is NOT NUL-terminated,
-            // so we must copy into a NUL-terminated scratch buffer (mirrors the
-            // directory branch below) instead of pointing at the caller's slice.
             let mut buf = bun_paths::path_buffer_pool::get();
             let slice: &ZStr = if CLONE_FILE_PATH {
                 buf[0..file_path.len()].copy_from_slice(file_path);
@@ -584,10 +512,6 @@ impl Watcher {
             bun_sys::open_a(file_path, 0, 0)?
         };
 
-        // Zig: `if (clone_file_path) bun.asByteSlice(bun.handleOom(allocator.dupeZ(u8, file_path))) else file_path`.
-        // `WatchItem.file_path` is now an owning `Cow<'static, [u8]>` column so the
-        // CLONE_FILE_PATH=true arm heap-dups (matching Zig's `dupeZ`) instead of
-        // dangling once the caller's buffer is freed.
         let file_path_: Cow<'static, [u8]> = if CLONE_FILE_PATH {
             Cow::Owned(file_path.to_vec())
         } else {
@@ -691,10 +615,6 @@ impl Watcher {
                 }
             }
         }
-        // Zig: `bun.handleOom(this.watchlist.ensureUnusedCapacity(...))` — abort on OOM.
-        // `MultiArrayList::ensure_unused_capacity` returns `Err(AllocError)` on
-        // allocation failure (does NOT abort), so discarding it would let the
-        // following `append_assume_capacity` write past capacity.
         self.watchlist
             .ensure_unused_capacity(1 + usize::from(parent_watch_item.is_none()))
             .unwrap_or_else(|_| bun_core::out_of_memory());
@@ -811,17 +731,6 @@ impl Watcher {
         result
     }
 
-    /// Lazily watch a file by path (slow path).
-    ///
-    /// This function is used when a file needs to be watched but was not
-    /// encountered during the normal import graph traversal. On macOS, it
-    /// opens a file descriptor with O_EVTONLY to obtain an inode reference.
-    ///
-    /// Thread-safe: uses internal locking to prevent race conditions.
-    ///
-    /// Returns:
-    /// - true if the file is successfully added to the watchlist or already watched
-    /// - false if the file cannot be opened or added to the watchlist
     pub fn add_file_by_path_slow(&mut self, file_path: &[u8], loader: Loader) -> bool {
         if file_path.is_empty() {
             return false;
@@ -1087,10 +996,6 @@ pub enum WatchItemKind {
     Directory,
 }
 
-/// Typed SoA column accessors — thin safe wrappers over the reflection-backed
-/// `MultiArrayList::items::<"name", T>()` so callers don't repeat the type.
-/// Implemented locally so callers can write `watchlist.items_fd()` instead of
-/// the unsafe generic `Slice::items::<F>(field)`.
 pub trait WatchItemColumns {
     fn items_file_path(&self) -> &[Cow<'static, [u8]>];
     fn items_hash(&self) -> &[u32];

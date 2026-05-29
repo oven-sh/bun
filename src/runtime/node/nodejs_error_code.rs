@@ -5,10 +5,6 @@
 /// https://nodejs.org/api/errors.html#nodejs-error-codes
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr)]
 pub enum Code {
-    /// Used when an operation has been aborted (typically using an AbortController).
-    /// APIs not using AbortSignals typically do not raise an error with this code.
-    /// This code does not use the regular ERR_* convention Node.js errors use in order to be compatible with the web platform's AbortError.
-    /// Added in: v15.0.0
     ABORT_ERR,
 
     /// A function argument is being used in a way that suggests that the function signature may be misunderstood. This is thrown by the assert module when the message parameter in assert.throws(block, message) matches the error message thrown by block because that usage suggests that the user believes message is the expected message rather than the message the AssertionError will display if block does not throw.
@@ -577,13 +573,6 @@ pub enum Code {
     /// A Buffer, TypedArray, DataView or string was provided as stdio input to an asynchronous fork. See the documentation for the child_process module for more information.
     ERR_INVALID_SYNC_FORK_INPUT,
 
-    /// A Node.js API function was called with an incompatible this value.
-    /// ```js
-    /// const urlSearchParams = new URLSearchParams('foo=bar&baz=new');
-    /// const buf = Buffer.alloc(1);
-    /// urlSearchParams.has.call(buf, 'foo');
-    /// ```
-    /// Throws a TypeError with code 'ERR_INVALID_THIS'
     ERR_INVALID_THIS,
 
     /// An invalid transfer object was passed to postMessage().
@@ -790,10 +779,6 @@ pub enum Code {
     /// An attempt was made to call stream.unshift() after the 'end' event was emitted.
     ERR_STREAM_UNSHIFT_AFTER_END_EVENT,
 
-    /// Prevents an abort if a string decoder was set on the Socket or if the decoder is in objectMode.
-    /// const Socket = require('net').Socket;
-    /// const instance = new Socket();
-    /// instance.setEncoding('utf8');
     ERR_STREAM_WRAP,
 
     /// An attempt was made to call stream.write() after stream.end() has been called.
@@ -899,12 +884,6 @@ pub enum Code {
     /// An invalid or unknown process signal was passed to an API expecting a valid signal (such as subprocess.kill()).
     ERR_UNKNOWN_SIGNAL,
 
-    /// import a directory URL is unsupported. Instead, self-reference a package using its name and define a custom subpath in the "exports" field of the package.json file.
-    /// ```js
-    /// import './'; // unsupported
-    /// import './index.js'; // supported
-    /// import 'package-name'; // supported
-    /// ```
     ERR_UNSUPPORTED_DIR_IMPORT,
 
     /// import with URL schemes other than file and data is unsupported.
@@ -916,10 +895,6 @@ pub enum Code {
     /// A dynamic import callback was not specified.
     ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING,
 
-    /// The module attempted to be linked is not eligible for linking, because of one of the following reasons:
-    /// - It has already been linked (linkingStatus is 'linked')
-    /// - It is being linked (linkingStatus is 'linking')
-    /// - Linking has failed for this module (linkingStatus is 'errored')
     ERR_VM_MODULE_ALREADY_LINKED,
 
     /// The cachedData option passed to a module constructor is invalid.

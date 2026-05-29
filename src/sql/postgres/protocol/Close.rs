@@ -1,15 +1,6 @@
 use super::new_writer::NewWriter;
 use super::portal_or_prepared_statement::PortalOrPreparedStatement;
 
-/// Close (F)
-/// Byte1('C')
-/// - Identifies the message as a Close command.
-/// Int32
-/// - Length of message contents in bytes, including self.
-/// Byte1
-/// - 'S' to close a prepared statement; or 'P' to close a portal.
-/// String
-/// - The name of the prepared statement or portal to close (an empty string selects the unnamed prepared statement or portal).
 pub struct Close<'a> {
     pub p: PortalOrPreparedStatement<'a>,
 }

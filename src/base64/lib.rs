@@ -55,17 +55,6 @@ pub const fn decode_lenient_len(source_len: usize) -> usize {
     source_len.div_ceil(4) * 3
 }
 
-/// Decode base64 the way Node.js `Buffer.from(str, "base64" | "base64url")`
-/// and `buf.write(str, "base64" | "base64url")` do: both the standard and the
-/// URL-safe alphabets are accepted, whitespace and any other non-alphabet
-/// bytes are skipped, and decoding stops at the first `'='`. Invalid input
-/// never fails — as much data as possible is decoded.
-///
-/// Like Node.js, strictly valid input for the requested alphabet
-/// (`is_urlsafe`) is decoded with simdutf's fastest kernel; everything else is
-/// decoded with simdutf's `base64_default_or_url_accept_garbage` mode.
-///
-/// Returns the number of bytes written to `destination`.
 pub fn decode_lenient(destination: &mut [u8], source: &[u8], is_urlsafe: bool) -> usize {
     // Fast path: the common case is strictly valid base64 for the requested
     // alphabet (possibly with whitespace and padding), which simdutf decodes
@@ -75,11 +64,6 @@ pub fn decode_lenient(destination: &mut [u8], source: &[u8], is_urlsafe: bool) -
         return strict.count;
     }
 
-    // simdutf only honors the accept-garbage stop-at-'=' rule when the
-    // destination can hold the worst-case decode; with a smaller destination
-    // (e.g. `buf.write` into a short buffer) it switches to a chunked strategy
-    // that keeps decoding past the '='. Apply the rule up front in that case
-    // so both strategies agree.
     let source = if destination.len() < decode_lenient_len(source.len()) {
         match source.iter().position(|&c| c == b'=') {
             Some(index) => &source[..index],
@@ -135,12 +119,6 @@ pub(crate) fn simdutf_encode_len_url_safe(source_len: usize) -> usize {
     simdutf::base64::encode_len(source_len, true)
 }
 
-/// Encode with the following differences from regular `encode` function:
-///
-/// * No padding is added (the extra `=` characters at the end)
-/// * `-` and `_` are used instead of `+` and `/`
-///
-/// See the documentation for simdutf's `binary_to_base64` function for more details (simdutf_impl.h).
 pub(crate) fn simdutf_encode_url_safe(destination: &mut [u8], source: &[u8]) -> usize {
     simdutf::base64::encode(source, destination, true)
 }
@@ -217,12 +195,6 @@ pub fn encode_url_safe(dest: &mut [u8], source: &[u8]) -> usize {
     unsafe { WTF__base64URLEncode(source.as_ptr(), source.len(), dest.as_mut_ptr(), dest.len()) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// VLQ — moved from bun_sourcemap. Ground truth: src/sourcemap/VLQ.zig.
-// Lives here because the encoding is pure
-// base64-alphabet bit-packing with zero sourcemap-specific deps; bun_sourcemap
-// re-exports this for its own consumers.
-// ──────────────────────────────────────────────────────────────────────────
 pub use vlq::{VLQ, VLQResult};
 
 /// Variable-length quantity encoding, limited to i32 as per source map spec.
@@ -296,18 +268,6 @@ pub mod vlq {
         entries
     };
 
-    // A single base 64 digit can contain 6 bits of data. For the base 64 variable
-    // length quantities we use in the source map spec, the first bit is the sign,
-    // the next four bits are the actual value, and the 6th bit is the continuation
-    // bit. The continuation bit tells us whether there are more digits in this
-    // value following this digit.
-    //
-    //   Continuation
-    //   |    Sign
-    //   |    |
-    //   V    V
-    //   101011
-    //
     const fn encode_slow_path(value: i32) -> VLQ {
         let mut len: u8 = 0;
         let mut bytes: [u8; VLQ_MAX_IN_BYTES] = [0; VLQ_MAX_IN_BYTES];
@@ -365,11 +325,6 @@ pub mod vlq {
         bytes
     };
 
-    // Shared body for `decode` / `decode_assume_valid`. The two .zig originals
-    // (src/sourcemap/VLQ.zig:104/135) differ only by two `bun.assert` lines;
-    // const-generic `ASSERT_VALID` is const-folded so codegen matches the
-    // hand-duplicated bodies.
-    // PERF(port): loop was `inline for` (unrolled) — profile if hot.
     #[inline(always)]
     fn decode_impl<const ASSERT_VALID: bool>(encoded: &[u8], start: usize) -> VLQResult {
         let mut shift: u8 = 0;
@@ -406,11 +361,6 @@ pub mod vlq {
             }
         }
 
-        // Reached when the input is empty or ends mid-VLQ (the last byte's
-        // continuation bit is set with no following byte, or all 8 bytes have
-        // it set — both malformed). No value was decoded; return `start`
-        // unchanged so callers' no-progress checks treat the truncated
-        // mapping as a parse failure instead of silently accepting `value: 0`.
         VLQResult { start, value: 0 }
     }
 
@@ -720,10 +670,6 @@ pub mod zig_base64 {
             result
         }
 
-        /// Invalid characters that are not ignored result in Error::InvalidCharacter.
-        /// Invalid padding results in Error::InvalidPadding.
-        /// Decoding more data than can fit in dest results in Error::NoSpaceLeft. See also ::calc_size_upper_bound.
-        /// Returns the number of bytes written to dest.
         pub(crate) fn decode(
             &self,
             dest: &mut [u8],
@@ -942,10 +888,6 @@ pub mod zig_base64 {
             assert_eq!(expected_decoded, &decoded[0..written]);
         }
 
-        /// `expected_with_ignore` is the error `decoder_with_ignore` reports
-        /// for the same input, or `None` if it accepts the input. Differs from
-        /// `expected_err` when the codec's `decoder_with_ignore` doesn't share
-        /// its `pad_char` (URL-safe family).
         fn test_error(
             codecs: &Codecs,
             encoded: &[u8],
@@ -986,19 +928,6 @@ pub mod zig_base64 {
         }
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// LAYERING: hoisted from `bun_css::css_modules::hash` so `bun_bundler` can
-// call the *same* implementation without taking a hard dep on `bun_css` (and
-// without re-implementing the hash, which would diverge — see review of
-// `LinkerContext.rs::css_modules_hash_shim`). `bun_css` re-exports this as
-// `css_modules::hash` for its in-crate callers.
-//
-// Spec: `src/css/css_modules.zig:hash` — wyhash(u64) of the formatted args,
-// truncated to u32, url-safe-base64-encoded into a bump-allocated slice. If
-// `at_start` and the first encoded byte is a digit, prefix `_` (CSS idents
-// can't start with a digit).
-// ──────────────────────────────────────────────────────────────────────────
 
 // TODO: replace with bun's hash
 pub fn wyhash_url_safe<'a>(

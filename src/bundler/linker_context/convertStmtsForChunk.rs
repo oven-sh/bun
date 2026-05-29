@@ -14,31 +14,6 @@ use crate::chunk::Chunk;
 use crate::linker_context_mod::{LinkerContext, LinkerOptionsMode, StmtList, StmtListWhich};
 use crate::options::Format;
 
-/// Code we ultimately include in the bundle is potentially wrapped
-///
-/// In that case, we do a final pass over the statements list to figure out
-/// where it needs to go in the wrapper, following the syntax of the output
-/// format ESM import and export statements to always be top-level, so they
-/// can never be inside the wrapper.
-///
-///      prefix - outer
-///      ...
-///      var init_foo = __esm(() => {
-///          prefix - inner
-///          ...
-///          suffix - inenr
-///      });
-///      ...
-///      suffix - outer
-///
-/// Keep in mind that we may need to wrap ES modules in some cases too
-/// Consider:
-///   import * as foo from 'bar';
-///   foo[computedProperty]
-///
-/// In that case, when bundling, we still need to preserve that module
-/// namespace object (foo) because we cannot know what they are going to
-/// attempt to access statically
 pub fn convert_stmts_for_chunk(
     c: &mut LinkerContext<'_>,
     source_index: u32,
@@ -56,13 +31,6 @@ pub fn convert_stmts_for_chunk(
 
     let output_format = c.options.output_format;
 
-    // If this file is a CommonJS entry point, double-write re-exports to the
-    // external CommonJS "module.exports" object in addition to our internal ESM
-    // export namespace object. The difference between these two objects is that
-    // our internal one must not have the "__esModule" marker while the external
-    // one must have the "__esModule" marker. This is done because an ES module
-    // importing itself should not see the "__esModule" marker but a CommonJS module
-    // importing us should see the "__esModule" marker.
     let mut module_exports_for_export: Option<Expr> = None;
     if output_format == Format::Cjs && chunk.is_entry_point() {
         module_exports_for_export = Some(Expr::allocate(

@@ -18,11 +18,6 @@ use bun_core::{MutableString, immutable as strings};
 use bun_options_types::Format;
 use enum_map::EnumMap;
 
-/// Renamed-name strings are either borrowed from `Symbol.original_name` (AST
-/// arena) or duped into the renamer's `bumpalo::Bump` arena. `StoreStr` is the
-/// arena-backed lifetime-erased slice wrapper that centralises the raw deref
-/// (one `unsafe` in `StoreStr::slice`), so the renamer's name-table reads stay
-/// safe. Phase B may later thread `'bump` and rewrite to `&'bump [u8]`.
 type NameStr = bun_ast::StoreStr;
 
 #[inline]
@@ -39,23 +34,6 @@ const SLOT_NAMESPACES: [SlotNamespace; 4] = [
     SlotNamespace::MangledProp,
 ];
 
-/// Lifetime-erased name slice used as the key in `NumberScope::name_counts`.
-///
-/// `NumberScope` lives in a `HiveArrayFallback` pool inside `NumberRenamer`,
-/// alongside the renamer's `arena: Bump`. A `&'a [u8]` key would make
-/// `NumberScope<'a>` self-referential to its own owner, so the renamer (like
-/// the rest of the AST layer) carries name slices as the lifetime-erased
-/// [`bun_ast::StoreStr`] and re-borrows on read. Every key inserted here points
-/// either at `Symbol::original_name` (an AST-arena slice that strictly outlives
-/// the renamer) or at bytes bump-allocated from the renamer's own `arena: Bump`,
-/// which is only reset on `NumberRenamer::Drop` after every `NumberScope` is
-/// returned to the pool — so the borrow contract documented on `StoreStr::slice`
-/// is always satisfied.
-///
-/// Replaces the previous `StringHashMap<u32>` (whose `put_no_clobber` heap-boxed
-/// a `Box<[u8]>` copy of the key) with a `Copy` 16-byte key that needs no
-/// allocation on insert and no free on the per-scope drop in the renamer's
-/// pool walkback. Same shape as Zig's `StringHashMapUnmanaged([]const u8, u32)`.
 #[derive(Clone, Copy)]
 pub struct NameKey(NameStr);
 
@@ -89,26 +67,10 @@ impl core::borrow::Borrow<[u8]> for NameKey {
     }
 }
 
-/// Per-`NumberScope` map of assigned names → next collision counter.
-/// `bun_wyhash::BuildHasher` matches `StringHashMap` so the renamer keeps its
-/// existing hash quality; `NameKey` is a `Copy` lifetime-erased slice so insert
-/// never heap-allocates a key copy and drop never frees one.
 pub(crate) type NameCountMap =
     bun_collections::hashbrown::HashMap<NameKey, u32, bun_wyhash::BuildHasher>;
 
 pub struct NoOpRenamer<'a> {
-    // PORT NOTE: Zig `Symbol.Map` is a non-owning `BabyList(BabyList(Symbol))`
-    // slice header passed by value (renamer.zig:2,126,452 — no `deinit` ever
-    // frees it). In the Rust port `symbol::Map` is `Vec<Vec<Symbol>>` (owning).
-    // Unlike `MinifyRenamer`/`NumberRenamer` (which the bundler builds over a
-    // *borrowed* `LinkerGraph.symbols` and so wrap in `ManuallyDrop`),
-    // `NoOpRenamer` is only constructed by `print_ast`/`print_common_js`, whose
-    // callers always pass an *owned* Map freshly built by
-    // `Map::init_with_one_list(mem::take(&mut ast.symbols))`. Owning + dropping
-    // here is required: `ManuallyDrop` leaked the per-file `Vec<Symbol>` on
-    // every transpile (require-cache.test.ts "files transpiled and loaded don't
-    // leak the output source code" — `await import()` re-transpiles each
-    // iteration, so the leak compounds to OOM).
     pub symbols: symbol::Map,
     pub source: &'a bun_ast::Source,
 }
@@ -146,10 +108,6 @@ impl<'a> NoOpRenamer<'a> {
     }
 }
 
-// PORT NOTE: two lifetime params — `'r` is the borrow of the underlying renamer,
-// `'src` is `NoOpRenamer`'s borrow of the `Source`. The Zig `Renamer` was a
-// tag+ptr union that erased both; using `&'a mut NoOpRenamer<'a>` would make
-// `'a` invariant and lock the source borrow to the renamer borrow.
 pub enum Renamer<'r, 'src> {
     NumberRenamer(&'r mut NumberRenamer),
     NoOpRenamer(&'r mut NoOpRenamer<'src>),
@@ -188,11 +146,6 @@ impl<'r, 'src> Renamer<'r, 'src> {
 
 #[derive(Clone, Copy)]
 pub struct SymbolSlot {
-    // Most minified names are under 15 bytes
-    // Instead of allocating a string for every symbol slot
-    // We can store the string inline!
-    // But we have to be very careful of where it's used.
-    // Or we WILL run into memory bugs.
     pub name: TinyString,
     pub count: u32,
     pub needs_capital_for_jsx: bool,
@@ -463,11 +416,6 @@ impl MinifyRenamer {
                 name_minifier.number_to_minified_name(&mut name_buf, next_name)?;
                 next_name += 1;
 
-                // Make sure we never generate a reserved name. We only have to worry
-                // about collisions with reserved identifiers for normal symbols, and we
-                // only have to worry about collisions with keywords for labels. We do
-                // not have to worry about either for private names because they start
-                // with a "#" character.
                 match ns {
                     symbol::SlotNamespace::Default => {
                         while self.reserved_names.contains_key(name_buf.as_slice()) {
@@ -622,13 +570,6 @@ impl NumberRenamer {
         // PERF(port): HiveArray.Fallback was bound to arena.arena() in Zig
         let number_scope_pool = HiveArrayFallback::<NumberScope, 128>::init();
 
-        // The arena is created here (before `root.name_counts`) so the
-        // reserved-name keys can be duped into it: `root_names` owns its keys
-        // as `Box<[u8]>` and is dropped at the end of this function, while
-        // `NameKey` is a lifetime-erased borrow that must outlive `root`.
-        // The set is bounded by the unique unbound/must-not-be-renamed globals
-        // across the chunk (typically a few hundred names), and this copy
-        // happens once per chunk vs. the millions of per-symbol ops below.
         let arena = Bump::new();
         let mut root = NumberScope::default();
         root.name_counts.reserve(root_names.len());
@@ -724,13 +665,6 @@ impl NumberRenamer {
                         parent: Some(bun_ptr::ParentRef::from(
                             core::ptr::NonNull::new(s).expect("number_scope non-null"),
                         )),
-                        // Pre-size to the AST scope's symbol count so the
-                        // per-name insert path doesn't realloc the table
-                        // 0→4→8→… as names are assigned. Most scopes assign
-                        // every member exactly once, so this is the exact
-                        // final size; symbols skipped by `assign_name`
-                        // (already renamed, non-default namespace) just leave
-                        // a little slack.
                         name_counts: NameCountMap::with_capacity_and_hasher(
                             symbol_count,
                             Default::default(),
@@ -757,13 +691,6 @@ impl NumberRenamer {
             self.assign_names_recursive_with_number_scope(s, child, source_index, sorted);
         }
 
-        // PORT NOTE: Zig (renamer.zig:594-598) only put the final `s` because
-        // both the pool fallback (`.init(renamer.arena.allocator())`) and
-        // `name_counts` data lived in arenas bulk-freed by `NumberRenamer.deinit
-        // -> arena.deinit()`. The Rust port moved both to the global heap
-        // (HiveArrayFallback::init() uses Box, StringHashMap uses global alloc),
-        // so we must walk the parent chain and `put` every intermediate scope
-        // we allocated in the loop above — not just the deepest one.
         while s != initial_scope {
             // SAFETY: `s` is a pool slot we allocated and initialized in the
             // loop above; every such slot has `parent: Some(...)`. Read parent
@@ -827,11 +754,6 @@ impl NumberRenamer {
 
 #[derive(Default)]
 pub struct NumberScope {
-    /// Backreference to the enclosing `NumberScope`. The parent is either
-    /// `NumberRenamer::root` or a pool slot allocated earlier in the same
-    /// `assign_names_recursive_with_number_scope` call, both of which strictly
-    /// outlive this child (children are `put()` back before their parent), so
-    /// `ParentRef::get()` is sound without per-site `unsafe`.
     pub parent: Option<bun_ptr::ParentRef<NumberScope>>,
     pub name_counts: NameCountMap,
 }
@@ -890,15 +812,6 @@ pub enum UnusedName {
     Renamed(NameStr),
 }
 
-/// Fast-path for `MutableString::ensure_valid_identifier`: returns `true` iff
-/// `s` is a non-empty ASCII identifier (`[A-Za-z_$][A-Za-z0-9_$]*`). This is
-/// the exact condition under which Zig's `ensureValidIdentifier` returns the
-/// input slice unchanged (modulo the strict-mode-reserved-word remap, handled
-/// by the caller). The Rust port of that function currently always allocates
-/// a `Box<[u8]>` even on the borrow path — see its `TODO(port)` — so hoisting
-/// this check into the renamer restores Zig's zero-alloc behaviour for the
-/// overwhelmingly common case (`symbol.original_name` is parser-produced and
-/// almost always satisfies this).
 #[inline]
 fn is_simple_ascii_identifier(s: &[u8]) -> bool {
     let Some((&first, rest)) = s.split_first() else {
@@ -918,14 +831,6 @@ fn is_simple_ascii_identifier(s: &[u8]) -> bool {
 impl NumberScope {
     /// Caller must use an arena allocator
     pub fn find_unused_name(&mut self, arena: &Bump, input_name: &[u8]) -> UnusedName {
-        // PORT NOTE: Zig's `MutableString.ensureValidIdentifier` borrows the
-        // input when it is already a valid ASCII identifier; the Rust port
-        // always heap-allocates (Box<[u8]>). Skip the call entirely for the
-        // common case so this stays alloc-free, matching the .zig fast path.
-        // The strict-mode-reserved-word remap (`let` → `_let`, etc.) is the
-        // only transform that fires for an otherwise-valid ASCII name, so
-        // gate on that too and fall through to the full normalizer when it
-        // would apply.
         let owned_name;
         let normalized;
         let mut name: &[u8] = if is_simple_ascii_identifier(input_name)
@@ -941,11 +846,6 @@ impl NumberScope {
         // PORT NOTE: hoisted from inside the match arm so `name` (which may borrow
         // it) stays valid through the trailing dupe.
         let mut mutable_name = MutableString::init_empty();
-        // True iff a "name2"/"name3" suffix was appended below (i.e. `name` was
-        // reassigned to `mutable_name.slice()`). On the hot ASCII path
-        // `!collided && !normalized` implies `name == input_name` so the tail
-        // check skips the byte compare; the rare `normalized` path still
-        // compares (see the comment at the tail).
         let mut collided = false;
 
         match NameUse::find(self, name) {
@@ -955,13 +855,6 @@ impl NumberScope {
                 let mut tries: u32 = if matches!(use_, NameUse::Used) {
                     1
                 } else {
-                    // To avoid O(n^2) behavior, the number must start off being the number
-                    // that we used last time there was a collision with this name. Otherwise
-                    // if there are many collisions with the same name, each name collision
-                    // would have to increment the counter past all previous name collisions
-                    // which is a O(n^2) time algorithm. Only do this if this symbol comes
-                    // from the same scope as the previous one since sibling scopes can reuse
-                    // the same name without problems.
                     match use_ {
                         NameUse::SameScope(n) => n,
                         _ => unreachable!(),
@@ -981,10 +874,6 @@ impl NumberScope {
                 match NameUse::find(self, mutable_name.slice()) {
                     NameUse::Unused => {
                         if matches!(use_, NameUse::SameScope(_)) {
-                            // `prefix` may borrow the local `owned_name`; if a
-                            // new entry is needed, dupe into the renamer arena
-                            // so the `NameKey` outlives this function. Mirrors
-                            // Zig's conditional `allocator.dupe(u8, prefix)`.
                             *self.entry_or_arena_dup(prefix, arena) = tries;
                         }
                         name = mutable_name.slice();
@@ -1011,15 +900,6 @@ impl NumberScope {
             }
         }
 
-        // Each name starts off with a count of 1 so that the first collision with
-        // "name" is called "name2".
-        //
-        // `name` may still equal `input_name` bytewise even when `normalized`
-        // is true: `ensure_valid_identifier` returns the input bytes unchanged
-        // for an identifier whose first codepoint is a non-ASCII ID_Start
-        // (e.g. `é`, `π`), since only `is_simple_ascii_identifier` is
-        // ASCII-restricted. The hot ASCII path skips the byte compare via
-        // `!normalized`; the rare non-ASCII path falls back to it.
         if !collided && (!normalized || strings::eql_long(name, input_name, true)) {
             // `input_name` is `Symbol::original_name.slice()` — an AST-arena
             // slice that outlives the renamer (see [`NameKey`] doc). No copy.
@@ -1041,11 +921,6 @@ impl NumberScope {
         UnusedName::Renamed(name)
     }
 
-    /// `name_counts.entry(prefix).or_insert(0)` with a vacant-only arena dup:
-    /// when the key is already present we mutate it in place; when it is not,
-    /// the bytes are bump-allocated into `arena` so the resulting [`NameKey`]
-    /// outlives the renamer. Mirrors Zig's `getOrPut` + conditional
-    /// `allocator.dupe(u8, prefix)` shape.
     fn entry_or_arena_dup(&mut self, prefix: &[u8], arena: &Bump) -> &mut u32 {
         use bun_collections::hashbrown::hash_map::RawEntryMut;
         match self.name_counts.raw_entry_mut().from_key(prefix) {
@@ -1168,13 +1043,6 @@ pub fn compute_initial_reserved_names(
         names.put_assume_capacity(keyword, 1);
     }
 
-    // Node contains code that scans CommonJS modules in an attempt to statically
-    // detect the set of export names that a module will use. However, it doesn't
-    // do any scope analysis so it can be fooled by local variables with the same
-    // name as the CommonJS module-scope variables "exports" and "module". Avoid
-    // using these names in this case even if there is not a risk of a name
-    // collision because there is still a risk of node incorrectly detecting
-    // something in a nested scope as an top-level export.
     if output_format == Format::Cjs {
         for name in CJS_NAMES {
             // PERF(port): was assume_capacity

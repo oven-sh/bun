@@ -4,12 +4,6 @@
     clippy::disallowed_types,
     clippy::disallowed_macros
 )]
-//! Set BUN_CODEGEN_DIR for `include!(concat!(env!("BUN_CODEGEN_DIR"), "/generated_classes.rs"))`.
-//!
-//! The codegen output lives at `<repo>/build/<profile>/codegen/` and is
-//! produced by `src/codegen/generate-classes.ts` (run as part of `bun bd`).
-//! This build script just resolves and exports the path; it does NOT run the
-//! generator (that would create a Bun→cargo→Bun bootstrap loop).
 
 use std::env;
 use std::path::{Path, PathBuf};

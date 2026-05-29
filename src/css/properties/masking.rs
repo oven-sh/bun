@@ -26,10 +26,6 @@ use crate::generics::{CssEql, DeepClone};
 use crate::properties::PropertyId;
 use crate::properties::PropertyIdTag;
 
-/// A [`<geometry-box>`](https://www.w3.org/TR/css-masking-1/#typedef-geometry-box) value
-/// as used in the `mask-clip` and `clip-path` properties.
-// TODO(port): css.DefineEnumProperty(@This()) — comptime-generated eql/hash/parse/toCss/deepClone.
-// In Rust this becomes #[derive] of the css enum-property protocol (kebab-case serialization).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum GeometryBox {
     /// The painted content is clipped to the content box.
@@ -106,11 +102,6 @@ pub struct Ellipse {
 pub struct Polygon {
     /// The fill rule used to determine the interior of the polygon.
     pub fill_rule: FillRule,
-    /// The points of each vertex of the polygon.
-    // TODO(port): css is an AST crate (§Allocators) — if Polygon is arena-fed this must become
-    // `bun_alloc::ArenaVec<'bump, Point>` and Polygon/BasicShape/ClipPath gain `<'bump>`.
-    // No construction site exists in src/css/*.zig today, so provenance is unconfirmed; keeping
-    // plain Vec<Point> until the arena story is verified.
     pub points: Vec<Point>,
 }
 
@@ -466,15 +457,6 @@ impl MaskBorder {
     // deepClone → #[derive(Clone)]
 }
 
-/// A value for the [-webkit-mask-composite](https://developer.mozilla.org/en-US/docs/Web/CSS/-webkit-mask-composite)
-/// property.
-///
-/// See also [MaskComposite](MaskComposite).
-/// A value for the [-webkit-mask-composite](https://developer.mozilla.org/en-US/docs/Web/CSS/-webkit-mask-composite)
-/// property.
-///
-/// See also [MaskComposite](MaskComposite).
-// TODO(port): css.DefineEnumProperty(@This()) → derive css enum-property protocol
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum WebKitMaskComposite {
     #[css(name = "clear")]
@@ -505,15 +487,6 @@ pub enum WebKitMaskComposite {
     Xor,
 }
 
-/// A value for the [-webkit-mask-source-type](https://github.com/WebKit/WebKit/blob/6eece09a1c31e47489811edd003d1e36910e9fd3/Source/WebCore/css/CSSProperties.json#L6578-L6587)
-/// property.
-///
-/// See also [MaskMode](MaskMode).
-/// A value for the [-webkit-mask-source-type](https://github.com/WebKit/WebKit/blob/6eece09a1c31e47489811edd003d1e36910e9fd3/Source/WebCore/css/CSSProperties.json#L6578-L6587)
-/// property.
-///
-/// See also [MaskMode](MaskMode).
-// TODO(port): css.DefineEnumProperty(@This()) → derive css enum-property protocol
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum WebKitMaskSourceType {
     /// Equivalent to `match-source` in the standard `mask-mode` syntax.

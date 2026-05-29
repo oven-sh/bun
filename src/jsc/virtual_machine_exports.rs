@@ -11,15 +11,6 @@ use bun_core::String as BunString;
 use bun_event_loop::ManagedTask::ManagedTask;
 use bun_sourcemap::{BakeSourceProvider, DevServerSourceProvider};
 
-// Zig: comptime { if (Environment.isWindows) @export(&Bun__ZigGlobalObject__uvLoop, ...) }
-// Handled below by `#[cfg(windows)]` on the fn definition itself.
-//
-// `#[unsafe(no_mangle)] extern "C"` thunks for everything below are emitted by
-// `src/codegen/generate-host-exports.ts` from the `// HOST_EXPORT(Sym, c)`
-// markers; the bodies here take safe `&VirtualMachine` / `&JSGlobalObject` /
-// `&BunString` borrows and the thunk performs the single `unsafe { &*ptr }`
-// deref centrally.
-
 // HOST_EXPORT(Bun__VirtualMachine__isShuttingDown, c)
 pub fn is_shutting_down(this: &VirtualMachine) -> bool {
     this.is_shutting_down()
@@ -87,9 +78,6 @@ pub fn is_bun_main(global: &JSGlobalObject, str: &BunString) -> bool {
     str.eql_utf8(global.bun_vm().as_mut().main())
 }
 
-/// When IPC environment variables are passed, the socket is not immediately opened,
-/// but rather we wait for process.on('message') or process.send() to be called, THEN
-/// we open the socket. This is to avoid missing messages at the start of the program.
 // HOST_EXPORT(Bun__ensureProcessIPCInitialized, c)
 pub fn ensure_process_ipc_initialized(global: &JSGlobalObject) {
     // getIPCInstance() will initialize a "waiting" ipc instance so this is enough.
@@ -121,9 +109,6 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) -> JSValu
     JSValue::UNDEFINED
 }
 
-/// This function is called on another thread
-/// The main difference: we need to allocate the task & wakeup the thread
-/// We can avoid that if we run it from the main thread.
 // HOST_EXPORT(Bun__queueTaskConcurrently, c)
 pub fn queue_task_concurrently(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) {
     crate::mark_binding!();
@@ -198,10 +183,6 @@ pub fn on_did_append_plugin(jsc_vm: &mut VirtualMachine, global: &JSGlobalObject
         return;
     }
 
-    // `Option::insert` returns `&mut PluginRunner` into the VM-owned slot;
-    // `plugin_runner` and `transpiler` are disjoint fields so the split borrow
-    // is fine. The slot is embedded in `*jsc_vm` and stable for the VM's
-    // lifetime, so taking a raw pointer into it for the linker BACKREF is sound.
     let runner = jsc_vm.plugin_runner.insert(PluginRunner {
         global_object: bun_ptr::BackRef::new(global),
     });

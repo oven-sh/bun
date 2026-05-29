@@ -19,10 +19,6 @@ pub use super::codec_jpeg as jpeg;
 pub use super::codec_png as png;
 pub use super::codec_webp as webp;
 
-/// Optional OS-native backend. Absent on Linux (and any platform we haven't
-/// written one for) so the dispatch in `decode`/`encode` compiles away. The
-/// backend module is only `use`d inside the matching cfg arm so non-target
-/// platforms never see its symbols. Exposed for `Image.fromClipboard()`.
 #[cfg(target_os = "macos")]
 pub use super::backend_coregraphics as system_backend;
 #[cfg(windows)]
@@ -31,24 +27,6 @@ pub use super::backend_wic as system_backend;
 /// `true` on platforms where `system_backend` is present.
 pub(crate) const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 
-/// Process-global selector exposed as `Bun.Image.backend`.
-///
-/// `.system` (default on darwin/windows) is the perf-optimal hybrid:
-///   • jpeg/png/webp decode+encode → static codecs (turbo/spng/libwebp).
-///     Profiling on M-series found ImageIO no faster: Huffman/inflate
-///     dominate and aren't AMX-amenable, and ImageIO bottoms out in stock
-///     libz vs our zlib-ng. Keeping these static also makes output bytes
-///     and the `quality` scale match Linux.
-///   • lanczos3 resize, rotate90, flip → vImage (AMX, ~3-6× the Highway
-///     kernel on the geometry step).
-///   • heic/avif decode+encode → ImageIO/WIC (no static codec).
-///
-/// `.bun` skips the OS layer entirely (Highway geometry, heic/avif throw)
-/// so behaviour is byte-identical to a Linux build.
-///
-/// Unsynchronised: written from JS, read from WorkPool — a torn read of a
-/// 1-byte enum is fine and the worst case is one task using the previous
-/// mode.
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, strum::EnumString, strum::IntoStaticStr)]
 #[strum(serialize_all = "lowercase")]
@@ -81,10 +59,6 @@ pub(crate) static BACKEND: core::sync::atomic::AtomicU8 =
         Backend::Bun as u8
     });
 
-/// Runtime half of the dispatch check; the comptime half is the
-/// `#[cfg(any(target_os = "macos", windows))]` gate at each call site (types
-/// can't be runtime-conditional, so the two stay separate). On platforms with
-/// no backend the cfg is comptime-dead and this is never referenced.
 #[cfg(any(target_os = "macos", windows))]
 #[inline]
 fn use_system() -> bool {
@@ -133,11 +107,6 @@ impl Format {
         if bytes.len() >= 6 && (&bytes[0..6] == b"GIF87a" || &bytes[0..6] == b"GIF89a") {
             return Some(Format::Gif);
         }
-        // ISO BMFF: u32be box-size · "ftyp" · major-brand · minor-version ·
-        // compatible-brands… HEIC and AVIF share this container; the brands
-        // distinguish them. `mif1`/`msf1` are codec-agnostic MIAF structural
-        // brands that appear in BOTH, so they can't decide on first sight —
-        // scan the whole brand list and let a codec-specific brand win.
         if bytes.len() >= 16 && &bytes[4..8] == b"ftyp" {
             let box_: usize = bytes.len().min(16usize.max(u32::from_be_bytes(
                 bytes[0..4].try_into().expect("infallible: size matches"),
@@ -209,17 +178,6 @@ pub struct Decoded {
     pub rgba: Vec<u8>, // global allocator (mimalloc)
     pub width: u32,
     pub height: u32,
-    /// ICC color profile bytes pulled from the source container (JPEG APP2,
-    /// PNG iCCP, WebP ICCP), global-allocator-owned. `None` when the
-    /// source didn't carry one or the decode path doesn't extract it —
-    /// BMP/GIF (no ICC chunk) and system backends (which already colour-
-    /// manage into sRGB during decode, so the profile is no longer
-    /// needed). The image pipeline hands this straight to the matching
-    /// encoder — the RGBA buffer is NOT converted to sRGB, so the bytes
-    /// only have their intended colour meaning when the profile travels
-    /// with them. Dropping it on a Display-P3 / Adobe RGB / XYB source
-    /// would reinterpret the values as sRGB and visibly shift the
-    /// colours. See issue #30197.
     pub icc_profile: Option<Vec<u8>>,
 }
 // PORT NOTE: `deinit` only freed owned fields → Drop is automatic via Vec/Option<Vec>.
@@ -253,11 +211,6 @@ bun_core::oom_from_alloc!(Error);
 /// cap is ~1 GiB, which is already past where you'd want to be.
 pub(crate) const DEFAULT_MAX_PIXELS: u64 = 0x3FFF * 0x3FFF;
 
-/// Hint from the pipeline about the eventual output size. JPEG can do M/8
-/// IDCT scaling for free, so when we know the resize target up front we
-/// decode at the smallest factor that still ≥ the target — skipping most of
-/// the IDCT work AND shrinking the RGBA buffer the resize pass touches. This
-/// is the same trick Sharp/libvips use and is where most of the perf gap was.
 #[derive(Copy, Clone, Default)]
 pub struct DecodeHint {
     /// Final output dims (after rotate). 0 = "no resize, full decode".
@@ -271,12 +224,6 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded
         Format::Jpeg => jpeg::decode(bytes, max_pixels, hint),
         Format::Png => png::decode(bytes, max_pixels),
         Format::Webp => webp::decode(bytes, max_pixels),
-        // Static codecs cover everything we ship; profiling on M-series showed
-        // ImageIO is no faster (AppleJPEG ≈ libjpeg-turbo since Huffman is the
-        // bottleneck and isn't vectorisable; spng+zlib-ng beats ImageIO's
-        // system libz). The OS backend is purely a *capability* fallback for
-        // containers we don't link a decoder for — and `backend == .bun` opts
-        // out of even that so behaviour is identical to Linux.
         Format::Heic | Format::Avif | Format::Tiff => match decode_via_system(bytes, max_pixels)? {
             Some(d) => Ok(d),
             None => Err(Error::UnsupportedOnPlatform),
@@ -293,17 +240,6 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded
                 Some(d) => d,
                 None => gif::decode(bytes, max_pixels)?,
             };
-            // GIF transparency is a binary palette-index flag — the RGB at
-            // α=0 is whatever the colour-table slot happened to hold and has
-            // no defined meaning. The static decoder emits `[0,0,0,0]`
-            // (codec_gif.zig: `pal[t] = .{0,0,0,0}`) and ImageIO does the
-            // same, but WIC's indexed→32bppRGBA converter expands the palette
-            // entry verbatim, leaving the original RGB with α=0. Zig never
-            // hit this because `bun.windows.GetProcAddressA` widens the
-            // symbol to UTF-16 for the narrow-only Win32 `GetProcAddress`,
-            // so `WICConvertBitmapSource` was never resolved and WIC decode
-            // always fell through to the static path. Normalise here so
-            // every backend yields identical bytes for the same GIF.
             for px in d.rgba.chunks_exact_mut(4) {
                 if px[3] == 0 {
                     px[0] = 0;
@@ -341,10 +277,6 @@ pub(crate) struct Probe {
     pub height: u32,
 }
 
-/// Header-only dimensions probe for `.metadata()`. Decoding the full RGBA for
-/// a 1920×1080 PNG just to read the IHDR is ~70× slower than Sharp; this reads
-/// the few bytes each format needs and stops. Still subject to `max_pixels` so
-/// metadata() and bytes() agree on what's "too big".
 pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
     let fmt = Format::sniff(bytes).ok_or(Error::UnknownFormat)?;
     let w: u32;
@@ -417,10 +349,6 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             return Err(Error::UnsupportedOnPlatform);
         }
     }
-    // The PNG/JPEG/BMP specs all cap each dimension at 2³¹−1; a header with
-    // a larger u32 value is corrupt regardless of `maxPixels`. Reject here so
-    // the i32 `last_width`/`last_height` casts downstream can't trap on a
-    // 24-byte hostile IHDR.
     if w == 0 || h == 0 || w > i32::MAX as u32 || h > i32::MAX as u32 {
         return Err(Error::DecodeFailed);
     }
@@ -448,13 +376,6 @@ pub struct EncodeOptions {
     pub dither: bool,
     /// JPEG only: emit a progressive scan script (coarse-to-fine render).
     pub progressive: bool,
-    /// ICC profile to embed in the output container (JPEG APP2, PNG iCCP,
-    /// WebP ICCP). `None` ⇒ no profile chunk/marker is written. The
-    /// pipeline forwards this from the decode step so a non-sRGB source
-    /// (P3, Adobe RGB, XYB/Jpegli) preserves its colour meaning through
-    /// re-encode. Borrowed; the caller retains ownership.
-    // TODO(port): lifetime — borrowed from caller for the duration of `encode()`;
-    // raw ptr per rule "never put a lifetime param on a struct".
     pub icc_profile: Option<NonNull<[u8]>>,
 }
 
@@ -474,14 +395,6 @@ impl Default for EncodeOptions {
     }
 }
 
-/// Encoded output paired with the free function for its allocator. The C
-/// codecs each malloc internally (turbojpeg's allocator, libwebp's, libc for
-/// libspng); rather than dupe into the global allocator so JS can own it,
-/// we hand the original buffer to JS via `ArrayBuffer.toJSWithContext` with
-/// the matching free — one allocation, zero copies, for the final output.
-///
-/// `free` matches `jsc.C.JSTypedArrayBytesDeallocator` (bytes, ctx) so it can
-/// be passed straight through; the `ctx` arg is unused.
 pub struct Encoded {
     // SAFETY: fat pointer (ptr+len) owned by whichever C allocator produced
     // it; `free` is the matching deallocator. Not a Box — drop must call `free`.
@@ -501,11 +414,6 @@ impl Drop for Encoded {
     }
 }
 
-/// Adapt a 1-arg C free (`tj3Free`, `WebPFree`, `std.c.free`) to the
-/// 2-arg JSC deallocator signature.
-// PORT NOTE: Zig `wrap(comptime f: anytype)` generated a distinct static fn per
-// call site. Rust cannot capture a runtime fn pointer in a non-capturing
-// `extern "C" fn`, so this is a macro that mints a static trampoline per call.
 #[macro_export]
 macro_rules! encoded_wrap_free {
     ($f:path) => {{
@@ -548,10 +456,6 @@ pub(crate) fn encode(
     let icc: Option<&[u8]> = opts.icc_profile.map(|p| unsafe { p.as_ref() });
     match opts.format {
         Format::Jpeg => jpeg::encode(rgba, width, height, opts.quality, opts.progressive, icc),
-        // PNG carries iCCP on both truecolour and indexed images — quantise
-        // operates on raw RGB numbers without converting colour spaces, so
-        // the palette entries are still in the source space and need the
-        // profile to be interpreted correctly (see PNG spec §11.3.3.3).
         Format::Png => {
             if opts.palette {
                 png::encode_indexed(
@@ -568,11 +472,6 @@ pub(crate) fn encode(
             }
         }
         Format::Webp => webp::encode(rgba, width, height, opts.quality, opts.lossless, icc),
-        // Same routing rationale as decode(): the OS encoder is a capability
-        // fallback, not a fast path — ImageIO's quality scale doesn't match
-        // libjpeg-turbo's, and it can't honour compressionLevel/palette/
-        // lossless, so using it for jpeg/png/webp would make output bytes
-        // diverge from Linux for no speed win.
         Format::Heic | Format::Avif => {
             #[cfg(any(target_os = "macos", windows))]
             if use_system() {
@@ -676,10 +575,6 @@ pub(crate) fn resize(
             Err(e) => return Err(e),
         }
     }
-    // ONE allocation for output + the kernel's scratch arena (intermediate
-    // dst_w×src_h×4 row buffer + spans/weights tables). Zero mallocs in the
-    // C++; mimalloc here is faster than libc, and the over-allocation rounds
-    // into the same size class as the row buffer alone.
     let out_sz: usize = (dw as usize) * (dh as usize) * 4;
     // SAFETY: pure FFI query; all args are by-value ints, no pointers.
     let scratch_sz = unsafe {

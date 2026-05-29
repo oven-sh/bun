@@ -19,12 +19,6 @@ where
     // TODO(port): replace with the real reader trait once it exists.
     R: DeprecatedRead,
 {
-    // Zig: `pub const Error = R.Error;` — inherent assoc types are nightly-only
-    // (E0658). Callers name `R::Error` directly; this alias was sugar.
-    // TODO(port): `pub const Reader = std.Io.GenericReader(*Self, Error, read);` —
-    // depends on the Rust port of `std.Io.GenericReader`. Left unported; `reader()`
-    // below is stubbed accordingly.
-
     pub fn read(&mut self, dest: &mut [u8]) -> Result<usize, R::Error> {
         // First try reading from the already buffered data onto the destination.
         let current = &self.buf[self.start..self.end];
@@ -75,30 +69,9 @@ pub fn buffered_reader<R: DeprecatedRead>(reader: R) -> BufferedReader<4096, R> 
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// SinglyLinkedList
-// ──────────────────────────────────────────────────────────────────────────
-//
-// DEDUP(D050): the Rust port of `SinglyLinkedList` / `SinglyLinkedNode` was
-// removed — the canonical implementation lives at
-// `bun_collections::pool::{SinglyLinkedList, Node}`. The two had diverged
-// (`data: T` vs `data: MaybeUninit<T>`, `*mut`-null vs `Option<*mut>` returns)
-// and this copy had zero callers outside its own unit test. New consumers
-// should depend on `bun_collections::pool` directly.
-
-// ──────────────────────────────────────────────────────────────────────────
 // DoublyLinkedList
 // ──────────────────────────────────────────────────────────────────────────
 
-/// A doubly-linked list has a pair of pointers to both the head and
-/// tail of the list. List elements have pointers to both the previous
-/// and next elements in the sequence. The list can be traversed both
-/// forward and backward. Some operations that take linear O(n) time
-/// with a singly-linked list can be done without traversal in constant
-/// O(1) time with a doubly-linked list:
-///
-/// - Removing an element.
-/// - Inserting a new element before an existing element.
-/// - Pushing or popping an element from the end of the list.
 pub struct DoublyLinkedList<T> {
     pub first: *mut DoublyLinkedNode<T>,
     pub last: *mut DoublyLinkedNode<T>,
@@ -124,11 +97,6 @@ impl<T> Default for DoublyLinkedList<T> {
 }
 
 impl<T> DoublyLinkedList<T> {
-    /// Insert a new node after an existing one.
-    ///
-    /// Arguments:
-    ///     node: Pointer to a node in the list.
-    ///     new_node: Pointer to the new node to insert.
     pub unsafe fn insert_after(
         &mut self,
         node: *mut DoublyLinkedNode<T>,
@@ -153,11 +121,6 @@ impl<T> DoublyLinkedList<T> {
         self.len += 1;
     }
 
-    /// Insert a new node before an existing one.
-    ///
-    /// Arguments:
-    ///     node: Pointer to a node in the list.
-    ///     new_node: Pointer to the new node to insert.
     pub unsafe fn insert_before(
         &mut self,
         node: *mut DoublyLinkedNode<T>,
@@ -182,11 +145,6 @@ impl<T> DoublyLinkedList<T> {
         self.len += 1;
     }
 
-    /// Concatenate list2 onto the end of list1, removing all entries from the former.
-    ///
-    /// Arguments:
-    ///     list1: the list to concatenate onto
-    ///     list2: the list to be concatenated
     pub unsafe fn concat_by_moving(&mut self, list2: &mut Self) {
         let l2_first = list2.first;
         if l2_first.is_null() {
@@ -211,10 +169,6 @@ impl<T> DoublyLinkedList<T> {
         list2.len = 0;
     }
 
-    /// Insert a new node at the end of the list.
-    ///
-    /// Arguments:
-    ///     new_node: Pointer to the new node to insert.
     pub unsafe fn append(&mut self, new_node: *mut DoublyLinkedNode<T>) {
         let last = self.last;
         if !last.is_null() {
@@ -228,10 +182,6 @@ impl<T> DoublyLinkedList<T> {
         }
     }
 
-    /// Insert a new node at the beginning of the list.
-    ///
-    /// Arguments:
-    ///     new_node: Pointer to the new node to insert.
     pub unsafe fn prepend(&mut self, new_node: *mut DoublyLinkedNode<T>) {
         let first = self.first;
         if !first.is_null() {
@@ -252,10 +202,6 @@ impl<T> DoublyLinkedList<T> {
         }
     }
 
-    /// Remove a node from the list.
-    ///
-    /// Arguments:
-    ///     node: Pointer to the node to be removed.
     pub unsafe fn remove(&mut self, node: *mut DoublyLinkedNode<T>) {
         // SAFETY: caller guarantees `node` is a valid node currently in this list.
         unsafe {
@@ -282,10 +228,6 @@ impl<T> DoublyLinkedList<T> {
         debug_assert!(self.len == 0 || (!self.first.is_null() && !self.last.is_null()));
     }
 
-    /// Remove and return the last node in the list.
-    ///
-    /// Returns:
-    ///     A pointer to the last node in the list.
     pub unsafe fn pop(&mut self) -> *mut DoublyLinkedNode<T> {
         let last = self.last;
         if last.is_null() {
@@ -296,10 +238,6 @@ impl<T> DoublyLinkedList<T> {
         last
     }
 
-    /// Remove and return the first node in the list.
-    ///
-    /// Returns:
-    ///     A pointer to the first node in the list.
     pub unsafe fn pop_first(&mut self) -> *mut DoublyLinkedNode<T> {
         let first = self.first;
         if first.is_null() {

@@ -51,10 +51,6 @@ pub mod visible {
                 }
             }
 
-            /// Byte index of the longest prefix of `input` whose visible
-            /// width is <= `max_width`. ANSI escapes count as zero-width
-            /// and are always included in the prefix. Never splits a
-            /// multi-byte UTF-8 codepoint.
             pub fn utf8_index_at_width(input: &[u8], max_width: usize) -> usize {
                 // SAFETY: `input` is a live slice for the duration of the call.
                 unsafe {

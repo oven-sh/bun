@@ -19,10 +19,6 @@ unsafe extern "C" {
 #[derive(Default)]
 pub struct FakeTimers {
     active: bool,
-    /// The sorted fake timers. TimerHeap is not optimal here because we need these operations:
-    /// - peek/takeFirst (provided by TimerHeap)
-    /// - peekLast (cannot be implemented efficiently with TimerHeap)
-    /// - count (cannot be implemented efficiently with TimerHeap)
     pub timers: TimerHeap,
 }
 
@@ -100,11 +96,6 @@ enum AssertMode {
 
 use crate::jsc_hooks::timer_all;
 
-/// RAII `lock()`/`unlock()` for the per-thread `timer::All.lock`. Centralises
-/// the single raw-pointer deref so call sites read `let _g = timers_lock_guard();`
-/// with no `unsafe`. The returned [`bun_threading::MutexGuard`] holds the mutex
-/// by raw pointer (no borrow), so it does not pin a `&timer::All` across the
-/// re-entrant heap accesses documented on `execute_*` below.
 #[inline]
 fn timers_lock_guard() -> bun_threading::MutexGuard {
     // SAFETY: `timer_all()` returns the boxed per-thread `RuntimeState.timer`,
@@ -166,17 +157,6 @@ impl FakeTimers {
         pinned
     }
 
-    /// Drain the fake-timer heap. Returns every `TimeoutObject` that was
-    /// linked so the caller can release the heap's `+1` ref and the `Strong`
-    /// JS pin via [`TimerObjectInternals::release_heap_pin`] *after* dropping
-    /// `&mut self` and `All.lock` — that path reaches `&mut All`, which would
-    /// alias `&mut self.fake_timers` here (same hazard `execute_next` notes).
-    ///
-    /// Marking `state = CANCELLED` alone strands the `Box<TimeoutObject>`: its
-    /// refcount sticks at 2 (wrapper +1 from `init_with`, heap +1 from
-    /// `reschedule`) and `internals.this_value` still GC-roots the wrapper, so
-    /// neither side ever frees. The Zig spec (FakeTimers.zig:81-89) has the
-    /// same gap.
     #[must_use]
     fn clear(&mut self) -> Vec<core::ptr::NonNull<TimerObjectInternals>> {
         self.assert_valid(AssertMode::Locked);
@@ -203,18 +183,6 @@ impl FakeTimers {
         pinned
     }
 
-    // PORT NOTE (noalias re-entrancy): `execute_*` / `fire` do NOT take
-    // `&mut self`. `EventLoopTimer::fire` dispatches into JS; a `setInterval`
-    // callback's reschedule (`timer::All::update` → `insert_lock_held` →
-    // `(*timer_all()).fake_timers.timers.insert`) writes back into *this
-    // same* `FakeTimers::timers` heap through a fresh raw pointer. With a
-    // live `&mut self` LLVM's `noalias` lets it cache `self.timers.root`
-    // across the (inlined) `fire` body — `peek()` on the next loop iteration
-    // then misses the re-inserted interval, so `advanceTimersByTime` /
-    // `runOnlyPendingTimers` fire each interval at most once per call. Same
-    // bug class as `TimerObjectInternals::fire` (see dc37f2018b34). Access
-    // the heap via the raw `timer_all()` pointer instead so every iteration
-    // reloads from memory.
     fn execute_next(global: &JSGlobalObject) -> bool {
         let timers = timer_all();
 

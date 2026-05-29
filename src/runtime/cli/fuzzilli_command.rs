@@ -16,10 +16,6 @@ pub(crate) struct FuzzilliCommand;
 impl FuzzilliCommand {
     #[cold]
     pub(crate) fn exec(_ctx: Command::Context) -> Result<(), bun_core::Error> {
-        // Zig: `if (bun.Environment.enable_fuzzilli) struct { … } else struct {}` —
-        // the dispatch site (`cli/mod.rs`) already gates on `ENABLE_FUZZILLI`, so
-        // this body is unreachable when the flag is off; bail loudly if a caller
-        // ever invokes it anyway.
         if !Environment::ENABLE_FUZZILLI {
             Output::pretty_errorln(format_args!(
                 "<r><red>error<r>: Fuzzilli mode is not enabled in this build"

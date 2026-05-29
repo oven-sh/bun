@@ -59,10 +59,6 @@ pub use bun_core::STRING_ALLOCATION_LIMIT;
 
 pub(crate) type OnUnhandledRejection = fn(&mut VirtualMachine, &JSGlobalObject, JSValue);
 pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, jsc::C::JSObjectRef>;
-/// Spec VirtualMachine.zig:144 `ExceptionList`. `api::JsException` lives in
-/// [`crate::schema_api`] (not `bun_options_types::schema::api`) because its
-/// `stack: StackTrace` field transitively names `ZigStackFramePosition` from
-/// this crate — see the `schema_api` module doc in lib.rs.
 pub type ExceptionList = Vec<crate::schema_api::JsException>;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -75,11 +71,6 @@ pub struct EntryPointResult {
     pub cjs_set_value: bool,
 }
 
-/// Downstream-compat alias: lib.rs previously exposed `virtual_machine::InitOptions`.
-/// Carries the cross-tier subset of Zig `Options` that [`init`] and
-/// `RuntimeHooks::init_runtime_state` need. `transform_options`/`debugger`
-/// live in `bun_options_types` (already a dep of `bun_jsc`), so they thread
-/// through here instead of being dropped at the CLI call-site.
 pub struct InitOptions {
     /// Spec VirtualMachine.zig:1207 `Options.args` — the CLI's
     /// `api.TransformOptions`. Consumed by `RuntimeHooks::init_runtime_state`
@@ -152,12 +143,6 @@ pub struct VirtualMachine {
     // TODO(port): lifetime — LIFETIMES.tsv says BORROW_PARAM (`&'a mut bun_ast::Log`);
     // raw NonNull used because VM is self-referential and cannot carry `<'a>`.
     pub log: Option<NonNull<bun_ast::Log>>,
-    /// Path of the entry module. BACKREF — borrows process-argv, the resolver's
-    /// process-lifetime `dirname_store`/`filename_store`, the standalone module
-    /// graph, or (for workers) the owning `WebWorker.unresolved_specifier`; in
-    /// every case the storage outlives this VM but is not Rust-`'static`.
-    /// `RawSlice` carries the BACKREF outlives-holder invariant — read via
-    /// `main()`.
     main: bun_ptr::RawSlice<u8>,
     pub main_is_html_entrypoint: bool,
     pub main_resolved_path: bun_core::String,
@@ -168,27 +153,11 @@ pub struct VirtualMachine {
     pub origin: bun_url::URL<'static>,
     // TODO(b2-cycle): `node_fs` is `Option<Box<bun_runtime::node::fs::NodeFS>>`.
     pub node_fs: Option<*mut c_void>,
-    /// Opaque per-VM `bun_runtime` state (boxed `timer::All` +
-    /// `Body::Value::HiveAllocator` + …). Set by
-    /// `RuntimeHooks::init_runtime_state` in [`init`]; reclaimed by
-    /// `RuntimeHooks::deinit_runtime_state` in [`destroy`]. Null when no high
-    /// tier is installed (e.g. `bun_jsc` unit tests).
-    ///
-    /// PORT NOTE: the Zig `timer: api.Timer.All` and
-    /// `body_value_pool: webcore.Body.Value.HiveAllocator` value
-    /// fields live inside this box rather than as `()` shadows here — both
-    /// types are owned by `bun_runtime` (forward dep). Access goes through
-    /// [`RuntimeHooks::timer_insert`] / [`RuntimeHooks::body_value_hive_ref`].
     pub runtime_state: *mut c_void,
     pub event_loop_handle: Option<*mut PlatformEventLoop>,
     pub pending_unref_counter: i32,
     pub preload: Vec<Box<[u8]>>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
-    // PORT NOTE: layering — the concrete `bun_standalone_graph::Graph` lives
-    // in a higher-tier crate. The resolver already broke that cycle with the
-    // `bun_resolver::StandaloneModuleGraph` trait; we hold the same trait
-    // object here so `init_with_module_graph` can hand it straight to
-    // `transpiler.resolver.standalone_module_graph` without a downcast.
     pub standalone_module_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     pub smol: bool,
     // TODO(b2-cycle): `dns_result_order` is `bun_runtime::api::dns::Resolver::Order`.
@@ -206,11 +175,6 @@ pub struct VirtualMachine {
 
     pub is_printing_plugin: bool,
     pub is_shutting_down: bool,
-    /// Set once `on_exit()` has finished draining `RareData::cleanup_hooks`.
-    /// After this point the cleanup-hook list is never iterated again, so
-    /// pushing to it (e.g. from a deferred N-API finalizer scheduled during
-    /// the final `collectNow()` in `Zig__GlobalObject__destructOnExit`) would
-    /// only leak the hook's `ctx` allocation.
     pub has_run_cleanup_hooks: bool,
     pub plugin_runner: Option<crate::plugin_runner::PluginRunner>,
     pub is_main_thread: bool,
@@ -238,12 +202,6 @@ pub struct VirtualMachine {
     // TODO(b2-cycle): `MacroEntryPoint` from `bun_bundler::entry_points` (gated).
     pub macro_entry_points: bun_collections::ArrayHashMap<i32, *mut c_void>,
     pub macro_mode: bool,
-    /// Depth of live [`MacroModeGuard`]s on this thread. Nonzero exactly while
-    /// macro JS may be executing — both `MacroContext::call` and `Macro::init`
-    /// (whose `load_macro_entry_point` runs the macro module's top-level via
-    /// `wait_for_promise`) hold a guard. `enable_/disable_macro_mode` are gated
-    /// on the 0↔1 transition so the guard is reentrant; this is the signal
-    /// [`drop_source_code_printer_if_macro_owned`] uses.
     pub macro_guard_depth: u32,
     pub no_macros: bool,
     pub auto_killer: ProcessAutoKiller::ProcessAutoKiller,
@@ -320,10 +278,6 @@ pub struct VirtualMachine {
     #[cfg(not(debug_assertions))]
     pub debug_thread_id: (),
 
-    /// `Cell` so [`EventLoop`] (a value field of this struct) can flip the flag
-    /// through `vm_ref()` (`&VirtualMachine`) without forming an overlapping
-    /// `&mut VirtualMachine` while `&mut EventLoop` is live. Zero-valid
-    /// (`Cell<bool>` is `repr(transparent)` over `bool`).
     pub is_inside_deferred_task_queue: core::cell::Cell<bool>,
     /// When true, drainMicrotasksWithGlobal is suppressed. `Cell` for the same
     /// reason as [`Self::is_inside_deferred_task_queue`].
@@ -348,11 +302,6 @@ pub struct VirtualMachine {
 // FFI declarations
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): move to jsc_sys
-//
-// `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle, so
-// `&JSGlobalObject` is ABI-identical to a non-null `JSGlobalObject*` and C++
-// mutating VM/process state through it is interior mutation invisible to Rust.
 unsafe extern "C" {
     safe fn Bun__handleUncaughtException(
         global: &JSGlobalObject,
@@ -413,16 +362,6 @@ pub(crate) struct VMHolder;
 pub(crate) static MAIN_THREAD_VM: core::sync::atomic::AtomicPtr<VirtualMachine> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-// `#[thread_local]` (bare `__thread` slot) instead of `thread_local!` macro:
-// `LocalKey::__getit` adds a lazy-init check + on some targets a
-// `pthread_getspecific` round-trip per access; Zig's `threadlocal var vm`
-// is a single `mov %fs:OFFSET`. `get_or_null()` (which reads `VM`) is the
-// highest-fan-in accessor on the per-request path — every
-// `VirtualMachine::get()/as_mut()/vm_get()` reaches it ≥3× per
-// `run_callback`. Const-init `Cell<ptr>` has no destructor, so no
-// `LocalKey` registration is needed. Module-level because Rust forbids
-// associated `static`s; the `VMHolder` namespace is preserved via the
-// `#[inline(always)]` accessors below.
 #[thread_local]
 static VM: Cell<Option<*mut VirtualMachine>> = Cell::new(None);
 #[thread_local]
@@ -499,11 +438,6 @@ impl ExitHandler {
         vm.exit_handler.exit_code = code;
     }
 
-    /// PORT NOTE: spec calls `this.exit_handler.dispatchOnExit()` from a
-    /// `*VirtualMachine`. Taking `&mut self: ExitHandler` and recovering the
-    /// parent via `container_of` would escape the provenance of `&mut self`
-    /// (which only covers the `ExitHandler` field). Callers pass the VM
-    /// reference instead; the body re-enters JS so no `&mut` is held.
     pub fn dispatch_on_exit(vm: &VirtualMachine) {
         let exit_code = vm.exit_handler.exit_code;
         Process__dispatchOnExit(vm.global(), exit_code);
@@ -549,40 +483,15 @@ impl Drop for AutoGcOnDrop<'_> {
     }
 }
 
-/// RAII guard that scopes [`VirtualMachine::enable_macro_mode`] /
-/// [`VirtualMachine::disable_macro_mode`] — the Rust spelling of Zig's
-/// `vm.enableMacroMode(); defer vm.disableMacroMode();` (Macro.zig:120).
-///
-/// Holds a [`BackRef`] (not `&'a mut`) because callers continue to access the
-/// per-thread VM (event loop, `run_with_api_lock`) while the guard is live;
-/// an exclusive borrow would forbid that under stacked-borrows. The backref
-/// invariant (VM outlives guard) is the caller's `new` contract; mutation
-/// routes through [`VirtualMachine::as_mut`] (thread-local provenance) so the
-/// guard never forms its own `&mut VM`.
-///
-/// [`BackRef`]: bun_ptr::BackRef
 #[must_use = "macro mode is disabled on drop; bind to a named local"]
 pub struct MacroModeGuard {
     vm: bun_ptr::BackRef<VirtualMachine>,
 }
 impl MacroModeGuard {
-    /// `vm` must be the live per-thread `VirtualMachine` (the [`BackRef`]
-    /// invariant: the VM outlives any guard it hands out). Mutation routes
-    /// through [`VirtualMachine::as_mut`], which derives provenance from the
-    /// thread-local slot — so this body contains no raw deref and the fn is
-    /// safe; the lifetime contract is the BackRef type invariant rather than
-    /// a per-call precondition.
-    ///
-    /// [`BackRef`]: bun_ptr::BackRef
     #[inline]
     pub fn new(vm: *mut VirtualMachine) -> Self {
         let vm = bun_ptr::BackRef::from(NonNull::new(vm).expect("vm non-null"));
         let vm_mut = vm.get().as_mut();
-        // Reentrant: only the outermost guard flips the VM into macro mode and
-        // back; inner guards (e.g. a macro that calls
-        // `Bun.Transpiler#transformSync` which itself enters a guard) just bump
-        // the depth so their `Drop` doesn't reset `macro_mode`/`event_loop`/
-        // `transpiler.target`/`transpiler_store.enabled` underneath the outer.
         vm_mut.macro_guard_depth += 1;
         if vm_mut.macro_guard_depth == 1 {
             vm_mut.enable_macro_mode();
@@ -616,12 +525,6 @@ unsafe impl Sync for VirtualMachine {}
 unsafe impl Send for VirtualMachine {}
 
 impl VirtualMachine {
-    /// Safe `&'static` accessor for the current thread's VM. The VM is a
-    /// per-thread singleton allocated once in [`init`] and never freed until
-    /// thread teardown, so the `'static` lifetime is sound. Mutation goes
-    /// through [`JsCell`]-wrapped fields (`vm.field.with_mut(|x| ...)`);
-    /// legacy code that still needs `&mut VirtualMachine` whole-struct uses
-    /// [`Self::get_mut_ptr`] + an explicit `unsafe` deref.
     #[inline(always)]
     pub fn get() -> &'static VirtualMachine {
         // SAFETY: `get_or_null()` returns the thread-local pointer set by
@@ -630,18 +533,6 @@ impl VirtualMachine {
         unsafe { &*Self::get_mut_ptr() }
     }
 
-    /// Raw `*mut` accessor for the current thread's VM. Prefer [`Self::get`]
-    /// for read access and `JsCell` field projection for mutation; this exists
-    /// for the (shrinking) set of call sites that still take
-    /// `*mut VirtualMachine` or need a whole-struct `&mut`.
-    ///
-    /// Per-request hot path: `vm_get`/`as_mut`/`NewServer::vm_mut` all funnel
-    /// through here, so it is reached several times per `run_callback` (Zig
-    /// just reads the bare `threadlocal var vm`). The previous `.expect()`
-    /// emitted a check + cold-path panic-format branch on every call;
-    /// `unwrap_unchecked` collapses to one TLS load. The "no VM on this
-    /// thread" case is a programmer error (host_fn reached before `init()`),
-    /// not a recoverable condition — keep the diagnostic in debug builds only.
     #[inline(always)]
     pub fn get_mut_ptr() -> *mut VirtualMachine {
         debug_assert!(
@@ -654,15 +545,6 @@ impl VirtualMachine {
         unsafe { Self::get_or_null().unwrap_unchecked() }
     }
 
-    /// `&mut self` from `&self` — the `JsCell` escape hatch applied to the
-    /// whole VM. Exists so legacy `&mut VirtualMachine`-taking helpers can be
-    /// called from a safe `&'static VirtualMachine` without an `unsafe` block
-    /// at every call site. Same single-JS-thread soundness contract as
-    /// [`JsCell::get_mut`]; keep the borrow short and do not hold across
-    /// reentrant JS calls.
-    /// Routes through [`Self::get_mut_ptr`] (the thread-local raw pointer)
-    /// rather than casting `&self`, so provenance is the original `*mut`
-    /// allocation — avoids the `invalid_reference_casting` UB lint.
     #[inline(always)]
     #[allow(clippy::mut_from_ref)]
     pub fn as_mut(&self) -> &mut VirtualMachine {
@@ -672,18 +554,6 @@ impl VirtualMachine {
         unsafe { &mut *Self::get_mut_ptr() }
     }
 
-    /// `&'static mut` to this thread's VM singleton — the static-fn counterpart
-    /// of [`Self::as_mut`]. Exists so per-type `fn vm_mut(&self)` shims (sql,
-    /// bake, cron) collapse to one call instead of each open-coding
-    /// `unsafe { &mut *self.vm.as_ptr() }` against a stored `BackRef`.
-    ///
-    /// Returns `'static` (not tied to any `&self`) so callers may pair the VM
-    /// borrow with a disjoint `&mut self.field` in the same expression. Same
-    /// single-JS-thread soundness contract as [`JsCell::get_mut`] and
-    /// [`Self::as_mut`]: keep the borrow short and do not hold it across
-    /// reentrant JS calls. Provenance is the thread-local `*mut` installed by
-    /// `init()`, so this is sound regardless of how the caller's own
-    /// `BackRef<VirtualMachine>` was constructed.
     #[inline(always)]
     pub fn get_mut() -> &'static mut VirtualMachine {
         // SAFETY: single-JS-thread invariant — see `unsafe impl Sync` above.
@@ -712,11 +582,6 @@ impl VirtualMachine {
         VM.set(Some(vm));
     }
 
-    /// Returns `&'static` so callers can hold the global across `&mut self`
-    /// reborrows (`JSGlobalObject` is a separate JSC heap allocation, so no
-    /// overlap with `VirtualMachine` storage). Same `'static`-on-the-JS-thread
-    /// contract as [`JSGlobalObject::bun_vm`] — the global lives for the VM
-    /// lifetime, and the VM is the per-thread singleton.
     #[inline(always)]
     pub fn global(&self) -> &'static JSGlobalObject {
         // `global` is set during init and live for the VM lifetime.
@@ -725,25 +590,12 @@ impl VirtualMachine {
         JSGlobalObject::opaque_ref(self.global)
     }
 
-    /// Spec VirtualMachine.zig: `pub fn eventLoop(this: *VirtualMachine) *EventLoop`
-    /// — returns a raw `*EventLoop` (no aliasing guarantee). Returning `&mut`
-    /// here would let two overlapping callers (e.g. a JS callback re-entering
-    /// `vm.event_loop()` from inside `tick()`) mint aliased `&mut EventLoop` to
-    /// the same allocation — UB per PORTING.md §Forbidden. Callers form a
-    /// short-lived `&mut *p` at the use site instead, mirroring [`Self::get`].
     #[inline(always)]
     pub fn event_loop(&self) -> *mut EventLoop {
         // self-pointer to regular_event_loop or macro_event_loop
         self.event_loop
     }
 
-    /// Safe `&mut EventLoop` accessor — the [`JsCell`] escape hatch applied to
-    /// the active event loop. `event_loop` is a self-pointer into either
-    /// `regular_event_loop` or `macro_event_loop` (both owned by this VM), so it
-    /// is live for the VM lifetime. Same single-JS-thread soundness contract as
-    /// [`Self::as_mut`]; keep the borrow short and do not hold across reentrant
-    /// JS calls. Prefer this over `unsafe { &mut *vm.event_loop() }` at call
-    /// sites.
     #[inline(always)]
     #[allow(clippy::mut_from_ref)]
     pub fn event_loop_mut(&self) -> &mut EventLoop {
@@ -791,19 +643,6 @@ impl VirtualMachine {
         VM::opaque_mut(self.jsc_vm)
     }
 
-    /// Raw accessor for the hot-reload import watcher. `bun_watcher` is the
-    /// type-erased `*mut ImportWatcher` installed by
-    /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`] (separate
-    /// `Box` heap allocation), or null when hot reload is disabled.
-    ///
-    /// NOTE: unlike `event_loop_mut`, the pointee is **not** JS-thread-only —
-    /// the inner `Box<Watcher>` is held as `&mut Watcher` for the lifetime of
-    /// the spawned file-watcher thread (`Watcher::thread_main`), and
-    /// `RuntimeTranspilerStore` reads it from transpiler workers. The Zig spec
-    /// models this as an alias-allowed `*Watcher` with an internal mutex, so we
-    /// return the raw pointer and leave the `unsafe` deref at the call site to
-    /// keep the cross-thread hazard visible. Callers must scope any reborrow to
-    /// a single mutex-guarded `Watcher` operation.
     #[inline]
     pub fn bun_watcher_ptr(&self) -> *mut crate::hot_reloader::ImportWatcher {
         self.bun_watcher
@@ -862,10 +701,6 @@ impl VirtualMachine {
         self.fs().top_level_dir
     }
 
-    /// Safe `&mut Debugger` accessor — the [`JsCell`] escape hatch applied to
-    /// the optional boxed `Debugger`. Same single-JS-thread soundness
-    /// contract as [`Self::as_mut`]; keep the borrow short and do not hold
-    /// across reentrant JS calls.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn debugger_mut(&self) -> Option<&mut crate::debugger::Debugger> {
@@ -947,17 +782,6 @@ impl VirtualMachine {
         &mut self.source_mappings
     }
 
-    /// Port of `VirtualMachine.sourceMapHandler` (VirtualMachine.zig:441).
-    /// Returns a small adaptor whose `get()` produces the erased
-    /// `js_printer::SourceMapHandler` for `print_with_source_map`.
-    ///
-    /// PORT NOTE: takes `*mut BufferPrinter` (raw), not `&'a mut`, because the
-    /// SAME `BufferPrinter` is also passed as the live `writer` to
-    /// `print_with_source_map`. Creating an `&'a mut` here would alias with
-    /// that writer borrow for the entire print; instead we stash the raw
-    /// pointer and only reborrow inside `on_source_map_chunk` once the
-    /// writer's last use (`print_slice`) has retired. See jsc_hooks.rs
-    /// `print_with_source_map` call-site PORT NOTE.
     #[inline]
     pub fn source_map_handler<'a>(
         &'a mut self,
@@ -1018,10 +842,6 @@ impl VirtualMachine {
         crate::ScriptExecutionStatus::Running
     }
 
-    /// Per-callback hot path: `drain_microtasks_with_global` calls
-    /// `uws_loop_mut()` (→ this) every time the microtask queue drains, and
-    /// the only call site there is already gated on
-    /// `event_loop_handle.is_some()`. Zig (`uwsLoop`) is a bare field load.
     #[inline(always)]
     pub fn uws_loop(&self) -> *mut uws::Loop {
         #[cfg(unix)]
@@ -1155,12 +975,6 @@ impl VirtualMachine {
             self.macro_event_loop.global = NonNull::new(self.global);
             self.macro_event_loop.concurrent_tasks = Default::default();
         }
-        // Idempotent; outside the `has_enabled_macro_mode` guard because
-        // `__bun_macro_context_deinit` runs per-job (RuntimeTranspilerStore
-        // scopeguard, JSTranspiler TransformTask, bundler `Worker::deinit`) and
-        // frees the printer while this VM survives with the flag still set —
-        // the next macro on the same pool thread would otherwise skip re-init
-        // and panic at `SOURCE_CODE_PRINTER.get().expect(...)`.
         if SOURCE_CODE_PRINTER.get().is_none() {
             SOURCE_CODE_PRINTER_FROM_MACRO.set(true);
         }
@@ -1220,23 +1034,12 @@ impl VirtualMachine {
         }
     }
 
-    /// `runWithAPILock(comptime Context, ctx, comptime fn)` — acquires the JSC
-    /// API lock around `f(ctx)`. Rust collapses the comptime params into a closure.
-    ///
-    /// Spec VirtualMachine.zig:2629-2631: `this.global.vm().holdAPILock(ctx, callback)`.
-    /// Routes `f` through `JSC__VM__holdAPILock` via an `OpaqueWrap`-style C
-    /// trampoline so the JSC API lock is held for the full duration of `f()`.
     pub fn run_with_api_lock<F, R>(&self, f: F) -> R
     where
         F: FnOnce() -> R,
     {
         use core::mem::{ManuallyDrop, MaybeUninit};
 
-        // PORT NOTE: Zig's `OpaqueWrap(Context, function)` synthesizes a
-        // `fn(*anyopaque) void` that casts back and calls the body. The Rust
-        // closure carries its own context, so the trampoline state is just
-        // `{ closure, out-slot }`. `ManuallyDrop` lets us move the `FnOnce`
-        // out by value inside the `extern "C"` body without `Option::take`.
         struct Trampoline<F, R> {
             f: ManuallyDrop<F>,
             result: MaybeUninit<R>,
@@ -1268,28 +1071,12 @@ impl VirtualMachine {
         result: JSValue,
         exception_list: Option<&mut ExceptionList>,
     ) {
-        // Spec VirtualMachine.zig:2156-2189: save/restore `had_errors` around
-        // the print, then route the value through `printException` /
-        // `printErrorlikeObject` (ConsoleObject formatter). The save/restore
-        // has no higher-tier dep, so it lives here unconditionally.
         let prev_had_errors = self.had_errors;
         self.had_errors = false;
 
-        // The actual print path needs `ConsoleObject::Formatter` +
-        // `ZigException` (high tier). Dispatch through `RuntimeHooks` —
-        // mirroring `auto_tick`/`ensure_debugger` — so the error is actually
-        // emitted to stderr before callers hard-exit. With no hook installed
-        // (low-tier unit tests), fail loudly: PORTING.md §Forbidden bans a
-        // silent no-op here since the .zig has real, observable logic.
         if let Some(hooks) = runtime_hooks() {
             (hooks.print_exception)(self, result, exception_list);
         } else {
-            // Low-tier fallback (no `bun_runtime` installed — unit tests):
-            // we cannot reach `ConsoleObject::Formatter`, so emit a degraded
-            // one-line render via the buffered error writer. Spec
-            // VirtualMachine.zig:2156-2189 routes through `printErrorlikeObject`
-            // (which formats name/message/stack); the closest we can do here
-            // without the high tier is the value's own `toString`.
             let _ = exception_list;
             let writer = bun_core::Output::error_writer();
             let global = self.global();
@@ -1316,10 +1103,6 @@ impl VirtualMachine {
         self.had_errors = prev_had_errors;
     }
 
-    /// Spec VirtualMachine.zig:2606 `loadMacroEntryPoint`. Looks up (or
-    /// generates) the synthetic `MacroEntryPoint` source for `(entry_path,
-    /// function_name, hash)` and evaluates it under the JSC API lock via
-    /// [`run_with_api_lock`].
     pub fn load_macro_entry_point(
         &mut self,
         entry_path: &[u8],
@@ -1378,13 +1161,6 @@ impl VirtualMachine {
         IS_MAIN_THREAD_VM.set(value);
     }
 
-    /// Spec VirtualMachine.zig:2283 `ensureDebugger`.
-    ///
-    /// The body lives in `bun_runtime` (it constructs `bun.api.Debugger`), so
-    /// dispatch through [`RuntimeHooks::ensure_debugger`] like
-    /// [`reload_entry_point`] does. No-op when hooks aren't installed (pure
-    /// `bun_jsc` unit tests) — matches the Zig early-return when `debugger`
-    /// is unset.
     pub fn ensure_debugger(&mut self, block_until_connected: bool) -> Result<(), bun_core::Error> {
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: hook contract — `self` is the live per-thread VM.
@@ -1393,10 +1169,6 @@ impl VirtualMachine {
         Ok(())
     }
 
-    /// Whether this VM should be destroyed after it exits, even if it is the
-    /// main thread's VM. Worker VMs are always destroyed on exit, regardless
-    /// of this setting. Setting this to true may expose bugs that would
-    /// otherwise only occur using Workers.
     pub fn should_destruct_main_thread_on_exit(&self) -> bool {
         bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false)
     }
@@ -1443,15 +1215,6 @@ impl VirtualMachine {
             self.exit_handler.exit_code = 1;
             (self.on_unhandled_rejection)(self, global_object, err);
         }
-        // PORT NOTE: Zig `defer this.is_handling_uncaught_exception = false;`
-        // (VirtualMachine.zig:707) covers BOTH the FFI call and the
-        // `onUnhandledRejection` callback above. The flag must stay raised
-        // while that callback runs so a re-entrant `uncaught_exception` from
-        // a user handler trips the recursion guard and hard-exits with code 7
-        // instead of recursing. Neither the FFI call nor the fn-pointer
-        // callback unwind past this frame (re-entry hits `process_exit` →
-        // `panic!`, which never returns), so a linear reset here matches the
-        // Zig `defer` scope.
         self.is_handling_uncaught_exception = false;
         handled
     }
@@ -1460,10 +1223,6 @@ impl VirtualMachine {
         if self.hot_reload != HOT_RELOAD_HOT {
             return None;
         }
-        // TODO(b2-cycle): spec lazy-inits via `RareData::hotMap(allocator)`;
-        // that accessor is gated in `rare_data.rs::_accessor_body`. Until it
-        // un-gates, return whatever the field already holds (callers that need
-        // the lazy-init path are themselves gated on `bun_runtime`).
         self.rare_data.as_deref_mut()?.hot_map.as_mut()
     }
 
@@ -1514,12 +1273,6 @@ impl VirtualMachine {
         ExitHandler::dispatch_on_exit(self);
         self.is_shutting_down = true;
 
-        // Make sure we run new cleanup hooks introduced by running cleanup
-        // hooks.
-        // PORT NOTE: each iteration re-fetches `rare_data` so the FFI hook
-        // bodies (which may re-enter `VirtualMachine` and push more hooks) do
-        // not run while a `&mut RareData` is live — the borrow ends after
-        // `mem::take` returns the owned `Vec`.
         loop {
             let hooks = match self.rare_data.as_deref_mut() {
                 Some(rare) if !rare.cleanup_hooks.is_empty() => {
@@ -1550,36 +1303,18 @@ impl VirtualMachine {
                 // VirtualMachine.zig:967 `t.deinit(true)`.
                 unsafe { uws::Timer::close::<true>(t.as_ptr()) };
             }
-            // Drain `TimeoutObject`s / `ImmediateObject`s from `All.timers`
-            // while `runtime_state`, the event loop, and the JSC heap are all
-            // still alive: drops their JS pins and in-heap `+1` refs so the GC
-            // sweep below (`destructOnExit` → `lastChanceToFinalize`) collects
-            // them instead of leaking. Must precede `close_all_socket_groups`
-            // and `~RunLoop::Timer` so no dangling `WTFTimer` heap node is
-            // observed during the walk.
             if let Some(hooks) = runtime_hooks() {
                 // SAFETY: `self` is the live per-thread VM on the JS thread;
                 // `runtime_state` is still installed (it's torn down in
                 // `destroy()`, well after `global_exit`).
                 unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self)) };
             }
-            // Detached worker threads may still be in startVM()/spin() using
-            // the process-global resolver BSSMap singletons. transpiler.deinit()
-            // below frees those singletons, so request termination of every
-            // live worker and wait for each to reach shutdown() first.
             if let Some(hooks) = runtime_hooks() {
                 // Main-thread only; futex-waits on every registered worker
                 // until each unparks at shutdown().
                 (hooks.terminate_all_workers_and_wait)(10_000);
             }
 
-            // Every worker has now posted its close task to our concurrent
-            // queue (OUTSTANDING is decremented after dispatchExit). Drop
-            // those queued lambdas — without running them — so the captured
-            // `Ref<Worker>` releases and the final GC sweep below brings the
-            // refcount to zero (`~Worker` → `WebWorker__destroy`). Must
-            // precede `destructOnExit`: deleting after JSC VM teardown would
-            // run `~JSEventListener` against freed Weak handle storage.
             self.event_loop_mut().drop_concurrent_cpp_tasks();
 
             // Embedded per-VM socket groups must drain while JSC is still
@@ -1603,13 +1338,6 @@ impl VirtualMachine {
             // a terminal state. Ask it to reclaim them now (waits up to 1s).
             bun_http::shutdown_for_exit();
 
-            // The HTTP daemon is parked. Release any task it posted to our
-            // queue before observing `is_shutting_down` (the read is
-            // non-atomic and can lag the JS-thread store) — `FetchTasklet`'s
-            // `on_progress_update` would have dropped the JS-side ref, and
-            // without it the tasklet ⇄ `Box<AsyncHTTP>` cycle leaks. Must
-            // precede `destructOnExit` so `FetchTasklet::deinit` can drop its
-            // JSC `Strong`/`Weak` handles against a live HandleSet.
             self.event_loop_mut().release_queued_tasks_for_shutdown();
 
             Zig__GlobalObject__destructOnExit(self.global());
@@ -1631,42 +1359,16 @@ impl VirtualMachine {
 
 extern crate alloc;
 
-// ──────────────────────────────────────────────────────────────────────────
-// §Dispatch — `bun_runtime` vtable.
-//
-// `init` / `load_entry_point` / the `bun -e` path reach into types that live
-// in the higher-tier `bun_runtime` crate (`api::Timer::All`, `node::fs`,
-// `webcore::Body`, the bundler entry-point generator, …). Per PORTING.md
-// §Dispatch (cold-path), the low tier defines a manual vtable; `bun_runtime`
-// defines the `#[no_mangle]` static `__BUN_RUNTIME_HOOKS`. Every call
-// site below is `// PERF(port): was inline switch` — acceptable, each does
-// real work (I/O, JS callback, allocation).
-// ──────────────────────────────────────────────────────────────────────────
-
 /// Opaque per-VM state owned by `bun_runtime` (Timer::All, NodeFS, Body hive
 /// allocator, …). Stored as `*mut c_void` in `VirtualMachine`; the high tier
 /// casts back on the other side of each hook.
 pub type RuntimeState = *mut c_void;
 
 pub struct RuntimeHooks {
-    /// `bun.api.Timer.All.init()` + `Body.Value.HiveAllocator.init()` +
-    /// `configureDebugger()` — everything `init()` does that names a
-    /// `bun_runtime` type. Called once with the freshly-boxed VM AFTER
-    /// `vm.global` / `vm.jsc_vm` are populated (spec VirtualMachine.zig:1313+);
-    /// returns the opaque per-VM runtime state pointer (or null). `Err` when
-    /// `Transpiler::init` fails (e.g. a deleted cwd → `getcwd` ENOENT); the
-    /// hook unwinds its own allocations, so [`VirtualMachine::init`] only has to
-    /// propagate the error (spec bubbles it via `try Transpiler.init(...)`).
     pub init_runtime_state: unsafe fn(
         vm: *mut VirtualMachine,
         opts: &mut InitOptions,
     ) -> Result<RuntimeState, bun_core::Error>,
-    /// Reclaim the per-VM state boxed by `init_runtime_state`. Called from
-    /// [`VirtualMachine::destroy`] (worker teardown) with the exact opaque
-    /// pointer `init_runtime_state` returned (or null). The high tier
-    /// `heap::take`s it and clears its thread-local cache. Spec
-    /// VirtualMachine.zig: `timer`/`entry_point` are value fields freed in
-    /// worker `destroy()`; without this slot every worker leaked one box.
     pub deinit_runtime_state: unsafe fn(vm: *mut VirtualMachine, state: RuntimeState),
     /// `ServerEntryPoint.generate(watch, entry_path)` — produces the synthetic
     /// `bun:main` module body for `entry_path`. Returns `false` on error
@@ -1682,17 +1384,7 @@ pub struct RuntimeHooks {
     /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
     /// Hoisted here so `event_loop.rs` doesn't need its own hook table.
     pub auto_tick: unsafe fn(vm: *mut VirtualMachine),
-    /// `eventLoop().autoTickActive()` — like `auto_tick` but only sleeps in
-    /// the uSockets loop while it has active handles (spec event_loop.zig:455).
-    /// Separate slot because the body skips `runImminentGCTimer` /
-    /// `handleRejectedPromises` and falls through to `tickWithoutIdle` when
-    /// idle — folding it into `auto_tick` would change shutdown semantics.
     pub auto_tick_active: unsafe fn(vm: *mut VirtualMachine),
-    /// `printException` / `printErrorlikeObject` — formats `value` (or its
-    /// wrapped `JSC::Exception`) to stderr via `ConsoleObject::Formatter`.
-    /// Spec `runErrorHandler` body (VirtualMachine.zig:2164-2188). High tier
-    /// owns the formatter; low tier dispatches here from
-    /// [`VirtualMachine::run_error_handler`].
     pub print_exception:
         fn(vm: &mut VirtualMachine, value: JSValue, exception_list: Option<&mut ExceptionList>),
     /// `vm.timer.insert(&mut event_loop_timer)` — `Timer::All` lives in
@@ -1707,16 +1399,7 @@ pub struct RuntimeHooks {
         vm: *mut VirtualMachine,
         timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
     ),
-    /// `RareData.defaultClientSslCtx()` — lazy default-trust-store client
-    /// `SSL_CTX*`, shared by every `tls: true` outbound connection that didn't
-    /// supply explicit options. The storage slot lives in `RareData`
-    /// (low-tier) but population reaches `RuntimeState.ssl_ctx_cache`
-    /// (`bun_runtime`, b2-cycle); spec rare_data.zig:741.
     pub default_client_ssl_ctx: unsafe fn(vm: *mut VirtualMachine) -> *mut uws::SslCtx,
-    /// `RareData.sslCtxCache().getOrCreateOpts(opts, &err)` — per-VM
-    /// digest-keyed weak `SSL_CTX*` cache. Returns a +1 ref or `None` on
-    /// BoringSSL rejection (`err` populated). `SSLContextCache` lives in
-    /// `bun_runtime::RuntimeState` (b2-cycle).
     pub ssl_ctx_cache_get_or_create: unsafe fn(
         vm: *mut VirtualMachine,
         opts: &uws::SocketContext::BunSocketContextOptions,
@@ -1729,19 +1412,8 @@ pub struct RuntimeHooks {
     /// `WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])` —
     /// spec VirtualMachine.zig:1760. Registry lives in `bun_runtime::webcore`.
     pub has_blob_url: fn(blob_id: &[u8]) -> bool,
-    /// `Response::get_blob_without_call_frame` /
-    /// `Request::get_blob_without_call_frame` — spec Macro.zig:331-334. If
-    /// `value` downcasts to a `Response` or `Request` (both live in
-    /// `bun_runtime::webcore`), return its body Blob wrapped in a resolved
-    /// Promise; `Ok(None)` to fall through to the `Blob`/`BuildMessage`/
-    /// `ResolveMessage` arms in `Macro::Run::coerce`.
     pub body_mixin_get_blob:
         fn(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<JSValue>>,
-    /// `bun.api.node.process.exit(global, code)` — spec
-    /// `runtime/node/node_process.zig`. Main-thread is `noreturn`; in a worker
-    /// it returns and the caller `panic!`s. Lives in `bun_runtime::node`
-    /// (forward-dep cycle), so [`uncaught_exception`] reaches it through this
-    /// slot instead of the linker.
     pub process_exit: unsafe fn(global: *mut JSGlobalObject, code: u8),
     /// `node_cluster_binding.handleInternalMessageChild(global, data)` — spec
     /// VirtualMachine.zig:3960 (IPCInstance.handleIPCMessage `.internal` arm).
@@ -1749,22 +1421,7 @@ pub struct RuntimeHooks {
     /// `node_cluster_binding.child_singleton.deinit()` — spec
     /// VirtualMachine.zig:3972 (IPCInstance.handleIPCClose).
     pub ipc_child_singleton_deinit: fn(),
-    /// `Jest.runner.?.bun_test_root.onBeforePrint()` — spec
-    /// ConsoleObject.zig:170. The `bun:test` runner lives in `bun_runtime`;
-    /// `console.log` calls this so the test reporter can flush its line state
-    /// before user output interleaves with it. No-op when `bun test` isn't
-    /// running.
     pub console_on_before_print: fn(),
-    /// `ConsoleObject.Formatter.printAs(.Object, …)` runtime-type dispatch —
-    /// spec ConsoleObject.zig `printAs` `.Object` arm: the long `if (value.as(T))`
-    /// chain over `Response`/`Request`/`Blob`/`S3Client`/`Archive`/
-    /// `BuildArtifact`/`FetchHeaders`/`Timer`/`Immediate`/`BuildMessage`/
-    /// `ResolveMessage`/Jest asymmetric matchers. All of those types live in
-    /// `bun_runtime`; the high tier owns the downcast + `write_format` calls.
-    ///
-    /// Returns `Ok(true)` when `value` was one of the runtime types and was
-    /// fully formatted into `writer`; `Ok(false)` to fall through to the
-    /// generic object printer.
     pub console_print_runtime_object: for<'a, 'f> fn(
         formatter: &'a mut crate::console_object::Formatter<'f>,
         writer: &'a mut dyn bun_io::Write,
@@ -1772,72 +1429,21 @@ pub struct RuntimeHooks {
         name_buf: &'a [u8; 512],
         enable_ansi_colors: bool,
     ) -> JsResult<bool>,
-    /// `bun.bun_js.applyStandaloneRuntimeFlags(b, graph)` — spec
-    /// web_worker.zig:552. Applies `--compile`-baked runtime flags to the
-    /// worker's transpiler. `graph` is the same trait object stored in
-    /// `vm.standalone_module_graph` (the high tier downcasts to its concrete
-    /// `bun_standalone_graph::Graph` — the sole implementor).
     pub apply_standalone_runtime_flags: unsafe fn(
         transpiler: *mut Transpiler<'static>,
         graph: &'static dyn bun_resolver::StandaloneModuleGraph,
     ),
-    /// Spec web_worker.zig:445-476 — parse `execArgv` against the `RunCommand`
-    /// param table and return the resulting `allow_addons` value
-    /// (`!args.flag("--no-addons")`), or `None` if parsing failed (Zig's
-    /// `catch break :parse_new_args`). The param table lives in
-    /// `bun_runtime::cli` (forward-dep). Spec only honours `--no-addons`;
-    /// the caller writes the returned bool back into
-    /// `transform_options.allow_addons` so the override semantics
-    /// ("override the existing even if it was set") match.
     pub parse_worker_exec_argv_allow_addons:
         unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> Option<bool>,
     /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` — spec
     /// web_worker.zig:727. `CronJob` lives in `bun_runtime::api::cron`.
     pub cron_clear_all_teardown: fn(vm: &mut VirtualMachine),
-    /// `webcore.WebWorker.terminateAllAndWait(timeout_ms)` — spec
-    /// VirtualMachine.zig:975. `WebWorker` lives in this crate but the
-    /// `web_worker` module is above `virtual_machine` in the dep graph
-    /// (forward use) AND the body re-enters `bun_runtime` for the worker
-    /// thread's `event_loop().auto_tick()`, so [`global_exit`] reaches it
-    /// through this slot. Prevents detached worker threads from racing the
-    /// freed resolver BSSMap singletons during `transpiler.deinit()`.
     pub terminate_all_workers_and_wait: fn(timeout_ms: u64),
-    /// `jsc.API.cron.CronJob.clearAllForVM(vm, .reload)` — spec
-    /// VirtualMachine.zig:815. Same impl as `cron_clear_all_teardown` but
-    /// the `.reload` mode preserves the next-fire schedule across the new
-    /// global so timers re-register instead of being torn down.
     pub cron_clear_all_reload: fn(vm: &mut VirtualMachine),
-    /// `graph.find(path).?.sourcemap.load()` — spec VirtualMachine.zig:3875.
-    /// The concrete `bun_standalone_graph::Graph` / `File` / `LazySourceMap`
-    /// live above `bun_jsc`; the high tier reaches them via the graph's own
-    /// `UnsafeCell` singleton accessor (NOT by downcasting the resolver trait
-    /// object — that shared-ref provenance is read-only and forming `&mut`
-    /// from it would be UB) and returns the lazily-decoded map (already
-    /// strong-ref'd via the returned `Arc`). [`resolve_source_mapping`]
-    /// caches it into `source_mappings` so subsequent lookups hit the fast
-    /// path. The caller gates the call on `vm.standalone_module_graph`.
     pub load_standalone_sourcemap:
         fn(path: &[u8]) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>>,
-    /// `bake::production::PerThread` source-map JSON lookup — spec
-    /// sourcemap_jsc/source_provider.zig:24
-    /// (`pt.source_maps.get(filename) → pt.bundled_outputs[idx].value.asSlice()`).
-    /// `pt` is the opaque `*mut PerThread` round-tripped through C++ via
-    /// `BakeGlobalObject__attachPerThreadData` / `…__getPerThreadData`;
-    /// `PerThread` lives in `bun_runtime::bake::production` (forward-dep
-    /// cycle), so `BakeSourceProvider::get_external_data` reaches it through
-    /// this slot. Returns the bundled `.map` JSON for `source_filename`, or
-    /// `None` if not in the table; the slice borrows
-    /// `PerThread.bundled_outputs` (lives for the bake build session, which
-    /// outlives any error-stack source-map resolution).
     pub bake_per_thread_source_map:
         unsafe fn(pt: *mut c_void, source_filename: &[u8]) -> Option<*const [u8]>,
-    /// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent)` — spec
-    /// Debugger.zig:351. Walks `Jest.runner.?.bun_test_root.active_file`'s
-    /// scope tree and emits `reportTestFoundWithLocation` for every test
-    /// discovered before the inspector connected. `Jest` / `DescribeScope`
-    /// live in `bun_runtime::test_runner` (forward-dep cycle), so the body is
-    /// hoisted to the high tier; low-tier `Bun__TestReporterAgentEnable`
-    /// dispatches here. No-op when `bun test` isn't running.
     pub retroactively_report_discovered_tests:
         unsafe fn(agent: *mut crate::debugger::TestReporterHandle),
     /// Cancel every `TimeoutObject` / `ImmediateObject` still in the calling
@@ -1851,16 +1457,6 @@ pub struct RuntimeHooks {
     pub cancel_all_timers: unsafe fn(vm: *mut VirtualMachine),
 }
 
-/// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS
-/// half of `bun_io`'s cycle-break manual vtable. Every slot is implementable
-/// from in-crate data (spec posix_event_loop.zig:100-104 / RareData.zig:441),
-/// so this is the single fully-populated instance; `aio::get_vm_ctx(.Js)` and
-/// the websocket-client adapters resolve to it. PORT NOTE: in Zig the
-/// `KeepAlive::ref(anytype)` accepted `*VirtualMachine` directly.
-/// Recover `&mut VirtualMachine` from the erased vtable `owner`. Private to
-/// this module — every caller is an `unsafe fn` slot in
-/// [`VM_EVENT_LOOP_CTX_VTABLE`] whose contract guarantees `owner` was erased
-/// from a live `*mut VirtualMachine` in [`VirtualMachine::event_loop_ctx`].
 #[inline(always)]
 fn vm_from_owner<'a>(owner: *mut ()) -> &'a mut VirtualMachine {
     // SAFETY: vtable contract — `owner` is a live `*mut VirtualMachine`.
@@ -1874,16 +1470,7 @@ bun_io::link_impl_EventLoopCtx! {
             let rare = vm_from_owner(this.cast()).rare_data();
             &raw mut **rare.file_polls_.get_or_insert_with(|| Box::new(bun_io::Store::init()))
         },
-        // CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick_concurrently`.
-        // Do NOT route through `vm_from_owner()` — that mints `&mut VM`, which
-        // would alias the JS thread's `&mut`. Raw place RMW only (the
-        // field-level non-atomic race is pre-existing; TODO: make
-        // `pending_unref_counter` an `AtomicI32` with `fetch_add`).
         increment_pending_unref_counter() => (*this).pending_unref_counter += 1,
-        // CROSS-THREAD: reached via `KeepAlive::{,un}ref_concurrently`. Do NOT
-        // use `vm_from_owner()` / `event_loop_mut()` — both mint `&mut`, UB
-        // against the JS thread's borrow. `event_loop()` takes `&self` (Sync)
-        // and `{,un}ref_concurrently` take `&self` (atomic fetch_add + wakeup).
         ref_concurrently()   => (*(*this).event_loop()).ref_concurrently(),
         unref_concurrently() => (*(*this).event_loop()).unref_concurrently(),
         after_event_loop_callback() => vm_from_owner(this.cast()).after_event_loop_callback,
@@ -1953,12 +1540,6 @@ impl VirtualMachine {
 }
 
 unsafe extern "Rust" {
-    /// The single `&'static` instance, defined `#[no_mangle]` in
-    /// `bun_runtime::jsc_hooks`. Link-time resolved — no `AtomicPtr`, no
-    /// init-order hazard. Zig had no crate split here; `VirtualMachine`
-    /// reached `Timer::All` / `ServerEntryPoint` / etc. directly.
-    /// `RuntimeHooks` is an immutable POD of fn-ptrs with a single definition;
-    /// reading it has no precondition beyond the link succeeding → `safe static`.
     safe static __BUN_RUNTIME_HOOKS: RuntimeHooks;
 }
 
@@ -1973,13 +1554,6 @@ pub fn runtime_hooks() -> Option<&'static RuntimeHooks> {
 // TODO(port): move to jsc_sys
 #[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
 unsafe extern "C" {
-    // Spec JSGlobalObject.zig:863 / headers.h:435 — note the real symbol is
-    // `Zig__GlobalObject__create` and takes 5 args (no leading `vm`); the Zig
-    // wrapper `JSGlobalObject.create` accepts `vm` only to call
-    // `vm.eventLoop().ensureWaker()` before the FFI.
-    // safe: `console`/`worker_ptr` are opaque round-trip pointers C++ stores
-    // into the new ZigGlobalObject (never dereferenced as Rust data); remaining
-    // args are by-value scalars.
     safe fn Zig__GlobalObject__create(
         console: *mut c_void,
         context_id: i32,
@@ -2018,14 +1592,6 @@ fn get_origin_timestamp() -> u64 {
 }
 
 impl VirtualMachine {
-    /// `VirtualMachine.init(opts)` — allocate + wire the per-thread VM.
-    ///
-    /// PORT NOTE: every step that names a `bun_runtime` / `bun_webcore` type
-    /// (`Timer.All.init`, `Body.Value.HiveAllocator`, `configureDebugger`,
-    /// `Config.configureTransformOptionsForBunVM`, `ParentDeathWatchdog`) is
-    /// dispatched through `RuntimeHooks::init_runtime_state` so `bun_jsc` does
-    /// not name those types directly. The hook receives the boxed VM after the
-    /// JSC-tier fields are populated and finishes the rest.
     pub fn init(mut opts: InitOptions) -> Result<*mut VirtualMachine, bun_core::Error> {
         jsc::mark_binding();
 
@@ -2065,11 +1631,6 @@ impl VirtualMachine {
             MAIN_THREAD_VM.store(vm, core::sync::atomic::Ordering::Release);
         }
 
-        // ConsoleObject is self-referential (buffers + adapters) — allocate
-        // stable storage and init in place. Spec VirtualMachine.zig:1238-1239:
-        // `console.init(Output.rawErrorWriter(), Output.rawWriter())` must
-        // happen BEFORE the pointer is stored/passed; the previous port left
-        // it as raw `MaybeUninit` (UB on first C++ read).
         let mut console_box: Box<core::mem::MaybeUninit<crate::console_object::ConsoleObject>> =
             Box::new(core::mem::MaybeUninit::uninit());
         crate::console_object::ConsoleObject::init_in_place(
@@ -2100,23 +1661,12 @@ impl VirtualMachine {
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::empty());
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
             addr_of_mut!((*vm).is_main_thread).write(opts.is_main_thread);
-            // Spec VirtualMachine.zig:154 — `= std.math.maxInt(u32)`. Left at the
-            // zeroed default this aliases `hot_reload_counter`'s initial 0, so a
-            // watcher event that races the very first entry-point load makes
-            // `reload()` think the rejection was already reported and proceed
-            // (replacing `pending_internal_promise`) instead of deferring,
-            // dropping the error on the floor.
             addr_of_mut!((*vm).pending_internal_promise_reported_at).write(u32::MAX);
             addr_of_mut!((*vm).on_unhandled_rejection)
                 .write(VirtualMachine::default_on_unhandled_rejection);
             addr_of_mut!((*vm).origin_timer).write(std::time::Instant::now());
             addr_of_mut!((*vm).origin_timestamp).write(get_origin_timestamp());
             addr_of_mut!((*vm).smol).write(opts.smol);
-            // `Option<{CPU,Heap}ProfilerConfig>` are NOT zero-valid: each
-            // payload contains a `bool`, and rustc picks that field's invalid
-            // range (not the `&[u8]` null-ptr) as the enum niche, so all-zero
-            // bytes decode as `Some` with null-ref slices. Write `None`
-            // explicitly.
             addr_of_mut!((*vm).cpu_profiler_config).write(None);
             addr_of_mut!((*vm).heap_profiler_config).write(None);
             // `Option<bool>` uses the bool's invalid range (2) as the niche, so
@@ -2124,11 +1674,6 @@ impl VirtualMachine {
             // silently disable certificate verification. Write `None` explicitly.
             addr_of_mut!((*vm).default_tls_reject_unauthorized).write(None);
             addr_of_mut!((*vm).ipc).write(None);
-            // Non-zero-valid container fields: `Vec`/`Box`/`HashMap`/
-            // `ArrayHashMap` all carry a `NonNull` (dangling when empty), and
-            // `URL` is a struct of `&[u8]` references — all-zero bytes violate
-            // their validity invariants even when len/cap are 0. Write the
-            // canonical empty value via `ptr::write` (no Drop of zeroed bytes).
             addr_of_mut!((*vm).preload).write(Vec::new());
             addr_of_mut!((*vm).argv).write(Vec::new());
             addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
@@ -2171,17 +1716,6 @@ impl VirtualMachine {
             (*addr_of_mut!((*vm).source_mappings)).map = addr_of_mut!((*vm).saved_source_map_table);
         }
 
-        // High-tier per-VM state — Transpiler / Timer::All / entry_point.
-        // PORT NOTE (init order): spec VirtualMachine.zig:1241/1259 builds
-        // `Transpiler.init` and `.timer = bun.api.Timer.All.init()` as part of
-        // the struct initializer BEFORE `JSGlobalObject.create`. The C++ body
-        // of `Zig__GlobalObject__create` re-enters via `WTFTimer__create`/
-        // `WTFTimer__update` (JSC's GC scheduler), which dereferences
-        // `runtime_state().timer` — so this hook MUST run first or that path
-        // null-derefs. The post-global tail (`configureDebugger`,
-        // `Body.Value.HiveAllocator.init`, spec :1321-1322) is gated TODO in
-        // the hook body and will need a separate post-global hook when
-        // un-gated. PERF(port): was inline switch.
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: hook contract — `vm` is the unique live VM on this
             // thread. Write through the raw `vm` ptr (not `vm_ref`) so no
@@ -2236,14 +1770,6 @@ impl VirtualMachine {
             (*uws::Loop::get()).internal_loop_data.jsc_vm = jsc_vm.cast();
         }
 
-        // Spec VirtualMachine.zig:1316 / :1191 — `if (opts.is_main_thread)
-        // bun.ParentDeathWatchdog.installOnEventLoop(jsc.EventLoopHandle.init(vm))`.
-        // Must run AFTER `ensure_waker()` (above) has set `event_loop_handle`,
-        // since on macOS the kqueue registration resolves the platform loop via
-        // `event_loop_ctx → uws_loop()`. No-op off macOS / when `--no-orphans`
-        // is not enabled. `init_with_module_graph` / `init_bake` route through
-        // here with their caller's `is_main_thread`; `init_worker` passes
-        // `false` so workers never arm the watchdog (matches spec `initWorker`).
         if opts.is_main_thread {
             // SAFETY: `vm` is the freshly-initialised per-thread VM singleton.
             bun_io::ParentDeathWatchdog::install_on_event_loop(unsafe { Self::event_loop_ctx(vm) });
@@ -2315,12 +1841,6 @@ impl VirtualMachine {
         }
     }
 
-    /// `eventLoop().autoTickActive()` — like [`auto_tick`](Self::auto_tick)
-    /// but only sleeps in the uSockets loop while it has active handles
-    /// (spec event_loop.zig:456). The real body lives in `event_loop.rs`
-    /// behind `` until the b2-cycle (`Timer::All`) breaks; until
-    /// then route through the same `auto_tick` hook so drain loops in
-    /// `on_before_exit` / `bun_main` still make forward progress.
     #[inline]
     pub fn auto_tick_active(&mut self) {
         if let Some(hooks) = runtime_hooks() {
@@ -2475,10 +1995,6 @@ impl VirtualMachine {
         Ok(self.pending_internal_promise.unwrap_or(promise))
     }
 
-    /// Drain pending tasks/microtasks if the event loop is not currently
-    /// re-entered. Port-side convenience used after top-level evaluation on
-    /// the `bun -e` path (Zig open-codes `eventLoop().tick()` +
-    /// `drainMicrotasks()` at each call site).
     pub fn drain_queues_if_needed(&mut self) {
         // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
         // accessed here (no overlapping `&mut EventLoop`).
@@ -2491,16 +2007,6 @@ impl VirtualMachine {
     }
 }
 
-/// Spec VirtualMachine.zig:2032 `processFetchLog`. Synthesize a JS
-/// `BuildMessage` / `ResolveMessage` / `AggregateError` from the parser
-/// `log` and write it into `ret` as `.err(..)` so the C++ module-loader
-/// (`Bun__onFulfillAsyncModule`, ModuleLoader.cpp) rejects the import promise
-/// with a real Error instead of `undefined`.
-///
-/// Free function (file-level in Zig); takes `&JSGlobalObject` directly rather
-/// than `&mut VirtualMachine` because the body never touches VM state — Zig
-/// only used `globalThis.arena()` for the format buffers, which is
-/// `bun.default_allocator` (= global mimalloc) and dropped per §Allocators.
 pub fn process_fetch_log(
     global_this: &JSGlobalObject,
     specifier: bun_core::String,
@@ -2569,10 +2075,6 @@ pub fn process_fetch_log(
         }
 
         _ => {
-            // Spec caps at 256 (`var errors_stack: [256]JSValue`). PERF(port):
-            // was inline switch — Zig stack-allocated; we heap-allocate the
-            // exact `len` since `JSValue` is a thin u64 and 256 * 8 B = 2 KiB
-            // is fine either way, but `Vec` avoids the uninit-array dance.
             let len = log.msgs.len().min(256);
             let mut errors: alloc::vec::Vec<JSValue> = alloc::vec::Vec::with_capacity(len);
             for msg in log.msgs.drain(..len) {
@@ -2609,21 +2111,6 @@ pub fn process_fetch_log(
 // SourceMapHandlerGetter — port of VirtualMachine.zig:403 `SourceMapHandlerGetter`.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Port of `SourceMapHandlerGetter` (VirtualMachine.zig:403). Holds raw
-/// pointers to the VM and the active `BufferPrinter` so that `get()` can
-/// return an erased `js_printer::SourceMapHandler` borrowing either the VM's
-/// `source_mappings` (fast path) or `self` (debugger / inline-sourcemap path)
-/// without the two `&mut` borrows colliding.
-///
-/// PORT NOTE: Zig stored `*VirtualMachine` / `*BufferPrinter` directly. Here
-/// we keep raw pointers + a `PhantomData<&'a mut ()>` so the getter's lifetime
-/// is tied to the `&'a mut VirtualMachine` it was built from in
-/// `source_map_handler`, but `get()` can still hand out a
-/// `SourceMapHandler<'_>` over `vm.source_mappings` without tripping borrowck
-/// on the disjoint `self.vm` reborrow. `printer` is accepted and stored as a
-/// raw pointer (NOT `&'a mut`) because the same `BufferPrinter` is also the
-/// live `writer` inside `print_with_source_map`; holding an `&'a mut` here
-/// would alias it for the whole print.
 pub struct SourceMapHandlerGetter<'a> {
     vm: *mut VirtualMachine,
     printer: *mut bun_js_printer::BufferPrinter,
@@ -2686,19 +2173,7 @@ impl<'a> SourceMapHandlerGetter<'a> {
         unsafe { &mut (*self.vm).source_mappings }
     }
 
-    /// Raw pointer to the active `BufferPrinter`.
-    ///
-    /// Intentionally NOT a `&mut`-returning accessor: the same
-    /// `BufferPrinter` is concurrently the live `writer` argument inside
-    /// `print_with_source_map`, so materializing a `&mut` here while the
-    /// printer is mid-write would alias. Callers must only dereference this
-    /// pointer once the writer's last byte has been emitted (i.e. inside
-    /// `on_source_map_chunk`, which the printer invokes from its tail).
     pub fn get(&mut self) -> bun_js_printer::SourceMapHandler<'_> {
-        // VirtualMachine.zig:408: take the inline-sourcemap path only when a
-        // debugger is present AND it is *not* in `.connect` mode — `.connect`
-        // (VSCode-extension) clients fall through to the `source_mappings`
-        // fast-path handler.
         let wants_inline_source_map = matches!(
             self.vm_debugger(),
             Some(d) if d.mode != crate::debugger::Mode::Connect
@@ -2714,11 +2189,6 @@ impl<'a> SourceMapHandlerGetter<'a> {
 }
 
 impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
-    /// Port of `SourceMapHandlerGetter.onChunk` (VirtualMachine.zig:418).
-    ///
-    /// When the inspector is enabled, we want to generate an inline sourcemap.
-    /// And, for now, we also store it in `source_mappings` like normal.
-    /// This is hideously expensive memory-wise...
     fn on_source_map_chunk(
         &mut self,
         chunk: bun_sourcemap::Chunk,
@@ -2793,13 +2263,6 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// ──────────────────────────────────────────────────────────────────────────
-// Options / IPC / per-thread printer — supporting types referenced by the
-// impl below. Field set mirrors VirtualMachine.zig:1204 (`Options`) and
-// :3899 (`IPCInstanceUnion` / `IPCInstance`).
-// ──────────────────────────────────────────────────────────────────────────
-
 /// Spec VirtualMachine.zig:1204 `Options`. `allocator` dropped per
 /// §Allocators (global mimalloc).
 #[derive(Default)]
@@ -2818,10 +2281,6 @@ pub struct Options {
     // forward-dep crate; callers pass it as the resolver's trait object so
     // both VM and resolver can hold it without the cycle.
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
-    // PORT NOTE: Zig `debugger: bun.cli.Command.Debugger` dropped — debugger
-    // configuration is plumbed through `RuntimeHooks::ensure_debugger` (the
-    // CLI option struct lives in `bun_cli`, a forward dep). See
-    // `runtime/jsc_hooks.rs` for the spec :1321 `configureDebugger` call site.
     pub is_main_thread: bool,
     pub destruct_main_thread_on_exit: bool,
 }
@@ -2966,13 +2425,6 @@ pub struct ResolveFunctionResult {
 pub(crate) static SOURCE_CODE_PRINTER: Cell<Option<NonNull<bun_js_printer::BufferPrinter>>> =
     Cell::new(None);
 
-/// `true` when [`enable_macro_mode`](VirtualMachine::enable_macro_mode)
-/// allocated [`SOURCE_CODE_PRINTER`] on this thread and no runtime VM has since
-/// claimed it via [`VirtualMachine::load_extra_env_and_source_code_printer`]
-/// (i.e. a bundler worker thread running a macro). Lets
-/// `__bun_macro_context_deinit` free the printer on worker teardown without
-/// touching the runtime VM's printer when an inline `Bun.build()` macro ran on
-/// the JS thread.
 #[thread_local]
 static SOURCE_CODE_PRINTER_FROM_MACRO: Cell<bool> = Cell::new(false);
 
@@ -3024,26 +2476,6 @@ fn drop_source_code_printer() {
     SOURCE_CODE_PRINTER_FROM_MACRO.set(false);
 }
 
-/// Free this thread's [`SOURCE_CODE_PRINTER`] Box only if
-/// [`enable_macro_mode`](VirtualMachine::enable_macro_mode) allocated it.
-/// Called from `js_parser_jsc::Macro::__bun_macro_context_deinit` on bundler
-/// worker teardown — the macro VM never reaches `VirtualMachine::deinit`, so
-/// the box would otherwise leak when the worker thread's TLS block is torn down
-/// before LSan scans (issue 03830 on debian-13-asan after the
-/// `leak:bun_js_parser_jsc::Macro` suppression was removed in #30875). A no-op
-/// on threads where the runtime VM had already initialized the printer (e.g. an
-/// inline `Bun.build()` macro on the JS thread), so subsequent module loads
-/// keep their printer.
-///
-/// Also a no-op while a [`MacroModeGuard`] is still active on this thread:
-/// `__bun_macro_context_deinit` can fire *inside* the guard scope (e.g. a
-/// macro that calls `new Bun.Transpiler().transformSync(...)` —
-/// `TranspilerStateGuard::drop` deinits the nested `MacroContext`), and freeing
-/// here would panic the next module fetch at
-/// `SOURCE_CODE_PRINTER.get().expect(...)` with no intervening
-/// `enable_macro_mode()`. Gated on `macro_guard_depth`: nonzero exactly while a
-/// guard is on the stack (both `MacroContext::call` and `Macro::init` hold one,
-/// so the macro module's top-level is covered too).
 pub fn drop_source_code_printer_if_macro_owned() {
     if !SOURCE_CODE_PRINTER_FROM_MACRO.get() {
         return;
@@ -3058,20 +2490,6 @@ pub fn drop_source_code_printer_if_macro_owned() {
     drop_source_code_printer();
 }
 
-/// Run a synchronous GC sweep on this thread's VM iff it was created for a
-/// bundler-worker macro (via `Macro::init`) and is otherwise quiescent. The
-/// macro VM is intentionally never `destroy()`'d (per-worker dealloc is
-/// unimplemented), so JS-wrapper-owned native boxes — e.g. a
-/// `new Bun.Transpiler()` constructed inside a macro body — would otherwise
-/// outlive the worker thread's TLS root and be reported by LSan once the
-/// `leak:bun_js_parser_jsc::Macro` suppression is gone.
-///
-/// Only invoked from `bun_bundler::ThreadPool::Worker::deinit` (the call site
-/// is the discriminant — JS `Worker` threads never reach it), after both
-/// per-worker `MacroContext` boxes are freed. Not called from
-/// `__bun_macro_context_deinit`: that path is reached from
-/// `TranspilerStateGuard::drop` and `JSTranspiler::Drop` (during a sweep),
-/// where re-entering `run_gc` would be a recursion hazard.
 pub fn collect_macro_vm_garbage() {
     let Some(vm) = VM.get() else { return };
     // SAFETY: `VM` is this thread's per-JS-thread VM singleton; we only read
@@ -3102,20 +2520,10 @@ pub(crate) fn create_if_different(s: &bun_core::String, other: &[u8]) -> bun_cor
     bun_core::String::clone_utf8(other)
 }
 
-// Additional FFI used by the formerly-gated impl.
-// C++ side defines `extern "C" SYSV_ABI` (BakeAdditionsToGlobalObject.cpp).
-//
-// safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; `&` is
-// ABI-identical to a non-null `JSGlobalObject*` and C++ mutating VM state
-// through it is interior to the cell.
 crate::jsc_abi_extern! {
     #[allow(improper_ctypes)]
     safe fn Bake__getAsyncLocalStorage(global: &JSGlobalObject) -> JSValue;
 }
-// `JSGlobalObject` / `VM` are opaque `UnsafeCell`-backed ZST handles, so
-// `&T` is ABI-identical to a non-null `T*`. `BakeCreateProdGlobal`'s
-// `console_ptr` is an opaque round-trip pointer C++ stores into the new global
-// (never dereferenced as Rust data) — same contract as `Zig__GlobalObject__create`.
 #[allow(improper_ctypes)]
 unsafe extern "C" {
     safe fn Bun__promises__isErrorLike(global: &JSGlobalObject, reason: JSValue) -> bool;
@@ -3272,13 +2680,6 @@ impl VirtualMachine {
                 .map(|i| map.map.swap_remove_at(i).1)
                 .and_then(|v| crate::ipc::Mode::from_string(&v.value))
                 .unwrap_or(crate::ipc::Mode::Json);
-            // PORT NOTE: Zig `IPC.log()` debug-only; the `IPC` scope static
-            // lives in `crate::ipc` and `scoped_log!` requires a bare ident,
-            // so the log line is dropped here.
-            // Spec: `std.fmt.parseInt(u31, fd_s, 10)` — accept only
-            // non-negative values that fit in i31 (i.e. `0..=i32::MAX`).
-            // Parsing as `u32` then `as i32` would silently wrap values in
-            // `2^31..2^32` to a negative fd instead of taking the warn branch.
             match bun_core::fmt::parse_int::<i32>(&fd_s, 10)
                 .ok()
                 .filter(|&n| n >= 0)
@@ -3367,10 +2768,6 @@ impl VirtualMachine {
             });
             if let Err(e) = r {
                 let exc = global_object.take_exception(e);
-                // PORT NOTE: Zig went `exc.asException(vm)` → `reportUncaughtException`,
-                // which itself just does `uncaughtException(global, exception.value(), false)`.
-                // `JSValue::as_exception` is not yet ported; inline the body — `exc` is
-                // already the exception's value.
                 let _ = this.uncaught_exception(global_object, exc, false);
             }
         };
@@ -3428,10 +2825,6 @@ impl VirtualMachine {
                     drain(self);
                     return;
                 }
-                // continue to default handler — but spec VirtualMachine.zig
-                // :667-669 RETURNS on `error.JSTerminated` from this drain
-                // (the VM is dead; don't bump the counter or invoke the
-                // handler).
                 if self.event_loop_mut().drain_microtasks().is_err() {
                     return;
                 }
@@ -3505,13 +2898,6 @@ impl VirtualMachine {
         }
     }
 
-    /// Spec VirtualMachine.zig:751 `packageManager`.
-    ///
-    /// `bun_resolver` holds the manager as an opaque forward-decl (it cannot
-    /// depend on `bun_install`). `bun_jsc` *can*, so cast the opaque back to
-    /// the concrete `bun_install::PackageManager` here — the resolver's
-    /// `PackageManager` is exactly that struct, just type-erased at a lower
-    /// tier.
     #[inline]
     pub fn package_manager(&mut self) -> &mut bun_install::PackageManager {
         let pm = self.transpiler.get_package_manager();
@@ -3588,12 +2974,6 @@ impl VirtualMachine {
         }
     }
 
-    /// Spec VirtualMachine.zig:827 `nodeFS`.
-    ///
-    /// `NodeFS` lives in `bun_runtime` (forward-dep on `bun_jsc`), so the
-    /// field is stored type-erased and the lazy boxed allocation goes through
-    /// [`RuntimeHooks::create_node_fs`]. Callers in `bun_runtime` cast the
-    /// returned pointer back to `*mut node::fs::NodeFS`.
     #[inline]
     pub fn node_fs(&mut self) -> *mut c_void {
         if let Some(existing) = self.node_fs {
@@ -3617,11 +2997,6 @@ impl VirtualMachine {
         debugger.next_debugger_id
     }
 
-    /// Spec VirtualMachine.zig:1016 `enqueueImmediateTask`.
-    ///
-    /// PORT NOTE (§Dispatch): `task` is an erased
-    /// `*mut bun_runtime::timer::ImmediateObject` — see
-    /// [`crate::event_loop::RunImmediateFn`].
     #[inline]
     pub fn enqueue_immediate_task(&mut self, task: *mut ()) {
         self.event_loop_mut().enqueue_immediate_task(task);
@@ -3636,20 +3011,7 @@ impl VirtualMachine {
         self.event_loop_mut().enqueue_task_concurrent(task);
     }
 
-    /// Spec VirtualMachine.zig:1028 `waitFor`.
-    ///
-    /// `cond` is `&Cell<bool>` (not `&mut bool`): the re-entrant
-    /// `tick()/auto_tick()` calls run JS that flips the flag through an
-    /// independently-captured handle, so the read must not be `noalias`.
-    /// `Cell` is `!Freeze`, which suppresses the LLVM `noalias`/`readonly`
-    /// attributes and forces a real reload on every `.get()` — no raw-pointer
-    /// laundering needed for the condition.
     pub fn wait_for(&mut self, cond: &core::cell::Cell<bool>) {
-        // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
-        // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` is
-        // LLVM-`noalias`, but `tick()/auto_tick()` re-enter JS which reaches
-        // `self` again via `VirtualMachine::get()`. Launder `self` so each
-        // access goes through an opaque address.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         while !cond.get() {
             // SAFETY: `this` is the unique live VM; each deref is a momentary
@@ -3673,14 +3035,6 @@ impl VirtualMachine {
         }
     }
 
-    /// Spec VirtualMachine.zig:1107 `initWithModuleGraph`.
-    ///
-    /// PORT NOTE: shares ~90% with [`init`]; the differences are (a) the
-    /// transpiler is built without `Config::configureTransformOptionsForBunVM`,
-    /// (b) `standalone_module_graph` is mandatory and propagated into the
-    /// resolver, (c) `configureLinkerWithAutoJSX(false)` instead of
-    /// `configureLinker()`. Rather than re-open-code the 80-line struct init,
-    /// we route through [`init`] and patch the deltas.
     pub fn init_with_module_graph(opts: Options) -> Result<*mut VirtualMachine, bun_core::Error> {
         let graph = opts.graph.expect("init_with_module_graph requires graph");
         let init_opts = InitOptions {
@@ -3705,12 +3059,6 @@ impl VirtualMachine {
         Ok(vm)
     }
 
-    /// Spec VirtualMachine.zig:1394 `initWorker`.
-    ///
-    /// PORT NOTE: takes `&WebWorker` (not `&mut`) — the worker thread may only
-    /// hold a shared reference to its `WebWorker` (the parent / main thread
-    /// concurrently observes it; see `web_worker.rs` worker-thread `&self`
-    /// note). All accesses on `worker` here are read-only.
     pub fn init_worker(
         worker: &crate::web_worker::WebWorker,
         opts: Options,
@@ -3724,10 +3072,6 @@ impl VirtualMachine {
             smol: opts.smol,
             eval_mode: opts.eval,
             is_main_thread: false,
-            // Spec VirtualMachine.zig:1477-1484 — `JSGlobalObject.create` is
-            // called with `worker.cpp_worker`, `worker.execution_context_id`,
-            // and `worker.mini` so the C++ ZigGlobalObject is born with its
-            // WorkerGlobalScope + debugger context id wired.
             worker_ptr: worker.cpp_worker(),
             context_id: Some(worker.execution_context_id() as i32),
             mini_mode: worker.mini(),
@@ -3744,10 +3088,6 @@ impl VirtualMachine {
         // `parent_poll_ref` is held (see web_worker.rs file header).
         let parent = worker.parent_vm();
         vm_ref.standalone_module_graph = parent.standalone_module_graph;
-        // Spec VirtualMachine.zig:1465 `initWorker` — the worker's resolver also
-        // needs the standalone graph, otherwise embedded `/$bunfs/...` specifiers
-        // (e.g. a `new Worker("./worker.ts")` entry point inside a compiled
-        // executable) resolve against the real filesystem and fail.
         vm_ref.transpiler.resolver.standalone_module_graph = opts.graph;
         vm_ref.hot_reload = parent.hot_reload;
         vm_ref.initial_script_execution_context_identifier = worker.execution_context_id() as i32;
@@ -3772,10 +3112,6 @@ impl VirtualMachine {
             is_main_thread: opts.is_main_thread,
             ..Default::default()
         };
-        // PORT NOTE: shares the console / log / event-loop wiring with `init`;
-        // the only delta is the global is created via `BakeCreateProdGlobal`
-        // instead of `ZigGlobalObject__create`. Route through `init` then
-        // swap the global.
         let vm = Self::init(init_opts)?;
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
@@ -3798,11 +3134,6 @@ impl VirtualMachine {
         Ok(vm)
     }
 
-    /// Spec VirtualMachine.zig:1586 `clearRefString`.
-    ///
-    /// Stored as [`RefString::on_before_deinit`] (an unsafe-fn-ptr slot) in
-    /// [`ref_counted_string_with_was_new`]; only ever invoked from
-    /// `RefString::destroy` with the live `*mut RefString` being torn down.
     fn clear_ref_string(_: *mut c_void, ref_string: *mut crate::ref_string::RefString) {
         // SAFETY: only reachable via `RefString::destroy`, which passes the
         // live heap `RefString` allocated in `ref_counted_string_with_was_new`;
@@ -3931,11 +3262,6 @@ impl VirtualMachine {
         self.ref_counted_string_with_was_new::<DUPE>(&mut was_new, input_, hash_)
     }
 
-    /// Spec VirtualMachine.zig:1656 `fetchWithoutOnLoadPlugins`.
-    // PORT NOTE: Zig `comptime flags: FetchFlags` lowered to a runtime arg —
-    // `FetchFlags` would need `ConstParamTy` (unstable derive on the enum's
-    // owning module) to stay a const generic; the only branches are cheap
-    // equality tests so the runtime form is fine. PERF(port): revisit.
     pub fn fetch_without_on_load_plugins(
         jsc_vm: &mut VirtualMachine,
         global_object: &JSGlobalObject,
@@ -3961,10 +3287,6 @@ impl VirtualMachine {
         let referrer_clone = referrer.to_utf8();
 
         let mut virtual_source_to_use: Option<bun_ast::Source> = None;
-        // Spec :1676-1677 — `var blob_to_deinit: ?webcore.Blob = null;
-        // defer if (blob_to_deinit) |*blob| blob.deinit();`. The blob crosses
-        // the bundler↔runtime boundary as an erased `OpaqueBlob`; deinit goes
-        // through the same `VmLoaderCtx` that produced it.
         struct BlobDeinit(
             Option<bun_bundler::options::OpaqueBlob>,
             bun_bundler::options::VmLoaderCtx,
@@ -4019,10 +3341,6 @@ impl VirtualMachine {
             .get()
             .expect("source_code_printer not initialized");
 
-        // PORT NOTE: Zig passes path/loader/module_type/printer/promise_ptr as
-        // positional params to `transpileSourceCode`; the §Dispatch shim takes
-        // them bundled as `TranspileExtra` behind `args.extra` (see
-        // ModuleLoader.rs `TranspileArgs`).
         let mut extra = ModuleLoader::TranspileExtra {
             // SAFETY: `lr.path` borrows from `specifier_clone` (and the VM's
             // resolver caches), both of which outlive the synchronous
@@ -4070,10 +3388,6 @@ impl VirtualMachine {
         slice
     }
 
-    /// Spec VirtualMachine.zig:1724 `_resolve`.
-    ///
-    /// PORT NOTE: Zig has `comptime is_a_file_path: bool`; folded to a runtime
-    /// arg here to avoid duplicating the body for both monomorphizations.
     pub fn _resolve(
         &mut self,
         ret: &mut ResolveFunctionResult,
@@ -4166,10 +3480,6 @@ impl VirtualMachine {
             top_level_dir
         };
 
-        // PORT NOTE: Zig modeled this as a labeled `while (true)` with
-        // `continue` after a successful cache bust. Expressed as a `loop`
-        // returning the resolver result; `retry_on_not_found` is consumed on
-        // the first miss.
         let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
         let result: bun_resolver::Result = loop {
             let import_kind = if is_esm {
@@ -4363,10 +3673,6 @@ impl VirtualMachine {
             return Ok(());
         }
 
-        // Swap in a fresh log so resolver errors don't pollute the VM's main log.
-        // `vm.log` is set unconditionally in `init` and never cleared (Zig
-        // stores `*logger.Log`, always non-null), so the `Option` is purely a
-        // zeroed-init nicety; the `expect` is infallible.
         let old_log: NonNull<bun_ast::Log> = jsc_vm.log.expect("vm.log set in init");
         let mut log = bun_ast::Log::default();
         jsc_vm.log = NonNull::new(&raw mut log);
@@ -4377,12 +3683,6 @@ impl VirtualMachine {
             // (sole impl — see `VirtualMachine::package_manager`).
             unsafe { (*pm.cast::<bun_install::PackageManager>().as_ptr()).log = &raw mut log };
         }
-        // PORT NOTE: Zig `defer { restore old_log }` — fires on every exit
-        // (including `?` from `ResolveMessage::create` below), so the VM's
-        // `log` cannot be left pointing at the dropped stack `log`. Hand-roll
-        // a drop guard (no captured borrows) so the unique `&mut *jsc_vm_ptr`
-        // below isn't kept alive across the closure. `BackRef` + `as_mut`
-        // route the restore through thread-local provenance.
         struct RestoreLog {
             vm: bun_ptr::BackRef<VirtualMachine>,
             old_log: NonNull<bun_ast::Log>,
@@ -4513,11 +3813,6 @@ impl VirtualMachine {
         // proxy strings; `ProxyEnvStorage: Default` so take()+drop suffices.
         drop(core::mem::take(&mut self.proxy_env_storage));
 
-        // The VM box is `dealloc`'d raw by the worker (see `web_worker.rs`
-        // section 5) so field `Drop`s never run; reclaim the boxed
-        // `ModuleLoader` payloads explicitly. `eval_source.contents` may be
-        // mmap-backed (`MAPPED_CONTENTS_CACHE`) — `Source`'s `Drop` is a
-        // no-op, so dropping the box just frees its own allocation.
         drop(core::mem::take(&mut self.module_loader));
 
         // SAFETY: this VM is raw-`dealloc`'d (no field `Drop` runs), so
@@ -4540,11 +3835,6 @@ impl VirtualMachine {
         }
         self.has_terminated = true;
     }
-    /// Spec VirtualMachine.zig:2134 `printException`.
-    ///
-    /// PORT NOTE: Zig is `comptime Writer`-generic; collapse to the concrete
-    /// `bun_core::io::Writer` since every call site passes
-    /// `Output.errorWriterBuffered()`.
     pub fn print_exception(
         &mut self,
         exception: &Exception,
@@ -4824,11 +4114,6 @@ impl VirtualMachine {
         self.run_error_handler(value, None);
     }
 
-    /// Spec VirtualMachine.zig:2663 `printErrorlikeObject`.
-    ///
-    /// PORT NOTE: Zig is `comptime Writer` + `comptime allow_ansi_color` +
-    /// `comptime allow_side_effects` — collapse to runtime bools and the
-    /// concrete `bun_core::io::Writer`.
     pub fn print_errorlike_object(
         &mut self,
         value: JSValue,
@@ -4839,20 +4124,9 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) {
-        // PORT NOTE: Zig declared `was_internal` and ran the
-        // exception-stack-trace `defer` after the body. Reshape: handle the
-        // post-print stack/exception_list block at the tail instead of via a
-        // drop guard (the body has no early-`?` returns once the AggregateError
-        // branch is taken).
         let global_ref = self.global();
 
         if value.is_aggregate_error(global_ref) {
-            // PORT NOTE: Zig comptime-generated `AggregateErrorIterator` with
-            // `extern "C"` callbacks. `JSValue::for_each` takes a C-ABI fn
-            // pointer + erased ctx, so thread the captures through a struct.
-            // The C trampoline erases lifetimes via `*mut c_void`; round-trip
-            // the caller's `&mut ExceptionList` as a raw pointer so child
-            // errors append to the same list (spec VirtualMachine.zig:2715).
             struct AggCtx<'a> {
                 formatter: *mut crate::console_object::Formatter<'a>,
                 writer: *mut bun_core::io::Writer,
@@ -4925,10 +4199,6 @@ impl VirtualMachine {
         if was_internal {
             if let Some(exception_) = exception {
                 let mut holder = crate::zig_exception::Holder::init();
-                // PORT NOTE: Zig calls `holder.deinit(this)` *before*
-                // `getStackTrace` (no-op on the empty holder); reordered to
-                // the tail for borrowck — semantics unchanged because
-                // `need_to_clear_parser_arena_on_deinit` is false here.
                 let zig_exception: &mut ZigException = holder.zig_exception();
                 exception_.get_stack_trace(global_ref, &mut zig_exception.stack);
                 if zig_exception.stack.frames_len > 0 {
@@ -5042,10 +4312,6 @@ impl VirtualMachine {
         JSValue::UNDEFINED
     }
 
-    /// Spec VirtualMachine.zig:2813 `printStackTrace`.
-    ///
-    /// PORT NOTE: Zig is `comptime Writer` + `comptime allow_ansi_colors`;
-    /// collapse to runtime bool + concrete writer.
     pub fn print_stack_trace(
         writer: &mut bun_core::io::Writer,
         trace: &crate::ZigStackTrace,
@@ -5322,10 +4588,6 @@ impl VirtualMachine {
                     {
                         continue;
                     }
-                    // PORT NOTE: `frames[j] = frame`. `ZigStackFrame` impls
-                    // `Drop` so `copy_within` is unavailable; swap instead —
-                    // the discarded tail past `j` is never read after we
-                    // truncate `frames_len` below.
                     frames_buf.swap(j, i);
                     j += 1;
                 }
@@ -5449,20 +4711,6 @@ impl VirtualMachine {
                     return;
                 };
                 *must_reset_parser_arena_later = true;
-                // PORT NOTE: spec ModuleLoader.zig:358 *borrows*
-                // `parse_result.source.contents` for `.print_source`
-                // (`bun.String.init`), so the Zig caller has nothing to
-                // release. The Rust transpile path must `clone_utf8` instead
-                // (the backing `parse_result` drops on return — see
-                // jsc_hooks.rs PORT NOTE at the `PrintSource` arm), leaving
-                // `source_code` with a +1 strong ref this caller never
-                // consumed. `to_utf8()` takes its own ref via
-                // `ZigStringSlice::WTF`, so balance the clone here. Also
-                // release the `dupe_ref` / `create_if_different` refs on
-                // `specifier` / `source_url` — this caller never reads them.
-                // Skipping the `source_code` deref leaks one WTFStringImpl
-                // (~file-size) per `Bun.inspect(new Error)` and fails
-                // inspect-error-leak.test.js.
                 let code = original_source.source_code.to_utf8();
                 original_source.source_code.deref();
                 original_source.specifier.deref();
@@ -5581,22 +4829,6 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) -> Result<(), bun_core::Error> {
-        // PORT NOTE: stack-safety guard for the Error recursion path.
-        // Zig's `printErrorInstance` is `comptime Writer`/`allow_ansi_color`/
-        // `allow_side_effects`-monomorphized so each instantiation carries
-        // only one branch's locals. The Rust port collapses those to runtime
-        // bools, so `print_error_instance_body` carries the union of all
-        // branches' locals (every `pretty_write!` expands to two `write!`s).
-        // More importantly, `remap_zig_exception` below calls
-        // `fetch_without_on_load_plugins` → the transpiler for source-line
-        // preview, and on Windows that call tree stack-allocates `PathBuffer`s
-        // (`MAX_PATH_BYTES = 98302` vs 4096 on Linux). One cycle can therefore
-        // exceed the default 256 KB headroom `is_safe_to_recurse()` leaves, so
-        // re-check here with an extra `MAX_PATH_BYTES * 3` of slack on Windows
-        // to cover the transpiler's nested path buffers — same parity-level
-        // protection the Object path gets from C++ `forEachProperty`'s
-        // `vm.isSafeToRecurse()`. The formatter's `stack_check` was seated by
-        // the caller (`format2` / `Bun.inspect`).
         let extra_headroom: usize = if cfg!(windows) {
             // 3× PathBuffer ≈ 288 KB — empirically enough for the
             // `remap_zig_exception` → `transpile_source_code` chain on the
@@ -5616,16 +4848,7 @@ impl VirtualMachine {
             return Ok(());
         }
 
-        // PORT NOTE: `Holder` is ~4 KB (32 ZigStackFrames + 6 source lines +
-        // ZigException). Zig stack-allocates it inside a small monomorphized
-        // function; here it sits next to the large runtime-dispatched body, so
-        // box it to keep the per-level recursion frame small enough for the
-        // 16K-deep `bun-inspect.test.ts` Error chain on Windows debug.
         let mut exception_holder = Box::new(crate::zig_exception::Holder::init());
-        // PORT NOTE: reshaped for borrowck — `zig_exception()` returns a
-        // `&mut` into the holder; we need to also borrow
-        // `need_to_clear_parser_arena_on_deinit` disjointly. Route through a
-        // raw pointer (the holder is heap-pinned for the call).
         let exception: *mut ZigException = exception_holder.zig_exception();
         let mut source_code_slice: Option<bun_core::ZigStringSlice> = None;
 
@@ -5653,20 +4876,10 @@ impl VirtualMachine {
         );
 
         drop(source_code_slice);
-        // Spec VirtualMachine.zig:3304 `defer exception_holder.deinit(this)` —
-        // releases the WTFString refs (`name`/`message`/stack-frame
-        // `function_name`/`source_url`/source-line bodies) populated by
-        // `JSC__JSValue__toZigException`. Skipping this leaks ~1 KB/error and
-        // OOMs the inspect-error-leak test.
         exception_holder.deinit(self);
         result
     }
 
-    /// Spec VirtualMachine.zig:3288 `printErrorInstance` — shared body for both
-    /// `mode == .js` (`error_instance != .zero`) and `mode == .zig_exception`
-    /// (`error_instance == .zero`). Renders source-line previews, the
-    /// name/message line, owned-property dump, stack trace, and the `cause:` /
-    /// AggregateError chain.
     #[allow(clippy::too_many_arguments)]
     fn print_error_instance_body(
         &mut self,
@@ -5684,10 +4897,6 @@ impl VirtualMachine {
 
         let prev_had_errors = self.had_errors;
         self.had_errors = true;
-        // PORT NOTE: Zig `defer this.had_errors = prev_had_errors;` — restore on
-        // every exit (including `?` from `JSError` paths). `BackRef` holds the
-        // VM without a live borrow; the write at drop routes through
-        // `VirtualMachine::as_mut` (thread-local provenance).
         struct RestoreHadErrors {
             vm: bun_ptr::BackRef<VirtualMachine>,
             prev: bool,
@@ -5822,16 +5031,7 @@ impl VirtualMachine {
         let is_error_instance = error_instance != JSValue::ZERO
             && error_instance.is_cell()
             && error_instance.js_type() == JSType::ErrorInstance;
-        // NOTE: cannot use `self.global()` — `global_ref` outlives a
-        // `&mut self` recursion (`print_error_instance_js`) and is passed to
-        // `Formatter<'2>::format`, which requires an unbounded (VM-lifetime)
-        // borrow. `global()` returns `&'static` so the borrow detaches.
         let global_ref = self.global();
-        // PORT NOTE: Zig keeps a borrowed `[]const u8` whose backing
-        // `bun.String` is `defer .deref()`-ed; hold the owning `bun_core::String`
-        // alongside the slice so the latin1 view stays live for this fn.
-        // `bun_core::String` is `Copy` (no `Drop`), so use a scopeguard to
-        // run `.deref()` on every exit path (matches Zig `defer`).
         let mut code_string_guard = scopeguard::guard(None::<bun_core::String>, |s| {
             if let Some(s) = s {
                 s.deref();
@@ -5998,10 +5198,6 @@ impl VirtualMachine {
 
         // This is usually unsafe to do, but we are protecting them each time first.
         let mut errors_to_append: Vec<JSValue> = Vec::new();
-        // PORT NOTE: Zig `defer { for (..) |e| e.unprotect(); deinit(); }`.
-        // `BackRef` (constructed from `&raw mut` via `NonNull` so the tag is
-        // not popped by later `errors_to_append.push` reborrows) lets the drop
-        // body read the Vec safely.
         struct UnprotectAll(bun_ptr::BackRef<Vec<JSValue>>);
         impl Drop for UnprotectAll {
             fn drop(&mut self) {
@@ -6437,24 +5633,12 @@ impl VirtualMachine {
             return Some(lookup);
         }
 
-        // Spec VirtualMachine.zig:3871-3889 — standalone-module-graph fallback.
-        // `graph.find(path).?.sourcemap.load()` reaches into
-        // `bun_standalone_graph::{Graph,File,LazySourceMap}` (higher tier);
-        // dispatch through [`RuntimeHooks::load_standalone_sourcemap`] per
-        // §Dispatch (cold path — one-time decode then cached below).
-        // Gate only — the hook reaches the concrete graph via its own
-        // `UnsafeCell` singleton (write-provenance), not via this read-only
-        // trait object.
         let _ = self.standalone_module_graph?;
         let hooks = runtime_hooks()?;
         // JS-thread call; hook mutates only per-`File` lazy caches under the
         // standalone graph's internal `INIT_LOCK`.
         let map = (hooks.load_standalone_sourcemap)(path)?;
 
-        // Spec: `map.ref(); this.source_mappings.putValue(path, Value.init(map))`.
-        // The `Arc::clone` is the ref-bump; `into_raw` transfers that strong
-        // ref into the table (reclaimed by `put_value`'s replace path /
-        // `SavedSourceMap` teardown). `catch bun.outOfMemory()` → `handle_oom`.
         bun_core::handle_oom(self.source_mappings.put_value(
             path,
             crate::saved_source_map::Value::init(std::sync::Arc::into_raw(std::sync::Arc::clone(
@@ -6489,10 +5673,6 @@ impl VirtualMachine {
 
         self.event_loop_mut().ensure_waker();
 
-        // PORT NOTE: reshaped for borrowck — `rare_data()` borrows `self` and
-        // `spawn_ipc_group` then needs `&mut VirtualMachine`. Split via raw
-        // pointers (disjoint fields) per the existing `Bun__RareData__*`
-        // accessors in virtual_machine_exports.rs.
         #[cfg(not(windows))]
         let this: *mut VirtualMachine = self;
 
@@ -6638,11 +5818,6 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
     if like {
         return reason;
     }
-    // Zig (VirtualMachine.zig:581-585) opens an explicit `TopExceptionScope`
-    // around the call and clears any exception via the scope; the C++ side has a
-    // `DECLARE_THROW_SCOPE`, so under `BUN_JSC_validateExceptionChecks=1` the
-    // post-call `clear_exception()` (whose own scope ctor asserts) is wrong
-    // without a Rust-side scope live across the call.
     let reason_str = {
         crate::top_scope!(scope, global_object);
         let r = Bun__noSideEffectsToString(global_object.vm(), global_object, reason);
@@ -6673,13 +5848,6 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         .to_js()
 }
 
-/// Spec PluginRunner.zig:121 `onResolveJSC`.
-///
-/// LAYERING: moved DOWN from `bun_bundler_jsc::PluginRunner` so
-/// `resolve_maybe_needs_trailing_slash` can consult `Bun.plugin()` resolvers
-/// without a `bun_jsc → bun_bundler_jsc` cycle. The body only touches
-/// `JSGlobalObject`/`JSValue`/`bun_core::String`, all of which live at this
-/// tier; `bun_bundler_jsc` re-exports this fn for its own callers.
 pub fn plugin_runner_on_resolve_jsc(
     global: &JSGlobalObject,
     namespace: bun_core::String,

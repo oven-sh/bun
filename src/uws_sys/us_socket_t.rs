@@ -9,13 +9,6 @@ bun_core::declare_scope!(uws, visible);
 
 const MAX_I32: usize = i32::MAX as usize;
 
-// Rust bindings for `us_socket_t`.
-//
-// TLS is per-socket (`s->ssl != NULL` in C); there is no `int ssl` selector.
-// Dispatch is by `kind()` — see `SocketKind` and `dispatch.rs`.
-//
-// Higher-level wrappers (`uws::SocketTCP`/`SocketTLS`) cover named pipes,
-// upgraded duplexes, and async DNS.
 bun_opaque::opaque_ffi! { pub struct us_socket_t; }
 
 #[repr(i32)]
@@ -231,12 +224,6 @@ impl us_socket_t {
         unsafe { NonNull::new(c::us_socket_adopt(self, g, k as u8, old_ext, new_ext)) }
     }
 
-    /// `adopt` + attach a fresh `SSL*` from `ssl_ctx` (refcounted by the C
-    /// side for the socket's lifetime). Does NOT kick the handshake — the
-    /// caller must repoint `ext` first (so any dispatch lands in the new
-    /// owner) and then call `start_tls_handshake`. Replaces
-    /// `us_socket_upgrade_to_tls` / `wrapTLS`.
-    // TODO(port): lifetime — self is consumed/invalidated; returned ptr may be a different allocation
     pub fn adopt_tls(
         &mut self,
         g: &mut SocketGroup,
@@ -310,10 +297,6 @@ impl us_socket_t {
     }
     #[cfg(windows)]
     pub fn write_fd(&mut self, _data: &[u8], _file_descriptor: Fd) -> i32 {
-        // Zig: `if (Environment.isWindows) @compileError(...)` — that fires only
-        // on call (lazy semantics). Rust evaluates `compile_error!` at item
-        // definition, so this would brick the windows build even with no callers.
-        // Mirror Zig intent with a runtime trap; no current Windows call site.
         unreachable!("us_socket_t::write_fd is not implemented on Windows")
     }
 
@@ -392,15 +375,6 @@ impl us_socket_t {
 mod c {
     use super::*;
 
-    // Every C-side decl takes `us_socket_r` (= `us_socket_t* nonnull_arg`), so
-    // mirror that here — passing null is UB and the typed methods above never do.
-    // `us_socket_t` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>`, so `&us_socket_t`
-    // / `&mut us_socket_t` are ABI-identical to a non-null pointer with no
-    // `readonly`/`noalias` attribute. Shims whose only pointer argument is the
-    // socket itself (plus value types) are declared `safe fn` so the validity
-    // proof lives in the type signature instead of per-call-site `unsafe { }`.
-    // Shims that take a (ptr,len) pair, nullable raw, or transfer ownership
-    // stay unsafe.
     unsafe extern "C" {
         pub(super) safe fn us_socket_get_native_handle(s: &mut us_socket_t) -> *mut c_void;
 

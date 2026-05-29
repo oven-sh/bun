@@ -190,12 +190,6 @@ pub mod argon2 {
         // `phc_format.deserialize` behaviour.
         let encoded = super::phc_ascii_str(encoded_hash)?;
 
-        // Zig (argon2.zig:565-567) only accepts version 0x13: an explicit
-        // `v=` segment that isn't `19` is `InvalidEncoding`, and a missing
-        // `v=` segment still hashes with 0x13 (kdf hard-codes `version`).
-        // rust-argon2's `verify_encoded` instead accepts `v=16` (computing
-        // with Version10) and defaults a missing segment to Version10, so
-        // pre-scan and normalise here before delegating.
         let normalised: std::borrow::Cow<'_, str> = 'norm: {
             // Encoded shape is `$<alg>$[v=N$]m=..,t=..,p=..$<salt>$<hash>`.
             // Locate the segment immediately after the alg-id.
@@ -320,22 +314,12 @@ pub mod bcrypt {
         if out.len() < HASH_LENGTH {
             return Err(bun_core::err!("NoSpaceLeft"));
         }
-        // Bun only ever requests `.crypt`. Zig's `.phc` path emits `$bcrypt$…`
-        // via the PHC serializer, which the Rust `bcrypt` crate does not
-        // implement; surface that as an encoding error rather than silently
-        // returning the wrong format.
         if options.encoding != Encoding::Crypt {
             return Err(bun_core::err!("InvalidEncoding"));
         }
 
         let cost = u32::from(options.params.rounds_log);
 
-        // Zig's `silently_truncate_password == false` path (bcrypt.zig:473-484)
-        // pre-hashes >72-byte passwords via HMAC-SHA512 keyed by the salt and
-        // never errors; the `bcrypt` crate's `non_truncating_*` instead returns
-        // `Err(Truncation)` (and trips at `>=72`, not `>72`). Bun's only caller
-        // (`PasswordObject`) always passes `true` and pre-hashes long passwords
-        // itself, so hard-assert here rather than ship a divergent codepath.
         debug_assert!(
             options.params.silently_truncate_password,
             "bcrypt: silently_truncate_password=false is unreachable from Bun \
@@ -376,11 +360,6 @@ pub mod bcrypt {
         );
         let _ = options;
 
-        // Zig (bcrypt.zig:794-798) dispatches on prefix:
-        //   `$2…`      → CryptFormatHasher.verify
-        //   otherwise  → PhcFormatHasher.verify (`$bcrypt$r=N$<salt>$<hash>`)
-        // `PasswordObject::Algorithm::get` sniffs both `$2` *and* `$bcrypt`
-        // (PasswordObject.rs:268), so PHC-encoded bcrypt hashes do reach here.
         if !encoded.starts_with("$2") {
             return verify_phc(encoded, password);
         }
@@ -389,20 +368,11 @@ pub mod bcrypt {
         // the Rust crate does the same inside `split_hash`.
         match vendor::verify(password, encoded) {
             Ok(true) => Ok(()),
-            // Zig: `if (!mem.eql(u8, wanted_s[3..], str[3..])) return PasswordVerificationFailed`.
-            // The Rust crate compares only the 23-byte raw digest (constant-time)
-            // and ignores the version prefix, which is the same observable
-            // contract — any `$2a/b/x/y$` hash with matching salt+digest passes.
             Ok(false) => Err(bun_core::err!("PasswordVerificationFailed")),
             Err(e) => Err(map_err(&e)),
         }
     }
 
-    /// Zig `PhcFormatHasher.verify` — `$bcrypt$r=N$<b64 salt>$<b64 hash>`.
-    ///
-    /// The Rust `bcrypt` crate has no PHC codec, so parse the string here
-    /// (matching Zig's `phc_format.deserialize` for the `HashResult` shape),
-    /// recompute via the raw block cipher, and compare the 23-byte digests.
     fn verify_phc(encoded: &str, password: &[u8]) -> Result<(), Error> {
         let invalid = || bun_core::err!("InvalidEncoding");
 
@@ -450,10 +420,6 @@ pub mod bcrypt {
             .decode(&mut expected, hash_b64.as_bytes())
             .map_err(|_| invalid())?;
 
-        // Zig drives the cipher with whatever `rounds_log: u6` it decoded; the
-        // Rust crate's raw `bcrypt()` asserts `cost < 32`, so reject the
-        // out-of-range tail here rather than panic. (Values <4 or ≥32 never
-        // appear in hashes Bun produced.)
         if !(4..=31).contains(&rounds_log) {
             return Err(bun_core::err!("WeakParameters"));
         }

@@ -50,11 +50,6 @@ use bun_http::ssl_config::SslConfig;
 
 bun_core::declare_scope!(WebSocketProxyTunnel, visible);
 
-/// Union type for upgrade client to maintain type safety.
-/// The upgrade client can be either HTTP or HTTPS depending on the proxy connection.
-///
-/// `Copy` so callbacks can snapshot the value and dispatch on the copy without
-/// holding a borrow of the tunnel across the re-entrant call.
 #[derive(Clone, Copy)]
 pub(crate) enum UpgradeClientUnion {
     Http(*mut HttpUpgradeClient),
@@ -125,13 +120,6 @@ pub struct WebSocketProxyTunnel {
     socket: SocketUnion,
     /// Write buffer for encrypted data (maintains TLS record ordering)
     write_buffer: StreamBuffer,
-    /// Snapshot of `wrapper.ssl` taken in `start()`.
-    ///
-    /// Callbacks fired from inside `SslWrapper::{start,receive_data,...}` run while
-    /// the caller holds a live `&mut SslWrapper`; under Stacked Borrows, *any* read
-    /// of `(*ctx).wrapper` bytes through the Box-provenance `ctx` pops that Unique
-    /// tag. Snapshotting the `*mut SSL` here lets `on_handshake` read it without
-    /// touching `wrapper`'s bytes.
     ssl: Option<NonNull<boringssl::c::SSL>>,
     /// Hostname for SNI (Server Name Indication)
     sni_hostname: Option<Box<[u8]>>,
@@ -151,10 +139,6 @@ impl WebSocketProxyTunnel {
         sni_hostname: &[u8],
         reject_unauthorized: bool,
     ) -> Result<NonNull<WebSocketProxyTunnel>, bun_alloc::AllocError> {
-        // PORT NOTE: const-generic bool → variant selection. The pointer cast is
-        // identity when SSL matches the alias (HttpUpgradeClient = NewHttpUpgradeClient<false>,
-        // etc); `assume_ssl`/`assume_tcp` rebuild the handler around the same
-        // `InternalSocket` so no `unsafe` is needed.
         let (upgrade_client, socket) = if SSL {
             (
                 UpgradeClientUnion::Https(upgrade_client.cast::<HttpsUpgradeClient>()),
@@ -196,10 +180,6 @@ impl WebSocketProxyTunnel {
         ssl_options: &SslConfig,
         initial_data: &[u8],
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        // Allow handshake to complete so we can access peer certificate for manual
-        // hostname verification in onHandshake(). The actual reject_unauthorized
-        // check uses self.reject_unauthorized field.
         let options = ssl_options.for_client_verification();
 
         // tier-neutral `init_from_options` takes the lowered
@@ -233,27 +213,12 @@ impl WebSocketProxyTunnel {
             (*this).wrapper = Some(wrapper);
         }
 
-        // Configure SNI with hostname.
-        //
-        // PORT NOTE: the Zig spec does this inside `onOpen`, which `SslWrapper::start()`
-        // invokes immediately before `handle_traffic()`. We hoist it here because
-        // `start()` holds `&mut SslWrapper` across the `on_open` dispatch, and any
-        // read of `(*ctx).wrapper` from inside the callback would invalidate that
-        // borrow under Stacked Borrows. The observable order vs BoringSSL is
-        // identical: SNI is set on the `SSL*` before the handshake is driven.
         if let Some(ssl_ptr) = ssl {
             // SAFETY: `this` is live; field projection covers only `sni_hostname`.
             if let Some(hostname) = unsafe { (*this).sni_hostname.as_deref() } {
                 if !strings::is_ip_address(hostname) {
                     // Set SNI hostname
                     let hostname_z = bun_core::ZBox::from_vec_with_nul(hostname.to_vec());
-                    // Zig `ssl_ptr.configureHTTPClient(host)` =
-                    // SNI + verify-hostname. The boringssl-crate ext-method
-                    // hasn't landed yet; route through bun_http's
-                    // tier-neutral helper which does SNI + ALPN(h1) (no
-                    // verify-hostname — that is checked manually in
-                    // `on_handshake`, matching the Zig path).
-                    // `hostname_z` is a NUL-terminated owned buffer in scope.
                     bun_http::configure_http_client_with_alpn(
                         // SAFETY: `ssl_ptr` is the live SSL handle from the wrapper.
                         unsafe { &mut *ssl_ptr.as_ptr() },
@@ -291,10 +256,6 @@ impl WebSocketProxyTunnel {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
         let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
         bun_core::scoped_log!(WebSocketProxyTunnel, "onOpen");
-        // SNI configuration is done in `start()` before the wrapper is driven;
-        // see PORT NOTE there. This callback intentionally does not touch
-        // `(*this).wrapper` — the caller (`SslWrapper::start`) holds `&mut self`
-        // over those bytes.
         let _ = this;
     }
 
@@ -610,10 +571,6 @@ impl Drop for WebSocketProxyTunnel {
     }
 }
 
-/// C export for setting the connected WebSocket client from C++
-// `tunnel` must stay `*mut` for the C ABI; C++ guarantees it is live and
-// non-null, so the deref is sound — not_unsafe_ptr_arg_deref is a false
-// positive at this FFI boundary.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn WebSocketProxyTunnel__setConnectedWebSocket(

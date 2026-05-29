@@ -26,10 +26,6 @@ use bun_uws as uws;
 /// `generated_js2native.rs` resolves as `secure_context::js::get_constructor`.
 pub use crate::generated_classes::js_SecureContext as js;
 
-// Codegen (`.classes.ts`) wires `to_js`/`from_js`/`from_js_direct` via this derive.
-// `#[repr(C)]` only to satisfy the `improper_ctypes` lint on the generated
-// `extern "C" fn(..., *mut SecureContext)` shims — C++ never reads this layout
-// (it round-trips `m_ctx` as `void*`).
 #[bun_jsc::JsClass]
 #[repr(C)]
 pub struct SecureContext {
@@ -75,16 +71,6 @@ impl SecureContext {
         SecureContext::create(global, &config)
     }
 
-    /// `tls.createSecureContext(opts)` entry point. WeakGCMap-memoised by config
-    /// digest so identical configs return the same `JSSecureContext` cell while
-    /// it's alive; falls through to `create()` (which itself hits the native
-    /// `SSLContextCache`) on miss. Returning the same cell is what makes
-    /// `secureContext === createSecureContext(opts)` hold and lets `Listener.zig`
-    /// pointer-compare without a JS-side WeakRef map.
-    // PORT NOTE: codegen (`generated_classes.rs::SecureContextClass__intern`)
-    // wraps this in `host_fn_result` and exports the C-ABI shim, so no
-    // `#[bun_jsc::host_fn]` here — that macro's Free shim calls by bare name
-    // and cannot resolve an associated fn.
     pub fn intern(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments();
         let opts = if args.len() > 0 {
@@ -121,14 +107,6 @@ impl SecureContext {
         Ok(value)
     }
 
-    /// Mode-neutral: Node lets one `SecureContext` back both `tls.connect()` and
-    /// `tls.createServer({secureContext})`, so we cannot bake client-vs-server
-    /// into the `SSL_CTX`. CTX-level verify mode is whatever `config` asked for
-    /// (i.e. servers don't send CertificateRequest unless `requestCert` was set);
-    /// the per-socket attach overrides client SSLs to `SSL_VERIFY_PEER` so chain
-    /// validation always runs and `verify_error` is populated for the JS-side
-    /// `rejectUnauthorized` decision. The trust store is loaded unconditionally in
-    /// `us_ssl_ctx_from_options` so that override has roots to validate against.
     pub fn create(global: &JSGlobalObject, config: &SSLConfig) -> JsResult<Box<SecureContext>> {
         let ctx_opts = config.as_usockets();
         Self::create_with_digest(global, &ctx_opts, ctx_opts.digest())
@@ -140,12 +118,6 @@ impl SecureContext {
         d: [u8; 32],
     ) -> JsResult<Box<SecureContext>> {
         let mut err = uws::create_bun_socket_error_t::none;
-        // PORT NOTE: spec is `global.bunVM().rareData().sslCtxCache()`. In the
-        // Rust crate split, `bun_jsc::RareData::ssl_ctx_cache()` returns an
-        // opaque cycle-break stub; the concrete per-VM `SSLContextCache` lives
-        // on this crate's `RuntimeState` (one per JS thread, same lifetime as
-        // `RareData`). Reach it via the thread-local — same instance
-        // `Bun__RareData__sslCtxCache` hands out over FFI.
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
         // SAFETY: `state` is the boxed per-thread `RuntimeState` installed by
@@ -153,10 +125,6 @@ impl SecureContext {
         // address for the VM's lifetime and is only touched from the JS thread.
         let cache = unsafe { &mut (*state).ssl_ctx_cache };
         let Some(ctx) = cache.get_or_create_digest(ctx_opts, d, &mut err) else {
-            // `err` is only set for the input-validation paths (bad PEM, missing
-            // file, …). When BoringSSL itself fails (e.g. unsupported curve) the
-            // enum is still `.none`; surface the library error stack instead of
-            // throwing an empty placeholder.
             if err == uws::create_bun_socket_error_t::none {
                 // `ERR_get_error` is declared `safe fn` in `boringssl_sys` (no
                 // preconditions; reads the thread-local error queue).

@@ -19,12 +19,6 @@ use crate::{
 
 use bun_dotenv as dot_env;
 
-/// File-level struct in Zig (`@This()` == `Task`).
-///
-/// `'a` is forced by LIFETIMES.tsv (BORROW_PARAM on `Request::*.network`).
-/// // TODO(port): lifetime — Task lives in an intrusive cross-thread queue
-/// (`next`, `package_manager` BACKREF). A `&'a mut NetworkTask` cannot soundly
-/// cross that boundary; Phase B should likely demote to `*mut NetworkTask`.
 pub struct Task<'a> {
     pub tag: Tag,
     pub request: Request<'a>,
@@ -47,11 +41,6 @@ pub struct Task<'a> {
     pub next: bun_threading::Link<Task<'a>>,
 }
 
-/// Zig: struct field defaults (`status = .waiting`, `threadpool_task = .{ .callback = &callback }`,
-/// `err = null`, `apply_patch_task = null`, `next = null`) with the remaining fields left
-/// `= undefined`. Callers MUST overwrite `tag`, `request`, `id`, `package_manager` before
-/// the task is observed. Exposed as a module-level fn so call sites that import this
-/// module as `Task` can write `..Task::uninit()` in struct-update position.
 #[inline]
 pub(crate) fn uninit() -> Task<'static> {
     Task {
@@ -63,11 +52,6 @@ pub(crate) fn uninit() -> Task<'static> {
         // SAFETY: untagged unions of `ManuallyDrop<_>` — any bit pattern is
         // valid storage and is never read before the caller overwrites it.
         data: unsafe { bun_core::ffi::zeroed_unchecked() },
-        // Every Zig caller passes `logger.Log.init(allocator)` for this field.
-        // `Log` contains `Vec<Msg>` (NonNull invariant) so it cannot be
-        // `mem::zeroed()`; and struct-update `..Task::uninit()` *drops* the
-        // base value's `log` when the caller supplies their own, so this must
-        // be a valid (empty) Log either way.
         log: Log::default(),
         id: Id(0),
         package_manager: None,
@@ -168,11 +152,6 @@ impl Id {
 }
 
 impl<'a> Task<'a> {
-    // ── Tag-checked projectors for the untagged `Request`/`Data` unions ────
-    // `Task.tag` is the single discriminant for both; every variant payload is
-    // POD or `ManuallyDrop`-wrapped (no drop on overwrite), so reading the
-    // wrong arm is well-defined garbage rather than UB. The macro's trailing
-    // `as *const $Ty` cast unwraps `ManuallyDrop<$Ty>` (`repr(transparent)`).
     bun_core::extern_union_accessors! {
         tag: tag as Tag, value: request;
         PackageManifest => request_package_manifest @ package_manifest: PackageManifestRequest<'a>, mut request_package_manifest_mut;
@@ -246,17 +225,6 @@ impl<'a> Task<'a> {
         let this: *mut Task<'a> = unsafe { bun_core::from_field_ptr!(Task, threadpool_task, task) };
         // SAFETY: exclusive access — task runs on exactly one worker thread
         let this: &mut Task<'a> = unsafe { &mut *this };
-        // BACKREF (LIFETIMES.tsv:598) — `package_manager` outlives every task it
-        // owns. The `ParentRef` is `Copy` and gives safe `Deref` for the
-        // shared-read sites below; `manager` is kept as a raw `*mut` for the
-        // whole function because this callback runs on ThreadPool workers
-        // concurrently (and concurrently with the main thread), so binding a
-        // long-lived `&mut PackageManager` here would be aliased-`&mut` UB.
-        // Subfields touched cross-thread (`resolve_tasks`, `wake`) are reached
-        // through raw-ptr/shared accessors below; the few callees whose
-        // signatures still take `&mut PackageManager` (`get_cache_directory`,
-        // `get_package_metadata`) are dereferenced inline at the call boundary
-        // only — same race as the Zig spec's freely-aliased `*PackageManager`.
         let manager_ref = this.package_manager.expect("Task.package_manager unset");
         let manager: *mut PackageManager = manager_ref.as_mut_ptr();
 
@@ -319,10 +287,6 @@ impl<'a> Task<'a> {
                     let loaded_manifest = loaded_manifest.clone();
                     let is_extended_manifest = *is_extended_manifest;
 
-                    // Shared read of `manager.options` (never mutated by worker
-                    // threads) via the `ParentRef` safe `Deref`. Wrap as
-                    // `BackRef` so the `&PackageManager` autoref does not stay
-                    // live across the `&mut *manager` below.
                     let scope = bun_ptr::BackRef::new(
                         manager_ref.scope_for_package_name(manifest.name.slice()),
                     );
@@ -383,14 +347,6 @@ impl<'a> Task<'a> {
                     }
                 }
                 Tag::Extract => {
-                    // Streaming extraction never reaches this callback: the
-                    // HTTP thread drives `TarballStream.drain_task`, which
-                    // fills in `this.data`/`this.status` and pushes to
-                    // `resolve_tasks` directly from `TarballStream.finish()`.
-                    // This path is the buffered fallback — feature flag off,
-                    // non-2xx status, or the whole body arrived in a single
-                    // chunk before streaming could commit.
-
                     // SAFETY: tag == Extract discriminates the union
                     let extract = unsafe { &mut *this.request.extract };
                     // Zig: `defer buffer.deinit()` — take ownership so the
@@ -526,12 +482,6 @@ impl<'a> Task<'a> {
                     this.status = Status::Success;
                 }
                 Tag::LocalTarball => {
-                    // `tarball_path` and `normalize` are computed on the main thread when the
-                    // task is enqueued. This callback runs on a ThreadPool worker and must not
-                    // read `manager.lockfile.packages` / `manager.lockfile.buffers.string_bytes`:
-                    // the main thread may reallocate those buffers concurrently while processing
-                    // other dependencies.
-
                     // SAFETY: tag == LocalTarball discriminates the union
                     let req = unsafe { &mut *this.request.local_tarball };
                     let tarball_path = req.tarball_path.slice();
@@ -609,13 +559,6 @@ fn read_and_extract(
 ) -> Result<ExtractData, bun_core::Error> {
     // TODO(port): narrow error set
     let bytes = if normalize {
-        // Zig `File.readFromUserInput(std.fs.cwd(), tarball_path, allocator)` resolves
-        // a user-provided relative path against `bun.fs.FileSystem.instance.top_level_dir`
-        // (the absolute project root cached at startup — NOT the live process cwd).
-        // The Rust `bun_sys::File::read_from_user_input` was reshaped to take that base
-        // explicitly (T1 `bun_sys` cannot depend on T5 `bun_resolver::fs`), so thread it
-        // through here from the install crate's `FileSystem` shim.
-        // Zig `try X.unwrap()` on Maybe(T) → plain `?` on bun_sys::Result<T>.
         File::read_from_user_input(
             Fd::cwd(),
             crate::bun_fs::FileSystem::instance().top_level_dir(),
@@ -705,12 +648,6 @@ pub struct GitCheckoutRequest {
 
 pub struct LocalTarballRequest {
     pub tarball: ExtractTarball,
-    /// Path to read the tarball from. May be the same as `tarball.url` (when
-    /// `normalize` is true) or an absolute path joined with a workspace
-    /// directory. Computed on the main thread in `enqueueLocalTarball` because
-    /// resolving it requires reading `lockfile.packages` / `string_bytes`,
-    /// which can be reallocated concurrently by the main thread while this
-    /// task runs on a ThreadPool worker.
     pub tarball_path: StringOrTinyString,
     /// When true, `tarball_path` is a user-provided path resolved relative to
     /// cwd. When false, it is already an absolute path.

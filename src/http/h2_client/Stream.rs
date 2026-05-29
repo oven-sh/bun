@@ -61,21 +61,10 @@ pub struct Stream {
     /// Per-stream send window (server's INITIAL_WINDOW_SIZE plus any
     /// WINDOW_UPDATEs minus DATA bytes already framed).
     pub send_window: i32,
-    /// Unsent suffix of a `.bytes` request body, parked while the send
-    /// window is exhausted. Borrows from `client.state.request_body`.
-    // BACKREF: borrows from `client.state.request_body`; `RawSlice` carries
-    // the outlives-holder invariant (client outlives every Stream it owns).
     pub pending_body: bun_ptr::RawSlice<u8>,
 }
 
 impl Stream {
-    /// Mutable access to the owning `HTTPClient` while `client` is `Some`.
-    ///
-    /// INVARIANT: `client` is a weak back-pointer set in `attach` and cleared
-    /// (via `take()`) before any terminal callback that could free the
-    /// `AsyncHTTP` embedding it; while `Some`, the client is alive and is a
-    /// disjoint allocation from both this `Stream` and the `ClientSession`.
-    /// HTTP-thread-only.
     #[inline]
     pub fn client_mut(&mut self) -> Option<&mut HTTPClient<'static>> {
         // Delegates to the shared accessor in `client_session`; see INVARIANT
@@ -149,12 +138,6 @@ impl Stream {
             pending_body: bun_ptr::RawSlice::EMPTY,
         })
     }
-
-    // PORT NOTE: Stream.zig:rst() re-entered the session via the `session`
-    // backref. In Rust that autorefs a second `&mut ClientSession` while
-    // `parse_frames`' `&mut ClientSession` is still live (Stacked-Borrows UB),
-    // so RST is routed through `ClientSession::rst_stream` instead — the
-    // session `&mut` is already in scope at every call site.
 
     pub fn sent_end_stream(&mut self) {
         self.state = match self.state {

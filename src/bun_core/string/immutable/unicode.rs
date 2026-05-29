@@ -20,10 +20,6 @@ use bun_simdutf_sys::simdutf;
 
 crate::declare_scope!(strings, hidden);
 
-/// Widen-append `src` ASCII bytes onto `dst` as `u16` code units. Reserves,
-/// commits the new length, then scalar-widens via `copy_u8_into_u16`. Folds
-/// the `reserve + set_len + copy_u8_into_u16` triple repeated across the
-/// UTF-8→UTF-16 paths into one audited block.
 #[inline]
 fn append_u8_as_u16(dst: &mut Vec<u16>, src: &[u8]) {
     if src.is_empty() {
@@ -44,22 +40,6 @@ fn append_u16_as_u8(dst: &mut Vec<u8>, src: &[u16]) {
     copy_u16_into_u8(unsafe { crate::vec::writable_slice(dst, src.len()) }, src);
 }
 
-// ───── canonical WTF-8 single-rune decode (Zig: unicode.zig decodeWTF8RuneT) ─────
-// Lives in `bun_core::string::immutable::unicode_draft` (this file), re-exported
-// through the inline `pub mod unicode` in immutable.rs and onward as
-// `bun_core::strings::{decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte, codepoint_size}`.
-//
-// Visibility promoted pub(super) → pub so the inline shim mod can re-export
-// instead of carrying a second body, and so md/glob/parsers can call directly.
-
-/// Integer types usable as the codepoint result of [`decode_wtf8_rune_t`].
-/// Sealed to the two instantiations Zig uses (`i32` aka `CodePoint`, and `u32`);
-/// every caller in-tree is one of these. `ZERO_VALUE` is the per-type sentinel
-/// Zig threaded as a `comptime_int` (`-1` for i32, `0` for u32).
-///
-/// PORT NOTE: bounds widened from `From<u8>` to include the bit-ops needed by
-/// `decode_wtf8_rune_t_multibyte` plus a `from_u32` constructor (folds in the
-/// previously separate `FromU32`/`FromU32Const` helper traits).
 pub trait CodePointZero:
     Copy
     + Eq
@@ -115,23 +95,6 @@ pub fn decode_wtf8_rune_t<T: CodePointZero>(p: [u8; 4], len: U3Fast, zero: T) ->
 
 pub use crate::strings::codepoint_size;
 
-// ───────────────────────────── UTF16 → UTF8 ─────────────────────────────
-//
-// The transcoding suite (`convert_utf16_to_utf8{,_append}`, `to_utf8_alloc{,_z}`,
-// `to_utf8_alloc_with_type`, `to_utf8_list_with_type`, `to_utf8_append_to_list`,
-// `to_utf8_from_latin1{,_z}`, `allocate_latin1_into_utf8_with_list`) lives
-// canonically in `crate::strings` (T0) and is re-exported by
-// `crate::string::immutable`. The `pub(super)` copies that previously lived here were
-// shadowed dead code (the parent module re-exports the bun_core versions, not
-// these) and have been deleted in D056.
-//
-// Kept below: the two variants bun_core does NOT provide —
-//   * `convert_utf16_to_utf8_without_invalid_surrogate_pairs` (hard-error on
-//     unpaired surrogates instead of U+FFFD replacement), and
-//   * `to_utf8_list_with_type_bun::<SKIP_TRAILING_REPLACEMENT>` (returns the
-//     dangling lead surrogate instead of replacing it — streaming TextEncoder
-//     contract).
-
 /// Returns `Some(u16)` (the trailing lead surrogate) when `SKIP_TRAILING_REPLACEMENT` and a
 /// dangling lead surrogate is at the end; otherwise `None`. When `SKIP_TRAILING_REPLACEMENT` is
 /// false the Zig version returned the list by value — in Rust the caller already owns `list`.
@@ -170,10 +133,6 @@ pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
             }
         }
 
-        // Encode into a stack scratch then append the `count` (≤ 4) bytes.
-        // Capacity for `count` is reserved above, so `extend_from_slice` is a
-        // bounds-check + memcpy with no realloc — same write traffic as the
-        // previous in-place `*[4]u8` cast without the raw-pointer view.
         let mut four = [0u8; 4];
         let _ = crate::strings::encode_wtf8_rune(&mut four, replacement.code_point);
         list.extend_from_slice(&four[..count]);
@@ -195,10 +154,6 @@ pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
 
 use crate::strings::EncodeIntoResult;
 
-/// Thin wrapper over the canonical T0 `crate::strings::allocate_latin1_into_utf8_with_list`.
-/// Kept `Result`-typed for source-compat with existing callers (TextEncoder /
-/// encoding.rs / ConsoleObject) — the bun_core impl is infallible per
-/// PORTING.md §Allocators (panic-on-OOM), so this is always `Ok`.
 pub fn allocate_latin1_into_utf8(latin1_: &[u8]) -> Result<Vec<u8>, AllocError> {
     Ok(crate::strings::allocate_latin1_into_utf8_with_list(
         Vec::with_capacity(latin1_.len()),
@@ -206,15 +161,6 @@ pub fn allocate_latin1_into_utf8(latin1_: &[u8]) -> Result<Vec<u8>, AllocError> 
         latin1_,
     ))
 }
-
-// ─── CANONICAL: UTF-16 codepoint decode ─────────────────────────────────────
-// Faithful port of unicode.zig:569 / :1321 / :1325 / :1361. Re-exported from
-// immutable.rs as `strings::{utf16_codepoint, utf16_codepoint_with_fffd,
-// UTF16Replacement}`; the parallel Utf16CodepointLen + duplicate struct/fns
-// that lived in immutable.rs are deleted in favour of this single source of
-// truth. All callers (visible.rs ×1; unicode.rs ×4; shell_parser/parse.rs ×1;
-// TextEncoderStreamEncoder.rs ×1) resolve through the
-// `pub use unicode_draft::{…}` re-export with no source change.
 
 /// `strings.UTF16Replacement` (unicode.zig:569) — decoded UTF-16 codepoint
 /// with surrogate metadata.
@@ -427,10 +373,6 @@ pub(super) fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
     convert_utf8_bytes_into_utf16_with_length(sequence, sequence_length, bytes.len())
 }
 
-// SWAR body moved down into `crate::strings` (T0) so the canonical
-// `copy_latin1_into_utf8` is the spec-faithful fast path. Re-export here so
-// `pub use unicode_draft::copy_latin1_into_utf8_stop_on_non_ascii` in
-// `immutable.rs` keeps resolving.
 pub use crate::strings::copy_latin1_into_utf8_stop_on_non_ascii;
 
 pub fn replace_latin1_with_utf8(buf_: &mut [u8]) {
@@ -558,11 +500,6 @@ pub fn copy_latin1_into_ascii(dest: &mut [u8], src: &[u8]) {
     }
 }
 
-/// It is common on Windows to find files that are not encoded in UTF8. Most of these include
-/// a 'byte-order mark' codepoint at the start of the file. The layout of this codepoint can
-/// determine the encoding.
-///
-/// https://en.wikipedia.org/wiki/Byte_order_mark
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BOM {
     Utf8,
@@ -637,10 +574,6 @@ impl BOM {
                 bytes
             }
             BOM::Utf16Le => {
-                // `trimmed_bytes` is `&[u8]` at offset 2 of a `Vec<u8>`; alignment is
-                // not guaranteed ≥ 2, so casting to `&[u16]` (the Zig `@alignCast`
-                // port) is UB. Route through the byte-level helper which copies into
-                // an aligned `Vec<u16>` first.
                 let trimmed_bytes = &bytes[Self::UTF16_LE_BYTES.len()..];
                 let out = crate::strings::to_utf8_alloc_from_le_bytes(trimmed_bytes);
                 drop(bytes);
@@ -654,10 +587,6 @@ impl BOM {
         }
     }
 
-    /// This is required for fs.zig's `use_shared_buffer` flag. we cannot free that pointer.
-    /// The returned slice will always point to the base of the input.
-    ///
-    /// Requires an arraylist in case it must be grown.
     pub fn remove_and_convert_to_utf8_without_dealloc<'a>(self, list: &'a mut Vec<u8>) -> &'a [u8] {
         match self {
             BOM::Utf8 => {
@@ -1000,11 +929,6 @@ pub(super) fn cp1252_to_codepoint_bytes_assume_not_ascii16(char: u32) -> u16 {
     CP1252_TO_UTF16_CONVERSION_TABLE[(char as u8) as usize]
 }
 
-// `copy_utf16_into_utf8` (the non-generic wrapper) lives canonically in
-// `crate::strings`; re-exported at `crate::string::immutable` (line ~391). The
-// `_impl<const ALLOW_TRUNCATED>` variant below is what hot paths
-// (encoding.rs, Sink.rs, websocket_client.rs) call directly.
-
 /// See comment on `copy_utf16_into_utf8_with_buffer_impl` on what `allow_truncated_utf8_sequence` should do
 pub fn copy_utf16_into_utf8_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
     buf: &mut [u8],
@@ -1039,21 +963,6 @@ pub fn copy_utf16_into_utf8_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
     copy_utf16_into_utf8_with_buffer_impl::<ALLOW_TRUNCATED_UTF8_SEQUENCE>(buf, utf16, utf16.len())
 }
 
-/// Q: What does the `allow_truncated_utf8_sequence` parameter do?
-/// A: If the output buffer can't fit everything, this function will write
-///    incomplete utf-8 byte sequences if `allow_truncated_utf8_sequence` is
-///    enabled.
-///
-/// Q: Doesn't that mean this function would output invalid utf-8? Why would you
-///    ever want to do that?
-/// A: Yes. This is needed for writing a UTF-16 string to a node Buffer that
-///    doesn't have enough space for all the bytes:
-///
-/// ```js
-/// let buffer = Buffer.allocUnsafe(1);
-/// buffer.fill("Ȣ");
-/// expect(buffer[0]).toBe(0xc8);
-/// ```
 pub(super) fn copy_utf16_into_utf8_with_buffer_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
     buf: &mut [u8],
     utf16: &[u16],
@@ -1158,10 +1067,6 @@ pub(super) fn copy_utf16_into_utf8_with_buffer_impl<const ALLOW_TRUNCATED_UTF8_S
         }
 
         utf16_remaining = &utf16_remaining[replacement.len as usize..];
-        // Zig does `remaining.ptr[0..4]` (a raw *[4]u8 with no bounds claim) and
-        // encodeWTF8RuneT only writes `width` bytes. In Rust, materializing
-        // `&mut [u8; 4]` would assert 4 valid bytes even when remaining.len() < 4,
-        // so encode into a stack buffer and copy the `width` bytes that were written.
         let mut four = [0u8; 4];
         let _ = crate::strings::encode_wtf8_rune(&mut four, replacement.code_point);
         remaining[..width].copy_from_slice(&four[..width]);
@@ -1246,11 +1151,6 @@ pub fn wtf8_sequence(code_point: u32) -> [u8; 4] {
     }
 }
 
-/// Convert potentially ill-formed UTF-8 or UTF-16 bytes to a Unicode Codepoint.
-/// Invalid codepoints are replaced with `zero` parameter
-/// This is a clone of esbuild's decodeWTF8Rune
-/// which was a clone of golang's "utf8.DecodeRune" that was modified to decode using WTF-8 instead.
-/// Asserts a multi-byte codepoint
 #[inline]
 pub fn decode_wtf8_rune_t_multibyte<T: CodePointZero>(p: [u8; 4], len: U3Fast, zero: T) -> T {
     debug_assert!(len > 1);

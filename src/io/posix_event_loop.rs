@@ -11,12 +11,6 @@ use bun_uws_sys::Loop as UwsLoop;
 
 pub type Loop = UwsLoop;
 
-// PORT NOTE: `addActive`/`subActive` live on `PosixLoop` in Zig (uws_sys/Loop.zig)
-// but the Rust `bun_uws_sys::Loop` only exposes `inc`/`dec`/`ref_`/`unref`. The
-// `active` counter is a public field, so inline the saturating math here until
-// `bun_uws_sys` grows `add_active`/`sub_active`. On Windows the uws loop has no
-// such counter (libuv tracks active handles itself); `posix_event_loop` is only
-// reachable from non-Windows `Loop` consumers, so the Windows arm is a no-op.
 #[cfg(not(windows))]
 #[inline]
 fn loop_add_active(loop_: &mut Loop, value: u32) {
@@ -56,18 +50,9 @@ where
 pub use crate::{EventLoopCtx, EventLoopCtxKind, EventLoopKind, OpaqueCallback};
 
 unsafe extern "Rust" {
-    /// Defined `#[no_mangle]` in `bun_runtime::jsc_hooks`.
-    // safe: by-value enum arg only; the `#[no_mangle] pub fn` body in
-    // `bun_runtime::jsc_hooks` is itself a safe fn (reads process globals) —
-    // no memory-safety preconditions.
     safe fn __bun_get_vm_ctx(kind: AllocatorType) -> EventLoopCtx;
 }
 
-/// Kind of fd a `FilePoll` (or pipe reader/writer) is wrapping. Lives here so
-/// `bun_io` (which now depends on this crate) and `FilePoll::file_type` share
-/// one definition; `bun_io::pipes` re-exports it for downstream callers.
-// PORT NOTE: Zig defines this in src/io/pipes.zig; sunk one tier to break the
-// io↔aio cycle (FilePoll::file_type was the only aio→io edge).
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum FileType {
     File,
@@ -97,14 +82,6 @@ pub fn get_vm_ctx(kind: AllocatorType) -> EventLoopCtx {
     __bun_get_vm_ctx(kind)
 }
 
-/// JS-thread [`EventLoopCtx`] for `KeepAlive::{ref_,unref}` / `FilePoll`.
-///
-/// Zig passed `*jsc.VirtualMachine` directly via `anytype` dispatch
-/// (`posix_event_loop.zig:45`); the Rust crate split routes through the
-/// link-time `__bun_get_vm_ctx` hook installed by `bun_runtime::init()`.
-/// Every `Js`-tier caller (i.e. everything outside the install/Mini loop)
-/// wants exactly `get_vm_ctx(AllocatorType::Js)`, so this shorthand replaces
-/// the ~21 byte-identical local wrappers each ported file grew independently.
 #[inline]
 pub fn js_vm_ctx() -> EventLoopCtx {
     get_vm_ctx(AllocatorType::Js)
@@ -168,17 +145,6 @@ const EV_EOF: u16 = 0x8000;
 // `panicLog` that the Rust port routes through `bun_output::panic!` (which
 // already names the syscall via `Tag`). No remaining call site → dropped.
 
-// ──────────────────────────────────────────────────────────────────────────
-// FilePoll Owner — hot-path tag+ptr (CYCLEBREAK §Hot dispatch list).
-// Low tier (here) stores `(tag: u8, ptr: *mut ())`; `bun_runtime::dispatch::on_poll`
-// owns the per-tag `match` so the variant types are never named in this crate.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Closed set of `FilePoll` owner kinds. Variant types live in higher-tier
-/// crates; `__bun_run_file_poll` (link-time, in `bun_runtime::dispatch`)
-/// matches on this and calls the per-kind handler directly — same enum-dispatch
-/// shape as `EventLoopCtx`, with the match on the runtime side because there
-/// are 13 variants × 1 dispatch fn (vs 2 × 9 for `EventLoopCtx`).
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum PollTag {
@@ -198,10 +164,6 @@ pub enum PollTag {
     LifecycleScriptSubprocessOutputReader,
 }
 
-/// Compatibility module — call sites in `bun_runtime`/`bun_install` still spell
-/// `poll_tag::FILE_SINK`. Re-export the enum variants under the old constant
-/// names; the literal values are unchanged. New code should use
-/// `PollTag::FileSink` directly.
 pub mod poll_tag {
     use super::PollTag;
     pub const NULL: PollTag = PollTag::Null;
@@ -262,21 +224,12 @@ pub enum AllocatorType {
     Mini,
 }
 
-// `FilePoll`/`Store` here are POSIX-specific (kqueue/epoll registration,
-// generation_number, allocator_type). On Windows the variants live in
-// `windows_event_loop`; the shared `EventLoopCtxVTable` above names
-// `crate::FilePoll`/`crate::Store` so the right one is picked.
 #[cfg(not(windows))]
 pub struct FilePoll {
     pub fd: Fd,
     pub flags: FlagsSet,
     pub owner: Owner,
 
-    /// We re-use FilePoll objects to avoid allocating new ones.
-    ///
-    /// That means we might run into situations where the event is stale.
-    /// on macOS kevent64 has an extra pointer field so we use it for that
-    /// linux doesn't have a field like that
     pub generation_number: KQueueGenerationNumber,
     pub next_to_free: *mut FilePoll,
 
@@ -323,12 +276,6 @@ impl FilePoll {
         FileType::Pipe
     }
 
-    // PORT NOTE: Zig `onKQueueEvent`/`onEpollEvent` take `_: *Loop` (unused, raw-pointer
-    // semantics). The Rust signatures drop the loop parameter entirely: holding a
-    // protected `&mut Loop` across `on_update` would alias the fresh `&mut Loop`
-    // that downstream `__bun_run_file_poll` handlers conjure via
-    // `EventLoopCtx::platform_event_loop()` when they re-enter the loop
-    // (`register_with_fd`/`unregister`/`deinit`).
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub fn on_kqueue_event(&mut self, kqueue_event: &KQueueEvent) {
         self.update_flags(Flags::from_kqueue_event(kqueue_event));
@@ -396,16 +343,7 @@ impl FilePoll {
         let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
         self.flags = FlagsSet::empty();
         self.fd = INVALID_FD;
-        // `self` may live inside the `Store.hive` inline array, so a
-        // `&mut Store` taken while `&mut self` is live would assert unique
-        // access over the slot and invalidate `self`'s tag (Stacked Borrows).
-        // Decay `self` to a raw slot pointer first, *then* materialise the
-        // `&mut Store` via the crate-private backref-deref accessor.
         let this = ptr::NonNull::from(self);
-        // `file_polls_mut()` is the per-thread set-once `Store` back-pointer
-        // (`BackRef`-shaped); `&mut self` has been retired to `this` above so
-        // the `&mut Store` it produces is the sole unique borrow into the hive.
-        // `Store::put` touches `this` only via raw-pointer ops (see its doc).
         vm.file_polls_mut().put(this, vm, was_ever_registered);
     }
 
@@ -517,14 +455,6 @@ impl FilePoll {
         }
     }
 
-    /// Build a fully-initialized `FilePoll` value for `Store::get_init`.
-    ///
-    /// PORT NOTE: the previous `&mut *pool.get()` + field-assign pattern was
-    /// instant validity UB — `FilePoll.owner`/`allocator_type` are enums with
-    /// niches, and `&mut FilePoll` over an uninitialized hive slot asserts a
-    /// valid discriminant. It also left `generation_number` uninitialized on
-    /// non-macOS-debug builds and then read it in the `syslog!` below. Building
-    /// the whole struct by value fixes both.
     #[inline]
     fn new_value(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> FilePoll {
         FilePoll {
@@ -681,10 +611,6 @@ impl FilePoll {
                 Flags::Writable => EPOLL::OUT | EPOLL::HUP | EPOLL::ERR | one_shot_flag,
                 _ => unreachable!(),
             };
-            // epoll keys on fd alone; if the other direction is already
-            // registered on this poll, preserve it in the CTL_MOD mask.
-            // (EPOLLONESHOT disarms the whole fd after the first event in
-            // either direction, so bidirectional one-shot is not supported.)
             if flag == Flags::Readable && self.flags.contains(Flags::PollWritable) {
                 debug_assert!(!self.flags.contains(Flags::OneShot));
                 flags |= EPOLL::OUT | EPOLL::ERR;
@@ -798,11 +724,6 @@ impl FilePoll {
 
             self.flags.insert(Flags::WasEverRegistered);
 
-            // If an error occurs while
-            // processing an element of the changelist and there is enough room
-            // in the eventlist, then the event will be placed in the eventlist
-            // with EV_ERROR set in flags and the system error in data. xnu ORs
-            // EV_ERROR into the existing action bits, so test the bit.
             if (changelist[0].flags & EV::ERROR) != 0 && changelist[0].data != 0 {
                 return errno_sys(changelist[0].data, sys::Tag::kevent).unwrap();
                 // Otherwise, -1 will be returned, and errno will be set to
@@ -1104,13 +1025,6 @@ impl FilePoll {
                 return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::kevent));
             }
 
-            // If an error occurs while processing an element of the changelist
-            // and there is enough room in the eventlist, then the event will be
-            // placed in the eventlist with EV_ERROR set in flags and the system
-            // error in data. With KEVENT_FLAG_ERROR_EVENTS, rc is the count of
-            // such error events; they are packed from index 0 regardless of
-            // which change failed. xnu ORs EV_ERROR into the existing action
-            // bits (EV_DELETE|EV_ERROR = 0x4002), so test the bit, not equality.
             if rc >= 1 && (changelist[0].flags & EV::ERROR) != 0 && changelist[0].data != 0 {
                 return errno_sys(changelist[0].data, sys::Tag::kevent).unwrap();
             }
@@ -1370,12 +1284,6 @@ impl Store {
         self.pending_free_tail = ptr::null_mut();
     }
 
-    /// `poll` is a live, fully-initialized slot in `self.hive`. It may point
-    /// *inside* `self.hive`'s inline `[FilePoll; 128]` buffer, so accepting it
-    /// as `&mut FilePoll` while `&mut self` is live would retag overlapping
-    /// storage under Stacked Borrows (UB). Mirror Zig's alias-tolerant
-    /// `poll: *FilePoll` and touch fields only through raw pointer ops — same
-    /// rationale as `process_deferred_frees` above.
     pub fn put(&mut self, poll: ptr::NonNull<FilePoll>, vm: EventLoopCtx, ever_registered: bool) {
         let poll = poll.as_ptr();
         if !ever_registered {
@@ -1432,13 +1340,6 @@ impl Store {
 // onTick (exported)
 // ──────────────────────────────────────────────────────────────────────────
 
-// `Pollable` mirrors Zig `bun.TaggedPointerUnion(.{FilePoll})`.
-//
-// PORT NOTE: `bun_collections::TaggedPtrUnion<(FilePoll,)>` cannot be
-// instantiated here — `impl_tagged_ptr_union!` would generate
-// `impl TypeList for (FilePoll,)`, which trips the orphan rule (foreign trait
-// on a tuple). Since the union has exactly one variant, wrap the raw
-// `TaggedPtr` directly with the same tag scheme (`1024 - index`).
 #[derive(Copy, Clone)]
 #[allow(dead_code)]
 pub(crate) struct Pollable {
@@ -1545,15 +1446,6 @@ pub enum OneShotFlag {
 
 #[cfg(not(windows))]
 const INVALID_FD: Fd = Fd::INVALID;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Waker / Closer — canonical impls live in this crate's `mod waker` /
-// `mod closer` (lib.rs). Before the bun_io→bun_io merge each crate had its
-// own copy (this file was bun_io's, lib.rs was bun_io's, kept apart so
-// `Loop::load` had no aio→io edge). With the merge there is one definition;
-// re-export here so `posix_event_loop::Waker` / `::Closer` (and therefore
-// the `bun_io::*` shim) keep resolving for downstream callers.
-// ──────────────────────────────────────────────────────────────────────────
 
 pub use crate::closer::Closer;
 #[cfg(target_os = "macos")]

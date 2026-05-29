@@ -55,10 +55,6 @@ pub(crate) fn to_be_instance_of(
     let expected_fmt = expected_value.to_fmt(&mut formatter);
     let value_fmt = value.to_fmt(&mut formatter2);
     if not {
-        // PORT NOTE: Zig built the fmt string via comptime `++` concatenation of
-        // `expected_line`/`received_line` consts; inlined here because Rust `concat!`
-        // only accepts literals (and `format_args!` needs a literal anyway).
-        // TODO(port): get_signature should be a `const fn` (was `comptime` in Zig).
         let signature = get_signature("toBeInstanceOf", "<green>expected<r>", true);
         return this.throw(
             global,

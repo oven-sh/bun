@@ -5,11 +5,6 @@ use core::cell::UnsafeCell;
 use crate::Mutex;
 use bun_safety::ThreadLock;
 
-/// A wrapper around a mutex, and a value protected by the mutex.
-/// This type uses `bun_threading::Mutex` internally.
-///
-/// Drop-in for `parking_lot::Mutex<T>`: `const fn new(T)`, `.lock()` returns
-/// a guard with `Deref`/`DerefMut`, no poisoning.
 pub type Guarded<Value> = GuardedBy<Value, Mutex>;
 
 /// `parking_lot::MutexGuard<'a, T>` drop-in alias for the [`Guarded`] case.
@@ -23,10 +18,6 @@ pub type Debug<Value> = GuardedBy<Value, ThreadLock>;
 /// A wrapper around a mutex, and a value protected by the mutex.
 /// `M` should have `lock` and `unlock` methods.
 pub struct GuardedBy<Value, M: RawMutex> {
-    /// The raw value. Don't use this if there might be concurrent accesses.
-    // `UnsafeCell` is load-bearing: `lock(&self)` hands out `&mut Value` while other `&self`
-    // borrows of `GuardedBy` exist (the mutex serializes the actual writers). Without the cell,
-    // deriving `&mut Value` from `&self` is UB under Stacked Borrows regardless of the mutex.
     pub unsynchronized_value: UnsafeCell<Value>,
     mutex: M,
 }
@@ -53,10 +44,6 @@ impl<Value: Default, M: RawMutex + Default> Default for GuardedBy<Value, M> {
 }
 
 impl<Value> GuardedBy<Value, Mutex> {
-    /// `const` constructor for `static` initializers (`Mutex::new()` is `const`;
-    /// `M::default()` in [`init`](Self::init) is not).
-    ///
-    /// Parity with `parking_lot::Mutex::new` / `parking_lot::const_mutex`.
     pub const fn new(value: Value) -> Self {
         Self {
             unsynchronized_value: UnsafeCell::new(value),
@@ -64,12 +51,6 @@ impl<Value> GuardedBy<Value, Mutex> {
         }
     }
 
-    /// Attempts to acquire the mutex without blocking. Returns the guard on
-    /// success, `None` if another thread holds the lock.
-    ///
-    /// Parity with `parking_lot::Mutex::try_lock`. Only provided for the real
-    /// [`Mutex`] backend (not generic `M`) because [`RawMutex`] intentionally
-    /// stays `lock`/`unlock`-only.
     #[inline]
     pub fn try_lock(&self) -> Option<GuardedLock<'_, Value, Mutex>> {
         if self.mutex.try_lock() {
@@ -79,10 +60,6 @@ impl<Value> GuardedBy<Value, Mutex> {
         }
     }
 
-    /// Borrow the underlying raw [`Mutex`]. Needed by callers that split
-    /// `lock()`/`unlock()` across function boundaries (e.g. `Progress.rs`
-    /// porting `lock_api::RawMutex`) or pair this `Guarded` with a bare
-    /// [`Condition::wait`](crate::Condition::wait).
     #[inline]
     pub fn raw_mutex(&self) -> &Mutex {
         &self.mutex
@@ -117,12 +94,6 @@ pub struct GuardedLock<'a, Value, M: RawMutex> {
 }
 
 impl<'a, Value> GuardedLock<'a, Value, Mutex> {
-    /// Borrow the raw [`Mutex`] this guard holds. Used by
-    /// [`Condition::wait_guarded`](crate::Condition::wait_guarded) to unlock /
-    /// re-lock around the OS wait without consuming the guard.
-    ///
-    /// The returned `&Mutex` has the guard's lifetime, not `'a`, so it cannot
-    /// outlive the guard and be used to double-unlock.
     #[inline]
     pub fn mutex(&self) -> &Mutex {
         &self.guarded.mutex

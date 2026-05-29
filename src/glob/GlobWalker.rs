@@ -46,16 +46,6 @@ fn dummy_filter_false(_val: &[u8]) -> bool {
 #[cfg(windows)]
 pub fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
     use bun_paths::resolve_path::{self, platform};
-    // Zig uses a SINGLE stack `bun.PathBuffer` for both `getFdPath` and
-    // `joinZBuf` (the join assembles parts into a temp scratch first, so the
-    // in/out alias is benign there). Rust's `&mut`/`&` aliasing rules forbid
-    // passing the same buffer as both `join_z_buf`'s output and an input part,
-    // so we still need two buffers — but on Windows `PathBuffer` is ~96 KB,
-    // and this is called from deep inside `Iterator::next()` (via `lstatat`
-    // for `FileKind::Unknown`), so two stack `PathBuffer`s (~192 KB, zero-
-    // initialized by `PathBuffer::uninit()`) risk overflowing the smaller
-    // worker-thread stacks. Draw both from the per-thread heap pool instead
-    // (uninit, RAII-returned) — zero stack footprint, no zero-fill.
     let mut dir_buf = bun_paths::path_buffer_pool::get();
     let dir = Syscall::get_fd_path(fd, &mut dir_buf)?;
     let parts: &[&[u8]] = &[&dir[..], path.as_bytes()];
@@ -204,48 +194,16 @@ impl Accessor for SyscallAccessor {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DirEntryAccessor
-// ─────────────────────────────────────────────────────────────────────────────
-// MOVED: `DirEntryAccessor` lives in `bun_resolver::dir_entry_accessor` —
-// the full DirEntry cache (`DirEntry`, `EntryMap`, `read_directory`,
-// `EntriesOption`) is owned by `bun_resolver` (higher-tier). Per PORTING.md
-// §Dispatch this is the "low-tier owns the trait, high-tier owns the impl"
-// case: the `Accessor` trait is exported here and `bun_resolver` provides
-// `impl bun_glob::walk::Accessor for DirEntryAccessor`. Keeping it in
-// `bun_glob` would create an upward dependency edge (bun_glob → bun_resolver).
-
-// ─────────────────────────────────────────────────────────────────────────────
 // GlobWalker_
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Zig: fn GlobWalker_(comptime ignore_filter_fn, comptime Accessor: type, comptime sentinel: bool) type
-//
-// `ignore_filter_fn` is lowered to a runtime fn-pointer field because Rust
-// const-generic fn pointers are unstable.
-// PERF(port): was comptime monomorphization (ignore_filter_fn) — profile if hot.
-//
-// `MatchedPath` was `[]const u8` or `[:0]const u8` depending on `sentinel`.
-// Without the arena, matched paths are heap-owned; we use `Box<[u8]>` and
-// include a trailing NUL byte when `SENTINEL == true`.
-// TODO(port): MatchedPath sentinel typing — consider a dedicated owned ZStr type.
 pub type MatchedPath = Box<[u8]>;
 
 pub type IgnoreFilterFn = fn(&[u8]) -> bool;
 
-/// Set of active component indices during traversal. At `**/X`
-/// boundaries the walker needs to both advance past X and keep the
-/// outer `**` alive; rather than visiting the directory twice, both
-/// states are tracked in one set and evaluated in a single readdir.
-///
-/// Uses AutoBitSet (inline up to 127 bits, heap-backed beyond) so any
-/// component count works.
 pub type ComponentSet = AutoBitSet;
 
 pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
-    // PERF(port): was arena bulk-free — Zig used std.heap.ArenaAllocator for all
-    // per-walk allocations (paths, workbuf, matchedPaths). The Rust port uses
-    // the global allocator; profile if hot.
-    /// not owned by this struct
     pub pattern: Box<[u8]>,
 
     /// If the pattern contains "./" or "../"
@@ -277,31 +235,6 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
 
 pub type Result_ = Maybe<()>;
 
-/// Array hashmap used as a set (values are the keys)
-/// to store matched paths and prevent duplicates
-///
-/// BunString is used so that we can call BunString.toJSArray()
-/// on the result of `.keys()` to give the result back to JS
-///
-/// The only type of string impl we use is ZigString since
-/// all matched paths are UTF-8 (DirIterator converts them on
-/// windows) and allocated on the arena
-///
-/// Multiple patterns are not supported so right now this is
-/// only possible when running a pattern like:
-///
-/// `foo/**/*`
-///
-/// Use `.keys()` to get the matched paths
-// PORT NOTE: Zig keys this on `BunString` so `.keys()` can hand a slice
-// straight to `BunString.toJSArray`. `to_js_array` lives in a `*_jsc` crate
-// (per PORTING.md §Strings, `.toJS` is only callable there), so the JS-array
-// fast path moves up-tier anyway and there's no win keeping `BunString` keys
-// here. Use `StringArrayHashMap<()>` (boxed `[u8]` keys); the JSC consumer
-// rebuilds `BunString`s from `.keys()`.
-// TODO(refactor): wire `MatchedMapContext` as a `StringArrayHashMap`
-// custom context once SENTINEL-aware hashing matters (currently the trailing
-// NUL is part of the key so dedupe is still exact).
 pub type MatchedMap = bun_collections::StringArrayHashMap<()>;
 
 pub struct MatchedMapContext;
@@ -310,10 +243,6 @@ impl MatchedMapContext {
     pub fn hash(&self, this: &BunString) -> u32 {
         debug_assert!(this.tag() == bun_core::Tag::ZigString);
         let slice = this.byte_slice();
-        // For SENTINEL the slice includes trailing NUL; hash excludes it.
-        // TODO(port): const-generic SENTINEL not reachable here; Zig branched at comptime.
-        // Thread `SENTINEL` through `MatchedMapContext` (or strip the NUL at
-        // insert time so the key never carries it).
         bun_collections::array_hash_map::hash_string(slice)
     }
 
@@ -331,18 +260,6 @@ pub enum IterState<A: Accessor> {
     /// Currently iterating over a directory
     Directory(Directory<A>),
 
-    /// Two particular cases where this is used:
-    ///
-    /// 1. A pattern with no special glob syntax was supplied, for example: `/Users/zackradisic/foo/bar`
-    ///
-    ///    In that case, the mere existence of the file/dir counts as a match, so we can eschew directory
-    ///    iterating and walking for a simple stat call to the path.
-    ///
-    /// 2. Pattern ending in literal optimization
-    ///
-    ///    With a pattern like: `packages/**/package.json`, once the iteration component index reaches
-    ///    the final component, which is a literal string ("package.json"), we can similarly make a
-    ///    single stat call to complete the pattern.
     Matched(MatchedPath),
 }
 
@@ -456,15 +373,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 // Skip the components associated with the literal path
                 starting_component_idx += 1;
 
-                // This means we got a pattern without any special glob syntax, for example:
-                // `/Users/zackradisic/foo/bar`
-                //
-                // In that case we don't need to do any walking and can just open up the FS entry
                 if starting_component_idx as usize >= self.walker.pattern_components.len() {
-                    // Matched-path payload must respect SENTINEL (Zig: MatchedPath
-                    // = if (sentinel) [:0]const u8 else []const u8). The open()
-                    // probe always needs a NUL — use a separate dupeZ for it so
-                    // SENTINEL=false matched paths don't carry a spurious 0x00.
                     let path = dupe_matched::<SENTINEL>(path_without_special_syntax);
                     let pathz_owned = dupe_z(path_without_special_syntax);
                     // SAFETY: dupe_z appends NUL at len()-1; ZStr len excludes it.
@@ -489,11 +398,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     return Ok(Ok(()));
                 }
 
-                // In the above branch, if `starting_component_idx >= pattern_components.len` then
-                // it should also mean that `end_byte_of_basename_excluding_special_syntax >= pattern.len`
-                //
-                // So if we see that `end_byte_of_basename_excluding_special_syntax < self.walker.pattern.len` we
-                // miscalculated the values
                 debug_assert!(
                     (self.walker.end_byte_of_basename_excluding_special_syntax as usize)
                         < self.walker.pattern.len()
@@ -709,10 +613,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             if idx as usize == self.walker.pattern_components.len().saturating_sub(1)
                 && self.walker.pattern_components[idx as usize].syntax_hint == SyntaxHint::Literal
             {
-                // Zig: `defer this.closeDisallowingCwd(fd)` — covered explicitly on
-                // both exit paths below (Err arm and post-Ok); no `?` between here
-                // and those calls, so a scopeguard is unnecessary.
-                // PERF(port): was stack-fallback (stackFallback(256, arena))
                 let pat_slice = self.walker.pattern_components[idx as usize]
                     .pattern_slice(&self.walker.pattern)
                     .to_vec();
@@ -766,12 +666,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         let mut iterator = iterator;
         #[cfg(windows)]
         {
-            // computeNtFilter operates on a single pattern component.
-            // When multiple indices are active (e.g. after `**`), the
-            // kernel filter could hide entries needed by other indices,
-            // so skip it. The filter is purely an optimization;
-            // matchPatternImpl still runs for correctness.
-            // TODO(port): @hasDecl(Accessor.DirIter, "setNameFilter") — trait default method covers this
             let filter: Option<&[u16]> = if active.count() == 1 {
                 self.compute_nt_filter(
                     u32::try_from(active.find_first_set().unwrap()).expect("int cast"),
@@ -795,11 +689,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         Ok(Ok(()))
     }
 
-    /// Compute an optional NtQueryDirectoryFile FileName filter for the current
-    /// pattern component. The kernel filter is used purely as a pre-filter;
-    /// matchPatternImpl still runs on every returned entry for correctness
-    /// (case sensitivity, 8.3 aliases, etc). We only emit a filter when the
-    /// NT match is guaranteed to be a superset of the glob match.
     #[cfg(windows)]
     fn compute_nt_filter(&mut self, component_idx: u32) -> Option<&[u16]> {
         let comp = &self.walker.pattern_components[component_idx as usize];
@@ -817,12 +706,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             return None;
         }
 
-        // Only `*` and literals are safe to lower. Reject anything NT cannot
-        // express (`[` `{` `\` `!`) or where NT semantics under-match glob
-        // (`?` matches one UTF-16 code unit, glob matches one codepoint).
-        // `<` `>` `"` are NT wildcards; treating them as literals would over-match,
-        // but they are invalid in Windows filenames so such a pattern never matches
-        // anyway.
         if strings::index_of_any(slice, b"?[{\\!<>\"").is_some() {
             return None;
         }
@@ -870,11 +753,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 )
                                 .with_path(work_item_path)));
                             }
-                            // PORT NOTE: reshaped for borrowck — Zig used `self.path_buf`
-                            // both as the scratch buffer here and from inside
-                            // `collapseDots`/`handleSysErrWithPath`. In Rust we split-borrow
-                            // `path_buf` and `pattern_components` (disjoint fields) for the
-                            // write+normalize, then drop the &mut and read via `self.walker`.
                             let mut symlink_full_path_len = work_item_path.len();
                             // PORT NOTE: reshaped for borrowck — entry_name is a sub-slice
                             // of symlink_full_path; capture range and re-slice later.
@@ -1454,12 +1332,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     pub fn handle_sys_err_with_path(&mut self, err: &SysError, path_buf: &ZStr) -> SysError {
         let src = path_buf.as_bytes();
         let copy_len = src.len().min(self.path_buf.len());
-        // Several callers pass a `path_buf` that is itself a slice of
-        // `self.path_buf` (e.g. Iterator::init error path, next() symlink
-        // openat error path). When src and dst alias the same range,
-        // `copy_from_slice` is UB (its safety contract requires
-        // non-overlapping). Zig's `bun.copy` is memmove. Match that:
-        // short-circuit identical-range, otherwise use overlap-safe ptr::copy.
         let dst = self.path_buf.as_mut_ptr();
         if src.as_ptr() != dst.cast_const() {
             // SAFETY: copy_len ≤ both src and dst capacity; ptr::copy is memmove
@@ -1494,11 +1366,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         Ok(Ok(()))
     }
 
-    // PORT NOTE: associated fn taking `pattern_components` so callers can
-    // split-borrow it from `&mut self.path_buf` (Zig freely aliased; Rust
-    // forbids `&mut self` + `&mut self.path_buf`). Error path builds SysError
-    // directly from `path_buf` (which is already `self.path_buf` for the
-    // symlink caller) instead of routing through `handle_sys_err_with_path`.
     fn collapse_dots_disjoint(
         pattern_components: &[Component],
         idx: u32,
@@ -1586,10 +1453,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         )
     }
 
-    /// Same as [`skip_special_components`] but takes `pattern_components`
-    /// directly so callers can split-borrow it from `&mut self.path_buf`
-    /// (the symlink branch in `Iterator::next` passes `self.path_buf` as
-    /// `scratch_path_buf` while reading `pattern_components`).
     pub fn skip_special_components_disjoint(
         pattern_components: &[Component],
         work_item_idx: u32,
@@ -1651,26 +1514,12 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         // Handle double wildcard `**`, this could possibly
         // propagate the `**` to the directory's children
         if pattern.syntax_hint == SyntaxHint::Double {
-            // Stop the double wildcard if it matches the pattern afer it
-            // Example: src/**/*.js
-            // - Matches: src/bun.js/
-            //            src/bun.js/foo/bar/baz.js
             if !is_last && self.match_pattern_impl(next_pattern.unwrap(), entry_name) {
-                // But if the next pattern is the last
-                // component, it should match and propagate the
-                // double wildcard recursion to the directory's
-                // children
                 if (component_idx + 1) as usize == self.pattern_components.len() - 1 {
                     *add = true;
                     return Some(0);
                 }
 
-                // In the normal case skip over the next pattern
-                // since we matched it, example:
-                // BEFORE: src/**/node_modules/**/*.js
-                //              ^
-                //  AFTER: src/**/node_modules/**/*.js
-                //                             ^
                 return Some(2);
             }
 
@@ -1693,15 +1542,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         None
     }
 
-    /// A file can only match if:
-    /// a) it matches against the last pattern, or
-    /// b) it matches the next pattern, provided the current
-    ///    pattern is a double wildcard and the next pattern is
-    ///    not a double wildcard
-    ///
-    /// Examples:
-    /// a -> `src/foo/index.ts` matches
-    /// b -> `src/**/*.ts` (on 2nd pattern) matches
     fn match_pattern_file(
         &self,
         entry_name: &[u8],
@@ -1970,19 +1810,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 {
                     for &c in &pattern[(component.start + 2) as usize..] {
                         match c {
-                            // The fast path checks that path[1..] == pattern[1..],
-                            // this will obviously not work if additional
-                            // glob syntax is present in the pattern, so we
-                            // must not apply this optimization if we see
-                            // special glob syntax.
-                            //
-                            // This is not a complete check, there can be
-                            // false negatives, but that's okay, it just
-                            // means we don't apply the optimization.
-                            //
-                            // We also don't need to look for the `!` token,
-                            // because that only applies negation if at the
-                            // beginning of the string.
                             b'[' | b'{' | b'?' | b'*' => break 'out_of_check_wildcard_filepath,
                             _ => {}
                         }
@@ -2186,18 +2013,6 @@ fn matched_as_slice<const SENTINEL: bool>(p: &[u8]) -> &[u8] {
     }
 }
 
-/// The logical path stored in a [`WorkItem`], excluding any trailing NUL.
-///
-/// For `SENTINEL == true`, `MatchedPath` boxes produced by [`GlobWalker::join`]
-/// carry a trailing NUL inside their `.len()` — Zig models the same value as
-/// `[:0]const u8`, which coerces to a `[]const u8` whose `.len` *excludes* the
-/// NUL. Root `WorkItem`s (and `SENTINEL == false` walks) instead hold a plain
-/// path with no NUL. A real filesystem path can never contain (let alone end
-/// in) a NUL byte, so a single trailing NUL is unambiguously the sentinel; we
-/// strip it here to recover the logical length, mirroring the Zig coercion.
-/// Without this, the NUL would be copied into the directory-path buffer and end
-/// up *embedded* in every path joined onto it (e.g. `assets/*` matching as
-/// `assets\0/file-1`, which truncates to `assets` when used as a C string).
 #[inline]
 fn work_item_logical_path(path: &[u8]) -> &[u8] {
     if path.last() == Some(&0) {
@@ -2223,10 +2038,6 @@ fn bun_join<const SENTINEL: bool>(parts: &[&[u8]]) -> Box<[u8]> {
 
 impl AccessorDirEntry for DirIterator::IteratorResult {
     fn name_slice(&self) -> &[u8] {
-        // Zig `entry.name.slice()` is always `[]const u8`: on Windows the `.u8`
-        // NewWrappedIterator transcodes via `strings.fromWPath` at iteration
-        // time. `Name::slice_u8()` exposes that cached transcode (or the native
-        // slice on POSIX) so this is uniformly `&[u8]`.
         self.name.slice_u8()
     }
     fn kind(&self) -> bun_sys::FileKind {

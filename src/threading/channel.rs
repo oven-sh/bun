@@ -22,16 +22,6 @@ bun_core::oom_from_alloc!(ChannelError);
 
 bun_core::named_error_set!(ChannelError);
 
-// PORT NOTE: reshaped for borrowck / thread-safety. In Zig all methods take
-// `*Self` and the mutex guards `buffer`/`is_closed`. In Rust we need `&self`
-// (Channel is shared across threads), so `buffer` is wrapped in `UnsafeCell`
-// and `is_closed` in `Cell`, both accessed only while `mutex` is held.
-//
-// PORT NOTE: Zig's `comptime buffer_type: LinearFifoBufferType` const-enum
-// param is unstable in Rust (`adt_const_params`). `bun_collections::LinearFifo`
-// already lowers it to a `LinearFifoBuffer<T>` trait param, so `Channel`
-// follows the same shape: `Channel<T, B: LinearFifoBuffer<T>>`. The original
-// `init` switch becomes per-buffer inherent constructors below.
 pub struct Channel<T, B: LinearFifoBuffer<T> = DynamicBuffer<T>> {
     mutex: Mutex,
     putters: Condition,
@@ -166,11 +156,6 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
 
         let mut pushed: usize = 0;
         while pushed < items.len() {
-            // Re-derive the `&mut buffer` each iteration: `Condition::wait`
-            // below releases the mutex, so a long-lived `&mut buffer` held
-            // across wait() would alias another thread's `&mut` (UB).
-            // `is_closed` is a `Cell` so `.get()` is already a fresh load each
-            // iteration (cannot be hoisted past the interior-mutable wait).
             let did_push = 'blk: {
                 if self.is_closed.get() {
                     return Err(ChannelError::Closed);

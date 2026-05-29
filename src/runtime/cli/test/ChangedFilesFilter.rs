@@ -51,18 +51,9 @@ pub struct Result<'a> {
     pub changed_count: usize,
     /// Number of test files before filtering.
     pub total_tests: usize,
-    /// Absolute paths of every local source file that participates in the
-    /// module graph (test entry points and everything they transitively
-    /// import, excluding node_modules). Used by `--changed --watch` to watch
-    /// files that would not otherwise be loaded when a subset of tests runs.
-    /// Owned by the caller; each element is individually allocated.
     pub module_graph_files: Vec<Box<[u8]>>,
 }
 
-/// Filter `test_files` in place to only the entries whose module graph
-/// reaches a changed file. On success, `test_files` is compacted (preserving
-/// order) and the new length is returned via `Result.test_files`.
-// TODO(port): narrow error set
 pub(crate) fn filter<'a>(
     ctx: &Command::Context,
     vm: &mut VirtualMachine,
@@ -71,14 +62,6 @@ pub(crate) fn filter<'a>(
 ) -> core::result::Result<Result<'a>, bun_core::Error> {
     let top_level_dir: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
 
-    // If this process was restarted by the --watch file watcher, it
-    // recorded exactly which files changed in this env var before
-    // exec()ing. Use that as the changed-file set instead of re-querying
-    // git, so editing one file re-runs only the tests that reach that
-    // file rather than every test affected by any uncommitted change.
-    // (On Windows the watcher restarts via TerminateProcess + parent
-    // respawn, which cannot carry state, so this is POSIX-only; Windows
-    // falls through to git below.)
     let changed_files = if let Some(trigger_set) = consume_watch_trigger() {
         trigger_set
     } else {
@@ -123,16 +106,6 @@ pub(crate) fn filter<'a>(
     // Convert PathString list to []const []const u8 for the bundler.
     let entry_points: Vec<&[u8]> = test_files.iter().map(|p| p.slice()).collect();
 
-    // Build a dedicated transpiler for scanning. We do not reuse the VM's
-    // transpiler because BundleV2.init takes ownership of the allocator and
-    // log, and we want the runtime transpiler left untouched for actually
-    // executing tests afterward.
-    //
-    // PORT NOTE: `BundleV2::scan_module_graph_from_cli` takes
-    // `&'a mut Transpiler<'a>` (invariant), so the arena, log, and transpiler
-    // are process-lifetime. The Zig original does the same — see the comment
-    // after the call about intentionally leaving the ThreadLocalArena and
-    // worker pool alive. Route through the shared CLI arena.
     let arena: &'static Arena = crate::cli::cli_arena();
     let log: &'static mut bun_ast::Log = arena.alloc(bun_ast::Log::new());
 
@@ -303,15 +276,6 @@ pub(crate) fn filter<'a>(
         }
     }
 
-    // The Zig original left the BundleV2 alive for the rest of the process —
-    // its AST payload lived in `graph.heap`. In the Rust port `to_ast()`
-    // materializes `Vec<Symbol>` / `Vec<Part>` / `Vec<ImportRecord>` on the
-    // global heap and the slab-only `MultiArrayList` drop never frees them, so
-    // release the graph columns and the bundler-owned worker pool now that
-    // everything needed has been copied out above. The scan transpiler itself
-    // is in the CLI arena (the `&'a mut Transpiler<'a>` invariant forces a
-    // `'static` borrow), so its Drop never runs either; free its heap-backed
-    // options through the borrow `bundle` still holds.
     bundle.deinit_without_freeing_arena();
     // SAFETY: `bundle.transpiler` is the arena-backed `&'static mut` noted
     // above — its `Drop` never runs, so `deinit` cannot lead to a double-drop.
@@ -329,18 +293,9 @@ pub(crate) fn filter<'a>(
 const TRIGGER_FILE_ENV_VAR_Z: &ZStr =
     ZStr::from_static(b"BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE\0");
 
-/// Make sure the trigger-file env var is set (generating a fresh temp
-/// path if this is the first process in the --watch chain) and wire up
-/// the hot-reloader collector to record changed paths. The collector
-/// and the path string intentionally live for the rest of the process;
-/// --watch exec()s on reload so nothing accumulates across restarts.
 pub(crate) fn init_watch_trigger() {
     #[cfg(windows)]
     {
-        // Windows --watch restarts via TerminateProcess + parent
-        // respawn with the parent's (unchanged) env, so a setenv in
-        // the first child would not reach subsequent children. Fall
-        // back to re-querying git on each restart there for now.
         return;
     }
 
@@ -400,11 +355,6 @@ unsafe extern "C" {
     pub(crate) fn setenv(name: *const c_char, value: *const c_char, overwrite: c_int) -> c_int;
 }
 
-/// If the previous process's watcher recorded which files triggered
-/// this restart, read the newline-separated absolute-path list out of
-/// the trigger file, delete the file, and return the set. Returns null
-/// if the file is absent, empty, or every path no longer exists (in
-/// which case the caller falls back to querying git).
 fn consume_watch_trigger() -> Option<StringSet> {
     #[cfg(windows)]
     {
@@ -436,10 +386,6 @@ fn consume_watch_trigger() -> Option<StringSet> {
             if path.is_empty() {
                 continue;
             }
-            // The watcher may see a file disappear (delete/rename). A path
-            // that no longer exists cannot appear in the module graph this
-            // run, so drop it; its importers will still be picked up if the
-            // importer file itself was touched.
             if !sys::exists(path) {
                 continue;
             }
@@ -467,13 +413,6 @@ pub(crate) enum GitError {
 
 bun_core::named_error_set!(GitError);
 
-/// Return the set of changed files (absolute paths) according to git.
-///
-/// With `since == ""` this is the union of unstaged, staged, and
-/// untracked files. With a ref, it is `git diff --name-only <since>`
-/// unioned with untracked files (a brand-new file is "changed since"
-/// any prior commit). Paths that do not exist on disk (deletions) are
-/// skipped since they cannot appear in the module graph.
 fn get_changed_files(
     top_level_dir: &[u8],
     since: &[u8],
@@ -571,12 +510,6 @@ fn get_changed_files(
         append_paths(&mut set, &git_root, &diff.stdout);
     }
 
-    // Untracked files are always considered changed — a brand-new file
-    // did not exist at HEAD or at `since`, so it is "changed since"
-    // either. `git diff --name-only` never reports untracked files, so
-    // supplement with ls-files in both branches above. `--full-name`
-    // forces repo-root-relative output regardless of our cwd, matching
-    // `git diff --name-only`.
     {
         let untracked = run_git(
             git_path,
@@ -632,10 +565,6 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
         // Windows rather than spinning up a MiniEventLoop.
         #[cfg(windows)]
         windows: spawn_sync::WindowsOptions {
-            // PORT NOTE: Zig `EventLoopHandle.init(anytype)` accepted a
-            // `*VirtualMachine` and called `vm.eventLoop()` internally; the
-            // Rust split keeps `init` taking the erased `*mut ()` event-loop
-            // pointer directly, so unwrap it here.
             loop_: EventLoopHandle::init(VirtualMachine::get().event_loop().cast()),
             ..Default::default()
         },

@@ -43,11 +43,6 @@ impl Slicable for crate::external_string::ExternalString {
 /// Alias so callers can name `bun_semver::string::Formatter` etc.
 pub use crate::semver_string as string;
 
-// ──────────────────────────────────────────────────────────────────────────
-// StringBuilder — trait abstracting `comptime StringBuilder: type` callers
-// in Version::count / Version::clone_into. Concrete impl is
-// `semver_string::Builder`; higher-tier crates may provide their own.
-// ──────────────────────────────────────────────────────────────────────────
 pub trait StringBuilder {
     fn count(&mut self, slice_: &[u8]);
     fn append<T: crate::semver_string::BuilderStringType>(&mut self, slice_: &[u8]) -> T;
@@ -76,18 +71,10 @@ impl StringBuilder for crate::semver_string::Builder {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// MOVE-IN: bun_install_types::sliced_string → bun_semver::sliced_string
-// Ground truth: src/install_types/SlicedString.zig
-// ══════════════════════════════════════════════════════════════════════════
 pub mod sliced_string {
     use super::external_string::ExternalString;
     use super::semver_string::String;
 
-    // TODO(port): lifetime — PORTING.md says "no lifetime param on struct for []const u8 fields",
-    // but SlicedString is purely a borrowed (ptr+len) view used for offset arithmetic into a
-    // backing buffer; Box/&'static/raw are all wrong here. Confirm `'a` threading or
-    // swap to raw `*const [u8]` if borrowck fights at call sites.
     #[derive(Copy, Clone)]
     pub struct SlicedString<'a> {
         pub buf: &'a [u8],
@@ -157,10 +144,6 @@ pub mod sliced_string {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// MOVE-IN: bun_install_types::external_string → bun_semver::external_string
-// Ground truth: src/install_types/ExternalString.zig
-// ══════════════════════════════════════════════════════════════════════════
 pub mod external_string {
     use core::cmp::Ordering;
 
@@ -227,10 +210,6 @@ pub mod external_string {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// MOVE-IN: bun_install_types::semver_string → bun_semver::semver_string
-// Ground truth: src/install_types/SemverString.zig
-// ══════════════════════════════════════════════════════════════════════════
 pub mod semver_string {
     use core::cmp::Ordering;
     use core::fmt;
@@ -246,10 +225,6 @@ pub mod semver_string {
     #[repr(C)]
     #[derive(Copy, Clone, PartialEq, Eq, Default)]
     pub struct String {
-        /// This is three different types of string.
-        /// 1. Empty string. If it's all zeroes, then it's an empty string.
-        /// 2. If the final bit is not set, then it's a string that is stored inline.
-        /// 3. If the final bit is set, then it's a string that is stored in an external buffer.
         pub bytes: [u8; String::MAX_INLINE_LEN],
     }
 
@@ -264,10 +239,6 @@ pub mod semver_string {
         }
     }
 
-    // https://en.wikipedia.org/wiki/Intel_5-level_paging
-    // https://developer.arm.com/documentation/101811/0101/Address-spaces-in-AArch64#:~:text=0%2DA%2C%20the%20maximum%20size,2%2DA.
-    // X64 seems to need some of the pointer bits
-    // Zig: `const max_addressable_space = u63;` — Rust has no u63; use a mask for the @truncate semantics.
     const MAX_ADDRESSABLE_SPACE_MASK: u64 = (1u64 << 63) - 1;
 
     const _: () = assert!(
@@ -347,11 +318,6 @@ pub mod semver_string {
                 SlicedString::init(buf, self.slice(buf))
             }
         }
-
-        // PORT NOTE: `hashContext`/`arrayHashContext` (took *Lockfile) intentionally NOT moved
-        // down — they would create a back-edge to bun_install. The HashContext/ArrayHashContext
-        // structs themselves live here; the Lockfile-taking convenience constructors stay in
-        // bun_install (or bun_install_types) as inherent helpers there.
 
         pub fn init(buf: &[u8], in_: &[u8]) -> String {
             match in_.len() {

@@ -29,11 +29,6 @@ pub mod windows_named_pipe;
 #[path = "WindowsNamedPipeContext.rs"]
 pub mod windows_named_pipe_context;
 
-/// Re-export of the canonical `bun_uws::ssl_wrapper` plus the runtime-tier
-/// `init(&SSLConfig, ..)` constructor that the lower tier can't see (it would
-/// need to name `crate::server::server_config::SSLConfig`). The body is the
-/// same `as_usockets() → init_from_options()` round-trip the old local copy
-/// did; the duplicate module file is gone.
 pub mod ssl_wrapper {
     pub use bun_uws::ssl_wrapper::*;
 
@@ -70,11 +65,6 @@ pub mod uws_jsc;
 pub mod ssl_config;
 pub use ssl_config::{SSLConfig, SSLConfigFromJs};
 
-// ─── canonical type surface ──────────────────────────────────────────────────
-// These were previously stub-defined inline here; now that the real
-// submodules compile, re-export instead so
-// `socket_body`/`tls_socket_functions`/`uws_handlers` all agree on one type.
-
 pub use handlers::{Handlers, SocketConfig};
 pub use listener::Listener;
 pub use socket_address::SocketAddress;
@@ -85,29 +75,12 @@ pub use socket_body::{
 #[cfg(windows)]
 pub use windows_named_pipe_context::WindowsNamedPipeContext;
 
-/// LAYERING: `udp_socket.rs` is the canonical body. It is mounted as
-/// `udp_socket_draft` above (legacy name retained for existing callers); the
-/// public `udp_socket` module below is a thin re-export façade so both
-/// `generated_classes.rs` (`crate::socket::udp_socket::UDPSocket`) and
-/// `generated_js2native.rs` (`crate::socket::udp_socket::udp_socket::js_connect`)
-/// resolve against the real struct, not an opaque placeholder.
 pub mod udp_socket {
-    /// `generated_js2native.rs` lowers `$zig(udp_socket.zig, UDPSocket.jsConnect)`
-    /// to `crate::socket::udp_socket::udp_socket::js_connect`. The inner
-    /// `udp_socket` segment is the snake-cased struct name; aliasing the type
-    /// lets the associated-fn path resolve directly.
     pub use super::udp_socket_draft::UDPSocket as udp_socket;
     pub use super::udp_socket_draft::*;
 }
 pub use udp_socket::UDPSocket;
 
-/// Codegen path alias.
-///
-/// `generated_js2native.rs` lowers `$zig(socket.zig, fnName)` to
-/// `crate::socket::socket::fn_name(...)` (one path segment per directory plus
-/// the file stem). The Rust port placed the bodies in `socket_body.rs` to keep
-/// `mod.rs` as the wiring layer, so re-export the js2native entry points under
-/// the name the generator expects rather than special-casing the generator.
 pub mod socket {
     pub use super::socket_body::{
         js_create_socket_pair, js_get_buffered_amount, js_is_named_pipe_socket,
@@ -115,16 +88,6 @@ pub mod socket {
     };
 }
 
-// ─── RawSocketEvents glue ────────────────────────────────────────────────────
-// `uws_handlers::RawSocketEvents<SSL>` is the raw-pointer dispatch trait the
-// vtable layer requires of `api::NewSocket<SSL>` (routed via `RawPtrHandler`,
-// not `PtrHandler`). PORT NOTE (noalias re-entrancy): the inherent `on_*`
-// methods take `this: *mut Self` precisely so no `&mut NewSocket` is held
-// across `callback.call` (JS can re-derive `&mut Self` via the wrapper's
-// `m_ptr` and mutate `flags`/`handlers`/`ref_count`); a `&mut self` argument
-// formed here from the ext slot and protected through the dispatch frame would
-// be aliasing UB. Bridge them here so the trait impl and the struct definition
-// stay in their respective files.
 impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
     const HAS_ON_OPEN: bool = true;
 

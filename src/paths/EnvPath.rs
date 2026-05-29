@@ -14,22 +14,12 @@ fn trim_path_delimiters(input: &[u8]) -> &[u8] {
     trimmed
 }
 
-// Zig: `pub fn EnvPath(comptime opts: EnvPathOptions) type { return struct { ... } }`
-// TODO(port): `EnvPathOptions` currently has no fields, so the comptime `opts`
-// parameter is vacuous. Re-introduce a `<const OPTS: EnvPathOptions>` const
-// generic (with `#[derive(core::marker::ConstParamTy)]` on `EnvPathOptions`)
-// once options are actually added.
 #[derive(Default)]
 pub struct EnvPath {
     // Zig: `std.mem.Allocator param` — dropped (non-AST crate, global mimalloc).
     buf: Vec<u8>,
 }
 
-/// Input accepted by [`EnvPath::append`].
-///
-/// Zig's `append` takes `input: anytype` and switches on `@TypeOf(input)`:
-/// raw slices are trimmed, anything else is assumed already-trimmed and has
-/// `.slice()` called on it. In Rust we express that dispatch as a trait.
 pub trait EnvPathInput {
     fn as_trimmed(&self) -> &[u8];
 }

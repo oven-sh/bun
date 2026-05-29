@@ -1,10 +1,6 @@
 use bun_core::strings;
 use bun_url::PercentEncoding;
 
-// TODO(port): lifetime — every `&'static [u8]` field below actually borrows from
-// either the `parse()` input slice or, when the input was percent-encoded, from
-// `_decoded_storage`. Zig has no lifetimes so this is implicit there. Add a
-// lifetime param to `URLPath` so the input-borrow case is checked.
 #[derive(Default)]
 pub struct URLPath {
     pub extname: &'static [u8],
@@ -16,38 +12,15 @@ pub struct URLPath {
     /// Treat URLs as non-sourcemap URLS
     /// Then at the very end, we check.
     pub is_source_map: bool,
-    /// Owned backing storage for the slice fields when `parse()` had to
-    /// percent-decode. Heap-stable: the slice fields above point into this
-    /// allocation, which is never resized and lives exactly as long as `self`.
-    /// Replaces the Zig threadlocal scratch buffers — owning the decode buffer
-    /// per-URLPath removes the use-after-free that a shared growable buffer
-    /// would introduce on the next `parse()` call.
-    ///
-    /// `URLPath` must not be `Clone`: copying the slice fields without this
-    /// owner would re-introduce the dangling hazard.
     _decoded_storage: Option<Box<[u8]>>,
 }
 
 impl URLPath {
-    /// Take ownership of the percent-decode buffer, if `parse()` had to
-    /// allocate one. The slice fields of `self` keep pointing into the
-    /// returned allocation — the caller must keep it alive for as long as any
-    /// of those slices (or sub-slices of them) are read; dropping it while
-    /// they are still in use leaves them dangling.
     #[must_use = "dropping the returned storage dangles the slice fields of this URLPath"]
     pub fn take_decoded_storage(&mut self) -> Option<Box<[u8]>> {
         self._decoded_storage.take()
     }
 }
-
-// PORT NOTE: Zig uses two threadlocal fixed `[1024]u8`/`[16384]u8` buffers and
-// decodes in-place via `fixedBufferStream`, then returns slices into that
-// threadlocal storage. A growable shared buffer cannot uphold that contract in
-// Rust (the next `parse()` may reallocate it and dangle every prior URLPath),
-// so instead each URLPath that needs decoding owns its decode buffer in
-// `_decoded_storage`. This costs one small allocation only on the
-// percent-encoded path, which is the rare case.
-// PERF(port): was zero-alloc fixed buffers — profile if it shows up on a hot path.
 
 pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Error> {
     // TODO(port): narrow error set
@@ -67,13 +40,6 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
         )?;
         debug_assert!(n as usize <= buf.len());
         buf.truncate(n as usize);
-        // Freeze into a heap-stable Box and park it in `decoded_storage` before
-        // borrowing: the slice fields in the returned URLPath borrow from this
-        // allocation, and the Box is later moved into that same URLPath, so the
-        // borrow is valid for the struct's whole lifetime (Box heap address is
-        // stable across moves). NLL releases the local borrow after the last
-        // use of `decoded_pathname` in the struct-literal field initialisers,
-        // before `_decoded_storage` is moved.
         decoded_storage = Some(buf.into_boxed_slice());
         decoded_pathname = decoded_storage.as_deref().unwrap();
     }

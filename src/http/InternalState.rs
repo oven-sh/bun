@@ -20,10 +20,6 @@ pub struct InternalState<'a> {
     /// this will be turned None once the metadata is cloned
     pub pending_response: Option<bun_picohttp::Response<'static>>,
 
-    /// This is the cloned metadata containing the response headers, url and status code after the .headers phase are received
-    /// will be turned None once returned to the user (the ownership is transferred to the user)
-    /// this can happen after await fetch(...) and the body can continue streaming when this is already None
-    /// the user will receive only chunks of the body stored in body_out_str
     pub cloned_metadata: Option<HTTPResponseMetadata>,
     pub flags: InternalStateFlags,
 
@@ -62,20 +58,7 @@ pub struct InternalStateFlags {
     pub is_redirect_pending: bool,
     pub is_libdeflate_fast_path_disabled: bool,
     pub resend_request_body_on_redirect: bool,
-    /// Cross-origin redirect: the per-request Host override must be dropped so
-    /// the follow-up connection re-derives SNI/Host from the redirect target.
-    /// The actual clear is deferred to `do_redirect`, after the old socket's
-    /// pool/close decision — that decision needs `hostname` still set to know
-    /// the handshake was verified against an override.
     pub clear_hostname_on_redirect: bool,
-    /// Set when the TLS handshake completed but the user-supplied JS
-    /// `checkServerIdentity` callback has not yet approved the peer
-    /// certificate. While set, `on_writable` must not write any HTTP
-    /// application data to the socket and `on_data` must treat incoming
-    /// application data as unexpected. Cleared by
-    /// `HTTPClient::resume_after_cert_check` once the JS thread reports the
-    /// check passed (and implicitly by `InternalState::reset()` on every
-    /// redirect hop / failure, so each hop re-parks independently).
     pub is_waiting_for_cert_check: bool,
 }
 
@@ -158,10 +141,6 @@ impl<'a> InternalState<'a> {
         if let Some(body) = body_msg {
             crate::body_out::as_mut(body).reset();
         }
-        // PORT NOTE: Zig calls `this.decompressor.deinit()` here. The boxed
-        // Zlib/Brotli/Zstd readers all impl Drop calling end()/destroy_instance
-        // (see Decompressor.rs PORT NOTE), so the `*self = ...` assignment below
-        // frees the FFI handle via drop glue — no explicit reset needed.
 
         // just in case we check and free to avoid leaks
         // (Option<HTTPResponseMetadata> drops on assignment; allocator param removed)
@@ -185,12 +164,6 @@ impl<'a> InternalState<'a> {
         };
     }
 
-    /// The caller-owned response body buffer (set in [`Self::init`]).
-    ///
-    /// INVARIANT: `body_out_str` points at a `MutableString` owned by the
-    /// `AsyncHTTP`/`FetchTasklet` that initiated this request and outlives
-    /// this `InternalState`; it is a separate heap allocation, never aliasing
-    /// any field of `self`.
     #[inline]
     fn body_out_mut(&mut self) -> &mut MutableString {
         crate::body_out::as_mut(self.body_out_str.unwrap())
@@ -203,12 +176,6 @@ impl<'a> InternalState<'a> {
         self.body_out_mut()
     }
 
-    /// Split-borrow `chunked_decoder` and the body buffer (which is either
-    /// `compressed_body` or the caller-owned `body_out_str`). Both targets are
-    /// disjoint from each other and from every other field touched by
-    /// `phr_decode_chunked` callers, so this lets the chunked-decode hot path
-    /// in `lib.rs` operate on safe references instead of repeated raw-ptr
-    /// place expressions.
     #[inline]
     pub fn chunked_decoder_and_body_buffer(
         &mut self,
@@ -255,12 +222,6 @@ impl<'a> InternalState<'a> {
         let mut still_needs_to_decompress = true;
 
         if bun_core::feature_flags::is_libdeflate_enabled() {
-            // Fast-path: use libdeflate
-            // TODO(port): bun_http::HTTPThread::deflater — `http_thread()` accessor and the
-            // `LibdeflateState { decompressor, shared_buffer }` it returns live in the gated
-            // HTTPThread cluster. Re-gated until HTTPThread un-gates (which itself blocks on
-            // bun_uws::SocketHandler method bodies).
-
             'libdeflate: {
                 use bun_libdeflate_sys::libdeflate as bun_libdeflate;
                 if !(is_final_chunk
@@ -275,11 +236,6 @@ impl<'a> InternalState<'a> {
                 log!("Decompressing {} bytes with libdeflate\n", buffer.len());
                 let deflater = crate::http_thread().deflater();
 
-                // gzip stores the size of the uncompressed data in the last 4 bytes of the stream
-                // But it's only valid if the stream is less than 4.7 GB, since it's 4 bytes.
-                // If we know that the stream is going to be larger than our
-                // pre-allocated buffer, then let's dynamically allocate the exact
-                // size.
                 if self.encoding == Encoding::Gzip
                     && buffer.len() > 16
                     && buffer.len() < 1024 * 1024 * 1024
@@ -400,13 +356,6 @@ impl<'a> InternalState<'a> {
         self.decompress_bytes(buffer.list.as_slice(), body_out_str, is_final_chunk)
     }
 
-    // TODO(port): narrow error set
-    // PORT NOTE: Zig takes `buffer: MutableString` BY VALUE (a shallow struct copy whose
-    // `.list.items` aliases the same allocation). Every caller passes `getBodyBuffer().*`,
-    // so `buffer` is always the current body buffer's bytes. To avoid aliased &mut/& under
-    // Stacked Borrows (decompress_bytes mutates `self.compressed_body`; the uncompressed
-    // path materialises `&mut *body_out_str`), callers `mem::take` the body buffer's `list`
-    // and pass it here as an owned Vec — no `&` into `self` survives across `&mut self`.
     pub fn process_body_buffer(
         &mut self,
         mut buffer: Vec<u8>,
@@ -419,10 +368,6 @@ impl<'a> InternalState<'a> {
             return Ok(false);
         }
 
-        // PORT NOTE: not `self.body_out_mut()` — `decompress_bytes` below takes
-        // `&mut self` alongside `body_out_str`; the accessor would tie the
-        // borrow to `self`. The free `body_out::as_mut` yields an unbounded
-        // `&mut` to the disjoint caller-owned allocation.
         let body_out_str = crate::body_out::as_mut(self.body_out_str.unwrap());
 
         match self.encoding {
@@ -434,10 +379,6 @@ impl<'a> InternalState<'a> {
                 self.compressed_body.list = buffer;
             }
             _ => {
-                // Uncompressed: caller took `buffer` from `body_out_str.list`, leaving it
-                // empty — move the bytes back (Zig's `owns()` check skipped the append
-                // because the by-value copy aliased body_out_str). If body_out_str is
-                // somehow non-empty, fall back to append.
                 if body_out_str.list.is_empty() {
                     body_out_str.list = buffer;
                 } else if !body_out_str.owns(&buffer) {

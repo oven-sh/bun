@@ -63,13 +63,6 @@ pub unsafe fn rename_symbols_in_chunk(
     // SAFETY: see fn safety doc — `c` is live for the call.
     let c: &LinkerContext<'_> = unsafe { &*c };
 
-    // ── raw SoA column pointers (root provenance) ────────────────────────
-    // `split_raw()` derives `*mut [T]` directly from the buffer base with no
-    // `&mut` intermediate, so per-column derefs here do not pop sibling
-    // tasks' borrow tags under Stacked Borrows. Read-only columns are
-    // deref'd to `&[T]`; the two written columns (`module_scope`, `parts`)
-    // are deref'd to `&mut [T]` — see CONCURRENCY note re: code-splitting
-    // overlap.
     let ast = c.graph.ast.split_raw();
     let meta = c.graph.meta.split_raw();
 
@@ -294,27 +287,9 @@ pub unsafe fn rename_symbols_in_chunk(
         let parts: &mut [Part] = all_parts[source_index as usize].as_mut_slice();
 
         match wrap {
-            // Modules wrapped in a CommonJS closure look like this:
-            //
-            //   // foo.js
-            //   var require_foo = __commonJS((exports, module) => {
-            //     exports.foo = 123;
-            //   });
-            //
-            // The symbol "require_foo" is stored in "file.ast.WrapperRef". We want
-            // to be able to minify everything inside the closure without worrying
-            // about collisions with other CommonJS modules. Set up the scopes such
-            // that it appears as if the file was structured this way all along. It's
-            // not completely accurate (e.g. we don't set the parent of the module
-            // scope to this new top-level scope) but it's good enough for the
-            // renaming code.
             WrapKind::Cjs => {
                 r.add_top_level_symbol(all_wrapper_refs[source_index as usize]);
 
-                // External import statements will be hoisted outside of the CommonJS
-                // wrapper if the output format supports import statements. We need to
-                // add those symbols to the top-level scope to avoid causing name
-                // collisions. This code special-cases only those symbols.
                 if c.options.output_format.keep_es6_import_export_syntax() {
                     let import_records = all_import_records[source_index as usize].as_slice();
                     for part in parts.iter() {
@@ -379,20 +354,6 @@ pub unsafe fn rename_symbols_in_chunk(
                 continue;
             }
 
-            // Modules wrapped in an ESM closure look like this:
-            //
-            //   // foo.js
-            //   var foo, foo_exports = {};
-            //   __export(foo_exports, {
-            //     foo: () => foo
-            //   });
-            //   let init_foo = __esm(() => {
-            //     foo = 123;
-            //   });
-            //
-            // The symbol "init_foo" is stored in "file.ast.WrapperRef". We need to
-            // minify everything inside the closure without introducing a new scope
-            // since all top-level variables will be hoisted outside of the closure.
             WrapKind::Esm => {
                 r.add_top_level_symbol(all_wrapper_refs[source_index as usize]);
             }

@@ -43,13 +43,6 @@ pub enum Tag {
 #[cfg(debug_assertions)]
 pub(crate) static ICOUNT: AtomicUsize = AtomicUsize::new(0);
 
-// ──────────────────────────────────────────────────────────────────────────
-// `init` / `alloc` — Zig switched on `@TypeOf(t)` to pick the `B` variant.
-// In Rust the comptime type-switch is a pair of small traits implemented for
-// each payload type; `Binding::init` / `Binding::alloc` stay monomorphic
-// per call-site like the Zig original.
-// ──────────────────────────────────────────────────────────────────────────
-
 pub trait BindingInit {
     fn into_b(self) -> B;
 }
@@ -127,28 +120,8 @@ impl Binding {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// ToExpr — Zig: `fn ToExpr(comptime expr_type: type, comptime func_type: anytype) type`
-// returns a struct holding `context: *ExprType` + `arena` whose
-// `wrapIdentifier` calls the comptime `func_type`.
-//
-// Rust cannot store `*mut P<'a, const ..>` in a non-generic field nor take a
-// fn item as a const generic, so the wrapper is type-erased: `wrap` is a plain
-// fn pointer that casts the erased `ctx` back to the concrete `P` instantiation.
-// Unlike Zig's struct, the `*ExprType` context is **not** stored — it is
-// supplied at call time (`Binding::to_expr(.., ctx, ..)`) so the raw pointer's
-// Stacked-Borrows tag is a child of the *live* `&mut P` at the call site rather
-// than a stale tag captured during `prepare_for_visit_pass` (which every later
-// `&mut self` retag would invalidate). The struct is `Copy` so the recursive
-// `to_expr` can pass it by value like Zig's `wrapper: anytype`.
-// ──────────────────────────────────────────────────────────────────────────
-
 #[derive(Copy, Clone)]
 pub struct ToExprWrapper {
-    /// Back-reference to `P.arena`. `BackRef` invariant: the arena is owned by
-    /// `P<'a>` and outlives every `ToExprWrapper` (which is stored on `P` and
-    /// only used during the visit pass). `None` only for the pre-wire
-    /// `dangling()` placeholder; niche-packed so layout matches `*const Arena`.
     arena: Option<bun_ptr::BackRef<Arena>>,
     wrap: fn(*mut core::ffi::c_void, crate::Loc, Ref) -> Expr,
 }
@@ -163,12 +136,6 @@ impl ToExprWrapper {
         }
     }
 
-    /// Zig: `Context.init(context)` — captures `*ExprType` and its arena.
-    /// `ExprType` is erased to `c_void`; callers (P.rs) supply a trampoline
-    /// closure that casts back to `*mut P<..>` and dispatches to
-    /// `P::wrap_identifier_{namespace,hoisting}`. Non-capturing closures
-    /// coerce to fn pointers, so this stays zero-cost like Zig's comptime fn.
-    /// The `*mut P` itself is passed per-call via `Binding::to_expr`.
     #[inline]
     pub fn new(arena: &Arena, wrap: fn(*mut core::ffi::c_void, crate::Loc, Ref) -> Expr) -> Self {
         Self {
@@ -193,24 +160,9 @@ impl ToExprWrapper {
     }
 }
 
-/// Zig: `Binding.ToExpr(expr_type, func_type)` returned a *type*; Rust callers
-/// that want the same per-(P, func) nominal type use this alias and construct
-/// via `ToExprWrapper::new`. Kept as a type alias (not a generic struct) so
-/// `P` can store two of these without threading its own generics through.
 pub type ToExpr = ToExprWrapper;
 
 impl Binding {
-    /// Zig: `pub fn toExpr(binding: *const Binding, wrapper: anytype) Expr`.
-    ///
-    /// `ctx` is the type-erased `*mut P<..>` derived from the *caller's live*
-    /// `&mut P` (e.g. `core::ptr::addr_of_mut!(*p) as *mut c_void`). Threading
-    /// it per-call keeps the raw pointer's provenance under the active Unique
-    /// borrow, avoiding the stale-tag UB of storing it long-term.
-    ///
-    /// Accepts the wrapper by `Borrow` so both the by-value call-site in
-    /// `visitStmt.rs` (`p.to_expr_wrapper_namespace`) and the `&mut` call-site
-    /// in `maybe.rs` (`&mut p.to_expr_wrapper_hoisted`) type-check without
-    /// edits — `T: Borrow<T>` and `&mut T: Borrow<T>` are both blanket impls.
     pub fn to_expr<W>(binding: &Binding, ctx: *mut core::ffi::c_void, wrapper: W) -> Expr
     where
         W: core::borrow::Borrow<ToExprWrapper>,

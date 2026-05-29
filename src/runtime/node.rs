@@ -1,12 +1,5 @@
 //! Node.js APIs in Bun. Access this namespace with `bun.api.node`
 
-// PORT NOTE: the Zig `comptime { _ = @import(...) }` force-reference block maps
-// to explicit `pub mod` declarations below. Rust only compiles a `.rs` file if
-// it is reachable via a `mod` declaration — `#[no_mangle]` alone does NOT make
-// an orphaned file link. Every Windows-only force-referenced sibling
-// (`uv_signal_handle_windows`, `win_watcher`) must have a `#[cfg(windows)]
-// pub mod` entry here or its C-ABI exports will be missing at link time.
-
 // ─── compiling submodules ─────────────────────────────────────────────────
 #[path = "node/nodejs_error_code.rs"]
 pub mod nodejs_error_code;
@@ -82,43 +75,31 @@ pub mod util {
 }
 pub use util::validators;
 
-// `crate::node::dirent::Kind` shim for dir_iterator.rs / node_fs.rs — the
-// Zig spec exports `Dirent = types.Dirent` and callers reach `.Kind` through
-// it. Rust can't hang an associated module off a struct re-export, so expose
-// a tiny module mirroring that shape.
 pub mod dirent {
     pub use super::types::Dirent;
     pub use super::types::DirentKind as Kind;
 }
 
-// node_fs.rs (~4.7kL): async task machinery (AsyncFSTask/UVFSRequest/cp/
-// readdir-recursive) is JSC-dense and re-gated *inside* the file with
-// ``. Sync `impl NodeFS` (read_file/write_file/stat/mkdir et al.),
-// `args::*`, `ret::*` are live.
 #[path = "node/node_fs.rs"]
 pub mod fs;
 
 // fs.watch() / fs.watchFile() backends — declared here so `fs::watch` /
 // `fs::watch_file` can reach the real `Arguments` / `FSWatcher` /
 // `StatWatcher` types instead of opaque local stand-ins.
-#[path = "node/path_watcher.rs"]
-pub mod path_watcher;
-#[cfg(windows)]
-#[path = "node/win_watcher.rs"]
-pub mod win_watcher;
-// Zig: `comptime { if (Environment.isWindows) _ = @import("./node/uv_signal_handle_windows.zig"); }`
-// — force-references `Bun__UVSignalHandle__init` / `Bun__UVSignalHandle__close`
-// for C++ (`src/jsc/bindings/BunProcess.cpp`). Must be `mod`-declared or the
-// `#[no_mangle]` exports are never compiled into the binary.
 #[path = "node/node_fs_binding.rs"]
 pub mod node_fs_binding;
 #[path = "node/node_fs_stat_watcher.rs"]
 pub mod node_fs_stat_watcher;
 #[path = "node/node_fs_watcher.rs"]
 pub mod node_fs_watcher;
+#[path = "node/path_watcher.rs"]
+pub mod path_watcher;
 #[cfg(windows)]
 #[path = "node/uv_signal_handle_windows.rs"]
 pub mod uv_signal_handle_windows;
+#[cfg(windows)]
+#[path = "node/win_watcher.rs"]
+pub mod win_watcher;
 
 // Type defs + non-JSC FFI bodies are live; every `#[bun_jsc::host_fn]` /
 // `#[bun_jsc::JsClass]` item is wrapped in ` mod _impl` inside
@@ -168,12 +149,6 @@ pub mod zlib {
     pub use super::native_zlib_impl as native_zlib;
     pub use super::native_zstd_impl as native_zstd;
     pub use bun_zlib::NodeMode;
-    // PORT NOTE: the `NativeZlib` / `NativeBrotli` / `NativeZstd` *struct*
-    // re-exports were dropped — those structs live inside each file's private
-    // `mod _impl { ... }` (JSC-gated) and are not reachable from here. The only
-    // consumers (`node_zlib_binding.rs::_impl::Native*`) are themselves gated
-    // behind a private `_impl` and resolve through `crate::api::Native*` once
-    // un-gated. Re-add the type re-exports when the `_impl` mods go `pub`.
 }
 
 // ─── submodule re-exports ─────────────────────────────────────────────────
@@ -188,19 +163,6 @@ pub type gid_t = libc::gid_t;
 #[cfg(not(unix))]
 pub type gid_t = bun_sys::windows::libuv::uv_gid_t;
 
-/// Node.js expects the error to include contextual information
-/// - "syscall"
-/// - "path"
-/// - "errno"
-///
-/// We can't really use Zig's error handling for syscalls because Node.js expects the "real" errno to be returned
-/// and various issues with std.posix that make it too unstable for arbitrary user input (e.g. how .BADF is marked as unreachable)
-///
-/// Phase F: collapsed from a bespoke `enum Maybe { Err, Result }` into a plain
-/// `core::result::Result` alias. The Zig-parity helper methods (`todo`,
-/// `success`, `errno_sys*`, `to_js`, …) move to the [`MaybeExt`] /
-/// [`MaybeSysExt`] / [`MaybeToJsExt`] extension traits below so call sites can
-/// keep using `Maybe::<T>::helper()` while gaining `?` propagation for free.
 pub type Maybe<R, E = bun_sys::Error> = core::result::Result<R, E>;
 
 // `union(enum)` → Rust enum is the tagged union; the explicit `Tag` enum is
@@ -312,10 +274,6 @@ pub trait MaybeErrorTodo: Sized + Default {
     }
 }
 
-/// Extension surface providing `Maybe::todo()` on `bun_sys::Maybe<T>`
-/// (= `core::result::Result<T, bun_sys::Error>`). Zig's `Maybe(T).todo()`
-/// returns `.{ .err = bun.sys.Error.todo() }`; this is the Rust equivalent for
-/// the upstream type-alias form of `Maybe` used throughout `node/`.
 pub trait MaybeTodo: Sized {
     fn todo() -> Self;
 }
@@ -329,10 +287,6 @@ impl<T> MaybeTodo for core::result::Result<T, bun_sys::Error> {
 
 // ─── methods that assume `E` carries an errno (i.e. `bun_sys::Error`) ─────
 
-/// Extension surface for `Maybe<R, bun_sys::Error>` carrying the Zig
-/// `Maybe(T)` errno helpers (`aborted`, `init_err_with_p`, `to_array_buffer`,
-/// `errno*`). Kept as a trait now that `Maybe` is a `Result` alias and can no
-/// longer host inherent impls.
 pub trait MaybeSysExt<R>: Sized {
     fn aborted() -> Self;
     fn init_err_with_p(
@@ -406,14 +360,6 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
         use bun_jsc::SysErrorJsc as _;
         match self {
             Ok(r) => {
-                // PORT NOTE: Zig hands the result slice straight to
-                // `ArrayBuffer.fromBytes` and ownership transfers to JSC — the
-                // GC-installed deallocator (`MarkedArrayBuffer_deallocator`)
-                // calls `mi_free` on the buffer when the JS object is
-                // collected. Leak the `Vec` here to hand the allocation to
-                // JSC; Bun's global allocator is mimalloc, so `to_js`'s
-                // `mi_is_in_heap_region` check succeeds and the buffer is
-                // freed by JSC, not Rust.
                 let bytes: &mut [u8] = Vec::leak(r.into());
                 bun_jsc::ArrayBuffer::from_bytes(bytes, bun_jsc::JSType::ArrayBuffer)
                     .to_js(global_object)
@@ -688,27 +634,12 @@ impl MaybeToJs for bun_sys::Error {
     }
 }
 
-// PORT NOTE: the Zig `.@"struct" / .@"enum" / .@"opaque" / .@"union"` and
-// non-string `.pointer` arms forwarded to `r.toJS(globalObject)`. In Rust each
-// such `R` implements `MaybeToJs` directly at its definition site (no blanket
-// `@typeInfo` reflection available); add per-type impls alongside the type.
-
 // PORT NOTE: the Zig `Maybe.format` (Display) impl is dropped — `Maybe` is now
 // `core::result::Result`, which already has `Debug`, and a foreign `Display`
 // impl on a foreign type is not expressible. No call sites depended on it.
 
 // ─── helpers ──────────────────────────────────────────────────────────────
 
-/// Abstracts over the `rc: anytype` parameter of the `errnoSys*` family.
-/// On Windows the Zig checked `@TypeOf(rc) == std.os.windows.NTSTATUS` to
-/// skip the `rc != 0 → null` early-out; that comptime type-compare is
-/// expressed here as the `IS_NTSTATUS` associated const.
-///
-/// `syscall_errno` is the per-type Zig `sys.getErrno(rc)` dispatch: integer
-/// rc → libc/Win32 errno, NTSTATUS rc → `translateNTStatusToErrno(rc)`. This
-/// MUST live on the trait — the free `bun_sys::get_errno` on Windows is
-/// unbounded and *ignores `rc`* (reads `GetLastError()`), so routing an
-/// NTSTATUS through it would discard the status and report stale TLS state.
 pub trait SyscallRc: Copy {
     const IS_NTSTATUS: bool = false;
     fn is_zero(self) -> bool;
@@ -729,18 +660,10 @@ macro_rules! impl_syscall_rc_int {
         }
     )*};
 }
-// `c_int` is a type alias for `i32` — covered by the `i32` impl.
-// `u64` has a `GetErrno` impl on Windows only; gate it so the macro body
-// type-checks on POSIX (matches the prior `+ GetErrno` bound's effective
-// admissible set — `u64` was never callable through `errno_sys*` on POSIX).
 impl_syscall_rc_int!(i32, i64, isize, u32, usize);
 #[cfg(windows)]
 impl_syscall_rc_int!(u64);
 
-// Zig: `if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else { ... }`
-// — NTSTATUS must OPT OUT of the `rc != 0 → None` short-circuit so real NT
-// error codes reach `get_errno`. The trait default is `false`, so this impl
-// MUST override `IS_NTSTATUS = true` explicitly.
 #[cfg(windows)]
 impl SyscallRc for bun_sys::windows::NTSTATUS {
     const IS_NTSTATUS: bool = true;

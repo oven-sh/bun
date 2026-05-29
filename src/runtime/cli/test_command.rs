@@ -26,13 +26,6 @@ use bun_sys::{self, Fd, File};
 // Debug log scope for test-runner entrypoint loading (Zig: bun.jsc.Jest.bun_test.debug.group).
 bun_output::declare_scope!(bun_test, hidden);
 
-// ─── coverage façade ────────────────────────────────────────────────────────
-// Thin adapter over `bun_sourcemap_jsc::code_coverage` that preserves the
-// Zig-shaped call paths used in `print_code_coverage` below
-// (`CodeCoverageReport::Text::writeFormat(..., enable_ansi_colors)` took a
-// runtime bool in Zig; the Rust port lifted it to a const generic, so the
-// adapter dispatches). Drop once the body is normalised to call
-// `code_coverage::{text,lcov}` directly with `<ENABLE_ANSI_COLORS>`.
 mod coverage {
     pub(super) use bun_sourcemap_jsc::code_coverage::{
         ByteRangeMapping, Fraction, Report as CodeCoverageReport, lcov as Lcov,
@@ -113,12 +106,6 @@ mod coverage {
 }
 use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
 
-// ─── compat shim: map Zig-shaped paths onto the test_runner crate ────────────
-// The body was originally written against `bun_jsc::jest::{bun_test, Snapshots,
-// TestRunner}` before `crate::test_runner` existed. Those types now live under
-// `crate::test_runner::*`; the façade below adapts the body's nested-path
-// usage (`bun_test::Execution::Result`, `bun_test::BasicResult`, …) without a
-// 2k-line body rewrite.
 use crate::test_runner::jest::{self, FileColumns as _, FileId, Summary, TestRunner};
 use crate::test_runner::snapshot::{InlineSnapshotToWrite, Snapshots};
 
@@ -596,12 +583,6 @@ impl JunitReporter {
                     let last = self.suite_stack.len() - 1;
                     self.suite_stack[last].metrics.failures += 1;
                 }
-                // TODO: add the failure message
-                // if (failure_message) |msg| {
-                //     try this.contents.appendSlice(bun.default_allocator, " message=\"");
-                //     try escapeXml(msg, this.contents.writer(bun.default_allocator));
-                //     try this.contents.appendSlice(bun.default_allocator, "\"");
-                // }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
                 self.contents
@@ -779,10 +760,6 @@ impl JunitReporter {
 }
 
 pub struct CommandLineReporter {
-    // TODO(port): `TestRunner<'a>` borrows `TestOptions`/regex from the CLI
-    // ctx; the reporter is held in a `Box` local to `TestCommand::exec` which
-    // never returns before process exit, so `'static` is sound here. Revisit
-    // if the reporter ever becomes scoped.
     pub jest: TestRunner<'static>,
     pub last_dot: u32,
     pub prev_file: u64,
@@ -791,10 +768,6 @@ pub struct CommandLineReporter {
     /// (Zig stores `?*CommandLineReporter` and freely mutates; Rust holds `&'a CommandLineReporter`).
     pub last_printed_dot: core::cell::Cell<bool>,
 
-    /// When running as a `--parallel` worker, this is the coordinator-assigned
-    /// index of the file currently being executed. While set, per-test output
-    /// is sent over the IPC pipe instead of to stderr; the coordinator owns
-    /// the terminal.
     pub worker_ipc_file_idx: Option<u32>,
 
     pub failures_to_repeat_buf: Vec<u8>,
@@ -1467,10 +1440,6 @@ impl CommandLineReporter {
         // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
         // collection loop below (single-threaded CLI report path).
         let map = unsafe { &mut *map.as_ptr() };
-        // PORT NOTE: Zig bitwise-copied each `ByteRangeMapping` out of the map
-        // (`entry.*`). The Rust struct owns a `MultiArrayList` and is not
-        // `Copy`, so collect mutable borrows into the thread-local map instead
-        // — same observable behaviour, no double-free risk.
         let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
         for entry in map.values_mut() {
             byte_ranges.push(entry);
@@ -1771,10 +1740,6 @@ impl CommandLineReporter {
                             Global::exit(1);
                         }
                         bun_sys::Result::Ok(f) => {
-                            // TODO(port): Zig used `f.writer().adaptToNewApi(buf)` (64 KB
-                            // buffered file writer). `bun_sys::File` has no `writer()` yet;
-                            // accumulate in a `Vec<u8>` (impl `bun_io::Write`) and flush to
-                            // the fd via `write_all` on success below.
                             let buffered: Vec<u8> = Vec::with_capacity(64 * 1024);
                             break 'brk Some((f, path, buffered));
                         }
@@ -2047,10 +2012,6 @@ impl TestCommand {
             Output::flush();
         }
 
-        // PORT NOTE: Zig used `ctx.allocator.create` with no destroy. `exec()` never
-        // returns before process exit, so the heap allocation outlives all observers.
-        // `Loader::init` borrows the map; erase to `'static` via raw pointer round-trip
-        // (the map is never freed — process-lifetime singleton).
         let env_map: *mut DotEnv::Map = bun_core::heap::into_raw(Box::new(DotEnv::Map::init()));
         // SAFETY: `env_map` is heap-allocated and never freed; valid for process lifetime.
         let mut env_loader: Box<DotEnv::Loader> =
@@ -2091,11 +2052,6 @@ impl TestCommand {
             ArrayHashMap::new();
         jsc::virtual_machine::isBunTest.store(true, core::sync::atomic::Ordering::Relaxed);
 
-        // Borrowed-slice views (`&[&[u8]]`) over owned `Vec<Box<[u8]>>` config so the
-        // TestRunner / Scanner field types (`Option<&[&[u8]]>`) line up. The owned
-        // backing `Vec`s live in `ctx` for the process lifetime, so each element
-        // is detached to `&'static [u8]` up front (lets the outer view detach to
-        // `&'static [&'static [u8]]` below without a nested-lifetime bitcast).
         let concurrent_test_glob_view: Option<Vec<&'static [u8]>> =
             ctx.test_options.concurrent_test_glob.as_ref().map(|v| {
                 v.iter()
@@ -2115,10 +2071,6 @@ impl TestCommand {
             .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
             .collect();
 
-        // PORT NOTE: Zig used `ctx.allocator.create` with no destroy. PORTING.md
-        // §Forbidden bans leaking; keep an owned `Box` local — `exec()` never
-        // returns before process exit, so the heap allocation outlives all
-        // raw-pointer observers (e.g. `Jest::RUNNER` below).
         let mut reporter: Box<CommandLineReporter> = Box::new(CommandLineReporter {
             jest: TestRunner {
                 default_timeout_ms: ctx.test_options.default_timeout_ms,
@@ -2135,10 +2087,6 @@ impl TestCommand {
                 only: ctx.test_options.only,
                 bail: ctx.test_options.bail,
                 max_concurrency: ctx.test_options.max_concurrency,
-                // `test_filter_regex` is an erased `*mut RegularExpression` (see
-                // options_types::context); cast back to a typed `NonNull` —
-                // kept raw so `matches()` can write through it without
-                // laundering shared-ref provenance.
                 filter_regex: ctx
                     .test_options
                     .test_filter_regex()
@@ -2219,22 +2167,12 @@ impl TestCommand {
         // SAFETY: `init` returns the heap-allocated process-lifetime VM; deref once.
         let vm: &mut VirtualMachine = unsafe {
             &mut *VirtualMachine::init(jsc::virtual_machine::InitOptions {
-                // Clone (not take): ParallelRunner::run_as_coordinator → build_worker_argv
-                // reads ctx.args.{conditions,define,loaders,tsconfig_override,drop,
-                // main_fields,extension_order,env_files,feature_flags,preserve_symlinks,
-                // allow_addons,disable_default_env_files,jsx} after this point to forward
-                // them to workers. Zig spec passes ctx.args by value-copy here.
                 transform_options: ctx.args.clone(),
                 debugger: core::mem::take(&mut ctx.runtime_options.debugger),
                 log: core::ptr::NonNull::new(ctx.log),
                 env_loader: core::ptr::NonNull::new(
                     (&raw mut *env_loader).cast::<DotEnv::Loader<'static>>(),
                 ),
-                // we must store file descriptors because we reuse them for
-                // iterating through the directory tree recursively
-                //
-                // in the future we should investigate if refactoring this to not
-                // rely on the dir fd yields a performance improvement
                 store_fd: true,
                 smol: ctx.runtime_options.smol,
                 is_main_thread: true,
@@ -2386,12 +2324,6 @@ impl TestCommand {
             #[cfg(windows)]
             let filter_names: &[&[u8]] = &filter_names_owned;
 
-            // PORT NOTE: on Windows the Zig duped+mutated each filter to swap
-            // `/`→`\` and stored the dup; on POSIX it borrowed straight from
-            // `ctx.positionals`. Rust unifies on a `Vec<&[u8]>` view either
-            // way (already built above as `filter_names_owned`); the Windows
-            // branch additionally needs an owned backing `Vec<Box<[u8]>>` for
-            // the rewritten bytes plus a second view vec over those boxes.
             #[cfg(windows)]
             let filter_names_normalized_storage: Vec<Box<[u8]>> = {
                 let mut normalized = Vec::with_capacity(filter_names.len());
@@ -2475,10 +2407,6 @@ impl TestCommand {
         let search_count = scanner.search_count;
         drop(scanner);
 
-        // When --changed or --shard filters the discovered test files
-        // down to zero, the "No tests found!" error path is suppressed
-        // and the run exits 0 — an empty shard or an unchanged tree
-        // is not a misconfiguration.
         let mut pass_with_no_tests_from_filter = false;
         let mut changed_module_graph_files: Vec<Box<[u8]>> = Vec::new();
         // PORT NOTE: defer free handled by Drop.
@@ -2536,16 +2464,6 @@ impl TestCommand {
         // TODO(port): test_files type — Zig is `[]PathString` slice into all_test_files or
         // result.test_files; ownership in Rust needs reshaping. Using &mut [PathString] here.
 
-        // --shard=M/N: sort the test files for determinism, then keep only
-        // every Nth file starting at M-1. This round-robin distribution
-        // keeps shards roughly balanced regardless of how many files there
-        // are, and is stable across runs and machines as long as the set of
-        // test files is the same.
-        //
-        // Only runs when there are files to shard — if the scanner or
-        // --changed already produced an empty list, fall through to the
-        // existing "No tests found!" / --changed messaging rather than
-        // printing a confusing "running 0/0 test files".
         if let Some(shard) = &ctx.test_options.shard {
             if !test_files.is_empty() {
                 test_files.sort_by(|a, b| strings::order(a.slice(), b.slice()));
@@ -2579,21 +2497,11 @@ impl TestCommand {
             }
         }
 
-        // Normally the watcher is only enabled when there are test files to
-        // run; `bun test --watch` with nothing matching should still exit.
-        // With --changed we always want to keep watching as long as any test
-        // files exist, since "nothing changed yet" is the common starting
-        // state and editing a source file should kick off a run.
         if !test_files.is_empty()
             || (ctx.test_options.changed.is_some() && all_test_files_count != 0)
         {
             vm.hot_reload = ctx.debug.hot_reload as u8;
 
-            // Install the --changed trigger collector BEFORE the watcher
-            // thread starts so a file edit during runAllTests is still
-            // recorded. The addFileByPathSlow seeding stays after
-            // runAllTests (separate concern; see O_EVTONLY comment
-            // below).
             if ctx.test_options.changed.is_some()
                 && vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH
             {
@@ -2657,22 +2565,6 @@ impl TestCommand {
             }
         }
 
-        // With --changed, only a subset of test files (possibly none) runs,
-        // so the module loader won't naturally add every source file to the
-        // watcher. Seed it from the module graph so editing any local source
-        // file — including files only reachable from tests that were
-        // filtered out — still triggers a restart under --watch.
-        //
-        // This must happen AFTER runAllTests: during the run the module
-        // loader registers loaded files with a readable fd, which
-        // RuntimeTranspilerStore reuses on the next load. On macOS
-        // addFileByPathSlow opens with O_EVTONLY (not readable); seeding
-        // first would hand that fd to the transpiler. Seeding after means
-        // loaded files are already present (indexOf early-returns) and only
-        // the never-loaded filtered-out subgraph gets an O_EVTONLY entry,
-        // which the transpiler never touches. The test harness syncs on the
-        // "Ran N tests" summary (printed after this), so seeding completes
-        // before the next file edit.
         if ctx.test_options.changed.is_some() && vm.is_watcher_enabled() {
             // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
             // `enable_hot_module_reloading`; non-null because
@@ -3003,11 +2895,6 @@ impl TestCommand {
             vm.exit_handler.exit_code = 1;
         }
         vm.is_shutting_down = true;
-        // Release `bun:test` GC roots before `global_exit()` so
-        // `destructOnExit()`'s `collectNow()` can reach the closures they pin
-        // (preload hooks, per-file describe/test callbacks). Clear `RUNNER`
-        // before dropping `reporter` so finalizers running inside the GC can't
-        // observe a dangling `TestRunner`.
         reporter.jest.bun_test_root.deinit_for_exit();
         // SAFETY: `RUNNER` is a `RacyCell` touched only from the single JS thread;
         // no concurrent reader exists on this shutdown path.

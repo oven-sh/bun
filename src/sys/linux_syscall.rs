@@ -158,11 +158,6 @@ pub(crate) fn close(fd: i32) -> Result<(), i32> {
     if rc == 0 { Ok(()) } else { Err(errno()) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// stat family — write into `libc::stat` so the public `bun_sys::Stat` alias
-// stays unchanged for downstream callers.
-// ──────────────────────────────────────────────────────────────────────────
-
 #[inline]
 pub(crate) fn fstat(fd: Fd) -> Result<libc::stat, i32> {
     let fd = fd.as_borrowed_fd();
@@ -187,21 +182,6 @@ pub(crate) fn fstatat(dir: i32, path: &ZStr, flags: i32) -> Result<libc::stat, i
     retry(|| rustix::fs::statat(dir, path.as_cstr(), at)).map(stat_to_libc)
 }
 
-/// Map rustix's kernel `struct stat` → `libc::stat`.
-///
-/// On Bun's tier-1 Linux targets (x86_64, aarch64 — gnu/musl/bionic alike),
-/// `rustix::fs::Stat` (= `linux_raw_sys::general::stat`, bindgen'd from the
-/// kernel UAPI `asm/stat.h`) and `libc::stat` are *the same struct*: every
-/// libc on those arches defines its userspace `struct stat` as a verbatim
-/// copy of the kernel layout so the syscall can write into it directly. The
-/// conversion is therefore a no-op `transmute` — no `zeroed()` memset, no
-/// 16-field move chain — matching Zig's single `fstat(fd, &out)` with zero
-/// post-processing. The const assert turns any future layout divergence into
-/// a compile error rather than silent field corruption.
-///
-/// (Perf: the previous field-by-field copy showed up in `bun install` profiles
-/// as `write_bytes<stat>` — the 144-byte memset behind `zeroed()` — plus the
-/// move chain, on a path that runs once per installed file.)
 #[inline(always)]
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn stat_to_libc(s: rustix::fs::Stat) -> libc::stat {
@@ -217,10 +197,6 @@ fn stat_to_libc(s: rustix::fs::Stat) -> libc::stat {
     unsafe { core::mem::transmute::<rustix::fs::Stat, libc::stat>(s) }
 }
 
-/// Fallback for arches where userspace `libc::stat` is *not* guaranteed
-/// layout-identical to the kernel struct (e.g. mips64 glibc reorders fields).
-/// Field-by-field copy by name — both expose every public `st_*` field, only
-/// padding/reserved names differ. Compiles to straight moves.
 #[inline]
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 fn stat_to_libc(s: rustix::fs::Stat) -> libc::stat {
@@ -245,21 +221,6 @@ fn stat_to_libc(s: rustix::fs::Stat) -> libc::stat {
     out.st_ctime_nsec = s.st_ctime_nsec as _;
     out
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// vectored I/O
-//
-// `readv`/`preadv` cannot route through rustix's typed `io::readv` because
-// that API requires `&mut [IoSliceMut]`, and our callers (lib.rs:3211/3258)
-// hand us `vecs.as_ptr()` derived from a *shared* `&[PlatformIoVec]` —
-// fabricating a `&mut` slice from that pointer is UB under Stacked/Tree
-// Borrows regardless of whether rustix actually writes to the iovec array.
-// Instead pass the raw pointer straight to the kernel via `libc::syscall`,
-// exactly as the Zig `std.os.linux.readv` path does. `syscall(2)` is a thin
-// register-shuffle (no PLT entry per call, no pthread cancellation point);
-// glibc translates the kernel `-errno` to `-1`+TLS-errno, which `sys_retry`
-// decodes.
-// ──────────────────────────────────────────────────────────────────────────
 
 /// EINTR-retry a raw `libc::syscall` returning a byte count. The closure
 /// itself carries any FFI `unsafe`; the retry loop is pure control flow.
@@ -293,10 +254,6 @@ pub(crate) unsafe fn readv(fd: Fd, vecs: *const libc::iovec, n: usize) -> Result
 /// Raw `writev(2)`.
 #[inline]
 pub(crate) unsafe fn writev(fd: Fd, vecs: *const libc::iovec, n: usize) -> Result<usize, i32> {
-    // Same shape as `readv` above: hand the raw `(iovec*, n)` pair straight to
-    // the kernel rather than fabricating a `&[IoSlice]` just to satisfy
-    // rustix's typed wrapper. The caller already owns a `&[PlatformIoVec]`;
-    // round-tripping through a reconstructed borrowed slice buys nothing.
     sys_retry(|| {
         // SAFETY: caller guarantees `vecs[..n]` are valid `iovec`s whose
         // `iov_base` are readable for `iov_len` bytes.
@@ -312,10 +269,6 @@ pub(crate) unsafe fn preadv(
     n: usize,
     off: i64,
 ) -> Result<usize, i32> {
-    // The kernel `preadv` ABI splits the offset into (lo, hi) longs on every
-    // arch; on LP64 the kernel's `pos_from_hilo` shifts `hi` out entirely, so
-    // `lo` carries the full 64-bit offset. Mirror glibc's `LO_HI_LONG` for
-    // documentation fidelity.
     let lo = off as libc::c_long;
     let hi = ((off as u64) >> 32) as libc::c_long;
     sys_retry(|| {
@@ -363,25 +316,6 @@ pub(crate) unsafe fn pwritev(
     })
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Linux-only kernel features (epoll / pidfd / copy_file_range / sendfile /
-// getdents64). These keep the *libc-convention* return shape (`-1` on error
-// with thread-local errno set) so existing callers in `bun_io`/`bun_runtime`
-// that decode via `GetErrno for isize` continue to work unchanged. The syscall
-// itself is raw; glibc's `syscall(2)` trampoline writes thread-local errno on
-// `-errno` returns, which callers decode via `GetErrno for isize`.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Raw `read(2)` — libc-convention return (for `linux::read` / `posix::read`).
-///
-/// This is a libc-convention thunk: callers may pass `fd == -1` (expecting
-/// EBADF), `buf == NULL` with `count == 0` (expecting `0`), or an
-/// uninitialized buffer (legal for `read(2)`). Routing through rustix would
-/// require constructing `BorrowedFd` (UB for `-1`, its niche value) and
-/// `&mut [u8]` (UB for null or uninit). Instead forward the raw triple to
-/// the kernel via `libc::syscall(SYS_read, ..)` — pointer-only, no Rust
-/// references, identical semantics to the pre-refactor `libc::read` path
-/// minus the PLT hop and pthread cancellation point.
 #[inline]
 pub(crate) unsafe fn read_raw(fd: i32, buf: *mut u8, count: usize) -> isize {
     // SAFETY: raw `read(2)`; kernel validates `fd`/`buf`/`count`.
@@ -396,19 +330,6 @@ pub(crate) unsafe fn write_raw(fd: i32, buf: *const u8, count: usize) -> isize {
     unsafe { libc::syscall(libc::SYS_write, fd, buf, count) as isize }
 }
 
-/// Raw `epoll_ctl(2)` — libc-convention return.
-///
-/// Routed via `libc::syscall(SYS_epoll_ctl, ..)` rather than rustix's typed
-/// `epoll::add/modify/delete` because the typed API would require:
-///   (a) constructing `BorrowedFd` for `epfd`/`fd` — UB if a caller probes
-///       with `-1` (the niche value), whereas the kernel returns EBADF;
-///   (b) reinterpreting `*mut libc::epoll_event` as rustix's `Event` and
-///       reading its fields — a cross-crate layout pun whose soundness
-///       depends on `EventData`/`EventFlags` having no invalid bit-patterns;
-///   (c) synthesizing EINVAL for unknown `op` values ourselves rather than
-///       letting the kernel reject them.
-/// Passing the raw quad straight through avoids all three and matches Zig's
-/// `std.os.linux.epoll_ctl` 1:1.
 #[inline]
 pub(crate) unsafe fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: *mut libc::epoll_event) -> i32 {
     // SAFETY: raw `epoll_ctl(2)`; kernel validates `epfd`/`op`/`fd`; `event`
@@ -416,21 +337,8 @@ pub(crate) unsafe fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: *mut libc::ep
     unsafe { libc::syscall(libc::SYS_epoll_ctl, epfd, op, fd, event) as i32 }
 }
 
-/// Raw `sendfile(2)` — libc-convention return.
-///
-/// Routed via `libc::syscall(SYS_sendfile, ..)` rather than rustix's
-/// `fs::sendfile` so that (a) `out_fd`/`in_fd == -1` yield EBADF instead of
-/// constructing a niche-invalid `BorrowedFd`, and (b) `offset` stays a raw
-/// `*mut loff_t` with no `&mut u64` type-pun. Matches Zig's
-/// `std.os.linux.sendfile` 1:1.
 #[inline]
 pub(crate) unsafe fn sendfile(out_fd: i32, in_fd: i32, offset: *mut i64, count: usize) -> isize {
-    // libc 0.2.186 omits `SYS_sendfile` from its aarch64 syscall tables (gnu,
-    // musl, *and* android — every other arch has it). Zig didn't hit this
-    // because `std.os.linux.SYS` is a complete kernel-derived table. The
-    // generic-syscall ABI (aarch64/riscv64/loongarch64) places `sendfile` at
-    // 71; the legacy ABIs that *do* have the constant differ, so the polyfill
-    // is aarch64-only and the rest still come from `libc`.
     #[cfg(target_arch = "aarch64")]
     const SYS_SENDFILE: libc::c_long = 71;
     #[cfg(not(target_arch = "aarch64"))]
@@ -440,14 +348,6 @@ pub(crate) unsafe fn sendfile(out_fd: i32, in_fd: i32, offset: *mut i64, count: 
     unsafe { libc::syscall(SYS_SENDFILE, out_fd, in_fd, offset, count) as isize }
 }
 
-/// Raw `copy_file_range(2)` — libc-convention return.
-///
-/// Routed via `libc::syscall(SYS_copy_file_range, ..)` rather than rustix's
-/// `fs::copy_file_range` because the rustix wrapper hard-codes `flags = 0`.
-/// The Zig `std.os.linux.copy_file_range` and the pre-refactor path both
-/// forward `flags` verbatim so the kernel can EINVAL future flag bits;
-/// preserve that behavior exactly. Also avoids the `BorrowedFd` niche hazard
-/// and `*mut i64 → &mut u64` type-pun on the offset pointers.
 #[inline]
 pub(crate) unsafe fn copy_file_range(
     in_: i32,
@@ -480,10 +380,6 @@ pub(crate) fn pidfd_open(pid: i32, flags: u32) -> Result<Fd, i32> {
     let flags = rustix::process::PidfdFlags::from_bits_retain(flags);
     once(rustix::process::pidfd_open(pid, flags)).map(own_fd)
 }
-/// Android: rustix 0.38 gates `process::pidfd_open` behind
-/// `cfg(target_os = "linux")`, but the kernel ABI is identical (same generic
-/// syscall number 434 since Linux 5.3, before any Android NDK target shipped).
-/// Raw-syscall it like the other shims here.
 #[inline]
 #[cfg(target_os = "android")]
 pub(crate) fn pidfd_open(pid: i32, flags: u32) -> Result<Fd, i32> {

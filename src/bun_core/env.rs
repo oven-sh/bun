@@ -30,11 +30,6 @@ pub const IS_WINDOWS: bool = cfg!(windows);
 pub(crate) const IS_POSIX: bool = !IS_WINDOWS && !IS_WASM;
 pub const IS_DEBUG: bool = cfg!(debug_assertions);
 pub(crate) const IS_TEST: bool = cfg!(test);
-// Zig's `Environment.isLinux` is `builtin.target.os.tag == .linux`, which is
-// TRUE on Android (Zig models Android as `os.tag == .linux, abi == .android`).
-// Rust splits them into two `target_os` values, so this const has to OR them
-// to keep the Zig semantics — otherwise `OS` (below) panics at const-eval on
-// the `*-linux-android` cross targets and Linux-only code paths are skipped.
 pub const IS_LINUX: bool = cfg!(any(target_os = "linux", target_os = "android"));
 pub(crate) const IS_FREEBSD: bool = cfg!(target_os = "freebsd");
 /// kqueue-based event loop (macOS + FreeBSD share most of this path).
@@ -241,14 +236,6 @@ pub const ARCH: Architecture = if IS_WASM {
 
 // Helper for const &str slicing (Rust stable lacks const range indexing on str).
 const fn const_str_slice(s: &'static str, start: usize, end: usize) -> &'static str {
-    // `[u8]::split_at` and `str::from_utf8` are both `const` on stable, so the
-    // sub-slice + UTF-8 check happens entirely at compile time without raw
-    // pointer arithmetic.
-    //
-    // ALLOWED `core::str::from_utf8`: this is the ONE permitted call site in
-    // the codebase. simdutf is the runtime validator (`bun_core::strings::
-    // {is_valid_utf8, str_utf8}`); `const fn` cannot call FFI, and this body
-    // const-evals at compile time only (git-SHA slicing).
     let (head, _) = s.as_bytes().split_at(end);
     let (_, sub) = head.split_at(start);
     match core::str::from_utf8(sub) {

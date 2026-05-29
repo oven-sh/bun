@@ -65,16 +65,6 @@ pub enum GcRepeatSetting {
 }
 
 impl GarbageCollectionController {
-    /// Recover `&mut Self` from a uws timer's ext slot. Single audited deref
-    /// for the two `extern "C"` callbacks below so they stay safe-bodied.
-    ///
-    /// `timer` is the live uws timer whose ext data was set to
-    /// `*mut GarbageCollectionController` in [`Self::init`]; the controller is
-    /// a BACKREF that strictly outlives the timer (`deinit()` closes the timer
-    /// before `self` is dropped). `Timer` is an `opaque_ffi!` ZST handle, so
-    /// [`uws::Timer::opaque_mut`] is the centralised non-null deref proof for
-    /// the handle itself; only the recovered `*mut Self` needs the audited
-    /// deref below.
     #[inline]
     fn from_timer_ext<'a>(timer: *mut uws::Timer) -> &'a mut Self {
         let ptr = uws::Timer::opaque_mut(timer).as_::<*mut Self>();
@@ -128,15 +118,6 @@ impl GarbageCollectionController {
             }
         }
 
-        // PORT NOTE: in the Zig spec `vm.transpiler` is fully constructed
-        // before `JSGlobalObject.create` → `ensureWaker` → this `init`. The
-        // Rust port defers `Transpiler::init` to the high-tier
-        // `init_runtime_state` hook (which runs *after* `ensure_waker`), so
-        // `vm.transpiler.env` is still the zeroed null ptr here on the main
-        // boot path. Fall back to defaults when null — these are debug/tuning
-        // knobs (BUN_GC_TIMER_INTERVAL / BUN_GC_TIMER_DISABLE /
-        // BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS) and the dot_env loader would
-        // just be reading process env anyway.
         let env = vm.env_loader_opt();
 
         let mut gc_timer_interval: i32 = 1000;
@@ -178,11 +159,6 @@ impl GarbageCollectionController {
     }
 
     pub fn bun_vm(&mut self) -> &mut VirtualMachine {
-        // S017: dropped `container_of` recovery — provenance of `&mut self`
-        // (which only covers `vm.gc_controller`) cannot soundly widen to the
-        // whole `VirtualMachine` under Stacked Borrows. Route through the
-        // per-thread singleton instead (same pointer, full-allocation
-        // provenance via `VirtualMachine::get_mut_ptr`).
         VirtualMachine::get().as_mut()
     }
 
@@ -202,18 +178,6 @@ impl GarbageCollectionController {
         }
     }
 
-    // We want to always run GC once in awhile
-    // But if you have a long-running instance of Bun, you don't want the
-    // program constantly using CPU doing GC for no reason
-    //
-    // So we have two settings for this GC timer:
-    //
-    //    - Fast: GC runs every 1 second
-    //    - Slow: GC runs every 30 seconds
-    //
-    // When the heap size is increasing, we always switch to fast mode
-    // When the heap size has been the same or less for 30 seconds, we switch to slow mode
-    // PERF(port): was comptime enum-literal monomorphization — profile if hot.
     pub fn update_gc_repeat_timer(&mut self, setting: GcRepeatSetting) {
         if setting == GcRepeatSetting::Fast && !self.gc_repeating_timer_fast {
             self.gc_repeating_timer_fast = true;

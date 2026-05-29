@@ -52,11 +52,6 @@ impl RequestedExports {
     }
 }
 
-// PORT NOTE: `original_alias` is stored as the raw arena `*const [u8]` (the
-// `NamedImport.alias` representation) instead of a tied `&'a [u8]` so the BFS
-// loop can hold a `BarrelExportResolution` across a `&mut graph.ast` reborrow
-// without the borrow checker seeing an overlap. The pointee outlives the
-// bundler arena, so dereferencing later is sound.
 struct BarrelExportResolution {
     import_record_index: u32,
     /// The original alias in the source module (e.g. "d" for `export { d as c }`)
@@ -83,15 +78,6 @@ fn resolve_barrel_export(
     })
 }
 
-/// Analyze a parsed file to determine if it's a barrel and mark unneeded
-/// import records as is_unused so they won't be resolved. Runs BEFORE resolution.
-///
-/// A file qualifies as a barrel if:
-/// 1. It has `sideEffects: false` or is in `optimize_imports`, AND
-/// 2. All named exports are re-exports (no local definitions), AND
-/// 3. It is not an export star target of another barrel.
-///
-/// Export * records are never deferred (always resolved) to avoid circular races.
 pub(crate) fn apply_barrel_optimization(
     this: &mut BundleV2,
     parse_result: &mut parse_task::Result,
@@ -142,10 +128,6 @@ fn apply_barrel_optimization_impl(
         return Ok(());
     }
 
-    // Check requested_exports to see which exports were already requested by
-    // files parsed before this barrel. scheduleBarrelDeferredImports records
-    // requests eagerly as each file is processed, so we don't need to scan
-    // the graph.
     if let Some(existing) = RequestedExports::lookup(&this.requested_exports, source_index) {
         match existing {
             RequestedExports::All => return Ok(()), // import * already seen — load everything
@@ -177,12 +159,6 @@ fn apply_barrel_optimization_impl(
         }
     }
 
-    // Dev server: also include exports persisted from previous builds. This
-    // handles the case where file A imports Alpha from the barrel (previous
-    // build) and file B adds Beta (current build). Without this, Alpha would
-    // be re-deferred because only B's requests are in requested_exports.
-    // PORT NOTE: `DevServerHandle` is `Copy`; copied out so the `&self` borrow
-    // doesn't conflict with later `&mut this.requested_exports`.
     let dev_handle = this.dev_server_handle().copied();
     if let Some(dev) = dev_handle {
         // SAFETY: barrel_needed_exports is owned by DevServer; bundler runs on the bundle
@@ -199,13 +175,6 @@ fn apply_barrel_optimization_impl(
         }
     }
 
-    // When HMR is active, ConvertESMExportsForHmr deduplicates import records
-    // by path — two `export { ... } from './utils.js'` blocks get merged into
-    // one record. The surviving record might be the one barrel optimization
-    // would mark as unused (its exports not needed), while the other record
-    // (whose exports ARE needed) gets marked unused by HMR dedup. To prevent
-    // both records from ending up unused, promote needed_records to cover ALL
-    // import records that share a path with any needed record.
     if dev_handle.is_some() {
         // Collect paths of needed records.
         // PERF(port): was stack-fallback (4096) — profile if hot.
@@ -359,30 +328,11 @@ fn resolve_barrel_records(
     scheduled
 }
 
-/// After a new file's import records are patched with source_indices,
-/// record what this file requests from each target in requested_exports
-/// (eagerly, before barrels are known), then BFS through barrel chains
-/// to un-defer needed records. Un-deferred records are re-resolved through
-/// resolveImportRecords (same path as initial resolution).
-/// Returns the number of newly scheduled parse tasks.
 pub(crate) fn schedule_barrel_deferred_imports(
     this: &mut BundleV2,
     result_source_index: u32,
     result_ast_target: bun_ast::Target,
 ) -> Result<i32, AllocError> {
-    // PORT NOTE: Zig passed `*ParseTask.Result.Success` and read `result.ast`
-    // after `graph.ast.set(idx, result.ast)` value-copied it. Rust *moves*
-    // `result.ast` into `graph.ast`, so this fn reads the just-written
-    // `graph.ast[result_source_index]` instead. Phase 1/2 only read
-    // `import_records` / `named_imports` for THIS index; the BFS (Phase 3)
-    // takes fresh `&mut graph.ast` borrows after these raw reads are dead.
-    //
-    // `graph.ast` SoA columns are not reallocated for the duration of this fn
-    // (no `graph.ast.append`/`set`); `items_*_mut()` in the BFS only re-slices
-    // the existing backing. The backrefs below are dereferenced only during
-    // Phase 1/2 (queue seeding), strictly before the BFS takes any `&mut` to
-    // the same column. `BackRef` detaches the borrowck lifetime so later
-    // `&mut this.*` borrows don't conflict.
     let file_import_records: bun_ptr::BackRef<import_record::List> =
         bun_ptr::BackRef::new(&this.graph.ast.items_import_records()[result_source_index as usize]);
     let file_named_imports: bun_ptr::BackRef<JSAst::NamedImports> =
@@ -392,21 +342,6 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // don't conflict with the `&self` accessor.
     let dev_handle = this.dev_server_handle().copied();
 
-    // Phase 1: Seed — eagerly record what this file requests from each target.
-    // This runs for every file, even before any barrels are known. When a barrel
-    // is later parsed, applyBarrelOptimization reads these pre-recorded requests
-    // to decide which exports to keep. O(file's imports) per file.
-
-    // In dev server mode, patchImportRecordSourceIndices skips saving source_indices
-    // on import records (the dev server uses path-based identifiers instead). But
-    // barrel optimization requires source_indices to seed requested_exports and to
-    // BFS un-defer records. Resolve paths → source_indices here as a fallback.
-    //
-    // PORT NOTE: reshaped for borrowck — `path_to_source_index_map` borrows
-    // `&mut this.graph`; wrap in `BackRef` so the long-lived read borrow
-    // doesn't conflict with `&mut this.requested_exports` /
-    // `&mut this.graph.ast` below. The map is not mutated for the duration of
-    // this fn.
     let path_to_source_index_map: Option<
         bun_ptr::BackRef<crate::PathToSourceIndexMap::PathToSourceIndexMap>,
     > = if dev_handle.is_some() {
@@ -424,15 +359,6 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // so we can detect bare imports (those with no specific export bindings).
     let mut named_ir_indices = AutoBitSet::init_empty(file_import_records.len())?;
 
-    // In HMR, ConvertESMExportsForHmr deduplicates import records by path:
-    // two `import { X } from 'mod'` statements become one, and the second
-    // record is marked is_unused=true. resolveImportRecords then skips those
-    // records, so their path.text stays as the raw specifier while the
-    // surviving record's path.text becomes the resolved absolute path.
-    // named_imports entries created for the dedup'd record still point at
-    // its index, so the direct path lookup below fails for those entries.
-    // Build a fallback: raw specifier → surviving record's resolved path
-    // text, using non-unused records in this file. See #28886.
     let mut dedup_fallback: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::default();
     if dev_handle.is_some() {
         for ir_probe in file_import_records.as_slice() {
@@ -458,13 +384,6 @@ pub(crate) fn schedule_barrel_deferred_imports(
         }
         named_ir_indices.set(ni.import_record_index as usize);
         let ir = &file_import_records.as_slice()[ni.import_record_index as usize];
-        // In dev server mode, source_index may not be patched — resolve via
-        // path map as a read-only fallback. Do NOT write back to the import
-        // record — the dev server intentionally leaves source_indices unset
-        // and other code (IncrementalGraph, printer) depends on that.
-        // For dedup'd HMR records (is_unused), fall back to a sibling's
-        // resolved path text since the record itself still has the raw
-        // specifier in path.text.
         let resolved_path_text = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
             dedup_fallback
                 .get(ir.path.text)
@@ -503,12 +422,6 @@ pub(crate) fn schedule_barrel_deferred_imports(
         }
     }
 
-    // Handle import records without named bindings (not in named_imports).
-    // - `import "x"` (bare statement): tree-shakeable with sideEffects: false — skip.
-    // - `require("x")`: synchronous, needs full module — always mark as .all.
-    // - `import("x")`: returns the full module namespace at runtime — consumer
-    //   can destructure or access any export. Must mark as .all. We cannot
-    //   safely assume which exports will be used.
     for (idx, ir) in file_import_records.as_slice().iter().enumerate() {
         let target = if ir.source_index.is_valid() {
             ir.source_index.get()
@@ -539,11 +452,6 @@ pub(crate) fn schedule_barrel_deferred_imports(
         }
     }
 
-    // Phase 2: BFS — un-defer barrel records that are now needed.
-    // Build work queue from this file's named_imports, then propagate
-    // through chains of barrels. Only runs real work when barrels exist
-    // (targets with deferred records).
-    // PERF(port): was stack-fallback (8192) — profile if hot.
     let mut queue: Vec<BarrelWorkItem> = Vec::new();
 
     // See PORT NOTE above — read-only deref valid through Phase 2.
@@ -621,11 +529,6 @@ pub(crate) fn schedule_barrel_deferred_imports(
         }
     }
 
-    // Also seed the BFS with exports previously requested from THIS file
-    // that couldn't propagate because this file wasn't parsed yet.
-    // This handles the case where file A requests export "d" from file B,
-    // but B hadn't been parsed when A's BFS ran, so B's export * records
-    // were empty and the propagation stopped.
     let this_source_index = result_source_index;
     if let Some(existing) = RequestedExports::lookup(&this.requested_exports, this_source_index) {
         match existing {
@@ -654,11 +557,6 @@ pub(crate) fn schedule_barrel_deferred_imports(
         return Ok(0);
     }
 
-    // Items [0, initial_queue_len) are from this file's imports and were
-    // already recorded in requested_exports during seeding (phase 1).
-    // Skip dedup for them so un-deferral proceeds correctly.
-    // Items added during BFS propagation (>= initial_queue_len) use normal
-    // dedup via requested_exports to prevent cycles.
     let initial_queue_len = queue.len();
 
     // PERF(port): was stack-fallback (1024) — profile if hot.
@@ -813,10 +711,6 @@ pub(crate) fn schedule_barrel_deferred_imports(
     Ok(newly_scheduled)
 }
 
-/// Persist an export name for a barrel file on the DevServer. Called during
-/// seeding so that exports requested in previous builds are not lost when the
-/// barrel is re-parsed in an incremental build where the requesting file is
-/// not stale.
 fn persist_barrel_export(dev: &crate::dispatch::DevServerHandle, barrel_path: &[u8], alias: &[u8]) {
     dev.register_barrel_export(barrel_path, alias)
 }

@@ -30,17 +30,9 @@ impl Opcode {
         (self as u8) & 0x8 != 0
     }
 
-    /// Zig `@enumFromInt(@as(u4, n))`. Caller must guarantee `n <= 0xF`;
-    /// debug-asserted. Public so call sites that already range-check the raw
-    /// nibble (e.g. the WS client's extern-C `op: u8` entry points) don't have
-    /// to repeat the `unsafe` block.
     #[inline]
     pub const fn from_raw(n: u8) -> Opcode {
         debug_assert!(n <= 0xF);
-        // Opcode exhaustively covers 0x0..=0xF; mask the low nibble (the
-        // header packs `opcode: u4`, so callers always pass a 4-bit value —
-        // the `& 0xF` is a no-op there but keeps the match total without an
-        // unreachable arm).
         match n & 0xF {
             0x0 => Opcode::Continue,
             0x1 => Opcode::Text,
@@ -62,14 +54,6 @@ impl Opcode {
     }
 }
 
-// Zig: packed struct(u16) with non-bool fields → #[repr(transparent)] u16 + manual shift accessors.
-// Zig packed-struct field order is LSB-first:
-//   bits 0..=6   len: u7
-//   bit  7       mask: bool
-//   bits 8..=11  opcode: Opcode (u4)
-//   bits 12..=13 rsv: u2       (default 0)   — rsv2 and rsv3
-//   bit  14      compressed: bool (default false) — rsv1
-//   bit  15      final: bool   (default true)
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct WebsocketHeader(u16);

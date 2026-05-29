@@ -16,11 +16,6 @@ use crate::compile_target::CompileTarget;
 use crate::global_cache::GlobalCache;
 use crate::offline_mode::OfflineMode;
 
-// TODO(port): every `[]const u8` / `[]const []const u8` struct field below is a
-// proc-lifetime CLI string (no `deinit`, populated once from argv/bunfig and
-// never freed). Ported as `Box<[u8]>` / `Vec<Box<[u8]>>` for now; may retype to
-// `&'static [u8]` once the CLI parser leaks into a bump arena.
-
 pub struct ContextData {
     pub start_time: i128,
     pub args: api::TransformOptions,
@@ -52,22 +47,6 @@ pub struct ContextData {
 }
 
 impl Default for ContextData {
-    // ── Startup .text page-fault reduction ───────────────────────────────
-    // `--version` perf showed `ContextData::default` (1 638 B) plus its
-    // out-of-line callees (`TransformOptions` / `DebugOptions` / `TestOptions`
-    // / `BundlerOptions` / `RuntimeOptions` / `CodeCoverageOptions` /
-    // `CompileTarget` / `CpuProf` …) sampling 31× across ≈10 distinct 4 KB
-    // r-xp pages — each nested `Default` impl landed in its own CGU, so the
-    // single call from `write_context_no_parse` faulted in ~40 KB of scattered
-    // `.text`. The Zig spec is `std.mem.zeroes(Context)` (one comptime blob).
-    //
-    // A literal `unsafe { core::mem::zeroed() }` would match Zig but is
-    // **unsound** in Rust: `Vec<T>` / `Box<[u8]>` carry a `NonNull` pointer
-    // (validity invariant — null is immediate UB regardless of len). Instead,
-    // every `Default` impl in this module is `#[inline(always)]` so the entire
-    // recursive chain folds into the one `write_context_no_parse` call site
-    // and lives on a single contiguous page. This removes the per-type callees
-    // from the startup fault set without violating any niche invariants.
     #[inline(always)]
     fn default() -> Self {
         Self {
@@ -183,12 +162,6 @@ impl ContextData {
         unsafe { &*self.log }
     }
 
-    /// `Arguments.parse` lives in `cli/`; forward-aliased so
-    /// `Command::ContextData::create(...)` keeps working.
-    // TODO(port): Zig was `pub const create = bun.cli.Command.createContextData;`
-    // — Rust cannot re-export an associated fn; TODO(port): add a thin
-    // delegating `pub fn create(...)` here once `bun_cli` exists, or invert the
-    // alias direction (cli re-exports this type).
     pub const CREATE_SEE_CLI: () = ();
 }
 
@@ -298,15 +271,6 @@ pub type Context<'a> = &'a mut ContextData;
 // the borrow lifetime above may need to become `*mut ContextData` at call sites
 // that re-enter the global ctx.
 
-// ──────────────────────────────────────────────────────────────────────────
-// Process-global CLI context handle.
-//
-// `ContextData` is owned by the CLI crate (storage lives in
-// `bun_runtime::cli::command::CONTEXT_DATA`), but lower-tier crates such as
-// `bun_jsc` need read access to parsed runtime options (e.g.
-// `runtime_options.console_depth`) without taking a forward dep on
-// `bun_runtime`. The CLI publishes its pointer here via `set_global` during
-// single-threaded startup; readers use `try_get`.
 static GLOBAL_CLI_CTX: core::sync::atomic::AtomicPtr<ContextData> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
@@ -422,12 +386,6 @@ pub struct TestOptions {
     pub path_ignore_patterns: Vec<Box<[u8]>>,
     pub path_ignore_patterns_from_cli: bool,
     pub test_filter_pattern: Option<Box<[u8]>>,
-    /// `?*bun.jsc.RegularExpression` — typed as opaque to keep this file free
-    /// of `jsc/` references. Read via `test_filter_regex()`.
-    // FORWARD_DECL(b0): erased bun_jsc::RegularExpression to break the T3→T6
-    // back-edge. High tier owns construction/destruction; this field only
-    // stores the pointer. LIFETIMES.tsv says OWNED, so the high-tier setter is
-    // responsible for freeing any previous value.
     pub test_filter_regex: Option<core::ptr::NonNull<()>>, // SAFETY: erased *mut bun_jsc::RegularExpression
     pub max_concurrency: u32,
     /// `bun test --isolate`: run each test file in a fresh global object on
@@ -442,11 +400,6 @@ pub struct TestOptions {
     /// Internal: this process is a `--parallel` worker. Files arrive over
     /// fd 3, results are written back over fd 3; no discovery, no header.
     pub test_worker: bool,
-    /// `bun test --changed[=<since>]`. When set, only test files whose
-    /// module graph reaches a file changed according to git are run.
-    /// None = flag not passed. "" = compare against uncommitted changes.
-    /// Otherwise the value is a git ref (commit, branch, tag) to diff
-    /// against.
     pub changed: Option<Box<[u8]>>,
     /// `bun test --shard=M/N`. When set, test files are sorted by path
     /// and only every Nth file (starting from M-1) is run. index is
@@ -503,12 +456,6 @@ impl Default for TestOptions {
             path_ignore_patterns_from_cli: false,
             test_filter_pattern: None,
             test_filter_regex: None,
-            // Under ASAN every spawned `bun` child is several-× heavier in
-            // RSS and ~2× slower to start, so `describe.concurrent` test
-            // files that spawn one child per test (e.g. process-stdio,
-            // multi-run) hit 20 live children at once and OOM the CI box.
-            // Cap the default to 5 there; the `--max-concurrency` flag still
-            // overrides explicitly.
             max_concurrency: if bun_core::env::ENABLE_ASAN { 5 } else { 20 },
             isolate: false,
             parallel: 0,

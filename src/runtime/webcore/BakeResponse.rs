@@ -16,10 +16,6 @@ pub fn fix_dead_code_elimination() {
 // C++ side declares `extern JSC_CALLCONV` (= SYSV_ABI on win-x64).
 bun_jsc::jsc_abi_extern! {
     #[allow(improper_ctypes)]
-    // `&JSGlobalObject` discharges the only deref'd-param precondition;
-    // `this` is stored opaquely in the JS wrapper (module-private — sole
-    // caller is `to_js_for_ssr`, whose own signature carries the
-    // ownership-transfer contract).
     safe fn BakeResponse__createForSSR(
         global_object: &JSGlobalObject,
         this: *mut Response,

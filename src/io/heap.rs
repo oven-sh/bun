@@ -1,32 +1,5 @@
 use core::ptr;
 
-/// An intrusive heap implementation backed by a pairing heap[1] implementation.
-///
-/// Why? Intrusive data structures require the element type to hold the metadata
-/// required for the structure, rather than an additional container structure.
-/// There are numerous pros/cons that are documented well by Boost[2]. For Zig,
-/// I think the primary benefits are making data structures allocation free
-/// (rather, shifting allocation up to the consumer which can choose how they
-/// want the memory to be available). There are various costs to this such as
-/// the costs of pointer chasing, larger memory overhead, requiring the element
-/// type to be aware of its container, etc. But for certain use cases an intrusive
-/// data structure can yield much better performance.
-///
-/// Usage notes:
-/// - The element T is expected to have a field "heap" of type IntrusiveField.
-///   See the tests for a full example of how to set this.
-/// - You can easily make this a min or max heap by inverting the result of
-///   "less" below.
-///
-/// [1]: https://en.wikipedia.org/wiki/Pairing_heap
-/// [2]: https://www.boost.org/doc/libs/1_64_0/doc/html/intrusive/intrusive_vs_nontrusive.html
-//
-// PORT NOTE: Zig's `Intrusive(T, Context, less)` takes `less` as a comptime fn-pointer
-// parameter. Rust cannot use fn pointers as const generics on stable, so the comparator
-// is folded into a trait on `Context` (`HeapContext<T>::less`). This preserves
-// monomorphization (no indirect call) at the cost of requiring the caller to impl the
-// trait instead of passing a free fn.
-// PERF(port): was comptime fn-pointer monomorphization — profile if hot.
 pub struct Intrusive<T: HeapNode, Context: HeapContext<T>> {
     pub root: *mut T,
     pub context: Context,
@@ -170,10 +143,6 @@ impl<T: HeapNode, Context: HeapContext<T>> Intrusive<T, Context> {
             return;
         }
 
-        // Detach "v" from the tree and clean up any links so it
-        // is as if this node never nexisted. The previous value
-        // must point to the proper next value and the pointers
-        // must all be cleaned up.
         let v_next = (*v).heap().next;
         if !v_next.is_null() {
             (*v_next).heap().prev = prev;
@@ -198,13 +167,6 @@ impl<T: HeapNode, Context: HeapContext<T>> Intrusive<T, Context> {
         self.root = self.meld(x, self.root);
     }
 
-    /// Meld (union) two heaps together. This isn't a generalized
-    /// union. It assumes that a.heap.next is null so this is only
-    /// meant in specific scenarios in the pairing heap where meld
-    /// is expected.
-    ///
-    /// For example, when melding a new value "v" with an existing
-    /// root "root", "v" must always be the first param.
     unsafe fn meld(&mut self, a: *mut T, b: *mut T) -> *mut T {
         // SAFETY: `a` and `b` are distinct valid nodes (caller invariant).
         debug_assert!((*a).heap().next.is_null());

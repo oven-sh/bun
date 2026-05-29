@@ -7,16 +7,6 @@ use bun_core::{SliceWithUnderlyingString, String, Tag, ZigStringSlice, strings};
 use crate::zig_string::{self, ZigString};
 use crate::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigStringJsc as _};
 
-// ── extern decls ────────────────────────────────────────────────────────────
-// `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle and `&String`/
-// `&mut String` are ABI-identical to non-null `*const String`/`*mut String`,
-// so shims that take only those are declared `safe fn`. The (ptr,len) pair
-// shims stay `unsafe fn`.
-//
-// `[[ZIG_EXPORT(...)]]`-annotated symbols (`BunString__toJS`, `BunString__fromJS`,
-// `BunString__transferToJS`, `BunString__toJSON`, `BunString__createUTF8ForJS`,
-// `Bun__parseDate`) are NOT redeclared here — route through `crate::cpp::*`,
-// which owns the canonical extern decl + per-mode exception scope.
 unsafe extern "C" {
     safe fn BunString__toJSDOMURL(global_object: &JSGlobalObject, in_: &mut String) -> JSValue;
     fn BunString__createArray(
@@ -87,18 +77,6 @@ pub fn to_js(this: &String, global_object: &JSGlobalObject) -> JsResult<JSValue>
     unsafe { crate::cpp::BunString__toJS(global_object, this) }
 }
 
-/// `BunString__toJSDOMURL` opens a `DECLARE_THROW_SCOPE` and throws (returning
-/// encoded `0`) when the string is not a valid URL, so wrap it in a validation
-/// scope exactly like `to_js`/`transfer_to_js` above. Without this, under
-/// `BUN_JSC_validateExceptionChecks=1` the C++ ThrowScope's destructor
-/// `simulateThrow()` leaves `m_needExceptionCheck` set and the caller's
-/// `to_js_host_call` scope dtor asserts "unchecked exception".
-///
-/// PORT NOTE: Zig's `toJSDOMURL` returns bare `JSValue` (no `JSError!`), which
-/// is a latent spec gap — it relies on the generated `toJSHostCall` thunk's
-/// `assertExceptionPresenceMatches(normal == .zero)` to satisfy the check. The
-/// Rust port routes the FFI through `from_js_host_call` so the exception is
-/// observed at the call site and surfaced as `Err(JsError::Thrown)`.
 #[track_caller]
 pub fn to_jsdomurl(this: &mut String, global_object: &JSGlobalObject) -> JsResult<JSValue> {
     crate::from_js_host_call(global_object, || BunString__toJSDOMURL(global_object, this))
@@ -276,10 +254,6 @@ pub fn js_escape_reg_exp_for_package_name_matching(
 pub mod unicode_testing_apis {
     use super::*;
 
-    /// Used in JS tests, see `internal-for-testing.ts`.
-    /// Exercises the `sentinel = true` path of `toUTF16AllocForReal`, which is
-    /// otherwise only reachable from Windows-only code (`bun build --compile`
-    /// metadata in `src/windows.zig`).
     #[bun_jsc::host_fn]
     pub fn to_utf16_alloc_sentinel(
         global_this: &JSGlobalObject,

@@ -71,10 +71,6 @@ bun_output::declare_scope!(napi, visible);
 #[allow(deprecated)] // bun_jsc gates the c_api module as deprecated; no replacement path yet.
 const TODO_EXCEPTION: jsc::c_api::ExceptionRef = ptr::null_mut();
 
-// Local extern declarations for JavaScriptCore C API symbols not yet surfaced
-// through the active `jsc::c_api` module (the full `javascript_core_c_api.rs`
-// is still gated). Signatures mirror `<JavaScriptCore/JSObjectRef.h>` /
-// `<JavaScriptCore/JSTypedArray.h>`.
 #[allow(deprecated)] // jsc::c_api::{JSObjectRef,JSValueRef,ExceptionRef} — bun_jsc gates the c_api module as deprecated; no replacement path yet.
 unsafe extern "C" {
     fn JSObjectGetPrototype(
@@ -99,12 +95,6 @@ unsafe extern "C" {
 // ──────────────────────────────────────────────────────────────────────────
 
 bun_opaque::opaque_ffi! {
-    /// This is `struct napi_env__` from napi.h
-    ///
-    /// Opaque C++ object. `!Freeze` so that `&NapiEnv` does not assert
-    /// immutability — C++ mutates the underlying object (e.g.
-    /// `napi_set_last_error`, handle-scope push/pop) through pointers derived
-    /// from `&self`. See [`Self::as_mut_ptr`].
     pub struct NapiEnv;
 }
 
@@ -217,11 +207,6 @@ bun_opaque::opaque_ffi! {
     pub struct NapiHandleScope;
 }
 
-// `crate::ffi::ffi_body` re-declares `NapiHandleScope__{open,close}` locally
-// with `*mut c_void` (it only needs the symbol address for TCC injection and
-// cannot name the private `NapiHandleScope` type). Both declarations are
-// ABI-identical thin pointers; suppress the duplicate-signature lint here as
-// well since which side it fires on depends on module traversal order.
 #[allow(clashing_extern_declarations)]
 unsafe extern "C" {
     pub(super) fn NapiHandleScope__open(env: *mut NapiEnv, escapable: bool)
@@ -866,14 +851,6 @@ unsafe extern "C" {
         bufsize: usize,
         result_ptr: *mut usize,
     ) -> napi_status;
-    /// Copies a JavaScript string into a UTF-8 string buffer. The result is the
-    /// number of bytes (excluding the null terminator) copied into buf.
-    /// A sufficient buffer size should be greater than the length of string,
-    /// reserving space for null terminator.
-    /// If bufsize is insufficient, the string will be truncated and null terminated.
-    /// If buf is NULL, this method returns the length of the string (in bytes)
-    /// via the result parameter.
-    /// The result argument is optional unless buf is NULL.
     pub(super) fn napi_get_value_string_utf8(
         env: napi_env,
         value: napi_value,
@@ -929,15 +906,6 @@ pub(super) extern "C" fn napi_get_prototype(
     );
     env.ok()
 }
-
-// TODO: bind JSC::ownKeys
-// pub extern "C" fn napi_get_property_names(env: napi_env, object: napi_value, result: *mut napi_value) -> napi_status {
-//     log("napi_get_property_names");
-//     if !object.is_object() {
-//         return .object_expected;
-//     }
-//     result.* =
-// }
 
 unsafe extern "C" {
     pub(super) fn napi_set_element(
@@ -2407,16 +2375,6 @@ pub(super) extern "C" fn napi_internal_enqueue_finalizer(
 
 // TODO: generate comptime version of this instead of runtime checking
 pub struct ThreadSafeFunction {
-    /// thread-safe functions can be "referenced" and "unreferenced". A
-    /// "referenced" thread-safe function will cause the event loop on the thread
-    /// on which it is created to remain alive until the thread-safe function is
-    /// destroyed. In contrast, an "unreferenced" thread-safe function will not
-    /// prevent the event loop from exiting. The APIs napi_ref_threadsafe_function
-    /// and napi_unref_threadsafe_function exist for this purpose.
-    ///
-    /// Neither does napi_unref_threadsafe_function mark the thread-safe
-    /// functions as able to be destroyed nor does napi_ref_threadsafe_function
-    /// prevent it from being destroyed.
     pub poll_ref: KeepAlive,
 
     // User implementation error can cause this number to go negative.
@@ -2497,12 +2455,6 @@ impl ThreadSafeFunction {
         bun_core::heap::into_raw(Box::new(init))
     }
 
-    // This has two states:
-    // 1. We need to run potentially multiple tasks.
-    // 2. We need to finalize the ThreadSafeFunction.
-    //
-    // Dispatched via the event-loop task table (`dispatch.rs`), which hands us
-    // a `*mut ThreadSafeFunction`; the signature is fixed by that registry.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_dispatch(this: *mut ThreadSafeFunction) {
         // SAFETY: `this` is a live heap allocation owned by the event loop dispatch.
@@ -2527,16 +2479,6 @@ impl ThreadSafeFunction {
                     .dispatch_state
                     .store(DispatchState::Pending as u8, Ordering::SeqCst);
             } else {
-                // We're done running tasks, for now. Transition Running → Idle
-                // via CAS instead of an unconditional store: between
-                // dispatch_one() observing an empty queue (and dropping the
-                // lock) and this point, another thread may have enqueued an
-                // item and called schedule_dispatch(). That swap() saw
-                // Running, so it intentionally did *not* schedule a new
-                // concurrent task — it relies on this loop to pick the item
-                // up. If we blindly stored Idle we'd overwrite that Pending
-                // and the callback would be dropped (flaky lost-wakeup under
-                // load). On CAS failure, loop and re-drain.
                 if self_
                     .dispatch_state
                     .compare_exchange(
@@ -2552,11 +2494,6 @@ impl ThreadSafeFunction {
                 // state was bumped to Pending by enqueue()/release(); re-dispatch.
             }
         }
-
-        // Node sets a maximum number of runs per ThreadSafeFunction to 1,000.
-        // We don't set a max. I would like to see an issue caused by not
-        // setting a max before we do set a max. It is better for performance to
-        // not add unnecessary event loop ticks.
     }
 
     pub fn is_closing(&self) -> bool {
@@ -2738,10 +2675,6 @@ impl ThreadSafeFunction {
         self_.unref();
 
         if let Some(fun) = self_.finalizer_fun {
-            // PORT NOTE: ownership transfer of `env` into the Finalizer. We clone (bumps the
-            // external refcount) and let the original drop with the Box below — net refcount
-            // delta is zero, equivalent to the Zig move. Avoids writing a zeroed `NonNull`
-            // sentinel back into the field, which is UB for `ExternalShared<T>`.
             let env = self_.env.clone();
             let finalizer = Finalizer {
                 env,
@@ -2966,12 +2899,6 @@ const NAPI_AUTO_LENGTH: usize = usize::MAX;
 // V8 API symbol references (DCE suppression)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// v8:: C++ symbols defined in v8.cpp
-///
-/// Do not call these at runtime, as they do not contain type and callconv info. They are simply
-/// used for DCE suppression and asserting that the symbols exist at link-time.
-///
-// TODO: write a script to generate this struct. ideally it wouldn't even need to be committed to source.
 #[cfg(not(windows))]
 mod v8_api {
     use core::ffi::c_void;
@@ -3072,16 +2999,6 @@ mod v8_api {
 #[cfg(windows)]
 mod v8_api {
     use core::ffi::c_void;
-    // MSVC name mangling is different than it is on unix.
-    // To make this easier to deal with, this script generates the list of functions.
-    //
-    // dumpbin .\build\CMakeFiles\bun-debug.dir\src\bun.js\bindings\v8\*.cpp.obj /symbols | where-object { $_.Contains(' node::') -or $_.Contains(' v8::') } | foreach-object { (($_ -split "\|")[1] -split " ")[1] } | ForEach-Object { "extern fn @`"${_}`"() *anyopaque;" }
-    //
-    // MSVC-mangled symbol names contain `?@$` and are not valid Rust identifiers, so each entry
-    // is exposed under a Rust-safe alias via `#[link_name = "..."]`. The list is purely for DCE
-    // suppression / link-time existence checks and has no runtime callers — only the symbol
-    // *address* is taken (see `fix_dead_code_elimination`). Keep in sync with the Zig V8API
-    // windows arm in src/runtime/napi/napi.zig.
     #[rustfmt::skip]
     unsafe extern "C" {
         #[link_name = "?TryGetCurrent@Isolate@v8@@SAPEAV12@XZ"]
@@ -3756,10 +3673,6 @@ pub fn fix_dead_code_elimination() {
         node_api_create_external_string_utf16,
     );
 
-    // uv_functions_to_export
-    // TODO(port): Zig iterates std.meta.declarations(uv_functions_to_export) — Rust has no
-    // reflection over extern blocks. Script-generate this black_box list from
-    // the `uv_functions_to_export` module above, or rely on `#[used]` static fn-ptr arrays.
     #[cfg(unix)]
     {
         use uv_functions_to_export::*;
@@ -4277,14 +4190,6 @@ impl NapiFinalizerTask {
 
         if vm.is_shutting_down() {
             if vm.has_run_cleanup_hooks() {
-                // `on_exit()` already drained cleanup hooks; we are inside the
-                // final `collectNow()` (Heap::sweepArrayBuffers) and the JSC
-                // VM is being torn down. The cleanup-hook list will never be
-                // walked again, and running the user finalizer here (mid-GC,
-                // with the global about to be freed) is unsafe. Drop the task
-                // so the `Box<NapiFinalizerTask>` and its `NapiEnvRef` are
-                // released; the addon's external data is reclaimed by the OS
-                // at process exit.
                 drop(self);
                 return;
             }

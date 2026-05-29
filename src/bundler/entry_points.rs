@@ -10,10 +10,6 @@ use bun_wyhash::{self, Wyhash11};
 use crate::Transpiler;
 use bun_js_parser as js_ast;
 
-// PORT NOTE: `Path`/`PathName` come from the lower-tier `bun_paths::fs` shim
-// (lifetime-erased `'static` slices) so `bun_ast::Source` field types line up;
-// `FileSystem` is the real `bun_resolver::fs` singleton now that
-// `bun_resolver` is in this crate's dep set.
 pub mod Fs {
     pub use bun_paths::fs::{Path, PathName};
     pub use bun_resolver::fs::FileSystem;
@@ -52,16 +48,6 @@ impl FallbackEntryPoint {
         // TODO(port): TranspilerType trait bound — body reads `.options.framework` and `.arena`.
         TranspilerType: TranspilerLike,
     {
-        // This is *extremely* naive.
-        // The basic idea here is this:
-        // --
-        // import * as EntryPoint from 'entry-point';
-        // import boot from 'framework';
-        // boot(EntryPoint);
-        // --
-        // We go through the steps of printing the code -- only to then parse/transpile it because
-        // we want it to go through the linker and the rest of the transpilation process
-
         let disable_css_imports = transpiler
             .options()
             .framework
@@ -70,15 +56,6 @@ impl FallbackEntryPoint {
             .client_css_in_js
             != ClientCssInJs::AutoOnImportCss;
 
-        // PORT NOTE: self-referential — when the rendered code fits in
-        // `entry.code_buffer` the Source borrows it (disjoint-field write to
-        // `entry.source` while `entry.code_buffer` is shared-borrowed). On
-        // overflow the Source owns the bytes via `Cow::Owned` (Zig allocated
-        // from `transpiler.arena`; here the Source owns it directly so Drop
-        // frees it).
-        // PORT NOTE: assemble bytes directly (not `write!`+`BStr`) so a
-        // non-UTF-8 byte in `input_path` is emitted verbatim like Zig `{s}`,
-        // not lossily replaced with U+FFFD by `BStr as Display`.
         macro_rules! render_into_entry {
             ($prefix:expr, $suffix:expr) => {{
                 let prefix: &[u8] = $prefix;
@@ -138,10 +115,6 @@ impl ClientEntryPoint {
         strings::starts_with(b"entry.", extname)
     }
 
-    // PORT NOTE: takes the lifetime-generic `bun_paths::fs::PathName<'_>` (not the
-    // `'static`-field `bun_paths::fs::PathName<'static>`) so callers with a borrowed path
-    // (e.g. `bun_runtime::filesystem_router::get_script_src_string`) needn't forge
-    // `'static`. The body only copies `dir`/`base`/`ext` into `outbuffer`.
     pub fn generate_entry_point_path<'a>(
         outbuffer: &'a mut [u8],
         original_path: &bun_paths::fs::PathName<'_>,
@@ -191,15 +164,6 @@ impl ClientEntryPoint {
         TranspilerType: TranspilerLike,
     {
         let entry = self;
-        // This is *extremely* naive.
-        // The basic idea here is this:
-        // --
-        // import * as EntryPoint from 'entry-point';
-        // import boot from 'framework';
-        // boot(EntryPoint);
-        // --
-        // We go through the steps of printing the code -- only to then parse/transpile it because
-        // we want it to go through the linker and the rest of the transpilation process
 
         let dir_to_use: &[u8] = original_path.dir_with_trailing_slash();
         let disable_css_imports = transpiler
@@ -279,11 +243,6 @@ impl ServerEntryPoint {
         is_hot_reload_enabled: bool,
         path_to_use: &[u8],
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        // Use the global arena so this buffer's lifetime is decoupled
-        // from whichever arena the caller's VM happens to be using; the
-        // slice is read later from `getHardcodedModule` which outlives any
-        // per-transpile arena.
         let code: Vec<u8> = 'brk: {
             if is_hot_reload_enabled {
                 let mut v: Vec<u8> = Vec::new();
@@ -360,11 +319,6 @@ impl ServerEntryPoint {
     }
 }
 
-// This is not very fast. The idea is: we want to generate a unique entry point
-// per macro function export that registers the macro Registering the macro
-// happens in VirtualMachine We "register" it which just marks the JSValue as
-// protected. This is mostly a workaround for being unable to call ESM exported
-// functions from C++. When that is resolved, we should remove this.
 pub struct MacroEntryPoint {
     pub code_buffer: [u8; MAX_PATH_BYTES * 2 + 500],
     pub output_code_buffer: [u8; MAX_PATH_BYTES * 8 + 500],

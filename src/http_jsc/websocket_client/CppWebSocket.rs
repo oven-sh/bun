@@ -22,12 +22,6 @@ bun_opaque::opaque_ffi! {
     pub struct CppWebSocket;
 }
 
-// FFI surface for `WebCore::WebSocket` (src/jsc/bindings/webcore/WebSocket.cpp).
-// Kept private to this module — the safe wrappers below are the only callers.
-//
-// `CppWebSocket` is an UnsafeCell-backed opaque ZST, so `&CppWebSocket` carries
-// no `readonly`/`noalias` — the C++ side owns and mutates all state behind it.
-// Imports whose only non-value param is that handle are declared `safe fn`.
 unsafe extern "C" {
     fn WebSocket__didConnect(
         websocket_context: &CppWebSocket,
@@ -63,11 +57,6 @@ unsafe extern "C" {
     fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: *mut BunString);
 }
 
-// PORT NOTE: receivers are `&self` (not `&mut self`) because `CppWebSocket` is
-// an opaque C++ handle with no Rust-visible state; mutation happens entirely on
-// the C++ side. Callers hold `NonNull<CppWebSocket>` and dispatch via shared
-// borrows (often while `&mut WebSocket<SSL>` is also live), so `&mut self`
-// would force needless `unsafe { &mut *ptr }` at every site.
 impl CppWebSocket {
     pub(crate) fn did_abrupt_close(&self, reason: ErrorCode) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
@@ -194,12 +183,6 @@ impl CppWebSocket {
     }
 }
 
-/// RAII owner of one pending-activity ref on a C++ `WebCore::WebSocket`.
-///
-/// Construction calls [`CppWebSocket::r#ref`]; `Drop` calls
-/// [`CppWebSocket::unref`]. Replaces the Zig `ws.ref(); defer ws.unref();`
-/// pattern when the ref must outlive the constructing scope (e.g. stored on a
-/// queued task).
 pub struct CppWebSocketRef(core::ptr::NonNull<CppWebSocket>);
 
 impl CppWebSocketRef {

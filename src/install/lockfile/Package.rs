@@ -12,26 +12,20 @@ use bun_semver::{self as semver, ExternalString, String, Version as SemverVersio
 
 use crate::bun_json::{Expr, ExprData};
 use crate::dependency::{Behavior, DependencyExt as _, TagExt as _};
+use crate::lockfile_real as lockfile;
+use crate::lockfile_real::{
+    Cloner, DependencySlice, Lockfile, PackageIDSlice, PatchedDep, PendingResolution,
+    PositionalStream, Stream, StringBuilder, TrustedDependenciesSet,
+};
 use crate::repository::RepositoryExt as _;
+use crate::resolution_real::{ResolutionType, Tag as ResolutionTag, TaggedValue};
+use crate::versioned_url::VersionedURLType;
 use crate::{
     self as install, Aligner, Bin, Dependency, ExternalStringList, ExternalStringMap, Features,
     Npm, PackageID, PackageJSON, PackageManager, PackageNameHash, Repository,
     TruncatedPackageNameHash, UpdateRequest, bin, default_trusted_dependencies, dependency,
     initialize_store, invalid_package_id,
 };
-// `Package.rs` is mounted as `crate::lockfile_real::package`; the parent module
-// (`super`) is the real `lockfile.rs`, distinct from the `crate::lockfile`
-// stub that lib.rs exposes for downstream crates during the staged port.
-// PORT NOTE: bare `use super as lockfile;` fails when this file is reached via
-// `#[path]` from a non-module context (rust-lang/rust#48067). Name the parent
-// module by its absolute crate path instead.
-use crate::lockfile_real as lockfile;
-use crate::lockfile_real::{
-    Cloner, DependencySlice, Lockfile, PackageIDSlice, PatchedDep, PendingResolution,
-    PositionalStream, Stream, StringBuilder, TrustedDependenciesSet,
-};
-use crate::resolution_real::{ResolutionType, Tag as ResolutionTag, TaggedValue};
-use crate::versioned_url::VersionedURLType;
 
 #[path = "Package/Meta.rs"]
 pub mod meta;
@@ -50,10 +44,6 @@ trait ExprStr {
     fn as_utf8<'b>(&self, bump: &'b bun_alloc::Arena) -> Option<&'b [u8]>;
 }
 impl ExprStr for Expr {
-    // Zig `Expr.asString` (expr.zig:477) — transparently transcodes UTF-16
-    // `EString`s. The earlier `is_utf8()` guard returned `None` for keys the
-    // lexer stored as UTF-16 (e.g. `\u`-escaped non-ASCII), tripping the
-    // `expect("unreachable")` callers below.
     #[inline]
     fn as_utf8<'b>(&self, bump: &'b bun_alloc::Arena) -> Option<&'b [u8]> {
         if let ExprData::EString(s) = &self.data {
@@ -63,16 +53,6 @@ impl ExprStr for Expr {
     }
 }
 
-// Zig: `pub fn Package(comptime SemverIntType: type) type { return extern struct { ... } }`
-// Defaulted to `u64` so bare `Package` matches Zig's primary `Package(u64)`
-// instantiation (the only one the lockfile/PM call sites name unqualified).
-//
-// PORT NOTE: `` cannot be used here — the derive
-// emits a `PackageField` enum with snake_case variants and an inherent
-// `__MAL_SIZES` const that fail to const-eval through the defaulted
-// `SemverIntType` param. The trait impl, field enum, and `PackageColumns` /
-// `PackageColumns` accessor traits are therefore expanded by hand below
-// (mirroring Zig's `MultiArrayList(Package).items(.field)`).
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Package<SemverIntType: VersionInt = u64> {
@@ -88,41 +68,16 @@ pub struct Package<SemverIntType: VersionInt = u64> {
     /// if resolutions[i] is an invalid package ID, then dependencies[i] is not resolved
     pub dependencies: DependencySlice,
 
-    /// The resolved package IDs for this package's dependencies. Instead of storing this
-    /// on the `Dependency` struct within `.dependencies`, it is stored on the package itself
-    /// so we can access it faster.
-    ///
-    /// Each index in this array corresponds to the same index in dependencies.
-    /// Each value in this array corresponds to the resolved package ID for that dependency.
-    ///
-    /// So this is how you say "what package ID for lodash does this package actually resolve to?"
-    ///
-    /// By default, the underlying buffer is filled with "invalid_id" to indicate this package ID
-    /// was not resolved
     pub resolutions: PackageIDSlice,
 
     pub meta: Meta,
     pub bin: Bin,
 
-    /// If any of these scripts run, they will run in order:
-    /// 1. preinstall
-    /// 2. install
-    /// 3. postinstall
-    /// 4. preprepare
-    /// 5. prepare
-    /// 6. postprepare
     pub scripts: Scripts,
 }
 
 pub type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
 
-// ─── ResolverContext ─────────────────────────────────────────────────────────
-//
-// Zig used `comptime ResolverContext: type` for `parse`/`parseWithJSON` and
-// branched on `ResolverContext == void` / `== PackageManager.GitResolver` at
-// comptime. Rust models this as a trait with associated consts; concrete
-// resolvers (folder/cache/git) override what they need. The `()` impl gives
-// the `void` semantics.
 pub trait ResolverContext {
     /// Zig: `comptime ResolverContext == void`.
     const IS_VOID: bool = false;
@@ -138,31 +93,12 @@ pub trait ResolverContext {
     /// `resolve`. Default no-op for void/folder resolvers that don't need it.
     fn count(&mut self, _builder: &mut StringBuilder<'_>, _json: &Expr) {}
 
-    /// Zig: `resolver.resolve(builder, json)` — produces the package's
-    /// `Resolution`. Only called when `!IS_VOID`.
-    ///
-    /// No default body: Zig enforced this at comptime (a non-void resolver
-    /// without `resolve` failed to compile). Each concrete resolver supplies
-    /// its own body; `()` returns the zero-value `Resolution` to mirror Zig's
-    /// "void leaves `package.resolution` uninitialized" path.
-    ///
-    /// Zig threaded `comptime IntType` through `parseWithJSON`, but the only
-    /// instantiation is `u64` (`Package.resolution: ResolutionType<u64>`), so
-    /// the trait method is monomorphic — keeps `CacheFolderResolver::resolve`
-    /// free of an identity `transmute`.
     fn resolve(
         &mut self,
         builder: &mut StringBuilder<'_>,
         json: &Expr,
     ) -> Result<ResolutionType<u64>, bun_core::Error>;
 
-    // ── GitResolver-only surface ────────────────────────────────────────────
-    // Zig accessed `resolver.resolved`, `resolver.new_name`, `resolver.dep_id`
-    // directly when `ResolverContext == GitResolver`. Trait methods so non-git
-    // resolvers don't need the fields; default impls are dead code (gated on
-    // `IS_GIT_RESOLVER`). The bodies here are never executed — calls are
-    // statically guarded by `if R::IS_GIT_RESOLVER` — so a debug assertion
-    // documents the invariant without panicking in release.
     fn resolution(&self) -> &ResolutionType<u64> {
         debug_assert!(
             false,
@@ -196,26 +132,10 @@ impl ResolverContext for () {
         _builder: &mut StringBuilder<'_>,
         _json: &Expr,
     ) -> Result<ResolutionType<u64>, bun_core::Error> {
-        // Zig: `if (comptime ResolverContext != void) { … }` — the void
-        // resolver never assigned `package.resolution`, so it kept its
-        // zero-initialized value. The call site still gates on `!IS_VOID`,
-        // but provide the equivalent behavior for trait completeness.
         Ok(ResolutionType::default())
     }
 }
 
-// ─── ResolverContextDyn ──────────────────────────────────────────────────────
-//
-// Object-safe projection of `ResolverContext` so the ~960-line body of
-// `parse_with_json` is compiled exactly once instead of being re-stamped per
-// `R` (six instantiations × ~49kB ≈ 292kB of identical machine code, plus a
-// duplicate `<()>` copy across CGUs). The associated consts become `&self`
-// predicates; everything else forwards 1:1. The generic `parse_with_json<R>`
-// stays as a thin shim that erases `&mut R` → `&mut dyn ResolverContextDyn`
-// and delegates to the non-generic `parse_with_json_impl`.
-//
-// `count`/`resolve` keep their `StringBuilder<'_>` borrow — lifetimes are
-// permitted on object-safe trait methods, only type generics are not.
 pub(crate) trait ResolverContextDyn {
     fn is_void(&self) -> bool;
     fn is_git(&self) -> bool;
@@ -284,11 +204,6 @@ impl<R: ResolverContext> ResolverContextDyn for R {
     }
 }
 
-/// Comparator for the post-build dependency sort. Hoisted out of
-/// `parse_with_json_impl` so `<[Dependency]>::sort_by` is instantiated once
-/// (the closure it wraps is zero-capture modulo `buf`, and the impl fn is
-/// itself non-generic, so the 6.5kB pdqsort + 2.2kB drift is emitted exactly
-/// once instead of per-`R`).
 #[inline]
 fn dep_sort_cmp(buf: &[u8], a: &Dependency, b: &Dependency) -> core::cmp::Ordering {
     // Zig used `std.sort.pdq` with a `<` predicate. `slice::sort_by` requires
@@ -405,33 +320,13 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
     }
 }
 
-// PORT NOTE: `clone` / `from_package_json` / `from_npm` / `parse*` all interact
-// with `Lockfile`, whose package list is concretely `MultiArrayList<Package<u64>>`.
-// Zig's `Package(SemverIntType)` is only ever instantiated at `u64` for these
-// paths (the `u32` instantiation is migration-only and routed through
-// `Serializer::load`). Binding the impl to `u64` avoids spurious
-// `Package<SemverIntType>` ≠ `Package<u64>` mismatches at every Lockfile call
-// site.
 impl Package<u64> {
     pub fn clone(&self, cloner: &mut Cloner) -> Result<PackageID, bun_core::Error> {
-        // TODO(port): narrow error set
-        // PORT NOTE: Zig passes (`pm`, `old`, `new`, `package_id_mapping`,
-        // `cloner`) separately, but `cloner` already owns `&mut` to all four.
-        // Rust borrowck rejects the redundant aliasing at the call site, so
-        // route everything through `cloner`'s disjoint fields here instead.
-        // `old`/`new`/`mapping` are reborrowed for the whole body (disjoint
-        // from `cloner.clone_queue` / `.trees_count` / `.old_preinstall_state`);
-        // `manager` is accessed via `cloner.manager` at each use so the borrow
-        // doesn't span the `cloner.*` accesses below.
         let old = &mut *cloner.old;
         let new = &mut *cloner.lockfile;
         let package_id_mapping = &mut *cloner.mapping;
         let old_string_buf = old.buffers.string_bytes.as_slice();
         let old_extern_string_buf = old.buffers.extern_strings.as_slice();
-        // PORT NOTE: `string_builder!` split-borrows only `new.buffers
-        // .string_bytes` + `new.string_pool`, leaving sibling buffer fields
-        // (`dependencies`, `resolutions`, `extern_strings`, `packages`) free
-        // for the disjoint borrows below.
         let mut builder_ = crate::string_builder!(new);
         let builder = &mut builder_;
         bun_output::scoped_log!(
@@ -474,10 +369,6 @@ impl Package<u64> {
         let end = prev_len + (old_dependencies.len() as u32);
         let max_package_id = old.packages.len() as PackageID;
 
-        // Grow both buffers by `old_dependencies.len()`, default-filling the
-        // new tail. The zip-loops further below overwrite each slot with the
-        // real cloned value; pre-filling avoids ever forming `&mut T` over
-        // uninitialized storage (the old `set_len`-then-assign dropped uninit).
         bun_core::vec::extend_from_fn(
             &mut new.buffers.dependencies,
             old_dependencies.len(),
@@ -493,22 +384,10 @@ impl Package<u64> {
         // Default-fill the tail so it is valid before `bin.clone` overwrites
         // it (replaces `reserve` + raw `set_len`).
         bun_core::vec::grow_default(&mut new.buffers.extern_strings, new_extern_string_count);
-        // PORT NOTE: Zig passes both `new.buffers.extern_strings.items` (full slice) and a
-        // tail subslice into `bin.clone`; the full slice is only used to compute the tail's
-        // offset for `ExternalStringList::init`. In Rust those two views would alias, so
-        // `Bin::clone_with_buffers` takes the precomputed offset directly.
         let new_extern_strings_start = new.buffers.extern_strings.len() - new_extern_string_count;
 
         let id = new.packages.len() as PackageID;
 
-        // PORT NOTE: Zig calls `appendPackageWithID` mid-body while still
-        // holding live slices into `new.buffers` and the `builder`. Rust can't
-        // express that (the method borrows `&mut Lockfile` whole), so build the
-        // `Package` value and clone the dependency strings *first* (only needs
-        // disjoint buffer fields), drop the builder, then append, then write
-        // resolutions. `appendPackageWithID` touches `packages` /
-        // `package_index` / `string_bytes` only — none of which the dependency
-        // pass mutates — so the reorder is observationally identical.
         let pkg_value = Package {
             name: builder
                 .append_with_hash::<String>(self.name.slice(old_string_buf), self.name_hash),
@@ -666,11 +545,6 @@ impl Package<u64> {
                     break;
                 }
             }
-
-            // We lose the bin info here
-            // package.bin = package_version.bin.clone(string_buf, manifest.extern_strings_bin_entries, extern_strings_list.items, extern_strings_slice, @TypeOf(&string_builder), &string_builder);
-            // and the integriy hash
-            // package.meta.integrity = package_version.integrity;
 
             package.meta.arch = package_json.arch;
             package.meta.os = package_json.os;
@@ -1014,10 +888,6 @@ impl DiffSummary {
 }
 
 impl Diff {
-    // PORT NOTE: Zig's `Package` here is the canonical `Package(u64)` (the only
-    // instantiation `Lockfile` ever holds). Dropping the generic avoids a
-    // spurious `Package<I>` ≠ `Package<u64>` mismatch on the recursive call
-    // through `from_lockfile.packages.get(...)`.
     pub(crate) fn generate(
         pm: &mut PackageManager,
         log: &mut bun_ast::Log,
@@ -1031,14 +901,6 @@ impl Diff {
         // TODO(port): narrow error set
         let mut summary = DiffSummary::default();
         let is_root = id_mapping.is_some();
-        // PORT NOTE: Zig held `to_deps` as a mutable slice binding and reassigned
-        // it after `parseWithJSON` (which may grow `to_lockfile.buffers
-        // .dependencies` and invalidate the old slice). Mirror that with raw fat
-        // pointers so the `&mut to_lockfile`/`&mut from_lockfile` reborrows below
-        // (sort, recursive `generate`) don't conflict with these read views; the
-        // recursive call only sorts `overrides`/`catalogs` and never reallocates
-        // either lockfile's `buffers.dependencies`/`resolutions`, so the raw
-        // pointers remain valid for the loop body.
         let mut to_deps: bun_ptr::RawSlice<Dependency> = to
             .dependencies
             .get(to_lockfile.buffers.dependencies.as_slice())
@@ -1068,10 +930,6 @@ impl Diff {
                 Output::pretty_errorln(format_args!("Overrides changed since last install"));
             }
         } else {
-            // PORT NOTE: reshaped for borrowck — Zig passed `from_lockfile`
-            // twice (once as `&mut self` via `.overrides`, once as `lockfile`).
-            // `OverrideMap::sort` only reads `lockfile.buffers.string_bytes`,
-            // so split the borrow at the field.
             lockfile::OverrideMap::sort(
                 &mut from_lockfile.overrides,
                 from_lockfile.buffers.string_bytes.as_slice(),
@@ -1216,21 +1074,6 @@ impl Diff {
         }
 
         'trusted_dependencies: {
-            // trusted dependency diff
-            //
-            // situations:
-            // 1 - Both old lockfile and new lockfile use default trusted dependencies, no diffs
-            // 2 - Both exist, only diffs are from additions and removals
-            //
-            // 3 - Old lockfile has trusted dependencies, new lockfile does not. Added are dependencies
-            //     from default list that didn't exist previously. We need to be careful not to add these
-            //     to the new lockfile. Removed are dependencies from old list that
-            //     don't exist in the default list.
-            //
-            // 4 - Old lockfile used the default list, new lockfile has trusted dependencies. Added
-            //     are dependencies are all from the new lockfile. Removed is empty because the default
-            //     list isn't appended to the lockfile.
-
             // 1
             if from_lockfile.trusted_dependencies.is_none()
                 && to_lockfile.trusted_dependencies.is_none()
@@ -1475,17 +1318,8 @@ impl Diff {
                         );
                         let _ = package_json_path.append(b"package.json"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
-                        // PORT NOTE: `bun.sys.File.toSource` was removed from
-                        // T1 (`bun_sys`) because `bun_ast::Source` lives in T2.
-                        // Route through the workspace cache's path-based getter
-                        // instead, which both reads and parses.
                         let mut workspace_pkg = Package::default();
 
-                        // The cache entry borrows `pm.workspace_package_json_cache`;
-                        // capture a stable BACKREF to its `source` so the
-                        // `&mut pm` reborrow below doesn't conflict. The entry
-                        // lives in a `StringHashMap` whose backing storage is
-                        // not touched by `parse_with_json`.
                         let (source_ref, json_root): (bun_ptr::ParentRef<bun_ast::Source>, Expr) =
                             match pm
                                 .workspace_package_json_cache
@@ -1560,23 +1394,6 @@ impl Diff {
                 }
             }
 
-            // We found a changed dependency!
-            //
-            // If only the *version literal* changed and the previously-resolved
-            // package still satisfies the new range, keep the existing
-            // resolution. Otherwise widening a range (e.g. `"4.0.0"` → `"*"`)
-            // re-resolves to latest on the next `bun add <unrelated>`, which
-            // surprises migrations from npm/pnpm lockfiles whose package.json
-            // range diverged from the locked version. This matches npm's
-            // sticky-lockfile behaviour and lets `Lockfile::get_package_id`
-            // apply its order-independence guard without overriding a locked
-            // pin.
-            //
-            // Skipped when the dependency is an explicit update target
-            // (`bun update <pkg>` or bare `bun update`): the user is asking
-            // for a fresh resolve and the old resolution must not be
-            // preserved. Same gate as the `Dependency::eql == true` branch
-            // above.
             let is_explicit_update_target = matches!(update_requests, Some(updates)
                 if updates.is_empty()
                     || updates.iter().any(|r| r.name_hash == from_dep.name_hash));
@@ -1658,10 +1475,6 @@ impl Package<u64> {
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         initialize_store();
-        // Zig threaded `lockfile.allocator` for the JSON arena. The returned
-        // `Expr` tree only needs to live until `parse_with_json` finishes, so
-        // a function-local arena is sufficient (matches Scripts.rs / lockfile.rs
-        // call sites) and avoids leaking.
         let bump = bun_alloc::Arena::new();
         let json = match crate::bun_json::parse_package_json_utf8(source, log, &bump) {
             Ok(j) => j,
@@ -1709,14 +1522,6 @@ impl Package<u64> {
         self.parse(lockfile, pm, log, source, resolver, features)
     }
 
-    // Zig: `comptime group: DependencyGroup`, `comptime features: Features`, `comptime tag: ?Dependency.Version.Tag`
-    // PERF(port): was comptime monomorphization on `group`/`tag` — profile if hot.
-    //
-    // PORT NOTE: Zig took `lockfile: *Lockfile`, but the live `StringBuilder`
-    // (also passed) already holds `&mut lockfile.buffers.string_bytes`. The
-    // body only otherwise touches `workspace_paths` / `workspace_versions`,
-    // so accept those two maps directly and read `string_bytes` via the
-    // builder — caller can then split-borrow at the field level.
     fn parse_dependency(
         workspace_paths: &mut lockfile::NameHashMap,
         workspace_versions: &mut lockfile::VersionHashMap,
@@ -1964,15 +1769,6 @@ impl Package<u64> {
                                     );
                                 #[cfg(windows)]
                                 {
-                                    // Zig spec (Package.zig:1175-1178) converts
-                                    // `relative_to_common_path_buf()[0..rel.len]` in place but then
-                                    // returns `rel`. With ALWAYS_COPY=false, `rel` may instead borrow
-                                    // RELATIVE_TO_BUF (resolve_path.rs early returns at L450/457/500/
-                                    // 522) or be `b""`. Re-deriving a slice of the common-path buf
-                                    // would yield stale bytes in those cases. Copy `rel` into the
-                                    // common-path scratch when it isn't already there, then convert
-                                    // and return that — preserving the spec's "return `rel`'s bytes"
-                                    // contract while avoiding aliasing UB.
                                     let len = rel.len();
                                     let common_raw = path::relative_to_common_path_buf();
                                     // `PathBuffer` is `repr(transparent)` over `[u8; N]`, so the
@@ -2154,15 +1950,7 @@ impl Package<u64> {
     ) -> Result<(), bun_core::Error> {
         #[allow(non_snake_case)]
         let FEATURES = features;
-        // TODO(port): narrow error set
-        // Zig threads `allocator` for `asString` transcoding; the Rust signature
-        // dropped it, so use a function-local arena (transcoded strings are only
-        // borrowed until `string_builder.append` copies them).
         let bump = bun_alloc::Arena::new();
-        // PORT NOTE: split-borrow `string_bytes`/`string_pool` so the dozens of
-        // disjoint `lockfile.{buffers.*, overrides, catalogs, workspace_*, …}`
-        // accesses below pass borrowck. Reads of `lockfile.buffers.string_bytes`
-        // must go through `string_builder.string_bytes` while it's live.
         let mut string_builder = crate::string_builder!(lockfile);
         let mut total_dependencies_count: u32 = 0;
 
@@ -2297,11 +2085,6 @@ impl Package<u64> {
         let mut workspace_names = workspace_map::WorkspaceMap::init();
         // defer workspace_names.deinit(); — Drop handles it
 
-        // pnpm/yarn synthesise an implicit `"*"` optional peer for entries
-        // that appear in `peerDependenciesMeta` but not in
-        // `peerDependencies`. Track the original key string so the
-        // post-build pass can emit a real `Dependency` for any meta-only
-        // names that nothing in the build loop consumed.
         let mut optional_peer_dependencies: ArrayHashMap<
             PackageNameHash,
             &[u8],
@@ -2376,14 +2159,6 @@ impl Package<u64> {
                         }
                         ExprData::EObject(obj) => {
                             if group.behavior.is_workspace() {
-                                // yarn workspaces expects a "workspaces" property shaped like this:
-                                //
-                                //    "workspaces": {
-                                //        "packages": [
-                                //           "path/to/package"
-                                //        ]
-                                //    }
-                                //
                                 if let Some(packages_query) = obj.as_property(b"packages") {
                                     let packages_expr = packages_query.expr;
                                     if !matches!(packages_expr.data, ExprData::EArray(_)) {
@@ -2560,21 +2335,6 @@ impl Package<u64> {
             );
         }
 
-        // PORT NOTE: Zig slices `lockfile.buffers.dependencies.items.ptr[off..total_len]`
-        // — i.e. into reserved-but-uncommitted capacity *without* bumping `items.len`.
-        // Mirroring that here matters: `parse_dependency` can return early with an error
-        // (e.g. `InstallFailed` for a non-matching `workspace:` range), and the caller
-        // may swallow it and re-enter for the next package. If we eagerly grow
-        // `dependencies` and then bail, `dependencies.len() != resolutions.len()` on the
-        // next call and the debug_assert above trips.
-        //
-        // Rather than `from_raw_parts_mut` over spare capacity (which yields a `&mut [T]`
-        // to uninitialized memory — UB, and `Dependency` is not `Copy` so indexed
-        // assignment would drop garbage), build into a local `Vec` and `append` into the
-        // lockfile buffer once all `?`-points are past. On early error the local vec is
-        // dropped and `lockfile.buffers.dependencies.len()` is left untouched, preserving
-        // the `== resolutions.len()` invariant exactly as the Zig spare-capacity write
-        // did. Capacity for the final `append` was reserved above so it does not realloc.
         let mut package_dependencies: Vec<Dependency> = Vec::with_capacity(total_len - off);
 
         'name: {
@@ -2667,11 +2427,6 @@ impl Package<u64> {
                                 let current_len = lockfile.buffers.extern_strings.len();
                                 let count = obj.properties.len_u32() as usize * 2;
                                 lockfile.buffers.extern_strings.reserve_exact(count);
-                                // Default-fill the tail; the loop below
-                                // overwrites each slot. Keeps every exposed
-                                // `ExternalString` valid even if `break 'bin`
-                                // fires partway through (replaces raw
-                                // `set_len`).
                                 let extern_strings = bun_core::vec::grow_default(
                                     &mut lockfile.buffers.extern_strings,
                                     count,
@@ -2701,10 +2456,6 @@ impl Package<u64> {
                                 if cfg!(debug_assertions) {
                                     debug_assert!(i == extern_strings.len());
                                 }
-                                // PORT NOTE: Zig passed the full extern_strings
-                                // buffer + tail subslice; `init` only needs the
-                                // tail's offset, so construct directly to avoid
-                                // the aliasing borrow.
                                 self.bin = Bin {
                                     tag: bin::Tag::Map,
                                     value: bin::Value {
@@ -2737,13 +2488,6 @@ impl Package<u64> {
             }
 
             if let Some(dirs) = json.as_property(b"directories") {
-                // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#directoriesbin
-                // Because of the way the bin directive works,
-                // specifying both a bin path and setting
-                // directories.bin is an error. If you want to
-                // specify individual files, use bin, and for all
-                // the files in an existing bin directory, use
-                // directories.bin.
                 if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
                     if let Some(str_) = bin_prop.expr.as_utf8(&bump) {
                         if !str_.is_empty() {
@@ -2867,12 +2611,6 @@ impl Package<u64> {
                                         ),
                                     };
 
-                                    // `Location::init_or_null` borrows `file` from
-                                    // `note_src.path.text`, which itself borrows
-                                    // `note_abs_path`; both drop before the log is
-                                    // printed. `Location::clone` deep-copies `file`
-                                    // into a `Cow::Owned`, matching the Zig
-                                    // `allocator.dupeZ` lifetime.
                                     notes.push(bun_ast::Data {
                                         text: b"Package name is also declared here".to_vec().into(),
                                         location: bun_ast::Location::init_or_null(
@@ -3005,11 +2743,6 @@ impl Package<u64> {
                                     value.loc,
                                 )? {
                                     let mut dep = dep_;
-                                    // swapRemove (not contains): drain names that
-                                    // have a real `peerDependencies` entry so the
-                                    // meta-only synthesis pass below only sees
-                                    // names that appear *only* in
-                                    // `peerDependenciesMeta`.
                                     if group.behavior.is_peer()
                                         && optional_peer_dependencies
                                             .swap_remove(&external_name.hash)
@@ -3036,12 +2769,6 @@ impl Package<u64> {
             }
         }
 
-        // Anything left in `optional_peer_dependencies` was listed only in
-        // `peerDependenciesMeta`. Synthesise an optional peer dep with
-        // version `"*"` so resolution can pick up a sibling install when
-        // one exists (matching pnpm/yarn). Webpack relies on this for
-        // `webpack-cli`, which it lists in meta but not in
-        // `peerDependencies`.
         let meta_only = optional_peer_dependencies.iterator();
         for entry in meta_only {
             let external_name = string_builder.append::<ExternalString>(*entry.value_ptr);
@@ -3096,10 +2823,6 @@ impl Package<u64> {
             .resize(total_len, invalid_package_id);
 
         let new_len = off + total_dependencies_count as usize;
-        // Capacity for `[off..total_len]` was reserved above; `append` is a
-        // single memcpy into it (no realloc). All `?`-points are past, so the
-        // `dependencies.len() == resolutions.len()` invariant is committed
-        // together with the `resolutions` resize/truncate that brackets this.
         debug_assert_eq!(lockfile.buffers.dependencies.len(), off);
         lockfile
             .buffers
@@ -3133,10 +2856,6 @@ impl Package<u64> {
                 has_workspaces = true;
             }
 
-            // `"workspaces"` being an object instead of an array is sometimes
-            // unexpected to people. therefore if you also are using workspaces,
-            // allow "catalog" and "catalogs" in top-level "package.json"
-            // so it's easier to guess.
             if !found_any_catalog_or_catalog_object && has_workspaces {
                 let _ =
                     lockfile
@@ -3179,11 +2898,6 @@ pub mod serializer {
         stream: &mut S,
     ) -> Result<(), bun_core::Error>
     where
-        // PORT NOTE: Zig threaded a separate `stream` (anytype) and `writer` over
-        // the same buffer. Two `&mut` to one object is UB in Rust regardless of
-        // access order, so the port collapses both roles onto one type —
-        // `Serializer::StreamType` impls both `PositionalStream` and
-        // `bun_io::Write`.
         S: PositionalStream + bun_io::Write,
     {
         // TODO(port): narrow error set
@@ -3236,11 +2950,6 @@ pub mod serializer {
                 let resolutions: &[Resolution<SemverIntType>] =
                     sliced.items::<"resolution", Resolution<SemverIntType>>();
                 for val in resolutions {
-                    // `ResolutionType::copy` builds a fresh zero-initialised
-                    // `Resolution` and writes only the active union member,
-                    // matching Zig `val.copy()`. A bare `*val` would serialise
-                    // garbage in the inactive union bytes (non-deterministic
-                    // lockfile output).
                     let copy = val.copy();
                     // SAFETY: Resolution is #[repr(C)] POD; reading raw bytes is sound.
                     stream.write_all(unsafe {
@@ -3268,10 +2977,6 @@ pub mod serializer {
         pub needs_update: bool,
     }
 
-    // PORT NOTE: Zig parameterised on `SemverIntType`, but the v2-migration arm
-    // below hard-codes `u32 → u64` (`VersionedURL.migrate()` returns `<u64>`).
-    // The only caller (`bun.lockb.rs`) instantiates at `u64`, so bind concretely
-    // instead of carrying a phantom generic that can't typecheck the migrate arm.
     pub(crate) fn load(
         stream: &mut Stream,
         end: usize,
@@ -3429,16 +3134,6 @@ pub mod serializer {
             if end_pos as u64 <= end_at {
                 let src = &stream.buffer[stream.pos..stream.pos + bytes.len()];
                 if matches!(field, PackageField::Resolution) {
-                    // Validate the tag discriminant on the *raw stream bytes*
-                    // before they are copied into the typed column. `ResolutionTag`
-                    // is a `#[repr(u8)]` enum with non-contiguous discriminants
-                    // (0,1,2,4,8,16,32,64,72,80,100); copying an out-of-range byte
-                    // into `ResolutionType.tag` and then reading it would be
-                    // immediate UB, and a `matches!` over all 11 typed variants is
-                    // provably exhaustive and would be optimized away. Check the
-                    // raw u8 here. Layout: `ResolutionType` is `#[repr(C)]
-                    // { tag: Tag, _padding: [u8; 7], value: ... }`, so the
-                    // discriminant is the first byte of each element.
                     let stride = mem::size_of::<ResolutionType<SemverIntType>>();
                     debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
                     for raw in src.chunks_exact(stride) {
@@ -3450,11 +3145,6 @@ pub mod serializer {
                     }
                 }
                 if matches!(field, PackageField::Meta) {
-                    // Same hardening as `Resolution` above: `Meta` embeds two
-                    // `#[repr(u8)]` enums (`Origin` = 0..=2 and
-                    // `HasInstallScript` = 0..=2). Copying an out-of-range byte
-                    // into either field and reading it back as the enum would
-                    // be immediate UB, so check the raw stream bytes first.
                     let stride = mem::size_of::<Meta>();
                     let origin_at = mem::offset_of!(Meta, origin);
                     let install_script_at = mem::offset_of!(Meta, has_install_script);

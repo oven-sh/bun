@@ -12,15 +12,6 @@ use super::ArrayList;
 // FontFaceProperty
 // ──────────────────────────────────────────────────────────────────────────
 
-/// A property within an `@font-face` rule.
-///
-/// See [FontFaceRule](FontFaceRule).
-//
-// blocked_on: properties::font::{FontFamily,FontWeight,FontStretch} +
-// properties::custom::CustomProperty (both `gated_prop!`-stubbed in
-// properties/mod.rs). The enum body un-gates with the variant payloads
-// once those leaves un-gate.
-
 pub enum FontFaceProperty {
     /// The `src` property.
     Source(ArrayList<Source>),
@@ -136,11 +127,6 @@ pub struct UnicodeRange {
     pub end: u32,
 }
 
-// blocked_on: Printer::write_fmt, Parser::{expect_ident_matching,position,
-// slice_from,next_including_whitespace,state,reset,
-// new_basic_unexpected_token_error}, Token shape (Dimension/Number/Delim
-// payloads), bun_core::{split_first,split_first_with_expected}.
-
 impl UnicodeRange {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // Attempt to optimize the range to use question mark syntax.
@@ -192,14 +178,6 @@ impl UnicodeRange {
 
     /// https://drafts.csswg.org/css-syntax/#urange-syntax
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<UnicodeRange> {
-        // <urange> =
-        //   u '+' <ident-token> '?'* |
-        //   u <dimension-token> '?'* |
-        //   u <number-token> '?'* |
-        //   u <number-token> <dimension-token> |
-        //   u <number-token> <number-token> |
-        //   u '+' '?'+
-
         input.expect_ident_matching(b"u")?;
         let after_u = input.position();
         Self::parse_tokens(input)?;
@@ -483,11 +461,6 @@ impl FontFormat {
 // Source / FontTechnology / UrlSource
 // ──────────────────────────────────────────────────────────────────────────
 
-/// A value for the [src](https://drafts.csswg.org/css-fonts/#src-desc)
-/// property in an `@font-face` rule.
-//
-// blocked_on: properties::font::FontFamily (gated_prop!).
-
 pub enum Source {
     /// A `url()` with optional format metadata.
     Url(UrlSource),
@@ -539,14 +512,6 @@ impl Source {
 
 #[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
 pub enum FontTechnology {
-    /// A font format keyword in the `format()` function of the
-    /// [src](https://drafts.csswg.org/css-fonts/#src-desc)
-    /// property of an `@font-face` rule.
-    /// A font features tech descriptor in the `tech()`function of the
-    /// [src](https://drafts.csswg.org/css-fonts/#font-features-tech-values)
-    /// property of an `@font-face` rule.
-    /// Supports OpenType Features.
-    /// https://docs.microsoft.com/en-us/typography/opentype/spec/featurelist
     FeaturesOpentype,
     /// Supports Apple Advanced Typography Font Features.
     /// https://developer.apple.com/fonts/TrueType-Reference-Manual/RM09/AppendixF.html
@@ -554,10 +519,6 @@ pub enum FontTechnology {
     /// Supports Graphite Table Format.
     /// https://scripts.sil.org/cms/scripts/render_download.php?site_id=nrsi&format=file&media_id=GraphiteBinaryFormat_3_0&filename=GraphiteBinaryFormat_3_0.pdf
     FeaturesGraphite,
-    /// A color font tech descriptor in the `tech()`function of the
-    /// [src](https://drafts.csswg.org/css-fonts/#src-desc)
-    /// property of an `@font-face` rule.
-    /// Supports the `COLR` v0 table.
     ColorColrv0,
     /// Supports the `COLR` v1 table.
     ColorColrv1,
@@ -588,11 +549,6 @@ pub struct UrlSource {
     /// Optional `tech()` function.
     pub tech: ArrayList<FontTechnology>,
 }
-
-// blocked_on: Url::{parse,to_css}, FontFormat::{parse,to_css},
-// FontTechnology::{parse,to_css}, Parser::{try_parse_with,
-// expect_function_matching,parse_nested_block,parse_list},
-// css::{void_wrap,to_css::from_list}, DeepClone.
 
 impl UrlSource {
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<UrlSource> {
@@ -699,16 +655,6 @@ impl FontFaceRule {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct FontFaceDeclarationParser;
-
-// PORT NOTE: Zig modeled `AtRuleParser` / `QualifiedRuleParser` /
-// `DeclarationParser` / `RuleBodyItemParser` as nested namespaces with
-// associated consts + fns. In Rust these are trait impls on
-// `FontFaceDeclarationParser`.
-//
-// blocked_on: css::{AtRuleParser,QualifiedRuleParser,DeclarationParser,
-// RuleBodyItemParser} trait signatures, properties::font::* +
-// properties::custom::CustomProperty, Size2D::parse, Parser surface,
-// FontFaceProperty enum body.
 
 const _: () = {
     use crate::css_properties::custom::{CustomProperty, CustomPropertyName};

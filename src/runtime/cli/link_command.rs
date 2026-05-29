@@ -222,11 +222,6 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
             let mut link_dest_buf = PathBuffer::uninit();
             let mut link_rel_buf = PathBuffer::uninit();
 
-            // PORT NOTE: Zig passed `&node_modules_path` for both
-            // `target_node_modules_path` (`*const`) and `node_modules_path`
-            // (`*mut`). Rust forbids `&` + `&mut` to the same value, so resolve
-            // the fd path twice (cheap: one `getFdPath` syscall) into two
-            // independent `AbsPath` buffers.
             let mut node_modules_path =
                 match <AbsPath>::init_fd_path(Fd::from_std_dir(&node_modules)) {
                     Ok(p) => p,

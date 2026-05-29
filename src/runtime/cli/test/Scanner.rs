@@ -154,18 +154,6 @@ impl<'a> Scanner<'a> {
             if let EntriesOption::Entries(entries) = root {
                 let fd = entries.fd;
                 debug_assert!(fd != Fd::INVALID);
-                // Collect first so `self.next(…)` doesn't overlap the
-                // `entries.data` borrow.
-                // PORT NOTE: this branch is taken when the resolver already has
-                // `path` cached (e.g. `run_env_loader`/`read_dir_info` read the
-                // cwd before the scanner runs), so `read_directory_with_iterator`
-                // returned the cached `EntryMap` without invoking `iterator.next`.
-                // Zig walks `std.HashMapUnmanaged` slot order here, which is
-                // deterministic per its linear-probing layout; Rust's SwissTable
-                // iteration order differs even with the same wyhash seed. Sort by
-                // (lowercased) base name so test-file discovery order is stable
-                // across the port — regression/issue/26851 relies on `a_*.test`
-                // running before `b_*.test` under `--bail`.
                 let mut entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
                 entry_ptrs.sort_by(|a, b| {
                     // SAFETY: `EntryMap` stores `*mut Entry` into the
@@ -244,12 +232,6 @@ impl<'a> Scanner<'a> {
         name: &[u8],
         handle: Option<bun_sys::Dir>,
     ) -> Result<&'static mut EntriesOption, bun_core::Error> {
-        // PORT NOTE: Zig `readDirectoryWithIterator` takes `*RealFS` and a
-        // duck-typed `*Scanner` iterator. `self.fs` is `&FileSystem` here, but
-        // the underlying `RealFS` is the process singleton and is mutated
-        // through `*mut` everywhere else (see `Transpiler.fs: *mut FileSystem`);
-        // cast away `&` to match the Zig calling convention. Serialised by
-        // `RealFS.entries_mutex` inside the callee.
         let real_fs = core::ptr::from_ref(&self.fs.fs).cast_mut();
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         let raw = handle.map(bun_sys::Dir::into_raw);

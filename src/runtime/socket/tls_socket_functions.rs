@@ -8,11 +8,6 @@ use bun_jsc::{
 
 use crate::api::bun_x509 as X509;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Local BoringSSL FFI surface not yet in bun_boringssl_sys.
-// Declared here per port rules (call the linked C symbol directly); migrate
-// into `bun_boringssl_sys` once the bindgen pass covers them.
-// ──────────────────────────────────────────────────────────────────────────
 #[allow(non_camel_case_types, non_upper_case_globals, dead_code)]
 pub(super) mod ffi {
     use super::boringssl::{SSL, SSL_CTX, X509, struct_stack_st_X509};
@@ -52,16 +47,6 @@ pub(super) mod ffi {
     pub(crate) const NID_id_GostR3410_2012_256: c_int = 979;
     pub(crate) const NID_id_GostR3410_2012_512: c_int = 980;
 
-    // ffi-safe-fn: every handle type below (`SSL`, `X509`, `SSL_CIPHER`,
-    // `EVP_PKEY`, `EC_KEY`, `EC_GROUP`) is an `opaque_ffi!` ZST — `&T`
-    // dereferences zero bytes, carries no `dereferenceable`/`noalias`
-    // obligation, and the `UnsafeCell` body lets BoringSSL mutate through a
-    // shared ref. Functions whose *only* pointer arguments are such handles
-    // (plus by-value scalars) therefore have no caller-side precondition and
-    // are declared `safe fn`; callers convert raw pointers via the
-    // const-asserted `T::opaque_ref` (panics on null, which every call site
-    // already guards). Functions that additionally take raw out-params /
-    // caller-owned buffers / +1 ownership pointers keep `unsafe fn`.
     unsafe extern "C" {
         // ── SSL session/handshake info ───────────────────────────────────
         pub(crate) safe fn SSL_get_version(ssl: &SSL) -> *const c_char;
@@ -133,15 +118,6 @@ pub(super) mod ffi {
 
         // ── X509 ─────────────────────────────────────────────────────────
         pub(crate) safe fn X509_up_ref(x: &X509) -> c_int;
-        // ffi-safe-fn: BoringSSL's `sk_value` takes `const OPENSSL_STACK *` and
-        // returns the element at `i` (or NULL if out-of-range — see
-        // `crypto/stack/stack.cc`); it never dereferences past the header it
-        // owns. The Rust `struct_stack_st_X509` is an `opaque_ffi!` ZST, so
-        // `&struct_stack_st_X509` is a thin non-null pointer with no
-        // `dereferenceable`/`noalias` obligation, and the `*mut X509` return is
-        // a mut→mut narrowing of the C `void *` slot. No remaining caller-side
-        // precondition; convert via `struct_stack_st_X509::opaque_ref` (panics
-        // on null, which both call sites already guard).
         #[link_name = "sk_value"]
         pub(crate) safe fn sk_X509_value(sk: &struct_stack_st_X509, i: usize) -> *mut X509;
 
@@ -156,18 +132,8 @@ pub(super) mod ffi {
         pub(crate) safe fn EC_KEY_get0_group(key: &EC_KEY) -> *const EC_GROUP;
         pub(crate) safe fn EC_GROUP_get_curve_name(group: &EC_GROUP) -> c_int;
 
-        // ── OBJ ──────────────────────────────────────────────────────────
-        // Pure NID→short-name lookup; takes a by-value int and returns a
-        // pointer into BoringSSL's static OID table (or null). No pointer
-        // precondition, so declare `safe fn`.
         pub(crate) safe fn OBJ_nid2sn(nid: c_int) -> *const c_char;
 
-        // ── Safe re-declarations of upstream `bun_boringssl_sys` symbols ──
-        // Upstream still takes raw `*const/*mut SSL`; the opaque-ZST `&SSL`
-        // (UnsafeCell body, zero-byte deref, no `noalias`) plus by-value
-        // scalars / `&mut` out-params leave no caller-side precondition, so
-        // declare them `safe fn` here and route callers through
-        // `SSL::opaque_ref` (panics on null, which every site already guards).
         pub(crate) safe fn SSL_get_servername(ssl: &SSL, ty: c_int) -> *const c_char;
         pub(crate) safe fn SSL_is_init_finished(ssl: &SSL) -> c_int;
         pub(crate) safe fn SSL_get_peer_cert_chain(ssl: &SSL) -> *mut struct_stack_st_X509;
@@ -216,14 +182,6 @@ pub(super) mod ffi {
 }
 use crate::node::StringOrBuffer;
 
-// In Zig this file is a mixin of free functions over `jsc.API.TLSSocket`.
-// The `#[bun_jsc::host_fn]` shims live on `NewSocket<SSL>` in `socket_body.rs`
-// and forward into these free helpers — keep them as plain `fn`s.
-// PORT NOTE: this file is `mod`-included from BOTH `socket/mod.rs` and
-// `socket/socket_body.rs`; `super::TLSSocket` resolves to the parent's
-// `NewSocket<true>` in either compilation, whereas the absolute path
-// `crate::api::TLSSocket` always picked the `mod.rs` shape and broke the
-// `socket_body` instance.
 type This = super::TLSSocket;
 
 pub(super) fn get_servername(
@@ -480,11 +438,6 @@ pub(super) fn get_tls_finished_message(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
-    // We cannot just pass nullptr to SSL_get_finished()
-    // because it would further be propagated to memcpy(),
-    // where the standard requirements as described in ISO/IEC 9899:2011
-    // sections 7.21.2.1, 7.21.1.2, and 7.1.4, would be violated.
-    // Thus, we use a dummy byte.
     let mut dummy: [u8; 1] = [0; 1];
     // SAFETY: ssl_ptr is a live *mut SSL; dummy is a valid 1-byte writable buffer.
     let size = unsafe {
@@ -672,11 +625,6 @@ pub(super) fn get_tls_peer_finished_message(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
-    // We cannot just pass nullptr to SSL_get_peer_finished()
-    // because it would further be propagated to memcpy(),
-    // where the standard requirements as described in ISO/IEC 9899:2011
-    // sections 7.21.2.1, 7.21.1.2, and 7.1.4, would be violated.
-    // Thus, we use a dummy byte.
     let mut dummy: [u8; 1] = [0; 1];
     // SAFETY: ssl_ptr is a live *mut SSL; dummy is a valid 1-byte writable buffer.
     let size = unsafe {
@@ -813,13 +761,6 @@ pub(super) fn get_ephemeral_key_info(
     };
     let result = JSValue::create_empty_object(global, 0);
 
-    // TODO: investigate better option or compatible way to get the key
-    // this implementation follows nodejs but for BoringSSL SSL_get_server_tmp_key will always return 0
-    // wich will result in a empty object
-    // let mut raw_key: *mut boringssl::EVP_PKEY = core::ptr::null_mut();
-    // if unsafe { boringssl::SSL_get_server_tmp_key(ssl_ptr, &mut raw_key) } == 0 {
-    //     return Ok(result);
-    // }
     let raw_key: *mut ffi::EVP_PKEY = ffi::SSL_get_privatekey(boringssl::SSL::opaque_ref(ssl_ptr));
     if raw_key.is_null() {
         return Ok(result);
@@ -1172,14 +1113,6 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
             use std::io::Write;
             let _ = write!(&mut formatted, "OpenSSL {}", ::bstr::BStr::new(message));
         }
-        // TODO(port): Zig leaks `formatted` into a global-marked ZigString; ownership semantics unclear.
-        // `Interned::leak_vec` makes the process-lifetime leak explicit (the
-        // bytes are never reclaimed). NOTE: `mark_global()` below tells JSC the
-        // bytes are mimalloc-owned and may be freed via `mi_free`, but
-        // `leak_vec` allocates with Rust's global allocator — allocator
-        // mismatch if JSC ever adopts the buffer. `to_error_instance` clones
-        // the string, so today the leaked bytes are simply never freed; the
-        // `mark_global` is dead weight matching Zig 1:1 (see TODO below).
         zig_str = ZigString::init(bun_ptr::Interned::leak_vec(formatted).as_bytes());
         let mut encoded_str = zig_str.with_encoding();
         encoded_str.mark_global();

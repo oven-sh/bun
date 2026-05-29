@@ -8,10 +8,6 @@ use crate::{PrintErr, Printer};
 use bun_alloc::Arena;
 use bun_ast::ImportRecord;
 
-/// Named replacement for the Zig anonymous `struct { v: ?LayerName }` used in
-/// both `ImportConditions.layer` and `ImportRule.layer`. The two Zig anonymous
-/// structs are layout-identical (the code `@ptrCast`s between the parents), so
-/// we use a single Rust type for both.
 #[repr(C)]
 #[derive(Default)]
 pub struct Layer {
@@ -91,34 +87,6 @@ impl ImportConditions {
         }
         Ok(())
     }
-
-    /// This code does the same thing as `deepClone` right now, but might change in the future so keeping this separate.
-    ///
-    /// So this code is used when we wrap a CSS file in import conditions in the final output chunk:
-    /// ```css
-    /// @layer foo {
-    ///     /* css file contents */
-    /// }
-    /// ```
-    ///
-    /// However, the *prelude* of the condition /could/ contain a URL token:
-    /// ```css
-    /// @supports (background-image: url('example.png')) {
-    ///     /* css file contents */
-    /// }
-    /// ```
-    ///
-    /// In this case, the URL token's import record actually belongs to the /parent/ of the current CSS file (the one who imported it).
-    /// Therefore, we need to copy this import record from the parent into the import record list of this current CSS file.
-    ///
-    /// In actuality, the css parser doesn't create an import record for URL tokens in `@supports` because that's pointless in the context of hte
-    /// @supports rule.
-    ///
-    /// Furthermore, a URL token is not valid in `@media` or `@layer` rules.
-    ///
-    /// But this could change in the future, so still keeping this function.
-    ///
-    // blocked_on: MediaList::clone_with_import_records (no impl yet on MediaList).
 
     pub fn clone_with_import_records(
         &self,
@@ -278,10 +246,6 @@ impl ImportRule {
     }
 
     pub fn deep_clone(&self, bump: &Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk. `url: &'static [u8]`
-        // is an arena-owned slice → identity copy (generics.zig "const
-        // strings" rule); `media` routes through `dc::media_list` until
-        // `MediaList` gains an arena-aware `deep_clone`.
         Self {
             url: self.url,
             layer: self.layer.as_ref().map(|l| l.deep_clone(bump)),

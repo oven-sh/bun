@@ -31,23 +31,6 @@ pub fn compute_cross_chunk_dependencies(
     // defer { meta.*.deinit(); free(chunk_metas) } — handled by Drop
 
     {
-        // PORT NOTE: Zig heap-allocated this via c.arena().create() and destroyed it at
-        // scope end; in Rust we construct on the stack and let it drop.
-        //
-        // `ctx` / `symbols` / `chunks` are stored as raw pointers so the struct does not
-        // hold a borrow on `c` or `chunks` across the sequential `walk` loop below.
-        //
-        // Derive `ctx_ptr` from the `&mut` (not `from_ref`) so the raw carries `c`'s own
-        // Unique provenance: under Stacked Borrows the subsequent `split_mut` reborrows
-        // are children of that tag, so `&*ctx_ptr` in `walk()` (which reads
-        // `c.graph.files.{ptrs,len}` via `is_external_dynamic_import`) stays valid.
-        // `from_ref(c)` would push a SharedRO tag that the `&mut c.graph.X` reborrows
-        // pop, leaving the raw dangling under SB.
-        //
-        // Lifetime-erase the `LinkerContext<'_>` so the struct's `'a` (which
-        // ties only the local SoA-column borrows) is not forced to equal the
-        // LinkerContext's invariant `'_`. `NonNull::from(&mut *c)` preserves
-        // `c`'s Unique provenance (see PORT NOTE above).
         let ctx_ref = bun_ptr::BackRef::from(
             core::ptr::NonNull::from(&mut *c).cast::<LinkerContext<'static>>(),
         );
@@ -86,10 +69,6 @@ pub fn compute_cross_chunk_dependencies(
 
 pub(crate) struct CrossChunkDependencies<'a, 'bump> {
     chunk_meta: &'a mut [ChunkMeta],
-    // PORT NOTE: `BackRef` — the same `[Chunk]` slice is also iterated mutably by
-    // the caller's sequential `walk` loop; `walk` only reads `chunks[other].unique_key`
-    // (disjoint from the per-iteration `&mut Chunk`). The slice outlives the struct
-    // (caller stack frame).
     chunks: bun_ptr::BackRef<[Chunk]>,
     parts: &'a [bun_ast::PartList<'bump>],
     import_records: &'a mut [bun_ast::import_record::List<'bump>],
@@ -100,31 +79,11 @@ pub(crate) struct CrossChunkDependencies<'a, 'bump> {
     exports_refs: &'a [Ref],
     sorted_and_filtered_export_aliases: &'a [js_meta::SortedAndFilteredExportAliases],
     resolved_exports: &'a [ResolvedExports],
-    // PORT NOTE: `BackRef` — Zig stores `*LinkerContext` / `*Symbol.Map` and freely
-    // aliases `c.graph` columns alongside; borrowck cannot express that split, so
-    // opt out here via `BackRef` (safe `Deref` at each use site in `walk`). Lifetime
-    // erased (`'static`) so the outer `CrossChunkDependencies<'_>` borrow is not tied
-    // to the LinkerContext's own invariant lifetime parameter.
     ctx: bun_ptr::BackRef<LinkerContext<'static>>,
-    // `BackRef` — `walk` mutates per-chunk symbol slots via
-    // `Map::assign_chunk_index(&self)`, which is a Relaxed store to
-    // `Symbol.chunk_index: AtomicU32`, so a shared `&Map` suffices. Holding
-    // `&mut Map` here would conflict with the `&LinkerContext` deref of `ctx`
-    // (which also reaches `c.graph.symbols`); `BackRef::Deref` yields the
-    // shared `&Map` each `walk` call needs.
     symbols: bun_ptr::BackRef<bun_ast::symbol::Map>,
 }
 
 impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
-    // Called once per chunk from the sequential loop above. Writes:
-    // `self.chunk_meta[chunk_index]` (per-chunk disjoint),
-    // `self.import_records[source_index][rec].{path,source_index}` (per-chunk
-    // disjoint via `chunk.files_with_parts_in_chunk`),
-    // `symbols.assign_chunk_index(ref)` (Relaxed atomic store to
-    // `Symbol.chunk_index: AtomicU32`; per-symbol-ref disjoint by chunk
-    // membership — debug-asserted in `assign_chunk_index`).
-    // Reads `ctx`/`chunks`/SoA columns shared. Never forms `&mut
-    // LinkerContext` (`ctx` is a `BackRef`, deref'd to `&`).
     pub(crate) fn walk(&mut self, chunk: &mut Chunk, chunk_index: usize) {
         let deps = self;
         // `ctx` / `chunks` are `BackRef`s into `LinkerContext` / the caller's chunk
@@ -186,11 +145,6 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                     }
                 }
 
-                // Remember what chunk each top-level symbol is declared in. Symbols
-                // with multiple declarations such as repeated "var" statements with
-                // the same name should already be marked as all being in a single
-                // chunk. In that case this will overwrite the same value below which
-                // is fine.
                 symbols.assign_chunk_index(&part.declared_symbols, chunk_index as u32);
 
                 let used_refs = part.symbol_uses.keys();
@@ -224,10 +178,6 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                             continue 'refs;
                         }
 
-                        // If this is an ES6 import from a CommonJS file, it will become a
-                        // property access off the namespace symbol instead of a bare
-                        // identifier. In that case we want to pull in the namespace symbol
-                        // instead. The namespace symbol stores the result of "require()".
                         if let Some(namespace_alias) = &symbol.namespace_alias {
                             ref_to_use = namespace_alias.namespace_ref;
                         }
@@ -244,11 +194,6 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         );
                     }
 
-                    // We must record this relationship even for symbols that are not
-                    // imports. Due to code splitting, the definition of a symbol may
-                    // be moved to a separate chunk than the use of a symbol even if
-                    // the definition and use of that symbol are originally from the
-                    // same source file.
                     let _ = chunk_meta.imports.put(ref_to_use, ()); // OOM-only Result (Zig: catch unreachable)
                 }
             }
@@ -276,10 +221,6 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                             target_ref = import_data.data.import_ref;
                         }
 
-                        // If this is an ES6 import from a CommonJS file, it will become a
-                        // property access off the namespace symbol instead of a bare
-                        // identifier. In that case we want to pull in the namespace symbol
-                        // instead. The namespace symbol stores the result of "require()".
                         if let Some(namespace_alias) =
                             &symbols.get_const(target_ref).unwrap().namespace_alias
                         {
@@ -327,10 +268,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
 ) -> Result<(), bun_alloc::AllocError> {
     // TODO(port): narrow error set
 
-    // Mark imported symbols as exported in the chunk from which they are declared
-    // PORT NOTE: reshaped for borrowck — Zig zips (chunks, chunk_metas, 0..) and also indexes
-    // chunk_metas[other_chunk_index] / chunks[other_chunk_index] inside the loop body. We
-    // iterate by index and re-borrow per access.
     debug_assert_eq!(chunks.len(), chunk_metas.len());
     for chunk_index in 0..chunks.len() {
         if !matches!(chunks[chunk_index].content, chunk::Content::Javascript(_)) {
@@ -483,10 +420,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             .unwrap()
                             .original_name
                             .slice();
-                        // The alias is stored on the chunk (`exports_to_other_chunks`,
-                        // `cross_chunk_suffix_stmts`) and read later in postProcessJSChunk,
-                        // so it must live in the linker arena — `r`'s internal arena is
-                        // reset per chunk and dropped at the end of this block.
                         let alias: bun_ast::StoreStr = if c.options.minify_identifiers {
                             bun_ast::StoreStr::new(
                                 c.arena()
@@ -545,13 +478,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     {
         debug!("Generating cross-chunk imports");
         let mut list: Vec<CrossChunkImport> = Vec::new();
-        // defer list.deinit() — handled by Drop
-        // PORT NOTE: reshaped for borrowck — Zig's `for (chunks) |*chunk|` aliases the same
-        // slice it passes to `sortedCrossChunkImports`. We move the per-chunk fields we
-        // mutate (`imports_from_other_chunks`, `cross_chunk_imports`) out via `take`, drop
-        // the `chunk` borrow, hand the whole `chunks` slice to `sorted_cross_chunk_imports`
-        // (which only reads `chunks[other].exports_to_other_chunks` — disjoint), then write
-        // the fields back at loop end.
         for chunk_index in 0..chunks.len() {
             if !matches!(chunks[chunk_index].content, chunk::Content::Javascript(_)) {
                 continue;

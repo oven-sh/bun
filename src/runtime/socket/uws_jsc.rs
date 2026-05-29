@@ -42,10 +42,6 @@ pub fn create_bun_socket_error_to_js(
     global_object: &JSGlobalObject,
 ) -> JSValue {
     match this {
-        // us_ssl_ctx_from_options only sets *err for the CA/cipher cases;
-        // bad cert/key/DH return NULL with .none and the detail is on the
-        // BoringSSL error queue. Surfacing it here keeps every
-        // `createSSLContext(...) orelse return err.toJS()` site correct.
         create_bun_socket_error_t::none => crate::crypto::boringssl_jsc::err_to_js(
             global_object,
             bun_boringssl_sys::ERR_get_error(),
@@ -82,10 +78,6 @@ pub use bun_jsc::system_error::verify_error_to_js;
 // ── AnyWebSocket.getTopicsAsJSArray ────────────────────────────────────────
 // TODO(port): move to bun_uws_sys
 unsafe extern "C" {
-    // Opaque-handle (`RawWebSocket` is an `opaque_ffi!` ZST — `&mut` carries no
-    // `noalias`, dereferences zero bytes) + live `&JSGlobalObject`
-    // (UnsafeCell-backed, FFI may mutate VM state). No caller-side precondition;
-    // matches `uws_ws_close` / `uws_ws_get_user_data` in `bun_uws_sys::WebSocket`.
     safe fn uws_ws_get_topics_as_js_array(
         ssl: i32,
         ws: &mut RawWebSocket,
@@ -121,22 +113,6 @@ pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
     data: JSValue,
     encoding: JSValue,
 ) -> JSValue {
-    // NOTE: `socket`/`buffer` are kept as raw `*mut` for the function lifetime and only
-    // dereferenced to `&mut` at each point of use. The JS calls below
-    // (`from_js_with_encoding_value_allow_request_response`, `throw_*`) can re-enter
-    // `JSNodeHTTPServerSocket.write` on the same socket, which would alias a long-lived
-    // `&mut *socket` / `&mut *buffer` under Stacked Borrows. The Zig spec uses raw
-    // pointers (`*uws.us_socket_t` / `*us_socket_stream_buffer_t`) with no uniqueness
-    // assertion, so we mirror that here.
-
-    // PERF(port): was stack-fallback (std.heap.stackFallback(16 * 1024)) — profile if hot.
-    //
-    // Convert `data`/`encoding` BEFORE materializing the stream buffer into an owning
-    // `Vec<u8>`: the conversion can run arbitrary JS (toString/Symbol.toPrimitive,
-    // Request/Response body coercion) which can re-enter this function on the same
-    // socket. Taking the buffer first would leave two owning `Vec`s over the same
-    // `list_ptr`; the inner call's realloc would free the allocation out from under
-    // the outer frame (use-after-free).
     let node_buffer: BlobOrStringOrBuffer = if data.is_undefined() {
         BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::EMPTY)
     } else {
@@ -181,10 +157,6 @@ pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
     // exit path without a scopeguard borrow conflict.
     let result: JSValue = 'body: {
         let data_slice = node_buffer.slice();
-        // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        // No JS executes between here and `JSValue::TRUE/FALSE` below, so the
-        // single `&mut` does not alias the re-entrant write path documented at
-        // the top of this fn (raw `socket` is still kept for that reason).
         let socket_ref = us_socket_t::opaque_mut(socket);
         if stream_buffer.is_not_empty() {
             let to_flush = stream_buffer.slice();

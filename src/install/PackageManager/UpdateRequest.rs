@@ -18,16 +18,6 @@ pub struct UpdateRequest {
     pub name: &'static [u8],
     pub name_hash: PackageNameHash,
     pub version: dependency::Version,
-    /// Backing buffer for `version.literal` (and friends) — either a leaked
-    /// CLI positional (truly process-lifetime) or the active lockfile's
-    /// `buffers.string_bytes`. Stored as a raw fat pointer because the
-    /// lockfile buffer's lifetime cannot be expressed as `'static` without UB
-    /// lifetime extension (PORTING.md §Forbidden patterns), and threading a
-    /// real `<'a>` through every `&mut [UpdateRequest]` in the install
-    /// pipeline is a larger reshape. ARENA-class field per the PORTING.md
-    /// type map: `[]const u8` struct-field, never freed, points into a buffer
-    /// owned elsewhere → `RawSlice<u8>` (centralises the outlives-holder
-    /// invariant; see `version_buf()`).
     pub version_buf: bun_ptr::RawSlice<u8>,
     pub package_id: PackageID,
     pub is_aliased: bool,
@@ -111,11 +101,6 @@ impl UpdateRequest {
         }
     }
 
-    /// It is incorrect to call this function before Lockfile.cleanWithLogger() because
-    /// resolved_name should be populated if possible.
-    ///
-    /// `self` needs to be a pointer! If `self` is a copy and the name returned from
-    /// resolved_name is inlined, you will return a pointer to stack memory.
     pub fn get_resolved_name<'a>(&'a self, lockfile: &'a Lockfile) -> &'a [u8] {
         if self.is_aliased {
             self.name
@@ -179,10 +164,6 @@ impl UpdateRequest {
                 _ => {}
             }
 
-            // CLI-lifetime allocation: `version_buf` is later reassigned to
-            // point at lockfile buffers, so the field is a raw `*const [u8]`
-            // rather than `Box<[u8]>`. Park the bytes in a process-lifetime
-            // static so LSan sees them as reachable instead of `Vec::leak`.
             let input: &'static [u8] = anchor_cli_bytes(input.into_boxed_slice());
 
             let mut value: &'static [u8] = input;

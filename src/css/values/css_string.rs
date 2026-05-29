@@ -3,14 +3,6 @@ pub use css::CssResult as Result;
 pub use css::PrintErr;
 pub use css::Printer;
 
-/// A quoted CSS string.
-///
-/// INVARIANT: the pointee is a sub-slice of the parser source buffer / arena
-/// and remains valid for the lifetime of the parse + print session (i.e. as
-/// long as the originating `ParserInput`/arena lives). Stored as a raw slice
-/// pointer rather than `&'static [u8]` so the arena lifetime is not laundered
-/// to `'static` (see PORTING.md §Forbidden patterns). A future refactor
-/// should thread an explicit `'bump` lifetime here.
 pub type CssString = *const [u8];
 
 pub struct CssStringFns;

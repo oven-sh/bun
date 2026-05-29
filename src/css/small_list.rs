@@ -21,21 +21,6 @@
 
 pub use bun_collections::SmallList;
 
-// ─── CSS-domain extension trait ────────────────────────────────────────────
-// (the `SmallListCssExt` trait that lived here was a verbatim duplicate of the
-// `generics::{DeepClone,CssEql,CssHash,IsCompatible,Parse,ToCss}` blanket impls
-// for `SmallList<T, N>` and has been removed — import the relevant `generics`
-// trait at the call site instead.)
-
-// ─── getFallbacks ──────────────────────────────────────────────────────────
-// The Zig version uses `@hasDecl(T, "getImage")` and `T == TextShadow` comptime
-// dispatch with a comptime-computed return type. In Rust this becomes a trait
-// with associated type for the return.
-
-/// Duck-typed protocol from the Zig source (`@hasDecl(T, "getImage")`): any
-/// value type that carries an `Image` and can produce color/prefix fallbacks
-/// of itself. Implemented by `values::image::Image` and
-/// `properties::background::Background`.
 pub trait ImageFallback: Sized {
     fn get_image(&self) -> &crate::values::image::Image;
     fn with_image(&self, arena: &bun_alloc::Arena, image: crate::values::image::Image) -> Self;
@@ -53,12 +38,6 @@ pub trait ImageFallback: Sized {
 // `ImageFallback for Image` is implemented alongside the type in
 // `crate::values::image` to avoid a duplicate impl here.
 
-/// Port of Zig `SmallList(T, N).getFallbacks` for the `@hasDecl(T, "getImage")`
-/// branch. The TextShadow branch is `get_fallbacks_text_shadow`.
-///
-/// Free-standing (was an inherent on `SmallList<T,1>`) so it can live in this
-/// crate now that `SmallList` is foreign. The lone caller threads `self`
-/// explicitly.
 #[inline]
 pub(crate) fn get_fallbacks<T: ImageFallback>(
     this: &mut SmallList<T, 1>,

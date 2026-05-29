@@ -4,14 +4,6 @@
     clippy::disallowed_types,
     clippy::disallowed_macros
 )]
-//! Export `BUN_CODEGEN_DIR` and fingerprint `build_options.rs` for
-//! `include!(concat!(env!("BUN_CODEGEN_DIR"), "/build_options.rs"))`.
-//!
-//! `build_options.rs` is written at configure time by
-//! `scripts/build/buildOptionsRs.ts` from the resolved `Config` (sha,
-//! version, baseline, …). This script does NOT run the generator — it just
-//! resolves the path and tells cargo to track the file so a sha/version
-//! change recompiles `bun_core`. Mirrors `src/{jsc,runtime}/build.rs`.
 
 use std::env;
 use std::path::{Path, PathBuf};

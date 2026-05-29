@@ -45,14 +45,6 @@ use bun_jsc::event_loop::{EventLoop, JsTerminated};
 use bun_jsc::task::report_error_or_terminate;
 use bun_jsc::virtual_machine::VirtualMachine;
 
-/// X-macro: the 42 `node:fs` async ops dispatched via `run_from_js_thread`.
-///
-/// Row shape: `$tag $ty;` — `$tag` is the `bun_event_loop::task_tag::*` const,
-/// `$ty` is the `fs_async::*` alias. They differ in exactly three rows
-/// (`FTruncate`/`Ftruncate`, `FChown`/`Fchown`, `StatFS`/`Statfs`), so the
-/// macro carries both idents. `ReaddirRecursive` is the bespoke
-/// `AsyncReaddirRecursiveTask` (not an `AsyncFSTask<_,_,F>`); `Cp` and
-/// `AsyncMkdirp` are intentionally absent — they have bespoke dispatch paths.
 macro_rules! for_each_fs_async_op {
     ($m:ident) => {
         $m! {
@@ -182,20 +174,6 @@ pub enum RunTaskResult {
     EarlyReturn,
 }
 
-/// Dispatch a single `Task` to its variant's `run`-style entry point.
-///
-/// This is the body of one iteration of Zig `tickQueueWithCount`'s `while`
-/// loop (the per-item `switch`). The surrounding drain loop + microtask flush
-/// lives in [`tick_queue_with_count`] below.
-// PERF(startup/dot): `#[inline(never)]` is deliberate. Zig's `inline else`
-// monomorphized every arm into the drain loop, but in Rust `#[inline]` here
-// bloated `tick_queue_with_count` to ~14 KB of `.text` interleaved with cold
-// shell/bake code, blowing the iTLB fault-around window for `bun <file>`.
-// Keeping `run_task` out-of-line lets `tick_queue_with_count` stay a tight
-// drain-loop wrapper (front-clustered via `src/startup.order`), and the cold
-// Shell*/Bake* clusters are further hoisted into [`run_task_cold`] so this
-// function's hot residue (AnyTask/ManagedTask/CppTask + fs/napi) fits in 1-2
-// pages.
 #[inline(never)]
 pub fn run_task(
     task: Task,
@@ -228,10 +206,6 @@ pub fn run_task(
             };
         }};
     }
-    /// Zig: `var t = task.get(T).?; defer t.deinit(); try t.runFromJS();`.
-    /// `defer` runs after `try` whether it errored or not, so destroy
-    /// unconditionally then propagate. `JsTerminated` tears down the VM,
-    /// so the destroy ordering is observably equivalent.
     macro_rules! run_then_destroy {
         ($ty:ty) => {{
             let t = cast_ptr!($ty);
@@ -376,10 +350,6 @@ pub fn run_task(
         // ── bake dev-server (cold — hoisted to `run_task_cold`) ──────────
         task_tag::BakeHotReloadEvent => run_task_cold(task),
         task_tag::FSWatchTask => {
-            // Zig: `defer t.deinit(); t.run();` — the task is heap-allocated
-            // (cloned from `FSWatcher.current_task` at enqueue). `deinit` is
-            // explicit (not `Drop`) so the embedded `current_task` field never
-            // runs it.
             let t = cast_ptr!(FSWatchTask);
             // SAFETY: tag identifies pointee; live Box'd FSWatchTask.
             unsafe { (*t).run() };
@@ -395,10 +365,6 @@ pub fn run_task(
             run_then_destroy!(work get_addr_info_request::Task);
         }
 
-        // ── node:fs async ops (`runFromJSThread`) ────────────────────────
-        // 42 arms stamped from `for_each_fs_async_op!` (module scope). The
-        // outer or-pattern proves the inner re-match is exhaustive over the
-        // table, so the trailing wildcard is genuinely unreachable.
         for_each_fs_async_op!(__fs_pat) => {
             macro_rules! __fs_run {
                 ($($tag:ident $ty:ident;)*) => { match task.tag {
@@ -449,12 +415,6 @@ pub fn run_task(
             )?;
         }
         task_tag::BundleV2DeferredBatchTask => {
-            // Zig: `Plugin.drainDeferred` is wrapped in `fromJSHostCallGeneric`
-            // (== `call_check_slow`) and the only caller does `catch return`.
-            // `bun_bundler` is JSC-free so the exception-scope check is hoisted
-            // to this dispatch arm; without it, `JSBundlerPlugin__drainDeferred`'s
-            // THROW_SCOPE is left unchecked and trips JSC exception validation
-            // at the next `drainMicrotasks` scope.
             let _ = bun_jsc::call_check_slow(global, || {
                 cast!(BundleV2DeferredBatchTask).run_on_js_thread();
             });
@@ -471,11 +431,6 @@ pub fn run_task(
         // ── timer wrappers (declared in the union but never dispatched
         //    here in Zig either — see Task.zig trailing `else`) ───────────
         task_tag::ImmediateObject | task_tag::TimeoutObject => {
-            // Spec Task.zig:529-535: `bun.Output.panic("Unexpected Task tag: {d}")`.
-            // This is a *reachable* producer bug (timer object enqueued as Task),
-            // not provable-unreachable — `unreachable_unchecked()` here would be
-            // release-build UB. PORTING.md §Dispatch only sanctions UB for the
-            // truly-unreachable wildcard.
             panic!("Unexpected Task tag: {}", task.tag.0);
         }
 
@@ -489,17 +444,6 @@ pub fn run_task(
     Ok(RunTaskResult::Continue)
 }
 
-/// Cold-path arms hoisted out of [`run_task`].
-///
-/// Shell* / Bake* (and, when they land, Install*) tags are never seen during
-/// `bun <file>` startup or the `dot` benchmark, but their per-arm bodies pull
-/// in `bun_shell` / `bun_bake` call sites that LLVM otherwise interleaves with
-/// the hot AnyTask/ManagedTask/CppTask jump table. Splitting them behind a
-/// `#[cold]` boundary lets lld place this whole cluster after the
-/// front-clustered startup window (see `src/startup.order`).
-///
-/// Returns `()` — none of the cold arms can fail or early-return; the caller
-/// falls through to `Ok(RunTaskResult::Continue)`.
 #[cold]
 #[inline(never)]
 fn run_task_cold(task: Task) {
@@ -509,11 +453,6 @@ fn run_task_cold(task: Task) {
             task.ptr.cast::<$ty>()
         };
     }
-    /// Shell builtin tasks: route through `ShellTask::run_from_main_thread`
-    /// so the keep-alive ref taken in `ShellTask::schedule` is unref'd before
-    /// the per-builtin body runs (Zig: `InnerShellTask.runFromMainThread`).
-    /// The wrapper recovers `&mut Interpreter` from the embedded
-    /// `ShellTask.interp` back-ref.
     macro_rules! shell_dispatch {
         ($ty:ty) => {{
             // SAFETY: §Dispatch — `t` is a live heap-allocated shell task;
@@ -631,19 +570,10 @@ pub fn tick_queue_with_count(
     }
 
     while let Some(task) = el.tasks.read_item() {
-        // PORT NOTE: Zig increments `counter` via `defer counter.* += 1;` at
-        // the top of the loop body, so it fires on every scope exit including
-        // the HotReloadTask `return`. Hoisting it before dispatch keeps the
-        // Continue path identical and avoids a scopeguard.
         *counter += 1;
         match run_task(task, el, vm, global)? {
             RunTaskResult::Continue => {}
             RunTaskResult::EarlyReturn => {
-                // Zig: `counter.* = 0; return;` followed by the deferred
-                // `counter.* += 1` (defers run after `return`, LIFO), so the
-                // observable result is `counter == 1`. Caller is
-                // `while tickWithCount(ctx) > 0` — must keep draining after a
-                // hot-reload task. Do NOT set 0 here.
                 *counter = 1;
                 return Ok(());
             }
@@ -683,11 +613,6 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             unsafe { &mut *owner.ptr.cast::<$ty>() }
         }};
     }
-    /// One match-arm body of the poll-tag dispatch. Recovers the typed owner as
-    /// a RAW `*mut $Ty` (never `&mut` — re-entrant callees like `DNSResolver`
-    /// pick their own deref mode without aliasing UB) then runs `$body`. The
-    /// 1-arg form is the Zig `ptr.as(T).onPoll(size_or_offset, hup)` shape that
-    /// covers most tags.
     macro_rules! poll_arm {
         ($Ty:ty) => {
             poll_arm!($Ty, |h| {
@@ -959,11 +884,6 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
     let tag = unsafe { (*t).tag };
     let vm = vm.cast::<VirtualMachine>();
 
-    /// One match-arm body: recover the container as RAW `*mut $Ty` (never
-    /// `&mut` — the handler may free it or re-enter), bind `now`/`vm`, and run
-    /// `$body` under one `unsafe` covering the per-fn-contract dereferences.
-    /// Defined *after* the `vm` cast so the def-site `vm` ident resolves to
-    /// the typed `*mut VirtualMachine`, not the erased `*mut ()` param.
     macro_rules! timer_arm {
         ($Ty:ty, $field:ident, |$c:ident, $now:ident, $vm:ident| $body:expr) => {{
             let $c: *mut $Ty = owner!($Ty, $field);
@@ -1171,40 +1091,16 @@ pub(crate) unsafe fn __bun_tick_queue_with_count(
 // (former duplicate `__bun_run_tasks` removed r6 — `bun_jsc::task::run_tasks`
 // had no callers; `__bun_tick_queue_with_count` above is the sole entry point.)
 
-/// `__bun_release_task_at_shutdown` body — declared `extern "Rust"` in
-/// `bun_jsc::event_loop`. Called from `release_queued_tasks_for_shutdown` on
-/// the JS thread for every queued task that will never be dispatched (the JS
-/// thread is past `global_exit`'s `is_shutting_down` flip and the loop will
-/// not tick again), after the HTTP daemon has parked and before
-/// `destructOnExit`. Releases the boxes and JSC handles the dispatch path
-/// would have dropped. Tags not yet listed leak their box at exit; add them
-/// as LSan surfaces them.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
     use bun_event_loop::task_tag;
     match task.tag {
-        // `callback` (HTTP thread) won the `has_schedule_callback` CAS and
-        // posted this entry, then deref'd its own +1 if final; the JS-side
-        // +1 it expected `on_progress_update` to drop is the one we release
-        // here. Runs on the JS thread, so the plain `deref` (→ `deinit` on
-        // 1→0) is the right teardown path; the HTTP daemon is already
-        // parked (`shutdown_for_exit` precedes `destroy`), so the
-        // `Box<AsyncHTTP>` and any `metadata` it owns are exclusively ours.
         task_tag::FetchTasklet => {
             // SAFETY: `task.ptr` is the live heap `FetchTasklet`; HTTP daemon is
             // already parked so we hold the sole reference.
             FetchTasklet::deref(task.ptr.cast::<FetchTasklet>());
             true
         }
-        // `AsyncFSTask`s are `Box::leak`'d in `create()` and freed by
-        // `destroy()` (called from `run_from_js_thread`'s scopeguard).
-        // `destroy()` resets `JSPromiseStrong` (touches the JSC HandleSet)
-        // and unrefs the loop `KeepAlive`, both of which are still valid
-        // here — we're before `destructOnExit`. Before
-        // `release_queued_tasks_for_shutdown` existed these boxes stayed
-        // reachable via `concurrent_tasks` (rooted by the static `VMHolder`),
-        // so LSan didn't flag them; the drain unhooks that root and surfaces
-        // the real leak.
         for_each_fs_async_op!(__fs_pat) => {
             macro_rules! __fs_destroy {
                 ($($tag:ident $ty:ident;)*) => { match task.tag {
@@ -1222,10 +1118,6 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
             for_each_fs_async_op!(__fs_destroy);
             true
         }
-        // Re-queued by the caller; the box stays reachable from the
-        // static-rooted VM. Dispatching the type-erased `AnyTask` callback
-        // is not generally safe at shutdown (e.g. `AsyncModule::on_done`,
-        // `dns::Holder::run` call straight into JS).
         _ => false,
     }
 }

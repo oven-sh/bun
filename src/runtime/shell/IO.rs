@@ -46,10 +46,6 @@ impl IO {
         size
     }
 
-    /// Spec: IO.zig `to_subproc_stdio`. Maps the state-node IO triple onto
-    /// `subproc::Stdio` for [`ShellSubprocess::spawn_async`], and stashes the
-    /// owning `IOWriter` Arcs on `shellio` so [`PipeReader`]'s captured-writer
-    /// path can tee subprocess output back into the JS-side buffers.
     pub fn to_subproc_stdio(&self, stdio: &mut [Stdio; 3], shellio: &mut ShellIO) {
         stdio[0] = self.stdin.to_subproc_stdio();
         stdio[1] = self.stdout.to_subproc_stdio(&mut shellio.stdout);
@@ -186,12 +182,6 @@ impl OutKind {
                 if let Some(cap) = val.captured {
                     Stdio::Capture(Capture { buf: cap })
                 } else {
-                    // Spec (IO.zig:178) reads `val.writer.fd.get()` — an
-                    // optional that becomes empty once the fd has been handed
-                    // off to libuv. `IOWriter::fd()` (IOWriter.rs) encodes
-                    // that same state by returning `Fd::INVALID` after
-                    // hand-off, so the sentinel compare here is the port of
-                    // the optional unwrap, not a fresh invariant.
                     let fd = val.writer.fd();
                     if fd != bun_sys::Fd::INVALID {
                         Stdio::Fd(fd)

@@ -93,12 +93,6 @@ bun_core::named_error_set!(ParseUrlError);
 // Representation
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Represents how a URL should be reported when formatting it as a string.
-///
-/// Input strings may be given in any format and they may be formatted in any format. If you wish
-/// to format a URL in a specific format, you can use its `format*` methods. However, each input
-/// string has a "default" representation which is used when calling `toString()`. Depending on the
-/// input, the default representation may be different.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 #[strum(serialize_all = "lowercase")]
 pub enum Representation {
@@ -120,11 +114,6 @@ pub enum Representation {
 // HostedGitInfo
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: reshaped for borrowck. The Zig stores `committish`/`project`/`user`
-// as `[]const u8` slices that alias into `_memory_buffer` (a single owned
-// allocation). Rust can't express that self-reference safely without lifetimes
-// on the struct. We store byte ranges into `_memory_buffer` instead and expose
-// slice accessors.
 pub struct HostedGitInfo {
     committish: Option<Range<usize>>,
     project: Range<usize>,
@@ -149,19 +138,6 @@ impl HostedGitInfo {
         self.user.clone().map(|r| &self._memory_buffer[r])
     }
 
-    /// Helper function to decode a percent-encoded string and append it to a StringBuilder.
-    /// Returns the decoded slice and updates the StringBuilder's length.
-    ///
-    /// The reason we need to do this is because we get URLs like github:user%20name/repo and we
-    /// need to decode them to 'user name/repo'. It would be nice if we could get all the
-    /// functionality of jsc.URL WITHOUT the percent-encoding, but alas, we cannot. And we need the
-    /// jsc.URL functionality for parsing, validating and punycode-decoding the URL.
-    ///
-    /// Therefore, we use this function to first take a URL string, encode it into a *jsc.URL and
-    /// then decode it back to a normal string. Kind of a lot of work, but it works.
-    ///
-    /// PORT NOTE: returns a `Range<usize>` into the StringBuilder's allocated buffer
-    /// instead of a borrowed slice (see struct-level note).
     fn decode_and_append(
         sb: &mut StringBuilder,
         input: &[u8],
@@ -248,20 +224,10 @@ impl HostedGitInfo {
     /// Given a URL-like (including shortcuts) string, parses it into a HostedGitInfo structure.
     /// The HostedGitInfo is valid only for as long as `git_url` is valid.
     pub fn from_url(git_url: &[u8]) -> Result<Option<Self>, HostedGitInfoError> {
-        // git_url_mut may carry two ownership semantics:
-        //  - It aliases `git_url`, in which case it must not be freed.
-        //  - It actually points to a new allocation, in which case it must be freed.
-        // PORT NOTE: modeled as Cow-like local; Drop handles the owned case.
         let git_url_owned: Option<Box<[u8]>>;
         let mut git_url_mut: &[u8] = git_url;
 
         if is_github_shorthand(git_url) {
-            // In this case we have to prefix the url with `github:`.
-            //
-            // NOTE(markovejnovic): I don't exactly understand why this is treated specially.
-            //
-            // TODO(markovejnovic): Perhaps we can avoid this allocation...
-            // This one seems quite easy to get rid of.
             let concatenated = strings::concat(&[b"github:", git_url]);
             git_url_owned = Some(concatenated);
             git_url_mut = git_url_owned.as_deref().unwrap();
@@ -387,11 +353,6 @@ pub struct ParsedUrl<'a> {
     pub proto: UrlProtocol<'a>,
 }
 
-/// Handles input like git:github.com:user/repo and inserting the // after the first : if necessary
-///
-/// May error with `error.InvalidGitUrl` if the URL is not valid.
-///
-/// Note that this may or may not allocate but it manages its own memory.
 pub fn parse_url(npa_str: &[u8]) -> Result<ParsedUrl<'_>, ParseUrlError> {
     // Certain users can provide values like user:password@github.com:foo/bar and we want to
     // "correct" the protocol to be git+ssh://user:password@github.com:foo/bar
@@ -449,10 +410,6 @@ pub enum WellDefinedProtocol {
     Sourcehut,
 }
 
-/// Buffer type for holding a protocol string with colon (e.g., "git+rsync:").
-/// Sized to hold the longest protocol name plus one character for the colon.
-// PORT NOTE: hoisted from `impl WellDefinedProtocol` — inherent associated types
-// are unstable (E0658).
 pub(crate) type StringWithColonBuffer = [u8; WellDefinedProtocol::MAX_PROTOCOL_LENGTH + 1];
 
 impl WellDefinedProtocol {
@@ -526,11 +483,6 @@ impl WellDefinedProtocol {
         &buf[0..protocol_str.len() + 1]
     }
 
-    /// The set of characters that must appear between <protocol><resource-identifier>.
-    /// For example, in `git+ssh://user@host:repo`, the `//` is the magic string. Some protocols
-    /// don't support this, for example `github:user/repo` is valid.
-    ///
-    /// Kind of arbitrary and implemented to match hosted-git-info's behavior.
     fn protocol_resource_identifier_concatenation_token(self) -> &'static [u8] {
         match self {
             Self::Git
@@ -593,10 +545,6 @@ impl WellDefinedProtocol {
 ///
 /// This mirrors the implementation of hosted-git-info, though it is significantly faster.
 pub(crate) fn is_github_shorthand(npa_str: &[u8]) -> bool {
-    // The implementation in hosted-git-info is a multi-pass algorithm. We've opted to implement a
-    // single-pass algorithm for better performance.
-    //
-    // This could be even faster with SIMD but this is probably good enough for now.
     if npa_str.is_empty() {
         return false;
     }
@@ -742,14 +690,6 @@ impl<'a> UrlProtocolPair<'a> {
 // normalize_protocol / correct_url
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Given a loose string that may or may not be a valid URL, attempt to normalize it.
-///
-/// Returns a struct containing the URL string with the `protocol://` part removed and a tagged
-/// enumeration. If the protocol is known, it is returned as a WellDefinedProtocol. If the protocol
-/// is specified in the URL, it is given as a slice and if it is not specified, the `unknown` field
-/// is returned. The result is a view into `npa_str` which must, consequently, remain stable.
-///
-/// This mirrors the `correctProtocol` function in `hosted-git-info/parse-url.js`.
 fn normalize_protocol(npa_str: &[u8]) -> UrlProtocolPair<'_> {
     let mut first_colon_idx: i32 = -1;
     if let Some(idx) = strings::index_of_char(npa_str, b':') {
@@ -815,26 +755,6 @@ fn normalize_protocol(npa_str: &[u8]) -> UrlProtocolPair<'_> {
         }
     }
 
-    // The next thing we can try is to search for the double slash and treat this protocol as a
-    // custom one.
-    //
-    // NOTE(markovejnovic): I also think this is wrong in parse-url.js.
-    // They:
-    // 1. Test the protocol against known protocols (which is fine)
-    // 2. Then, if not found, they go through that hoop of checking for @ and : guessing if it is a
-    //    git+ssh URL or not
-    // 3. And finally, they search for ://.
-    //
-    // The last two steps feel like they should happen in reverse order:
-    //
-    // If I have a foobar://user:host@path URL (and foobar is not given as a known protocol), their
-    // implementation will not report this as a foobar protocol, but rather as
-    // git+ssh://foobar://user:host@path which, I think, is wrong.
-    //
-    // I even tested it: https://tinyurl.com/5y4e6zrw
-    //
-    // Our goal is to be bug-for-bug compatible, at least for now, so this is how I re-implemented
-    // it.
     let maybe_dup_slash_idx = strings::index_of(npa_str, b"//");
     if let Some(dup_slash_idx) = maybe_dup_slash_idx {
         if i32::try_from(dup_slash_idx).expect("int cast") == first_colon_idx + 1 {
@@ -928,16 +848,6 @@ pub(crate) fn correct_url<'a>(
 // HostProvider
 // ──────────────────────────────────────────────────────────────────────────
 
-/// This enumeration encapsulates all known host providers and their configurations.
-///
-/// Providers each have different configuration fields and, on top of that, have different
-/// mechanisms for formatting URLs. For example, GitHub will format SSH URLs as
-/// `git+ssh://git@${domain}/${user}/${project}.git${maybeJoin('#', committish)}`, while `gist`
-/// will format URLs as `git+ssh://git@${domain}/${project}.git${maybeJoin('#', committish)}`. This
-/// structure encapsulates the differences between providers and how they handle all of that.
-///
-/// Effectively, this enumeration acts as a registry of all known providers and a vtable for
-/// jumping between different behavior for different providers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Enum, strum::IntoStaticStr)]
 #[strum(serialize_all = "lowercase")]
 pub enum HostProvider {
@@ -979,11 +889,6 @@ impl HostProvider {
         &shct[0..shct.len() - 1]
     }
 
-    /// Find the appropriate host provider by its shortcut (e.g. "github:").
-    ///
-    /// The second parameter allows you to declare whether the given string includes the protocol:
-    /// colon or not.
-    // PERF(port): was comptime monomorphization — profile if it shows up on a hot path
     fn from_shortcut(shortcut_str: &[u8], with_colon: bool) -> Option<HostProvider> {
         // PORT NOTE: Zig used `inline for (std.meta.fields(Self))` (comptime reflection).
         for provider in Self::ALL {
@@ -1067,11 +972,6 @@ pub struct ExtractResult {
 impl ExtractResult {
     // PORT NOTE: `deinit` → Drop; `Option<Box<[u8]>>` frees automatically.
 
-    /// Return the buffer which owns this Result and the allocator responsible for
-    /// freeing it.
-    ///
-    /// Same semantics as C++ STL. Safe-to-deinit Result after this, not safe to
-    /// use it.
     fn move_out(&mut self) -> Box<[u8]> {
         let Some(buffer) = self._owned_buffer.take() else {
             panic!(
@@ -1801,10 +1701,6 @@ pub mod formatters {
 // configs (std.enums.EnumArray)
 // ──────────────────────────────────────────────────────────────────────────
 
-// PERF(port): was `std.enums.EnumArray(Self, Config).init(.{...})` (comptime
-// dense array indexed by enum). `enum_map::EnumMap` can't be const-initialized
-// with fn pointers, so this uses a `OnceLock` static — flatten into a
-// `match`-based accessor if it shows up on a hot path.
 fn configs() -> &'static EnumMap<HostProvider, Config> {
     use std::sync::OnceLock;
     static CONFIGS: OnceLock<EnumMap<HostProvider, Config>> = OnceLock::new();
@@ -1911,10 +1807,6 @@ fn configs() -> &'static EnumMap<HostProvider, Config> {
 // TestingAPIs
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE (layering): `pub const X = @import("../install_jsc/...")` aliases deleted —
-// `js_parse_url` / `js_from_url` live in `bun_install_jsc` (higher tier). Re-exporting
-// them here would re-introduce the install ↔ jsc cycle. Module kept as a marker so
-// Zig grep for `TestingAPIs` still lands here.
 pub mod testing_apis {}
 
 // ported from: src/install/hosted_git_info.zig

@@ -31,21 +31,6 @@ use core::sync::atomic::{AtomicU64, Ordering};
 // LiveMarker / Anchored
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Zero-cost-in-release liveness sentinel embedded in a parent struct.
-///
-/// Debug: `AtomicU64` initialised from a process-global counter; `Drop` poisons
-/// it to [`DEAD`](Self::DEAD). Release: ZST (no field, no `Drop`).
-///
-/// Embed this in any struct that hands out [`ParentRef::anchored`] copies of
-/// itself, then `#[derive(Anchored)]` (re-exported from `bun_ptr`) so the
-/// derive can locate the field. Every `ParentRef::get()` / `Deref` then
-/// debug-asserts that the parent's marker still matches the snapshot taken at
-/// construction — catching use-after-parent-drop and ABA-reallocation at the
-/// deref site instead of the eventual segfault.
-///
-/// `AtomicU64` (not `Cell<u64>`) so the marker is `Send + Sync` and embedding
-/// it does not poison the parent's auto-traits, and so the cross-thread
-/// `ParentRef::get()` debug-check is itself race-free.
 pub struct LiveMarker {
     #[cfg(debug_assertions)]
     generation: AtomicU64,
@@ -136,15 +121,6 @@ pub trait Anchored {
 // ParentRef<T>
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Non-owning back-pointer from a child/task to its mortal owner.
-///
-/// See the [module docs](self) for the full rationale.
-///
-/// # Layout
-/// `#[repr(transparent)]` over `NonNull<T>` in release, so
-/// `Option<ParentRef<T>>` is pointer-sized (NonNull niche) — bit-identical to
-/// the `*mut T` field it replaces, no struct-layout churn. In debug builds the
-/// generation snapshot adds 16 bytes.
 #[cfg_attr(not(debug_assertions), repr(transparent))]
 pub struct ParentRef<T: ?Sized> {
     ptr: NonNull<T>,
@@ -161,13 +137,6 @@ pub struct ParentRef<T: ?Sized> {
 }
 
 impl<T: ?Sized> ParentRef<T> {
-    /// Construct from a shared borrow of the parent. Provenance is
-    /// `SharedReadOnly` — correct, because `ParentRef` only ever yields `&T`.
-    ///
-    /// **Do not** call [`assume_mut`](Self::assume_mut) on the result; the
-    /// stored pointer has no write provenance. Use [`from_raw_mut`] for that.
-    ///
-    /// [`from_raw_mut`]: Self::from_raw_mut
     #[inline]
     pub fn new(parent: &T) -> Self {
         Self {
@@ -179,11 +148,6 @@ impl<T: ?Sized> ParentRef<T> {
         }
     }
 
-    /// Construct and capture the parent's live-generation. Prefer this over
-    /// [`new`](Self::new) for any parent with a finite lifetime (i.e. almost
-    /// all of them) so use-after-drop is caught in debug builds.
-    ///
-    /// Same `SharedReadOnly` provenance caveat as [`new`](Self::new).
     #[inline]
     pub fn anchored(parent: &T) -> Self
     where
@@ -285,11 +249,6 @@ impl<T: ?Sized> ParentRef<T> {
         }
     }
 
-    /// Shared borrow of the parent. **Debug-asserts** liveness if anchored.
-    ///
-    /// Sound under the `ParentRef` invariant: the pointee outlives the holder
-    /// (by construction or by the caller's `from_raw*` contract). The returned
-    /// borrow is tied to `&self` so it cannot outlive the `ParentRef`.
     #[inline]
     pub fn get(&self) -> &T {
         #[cfg(debug_assertions)]
@@ -305,11 +264,6 @@ impl<T: ?Sized> ParentRef<T> {
         self.ptr.as_ptr()
     }
 
-    /// Raw pointer with the provenance the `ParentRef` was constructed with.
-    /// Only carries write permission if constructed via
-    /// [`from_raw_mut`](Self::from_raw_mut) / [`from_nullable_mut`].
-    ///
-    /// [`from_nullable_mut`]: Self::from_nullable_mut
     #[inline]
     pub fn as_mut_ptr(self) -> *mut T {
         self.ptr.as_ptr()

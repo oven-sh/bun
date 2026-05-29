@@ -156,11 +156,6 @@ impl<D: PartialEq + Clone> PartialEq for DimensionPercentage<D> {
     }
 }
 
-// `Zero`/`MulF32`/`TryAdd`/`Parse` protocol traits live in
-// `crate::values::protocol` until `generics::parse_tocss_numeric_gated`
-// un-gates. The bound set below mirrors the full Zig comptime-method surface
-// on `D`; per-method `where` clauses narrow further so plain
-// `DimensionPercentage<D>` (no behavior) needs only `D: Clone`.
 impl<D> DimensionPercentage<D>
 where
     // TODO(port): narrow these bounds; mirroring methods called on D below.
@@ -478,17 +473,6 @@ impl NumberOrPercentage {
             NumberOrPercentage::Percentage(p) => p.to_css(dest),
         }
     }
-
-    // pub fn parse(input: *css.Parser) Result(NumberOrPercentage) {
-    //     _ = input; // autofix
-    //     @panic(css.todo_stuff.depth);
-    // }
-
-    // pub fn toCss(this: *const NumberOrPercentage, dest: *css.Printer) css.PrintErr!void {
-    //     _ = this; // autofix
-    //     _ = dest; // autofix
-    //     @panic(css.todo_stuff.depth);
-    // }
 
     pub(crate) fn into_f32(&self) -> f32 {
         match self {

@@ -16,8 +16,14 @@ use core::ffi::c_char;
 use std::cell::Cell;
 
 #[cfg(not(windows))]
+use crate::api::bun::process::SpawnResultExt as _;
+use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use bun_core::ZStr;
+#[cfg(not(windows))]
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
+use bun_io::pipe_reader::BufferedReaderParent;
 use bun_io::{KeepAlive, Loop as AsyncLoop};
 use bun_jsc::virtual_machine::{HOT_RELOAD_HOT, VirtualMachine};
 use bun_jsc::{
@@ -30,16 +36,6 @@ use bun_paths::{self as path};
 use bun_resolver::fs::FileSystem;
 #[cfg(not(target_os = "macos"))]
 use bun_resolver::fs::RealFS;
-// `Process`/`Rusage`/`SpawnOptions`/`Status`/`spawn_process` live in
-// `api::bun::process` (re-exported under `api::bun::spawn::posix_spawn`, but
-// not at the `spawn` module root). Alias `process` as `spawn` so the
-// `spawn::spawn_process(...)` call site below resolves.
-#[cfg(not(windows))]
-use crate::api::bun::process::SpawnResultExt as _;
-use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
-use bun_core::ZStr;
-use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(target_os = "macos")]
 use bun_sys::FdDirExt as _;
 // Owned NUL-terminated string (Zig `[:0]u8` allocation) — `bun_str` exposes the
@@ -49,10 +45,6 @@ use bun_sys::{self as sys, Fd, File};
 
 // ─── local shims (upstream-crate gaps; see PORTING.md §extension traits) ────
 
-/// Recover `&mut VirtualMachine` from the per-thread singleton.
-///
-/// Safe: delegates to [`VirtualMachine::as_mut`], which already encapsulates
-/// the single-JS-thread thread-local deref (provenance from `get_mut_ptr()`).
 #[inline]
 fn vm_mut<'a>() -> &'a mut VirtualMachine {
     VirtualMachine::get_mut()
@@ -64,15 +56,6 @@ use crate::jsc_hooks::timer_all_mut as timer_all;
 // CronJobBase — shared base for CronRegisterJob and CronRemoveJob
 // ============================================================================
 
-/// Shared base for [`CronRegisterJob`] and [`CronRemoveJob`].
-// Zig: `fn CronJobBase(comptime Self: type) type { return struct { ... } }`
-//
-// PORT NOTE: every method on the path to `finish()` (which `heap::take`-
-// drops `this`) takes a raw `*mut Self` receiver, mirroring the Zig `*Self`.
-// A `&mut self` *parameter* would carry a Stacked Borrows FnEntry protector,
-// making the in-flight dealloc UB; a *local* `let s = &mut *this` reborrow
-// has no protector and ends at last use under NLL, so field access via `s`
-// followed by `Self::finish(this)` is sound.
 trait CronJobBase: Sized {
     fn remaining_fds_mut(&mut self) -> &mut i8;
     fn err_msg_mut(&mut self) -> &mut Option<Vec<u8>>;
@@ -243,11 +226,6 @@ impl CronRegisterJob {
                     && !(s.state == RegisterState::ReadingCrontab && exited.code == 1)
                     && s.state != RegisterState::BootingOut
                 {
-                    // Materialize the trimmed stderr into an owned buffer:
-                    // `final_buffer()` borrows `s` mutably, and `set_err`
-                    // below needs another `&mut s` — copy out so the two
-                    // borrows do not overlap (Windows only; POSIX ignores
-                    // stderr here).
                     #[cfg(windows)]
                     let stderr_owned: Vec<u8> = bun_core::immutable::trim(
                         s.stderr_reader.final_buffer().as_slice(),
@@ -1402,22 +1380,12 @@ impl Drop for CronRemoveJob {
 // CronJob — in-process callback-style cron (Bun.cron(expr, cb))
 // ============================================================================
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `on_timer_fire`
-// calls `cb.call()` which re-enters JS; that JS may call `stop()`/`ref()`/
-// `unref()` on this same wrapper, so a `noalias` `&mut Self` held across the
-// re-entry is Stacked-Borrows UB and an LLVM-level miscompile hazard. `&self`
-// + `UnsafeCell`-backed fields suppresses `noalias` on the receiver.
 #[bun_jsc::JsClass(no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Self::destroy_impl)]
 pub struct CronJob {
     // bun.ptr.RefCount(...) intrusive — keep raw count for IntrusiveRc compat.
     ref_count: Cell<u32>,
-    // pub: `bun_core::from_field_ptr!(CronJob, event_loop_timer)` needs `offset_of!` visibility.
-    // `JsCell` is `#[repr(transparent)]`, so the byte offset of the inner
-    // `EventLoopTimer` is identical and the dispatch.rs `owner!` macro works
-    // unchanged.
     pub event_loop_timer: JsCell<EventLoopTimer>,
     // LIFETIMES.tsv: JSC_BORROW → GlobalRef. Read-only after construction.
     global: GlobalRef,
@@ -1456,10 +1424,6 @@ pub enum ClearMode {
 type CronJobDerefOnDrop = bun_ptr::ScopedRef<CronJob>;
 
 impl CronJob {
-    /// `CellRefCounted::destroy` target (refcount hit zero).
-    ///
-    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-    /// whose generated trait `destroy` upholds the sole-owner contract.
     fn destroy_impl(this: *mut Self) {
         // deinit: this_value.deinit() then destroy.
         // SAFETY: last ref; nobody else holds a pointer.
@@ -1481,27 +1445,11 @@ impl CronJob {
         )))
     }
 
-    /// `self`'s address as `*mut Self` for raw-ptr-receiver helpers (e.g.
-    /// `self_stop`, `schedule_next`). The callees deref it as `&*` (shared) —
-    /// all mutation is `UnsafeCell`-backed — so no write provenance is
-    /// required; the `*mut` spelling is purely to match the existing
-    /// raw-ptr-receiver signature (which also stands for "callee may free
-    /// the allocation").
     #[inline]
     fn as_ctx_ptr(&self) -> *mut Self {
         std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
-    /// Recover `&CronJob` from a raw-ptr receiver. Centralises the set-once
-    /// `*mut Self → &Self` deref so the raw-ptr-receiver helpers
-    /// (`release_pending_ref`, `self_stop`, `schedule_next`, `on_timer_fire`,
-    /// `on_promise_*`) stay safe at the call site — one `unsafe` here, N safe
-    /// callers.
-    ///
-    /// Only valid while the caller holds at least one intrusive ref (timer
-    /// heap, list entry, `pending_ref`, or a `ref_guard`). R-2: shared borrow
-    /// only — every field is `Cell`/`JsCell`/read-only-after-construction, so
-    /// re-entrant JS forming a fresh `&Self` aliases soundly.
     #[inline]
     fn from_ctx_ptr<'a>(this: *mut Self) -> &'a Self {
         // SAFETY: every call site (private to this module) passes the
@@ -1512,14 +1460,6 @@ impl CronJob {
         unsafe { &*this }
     }
 
-    /// RAII pair for `ref_()` / `deref()`: bumps the intrusive refcount now and
-    /// releases it on drop. Replaces the Zig `this.ref(); defer this.deref();`
-    /// idiom. The guard holds a raw pointer (not `&mut Self`) so no Rust
-    /// reference is live across the potential free in `deref()`.
-    ///
-    /// Safe under the same module-private invariant as [`from_ctx_ptr`]: every
-    /// call site (private to this module) passes the intrusively-refcounted
-    /// heap allocation with refcount > 0.
     #[inline]
     fn ref_guard(this: *mut Self) -> CronJobDerefOnDrop {
         // SAFETY: module-private invariant (see `from_ctx_ptr`) — `this` is the
@@ -1568,10 +1508,6 @@ impl CronJob {
 
     fn self_stop(this: *mut Self, vm: &VirtualMachine) {
         let this_ref = Self::from_ctx_ptr(this);
-        // While the callback is on the stack or its promise is pending, defer
-        // list removal + downgrade to finishDeferredStop (called from
-        // scheduleNext after settle) so onPromiseReject can read pendingPromise
-        // and clearAllForVM(.teardown) can release pending_ref.
         if this_ref.in_fire.get() || this_ref.pending_ref.get() {
             this_ref.stopped.set(true);
             this_ref.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
@@ -1604,10 +1540,6 @@ impl CronJob {
         }
     }
 
-    /// `.reload`: --hot — promises in flight will still settle on this VM, so
-    /// the pending ref is left for onPromiseResolve/Reject to balance.
-    /// `.teardown`: worker exit — the event loop is dying, settle never
-    /// happens, so release the pending ref here to avoid leaking the struct.
     pub fn clear_all_for_vm<const MODE: ClearMode>(vm: &mut VirtualMachine) {
         // Drain the list first so `stop_internal` (which re-enters the VM)
         // doesn't alias the `rare` borrow.
@@ -1658,10 +1590,6 @@ impl CronJob {
 
     fn schedule_next(this: *mut Self, vm: &VirtualMachine) {
         let this_ref = Self::from_ctx_ptr(this);
-        // Every path into here has just returned from user JS (the callback,
-        // an uncaughtException handler, or an unhandledRejection handler). If
-        // that JS called process.exit() / worker.terminate(), don't re-arm
-        // the timer into a VM whose teardown now owns it.
         if this_ref.stopped.get()
             || vm.script_execution_status() != jsc::ScriptExecutionStatus::Running
         {
@@ -1681,11 +1609,6 @@ impl CronJob {
         // list entry; bracket-ref so that path can't drop the last ref mid-function.
         // Timer heap holds the entry; `this` is live until the guard drops.
         let _guard = Self::ref_guard(this);
-        // Bracket-ref above keeps `this` alive across scheduleNext →
-        // finishDeferredStop. R-2: shared (`&*`) — `cb.call()` re-enters JS,
-        // which may call `stop()`/`ref()`/`unref()` on this same wrapper; a
-        // `noalias` `&mut Self` here would be Stacked-Borrows UB. All mutation
-        // is interior (`Cell`/`JsCell`).
         let this_ref = Self::from_ctx_ptr(this);
         this_ref
             .event_loop_timer
@@ -1726,11 +1649,6 @@ impl CronJob {
             Err(_) => {
                 this_ref.in_fire.set(false);
                 if let Some(err) = this_ref.global.try_take_exception() {
-                    // terminate() arriving mid-callback leaves the TerminationException
-                    // pending (tryClearException refuses to clear it) while JSC clears
-                    // hasTerminationRequest on VMEntryScope exit. Reporting it would
-                    // enter a DeferTermination scope and assert; match setTimeout's
-                    // Bun__reportUnhandledError and drop it.
                     if err.is_termination_exception() {
                         Self::self_stop(this, vm);
                         return;
@@ -1766,10 +1684,6 @@ impl CronJob {
                         Bun__CronJob__onPromiseResolve,
                         Bun__CronJob__onPromiseReject,
                     );
-                    // Zig's `then()` is `TopExceptionScope`-wrapped and only fails
-                    // on termination. The Rust `then()` returns `()`, so re-check
-                    // the VM status and run the same recovery the Zig `catch`
-                    // ran — otherwise `pending_ref` and the `ref_()` above leak.
                     if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
                         js::pending_promise_set_cached(
                             js_this,
@@ -1921,10 +1835,6 @@ impl CronJob {
     }
 }
 
-// These MUST be *function* symbols: C++ `promiseHandlerID` compares the handler
-// pointer passed to `JSValue::then` against `&Bun__CronJob__onPromiseResolve`
-// by identity. A `static JSHostFn` would export a data slot whose address never
-// matches the inner shim, tripping RELEASE_ASSERT_NOT_REACHED.
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
     pub unsafe fn Bun__CronJob__onPromiseResolve(
@@ -2145,12 +2055,6 @@ impl SpawnCmdTarget for CronRemoveJob {
     }
 }
 
-/// Generic spawn used by both CronRegisterJob and CronRemoveJob.
-///
-/// May free `this` (synchronously, via either an early `T::finish` on setup
-/// error or `watch_or_reap` → exit handler → `maybe_finished` → `finish`).
-/// Raw-ptr receiver: see [`CronJobBase`] PORT NOTE. Callers must not touch
-/// `this` after this returns.
 unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     this: *mut T,
     argv: &mut [*const c_char],
@@ -2217,24 +2121,6 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         }
     };
 
-    // PORT NOTE / OWNERSHIP: Zig stashes the heap libuv pipe in
-    // `stderr_reader.source.?.pipe` and reuses the same pointer for
-    // `SpawnOptions.stderr = .{ .buffer = pipe }`. In the Rust port BOTH
-    // `Source::Pipe` and `WindowsStdioResult::Buffer` own a `Box<uv::Pipe>`,
-    // and `spawn_process_windows` `heap::take`s the raw `Stdio::Buffer`
-    // pointer into `WindowsStdioResult::Buffer` on success. Pre-stashing the
-    // Box in `stderr_reader.source` here (the original transliteration) would
-    // create TWO `Box<uv::Pipe>` over one allocation — UB under Stacked
-    // Borrows even with a `mem::forget` of the duplicate, because moving the
-    // first Box into `Source::Pipe` reasserts its `Unique` tag and kills the
-    // raw pointer's provenance before `spawn_process_windows` ever
-    // dereferences it. Instead hand the raw heap pointer to `Stdio::Buffer`
-    // alone (sole owner), let `spawn_process_windows` round-trip it through
-    // `heap::take`, and stash the returned Box in `stderr_reader.source`
-    // AFTER spawn — see the `#[cfg(windows)]` block below and
-    // `lifecycle_script_runner.rs` / `filter_run.rs` for the canonical
-    // pattern. On spawn error, `WindowsStdio` has no `Drop`; reclaim
-    // explicitly via `spawn_options.stderr.deinit()`.
     #[cfg(windows)]
     let stderr_pipe_ptr: *mut bun_sys::windows::libuv::Pipe =
         bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
@@ -2267,10 +2153,6 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         match unsafe { spawn::spawn_process(&spawn_options, argv.as_mut_ptr().cast(), envp) } {
             Ok(Ok(sp)) => sp,
             Ok(Err(err)) => {
-                // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
-                // raw `*mut uv::Pipe` on the SUCCESS path; on every error return
-                // ownership stays with the caller and `WindowsStdio` has no
-                // `Drop`. Reclaim it (uv_close + free if init'd) here.
                 #[cfg(windows)]
                 spawn_options.stderr.deinit();
                 s.set_err(format_args!(
@@ -2325,15 +2207,6 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     }
     #[cfg(windows)]
     {
-        // `spawn_process_windows` has `heap::take`n `stderr_pipe_ptr` out of
-        // `Stdio::Buffer` into `spawned.stderr` as
-        // `WindowsStdioResult::Buffer(Box<uv::Pipe>)`. Take that Box out
-        // *here* (sole owner — single `into_raw` → `from_raw` round-trip, no
-        // aliasing Box) and stash it in `stderr_reader.source` BEFORE
-        // `start_with_current_pipe` (which reads `source.?.pipe`) and BEFORE
-        // `spawned` drops — otherwise `WindowsSpawnResult::Drop` would
-        // `uv_close`+free the live, libuv-registered handle (UAF in the read
-        // callback + double-free on reader close).
         if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
             debug_assert!(core::ptr::eq(Box::as_ref(&pipe), stderr_pipe_ptr));
             s.stderr_reader().source = Some(bun_io::Source::Pipe(pipe));
@@ -2382,25 +2255,11 @@ fn find_crontab() -> Option<*const c_char> {
     }
     #[cfg(not(windows))]
     {
-        // Zig: `const static = struct { var buf: bun.PathBuffer = undefined; };`
-        // The returned `*const c_char` borrows this buffer, so it must outlive
-        // the call. `Bun.cron` is exposed on every `BunObject`, so this is
-        // reachable from the main JS thread *and* any Worker thread
-        // concurrently — a process-global `static` would be a data race.
-        // `thread_local!` gives each JS thread its own scratch buffer; the
-        // returned pointer is consumed on the same thread (copied by
-        // `posix_spawn`) before any later call can overwrite it. Non-Windows
-        // only, so `MAX_PATH_BYTES` is ≤4 KiB and inline TLS is fine.
         thread_local! {
             static BUF: core::cell::RefCell<bun_core::PathBuffer> =
                 const { core::cell::RefCell::new(bun_core::PathBuffer::ZEROED) };
         }
         let path_env = env_var::PATH.get().unwrap_or(b"/usr/bin:/bin");
-        // `bun_which::which` is a pure PATH walk that cannot reenter
-        // `find_crontab`, so the `RefCell` borrow is never contested. The
-        // returned raw pointer escapes the `RefMut` guard but stays valid:
-        // it points into per-thread storage and is consumed by `posix_spawn`
-        // on this thread before any later call could overwrite the buffer.
         BUF.with_borrow_mut(|buf| {
             let found = bun_which::which(buf, path_env, b"", b"crontab")?;
             Some(found.as_ptr().cast())
@@ -2458,11 +2317,6 @@ fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_alloc::AllocError
     );
     Ok(ZString::from_bytes(joined))
 }
-
-// ============================================================================
-// Pure OS-level cron translators (crontab filter, launchd plist, schtasks XML).
-// No JSC dependencies — operate on `&[u8]` and `cron_parser::CronExpression`.
-// ============================================================================
 
 /// Get the current user ID portably.
 pub fn get_uid() -> u32 {
@@ -2590,13 +2444,6 @@ pub fn cron_to_calendar_interval(schedule: &[u8]) -> Result<Vec<u8>, CalendarErr
         *fv = Some(vals);
     }
 
-    // Generate StartCalendarInterval dicts.
-    // For wildcard fields, omit the key entirely (launchd treats missing = all).
-    //
-    // POSIX cron OR semantics: when BOTH day-of-month and day-of-week are non-wildcard,
-    // the job fires when EITHER matches. launchd ANDs keys within a single dict, so we
-    // emit two separate sets of dicts: one with Day (no Weekday) and one with Weekday
-    // (no Day). launchd fires when ANY dict matches, achieving OR behavior.
     let mut result: Vec<u8> = Vec::new();
 
     let has_dom = field_values[2].is_some();
@@ -2760,19 +2607,11 @@ pub fn cron_to_task_xml(
     let weekdays_is_wild = cron.weekdays == cron_parser::ALL_WEEKDAYS;
     let months_is_wild = cron.months == cron_parser::ALL_MONTHS;
 
-    // Try to use a single trigger with Repetition for simple repeating patterns.
-    // This avoids the 48-trigger limit for high-frequency expressions.
-    // Only valid when: (a) all days/weekdays/months are wild, AND
-    // (b) the pattern is expressible as a single PT interval that doesn't drift.
     let minute_interval = compute_step_interval::<u64>(cron.minutes, 0, 59);
     let hour_interval = compute_step_interval::<u32>(cron.hours, 0, 23);
     let minutes_count: u32 = cron.minutes.count_ones();
     let hours_count: u32 = cron.hours.count_ones();
 
-    // Case 1: All hours active, evenly-spaced minutes that divide 60
-    //   e.g. "* * * * *" → PT1M, "*/5 * * * *" → PT5M, "*/15 * * * *" → PT15M
-    // Case 2: Single minute, evenly-spaced hours that divide 24
-    //   e.g. "0 * * * *" → PT1H, "0 */2 * * *" → PT2H, "30 */6 * * *" → PT6H
     let can_use_repetition = days_is_wild
         && weekdays_is_wild
         && months_is_wild
@@ -3070,10 +2909,6 @@ fn append_calendar_trigger_with_schedule(
     Ok(())
 }
 
-/// Local stand-in for the planned `bun_core::BitOps` trait — only what
-/// `compute_step_interval` needs, implemented for the two integer widths the
-/// cron bitfields use.
-// TODO(port): replace with `bun_core::BitOps` once that trait lands.
 trait StepBits:
     Copy + core::ops::BitAnd<Output = Self> + core::ops::Sub<Output = Self> + PartialEq
 {

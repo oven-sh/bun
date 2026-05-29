@@ -73,14 +73,6 @@ pub mod js_bindings {
         // Zig: @setRuntimeSafety(false) — Rust has no per-fn equivalent; the raw-ptr write below
         // is already unchecked inside `unsafe`.
         crash_handler::suppress_core_dumps_if_necessary();
-        // Under ASAN the SIGSEGV handler is intentionally not installed
-        // (`reset_on_posix()` early-returns so ASAN's own DEADLYSIGNAL diagnostic
-        // stays in charge of real faults). A bare deref here would route to ASAN's
-        // handler — no trace string, no upload — and the `segfault should report`
-        // test times out waiting for a POST that never comes. Invoke the handler
-        // directly with the address it *would* have received from `siginfo_t`; the
-        // code path under test (`crash_handler(SegmentationFault, …)` → trace
-        // string → `report()`) is exactly what `handle_segfault_posix` calls.
         if Environment::ENABLE_ASAN {
             crash_handler::crash_handler(
                 crash_handler::CrashReason::SegmentationFault(0xDEADBEEF),

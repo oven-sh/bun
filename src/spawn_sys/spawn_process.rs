@@ -41,19 +41,6 @@ pub type PidFdType = FdT;
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
 pub type PidFdType = (); // u0 in Zig
 
-// ──────────────────────────────────────────────────────────────────────────
-// Rusage — platform-uniform resource-usage struct
-//
-// One Bun-level type per target, mirroring Zig's `bun.spawn.Rusage`
-// (process.zig:72-97). On every Unix this is `libc::rusage` — Rust's libc
-// crate, unlike Zig's `std.posix`, *does* define `rusage` on FreeBSD with
-// the standard `ru_*` field names, so no hand-rolled FreeBSD struct is
-// needed. On Windows it is the value-typed `WinRusage` below (NOT
-// `uv_rusage_t` — that is vendor FFI ABI in `bun_libuv_sys` and stays
-// untouched; our Windows path fills `WinRusage` directly from Win32, not
-// via libuv).
-// ──────────────────────────────────────────────────────────────────────────
-
 #[derive(Default, Clone, Copy)]
 pub struct WinTimeval {
     pub sec: i64,
@@ -108,14 +95,6 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
         )
     } != 0
     {
-        // FILETIME is in 100-nanosecond ticks. 1 s = 10_000_000 ticks; 1 µs =
-        // 10 ticks. The Zig spec (process.zig:53) computes the sub-second part
-        // as `temp % 1_000_000`, which is unit-mismatched: it takes a 100-ns
-        // tick count modulo a microsecond denominator, so a 178 125 µs run
-        // (1_781_250 ticks) reports as 781_250 µs. That over-report is what
-        // tips the "does not use 100% cpu > install" test (`cpuTime.total <
-        // 750_000`) on Windows aarch64. Diverge from spec and convert
-        // correctly: `(ticks % 10_000_000) / 10`.
         let mut temp: u64 =
             ((kerneltime.dwHighDateTime as u64) << 32) | kerneltime.dwLowDateTime as u64;
         if temp > 0 {
@@ -155,10 +134,6 @@ pub fn rusage_zeroed() -> Rusage {
     bun_core::ffi::zeroed()
 }
 
-/// Platform-uniform field accessors over [`Rusage`]. The underlying alias has
-/// divergent field names (`ru_*` on every Unix `libc::rusage`; bare names on
-/// `WinRusage` with several `u0`/absent counters). This trait gives JS-facing
-/// getters one cfg-free body, matching the Zig spec's uniform names.
 pub trait RusageFields {
     fn utime_sec(&self) -> i64;
     fn utime_usec(&self) -> i64;
@@ -315,17 +290,7 @@ pub struct PosixSpawnOptions {
     pub stream: bool,
     pub sync: bool,
     pub can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: bool,
-    /// Apple Extension: If this bit is set, rather
-    /// than returning to the caller, posix_spawn(2)
-    /// and posix_spawnp(2) will behave as a more
-    /// featureful execve(2).
     pub use_execve_on_macos: bool,
-    /// If we need to call `socketpair()`, this
-    /// sets SO_NOSIGPIPE when true.
-    ///
-    /// If false, this avoids setting SO_NOSIGPIPE
-    /// for stdout. This is used to preserve
-    /// consistent shell semantics.
     pub no_sigpipe: bool,
     /// setpgid(0, 0) in the child so it leads its own process group. The parent
     /// can then `kill(-pid, sig)` to signal the child and all its descendants.
@@ -335,11 +300,6 @@ pub struct PosixSpawnOptions {
     pub pty_slave_fd: i32,
     /// Windows-only ConPTY handle; void placeholder on POSIX.
     pub pseudoconsole: (),
-    /// Linux only. When non-null, the child sets PR_SET_PDEATHSIG to this
-    /// signal between vfork and exec in posix_spawn_bun, so the kernel kills
-    /// it when the spawning thread dies. When null, defaults to SIGKILL if
-    /// no-orphans mode is enabled (see `ParentDeathWatchdog`), else 0 (no
-    /// PDEATHSIG). Not exposed to JS yet.
     pub linux_pdeathsig: Option<u8>,
 }
 
@@ -376,14 +336,6 @@ impl PosixSpawnOptions {
     pub fn deinit(&mut self) {}
 }
 
-/// `bun.jsc.Subprocess.StdioKind` — defined here (not in `subprocess`) to keep
-/// the spawn-sys layer leaf. Re-exported up through `bun_spawn::process` →
-/// `bun_runtime::api::{bun_process, JscSubprocess}` → `shell::subproc`.
-///
-/// `EnumSetType` is load-bearing for `closed: EnumSet<StdioKind>` on both
-/// `Subprocess` and `ShellSubprocess`; `IntoStaticStr` for close-IO logging.
-/// (`EnumSetType` auto-supplies `Copy + Clone + Eq + PartialEq`; do not add
-/// `#[repr(u8)]` — the derive forbids it, and no caller casts `as u8`.)
 #[derive(enumset::EnumSetType, Debug, strum::IntoStaticStr)]
 #[enumset(repr = "u8")]
 pub enum StdioKind {
@@ -487,11 +439,6 @@ impl PosixSpawnResult {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn pidfd_flags_for_linux() -> u32 {
-        // pidfd_nonblock only supported in 5.10+. The Zig path consults
-        // `analytics.kernel_version()` (semver compare); until that helper is
-        // ported, optimistically request NONBLOCK and rely on the EINVAL retry
-        // below to fall back on older kernels.
-        // TODO(port): wire bun_analytics::kernel_version() once available.
         bun_sys::O::NONBLOCK as u32
     }
 
@@ -579,23 +526,6 @@ pub(crate) const POSIX_SPAWN_CLOEXEC_DEFAULT: i32 = 0x4000; // _POSIX_SPAWN_CLOE
 #[cfg(target_os = "macos")]
 pub(crate) const POSIX_SPAWN_SETEXEC: i32 = 0x0040; // POSIX_SPAWN_SETEXEC
 
-/// RAII fd cleanup matching the Zig `defer` (process.zig:1393-1403) and
-/// `errdefer` (process.zig:1407-1411) in `spawnProcessPosix`. The `defer`
-/// runs on *every* exit (set CLOEXEC on `to_set_cloexec`, then close
-/// `to_close_at_end`); the `errdefer` additionally closes `to_close_on_error`
-/// on error returns. `on_error` is disarmed on the success path.
-///
-/// This exists so that bare `?` on `actions.*` propagates without leaking
-/// the parent-side socketpair ends pushed earlier in the loop.
-///
-/// PORT NOTE (intentional divergence): Zig's `errdefer` only fires on
-/// error-union returns (`try` failures), *not* on `return .{.err = ..}` value
-/// returns — so in the spec, socketpair/set_nonblocking/spawn_z value-error
-/// paths leak `to_close_on_error`. This guard initializes `on_error = true`
-/// and is only disarmed after `spawn_z` succeeds, deliberately widening the
-/// cleanup to cover those value-error returns as well. The fds in
-/// `to_close_on_error` are parent-side ends never handed back to the caller on
-/// any error path, so closing them is the correct behavior.
 #[cfg(unix)]
 struct PosixSpawnFdGuard {
     to_set_cloexec: Vec<Fd>,
@@ -694,10 +624,6 @@ pub unsafe fn spawn_process_posix(
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        // Explicit per-spawn value wins; otherwise no-orphans mode defaults
-        // every child to SIGKILL-on-parent-death so non-Bun descendants are
-        // covered without relying on env-var inheritance, and the prctl happens
-        // in the vfork child before exec so there's no startup race.
         attr.linux_pdeathsig = if let Some(sig) = options.linux_pdeathsig {
             i32::from(sig)
         } else if crate::pdeathsig::should_default() {
@@ -712,10 +638,6 @@ pub unsafe fn spawn_process_posix(
     }
     let mut spawned = PosixSpawnResult::default();
     let mut extra_fds: Vec<ExtraPipe> = Vec::new();
-    // errdefer extra_fds.deinit() — Vec drops on ?
-    // PERF(port): was stack-fallback allocator (2048)
-    // Zig `defer` + `errdefer` cleanup → owned by an RAII guard so every `?`
-    // (and every explicit `return Ok(Err(..))`) runs it. See PosixSpawnFdGuard.
     let mut cleanup = PosixSpawnFdGuard {
         to_set_cloexec: Vec::new(),
         to_close_at_end: Vec::new(),
@@ -751,13 +673,6 @@ pub unsafe fn spawn_process_posix(
 
         match stdio_options[i] {
             PosixStdio::Dup2(dup2) => {
-                // This is a hack to get around the ordering of the spawn actions.
-                // If stdout is set so that it redirects to stderr, the order of actions will be like this:
-                // 0. dup2(stderr, stdout) - this makes stdout point to stderr
-                // 1. setup stderr (will make stderr point to write end of `stderr_pipe_fds`)
-                // This is actually wrong, 0 will execute before 1 so stdout ends up writing to stderr instead of the pipe
-                // So we have to instead do `dup2(stderr_pipe_fd[1], stdout)`
-                // Right now we only allow one output redirection so it's okay.
                 if i == 1 && dup2.to == StdioKind::Stderr {
                     dup_stdout_to_stderr = true;
                 } else {
@@ -816,12 +731,6 @@ pub unsafe fn spawn_process_posix(
                     ];
                 };
 
-                // Note: we intentionally do NOT call shutdown() on the
-                // socketpair fds. On SOCK_STREAM socketpairs, shutdown(fd, SHUT_WR)
-                // sends a FIN to the peer, which causes programs that poll the
-                // write end for readability (e.g. Python's asyncio connect_write_pipe)
-                // to interpret it as "connection closed" and tear down their transport.
-                // The socketpair is already used unidirectionally by convention.
                 #[cfg(target_os = "macos")]
                 {
                     // macOS seems to default to around 8 KB for the buffer size

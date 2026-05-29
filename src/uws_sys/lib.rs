@@ -8,11 +8,6 @@
     clippy::not_unsafe_ptr_arg_deref
 )]
 #![warn(unused_must_use)]
-//! Low-level FFI bindings for uSockets / uWebSockets as used by Bun.
-//!
-//! Each `*.rs` file is mapped to a snake_case
-//! module name (the names downstream `bun_uws` expects). Crate-root re-exports
-//! flatten the common handle types.
 
 // ───────────────────────── crate-root FFI primitives ─────────────────────────
 
@@ -34,11 +29,6 @@ pub const LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE: core::ffi::c_int = 32;
 /// BoringSSL `SSL_CTX` (alias so callers don't need a direct boringssl dep).
 pub type SslCtx = bun_boringssl_sys::SSL_CTX;
 
-/// `struct us_bun_verify_error_t` — TLS handshake verification result.
-///
-/// Field is named `error_no` (mirrors the Zig `error_no`) so the Node-compat
-/// `verifyError`/`authorizationError` paths read naturally; the C struct's
-/// first member is `int error` and the layout is identical.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct us_bun_verify_error_t {
@@ -56,12 +46,6 @@ impl Default for us_bun_verify_error_t {
     }
 }
 impl us_bun_verify_error_t {
-    /// Borrow the BoringSSL verify-error `code` as a `CStr`, or `None` if null.
-    ///
-    /// uSockets populates `code`/`reason` from BoringSSL's static error-string
-    /// table (`X509_verify_cert_error_string` and friends), so the pointee is
-    /// `'static` in practice; the borrow is conservatively tied to `&self` so
-    /// the accessor is sound even if a future caller heap-allocates the struct.
     #[inline]
     pub fn code(&self) -> Option<&core::ffi::CStr> {
         if self.code.is_null() {
@@ -122,12 +106,6 @@ impl create_bun_socket_error_t {
     }
 }
 
-/// WebSocket frame opcode (`uWS::OpCode`).
-///
-/// Spec is `enum(i32) { ..., _ }` — non-exhaustive, so any `i32` from C++ is a
-/// valid bit pattern. This type crosses the FFI boundary *into* Rust via
-/// `uws_websocket_message_handler`, so it must not be an exhaustive
-/// `#[repr(i32)]` enum (an out-of-range discriminant would be instant UB).
 #[repr(transparent)]
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 pub struct Opcode(pub i32);
@@ -162,11 +140,6 @@ pub enum SendStatus {
 /// `bun.timespec` — `us_loop_run_bun_tick` takes `*const timespec`.
 pub use bun_core::Timespec;
 
-// Opaque FFI handles (Nomicon pattern) — what higher tiers reach for when the
-// real module body isn't needed. See `bun_core::opaque_extern!` doc for the
-// `UnsafeCell<[u8;0]>` / `!Freeze` rationale; with UnsafeCell the reference is
-// ABI-identical to a non-null pointer, which lets us declare value-typed shims
-// as `safe fn` and drop per-call-site `unsafe { }`.
 bun_core::opaque_extern!(
     pub us_loop_t, pub us_socket_context_t, pub us_udp_socket_t, pub us_udp_packet_buffer_t,
     pub UpgradedDuplex, pub WindowsNamedPipe,
@@ -260,11 +233,6 @@ impl UpgradedDuplex {
     }
 }
 
-// ── WindowsNamedPipe (cycle-break shim) ─────────────────────────────────────
-// Same link-time-dispatch as `UpgradedDuplex` above: the real
-// `WindowsNamedPipe` lives in `bun_runtime::socket`; this opaque handle
-// forwards to `extern "C"` symbols that the runtime crate exports with
-// `#[no_mangle]`. Surface mirrors `src/jsc/api/bun/socket.zig WindowsNamedPipe`.
 #[cfg(windows)]
 unsafe extern "C" {
     safe fn WindowsNamedPipe__ssl_error(this: &WindowsNamedPipe) -> us_bun_verify_error_t;

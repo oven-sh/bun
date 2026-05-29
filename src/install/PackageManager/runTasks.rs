@@ -39,19 +39,6 @@ use super::package_manager_options as Options;
 use super::package_manager_options::{Do, Enable};
 use crate::isolated_install::store as Store;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Callbacks trait
-// ──────────────────────────────────────────────────────────────────────────
-//
-// The Zig `runTasks` takes `comptime Ctx: type` + `comptime callbacks: anytype`
-// and branches on `@TypeOf(callbacks.onExtract) != void`, `Ctx == *PackageInstaller`,
-// etc. Rust models this as a single trait with associated consts gating the
-// optional hooks (default-unreachable bodies), plus associated-const tags for
-// the `Ctx` identity checks. Phase B should revisit whether the call sites can
-// be split into 2–3 concrete impls instead of const-gated branches.
-//
-// TODO(port): callbacks trait — comptime duck-typing reshape; verify against
-// the three call sites (`PackageInstaller`, `Store.Installer`, void) in Phase B.
 pub trait RunTasksCallbacks {
     /// Mirrors `Ctx` (the `extract_ctx` value type).
     type Ctx;
@@ -78,11 +65,6 @@ pub trait RunTasksCallbacks {
         unreachable!()
     }
 
-    // PORT NOTE: Zig calls `onPackageDownloadError` with two distinct shapes
-    // depending on the comptime `Ctx`: `task.task_id: Task.Id` for
-    // `*Store.Installer`, `package_id: PackageID` otherwise. Model the
-    // comptime branch as static dispatch via two trait methods so impls
-    // receive the correctly-typed id without a `Task::Id` round-trip pun.
     fn on_package_download_error_store(
         _ctx: &mut Self::Ctx,
         _task_id: Task::Id,
@@ -104,10 +86,6 @@ pub trait RunTasksCallbacks {
         unreachable!()
     }
 
-    // TODO(port): two distinct call shapes in Zig:
-    //   PackageInstaller: (ctx, task_id, dependency_id, *ExtractData, log_level)
-    //   Store.Installer:  (ctx, task_id)
-    // Model as two methods; only one is reachable per impl.
     fn on_extract_package_installer(
         _ctx: &mut Self::Ctx,
         _task_id: Task::Id,
@@ -125,18 +103,10 @@ pub trait RunTasksCallbacks {
         unreachable!()
     }
 
-    /// Reinterpret `&mut Self::Ctx` as `&mut PackageInstaller` — only valid
-    /// when `IS_PACKAGE_INSTALLER` is true (Zig: `Ctx == *PackageInstaller`
-    /// comptime check). Default body is unreachable; the `PackageInstaller`
-    /// impl overrides it with an identity cast.
     fn as_package_installer<'a>(_ctx: &'a mut Self::Ctx) -> &'a mut PackageInstaller<'a> {
         unreachable!()
     }
 
-    /// Reinterpret `&mut Self::Ctx` as `&mut Store::Installer` — only valid
-    /// when `IS_STORE_INSTALLER` is true (Zig: `Ctx == *Store.Installer`
-    /// comptime check). Default body is unreachable; the `Store::Installer`
-    /// impl overrides it with an identity cast.
     fn as_store_installer<'a>(_ctx: &'a mut Self::Ctx) -> &'a mut Store::Installer<'a> {
         unreachable!()
     }
@@ -156,18 +126,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
     let mut timestamp_this_tick: Option<u32> = None;
 
-    // Zig: `defer { manager.drainDependencyList(); ... progress update ... }`
-    // PORT NOTE: scopeguard captures `manager` via raw pointer because the loop
-    // body holds `&mut` to it for the function's duration; `has_updated_this_run`
-    // is a `Cell<bool>` so the guard captures it by shared ref. The guard runs
-    // on every exit (incl. `?` early-returns), matching Zig `defer` semantics.
-    //
-    // Stacked Borrows: the raw pointers must remain the provenance root for all
-    // body accesses, otherwise the first direct use of the `&mut` fn params
-    // would pop the raw tags and the guard derefs become UB. We therefore
-    // shadow the params with reborrows *through* the raw pointers — every body
-    // use of `manager`/`extract_ctx` below is a child of `*_ptr`, so the
-    // pointers stay valid until the guards fire.
     let manager_ptr: *mut PackageManager = manager;
     let extract_ctx_ptr: *mut C::Ctx = extract_ctx;
     // SAFETY: `manager_ptr`/`extract_ctx_ptr` were just derived from unique
@@ -256,13 +214,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     }
 
     if C::IS_STORE_INSTALLER {
-        // PORT NOTE: reshaped for borrowck — Zig writes `const installer:
-        // *Store.Installer = extract_ctx;` and freely aliases
-        // `installer.manager` with the outer `manager`. Here we obtain the
-        // installer via the trait downcast and access PackageManager only
-        // through `installer.manager` for the duration of this block, never
-        // via the function-scope `manager` shadow, so the two `&mut` do not
-        // overlap in use.
         let installer: &mut Store::Installer<'_> = C::as_store_installer(extract_ctx);
         let installer_ptr: *mut Store::Installer<'_> = installer;
         let batch = installer.task_queue.pop_batch();
@@ -559,11 +510,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                         manifest.pkg.public_max_age = timestamp_this_tick.unwrap();
 
-                        // PORT NOTE: reshaped for borrowck — Zig writes through
-                        // the `getOrPut` slot then re-reads it for `saveAsync`.
-                        // `bun_collections::HashMap` lacks `get_or_put` for
-                        // non-`Default` values, so insert by-value (overwriting
-                        // any prior entry, matching Zig semantics) and reborrow.
                         let name_hash = manifest.pkg.name.hash;
                         manager
                             .manifests
@@ -571,13 +517,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             .insert(name_hash, ManifestEntry::Manifest(manifest));
 
                         if manager.options.enable.contains(Enable::MANIFEST_CACHE) {
-                            // PORT NOTE: reshaped for borrowck — compute the
-                            // `&mut`-taking directory accessors first so the
-                            // shared `scope_for_package_name` / `manifests`
-                            // borrows below do not overlap them. `save_async`
-                            // only needs `&PackageManifest`, so reborrow the
-                            // freshly-inserted entry immutably alongside the
-                            // scope (both `&manager`, no conflict).
                             let tmp_fd = directories::get_temporary_directory(manager).handle.fd;
                             let cache_fd = directories::get_cache_directory(manager);
                             npm::package_manifest::Serializer::save_async(
@@ -615,10 +554,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 }
 
-                // PORT NOTE: reshaped — `enqueue_parse_npm_package` takes
-                // `StringOrTinyString` by value; reconstruct from the slice we
-                // captured (the original lives in `task.callback`, which the
-                // enqueued resolve Task takes ownership of via `network`).
                 let name_tiny = strings::StringOrTinyString::init_append_if_needed(
                     name,
                     &mut crate::network_task::filename_store_appender(),
@@ -634,23 +569,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 manager.task_batch.push(ThreadPoolBatch::from(queued));
             }
             NetworkTaskCallback::Extract(extract) => {
-                // PORT NOTE: reshaped for borrowck — `extract` borrows
-                // `task.callback`; the body also calls `&mut self` methods on
-                // `task` (`reset_streaming_for_retry`,
-                // `discard_unused_streaming_state`) which only touch disjoint
-                // fields. Detach via raw pointer (mirroring the
-                // `PackageManifest` arm above) so those calls don't overlap.
                 let extract_ptr: *mut ExtractTarball = extract;
                 // SAFETY: `extract` lives in `task.callback`, which outlives
                 // this match arm; the methods called on `task` below never
                 // touch `task.callback` (see `NetworkTask::reset_streaming_*`
                 // / `discard_unused_streaming_state`).
                 let extract = unsafe { &mut *extract_ptr };
-                // Streaming extraction never pushes its NetworkTask to
-                // `async_network_task_queue` once committed — the
-                // extract Task published by `TarballStream.finish()`
-                // owns its lifetime — so every `.extract` task that
-                // arrives here is taking the buffered path.
                 debug_assert!(!task.streaming_committed);
 
                 if !has_network_error && task.response.metadata.is_none() {
@@ -706,11 +630,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 }
 
-                // Past this point we will not retry. If streaming state was
-                // allocated but never scheduled, release it now so the
-                // pre-created Task goes back to the pool and the stream
-                // buffers are freed. The buffered `enqueueExtractNPMPackage`
-                // path below allocates its own Task.
                 task.discard_unused_streaming_state(manager);
 
                 let Some(metadata) = task.response.metadata.as_ref() else {
@@ -719,18 +638,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         .fail
                         .unwrap_or_else(|| bun_core::err!("TarballFailedToDownload"));
 
-                    // The download will not be retried for this task_id, so
-                    // drop the dedupe state before dispatching the error.
-                    // Otherwise a later `enqueuePackageForDownload` for the
-                    // same package sees `found_existing`, never schedules a
-                    // network task, and waits forever for a callback that
-                    // will not arrive. `Store.Installer.onPackageDownloadError`
-                    // drains `task_queue` itself but does not touch
-                    // `network_dedupe_map`, so this must run on the callback
-                    // path too. Capture `is_required` first —
-                    // `isNetworkTaskRequired` reads the map and returns `true`
-                    // when the entry is gone, which would upgrade optional-dep
-                    // warnings to errors on the void-callback fallback below.
                     let is_required = manager.is_network_task_required(task.task_id);
                     let _ = manager.network_dedupe_map.remove(&task.task_id);
 
@@ -805,13 +712,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let response = &metadata.response;
 
                 if response.status_code > 399 {
-                    // Non-retryable HTTP error: drop dedupe state so a later
-                    // enqueue for this task_id schedules a fresh network task
-                    // instead of waiting on this failed one. Runs before the
-                    // callback branch so `Store.Installer` (which `continue`s
-                    // from the callback) is covered too. Capture
-                    // `is_required` first — `isNetworkTaskRequired` reads the
-                    // map and returns `true` when the entry is gone.
                     let is_required = manager.is_network_task_required(task.task_id);
                     let _ = manager.network_dedupe_map.remove(&task.task_id);
 
@@ -939,11 +839,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         // Phase B: have the iterator yield a pool guard that puts back on Drop.
         // SAFETY: `task_ptr` non-null per loop guard; node exclusively owned by this batch.
         let task = unsafe { &mut *task_ptr };
-        // The per-iteration scopeguards capture the function-scope provenance
-        // roots (`manager_ptr`/`extract_ctx_ptr`) — the body shadows
-        // `manager`/`extract_ctx` are reborrows of those same roots (see
-        // drain `defer!` setup), so dereffing a root in a guard is valid both
-        // before *and* after every body use of the shadow under Stacked Borrows.
         scopeguard::defer! {
             // SAFETY: `manager_ptr` is the provenance root for every body access
             // to `manager`; `task_ptr` is the sole live handle to this pool slot.
@@ -955,10 +850,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         manager.decrement_pending_tasks();
 
         if !task.log.msgs.is_empty() {
-            // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
-            // not `&mut Writer` (the underlying `Writer` is the FFI shape).
-            // Zig: `try task.log.print(Output.errorWriter())` — propagate the
-            // write error (WriteFailed) out of `runTasks`.
             task.log.print(std::ptr::from_mut(Output::error_writer()))?;
             if task.log.errors > 0 {
                 manager.any_failed_to_install = true;
@@ -968,10 +859,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
         match task.tag {
             Task::Tag::PackageManifest => {
-                // Zig: `defer manager.preallocated_network_tasks.put(task.request.package_manifest.network);`
-                // PORT NOTE: capture the `*mut NetworkTask` up front — the
-                // `&'a mut NetworkTask` field can't be moved out through
-                // `ManuallyDrop`'s immutable `Deref` inside the defer body.
                 let net_ptr: *mut NetworkTask = {
                     let req = task.request_package_manifest_mut();
                     &raw mut *req.network
@@ -1053,10 +940,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
             }
             Task::Tag::Extract | Task::Tag::LocalTarball => {
-                // Zig: `defer { switch (task.tag) { .extract => preallocated_network_tasks.put(...), else => {} } }`
-                // PORT NOTE: capture the `*mut NetworkTask` up front (only for the
-                // Extract arm) so the defer body need not move the `&mut` out
-                // through `ManuallyDrop`'s immutable `Deref`.
                 let net_ptr: *mut NetworkTask = if task.tag == Task::Tag::Extract {
                     let req = task.request_extract_mut();
                     &raw mut *req.network
@@ -1098,14 +981,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         .err
                         .unwrap_or_else(|| bun_core::err!("TarballFailedToExtract"));
 
-                    // Extract-task failure (integrity check, libarchive error, etc.)
-                    // is symmetric with the HTTP 4xx/5xx branch above: drop the
-                    // dedupe state so a later `enqueuePackageForDownload` for this
-                    // `task_id` schedules a fresh network task instead of waiting
-                    // on this failed one forever. Runs before the callback branch
-                    // so `Store.Installer` (which `continue`s from the callback)
-                    // is covered too. `network_dedupe_map.remove` is a no-op for
-                    // `local_tarball` tasks (they never populate the map).
                     let _ = manager.network_dedupe_map.remove(&task.id);
 
                     if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
@@ -1294,11 +1169,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
                         C::on_package_manifest_error(extract_ctx, name, err, url);
                     } else if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR && C::IS_STORE_INSTALLER {
-                        // The isolated installer queued its entry contexts
-                        // under `checkout_id`, not `clone_id`. A failed clone
-                        // never reaches checkout, so drain every waiting
-                        // checkout for this repo or the install loop blocks
-                        // forever on the entry's pending-task slot.
                         let mut drained_any = false;
                         if let Some(waiters) = manager.task_queue.remove(&task.id) {
                             let pkg_resolutions = manager.lockfile.packages.items_resolution();
@@ -1371,13 +1241,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // this dependency might be something other than a git dependency! only need the name and
                     // behavior, use the resolution from the task.
                     let dep_id = clone.dep_id;
-                    // PORT NOTE: reshaped for borrowck — Zig copies `dep` by
-                    // value. Copy the small `String` handles + behavior bit so
-                    // the `&manager.lockfile` borrow doesn't extend across the
-                    // `&mut manager` calls (`has_created_network_task`,
-                    // `enqueue_git_checkout`) below; detach the slice backing
-                    // through `string_buf_ptr` (matching the
-                    // `PackageManifest`-arm `name` detach pattern above).
                     let (dep_name_handle, is_required) = {
                         let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
                         (dep.name, dep.behavior.is_required())
@@ -1795,11 +1658,6 @@ pub fn generate_network_task_for_tarball<'a>(
         return Ok(None);
     }
 
-    // PORT NOTE: reshaped for borrowck — Zig writes the whole struct via `.* = .{}`.
-    // All `&mut this` uses (patch-task alloc, cache/temp dir, pool slot) happen
-    // first; the immutable `pkg_name`/`scope` borrows are taken afterwards and
-    // live only through `for_tarball`, leaving `this` free for the streaming
-    // tail.
     let apply_patch_task = if let Some(h) = patch_name_and_version_hash {
         let patch_hash = this
             .lockfile
@@ -1820,10 +1678,6 @@ pub fn generate_network_task_for_tarball<'a>(
     } else {
         None
     };
-    // Borrowed views: `cache_dir` and `temp_dir` are owned by the `PackageManager`
-    // singleton and the `TemporaryDirectory` once-cell, respectively. They flow
-    // into `ExtractTarball::{cache_dir,temp_dir}`, which must be `Fd` (not `Dir`)
-    // so the task's drop never closes them.
     let cache_dir = directories::get_cache_directory(this);
     let temp_dir = directories::get_temporary_directory(this).handle.fd();
     // Backref address only — stored, not dereffed in this function. The tag is
@@ -1917,10 +1771,6 @@ pub fn generate_network_task_for_tarball<'a>(
     Ok(Some(unsafe { &mut *net_ptr }))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// `impl PackageManager` — method-syntax shims over the free functions above so
-// callers (incl. this file) can write `manager.foo()` matching the Zig spec.
-// ──────────────────────────────────────────────────────────────────────────
 impl PackageManager {
     #[inline]
     pub fn drain_dependency_list(&mut self) {

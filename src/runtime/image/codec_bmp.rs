@@ -63,12 +63,6 @@ pub fn parse_header(b: &[u8]) -> Result<Header, codecs::Error> {
         top_down: h_raw < 0,
         bpp,
         pix_off,
-        // BI_RGB defaults — Windows-native byte order is BGR(X). For 32-bit
-        // BI_RGB the high byte is *reserved* per the BITMAPINFOHEADER spec
-        // and real-world producers (CF_DIB clipboard, GetDIBits, Pillow BGRX)
-        // write 0 there; treating it as alpha would make every such image
-        // fully transparent. Alpha is only honoured below for BI_BITFIELDS
-        // with an explicit V4+ mask, matching libgd/Pillow/stb_image.
         r_mask: 0x00FF0000,
         g_mask: 0x0000FF00,
         b_mask: 0x000000FF,
@@ -90,10 +84,6 @@ pub fn parse_header(b: &[u8]) -> Result<Header, codecs::Error> {
             0
         };
     }
-    // BITFIELDS masks come from the file; reject anything that isn't a
-    // single ≤8-bit-wide aligned run before `shift_width` casts the
-    // popcount into u5 (and `to8` multiplies by 255 in u32). 5/6-bit masks
-    // are real (565 BMPs); >8-bit are nonsense for an 8-bit-per-channel out.
     for m in [h.r_mask, h.g_mask, h.b_mask, h.a_mask] {
         if m != 0 {
             // Contiguous-run check: m >> ctz(m) must be 2^k - 1. The +1 wraps

@@ -58,13 +58,6 @@ impl PackedMap {
     }
 }
 
-/// HTML, CSS, Assets, and failed files do not have source maps. These cases
-/// should never allocate an object. There is still relevant state for these
-/// files to encode, so a tagged union is used.
-///
-/// PORT NOTE: Zig `bun.MultiArrayList(Shared)` SoA split buys nothing for a
-/// 2-word payload and `MultiArrayElement` cannot be derived for an enum, so
-/// callers store `Vec<Shared>`.
 #[derive(Default)]
 pub enum Shared {
     Some(Rc<PackedMap>),

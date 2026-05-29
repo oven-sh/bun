@@ -61,25 +61,6 @@ pub enum HtmlScanKind {
 
 pub const HTML_SCAN_KIND_COUNT: usize = 4;
 
-/// Memo of failed closing-delimiter searches in `find_html_tag`.
-///
-/// A `<!--` / `<?` / `<!DECL` / `<![CDATA[` candidate scans forward for a
-/// terminator that may not exist, reaching the end of the inline slice. Once
-/// one such scan has failed from some position, any later scan of the same
-/// kind starting at or beyond that position must fail too, so it can return
-/// immediately instead of rescanning to the end — that rescan is quadratic on
-/// inputs with many unterminated openers in one paragraph (found by fuzzing).
-///
-/// The memo describes one slice at a time, keyed by address + length. Because
-/// `find_html_tag` is also called on link-label sub-slices of that slice (with
-/// their own coordinates), a recorded fact serves any sub-slice query by
-/// translating positions with the sub-slice's offset: "no terminator at or
-/// after position P of the paragraph" covers every later position of every
-/// label inside it. Sub-slice scans never overwrite the enclosing slice's
-/// entry (they prove nothing beyond their own extent), and
-/// `process_inline_content` starts each slice from an empty memo and restores
-/// the caller's on return, so recycled merged-line buffers and transient
-/// table-cell buffers can never alias a previous slice's entry.
 #[derive(Clone, Copy)]
 pub struct HtmlScanMemo {
     slice_addr: usize,
@@ -146,10 +127,6 @@ impl Parser<'_> {
                 merged_len -= 1;
             }
         }
-        // PORT NOTE: reshaped for borrowck — Zig passes self.buffer.items directly into a
-        // &self method; Rust take()s the Vec out so process_inline_content (and any recursive
-        // call via process_link) gets a fresh self.buffer to scribble on without aliasing.
-        // TODO(port): verify recursive calls (via process_link) do not need the parent buffer.
         let merged = core::mem::take(&mut self.buffer);
         let ret = self.process_inline_content(&merged[..merged_len], block_lines[0].beg);
         self.buffer = merged;
@@ -165,17 +142,8 @@ impl Parser<'_> {
             return Err(parser::Error::StackOverflow);
         }
 
-        // Failed HTML terminator searches recorded for another slice must not
-        // leak into this one (the merged-line buffer is recycled across blocks,
-        // so a stale entry could alias a new slice of the same length). The
-        // caller's memo is restored on return so a recursive call for a link
-        // label does not throw away what the enclosing slice already learned.
         let outer_html_scan_memo = self.html_scan_memo.replace(HtmlScanMemo::EMPTY);
 
-        // Bracket-pair map for this slice: link processing looks up the ']'
-        // matching a '[' here instead of rescanning the rest of the slice for
-        // every opener. The backing storage is recycled via self.bracket_pairs
-        // (recursive calls for link labels simply build their own small map).
         let bracket_storage = core::mem::take(&mut self.bracket_pairs);
         let brackets = self.compute_bracket_matches(content, bracket_storage);
 
@@ -836,10 +804,6 @@ impl Parser<'_> {
         let mut memo = self.html_scan_memo.get();
         if !memo.applies_to(content) {
             if memo.offset_within(content).is_some() {
-                // A sub-slice scan stops at the sub-slice's end, so it proves
-                // nothing about the rest of the enclosing slice; keep the
-                // enclosing entry (it already answers the sub-slice's later
-                // queries via offset_within).
                 return;
             }
             memo = HtmlScanMemo::EMPTY;

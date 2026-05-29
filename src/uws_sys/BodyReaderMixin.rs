@@ -4,12 +4,6 @@ use core::mem;
 use crate::AnyResponse;
 use crate::response::Response;
 
-/// Response types that can drive a `BodyReaderMixin`: must support registering
-/// data/abort callbacks and converting to `AnyResponse`. Stands in for the Zig
-/// `anytype` parameter on `readBody`.
-///
-/// Only `Response<SSL>` is wired today (DevServer's only consumer is HTTP/1.x);
-/// `h3::Response` can be added once its callback signatures are unified.
 pub trait BodyResponse: Sized + 'static {
     fn on_data<U, H>(&mut self, handler: H, ctx: *mut U)
     where
@@ -48,17 +42,6 @@ impl<const SSL: bool> BodyResponse for Response<SSL> {
     }
 }
 
-/// Mixin to read an entire request body into memory and run a callback.
-/// Consumers should make sure a reference count is held on the server,
-/// and is unreferenced after one of the two callbacks are called.
-///
-/// See `DevServer`'s `ErrorReportRequest` for an example.
-///
-/// In Zig this was a `fn(...) type` taking a comptime `field` name and two
-/// comptime fn pointers (`onBody`, `onError`). In Rust those are expressed as
-/// a trait the wrapper type implements; the comptime `field` name used by
-/// `@fieldParentPtr` is the [`bun_core::IntrusiveField`] supertrait (implement
-/// via `bun_core::intrusive_field!`).
 pub trait BodyReaderHandler: bun_core::IntrusiveField<BodyReaderMixin<Self>> + 'static {
     /// `body` is freed after this function returns.
     ///
@@ -98,36 +81,11 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         }
     }
 
-    /// Memory is freed after the callback returns, or automatically on failure.
-    ///
-    /// Takes `*mut Wrap` (not `&mut self`) so the registered C user_data carries
-    /// provenance for the *entire* enclosing `Wrap`, not just the mixin field.
-    /// Zig used `@fieldParentPtr(field, ctx)` which has no provenance/aliasing
-    /// restriction; in Rust, deriving the parent by `.byte_sub(OFFSET)` from a
-    /// `&mut self`-sourced pointer is out-of-provenance under Stacked Borrows
-    /// and the resulting `&mut Wrap` would overlap a live `&mut Self`. Callers
-    /// pass the `heap::alloc`'d wrapper pointer directly; trampolines below
-    /// reach the mixin via *forward* offset (`mixin_of`), so the stored pointer
-    /// already has full-Wrap provenance and no overlapping `&mut` are formed.
     pub fn read_body<R: BodyResponse>(wrap: *mut Wrap, resp: &mut R) {
         resp.on_data(Self::on_data_generic::<R>, wrap);
         resp.on_aborted(Self::on_aborted_handler::<R>, wrap);
     }
 
-    /// Forward offset `Wrap` → its embedded mixin field, materialised as `&mut`.
-    /// Inverse direction of Zig's `@fieldParentPtr` — we go parent→field because
-    /// the stored user_data is the parent (full provenance), never the field.
-    ///
-    /// Single nonnull-asref accessor for the set-once `wrap` user-data.
-    ///
-    /// Type invariant (encapsulated `unsafe`): every `*mut Wrap` reaching this
-    /// fn is the heap-allocated pointer registered by [`Self::read_body`] as
-    /// the uWS user-data; uWS dispatch is single-threaded and the only access
-    /// path to the allocation is via these crate-private trampolines, so no
-    /// other `&`/`&mut` into `*wrap` is live for the returned borrow's
-    /// duration. Each caller drops the returned `&mut Self` (NLL temporary)
-    /// before any `Wrap::on_body`/`on_error` call that may `heap::take(wrap)`.
-    /// Crate-private — collapses the per-call-site proof into this one block.
     #[inline]
     fn mixin_of<'a>(wrap: *mut Wrap) -> &'a mut Self {
         // SAFETY: type invariant — see doc comment above. `IntrusiveField::OFFSET`
@@ -140,10 +98,6 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         let any = r.to_any();
         match Self::on_data(wrap, any, chunk, last) {
             Ok(()) => {}
-            // Match Zig's `error.OutOfMemory => onOOM, else => onInvalid` by error
-            // *kind* only — `bun_core::Error`'s derived `PartialEq` compares all
-            // fields (syscall/fd/path), and `err!("OutOfMemory")` is currently a
-            // TODO sentinel, so a full-struct compare would invert the branch.
             Err(e) if e == bun_core::Error::OUT_OF_MEMORY => Self::on_oom(wrap, any),
             Err(_) => Self::on_invalid(wrap, any),
         }

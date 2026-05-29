@@ -26,11 +26,6 @@ impl FileRange {
         Some(v)
     }
 
-    /// Take the back half as a new contiguous range for the thief, leaving the
-    /// owner the front half. The thief then walks its stolen block forward via
-    /// pop_front, so both workers keep directory locality. For len()==1 the
-    /// single file goes to the thief (owner is either already inflight or was
-    /// never spawned).
     pub(crate) fn steal_back_half(&mut self) -> Option<FileRange> {
         if self.is_empty() {
             return None;

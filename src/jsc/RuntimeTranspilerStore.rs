@@ -45,10 +45,6 @@ use crate::virtual_machine::{SourceMapHandlerGetter, VirtualMachine, create_if_d
 use crate::{JSGlobalObject, JSInternalPromise, JSValue, JsResult, ResolvedSource};
 use bun_core::OwnedString;
 
-// LAYERING: `ParseOptions.runtime_transpiler_cache` carries the canonical
-// lower-tier type from `bun_js_parser` (re-exported via `bun_bundler`). The
-// JSC-tier disk-backed `Entry` is round-tripped through it type-erased via
-// `JSC_PARSER_CACHE_VTABLE` (see RuntimeTranspilerCache.rs).
 use bun_ast::RuntimeTranspilerCache;
 
 bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
@@ -57,12 +53,6 @@ bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 // Debug source dumping (debug-only helpers; no-ops in release)
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: takes `NonNull<VirtualMachine>` (not `&mut`) — these are called
-// from the transpiler worker thread while the JS thread is concurrently live on
-// the same VM, so a `&mut VirtualMachine` would be a data race AND would alias
-// the caller's `&mut TranspilerJob` (which is stored inside
-// `vm.transpiler_store`). Only the `source_mappings` leaf field is touched,
-// under its own internal lock.
 pub(crate) fn dump_source(vm: NonNull<VirtualMachine>, specifier: &[u8], printer: &BufferPrinter) {
     dump_source_string(vm, specifier, printer.ctx.get_written());
 }
@@ -73,10 +63,6 @@ pub(crate) fn dump_source_string(vm: NonNull<VirtualMachine>, specifier: &[u8], 
     }
 }
 
-// Zig: local `struct { pub var dir; pub var lock; }` — module statics in Rust.
-// PORTING.md §Global mutable state: lazily-opened debug-dump dir, guarded by a
-// mutex. `Guarded` fuses the lock and the payload so the per-access body is
-// safe code (replaces the prior split `Mutex` + `RacyCell` pair).
 static BUN_DEBUG_HOLDER: Guarded<Option<Dir>> = Guarded::new(None);
 
 pub(crate) fn dump_source_string_failiable(
@@ -231,18 +217,6 @@ impl RuntimeTranspilerStore {
         Self::default()
     }
 
-    /// In-place constructor. Writes the bookkeeping fields directly at `out`
-    /// and leaves the inline `[MaybeUninit<TranspilerJob>; 64]` hive buffer
-    /// uninitialized — its bytes are never read until `used.set()` claims a
-    /// slot, so any bit pattern is valid.
-    ///
-    /// PERF(port): `out.write(Self::init())` materialises a stack temporary
-    /// of `size_of::<Self>()` (≈ 64 × `size_of::<TranspilerJob>()`) and
-    /// `memcpy`s it; rustc cannot elide the copy through the `MaybeUninit`
-    /// payload. Zig's `Store.init()` left `buffer` `undefined` and only
-    /// zeroed the bitset — this restores that.
-    ///
-    /// On return, `*out` is fully initialized.
     pub fn init_in_place(out: &mut core::mem::MaybeUninit<Self>) {
         use core::ptr::addr_of_mut;
         let out = out.as_mut_ptr();
@@ -338,12 +312,6 @@ impl RuntimeTranspilerStore {
             }
         }
 
-        // Build the job by value and `get_init` it into the hive — the `Box`
-        // alloc, `JSInternalPromise::create`, and `StrongOptional::create`
-        // above all happen *before* the slot is claimed, so an OOM/throw on
-        // that path no longer leaves a claimed-but-uninit `TranspilerJob` (which
-        // carries `Log`/`String`/`StrongOptional` drop glue) for the next
-        // `put()` to drop.
         let job: *mut TranspilerJob = self
             .store
             .get_init(TranspilerJob {
@@ -414,10 +382,6 @@ pub struct TranspilerJob {
     pub generation_number: u32,
     pub log: bun_ast::Log,
     pub parse_error: Option<bun_core::Error>,
-    /// RAII-owned: holds +1 on `source_code`/`source_url`/`specifier`/
-    /// `bytecode_origin_path` until `run_from_js_thread` `take()`s and
-    /// `into_ffi()`s to C++. Dropped (via `HiveArray::put` → `drop_in_place`)
-    /// on any path that skips `run_from_js_thread` derefs them.
     pub resolved_source: OwnedResolvedSource,
     pub work_task: WorkPoolTask,
     /// INTRUSIVE — `UnboundedQueue<TranspilerJob>` link.
@@ -449,23 +413,9 @@ impl Fetcher {
     }
 }
 
-/// Per-worker output buffer (Zig: `threadlocal var source_code_printer:
-/// ?*js_printer.BufferPrinter = null`). The printer is the **only** state
-/// retained across `run()` calls — its backing `Vec<u8>` is genuinely worth
-/// reusing (capped at 512 K / 2 M below). The parse arena and AST memory
-/// store, by contrast, are stack-local per call and bulk-freed on return; see
-/// the RSS-regression note in `run()`.
-//
-// `#[thread_local]` not `thread_local!`: Zig `threadlocal var` is bare
-// `__thread`; the macro's `LocalKey::__getit` wrapper showed up on the
-// async-import hot path. Const-init `Cell<ptr>` (no dtor).
 #[thread_local]
 static SOURCE_CODE_PRINTER: Cell<Option<NonNull<BufferPrinter>>> = Cell::new(None);
 
-/// Get-or-leak accessor for the `#[thread_local]` `Cell<Option<NonNull<T>>>`
-/// slot above. Returns `&'static mut T` because the Box is leaked for the
-/// worker thread's lifetime and `#[thread_local]` guarantees per-thread
-/// exclusive access; callers reborrow `&'static T` where a shared ref suffices.
 #[inline]
 fn tls_get_or_leak<T>(
     slot: &Cell<Option<NonNull<T>>>,
@@ -486,19 +436,6 @@ fn tls_get_or_leak<T>(
 }
 
 impl TranspilerJob {
-    /// Zig `deinit` — kept as a private inherent fn (not `impl Drop`) because the
-    /// slot is recycled into the HiveArray via `store.put(this)`. Only caller is
-    /// `run_from_js_thread`.
-    ///
-    /// PORT NOTE: `HiveArrayFallback::put` runs `drop_in_place` on the slot (see
-    /// hive_array.rs PORT NOTE), so the Drop-carrying fields — `OwnedString` ×2,
-    /// `OwnedResolvedSource`, `Log`, `StrongOptional` — are torn down *there*,
-    /// not here. This function handles only the teardown that field drop glue
-    /// does **not** cover: the leaked `path.text` Box, `poll_ref.disable()`,
-    /// and `fetcher.deinit()` (whose payload `bun_core::String` is `Copy` with
-    /// manual `.deref()`). Doing both — explicit `take()` here *and*
-    /// `drop_in_place` in `put()` — would double-drop should any future field's
-    /// `Default` not be trivially droppable.
     fn reset_for_pool(&mut self) {
         // bun.default_allocator.free(this.path.text) — `path.text` was Box-duplicated in
         // `transpile()`; reconstruct the Box and drop it.
@@ -605,23 +542,6 @@ impl TranspilerJob {
     }
 
     pub(crate) fn run(&mut self) {
-        // Zig: `var arena = bun.ArenaAllocator.init(bun.default_allocator);
-        //       defer arena.deinit();`
-        //
-        // Stack-local per call, bulk-freed on return. An earlier port hoisted
-        // this to a per-worker-thread leaked `Box<MimallocArena>` (and a second
-        // one inside a leaked `ASTMemoryAllocator`) and only `reset()` it at
-        // the *start* of the next call. On a 64-core box ~40 thread-pool
-        // workers each parse one or two modules then go idle, leaving ~80
-        // undestroyed `mi_heap_t`s holding ~7 MB requested / ~10–11 MB
-        // committed of dead AST between calls — the +12 % RSS regression seen
-        // on `server/elysia`. The hoist existed only to manufacture a
-        // `&'static Arena` for `Transpiler::set_arena`; the lifetime-erased
-        // `Transpiler<'_>` cast below accepts `&arena` directly, so the hoist
-        // bought nothing and cost RSS. `MimallocArena::Drop` =
-        // `mi_heap_destroy`, so the per-call heap-churn is identical to a
-        // start-of-call `reset()` but the worker holds **zero** retained pages
-        // between calls.
         let arena = Arena::new();
 
         // `defer this.dispatchToMainThread()` — fires on every return path.
@@ -656,10 +576,6 @@ impl TranspilerJob {
             return;
         }
 
-        // Zig: `var ast_scope = ast_memory_store.?.enter(allocator); defer ast_scope.exit();`
-        // `borrowing()` matches the Zig shape: the AST node store and the
-        // `AstVec` spill share `arena`'s heap and are bulk-freed when `arena`
-        // drops at the end of `run()`.
         let mut ast_memory_store = ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_store.enter();
 
@@ -668,12 +584,6 @@ impl TranspilerJob {
         let loader = self.loader;
         let this_tag = self.resolved_source.get().tag;
 
-        // PORT NOTE: Zig threaded the arena into `output_code_allocator`; the Rust port of
-        // RuntimeTranspilerCache dropped the per-allocator fields (Box<[u8]> + global mimalloc).
-        // LAYERING: this is the canonical `bun_ast::RuntimeTranspilerCache`
-        // wired with the JSC vtable so the parser's `cache.get()` reaches the
-        // disk-backed `Entry` loader; on a hit `cache.entry` holds a type-erased
-        // `*mut CacheEntry` which is unboxed below.
         let mut cache = RuntimeTranspilerCache {
             r#impl: Some(bun_ast::TranspilerCacheImplKind::Jsc),
             ..Default::default()
@@ -716,19 +626,6 @@ impl TranspilerJob {
         // (BundleOptions value copy). The Rust resolver already shares opts with the parent
         // Transpiler via raw pointer; set_arena/set_log keep them in sync.
         transpiler.macro_context = None;
-        // PORT NOTE: Zig's `MacroContext.init` is a value-type with no heap
-        // allocation, so re-creating it per-iteration (as `parse_maybe` does
-        // when `macro_context.is_none()`) is free. The Rust port boxes a
-        // higher-tier `MacroContext` via `__bun_macro_context_init`; that Box
-        // is intentionally leaked for the long-lived `vm.transpiler`, but here
-        // we operate on a per-iteration `ManuallyDrop` bytewise copy, so we
-        // MUST free what `parse_maybe` allocates or every dynamic `import()`
-        // leaks one `Box<MacroContext>` (require-cache.test.ts "files
-        // transpiled and loaded don't leak file paths > via import()" OOMs at
-        // ~0.5 GB after 100k iterations). The owned `MimallocArena` inside is
-        // now lazy (`bump: Option<Arena>`, init on first `.call()`), so the
-        // per-iteration `mi_heap_new()` is gone; this guard just reclaims the
-        // small `Box`.
         let _macro_ctx_guard =
             scopeguard::guard(ptr::addr_of_mut!(transpiler.macro_context), |slot| {
                 // SAFETY: `slot` points into `transpiler_storage`, which is
@@ -762,19 +659,7 @@ impl TranspilerJob {
         let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher>> =
             unsafe { bun_ptr::ParentRef::from_nullable_mut((*vm).bun_watcher.cast()) };
         if let Some(iw) = import_watcher {
-            // The watchlist *is* mutated cross-thread (the watcher thread's
-            // `flush_evictions` closes fds and `swap_remove`s), so snapshot
-            // under the watcher mutex — see
-            // `ImportWatcher::snapshot_fd_and_package_json` doc for the EBADF
-            // race this closes (port improves on Zig spec; Zig
-            // `RuntimeTranspilerStore.zig:344` reads unlocked).
             (fd, package_json) = iw.snapshot_fd_and_package_json(hash);
-            // On Linux, `addFileByPathSlow` inserts watchlist entries with
-            // `fd = invalid_fd` (only kqueue needs the descriptor). Treat
-            // invalid as "no cached fd" so `readFileWithAllocator` opens the
-            // file instead of calling `seekTo` on a bogus handle. The snapshot
-            // helper already filtered `!is_valid()`; additionally reject
-            // stdio-tagged fds here.
             if fd.is_some_and(|f| f.stdio_tag().is_some()) {
                 fd = None;
             }
@@ -790,12 +675,6 @@ impl TranspilerJob {
         {
             MacroRemap::default()
         } else {
-            // PORT NOTE: `MacroRemap` (StringArrayHashMap of StringArrayHashMap)
-            // has no nested `Clone` impl (the inherent `clone()` requires
-            // `V: Clone`); the Zig copied it by value. Re-key shallowly here
-            // matching the build-command conversion (transpiler.rs:2616).
-            // Spec (Zig l.363) is an infallible value-copy, so OOM during the
-            // inner `clone()` must abort — never silently drop a remapping.
             let mut m = MacroRemap::default();
             for (k, v) in transpiler.options.macro_remap.iter() {
                 m.insert(k, bun_core::handle_oom(v.clone()));
@@ -803,21 +682,8 @@ impl TranspilerJob {
             m
         };
 
-        // Zig: `var fallback_source: logger.Source = undefined;` — only
-        // initialised on the `is_node_override` branch and only read through
-        // `parse_options.virtual_source` (raw-ptr borrow). `MaybeUninit` mirrors
-        // the `= undefined` exactly; the write is `Cow::Borrowed`/borrowed-path
-        // only, so skipping `Drop` is sound.
         let mut fallback_source = core::mem::MaybeUninit::<bun_ast::Source>::uninit();
 
-        // Usually, we want to close the input file automatically.
-        //
-        // If we're re-using the file descriptor from the fs watcher
-        // Do not close it because that will break the kqueue-based watcher
-        //
-        // PORT NOTE: stored in a `Cell` so the scopeguard closure can capture
-        // `&Cell<bool>` and the post-parse writes are visible to it without
-        // raw-pointer laundering (which the unused-assignment lint can't see).
         let should_close_input_file_fd = Cell::new(fd.is_none());
 
         let mut input_file_fd: Fd = Fd::INVALID;
@@ -912,12 +778,6 @@ impl TranspilerJob {
             }
         }
 
-        // Zig spec: `vm.isWatcherEnabled()` ⇔ `vm.bun_watcher != .none`. The
-        // Rust field is a type-erased `*mut ImportWatcher`, so a non-null
-        // pointer may still hold `ImportWatcher::None`; both must be ruled out
-        // or we'd skip closing `input_file_fd` without a watcher to adopt it.
-        // Discriminant read on the BACKREF captured above; only the JS thread
-        // mutates the variant.
         let is_watcher_enabled =
             import_watcher.is_some_and(|iw| !matches!(&*iw, ImportWatcher::None));
 
@@ -1120,19 +980,9 @@ impl TranspilerJob {
             } else {
                 None
             };
-        // Spec ModuleLoader.zig:523 — propagate top-level-await to the cached
-        // module record. Without this, modules cached via the isolation source
-        // provider (used under --isolate / --parallel) are reported to JSC as
-        // having no TLA, so the module's evaluation promise resolves before the
-        // top-level-await actually completes — causing the caller's
-        // `wait_for_promise` on the preload to return early.
         if let Some(mi) = module_info.as_deref_mut() {
             mi.flags.has_tla = !parse_result.ast.top_level_await_keyword.is_empty();
         }
-        // PORT NOTE: derive `*mut` from a `&mut` borrow (not `&x as *const _ as
-        // *mut _`, which is Stacked-Borrows UB). The `&mut` borrow ends when the
-        // closure returns; the raw pointer stays valid until `module_info` is
-        // moved/touched again (after `print_with_source_map`).
         let module_info_ptr: Option<*mut analyze_transpiled_module::ModuleInfo> =
             module_info.as_deref_mut().map(std::ptr::from_mut);
 
@@ -1197,14 +1047,6 @@ impl TranspilerJob {
             }
             // else: writeback guard already restored `printer` into the thread-local.
 
-            // In a benchmarking loading @babel/standalone 100 times:
-            //
-            // After ensureHash:
-            // 354.00 ms    4.2%    354.00 ms           WTF::StringImpl::hashSlowCase() const
-            //
-            // Before ensureHash:
-            // 506.00 ms    6.1%    506.00 ms           WTF::StringImpl::hashSlowCase() const
-            //
             result.ensure_hash();
 
             break 'brk result;
@@ -1221,11 +1063,6 @@ impl TranspilerJob {
             tag: this_tag,
             ..Default::default()
         });
-
-        // `arena` and `ast_memory_store` drop here (after `_ast_scope` restores
-        // the thread-local AST heap pointer), `mi_heap_destroy`ing every parse
-        // / AST allocation made by this call. Nothing references them past
-        // this point — `source_code` above is a fresh WTF::String copy.
     }
 }
 

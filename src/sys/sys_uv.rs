@@ -8,14 +8,10 @@ use bstr::BStr;
 
 use bun_core::ZStr;
 
+use crate::ReturnCodeExt;
 use crate::Tag;
 use crate::windows::libuv as uv;
 use crate::{E, Fd, FdExt, Mode, PlatformIOVec, PlatformIOVecConst, Stat, StatFS};
-// `ReturnCodeExt::err_enum_e` overlays the libuv→POSIX errno translation that
-// Zig's `ReturnCode::errno()` does inline; without it the raw `UV_E*` magnitude
-// (e.g. 4058 for UV_ENOENT) would land in `Error.errno` and break callers that
-// compare against `E::NOENT as _`.
-use crate::ReturnCodeExt;
 
 /// `Maybe(T)` from Zig.
 type Result<T> = crate::Result<T>;
@@ -40,15 +36,6 @@ pub use crate::lseek;
 pub use crate::symlink;
 pub use crate::unlinkat;
 pub use crate::unlinkat_with_flags;
-// Zig: `pub const mkdirOSPath = bun.sys.mkdirOSPath;` — on Windows that's the
-// WTF-16 `CreateDirectoryW` wrapper (handles unpaired surrogates / `\\?\` long
-// paths). Wrap the real port (`mkdir_w`), NOT the UTF-8 `mkdir`, so callers
-// passing an `OSPathSlice` keep WTF-16 semantics.
-//
-// Spec: `pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: mode_t) Maybe(void)`
-// (sys.zig:939). The `flags` param is ignored on Windows (`_ = flags;`) but is
-// part of the public 2-arg signature, so we cannot `pub use mkdir_w as ...` —
-// that would drop the second arg and break Zig-ported callers that pass a mode.
 #[inline]
 #[allow(dead_code)]
 pub fn mkdir_os_path(file_path: &bun_core::WStr, flags: Mode) -> Result<()> {
@@ -58,20 +45,6 @@ pub fn mkdir_os_path(file_path: &bun_core::WStr, flags: Mode) -> Result<()> {
 
 // Note: `req = undefined; req.deinit()` has a safety-check in a debug build
 
-/// RAII owner for a synchronous `uv_fs_t` request.
-///
-/// `uv_fs_t` becomes **self-referential** after `uv_fs_read`/`uv_fs_write` with
-/// `nbufs <= 4`: libuv points `req->fs.info.bufs` at the inline
-/// `req->fs.info.bufsml[4]` array (vendor/libuv/src/win/fs.c:3291). If the
-/// struct is bitwise-moved before `uv_fs_req_cleanup`, the cleanup check
-/// `if (bufs != bufsml) uv__free(bufs);` (fs.c:3237) sees the *old* stack
-/// address ≠ the *new* `bufsml` slot and frees a stack pointer — heap UB.
-///
-/// `scopeguard::guard(fs_t, |mut r| r.deinit())` triggers exactly that move
-/// (its `Drop` `ManuallyDrop::take`s the value into the closure arg), so we
-/// instead give the request a real `Drop` impl: Rust calls `Drop::drop` *in
-/// place* at the original address, so `bufs == bufsml` still holds and cleanup
-/// is sound. Do **not** move an `FsReq` after passing it to libuv.
 #[repr(transparent)]
 struct FsReq(uv::fs_t);
 
@@ -105,10 +78,6 @@ impl core::ops::DerefMut for FsReq {
 }
 
 pub fn open(file_path: &ZStr, c_flags: i32, perm_: Mode) -> Result<Fd> {
-    // Zig: `defer req.deinit();` — libuv heap-allocates the WCHAR path copy
-    // (`fs__capture_path`) and only `uv_fs_req_cleanup` frees it. `FsReq`'s
-    // `Drop` runs cleanup in place on every return path (see `FsReq` doc for
-    // why a by-value scopeguard is unsound here).
     let mut req = FsReq::new();
 
     let flags = uv::O::from_bun_o(c_flags);
@@ -216,10 +185,6 @@ pub fn fchmod(fd: Fd, flags: Mode) -> Result<()> {
 
 #[allow(dead_code)]
 pub fn statfs(file_path: &ZStr) -> Result<StatFS> {
-    // Zig: `defer req.deinit();` — `uv_fs_statfs` heap-allocates the
-    // `uv_statfs_t` result into `req.ptr` (plus the WCHAR path copy); only
-    // `uv_fs_req_cleanup` frees them. Guard so both success and error paths
-    // free.
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
     let rc = unsafe { uv::uv_fs_statfs(uv::Loop::get(), &mut *req, file_path.as_ptr(), None) };
@@ -327,10 +292,6 @@ pub fn unlink(file_path: &ZStr) -> Result<()> {
 }
 
 pub fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mut ZStr> {
-    // Zig: `defer req.deinit();` — `uv_fs_readlink` heap-allocates the target
-    // string into `req.ptr` (plus the WCHAR path copy); only `uv_fs_req_cleanup`
-    // frees them. The guard covers all four return paths below; the bytes are
-    // copied into `buf` *before* the guard runs.
     let mut req = FsReq::new();
     // Edge cases: http://docs.libuv.org/en/v1.x/fs.html#c.uv_fs_realpath
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
@@ -594,10 +555,6 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
         let chunk_len = remaining_bufs.len().min(MAX_IOVEC_COUNT);
         let chunk_bufs = &remaining_bufs[0..chunk_len];
 
-        // Zig: `defer req.deinit();` — `uv_fs_read` heap-allocates
-        // `req->fs.info.bufs` when `nbufs > 4` and self-points it at
-        // `req->fs.info.bufsml` when `nbufs <= 4`; `FsReq::drop` runs
-        // `uv_fs_req_cleanup` in place every iteration (early-return included).
         let mut req = FsReq::new();
 
         // The int return value of uv_fs_read truncates req.result (ssize_t) and
@@ -668,10 +625,6 @@ pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usi
         let chunk_len = remaining_bufs.len().min(MAX_IOVEC_COUNT);
         let chunk_bufs = &remaining_bufs[0..chunk_len];
 
-        // Zig: `defer req.deinit();` — `uv_fs_write` heap-allocates
-        // `req->fs.info.bufs` when `nbufs > 4` and self-points it at
-        // `req->fs.info.bufsml` when `nbufs <= 4`; `FsReq::drop` runs
-        // `uv_fs_req_cleanup` in place every iteration (early-return included).
         let mut req = FsReq::new();
 
         // The int return value of uv_fs_write truncates req.result (ssize_t) and
@@ -881,10 +834,6 @@ pub fn write(fd: Fd, buf: &[u8]) -> Result<usize> {
     Result::Ok(total_written)
 }
 
-// PORT NOTE: Zig's `write()` builds a `[1]PlatformIOVecConst` and calls `writev` (which
-// takes `[]PlatformIOVec`). The two types alias on Windows so Zig coerces silently. Rust
-// can't, so route through pwritev directly with position = -1. TODO(refactor): unify the
-// iovec types on Windows.
 #[inline]
 fn writev_const(fd: Fd, bufs: &[PlatformIOVecConst]) -> Result<usize> {
     pwritev(fd, bufs, -1)

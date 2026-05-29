@@ -32,10 +32,6 @@ pub mod pending_connect;
 #[path = "h3_client/Stream.rs"]
 pub mod stream;
 
-// Single `Output.scoped(.h3_client, .hidden)` for the whole module tree. Zig
-// comptime-deduplicates per tag, so the four submodules share one
-// `really_disable`/`is_visible_once`/lock; declaring it once here and importing
-// in each child preserves that behavior.
 bun_core::declare_scope!(h3_client, hidden);
 
 pub use client_context::ClientContext;
@@ -43,13 +39,6 @@ pub use client_session::ClientSession;
 pub use pending_connect::PendingConnect;
 pub use stream::Stream;
 
-/// Live-object counters for the leak test in fetch-http3-client.test.ts.
-/// Incremented at allocation, decremented in deinit. Read from the JS thread
-/// via TestingAPIs.quicLiveCounts so they must be atomic.
-// PORT NOTE: Zig names are `live_sessions`/`live_streams` (snake_case module
-// vars). Kept verbatim so cross-crate readers (`bun_http_jsc`) and the gated
-// submodules see the same identifier the Zig uses; SCREAMING_SNAKE aliases
-// preserved for the existing internal references.
 #[allow(non_upper_case_globals)]
 pub static live_sessions: AtomicU32 = AtomicU32::new(0);
 #[allow(non_upper_case_globals)]

@@ -8,10 +8,6 @@ use crate::p::P;
 use crate::parser::{ReactRefresh, Ref, TempRef};
 use bun_ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
 
-// PORT NOTE: `P::generate_temp_ref` is ``-gated in P.rs (round-6
-// re-gate); replicate it here so this file can un-gate independently. Body is
-// a 1:1 port of P.zig `generateTempRefWithScope` with `scope = current_scope`.
-// `P::will_use_renamer` is private — its body is inlined.
 fn generate_temp_ref<'p, const TS: bool, const SCAN: bool>(
     p: &mut P<'p, TS, SCAN>,
     default_name: Option<&'p [u8]>,
@@ -48,11 +44,6 @@ pub(crate) struct ConvertESMExportsForHmr<'a> {
     pub export_props: Vec<G::Property>,
     pub stmts: Vec<Stmt>,
 }
-// PORT NOTE: Zig used `std.ArrayListUnmanaged` with `p.arena` for the four
-// collections; in Rust the parser arena is a `bumpalo::Bump`, but the consumers
-// (`Vec::move_from_list` for `export_props`, arena copy for `stmts`) want
-// global-heap `Vec<T>` anyway. Kept as `Vec` so callers can construct via
-// `Default::default()` without needing `&'a Bump`. See P.zig:6389.
 
 #[derive(Default)]
 pub(crate) struct ImportRef {
@@ -367,12 +358,6 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 for item in st.items.slice_mut().iter_mut() {
                     let ref_ = item.name.ref_.expect("infallible: ref bound");
                     let symbol = &mut p.symbols[ref_.inner_index() as usize];
-                    // Always set the namespace alias using the deduplicated import
-                    // record. When two `export { ... } from` statements reference
-                    // the same source, the second import record is marked unused
-                    // and its items are merged into the first. The symbols may
-                    // already have a namespace_alias from ImportScanner pointing at
-                    // the now-unused record, so we must update it.
                     symbol.namespace_alias = Some(G::NamespaceAlias {
                         namespace_ref: deduped.namespace_ref,
                         alias: item.original_name,
@@ -387,11 +372,6 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         !self.is_in_node_modules, // live binding when this may be replaced
                     )?;
 
-                    // imports and export statements have their alias +
-                    // original_name swapped. this is likely a design bug in
-                    // the parser but since everything uses these
-                    // assumptions, this hack is simpler than making it
-                    // proper
                     core::mem::swap(&mut item.alias, &mut item.original_name);
                 }
                 return Ok(());
@@ -478,10 +458,6 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             let js_ast::StmtData::SImport(mut stmt) = self.stmts[stmt_index as usize].data else {
                 unreachable!()
             };
-            // The surviving record may have been marked is_unused by barrel
-            // optimization (when the first export-from statement's exports
-            // were all deferred). Since we are merging new items into it,
-            // clear is_unused so the import is actually emitted.
             p.import_records.items_mut()[stmt.import_record_index as usize]
                 .flags
                 .remove(import_record::Flags::IS_UNUSED);
@@ -527,10 +503,6 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     let symbol = &mut p.symbols[namespace_ref.inner_index() as usize];
                     symbol.use_count_estimate = 0;
                     symbol.link.set(stmt.namespace_ref);
-                    // PORT NOTE: Zig `@hasField(@typeInfo(@TypeOf(p)).pointer.child, "symbol_uses")`
-                    // gated this on whether the concrete `p` type carries `symbol_uses`. The
-                    // concrete `P` always does; once a `ParserLike` trait is introduced for
-                    // AstBuilder, that variant should override this to a no-op.
                     p.symbol_uses.swap_remove(&namespace_ref);
                 }
             }
@@ -627,15 +599,6 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             || (kind == js_ast::symbol::Kind::Import && !self.is_in_node_modules)
             || has_been_assigned_to
         {
-            // TODO (2024-11-24) instead of requiring getters for live-bindings,
-            // a callback propagation system should be considered.  mostly
-            // because here, these might not even be live bindings, and
-            // re-exports are so, so common.
-            //
-            // update(2025-03-05): HMRModule in ts now contains an exhaustive map
-            // of importers. For local live bindings, these can just remember to
-            // mutate the field in the exports object. Re-exports can just be
-            // encoded into the module format, propagated in `replaceModules`
             let key = Expr::init(
                 E::EString::init(export_symbol_name.unwrap_or(original_name).slice()),
                 loc,
@@ -696,11 +659,6 @@ impl<'a> ConvertESMExportsForHmr<'a> {
     pub(crate) fn finalize<'p, const TS: bool, const SCAN: bool>(
         &mut self,
         p: &mut P<'p, TS, SCAN>,
-        // PORT NOTE: Zig took `all_parts: []Part` and freely re-derived
-        // `&mut all_parts[len-1]` while `ctx.last_part` aliased the same slot.
-        // Rust forbids that aliasing (Stacked Borrows: `&mut [Part]` asserts
-        // exclusive access to every element). Caller passes the `[0..len-1]`
-        // prefix obtained via `split_last_mut`, disjoint from `self.last_part`.
         head_parts: &mut [js_ast::Part],
     ) -> Result<(), AllocError> {
         if !self.export_star_props.is_empty() {

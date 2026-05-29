@@ -12,11 +12,6 @@ use crate::schema::api;
 use bun_core::strings;
 use std::borrow::Cow;
 
-/// Port of `options.JSX.Runtime` (options.zig:1359 — `pub const Runtime =
-/// api.JsxRuntime;`). 4-state including `_None` so `Pragma.runtime` preserves
-/// the zero value when an `api.Jsx` arrives with `runtime == _none` (Zig
-/// options.zig:1344 assigns it directly). `#[default]` is `Automatic` (Zig:
-/// `runtime: api.Api.JsxRuntime = .automatic`).
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Runtime {
@@ -54,18 +49,6 @@ pub static RUNTIME_MAP: phf::Map<&'static [u8], RuntimeDevelopmentPair> = phf::p
     b"react-jsxdev" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
 };
 
-/// Port of Zig `[]const string` for `Pragma.{factory,fragment}`.
-///
-/// In Zig (options.zig:1193) the field is a fat slice that, by default, points
-/// at the static `Defaults.Factory` array — copying the struct is a 16-byte
-/// pointer copy with **zero** allocations. The original Rust port boxed every
-/// element (`Box<[Box<[u8]>]>`), making `Pragma::default()` / `Clone` cost ~10
-/// heap allocations and dominating mimalloc samples in the resolver hot path.
-///
-/// `MemberList` restores Zig's cost model: the overwhelmingly-common case
-/// (`Static`) borrows a `&'static [&'static [u8]]` so default+clone are a
-/// pointer copy; only an explicit override (`/** @jsx foo */`, tsconfig
-/// `jsxFactory`, …) materialises an `Owned` boxed slice.
 #[derive(Debug, Clone)]
 pub enum MemberList {
     Static(&'static [&'static [u8]]),
@@ -143,11 +126,6 @@ impl<'a> Iterator for MemberListIter<'a> {
 
 impl<'a> ExactSizeIterator for MemberListIter<'a> {}
 
-/// Port of `options.JSX.ImportSource` (options.zig:1208).
-///
-/// Zig stores `[]const u8` borrowing `Defaults.ImportSourceDev`/`ImportSource`;
-/// `Cow::Borrowed` matches that (zero-alloc default/clone), `Cow::Owned` covers
-/// the `set_import_source()` override path.
 #[derive(Debug, Clone)]
 pub struct ImportSource {
     pub development: Cow<'static, [u8]>,
@@ -164,13 +142,6 @@ impl Default for ImportSource {
     }
 }
 
-/// Port of `options.JSX.Pragma` (options.zig:1192).
-///
-/// All string fields default to borrowed `'static` data (matching Zig's
-/// `Defaults.*` slice initialisers), so `Pragma::default()` and the derived
-/// `Clone` perform **zero** heap allocations in the common case. Hot callers
-/// — `RuntimeTranspilerStore` (per transpiled module) and `Resolver`
-/// (per resolve) — clone this struct on every operation.
 #[derive(Debug, Clone)]
 pub struct Pragma {
     // these need to be arrays
@@ -187,10 +158,6 @@ pub struct Pragma {
     pub classic_import_source: Cow<'static, [u8]>,
     pub package_name: Cow<'static, [u8]>,
 
-    /// Configuration Priority:
-    /// - `--define=process.env.NODE_ENV=...`
-    /// - `NODE_ENV=...`
-    /// - tsconfig.json's `compilerOptions.jsx` (`react-jsx` or `react-jsxdev`)
     pub development: bool,
     pub parse: bool,
     pub side_effects: bool,
@@ -267,10 +234,6 @@ impl Pragma {
             || &*self.package_name == b"@emotion/react"
     }
 
-    /// Port of `options.JSX.Pragma.setImportSource` (Zig wraps
-    /// `strings.concatIfNeeded`). When `package_name` is the default
-    /// `"react"`, this borrows the interned `defaults::IMPORT_SOURCE*` —
-    /// matching Zig's interned-string fast path with zero allocations.
     pub fn set_import_source(&mut self) {
         self.import_source.development = Self::concat_or_interned(
             &self.package_name,

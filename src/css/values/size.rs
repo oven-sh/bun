@@ -10,13 +10,6 @@ pub struct Size2D<T> {
     pub b: T,
 }
 
-// PORT NOTE: Zig's `switch (T) { f32 => ..., LengthPercentage => ..., else => T.parse }`
-// is comptime type dispatch. In Rust this is expressed via trait bounds — `f32` and
-// `LengthPercentage` must impl the same `Parse`/`ToCss`/`Eql` traits as other CSS value
-// types (the `f32` impls delegate to `CSSNumberFns`). The per-type `switch` arms are
-// therefore collapsed into trait method calls below.
-// TODO(port): confirm trait names match the crate API once `generics::
-// parse_tocss_numeric_gated` un-gates; for now bound on `values::protocol`.
 impl<T> Size2D<T>
 where
     T: Clone + PartialEq,

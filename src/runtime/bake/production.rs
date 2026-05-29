@@ -60,10 +60,6 @@ fn side_name(s: bun_bundler::options::Side) -> &'static str {
     }
 }
 
-/// Process-lifetime backing storage for the dotenv singleton (mirrors Zig's
-/// `allocator.create(DotEnv.Map)` + `allocator.create(DotEnv.Loader)` that are
-/// never freed). PORTING.md §Forbidden bans leaking; `OnceLock` owns the
-/// allocation instead. `Loader` self-borrows `Map`, so both live in one cell.
 struct DotenvSingleton {
     map: UnsafeCell<dotenv::Map>,
     loader: UnsafeCell<MaybeUninit<dotenv::Loader<'static>>>,
@@ -118,11 +114,6 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     // SAFETY: `init_bake` returns a freshly-allocated VM owned by this thread;
     // unique access for the rest of this function.
     let vm = unsafe { &mut *vm_ptr };
-    // defer vm.deinit() — handled by `vm.destroy()` on the unwind path below.
-    // PORT NOTE: pass `vm_ptr` by value into the guard so the drop closure does
-    // not borrow the local (`defer!` would capture `&vm_ptr`, which under
-    // edition-2024 disjoint-capture rules collides with the `&mut *vm_ptr`
-    // re-borrows on the JSError path).
     let _vm_guard = scopeguard::guard(vm_ptr, |p| {
         // SAFETY: p is the unique live VM on this thread.
         unsafe { (*p).destroy() };
@@ -140,10 +131,6 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         vm.preload.clone_from(&ctx.preloads);
         vm.argv.clone_from(&ctx.passthrough);
         vm.arena = NonNull::new(&raw mut arena);
-        // vm.allocator = arena.arena() — dropped per §Allocators
-        // Spec production.zig:50: `b.options.install = ctx.install` (raw
-        // `?*const Api.BunInstall` copy). `BundleOptions.install` is now
-        // `Option<NonNull<_>>`, so no lifetime-extension cast is needed.
         let install_ptr = ctx.install.as_deref().map(NonNull::from);
         b.options.install = install_ptr;
         b.resolver.opts.install = install_ptr;
@@ -153,10 +140,6 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
             .offline_mode_setting
             .unwrap_or(OfflineMode::Online)
             == OfflineMode::Offline;
-        // PORT NOTE: `bun_resolver::options::BundleOptions` has no
-        // `prefer_latest_install` field in the Rust port; compute the value once
-        // and assign only to `b.options` (which does carry it). The Zig source
-        // mirrored it onto resolver.opts but the resolver never reads it.
         let prefer_latest = ctx
             .debug
             .offline_mode_setting
@@ -186,12 +169,6 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
             vm.transpiler.options.no_macros = true;
         }
         MacroOptions::Map(macros) => {
-            // PORT NOTE: Zig spec is `b.options.macro_remap = macros;` — a
-            // shallow struct copy where both maps share the same backing
-            // string slices owned by `ctx`. The two Rust types are nominally
-            // distinct (`ArrayHashMap<Box<[u8]>, ArrayHashMap<Box<[u8]>, Box<[u8]>>>`
-            // vs `StringArrayHashMap<StringArrayHashMap<Box<[u8]>>>`), so
-            // rebuild the resolver-shaped map by cloning value bytes.
             let mut remap = bun_resolver::package_json::MacroMap::default();
             for (pkg, inner) in macros.iter() {
                 let mut entry = bun_resolver::package_json::MacroImportReplacementMap::default();
@@ -223,11 +200,6 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     // releases the lock — matching Zig's `defer api_lock.release()` ordering.
     let _api_lock = unsafe { (*vm.jsc_vm).get_api_lock() };
 
-    // PORT NOTE: `PerThread` owns its data in Rust (Zig held borrowed slices
-    // into `buildWithVm` locals, which is fine in Zig but unrepresentable for a
-    // value living in this frame). Start with an empty placeholder so Drop
-    // (which detaches the C++-side per-thread pointer) runs in this frame's
-    // LIFO order — under the API lock, before the VM is destroyed.
     let mut pt = PerThread::placeholder(vm_ptr);
 
     // PORT NOTE: reshaped for borrowck — `pt.vm` already borrows `*vm`, so pass
@@ -431,10 +403,6 @@ pub(super) fn build_with_vm(
         .map(|sc| sc.separate_ssr_graph)
         .unwrap_or(false);
 
-    // this is probably wrong
-    // PORT NOTE: process-lifetime dotenv singleton owned via `OnceLock`
-    // (PORTING.md §Forbidden: no leaking). `Loader` self-borrows `Map`,
-    // so both live in `DOTENV_SINGLETON`.
     let backing = DOTENV_SINGLETON.get_or_init(|| DotenvSingleton {
         map: UnsafeCell::new(dotenv::Map::init()),
         loader: UnsafeCell::new(MaybeUninit::uninit()),
@@ -450,10 +418,6 @@ pub(super) fn build_with_vm(
     loader.map.put(b"NODE_ENV", b"production")?;
     dotenv::set_instance(std::ptr::from_mut::<dotenv::Loader<'static>>(loader));
 
-    // TODO(port): Zig used `var x: Transpiler = undefined;` + out-param init.
-    // PORTING.md §Exception — out-param constructors: reshape to a returned
-    // value once `init_transpiler_with_options` is reshaped; for now use
-    // `MaybeUninit` to mirror the in-place-init contract.
     let mut client_transpiler = MaybeUninit::<Transpiler>::uninit();
     let mut server_transpiler = MaybeUninit::<Transpiler>::uninit();
     let mut ssr_transpiler = MaybeUninit::<Transpiler>::uninit();
@@ -624,13 +588,6 @@ pub(super) fn build_with_vm(
         framework_router::InsertionContext::wrap(&mut entry_points),
     )?;
 
-    // `bake_body::Framework` is the runtime-side superset; the bundler reads only
-    // `built_in_modules` / `server_components` / `react_fast_refresh` /
-    // `is_built_in_react` via its lower-tier `bake_types::Framework` view.
-    // Project once here via the shared helper so the field-shape (e.g.
-    // `BuiltInModule` `&'static [u8]` → `Box<[u8]>`) stays in one place.
-    // TODO(port): collapse `bake_body::Framework` into `bun_bundler::bake_types::Framework`
-    // once `FileSystemRouterType`/`framework_router::Style` move down to bun_bundler.
     let bundler_framework = framework.as_bundler_view();
 
     let bundled_outputs_list: Vec<OutputFile> = {
@@ -652,10 +609,6 @@ pub(super) fn build_with_vm(
         // Lives in this block's stack frame, outliving the bundle call.
         let mut any_loop = bun_event_loop::AnyEventLoop::js(vm.event_loop().cast());
 
-        // Spec production.zig:312 — plain `try`; propagate via `?`. Do NOT
-        // catch-and-exit here: the bake path expects this call to succeed for
-        // valid inputs, and any `BuildFailed` indicates a port bug upstream
-        // (in the bundler), not a user-facing diagnostic to swallow.
         BundleV2::generate_from_bake_production_cli(
             &entry_points,
             // SAFETY: see `server_ptr` comment above.
@@ -687,10 +640,6 @@ pub(super) fn build_with_vm(
     let mut css_chunks_count: usize = 0;
     let mut css_chunks_first: usize = 0;
 
-    // Index all bundled outputs.
-    // Client files go to disk.
-    // Server files get loaded in memory.
-    // Populate indexes in `entry_points` to be looked up during prerendering
     let mut module_keys: Vec<BunString> = vec![BunString::dead(); entry_points.files.count()];
     let mut output_module_map: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     let mut source_maps: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
@@ -1268,11 +1217,6 @@ fn load_module(
     // S012: `JSInternalPromise` (= `JSPromise`) is an `opaque_ffi!` ZST —
     // safe `*mut → &mut` deref via the const-asserted accessor.
     jsc::JSInternalPromise::opaque_mut(promise).set_handled();
-    // PORT NOTE: Zig's `*VirtualMachine` is a freely-aliasing mutable pointer.
-    // We take `*mut VirtualMachine` (not `&VirtualMachine`) so the provenance
-    // permits mutation — casting a `&T` to `*mut T` and writing through it is
-    // UB. The raw pointer flows from `VirtualMachine::init_bake` unchanged.
-    //
     let _ = vm;
     let vm_ref = VirtualMachine::get();
     vm_ref
@@ -1323,11 +1267,6 @@ fn bake_get_on_module_namespace(
     Some(result)
 }
 
-// Renders all routes for static site generation by calling the JavaScript implementation.
-// TODO(port): move to bake_sys
-// All args are by-value `JSValue`/`BunString` plus a live `&JSGlobalObject`
-// (UnsafeCell-backed); C++ allocates and returns a non-null `JSPromise*`.
-// No caller-side precondition for the call itself — declare `safe fn`.
 unsafe extern "C" {
     safe fn BakeRenderRoutesForProdStatic(
         global: &JSGlobalObject,
@@ -1421,14 +1360,6 @@ pub(super) extern "C" fn BakeProdResolve(
     ))
 }
 
-/// After a production bundle is generated, prerendering needs to be able to
-/// look up the generated chunks associated with each route's `OpaqueFileId`
-/// This data structure contains that mapping, and is also used by bundle_v2
-/// to enqueue the entry points.
-///
-/// Canonical definition lives in `bun_bundler::bake_types::production` (lower
-/// tier) so the bundler and runtime share ONE nominal type. Re-exported here
-/// for `bake::production::EntryPointMap` callers.
 pub use bun_bundler::bake_types::production::{EntryPointHashMap, EntryPointMap, InputFile};
 
 impl framework_router::InsertionHandler for EntryPointMap {
@@ -1448,11 +1379,6 @@ impl framework_router::InsertionHandler for EntryPointMap {
         _rel_path: &[u8],
         _fail: framework_router::TinyLog,
     ) -> Result<(), bun_alloc::AllocError> {
-        // Zig: `InsertionContext.wrap` compiles this slot to
-        // `@panic("TODO: onRouterSyntaxError for " ++ @typeName(T))` when the
-        // wrapped type lacks the decl (FrameworkRouter.zig:966). EntryPointMap
-        // does not define it, so a malformed route pattern during a production
-        // build must crash loudly rather than be swallowed.
         bun_core::todo_panic!("onRouterSyntaxError for EntryPointMap")
     }
 
@@ -1482,12 +1408,6 @@ impl framework_router::InsertionHandler for EntryPointMap {
     }
 }
 
-/// Data used on each rendering thread. Contains all information in the bundle needed to render.
-/// This is referred to as `pt` in variable/field naming, and Bake::ProductionPerThread in C++
-///
-/// PORT NOTE: Zig held borrowed slices into `buildWithVm` locals; the Rust port
-/// owns the backing storage so the value can outlive `build_with_vm` in the
-/// caller's frame without dangling references.
 pub struct PerThread {
     // Shared Data (owned)
     /// Owns `input_files` (keys) and `output_indexes` (values).
@@ -1499,30 +1419,15 @@ pub struct PerThread {
     pub module_map: StringArrayHashMap<OutputFileIndex>,
     pub source_maps: StringArrayHashMap<OutputFileIndex>,
 
-    // Thread-local
-    // PORT NOTE: Zig's `vm: *jsc.VirtualMachine`. Stored as `BackRef` (the VM
-    // is process-lifetime and outlives every `PerThread`); `load_module`
-    // re-derives a mutable VM via the per-thread singleton, so no write
-    // provenance is needed here.
     pub vm: bun_ptr::BackRef<VirtualMachine>,
     /// Indexed by entry point index (OpaqueFileId)
     pub loaded_files: AutoBitSet,
-    /// JSArray of JSString, indexed by entry point index (OpaqueFileId)
-    // Zig protects/unprotects this manually; PORTING.md mandates Strong for
-    // JSValue struct fields. `None` mirrors the pre-init `.null` state;
-    // `PerThread::init` fills it. Strong's Drop releases the GC root.
     pub all_server_files: Option<bun_jsc::Strong>,
     /// `attach()` was called and Drop should detach. The placeholder created in
     /// `build_command` before `init` must not call into C++ on drop.
     attached: bool,
 }
 
-// TODO(port): move to bake_sys
-// C++ treats `PerThread` as an opaque pointer (Bake::ProductionPerThread*); the Rust
-// layout is irrelevant across the FFI boundary, so silence the improper_ctypes lint.
-// C++ stores `pt` opaquely on the global (never dereferenced C++-side; null
-// detaches), so the call has no precondition beyond a live `&JSGlobalObject`
-// — declare `safe fn`.
 #[allow(improper_ctypes)]
 unsafe extern "C" {
     safe fn BakeGlobalObject__attachPerThreadData(global: &JSGlobalObject, pt: *mut PerThread);
@@ -1593,10 +1498,6 @@ impl PerThread {
     }
 
     pub fn attach(&mut self) {
-        // `self.global()` derefs the JSC_BORROW `vm` back-pointer (live for the
-        // VM lifetime); C++ stores `pt` opaquely and hands it back via
-        // `BakeProdResolve`, so passing `from_mut(self)` is just identity —
-        // detached in Drop.
         let global = self.global();
         BakeGlobalObject__attachPerThreadData(global, std::ptr::from_mut::<PerThread>(self));
         self.attached = true;
@@ -1626,13 +1527,6 @@ impl PerThread {
         )
     }
 
-    /// The JSString entries in `all_server_files` is generated lazily. When
-    /// multiple rendering threads are used, unreferenced files will contain
-    /// holes in the array used. Returns a JSValue of the "FileIndex" type
-    //
-    // What could be done here is generating a new index type, which is
-    // specifically for referenced files. This would remove the holes, but make
-    // it harder to pre-allocate. It's probably worth it.
     pub fn preload_bundled_module(&mut self, id: OpaqueFileId) -> JsResult<JSValue> {
         let global = self.global();
         if !self.loaded_files.is_set(id.get() as usize) {
@@ -1715,10 +1609,6 @@ impl TypeAndFlags {
         (self.0 & 0xFF) as u8
     }
 
-    /// Don't inclue the runtime client code (e.g.
-    /// bun-framework-react/client.tsx). This is used if we know a server
-    /// component does not include any downstream usages of "use client" and so
-    /// we can omit the client code entirely.
     pub const fn no_client(self) -> bool {
         ((self.0 >> 8) & 1) != 0
     }

@@ -84,14 +84,6 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
     }
 }
 
-/// C++ bridge for `BunAnalyzeTranspiledModule.cpp` — renders a diff between the
-/// JSC-parsed module record and Bun's transpiler output when they disagree.
-///
-/// Ported from `src/bundler_jsc/analyze_jsc.zig`. Lives here (not in
-/// `bun_bundler_jsc::analyze_jsc`) because `DiffFormatter` is a `bun_runtime`
-/// type and `bun_bundler_jsc` is a lower-tier crate that cannot depend on it;
-/// the `extern "C"` symbol resolves the same at link time regardless of which
-/// crate defines it.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn zig__renderDiff(
     expected_ptr: *const core::ffi::c_char,

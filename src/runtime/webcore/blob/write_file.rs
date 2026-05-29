@@ -75,11 +75,6 @@ pub struct WriteFile {
 bun_threading::intrusive_work_task!(WriteFile, task);
 bun_io::intrusive_io_request!(WriteFile, io_request);
 
-// ──────────────────────────────────────────────────────────────────────────
-// Zig: `pub const getFd = FileOpener(@This()).getFd;`
-//      `pub const doClose = FileCloser(WriteFile).doClose;`
-// ──────────────────────────────────────────────────────────────────────────
-
 impl FileOpener for WriteFile {
     const OPEN_FLAGS: i32 =
         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::NONBLOCK;
@@ -207,10 +202,6 @@ impl FileCloser for WriteFile {
         })
     }
 
-    // `FileCloser` fixes `on_close_io_request` to take `*mut WorkPoolTask`;
-    // the trait method cannot be marked `unsafe fn`, so the lint is
-    // unsatisfiable here. The pointer is the intrusive `&mut self.task` set
-    // in `on_io_request_closed` and is guaranteed live.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
         // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
@@ -308,12 +299,6 @@ impl WriteFile {
             close_after_io: false,
             mkdirp_if_not_exists,
         }));
-        // PORT NOTE: Zig follows with `file_blob.store.?.ref()` because the Zig
-        // caller bitwise-copies `Blob` (no ref bump, no dtor) and `bun.destroy`
-        // in `then` does not deref. In Rust the caller passes a `+1` Blob (via
-        // `borrowed_view()`'s `StoreRef::clone`) and `heap::take(this)` in
-        // `then` runs `StoreRef::drop`, so the explicit ref/deref pair is
-        // folded into RAII.
         Ok(write_file)
     }
 
@@ -324,10 +309,6 @@ impl WriteFile {
         callback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
     ) -> Result<*mut WriteFile, Error> {
-        // PORT NOTE: Zig generated a per-`Type` `Handler.run` thunk that
-        // `@ptrCast` the *anyopaque ctx back. In Rust the caller supplies a
-        // `*mut c_void`-typed callback directly (see `WriteFilePromise::run`)
-        // so the thunk collapses to a `.cast()` on `context`.
         WriteFile::create_with_ctx(
             file_blob,
             bytes_blob,
@@ -344,11 +325,6 @@ impl WriteFile {
         let fd = self.opened_fd;
         debug_assert!(fd != Fd::INVALID);
 
-        // We do not use pwrite() because the file may not be
-        // seekable (such as stdout)
-        //
-        // On macOS, it is an error to use pwrite() on a
-        // non-seekable file.
         let result: bun_sys::Result<usize> =
             sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]);
 
@@ -385,15 +361,6 @@ impl WriteFile {
         let cb_ctx = this.on_complete_ctx;
         let system_error = this.system_error.take();
         let total_written = this.total_written;
-        // Zig: `this.bytes_blob.store.?.deref(); this.file_blob.store.?.deref();
-        //       bun.destroy(this);`
-        // Folded into RAII: dropping the `Box` runs `WriteFile`'s field-drop
-        // glue, which drops `bytes_blob.store`/`file_blob.store: Option<
-        // StoreRef>` → `Store::deref()` — exactly one deref each, same as
-        // the spec. (An earlier explicit `detach()` here was a no-op; the
-        // bun-write-leak.test.ts failure was the ASAN debug build's ~320 MB
-        // baseline RSS exceeding the fixture's 256 MB absolute threshold,
-        // not an unbalanced ref.)
         drop(this);
 
         if let Some(err) = system_error {
@@ -477,29 +444,8 @@ impl WriteFile {
                 }
             }
 
-            // We opened the file descriptor with O_NONBLOCK, so we
-            // shouldn't have to worry about blocking reads/writes
-            //
-            // We do not call fstat() because that is very expensive.
             false
         };
-
-        // We have never supported offset in Bun.write().
-        // and properly adding support means we need to also support it
-        // with splice, sendfile, and the other cases.
-        //
-        // if (this.file_blob.offset > 0) {
-        //     // if we start at an offset in the file
-        //     // example code:
-        //     //
-        //     //    Bun.write(Bun.file("/tmp/lol.txt").slice(10), "hello world");
-        //     //
-        //     // it should write "hello world" to /tmp/lol.txt starting at offset 10
-        //     switch (bun.sys.setFileOffset(fd, this.file_blob.offset)) {
-        //         // we ignore errors because it should continue to work even if its a pipe
-        //         .err, .result => {},
-        //     }
-        // }
 
         if self.could_block && bun_core::is_writable(fd) == bun_core::Pollable::NotReady {
             self.wait_for_writable();
@@ -508,12 +454,6 @@ impl WriteFile {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            // If it's a potentially large file, lets attempt to
-            // preallocate the saved filesystem size.
-            //
-            // We only do this on Linux because the equivalent on macOS
-            // seemed to have zero performance impact in
-            // microbenchmarks.
             if !self.could_block && self.bytes_blob.shared_view().len() > 1024 {
                 let _ = sys::preallocate_file(
                     fd.native(),
@@ -597,14 +537,6 @@ impl WriteFile {
         self.on_finish();
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// WriteFileWindows
-//
-// libuv-backed write path used by `Blob.writeFileInternal` on Windows. The
-// whole impl is `#[cfg(windows)]`-gated because `bun_sys::windows::libuv`
-// (and the libuv `fs_t`/`uv_buf_t` types) only exist when targeting Windows.
-// ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
 pub use self::windows_impl::{WriteFileWindows, WriteFileWindowsError};
@@ -966,14 +898,6 @@ mod windows_impl {
                 .pathlike
                 .path()
                 .slice();
-            // LIFETIME: `AsyncMkdirp::new` returns `Box<Self>`. In Zig (write_file.zig:486)
-            // `.new(...)` is `bun.TrivialNew`, which yields a raw `*AsyncMkdirp` with no
-            // destructor — the allocation is intentionally leaked here and freed by
-            // `work_pool_callback` after invoking `completion`. In Rust the temporary
-            // `Box` would drop at end-of-statement, freeing the allocation immediately
-            // after `schedule()` stashes a raw `*mut WorkPoolTask` into the work pool,
-            // so the worker thread would dereference freed memory. `Box::leak` hands
-            // ownership to the work-pool/completion path, matching the Zig lifetime.
             Box::leak(crate::node::fs::async_::AsyncMkdirp::new(
                 crate::node::fs::async_::AsyncMkdirp {
                     completion: Self::on_mkdirp_complete_concurrent,
@@ -1367,15 +1291,6 @@ impl WriteFileWaitFromLockedValueTask {
         // (must coexist with `&mut this_ref` and survive `heap::take(this)`).
         let global_ref = this_ref.global_this;
         let global_this = global_ref.get();
-        // PORT NOTE: Zig `var file_blob = this.file_blob;` is a non-owning
-        // bitwise copy — both bindings alias the same `*Store` with no ref
-        // bump, and `bun.destroy(this)` later frees raw memory without running
-        // field destructors. In Rust `heap::take(this)` *does* drop fields,
-        // so leaving the `StoreRef` in `this.file_blob` would double-deref it.
-        // Move ownership out instead; the `Locked` arm — the only path that
-        // keeps `this` alive for a future callback — moves it back so the next
-        // `then()` invocation sees an intact `file_blob`. This also avoids the
-        // throwaway `content_type`/`name` clones that `Blob::dupe()` performs.
         let mut file_blob = core::mem::take(&mut this_ref.file_blob);
         match value {
             body::Value::Error(err_ref) => {

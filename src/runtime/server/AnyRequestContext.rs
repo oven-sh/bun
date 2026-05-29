@@ -20,13 +20,6 @@ type DebugHttpsCtx = RequestContext<DebugHTTPSServer, true, true, false>;
 type HttpsH3Ctx = RequestContext<HTTPSServer, true, false, true>;
 type DebugHttpsH3Ctx = RequestContext<DebugHTTPSServer, true, true, true>;
 
-// PORT NOTE (§Dispatch): Zig used `bun.ptr.TaggedPointerUnion(...)`. The
-// `bun_ptr::impl_tagged_ptr_union!` macro hits the orphan rule from outside
-// `bun_ptr`, so per §Dispatch store `(tag: u8, ptr: *mut ())` as two fields.
-// PERF(port): was TaggedPointerUnion pack — 8→16 bytes. AnyRequestContext is
-// stored inside `webcore::Request` (one per in-flight request); if profiling
-// flags the extra 8 bytes, move the impl_tagged_ptr_union! invocation into
-// `bun_ptr` for these six types.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CtxTag {
@@ -90,17 +83,6 @@ impl AnyRequestContext {
     }
 }
 
-/// Dispatch `$body` to the concrete RequestContext type behind the tagged
-/// pointer. The pointer types only differ in their comptime parameters
-/// (ssl/debug/http3), so every method body is identical — this collapses what
-/// used to be six hand-written switch arms per accessor.
-///
-/// Mirrors Zig's `inline fn dispatch(..., comptime cb: anytype, args)` which
-/// `inline for`s over `Pointer.type_map`. Rust closures cannot be generic over
-/// `T`, so a macro is the closest structural equivalent.
-// TODO(refactor): if all six ctx types gain a shared `RequestContextLike`
-// trait (with `const IS_H3: bool` + `type Resp`), this macro can become a
-// method taking `impl FnOnce(&mut dyn RequestContextLike)` for the simple arms.
 macro_rules! dispatch {
     ($self:expr, $default:expr, |$T:ident, $ctx:ident| $body:expr) => {{
         let this = $self;
@@ -125,12 +107,6 @@ macro_rules! dispatch {
         }
     }};
 }
-
-// ─── dispatch arms calling gated RequestContext methods ──────────────────────
-// set_timeout / set_cookies / set_timeout_handler / get_remote_socket_info /
-// on_abort / ref_ / deref / set_signal_aborted forward to RequestContext
-// methods that live in `_gated_state_machine`. Un-gate alongside.
-// TODO(port): RequestContext state-machine bodies.
 
 impl AnyRequestContext {
     pub fn set_additional_on_abort_callback(self, cb: Option<AdditionalOnAbortCallback>) {
@@ -227,11 +203,6 @@ impl AnyRequestContext {
         }))
     }
 
-    /// Mutable access to the attached DevServer. Zig passed `*DevServer`
-    /// freely; the Rust accessor above hands out `&` only. The `Box` slot
-    /// inside `NewServer` has a stable address, so deriving `&mut` here is
-    /// sound as long as the caller upholds the usual single-writer rule on the
-    /// JS thread.
     pub fn dev_server_mut(self) -> Option<*mut crate::bake::DevServer::DevServer> {
         dispatch!(self, None, |_T, ctx| {
             let server = ctx.server?.as_ptr();

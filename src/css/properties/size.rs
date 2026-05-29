@@ -69,10 +69,6 @@ pub enum Size {
     Contain,
 }
 
-/// Case-insensitive keyword dispatch for `Size`/`MaxSize` parse bodies.
-/// PORT NOTE: Zig used `bun.ComptimeStringMap(..).getASCIIICaseInsensitive` —
-/// expanded as an `if`-chain over `eql_case_insensitive_ascii::<true>` (≤14 keys;
-/// per PORTING.md a phf table is overkill at this size).
 macro_rules! size_ident_match {
     ($ident:expr, { $($lit:literal => $val:expr,)+ } else $err:expr) => {{
         let __ident: &[u8] = $ident;
@@ -452,14 +448,6 @@ pub struct SizeHandler {
 // PORT NOTE: `context.arena` was dropped from PropertyHandlerContext; the
 // arena is recovered via `dest.bump()`.
 use css::compat::Feature;
-
-// ─── helper macros (Zig used `inline fn` + `comptime []const u8` field names + @field/@unionInit) ───
-//
-// TODO(port): the following four macros replace Zig's `propertyHelper`, `logicalUnparsedHelper`,
-// `flushPrefixHelper`, `flushPropertyHelper`, `flushLogicalHelper`. The Zig code passes field
-// names as comptime strings and uses @field/@unionInit/@tagName to splice them into struct/enum
-// accesses. Rust has no equivalent reflection — macro_rules! is the closest 1:1 mapping.
-// PERF(port): was comptime monomorphization.
 
 macro_rules! property_helper {
     ($this:expr, $field:ident, $ty:ty, $value:expr, $category:expr, $dest:expr, $context:expr) => {{

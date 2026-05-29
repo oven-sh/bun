@@ -17,11 +17,6 @@ use bun_core::{String as BunString, immutable as strings};
 // as `CodepointCursor` so the body reads identically to the Zig source.
 type CodepointCursor = strings::Cursor;
 
-/// Opaque stand-in for `bun_jsc::JSValue` — the parser only *stores* the
-/// jsobjs slice (never inspects it), so the lower-tier crate can stay
-/// JSC-free. `bun_jsc::JSValue` is `#[repr(transparent)] usize`, so callers
-/// in `bun_runtime` may safely reinterpret `&mut [JSValue]` ↔ `&mut [JSValueRaw]`
-/// via a typed pointer cast.
 #[repr(transparent)]
 #[derive(Clone, Copy)]
 pub struct JSValueRaw(pub usize);
@@ -107,10 +102,6 @@ pub mod ast {
         Subshell(&'arena Subshell<'arena>),
         If(&'arena If<'arena>),
         CondExpr(&'arena CondExpr<'arena>),
-        /// Valid async (`&`) expressions: pipeline, cmd, subshell, if, condexpr.
-        /// Note that commands in a pipeline cannot be async.
-        /// TODO: Extra indirection for essentially a boolean feels bad for performance
-        /// could probably find a more efficient way to encode this information.
         Async(&'arena Expr<'arena>),
     }
 
@@ -389,16 +380,6 @@ pub mod ast {
     pub struct If<'arena> {
         pub cond: SmolList<Stmt<'arena>, 1>,
         pub then: SmolList<Stmt<'arena>, 1>,
-        /// From the spec:
-        ///
-        /// else_part        : Elif compound_list Then else_part
-        ///                  | Else compound_list
-        ///
-        /// If len is:
-        /// - 0                                   => no else
-        /// - 1                                   => just else
-        /// - 2n (n is # of elif/then branches)   => n elif/then branches
-        /// - 2n + 1                              => n elif/then branches and an else branch
         pub else_parts: SmolList<SmolList<Stmt<'arena>, 1>, 1>,
     }
 
@@ -572,17 +553,6 @@ pub mod ast {
     }
 
     bitflags::bitflags! {
-        /// Bit flags for redirects:
-        /// -  `>`  = Redirect.Stdout
-        /// -  `1>` = Redirect.Stdout
-        /// -  `2>` = Redirect.Stderr
-        /// -  `&>` = Redirect.Stdout | Redirect.Stderr
-        /// -  `>>` = Redirect.Append | Redirect.Stdout
-        /// - `1>>` = Redirect.Append | Redirect.Stdout
-        /// - `2>>` = Redirect.Append | Redirect.Stderr
-        /// - `&>>` = Redirect.Append | Redirect.Stdout | Redirect.Stderr
-        ///
-        /// Multiple redirects are not supported yet.
         #[derive(Clone, Copy, PartialEq, Eq, Default)]
         pub struct RedirectFlags: u8 {
             const STDIN         = 1 << 0;
@@ -660,15 +630,6 @@ pub mod ast {
         }
 
         pub fn to_flags(self) -> i32 {
-            // Spec: shell.zig `RedirectFlags.toFlags()` uses `bun.O.{RDONLY,...}`.
-            // `bun_shell_parser` is sys-tier-free so it cannot depend on
-            // `bun_sys::O`; mirror those constants here. On POSIX `bun.O.*` is
-            // `libc::O_*`. On Windows `bun.O.*` is the *Linux-shaped octal*
-            // values (sys.zig:188-213) — NOT MSVCRT `_O_*` — because
-            // `bun_sys::open` → `sys_uv::open` → `uv::O::from_bun_o` bit-tests
-            // against those exact values. Using `libc::O_CREAT` (0x100) /
-            // `libc::O_APPEND` (0x8) on Windows silently dropped CREAT/APPEND
-            // through `from_bun_o`, so `> file` failed to create the target.
             #[cfg(not(windows))]
             const O_RDONLY: i32 = libc::O_RDONLY;
             #[cfg(not(windows))]
@@ -1031,10 +992,6 @@ impl<'bump> Parser<'bump> {
         self.jsobjs = core::mem::take(&mut subparser.jsobjs);
     }
 
-    /// Main parse function
-    ///
-    /// Loosely based on the shell grammar documented in the spec:
-    /// https://pubs.opengroup.org/onlinepubs/009604499/utilities/xcu_chap02.html#tag_02_10
     pub fn parse(&mut self) -> ParseResult<ast::Script<'bump>> {
         self.parse_impl()
     }
@@ -1266,10 +1223,6 @@ impl<'bump> Parser<'bump> {
     fn parse_cond_expr(&mut self) -> ParseResult<ast::CondExpr<'bump>> {
         let _ = self.expect(TokenTag::DoubleBracketOpen);
 
-        // Quick check to see if it's a single operand operator
-        // Operators are not allowed to be expanded (i.e. `FOO=-f; [[ $FOO package.json ]]` won't work)
-        // So it must be a .Text token
-        // Also, all single operand operators start with "-", so check it starts with "-".
         if let Token::Text(range) = self.peek() {
             let txt = self.text(range);
 
@@ -2050,10 +2003,6 @@ impl<'bump> Parser<'bump> {
         let Token::Text(range) = peektok else {
             return false;
         };
-        // A keyword like `fi` only terminates the if body when it is followed
-        // by a delimiter. `fi$x`, `else$x`, etc. are ordinary command text and
-        // must keep the body loop running so they go through the normal
-        // command/atom path instead of the panicking `expect_if_clause_text_token`.
         if !self.delimits(self.peek_n(1)) {
             return false;
         }
@@ -2176,13 +2125,6 @@ pub enum IfClauseTok {
 }
 
 impl IfClauseTok {
-    /// Classify the *current peeked* token as an if-clause keyword.
-    ///
-    /// `tok` must be `p.peek()`: like `match_if_clausetok` and
-    /// `is_if_clause_text_token`, this only treats the text as a keyword when
-    /// the *next* token delimits it, so `fi$x` / `else$x` / `elif$x` are not
-    /// misclassified and routed into the panicking
-    /// `expect_if_clause_text_token`.
     pub fn from_tok(p: &Parser<'_>, tok: Token) -> Option<IfClauseTok> {
         match tok {
             Token::Text(range) if p.delimits(p.peek_n(1)) => Self::from_text(p.text(range)),
@@ -2276,13 +2218,6 @@ pub enum Token {
     Comma,
     BraceEnd,
     CmdSubstBegin,
-    /// When cmd subst is wrapped in quotes, then it should be interpreted as literal string, not
-    /// word split-ed arguments to a cmd. We lose quotation context in the AST, so we don't know
-    /// how to disambiguate that. So this is a quick hack to give the AST that context.
-    ///
-    /// This matches this shell behaviour:
-    /// echo test$(echo "1    2") -> test1 2\n
-    /// echo "test$(echo "1    2")" -> test1    2\n
     CmdSubstQuoted,
     CmdSubstEnd,
     OpenParen,
@@ -2405,11 +2340,6 @@ pub struct LexError {
     pub msg: TextRange,
 }
 
-/// A special char used to denote the beginning of a special token
-/// used for substituting JS variables into the script string.
-///
-/// \b (decimal value of 8) is deliberately chosen so that it is not
-/// easy for the user to accidentally use this char in their script.
 const SPECIAL_JS_CHAR: u8 = 8;
 const MAX_SUBSHELL_DEPTH: u32 = 128;
 pub const LEX_JS_OBJREF_PREFIX: &[u8] = b"\x08__bun_";
@@ -2478,10 +2408,6 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
     pub subshell_depth: u32,
     pub errors: bun_alloc::ArenaVec<'bump, LexError>,
 
-    /// Strpool ranges that hold bytes spliced in from interpolated JS values
-    /// (`\x08__bunstr_N` refs). Interpolated bytes are data, not shell
-    /// syntax, so the parser must not reinterpret them (e.g. an `=` inside
-    /// one must not create an env assignment).
     pub js_string_ranges: bun_alloc::ArenaVec<'bump, TextRange>,
 
     /// Contains a list of strings we need to escape
@@ -2612,13 +2538,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
     pub fn lex(&mut self) -> Result<(), LexerError> {
         loop {
-            // Fast path: bulk-consume runs of non-special bytes in Normal state.
-            // Zig's `switch (char)` compiles to a jump table even in debug; the
-            // Rust guard-arm chain below does not, so a 1 MiB literal word (see
-            // shell-leak-args.test.ts) walks ~20 guard comparisons per byte and
-            // overruns the test timeout. This block mirrors what the slow path
-            // would do for any byte NOT in SPECIAL_CHARS_TABLE: append to
-            // strpool and advance, with no state change.
             if ENCODING == StringEncoding::Ascii && self.chars.state == CharState::Normal {
                 let scan: Option<(&'bump [u8], usize, usize)> = match &self.chars.src {
                     Src::Ascii(a) => {
@@ -2693,12 +2612,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         continue;
                     }
                 }
-            }
-            // Handle non-escaped chars:
-            // 1. special syntax (operators, etc.)
-            // 2. lexing state switchers (quotes)
-            // 3. word breakers (spaces, etc.)
-            else if !escaped {
+            } else if !escaped {
                 let mut fell_through = false;
                 'escaped: {
                     match char {
@@ -3450,12 +3364,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         let start = self.strpool.len();
         if bunstr.is_utf16() {
             let utf16 = bunstr.utf16();
-            // PORT NOTE: Zig calls simdutf for the exact length then
-            // `convertUTF16ToUTF8Append` directly into the bump-backed
-            // ArrayList. The Rust transcoding helpers in bun_core take
-            // `&mut Vec<u8>` (global allocator), so go through a scratch Vec
-            // and copy. PERF(port): re-unify once a bumpalo-aware transcoder
-            // lands in bun_core.
             let mut scratch: Vec<u8> = Vec::with_capacity(utf16.len() * 3);
             bun_core::convert_utf16_to_utf8_append(&mut scratch, utf16);
             self.strpool.extend_from_slice(&scratch);
@@ -3491,10 +3399,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
     fn handle_js_string_ref(&mut self, bunstr: BunString) -> Result<(), LexerError> {
         if bunstr.length() == 0 {
-            // Empty JS string ref: emit a zero-length DoubleQuotedText token directly.
-            // The parser converts this to a quoted_empty atom, preserving the empty arg.
-            // This works regardless of the lexer's current quote state (Normal/Single/Double)
-            // because the \x08 marker is processed before quote-state handling.
             let pos = self.j;
             self.tokens.push(Token::DoubleQuotedText(TextRange {
                 start: pos,
@@ -3505,12 +3409,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         let start = self.j;
         self.append_string_to_str_pool(bunstr)?;
         self.js_string_ranges.push(TextRange { start, end: self.j });
-        // Interpolated values are data, not shell syntax. If the value would
-        // begin its Text token with `~`, flush it as a quoted-text token so the
-        // parser does not re-interpret it as tilde expansion. Values that
-        // cannot be misread stay coalesced with the surrounding word so that
-        // literal source text after the interpolation (e.g. `${name}~bak`)
-        // keeps its meaning.
         if self.chars.state == CharState::Normal && self.strpool.get(start as usize) == Some(&b'~')
         {
             self.tokens
@@ -3556,10 +3454,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             });
             return;
         }
-        // Set the cursor to decode the codepoint at new_idx.
-        // Use width=0 so that nextCursor (which computes pos = width + i)
-        // starts reading from exactly new_idx.
-        // TODO(port): direct field access on SrcUnicode cursor — encapsulate in helper.
         self.chars.src.set_unicode_cursor(new_idx);
         if let Some(pc) = prev_ascii_char {
             self.chars.prev = Some(InputChar {
@@ -3842,11 +3736,6 @@ impl<'a> SrcAscii<'a> {
 
 pub(crate) type CodepointIterator<'a> = strings::UnsignedCodepointIterator<'a>;
 
-// PORT NOTE: Zig holds a `CodepointIterator` by value (whose only state used
-// by `next(cursor)` is `bytes`). The Rust `NewCodePointIterator` lacks
-// `Clone`/`Copy`, so store the underlying `&[u8]` instead and rebuild the
-// iterator on demand — keeps `SrcUnicode` (and thus `BacktrackSnapshot`)
-// `Copy` like the Zig original.
 #[derive(Clone, Copy)]
 pub struct SrcUnicode<'a> {
     pub bytes: &'a [u8],
@@ -4095,10 +3984,6 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
 
 // ───────────────────────────── var-name / eq helpers ─────────────────────────────
 
-/// Only these characters allowed:
-/// - a-zA-Z
-/// - _
-/// - 0-9 (but can't be first char)
 pub fn is_valid_var_name(var_name: &[u8]) -> bool {
     if is_all_ascii(var_name) {
         return is_valid_var_name_ascii(var_name);
@@ -4227,10 +4112,6 @@ pub const SPECIAL_CHARS: [u8; 34] = [
     SPECIAL_JS_CHAR,
 ];
 
-// PORT NOTE: Zig uses `bit_set.IntegerBitSet(256)`. The Rust
-// `bun_collections::IntegerBitSet<N>` is single-`usize`-backed (≤64 bits), so a
-// 256-entry membership table is materialised as `[bool; 256]` instead — same
-// O(1) byte-indexed lookup, const-evaluable.
 pub struct ByteTable(pub [bool; 256]);
 impl ByteTable {
     #[inline]
@@ -4367,10 +4248,6 @@ pub fn needs_escape_utf16(str: &[u16]) -> bool {
     false
 }
 
-/// Checks for the presence of any char from `SPECIAL_CHARS` in `str`. This
-/// indicates the *possibility* that the string must be escaped, so it can have
-/// false positives, but it is faster than running the shell lexer through the
-/// input string for a more correct implementation.
 pub fn needs_escape_utf8_ascii_latin1(str: &[u8]) -> bool {
     for &c in str {
         if SPECIAL_CHARS_TABLE.is_set(c as usize) {
@@ -4648,22 +4525,12 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                     return;
                 }
                 let new_len = inlined.len as usize - starting_idx;
-                // Rotate the suffix to the front; the old prefix lands at
-                // `[new_len..]` and is abandoned by the len adjust (same
-                // leak-on-Drop caveat as the original `ptr::copy` version —
-                // see `clear_retaining_capacity` TODO; all current `T` are
-                // arena-backed and `!Drop`).
                 inlined.slice_mut().rotate_left(starting_idx);
                 inlined.len = u32::try_from(new_len).expect("int cast");
                 // TODO(port): Zig version copies into [0..starting_idx] which is a bug if
                 // new_len > starting_idx; mirroring intended semantics (shift-down) here.
             }
             SmolList::Heap(heap) => {
-                // `Vec::drain` shifts the tail down and drops the prefix.
-                // The previous `ptr::copy + set_len` overwrote the prefix
-                // without dropping it; for the arena-backed `!Drop` `T` used
-                // here that's identical, and for `Drop` `T` this is the
-                // non-leaking behaviour the spec intended.
                 heap.drain(0..starting_idx);
             }
         }

@@ -13,10 +13,6 @@ impl SIMDUTFResult {
     }
 }
 
-// Zig: `enum(i32) { ..., _ }` — the `_` arm means *any* i32 is a valid bit
-// pattern (C++ may return values outside the named set). A `#[repr(i32)] enum`
-// in Rust would be UB on unknown discriminants, so we use a transparent newtype
-// with associated consts instead.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Status(pub i32);
@@ -30,10 +26,6 @@ impl Status {
     pub const TOO_LONG: Status = Status(3);
     /// The decoded character must be above U+7F for two-byte characters, U+7FF for three-byte characters,
     pub const OVERLONG: Status = Status(4);
-    /// and U+FFFF for four-byte characters.
-    /// The decoded character must be less than or equal to U+10FFFF OR less than or equal than U+7F for ASCII.
-    /// The decoded character must be not be in U+D800...DFFF (UTF-8 or UTF-32) OR
-    /// a high surrogate must be followed by a low surrogate and a low surrogate must be preceded by a high surrogate (UTF-16)
     pub const TOO_LARGE: Status = Status(5);
     pub const SURROGATE: Status = Status(6);
     /// Found a character that cannot be part of a valid base64 string.
@@ -828,11 +820,6 @@ pub mod base64 {
         }
     }
 
-    /// Lenient decode matching Node.js `Buffer` semantics
-    /// (`simdutf::base64_default_or_url_accept_garbage` + loose last chunk):
-    /// accepts both the standard and URL-safe alphabets, skips whitespace and
-    /// any other non-alphabet characters, and stops at the first `'='`.
-    /// On success, `count` is the number of bytes written to `output`.
     pub fn decode_lenient(input: &[u8], output: &mut [u8]) -> SIMDUTFResult {
         // SAFETY: input/output are valid slices; FFI honors outlen bound.
         unsafe {

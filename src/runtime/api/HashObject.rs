@@ -2,17 +2,6 @@ use crate::webcore::Blob;
 use bun_core::ZigStringSlice;
 use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
 
-// ──────────────────────────────────────────────────────────────────────────
-// Hash algorithm abstraction
-//
-// Zig's `hashWrap` uses `@hasDecl` / `std.meta.ArgsTuple` / `@TypeOf` to
-// reflect on each `std.hash.*` type's inconsistent interface (1-arg vs
-// 2-arg, seed-first vs bytes-first, `hash` vs `hashWithSeed`). Per
-// PORTING.md §Comptime reflection, that collapses to a trait: every hasher
-// presents a uniform `hash(seed, input) -> Output` and the per-type impl
-// absorbs the signature differences.
-// ──────────────────────────────────────────────────────────────────────────
-
 pub(crate) trait HashOutput: Copy {
     fn to_js(self, global: &JSGlobalObject) -> JSValue;
 }
@@ -38,11 +27,6 @@ pub(crate) trait HashAlgorithm {
     /// seed (Adler32) ignore it — matches the Zig 1-arg branch.
     fn hash(seed: u64, input: &[u8]) -> Self::Output;
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Hasher impls — one unit struct per algorithm.
-// Each must produce output **bit-identical** to Zig's `std.hash.*`.
-// ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct Wyhash;
 impl HashAlgorithm for Wyhash {
@@ -130,12 +114,6 @@ pub(crate) struct XxHash3;
 impl HashAlgorithm for XxHash3 {
     type Output = u64;
     fn hash(seed: u64, input: &[u8]) -> u64 {
-        // Runtime-dispatched SIMD xxHash3 (Highway); see
-        // src/jsc/bindings/xxhash3.cpp. Output is bit-identical to the xxHash
-        // reference, pinned by the vector suite in test/js/bun/util/hash.test.js.
-        //
-        // Zig wrapper forces a u32 seed (via @truncate) before widening back to
-        // XxHash3's native u64 — preserve that truncation.
         bun_highway::xxhash3_64(seed as u32 as u64, input)
     }
 }
@@ -176,12 +154,6 @@ impl HashAlgorithm for Rapidhash {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Host functions — one per algorithm. Zig expressed these as
-// `pub const wyhash = hashWrap(std.hash.Wyhash);` (comptime fn returning a
-// JSHostFnZig). Rust spells the monomorphization explicitly.
-// ──────────────────────────────────────────────────────────────────────────
-
 #[bun_jsc::host_fn]
 pub(crate) fn wyhash(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     hash_wrap::<Wyhash>(global, frame)
@@ -192,10 +164,6 @@ pub(crate) fn adler32(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     hash_wrap::<Adler32>(global, frame)
 }
 
-// phase-d: explicit export name — bare `#[host_fn]` defaults the C symbol to
-// the Rust ident (`crc32`), which collides with `node_zlib_binding::crc32`'s
-// shim. The shim ident (`__jsc_host_crc32`) is unchanged, so `create()` below
-// keeps resolving.
 #[bun_jsc::host_fn(export = "Bun__HashObject__crc32")]
 pub(crate) fn crc32(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     hash_wrap::<Crc32>(global, frame)
@@ -318,12 +286,6 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
         }
     }
 
-    // std.hash has inconsistent interfaces
-    //
-    // PORT NOTE: the Zig used `@hasDecl`/`ArgsTuple`/`bun.trait.isNumber` to
-    // pick between `hash` vs `hashWithSeed`, 1-arg vs 2-arg, and seed-first
-    // vs bytes-first. That dispatch is absorbed into `HashAlgorithm::hash`
-    // per-impl above; here we always read an optional seed and pass it.
     let mut seed: u64 = 0;
     if let Some(arg) = args.next_eat() {
         if arg.is_number() || arg.is_big_int() {

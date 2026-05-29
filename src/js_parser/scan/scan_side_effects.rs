@@ -151,11 +151,6 @@ impl SideEffects {
             p.report_stack_overflow(expr.loc);
             return Some(expr);
         }
-        // PORT NOTE: `Expr`/`ExprData`/`StoreRef<_>` are all `Copy`. We match on
-        // `expr.data` *by value* so `expr` itself is never borrowed across a
-        // recursive `simplify_unused_expr(p, ..)` call. Mutations to boxed
-        // payloads write through `StoreRef::DerefMut` into the arena, so they
-        // persist even though the `StoreRef` binding is a local copy.
         match expr.data {
             ExprData::ENull(_)
             | ExprData::EUndefined(_)
@@ -298,10 +293,6 @@ impl SideEffects {
                         return Self::simplify_unused_binary_comma_expr(p, expr);
                     }
 
-                    // We can simplify "==" and "!=" even though they can call "toString" and/or
-                    // "valueOf" if we can statically determine that the types of both sides are
-                    // primitives. In that case there won't be any chance for user-defined
-                    // "toString" and/or "valueOf" to be called.
                     Op::Code::BinLooseEq
                     | Op::Code::BinLooseNe
                     | Op::Code::BinLt
@@ -334,11 +325,6 @@ impl SideEffects {
 
                         match bin.op {
                             Op::Code::BinLooseEq | Op::Code::BinLooseNe => {
-                                // If one side is a number and the other side is a known primitive with side effects,
-                                // the number can be printed as `0` since the result being unused doesn't matter,
-                                // we only care to invoke the coercion.
-                                // We only do this optimization if the other side is a known primitive with side effects
-                                // to avoid corrupting shared nodes when the other side is an undefined identifier
                                 if matches!(bin.left.data, ExprData::ENumber(_)) {
                                     bin.left.data = ExprData::ENumber(E::Number { value: 0.0 });
                                 } else if matches!(bin.right.data, ExprData::ENumber(_)) {
@@ -536,11 +522,6 @@ impl SideEffects {
             Op::Code::BinStrictEq | Op::Code::BinStrictNe | Op::Code::BinComma
         ));
 
-        // PORT NOTE: Zig threads `p.binary_expression_simplify_stack` (a reusable
-        // ArrayList on `P`) to avoid per-call allocation. The Rust `P` field is
-        // currently `ListManaged<'a, ()>` (placeholder element type — see P.rs:537),
-        // so until that's reshaped to `BinaryExpressionSimplifyVisitor` we use a
-        // local Vec. Same iteration order; only the arena differs.
         let mut stack: Vec<StoreRef<E::Binary>> = Vec::with_capacity(8);
         stack.push(root_bin);
 
@@ -605,19 +586,6 @@ impl SideEffects {
         false
     }
 
-    /// If this is in a dead branch, then we want to trim as much dead code as we
-    /// can. Everything can be trimmed except for hoisted declarations ("var" and
-    /// "function"), which affect the parent scope. For example:
-    ///
-    ///   function foo() {
-    ///     if (false) { var x; }
-    ///     x = 1;
-    ///   }
-    ///
-    /// We can't trim the entire branch as dead or calling foo() will incorrectly
-    /// assign to a global variable instead.
-    ///
-    /// Caller is expected to first check `p.options.dead_code_elimination` so we only check it once.
     pub fn should_keep_stmt_in_dead_control_flow(stmt: Stmt, bump: &Bump) -> bool {
         match stmt.data {
             // Omit these statements entirely

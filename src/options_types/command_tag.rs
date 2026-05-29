@@ -125,15 +125,6 @@ impl Tag {
     /// Number of variants. Mirrors `enum_map::Enum::LENGTH` so const-array
     /// tables below can size themselves without naming the trait at every use.
     pub const COUNT: usize = <Self as Enum>::LENGTH;
-
-    // Heavy methods that pull in `Arguments` / help text live in `cli/cli.zig`.
-    // In Zig these were aliased here (`params`, `printHelp`) relying on lazy
-    // decl resolution so `options_types/` did not compile-depend on `cli/`
-    // unless invoked. Rust has no lazy decl resolution; re-exporting
-    // `bun_runtime::cli::Command::{tag_params, tag_print_help}` here would create a
-    // crate cycle (cli → options_types → cli).
-    // TODO(port): call sites of `cmd.params()` / `cmd.printHelp()` must call
-    // `bun_runtime::cli::Command::tag_params(cmd)` / `tag_print_help(cmd)` directly.
 }
 
 /// `.rodata` flag table indexed by [`Tag`] discriminant. These tables cost zero

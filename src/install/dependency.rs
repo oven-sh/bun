@@ -9,13 +9,6 @@ use crate::hosted_git_info;
 use crate::repository::Repository;
 use crate::{PackageManager, PackageNameHash};
 
-// ──────────────────────────────────────────────────────────────────────────
-// NpmAliasRegistry — exposes only the one `PackageManager` method `parse`
-// actually touches (`known_npm_aliases.put`) so `parse_with_tag` can take an
-// `Option<&mut dyn NpmAliasRegistry>` and stay decoupled from the full
-// `PackageManager` surface (Zig threads `*PackageManager` directly).
-// ──────────────────────────────────────────────────────────────────────────
-
 pub trait NpmAliasRegistry {
     fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version);
 }
@@ -28,11 +21,6 @@ impl NpmAliasRegistry for PackageManager {
     }
 }
 
-/// Field-level impl so callers that have already split-borrowed
-/// `PackageManager` (e.g. they hold `&mut manager.lockfile` for a
-/// `StringBuilder`) can pass `&mut manager.known_npm_aliases` directly to
-/// `Dependency::clone_in` / `OverrideMap::clone` instead of a full
-/// `&mut PackageManager`.
 impl NpmAliasRegistry for crate::package_manager_real::NpmAliasMap {
     #[inline]
     fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version) {
@@ -44,13 +32,6 @@ impl NpmAliasRegistry for crate::package_manager_real::NpmAliasMap {
 // URI
 // ──────────────────────────────────────────────────────────────────────────
 
-// MOVE_DOWN: data structs (`URI`, `NpmInfo`, `TagInfo`, `TarballInfo`,
-// `Value`, `Version`, `Dependency`, `Behavior`) and their `Default`/`Clone`/
-// `eql` impls now live in `bun_install_types::resolver_hooks` so the resolver
-// and `bun_install` share ONE definition (no opaque round-trip blob).
-// Install-tier behaviour (parsing, builder-clone, comparators, JSON, ...) is
-// provided below as extension traits so existing `Type::method(...)` /
-// `value.method(...)` call sites resolve via UFCS once the trait is in scope.
 pub use bun_install_types::resolver_hooks::{
     Behavior, Dependency, DependencyVersion as Version, DependencyVersionTag as Tag,
     DependencyVersionValue as Value, NpmInfo, TagInfo, TarballInfo, URI,
@@ -135,13 +116,6 @@ impl DependencyExt for Dependency {
         }
     }
 
-    /// Forwards to the module-level `parse_with_optional_tag`
-    /// (Zig: `Dependency.parseWithOptionalTag`).
-    ///
-    /// `alias_hash`, `log`, and `package_manager` accept either the bare value
-    /// (`u64` / `&mut Log` / `&mut PackageManager`) or `Option<_>` — Zig callers
-    /// pass both forms (`null` vs pointer) and the port keeps that ergonomics
-    /// via `impl Into<Option<_>>`.
     #[inline]
     fn parse_with_optional_tag<'a, 'b>(
         alias: String,
@@ -163,11 +137,6 @@ impl DependencyExt for Dependency {
         )
     }
 
-    /// Sorting order for dependencies is:
-    /// 1. [ `peerDependencies`, `optionalDependencies`, `devDependencies`, `dependencies` ]
-    /// 2. name ASC
-    /// "name" must be ASC so that later, when we rebuild the lockfile
-    /// we insert it back in reverse order without an extra sorting pass
     fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool {
         let behavior = lhs.behavior.cmp(rhs.behavior);
         if behavior != Ordering::Equal {
@@ -224,10 +193,6 @@ impl DependencyExt for Dependency {
         version_buf: &[u8],
         builder: &mut SB,
     ) -> Result<Dependency, bun_core::Error> {
-        // TODO(port): narrow error set
-        // PORT NOTE: reshaped for borrowck — Zig captured `out_slice` first, but
-        // `append_string` may reallocate `string_bytes`, invalidating the slice.
-        // Append first, then borrow the (now-stable) buffer.
         let new_literal = builder.append_string(self.version.literal.slice(version_buf));
         let new_name = builder.append_string(self.name.slice(name_buf));
         let out_slice = builder.string_bytes();
@@ -287,12 +252,6 @@ impl DependencyExt for Dependency {
         is_remote_tarball(dep)
     }
 
-    /// Compat: dependents call `Dependency::parse` as an associated fn;
-    /// the actual implementation is a free fn. Delegate so downstream callers
-    /// (`bun_install_jsc`) keep type-checking.
-    ///
-    /// `alias_hash`, `log`, and `manager` accept either bare values or
-    /// `Option<_>` (Zig callers pass both `null` and concrete pointers).
     #[inline]
     fn parse<'a, 'b>(
         alias: String,
@@ -306,22 +265,11 @@ impl DependencyExt for Dependency {
     }
 }
 
-// `comptime StringBuilder: type` param maps onto `bun_semver::StringBuilder`
-// (count / append<T> / append_string). The only extra method needed here is
-// access to the FULL backing buffer (Zig: `builder.lockfile.buffers
-// .string_bytes.items`), which is intentionally NOT on the base trait since
-// `semver_string::Builder`'s isolated Box<[u8]> would be wrong for callers
-// that need the lockfile's full string_bytes.
 pub trait StringBuilderLike: bun_semver::StringBuilder {
     /// Full backing string buffer (Zig: `builder.lockfile.buffers.string_bytes.items`).
     fn string_bytes(&self) -> &[u8];
 }
 
-// PORT NOTE: single-impl monomorphization is intentional. Every Zig call site
-// of `Dependency.count`/`clone`/`*WithDifferentBuffers` passes
-// `*Lockfile.StringBuilder` (Package.zig, OverrideMap.zig, CatalogMap.zig,
-// install_with_manager.zig) — `semver_string::Builder` is never used here, and
-// its isolated Box<[u8]> can't satisfy `builder.lockfile.buffers.string_bytes`.
 impl<'a> StringBuilderLike for crate::lockfile_real::StringBuilder<'a> {
     #[inline]
     fn string_bytes(&self) -> &[u8] {
@@ -420,13 +368,6 @@ pub(crate) fn is_scp_like_path(dependency: &[u8]) -> bool {
     false
 }
 
-/// Github allows for the following format of URL:
-/// https://github.com/<org>/<repo>/tarball/<ref>
-/// This is a legacy (but still supported) method of retrieving a tarball of an
-/// entire source tree at some git reference. (ref = branch, tag, etc. Note: branch
-/// can have arbitrary number of slashes)
-///
-/// This also checks for a github url that ends with ".tar.gz"
 #[inline]
 pub(crate) fn is_github_tarball_path(dependency: &[u8]) -> bool {
     if is_tarball(dependency) {
@@ -460,12 +401,6 @@ pub(crate) fn is_remote_tarball(dependency: &[u8]) -> bool {
     dependency.starts_with(b"https://") || dependency.starts_with(b"http://")
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Compat aliases: dependents reference `dependency::version::Tag`,
-// `dependency::VersionTag`, `Dependency::is_remote_tarball`, and a `tarball`
-// submodule. The Zig nests `Tag` under `Dependency.Version`, but here it's
-// flattened to top-level — keep both paths so dependents type-check.
-// ──────────────────────────────────────────────────────────────────────────
 pub use Tag as VersionTag;
 pub mod version {
     pub use super::Tag;
@@ -771,11 +706,6 @@ impl VersionExt for Version {
 // Version::Tag
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: Zig `Tag.map = bun.ComptimeStringMap(Tag, ...)`. Was a `phf::Map`
-// in an earlier draft; rewritten as a length-gated match (cf. 12577e958d71
-// clap::find_param) — 9 entries with near-unique lengths, so a single `usize`
-// compare rejects almost every miss before touching bytes, and hits resolve in
-// ≤3 slice compares with no hashing or static-init overhead.
 #[inline]
 pub fn tag_from_bytes(bytes: &[u8]) -> Option<Tag> {
     match bytes.len() {
@@ -843,14 +773,6 @@ impl TagExt for Tag {
         // PERF(port): was stack-fallback allocator (1024B); now uses global mimalloc — profile if it shows up on a hot path.
 
         match dependency[0] {
-            // =1
-            // >1.2
-            // >=1.2.3
-            // <1
-            // <=1.2
-            // ^1.2.3
-            // *
-            // || 1.x
             b'=' | b'>' | b'<' | b'^' | b'*' | b'|' => return Tag::Npm,
             // ./foo.tgz
             // ./path/to/foo
@@ -890,10 +812,6 @@ impl TagExt for Tag {
                 }
                 return Tag::Npm;
             }
-            // foo.tgz
-            // foo/repo
-            // file:path/to/foo
-            // file:path/to/foo.tar.gz
             b'f' => {
                 if dependency.starts_with(b"file:") {
                     if is_tarball(dependency) {
@@ -907,11 +825,6 @@ impl TagExt for Tag {
                     return Tag::Catalog;
                 }
             }
-            // git_user/repo
-            // git_tarball.tgz
-            // github:user/repo
-            // git@example.com/repo.git
-            // git://user@example.com/repo.git
             b'g' => {
                 if dependency.starts_with(b"git") {
                     let mut url = &dependency[b"git".len()..];
@@ -1083,11 +996,6 @@ impl TagExt for Tag {
                     return Tag::Npm;
                 }
             }
-            // v1.2.3
-            // verilog
-            // verilog.tar.gz
-            // verilog/repo
-            // virt@example.com:repo.git
             b'v' => {
                 if is_tarball(dependency) {
                     return Tag::Tarball;
@@ -1106,10 +1014,6 @@ impl TagExt for Tag {
                     _ => Tag::DistTag,
                 };
             }
-            // workspace:*
-            // w00t
-            // w00t.tar.gz
-            // w00t/repo
             b'w' => {
                 if dependency.starts_with(b"workspace:") {
                     return Tag::Workspace;
@@ -1539,13 +1443,6 @@ pub fn parse_with_tag(
                 let protocol = protocol as usize;
                 if &dependency[0..protocol] == b"file" {
                     let folder: &[u8] = 'folder: {
-                        // from npm:
-                        //
-                        // turn file://../foo into file:../foo
-                        // https://github.com/npm/cli/blob/fc6e291e9c2154c2e76636cb7ebf0a17be307585/node_modules/npm-package-arg/lib/npa.js#L269
-                        //
-                        // something like this won't behave the same
-                        // file://bar/../../foo
                         let maybe_dot_dot: &[u8] = 'maybe_dot_dot: {
                             if dependency.len() > protocol + 1 && dependency[protocol + 1] == b'/' {
                                 if dependency.len() > protocol + 2
@@ -1579,10 +1476,6 @@ pub fn parse_with_tag(
                         &dependency[protocol + 1..]
                     };
 
-                    // from npm:
-                    //
-                    // turn /C:/blah info just C:/blah on windows
-                    // https://github.com/npm/cli/blob/fc6e291e9c2154c2e76636cb7ebf0a17be307585/node_modules/npm-package-arg/lib/npa.js#L277
                     #[cfg(windows)]
                     {
                         if let Some(dep) = is_windows_abs_path_with_leading_slashes(folder) {
@@ -1618,10 +1511,6 @@ pub fn parse_with_tag(
                         });
                     }
 
-                    // from npm:
-                    //
-                    // turn /C:/blah info just C:/blah on windows
-                    // https://github.com/npm/cli/blob/fc6e291e9c2154c2e76636cb7ebf0a17be307585/node_modules/npm-package-arg/lib/npa.js#L277
                     if let Some(dep) = is_windows_abs_path_with_leading_slashes(dependency) {
                         return Some(Version {
                             literal: sliced.value(),
@@ -1701,12 +1590,6 @@ pub fn parse_with_tag(
         }
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Behavior — MOVE_DOWN: canonical definition lives in
-// `bun_install_types::resolver_hooks` so `bun_resolver` and `bun_install`
-// share one nominal type. Re-export it here for `crate::dependency::Behavior`.
-// ──────────────────────────────────────────────────────────────────────────
 
 // ──────────────────────────────────────────────────────────────────────────
 

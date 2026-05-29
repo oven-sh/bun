@@ -48,12 +48,6 @@ fn format_name(f: codecs::Format) -> &'static str {
     }
 }
 
-// `pub const js = jsc.Codegen.JSImage;` — `fromJS`/`fromJSDirect`/`toJS` are
-// provided by `#[bun_jsc::JsClass]` codegen (see PORTING.md §JSC types). The
-// `sourceJS` cached-value accessors are emitted by `generate-classes.ts` into
-// `generated_classes.rs::js_Image`; re-export that module here so callers use
-// `js::source_js_set_cached` / `js::source_js_get_cached` exactly as the Zig
-// did via `js.sourceJSSetCached`.
 pub use crate::generated_classes::js_Image as js;
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
@@ -73,10 +67,6 @@ pub struct Image {
     /// synchronously after the first await.
     last_width: Cell<i32>,
     last_height: Cell<i32>,
-    /// Strong while at least one PipelineTask is in flight, weak otherwise. The
-    /// Strong→wrapper→sourceJS-slot chain is what keeps the borrowed ArrayBuffer
-    /// alive across the WorkPool roundtrip; switching to weak when idle lets GC
-    /// collect the wrapper without polling `hasPendingActivity` every cycle.
     this_ref: JsCell<JsRef>,
     pending_tasks: Cell<u32>,
 }
@@ -97,28 +87,12 @@ impl Default for Image {
 }
 
 pub enum Source {
-    /// Input is a JS ArrayBuffer/TypedArray held in the wrapper's `sourceJS`
-    /// cached slot. We never cache the raw pointer here — it could be detached
-    /// or (for resizable, which we reject) reallocated. Each use re-fetches:
-    ///  - `doMetadata` (sync, JS thread): `asArrayBuffer` → probe; no copy.
-    ///  - `schedule()` (JS thread): `asArrayBuffer` → `pin()` → hand the
-    ///    fresh slice to the worker; `then()` (JS thread) unpins. The pin
-    ///    only lives for the task, never touches `finalize` (which runs
-    ///    during GC sweep), and only forces `possiblySharedBuffer()`
-    ///    materialisation when actually going off-thread — and that costs no
-    ///    more than the dupe it replaces.
     JsBuffer,
     /// Owned — Blob inputs (the Blob's store may be sliced/freed independently)
     /// and decoded data: URLs.
     Owned(Vec<u8>),
     /// Owned, NUL-terminated. Read on the worker thread.
     Path(ZBox),
-    /// `Bun.file()`, `Bun.s3()`, an fd-backed Blob — anything whose bytes
-    /// don't exist until read. We hold a Strong on the JS Blob and, at
-    /// terminal time, just call its own `.bytes()` (whatever that means for
-    /// that kind of Blob — file, S3, pipe, slice) and chain the pipeline
-    /// task off the resulting Promise. After the first read completes the
-    /// source is swapped to `.owned` so subsequent terminals reuse the bytes.
     Blob(Strong),
 }
 
@@ -130,10 +104,6 @@ pub enum Source {
 // pipeline) and have no `bun_jsc` wrapper.
 unsafe extern "C" {
     fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
-    /// 0 = detached/null, 1 = FastTypedArray (≤~1 KB, GC-movable — dupe),
-    /// 2 = pinned ArrayBuffer (caller must unpin). For OversizeTypedArray the
-    /// helper adopts the storage in-place (createAdopted — no byte copy) and
-    /// pins; once adopted it's detachable, so it MUST be pinned, not borrowed.
     fn JSC__JSValue__borrowBytesForOffThread(
         v: JSValue,
         out_ptr: *mut *const u8,
@@ -189,14 +159,6 @@ impl Default for Resize {
     }
 }
 
-/// One slot per operation, not an op list — calling `.resize()` twice
-/// overwrites, it doesn't resize twice. This is Sharp's semantics and means
-/// the worker snapshot is a plain struct copy with a fixed execution order
-/// (`run()` below), no allocation, no "too many ops" edge.
-///
-/// Execution order matches Sharp: (autoOrient) → rotate → flip/flop → resize
-/// → modulate. Rotate precedes resize so the target box is interpreted in
-/// upright space; modulate runs last so it operates on the fewest pixels.
 #[derive(Clone, Copy, Default)]
 pub struct Pipeline {
     pub rotate: u16, // 0/90/180/270
@@ -226,13 +188,6 @@ impl Default for Modulate {
     }
 }
 
-/// `@intFromFloat` is safety-checked UB on NaN/±Inf/out-of-range; every
-/// number we read from JS goes through this so hostile input throws/clamps
-/// instead of aborting. NaN → lo, ±Inf → the matching bound; bounds are f64
-/// so the clamp stays in float space.
-///
-/// Rust `as` already saturates on overflow/NaN, but we keep the explicit
-/// clamp so behaviour matches Zig exactly (NaN → `lo`, not 0).
 macro_rules! coerce_int {
     ($T:ty, $x:expr, $lo:expr, $hi:expr) => {{
         let x: f64 = $x;
@@ -244,11 +199,6 @@ macro_rules! coerce_int {
     }};
 }
 
-/// Size cap for `.path` sources, applied at fstat time before reading
-/// anything. This is the *encoded* file, not the decoded RGBA — `maxPixels`
-/// covers the latter once we have a header. 256 MiB comfortably fits any
-/// real-world image (a 268 MP JPEG is ~80 MB) while keeping a single
-/// path-driven request from materialising gigabytes before any guard runs.
 const MAX_INPUT_FILE_BYTES: u64 = 256 << 20;
 
 // ───────────────────────────── lifecycle ────────────────────────────────────
@@ -280,13 +230,6 @@ impl Image {
         )
     }
 
-    /// `Bun.file("…").image()` / `Bun.s3("…").image()` / `Blob#image()`. Same
-    /// allocation as `new Bun.Image(blob, opts)`. Everything that can throw runs
-    /// BEFORE `toJS()` — once the wrapper exists its `m_ctx` owns the *Image and
-    /// the generated `~JSImage` will `finalize()` on GC, so a manual `finalize()`
-    /// after `toJS()` is a double-free. (Contrast `from_input_js` where the
-    /// codegen constructor only wires `m_ctx` after the fn returns, so its
-    /// errdefer is safe.)
     pub fn from_blob_js(
         global: &JSGlobalObject,
         blob_value: JSValue,
@@ -295,11 +238,6 @@ impl Image {
         let mut img = Box::<Image>::default();
         // errdefer img.finalize() — `Box` drops on `?` automatically.
         apply_options(&mut img, global, options)?;
-        // For Blob receivers `source_from_js` either dupes (in-memory blob) or
-        // creates a Strong (file/S3); the cached `sourceJS` slot is only used
-        // for the `.js_buffer` path, which a Blob never produces. The only
-        // reason `source_from_js` takes `this_value` at all is to set that slot
-        // for ArrayBuffer inputs — pass `.zero` and assert below.
         img.source
             .set(source_from_js(global, blob_value, JSValue::ZERO)?);
         debug_assert!(!matches!(img.source.get(), Source::JsBuffer));
@@ -396,13 +334,6 @@ fn source_from_js(
         return Ok(Source::Path(ZBox::from_bytes(s)));
     }
     if let Some(ab) = value.as_array_buffer(global) {
-        // A resizable/growable buffer can shrink or reallocate underneath any
-        // slice we'd take; a SharedArrayBuffer can be mutated by another
-        // thread while the worker decodes (the codec layer parses the same
-        // bytes twice — header then body — so a TOCTOU swap can resize the
-        // implied output behind a guard that's already passed). The worker
-        // *borrows* the slice (see `pin_for_task`), so this rejection is
-        // load-bearing — `buf.slice()` is the obvious workaround.
         if ab.resizable || ab.shared {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Image(): resizable / shared ArrayBuffer is not supported; pass a fixed-length view (e.g. buf.slice())",
@@ -420,11 +351,6 @@ fn source_from_js(
         if !view.is_empty() {
             return Ok(Source::Owned(view.to_vec()));
         }
-        // Anything with a backing store but no in-memory view yet
-        // (`Bun.file()`, `Bun.s3()`, fd, …) — keep the JS object and read it
-        // through ITS OWN `.bytes()` at terminal time, so we inherit whatever
-        // that store type does (file → ReadFile, S3 → fetch, etc.) without
-        // knowing about it here.
         if blob.store.get().is_some() {
             return Ok(Source::Blob(Strong::create(value, global)));
         }
@@ -620,10 +546,6 @@ impl Image {
     }
 }
 
-/// Stable `.code` so callers can branch without parsing the message — and so
-/// tests can skip when a system-backend format is unavailable on *this
-/// machine* (e.g. AVIF encode on M1/M2, or Windows without the HEIF store
-/// extension) without hard-coding which configurations have what.
 fn error_code(e: codecs::Error) -> &'static ZStr {
     use codecs::Error as E;
     match e {
@@ -692,17 +614,6 @@ impl Image {
         }
     }
 
-    /// Pin the source ArrayBuffer for the duration of one off-thread task and
-    /// return a slice that's safe for the worker to read. Unpinned in `then()`.
-    ///
-    /// We deliberately DON'T copy: the encoded input can be tens of MB and
-    /// nobody mutates a buffer they just handed to a decoder. The contract is
-    /// documented and `.shared`/`.resizable` are refused at construction. The
-    /// codec layer is hardened so a hostile mid-decode mutation degrades to
-    /// `DecodeFailed`, not OOB/heap-leak — see `codec_jpeg.zig` cropping +
-    /// post-check, `codec_webp.zig` dim re-check. (If the attacker already runs
-    /// JS in-process the threat model is moot anyway; the surface that matters
-    /// is hostile *bytes*, which the codec validation handles.)
     fn pin_for_task(
         &self,
         this_value: JSValue,
@@ -713,14 +624,6 @@ impl Image {
                 let Some(v) = js::source_js_get_cached(this_value) else {
                     return Err(PinError::Detached);
                 };
-                // Classify the storage mode WITHOUT promoting it. A fresh
-                // `new Uint8Array(N)` (the common path — `await res.bytes()`,
-                // `Buffer.from(file)`) is `OversizeTypedArray`: bytes in
-                // fastMalloc, no JSArrayBuffer wrapper, can't be detached or
-                // moved. Calling `possiblySharedBuffer()` on that would
-                // `slowDownAndWasteMemory()` → copy + allocate a wrapper for
-                // every input. The classifier returns the slice directly and
-                // tells us whether anything actually needs pinning.
                 let mut ptr: *const u8 = core::ptr::null();
                 let mut len: usize = 0;
                 // SAFETY: FFI call; out-params are valid pointers to locals.
@@ -744,11 +647,6 @@ impl Image {
                             })
                         }
                     }
-                    // Oversize/Wasteful/DataView/JSArrayBuffer: pinned by the
-                    // helper. For Oversize, possiblySharedBuffer() adopts the
-                    // existing fastMalloc storage in-place (zero byte copy);
-                    // pinning then keeps it alive even if JS does `.buffer` →
-                    // `transfer()` while the worker reads.
                     2 => {
                         if len == 0 {
                             // SAFETY: helper pinned `v`; unpin before erroring.
@@ -784,15 +682,6 @@ impl Image {
     }
 }
 
-// ───────────────────────── static `Bun.Image.backend` ───────────────────────
-//
-// PORT NOTE: `#[bun_jsc::host_fn(getter|setter)]` expands to a `Self`-taking
-// shim, but these are *static* class accessors (no receiver). The C-ABI shim
-// is emitted by `.classes.ts` codegen (`generated_classes.rs`) and calls them
-// as `Image::<fn>(…)`, so they live in an inherent `impl` with the codegen's
-// exact arity — including the trailing opaque `PropertyName` it threads
-// through but Zig's `getBackend` ignores.
-
 impl Image {
     pub fn get_backend(global: &JSGlobalObject, _: JSValue, _: PropertyName) -> JsResult<JSValue> {
         // `BACKEND` only ever stores a valid `Backend as u8` discriminant
@@ -820,17 +709,6 @@ impl Image {
             Err(_) => false,
         }
     }
-
-    // ──────── static `Bun.Image.fromClipboard()` / `.hasClipboardImage()` ───
-    //
-    // JS-thread synchronous read of the system clipboard for an image
-    // representation, returning a fresh `Bun.Image` wrapping the raw container
-    // bytes. Decode/encode still go through the normal off-thread pipeline;
-    // only the pasteboard fetch is synchronous, and that's a memcpy of bytes
-    // the OS already has in-process. `null` ⇔ no image present. Linux returns
-    // `null` unconditionally — there's no stable native API to dlopen and
-    // shelling out to `wl-paste`/`xclip` from inside `Bun.Image` is the wrong
-    // layer.
 
     pub fn from_clipboard(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         // `comptime codecs.system_backend` → cfg-gated module re-export.
@@ -868,11 +746,6 @@ impl Image {
         Ok(JSValue::FALSE)
     }
 
-    /// Monotone counter that increments on every system-wide clipboard write
-    /// (NSPasteboard.changeCount / GetClipboardSequenceNumber). macOS has no
-    /// clipboard-change notification, so polling this and calling
-    /// `hasClipboardImage()` only when it moves is the cheapest hint-UI
-    /// pattern. `-1` on Linux.
     pub fn clipboard_change_count(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         #[cfg(any(target_os = "macos", windows))]
         {
@@ -1001,11 +874,6 @@ impl Image {
         )
     }
 
-    /// `.placeholder()` — ThumbHash-rendered ≤32px PNG `data:` URL. ~28 chars
-    /// of hash → ~400-700 bytes of `data:image/png;base64,…` ready for `<img
-    /// src>` / Next's `blurDataURL`. Runs entirely on the work pool; the
-    /// pipeline ops (resize/rotate/…) are skipped — a placeholder is OF the
-    /// source, not of the output.
     #[bun_jsc::host_fn(method)]
     pub fn do_placeholder(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let args = cf.arguments();
@@ -1023,12 +891,6 @@ impl Image {
         self.schedule(global, cf.this(), Kind::Placeholder, Deliver::DataUrl)
     }
 
-    /// Terminal: encode and write to `path` on the work pool (no round-trip of
-    /// then `Bun.write(dest, encoded)` — same path as `await Bun.write(...)`, so
-    /// `dest` may be a path string, `Bun.file()`, `Bun.s3()`, or an fd. Resolves
-    /// with bytes written. If no format method was chained and `dest` is a path
-    /// string, the encode format is inferred from its extension, falling back to
-    /// the source format — so `img.resize(100).write("thumb.webp")` Just Works.
     #[bun_jsc::host_fn(method)]
     pub fn do_write(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let args = cf.arguments();
@@ -1132,34 +994,17 @@ impl Image {
         Ok(promise_value)
     }
 
-    /// Run the full pipeline on the *current* thread. Used when an `Image` is
-    /// passed straight to `new Response(image)` / `new Request(url, {body: image})`
-    /// — the body-init contract is synchronous, so we encode here and hand back an
-    /// owned buffer the Body can wrap as an `InternalBlob`. The async terminals
-    /// (`bytes`/`blob`/…) remain the off-thread path.
-    ///
-    /// A later refinement is to return a `.Locked` body and resolve it from the
-    /// worker pool; this is the simple, correct first cut.
     pub fn encode_for_body(
         &self,
         global: &JSGlobalObject,
         this_value: JSValue,
     ) -> JsResult<(codecs::Encoded, &'static ZStr)> {
-        // The body-init contract is synchronous, so a `.blob` source can't go
-        // through the async read chain here. For the common case (file by path)
-        // fall back to the `.path` source — `run()` reads it inline. fd/S3-backed
-        // BunFiles would block or need network; refuse with a clear message until
-        // the body path is made `.Locked`.
         if let Source::Blob(strong) = self.source.get() {
             const REFUSE: &str = "Image: fd/S3-backed Bun.file as a Response body — pass `await file.bytes()` or a path string";
             let blob_js = strong.get();
             let Some(blob) = blob_js.as_class_ref::<Blob>() else {
                 return Err(global.throw(format_args!("{REFUSE}")));
             };
-            // Braced so the `else` can't dangle onto the inner `if` — a null
-            // store would otherwise fall through to `pin_for_task`'s `.blob =>
-            // unreachable`. (The Strong-held wrapper makes that nominally
-            // unreachable, but this path should throw, not abort, when it isn't.)
             if let Some(store) = blob.store.get() {
                 if let blob_store::Data::File(file) = &store.data {
                     if let PathOrFileDescriptor::Path(path) = &file.pathlike {
@@ -1182,12 +1027,6 @@ impl Image {
                 return Err(global.throw(format_args!("Image: source ArrayBuffer was detached")));
             }
         };
-        // PORT NOTE: Zig `defer input.release()` is hoisted below — `input`
-        // moves into `task`, and `run()` is sync with no early returns, so we
-        // release via `task.input` after the result is extracted.
-        // PORT NOTE: Zig never calls `PipelineTask.deinit()` on this stack
-        // temporary (only `then()` does — Image.zig:1092). `Drop` here would
-        // underflow `pending_tasks` and downgrade `this_ref`, so suppress it.
         let mut task = mem::ManuallyDrop::new(PipelineTask {
             image: std::ptr::from_ref::<Image>(self),
             global,
@@ -1227,13 +1066,6 @@ impl Image {
 
 // ───────────────────────────── worker task ──────────────────────────────────
 
-/// `.blob` source: ask the Blob for its bytes via the store-agnostic
-/// `Blob.readBytesToHandler` (file → ReadFile/ReadFileUV, S3 → S3.download,
-/// memory → dupe), receive the owned `[]u8` directly — never wrapped in a
-/// JSValue — swap it into `image.source = .owned`, and re-enter `schedule()`.
-/// Promise-of-promise flattens, so the caller sees one `await` for
-/// read+decode+ops+encode. After the first read, subsequent terminals on the
-/// same instance reuse the `.owned` bytes without re-reading.
 struct BlobReadChain<'a> {
     image: *const Image,
     global: &'a JSGlobalObject,
@@ -1281,10 +1113,6 @@ impl<'a> BlobReadChain<'a> {
             outer: jsc::JSPromiseStrong::init(global),
         });
         let promise = chain.outer.value();
-        // `read_bytes_to_handler` stores the handler pointer and calls
-        // `on_read_bytes` on the JS thread (sync for in-memory, async for
-        // file/S3). Ownership of the chain transfers there; the trait impl
-        // below reconstructs the Box and frees it.
         let raw = bun_core::heap::into_raw(chain);
         // SAFETY: `raw` is freshly leaked and uniquely owned by the read
         // dispatch; reclaimed in `<BlobReadChain as ReadBytesHandler>::on_read_bytes`.
@@ -1312,14 +1140,6 @@ impl<'a> BlobReadChain<'a> {
 
         match r {
             ReadBytesResult::Ok(bytes) => {
-                // Concurrent terminals can have started multiple BlobReadChains
-                // (no in-flight serialisation — `start()` re-enters every time
-                // it sees `.blob`). The FIRST resolver wins and swaps to
-                // `.owned`; that buffer is then *borrowed* by `pin_for_task`
-                // into a worker-thread PipelineTask. A later resolver MUST NOT
-                // drop the source (it would free what the worker is reading)
-                // — drop the redundant read instead and re-enter `schedule()`
-                // on the already-swapped source.
                 if matches!(image.source.get(), Source::Blob(_)) {
                     image.source.set(Source::Owned(bytes));
                 } else {
@@ -1462,10 +1282,6 @@ pub enum Kind {
     /// `None` ⇒ re-encode in the source format (resolved after decode).
     Encode(Option<codecs::EncodeOptions>),
     Metadata,
-    /// `.placeholder()` — decode → box-resize ≤100 → ThumbHash → render
-    /// → PNG → `data:` URL. The whole chain runs on the worker; the
-    /// hash itself never crosses the JS boundary unless we add an
-    /// `as: "hash"` option later.
     Placeholder,
 }
 
@@ -1497,20 +1313,6 @@ impl<'a> PipelineTask<'a> {
             // SAFETY: `p` borrows `image.source.path`, which outlives the task
             // because `this_ref` is held Strong while pending_tasks > 0.
             let p: &ZStr = unsafe { &*p };
-            // The path string came straight from the constructor, so treat
-            // it as untrusted: open + fstat first instead of `readFrom`.
-            //   • !S_ISREG → ENODEV. `/dev/zero`/`/dev/urandom` would
-            //     otherwise pread forever (st_size=0, never returns 0) until
-            //     the doubling Vec OOMs the process; a FIFO with no writer
-            //     would park this WorkPool thread in-kernel forever.
-            //   • st_size cap → file-based decompression-bomb fails up
-            //     front with a clear error instead of materialising a
-            //     multi-GB encoded buffer before `maxPixels` even runs.
-            // O_NONBLOCK so the open itself can't block on a FIFO. POSIX-only:
-            // on Windows it omits FILE_SYNCHRONOUS_IO_NONALERT (overlapped
-            // handle) and the subsequent sync read fails EINVAL. Windows has
-            // no open-blocking FIFOs in the same sense; the !S_ISREG check
-            // below still rejects pipes/devices.
             #[cfg(unix)]
             let oflags = sys::O::RDONLY | sys::O::NONBLOCK;
             #[cfg(not(unix))]
@@ -1555,10 +1357,6 @@ impl<'a> PipelineTask<'a> {
             self.input.slice()
         };
 
-        // Header-only fast path for `.metadata()` — Sharp parses just the
-        // IHDR/SOF/VP8 header; we used to decode the full RGBA buffer first
-        // (~70× slower on a 1920×1080 PNG). EXIF orientation only swaps the
-        // reported dims, no pixels involved.
         if matches!(self.kind, Kind::Metadata) {
             match codecs::probe(input, self.max_pixels) {
                 Ok(p) => {
@@ -1587,12 +1385,6 @@ impl<'a> PipelineTask<'a> {
             }
         }
 
-        // Decode-time downscale hint. The IDCT picker constrains in *stored*
-        // axes, so any 90/270 rotate that runs before resize — explicit OR
-        // EXIF auto-orient — needs the hint axes swapped, otherwise one axis
-        // can be over-shrunk and then upscaled, throwing away detail.
-        // (flip/flop are pure mirrors that never change w/h, so the hint
-        //  stays valid through them.)
         let hint: codecs::DecodeHint = if let Some(r) = self.pipeline.resize {
             let mut tw = r.w;
             // r.h==0 means "preserve aspect" — constrain on width only.
@@ -1659,11 +1451,6 @@ impl<'a> PipelineTask<'a> {
             return;
         }
 
-        // No format method chained ⇒ re-encode in the source format. For
-        // decode-only sources (bmp/tiff/gif) that would dead-end in the
-        // "HEIC/AVIF require macOS or Windows" message, which is wrong twice
-        // over. Emit PNG instead — it's the lossless, everywhere-supported
-        // default Sharp uses for the same case.
         let Kind::Encode(enc_opt) = &self.kind else {
             unreachable!()
         };
@@ -1676,12 +1463,6 @@ impl<'a> PipelineTask<'a> {
             },
             ..Default::default()
         });
-        // Carry the source ICC profile through to the encoder unless the
-        // caller already set one (reserved for a future `.withIccProfile()`
-        // method). The pipeline doesn't colour-convert the RGBA, so dropping
-        // the profile reinterprets a non-sRGB source (Display-P3, Adobe RGB,
-        // Jpegli XYB) as sRGB and visibly shifts the colours — see #30197.
-        // JPEG/PNG/WebP embed it; HEIC/AVIF via the system backend do not.
         if enc.icc_profile.is_none() {
             // `EncodeOptions.icc_profile` borrows for the duration of `encode()`
             // (raw `NonNull<[u8]>`); `decoded` outlives the call below.
@@ -1705,14 +1486,6 @@ impl<'a> PipelineTask<'a> {
 
     /// Back on the JS thread.
     pub fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
-        // `defer self.deinit()` → handled by `Drop for PipelineTask` when the
-        // owning `ConcurrentPromiseTask` Box is destroyed by the event-loop
-        // dispatch (`run_from_js` → `destroy`), immediately after this returns.
-        // JS thread again — release the per-task pin so user code can
-        // transfer/detach the source now.
-        // PORT NOTE: reshaped for borrowck — `PipelineTask: Drop` forbids
-        // moving fields out by destructure; `mem::take`/`mem::replace` the
-        // owning fields into locals instead so `Drop` still runs on the husk.
         mem::take(&mut self.input).release();
         let global = self.global;
         // SAFETY: BACKREF; JS thread; wrapper kept alive by `this_ref` Strong.
@@ -1787,17 +1560,9 @@ impl<'a> PipelineTask<'a> {
                         blob.content_type
                             .set(std::ptr::from_ref::<[u8]>(format.mime().as_bytes()));
                         blob.content_type_was_set.set(true);
-                        // UFCS to pick the consuming `JsClass::to_js(self, _)`
-                        // (heap-promotes via `Blob::new`) over the inherent
-                        // `Blob::to_js(&mut self, _)` that expects an
-                        // already-heap-allocated receiver.
                         promise.resolve(global, <Blob as bun_jsc::JsClass>::to_js(blob, global))?;
                     }
                     tag @ (Deliver::Base64 | Deliver::DataUrl) => {
-                        // PERF(port): was comptime tag dispatch — profile if it shows up on a hot path.
-                        // This arm copies the bytes out — re-arm `Encoded::drop` so
-                        // the codec allocation is freed at scope exit (RAII), not by
-                        // a JS finalizer.
                         let _out = mem::ManuallyDrop::into_inner(out);
                         // `data:` and `;base64,` are both ASCII so the prefix
                         // length is exact; one buffer holds prefix+payload.
@@ -1826,12 +1591,6 @@ impl<'a> PipelineTask<'a> {
                             };
                         promise.resolve(global, str)?;
                     }
-                    // `.write(dest)` — wrap the codec buffer as a Buffer (codec's
-                    // own free is the finalizer; no dupe), hand it to the SAME
-                    // implementation `Bun.write` uses, and resolve our promise
-                    // with that Promise<number>. So `dest` may be a path string,
-                    // `Bun.file()`, `Bun.s3()`, or an fd — anything `Bun.write`
-                    // accepts — and we don't reimplement any of it.
                     Deliver::WriteDest(dest) => {
                         let dest_js = dest.get();
                         // SAFETY: `out.bytes` is the codec-owned allocation whose
@@ -1887,13 +1646,6 @@ impl<'a> PipelineTask<'a> {
         Ok(())
     }
 
-    /// Fixed Sharp order: rotate → flip/flop → resize. Each stage replaces
-    /// `d` in place; the old buffer is freed before assigning the new one so
-    /// peak memory is at most 2× one frame. Every stage hand-swaps only the
-    /// pixel slots — rotate/resize return a fresh `Decoded` with
-    /// `icc_profile == None`, so overwriting `d.*` wholesale would drop the
-    /// source's colour profile. Geometry doesn't change colour meaning, so
-    /// the profile survives unchanged.
     fn apply_pipeline(&self, d: &mut codecs::Decoded) -> Result<(), codecs::Error> {
         let p = &self.pipeline;
         if p.rotate != 0 {
@@ -1914,12 +1666,6 @@ impl<'a> PipelineTask<'a> {
         }
         if let Some(r) = p.resize {
             let t = resolve_resize(r, d.width, d.height);
-            // Guard the output canvas AND the H-then-V intermediate (always
-            // dst_w × src_h — image_resize.cpp pass order is fixed). A 1×N
-            // source → resize(W,1) has tiny input AND output canvases yet a
-            // W×N intermediate; with W=262143, N=16383 that's a 17 GiB alloc
-            // from a ~200-byte PNG. The src_w×dst_h cross-product is bounded
-            // by max(input, output) so doesn't need its own check.
             if (t.0 as u64) * (t.1 as u64) > self.max_pixels
                 || (t.0 as u64) * (d.height as u64) > self.max_pixels
             {
@@ -1939,12 +1685,6 @@ impl<'a> PipelineTask<'a> {
     }
 }
 
-/// `.placeholder()` body — runs on the worker. Input is the decoded RGBA
-/// at source size; output is a PNG of the ThumbHash render, ready for the
-/// `.dataurl` deliver. ThumbHash needs ≤100×100, so first downscale with
-/// `box` (the only filter that's correct for "average everything in a
-/// cell" — Lanczos would ring into the DCT). The hash itself stays on
-/// the worker stack; only the rendered PNG crosses back.
 fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs::Error> {
     const MAX_IN: u32 = 100;
     let mut w = sw;
@@ -1982,11 +1722,6 @@ fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs:
 /// Map a resize spec to concrete output dims given the current dims.
 fn resolve_resize(r: Resize, sw: u32, sh: u32) -> (u32, u32) {
     let mut w = r.w;
-    // Widen before multiplying — `r.w` is user-controlled and `sh` is
-    // bounded only by `max_pixels`, so the u32 product can wrap; and the
-    // quotient can exceed u32 for tall-thin sources (1×5M with .resize(1k)
-    // → 5e9), so clamp to the same per-side cap do_resize uses before the
-    // narrowing cast. The maxPixels guard then rejects the product.
     let mut h: u32 = if r.h != 0 {
         r.h
     } else {

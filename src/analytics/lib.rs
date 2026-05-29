@@ -12,11 +12,6 @@ use bun_core::slice_to_nul;
 
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Enables analytics. This is used by:
-/// - crash_handler's `report` function to anonymously report crashes
-///
-/// Since this field can be `Unknown`, it makes more sense to call `is_enabled`
-/// instead of processing this field directly.
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum TriState {
@@ -77,26 +72,9 @@ pub fn is_enabled() -> bool {
 // Features
 // ──────────────────────────────────────────────────────────────────────────
 
-/// This answers, "What parts of bun are people actually using?"
-///
-/// PORT NOTE: In Zig this is a `struct` used purely as a namespace of `pub var`
-/// decls, iterated via `@typeInfo` reflection. Rust has no decl reflection, so
-/// the feature list is declared once via `define_features!` and that macro
-/// generates the statics, `PACKED_FEATURES_LIST`, `PackedFeatures`,
-/// `packed_features()`, and the `Display` body.
 pub mod features {
     use super::*;
 
-    // PORT NOTE (cyclebreak): the Zig original is
-    // `EnumSet(bun.jsc.ModuleLoader.HardcodedModule)`. That enum lives in
-    // `bun_resolve_builtins` (T5) and pulling it here would create a forward
-    // dep (analytics is T1). The only operations we need are `insert` and
-    // ordered iteration of the module *names* for the crash-report formatter,
-    // so store the `&'static str` name (= `@tagName(HardcodedModule)`) instead
-    // of the enum value. Writers (`runtime/jsc_hooks.rs`) call
-    // `BUILTIN_MODULES.lock().insert(<&'static str>::from(hardcoded))`.
-    // PERF(port): Zig used a packed `EnumSet` (bitset); BTreeSet is O(log n)
-    // insert — fine for ≤~80 entries written once each at module-load time.
     pub(crate) static BUILTIN_MODULES: bun_core::Mutex<std::collections::BTreeSet<&'static str>> =
         bun_core::Mutex::new(std::collections::BTreeSet::new());
     // PORT NOTE: Zig used a plain mutable global; wrapped in a Mutex here
@@ -121,11 +99,6 @@ pub mod features {
             /// Zig: `pub const packed_features_list = brk: { ... }`
             pub const PACKED_FEATURES_LIST: &[&str] = &[ $( $name ),* ];
 
-            // Zig: `pub const PackedFeatures = @Type(.{ .@"struct" = .{ .layout = .@"packed", .backing_integer = u64, ... } })`
-            // All fields are `bool` → bitflags over u64.
-            // PORT NOTE: nightly `${index()}` (macro_metavar_expr) is unavailable
-            // on stable, so each feature carries an explicit `$idx` literal at the
-            // call site. The dense-index assertion below catches gaps/duplicates.
             ::bitflags::bitflags! {
                 #[repr(transparent)]
                 #[derive(Default, Copy, Clone, PartialEq, Eq)]
@@ -214,11 +187,6 @@ pub mod features {
         };
     }
 
-    // PORT NOTE: Zig identifiers `@"Bun.stderr"` etc. cannot be Rust idents;
-    // renamed to `bun_stderr` etc. The string literal preserves the original
-    // name for output / `PACKED_FEATURES_LIST` (matches `@tagName` semantics).
-    // The leading integer is the bit index in `PackedFeatures` (must be dense
-    // 0..N — asserted at compile time inside the macro).
     define_features! {
         0 => (bun_stderr, "Bun.stderr"),
         1 => (bun_stdin, "Bun.stdin"),
@@ -289,15 +257,6 @@ pub mod features {
         #[unsafe(export_name = "Bun__Feature__webview_webkit")]
         57 => (webview_webkit, "webview_webkit"),
     }
-
-    // Zig: `comptime { @export(&napi_module_register, .{ .name = "Bun__napi_module_register_count" }); ... }`
-    // PORT NOTE: C++ declares these as `extern "C" size_t Bun__...;` and
-    // reads/increments the value directly, so the exported symbol must BE the
-    // `usize` storage (not a pointer to it). `AtomicUsize` is `#[repr(C)]
-    // usize`-layout-compatible. Handled via `#[unsafe(export_name = "...")]`
-    // on the canonical statics inside `define_features!` above — Rust cannot
-    // alias-export a static under a second symbol name, so the export name is
-    // attached to the single definition.
 }
 
 // Re-exports to mirror Zig's `Features.packedFeatures()` etc. at module scope.
@@ -335,11 +294,6 @@ pub enum EventName {
     http_start,
     http_build,
 }
-
-// Zig: `var random: std.rand.DefaultPrng = undefined;`
-// PORT NOTE: declared but never read in analytics.zig — dead code. Dropped
-// rather than gated; if a future schema-encode path needs a PRNG, seed one
-// locally (PORTING.md §Concurrency: OnceLock<...>, no `static mut`).
 
 const PLATFORM_ARCH: analytics::Architecture = {
     #[cfg(target_arch = "aarch64")]
@@ -408,14 +362,6 @@ pub mod generate_header {
         // ──────────────────────────────────────────────────────────────────
         // Linux / Android
         // ──────────────────────────────────────────────────────────────────
-
-        // Zig: `pub var linux_os_name: std.c.utsname = undefined;`
-        // PORT NOTE: Zig's `Environment.isLinux` is true on Android (it checks
-        // the kernel, not the libc target), so all Linux-gated items below are
-        // `any(linux, android)` — `for_linux()` itself branches on Android.
-        // The cached `utsname` itself now lives in T1 at
-        // `bun_core::ffi::cached_uname()` so `bun_sys` feature probes share the
-        // same single `uname(2)` syscall.
 
         // ──────────────────────────────────────────────────────────────────
         // Platform OnceLock
@@ -496,12 +442,6 @@ pub mod generate_header {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         pub fn kernel_version() -> semver::Version {
-            // Route through the T1 canonical probe so the whole binary issues
-            // a single `uname(2)` for kernel-version detection. The full
-            // semver `tag` (pre/build) is irrelevant here — `.min()` on the
-            // old parse path already zeroed it — so a {major,minor,patch}
-            // lift is behavior-identical for all callers (crash_handler
-            // formatting, epoll_pwait2 >=5.11 gate, `bun.linuxKernelVersion`).
             let v = bun_core::linux_kernel_version();
             semver::Version {
                 major: u64::from(v.major),

@@ -1,20 +1,6 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 #![allow(unexpected_cfgs)]
-//! Bun's cross-platform filesystem watcher.
-//!
-//! Function bodies that depend on crate surface that hasn't landed yet
-//! (e.g. `bun_sys::linux` raw inotify syscalls, `bun_collections::MultiArrayElement`
-//! derive, `bun_fs`) are individually gated with `// TODO(port): bun_X::Y` markers.
-
-// ─── platform impls ───────────────────────────────────────────────────────
-//
-// Each platform watcher is compiled only for its target. All three backends
-// are now un-gated against their respective `bun_sys` platform surfaces. The
-// Windows backend's `init()` body alone remains re-gated on lower-tier
-// symbols that have not landed (`bun_windows_sys::ntdll::NtCreateFile`,
-// `bun_windows_sys::FILE_OPEN`); see the `TODO(port)` marker in
-// `WindowsWatcher.rs`. A host build never compiles the non-native backends.
 
 // Android: same kernel inotify ABI as glibc/musl Linux.
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -43,11 +29,6 @@ pub use watcher_impl::{
     MAX_EVICTION_COUNT, Op, PackageJSON, REQUIRES_FILE_DESCRIPTORS, WATCH_OPEN_FLAGS, WatchEvent,
     WatchItem, WatchItemColumns, WatchItemIndex, WatchItemKind, WatchList, Watcher, WatcherContext,
 };
-
-// ─── upward-crate placeholders (CYCLEBREAK) ───────────────────────────────
-//
-// These belong to higher-tier crates that don't yet expose a usable surface
-// to depend on. Watcher only stores/passes them through; never dereferenced.
 
 // TODO(port): bun_ast::Loader
 /// Opaque forward-decl of `bun_ast::Loader`. Watcher only stores

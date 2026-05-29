@@ -18,19 +18,6 @@ pub struct SymbolInfo {
     pub source_location: Option<SourceLocation>,
 }
 
-// ──────────────────────────────────────────────────────────────────────
-// Frame-pointer stack unwinder (port of the `std.debug` subset Zig used:
-// `@frameAddress`, `MemoryAccessor`, `StackIterator`). The Rust port had
-// briefly routed capture through libc `backtrace()` / `RtlCaptureStackBackTrace`,
-// which are CFI/unwind-table based — but release builds strip the unwind tables
-// (`-fno-asynchronous-unwind-tables` + `--no-eh-frame-hdr`) and the POSIX
-// signal handler runs on an `SA_ONSTACK` altstack, so those APIs captured only
-// the handler's own frames (or nothing). Frame pointers are force-enabled
-// (`-Cforce-frame-pointers=yes`, `-fno-omit-frame-pointer`), so FP walking is
-// the correct mechanism. Lives in `bun_core` (libc/std/bun_alloc only) so the
-// crash handler, `StoredTrace`, and `btjs` can all share one implementation.
-// ──────────────────────────────────────────────────────────────────────
-/// Port of Zig `@frameAddress()`. Reads the frame-pointer register directly.
 #[inline(always)]
 pub fn frame_address() -> usize {
     #[cfg(target_arch = "x86_64")]
@@ -231,11 +218,6 @@ impl StackIterator {
         core::mem::size_of::<usize>()
     };
 
-    /// `fp` is required: this function is not `#[inline(always)]`, so a
-    /// `frame_address()` call from inside it would read this frame's own rbp —
-    /// a frame that no longer exists by the time `next()` dereferences it. Pass
-    /// `frame_address()` from the caller (where it inlines) or a context-seeded
-    /// value.
     pub fn init(fp: usize) -> StackIterator {
         StackIterator {
             fp,
@@ -268,15 +250,6 @@ impl StackIterator {
 
 pub(crate) const PC_OFFSET: usize = StackIterator::PC_OFFSET;
 
-/// Capture the current thread's call stack.
-///
-/// POSIX: walk frame pointers. Windows: `RtlCaptureStackBackTrace` via
-/// `.pdata` (rbp is not a reliable frame pointer across all linked code).
-///
-/// `first_address`, when present, trims every frame above (and including) the
-/// capture machinery: frames are dropped until one matches `first_address`.
-/// If no frame matches (e.g. inlining moved the boundary), the full untrimmed
-/// trace is returned rather than an empty one — a noisier trace beats none.
 #[inline(never)]
 pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -> usize {
     #[cfg(windows)]
@@ -319,20 +292,6 @@ pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -
     n
 }
 
-/// Capture a faulting thread's call stack from the fault context. `pc` is the
-/// exact faulting instruction (`ExceptionAddress` / `mcontext` PC) and becomes
-/// frame 0.
-///
-/// POSIX: walk frame pointers from `fp` (the saved frame pointer register).
-/// No trimming is needed — the walk starts on the faulting stack, so the
-/// signal handler's own frames (on the altstack) are never in the chain.
-///
-/// Windows: `rbp` is not a reliable frame pointer across all linked code (the
-/// prebuilt JavaScriptCore and LLInt assembly do not maintain it), so an
-/// fp-walk derails at the C++ boundary. Use the native `.pdata`-based
-/// `RtlCaptureStackBackTrace` instead — it works with or without unwind tables
-/// since `.pdata` is always emitted — and trim the handler's own frames by
-/// scanning for `pc`. `fp` is unused on Windows.
 pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
     if out.is_empty() {
         return 0;
@@ -352,11 +311,6 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
                 core::ptr::null_mut(),
             )
         } as usize;
-        // VEH runs on the faulting thread's stack, so the captured trace is
-        // [handler frames…][fault frame][callers…]. Trim everything above the
-        // first frame whose return address sits within a small tolerance of
-        // the fault `pc` (the call-site/return-address may be a few bytes
-        // off). If no match, keep the full trace rather than discard it.
         const TOLERANCE: usize = 256;
         let frames = &out[1..1 + got];
         let skip = frames

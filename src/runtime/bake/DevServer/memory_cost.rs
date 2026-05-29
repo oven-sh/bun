@@ -16,15 +16,6 @@ pub struct MemoryCost {
     pub other: usize,
 }
 
-/// Returns an estimation for how many bytes DevServer is explicitly aware of.
-/// If this number stays constant but RSS grows, then there is a memory leak. If
-/// this number grows out of control, then incremental garbage collection is not
-/// good enough.
-///
-/// Memory measurements are important as DevServer has a long lifetime, but
-/// unlike the HTTP server, it controls a lot of objects that are frequently
-/// being added, removed, and changed (as the developer edits source files). It
-/// is exponentially easy to mess up memory management.
 pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     let mut other_bytes: usize = size_of::<DevServer>();
     let mut incremental_graph_client: usize = 0;
@@ -32,44 +23,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     let mut js_code: usize = 0;
     let mut source_maps: usize = 0;
     let mut assets: usize = 0;
-
-    // See https://github.com/ziglang/zig/issues/21879
-    // PORT NOTE: Zig used `useAllFields(DevServer, .{...})` to compile-time-assert that
-    // every DevServer field is accounted for below. Rust has no equivalent; the field
-    // list is preserved as comments. A proc-macro or static-assert could re-add the check.
-    // TODO(port): exhaustiveness check for DevServer fields (was bun.meta.useAllFields)
-
-    // does not contain pointers
-    //   .assume_perfect_incremental_bundling
-    //   .bun_watcher
-    //   .bundles_since_last_error
-    //   .configuration_hash_key
-    //   .inspector_server_id
-    //   .deferred_request_pool
-    //   .dump_dir
-    //   .emit_incremental_visualizer_events
-    //   .emit_memory_visualizer_events
-    //   .frontend_only
-    //   .generation
-    //   .graph_safety_lock
-    //   .has_pre_crash_handler
-    //   .magic
-    //   .memory_visualizer_timer
-    //   .plugin_state
-    //   .server_register_update_callback
-    //   .server_fetch_function_callback
-    //   .watcher_atomics
-
-    // pointers that are not considered a part of DevServer
-    //   .vm
-    //   .server
-    //   .server_transpiler
-    //   .client_transpiler
-    //   .ssr_transpiler
-    //   .log
-    //   .framework
-    //   .bundler_options
-    //   .broadcast_console_log_from_browser_to_server
 
     // to be counted.
     // .root
@@ -103,10 +56,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // .source_maps
     other_bytes += memory_cost_array_hash_map(&dev.source_maps.entries);
     for entry in dev.source_maps.entries.values() {
-        // PORT NOTE: Zig stored `MultiArrayList(PackedMap.Shared)` and called
-        // `entry.files.memoryCost()` (capacityInBytes). The Rust port stores a
-        // plain `Vec<packed_map::Shared>` (see source_map_store.rs PORT NOTE),
-        // so the SoA byte-count is replaced by `cap * size_of::<Shared>()`.
         source_maps += entry.files.capacity() * size_of::<packed_map::Shared>();
         for file in entry.files.iter() {
             source_maps += file.memory_cost();
@@ -152,11 +101,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // std does not provide a way to measure exact allocation size of HashMapUnmanaged
     other_bytes +=
         dev.html_router.map.capacity() * (size_of::<*const HTMLBundleRoute>() + size_of::<&[u8]>());
-    // DevServer does not count the referenced HTMLBundle.HTMLBundleRoutes
-    // .bundling_failures
-    // PORT NOTE: Zig keys the set by `SerializedFailure` directly; the Rust port
-    // stores `OwnerPacked → SerializedFailure`, so the failure payloads live in
-    // `.values()`.
     other_bytes += memory_cost_slice(dev.bundling_failures.values());
     for failure in dev.bundling_failures.values() {
         other_bytes += failure.data.len();
@@ -218,10 +162,6 @@ pub(crate) fn memory_cost_slice<T>(slice: &[T]) -> usize {
 }
 
 pub(crate) fn memory_cost_array_hash_map<K, V, C>(map: &ArrayHashMap<K, V, C>) -> usize {
-    // Zig: `@TypeOf(map.entries).capacityInBytes(map.entries.capacity)` — the
-    // SoA byte capacity of the backing `MultiArrayList`. The Rust `ArrayHashMap`
-    // stores three separate `Vec`s (keys, values, 32-bit hashes) instead, so the
-    // equivalent footprint is `capacity * (sizeof K + sizeof V + sizeof u32)`.
     map.capacity() * (size_of::<K>() + size_of::<V>() + size_of::<u32>())
 }
 

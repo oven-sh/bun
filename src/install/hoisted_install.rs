@@ -78,10 +78,6 @@ pub(crate) fn install_hoisted_packages(
 
     let original_trees = core::mem::take(&mut this.lockfile.buffers.trees);
     let original_tree_dep_ids = core::mem::take(&mut this.lockfile.buffers.hoisted_dependencies);
-    // Put them back immediately — Zig's `const original_* = buffers.*` is a
-    // by-value copy of the ArrayList header (ptr/len/cap), leaving the buffer
-    // live. Rust `Vec` can't alias like that, so the rollback below restores
-    // the *taken* originals; `filter()` repopulates the live ones in-place.
     this.lockfile.buffers.trees.clone_from(&original_trees);
     this.lockfile
         .buffers
@@ -89,12 +85,6 @@ pub(crate) fn install_hoisted_packages(
         .clone_from(&original_tree_dep_ids);
 
     {
-        // PORT NOTE: reshaped for borrowck — Zig passes `this.log, this` (two
-        // borrows of `this`). `lockfile` is `Box<Lockfile>` so the heap object
-        // is disjoint from the `PackageManager` struct; snapshot raw `*mut
-        // Lockfile` and `*mut Log` first so `filter` can hold `&mut Lockfile`
-        // and `&mut PackageManager` simultaneously through `mgr_ptr`'s
-        // provenance root.
         let log: *mut bun_ast::Log = this.log;
         // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is heap-owned
         // via `Box`, so `*mut Lockfile` does not overlap `*mut PackageManager`.
@@ -172,12 +162,6 @@ pub(crate) fn install_hoisted_packages(
         this.downloads_node = None;
     });
 
-    // If there was already a valid lockfile and so we did not resolve, i.e. there was zero network activity
-    // the packages could still not be in the cache dir
-    // this would be a common scenario in a CI environment
-    // or if you just cloned a repo
-    // we want to check lazily though
-    // no need to download packages you've already installed!!
     let mut new_node_modules = false;
     let cwd = Fd::cwd();
     let node_modules_folder: Dir = 'brk: {
@@ -260,10 +244,6 @@ pub(crate) fn install_hoisted_packages(
                 bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*buffers).string_bytes)),
             )
         };
-        // Safe `BackRef` view of the same heap `Lockfile` as `lockfile_ptr`
-        // (BACKREF — outlives this install pass). `From<NonNull>` is the
-        // safe constructor; the read-only column projections below go
-        // through `Deref` instead of a per-site raw deref.
         let lockfile_ref = bun_ptr::BackRef::<crate::lockfile::Lockfile>::from(
             core::ptr::NonNull::new(lockfile_ptr).expect("lockfile BACKREF non-null"),
         );
@@ -339,24 +319,6 @@ pub(crate) fn install_hoisted_packages(
                 break 'trees (completed_trees, tree_ids_to_trees_the_id_depends_on);
             };
 
-            // These slices potentially get resized during iteration
-            // so we want to make sure they're not accessible to the rest of this function
-            // to make mistakes harder
-            //
-            // PORT NOTE: BACKREF — Zig's `var parts = packages.slice()` is a
-            // by-value `MultiArrayList.Slice` (raw ptr+len per column), so
-            // `parts.items(.field)` yields independent `[]T` regardless of
-            // mutability. The `PackageInstaller` slice fields are
-            // `bun_ptr::RawSlice<T>` (raw `*const [T]`, no lifetime), so
-            // wrapping each column with `RawSlice::new` stores the (ptr, len)
-            // without keeping a borrow live — no `&'a → &'a` detach
-            // round-trip needed. Derive through `lockfile_ptr` so the
-            // provenance root matches `installer.lockfile`/`installer.manager`.
-            // RawSlice invariant: `lockfile_ref` derived from `mgr_ptr`;
-            // the packages column buffers are not freed for the lifetime of
-            // `installer` (only grow, which is why
-            // `fix_cached_lockfile_package_slices` re-snapshots). Read-only
-            // projection via the safe `BackRef::Deref`.
             let parts = lockfile_ref.packages.slice();
             let metas = bun_ptr::RawSlice::new(parts.items_meta());
             let bins = bun_ptr::RawSlice::new(parts.items_bin());
@@ -373,11 +335,6 @@ pub(crate) fn install_hoisted_packages(
             let trees_count = this.lockfile.buffers.trees.len();
             let trusted_deps = this.find_trusted_dependencies_from_update_requests();
 
-            // `PackageInstaller.{manager,lockfile,progress}` are BACKREF raw
-            // pointers (Zig: non-exclusive `*PM` / `*Lockfile`); copying
-            // `mgr_ptr` into them does not move `this`, so the body below
-            // keeps using `this` for `pending_task_count` / `run_tasks` /
-            // lifecycle ticks via the same provenance root.
             break 'brk PackageInstaller {
                 manager: mgr_ptr,
                 metas,
@@ -566,10 +523,6 @@ pub(crate) fn install_hoisted_packages(
         this.tick_lifecycle_scripts();
         this.report_slow_lifecycle_scripts();
 
-        // PORT NOTE: reshaped for borrowck — Zig iterates `installer.trees`
-        // by value while calling `installer.installAvailablePackages` (which
-        // also touches `installer.trees`); index instead of `.iter()` so the
-        // immutable borrow doesn't overlap `&mut self`.
         for tree_idx in 0..installer.trees.len() {
             if cfg!(debug_assertions) {
                 debug_assert!(installer.trees[tree_idx].pending_installs.len() == 0);
@@ -581,11 +534,6 @@ pub(crate) fn install_hoisted_packages(
         // .monotonic is okay because this value is only accessed on this thread.
         this.finished_installing.store(true, Ordering::Relaxed);
         if log_level.show_progress() {
-            // Route through the stored `NonNull` (set above) instead of
-            // re-borrowing the `scripts_node` local directly: under Stacked
-            // Borrows a fresh `&mut local` here would invalidate the raw
-            // pointer that lifecycle-script callbacks dereference via
-            // `scripts_node_mut()` while we drain below.
             if let Some(n) = this.scripts_node_mut() {
                 n.activate();
             }
@@ -595,11 +543,6 @@ pub(crate) fn install_hoisted_packages(
             return Err(bun_core::err!("InstallFailed"));
         }
 
-        // PORT NOTE: Zig copies the bitset header (`summary.* = installer.*`);
-        // Rust moves. `replace` with a fresh empty so `installer` stays whole
-        // for the `link_remaining_bins` / `complete_remaining_scripts` calls
-        // below. Route through `installer.summary` because `summary` itself is
-        // exclusively borrowed by `installer` for this scope.
         {
             let taken = core::mem::replace(
                 &mut installer.successfully_installed,

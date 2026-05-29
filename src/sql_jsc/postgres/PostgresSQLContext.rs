@@ -13,16 +13,7 @@ pub struct PostgresSQLContext {
 }
 
 impl PostgresSQLContext {
-    // Exported to C++ as `PostgresSQLContext__init` — the Zig used
-    // `comptime { @export(&jsc.toJSHostFn(init), .{ .name = "PostgresSQLContext__init" }) }`.
-    // The #[bun_jsc::host_fn] attribute emits the callconv(jsc.conv) shim; the
-    // `export = "..."` arg gives it the #[unsafe(no_mangle)] symbol name.
-    // TODO(port): bun_jsc::host_fn proc-macro (#[bun_jsc::host_fn(export = "PostgresSQLContext__init")])
     pub fn init(global: &JSGlobalObject, frame: &CallFrame) -> JSValue {
-        // `bun_vm()` → `&'static VirtualMachine` (per-thread singleton);
-        // `as_mut()` is the canonical safe escape hatch for the shrinking set
-        // of `&mut self` helpers like `sql_state()` — one audited unsafe lives
-        // in bun_jsc.
         let ctx = &mut global.bun_vm().as_mut().sql_state().postgresql_context;
         ctx.on_query_resolve_fn.set(global, frame.argument(0));
         ctx.on_query_reject_fn.set(global, frame.argument(1));

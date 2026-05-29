@@ -11,16 +11,6 @@
 // erasure that forced every bundler/linker call site to `.cast()` back.
 pub use bun_css::BundlerStyleSheet;
 
-/// Arena-owned handle to a parsed CSS stylesheet (Zig: `*bun.css.BundlerStyleSheet`).
-///
-/// The pointee lives in a per-file `Bump` whose ownership is held by
-/// `Graph.heap` (bumps are `Pin<Box<Bump>>` owned by the
-/// graph and outlive every `BundledAst` row by struct drop order). No `'arena`
-/// lifetime is threaded — N files imply N distinct per-worker bumps with no
-/// single common lifetime — so the invariant is enforced by drop order, not
-/// the type system. `StoreRef`'s `Deref`/`DerefMut` encapsulate the single
-/// documented `unsafe` deref justified by that invariant; callers use `&*r`
-/// (or `Option::as_deref`) instead of open-coded `unsafe { &*ptr }`.
 pub(crate) type CssAstRef = bun_ast::StoreRef<BundlerStyleSheet>;
 
 /// Element type of the `css` SoA column (`items_css()`). Exposed so bundler
@@ -38,16 +28,6 @@ pub(crate) type CommonJSNamedExports = bun_ast::ast_result::CommonJSNamedExports
 pub(crate) type NamedExports = bun_ast::ast_result::NamedExports;
 pub(crate) type NamedImports = bun_ast::ast_result::NamedImports;
 pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
-
-// PORT NOTE: Zig stores `MultiArrayList(BundledAst)` on `Graph.ast` /
-// `LinkerGraph.ast` and the bundler indexes columns via `.items(.field)`
-// (see `linker_context/scanImportsAndExports.zig`, `LinkerContext.zig`).
-// `` generates the `BundledAstField` enum +
-// `BundledAstColumns`/`BundledAstColumns` (`items_named_imports()`,
-// `items_named_exports()`, …) that those callers expect at
-// `crate::bundled_ast::*`.
-//
-// 26 fields ≤ `multi_array_list::MAX_FIELDS` (32).
 
 pub struct BundledAst<'arena> {
     pub approximate_newline_count: u32,
@@ -154,10 +134,6 @@ bitflags::bitflags! {
 }
 
 impl<'arena> BundledAst<'arena> {
-    // Zig: `pub const empty = BundledAst.init(Ast.empty)` (comptime). The three `ArenaVec`
-    // fields prevent `const fn` here, but spell out the defaults directly instead of
-    // round-tripping through `Ast::empty_in` + `init` — this runs once per discovered
-    // module on the main thread.
     pub fn empty_in(arena: &'arena bun_alloc::Arena) -> Self {
         Self {
             approximate_newline_count: 0,

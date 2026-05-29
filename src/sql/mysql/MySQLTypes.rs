@@ -1,10 +1,5 @@
 use strum::IntoStaticStr;
 
-// TODO(port): Zig source is `enum(u8) { ..., _ }` (non-exhaustive — any u8 is a valid
-// CharacterSet). A Rust `#[repr(u8)] enum` is UB for unnamed discriminants. Either
-// (a) keep this enum and guarantee all decode sites range-check before `from_raw`, or
-// (b) switch to `#[repr(transparent)] pub struct CharacterSet(pub u8)` with associated
-// consts. `label()` below already assumes out-of-range values are possible.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, IntoStaticStr)]
 pub enum CharacterSet {
@@ -251,10 +246,6 @@ impl Default for CharacterSet {
     }
 }
 
-// MySQL field types
-// https://dev.mysql.com/doc/dev/mysql-server/latest/binary__log__types_8h.html#a8935f33b06a3a88ba403c63acd806920
-// TODO(port): Zig source is `enum(u8) { ..., _ }` (non-exhaustive). See note on CharacterSet
-// above — same decision applies (range-checked `from_raw` vs newtype-over-u8).
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, IntoStaticStr)]
 pub enum FieldType {
@@ -296,11 +287,6 @@ impl FieldType {
     // Deleted per PORTING.md — `from_js` is provided as an extension-trait method in the
     // `bun_sql_jsc` crate; the base type carries no JSC dependency.
 
-    /// Decode a raw protocol byte. Zig `FieldType` is a non-exhaustive
-    /// `enum(u8)` so `@enumFromInt` accepts any byte; this Rust enum is
-    /// exhaustive, so unknown bytes return `None` instead of producing an
-    /// invalid discriminant. LLVM folds the contiguous arms to two range
-    /// checks.
     #[inline]
     pub const fn from_raw(b: u8) -> Option<Self> {
         Some(match b {

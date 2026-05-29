@@ -27,34 +27,13 @@ pub enum OverflowError {
 
 crate::named_error_set!(OverflowError);
 
-/// A structure with an array and a length, that can be used as a slice.
-///
-/// Useful to pass around small arrays whose exact size is only known at
-/// runtime, but whose maximum size is known at comptime, without requiring
-/// an `Allocator`.
 pub type BoundedArray<T, const BUFFER_CAPACITY: usize> = BoundedArrayAligned<T, BUFFER_CAPACITY>;
 // PORT NOTE: Zig's `BoundedArray` delegates to `BoundedArrayAligned` with `@alignOf(T)`.
 // In Rust the natural alignment of `[T; N]` is already `align_of::<T>()`, so the alias is
 // transparent. The explicit `alignment` const-param is dropped (see below).
 
-/// A structure with an array, length and alignment, that can be used as a
-/// slice.
-///
-/// Useful to pass around small explicitly-aligned arrays whose exact size is
-/// only known at runtime, but whose maximum size is known at comptime, without
-/// requiring an `Allocator`.
-// TODO(port): Zig takes `comptime alignment: Alignment` and applies it via
-// `align(alignment.toByteUnits())` on the buffer field. Stable Rust cannot express
-// `#[repr(align(N))]` with a const-generic `N`. All in-tree callers use the default
-// `@alignOf(T)` via `BoundedArray`, so the param is dropped. Revisit if a
-// caller needs over-alignment (would require a wrapper type per alignment).
 pub struct BoundedArrayAligned<T, const BUFFER_CAPACITY: usize> {
     buffer: [MaybeUninit<T>; BUFFER_CAPACITY],
-    // TODO(port): Zig uses `Length = std.math.ByteAlignedInt(std.math.IntFittingRange(0, buffer_capacity))`
-    // (smallest byte-aligned uint that fits `0..=BUFFER_CAPACITY`) to shrink this field.
-    // Stable Rust const generics cannot pick an integer type from a const value without
-    // `generic_const_exprs`. Using `usize` for now.
-    // PERF(port): was size-optimized integer field — profile if it shows up on a hot path
     len: usize,
 }
 
@@ -217,10 +196,6 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         Some(unsafe { self.buffer[i].assume_init_read() })
     }
 
-    /// Return a slice of only the extra capacity after items.
-    /// This can be useful for writing directly into it.
-    /// Note that such an operation must be followed up with a
-    /// call to `resize()`
     pub fn unused_capacity_slice(&mut self) -> &mut [MaybeUninit<T>] {
         &mut self.buffer[self.len..]
     }
@@ -331,10 +306,6 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         self.buffer[i].write(item);
     }
 
-    /// Remove the element at index `i`, shift elements after index
-    /// `i` forward, and return the removed element.
-    /// Asserts the slice has at least one item.
-    /// This operation is O(N).
     pub fn ordered_remove(&mut self, i: usize) -> T
     where
         T: Copy,

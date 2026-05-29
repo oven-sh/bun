@@ -70,35 +70,8 @@ where
     Expr::init(t, loc)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// JSONLikeParser
-// ──────────────────────────────────────────────────────────────────────────
-//
-// Zig defines two layers:
-//   fn JSONLikeParser(comptime opts: JSONOptions) type   — wrapper
-//   fn JSONLikeParser_(comptime ...8 bools...) type      — "hack fixes using LLDB"
-//
-// The Rust port collapses both into a *single* concrete type carrying
-// `JSONOptions` at runtime. The earlier port mirrored Zig's comptime layer
-// with 8 struct-level `const bool` generics plus 2 more on `parse_expr`; that
-// gave a 2^10 monomorphization surface (6+ live combos in-tree, more once
-// downstream crates pick their own), each re-emitted in every crate that
-// touched a new combo. The body is I/O-bound on lexer reads and the option
-// branches are perfectly predicted, so a runtime `opts` field costs nothing
-// measurable while letting `parse_expr` be `#[inline(never)]` and emitted
-// exactly once in `bun_parsers`. (benches: startup/npm-script.)
-//
-// `crate::json_lexer::Lexer` already carries a runtime `JSONOptions` (the JSON
-// token loop is small enough that comptime specialisation bought nothing), so
-// the parser simply reuses the same struct.
-
 pub struct JSONLikeParser<'a, 'bump> {
     pub lexer: js_lexer::Lexer<'a, 'bump>,
-    // PORT NOTE — Stacked Borrows: the Zig spec stores a second `*logger.Log`
-    // here (json.zig:103). In Rust that would alias the lexer's `*mut Log`; a
-    // live `&'a mut Log` field would invalidate the lexer's SharedReadWrite tag
-    // on first use (UB on the next lexer error). All log writes route through
-    // `self.lexer.log_mut()` instead — single provenance chain.
     pub bump: &'bump Bump,
     pub list_bump: &'bump Bump,
     pub stack_check: StackCheck,
@@ -150,14 +123,6 @@ where
         self.lexer.source
     }
 
-    /// Recursive-descent JSON expression parser.
-    ///
-    /// `#[inline(never)]` + no const generics: this is the hot body that the
-    /// old 10-const-bool surface monomorphized N ways across downstream
-    /// crates. One copy lives in `bun_parsers`; callers link to it.
-    /// `maybe_auto_quote` / `force_utf8` are runtime — both branches are
-    /// perfectly predicted (set once per top-level call, constant across the
-    /// recursion).
     #[inline(never)]
     pub fn parse_expr(
         &mut self,
@@ -343,12 +308,6 @@ where
             }
             _ => {
                 if maybe_auto_quote {
-                    // PORT NOTE: borrowck — capture `source` (a `&'a Source`,
-                    // Copy) and the lexer's `*mut Log` before reassigning
-                    // `self.lexer`. The new lexer is built over the *same* raw
-                    // log pointer so there is still exactly one provenance
-                    // chain (see struct note); the temporary `&mut *log_ptr`
-                    // ends as soon as `init_json` stores it back as `*mut`.
                     let source = self.lexer.source;
                     let log_ptr = self.lexer.log_ptr();
                     // SAFETY: `log_ptr` is the sole handle to the `Log`; the
@@ -389,19 +348,6 @@ where
         Ok(true)
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// PackageJSONVersionChecker
-// ──────────────────────────────────────────────────────────────────────────
-//
-// This is a special JSON parser that stops as soon as it finds
-// {
-//    "name": "NAME_IN_HERE",
-//    "version": "VERSION_IN_HERE",
-// }
-// and then returns the name and version.
-// More precisely, it stops as soon as it finds a top-level "name" and "version" property which are strings
-// In most cases, it should perform zero heap allocations because it does not create arrays or objects (It just skips them)
 
 pub struct PackageJSONVersionChecker<'a, 'bump> {
     pub lexer: js_lexer::Lexer<'a, 'bump>,
@@ -540,10 +486,6 @@ where
             T::TOpenBrace => {
                 self.lexer.next()?;
                 self.depth += 1;
-                // PORT NOTE: Zig `defer p.depth -= 1` — wrap body in a closure so `?`
-                // returns here and depth is decremented exactly once on every exit path
-                // (Ok, Err, early break). scopeguard cannot hold `&mut self.depth` while
-                // the body re-borrows `&mut self`.
                 let result = (|| -> Result<Expr, bun_core::Error> {
                     let mut has_properties = false;
                     while self.lexer.token != T::TCloseBrace {
@@ -569,10 +511,6 @@ where
                             if let (Some(key_s), Some(val_s)) =
                                 (key.data.as_e_string(), value.data.as_e_string())
                             {
-                                // Zig matched on `.e_string` tag and read
-                                // `.e_string.data` directly; `as_e_string()` returns
-                                // `StoreRef<EString>` which derefs to the payload, so
-                                // `.data` is the raw byte slice.
                                 if !self.has_found_name && key_s.data == b"name" {
                                     let len = val_s.data.len().min(self.found_name_buf.len());
 
@@ -631,14 +569,6 @@ where
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// toAST
-// ──────────────────────────────────────────────────────────────────────────
-//
-// Zig `toAST` switches on `@typeInfo(Type)` to recursively convert any value
-// into a `js_ast.Expr`. Rust has no `@typeInfo`; this becomes a trait with
-// per-type impls. Struct/enum/union arms require a derive macro.
-
 pub trait ToAst {
     fn to_ast(&self, bump: &Bump) -> Result<Expr, bun_core::Error>;
 }
@@ -664,10 +594,6 @@ macro_rules! impl_to_ast_int {
         }
     )*};
 }
-// PORT NOTE: `u8` is intentionally omitted so the generic `impl<T: ToAst> for [T]`
-// / `[T; N]` does NOT match byte arrays — Zig special-cases `Array.child == u8`
-// (json.zig:557-565) to emit `E::String`, not `E::Array`. See dedicated
-// `[u8]` / `[u8; N]` impls below.
 impl_to_ast_int!(i8, i16, i32, i64, isize, u16, u32, u64, usize);
 
 macro_rules! impl_to_ast_float {
@@ -755,42 +681,6 @@ impl ToAst for bun_core::Error {
     }
 }
 
-// TODO(port): proc-macro — Zig's `.@"struct"` arm iterates `@typeInfo(Type).Struct.fields`
-// and emits an `E.Object` keyed by field name. Provide `#[derive(ToAst)]` that
-// expands to:
-//   impl ToAst for Foo {
-//     fn to_ast(&self, bump: &Bump) -> Result<Expr, _> {
-//       let mut properties = Vec::<G::Property>::with_capacity(bump, N);
-//       properties.push_assume_capacity(G::Property {
-//         key: Some(Expr::init(E::String { data: b"field_name" }, Loc::EMPTY)),
-//         value: Some(self.field_name.to_ast(bump)?),
-//         ..Default::default()
-//       });
-//       ...
-//       Ok(Expr::init(E::Object { properties, is_single_line: N <= 1, .. }, Loc::EMPTY))
-//     }
-//   }
-//
-// TODO(port): proc-macro — Zig's `.@"enum"` arm validates the discriminant via
-// `intToEnum` (returns null on failure) then emits `@tagName(value)` as a string.
-// Map to `#[derive(strum::IntoStaticStr)]` + `<&'static str>::from(*self).as_bytes().to_ast()`.
-//
-// TODO(port): proc-macro — Zig's `.@"union"` arm (tagged union) constructs a
-// single-field anonymous struct `{ <variant_name>: payload }` and recurses.
-// In Rust this is the natural shape of `enum` payloads; the derive should emit
-// `match self { Variant(v) => /* { "Variant": v } */ }`.
-
-// ──────────────────────────────────────────────────────────────────────────
-// Parser option presets
-// ──────────────────────────────────────────────────────────────────────────
-//
-// Zig spelt these as distinct `JSONLikeParser(.{...})` *types*. With the
-// const-generic surface collapsed (see `JSONLikeParser` note), they become
-// plain `JSONOptions` constants fed to the one concrete parser.
-//
-// Spec lexer.zig:50 — `json_warn_duplicate_keys: bool = true` is the DEFAULT;
-// json.zig:647-655/734 do not override it for the first four presets.
-
 const JSON_OPTS: js_lexer::JSONOptions = js_lexer::JSONOptions {
     is_json: true,
     ..js_lexer::JSONOptions::DEFAULT
@@ -829,11 +719,6 @@ const PACKAGE_JSON_OPTS: js_lexer::JSONOptions = js_lexer::JSONOptions {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): these were `var` (mutable file-scope) in Zig because Expr.Data
-// stores `*E.Object` etc. Never mutated — `RacyCell` only because
-// `StoreRef::from_raw` wants a `*mut T` and the payload types are `!Sync`.
-// Could prefer `Expr::Data` constructors that don't need a backing static
-// (e.g. inline empty-object sentinel).
 static EMPTY_OBJECT: bun_core::RacyCell<E::Object> = bun_core::RacyCell::new(E::Object::EMPTY);
 static EMPTY_ARRAY: bun_core::RacyCell<E::Array> = bun_core::RacyCell::new(E::Array::EMPTY);
 static EMPTY_STRING: bun_core::RacyCell<E::String> = bun_core::RacyCell::new(E::String::EMPTY);
@@ -855,14 +740,6 @@ fn empty_array_data() -> js_ast::expr::Data {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Parse JSON
-/// This leaves UTF-16 strings as UTF-16 strings
-/// The JavaScript Printer will handle escaping strings if necessary
-//
-// `FORCE_UTF8` stays a const generic at the *public* boundary so existing
-// call sites (`json::parse::<true>(…)`) keep compiling, but the body is a
-// trivial forward into the single non-generic `parse_expr`. The wrapper
-// monomorphizes to a few instructions; no large body is duplicated.
 #[inline]
 pub fn parse<const FORCE_UTF8: bool>(
     source: &bun_ast::Source,
@@ -904,11 +781,6 @@ pub fn parse<const FORCE_UTF8: bool>(
     parser.parse_expr(false, FORCE_UTF8)
 }
 
-/// Parse Package JSON
-/// Allow trailing commas & comments.
-/// This eagerly transcodes UTF-16 strings into UTF-8 strings
-/// Use this when the text may need to be reprinted to disk as JSON (and not as JavaScript)
-/// Eagerly converting UTF-8 to UTF-16 can cause a performance issue
 pub fn parse_package_json_utf8(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -959,12 +831,6 @@ pub struct JsonResult {
     pub indentation: Indentation,
 }
 
-// Zig signature takes `comptime opts: js_lexer.JSONOptions`. The 8-bool
-// const-generic spelling is kept *only* as a back-compat shim for existing
-// call sites in downstream crates; it immediately reifies the flags into a
-// runtime `JSONOptions` and forwards to the single non-generic body below.
-// Each monomorphized shim is a handful of instructions — the heavy
-// `parse_expr` body is shared.
 #[inline]
 pub fn parse_package_json_utf8_with_opts<
     const IS_JSON: bool,
@@ -1065,11 +931,6 @@ pub fn parse_package_json_utf8_with_opts_rt(
     })
 }
 
-/// Parse Package JSON
-/// Allow trailing commas & comments.
-/// This eagerly transcodes UTF-16 strings into UTF-8 strings
-/// Use this when the text may need to be reprinted to disk as JSON (and not as JavaScript)
-/// Eagerly converting UTF-8 to UTF-16 can cause a performance issue
 pub fn parse_utf8(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,

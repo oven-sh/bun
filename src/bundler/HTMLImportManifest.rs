@@ -243,10 +243,6 @@ pub fn write<W: Write + ?Sized>(
     let file_entry_bits: &[AutoBitSet] = linker_graph.files.items_entry_bits();
     let mut already_visited_output_file = AutoBitSet::init_empty(additional_output_files.len())?;
 
-    // Write all chunks that have files associated with this entry point.
-    // Also include browser chunks from server builds (lazy-loaded chunks from dynamic imports).
-    // When there's only one HTML import, all browser chunks belong to that manifest.
-    // When there are multiple HTML imports, only include chunks that intersect with this entry's bits.
     let has_single_html_import = graph.html_imports.html_source_indices.len() == 1;
     for ch in chunks.iter() {
         if ch.entry_bits().has_intersection(&entry_point_bits)
@@ -282,10 +278,6 @@ pub fn write<W: Write + ?Sized>(
                 writer,
                 input,
                 path,
-                // The HTML chunk's body embeds the hashed paths of its JS/CSS
-                // chunks, so its etag must change when those do. `isolated_hash`
-                // by design excludes those substitutions; the placeholder hash
-                // folds them in via `appendIsolatedHashesForImportedChunks`.
                 ch.template.placeholder.hash.unwrap_or(ch.isolated_hash),
                 ch.content.loader(),
                 if ch.entry_point.is_entry_point() {

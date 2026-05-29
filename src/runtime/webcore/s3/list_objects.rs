@@ -8,10 +8,6 @@ use bun_core::{ZigStringSlice as Utf8Slice, strings};
 use bun_ptr::RawSlice;
 
 pub struct S3ListObjectsOptions {
-    // Self-referential views: these borrow from the corresponding
-    // `_field: Utf8Slice` below. In Zig the slice and its backing storage are
-    // separate fields; `RawSlice` encodes the non-owning contract so callers
-    // read `.as_deref()` instead of open-coding `unsafe { &*p }`.
     pub continuation_token: Option<RawSlice<u8>>,
     pub delimiter: Option<RawSlice<u8>>,
     pub encoding_type: Option<RawSlice<u8>>,
@@ -32,13 +28,6 @@ pub struct S3ListObjectsOptions {
 
 // Zig deinit only forwarded to each Utf8Slice field's deinit; Rust handles
 // that via field Drop, so no explicit `impl Drop` is needed here.
-
-// PORT NOTE: result structs borrow slices out of the input `xml: &[u8]`
-// passed to `parse_s3_list_objects_result`. The Zig code never frees these
-// (they alias the request body buffer). Represented with an explicit `'a` —
-// the borrow is unambiguous and any other encoding (Box / raw ptr) would
-// misrepresent ownership. The caller keeps `xml` alive for the result's
-// lifetime (result is consumed by toJS before the response body is freed).
 
 struct ObjectOwner<'a> {
     id: Option<&'a [u8]>,

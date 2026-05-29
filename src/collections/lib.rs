@@ -16,10 +16,6 @@
 pub mod hive_array;
 pub mod multi_array_list;
 pub mod vec_ext;
-// `bounded_array` moved down to `bun_core` (cycle-break for the
-// `bun_string → bun_core` merge — `bun_core::string::immutable` needs it).
-// Re-exported here unchanged so existing `bun_collections::BoundedArray` /
-// `bun_collections::bounded_array::*` paths keep resolving.
 pub use bun_core::bounded_array;
 pub mod identity_context;
 pub mod linear_fifo;
@@ -61,11 +57,6 @@ pub mod dynamic_bit_set {
     pub use super::bit_set::DynamicBitSetList as List;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// `PriorityQueue` — port of `std.PriorityQueue(T, Context, lessThan)`.
-// Min-heap backed by a `Vec<T>`; the comparator context is held by value so
-// callers can rebind it (Zig stores `context: Context` directly on the queue).
-// ──────────────────────────────────────────────────────────────────────────
 pub trait PriorityCompare<T> {
     fn compare(&self, a: &T, b: &T) -> core::cmp::Ordering;
 }
@@ -168,13 +159,6 @@ pub use array_hash_map::{
     StringHashMapContext, StringHashMapInner, StringHashMapKey, StringHashMapUnownedKey, StringSet,
     VacantEntry, string_hash_map,
 };
-/// Downstream crates name hashbrown's iterator/entry types in struct fields
-/// (e.g. `bun_resolver::DirEntryDirIter`). `StringHashMap` `Deref`s to a
-/// `hashbrown::HashMap`, so those iterators are the API surface; re-export
-/// the crate so callers don't grow their own direct dep just to spell the
-/// type. (A type alias per iterator would work too, but every `.iter()` /
-/// `.values()` / `.entry()` returns a distinct hashbrown type — re-exporting
-/// the crate is the smaller surface.)
 pub use hashbrown;
 
 pub mod string_map;
@@ -183,25 +167,7 @@ pub use string_map::StringMap;
 // Re-export from bun_ptr so callers can name it as `bun_collections::TaggedPtrUnion`
 // (PORTING.md groups it under Collections; the impl lives in src/ptr/).
 pub use bun_ptr::tagged_pointer::{TaggedPtr as TaggedPointer, TaggedPtrUnion};
-// Lifetime-erasure helpers (RUST_PATTERNS.md §6/§18) — re-exported here so
-// crates that already depend on `bun_collections` (logger, css, js_parser,
-// crash_handler, watcher, http_types) can route the borrowck-dodge through
-// one centralised `unsafe fn` instead of open-coding the lifetime cast.
 pub use bun_ptr::{RawSlice, detach_lifetime, detach_ref};
-
-// ──────────────────────────────────────────────────────────────────────────
-// SmallList — `bun.SmallList(T, N)` (Zig: src/css/small_list.zig).
-//
-// Thin `#[repr(transparent)]` newtype over `smallvec::SmallVec<[T; N]>` that
-// preserves the Zig-named API surface (`append`, `slice`, `at`, `len()->u32`,
-// `init_capacity`, …) so the ~300 CSS-parser call sites stay untouched.
-// Replaces the bespoke ~800-line `Data`/`HeapData` union + raw-ptr container
-// that previously lived in `bun_css::small_list` (which was itself a port of
-// servo/rust-smallvec — this closes the loop back onto the upstream crate).
-//
-// `const_generics` feature is required so `[T; N]` satisfies `smallvec::Array`
-// for an arbitrary `const N: usize` (callers use N ∈ {1,2,3,4,5,6}).
-// ──────────────────────────────────────────────────────────────────────────
 
 pub use smallvec;
 
@@ -309,15 +275,6 @@ impl<T, const N: usize> SmallList<T, N> {
         debug_assert!(values.len() <= N);
         Self(smallvec::SmallVec::from_slice(values))
     }
-    /// Build a `SmallList` whose heap spill (if any) is allocated from `arena`
-    /// instead of the global allocator.
-    ///
-    /// Use this when the list is stored in an arena-owned, never-`Drop`'d
-    /// structure (forgotten/`set_len(0)`-cleared on teardown). The returned
-    /// list **must not** be dropped or grown past its initial length: when it
-    /// spills, the backing storage is arena memory that the global allocator
-    /// does not own. The arena reclaims the slab on reset; running
-    /// `SmallVec::drop` would call `dealloc` on a pointer it never handed out.
     #[cfg_attr(bun_asan, inline(never))]
     #[cfg_attr(not(bun_asan), inline)]
     pub fn from_arena_iter<I>(arena: &bun_alloc::Arena, iter: I) -> Self
@@ -344,10 +301,6 @@ impl<T, const N: usize> SmallList<T, N> {
         Self(smallvec::SmallVec::from_vec(list))
     }
 
-    // ── access ─────────────────────────────────────────────────────────────
-    /// Zig `len()` returns `u32` (not `usize`); preserved so the ~300 call-site
-    /// integer arithmetic in `bun_css` stays unchanged. Inherent shadows the
-    /// `[T]::len()->usize` reachable via `Deref`.
     #[inline]
     pub fn len(&self) -> u32 {
         self.0.len() as u32
@@ -499,16 +452,6 @@ impl<T, const N: usize> SmallList<T, N> {
         }
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// HashMap — `std.AutoHashMap(K, V)` / `std.HashMap(K, V, Ctx, max_load)`.
-//
-// Ported linear-probe layout (open-addressing, tombstones, power-of-two cap,
-// 80% load) so iteration order matches Zig exactly — required by callers that
-// snapshot the iteration sequence (lockfile debug stringify, etc.). The `Ctx`
-// type parameter is now load-bearing: `AutoHashContext` wyhashes the key,
-// `IdentityContext<K>` uses `k as u64` so pre-hashed keys aren't re-hashed.
-// ──────────────────────────────────────────────────────────────────────────
 
 pub mod zig_hash_map;
 pub use zig_hash_map::{AutoHashContext, HashContext, HashMap};

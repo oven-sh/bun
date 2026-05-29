@@ -191,11 +191,6 @@ impl Stdio {
             // must drop it before mutating `self`. Shadowing ends the borrow here.
             let _ = remain;
 
-            // PORT NOTE: in Zig only `.array_buffer` / `.blob` are explicitly
-            // deinit'd before reassignment. In Rust, assigning to `*self` drops
-            // the previous variant via `Drop`, which has equivalent behaviour
-            // for those arms and is a no-op for others (and additionally closes
-            // a prior `.memfd`, which Zig left open — arguably a leak fix).
             *self = Stdio::Memfd(fd);
             true
         }
@@ -648,10 +643,6 @@ impl Drop for Stdio {
 /// whether `uv_close` is needed.
 #[cfg(windows)]
 fn create_zeroed_pipe() -> *mut uv::Pipe {
-    // `bun.new` → heap::alloc(Box::new(..)). WindowsSpawnOptions.Stdio.{buffer,ipc}
-    // store the pipe as a raw FFI-owned `*mut uv::Pipe` so `spawn_process_windows`
-    // can transfer sole ownership into `WindowsStdioResult::Buffer` via
-    // `heap::take` without aliasing a live `Box` (which would double-free).
     bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()))
 }
 

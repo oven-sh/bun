@@ -18,10 +18,6 @@ pub use bun_s3_signing::acl::ACL;
 pub use bun_s3_signing::storage_class::StorageClass;
 
 pub use bun_s3_signing::error as Error;
-// PORT NOTE: `throwSignError` / `getJSSignError` live in `error_jsc.zig` (jsc-side
-// of the s3_signing error tables). The pure error module is `bun_s3_signing::error`;
-// the jsc helpers are mounted here as a child module so the umbrella re-export hub
-// matches the Zig `s3/client.zig` shape.
 #[path = "error_jsc.rs"]
 pub mod error_jsc;
 pub use error_jsc::S3ErrorJsc;
@@ -179,11 +175,6 @@ pub(crate) fn delete(
 
 pub(crate) fn list_objects(
     this: &S3Credentials,
-    // PORT NOTE: Zig took `S3ListObjectsOptions` by-value (implicit struct
-    // copy at the call site). The Rust struct owns `Utf8Slice`s and is not
-    // `Clone`, but this fn only reads fields synchronously to build the
-    // search-params string — borrow instead so the caller (Store::S3::
-    // list_objects) can retain ownership in its async Wrapper for `Drop`.
     list_options: &S3ListObjectsOptions,
     callback: fn(S3ListObjectsResult, *mut c_void) -> JsTerminatedResult<()>,
     callback_context: *mut c_void,
@@ -416,10 +407,6 @@ pub fn upload(
     )
 }
 
-/// returns a writable stream that writes to the s3 path
-///
-/// Takes ownership of one `credentials` ref (adopted directly into the
-/// `MultiPartUpload`; not bumped). Callers pass `creds.dupe()`.
 pub(crate) fn writable_stream(
     credentials: bun_ptr::IntrusiveRc<S3Credentials>,
     path: &[u8],
@@ -490,10 +477,6 @@ pub(crate) fn writable_stream(
     }
 
     let proxy_url = proxy.unwrap_or(b"");
-    // `credentials` ref adopted by value — moved into the MultiPartUpload below.
-    // JSC_BORROW: `global_this` outlives the task (it owns the VM/heap that owns the JS
-    // objects which keep the task alive); stored via `GlobalRef` in the heap-allocated
-    // MultiPartUpload, matching the Zig pointer field.
     let global_static = GlobalRef::from(global_this);
     let part_size = options.part_size;
     let task_ptr: *mut MultiPartUpload = bun_core::heap::into_raw(Box::new(MultiPartUpload {
@@ -737,11 +720,6 @@ impl Drop for S3UploadStreamWrapper {
     }
 }
 
-/// consumes the readable stream and upload to s3
-///
-/// Takes ownership of one `credentials` ref (adopted directly into the
-/// `MultiPartUpload`; not bumped). Callers pass `creds.dupe()`. On every
-/// early-return path the ref is explicitly released.
 pub fn upload_stream(
     credentials: bun_ptr::IntrusiveRc<S3Credentials>,
     path: &[u8],
@@ -1039,10 +1017,6 @@ pub(crate) fn download_stream(
             response_buffer: MutableString::default(),
             mutex: Default::default(),
             reported_response_buffer: MutableString::default(),
-            // Zig: `state: State.AtomicType = .init(@bitCast(State{}))` — `State{}` defaults
-            // `has_more = true` (bit 48). Passing 0 here would start the task with
-            // `has_more == false`, tripping the `assert(state.has_more)` in
-            // `process_http_callback` on the very first HTTP-thread callback.
             state: core::sync::atomic::AtomicU64::new(
                 crate::webcore::s3::download_stream::State::default().0,
             ),
@@ -1202,11 +1176,6 @@ pub fn readable_stream(
         fn on_stream_cancelled(ctx: Option<*mut c_void>) {
             // SAFETY: ctx points to a S3DownloadStreamWrapper allocated in readable_stream
             let self_: &mut Self = unsafe { &mut *ctx.unwrap().cast::<Self>() };
-            // Release the Strong ref so the ReadableStream can be GC'd.
-            // The download may still be in progress, but the callback will
-            // see readable_stream_ref.get() return null and skip data delivery.
-            // When the download finishes (has_more == false), deinit() will
-            // clean up the remaining resources.
             self_.readable_stream_ref.deinit();
             // Abort the in-flight HTTP request so the HTTP thread delivers a final
             // callback with `has_more == false`, which frees the task and this wrapper.

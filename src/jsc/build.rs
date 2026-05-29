@@ -4,15 +4,6 @@
     clippy::disallowed_types,
     clippy::disallowed_macros
 )]
-//! Set BUN_CODEGEN_DIR for `include!(concat!(env!("BUN_CODEGEN_DIR"), "/cpp.rs"))`.
-//!
-//! The codegen output lives at `<repo>/build/<profile>/codegen/` and is produced by
-//! `src/codegen/cppbind.ts` (run as part of `bun bd`). This build script just
-//! resolves and exports the path; it does NOT run the generator (that would
-//! create a Bun→cargo→Bun bootstrap loop).
-//!
-//! Mirrors `src/runtime/build.rs` so `cargo check -p bun_jsc` (and `--workspace`)
-//! works without a manually-exported `BUN_CODEGEN_DIR`.
 
 use std::env;
 use std::path::{Path, PathBuf};

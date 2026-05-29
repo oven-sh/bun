@@ -13,11 +13,6 @@ use crate::shell::{ExitCode, ShellErr};
 pub struct Cp {
     pub opts: Opts,
     pub state: State,
-    /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
-    /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
-    /// directly (see mkdir.rs `Exec::output_queue`). Lives on `Cp` (not
-    /// `ExecState`) because `print_shell_cp_task` is also driven from
-    /// [`State::Ebusy`] on Windows; both states must be able to stash/pop.
     pub output_queue: std::collections::VecDeque<*mut OutputTask<Cp>>,
 }
 
@@ -47,10 +42,6 @@ pub struct ExecState {
     pub ebusy: EbusyState,
 }
 
-/// On Windows it is possible to get an EBUSY error very simply by running
-/// `cp myfile.txt myfile.txt mydir/` — two tasks race for the same dest. Bun
-/// ignores the EBUSY if at least one task succeeded for that dest. Spec:
-/// cp.zig `EbusyState`.
 #[derive(Default)]
 pub struct EbusyState {
     pub tasks: Vec<*mut ShellCpTask>,
@@ -212,10 +203,6 @@ impl Cp {
         Self::next(interp, cmd)
     }
 
-    /// Spec: cp.zig `ignoreEbusyErrorIfPossible`. Windows-only post-processing
-    /// of tasks that failed with EBUSY: if some other task already succeeded
-    /// for the same absolute src/tgt, the EBUSY is benign and the task is
-    /// dropped; otherwise its error is surfaced via `print_shell_cp_task`.
     #[cfg(windows)]
     fn ignore_ebusy_error_if_possible(interp: &Interpreter, cmd: NodeId) -> Yield {
         loop {
@@ -274,15 +261,6 @@ impl Cp {
             let tref = unsafe { &mut *task };
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 if let Some(err) = &tref.err {
-                    // Spec: cp.zig — defer the task to the ebusy phase.
-                    // PORT NOTE: cp.zig L215-221 reads
-                    //   `err.* == .sys and err.sys.getErrno() == .BUSY and (tgt_match) or (src_match)`
-                    // Zig `and` binds tighter than `or`, so this parses as
-                    //   `(is_sys && errno==BUSY && tgt_match) || src_match`
-                    // i.e. ANY sys error whose `path` equals `src_absolute` is
-                    // deferred regardless of errno. We mirror that precedence
-                    // exactly here for spec parity (even though it is almost
-                    // certainly a latent precedence bug upstream).
                     let is_ebusy = matches!(err, ShellErr::Sys(sys)
                         if (sys.get_errno() == bun_sys::E::EBUSY
                                 && tref.tgt_absolute.as_deref()
@@ -403,11 +381,6 @@ pub struct ShellCpTask {
     pub src_absolute: Option<Vec<u8>>,
     pub tgt_absolute: Option<Vec<u8>>,
     pub cwd_path: Vec<u8>,
-    /// Spec: cp.zig `verbose_output_lock` + `verbose_output`. `cp_on_copy` is
-    /// invoked from work-pool threads (concurrently per copied file) while the
-    /// directory walk is still fanning out, so the buffer must live inside the
-    /// mutex — Zig's split lock-then-mutate pattern would alias `&mut self` in
-    /// Rust.
     pub verbose_output: bun_threading::Guarded<Vec<u8>>,
     pub err: Option<ShellErr>,
     pub task: ShellTask,
@@ -456,11 +429,6 @@ impl ShellCpTask {
         out.push(b'\n');
     }
 
-    /// Spec: cp.zig `cpOnCopy`. Called from the node:fs `NewAsyncCpTask<true>`
-    /// work-pool thread for every successfully-copied file. Records the pair
-    /// for `-v`; on Windows the paths arrive as WTF-16 and are transcoded.
-    /// Takes `&self` because subtasks fan out concurrently — the only mutated
-    /// state is the locked `verbose_output` buffer.
     pub(crate) fn cp_on_copy(&self, src: &[bun_paths::OSPathChar], dest: &[bun_paths::OSPathChar]) {
         if !self.opts.verbose {
             return;
@@ -580,10 +548,6 @@ impl ShellCpTask {
         }
     }
 
-    /// Spec: cp.zig `runFromThreadPoolImpl`. Resolves src/tgt to absolute
-    /// paths, classifies them per the three POSIX `cp` synopses
-    /// (<https://man7.org/linux/man-pages/man1/cp.1p.html>), then hands off to
-    /// the node:fs async cp implementation.
     fn run_from_thread_pool_impl(&mut self) -> Option<ShellErr> {
         use resolve_path::{Platform, platform};
 
@@ -608,14 +572,6 @@ impl ShellCpTask {
             )
         };
 
-        // Cases:
-        //   SRC       DEST
-        //   ----------------
-        //   file   -> file
-        //   file   -> folder
-        //   folder -> folder
-        // We need to check dest to see what it is; if it doesn't exist we
-        // need to create it.
         let src_is_dir = match Self::is_dir(src) {
             Ok(x) => x,
             Err(e) => return Some(ShellErr::new_sys(&e)),
@@ -770,10 +726,6 @@ impl bun_event_loop::Taskable for ShellCpTask {
 impl crate::shell::interpreter::ShellTaskCtx for ShellCpTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
     fn run_from_thread_pool(_this: &mut Self) {
-        // Not reached: `ShellCpTask::schedule` installs `work_pool_callback`
-        // directly (cp.zig does NOT use `InnerShellTask` — the generic
-        // trampoline auto-posts back, which would double-enqueue when the
-        // `ShellAsyncCpTask` later calls `cp_on_finish`).
         debug_assert!(
             false,
             "ShellCpTask scheduled via ShellTask::schedule; use ShellCpTask::schedule"

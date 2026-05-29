@@ -8,10 +8,6 @@ use bun_core::{OwnedString, String as BunString, strings};
 use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
 
-// `bun.schema.api.Loader` — bindgen-emitted enum from `src/options_types/schema.zig`.
-// Mirrored as a transparent `u8` because the schema enum is *open* in Zig
-// (`enum(u8) { …, _ }`) and the FFI caller may hand us discriminants outside
-// the closed Rust `api::Loader` set; transmuting an unknown tag would be UB.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) struct ApiLoader(pub u8);
@@ -30,11 +26,6 @@ impl ApiLoader {
     }
 }
 
-// Zig: `export const NodeModuleModule__findPath = jsc.host_fn.wrap3(findPath);`
-// `wrap3` emits an `extern "C" fn(*JSGlobalObject, bun.String, ?*JSArray) -> JSValue` shim
-// that forwards to `findPath` via `toJSHostCall`. The C++ caller (NodeModuleModule.cpp
-// `jsFunctionFindPath`) does the CallFrame → (BunString, JSArray*) extraction itself and
-// invokes this with the coerced args directly — there is no CallFrame here.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn NodeModuleModule__findPath(
     global: &JSGlobalObject,
@@ -143,10 +134,6 @@ impl Default for CustomLoader {
     }
 }
 
-// TODO(port): move to jsc_sys
-//
-// `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; remaining
-// params are by-value `JSValue`/scalars → `safe fn`.
 unsafe extern "C" {
     pub safe fn JSCommonJSExtensions__appendFunction(
         global: &JSGlobalObject,

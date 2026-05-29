@@ -11,12 +11,6 @@ pub(crate) struct CPUFeatures {
     pub flags: Flags,
 }
 
-// Zig: `packed struct(u8)` per-arch. All semantic fields are `bool`; the trailing
-// `padding: uN = 0` is unused bits. bitflags! models this directly (unknown bits
-// = padding). Bit order matches Zig packed-struct LSB-first layout.
-// PORT NOTE: guide says "bitflags! if every field is bool" — padding is uN, but
-// it is pure padding, so bitflags is the correct shape here.
-
 #[cfg(target_arch = "x86_64")]
 bitflags::bitflags! {
     #[repr(transparent)]

@@ -189,15 +189,6 @@ impl<'a> ProcessHandle<'a> {
 
         #[cfg(windows)]
         {
-            // Zig: `this.stdout_reader.reader.source = .{ .pipe = this.options.stdout.buffer }`.
-            // In the Rust port `spawn_process_windows` has *already* reclaimed
-            // sole ownership of that heap pipe into
-            // `WindowsStdioResult::Buffer(Box<uv::Pipe>)` (see
-            // src/spawn/process.rs WindowsStdio::Buffer doc). Reconstructing a
-            // second Box from `self.options.stdout` here would alias the same
-            // allocation and double-free when `spawned` drops. Instead, move
-            // the Box out of the spawn *result* — `WindowsStdioResult::take()`
-            // leaves `Unavailable` behind so `spawned`'s drop is a no-op.
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
                 self.stdout_reader.reader.source = Some(bun_io::Source::Pipe(pipe));
             }
@@ -391,11 +382,6 @@ impl<'a> State<'a> {
     fn process_exit(&mut self, handle: &mut ProcessHandle<'a>) -> Result<(), Error> {
         self.remaining_scripts -= 1;
 
-        // Flush remaining buffers (stdout first, then stderr)
-        // PORT NOTE: reshaped for borrowck — `flush_pipe_buffer` would need both
-        // `&ProcessHandle` and `&mut handle.stdout_reader` which overlap. Route
-        // through a raw ptr (the State/handle backref pattern is already
-        // raw-ptr-based throughout this file).
         let handle_ptr = std::ptr::from_mut::<ProcessHandle>(handle);
         // SAFETY: handle_ptr is live for this call; flush_pipe_buffer reads only
         // `config`/`color_idx` from `handle` and writes only `pipe.line_buffer`.

@@ -6,10 +6,6 @@ pub(crate) type AddressableSize = u64;
 
 /// `TaggedPtr::Tag` — logically u15, carried in u16. (Inherent assoc types are nightly; hoisted here.)
 pub type TagType = u16;
-/// Zig: `packed struct(u64) { _ptr: u49, data: u15 }`
-/// Packed-struct field order in Zig is LSB-first, so:
-///   bits  0..49 → `_ptr`
-///   bits 49..64 → `data`
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct TaggedPtr(u64);
@@ -100,27 +96,6 @@ impl From<Option<*mut c_void>> for TaggedPtr {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TaggedPointerUnion
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// Zig builds this with heavy comptime reflection: `@typeName`, `@Type` to mint
-// an enum, `@hasField`/`@field` for membership checks, and `inline for` over a
-// type tuple. None of that exists in Rust. We model it with two traits:
-//
-//   - `TypeList`      : implemented for the tuple `(T1, T2, ...)`; carries the
-//                       variant count and the tag→name table.
-//   - `UnionMember<L>`: implemented for each `Ti` against its list `L`; carries
-//                       that type's tag value (1024 - index, matching Zig).
-//
-// `assert_type` / `@hasField` become a `T: UnionMember<Ts>` bound — the compile
-// error is the trait-bound failure.
-//
-// Tag values are assigned exactly as Zig does: `1024 - i` for index `i`. Zig
-// also reifies a non-exhaustive `enum(u15)` for the tag; we keep the raw u15
-// and expose `tag()` as the integer (callers that need an enum can define one
-// per instantiation).
-
 /// Implemented for the tuple of types passed to `TaggedPtrUnion<(...)>`.
 pub trait TypeList {
     const LEN: usize;
@@ -139,12 +114,6 @@ pub trait UnionMember<Ts: TypeList> {
     const NAME: &'static str;
 }
 
-/// Generates `TypeList` for `($($T,)*)` and `UnionMember<($($T,)*)>` for each
-/// `$T`, assigning tags `1024 - i` to match Zig's `TagTypeEnumWithTypeMap`.
-// TODO(port): proc-macro — Zig uses `@typeName` for both the tag enum field
-// name and the `name` string. `stringify!($T)` is the closest analogue but
-// won't match Zig's fully-qualified `@typeName` output; confirm no caller
-// depends on the exact string.
 #[macro_export]
 macro_rules! impl_tagged_ptr_union {
     ($($T:ty),+ $(,)?) => {
@@ -317,13 +286,6 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
     pub fn is_null(self) -> bool {
         self.repr.ptr_bits() == 0
     }
-
-    // TODO(port): `call(comptime fn_name, args, comptime Ret)` dispatches by
-    // tag and invokes `@field(entry.ty, fn_name)` reflectively. Rust cannot
-    // look up a method by string at compile time. Port pattern: define a trait
-    // with the target method, bound every `Ti: TheTrait`, and have callers
-    // `match self.tag()` (or use a per-instantiation `dispatch!` macro). Each
-    // callsite of `.call(...)` needs to be rewritten by hand.
 }
 
 // ported from: src/ptr/tagged_pointer.zig

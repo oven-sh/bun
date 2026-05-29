@@ -56,83 +56,24 @@ static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
 #[global_allocator]
 static ALLOC: std::alloc::System = std::alloc::System;
 
-/// ASAN runtime options override. Lives in the binary crate so it is a direct
-/// link input — the ASAN runtime weak-defines this symbol, and an rlib/archive
-/// member that only provides it would never be extracted, so the override in
-/// `bun_safety::asan` silently didn't apply (manifesting as a
-/// `Thread::currentSingleton().stack().contains(this)` assert in
-/// `JSGlobalObject::GlobalPropertyInfo` because `detect_stack_use_after_return`
-/// puts C++ stack locals on a heap-backed fake stack JSC's conservative GC
-/// can't see). Unconditional: harmless dead symbol when ASAN isn't linked.
-///
-/// `#[cold]`: read once by the ASAN runtime during its own init (never linked
-/// in release / on the `bun run` path) — keep it off the startup `.text` pages.
 #[cold]
 #[inline(never)]
 #[unsafe(no_mangle)]
 pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
-    // detect_stack_use_after_return=0: keep stack locals on the real stack so
-    //   JSC's conservative GC scan and `StackBounds::contains` see them.
-    // detect_leaks=0: off by default (Linux defaults it on); CI opts in via
-    //   ASAN_OPTIONS with a suppressions file.
-    //
-    // PORT NOTE: matches `src/safety/asan.zig` exactly. Do NOT add `symbolize=0`
-    // here — LSAN's function-name suppression matching (`test/leaksan.supp`)
-    // requires symbolized stacks; with symbolization disabled every entry like
-    // `leak:uws_create_app` silently stops matching and CI reports the
-    // suppressed allocations as leaks. If local debug crashes feel slow to
-    // print, set `ASAN_OPTIONS=symbolize=0` in your shell instead.
     c"detect_stack_use_after_return=0:detect_leaks=0".as_ptr()
 }
 
-/// LSAN built-in suppressions, merged with whatever `LSAN_OPTIONS=suppressions=`
-/// the CI runner passes (`test/leaksan.supp`). That file's entries were written
-/// against Zig's symbol mangling (`runtime.node.zlib.NativeZlib.Context.init`,
-/// `jsc.web_worker.create`, …); LSAN matches by *substring on a symbolized
-/// frame*, so after the Rust port renamed every frame to `bun_<crate>::<mod>`
-/// none of the Zig-named rules fire and CI reports the same intentionally-
-/// leaked-at-exit allocations the suppressions were authored for. Baking the
-/// Rust spellings into the binary keeps `leaksan.supp` as the C/C++/JSC list
-/// and lets the Rust list ride with the code that produces the symbols.
-///
-/// Also covers one Rust-only false positive that has no Zig analogue:
-/// `std::thread::Builder::spawn` allocates an `Arc<thread::Inner>` that the
-/// detached thread holds in TLS for its lifetime; LSAN does not scan other
-/// threads' TLS roots at exit, so every long-lived detached thread (HTTP
-/// client, debugger, FSEvents) reports a 48-byte "leak".
-///
-/// Weak-defined by the ASAN runtime, so this strong definition wins. Harmless
-/// dead symbol when ASAN isn't linked (same linkage story as
-/// `__asan_default_options` above).
-///
-/// `#[cold]`: read once by the LSAN runtime during its own init (never linked
-/// in release / on the `bun run` path) — keep it off the startup `.text` pages.
 #[cold]
 #[inline(never)]
 #[unsafe(no_mangle)]
 pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
-    // One rule per line. Substring match on any frame in the allocation stack.
-    //
-    // Every entry below is a structural / process-lifetime allocation that has
-    // been investigated and is intentionally suppressed — not a leak. New
-    // entries here require a comment naming the owner and why it cannot be
-    // freed before exit. Do NOT add a suppression to silence a CI flake; fix
-    // the lifecycle instead.
     concat!(
         // Rust std false positive — a detached thread's `Arc<thread::Inner>`
         // is held by the OS thread's TLS, which LSan does not scan as a root.
         "leak:std::thread::thread::Thread>::new\n",
-        // macOS-only `dlopen("CoreFoundation")` / `dlopen("CoreServices")`
-        // and the per-process `FSEventStream` / `CFRunLoop` they require.
-        // These are platform singletons by design (CF objects are not safely
-        // disposable while the dylib remains loaded).
         "leak:bun_runtime::node::fs_events::init_core_foundation\n",
         "leak:bun_runtime::node::fs_events::init_core_services\n",
         "leak:bun_runtime::node::fs_events::FSEventsLoop\n",
-        // Process-lifetime inspector thread. The debugger handles SIGINT and
-        // serves the WebSocket protocol up to (and during) `process.exit()`;
-        // joining it from `global_exit` would deadlock when the user is
-        // mid-breakpoint. The thread's stack/Arc are reclaimed by the OS.
         "leak:bun_jsc::debugger::Debugger>::start_js_debugger_thread\n",
         "\0",
     )
@@ -176,10 +117,6 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
         libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
     }
 
-    // main.zig:40-50 — Windows-only startup. Must run BEFORE the first libuv
-    // call (uv allocator) and before anything reads `Bun.env`/`process.env`
-    // (env conversion). The Zig spec orders these between sigaction and
-    // `start_time`/`initArgv`.
     #[cfg(windows)]
     {
         // SAFETY: mimalloc fns match the libuv allocator signatures; called
@@ -227,11 +164,6 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
     StackCheck::configure_thread();
     bun_io::ParentDeathWatchdog::install();
 
-    // 6. Push high-tier allocator vtable addresses into the
-    //    `bun_safety::alloc::has_ptr` registry so debug-only allocator-mismatch
-    //    checks can identify `LinuxMemFdAllocator`/`MimallocArena` instances
-    //    (Zig: inline `isInstance` chain in `safety/alloc.zig:hasPtr`).
-    //    Runs once; reads are lock-free Relaxed.
     bun_runtime::allocators::register_safety_vtables();
 
     // 7. CLI dispatch.

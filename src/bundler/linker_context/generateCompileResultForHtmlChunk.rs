@@ -386,11 +386,6 @@ impl<'a> HTMLLoader<'a> {
     }
 }
 
-/// `chunk` is the HTML chunk being compiled (held read-only via `BackRef`
-/// inside `HTMLLoader`). `chunks` is the raw `*mut [Chunk]` from
-/// `GenerateChunkCtx.chunks` (write provenance, valid for the link step) —
-/// stored as-is and only deref'd at the guarded `&mut *` sites in
-/// `HTMLLoader::{on_tag,get_head_tags}` and the standalone-HTML branch below.
 fn generate_compile_result_for_html_chunk_impl<'a>(
     c: &'a LinkerContext<'a>,
     chunk: &Chunk,
@@ -400,11 +395,6 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
     let sources = parse_graph.input_files.items_source();
     let import_records = c.graph.ast.items_import_records();
     let source_index = chunk.entry_point.source_index();
-
-    // HTML bundles for dev server must be allocated to it, as it must outlive
-    // the bundle task. See `DevServer.RouteBundle.HTML.bundled_html_text`
-    // TODO(port): Zig used `dev.arena()` vs `worker.arena` to control output ownership.
-    // In Rust with global mimalloc this distinction collapses; verify DevServer ownership.
 
     // `c.log` is now `*mut Log` (raw backref); copy directly. The HTMLLoader.log
     // field is currently dead_code, so no write actually occurs through this
@@ -437,12 +427,6 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
     HTMLProcessor::<HTMLLoader, true>::run(&mut html_loader, contents)
         .unwrap_or_else(|_| panic!("unexpected error from HTMLProcessor.run"));
 
-    // There are some cases where invalid HTML will make it so </head> is
-    // never emitted, even if the literal text DOES appear. These cases are
-    // along the lines of having a self-closing tag for a non-self closing
-    // element. In this case, head_end_tag_index will be 0, and a simple
-    // search through the page is done to find the "</head>"
-    // See https://github.com/oven-sh/bun/issues/17554
     let script_injection_offset: u32 = if has_dev_server {
         'brk: {
             if let Some(head) = html_loader.end_tag_indices.head {

@@ -27,11 +27,6 @@ use super::my_sql_statement::{self as my_sql_statement, ExecutionFlags, MySQLSta
 bun_core::define_scoped_log!(debug, MySQLQuery, visible);
 
 pub struct MySQLQuery {
-    // Intrusive refcount (`MySQLStatement::ref_` / `::deref`). Null = none.
-    // Zig uses `bun.ptr.RefCount` and mutates `stmt.status` / `stmt.execution_flags`
-    // in place; the connection's `PreparedStatementsMap` also stores `*mut MySQLStatement`,
-    // so this pointer participates in the same intrusive ownership graph (each holder
-    // owns one ref).
     statement: *mut MySQLStatement,
     query: BunString,
 
@@ -121,10 +116,6 @@ impl MySQLQuery {
 
         while let Some(js_value) = iter.next().map_err(js_error_to_mysql)? {
             if i as usize >= len {
-                // The binding array yielded more values than the prepared statement
-                // expects. This can happen when the user-supplied array is mutated (e.g.
-                // from an index getter) between signature generation and binding. Fail
-                // loudly instead of writing past the end of `params`/`param_types`.
                 return Err(AnyMySQLError::WrongNumberOfParametersProvided);
             }
             let param = &param_types[i as usize];
@@ -152,10 +143,6 @@ impl MySQLQuery {
         Ok(params)
     }
 
-    /// `statement` is a raw `*mut MySQLStatement` (not `&mut`) because the sole caller,
-    /// `run_prepared_query`, must derive it from `self.statement` and then call this
-    /// `&mut self` method — a `&mut MySQLStatement` rooted in `*self` would overlap that
-    /// reborrow. The Zig original (.zig:59) likewise passes an independent `*MySQLStatement`.
     fn bind_and_execute<C: WriterContext>(
         &mut self,
         writer: NewWriter<C>,
@@ -165,10 +152,6 @@ impl MySQLQuery {
         columns_value: JSValue,
     ) -> Result<(), AnyMySQLError> {
         {
-            // `statement` is non-null and kept alive by the intrusive ref held in
-            // `self.statement` for the duration of this call; no other `&mut` to it
-            // exists (caller passes the raw pointer before reborrowing `self`). This
-            // block only reads — `ParentRef` yields `&T`.
             let stmt = bun_ptr::ParentRef::from(
                 core::ptr::NonNull::new(statement).expect("bind_and_execute: statement non-null"),
             );
@@ -181,17 +164,6 @@ impl MySQLQuery {
             }
         }
 
-        // BLOB parameters borrow ArrayBuffer/Blob bytes rather than copying.
-        // Converting later parameters can run user JS (index getters, toJSON,
-        // toString coercion) which could drop the last reference to an earlier
-        // buffer and force GC. Root every borrowed JSValue in a stack-scoped
-        // MarkedArgumentBuffer so the wrapper (and its RefPtr<ArrayBuffer>)
-        // survives until execute.deinit() has unpinned and released the borrow.
-        //
-        // `MarkedArgumentBuffer::new` is the safe closure trampoline — the
-        // `*mut Ctx` / `*mut MarkedArgumentBuffer` backref derefs are
-        // centralised in `bun_jsc`, so no per-site `Ctx` struct + `extern "C"`
-        // thunk is needed here.
         MarkedArgumentBuffer::new(|roots| {
             self.bind_and_execute_impl(
                 writer,
@@ -285,10 +257,6 @@ impl MySQLQuery {
         let query_str = self.query.to_utf8();
         let writer = connection.get_writer();
         if self.statement.is_null() {
-            // Zig: `bun.new(MySQLStatement, .{ .signature = .empty(), .status = .parsing, .ref_count = .initExactRefs(1) })`.
-            // `heap::alloc` yields a heap allocation with intrusive ref_count == 1
-            // (the `Default` impl sets `ref_count = Cell::new(1)`).
-            // FRU (`..Default::default()`) is illegal for `Drop` types; mutate instead.
             let mut stmt = Box::new(MySQLStatement::default());
             stmt.signature = Signature::empty();
             stmt.status = my_sql_statement::Status::Parsing;
@@ -322,10 +290,6 @@ impl MySQLQuery {
                 Ok(s) => s,
                 Err(err) => {
                     if !global_object.has_exception() {
-                        // PORT NOTE: Zig calls `AnyMySQLError.mysqlErrorToJS` here, but the
-                        // Rust `Signature::generate` returns a wider `bun_core::Error`. Use
-                        // `throw_error` (which builds an `Error` instance from the error
-                        // name + message) instead of forcing into the MySQL enum.
                         let _ = global_object.throw_error(err, "failed to generate signature");
                     }
                     return Err(bun_core::err!("JSError"));
@@ -346,12 +310,6 @@ impl MySQLQuery {
 
             if entry.found_existing {
                 let stmt: *mut MySQLStatement = *entry.value_ptr;
-                // `found_existing` ⇒ the map already holds a live, ref-counted
-                // `*mut MySQLStatement` (separate heap allocation, never aliases
-                // `*self`); this thread is the only mutator. Every access in this
-                // branch is a shared read (`status`, `error_response.to_js`,
-                // `ref_()` are `&self`), so a single `ParentRef` deref covers all
-                // three former per-site raw `(*stmt).…` derefs.
                 let stmt_ref = bun_ptr::ParentRef::from(
                     core::ptr::NonNull::new(stmt).expect("found_existing ⇒ non-null map entry"),
                 );
@@ -382,12 +340,6 @@ impl MySQLQuery {
             }
         }
         let stmt: *mut MySQLStatement = self.statement;
-        // `stmt` is non-null (set in both branches above) and kept alive by the
-        // intrusive ref in `self.statement`; separate heap allocation (never
-        // aliases `*self`). `ParentRef` collapses the read-only `(*stmt).status`
-        // / `(*stmt).error_response` derefs below into one safe `Deref`; the
-        // `.Pending` arm's status write goes through `get_statement()` (the
-        // single audited intrusive-pointer accessor).
         let stmt_ref = bun_ptr::ParentRef::from(
             core::ptr::NonNull::new(stmt).expect("self.statement set above"),
         );
@@ -439,10 +391,6 @@ impl MySQLQuery {
                         let _ = global_object.throw_error(err, "failed to prepare query");
                         return Err(bun_core::err!("JSError"));
                     }
-                    // `self.statement` was set in both branches above; route
-                    // through the single-unsafe accessor instead of a raw
-                    // `(*stmt)` deref so the write goes via the same audited
-                    // intrusive-pointer path as every other status mutation.
                     self.get_statement()
                         .expect("self.statement set above")
                         .status = my_sql_statement::Status::Parsing;

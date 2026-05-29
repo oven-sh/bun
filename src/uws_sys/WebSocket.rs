@@ -19,10 +19,6 @@ pub struct NewWebSocket<const SSL_FLAG: i32> {
 }
 
 impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
-    /// Reborrow as the un-parameterized handle type. Both `NewWebSocket<_>` and
-    /// `RawWebSocket` are `#[repr(C)]` opaque ZSTs over `UnsafeCell<[u8; 0]>`,
-    /// so this is a same-address, same-layout reborrow with no `noalias`
-    /// implications.
     #[inline]
     pub fn raw(&mut self) -> &mut RawWebSocket {
         // SAFETY: layout-identical opaque ZSTs (see doc comment); the reborrow
@@ -104,14 +100,6 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
         unsafe { c::uws_ws_end(SSL_FLAG, self.raw(), code, message.as_ptr(), message.len()) }
     }
 
-    /// Run `callback(ctx)` while the socket is corked.
-    ///
-    /// Zig: `cork(ctx: anytype, comptime callback: anytype)` — the callback is
-    /// monomorphized into an `extern "C"` trampoline. Rust cannot const-generic
-    /// over a fn value, so we tunnel `(ctx, callback)` through the user-data
-    /// pointer instead.
-    // TODO(perf): comptime-callback monomorphization — a per-callsite
-    // `extern "C" fn` would avoid the indirect call.
     pub fn cork<C>(&mut self, ctx: &mut C, callback: fn(&mut C)) {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
@@ -215,11 +203,6 @@ impl RawWebSocket {
         c::uws_ws_memory_cost(ssl_flag, self)
     }
 
-    /// They're the same memory address.
-    ///
-    /// Equivalent to:
-    ///
-    ///   (struct us_socket_t *)socket
     pub fn as_socket(&mut self) -> *mut Socket {
         std::ptr::from_mut::<RawWebSocket>(self).cast::<Socket>()
     }
@@ -256,30 +239,12 @@ impl AnyWebSocket {
         unsafe { c::uws_ws_get_user_data(ssl, ws).cast::<T>().as_mut() }
     }
 
-    /// Raw user-data pointer cast to `*mut T` (NULL if unset).
-    ///
-    /// PORT NOTE (noalias re-entrancy): the `WebSocketHandler` dispatch
-    /// trampolines use this instead of `as_::<T>()` so the handler frame holds
-    /// a raw `*mut T`, not a `noalias` `&mut T`. A JS callback fired from inside
-    /// the handler can re-derive `&mut T` via the JS wrapper's `m_ptr` (e.g.
-    /// `ws.close()` → `on_close` → `flags.set_closed(true)`); a live `noalias`
-    /// `&mut T` across that call lets LLVM dead-store the re-entrant write.
-    ///
-    /// Safe: `uws_ws_get_user_data` is a `safe fn` (opaque-handle + scalar
-    /// args) and raw-pointer `cast` is safe; only the eventual *dereference*
-    /// requires the caller's "user data was set to a `*mut T`" guarantee.
     #[inline]
     pub fn as_ptr<T>(self) -> *mut T {
         let (ssl, ws) = self.split();
         c::uws_ws_get_user_data(ssl, ws).cast::<T>()
     }
 
-    /// (ssl_flag, &mut socket) pair for the C shims that take both.
-    ///
-    /// `RawWebSocket` is an opaque `UnsafeCell<[u8; 0]>` — `&mut` carries no
-    /// `noalias`, dereferences zero bytes, and uWS guarantees the pointer is
-    /// non-null for a live `AnyWebSocket`. The unbounded lifetime is harmless
-    /// for the same reason: there are no bytes for it to claim validity over.
     #[inline]
     fn split<'a>(self) -> (i32, &'a mut RawWebSocket) {
         let (ssl, p) = match self {
@@ -400,11 +365,6 @@ impl AnyWebSocket {
         opcode: Opcode,
         compress: bool,
     ) -> bool {
-        // Zig: switch (ssl) { inline else => |tls| uws.NewApp(tls).publishWithOptions(...) }
-        // S012: `NewApp<SSL>` is a ZST opaque — route the `*mut → &mut` deref
-        // through `bun_opaque::opaque_deref_mut` (caller still vouches that
-        // `app` is the matching `uws_app_t*`; the `ssl` flag selects the
-        // const-generic instantiation).
         if ssl {
             uws::NewApp::<true>::publish_with_options(
                 bun_opaque::opaque_deref_mut(app.cast::<uws::NewApp<true>>()),
@@ -502,19 +462,6 @@ impl Default for WebSocketBehavior {
     }
 }
 
-/// User-data type stored on a uWS WebSocket. Replaces Zig's `comptime Type`
-/// parameter to `WebSocketBehavior.Wrap`.
-///
-/// `HAS_ON_*` consts replace `@hasDecl(Type, "...")` — set to `false` to leave
-/// the corresponding C callback `null`.
-/// PORT NOTE (noalias re-entrancy): the `on_*` methods take `this: *mut Self`,
-/// NOT `&mut self`. The handler body re-enters JS (`ws.send()`, `ws.close()`,
-/// promise callbacks…); JS can call back into this same socket via the wrapper
-/// object's `m_ptr`, re-deriving a `&mut Self` and mutating its fields. A live
-/// `noalias` `&mut Self` argument carried through the dispatch frame would
-/// alias that re-entrant borrow (Stacked-Borrows UB) and let LLVM dead-store
-/// the re-entrant write. Implementors materialise short-lived `&mut *this`
-/// reborrows only — none spanning a JS callback.
 pub trait WebSocketHandler: Sized + 'static {
     const HAS_ON_MESSAGE: bool = true;
     const HAS_ON_DRAIN: bool = true;
@@ -584,10 +531,6 @@ where
         }
     }
 
-    // The `on_*` trampolines below are stored as fn-pointer values in
-    // `WebSocketBehavior`; a safe `extern "C" fn` item coerces to the
-    // `Option<unsafe extern "C" fn(..)>` field type. Each body already scopes
-    // its own proof block around the `T::on_*` dispatch / `thunk::c_slice`.
     pub(crate) extern "C" fn on_open(raw_ws: *mut RawWebSocket) {
         let ws = Self::make_ws(raw_ws);
         // `*mut T` (not `&mut T`) — no `noalias` borrow held across the
@@ -734,11 +677,6 @@ pub mod c {
 
     pub(crate) type uws_compress_options_t = i32;
 
-    // `RawWebSocket` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>` —
-    // `&RawWebSocket`/`&mut RawWebSocket` are ABI-identical to a non-null
-    // pointer with no `readonly`/`noalias`. Shims whose only pointer argument
-    // is the socket itself (plus value types) are `safe fn`; (ptr,len) shims
-    // and out-param shims stay unsafe.
     unsafe extern "C" {
         pub(crate) safe fn uws_ws_memory_cost(ssl: i32, ws: &mut RawWebSocket) -> usize;
         pub(crate) fn uws_ws(
@@ -804,10 +742,6 @@ pub mod c {
             message: *const u8,
             length: usize,
         );
-        // safe: cork is synchronous — `user_data` is passed straight back to
-        // `handler` without being dereferenced by the C++ shim itself, so the
-        // call has no preconditions beyond the live opaque handle. Mirrors
-        // `uws_res_cork`.
         pub(crate) safe fn uws_ws_cork(
             ssl: i32,
             ws: &mut RawWebSocket,

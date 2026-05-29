@@ -29,11 +29,6 @@ impl FdJsc for Fd {
             return None;
         }
         let fd: i32 = i32::try_from(fd64).expect("int cast");
-        // On Windows, JS-visible fds are libuv/CRT fds (see `to_js`). libuv fd
-        // 0/1/2 already map to stdio, so there is no need to substitute the
-        // cached `.system` HANDLE here — doing so forces every `sys_uv` call to
-        // round-trip through `Fd::uv()`'s stdio-handle comparison, which panics
-        // if the process std handle was swapped after startup.
         Some(Fd::from_uv(fd))
     }
 
@@ -98,11 +93,6 @@ impl FdJsc for Fd {
         JSValue::js_number_from_int32(uv_owned_fd.uv())
     }
 
-    /// Convert an FD to a JavaScript number without transferring ownership to libuv.
-    /// Unlike to_js(), this does not call make_lib_uv_owned() on Windows, so the caller
-    /// retains ownership and must close the FD themselves.
-    /// Returns -1 for invalid file descriptors.
-    /// On Windows: returns Uint64 for system handles, Int32 for uv file descriptors.
     fn to_js_without_making_lib_uv_owned(self) -> JSValue {
         if !self.is_valid() {
             return JSValue::js_number_from_int32(-1);

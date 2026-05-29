@@ -48,10 +48,6 @@ impl Taskable for S3HttpDownloadStreamingTask {
 
 impl Default for S3HttpDownloadStreamingTask {
     fn default() -> Self {
-        // PORT NOTE: only the Zig-defaulted fields (`has_schedule_callback` .. `concurrent_task`)
-        // are observed via this path; the rest are placeholders that the caller (client.rs
-        // `..Default::default()`) overwrites before the task pointer escapes. `http` is zeroed
-        // to mirror Zig's `= undefined` + later overwrite (see S3HttpSimpleTask PORT NOTE).
         Self {
             // never read — fully overwritten by `AsyncHTTP::init` before first use.
             http: core::mem::MaybeUninit::uninit(),
@@ -146,10 +142,6 @@ impl S3HttpDownloadStreamingTask {
                 }
                 break 'brk MutableString::default();
             } else {
-                // PORT NOTE: Zig copies the MutableString struct by value here (shallow copy of
-                // ptr+len+cap), then `.reset()` zeros the source — i.e. an ownership transfer.
-                // `core::mem::take` gives the same observable semantics in Rust without the
-                // transient aliasing the Zig code relied on.
                 let buffer = core::mem::take(&mut self.reported_response_buffer);
                 break 'brk buffer;
             }
@@ -238,10 +230,6 @@ impl S3HttpDownloadStreamingTask {
                 0
             });
             if state.status_code() == 0 {
-                // PORT NOTE: Zig explicitly `deinit()`s `certificate_info` / `metadata` here.
-                // In the Rust port both types free their owned buffers via `Drop`, and
-                // `HTTPClientResult` is dropped by the caller after this returns, so the
-                // explicit-free calls become no-ops.
                 if let Some(m) = &result.metadata {
                     state.set_status_code(m.response.status_code);
                 }
@@ -293,13 +281,6 @@ impl S3HttpDownloadStreamingTask {
 
         if should_enqueue {
             if let Some(body) = result.body {
-                // .zig:207 does `this.response_buffer = body.*;`, but `body` is
-                // `&this.response_buffer` (see http/client.zig:600), so that line is a no-op
-                // self-assign in Zig. In Rust, a `ptr::read` + assign here would run Drop on the
-                // old `self.response_buffer`, freeing the Vec allocation that `body` (and the
-                // freshly-stored value) still point at — a use-after-free / double-free. The net
-                // effect of .zig:207-211 is: append `body`'s bytes to `reported_response_buffer`,
-                // then reset the buffer. Do exactly that, operating on `body` directly.
                 if !body.list.as_slice().is_empty() {
                     let _ = self.reported_response_buffer.write(body.list.as_slice());
                 }
@@ -351,10 +332,6 @@ impl S3HttpDownloadStreamingTask {
             let task = core::ptr::NonNull::from(
                 self_.concurrent_task.from(this, AutoDeinit::ManualDeinit),
             );
-            // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
-            // is initialized for the request's lifetime and enqueue is thread-safe (`&self`).
-            // `task` is the inline `concurrent_task` field of this heap request;
-            // the queue takes ownership of its `next` link.
             self_
                 .vm
                 .expect("vm set at task creation")
@@ -385,12 +362,6 @@ impl Drop for S3HttpDownloadStreamingTask {
     }
 }
 
-/// Zig: `packed struct(u64)` — not all-bool, so manual bitfield over a transparent u64.
-/// Layout (LSB-first, matching Zig packed-struct bit order):
-///   bits  0..32 : status_code (u32)
-///   bits 32..48 : request_error (u16)
-///   bit  48     : has_more (bool)
-///   bits 49..64 : _reserved (u15)
 #[repr(transparent)]
 #[derive(Copy, Clone)]
 pub struct State(pub u64);

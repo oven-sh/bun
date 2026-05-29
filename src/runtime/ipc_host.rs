@@ -213,13 +213,6 @@ pub fn emit_handle_ipc_message(
     Ok(JSValue::UNDEFINED)
 }
 
-// Zig: comptime { const Bun__Process__send = jsc.toJSHostFn(Bun__Process__send_); @export(...) }
-// The #[bun_jsc::host_fn] attribute emits the callconv(jsc.conv) shim and export.
-//
-// LAYERING: lives here (not in `bun_jsc::virtual_machine_exports`) because the
-// body — via `do_send` — names `Listener` (`bun_runtime`). The export is a
-// link-time `#[no_mangle]` symbol, so the defining crate does not matter to
-// the C++ caller.
 #[bun_jsc::host_fn(export = "Bun__Process__send")]
 pub(crate) fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();

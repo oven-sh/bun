@@ -1,10 +1,5 @@
 use phf::phf_map;
 
-// PORT NOTE: Zig `enum(u8) { ..., _ }` is non-exhaustive — it can hold any u8
-// value, not just the named tags. A plain `#[repr(u8)] enum` cannot express
-// that (Rust enums are exhaustive; transmuting an unnamed discriminant is UB).
-// Modeled as a transparent u8 newtype with associated consts so the `else`
-// arm in `label()` remains reachable, matching Zig control flow.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct EventType(pub u8);

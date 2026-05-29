@@ -52,12 +52,6 @@ impl WaitGroup {
             return;
         }
 
-        // This is the last task, so we need to signal the condition. If we were to call `cond.signal`
-        // right now, a concurrent call to `wait` which has read a non-zero count (from before we
-        // decremented it above) but which has not yet called `cond.wait` will miss the signal and
-        // end up blocking forever. A thread in this state (in between reading the count and calling
-        // `cond.wait`) is necessarily holding the mutex, so by locking and unlocking the mutex here,
-        // we ensure that it reaches the call to `cond.wait` before we call `cond.signal`.
         self.mutex.lock();
         self.mutex.unlock();
         self.cond.signal();

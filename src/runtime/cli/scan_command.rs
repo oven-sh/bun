@@ -58,10 +58,6 @@ impl ScanCommand {
         ));
         Output::flush();
 
-        // PORT NOTE: reshaped for borrowck — `manager.lockfile.load_from_cwd(&mut self,
-        // Some(manager), log)` would alias `&mut *manager.lockfile` with `&mut *manager`.
-        // Project disjoint raw pointers from the singleton first; `load_from_cwd` only
-        // reads `manager.options`/migration helpers and never re-borrows `manager.lockfile`.
         {
             let pm_ptr: *mut PackageManager = manager;
             // SAFETY: `manager.log` is set non-null by `PackageManager::init`.

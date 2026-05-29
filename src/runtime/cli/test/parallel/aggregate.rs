@@ -37,10 +37,6 @@ fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {
 
 pub(crate) fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &Summary) {
     let mut body: Vec<u8> = Vec::new();
-    // Crashed workers never reach workerFlushAggregates, so any files they ran
-    // (including earlier passing ones) have no fragment. Compute the outer
-    // <testsuites> totals from what we actually emit so they always equal the
-    // sum of inner <testsuite> elements; CI tools schema-validate this.
     #[derive(Default)]
     struct Totals {
         tests: u32,
@@ -147,11 +143,6 @@ impl FileCoverage {
     }
 }
 
-/// Merge per-worker LCOV fragments into a single report. Line-level (DA) merge
-/// is precise. FNF/FNH take the per-worker max since Bun's LCOV writer doesn't
-/// emit per-function FN/FNDA records yet, so disjoint per-worker function hits
-/// can't be unioned; this under-reports % Funcs when workers cover different
-/// functions of the same file. The non-parallel path has the same FN/FNDA gap.
 pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     paths: &[&[u8]],
     opts: &mut CodeCoverageOptions,

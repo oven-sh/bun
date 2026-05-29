@@ -18,12 +18,6 @@ use bun_core::strings;
 // https://drafts.csswg.org/css-syntax-3/#whitespace
 const SPACE_CHARACTERS: &[u8] = &[0x20, 0x09];
 
-/// A CSS [syntax string](https://drafts.css-houdini.org/css-properties-values-api/#syntax-strings)
-/// used to define the grammar for a registered custom property.
-// PORT NOTE: the Zig source comments note "Zig doesn't have lifetimes, so 'i is omitted" —
-// upstream lightningcss Rust threaded `'i`, but the port uses `&'static [u8]` /
-// `*const [u8]` placeholders for arena-borrowed slices (matching `Token` /
-// `ident.rs`). TODO(refactor): thread `'bump` and restore the lifetime.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyntaxString {
     /// A list of syntax components.
@@ -216,11 +210,6 @@ impl SyntaxString {
     }
 }
 
-/// A [syntax component](https://drafts.css-houdini.org/css-properties-values-api/#syntax-component)
-/// within a [SyntaxString](SyntaxString).
-///
-/// A syntax component consists of a component kind an a multiplier, which indicates how the component
-/// may repeat during parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyntaxComponent {
     pub kind: SyntaxComponentKind,
@@ -292,12 +281,6 @@ pub enum SyntaxComponentKind {
     TransformList,
     /// A `<custom-ident>` component.
     CustomIdent,
-    /// A literal component.
-    // PORT NOTE: PORTING.md §Forbidden bans laundering a parser-borrowed slice to
-    // `&'static`. Zig's arena keeps the source alive for the AST's lifetime; Rust
-    // would need a `'bump` lifetime threaded through `SyntaxString`. The port owns
-    // the bytes instead — `Box<[u8]>` per §Forbidden ("the field should be
-    // `Box<[T]>` … not `&'static [T]`"). May swap for `&'bump [u8]` later.
     Literal(Box<[u8]>),
 }
 
@@ -382,12 +365,6 @@ fn is_name_code_point(c: u8) -> bool {
     is_ident_start(c) || (c >= b'0' && c <= b'9') || c == b'-'
 }
 
-// ─── ParsedComponent ──────────────────────────────────────────────────────
-// `ParsedComponent` is the materialized form of a `SyntaxComponentKind` and
-// carries `Image` / `CssColor` / `Transform{,List}` / `TokenList` payloads.
-// PORT NOTE: no `#[derive]` — payload types lack a common Debug/Clone/PartialEq
-// surface (Image: none; TokenList: Default-only; Ident/CustomIdent: no Eq;
-// Transform: no Debug). Zig has only `deepClone` + `toCss`, mirrored below.
 pub enum ParsedComponent {
     /// A `<length>` value.
     Length(Length),
@@ -413,10 +390,6 @@ pub enum ParsedComponent {
     Resolution(Resolution),
     /// A `<transform-function>` value.
     TransformFunction(Transform),
-    /// A `<transform-list>` value.
-    // PORT NOTE: `TransformList<'bump>` borrows the parser arena. The port uses
-    // `'static` placeholders (matching `Token`/`Ident`). TODO(refactor): thread
-    // `'bump` through `ParsedComponent<'a>`.
     TransformList(TransformList),
     /// A `<custom-ident>` value.
     CustomIdent(CustomIdent),
@@ -480,11 +453,6 @@ impl ParsedComponent {
     }
 
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: hand-expanded `css.implementDeepClone` (variant-wise reflection).
-        // Payload signatures aren't yet uniform across the crate (some `deep_clone()`
-        // take no arena, some take `&Arena`, some are `Copy`), so the `#[derive(DeepClone)]`
-        // macro can't cover this enum until the signatures are unified. Match-arm dispatch
-        // mirrors the Zig comptime switch exactly.
         match self {
             ParsedComponent::Length(v) => ParsedComponent::Length(v.deep_clone()),
             ParsedComponent::Number(v) => ParsedComponent::Number(*v),

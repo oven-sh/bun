@@ -15,16 +15,6 @@ use crate::{
 };
 use bun_core::{Fd, WStr, ZStr, strings};
 
-// ──────────────────────────────────────────────────────────────────────────
-// Options
-// ──────────────────────────────────────────────────────────────────────────
-//
-// Zig models `Options` as a struct of comptime enum fields passed as a single
-// `comptime opts: Options` parameter. Rust cannot take a struct as a const
-// generic on stable, so the fields are spread as individual const-generic
-// parameters on `Path` below. The `Options` namespace is kept as a module for
-// the enums so diff readers can map `Options.Kind` ↔ `options::Kind`.
-
 pub mod options {
     use super::*;
 
@@ -133,31 +123,8 @@ pub mod options {
         }
     }
 
-    // Zig: `pub fn ResultFn(comptime opts) fn(type) type` — returns `T` when
-    // `.assume_always_less_than_max_path`, `Error!T` otherwise.
-    //
-    // TODO(port): Rust cannot vary a fn's return type on a const-generic value.
-    // All `Result(T)` call sites below return `Result<T, Error>` unconditionally;
-    // callers configured with `AssumeAlwaysLessThanMaxPath` should treat the
-    // `Err` arm as unreachable. Could split into two inherent impls via
-    // `where` bounds on `CHECK_LENGTH` once `generic_const_exprs` lands, or
-    // expose `_unchecked` variants.
     pub type Result<T> = core::result::Result<T, Error>;
 
-    /// `Result::unwrap` for the `CheckLength::AssumeAlwaysLessThanMaxPath`
-    /// configuration (every `Auto*`/`Os*` `Path` alias).
-    ///
-    /// In Zig, `Path(.{ .check_length = .assume_always_less_than_max_path })`
-    /// `from`/`append`/`appendFmt` return bare `T` (not `Error!T`), so call
-    /// sites are `path.append(x)` with no `try`. The Rust port returns
-    /// `Result<T, Error>` unconditionally (see PORT NOTE above), but the
-    /// `from`/`append` bodies *skip the length check entirely* in `ASSUME`
-    /// mode -- `Err(MaxPathExceeded)` is dead code, and an over-long input
-    /// instead panics inside `PooledBuf::append` slice indexing. So callers
-    /// on `ASSUME` types should use this instead of `?`/`handle_oom`: it
-    /// makes the infallibility explicit and, unlike `handle_oom`, panics with
-    /// the real reason if the invariant is ever violated rather than
-    /// misreporting it as "out of memory".
     pub trait AssumeOk<T> {
         fn assume_ok(self) -> T;
     }
@@ -199,15 +166,6 @@ macro_rules! sep_dispatch {
     };
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PathUnit trait — replaces `opts.pathUnit()` / `opts.notPathUnit()` /
-// `opts.Buf().pooled`'s type-level switch on `opts.unit`.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// A path code unit: `u8` (UTF-8/WTF-8 bytes) or `u16` (WTF-16, Windows).
-/// Extends the canonical [`crate::PathChar`] with the buffer-pool / ZSlice
-/// machinery this module needs; the ASCII helpers (`from_u8`/`eq_ascii`/
-/// `to_ascii`) are inherited.
 pub trait PathUnit: crate::PathChar {
     /// `opts.notPathUnit()`
     type Other: PathUnit;
@@ -224,11 +182,6 @@ pub trait PathUnit: crate::PathChar {
     /// `ptr[..=len]` must be valid for reads for `'a`, and `ptr[len]` must be `0`.
     unsafe fn zslice_from_raw<'a>(ptr: *const Self, len: usize) -> &'a Self::ZSlice;
 
-    /// `bun.path_buffer_pool.get()` / `bun.w_path_buffer_pool.get()`
-    // LIFETIMES.tsv classifies `Buf.pooled` as OWNED → Box<PathBuffer>; the
-    // underlying pool hands out heap buffers and reclaims them in `deinit`.
-    // TODO(port): swap to `crate::path_buffer_pool()` RAII guard once the
-    // guard type is generic over unit; for now model as Box and put-back in Drop.
     fn pool_get() -> Box<Self::Buffer>;
     fn pool_put(buf: Box<Self::Buffer>);
 
@@ -240,11 +193,6 @@ pub trait PathUnit: crate::PathChar {
     /// switch. Mirrors Zig's comptime branch on `.u8`/`.u16` in `paths/Path.zig`.
     const LONG_PATH_PREFIX: &'static [Self];
 
-    // ── identity downcasts ────────────────────────────────────────────────
-    // Trait-dispatched no-op identity casts. The default body is unreachable
-    // for the non-matching impl; callers gate on `TypeId` so the dead arm is
-    // const-folded out, and in the live arm the cast is a safe
-    // `fn(&[u8]) -> &[u8]` in the monomorphized code.
     #[inline(always)]
     fn id_u8(_: &[Self]) -> &[u8] {
         unreachable!("PathUnit::id_u8 on non-u8")
@@ -441,10 +389,6 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
             self.len += 1;
         }
 
-        // TODO(port): the Zig branches on `opts.inputChildType(@TypeOf(characters))` to pick
-        // convertUTF8toUTF16InBuffer vs convertUTF16toUTF8InBuffer. Rust cannot match on a
-        // type parameter at runtime; could route through a helper trait. For now this
-        // dispatches via TypeId-equivalent specialization on the two concrete impls.
         let converted_len = convert_into_buffer::<U>(&mut buf[self.len..], characters);
         if SEP_OPT != PathSeparators::ANY {
             for off in 0..converted_len {
@@ -622,10 +566,6 @@ pub type RelPath<
 /// `Path(.{ .kind = .rel, .sep = .auto })`
 pub type AutoRelPath = Path<u8, { Kind::REL }, { PathSeparators::AUTO }>;
 
-/// `Path(comptime opts: Options) type`
-///
-/// `BufType` is omitted as a parameter because only `.pool` is implemented in Zig.
-/// `Unit` is encoded as the type parameter `U: PathUnit` (use `u8`, `u16`, or `OsUnit`).
 pub struct Path<
     U: PathUnit = u8,
     const KIND: u8 = { Kind::ANY },
@@ -706,23 +646,12 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             Kind::Any => {}
         }
 
-        // `getFdPath`/`getFdPathW` are libc/kernel32-only, so the bodies live
-        // in `bun_core::fd_path_raw[_w]` (T0). >0 = units written, <0 = error.
-        // PORT NOTE: Zig `fd.getFdPath(this._buf.pooled)` dispatches on the
-        // pooled buffer's element type (u8 → readlink/F_GETPATH, u16 →
-        // GetFinalPathNameByHandleW). Rust monomorphizes eagerly, so we
-        // TypeId-dispatch on the buffer element type.
         use core::any::TypeId;
         let mut this = Self::init();
 
         if TypeId::of::<U>() == TypeId::of::<u8>() {
             let buf: &mut [u8] = U::id_u8_mut(U::buffer_as_mut_slice(&mut this._buf.pooled));
 
-            // Zig spec (`bun.getFdPath` with `*PathBuffer`): on Windows the
-            // u8 path still resolves via `GetFinalPathNameByHandleW` into a
-            // stack `WPathBuffer`, then transcodes to UTF-8 with
-            // `strings.copyUTF16IntoUTF8`. `fd_path_raw` has no Windows arm
-            // (returns 0), so route through the wide call here.
             #[cfg(windows)]
             {
                 let mut wbuf = crate::w_path_buffer_pool::get();
@@ -730,13 +659,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                 // SAFETY: wslice is valid for wslice.len() writable u16 units.
                 let n = unsafe { bun_core::fd_path_raw_w(fd, wslice.as_mut_ptr(), wslice.len()) };
                 if n <= 0 {
-                    // Zig `bun.windows.GetFinalPathNameByHandle` surfaces
-                    // `error.FileNotFound` (return_length==0) or
-                    // `error.NameTooLong` (return_length>=buf.len);
-                    // `fd_path_raw_w` collapses both to -1, so propagate the
-                    // dominant Zig error rather than inventing EBADF.
-                    // TODO(port): have `fd_path_raw_w` distinguish overflow
-                    // (e.g. -2) so callers can map ENAMETOOLONG separately.
                     return Err(bun_core::Error::intern("FileNotFound"));
                 }
                 let wide = &wslice[..n as usize];
@@ -767,10 +689,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             // SAFETY: buf is valid for buf.len() writable u16 units.
             let n = unsafe { bun_core::fd_path_raw_w(fd, buf.as_mut_ptr(), buf.len()) };
             if n <= 0 {
-                // Zig `bun.windows.GetFinalPathNameByHandle` surfaces
-                // `error.FileNotFound` / `error.NameTooLong`; `fd_path_raw_w`
-                // collapses both to -1, so propagate the dominant Zig error
-                // rather than inventing EBADF.
                 return Err(bun_core::Error::intern("FileNotFound"));
             }
             let raw = &buf[..n as usize];
@@ -886,19 +804,8 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         &U::buffer_as_slice(&self._buf.pooled)[..self._buf.len]
     }
 
-    /// Reinterpret this path under a different `SEP_OPT` const parameter.
-    /// Zig's `bun.Path(.{ .sep = .auto })` and `bun.Path(.{})` are
-    /// structurally identical at runtime — the option only affects how
-    /// `append`/`append_join` normalize separators going forward — so
-    /// passing a built path to a callee typed with a different `sep`
-    /// option is sound. Rust's const-generic monomorphization makes them
-    /// nominally distinct, hence this explicit conversion.
     #[inline]
     pub fn into_sep<const NEW_SEP: u8>(self) -> Path<U, KIND, NEW_SEP, CHECK> {
-        // Explicit field move (not `transmute`): `Path`/`Buf` are `repr(Rust)`, so
-        // Rust gives no layout-compat guarantee between distinct const-generic
-        // instantiations. Rebuilding field-by-field is layout-agnostic and
-        // optimizes to the same no-op move.
         let mut this = ManuallyDrop::new(self);
         let len = this._buf.len;
         // SAFETY: `pooled` was initialized in `init()` and is taken exactly once
@@ -1138,11 +1045,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             }
         }
 
-        // TODO(port): the Zig dispatches on `@TypeOf(part)` × `opts.pathUnit()` to pick
-        // joinStringBuf vs joinStringBufW vs a transcode-then-recurse path. Rust cannot
-        // match on type identity in a fn body without specialization. The four arms are
-        // reproduced below via TypeId checks; could be replaced with a sealed-trait
-        // dispatch on (C, U).
         use core::any::TypeId;
         let c_is_u8 = TypeId::of::<C>() == TypeId::of::<u8>();
         let u_is_u8 = TypeId::of::<U>() == TypeId::of::<u8>();
@@ -1202,13 +1104,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         &self,
         to: &Path<U, K2, SEP_OPT, CHECK>,
     ) -> RelPath<U, SEP_OPT, CHECK> {
-        // PORT NOTE: `resolve_path::relative_buf_z` is `&[u8]`-only and the Zig
-        // had no u16 variant either — Path.zig `relative` calls `relativeBufZ`
-        // unconditionally, which would compile-error on a u16 instantiation
-        // (Zig's lazy eval hides that). Rust monomorphizes eagerly, so we
-        // TypeId-dispatch: u8 → identity-cast and call; u16 → transcode through
-        // temp u8 buffers and back. TODO(port): width-generic
-        // `relative_buf_z_t<C>` if u16 callers turn out to be hot.
         use core::any::TypeId;
         let mut output: RelPath<U, SEP_OPT, CHECK> = Path::init();
 
@@ -1220,11 +1115,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             let trimmed = trim_input(TrimInputKind::Rel, rel.as_bytes());
             output._buf.len = trimmed.len();
         } else {
-            // U == u16: transcode from/to → u8 scratch buffers, compute the
-            // relative path in u8-space, then transcode back into the u16
-            // output buffer. Mirrors the cross-width arms in `append_join`.
-            // PERF(port): three pooled buffers + two transcodes — profile if
-            // hot; only ever reached on Windows wide-path callers.
             let from_u16: &[u16] = U::id_u16(self.slice());
             let to_u16: &[u16] = U::id_u16(to.slice());
 
@@ -1300,10 +1190,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     /// element type matches `U`. Stands in for Zig's `anytype` + `inputChildType`.
     fn _buf_append_input<C: PathUnit>(&mut self, characters: &[C], add_separator: bool) {
         use core::any::TypeId;
-        // Route via concrete `u8`/`u16` using the safe trait-dispatched
-        // identity casts (`id_u8`/`id_from_u8` etc.) — each is the literal
-        // identity in its monomorphized impl and `unreachable!()` otherwise,
-        // so no `from_raw_parts` is needed for the generic→generic reslice.
         if TypeId::of::<C>() == TypeId::of::<u8>() {
             let bytes = C::id_u8(characters);
             if TypeId::of::<U>() == TypeId::of::<u8>() {
@@ -1380,11 +1266,6 @@ impl<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> Drop
         self.path._buf.set_length(self.saved_len);
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Free functions (were nested in `Path(opts)` but don't depend on opts beyond
-// the input element type, so they're hoisted to generics over `C: PathUnit`)
-// ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) fn root_len<C: PathUnit>(input: &[C]) -> Option<usize> {
     #[cfg(windows)]

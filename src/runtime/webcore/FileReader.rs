@@ -18,35 +18,11 @@ use crate::webcore::streams;
 
 bun_core::declare_scope!(FileReader, visible);
 
-// TODO(port): `pending_view` and the `Js`/`Temporary` variants below borrow into a
-// JS-owned typed-array buffer kept alive by `pending_value: Strong` / `ensure_still_alive`.
-// Represented as unbounded `&mut [u8]` / `&[u8]` here to keep function bodies
-// readable; TODO(refactor): replace with a proper raw-slice wrapper (BACKREF lifetime).
-
-// R-2 (host-fn re-entrancy): every JS-exposed / vtable-reachable method takes
-// `&self`; per-field interior mutability via `Cell` (Copy) / `JsCell` (non-
-// Copy). The `SourceContext` trait and `BufferedReaderParent` shims still
-// hand in `&mut Self` / `*mut Self` until those layers are migrated — `&mut T`
-// auto-derefs to `&T` so the impls below compile against either. `Cell<T>` and
-// `JsCell<T>` are both `#[repr(transparent)]`, so the embedded layout (offset
-// 0 of `NewSource<FileReader>`) is unchanged.
 pub struct FileReader {
-    /// Wrapped in `UnsafeCell` so that the back-ref `*mut FileReader` (vtable
-    /// `parent`) and the reader's own `&mut self` both derive from a
-    /// SharedReadWrite root — see `BufferedReaderParent` aliasing contract
-    /// (PipeReader.rs). The vtable callbacks fire while a `&mut BufferedReader`
-    /// is live on the caller's stack and re-enter `self.reader` (close/buffer/
-    /// is_done); without `UnsafeCell` materializing `&mut FileReader` there is
-    /// Stacked-Borrows UB. Matches sibling `IOReader` (shell) port.
     pub reader: UnsafeCell<IOReader>,
     pub done: Cell<bool>,
     pub pending: JsCell<streams::Pending>,
     pub pending_value: JsCell<Strong>, // Strong.Optional
-    // TODO(port): `&'static mut [u8]` forge — borrows a JS typed-array buffer
-    // that GC can move/collect, and `&'static mut` asserts uniqueness the GC
-    // does not honour. `bun_ptr::Interned` is read-only by construction so
-    // does NOT cover this; tracked under the sibling `static-widen-mut`
-    // pattern (field should become `*mut [u8]` / `RawSliceMut<u8>`).
     pub pending_view: JsCell<&'static mut [u8]>,
     pub fd: Cell<Fd>,
     /// Read-only after construction (set via struct literal in `from_blob_*`).
@@ -219,10 +195,6 @@ impl Lazy {
                 || (matches!(&file.pathlike, PathOrFileDescriptor::Fd(pl_fd)
                         if pl_fd.stdio_tag().is_some() && sys::isatty(*pl_fd)))
             {
-                // var termios = std.mem.zeroes(std.posix.termios);
-                // _ = std.c.tcgetattr(fd.cast(), &termios);
-                // bun.C.cfmakeraw(&termios);
-                // _ = std.c.tcsetattr(fd.cast(), std.posix.TCSA.NOW, &termios);
                 file.is_atty = Some(true);
             }
 
@@ -277,14 +249,6 @@ impl Lazy {
     }
 }
 
-// `bun.io.BufferedReader.init(@This())` — vtable parent. Maps the Zig
-// `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
-//
-// R-2: every mutated field on `FileReader` is `Cell`/`JsCell`/`UnsafeCell`-
-// backed, so materializing `&FileReader` via `(&*this)` does not assert Unique
-// over any byte the caller may have borrowed (SharedReadWrite root); the
-// inherent impls re-derive any reader access through `reader()`
-// (`UnsafeCell::get`).
 bun_io::impl_buffered_reader_parent! {
     FileReader for FileReader;
     has_on_read_chunk = true;
@@ -328,12 +292,6 @@ impl FileReader {
         self.event_loop().native_loop()
     }
 
-    // TODO(port): in-place init — `self` is the `context` field of an already-allocated
-    // `Source`; the Zig writes `this.* = FileReader{...}` then reads `parent()`. Note the
-    // Zig struct literal omits `event_loop` (no default) — likely dead code or relies on
-    // a quirk; preserved as-is.
-    // R-2: kept `&mut self` — init-time constructor that runs before any
-    // host-fn could re-enter; `*self =` requires unique access.
     pub fn setup(&mut self, fd: Fd) {
         *self = FileReader {
             reader: UnsafeCell::new(IOReader::init::<FileReader>()),
@@ -362,10 +320,6 @@ impl FileReader {
         // on every path through the original `if let` body) so the `StoreRef`
         // is owned locally and the cell borrow is released immediately.
         if let Lazy::Blob(store) = self.lazy.replace(Lazy::None) {
-            // `StoreRef::data_mut` encapsulates the raw-pointer deref under the
-            // `StoreRef` liveness invariant (single-threaded JS event loop; we
-            // hold the only mutating handle). Matches Zig's `*Blob.Store`
-            // direct field access.
             match store.data_mut() {
                 blob::store::Data::S3(_) | blob::store::Data::Bytes(_) => {
                     panic!("Invalid state in FileReader: expected file ")
@@ -509,11 +463,6 @@ impl FileReader {
         streams::Start::Ready
     }
 
-    /// Safe accessor for the parent `NewSource.global_this` back-reference.
-    ///
-    /// One unsafe (`from_field_ptr` raw-place projection of a `Copy` field —
-    /// no `&Source` is materialized so no aliasing with `&self`); callers
-    /// then `Deref` the returned `BackRef` with no unsafe.
     #[inline]
     fn parent_global(&self) -> bun_ptr::BackRef<jsc::JSGlobalObject> {
         // SAFETY: see `parent()` — `self` is the `context` field of a live
@@ -533,16 +482,6 @@ impl FileReader {
         }
     }
 
-    // NOTE: not `impl Drop` — FileReader is embedded as `Source.context` and this is
-    // invoked from the Source's JS finalizer path via `SourceContext::deinit_fn`.
-    // Not `pub`: reached only via the `SourceContext` trait impl below.
-    //
-    // Only side-effect teardown lives here. Owned fields (buffered: Vec, reader:
-    // BufferedReader, pending_value: Strong, lazy: Arc) drop when the caller
-    // (`NewSource::decrement_count`) reclaims the `Box<Source>` *after* this
-    // returns. Freeing the parent here (Zig: `this.parent().deinit()`) would
-    // deallocate the storage backing `&self` while the borrow is still live
-    // — a dangling-reference UAF — so ownership release stays with the caller.
     fn deinit(&self) {
         self.reader().update_ref(false);
     }
@@ -618,14 +557,6 @@ impl FileReader {
             }
         }
 
-        // Kept as a RAW `*mut Vec<u8>` for the lifetime of this fn — never bound to a
-        // long-lived `&mut Vec<u8>`. `reader_buffer` points inside `self.reader` while
-        // we still hold `&self` and mutate `self.buffered`/`self.pending` etc.
-        // interleaved with reads/clears of `*reader_buffer`. Holding a `&mut Vec` here
-        // would be the aliased-&mut forbidden pattern (PORTING.md §Forbidden patterns).
-        // Spec FileReader.zig:337 `const reader_buffer = this.reader.buffer();` is a Zig
-        // raw `*std.ArrayList(u8)` with no aliasing rules; we mirror that with a raw ptr
-        // and deref only at the exact use sites below.
         let reader_buffer: *mut Vec<u8> = self.reader().buffer();
 
         if !self.read_inside_on_pull.get().is_none() {
@@ -932,13 +863,6 @@ impl FileReader {
                     return streams::Result::Owned(Vec::<u8>::move_from_list(buffered));
                 }
                 _ => {
-                    // Spec FileReader.zig:544 `else => {}` falls through to set
-                    // `pending_view = buffer`. The only variants reaching this arm
-                    // are `None` (impossible — we just stored `Js(buffer)` above and
-                    // `on_read_chunk` never sets `None`) and `AmountRead` (never
-                    // produced by `on_read_chunk`). Unreachable in the current state
-                    // machine; if that invariant ever changes, the buffer slice must
-                    // be recovered from a captured raw ptr+len before the move.
                     unreachable!(
                         "on_read_chunk never yields None/AmountRead while read_inside_on_pull == Js"
                     );
@@ -1084,29 +1008,14 @@ impl FileReader {
     }
 }
 
-// TODO(port): `ReadableStream.NewSource(@This(), "File", onStart, onPull, onCancel, deinit,
-// setRefOrUnref, drain, memoryCost, null)` is a comptime type-generator that builds a
-// vtable-backed Source struct embedding `context: FileReader`. In Rust this becomes a
-// generic `NewSource<C>` + a `SourceContext` trait impl.
 pub type Source = readable_stream::NewSource<FileReader>;
 
-// Intrusive backref: `self` is always the `context` field of a heap-allocated
-// `Source` (Zig `@fieldParentPtr("context", this)`). Returns `*mut Source`
-// (NOT `&mut Source`) because `self` IS the `context` field — materializing
-// `&mut Source` would alias the live `&self` borrow. Callers deref in a tight
-// `unsafe { (*ptr).method() }` scope and never hold `&mut Source` across other
-// `self.*` accesses.
 bun_core::impl_field_parent! { FileReader => Source.context; pub fn raw parent; }
 
 impl readable_stream::SourceContext for FileReader {
     const NAME: &'static str = "File";
     const SUPPORTS_REF: bool = true;
     crate::source_context_codegen!(js_FileInternalReadableStreamSource);
-    // R-2: trait sigs are still `&mut self` (shared with ByteBlobLoader/
-    // ByteStream — separate migration); the inherent impls take `&self`, so
-    // these forward via auto-deref. The `&mut` here is what the codegen shim
-    // currently emits; once `NewSource` is celled the trait flips to `&self`
-    // and these become straight `Self::*(self, ..)` calls.
     fn on_start(&mut self) -> streams::Start {
         Self::on_start(self)
     }
@@ -1154,12 +1063,6 @@ fn read_state_tag(state: ReadState) -> &'static str {
     }
 }
 
-/// Checks whether `slice` lies within `vec`'s allocation (including spare
-/// capacity). Replaces the previous `AllocatedSlice` trait, which materialised
-/// a `&[u8]` over `[len, capacity)` — uninitialised memory — purely to feed
-/// `bun_core::is_slice_in_buffer`. That was UB-adjacent (a `&[u8]` asserts its
-/// bytes are initialised); this helper does the same containment check with
-/// pure address arithmetic and never forms a reference over uninit bytes.
 #[inline]
 fn is_slice_in_vec_capacity(slice: &[u8], vec: &Vec<u8>) -> bool {
     let slice_start = slice.as_ptr() as usize;

@@ -7,19 +7,6 @@ use crate::debugger::AsyncTaskTracker;
 use crate::event_loop::EventLoop;
 use bun_ptr::BackRef;
 
-/// A generic task that runs work on a thread pool and executes a callback on the main JavaScript thread.
-/// Unlike ConcurrentPromiseTask which automatically resolves a Promise, WorkTask provides more flexibility
-/// by allowing the Context to handle the result however it wants (e.g., calling callbacks, emitting events, etc.).
-///
-/// The Context type must implement:
-/// - `run(*mut Context, *mut WorkTask)` - performs the work on the thread pool
-/// - `then(*mut Context, &JSGlobalObject)` - handles the result on the JS thread (no automatic Promise resolution)
-///
-/// Key differences from ConcurrentPromiseTask:
-/// - No automatic Promise creation or resolution
-/// - Includes async task tracking for debugging
-/// - More flexible result handling via the `then` callback
-/// - Context receives a reference to the WorkTask itself in the `run` method
 pub trait WorkTaskContext: Sized {
     /// Tag this `WorkTask<Self>` carries when enqueued back onto the JS event
     /// loop's concurrent queue (`task_tag::*`). Mirrors Zig's per-instantiation
@@ -128,10 +115,6 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
     }
 
     pub fn on_finish(this: &mut Self) {
-        // `concurrent_task` is an intrusive field of `*this`; `from`
-        // re-initializes it in place and returns the same address. Passing
-        // `this_ptr` while holding `&mut *this` is sound because `from` only
-        // stores the pointer (does not dereference it).
         let event_loop = this.event_loop;
         let this_ptr: *mut Self = this;
         let task = core::ptr::NonNull::from(

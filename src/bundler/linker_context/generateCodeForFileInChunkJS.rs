@@ -59,18 +59,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         Index::INVALID
     };
 
-    // referencing everything by array makes the code a lot more annoying :(
-    //
-    // PORT NOTE: `MultiArrayList::get` returns `ManuallyDrop<BundledAst>` — the
-    // storage retains ownership of every Drop field (`parts`, `symbols`,
-    // `named_imports`, …). The local `flags` mutation below is intentional and
-    // stays scoped to this read view.
     let mut ast = c.graph.ast.get(source_index);
 
-    // For HMR, part generation is entirely special cased.
-    // - export wrapping is already done.
-    // - imports are split from the main code.
-    // - one part range per file
     if c.options.output_format == OutputFormat::InternalBakeDev {
         'brk: {
             if part_range.source_index.is_runtime() {
@@ -187,10 +177,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             // TODO: there is a weird edge case where the pretty path is not computed
             // it does not reproduce when debugging.
             let source_ref = c.get_source(source_index as u32);
-            // PORT NOTE: reshaped for borrowck — Zig copies the `Source` by value,
-            // mutates `.path`, and passes `&source`. `bun_ast::Source` is not `Clone`
-            // (its `Cow` fields would deep-copy `Owned` data); instead, build a
-            // borrowed-field shadow only when the path needs fixing.
             let source_storage: bun_ast::Source;
             let source: &bun_ast::Source = if core::ptr::eq(
                 source_ref.path.text.as_ptr(),
@@ -355,33 +341,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         let mut single_stmts_list: [Stmt; 1] = [Stmt::empty()];
         let mut part_stmts: &[Stmt] = part.stmts.slice();
 
-        // If this could be a JSON or TOML file that exports a top-level object literal, go
-        // over the non-default top-level properties that ended up being imported
-        // and substitute references to them into the main top-level object literal.
-        // So this JSON file:
-        //
-        //   {
-        //     "foo": [1, 2, 3],
-        //     "bar": [4, 5, 6],
-        //   }
-        //
-        // is initially compiled into this:
-        //
-        //   export var foo = [1, 2, 3];
-        //   export var bar = [4, 5, 6];
-        //   export default {
-        //     foo: [1, 2, 3],
-        //     bar: [4, 5, 6],
-        //   };
-        //
-        // But we turn it into this if both "foo" and "default" are imported:
-        //
-        //   export var foo = [1, 2, 3];
-        //   export default {
-        //     foo,
-        //     bar: [4, 5, 6],
-        //   };
-        //
         if index == part_index_for_lazy_default_export {
             debug_assert!(index != u32::MAX);
 
@@ -400,11 +359,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             // Be careful: the top-level value in a JSON file is not necessarily an object
             if let ExprData::EObject(e_object) = default_expr.data {
-                // PORT NOTE: Zig `properties.clone(temp_arena)` is a memcpy into the
-                // temp arena. `G::Property` is not `Clone` (it embeds a `Vec`), so
-                // mirror the Zig bitwise copy directly. JSON object properties carry no
-                // owned heap data (`ts_decorators` is always empty, `class_static_block`
-                // is `None`), so the duplicated bits do not alias any allocation.
                 let src_len = e_object.properties.len();
                 let mut new_properties = Vec::<G::Property>::init_capacity(src_len);
                 // SAFETY: `new_properties` has capacity `src_len`; source slice is live
@@ -448,14 +402,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             .top_level_symbol_to_parts(source_index as u32, export_ref)[0]
                             as usize;
                         if parts_live.is_set(part_idx) {
-                            // PTR_AUDIT(#1): `*prop` is a bitwise copy of
-                            // `e_object.properties[i]` (see `copy_nonoverlapping`
-                            // above). A plain `*prop = …` would run `Drop` on the
-                            // aliased old value — specifically `prop.ts_decorators:
-                            // Vec<Expr>`, which (if non-empty) would free the
-                            // *original AST's* allocation. The "JSON ⇒ ts_decorators
-                            // empty" invariant makes that drop a no-op today, but
-                            // `ptr::write` enforces it structurally.
                             let key = prop.key;
                             let value_loc =
                                 prop.value.as_ref().expect("infallible: prop has value").loc;
@@ -511,12 +457,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         }
     }
 
-    // Hoist all import statements before any normal statements. ES6 imports
-    // are different than CommonJS imports. All modules imported via ES6 import
-    // statements are evaluated before the module doing the importing is
-    // evaluated (well, except for cyclic import scenarios). We need to preserve
-    // these semantics even when modules imported via ES6 import statements end
-    // up being CommonJS modules.
     stmts
         .all_stmts
         .reserve(stmts.inside_wrapper_prefix.stmts.len() + stmts.inside_wrapper_suffix.len());
@@ -640,10 +580,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 }
             }
             WrapKind::Esm => {
-                // The wrapper only needs to be "async" if there is a transitive async
-                // dependency. For correctness, we must not use "async" if the module
-                // isn't async because then calling "require()" on that module would
-                // swallow any exceptions thrown during module initialization.
                 let is_async = flags.is_async_or_has_async_dependency;
 
                 struct ExportHoist {
@@ -699,10 +635,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         let stmt = stmts.all_stmts[i];
                         let transformed = match stmt.data {
                             StmtData::SLocal(local) => 'stmt: {
-                                // "using" / "await using" declarations have disposal
-                                // side-effects tied to the scope they appear in, so
-                                // they must stay inside the closure rather than being
-                                // hoisted to `var` + assignment.
                                 if local.kind.is_using() {
                                     break 'stmt stmt;
                                 }
@@ -752,10 +684,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 continue 'hoist;
                             }
                             StmtData::SClass(mut class) => 'stmt: {
-                                // PORT NOTE: `class` is `StoreRef<S::Class>` — an arena-owned pointer.
-                                // `&mut class.class` (via DerefMut) yields a `&mut G::Class` into arena
-                                // memory, so wrapping it in a StoreRef for `EClass` is sound and matches
-                                // Zig's `&class.class`.
                                 if class.class.can_be_moved() {
                                     stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
                                     continue 'hoist;
@@ -864,19 +792,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     // // `init_foo` without it actually existing.
                     // debug_assert!(ast.wrapper_ref.is_empty());
 
-                    // TODO: the edge case where we are wrong is when there
-                    // are references to other ESM modules, but those get
-                    // fully hoisted. The look like side effects, but they
-                    // are removed.
-                    //
-                    // It is too late to retroactively delete the
-                    // wrapper_ref, since printing has already begun.  The
-                    // most we can do to salvage the situation is to print
-                    // an empty arrow function.
-                    //
-                    // This is marked as a TODO, because this can be solved
-                    // via a count of external modules, decremented during
-                    // linking.
                     if !ast.wrapper_ref.is_empty() {
                         let value = Expr::init(
                             E::Arrow {
@@ -929,11 +844,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         });
     }
 
-    // Collect top-level declarations from the converted statements.
-    // This is done here (after convertStmtsForChunk) rather than in
-    // postProcessJSChunk, because convertStmtsForChunk transforms the AST
-    // (e.g. export default expr → var, export stripping) and the converted
-    // statements reflect what actually gets printed.
     let mut r = r;
     if let Some(dc) = decl_collector {
         dc.collect_from_stmts(out_stmts, &mut r, c);
@@ -973,16 +883,6 @@ impl Default for DeclCollector {
 }
 
 impl DeclCollector {
-    /// Collect top-level declarations from **converted** statements (after
-    /// `convertStmtsForChunk`). At that point, export statements have already
-    /// been transformed:
-    /// - `s_export_default` → `s_local` / `s_function` / `s_class`
-    /// - `s_export_clause` → removed entirely
-    /// - `s_export_from` / `s_export_star` → removed or converted to `s_import`
-    ///
-    /// Remaining `s_import` statements (external, non-bundled) don't need
-    /// handling here; their bindings are recorded separately in
-    /// `postProcessJSChunk` by scanning the original AST import records.
     pub fn collect_from_stmts(
         &mut self,
         stmts: &[Stmt],

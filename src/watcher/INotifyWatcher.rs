@@ -14,13 +14,6 @@ use crate::watcher_impl::{MAX_COUNT as max_count, Op, WatchEvent, WatchItemIndex
 
 bun_core::declare_scope!(watcher, visible);
 
-// inotify events are variable-sized, so a byte buffer is used (also needed
-// since communication is done via the `read` syscall). what is notable about
-// this is that while a max_count is defined, more events than max_count can be
-// read if the paths are short. the buffer is sized not to the maximum possible,
-// but an arbitrary but reasonable size. when reading, the strategy is to read
-// as much as possible, then process the buffer in `max_count` chunks, since
-// `bun.Watcher` has the same hardcoded `max_count`.
 const EVENTLIST_BYTES_SIZE: usize = (Event::LARGEST_SIZE / 2) * max_count;
 
 /// Aligned to `align_of::<Event>()` so casts from the buffer base are sound.
@@ -81,15 +74,6 @@ pub struct Event {
     pub watch_descriptor: EventListIndex,
     pub mask: u32,
     pub cookie: u32,
-    /// The name field is present only when an event is returned for a
-    /// file inside a watched directory; it identifies the filename
-    /// within the watched directory.  This filename is null-terminated,
-    /// and may include further null bytes ('\0') to align subsequent
-    /// reads to a suitable address boundary.
-    ///
-    /// The len field counts all of the bytes in name, including the null
-    /// bytes; the length of each inotify_event structure is thus
-    /// sizeof(struct inotify_event)+len.
     pub name_len: u32,
 }
 
@@ -218,15 +202,6 @@ impl INotifyWatcher {
 
     pub(crate) fn read(&mut self) -> bun_sys::Result<&[*const Event]> {
         debug_assert!(self.loaded);
-        // This is what replit does as of Jaunary 2023.
-        // 1) CREATE .http.ts.3491171321~
-        // 2) OPEN .http.ts.3491171321~
-        // 3) ATTRIB .http.ts.3491171321~
-        // 4) MODIFY .http.ts.3491171321~
-        // 5) CLOSE_WRITE,CLOSE .http.ts.3491171321~
-        // 6) MOVED_FROM .http.ts.3491171321~
-        // 7) MOVED_TO http.ts
-        // We still don't correctly handle MOVED_FROM && MOVED_TO it seems.
         use bun_sys::linux as system;
         use bun_sys::{E, get_errno};
         let mut i: u32 = 0;
@@ -399,23 +374,6 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     events_buf[..events_len].copy_from_slice(events);
     let events = &events_buf[..events_len];
 
-    // Zig: `this.watchlist.items(.eventlist_index)`.
-    // PORT NOTE: reshaped for borrowck — copy the (small) column to a local Vec
-    // so the borrow of `this.watchlist` ends before we mutably borrow other
-    // `this` fields inside the batching loop below.
-    // PERF(port): Zig used the column slice directly.
-    //
-    // PORT NOTE: locked — diverges from Zig spec (which reads this column
-    // unlocked). `on_file_update` may evict watchlist entries via
-    // `remove_at_index` + `flush_evictions` (the dir-event path appends *and*
-    // evicts the matched file watch). The enqueued reload then re-imports the
-    // module on the JS thread, whose `add_file` re-appends the entry under
-    // `this.mutex`, potentially reallocating the MultiArrayList backing while
-    // this thread is mid-`items_eventlist_index()` on the next cycle. Under
-    // load (`watch-many-dirs.test.ts` writes 129 files concurrently, > the
-    // 128 `max_count` batch size, so the dir-event-only batch is common) the
-    // unlocked read raced the realloc and the process occasionally died with
-    // a non-zero exit code. Snapshot under the same mutex `add_file` takes.
     let eventlist_index: Vec<EventListIndex> = {
         let _guard = this.mutex.lock_guard();
         this.watchlist.items_eventlist_index().to_vec()
@@ -549,10 +507,6 @@ fn process_inotify_event_batch(
 
     let _guard = this.mutex.lock_guard();
     if this.running.load() {
-        // watch_events.len == 0 is checked above, so last_event_index + 1 is safe.
-        // PORT NOTE: reshaped for borrowck — split disjoint field borrows so we can
-        // pass `&mut watch_events[..]` in place (matching Zig's `all_events[0..]`)
-        // without a gratuitous `.to_vec()`/`.clone()`.
         let deduped = &mut this.watch_events[..last_event_index + 1];
         let changed = &this.changed_filepaths[..name_off as usize];
         crate::watcher_trace::write_events(&this.watchlist, deduped, changed);

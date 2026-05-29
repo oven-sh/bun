@@ -90,10 +90,6 @@ impl CalcUnit {
     }
 }
 
-/// A mathematical expression used within the `calc()` function.
-///
-/// This type supports generic value types. Values such as `Length`, `Percentage`,
-/// `Time`, and `Angle` support `calc()` expressions.
 pub enum Calc<V> {
     /// A literal value.
     /// PERF: this pointer feels unnecessary if V is small
@@ -113,16 +109,6 @@ pub enum Calc<V> {
     /// A math function, such as `calc()`, `min()`, or `max()`.
     Function(Box<MathFunction<V>>),
 }
-
-// ───────────────────────────── CalcValue trait ─────────────────────────────
-// Replaces the Zig `switch (V)` / `@hasDecl(V, ...)` comptime-type dispatch.
-// Every type that can appear inside `Calc<V>` implements this.
-//
-// The numeric protocol (`mul_f32`/`try_sign`/`try_map`/`try_op`/`try_op_to`/
-// `partial_cmp`/`try_from_angle`/`parse`/`to_css`/`is_compatible`) lives in
-// `crate::values::protocol` (re-exported from `crate::generics`); `CalcValue`
-// pulls it in as supertraits so each concrete impl block only carries the
-// calc-specific hooks below.
 
 pub trait CalcValue:
     Sized
@@ -152,10 +138,6 @@ impl<V: Clone> Clone for Calc<V> {
     }
 }
 
-// Structural equality decoupled from `CalcValue` so `derive(PartialEq)` on
-// `Length` / `DimensionPercentage<D>` consumers can compare through
-// `Box<Calc<V>>` without pulling in the full behavior bound. `Calc::eql`
-// (below) keeps its `V: CalcValue` bound for callers that already have it.
 impl<V: PartialEq + Clone> PartialEq for Calc<V> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -338,10 +320,6 @@ impl<V: CalcValue> Calc<V> {
         parse_ident: F,
     ) -> CssResult<Self> {
         let location = input.current_source_location();
-        // PORT NOTE: clone the token before reborrowing `input` so the function
-        // name slice is owned by the cloned `Token` (whose payload already
-        // carries the parser's arena lifetime) instead of being laundered to
-        // `'static` here.
         let tok = input.next()?.clone();
         let unit = match tok {
             css::Token::Function(f) => match CalcUnit::get_any_case(f) {
@@ -456,13 +434,7 @@ impl<V: CalcValue> Calc<V> {
                 Self::parse_math_fn(
                     i,
                     (),
-                    |_, a, b| {
-                        // Zig `@mod(a, b)`: floored modulo, result takes sign of divisor.
-                        // Equivalent to `a - b * floor(a / b)`. Rust `%` is truncated (sign of
-                        // dividend) and `rem_euclid` is non-negative, so neither matches for
-                        // negative `b` — use the explicit floor formula.
-                        a - b * (a / b).floor()
-                    },
+                    |_, a, b| a - b * (a / b).floor(),
                     |_, a, b| MathFunction::Rem {
                         dividend: a,
                         divisor: b,
@@ -690,12 +662,6 @@ impl<V: CalcValue> Calc<V> {
                 other => return Ok(other),
             },
             Err(e) => {
-                // A math function token can only be parsed by `Self::parse`.
-                // If that failed, none of the alternatives below can succeed
-                // either, so return the error rather than falling through:
-                // `V::parse` would re-enter the same nested block through
-                // `Calc::parse` again, which makes deeply nested invalid
-                // arguments exponentially slow to reject.
                 let start = input.state();
                 let failed_unit = match input.next() {
                     Ok(css::Token::Function(name)) => CalcUnit::get_any_case(name),
@@ -861,12 +827,6 @@ impl<V: CalcValue> Calc<V> {
             }
         }
 
-        // blocked_on: values/length.rs un-gate — until Length is real,
-        // `atan2(10px, 5px)` (and any other length-dimension pair) falls
-        // through to the CSSNumber path below and errors with `invalid_value`,
-        // diverging from Zig (`Angle::Rad(atan2(10,5))`). Tracked as a known
-        // incompleteness; no behaviour stub is added because a partial
-        // dimension matcher would mis-reduce mixed-unit lengths.
         if let Ok(v) = try_parse_atan2_args::<C, Length>(input, ctx) {
             return Ok(v);
         }
@@ -1102,11 +1062,6 @@ impl<V: CalcValue> Calc<V> {
         }
     }
 
-    /// PERF:
-    /// I don't like how this function requires allocating a second ArrayList
-    /// I am pretty sure we could do this reduction in place, or do it as the
-    /// arguments are being parsed.
-    // PERF(port): `args`/`reduced` were arena bulk-free (ArrayList fed input.arena()) — profile if hot
     fn reduce_args(args: &mut Vec<Self>, order: Ordering) {
         // Reduces the arguments of a min() or max() expression, combining compatible values.
         // e.g. min(1px, 1em, 2px, 3in) => min(1px, 1em)
@@ -1188,10 +1143,6 @@ pub enum TrigFnKind {
     Atan,
 }
 
-/// A CSS math function.
-///
-/// Math functions may be used in most properties and values that accept numeric
-/// values, including lengths, percentages, angles, times, etc.
 pub enum MathFunction<V> {
     /// The `calc()` function.
     Calc(Calc<V>),
@@ -1612,18 +1563,6 @@ fn absf(a: f32) -> f32 {
     a.abs()
 }
 
-// ───────────────────────── CalcValue impls ─────────────────────────────────
-// One impl per concrete `V` that `Calc<V>` is instantiated with. The
-// numeric-protocol surface (`mul_f32`/`try_sign`/`try_map`/`try_op{,_to}`/
-// `partial_cmp`/`try_from_angle`/`parse`/`to_css`/`is_compatible`) is
-// satisfied via `crate::values::protocol::*` supertraits; only the
-// calc-specific Zig `switch (V)` arms (`intoValue` / `addValue` / `intoCalc`
-// / `eql`) live here.
-//
-// Any type whose protocol impls don't already exist elsewhere gets them
-// immediately below its `CalcValue` impl as one-line forwarders to the
-// inherent method.
-
 impl CalcValue for CSSNumber {
     #[inline]
     fn add_internal(self, rhs: Self) -> Self {
@@ -1667,26 +1606,6 @@ impl CalcValue for Angle {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// `protocol::*` forwarder stamper for `CalcValue` leaf types.
-//
-// Rust analogue of Zig's single comptime dispatcher in `src/css/generics.zig`
-// (`tryFromAngle`/`trySign`/`tryMap`/`tryOp`/`tryOpTo`/`partialCmp`, lines
-// ~489-570), which duck-types via `@hasDecl(T, "sign")` etc. Here each leaf
-// opts in per-trait; only the listed arms are stamped — `Parse`/`ToCss`/
-// `IsCompatible` already supplied by `impl_parse_tocss_via_inherent!` /
-// `bridge_is_compatible!` stay out of the invocation.
-//
-// Arm vocab (each `arm: spec,` — trailing comma required):
-//   mul_f32:        forward
-//   partial_cmp:    forward
-//   try_from_angle: forward | none
-//   try_sign:       forward | <ident>   (ident = infallible inherent → `Some`)
-//   try_map:        forward | <ident>
-//   try_op:         forward | |rhs, ctx, f| { <body> }   (idents = param names;
-//   try_op_to:      |rhs, ctx, f| { <body, generic R> }   captured for hygiene)
-//   is_compatible:  forward | always_true
-//   parse_to_css:   forward             (stamps both `Parse` + `ToCss`)
 macro_rules! calc_protocol_forwarders {
     ($T:ty { $($arms:tt)* }) => { calc_protocol_forwarders!(@ $T; $($arms)*); };
     (@ $T:ty;) => {};
@@ -1736,10 +1655,6 @@ macro_rules! calc_protocol_forwarders {
         }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
-    // Closure-ish syntax so `$this/$rhs/$ctx/$f` carry call-site hygiene into
-    // the param list (macro_rules! fn-params are hygienic — `self` does not
-    // resolve in a `:block` from the call site, so the caller binds it via
-    // `$this`).
     (@ $T:ty; try_op: |$this:ident, $rhs:ident, $ctx:ident, $f:ident| $body:block, $($r:tt)*) => {
         impl protocol::TryOp for $T {
             #[inline] fn try_op<C>(&self, $rhs: &Self, $ctx: C, $f: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
@@ -1863,10 +1778,6 @@ calc_protocol_forwarders!(Length {
     try_sign: forward,
     try_map: forward,
     try_op: |this, rhs, ctx, f| {
-        // Delegate to `protocol::TryOp for LengthValue` (which inlines the
-        // same-unit/px-convert dispatch) rather than the inherent `Length::try_op`
-        // — the inherent takes a 2-arg `Fn` closure, and adapting our 3-arg `f`
-        // to that without `C: Copy` would only yield `FnOnce`.
         if let (Length::Value(a), Length::Value(b)) = (this, rhs) {
             return <LengthValue as protocol::TryOp>::try_op(a, b, ctx, f).map(Length::Value);
         }
@@ -1899,13 +1810,6 @@ impl CalcValue for Length {
     }
 }
 
-/// `protocol::*` + `CalcValue` impls for the two concrete `DimensionPercentage<D>`
-/// instantiations that participate in `Calc<V>`. Kept as a macro (rather than
-/// a blanket `impl<D: …>`) so coherence doesn't tangle with the `where Self:
-/// CalcValue` bounds on the inherent methods these forward to. Trailing extra
-/// arms (e.g. `parse_to_css: forward,`) are forwarded into
-/// `calc_protocol_forwarders!` — `LengthPercentage` already gets `Parse`/`ToCss`
-/// from `impl_parse_tocss_via_inherent!`, only `Angle` needs them stamped here.
 macro_rules! dim_pct_protocol {
     ($D:ty $(, $($extra:tt)*)?) => {
         calc_protocol_forwarders!(DimensionPercentage<$D> {

@@ -34,19 +34,6 @@ use crate::package_manager::package_manager_resolution as pm_resolution;
 use crate::resolution;
 use crate::{DependencyID, Features, PackageID, PackageManager, PreinstallState};
 
-// ─── Static layout asserts (Resolution overlay) ───────────────────────────
-// `resolution::ResolutionType<u64>` and `hooks::Resolution` are distinct
-// `#[repr(C)]` structs with identical field order
-// (`tag: u8, _padding: [u8;7], value: ResolutionValue<u64>`). Pin that
-// contract. The `value` fields are the SAME nominal type (`resolution::Value`
-// aliases `hooks::ResolutionValue`), so only the whole-struct layout needs
-// pinning.
-//
-// NB: size/align equality is necessary but NOT sufficient for a whole-struct
-// transmute — the two `tag` fields have different validity domains (open `u8`
-// newtype vs closed `#[repr(u8)] enum`). The bridge below therefore copies
-// fields explicitly.
-
 const _: () = assert!(size_of::<resolution::Resolution>() == size_of::<hooks::Resolution>());
 const _: () = assert!(align_of::<resolution::Resolution>() == align_of::<hooks::Resolution>());
 
@@ -67,12 +54,6 @@ const _: () = {
 
 #[inline]
 fn tag_to_hooks(t: resolution::Tag) -> hooks::ResolutionTag {
-    // `resolution::Tag` is a `#[repr(transparent)]` u8 newtype (Zig
-    // `enum(u8) { ..., _ }` — non-exhaustive; lockfile bytes may carry any
-    // value). `hooks::ResolutionTag` is a closed `#[repr(u8)] enum`. A blind
-    // transmute would produce an invalid enum discriminant (UB) for any byte
-    // outside the named set, so map explicitly and saturate unknowns to
-    // `Uninitialized` (debug-asserted).
     match t {
         resolution::Tag::Uninitialized => hooks::ResolutionTag::Uninitialized,
         resolution::Tag::Root => hooks::ResolutionTag::Root,
@@ -98,10 +79,6 @@ fn tag_to_hooks(t: resolution::Tag) -> hooks::ResolutionTag {
 
 #[inline]
 fn resolution_to_hooks(r: &resolution::Resolution) -> hooks::Resolution {
-    // `resolution::Value<u64>` is a type alias for `hooks::ResolutionValue<u64>`,
-    // so `value` copies as the SAME nominal type. `hooks::Resolution` is
-    // in-memory only (never byte-serialized), so trailing union bytes carrying
-    // over from the install-side zero-init contract is fine.
     hooks::Resolution {
         tag: tag_to_hooks(r.tag),
         _padding: r._padding,
@@ -197,15 +174,6 @@ impl hooks::AutoInstaller for PackageManager {
         package_json: &dyn hooks::PackageJsonView,
         features: Features,
     ) -> Result<PackageID, bun_core::Error> {
-        // Port of `Package.fromPackageJSON` + `lockfile.appendPackage`
-        // (resolver.zig:2064-2073), driven entirely off the
-        // `PackageJsonView` interface so this impl does not need to name
-        // `bun_resolver::PackageJSON` directly.
-
-        // PORT NOTE: reshaped for borrowck — `string_builder!` borrows
-        // `self.lockfile` mutably while `dep.clone_in` needs `&mut self`.
-        // Use a raw pointer for the disjoint reborrow (same approach as
-        // `Package::from_package_json`).
         let pm: *mut PackageManager = self;
         // SAFETY: `pm` derives from `&mut self`; reborrows below are disjoint
         // from `string_builder`'s borrow of `lockfile.{string_bytes,string_pool}`.
@@ -243,11 +211,6 @@ impl hooks::AutoInstaller for PackageManager {
         let dep_start = dependencies_list.len();
         debug_assert!(dependencies_list.len() == resolutions_list.len());
 
-        // Zig writes through `items.ptr[len..total_len]` and only bumps
-        // `.items.len` after the last fallible point (Package.zig:265-296).
-        // Mirror that by default-filling the tail now and `truncate`-ing back
-        // to `dep_start` on the error path so a failed `clone_in` leaves both
-        // buffer lengths consistent.
         let mut dependencies: &mut [dependency::Dependency] =
             bun_core::vec::grow_default(dependencies_list, total_dependencies_count as usize);
 
@@ -356,10 +319,6 @@ impl hooks::AutoInstaller for PackageManager {
         patch_name_and_version_hash: Option<u64>,
     ) -> Result<(), bun_core::Error> {
         let r = resolution_from_hooks(resolution);
-        // Zig: resolver.zig:2123 — only the npm arm reaches this enqueue.
-        // Caller passes a `Resolution` whose tag was already checked == Npm by
-        // the resolver (`resolution.tag == .npm`); the field-copy bridge
-        // preserves the tag/union pairing.
         let npm = *r.npm();
         let url = self.lockfile.str(&npm.url).to_vec();
         enqueue::enqueue_package_for_download(

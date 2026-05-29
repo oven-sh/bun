@@ -26,32 +26,8 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU16, AtomicU32, AtomicU64, O
 // AtomicCell<T>
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Lock-free atomic cell for any `Copy` type up to 8 bytes.
-///
-/// This is the cross-thread counterpart to [`RacyCell`](crate::RacyCell):
-/// where `RacyCell` documents "single-threaded by construction", `AtomicCell`
-/// documents "actually shared; every load/store is an atomic op with
-/// Acquire/Release ordering". Use this for flags, counters, small enums,
-/// handles, and `Option<NonNull<_>>` that more than one thread touches.
-///
-/// `T` must implement [`Atom`] (no padding, `size_of::<T>() ∈ {1,2,4,8}`).
-/// Larger or padded `T` is a compile error — use `bun_threading::RwLock<T>` or
-/// restructure. There is **no** seqlock fallback (unlike crossbeam's
-/// `AtomicCell`): if it doesn't fit in a native atomic word, it doesn't
-/// compile.
-///
-/// Default ordering is **Acquire/Release**, not Relaxed — at least six of the
-/// data-race findings that motivated this type were "Relaxed gives no
-/// happens-before for the init it guards". Telemetry / best-effort hints can
-/// opt out via [`load_relaxed`](Self::load_relaxed) /
-/// [`store_relaxed`](Self::store_relaxed), named so grep finds every site
-/// that opted out of ordering.
 #[repr(C)]
 pub struct AtomicCell<T: Copy> {
-    // ZST that forces 8-byte alignment so `inner`'s address is valid for
-    // `AtomicU64` (the widest backing we cast to). Smaller widths need ≤8, so
-    // this covers all sizes. With `repr(C)` the ZST occupies offset 0 and
-    // `inner` is also at offset 0.
     _align: [AtomicU64; 0],
     inner: UnsafeCell<T>,
 }
@@ -239,12 +215,6 @@ const unsafe fn xmute<A, B>(a: A) -> B {
     })
 }
 
-/// Implement [`Atom`] for a non-pointer `Copy` type by routing to the
-/// `AtomicU{8,16,32,64}` of matching width.
-///
-/// `unsafe` because the caller asserts the [`Atom`] safety contract (size is
-/// a power of two ≤ 8, no padding bytes). A `const _` assert checks the size
-/// half at compile time; the no-padding half is on you.
 #[macro_export]
 macro_rules! unsafe_impl_atom {
     ($($T:ty),+ $(,)?) => {$(
@@ -588,10 +558,6 @@ impl<T> ThreadCell<T> {
 }
 
 impl<T: ?Sized> ThreadCell<T> {
-    /// Bind this cell to the calling thread. Idempotent on the owner; panics
-    /// if a *different* thread has already claimed it. Call once from the
-    /// owning thread's entry point (e.g. `HTTPThread::on_start`,
-    /// `IoRequestLoop::on_spawn_io_thread`).
     #[inline]
     pub fn claim(&self) {
         #[cfg(debug_assertions)]
@@ -635,11 +601,6 @@ impl<T: ?Sized> ThreadCell<T> {
         self.inner.get()
     }
 
-    /// Raw pointer **without** the owner assertion. Use only on paths that
-    /// touch fields which are *themselves* cross-thread-safe (lock-free
-    /// queue + waker), pending a refactor that moves those fields out of the
-    /// thread-confined struct. Every call site must say which fields it
-    /// touches and why that's sound.
     #[inline]
     pub fn get_unchecked(&self) -> *mut T {
         self.inner.get()

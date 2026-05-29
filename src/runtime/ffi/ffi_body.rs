@@ -64,12 +64,6 @@ fn strings_to_js_array(global: &JSGlobalObject, strs: &[bun_core::String]) -> Js
     })
 }
 
-// `bun_tcc_sys` is an un-gated workspace crate and a direct dep of
-// `bun_runtime`, so import it unconditionally. Runtime availability is governed
-// by `bun_core::Environment::ENABLE_TINYCC` (mirrors Zig
-// `Environment.enable_tinycc`) via the early-return guards in the host-fns
-// below — type resolution for `TCC::{Config, ConfigErr, OutputFormat, State}`
-// must succeed regardless.
 use bun_tcc_sys as TCC;
 
 bun_output::declare_scope!(TCC, visible);
@@ -81,10 +75,6 @@ unsafe extern "C" {
 
 use super::get_dl_error;
 
-/// Run a function that needs to write to JIT-protected memory.
-///
-/// This is dangerous as it allows overwriting executable regions of memory.
-/// Do not pass in user-defined functions (including JSFunctions).
 fn dangerously_run_without_jit_protections<R>(func: impl FnOnce() -> R) -> R {
     const HAS_PROTECTION: bool = cfg!(all(target_arch = "aarch64", target_os = "macos"));
     if HAS_PROTECTION {
@@ -111,10 +101,6 @@ struct Offsets {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    // Written once by C++ before any Rust read. C++ mutates these bytes, so a
-    // plain non-`mut` extern static would assert immutability to the optimizer
-    // (UB). `RacyCell<T>` is `#[repr(transparent)]` over `UnsafeCell<T>`, so
-    // the extern layout is identical to `Offsets`.
     #[link_name = "Bun__FFI__offsets"]
     static BUN_FFI_OFFSETS: bun_core::RacyCell<Offsets>;
     #[link_name = "Bun__FFI__ensureOffsetsAreLoaded"]
@@ -194,11 +180,6 @@ impl Offsets {
     }
 }
 
-// R-2 (host-fn re-entrancy): the JS-exposed `close()` method takes `&self`;
-// per-field interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
-// `close()` does not itself re-enter JS, but routing mutation through
-// `UnsafeCell`-backed fields suppresses `noalias` on the `&Self` the codegen
-// shim materialises from `m_ctx`, which is the systemic R-2 guarantee.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct FFI {
     pub dylib: JsCell<Option<bun_sys::DynLib>>, // TODO(port): std.DynLib equivalent
@@ -220,17 +201,6 @@ impl Default for FFI {
 
 impl FFI {
     pub fn finalize(self: Box<Self>) {
-        // Zig spec (ffi.zig:69): `pub fn finalize(_: *FFI) callconv(.c) void {}` —
-        // INTENTIONAL no-op when not closed. Compiled trampolines / dlopen'd
-        // symbols may still be reachable from JS after the wrapper is GC'd
-        // (e.g. `const { fn } = dlopen(...).symbols`); teardown is owned by
-        // `close()`. Dropping the Box would run `Function::drop` →
-        // `tcc_delete()`, freeing the executable pages those JSFunctions still
-        // jump into.
-        //
-        // When `close()` HAS run, the functions map is empty and the dylib /
-        // shared TCC state are already gone, so the Box only owns the (empty)
-        // hashmap's retained-capacity buffer. Drop it instead of leaking.
         if self.closed.get() {
             drop(self);
         } else {
@@ -346,11 +316,6 @@ mod stdarg {
     mod mac {
         use super::*;
         use core::sync::atomic::AtomicPtr;
-        // libc declares these as `FILE *__stdinp;` — `AtomicPtr<c_void>` is
-        // `#[repr(C)]` over a single `*mut c_void`, so the extern layout is
-        // identical. We never read them; we hand TinyCC the *address* of the
-        // global (matching Zig's `@extern(*anyopaque, .{ .name = "__stdinp" })`)
-        // so JIT'd code that references `__stdoutp` loads the FILE* from there.
         unsafe extern "C" {
             #[link_name = "__stdinp"]
             static FFI_STDINP: AtomicPtr<c_void>;
@@ -515,15 +480,6 @@ impl CompileC {
     fn get_system_root_dir_once() {
         #[cfg(target_os = "macos")]
         {
-            // Zig: `bun.spawnSync(&.{ argv = ["xcrun", "-sdk", "macosx",
-            // "-show-sdk-path"], stdout = .buffer, ... })` to auto-detect the
-            // active SDK root. The Rust `bun::spawn_sync` helper isn't ported
-            // yet (see install/repository.rs TODO), so use std::process as a
-            // shim — semantics match: inherit env, ignore stdin/stderr,
-            // capture stdout, treat any spawn/exit failure as "not found"
-            // (Zig: `catch return` / `if (process.result.isOK())`).
-            // `Command::new("xcrun")` does PATH lookup like `bun.which`, and
-            // /usr/bin is always in PATH on macOS, matching the Zig fallback.
             #[allow(clippy::disallowed_types, clippy::disallowed_methods)]
             let out = match std::process::Command::new("xcrun")
                 .arg("-sdk")
@@ -1475,23 +1431,12 @@ impl FFI {
                 () => b"dll",
                 // TODO(port): wasm @compileError("TODO")
             };
-            // Spec `ffi.zig:1030` — `ModuleLoader.resolveEmbeddedFile(vm, buf,
-            // name_slice.slice(), ext)` extracts a bunfs-embedded shared
-            // library (added via `import lib from "./lib.so" with { type:
-            // "file" }` and shipped through `bun build --compile`) to a real
-            // on-disk temp file, returning the tmpfile path; libc `dlopen(2)`
-            // can't see the bunfs virtual FS. The helper lives in
-            // `crate::jsc_hooks` — same crate, so a direct call.
             let _ = vm;
             if let Some(len) = crate::jsc_hooks::resolve_embedded_file_to_buf(
                 name_slice.slice(),
                 ext,
                 &mut filepath_buf[..],
             ) {
-                // Spec `ffi.zig:1041` — NUL-terminate in place so `DynLib::open`
-                // can pass the slice to libc without copying. `resolve_*_to_buf`
-                // is bounded by `Fs::FileSystem::tmpname` + a tmpdir join (both
-                // fit in `PATH_MAX`), so `filepath_buf[len]` is in bounds.
                 filepath_buf[len] = 0;
                 break 'brk &filepath_buf[0..len];
             }
@@ -2165,10 +2110,6 @@ impl Function {
             Err(e) if e == bun_core::err!("OutOfMemory") => {
                 return Err(bun_core::err!("TCCMissing"));
             }
-            // 1. .Memory is always a valid option, so InvalidOptions is
-            //    impossible
-            // 2. other throwable functions arent called, so their errors
-            //    aren't possible
             Err(_) => unreachable!(),
         };
         self.state = Some(state);
@@ -2634,10 +2575,6 @@ static CREATE_COMPILER_RT_DIR_ONCE: Once = Once::new();
 
 impl CompilerRT {
     fn create_compiler_rt_dir() {
-        // Spec ffi.zig:2340 — `Fs.FileSystem.instance.tmpdir() catch return`.
-        // `bun_resolver::fs::FileSystem` (the inline canonical surface) doesn't
-        // yet expose an inherent `tmpdir()`; reuse the crate-local
-        // `FileSystemTmpdirExt` shim already in service for `jsc_hooks`.
         use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
         let Ok(tmpdir) = Fs::FileSystem::instance().tmpdir() else {
             return;
@@ -2740,11 +2677,6 @@ impl CompilerRT {
         state
             .add_symbol(zstr!("memcpy"), Self::memcpy as *const c_void)
             .expect("unreachable");
-        // Re-declare the C++ NapiHandleScope hooks locally — the canonical
-        // declarations live in `crate::napi::napi_body` which is private, and
-        // we only need the symbol addresses to hand to TCC. The canonical
-        // signatures use `*mut NapiHandleScope` (an opaque type not re-exported
-        // here); `*mut c_void` is ABI-identical for address-taking purposes.
         #[allow(clashing_extern_declarations)]
         unsafe extern "C" {
             fn NapiHandleScope__open(env: *mut napi::NapiEnv, escapable: bool) -> *mut c_void;
@@ -2820,10 +2752,6 @@ fn make_napi_env_if_needed<'a>(
     functions: impl IntoIterator<Item = &'a Function>,
     global_this: &JSGlobalObject,
 ) -> Option<&'static napi::NapiEnv> {
-    // Return is `'static`, not `'a` — the env is heap-allocated by C++
-    // (`makeNapiEnvForFFI`) and owned by the VM for process lifetime; tying it
-    // to `'a` (the iterator borrow) is over-restrictive and blocks the
-    // immediate-after `values_mut()` loop at every call site.
     for function in functions {
         if function.needs_napi_env() {
             // TODO(port): lifetime — makeNapiEnvForFFI returns a heap-allocated env owned by VM

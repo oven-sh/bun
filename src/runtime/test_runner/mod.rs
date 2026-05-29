@@ -20,18 +20,8 @@ pub mod diff {
     pub mod print_diff;
 }
 
-// ─── JSC-heavy core ──────────────────────────────────────────────────────
-// `cfg_jsc!` is a historical no-op grouping macro kept so the 18 module decls
-// stay one logical unit (and so a future `#[cfg]` can be re-introduced at a
-// single token if `bun_jsc` ever needs to be feature-gated again).
 macro_rules! cfg_jsc { ($($i:item)*) => { $( $i )* }; }
 
-/// Stamps out an `impl Expect { #[host_fn(method)] pub fn $method(..) }` that
-/// delegates to [`Expect::run_unary_predicate`]. Defined here (top-level,
-/// outside `cfg_jsc!`) so it can be addressed as
-/// `crate::unary_predicate_matcher!` from each `expect/toBe*.rs` file —
-/// `#[macro_export]` inside a macro-expanded module hits
-/// `macro_expanded_macro_exports_accessed_by_absolute_paths`.
 #[macro_export]
 macro_rules! unary_predicate_matcher {
     ($method:ident, $name:literal, |$v:ident| $pred:expr) => {
@@ -61,13 +51,6 @@ cfg_jsc! {
     #[path = "ScopeFunctions.rs"] pub mod scope_functions;
     #[path = "snapshot.rs"]       pub mod snapshot;
 
-    // expect.rs is the umbrella file (Expect struct + asymmetric matchers +
-    // ExpectStatic + mock helpers); each `expect/to*.rs` adds one inherent
-    // method or free host_fn to `Expect`. Declared `pub` because the
-    // generate-classes.ts Rust emitter resolves payload types at
-    // `crate::test_runner::expect_core::Expect*` (see
-    // build/debug/codegen/generated_classes.rs); the `pub mod expect` façade
-    // below layers matcher submodules + shims on top via `pub use`.
     #[path = "expect.rs"]
     pub mod expect_core;
 }
@@ -91,18 +74,10 @@ pub mod expect {
     pub use super::expect_core::mock;
     pub use super::diff_format::DiffFormatter;
 
-    /// `Expect.js.*GetCached` / `*SetCached` accessors (Zig: `Expect.js.capturedValueGetCached`
-    /// etc., generate-classes.ts `cache: true` slots from jest.classes.ts:226). Exposed as a
-    /// sibling `js` module so matcher drafts can write `super::js::captured_value_get_cached(..)`
-    /// — `Expect::js::..` does not resolve in Rust (no inherent associated modules).
     pub mod js {
         ::bun_jsc::codegen_cached_accessors!("Expect"; capturedValue, resultValue);
     }
 
-    /// Free-fn alias for `Expect::get_signature` — many matcher modules
-    /// import it as a path item (`use super::get_signature`),
-    /// which Rust does not allow for associated fns. Thin shim keeps those
-    /// modules unmodified.
     #[inline]
     pub fn get_signature(
         matcher_name: &'static str,
@@ -112,13 +87,6 @@ pub mod expect {
         Expect::get_signature(matcher_name, args, not)
     }
 
-    /// Const-context twin of `get_signature` — Zig's `getSignature` is a
-    /// `comptime` fn (.zig:103-109) that concatenates string literals. Rust
-    /// has no const-fn string concat, so call sites that need a `&'static
-    /// str` constant (e.g. inside `const_format::concatcp!`) use this macro
-    /// instead. `use super::get_signature;` imports both the fn (value
-    /// namespace) and this macro (macro namespace), so runtime callers keep
-    /// `get_signature(...)` and const callers write `get_signature!(...)`.
     macro_rules! __get_signature {
         ($matcher:expr, $args:expr, true $(,)?) => {
             ::const_format::concatcp!(
@@ -134,13 +102,6 @@ pub mod expect {
         };
     }
     pub(crate) use __get_signature as get_signature;
-
-    // ── call-convention adapters over `bun_jsc` inherents ────────────
-    // The matcher modules were written against a slightly different
-    // `bun_jsc` surface (argument order, builder-style setters, two-arg
-    // `throw_*`). Rather than touch 75 files we provide thin extension
-    // traits / aliases here that forward to the now-landed inherents — no
-    // local FFI re-decls, no semantic divergence.
 
     use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
     use bun_jsc::console_object::Formatter;
@@ -215,12 +176,6 @@ pub mod expect {
                 out,
                 fmt_options,
             )?;
-            // Zig: `try out.flush()` — `FormatOptions.flush` is false, so the
-            // formatter does not flush internally; a buffered `out` would
-            // otherwise drop trailing snapshot bytes. Propagate the writer
-            // error as a thrown JS error so the caller's `.is_err()` branch
-            // (expect.rs `to_match_snapshot_value_kind`) fires, matching the
-            // Zig `!void` contract.
             out.flush().map_err(|e| global.throw_error(e, "snapshot writer flush failed"))?;
             Ok(())
         }
@@ -314,12 +269,6 @@ pub mod expect {
     #[derive(Copy, Clone, PartialEq, Eq)]
     pub enum BigIntCompare { LessThan, Equal, GreaterThan, Undefined }
 
-    /// Two-argument `throw_*` adapters — matcher modules call
-    /// `global.throw_pretty(FMT, format_args!(FMT, ..))` (Zig's `comptime fmt`
-    /// + `args`). Rust's `Arguments<'_>` already encloses the format string,
-    /// so the leading `&str` is redundant; these shims drop it and forward to
-    /// the bun_jsc inherents (`throw_pretty` runs the `<r>/<d>` → ANSI/strip
-    /// pass at runtime; `throw`/`throw_invalid_arguments` do not).
     pub trait JSGlobalObjectTestExt {
         fn throw_pretty(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
         fn throw2(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
@@ -340,21 +289,12 @@ pub mod expect {
         }
     }
 
-    /// `super::make_formatter(global_this)`
-    /// is the universal matcher pattern; `Formatter` has no `Default` (it
-    /// borrows `global_this`), so provide the constructor every matcher
-    /// expected.
     #[inline]
     pub fn make_formatter(global: &JSGlobalObject) -> Formatter<'_> {
         let mut f = Formatter::new(global);
         f.quote_strings = true;
         f
     }
-
-    // ── numeric ordering matchers (toBe{Greater,Less}Than[OrEqual]) ───────
-    // Four near-identical Zig matchers (toBeGreaterThan.zig:1-59 etc.) are
-    // copy-pasted upstream; collapse to one body parameterised by relation.
-    // Rust-side dedup, not a parity restore.
 
     #[derive(Copy, Clone)]
     pub(super) enum OrderingRelation { Gt, Ge, Lt, Le }
@@ -407,10 +347,6 @@ pub mod expect {
     }
 
     impl Expect {
-        /// Shared body for `toBeGreaterThan` / `toBeGreaterThanOrEqual` /
-        /// `toBeLessThan` / `toBeLessThanOrEqual`. The four upstream Zig files
-        /// differ only in `name`, the `>`/`>=`/`<`/`<=` operator, and which
-        /// `BigIntCompare` arms count as a pass — all of which `rel` encodes.
         pub(super) fn numeric_ordering_matcher(
             &self,
             global: &JSGlobalObject,
@@ -485,10 +421,6 @@ pub mod expect {
         }
     }
 
-    /// Builder-style `.with_quote_strings(bool)` shim — `bun_jsc::Formatter`
-    /// exposes `quote_strings` as a public field, not a chained setter. A
-    /// handful of matcher modules write
-    /// `Formatter::new(g).with_quote_strings(true)`.
     pub trait FormatterTestExt: Sized {
         fn with_quote_strings(self, b: bool) -> Self;
     }
@@ -497,13 +429,6 @@ pub mod expect {
         fn with_quote_strings(mut self, b: bool) -> Self { self.quote_strings = b; self }
     }
 
-    // ── matcher modules (75) ──────────────────────────────────────────
-    // Each file is `impl Expect { pub fn to_*(..) }` or a free
-    // `#[bun_jsc::host_fn(method)] pub fn to_*(this: &mut Expect, ..)`.
-    // Bodies are real (un-gated); they exercise the full bun_jsc::JSValue
-    // method surface (is_null/is_string/deep_equals/to_fmt/array_iterator
-    // /get_length/...). Any method gap surfaces here when `cfg_jsc!` is
-    // flipped.
     macro_rules! matchers {
         ( $( $file:literal => $mod:ident ),* $(,)? ) => {
             $( #[path = $file] pub mod $mod; )*

@@ -101,19 +101,6 @@ impl ArgIter<'static> for OsIterator {
     }
 }
 
-/// Process argv as a `&'static` slice of `&'static [u8]`.
-///
-/// Zig: `bun.argv: [][:0]const u8` — the process-global view that includes
-/// `BUN_OPTIONS` injection.
-///
-/// This used to project `&ZStr → &[u8]` through a `OnceLock<Vec<&[u8]>>`,
-/// which (a) allocated a Vec on the `--version` startup path and (b) emitted a
-/// distinct `OnceLock<Vec<&[u8]>>::initialize` / `Once::call_once_force`
-/// monomorphisation that perf showed faulting in its own 4 KB `.text` page.
-/// `bun_core::ZStr` is `#[repr(transparent)]` over `[u8]`, so `&ZStr` and
-/// `&[u8]` are layout-identical fat pointers — reinterpret the process-static
-/// `[&ZStr]` view in place: zero alloc, zero lazy-init shim, zero extra
-/// `.text`.
 #[inline]
 fn os_argv() -> &'static [&'static [u8]] {
     let z: &'static [&'static bun_core::ZStr] = bun_core::argv().as_slice();
@@ -206,10 +193,6 @@ impl<'a> ShellIterator<'a> {
                         return res;
                     }
 
-                    // Slicing is not possible if a quote starts while parsing none
-                    // quoted args.
-                    // Example:
-                    // ab'cd' -> abcd
                     b'\'' => {
                         list.extend_from_slice(&s[start..i]);
                         start = i + 1;
@@ -232,11 +215,6 @@ impl<'a> ShellIterator<'a> {
                     _ => {}
                 },
 
-                // We're in this state after having parsed the quoted part of an
-                // argument. This state works mostly the same as .no_quote, but
-                // is aware, that the last character seen was a quote, which should
-                // not be part of the argument. This is why you will see `i - 1` here
-                // instead of just `i` when `iter.str` is sliced.
                 State::AfterQuote => match c {
                     b' ' | b'\t' | b'\n' => {
                         let res = Self::result(s, start, i - 1, list);
@@ -265,10 +243,6 @@ impl<'a> ShellIterator<'a> {
                     }
                 },
 
-                // The states that parse the quoted part of arguments. The only differnece
-                // between single and double quoted arguments is that single quoted
-                // arguments ignore escape sequences, while double quoted arguments
-                // does escaping.
                 State::SingleQuote => match c {
                     b'\'' => state = State::AfterQuote,
                     _ => {}
@@ -283,11 +257,6 @@ impl<'a> ShellIterator<'a> {
                     _ => {}
                 },
 
-                // The state we end up when after the escape character (`\`). All these
-                // states do is transition back into the previous state.
-                // TODO: Are there any escape sequences that does transform the second
-                //       character into something else? For example, in Zig, `\n` is
-                //       transformed into the line feed ascii character.
                 State::NoQuoteEscape => {
                     state = State::NoQuote;
                 }

@@ -33,11 +33,6 @@ pub enum State {
 #[ref_count(destroy = PipeReader::deinit, debug_name = "PipeReader")]
 pub struct PipeReader {
     pub reader: IOReader,
-    // Backref to owning Subprocess; cleared in detach()/onReaderDone()/onReaderError().
-    // `ParentRef` encapsulates the single unsafe deref behind a safe `Deref`/`get()`;
-    // the Subprocess owns this PipeReader (via `Readable::Pipe`) and is guaranteed
-    // live whenever `process.is_some()` — see `on_close_io`/`finalize` ordering.
-    // `'static` erases the borrow-checker lifetime (Subprocess is heap-pinned).
     pub process: Option<ParentRef<Subprocess<'static>>>,
     // Long-lived borrow of the VM's event loop. The VM (and its embedded
     // `EventLoop`) outlives every PipeReader, so `BackRef` centralises the
@@ -121,10 +116,6 @@ impl PipeReader {
         MaxBuf::add_to_pipereader(limit, &mut this.reader.maxbuf);
         #[cfg(windows)]
         {
-            // Zig: `this.reader.source = .{ .pipe = this.stdio_result.buffer }` —
-            // on Windows `StdioResult` is the `WindowsStdioResult` enum and the
-            // `.buffer` payload is a heap-allocated `uv::Pipe`. Ownership
-            // transfers to `reader.source`; `stdio_result` is left `Unavailable`.
             if let StdioResult::Buffer(pipe) = this.stdio_result.take() {
                 this.reader.source = Some(bun_io::Source::Pipe(pipe));
             }
@@ -184,10 +175,6 @@ impl PipeReader {
                             // will drop the last ref and deinit() closes the handle.
                             return bun_sys::Result::Ok(());
                         }
-                        // PORT NOTE: `PollOrFd` is an enum in the Rust port; the Zig
-                        // `this.reader.handle.poll` field projection becomes a variant
-                        // pattern. `FilePoll` is an opaque vtable-backed handle (Copy)
-                        // with `set_flag` standing in for `poll.flags.insert(...)`.
                         if let Some(poll) = self.reader.handle.get_poll() {
                             poll.set_flag(FilePollFlag::Socket);
                             poll.set_flag(FilePollFlag::Nonblocking);
@@ -270,11 +257,6 @@ impl PipeReader {
         &mut self,
         global_object: &JSGlobalObject,
     ) -> JsResult<JSValue> {
-        // `defer this.detach()` — detach() = clear `process` backref + deref. The deref
-        // may drop the last ref, so it must run after the result is computed; the backref
-        // clear must also wait (from_pipe hands `&mut self.reader` to JS, which may
-        // re-enter on_reader_done/on_reader_error and consult `self.process`). Compound
-        // side-effect, not pure refcount → defer! is the RAII shape here.
         let this_ptr: *mut PipeReader = self;
         scopeguard::defer! {
             // SAFETY: `self` is valid for the duration of this call; detach() may free it,
@@ -315,11 +297,6 @@ impl PipeReader {
         match &mut self.state {
             State::Done(bytes) => {
                 let bytes = core::mem::take(bytes);
-                // `defer this.state = .{ .done = &.{} }` — state.done is now empty via take().
-                // PORT NOTE: `MarkedArrayBuffer::from_bytes` takes a borrowed `&mut [u8]`
-                // with `owns_buffer = true` (freed via mimalloc on the JS side); leak the
-                // boxed slice so JS becomes the owner — same pattern as
-                // `MarkedArrayBuffer::from_string`.
                 let slice: &'static mut [u8] = Box::leak(bytes.into_boxed_slice());
                 MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)
                     .to_node_buffer(global_this)
@@ -372,10 +349,6 @@ impl PipeReader {
         }
     }
 
-    /// Called when ref_count hits zero. Consumes the Box allocation.
-    ///
-    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-    /// whose generated trait `destructor` upholds the sole-owner contract.
     fn deinit(this: *mut PipeReader) {
         // SAFETY: refcount == 0 ⇒ `this` is the unique owner.
         let this_ref = unsafe { &mut *this };
@@ -387,10 +360,6 @@ impl PipeReader {
 
         #[cfg(windows)]
         {
-            // WindowsBufferedReader.onError() never closes the source, and
-            // WindowsBufferedReader.deinit() nulls this.source before calling
-            // closeImpl so it never actually closes either. Close it here on
-            // the error path so the uv.Pipe handle doesn't leak.
             if matches!(this_ref.state, State::Err(_))
                 && this_ref.reader.source.is_some()
                 && !this_ref.reader.source.as_ref().unwrap().is_closed()
@@ -411,10 +380,6 @@ impl PipeReader {
     }
 }
 
-// `bun.io.BufferedReader.init(@This())` — vtable parent. The Zig spec declares
-// `onReaderDone`/`onReaderError`/`loop`/`eventLoop` (no `onReadChunk`).
-// `on_reader_done`/`on_reader_error` are tail-position (the reader is finished
-// with `self`), so `&mut *this` autoref is OK.
 bun_io::impl_buffered_reader_parent! {
     SubprocessPipeReader for PipeReader;
     has_on_read_chunk = false;

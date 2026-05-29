@@ -47,12 +47,6 @@ pub enum T {
 }
 
 pub struct Lexer<'a> {
-    // PORT NOTE: borrowed (`&'a Source`) rather than owned so
-    // `identifier`/`string_literal_slice` can borrow `&'a [u8]` from
-    // `source.contents` without a self-referential struct. The Zig original
-    // copied `Source` by value because Zig has no borrow checker; the Rust
-    // `bun_ast::Source.contents` is now `Cow<'static,[u8]>` so an owned copy
-    // would tie those slices to `&self` instead of `'a`.
     pub source: &'a bun_ast::Source,
     pub log: &'a mut bun_ast::Log,
     pub start: usize,
@@ -322,21 +316,6 @@ impl<'a> Lexer<'a> {
             loop {
                 if self.code_point < '0' as CodePoint || self.code_point > '9' as CodePoint {
                     match self.code_point {
-                        // '-' => {
-                        //     if (lexer.raw().len == 5) {
-                        //         // Is this possibly a datetime literal that begins with a 4 digit year?
-                        //         lexer.step();
-                        //         while (!lexer.has_newline_before) {
-                        //             switch (lexer.code_point) {
-                        //                 ',' => {
-                        //                     lexer.string_literal_slice = lexer.raw();
-                        //                     lexer.token = T.t_string_literal;
-                        //                     break;
-                        //                 },
-                        //             }
-                        //         }
-                        //     }
-                        // },
                         c if c == '_' as CodePoint => {}
                         _ => break,
                     }
@@ -712,11 +691,6 @@ impl<'a> Lexer<'a> {
                         }
                     }
 
-                    // PORT NOTE: reshaped for borrowck — capture slice bounds as indices
-                    // instead of laundering a `&'a [u8]` through a raw pointer. On the fast
-                    // path we reslice immediately before `return`; on the slow path we
-                    // reslice after the loop and hand it straight to
-                    // `decode_escape_sequences` without stashing in `self` first.
                     let slice_lo: usize;
                     let slice_hi: usize;
                     if is_multiline_string_literal {
@@ -875,12 +849,6 @@ impl<'a> Lexer<'a> {
             let width = iter.width;
             match iter.c {
                 c if c == '\r' as CodePoint => {
-                    // Convert '\r\n' into '\n'. After `next()` returns for `\r`,
-                    // `iter.i` is the start byte of the `\r` itself — the `\n`
-                    // we're looking for is at `iter.i + 1`. Reading `text[iter.i]`
-                    // would always be `\r`, so the check never fired and a literal
-                    // CRLF in a slow-path multiline basic string decoded to two LFs.
-                    // Match the JS lexer (js_parser/lexer.rs:660-661).
                     let next_i: usize = iter.i as usize + 1;
                     if next_i < text.len() && text[next_i] == b'\n' {
                         iter.i += 1;
@@ -915,12 +883,6 @@ impl<'a> Lexer<'a> {
                             continue;
                         }
                         c if c == 'v' as CodePoint => {
-                            // Vertical tab is invalid JSON
-                            // We're going to allow it.
-                            // if (comptime is_json) {
-                            //     lexer.end = start + iter.i - width2;
-                            //     try lexer.syntaxError();
-                            // }
                             buf.push(11);
                             continue;
                         }
@@ -1152,12 +1114,6 @@ impl<'a> Lexer<'a> {
                                 self.add_default_error(b"Unexpected end of line")?;
                             }
 
-                            // Ignore line continuations. A line continuation is not an escaped newline.
-                            // Match the JS lexer (js_parser/lexer.rs:660-661, 937-939): guard on
-                            // the index we actually read (`iter.i + 1`), not `iter.i`. Without
-                            // this, a multiline basic string ending in `\<CR>` right before `"""`
-                            // reads `text[len]` and panics even in release (slice bounds checks
-                            // always run).
                             let next_i: usize = iter.i as usize + 1;
                             if next_i < text.len() && text[next_i] == b'\n' {
                                 // Make sure Windows CRLF counts as a single newline

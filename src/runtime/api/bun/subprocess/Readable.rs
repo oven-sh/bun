@@ -29,28 +29,10 @@ pub enum Readable {
     Inherit,
     Ignore,
     Closed,
-    /// Eventually we will implement Readables created from blobs and array buffers.
-    /// When we do that, `buffer` will be borrowed from those objects.
-    ///
-    /// When a buffered `pipe` finishes reading from its file descriptor,
-    /// the owning `Readable` will be converted into this variant and the pipe's
-    /// buffer will be taken as an owned `CowString`.
     Buffer(CowString),
 }
 
 impl Readable {
-    /// Mutable borrow of the `Pipe` payload's `PipeReader`.
-    ///
-    /// Centralises the `IntrusiveRc → &mut T` deref so the per-match-arm
-    /// `unsafe` blocks (`ref_`/`unref`/`close` and the `Subprocess` callers in
-    /// `on_close_io`/`on_process_exit`/`testing_apis`) collapse to this one
-    /// site. `IntrusiveRc` (= `RefPtr`) deliberately has no `DerefMut`; the
-    /// invariant that makes `&mut` sound here is that `Readable::Pipe` holds
-    /// the owning strong ref for the variant's lifetime (created by
-    /// `PipeReader::create`, released by `detach()`/`deref()` only after the
-    /// variant is moved out), the reader lives in its own heap allocation
-    /// disjoint from `Readable`/`Subprocess`, and access is
-    /// single-JS-mutator-thread.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(in crate::api) fn pipe_reader_mut(pipe: &IntrusiveRc<PipeReader>) -> &mut PipeReader {
@@ -58,14 +40,6 @@ impl Readable {
         unsafe { &mut *pipe.as_ptr() }
     }
 
-    /// Clear the `PipeReader`'s `process` backref and release the caller's ref
-    /// (Zig: `pipe.detach()`). Centralises what was the `into_raw()` +
-    /// `unsafe { PipeReader::detach(raw) }` dance so the three callers in
-    /// `finalize` / `to_js` / `to_buffered_value` stay safe — the caller's
-    /// `IntrusiveRc` encodes the "live + one ref" invariant `detach()` needs,
-    /// and `RefPtr::deref` is the safe drop. Callers pass the `IntrusiveRc`
-    /// they just moved out of `self` and drop it (a no-op — `RefPtr` has no
-    /// `Drop`) immediately after.
     #[inline]
     fn pipe_detach(pipe: &IntrusiveRc<PipeReader>) {
         Self::pipe_reader_mut(pipe).process = None;
@@ -116,11 +90,6 @@ impl Readable {
         // PORT NOTE: Zig `allocator` param dropped (was unused / autofix); global mimalloc assumed.
         super::assert_stdio_result!(result);
 
-        // Ownership of any resource inside `stdio` (notably `.memfd`) is being
-        // *transferred* into the returned `Readable` — Zig's `Readable.init`
-        // never calls `stdio.deinit()`. `Stdio` has a Rust `Drop` impl that
-        // would close the memfd, so suppress it here to avoid a double-close
-        // (EBADF) when the Readable later closes the same fd.
         let stdio = mem::ManuallyDrop::new(stdio);
 
         #[cfg(unix)]

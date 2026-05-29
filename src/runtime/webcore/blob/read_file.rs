@@ -47,16 +47,7 @@ macro_rules! log {
 // NewReadFileHandler
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Zig: `pub fn NewReadFileHandler(comptime Function: anytype) type`
-///
-/// `F` provides the comptime callback that converts the read bytes to a JSValue.
-/// Modelled as a trait so each instantiation monomorphizes like the Zig
-/// type-generator did.
 pub trait ReadFileToJs {
-    /// `by` carries the caller's allocation provenance unchanged:
-    /// `Lifetime::Temporary` ⇒ a `Box::<[u8]>::into_raw` the callee MUST take
-    /// ownership of (every `to_*_with_bytes::<Temporary>` arm reclaims it);
-    /// otherwise a borrow valid for the call.
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], lifetime: Lifetime) -> JsResult<JSValue>;
 }
 
@@ -78,12 +69,6 @@ impl<'a, F: ReadFileToJs> NewReadFileHandler<'a, F> {
     }
 }
 
-/// Models Zig's `comptime callback: fn(ctx: Context, bytes: ReadFileResultType) bun.JSTerminated!void`
-/// (and `comptime Handler: type` for `ReadFileUV.start`). Monomorphized per
-/// call-site type so the erased shim calls `C::run` directly and
-/// `on_complete_ctx` carries the **raw** `*mut C` — no heap wrapper, matching
-/// the Zig spec where any code introspecting `onCompleteCtx` sees the original
-/// context pointer.
 pub trait ReadFileCompletion {
     /// # Safety
     /// `ctx` must be a heap-allocated `Self` whose ownership is transferred to
@@ -112,10 +97,6 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                     blob.size
                         .set((bytes.len() as SizeType).min(blob.size.get()));
                 }
-                // Zig defined a local `WrappedFn` struct to adapt the comptime
-                // `Function` into the `toJSHostCall` shape; Rust closures + the
-                // `#[track_caller]` `to_js_host_call` inside `AnyPromise::wrap`
-                // give the same source-location/exception-scope behaviour.
                 AnyPromise::Normal(promise).wrap(global_this, move |g| {
                     F::call(&blob, g, bytes, Lifetime::Temporary)
                 })?;
@@ -140,15 +121,6 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
 pub type ReadFileOnReadFileCallback = fn(ctx: *mut c_void, bytes: ReadFileResultType);
 
 pub struct ReadFileRead {
-    /// Always a `Box::<[u8]>::into_raw` from the producer's read buffer
-    /// (`Vec::into_boxed_slice()` so layout is exactly `(ptr, len)`). Every
-    /// consumer reclaims via `heap::take` — there is no borrow case left
-    /// (Zig's `is_temporary = false` arm is unreachable here; only the two
-    /// finishers below construct this type and both hand off owned bytes).
-    /// Stored as a raw pointer rather than `Box<[u8]>` because the
-    /// `NewReadFileHandler` consumer forwards it straight into
-    /// `to_*_with_bytes::<Temporary>(*mut [u8])`, which itself decides whether
-    /// the bytes are freed locally or transferred to a JSC external string.
     pub buf: *mut [u8],
     pub total_size: SizeType,
 }
@@ -309,10 +281,6 @@ impl FileCloser for ReadFile {
         })
     }
 
-    // `FileCloser` fixes `on_close_io_request` to take `*mut WorkPoolTask`;
-    // the trait method cannot be marked `unsafe fn`, so the lint is
-    // unsatisfiable here. The pointer is the intrusive `&mut self.task` set
-    // in `on_io_request_closed` and is guaranteed live.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
         // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
@@ -396,11 +364,6 @@ impl ReadFile {
         max_len: SizeType,
         context: *mut C,
     ) -> Result<Box<ReadFile>, Error> {
-        // Zig used a local `Handler` struct whose `run` calls the comptime
-        // `callback` and swallows the JSTerminated error. `ReadFileCompletion`
-        // monomorphizes per `C`, so `handler_run::<C>` is that local struct's
-        // `run` and `on_complete_ctx` is the unwrapped `*mut C` — exactly the
-        // Zig layout (no extra heap box, nothing to leak on the `Err` path).
         fn handler_run<C: ReadFileCompletion>(ctx: *mut c_void, bytes: ReadFileResultType) {
             // TODO(port): properly propagate exception upwards (matches Zig TODO).
             // SAFETY: `ctx` is the `*mut C` passed unmodified through
@@ -492,18 +455,8 @@ impl ReadFile {
         }
     }
 
-    /// Returns a raw `(ptr, len)` into either `stack_buffer` or
-    /// `self.buffer`'s spare capacity. Raw (not `&mut [u8]`) so the caller in
-    /// `do_read_loop` can carry it across the `&mut self` `do_read` call
-    /// without two live `&mut` covering overlapping memory (Stacked-Borrows
-    /// UB). The slice is materialised only at the syscall boundary.
-    // PORT NOTE: Zig indexed raw ptr range `items.ptr[items.len..capacity]`.
     #[cfg(not(windows))]
     fn remaining_buffer(&mut self, stack_buffer: &mut [u8]) -> (*mut u8, usize) {
-        // `spare_capacity_mut()` is the safe spelling of
-        // `as_mut_ptr().add(len) .. as_mut_ptr().add(cap)`; we immediately
-        // decay it to a raw `(ptr, len)` so the borrow does not outlive this
-        // call (the caller carries the raw pair across `&mut self`).
         let spare = self.buffer.spare_capacity_mut();
         let (ptr, len) = if spare.len() < stack_buffer.len() {
             (stack_buffer.as_mut_ptr(), stack_buffer.len())
@@ -514,12 +467,6 @@ impl ReadFile {
         (ptr, cap)
     }
 
-    /// `buffer` is passed raw because it may point into `self.buffer`'s spare
-    /// capacity; holding it as `&mut [u8]` alongside `&mut self` would be two
-    /// live `&mut` to overlapping memory. `do_read` never touches
-    /// `self.buffer`, so the disjoint access is sound — we just keep the
-    /// pointer raw across the `&mut self` borrow and materialise the slice
-    /// only for the syscall.
     pub fn do_read(
         &mut self,
         buffer: (*mut u8, usize),
@@ -778,17 +725,6 @@ impl ReadFile {
         }
         self.read_off = 0;
 
-        // If it's not a regular file, it might be something
-        // which would block on the next read. So we should
-        // avoid immediately reading again until the next time
-        // we're scheduled to read.
-        //
-        // An example of where this happens is stdin.
-        //
-        //    await Bun.stdin.text();
-        //
-        // If we immediately call read(), it will block until stdin is
-        // readable.
         if self.could_block {
             if bun_core::is_readable(fd) == bun_core::Pollable::NotReady {
                 self.wait_for_readable();
@@ -812,21 +748,8 @@ impl ReadFile {
     fn do_read_loop(&mut self) {
         #[cfg(not(windows))]
         {
-            // we hold a 64 KB stack buffer incase the amount of data to
-            // be read is greater than the reported amount
-            //
-            // 64 KB is large, but since this is running in a thread
-            // with it's own stack, it should have sufficient space.
-            // PORT NOTE: hoisted out of the loop and zero-initialized once — the
-            // one-time 64 KB memset is negligible next to the per-iteration
-            // syscall, and avoids the `MaybeUninit<u8>` → `&mut [u8]` cast (uninit
-            // bytes behind a `&[u8]` is technically UB even when never read).
             let mut stack_buffer = [0u8; 64 * 1024];
             while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
-                // PORT NOTE: reshaped for borrowck — keep the read target as a raw
-                // (ptr, len) across the `&mut self` `do_read` call; no `&mut [u8]`
-                // to `self.buffer`'s spare capacity is ever live alongside
-                // `&mut self`.
                 let stack_ptr = stack_buffer.as_mut_ptr();
                 let (buf_ptr, buf_len) = self.remaining_buffer(&mut stack_buffer);
 
@@ -857,12 +780,6 @@ impl ReadFile {
                         // SAFETY: read() wrote `read_amount` initialized bytes into spare capacity.
                         unsafe { bun_core::vec::commit_spare(&mut self.buffer, read_amount) };
                     }
-                    // - If they DID set a max length, we should stop
-                    //   reading after that.
-                    //
-                    // - If they DID NOT set a max_length, then it will
-                    //   be Blob.max_size which is an impossibly large
-                    //   amount to read.
                     if !self.read_eof && self.buffer.len() >= self.max_length as usize {
                         break;
                     }
@@ -872,17 +789,6 @@ impl ReadFile {
                         break;
                     }
 
-                    // If it's not a regular file, it might be something
-                    // which would block on the next read. So we should
-                    // avoid immediately reading again until the next time
-                    // we're scheduled to read.
-                    //
-                    // An example of where this happens is stdin.
-                    //
-                    //    await Bun.stdin.text();
-                    //
-                    // If we immediately call read(), it will block until stdin is
-                    // readable.
                     if retry
                         || (self.could_block
                         // If we received EOF, we can skip the poll() system
@@ -1007,12 +913,6 @@ impl<'a> FileCloser for ReadFileUV<'a> {
         self.loop_
     }
 
-    // Zig `FileCloser` gates the `close_after_io` / `io_request` / `io_poll` /
-    // `state` / `task` accesses on `@hasField(This, "io_request")`, which is
-    // **false** for `ReadFileUV` (its libuv request field is `req`, not
-    // `io_request`). So `do_close` falls straight to the close-fd branch and
-    // none of the methods below are ever reached — these mark genuinely dead
-    // code paths, not unported stubs.
     fn close_after_io(&self) -> bool {
         false
     }
@@ -1044,10 +944,6 @@ impl<'a> FileCloser for ReadFileUV<'a> {
 
 #[cfg(windows)]
 impl<'a> ReadFileUV<'a> {
-    /// Typed entry — mirrors Zig `start(event_loop, store, off, max_len,
-    /// comptime Handler, handler: *anyopaque)`: caller passes the already-erased
-    /// `*anyopaque`; `H` (via turbofish) supplies `Handler.run` through the
-    /// `ReadFileUvHandler` blanket impl.
     pub fn start<H>(
         event_loop: *mut EventLoop,
         store: StoreRef,
@@ -1130,11 +1026,6 @@ impl<'a> ReadFileUV<'a> {
         let result = if let Some(err) = this_box.system_error.take() {
             ReadFileResultType::Err(err)
         } else {
-            // Move byte_store out so dropping `this_box` below does not free the
-            // buffer we hand to the callback. Normalize to `Box<[u8]>` so the
-            // `is_temporary` consumer (Body.rs / Blob.rs) can soundly reclaim
-            // via `heap::take` — handing out `(ptr, len)` from a ByteStore
-            // whose `cap > len` would be a layout-mismatched dealloc.
             let boxed = core::mem::take(&mut this_box.byte_store).into_boxed_slice();
             ReadFileResultType::Result(ReadFileRead {
                 buf: bun_core::heap::into_raw(boxed),
@@ -1360,11 +1251,6 @@ impl<'a> ReadFileUV<'a> {
             }
 
             let buf = self.remaining_buffer();
-            // Construct uv_buf_t directly from `as_mut_ptr()` so the stored
-            // `base` carries write provenance — `uv_buf_t::init` takes `&[u8]`
-            // and would implicitly reborrow `buf` as shared, yielding a
-            // SharedReadOnly-tagged pointer that libuv then *writes* through
-            // (uv_fs_read fills this buffer), which is UB under Stacked Borrows.
             let mut bufs: [libuv::uv_buf_t; 1] = [libuv::uv_buf_t {
                 len: buf.len() as libuv::ULONG,
                 base: buf.as_mut_ptr().cast::<u8>(),
@@ -1454,10 +1340,6 @@ pub trait ReadFileUvHandler {
     fn run(ctx: *mut c_void, bytes: ReadFileResultType);
 }
 
-/// Any `ReadFileCompletion` is usable as a `ReadFileUV` handler — the libuv
-/// path stores the same `(ctx, run)` pair, just without the JSTerminated
-/// return (Zig swallowed it via `catch {}` in the POSIX path; the UV path's
-/// `Handler.run` is `void`-returning by contract).
 impl<C: ReadFileCompletion> ReadFileUvHandler for C {
     fn run(ctx: *mut c_void, bytes: ReadFileResultType) {
         // SAFETY: `ctx` is the `*mut C` passed unmodified through

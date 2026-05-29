@@ -29,10 +29,6 @@ fn has_ptr(alloc: StdAllocator) -> bool {
         || core::ptr::eq(alloc.vtable, basic::Z_ALLOCATOR.vtable)
         || bun_alloc::MimallocArena::is_instance(&alloc)
         || bun_alloc::String::is_wtf_allocator(alloc)
-        // Higher-tier allocators (arena, LinuxMemFdAllocator, MaxHeapAllocator,
-        // CachedBytecode, bundle_v2, heap_breakdown::Zone)
-        // push their vtable addresses into the registry at init. Empty
-        // registry ⇒ `false` (safe under-approximation).
         || crate::known_alloc_vtable(alloc)
 }
 
@@ -55,10 +51,6 @@ fn guaranteed_mismatch(alloc1: StdAllocator, alloc2: StdAllocator) -> bool {
     ptr1 != ptr2
 }
 
-/// Asserts that two allocators are equal (in debug builds).
-///
-/// This function may have false negatives; that is, it may fail to detect that two allocators
-/// are different. However, in practice, it's a useful safety check.
 pub fn assert_eq(alloc1: StdAllocator, alloc2: StdAllocator) {
     assert_eq_fmt(alloc1, alloc2, format_args!("allocators do not match"));
 }
@@ -98,11 +90,6 @@ pub fn assert_eq_fmt(alloc1: StdAllocator, alloc2: StdAllocator, args: fmt::Argu
     panic!("{}", args);
 }
 
-/// Use this in unmanaged containers to ensure multiple allocators aren't being used with the same
-/// container. Each method of the container that accepts an allocator parameter should call either
-/// `CheckedAllocator::set` (for non-const methods) or `CheckedAllocator::assert_eq` (for const
-/// methods). (Exception: methods like `clone` which explicitly accept any allocator should not call
-/// any methods on this type.)
 pub struct CheckedAllocator {
     // Zig: `#allocator: if (enabled) NullableAllocator else void = if (enabled) .init(null)`
     #[cfg(debug_assertions)]
@@ -184,19 +171,6 @@ impl CheckedAllocator {
         }
     }
 
-    /// Transfers ownership of the collection to a new allocator.
-    ///
-    /// This method is valid only if both the old allocator and new allocator are `MimallocArena`s.
-    /// This is okay because data allocated by one `MimallocArena` can always be freed by another
-    /// (this includes `resize` and `remap`).
-    ///
-    /// `new_allocator` should be one of the following:
-    ///
-    /// * `&MimallocArena`
-    /// * `&MimallocArena` (const)
-    /// * `MimallocArena::Borrowed`
-    ///
-    /// If you only have a `StdAllocator`, see `MimallocArena::Borrowed::downcast`.
     #[inline]
     pub fn transfer_ownership(&mut self, new_alloc: &impl AsMimallocArenaAllocator) {
         let _ = new_alloc;
@@ -233,10 +207,6 @@ impl CheckedAllocator {
     }
 }
 
-/// Zig's `transferOwnership` accepts `*MimallocArena | *const MimallocArena |
-/// MimallocArena.Borrowed` via `anytype` + comptime switch and calls
-/// `.allocator()` on the result. `MimallocArena` lives in `bun_runtime` (above
-/// this crate), so callers implement this trait there.
 pub trait AsMimallocArenaAllocator {
     fn allocator(&self) -> StdAllocator;
 }

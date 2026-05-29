@@ -143,10 +143,6 @@ impl Mv {
                 let maybe_fd: Option<bun_sys::Fd> = match result.unwrap() {
                     Ok(fd) => fd,
                     Err(e) => {
-                        // Spec mv.zig:228-247 — only ENOENT (rename to a
-                        // new path) is acceptable, and only with exactly
-                        // one source. Any other errno (EACCES, ELOOP, …)
-                        // is reported and fails regardless of source count.
                         let target = match &Self::state_mut(interp, cmd).state {
                             MvState::CheckTarget(t) => t.target.as_bytes().to_vec(),
                             _ => unreachable!(),
@@ -406,10 +402,6 @@ impl Mv {
 }
 
 impl Drop for Mv {
-    /// Spec: mv.zig `deinit` — close the directory fd opened by
-    /// `ShellMvCheckTargetTask` (`openat(target, O_RDONLY|O_DIRECTORY)`).
-    /// `bun_sys::Fd` is `Copy` with no `Drop`, so without this every
-    /// `mv srcs... dir/` leaks one open fd.
     fn drop(&mut self) {
         if let Some(fd) = self.args.target_fd.take() {
             closefd(fd);
@@ -460,11 +452,6 @@ pub struct ShellMvBatchedTask {
     pub target: ZBox,
     pub target_fd: Option<bun_sys::Fd>,
     pub cwd: bun_sys::Fd,
-    /// Back-reference into `MvState::Executing::error_signal`. The owning
-    /// `MvState` outlives every batched task (tasks are joined / counted in
-    /// `batched_move_task_done` before the state transitions), so the
-    /// `BackRef` invariant holds. `None` only between construction and
-    /// scheduling — never observed by `run_from_thread_pool`.
     pub error_signal: Option<BackRef<AtomicBool>>,
     pub err: Option<bun_sys::Error>,
     pub task: ShellTask,
@@ -504,10 +491,6 @@ impl ShellMvBatchedTask {
         // Bounce-back is posted by `shell_task_trampoline`.
     }
 
-    /// Spec: mv.zig `ShellMvBatchedTask.moveInDir` — `renameat(cwd, src,
-    /// target_fd, basename(src))`. Reshaped for borrowck: free fn over the
-    /// fields it touches so `src` can borrow `self.sources[_]` while `self.err`
-    /// is written by the caller.
     fn move_in_dir(
         cwd: bun_sys::Fd,
         target_fd: bun_sys::Fd,

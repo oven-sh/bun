@@ -505,11 +505,6 @@ impl FileResponseStream {
         self.finish();
     }
 
-    /// Clear all uWS callbacks pointing at us. Must run while `resp` is still
-    /// live (i.e., before `resp.end()` / `end_send_file()` / `force_close()` give
-    /// the socket back to uWS, which may free it on the next loop tick). After
-    /// this runs, `finish()` — which can be reached from the deferred `eof_task`
-    /// — will not touch `resp` again.
     fn detach_resp(&mut self) {
         if self.state.contains(State::RESP_DETACHED) {
             return;
@@ -566,10 +561,6 @@ impl FileResponseStream {
     // hand-rolled `ref_guard`/`DerefOnDrop` pair is now `bun_ptr::ScopedRef<Self>`.
 }
 
-// `bun.io.BufferedReader.init(@This())` — vtable parent. Maps the Zig
-// `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
-// `loop_` delegates to the inherent `r#loop()` which already does the
-// cfg(windows) `.uv_loop` projection (Zig spec: FileResponseStream.zig `loop()`).
 bun_io::impl_buffered_reader_parent! {
     FileResponseStream for FileResponseStream;
     has_on_read_chunk = true;

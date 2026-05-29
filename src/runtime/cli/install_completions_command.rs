@@ -579,14 +579,6 @@ impl InstallCompletionsCommand {
                 let needs_to_tell_them_to_add_completions_file: bool = 'brk: {
                     let dot_zshrc: File = 'zshrc: {
                         'first: {
-                            // https://zsh.sourceforge.io/Intro/intro_3.html
-                            // There are five startup files that zsh will read commands from:
-                            // $ZDOTDIR/.zshenv
-                            // $ZDOTDIR/.zprofile
-                            // $ZDOTDIR/.zshrc
-                            // $ZDOTDIR/.zlogin
-                            // $ZDOTDIR/.zlogout
-
                             if let Some(zdot_dir) = env_var::ZDOTDIR.get() {
                                 zshrc_filepath[..zdot_dir.len()].copy_from_slice(zdot_dir);
                                 zshrc_filepath[zdot_dir.len()..zdot_dir.len() + b"/.zshrc".len()]

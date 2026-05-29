@@ -1,9 +1,5 @@
 use core::ffi::c_int;
 
-// #define Z_BINARY   0
-// #define Z_TEXT     1
-// #define Z_ASCII    Z_TEXT   /* for compatibility with 1.2.2 and earlier */
-// #define Z_UNKNOWN  2
 #[repr(C)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum DataType {
@@ -12,15 +8,6 @@ pub enum DataType {
     Unknown = 2,
 }
 
-// #define Z_OK            0
-// #define Z_STREAM_END    1
-// #define Z_NEED_DICT     2
-// #define Z_ERRNO        (-1)
-// #define Z_STREAM_ERROR (-2)
-// #define Z_DATA_ERROR   (-3)
-// #define Z_MEM_ERROR    (-4)
-// #define Z_BUF_ERROR    (-5)
-// #define Z_VERSION_ERROR (-6)
 #[repr(C)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum ReturnCode {
@@ -35,13 +22,6 @@ pub enum ReturnCode {
     VersionError = -6,
 }
 
-// #define Z_NO_FLUSH      0
-// #define Z_PARTIAL_FLUSH 1
-// #define Z_SYNC_FLUSH    2
-// #define Z_FULL_FLUSH    3
-// #define Z_FINISH        4
-// #define Z_BLOCK         5
-// #define Z_TREES         6
 #[repr(C)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum FlushValue {
@@ -59,17 +39,6 @@ pub enum FlushValue {
     Trees = 6,
 }
 
-// ---------------------------------------------------------------------------
-// z_stream — single source of truth for both POSIX and Windows.
-//
-// zlib (and zlib-ng compat) typedef `uLong` as `unsigned long`, so one
-// `c_ulong`-based definition is ABI-correct on LP64 (8-byte) *and* LLP64
-// (4-byte) targets. The two per-platform copies in posix.rs / win32.rs were
-// already field-for-field identical; win32.rs had even normalized its
-// `struct_internal_state` to match posix so rustc's
-// `clashing_extern_declarations` lint saw the extern fns as compatible. This
-// hoist makes that the actual single definition.
-// ---------------------------------------------------------------------------
 use core::ffi::{c_char, c_uint, c_ulong, c_void};
 
 // typedef voidpf (*alloc_func)(voidpf opaque, uInt items, uInt size);
@@ -83,14 +52,6 @@ pub type z_free_fn = free_func;
 pub type z_alloc_func = alloc_func;
 pub type z_free_func = free_func;
 
-// ---------------------------------------------------------------------------
-// zconf.h scalar typedefs — single source of truth.
-//
-// Previously duplicated in win32.rs (translate-c output) and bun_zlib::lib.rs
-// (hand-port of zlib.zig). All resolve to ABI-identical primitives on every
-// target Bun ships; `uLong` = `unsigned long` (4B on LLP64 Windows, 8B on LP64
-// Unix) for the same reason zStream_struct above uses `c_ulong` directly.
-// ---------------------------------------------------------------------------
 pub type Byte = u8;
 pub type Bytef = u8;
 pub type uInt = c_uint;
@@ -98,17 +59,6 @@ pub type uLong = c_ulong;
 pub type uLongf = uLong;
 pub type voidpf = *mut c_void;
 
-// ---------------------------------------------------------------------------
-// gzFile — opaque handle.
-//
-// zlib.h exposes `struct gzFile_s { unsigned have; unsigned char *next;
-// z_off64_t pos; }` purely so the `gzgetc()` macro can inline a fast path;
-// every other API treats `gzFile` as an opaque pointer. Bun never derefs it,
-// so one definition suffices for all targets. `pos` is `z_off64_t` — `__int64`
-// on Windows, `off64_t` on LP64 Unix — i.e. `i64` everywhere Bun ships, hence
-// the divergence between the old win32.rs (`c_longlong`) and bun_zlib
-// (`c_long`) copies was immaterial.
-// ---------------------------------------------------------------------------
 #[repr(C)]
 pub struct struct_gzFile_s {
     pub have: c_uint,

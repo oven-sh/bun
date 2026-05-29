@@ -29,19 +29,6 @@ unsafe extern "C" {
     pub(crate) fn WebPFree(ptr: *mut c_void);
 }
 
-// ─── libwebpmux / libwebpdemux ──────────────────────────────────────────────
-// WebP carries colour profiles (and EXIF/XMP) in a VP8X RIFF container that
-// wraps the VP8/VP8L bitstream. `WebPEncodeRGBA` only emits the bare
-// bitstream chunk, and `WebPDecodeRGBA` only reads it — neither touches
-// the surrounding chunks. To pull an ICCP chunk out of an input (decode)
-// or to attach one to an output (encode) we go through the separate
-// demux/mux APIs, which operate on the whole RIFF file. Both are
-// statically linked from the same libwebp checkout.
-//
-// ABI version constants below are pinned to the libwebp commit in
-// `scripts/build/deps/libwebp.ts` (v1.6.0). If that commit is bumped, check
-// `src/webp/mux.h` / `demux.h` for `WEBP_{MUX,DEMUX}_ABI_VERSION` — the
-// *Internal entry points reject a caller with a different major byte.
 const WEBP_DEMUX_ABI_VERSION: c_int = 0x0107;
 const WEBP_MUX_ABI_VERSION: c_int = 0x0109;
 /// `WebPFormatFeature.WEBP_FF_FORMAT_FLAGS` — selector for `WebPDemuxGetI`
@@ -70,10 +57,6 @@ impl Default for WebPData {
     }
 }
 
-/// `struct WebPChunkIterator` — cursor into a VP8X chunk list. Only `chunk`
-/// is read; `pad`/`private_` are libwebp-internal bookkeeping that
-/// `WebPDemuxReleaseChunkIterator` walks. `chunk.bytes` is a borrowed view
-/// INTO the original input buffer — dupe it out before `WebPDemuxDelete`.
 #[repr(C)]
 struct WebPChunkIterator {
     chunk_num: c_int,
@@ -145,12 +128,6 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
         // SAFETY: p was returned by WebPDecodeRGBA above; WebPFree is the matching deallocator.
         unsafe { WebPFree(p.cast::<c_void>()) }
     });
-    // `bytes` is a borrowed view of a JS ArrayBuffer the user can still WRITE
-    // (the pin only blocks detach), so a hostile caller can swap in a smaller
-    // WebP between WebPGetInfo and WebPDecodeRGBA. libwebp re-parses on the
-    // second call and writes the actual decoded dims back into cw/ch — reject
-    // any mismatch instead of trusting the probe and over-reading the
-    // smaller allocation. (Same race the CG shim guards at :298.)
     if u32::try_from(cw).ok() != Some(w) || u32::try_from(ch).ok() != Some(h) {
         return Err(codecs::Error::DecodeFailed);
     }
@@ -158,18 +135,6 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     // SAFETY: WebPDecodeRGBA returns a buffer of w*h*4 bytes on success.
     let out: Vec<u8> = unsafe { core::slice::from_raw_parts(ptr, len) }.to_vec();
 
-    // Extract the ICCP chunk (if any) from the RIFF container. A plain
-    // VP8/VP8L WebP with no VP8X wrapper has no ICCP — `WebPDemux` still
-    // succeeds, `WEBP_FF_FORMAT_FLAGS` returns 0, and we skip the chunk
-    // walk. The chunk iterator hands back a borrowed view into `bytes`;
-    // dupe into the global allocator to match JPEG/PNG ownership so the
-    // pipeline can free it uniformly. Propagate OutOfMemory on the dupe
-    // rather than silently dropping colour management — the pixels may be
-    // Display P3 / Adobe RGB / XYB where "no profile" reinterprets them as
-    // sRGB and visibly shifts colour, which is the exact bug #30197 is
-    // about. A failed demux (malformed container) falls through with
-    // `icc_profile = None`; the pixels decoded fine so the image is still
-    // usable.
     let icc: Option<Vec<u8>> = 'blk: {
         let data = WebPData {
             bytes: bytes.as_ptr(),
@@ -281,13 +246,6 @@ pub(crate) fn encode(
         });
     }
 
-    // Wrap the bitstream in a VP8X container with an ICCP chunk. libwebpmux
-    // builds a new RIFF file from the image + chunk and allocates the
-    // assembled output via `WebPMalloc`; hand THAT buffer to JS with
-    // `WebPFree` as the finaliser and drop the intermediate encode. With
-    // `copy_data = 0` the mux borrows our buffers until `WebPMuxAssemble`
-    // returns, so `bitstream`/`profile` must outlive the assemble call
-    // (both do — `bitstream` is freed below, `profile` is caller-owned).
     let _free_bitstream = scopeguard::guard(bitstream.as_mut_ptr(), |p| {
         // SAFETY: p is the buffer returned by WebPEncode*RGBA above; WebPFree is the matching deallocator.
         unsafe { WebPFree(p.cast::<c_void>()) }

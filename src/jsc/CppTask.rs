@@ -48,11 +48,6 @@ impl EventLoopTaskNoContext {
         unsafe { Bun__EventLoopTaskNoContext__performTask(this) }
     }
 
-    /// Get the VM that created this task. `VirtualMachine` is process-lifetime
-    /// (PORTING.md §Global mutable state), so a [`BackRef`] is the right
-    /// non-owning handle: callers project `&VirtualMachine` via `Deref` and
-    /// route mutation through the VM's safe interior accessors (e.g.
-    /// `event_loop_shared()`).
     pub fn get_vm(&self) -> Option<bun_ptr::BackRef<VirtualMachine>> {
         NonNull::new(Bun__EventLoopTaskNoContext__createdInBunVm(self)).map(bun_ptr::BackRef::from)
     }

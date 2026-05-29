@@ -3,17 +3,6 @@ use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, ZigStrin
 
 use super::nodejs_error_code::Code as ErrorCode;
 
-// PORT NOTE: reshaped — Zig's `createSimpleError` is a comptime fn that mints a
-// monomorphized `cbb: fn(*JSGlobalObject) JSError!JSValue` and returns it as a
-// `jsc.JS2NativeFunctionType` const. Rust cannot mint an `fn` item from a const
-// generic fn pointer, so each call site becomes a `pub fn` directly (same shape
-// the `generated_js2native.rs` thunk layer expects). Names stay SCREAMING to
-// match the .zig spec exactly.
-//
-// `createFn` was `createErrorInstanceWithCode` / `createTypeErrorInstanceWithCode`
-// — both removed from `JSGlobalObject` upstream; their historical bodies were
-// `createErrorInstance(fmt, args)` + `err.put("code", @tagName(code))`, which is
-// inlined here.
 macro_rules! create_simple_error {
     ($name:ident, $create_fn:ident, $code:expr, $message:literal) => {
         #[allow(non_snake_case)]

@@ -112,21 +112,10 @@ impl ErrorReportRequest {
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
 
-        // .finalize has to be called last, but only in the non-error path.
-        // PORT NOTE: Zig used `defer if (should_finalize_self) ctx.finalize()`
-        // with `should_finalize_self` flipped to true only at the very end.
-        // On error return, BodyReaderMixin calls `on_error` → `finalize`, so
-        // here we simply call `finalize` directly at the success tail.
-
         let mut reader = bun_io::FixedBufferStream::new(body);
 
         // PERF(port): was stack-fallback (65536) + ArenaAllocator — profile if it shows up on a hot path.
         let arena = Arena::new();
-        // The Zig used a separate per-source-map arena that was reset between
-        // parses; the Rust `source_map_store::get_parsed_source_map` (the
-        // canonical impl on `DevServer.source_maps`) takes `&self` and
-        // allocates VLQ scratch + result mappings into the global mimalloc
-        // heap, so no per-map reset arena is threaded here.
 
         // BackRef::get() is safe under the back-reference invariant (DevServer
         // outlives this request). No `&mut *ctx` is formed for the body of this
@@ -176,11 +165,6 @@ impl ErrorReportRequest {
 
         let browser_url_origin = bun_url::origin_from_slice(browser_url).unwrap_or(browser_url);
 
-        // All files that DevServer could provide a source map fit the pattern:
-        // `/_bun/client/<label>-{u64}.js`
-        // Where the u64 is a unique identifier pointing into sourcemaps.
-        //
-        // HMR chunks use this too, but currently do not host their JS code.
         let mut parsed_source_maps: ArrayHashMap<SourceMapKey, Option<GetResult<'_>>> =
             ArrayHashMap::new();
         bun_core::handle_oom(parsed_source_maps.ensure_total_capacity(4));
@@ -226,19 +210,6 @@ impl ErrorReportRequest {
                 continue;
             };
 
-            // When before the first generated line, remap to the HMR runtime.
-            //
-            // Reminder that the HMR runtime is *not* sourcemapped. And appears
-            // first in the bundle. This means that the mappings usually looks like
-            // this:
-            //
-            // AAAA;;;;;;;;;;;ICGA,qCAA4B;
-            // ^              ^ generated_mappings[1], actual code
-            // ^
-            // ^ generated_mappings[0], we always start it with this
-            //
-            // So we can know if the frame is inside the HMR runtime if
-            // `frame.position.line < generated_mappings[1].lines`.
             let generated_mappings = result.mappings.generated();
             if generated_mappings.len() <= 1
                 || frame.position.line.zero_based() < generated_mappings[1].lines.zero_based()
@@ -311,10 +282,6 @@ impl ErrorReportRequest {
                 break 'trim_runtime_frames;
             }
 
-            // Move all frames up
-            // PORT NOTE: reshaped — Zig copied items down then truncated; Rust
-            // `Vec::retain` does the same in-place compaction with the same
-            // relative order.
             frames.retain(|frame| {
                 !(frame.position.is_invalid()
                     && frame.source_url.byte_slice().as_ptr() == RUNTIME_NAME.as_ptr())
@@ -343,10 +310,6 @@ impl ErrorReportRequest {
             // PERF(port): was comptime bool dispatch — `print_externally_remapped_zig_exception`
             // takes runtime `allow_ansi_color`, so no `inline else` split needed.
             let ansi_colors = Output::enable_ansi_colors_stderr();
-            // `dev.vm` is `*const` (shared-ref provenance from `Options.vm`);
-            // `vm_mut()` recovers `&mut VirtualMachine` via the per-thread
-            // singleton (`VirtualMachine::get() -> *mut`), which carries
-            // mutable provenance. Single JS thread — no aliasing `&mut`.
             let vm = dev.vm_mut();
             let _ = vm.print_externally_remapped_zig_exception(
                 &mut exception,
@@ -416,10 +379,6 @@ impl ErrorReportRequest {
                 ..Default::default()
             },
         );
-        // `should_finalize_self = true;` — see PORT NOTE at fn top.
-        // `ctx` is the original heap-allocated pointer (caller contract); the
-        // only borrow derived from it (`dev`) points into a separate DevServer
-        // allocation, so freeing `*ctx` does not invalidate any live reference.
         ErrorReportRequest::finalize(ctx);
         Ok(())
     }
@@ -483,17 +442,6 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
 
     let mut rest = &contents[index_of_first_line..];
 
-    // For decoding JSON escapes, the JS Lexer decoding function has
-    // `decodeEscapeSequences`, which only supports decoding to UTF-16.
-    // Alternatively, it appears the TOML lexer has copied this exact
-    // function but for UTF-8. So the decoder can just use that.
-    //
-    // This function expects but does not assume the escape sequences
-    // given are valid, and does not bubble errors up.
-    //
-    // PORT NOTE: `Lexer<'a>` borrows `&'a mut Log` and `&'a Source`; allocate
-    // both from the caller's arena so their lifetime matches the decoded
-    // `ArenaVec<'a, u8>` slices we hand back in `result`.
     let log: &'a mut Log = arena.alloc(Log::init());
     let source: &'a bun_ast::Source = arena.alloc(bun_ast::Source::init_empty_file(b""));
     let mut l = bun_parsers::toml::Lexer {
@@ -577,19 +525,8 @@ fn read_string32<'a>(
     Ok(s)
 }
 
-/// The report body is attacker-controlled: `/_bun/report_error` accepts a
-/// CORS "simple request" POST from any origin, and these strings are printed
-/// to the developer's terminal. Replace C0 control bytes (except `\t`/`\n`)
-/// and DEL so the payload cannot inject ANSI/OSC escape sequences (cursor
-/// movement, OSC 52 clipboard writes, hyperlinks). UTF-8-encoded C1 controls
-/// (U+0080..=U+009F, i.e. `0xC2 0x80..=0x9F`) are also replaced: xterm-family
-/// terminals decode them back to C1, so `0xC2 0x9B` would otherwise act as CSI.
 pub(crate) fn sanitize_for_terminal<'a>(s: &'a [u8], arena: &'a Arena) -> &'a [u8] {
     fn is_disallowed(prev: u8, b: u8) -> bool {
-        // Lone 0x80..=0x9F bytes are continuation bytes of legitimate
-        // multi-byte characters and must not be blanked; only the encoded C1
-        // form (a 0xC2 lead byte followed by 0x80..=0x9F) reaches the
-        // terminal as a control.
         (b < 0x20 && b != b'\t' && b != b'\n')
             || b == 0x7f
             || (prev == 0xc2 && (0x80..=0x9f).contains(&b))

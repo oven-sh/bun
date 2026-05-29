@@ -12,11 +12,6 @@ unsafe extern "C" {
     safe fn Bun__HTTPMethod__toJS(method: Method, global_object: &JSGlobalObject) -> JSValue;
 }
 
-/// Port of Zig `Method.fromJS` (= `Map.fromJS`, the `ComptimeStringMap` JSC
-/// bridge in `src/jsc/comptime_string_map_jsc.zig`). Converts a JS string
-/// value to UTF-8 and looks it up in the static method table.
-///
-/// Lives here (not in `bun_http_types`) so the base crate stays JSC-free.
 pub fn from_js(global_this: &JSGlobalObject, input: JSValue) -> JsResult<Option<Method>> {
     // `defer str.deref()` — `bun_core::String` is `Copy` (no `Drop`), so wrap the
     // +1 ref from `BunString::from_js` in `OwnedString` to release it on scope exit.

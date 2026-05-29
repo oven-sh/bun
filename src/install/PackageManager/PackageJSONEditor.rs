@@ -39,11 +39,6 @@ fn arena_dup<'a>(arena: &'a bun_alloc::Arena, bytes: &[u8]) -> &'a [u8] {
     arena.alloc_slice_copy(bytes)
 }
 
-/// Shallow-copy a `G::Property` for the JSON-editing path. Only `key`/`value`
-/// (both `Option<Expr>`, `Copy`) are populated by the JSON parser; the rest
-/// (`ts_decorators`, `class_static_block`, …) are always default for parsed
-/// `package.json` and would be discarded by Zig's bitwise `@memcpy` + arena
-/// reset anyway.
 #[inline]
 fn copy_property(p: &G::Property) -> G::Property {
     G::Property {
@@ -252,10 +247,6 @@ pub(crate) fn edit_update_no_args(
     // is to always avoid the store
     let _guard = ExprDisabler::scope();
 
-    // Zig: `const allocator = manager.allocator;` — process-lifetime arena for AST
-    // nodes that must outlive `Expr.Data.Store.reset()`. See `PackageManager.ast_arena`.
-    // PORT NOTE: reshaped for borrowck — `arena` is a disjoint-field borrow held across
-    // the `&mut manager.updating_packages` accesses below.
     let arena = &manager.ast_arena;
 
     for group in DEPENDENCY_GROUPS {
@@ -546,21 +537,12 @@ pub(crate) fn edit(
     // is to always avoid the store
     let _guard = ExprDisabler::scope();
 
-    // Zig: `const allocator = manager.allocator;` — process-lifetime arena for AST
-    // nodes that must outlive `Expr.Data.Store.reset()`. See `PackageManager.ast_arena`.
-    // PORT NOTE: reshaped for borrowck — `arena` is a disjoint-field borrow held across
-    // the `&mut manager.{updating_packages,trusted_deps_to_add_to_package_json}` accesses below.
     let arena = &manager.ast_arena;
 
     let mut remaining = updates.len();
     let mut replacing: usize = 0;
     let only_add_missing = manager.options.enable.contains(Enable::ONLY_MISSING);
 
-    // There are three possible scenarios here
-    // 1. There is no "dependencies" (or equivalent list) or it is empty
-    // 2. There is a "dependencies" (or equivalent list), but the package name already exists in a separate list
-    // 3. There is a "dependencies" (or equivalent list), and the package name exists in multiple lists
-    // Try to use the existing spot in the dependencies list if possible
     {
         if options.add_trusted_dependencies {
             if let Some(query) = current_package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
@@ -632,13 +614,6 @@ pub(crate) fn edit(
                                                     break 'add_packages_to_update;
                                                 }
 
-                                                // PORT NOTE: Zig leaves `entry.value_ptr.*`
-                                                // undefined across the `npm:`-alias bailout
-                                                // below (Zig:435), which is later read by
-                                                // `fetchSwapRemove` — UB. `get_or_put` here
-                                                // already default-initializes the slot, so
-                                                // `found_existing` semantics match Zig and the
-                                                // bailout path is well-defined.
                                                 let mut is_alias = false;
                                                 if strings::trim(
                                                     &version_literal_owned,
@@ -696,16 +671,6 @@ pub(crate) fn edit(
                                 }
                                 break;
                             } else {
-                                // For non-aliased positionals where `get_name()` returns the
-                                // version literal (path/URL) rather than the resolved package
-                                // name — github/git/tarball URLs and local folder/tarball/link
-                                // paths — fall back to matching by the stored value so a
-                                // re-run doesn't append a duplicate `"<name>": "<literal>"`
-                                // key. Skipped when the user wrote `alias@url`: that form is
-                                // an explicit request to key by `alias`, so consolidating into
-                                // an existing entry under a different name would silently drop
-                                // the alias. `e_string.is_none()` guards so a match in an
-                                // earlier dependency list isn't re-counted across iterations.
                                 if request.e_string.is_none()
                                     && !request.is_aliased
                                     && (request.version.tag == dependency::Tag::Github
@@ -881,10 +846,6 @@ pub(crate) fn edit(
                 break;
             }
 
-            // Zig:545 `defer ... bun.assert(request.e_string != null)` — there are no early-exit
-            // paths between the top of this `for` body and here, so a plain post-loop assert is
-            // equivalent to the deferred one (and avoids a `scopeguard` borrow conflict on
-            // `request.e_string`).
             #[cfg(debug_assertions)]
             debug_assert!(request.e_string.is_some());
         }
@@ -1139,10 +1100,6 @@ pub(crate) fn edit(
                             if let Some(entry) =
                                 manager.updating_packages.fetch_swap_remove(request.name)
                             {
-                                // Zig declares `alias_at_index` here and assigns it inside the
-                                // `version_literal` block but never reads it afterwards (dead
-                                // store, vestigial from the earlier `editUpdateNoArgs` copy).
-                                // The Rust port omits the variable entirely.
                                 let new_version: Vec<u8> = 'new_version: {
                                     let version_fmt = resolutions[request.package_id as usize]
                                         .npm()

@@ -18,11 +18,6 @@ use syn::{
     spanned::Spanned,
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-// #[bun_jsc::host_fn] / #[bun_jsc::host_fn(method|getter|setter)] /
-// #[bun_jsc::host_fn(export = "Name")]
-// ──────────────────────────────────────────────────────────────────────────
-
 #[derive(Default)]
 struct HostFnArgs {
     kind: HostFnKind,
@@ -70,14 +65,6 @@ impl Parse for HostFnArgs {
     }
 }
 
-/// Emit an extern shim with the JSC calling convention.
-/// The body is duplicated under two `#[cfg]` arms because Rust does not accept
-/// a macro/const in ABI-string position.
-///
-/// `export_name = None` means no `#[export_name]` is emitted (Rust mangling
-/// applies); used for the default getter/setter/method case where the real
-/// link name is owned by the `JsClass` codegen and the placeholder shim only
-/// needs to type-check, not link.
 fn jsc_extern_fn(
     export_name: Option<&str>,
     sig_args: &TokenStream2,
@@ -114,23 +101,12 @@ fn expand_host_fn(args: &HostFnArgs, func: &ItemFn) -> syn::Result<TokenStream2>
     let fn_name = &func.sig.ident;
     let fn_name_str = fn_name.to_string();
 
-    // Detect a leading receiver (`&self` / `&mut self`). When present, the
-    // shim is emitted *inside* the surrounding `impl` block so it can name
-    // `Self`; the C-ABI signature passes `*mut Self` as the first argument
-    // (the codegen'd C++ passes `m_ctx`).
     let has_receiver = func
         .sig
         .inputs
         .first()
         .is_some_and(|a| matches!(a, FnArg::Receiver(_)));
 
-    // R-2 (PORT_NOTES_PLAN): for `&self` receivers, materialise `&*__this`
-    // (NOT `&mut *__this`). A method that calls back into JS can be re-entered
-    // on the same `m_ctx`; holding a `noalias` `&mut Self` across that re-entry
-    // is Stacked-Borrows UB. Such methods take `&self` and route mutation
-    // through `Cell`/`JsCell` fields, so the shim must hand them a shared
-    // borrow. `&mut self` receivers (and typed `this: &mut Self` patterns)
-    // keep the `&mut *` reborrow.
     let receiver_is_shared = func
         .sig
         .inputs
@@ -142,15 +118,6 @@ fn expand_host_fn(args: &HostFnArgs, func: &ItemFn) -> syn::Result<TokenStream2>
         quote! { let __t = unsafe { &mut *__this }; }
     };
 
-    // Shim symbol name. Only emitted when an explicit `export = "..."` is
-    // supplied. In Zig, `@export(&toJSHostFn(f), .{ .name = ... })` always
-    // received a caller-supplied unique name; defaulting to the bare Rust
-    // ident here produces cross-module link collisions for common names
-    // (`parse`, `getter`, `crc32`, …) once codegen runs. With no explicit
-    // export, Rust mangling on `__jsc_host_<name>` keeps each module's shim
-    // unique — same rationale as the getter/setter/method case below, where
-    // the `.classes.ts` generator owns the link name (`TypePrototype__name`
-    // etc.) and the `JsClass` macro re-emits with the proper name.
     let _ = fn_name_str;
     let export: Option<String> = args.export.as_ref().map(|l| l.value());
     let shim_ident = format_ident!("__jsc_host_{}", fn_name);
@@ -174,14 +141,6 @@ fn expand_host_fn(args: &HostFnArgs, func: &ItemFn) -> syn::Result<TokenStream2>
         // `Free` with a receiver == method-style (PORTING.md permits omitting
         // the `(method)` arg when the signature has `&self`).
         HostFnKind::Free | HostFnKind::Method => {
-            // `passThis: true` in `.classes.ts` adds a trailing
-            // `this_value: JSValue` parameter (Zig: `this_value: jsc.JSValue`).
-            // The real exported wrapper lives in `generated_classes.rs`; this
-            // placeholder shim only needs to type-check, so detect the 4-arg
-            // shape (self/this + global + frame + this_value) and forward
-            // `callframe.this()` accordingly. Count total inputs — the first
-            // may be either a `&mut self` receiver or an explicit
-            // `this: &mut Self` typed pattern.
             let call = if func.sig.inputs.len() >= 4 {
                 quote! { Self::#fn_name(__t, __g, __f, __f.this()) }
             } else {
@@ -251,19 +210,6 @@ fn expand_host_fn(args: &HostFnArgs, func: &ItemFn) -> syn::Result<TokenStream2>
     })
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// bun_jsc::codegen_cached_accessors!("TypeName"; prop_a, prop_b, ...)
-//
-// Emits one `${snake}_get_cached` / `${snake}_set_cached` pair per listed
-// property, each thin-wrapping the C++-side
-//   `${TypeName}Prototype__${prop}GetCachedValue(JSValue) -> JSValue`
-//   `${TypeName}Prototype__${prop}SetCachedValue(JSValue, *JSGlobalObject, JSValue)`
-// shims that `src/codegen/generate-classes.ts` produces for every
-// `cache: true` property. The getter maps `.zero` → `None` (matches the Zig
-// `${name}GetCached` wrapper). Both extern blocks are duplicated under the
-// JSC calling-convention `#[cfg]` split (see `jsc_extern_fn` above).
-// ──────────────────────────────────────────────────────────────────────────
-
 struct CachedAccessorsInput {
     type_name: LitStr,
     props: Vec<Ident>,
@@ -316,10 +262,6 @@ pub fn codegen_cached_accessors(input: TokenStream) -> TokenStream {
         let set_ext = format_ident!("__{snake}_set_cached_value");
 
         out.extend(quote! {
-            // `safe fn` to match the `safe fn …GetCachedValue` /
-            // `…SetCachedValue` declarations `generate-classes.ts` emits in
-            // `generated_classes.rs` (otherwise `clashing_extern_declarations`
-            // fires — the only difference was the call-safety qualifier).
             #[cfg(all(windows, target_arch = "x86_64"))]
             unsafe extern "sysv64" {
                 #[link_name = #get_sym]
@@ -359,19 +301,9 @@ pub fn codegen_cached_accessors(input: TokenStream) -> TokenStream {
                 global: &::bun_jsc::JSGlobalObject,
                 value: ::bun_jsc::JSValue,
             ) {
-                // FFI does `m_${prop}.set(vm, this, value)`. `as_mut_ptr`
-                // derives `*mut` via the `UnsafeCell` interior, so the C++
-                // write barrier mutating VM/heap state is sound under Stacked
-                // Borrows (a `&T as *const T as *mut T` cast would not be).
                 #set_ext(this_value, global.as_mut_ptr(), value)
             }
 
-            /// Read-and-clear the `JSC::WriteBarrier` slot in one step.
-            ///
-            /// Returns `Some(value)` and resets the slot to `.zero` (dropping
-            /// this GC root) iff a value was cached; `None` if the slot was
-            /// already empty. Replaces the hand-rolled
-            /// `let v = get_cached()?; set_cached(ZERO); Some(v)` pattern.
             #[inline]
             pub fn #take_fn(
                 this_value: ::bun_jsc::JSValue,
@@ -384,13 +316,6 @@ pub fn codegen_cached_accessors(input: TokenStream) -> TokenStream {
         });
     }
 
-    // Mirror the `Gc` enum that `generate-classes.ts` emits for the build-time
-    // `js_$T` modules, so `js_class_module!` callers get the same
-    // `js::Gc::$prop.get()/.set()/.clear()` surface as the codegen'd modules.
-    // Variant names are the raw prop idents (camelCase) — every caller's prop
-    // set is verified to contain no Rust keywords (see
-    // `codegen_cached_accessors!` call sites); if one is ever added, the
-    // resulting "expected identifier, found keyword" error points exactly here.
     if !props.is_empty() {
         let variants = props.iter();
         let get_arms = props.iter().map(|p| {
@@ -439,11 +364,6 @@ fn camel_to_snake(s: &str) -> String {
     out
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// #[bun_jsc::host_call] — bare ABI rewrite for non-JSHostFn signatures
-// (e.g. `hasPendingActivity: extern fn(*mut Self) -> bool`).
-// ──────────────────────────────────────────────────────────────────────────
-
 #[proc_macro_attribute]
 pub fn host_call(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let func = parse_macro_input!(item as ItemFn);
@@ -456,11 +376,6 @@ pub fn host_call(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let inputs = &sig.inputs;
     let output = &sig.output;
     let (impl_generics, _ty_generics, where_clause) = sig.generics.split_for_impl();
-    // No implicit `#[no_mangle]` — multiple types share method names
-    // (`has_pending_activity`, `ptr_without_type_checks`, …) and collide at
-    // codegen otherwise. The generated `.classes.ts` wrappers own the canonical
-    // `${T}__hasPendingActivity` link names; callers needing a C symbol attach
-    // `#[unsafe(export_name = "…")]` themselves (re-emitted via `#(#attrs)*`).
     quote! {
         #[cfg(all(windows, target_arch = "x86_64"))]
         #(#attrs)*
@@ -472,21 +387,6 @@ pub fn host_call(_attr: TokenStream, item: TokenStream) -> TokenStream {
     }
     .into()
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// #[bun_jsc::JsClass] — emit `.classes.ts`-style C-ABI hooks.
-//
-// Mirrors `src/codegen/generate-classes.ts` symbol naming:
-//   classSymbolName(T, "construct") → `${T}Class__construct`
-//   classSymbolName(T, "finalize")  → `${T}Class__finalize`
-//   symbolName(T, "estimatedSize")  → `${T}__estimatedSize`
-//   `${T}__fromJS` / `${T}__fromJSDirect` / `${T}__create` (C++-side, imported)
-//
-// This is the *minimal* surface: getter/setter/method shims per
-// `#[js(getter)]` etc. are emitted by `#[host_fn(..)]` on the impl methods;
-// per-property `${T}Prototype__${name}` naming will be wired when the
-// `.classes.ts` generator gains a `.rs` output mode.
-// ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 struct JsClassArgs {
@@ -592,15 +492,6 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
         .map(|l| l.value())
         .unwrap_or_else(|| rust_ty.to_string());
 
-    // C++→Rust export hooks (`${T}Class__construct` / `${T}Class__finalize` /
-    // `${T}__estimatedSize` / `${T}__ZigStructSize`) are now emitted by
-    // `generateRust()` in `src/codegen/generate-classes.ts` — see
-    // `build/*/codegen/generated_classes.rs`. Emitting them here as well
-    // produces duplicate-symbol link errors, so this macro is now *import-side
-    // only*: it declares the C++ externs and supplies the `JsClass` trait impl.
-    // The `no_finalize` / `no_construct` / `estimated_size` attribute knobs are
-    // still accepted (call sites carry them, and they document the
-    // `.classes.ts` shape), but no longer drive any token emission here.
     let _ = (args.no_finalize, args.no_construct, args.estimated_size);
 
     // Rust→C++ hooks (we import these; bodies live in generated C++).
@@ -616,10 +507,6 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
     let create_lit = LitStr::new(&create_sym, Span::call_site());
     let get_ctor_lit = LitStr::new(&get_ctor_sym, Span::call_site());
 
-    // `noConstructor: true` classes have no C++-side `${T}__getConstructor`
-    // export — emitting an `extern` for it produces a link-time undefined
-    // symbol. Gate the decl + trait override; the `JsClass` trait supplies a
-    // default `get_constructor` body so the impl stays well-formed.
     let (get_ctor_extern, get_ctor_impl) = if args.no_constructor {
         (quote! {}, quote! {})
     } else {
@@ -633,10 +520,6 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
             },
             quote! {
                 fn get_constructor(global: &::bun_jsc::JSGlobalObject) -> ::bun_jsc::JSValue {
-                    // C++ side returns the cached constructor
-                    // (`WebCore::clientSubspaceFor*`-registered). `as_mut_ptr`
-                    // derives `*mut` via `UnsafeCell` — the lazy init may
-                    // mutate the global's constructor cache.
                     __get_constructor(global.as_mut_ptr())
                 }
             },
@@ -645,11 +528,6 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
 
     let trait_impl = quote! {
         const _: () = {
-            // `safe fn` (not bare `fn`) so these match the `safe fn`
-            // declarations `generate-classes.ts` emits in
-            // `generated_classes.rs` — otherwise `clashing_extern_declarations`
-            // fires for every codegen'd class (the only difference was the
-            // call-safety qualifier).
             #[cfg(all(windows, target_arch = "x86_64"))]
             unsafe extern "sysv64" {
                 #[link_name = #from_js_lit]
@@ -716,10 +594,6 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
             impl ::bun_jsc::JsClass for #rust_ty {
                 fn to_js(self, global: &::bun_jsc::JSGlobalObject) -> ::bun_jsc::JSValue {
                     let ptr = ::bun_jsc::heap::alloc(self);
-                    // `ptr` ownership transfers to the C++ wrapper (freed via
-                    // `${T}Class__finalize`). `as_mut_ptr` derives `*mut` via
-                    // `UnsafeCell` so C++ allocating on the GC heap through this
-                    // pointer is sound (no read-only provenance from `&JSGlobalObject`).
                     __create(global.as_mut_ptr(), ptr)
                 }
                 fn from_js(value: ::bun_jsc::JSValue) -> ::core::option::Option<*mut Self> {
@@ -872,12 +746,6 @@ fn expand_uws_callback(args: &UwsCallbackArgs, func: &ItemFn) -> syn::Result<Tok
                 };
                 thunk_params.push(quote! { #p: #ptr_ty });
                 thunk_params.push(quote! { #l: usize });
-                // Tolerate (null, 0) — uWS passes this for empty buffers, and
-                // `from_raw_parts(null, 0)` is UB. Zig's `[]const u8` also
-                // permits `(undefined, 0)`. Use an explicit, obviously-sound
-                // construction per mutability instead of `(&mut [][..]) as _`,
-                // which borrows a temporary and relies on a non-existent
-                // `&mut [T] -> &[T]` `as`-cast.
                 prelude.push(if mutable {
                     quote! {
                         // SAFETY: caller guarantees `#p[..#l]` valid for the call;
@@ -927,10 +795,6 @@ fn expand_uws_callback(args: &UwsCallbackArgs, func: &ItemFn) -> syn::Result<Tok
     });
 
     let inner_call = quote! {
-        // Slice args are reconstructed from (ptr, len) pairs the caller
-        // guarantees valid for the call. Do this *before* borrowing `__this`
-        // so a future `&mut [T]` arg that (incorrectly) aliased `*self` would
-        // at least not be lexically interleaved with the receiver borrow.
         #(#prelude)*
         // SAFETY: `__ctx` is the `*Self` registered with the C side; uWS / the
         // caller guarantees it is live and exclusively accessed for the

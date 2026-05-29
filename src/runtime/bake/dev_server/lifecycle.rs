@@ -12,12 +12,6 @@
 
 use super::{DevServer, HotReloadEvent, WatcherAtomics};
 
-// ──────────────────────────────────────────────────────────────────────────
-// WatcherContext impl — wires `bun_watcher::Watcher::init::<DevServer>`.
-// The watcher's stored fn-ptrs (`on_file_update_wrapped` / `on_error_wrapped`
-// in `Watcher::init`) call *these* trait methods, never the inherent ones
-// directly, so each forwards to the real ported body on `DevServer`.
-// ──────────────────────────────────────────────────────────────────────────
 impl bun_watcher::WatcherContext for DevServer {
     fn on_file_update(
         &mut self,

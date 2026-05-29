@@ -4,11 +4,6 @@ use crate::values::angle::Angle;
 use crate::values::calc::Calc;
 use crate::values::number::{CSSNumber, CSSNumberFns};
 
-/// A CSS [`<time>`](https://www.w3.org/TR/css-values-4/#time) value, in either
-/// seconds or milliseconds.
-///
-/// Time values may be explicit or computed by `calc()`, but are always stored and serialized
-/// as their computed value.
 #[repr(u8)]
 #[derive(
     Clone,
@@ -39,11 +34,6 @@ impl Time {
         }
     }
 
-    // css.implementDeepClone / css.implementEql / css.implementHash — provided
-    // by `#[derive(DeepClone, CssEql, CssHash)]` above (POD f32 payload).
-    // Kept as an inherent assoc fn for `protocol::CalcValue` callers that
-    // forward via UFCS (`Time::eql(a, b)`) — does not conflict with the
-    // derived trait method (that one has a `&self` receiver).
     #[inline]
     pub fn eql(lhs: Self, rhs: Self) -> bool {
         lhs == rhs
@@ -183,10 +173,6 @@ impl Time {
     }
 
     pub fn op(self, other: Time, op_fn: impl Fn(f32, f32) -> f32) -> Time {
-        // PORT NOTE: Zig uses `ctx: anytype` + comptime fn-pointer (its closure idiom).
-        // Rust closures capture ctx directly, so the `ctx` param is dropped.
-        // PORT NOTE: reshaped bit-packed `switch_val` into an exhaustive tuple match;
-        // semantics are identical, `unreachable` arm is unnecessary.
         let _ = (self.tag(), TAG_SECONDS, TAG_MILLISECONDS); // keep tag consts referenced
         match (self, other) {
             (Time::Seconds(a), Time::Seconds(b)) => Time::Seconds(op_fn(a, b)),

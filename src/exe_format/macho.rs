@@ -194,10 +194,6 @@ impl MachoFile {
         debug_assert!(size_diff % PAGE_SIZE as i64 == 0);
         let num_of_new_pages = size_diff / PAGE_SIZE as i64;
 
-        // Pre-grow the backing buffer to fit: the `size_diff` bytes of new section
-        // content and one SHA-256 hash per new page. `buildAndSign` may grow further
-        // to write the complete signature, but reserving this up front avoids the
-        // common reallocation.
         self.data.reserve(
             usize::try_from(size_diff + num_of_new_pages * HASH_SIZE as i64).expect("int cast"),
         );
@@ -275,16 +271,6 @@ impl MachoFile {
             if self.header.cputype == macho::CPU_TYPE_ARM64
                 && feature_flag::BUN_NO_CODESIGN_MACHO_BINARY.get() != Some(true)
             {
-                // `buildAndSign` replaces the template's signature with one built by
-                // `MachoSigner`, whose size depends only on the (possibly-shifted)
-                // `cs.dataoff` — not on the template signature's shape. Resize
-                // __LINKEDIT and `LC_CODE_SIGNATURE.datasize` to that exact size.
-                //
-                // This must run even when `size_diff == 0` (bundle fits in the
-                // template's existing __BUN slot): the template may have been signed
-                // with a different page size / identifier / blob set, so its
-                // `cs.datasize` can be smaller than what `sign()` will produce, which
-                // the trailing truncation in `sign()` then chops (issue #29120).
                 let cs_sz = size_of::<macho::linkedit_data_command>();
                 let seg_sz = size_of::<macho::segment_command_64>();
 
@@ -296,11 +282,6 @@ impl MachoFile {
                 let mut seg: macho::segment_command_64 =
                     read_struct(&self.data[linkedit_seg_idx..][..seg_sz]);
 
-                // The template signature is the tail of __LINKEDIT; swap its footprint.
-                // vmsize must be page-aligned and >= filesize, so derive it from the
-                // freshly-computed filesize rather than the pre-update vmsize (otherwise
-                // an old vmsize that was already page-aligned to a wider page can leave
-                // the segment one page larger than necessary).
                 seg.filesize = seg.filesize - sig_size as u64 + new_sig_size as u64;
                 seg.vmsize = align_size(seg.filesize, PAGE_SIZE);
                 write_struct(&mut self.data[linkedit_seg_idx..][..seg_sz], &seg);
@@ -647,11 +628,6 @@ impl MachoSigner {
     const SIGNATURE_PAGE_SIZE: usize = 1 << 12;
     const SIGNATURE_HASH_SIZE: usize = 32; // SHA256 = 32 bytes
 
-    /// Compute the exact number of bytes that `sign()` will write at `sig_off`
-    /// (the `SuperBlob` + `BlobIndex` + `CodeDirectory` + identifier + page
-    /// hashes). `writeSection` uses this to size `linkedit_seg.filesize` and
-    /// the `LC_CODE_SIGNATURE.datasize` so the signer's output fits exactly
-    /// inside __LINKEDIT.
     pub(crate) fn compute_signature_size(sig_off: u64) -> usize {
         let total_pages: usize =
             usize::try_from(sig_off.div_ceil(Self::SIGNATURE_PAGE_SIZE as u64)).unwrap();

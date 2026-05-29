@@ -5,12 +5,6 @@ use crate::{Alignment, Allocator};
 // `std.heap.c_allocator` — the libc-malloc-backed allocator.
 use super::C_ALLOCATOR as c_allocator;
 
-/// A fallback zero-initializing allocator.
-//
-// Zig: `pub const allocator = Allocator{ .ptr = undefined, .vtable = &vtable };`
-// `std.mem.Allocator` is a `{ptr, vtable}` fat struct — the Rust mapping is
-// `&dyn bun_alloc::Allocator`, so the public export is a ZST implementing the
-// trait. Consumers borrow `&ALLOCATOR` (coerces to `&dyn Allocator`).
 pub static ALLOCATOR: Z = Z;
 
 #[derive(Clone, Copy, Default)]

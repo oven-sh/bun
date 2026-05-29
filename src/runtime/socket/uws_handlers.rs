@@ -25,15 +25,6 @@ use bun_jsc::ipc as IPC;
 use bun_sql_jsc::mysql;
 use bun_sql_jsc::postgres;
 
-/// Some consumer methods are `bun.JSError!void` (they can throw into JS),
-/// some are plain `void`. The old `configure()` trampolines hand-unrolled the
-/// catch per call site; here we do it once. JS errors are already on the
-/// pending-exception slot — there's nowhere for the C event loop to propagate
-/// them — so we just don't lose the unwind.
-///
-/// Zig used `@typeInfo(@TypeOf(result)) == .error_union` to branch at comptime;
-/// in Rust we express the same with a tiny trait specialised on `()` and
-/// `Result<(), E>`.
 #[inline]
 fn swallow<R: Swallow>(result: R) {
     result.swallow();
@@ -53,18 +44,6 @@ impl<E> Swallow for Result<(), E> {
     }
 }
 
-/// Replaces the Zig `if (@hasDecl(T, "onX")) this.onX(..)` pattern: a trait
-/// with default no-op methods that each owner type overrides for the events it
-/// actually handles. The `<const SSL: bool>` parameter mirrors the Zig
-/// `comptime ssl: bool` so a type can opt into different behaviour per
-/// transport (and so `NewSocketHandler<SSL>` is nameable in signatures).
-///
-/// All methods default to `Ok(())`; `swallow` collapses both `()` and
-/// `Result<(), _>` so consumer impls may return either — but to avoid
-/// associated-type contortions every default returns `bun_jsc::JsResult<()>`
-/// and plain-`void` consumers just `Ok(())`.
-// TODO(port): if a consumer's `on_*` is infallible, the trait default forces a
-// `Result` wrap; revisit once consumer crates are ported.
 pub trait SocketEvents<const SSL: bool> {
     fn on_open(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
         Ok(())
@@ -108,12 +87,6 @@ pub trait SocketEvents<const SSL: bool> {
     }
 }
 
-/// `Ext = *?*T`: the socket ext stores a single pointer to the heap-allocated
-/// owner (matching the old `socket.ext(**anyopaque).* = this` pattern). It is
-/// optional because a connect/accept can fail and dispatch `on_close` /
-/// `on_connect_error` BEFORE the caller has had a chance to stash `this` in the
-/// freshly-calloc'd ext slot — pretending it's `**T` there is a NULL deref the
-/// type system can't see.
 pub struct PtrHandler<T, const SSL: bool>(core::marker::PhantomData<T>);
 
 #[inline(always)]
@@ -171,20 +144,6 @@ where
         swallow(this.on_end(wrap::<SSL>(s)));
     }
     fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
-        // Close FIRST, then notify — same order `main`'s `configure()`
-        // trampoline used. The handler may re-enter `connectInner`
-        // synchronously (node:net `autoSelectFamily` falls back to the
-        // next address from inside the JS `connectError` callback); on
-        // Windows/libuv, starting the next attempt's `uv_poll_t` while
-        // this half-open one is still active and then closing it
-        // *afterwards* leaves the second poll never delivering
-        // writable/error → process hang (Win11-aarch64
-        // double-connect.test, test-net-server-close).
-        //
-        // Safe for TLS too: `us_internal_ssl_close` short-circuits
-        // SEMI_SOCKET straight to `close_raw`, and `close_raw` skips
-        // dispatch for SEMI_SOCKET, so no `on_handshake`/`on_close` lands
-        // in JS before we read `ext`/`this`.
         let this = ext.get();
         // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
         // deref (`s` is a live socket passed by the trampoline).
@@ -221,14 +180,6 @@ where
     }
 }
 
-// ── RawSocketEvents / RawPtrHandler ─────────────────────────────────────────
-//
-// Some consumers' handlers may free or re-enter `*Self` mid-call (refcount
-// reaching zero, `tcp.close()` synchronously dispatching `on_close`, …) and
-// therefore take `*mut Self` rather than `&mut self`. Dispatching those
-// through `PtrHandler` would form a `&mut T` argument that outlives the
-// allocation it points to (Stacked-Borrows argument-protector UB), so they
-// get a raw-pointer twin of the trait/adapter pair.
 pub trait RawSocketEvents<const SSL: bool>: Sized {
     const HAS_ON_OPEN: bool = false;
 
@@ -444,31 +395,6 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
     }
 }
 
-// ── SocketEvents / NsSocketEvents impls ─────────────────────────────────────
-//
-// In Zig the consumer types carry `onOpen`/`onData`/… as inherent decls and
-// `@hasDecl` filters at comptime. Rust expresses that as a trait with default
-// no-ops; each consumer type opts in with an `impl` that overrides only the
-// events it actually handles. `api::NewSocket`'s real impl lives in
-// `socket/mod.rs` (bridges to inherent methods).
-
-/// Forwards `NsSocketEvents` to the inherent `on_*` methods on a driver's
-/// `SocketHandler<SSL>` namespace type. Mirrors Zig's single
-/// `NsHandler(Owner, H, ssl)` generic (uws_handlers.zig:154), which used
-/// `@hasDecl` + a comptime `swallow` to absorb both `void` and `!void`
-/// returns; here `swallow()` (specialised on `()` and `Result<(), E>` above)
-/// does the same, so one expansion covers drivers whose inherent fns are
-/// infallible (postgres, mysql) and those returning `JsTerminatedResult<()>`
-/// (valkey). The dispatcher (`NsHandler: VHandler`) `swallow`s the trait
-/// result anyway, so swallowing one frame earlier is behaviour-preserving.
-///
-/// `on_long_timeout` is intentionally NOT forwarded — no driver defines it,
-/// so the trait default fires (matches Zig's `@hasDecl` short-circuit).
-///
-/// `on_handshake` reads the inherent `ON_HANDSHAKE: Option<fn(..)>` const —
-/// Zig's `pub const onHandshake = if (ssl) onHandshake_ else null;` pattern,
-/// where the `null` arm meant "leave the slot unbound" so the dispatcher's
-/// no-op default fires for plain TCP.
 macro_rules! impl_ns_socket_events_forward {
     ($Owner:ty, $Handler:ty) => {
         impl<const SSL: bool> NsSocketEvents<$Owner, SSL> for $Handler {
@@ -538,20 +464,8 @@ impl_ns_socket_events_forward!(
 );
 impl_ns_socket_events_forward!(js_valkey::JSValkeyClient, js_valkey::SocketHandler<SSL>);
 
-// ── Bun.connect / Bun.listen ────────────────────────────────────────────────
-// PORT NOTE (noalias re-entrancy): routed through `RawPtrHandler`, not
-// `PtrHandler`. `NewSocket::on_*` re-enter JS (`socket.write/end/reload`) which
-// re-derives `&mut NewSocket` via the wrapper's `m_ptr`; a `&mut NewSocket`
-// argument formed by `PtrHandler` and protected through the dispatch frame
-// would alias that re-entrant borrow (Stacked-Borrows UB + `noalias`
-// dead-store of the re-entrant write). `RawPtrHandler` passes `*mut Self`.
 pub type BunSocket<const SSL: bool> = RawPtrHandler<api::NewSocket<SSL>, SSL>;
 
-/// Listener accept path: the ext is uninitialised at on_open time (the C accept
-/// loop just calloc'd it), so we read the `*Listener` off `group->ext` and let
-/// `on_create` allocate the `NewSocket` and stash it in the ext. After that the
-/// socket is re-stamped as `.bun_socket_{tcp,tls}` and routes through
-/// `BunSocket` above.
 pub struct BunListener<const SSL: bool>;
 
 impl<const SSL: bool> VHandler for BunListener<SSL>
@@ -642,14 +556,6 @@ where
     }
 }
 
-/// Like `PtrHandler` but the callbacks live on a separate namespace `H` (the
-/// driver's pre-existing `SocketHandler(ssl)` adapter) rather than as methods
-/// on the owner type itself. Ext stores `*Owner` (optional for the same reason
-/// as `PtrHandler`).
-///
-/// In Rust the "separate namespace" becomes a trait `NsSocketEvents` whose
-/// methods take `&mut Owner` as the first parameter; each driver's
-/// `SocketHandler<SSL>` zero-sized type implements it.
 pub trait NsSocketEvents<Owner, const SSL: bool> {
     fn on_open(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
         Ok(())
@@ -785,21 +691,8 @@ where
     }
 }
 
-// ── HTTP client thread (fetch) ──────────────────────────────────────────────
-//
-// Unlike every other consumer the fetch ext slot does NOT hold a `*Owner`. It
-// holds an `ActiveSocket` — a `bun.TaggedPointerUnion` *value* packed into one
-// word (`.ptr()` → `*anyopaque` with the tag in the high bits). Dereferencing
-// it as a real pointer is UB; `Handler.on*` decode it via `ActiveSocket.from`.
-// This adapter just lifts the word out of the slot, so the `*anyopaque` here
-// is intentional and irreducible — it IS the tagged-pointer encoding, not a
-// type we forgot to name.
 pub struct HTTPClient<const SSL: bool>;
 
-// Zig's `fwd` helper used `@field` + `@call` to dispatch by name; Rust has no
-// field-by-string reflection, so each event is written out. The
-// `@TypeOf(@field(H, name)) != @TypeOf(null)` guard becomes simply not setting
-// `HAS_ON_*` for events the upstream `Handler<SSL>` doesn't define.
 type HttpH<const SSL: bool> = bun_http::http_context::Handler<SSL>;
 
 impl<const SSL: bool> VHandler for HTTPClient<SSL> {
@@ -896,10 +789,6 @@ pub type MySQL<const SSL: bool> = NsHandler<
 pub type Valkey<const SSL: bool> =
     NsHandler<js_valkey::JSValkeyClient, js_valkey::SocketHandler<SSL>, SSL>;
 
-// ── Bun.spawn IPC / process.send() ──────────────────────────────────────────
-// Ext is `*IPC.SendQueue` for both child-side `process.send` and parent-side
-// `Bun.spawn({ipc})`. Handlers live in `ipc.zig` as free functions, not
-// methods on SendQueue, so we adapt manually instead of via PtrHandler.
 pub struct SpawnIPC;
 
 use IPC::IPCHandlers::PosixSocket as IpcH;

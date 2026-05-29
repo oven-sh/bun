@@ -96,13 +96,6 @@ impl<'a> PropertyHandlerContext<'a> {
     }
 }
 
-// ─── heavy rule-building helpers (gated) ──────────────────────────────────
-// blocked_on: css_rules::{CssRule,CssRuleList,StyleRule,SupportsRule,media},
-// selectors::parser::{Direction,Component,PseudoClass}, DeclarationBlock
-// construction with bump-allocated lists, properties/custom::UnparsedProperty.
-// These build whole rule subtrees and are only called from the (still-gated)
-// minify path; un-gate alongside `rules/style.rs`.
-
 impl<'a> PropertyHandlerContext<'a> {
     /// `'static`-erased arena handle for building `DeclarationBlock<'static>` /
     /// `DeclarationList<'static>` (see rules/mod.rs `decl_block_static`).

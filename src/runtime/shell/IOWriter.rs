@@ -28,15 +28,6 @@ use crate::shell::yield_::Yield;
 // ChildPtr (NodeId-arena port of Zig TaggedPointerUnion)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// In the NodeId-arena port, a "writer child" is `(NodeId, WriterTag)` — the
-/// id of the owning state node plus a tag saying which `on_io_writer_chunk`
-/// impl to dispatch to. Replaces Zig's `TaggedPtrUnion<(Builtin, Cmd,
-/// Pipeline, …, PipeReader.CapturedWriter)>`.
-///
-/// The one tag that does **not** live in the NodeId arena is
-/// `WriterTag::Subproc` (the `subproc::CapturedWriter` embedded inside a
-/// heap-allocated `PipeReader`); for that variant the dispatch target is
-/// carried in `raw` instead of `node`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ChildPtr {
     pub node: NodeId,
@@ -131,12 +122,6 @@ impl Writer {
     fn set_dead(&mut self) {
         self.ptr = ChildPtr::NULL;
     }
-    /// Tee `chunk` into the optional capture buffer.
-    ///
-    /// `bytelist` (when set) points into a live `ShellExecEnv` `Bufio`
-    /// (`OutFd::captured` — see its doc); the env outlives every queued
-    /// `Writer`. Localises the per-callsite raw deref in
-    /// `do_file_write` / `on_write_pollable`.
     #[inline]
     fn tee(&self, chunk: &[u8]) {
         if let Some(bl) = self.bytelist {
@@ -170,10 +155,6 @@ pub(crate) type WriterImpl = bun_io::pipe_writer::WindowsBufferedWriter<IOWriter
 #[allow(dead_code)]
 pub(crate) type Poll = WriterImpl;
 
-/// Poll-dispatch entry for `SHELL_BUFFERED_WRITER`. Holds an extra Arc strong
-/// ref across `on_poll` so child `onIOWriterChunk` callbacks (via `bump()`)
-/// can drop the last external ref without freeing `self` while PipeWriter is
-/// still on the stack. Spec uses an async-deinit hop for the same guarantee.
 #[cfg(not(windows))]
 pub fn on_poll(writer: &mut Poll, size_hint: isize, hup: bool) {
     use bun_io::pipe_writer::PosixPipeWriter;
@@ -186,10 +167,6 @@ pub fn on_poll(writer: &mut Poll, size_hint: isize, hup: bool) {
 }
 
 impl IOWriter {
-    /// Spec: IOWriter.zig `runFromMainThread` — explicitly a no-op
-    /// (`// this is unused`). Kept only because `task_tag::ShellIOWriter`
-    /// exists in the Zig task-tag enum and the Rust dispatch table mirrors it.
-    /// No code path enqueues this tag.
     pub fn run_from_main_thread(_this: *mut IOWriter) {
         // intentionally empty — see spec. No unsafe operations; the pointer
         // is never dereferenced.
@@ -232,10 +209,6 @@ struct State {
     /// without unsafe Arc-pointer reconstruction. Set via `Arc::new_cyclic` in
     /// `init()` (the sole constructor).
     self_weak: std::sync::Weak<IOWriter>,
-    /// Backref to the owning interpreter for async-poll callbacks (which must
-    /// drive `Yield::run`). Set by the first `enqueue`/`set_interp`; `None`
-    /// until then. Spec: implicit in Zig (children held `*Interpreter` via
-    /// `@fieldParentPtr`).
     interp: Option<bun_ptr::ParentRef<Interpreter>>,
 }
 
@@ -262,10 +235,6 @@ impl IOWriter {
         unsafe { &mut *self.state.get() }
     }
 
-    /// Bump our own Arc strong count. Held across re-entrant `run_yield` calls
-    /// whose child callback may drop the last external ref and free us
-    /// mid-method. Spec gets the same guarantee from `asyncDeinit`'s next-tick
-    /// hop; here we keep a strong ref on the stack instead.
     #[inline]
     fn keepalive(&self) -> std::sync::Arc<IOWriter> {
         self.state()
@@ -362,10 +331,6 @@ impl IOWriter {
         cost
     }
 
-    /// `bun_io::EventLoopHandle` is an opaque `*mut c_void` that the io-layer
-    /// `FilePollVTable` round-trips back to the runtime. We pass the address of
-    /// the stored `bun_event_loop::EventLoopHandle` so the (runtime-registered)
-    /// vtable can recover it.
     #[cfg(not(windows))]
     #[inline]
     fn io_evtloop(&self) -> bun_io::EventLoopHandle {
@@ -383,14 +348,6 @@ impl IOWriter {
         if let Err(e) = s.writer.start(s.fd, s.flags.pollable) {
             #[cfg(not(windows))]
             {
-                // We get this if we pass in a file descriptor that is not
-                // pollable, for example a special character device like
-                // /dev/null. If so, restart with polling disabled.
-                //
-                // It's also possible on Linux for EINVAL to be returned
-                // when registering multiple writable/readable polls for the
-                // same file descriptor. The shell code here makes sure to
-                // _not_ run into that case, but it is possible.
                 if e.get_errno() == E::EINVAL {
                     crate::shell_log!("IOWriter(fd={}) got EINVAL", s.fd);
                     s.flags.pollable = false;
@@ -424,11 +381,6 @@ impl IOWriter {
             }
             #[cfg(windows)]
             {
-                // This might happen if the file descriptor points to NUL.
-                // On Windows GetFileType(NUL) returns FILE_TYPE_CHAR, so
-                // `this.writer.start()` will try to open it as a tty with
-                // uv_tty_init, but this returns EBADF. As a workaround,
-                // we'll try opening the file descriptor as a file.
                 if e.get_errno() == E::EBADF {
                     s.flags.pollable = false;
                     s.flags.nonblock = false;
@@ -440,19 +392,6 @@ impl IOWriter {
         }
         #[cfg(windows)]
         {
-            // Spec: PipeWriter.zig:919-924 — when `Source::open` produced a uv
-            // pipe/tty, libuv has TAKEN OWNERSHIP of the underlying HANDLE
-            // (`uv_pipe_open`/`uv_tty_init`) and `uv_close` (issued by
-            // `s.writer.close()` in Drop) will close it. Zig records this via
-            // `rawfd.take()` on the `*MovableIfWindowsFd` it passes to
-            // `writer.start`, nulling `this.fd` so `deinitOnMainThread`'s
-            // `if (this.fd.isValid()) this.fd.close()` is a no-op. The Rust
-            // port stores a plain `Fd` and `BaseWindowsPipeWriter::start`
-            // drops the `take()` (TODO at PipeWriter.rs:1277), so disarm the
-            // Drop close here instead. The `Source::File`/`SyncFile` case
-            // (incl. the EBADF→`start_with_file` fallback above, which
-            // `return`s early) keeps `s.fd` valid: with `owns_fd=false`
-            // PipeWriter does NOT close it there, so Drop must.
             if matches!(
                 s.writer.source,
                 Some(bun_io::Source::Pipe(_) | bun_io::Source::Tty(_))
@@ -536,11 +475,6 @@ impl IOWriter {
         {
             debug_assert!(matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_)));
             if let Some(poll) = s.writer.get_poll() {
-                // Spec: `poll.isWatching()` — `is_registered() && !needs_rearm`.
-                // NOT `is_registered()`: after a one-shot fire that drains
-                // everything (no `register_poll()`), `PollWritable` stays set
-                // but `NeedsRearm` is set → `is_registered()` would return
-                // Suspended without re-arming and stall the queue forever.
                 if poll.is_watching() {
                     return WriteOutcome::Suspended;
                 }
@@ -820,10 +754,6 @@ impl IOWriter {
         if !wrote_everything && s.writer_idx < s.writers.len() {
             #[cfg(windows)]
             {
-                // PORT NOTE: inline `set_writing(true)` instead of calling the
-                // helper — the helper re-derives `state()` while `s` is live,
-                // which is two simultaneous `&mut State` (UB under Stacked
-                // Borrows). Same discipline as the top of this fn.
                 s.is_writing = true;
                 s.writer.write();
             }
@@ -890,10 +820,6 @@ impl IOWriter {
                 continue;
             }
             seen.push(ptr);
-            // Spec: `if (this.err) |*e| e.ref();` — `SystemError` in the Rust
-            // port owns `bun_core::String`s by value (no shared refcount yet),
-            // so re-derive a fresh one per callee instead of cloning the stored
-            // error.
             let ee = err.to_shell_system_error();
             self.run_yield(Yield::OnIoWriterChunk {
                 child: ptr,
@@ -1014,12 +940,6 @@ impl IOWriter {
             let _ = write!(&mut s.buf, "{}: ", k.as_str());
         }
         let _ = s.buf.write_fmt(args);
-        // Spec: Zig writes into `buf` *before* checking broken_pipe in
-        // `enqueueFmt`; mirror that ordering (the bytes are dead but the
-        // buffer will be cleared on the error path anyway).
-        // PORT NOTE: inline `handle_broken_pipe` instead of calling the helper —
-        // the helper re-derives `state()` while `s` is still live, which is two
-        // simultaneous `&mut State` (UB under Stacked Borrows).
         if s.flags.broken_pipe {
             let err = sys::Error::from_code(E::EPIPE, sys::Tag::write).to_system_error();
             return Yield::OnIoWriterChunk {
@@ -1159,14 +1079,6 @@ fn drain_buffered_data(
 
 impl Drop for IOWriter {
     fn drop(&mut self) {
-        // Spec: IOWriter.zig `deinitOnMainThread`. The Zig version hopped to
-        // the next tick when `started` to avoid PipeWriter touching us after
-        // free; with `Arc` the last ref drops *after* the callback returns, so
-        // the synchronous path is safe.
-        // TODO(port): if a PipeWriter callback is on the stack when the last
-        // Arc drops (possible via re-entrant child deinit), we need the async
-        // hop. Revisit once `bun_event_loop::EventLoopTask` is wired to the
-        // shell's `EventLoopHandle` shim.
         let s = self.state.get_mut();
         crate::shell_log!("IOWriter(fd={}) deinit", s.fd);
         #[cfg(not(windows))]

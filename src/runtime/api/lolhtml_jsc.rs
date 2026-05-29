@@ -4,17 +4,6 @@ use bun_core::{String as BunString, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_lolhtml_sys::HTMLString;
 
-/// `HTMLString.toString` — port of `lol_html.zig:HTMLString.toString`.
-///
-/// Lives here (not in `bun_lolhtml_sys`) because the `*_sys` crate is a leaf
-/// FFI crate with no `bun_string` dependency; pulling one in would invert the
-/// layering. This module is the higher-tier wrapper that owns the
-/// `HTMLString` → `bun.String` bridge.
-///
-/// Zero-copies all-ASCII payloads as a Latin-1 external string (ownership of
-/// the lol-html buffer transfers to WTF and is freed by
-/// [`HTMLString::deinit_external`]); otherwise clones as UTF-8 and frees the
-/// original.
 pub(crate) fn html_string_to_string(this: HTMLString) -> BunString {
     let bytes = this.slice();
     if !bytes.is_empty() && strings::is_all_ascii(bytes) {

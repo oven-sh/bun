@@ -38,14 +38,6 @@ impl Drop for PendingConnect {
 }
 
 impl PendingConnect {
-    /// Mutable access to the owned `quic::PendingConnect` C handle.
-    ///
-    /// INVARIANT: `pc` is set once in [`register`] to a live
-    /// `us_quic_pending_connect_t` and is consumed by exactly one of
-    /// `resolved()` / `cancel()` in [`on_dns_resolved`]. The handle is a
-    /// separate FFI heap allocation disjoint from `self`. HTTP-thread-only at
-    /// every caller. Centralises the raw `(*this.pc)` upgrade repeated at
-    /// each consume site.
     #[inline]
     fn pc_mut<'a>(&self) -> &'a mut quic::PendingConnect {
         // SAFETY: see INVARIANT above.
@@ -115,11 +107,6 @@ impl PendingConnect {
     ///
     /// SAFETY: `this` must be the pointer produced by `heap::alloc` in `register`.
     pub unsafe fn on_dns_resolved_threadsafe(this: *mut PendingConnect) {
-        // `this` is a live heap-allocated PendingConnect (caller contract);
-        // wrap it in a `ParentRef` (pointee outlives holder) so the shared
-        // `loop_ptr` read goes through the safe `Deref` impl instead of an
-        // open-coded `(*this)`. Read *before* publishing — once pushed, the
-        // HTTP thread may free `this` at any time via `drain_resolved`.
         let loop_ptr = bun_ptr::ParentRef::from(
             NonNull::new(this).expect("on_dns_resolved_threadsafe: non-null"),
         )
@@ -167,10 +154,6 @@ impl PendingConnect {
     }
 }
 
-/// Heap-allocated `PendingConnect` handed from DNS worker → HTTP thread.
-/// `*mut T` is `!Send` by default; this wrapper asserts the actual contract:
-/// the pointee is touched by exactly one thread at a time (producer pushes,
-/// consumer pops + frees), serialized by `RESOLVED`'s mutex.
 #[repr(transparent)]
 struct Resolved(*mut PendingConnect);
 // SAFETY: `Resolved` only ever crosses threads while held inside `RESOLVED`'s
@@ -179,14 +162,6 @@ struct Resolved(*mut PendingConnect);
 // after handoff.
 unsafe impl Send for Resolved {}
 
-/// Queue of `PendingConnect`s whose DNS resolved off the HTTP thread, drained
-/// on the next `HTTPThread::drain_events`. Conceptually a field of
-/// [`HTTPThread`](crate::HTTPThread) (there is exactly one), but kept as a
-/// module static because `http_thread()` hands out `&'static mut HTTPThread`
-/// to the HTTP thread — projecting a shared `&` to an interior field from the
-/// DNS worker would alias that exclusive borrow under Stacked Borrows. A
-/// dedicated `Sync` static sidesteps that without weakening the singleton
-/// accessor's `&mut` contract.
 static RESOLVED: Guarded<Vec<Resolved>> = Guarded::new(Vec::new());
 
 // ported from: src/http/h3_client/PendingConnect.zig

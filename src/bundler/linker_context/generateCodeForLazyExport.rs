@@ -61,12 +61,6 @@ pub fn generate_code_for_lazy_export(
 
     let module_ref = this.graph.ast.items_module_ref()[source_index as usize];
 
-    // Handle css modules
-    //
-    // --- original comment from esbuild ---
-    // If this JavaScript file is a stub from a CSS file, populate the exports of
-    // this JavaScript stub with the local names from that CSS file. This is done
-    // now instead of earlier because we need the whole bundle to be present.
     if let Some(css_ast) = maybe_css_ast {
         let stmt: Stmt = part.stmts[0];
         if !matches!(stmt.data, StmtData::SLazyExport(_)) {
@@ -254,10 +248,6 @@ pub fn generate_code_for_lazy_export(
                                     }
                                 }
                                 Some(CssSpecifier::Global) => {
-                                    // E.g.: `composes: foo from global`
-                                    //
-                                    // In this example `foo` is global and won't be rewritten to a locally scoped
-                                    // name, so we can just add it as a string.
                                     for name in compose.names.slice() {
                                         let name_v = name.v();
                                         self.parts.push(E::TemplatePart {
@@ -436,10 +426,6 @@ pub fn generate_code_for_lazy_export(
             if let ExprData::EObject(e_object) = &expr.data {
                 for property in e_object.properties.slice() {
                     let _: &G::Property = property;
-                    // PORT NOTE: `Expr`/`ExprData`/`StoreRef<_>` are `Copy`. Copy `key` out so
-                    // `key_str: StoreRef<E::EString>` is a mutable local — `slice()` resolves
-                    // the rope in-place via `DerefMut` into the arena slot (matches Zig's
-                    // `property.key.?.data.e_string.slice(...)` which takes `*String`).
                     let Some(key) = property.key else { continue };
                     let ExprData::EString(mut key_str) = key.data else {
                         continue;
@@ -463,17 +449,6 @@ pub fn generate_code_for_lazy_export(
                         continue;
                     }
 
-                    // This initializes the generated variable with a copy of the property
-                    // value, which is INCORRECT for values that are objects/arrays because
-                    // they will have separate object identity. This is fixed up later in
-                    // "generateCodeForFileInChunkJS" by changing the object literal to
-                    // reference this generated variable instead.
-                    //
-                    // Changing the object literal is deferred until that point instead of
-                    // doing it now because we only want to do this for top-level variables
-                    // that actually end up being used, and we don't know which ones will
-                    // end up actually being used at this point (since import binding hasn't
-                    // happened yet). So we need to wait until after tree shaking happens.
                     let generated =
                         this.generate_named_export_in_file(source_index, module_ref, name, name)?;
                     // PERF(port): was `this.arena().alloc(Stmt, 1)` (arena).

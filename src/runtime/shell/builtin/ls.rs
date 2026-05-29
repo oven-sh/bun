@@ -451,10 +451,6 @@ impl ShellLsTask {
     /// Spec: ls.zig `ShellLsTask.join`.
     fn join(&self, child: &[u8]) -> ZBox {
         if !self.is_absolute {
-            // If relative paths enabled, stdlib join is preferred over
-            // ResolvePath.joinBuf because it doesn't try to normalize the path.
-            // Spec: `std.fs.path.joinZ` — its `isSep` accepts both '/' and '\'
-            // on Windows, so `["foo/", "bar"]` → `foo/bar` (no extra sep).
             let parent = self.path.as_bytes();
             let mut v = Vec::with_capacity(parent.len() + 1 + child.len());
             v.extend_from_slice(parent);

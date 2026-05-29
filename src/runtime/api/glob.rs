@@ -259,11 +259,6 @@ impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
     }
 
     fn then(&mut self, promise: &mut JSPromise) -> Result<(), JsTerminated> {
-        // PORT NOTE: Zig `defer this.deinit()` freed walker + self. Ownership of
-        // `Box<WalkTask>` is held by `ConcurrentPromiseTask.ctx`; the wrapper is
-        // freed via `ConcurrentPromiseTask::destroy` on the `.manual_deinit` path
-        // after `run_from_js` returns, which drops `ctx` (and thus `walker`).
-
         if let Some(err) = &self.err {
             promise.reject_with_async_stack(self.global, err.to_js(self.global))?;
             return Ok(());
@@ -316,11 +311,6 @@ impl Glob {
         let error_on_broken_symlinks = match_opts.error_on_broken_symlinks;
         let only_files = match_opts.only_files;
 
-        // PORT NOTE: Zig stack-inits `GlobWalker = .{}` then calls `.init()` /
-        // `.initWithCwd()` as out-param mutators. The Rust `GlobWalker` reshaped
-        // those into associated constructors returning `Result<Maybe<Self>>`, so
-        // there is no `Default` and no separate allocation step.
-        // `errdefer alloc.destroy(globWalker)` is handled by Box drop on `?` paths.
         let _ = arena; // arena ownership is no longer threaded through GlobWalker init.
 
         if let Some(cwd) = cwd {
@@ -359,10 +349,6 @@ impl Glob {
         Ok(Some(glob_walker))
     }
 
-    // PORT NOTE: no `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]` derive on
-    // the struct already emits the `GlobClass__construct` shim that calls
-    // `<Glob>::constructor(..)`. The free-fn `host_fn` expansion can't name an
-    // associated fn without a receiver.
     pub fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Glob>> {
         let arguments_ = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
@@ -391,10 +377,6 @@ impl Glob {
         }))
     }
 
-    /// Called on the GC thread concurrently with the mutator. Reads only the
-    /// atomic counter; never allocates, locks, or touches JS. The codegen shim
-    /// (`Glob__hasPendingActivity`) handles the `callconv(.c)` ABI and passes
-    /// `&*this`.
     pub fn has_pending_activity(&self) -> bool {
         self.has_pending_activity.load(Ordering::SeqCst) > 0
     }
@@ -409,11 +391,6 @@ fn decr_pending_activity_flag(has_pending_activity: &AtomicUsize) {
 }
 
 impl Glob {
-    // R-2 (host-fn re-entrancy): all JS-exposed methods take `&self`. `Glob`'s
-    // fields are read-only after construction (`pattern`) or already atomic
-    // (`has_pending_activity`), so no `Cell`/`JsCell` wrapping is needed — the
-    // `&mut self` receivers were vestigial. The codegen shim still emits
-    // `this: &mut Glob`; `&mut T` auto-derefs to `&T`.
     #[bun_jsc::host_fn(method)]
     pub fn __scan(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments_ = callframe.arguments_old::<1>();
@@ -444,12 +421,6 @@ impl Glob {
         let mut task = WalkTask::create(global_this, glob_walker, &self.has_pending_activity);
         let promise = task.promise.value();
         task.schedule();
-        // Ownership passes to the work pool / event loop; freed via
-        // `ConcurrentPromiseTask::destroy` on the `.manual_deinit` path.
-        // PORT NOTE: lifetime — WalkTask<'_> borrows `&self.has_pending_activity`
-        // and `global_this`. Both referents outlive the task: `Glob` is GC-rooted
-        // via `hasPendingActivity()`, and `JSGlobalObject` lives until VM teardown.
-        // `into_raw` erases the stack-tied `'_` once the heap allocation escapes.
         let _ = bun_core::heap::into_raw(task);
         Ok(promise)
     }

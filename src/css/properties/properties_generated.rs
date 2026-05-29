@@ -370,10 +370,6 @@ impl PropertyIdTag {
         )
     }
 
-    /// The caniuse `prefixes::Feature` that governs this property's vendor
-    /// prefixes, if one exists. Returns `None` for unprefixed properties *and*
-    /// for the 23 prefixed-but-unmapped legacy properties (`box-orient`,
-    /// `flex-pack`, `mask-box-image-*`, …) that have no `Feature` entry.
     pub const fn prefix_feature(self) -> Option<PrefixFeature> {
         use PropertyIdTag as T;
         Some(match self {
@@ -679,14 +675,6 @@ impl PropertyIdTag {
     }
 }
 
-/// A known CSS property name + (for prefixable properties) the vendor
-/// prefix it was parsed with. Variants without payload are unprefixed.
-//
-// PORT NOTE: do NOT `#[derive(PartialEq, Eq)]` here — the spec-correct
-// equality (Zig `PropertyId.eql`, properties_generated.zig:9195) ignores the
-// `Custom(CustomPropertyName)` payload and is hand-written below. A derived
-// impl would (a) conflict (E0119) and (b) diverge by comparing custom-name
-// bytes.
 #[derive(Debug, Clone, Copy)]
 pub enum PropertyId {
     BackgroundColor,
@@ -940,15 +928,6 @@ pub enum PropertyId {
     Custom(CustomPropertyName),
 }
 
-// PORT NOTE: Zig `PropertyId.eql()` (properties_generated.zig:9195) compares the
-// tag, then *only* compares the payload when its type is `VendorPrefix` — for
-// `.custom` (whose payload is `CustomPropertyName`) and all unit/void variants
-// it returns `true` on tag match alone. A derived `PartialEq` would compare the
-// `CustomPropertyName` bytes, diverging from the spec (observable in
-// `rules/style.zig:isDuplicate`). `prefix()` already returns the `VendorPrefix`
-// payload for the 65 prefixed variants and `VendorPrefix::empty()` for every
-// other variant (including `Custom`/`All`/`Unparsed`), so `tag` + `prefix`
-// equality is exactly the Zig semantics.
 impl PartialEq for PropertyId {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -1222,10 +1201,6 @@ impl PropertyId {
         }
     }
 
-    /// Returns the property name, without any vendor prefixes.
-    ///
-    /// Mirrors Zig `PropertyId.name()` (properties_generated.zig:7674), which is
-    /// literally `if (.custom) return custom.asStr(); return @tagName(this.*);`.
     pub fn name(&self) -> &[u8] {
         match self {
             PropertyId::Custom(c) => c.as_str(),
@@ -3131,11 +3106,6 @@ impl PropertyId {
     }
 }
 
-/// A parsed CSS declaration value, tagged by [`PropertyIdTag`]. Prefixed
-/// properties carry `(value, VendorPrefix)`.
-// PORT NOTE: no `#[derive(Clone)]` — several `css_values::*` payloads
-// (Image, Size2D, Rect, SmallList) intentionally lack `Clone` and use
-// `deep_clone(&Arena)` instead. `Property::deep_clone` is the public API.
 pub enum Property {
     BackgroundColor(css::css_values::color::CssColor),
     BackgroundImage(SmallList<css::css_values::image::Image, 1>),
@@ -6180,10 +6150,6 @@ impl Property {
             PropertyId::Unparsed => {}
         }
 
-        // If a value was unable to be parsed, treat as an unparsed property.
-        // This is different from a custom property, handled above, in that the property name is known
-        // and stored as an enum rather than a string. This lets property handlers more easily deal with it.
-        // Ideally we'd only do this if var() or env() references were seen, but err on the safe side for now.
         input.reset(&state);
         UnparsedProperty::parse(property_id, input, options).map(Property::Unparsed)
     }
@@ -6192,26 +6158,9 @@ impl Property {
         properties_impl::property_mixin::to_css(self, dest, important)
     }
 
-    /// Returns the given longhand property for a shorthand.
-    ///
-    /// PORT NOTE: in Zig (`properties_generated.zig:7087-7160`) each arm
-    /// dispatches to `v.longhand(property_id)` where the per-type `longhand`
-    /// is provided by `DefineShorthand`, whose body is
-    /// `@compileError(todo_stuff.depth)`. Zig only instantiates
-    /// `Property.longhand` when referenced (it isn't), so the @compileError
-    /// never fires. Rust type-checks eagerly, so the per-arm dispatch is
-    /// routed through a no-op `lh!` that mirrors the Zig fallthrough
-    /// (`return null`) until the `DefineShorthand` derive is ported. There
-    /// are no callers.
-    // blocked_on: shorthand_handler_port — leaf shorthand types lack `.longhand()` (Zig body is `@compileError(todo_stuff.depth)`, .zig:7087-7160)
     pub fn longhand(&self, property_id: &PropertyId) -> Option<Property> {
         #[inline(always)]
         fn lh<T: ?Sized>(_v: &T, _id: &PropertyId) -> Option<Property> {
-            // PORT NOTE: per-type `v.longhand(property_id)` is
-            // `@compileError(todo_stuff.depth)` in Zig and never instantiated.
-            // Trip in debug so callers can't accidentally rely on the
-            // always-`None` placeholder before `DefineShorthand::longhand`
-            // is ported.
             debug_assert!(
                 false,
                 "Property::longhand: per-type DefineShorthand::longhand not yet ported"
@@ -7400,21 +7349,12 @@ impl Property {
         }
     }
 
-    /// We're going to have this empty for now since not every property has a deinit function.
-    /// It's not strictly necessary since all allocations are into an arena.
-    /// It's mostly intended as a performance optimization in the case where mimalloc arena is used,
-    /// since it can reclaim the memory and use it for subsequent allocations.
-    /// I haven't benchmarked that though, so I don't actually know how much faster it would actually make it.
     pub fn deinit(&mut self, arena: &bun_alloc::Arena) {
         let _ = self;
         let _ = arena;
     }
 }
 
-// PORT NOTE: `declaration::placeholder_property()` (the moved-out slot
-// sentinel in `DeclarationBlock::minify`) is `Property{ .all = .revert-layer }`
-// in Zig. Expose it via `Default` so the un-gated stub branch in
-// `declaration.rs` keeps compiling against the real enum.
 impl Default for Property {
     #[inline]
     fn default() -> Self {

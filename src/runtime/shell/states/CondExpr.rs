@@ -109,12 +109,6 @@ impl CondExpr {
                 if path_empty {
                     return interp.child_done(parent, this, 1);
                 }
-                // PORT NOTE: spec posts a `ShellCondExprStatTask` to the
-                // thread pool then resumes via `.stat_complete`. The async
-                // task plumbing isn't wired into the NodeId trampoline yet,
-                // so call `shell_statat` synchronously and evaluate inline.
-                // TODO(port): route through ShellCondExprStatTask once
-                // ShellTask scheduling is un-gated.
                 let (cwd_fd, mut path) = {
                     let me = interp.as_condexpr(this);
                     let cwd_fd = me.base.shell().cwd_fd;

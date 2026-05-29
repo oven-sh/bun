@@ -9,10 +9,6 @@
 // To regenerate: see `src/http_types/mime_type_list_enum.zig` header for the
 // canonical command; the `.rs` path is not wired into codegen yet.
 
-/// Compact handle to one of the 2310 known MIME-type strings.
-///
-/// Zig: `enum(u14)` with `@"<mime>"` variant idents. Rust idents cannot
-/// contain `/`, so we wrap the literal instead and compare by string.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct MimeTypeList(pub &'static str);
 

@@ -66,14 +66,6 @@ impl TextEncoderStreamEncoder {
 
             break 'prepend_replacement 0;
         };
-        // In a previous benchmark, counting the length took about as much time as allocating the buffer.
-        //
-        // Benchmark    Time %    CPU (ns)    Iterations    Ratio
-        // 288.00 ms   13.5%    288.00 ms           simdutf::arm64::implementation::convert_latin1_to_utf8(char const*, unsigned long, char*) const
-        // 278.00 ms   13.0%    278.00 ms           simdutf::arm64::implementation::utf8_length_from_latin1(char const*, unsigned long) const
-        //
-        //
-        // TODO(port): Zig threw a JS OOM exception on alloc failure; Rust Vec aborts on OOM.
         let mut buffer: Vec<u8> = Vec::with_capacity(input.len() + prepend_replacement_len);
         if prepend_replacement_len > 0 {
             // PERF(port): was appendSliceAssumeCapacity

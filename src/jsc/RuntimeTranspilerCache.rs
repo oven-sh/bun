@@ -18,39 +18,8 @@ use bun_wyhash::Wyhash;
 
 bun_core::declare_scope!(cache, visible);
 
-/// ** Update the version number when any breaking changes are made to the cache format or to the JS parser **
-/// Version 3: "Infinity" becomes "1/0".
-/// Version 4: TypeScript enums are properly handled + more constant folding
-/// Version 5: `require.main === module` no longer marks a module as CJS
-/// Version 6: `use strict` is preserved in CommonJS modules when at the top of the file
-/// Version 7: Several bundler changes that are likely to impact the runtime as well.
-/// Version 8: Fix for generated symbols
-/// Version 9: String printing changes
-/// Version 10: Constant folding for ''.charCodeAt(n)
-/// Version 11: Fix ￿ printing regression
-/// Version 12: "use strict"; makes it CommonJS if we otherwise don't know which one to pick.
-/// Version 13: Hoist `import.meta.require` definition, see #15738
-/// Version 14: Updated global defines table list.
-/// Version 15: Updated global defines table list.
-/// Version 16: Added typeof undefined minification optimization.
-/// Version 17: Removed transpiler import rewrite for bun:test. Not bumping it causes test/js/bun/http/req-url-leak.test.ts to fail with SyntaxError: Export named 'expect' not found in module 'bun:test'.
-/// Version 18: Include ESM record (module info) with an ES Module, see #15758
-/// Version 19: Sourcemap blob is InternalSourceMap (varint stream + sync points), not VLQ.
-/// Version 20: InternalSourceMap stream is bit-packed windows.
-/// Version 21: ModuleInfo records a phase byte per requested module (`import defer`).
-/// Version 22: Serialize `has_tla` in the cached ESM record flags byte. Entries
-/// written before #30888 carried `has_tla=false` for every module; the cache-HIT
-/// path reinstates the bug for any previously-cached TLA module (#30887).
 const EXPECTED_VERSION: u32 = 22;
 
-/// Source files smaller than this are not written to / read from the on-disk
-/// transpiler cache. Originally 50 KiB, which excluded almost every file in a
-/// typical `node_modules` tree (eslint pulls in ~1500 small CommonJS files, all
-/// well under that floor), forcing a full lex -> parse -> visit -> print ->
-/// sourcemap pass on every invocation. A `statx` + `open` + `read` of a tiny
-/// cache file is far cheaper than re-transpiling, so the floor is low. The cache
-/// key still incorporates the source byte length (see `input_byte_length` /
-/// `is_stale`), so shrinking this does not weaken staleness detection.
 const MINIMUM_CACHE_SIZE: usize = 4 * 1024;
 
 // When making parser changes, it gets extremely confusing.
@@ -158,10 +127,6 @@ impl Metadata {
         Ok(())
     }
 
-    /// PORT NOTE: Zig took `anytype reader`; both call sites
-    /// (`from_file_with_cache_file_path`, the debug round-trip in `Entry::save`)
-    /// drive it from a `fixedBufferStream`, so we accept the concrete
-    /// `bun_io::FixedBufferStream` over a borrowed slice.
     pub fn decode(
         &mut self,
         reader: &mut bun_io::FixedBufferStream<&[u8]>,
@@ -449,24 +414,6 @@ impl Entry {
         } else {
             match self.metadata.output_encoding {
                 Encoding::UTF8 => {
-                    // PORT NOTE / PERF: Zig threaded `output_code_allocator`
-                    // (the per-call arena) here so the ~1.2 MB scratch buffer
-                    // was bump-freed with the parse arena. The Rust port
-                    // dropped that field and `pread_box`'d into a `Box<[u8]>`
-                    // on the worker thread's mimalloc heap, which — even after
-                    // the consumer's `String::clone_utf8` + drop — leaves the
-                    // segment resident in that thread heap (build/create-vue
-                    // bench regression).
-                    //
-                    // Instead, pread straight into a WTF-allocated Latin-1
-                    // buffer (`WTF::StringImpl::tryCreateUninitialized` →
-                    // bmalloc, not the worker mimalloc heap). Transpiler
-                    // output is overwhelmingly pure ASCII, in which case the
-                    // buffer *is* the final `BunString` and we skip the
-                    // 1.2 MB `clone_utf8` memcpy the consumer used to do at
-                    // RuntimeTranspilerStore.rs / jsc_hooks.rs. Only if the
-                    // bytes contain non-ASCII UTF-8 do we fall back to
-                    // `clone_utf8` (transcode → UTF-16) and deref the scratch.
                     let len = self.metadata.output_byte_length as usize;
                     let (scratch, bytes) = BunString::create_uninitialized_latin1(len);
                     // `(dead, &mut [])` on WTF allocation failure; `len > 0`
@@ -600,12 +547,6 @@ pub struct RuntimeTranspilerCache {
     pub exports_kind: ExportsKind,
     pub output_code: Option<BunString>,
     pub entry: Option<Entry>,
-    // PORT NOTE: Zig had sourcemap_allocator / output_code_allocator / esm_record_allocator
-    // fields. `sourcemap` / `esm_record` were `bun.default_allocator` at every
-    // call site so `Box<[u8]>` (global mimalloc) is equivalent.
-    // `output_code_allocator` was the per-call arena; rather than re-thread it,
-    // the UTF-8 load arm now preads straight into WTF storage (see
-    // `Entry::load`), so no arena scratch is needed at all.
 }
 
 impl Default for RuntimeTranspilerCache {
@@ -625,12 +566,6 @@ pub fn hash(bytes: &[u8]) -> u64 {
     Wyhash::hash(SEED, bytes)
 }
 
-/// Allocate `len` bytes and fill them via `pread_all` at `offset`, returning
-/// `MissingData` on a short read.
-///
-/// Uses `Box::new_uninit_slice` instead of `vec![0u8; len]` so the cache hot
-/// path (lint/create-next benches) skips the redundant zero-memset — the kernel
-/// is about to overwrite every byte anyway.
 fn pread_box(file: &sys::File, len: usize, offset: u64) -> Result<Box<[u8]>, bun_core::Error> {
     let mut buf = Box::<[u8]>::new_uninit_slice(len);
     // SAFETY: `MaybeUninit<u8>` and `u8` have identical size/align, and
@@ -706,10 +641,6 @@ impl RuntimeTranspilerCache {
             return len;
         }
 
-        // PORT NOTE: Zig used `FileSystem.instance.absBufZ(parts, buf)`. The
-        // inline `bun_resolver::fs::FileSystem` surface only exposes `abs_buf`
-        // (no `_z`), so go straight to the underlying joiner with the same
-        // `top_level_dir` + `Loose` platform Zig's `absBufZ` used.
         let top = FileSystem::instance().top_level_dir;
 
         if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
@@ -750,21 +681,12 @@ impl RuntimeTranspilerCache {
         0
     }
 
-    // Only do this at most once per-thread.
-    // PORT NOTE: Zig used `bun.ThreadlocalBuffers(struct { buf: bun.PathBuffer })`
-    // plus a threadlocal `?[:0]const u8` pointing into it. Rust thread_local
-    // can't easily borrow into itself across calls, so we cache the resolved
-    // path bytes + length and re-copy into the caller's buffer on each call.
     thread_local! {
         // bun.ThreadlocalBuffers: heap-backed so only a Box pointer lives in TLS.
         static CACHE_DIR_BUF: RefCell<Box<PathBuffer>> = RefCell::new(Box::new(PathBuffer::ZEROED));
         static RUNTIME_TRANSPILER_CACHE: Cell<Option<usize>> = const { Cell::new(None) };
     }
 
-    /// Copies the (cached) cache-dir path into `buf`, NUL-terminates it, and
-    /// returns its length. Zig returned the threadlocal `[:0]const u8`; we
-    /// return the length so the caller can keep mutably borrowing `buf` to
-    /// append the filename.
     fn get_cache_dir(buf: &mut PathBuffer) -> Result<usize, bun_core::Error> {
         if IS_DISABLED.load(Ordering::Relaxed) {
             return Err(bun_core::err!(CacheDisabled));
@@ -869,15 +791,6 @@ impl RuntimeTranspilerCache {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.toFile");
 
         let mut cache_file_path_buf = PathBuffer::uninit();
-        // PORT NOTE: Zig matched on `source_code.encoding()`; derive from
-        // `is_utf8()` instead. Zig's `.utf8` arm borrowed `source_code.byteSlice()`
-        // without copying; `OutputCode::Utf8` here owns a `Box<[u8]>`, so we
-        // copy. PERF(port): add a borrowed `OutputCode` variant to avoid the copy.
-        //
-        // Zig: `else => .{ .string = source_code }` — by-value copy, **no**
-        // `dupeRef()` and **no** matching `deref()`. `BunString` is `Copy` and
-        // `OutputCode` has no `Drop`, so `*source_code` here is the same
-        // refcount-neutral borrow.
         let output_code: OutputCode = if source_code.is_utf8() {
             OutputCode::Utf8(Box::from(source_code.byte_slice()))
         } else {
@@ -1056,18 +969,6 @@ impl RuntimeTranspilerCache {
 }
 
 pub static IS_DISABLED: AtomicBool = AtomicBool::new(false);
-
-// ──────────────────────────────────────────────────────────────────────────
-// VTable bridge for the canonical (lower-tier) `bun_ast::RuntimeTranspilerCache`.
-//
-// LAYERING: `ParseOptions.runtime_transpiler_cache` carries the lower-tier
-// type so the parser crate names no `bun_jsc` types. `RuntimeTranspilerStore::run`
-// constructs that lower-tier cache with this vtable so the parser's
-// `cache.get()` reaches the disk-backed `RuntimeTranspilerCache::get()` above.
-// On a hit the concrete `Entry` is boxed and stored type-erased in
-// `bun_ast::RuntimeTranspilerCache.entry`; the store casts it back via
-// `heap::take(ptr.cast::<Entry>())`.
-// ──────────────────────────────────────────────────────────────────────────
 
 bun_ast::link_impl_TranspilerCacheImpl! {
     Jsc for bun_ast::RuntimeTranspilerCache => |this| {

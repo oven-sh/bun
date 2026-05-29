@@ -25,12 +25,6 @@ pub struct Meta {
     pub man_dir: String,
     pub integrity: Integrity,
 
-    /// Shouldn't be used directly. Use `Meta.has_install_script()` and
-    /// `Meta.set_has_install_script()` instead.
-    ///
-    /// `.Old` represents the value of this field before it was used
-    /// in the lockfile and should never be saved to a new lockfile.
-    /// There is a debug assert for this in `Lockfile.Package.Serializer.save()`.
     pub has_install_script: HasInstallScript,
 
     pub _padding_integrity: [u8; 2],
@@ -85,10 +79,6 @@ impl Meta {
         self.has_install_script == HasInstallScript::Old
     }
 
-    // PORT NOTE: Zig used `comptime StringBuilderType: type` duck-typing for the
-    // builder param. The only concrete instantiation in install is
-    // `*Lockfile.StringBuilder`, so we take it directly here instead of a
-    // placeholder trait that nothing implements.
     pub fn count(&self, buf: &[u8], builder: &mut LockfileStringBuilder<'_>) {
         builder.count(self.man_dir.slice(buf));
     }

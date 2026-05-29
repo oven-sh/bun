@@ -96,12 +96,6 @@ pub struct Ast<'a> {
     pub import_meta_ref: Ref,
 }
 
-// PORT NOTE: Zig field defaults reference named constants (`Ref.None`, `logger.Range.None`,
-// `ExportsKind.none`, `Target.browser`) whose equivalence to the Rust types' `Default::default()`
-// is unverified across crates, so spell them out here instead of `#[derive(Default)]`.
-//
-// `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
-// so `Default` no longer applies; use `Ast::empty_in(arena)`.
 impl<'a> Ast<'a> {
     pub fn empty_in(arena: &'a bun_alloc::MimallocArena) -> Self {
         Self {
@@ -161,13 +155,6 @@ impl Default for CommonJSNamedExport {
     }
 }
 
-// `Ast` is held in arena-allocated structures whose `Drop` never runs (the
-// `BabyList` pattern — bulk-freed on `ASTMemoryAllocator` / `store_ast_alloc_heap`
-// reset). Any `Vec`/`Box` field that defaults to the global allocator therefore
-// leaks. The `AstAlloc` parameter routes the column vecs and per-key boxes
-// into the same thread-local AST `mi_heap` so they're reclaimed by
-// `mi_heap_destroy` alongside the AST nodes (same motivation as
-// `G::DeclList`/`PropertyList` and `Scope::members`).
 pub type CommonJSNamedExports = StringArrayHashMap<CommonJSNamedExport, StringContext, AstAlloc>;
 
 pub type NamedImports = ArrayHashMap<Ref, NamedImport, AutoContext, AstAlloc>;
@@ -185,12 +172,6 @@ impl<'a> Ast<'a> {
             ..Ast::empty_in(arena)
         }
     }
-
-    // Zig `deinit` only freed `parts`, `symbols`, `import_records` via `bun.default_allocator`,
-    // and was guarded by "Do not call this if it wasn't globally allocated!".
-    // In Rust those fields own their storage and free on Drop; no explicit body needed.
-    // TODO(port): Vec<T> Drop semantics must distinguish arena-backed vs heap-backed to
-    // preserve the Zig conditional-free behavior. Revisit.
 }
 
 pub use crate::g::Class;

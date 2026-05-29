@@ -11,40 +11,6 @@ use crate::{
     ListenSocket as UwsListenSocket, Opcode, Request, WebSocketBehavior, us_socket_t, uws_res,
 };
 
-// This file provides Rust bindings for the uWebSockets App class.
-// It wraps the C API exposed in libuwsockets.cpp which provides a C interface
-// to the C++ uWebSockets library defined in App.h.
-//
-// The architecture is:
-// 1. App.h - C++ uWebSockets library with TemplatedApp<SSL> class
-//    - Defines the main TemplatedApp<bool SSL> template class
-//    - Provides HTTP/WebSocket server functionality with SSL/non-SSL variants
-//    - Contains WebSocketBehavior struct for configuring WebSocket handlers
-//    - Implements routing methods (get, post, put, delete, etc.)
-//    - Manages WebSocket contexts, topic trees for pub/sub, and compression
-//    - Handles server name (SNI) support for SSL contexts
-//    - Provides listen() methods for binding to ports/unix sockets
-//
-// 2. libuwsockets.cpp - C wrapper functions that call the C++ methods
-//    - Exposes C functions like uws_create_app(), uws_app_get(), etc.
-//    - Handles SSL/non-SSL branching with if(ssl) checks
-//    - Converts between C types (char*, size_t) and C++ types (string_view)
-//    - Manages memory and object lifetime for C callers
-//    - Provides callback wrappers that convert C function pointers to C++ lambdas
-//    - Functions like uws_app_connect(), uws_app_trace() mirror C++ methods
-//
-// 3. App.rs - Rust bindings that call the C wrapper functions
-//    - App<const SSL: bool> generic struct parameterized by SSL boolean
-//    - Methods like create(), destroy(), close() call corresponding C functions
-//    - Type-safe wrappers around raw C pointers and function calls
-//    - Converts Rust slices to C pointer/length pairs
-//    - Provides compile-time SSL flag selection via SSL as i32
-//
-// This layered approach allows Rust code to use high-performance uWebSockets
-// functionality while maintaining memory safety and Rust's type system benefits.
-// The C layer handles the impedance mismatch between Rust and C++, while the
-// Rust layer provides idiomatic APIs for Rust developers.
-
 /// Opaque handle to a uWS::TemplatedApp<SSL>. Always used via `*mut App<SSL>`.
 #[repr(C)]
 pub struct App<const SSL: bool> {
@@ -55,10 +21,6 @@ pub struct App<const SSL: bool> {
 /// Zig name compatibility (`uws.NewApp(ssl)`).
 pub type NewApp<const SSL: bool> = App<SSL>;
 
-/// Stamps one `pub fn $name(&mut self, pattern, handler, user_data)` per HTTP
-/// verb. Bodies are byte-identical modulo the C symbol — see `uws_app_get` &co
-/// in capi.rs. uWS copies `pattern` internally, so the slice need only live for
-/// the call.
 macro_rules! uws_app_route_methods {
     ($($name:ident => $cfn:ident),* $(,)?) => {$(
         pub fn $name(
@@ -160,32 +122,6 @@ impl<const SSL: bool> App<SSL> {
             )
         }
     }
-
-    // ─────────────────────────────────────────────────────────────────────
-    // RouteHandler
-    //
-    // Zig's `RouteHandler(comptime UserDataType, comptime handler)` generated a
-    // unique `extern "C" fn handle(...)` per (UserDataType, handler) pair at
-    // comptime, downcasting `user_data: ?*anyopaque` and calling `handler` with
-    // `.always_inline`.
-    //
-    // Rust cannot accept a `fn` as a const-generic parameter, so the type-safe
-    // shim cannot be monomorphized here without a macro. We expose the raw
-    // C handler type directly; callers supply their own `extern "C" fn` (or a
-    // future `route_handler!` macro generates one). The shape of that shim is:
-    //
-    //   extern "C" fn handle<U, const SSL: bool>(
-    //       res: *mut uws_res,
-    //       req: *mut Request,
-    //       user_data: *mut c_void,
-    //   ) {
-    //       let user_data = unsafe { &mut *(user_data as *mut U) };
-    //       HANDLER(user_data, unsafe { &mut *req }, unsafe { &mut *(res as *mut Response<SSL>) });
-    //   }
-    //
-    // TODO(port): proc-macro or trait-based comptime handler dispatch (RouteHandler).
-    // PERF(port): was @call(.always_inline) on the user handler — profile if hot.
-    // ─────────────────────────────────────────────────────────────────────
 
     uws_app_route_methods! {
         get     => uws_app_get,
@@ -436,33 +372,8 @@ impl<const SSL: bool> App<SSL> {
             )
         }
     }
-
-    // HTTP response object for handling HTTP responses.
-    //
-    // This wraps the uWS HttpResponse template class from HttpResponse.h, providing
-    // methods for writing response data, setting headers, handling timeouts, and
-    // managing the response lifecycle. The response object supports both regular
-    // HTTP responses and chunked transfer encoding, and can handle large data
-    // writes by automatically splitting them into appropriately sized chunks.
-    //
-    // Key features:
-    // - Write response data with automatic chunking for large payloads
-    // - Set HTTP status codes and headers
-    // - Handle response timeouts and aborted requests
-    // - Support for WebSocket upgrades
-    // - Cork/uncork functionality for efficient batched writes
-    // - Automatic handling of Connection: close semantics
-    //
-    // TODO(port): Zig exposed `Response` and `WebSocket` as nested associated types
-    // (App<SSL>::Response). Rust inherent associated types are unstable; callers use
-    // `crate::response::Response<{SSL as i32}>` / `crate::web_socket::WebSocket<{SSL as i32}>`
-    // directly until a stable encoding (trait assoc type or type alias) is picked.
 }
 
-/// Opaque listen socket handle, parameterized by SSL to match `App<SSL>`.
-///
-/// TODO(port): in Zig this was a nested `App<SSL>::ListenSocket` opaque. Rust cannot
-/// nest type definitions inside an `impl`; defined at module level instead.
 #[repr(C)]
 pub struct ListenSocket<const SSL: bool> {
     _p: core::cell::UnsafeCell<[u8; 0]>,
@@ -655,10 +566,6 @@ pub mod c {
             opcode: Opcode,
             compress: bool,
         ) -> bool;
-        // safe: `uws_app_s` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so
-        // `&mut uws_app_s` is ABI-identical to the C `uws_app_t*` (non-null,
-        // no `noalias`/`readonly`). The C++ body only reads `app->getNativeHandle()`
-        // — no preconditions beyond a live handle.
         pub(crate) safe fn uws_get_native_handle(ssl: i32, app: &mut uws_app_s) -> *mut c_void;
         pub(crate) fn uws_remove_server_name(
             ssl: i32,

@@ -29,11 +29,6 @@
     dead_code,
     improper_ctypes,
     improper_ctypes_definitions,
-    // The generated `raw::` block is the canonical extern surface. A handful of
-    // legacy hand-written decls (reference-typed params, `safe fn`) still exist
-    // elsewhere in `bun_jsc` and are compiled before this module, so the lint
-    // would fire here even though both spellings are ABI-identical (`&T` ≡
-    // non-null `*const T`). New code must call `crate::cpp::*`, not redeclare.
     clashing_extern_declarations,
     clippy::missing_safety_doc,
     clippy::not_unsafe_ptr_arg_deref,

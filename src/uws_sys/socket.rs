@@ -27,14 +27,6 @@ use crate::{
 
 bun_core::declare_scope!(uws, visible);
 
-// ──────────────────────────────────────────────────────────────────────────
-// CloseCode PascalCase aliases
-// ──────────────────────────────────────────────────────────────────────────
-// `bun_uws_sys::CloseCode` (us_socket_t.rs) keeps the Zig snake-case variant
-// names (`normal`/`failure`/`fast_shutdown`). The deleted `bun_uws::CloseKind`
-// duplicate used PascalCase. Expose both spellings via associated consts so
-// every existing call site (`CloseCode::Normal`, `CloseKind::Failure`, …)
-// resolves against the one canonical `#[repr(i32)]` enum.
 #[allow(non_upper_case_globals)]
 impl CloseCode {
     pub const Normal: CloseCode = CloseCode::normal;
@@ -46,12 +38,6 @@ impl CloseCode {
 // InternalSocket
 // ──────────────────────────────────────────────────────────────────────────
 
-/// State of a single connection. `Copy` — Zig passed `ThisSocket` by value
-/// through the entire HTTP-client / Bun.Socket state machines, so the handle
-/// is a trivially-copyable tagged pointer. The `UpgradedDuplex` / `Pipe`
-/// payloads are raw `*mut` (NOT `&mut`): they are stored in long-lived
-/// `Cell<NewSocketHandler>` fields and re-borrowed per call via the opaque
-/// deref helpers below.
 #[derive(Copy, Clone)]
 pub enum InternalSocket {
     Connected(*mut us_socket_t),
@@ -64,11 +50,6 @@ pub enum InternalSocket {
     Pipe,
 }
 
-// Zig `InternalSocket.eq` — variant + pointer-identity equality.
-// PORT NOTE: Zig's `.pipe` arm returns `false` even for `(pipe, pipe)` on
-// non-Windows (the variant carries no payload there, so identity is
-// meaningless). Mirrored exactly so debug-asserts that compare sockets behave
-// identically to the Zig build.
 impl PartialEq for InternalSocket {
     fn eq(&self, other: &Self) -> bool {
         match (*self, *other) {
@@ -109,15 +90,6 @@ impl InternalSocket {
     }
 }
 
-// ── Safe deref helpers for `InternalSocket` payloads ────────────────────────
-// All four payload types are `#[repr(C)] UnsafeCell<[u8; 0]>` opaque ZSTs
-// (`opaque_ffi!` / `opaque_extern!`): zero-sized, align-1, no `noalias` /
-// `readonly`. Materializing `&mut T` from `*mut T` therefore has exactly one
-// validity requirement — non-null — which uSockets guarantees for every
-// pointer it stores in `Connected` / `Connecting` / `UpgradedDuplex` / `Pipe`.
-// Centralizing the deref keeps the proof local instead of repeating
-// `unsafe { &mut *s }` at ~50 match arms.
-
 /// Reborrow the `InternalSocket::Connected` payload.
 #[inline(always)]
 fn sock<'a>(p: *mut us_socket_t) -> &'a mut us_socket_t {
@@ -140,12 +112,6 @@ fn pipe<'a>(p: *mut WindowsNamedPipe) -> &'a mut WindowsNamedPipe {
     bun_opaque::opaque_deref_mut(p)
 }
 
-/// Five-arm `match self.socket` with the `#[cfg(windows)]` Pipe split owned
-/// exactly once. Each arm binds the deref'd opaque (`$s` / `$c` / `$d` / `$p`)
-/// so method bodies are one-liners and the per-arm `#[cfg]` noise lives here.
-///
-/// Arms not supplied default to: `connecting`/`detached` → `$det` expr;
-/// `pipe` → `$det` on non-Windows (no payload), supplied body on Windows.
 macro_rules! on_socket {
     (
         $sock:expr;
@@ -215,10 +181,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         Self::DETACHED
     }
 
-    // ── const-generic discriminant casts ────────────────────────────────────
-    // Layout is identical (single `InternalSocket` field — the bool only gates
-    // `get_native_handle`); these are safe field moves with a matching debug
-    // assert that the caller passed the right arm.
     #[inline]
     pub const fn assume_ssl(self) -> NewSocketHandler<true> {
         debug_assert!(IS_SSL);
@@ -355,12 +317,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
-    /// Write `data` and pass `file_descriptor` over the socket via SCM_RIGHTS.
-    /// POSIX-only — Windows IPC fd passing goes through libuv pipes instead.
-    ///
-    /// LAYERING: takes the raw POSIX fd (`c_int`) rather than `bun_sys::Fd` —
-    /// `bun_uws_sys` sits below `bun_sys`; callers extract `.native()` at the
-    /// boundary.
     #[cfg(not(windows))]
     pub fn write_fd(&self, data: &[u8], file_descriptor: c_int) -> i32 {
         match self.socket {
@@ -496,10 +452,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         self.get_native_handle().map(|h| h.cast())
     }
 
-    /// `*SSL` when `IS_SSL`, raw fd-as-ptr otherwise. Type-erased to
-    /// `*mut c_void` here because const-generic type dispatch
-    /// (`NativeSocketHandleType(is_ssl)`) is unsupported in stable Rust;
-    /// callers `cast()` immediately anyway.
     pub fn get_native_handle(&self) -> Option<*mut c_void> {
         match self.socket {
             InternalSocket::Connected(s) => sock(s).get_native_handle(),
@@ -707,11 +659,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             ZStr::from_slice_with_nul(&heap).as_cstr()
         };
 
-        // Zig `?*Owner` is null-niche optimized (8 bytes); the dispatch
-        // trampolines read the ext slot as `Option<NonNull<_>>`, so size and
-        // write must match that layout — NOT `Option<*mut Owner>` (16 bytes,
-        // discriminant-first), which would hand the trampoline `1` instead of
-        // the owner pointer.
         let ext_size = size_of::<Option<NonNull<Owner>>>() as c_int;
         match g.connect(kind, ssl_ctx, host_z, port, opts, ext_size) {
             ConnectResult::Failed => Err(ConnectError::FailedToOpenSocket),
@@ -755,13 +702,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         })
     }
 
-    /// Move an open socket into a new group/kind, stashing `owner` in the ext.
-    /// Replaces `Socket.adoptPtr`.
-    ///
-    /// `set_socket_field` replaces Zig's `comptime field: []const u8` +
-    /// `@field(owner, field)` reflection — the closure writes the resulting
-    /// `Self` into the owner's socket field via the raw `*mut Owner` (passing
-    /// `&mut Owner` here would alias any live `&mut` the caller already holds).
     pub fn adopt_group<Owner>(
         tcp: *mut us_socket_t,
         g: *mut SocketGroup,
@@ -783,10 +723,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             return false;
         }
         *sock(new_s).ext::<*mut c_void>() = owner.cast::<c_void>();
-        // Forward the raw pointer — do NOT materialize `&mut *owner` here:
-        // callers (e.g. websocket_client) hold a live `&mut Owner` across this
-        // call, so creating a second one would be aliased UB. The closure
-        // performs the field write through the raw pointer itself.
         set_socket_field(
             owner,
             Self {

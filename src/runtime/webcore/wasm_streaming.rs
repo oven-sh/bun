@@ -15,10 +15,6 @@ use crate::webcore::body::{BodyMixin as _, Value as BodyValue};
 use crate::webcore::{ReadableStream, Response, response};
 
 unsafe extern "C" {
-    // `streaming_compiler` is the opaque C++ `StreamingCompiler*` handed in by
-    // the host; `bytes_ptr`/`bytes_len` are the ptr/len of a Rust `&[u8]`.
-    // Module-private with one call site below — no caller-side precondition
-    // remains.
     safe fn JSC__Wasm__StreamingCompiler__addBytes(
         streaming_compiler: *mut c_void,
         bytes_ptr: *const u8,

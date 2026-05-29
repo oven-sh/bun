@@ -10,11 +10,6 @@ use bun_ast::expr::EFlags;
 use bun_ast::op::Level;
 use bun_ast::{E, Expr, ExprData, OpCode, OptionalChain};
 
-// Zig: `fn ParseSuffix(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block. The 50+ per-token `t_*` helpers are private; only `parse_suffix` is
-// surfaced. Round-G un-gates the per-token bodies (same JsxT pattern as parseStmt.rs).
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Continuation {
     Next,
@@ -33,13 +28,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
             p.skip_type_script_type(Level::Lowest)?;
 
-            // These tokens are not allowed to follow a cast expression. This isn't
-            // an outright error because it may be on a new line, in which case it's
-            // the start of a new expression when it's after a cast:
-            //
-            //   x = y as z
-            //   (something);
-            //
             match p.lexer.token {
                 T::TPlusPlus
                 | T::TMinusMinus
@@ -334,14 +322,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         left: &mut Expr,
         flags: EFlags,
     ) -> CResult {
-        // When parsing a decorator, ignore EIndex expressions since they may be
-        // part of a computed property:
-        //
-        //   class Foo {
-        //     @foo ['computed']() {}
-        //   }
-        //
-        // This matches the behavior of the TypeScript compiler.
         if flags == EFlags::TsDecorator {
             return Ok(Continuation::Done);
         }
@@ -411,10 +391,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         p.lexer.next()?;
 
-        // Stop now if we're parsing one of these:
-        // "(a?) => {}"
-        // "(a?: b) => {}"
-        // "(a?, b?) => {}"
         if Self::IS_TYPESCRIPT_ENABLED
             && left.loc.start == p.latest_arrow_arg_loc.start
             && (p.lexer.token == T::TColon
@@ -1442,10 +1418,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         flags: EFlags,
     ) -> Result<(), Error> {
         let p = self;
-        // PORT NOTE: Zig kept a separate `left_value` local + `left = &left_value`
-        // to work around a Zig codegen bug ("creates a new address to stack locals
-        // each & usage"). Rust has no such bug, so we mutate `left` directly and
-        // drop the trailing/deferred `left_and_out.* = left_value` writebacks.
 
         let mut optional_chain: Option<OptionalChain> = None;
         loop {
@@ -1495,15 +1467,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let old_optional_chain = optional_chain;
             optional_chain = None;
 
-            // Each of these tokens are split into a function to conserve
-            // stack space. Currently in Zig, the compiler does not reuse
-            // stack space between scopes This means that having a large
-            // function with many scopes and local variables consumes
-            // enormous amounts of stack space.
-            //
-            // PORT NOTE: Zig used `inline ... => |tag| @field(@This(), @tagName(tag))(p, level, left)`
-            // for comptime name-based dispatch. Rust has no @field/@tagName reflection, so each
-            // arm is written out explicitly.
             let continuation = match p.lexer.token {
                 T::TAmpersand => Self::sfx_t_ampersand(p, level, left),
                 T::TAmpersandAmpersandEquals => {

@@ -62,11 +62,6 @@ impl Drop for Strong {
     }
 }
 
-/// Holds a strong reference to a JS value, protecting it from garbage
-/// collection. When not holding a value, the strong may still be allocated.
-// PORT NOTE: field renamed from `impl` (Rust keyword) to `handle`.
-// `#[repr(transparent)]` matches the Zig layout (`?*Impl` — single nullable
-// pointer) so it stays FFI-safe when embedded in `extern "C"` structs.
 #[repr(transparent)]
 #[derive(Default)]
 pub struct Optional {
@@ -222,14 +217,6 @@ impl Impl {
     /// SAFETY: `this` must be a valid handle from `init`; consumed here (do not reuse).
     pub unsafe fn destroy(this: NonNull<Impl>) {
         crate::mark_binding!();
-        // Defensive: a corrupted slot pointer here segfaults inside JSC's
-        // HandleBlock::handleSet (the backing block is recovered by masking
-        // the slot to the block base, then `+0x10` is read), which loses the
-        // Rust caller frame. With panic=abort the crash-handler hook captures
-        // a Rust backtrace, so a `panic!` at this layer surfaces the *exact*
-        // call site that holds the corrupted Strong. The 0x10000 floor is
-        // Windows' default null-page guard; legitimate `Impl*` are bmalloc'd
-        // far above it.
         if cfg!(debug_assertions) || cfg!(windows) {
             // Always-on on Windows while #53265 fs-promises-writeFile segfault
             // is being root-caused; release-stripped elsewhere. Remove the
@@ -246,12 +233,6 @@ impl Impl {
     }
 }
 
-// TODO(port): move to jsc_sys
-//
-// `Impl` and `JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles, so
-// `&Impl`/`&JSGlobalObject` are ABI-identical to non-null `*const T` and C++
-// mutating through them (HandleSet slot write) is interior mutation invisible
-// to Rust. `delete` consumes the C++ allocation and so stays `unsafe fn`.
 unsafe extern "C" {
     fn Bun__StrongRef__delete(this: *mut Impl);
     safe fn Bun__StrongRef__new(global: &JSGlobalObject, value: JSValue) -> *mut Impl;

@@ -33,11 +33,6 @@ pub struct Exec {
 }
 
 impl Exec {
-    /// Borrow the current `SmolList<Stmt, 1>` being walked.
-    ///
-    /// `stmts` always points into the AST arena (`ShellArgs::__arena`), which
-    /// the interpreter holds for its entire lifetime — it outlives every state
-    /// node (BackRef invariant).
     #[inline]
     fn stmts(&self) -> &ast::SmolList<ast::Stmt, 1> {
         self.stmts.get()

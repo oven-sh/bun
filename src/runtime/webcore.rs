@@ -51,38 +51,16 @@ pub use streams::{
 pub mod object_url_registry;
 pub use object_url_registry::ObjectURLRegistry;
 
-// ─── webcore-local jsc re-export ─────────────────────────────────────────────
-// `bun_jsc` is now a dep of `bun_runtime`; forward to it. The per-class
-// submodules (`JSBlob`, `JSResponse`, …) live in `bun_jsc::generated`
-// (`js_class_module!`); the previous local stub macro (`js_class_mod`) that
-// returned `JSValue::default()` from `to_js_unchecked` has been removed —
-// every webcore caller now imports the real bindings directly
-// (`bun_jsc::generated::JS{Blob,Request,Response,…}`).
 pub mod jsc {
     pub use crate::jsc::*;
     pub use bun_jsc::virtual_machine::VirtualMachine;
 
-    /// `jsc.Codegen.JS*` — forward the real `js_class_module!`-emitted modules
-    /// so any webcore call site that still spells the path
-    /// `crate::webcore::jsc::codegen::JS…` resolves to working C++ shims
-    /// instead of a no-op stub.
     pub mod codegen {
         pub use crate::jsc::codegen::*;
         pub use bun_jsc::generated::{JSBlob, JSRequest, JSResponse};
-        // `JSFileSink` / `JSFileReader` are NOT `.classes.ts`-generated —
-        // FileSink uses the JSSink codegen (`FileSink__createObject` /
-        // `FileSink__fromJS` in JSSink.cpp) and FileReader uses
-        // `source_context_codegen!`; neither flows through `js_class_module!`.
     }
 }
 
-// `bun_s3` is not a workspace crate (only `bun_s3_signing`). Webcore drafts
-// reference `bun_s3::{S3Credentials, ACL, ...}` for the S3-backed Blob store.
-// Forward the real `bun_s3_signing` types so `s3_stub::X` and
-// `bun_s3_signing::X` are the *same* type (avoids
-// `s3_stub::ACL`-vs-`bun_s3_signing::ACL` mismatches across modules).
-// Remaining names without a real definition stay as opaque unit structs.
-// TODO(port): bun_s3 — replace with real crate once it exists.
 pub mod s3_stub {
     macro_rules! opaque { ($($n:ident),* $(,)?) => {$(
         #[derive(Debug, Default)] pub struct $n;
@@ -103,24 +81,12 @@ pub mod s3_stub {
     pub use crate::webcore::s3::MultiPartUploadOptions;
 }
 
-// `crate::node::types` is now un-gated; forward the real enums so
-// `webcore::node_types::X` and `crate::node::types::X` are the *same* type.
-// The previous local stub definitions caused `expected node_types::PathLike,
-// found node::types::PathLike` mismatches across modules.
 pub mod node_types {
     pub use crate::node::types::{PathLike, PathOrBlob, PathOrFileDescriptor};
 }
 
 pub use crate::jsc::AbortSignal;
 
-// ─── AutoFlusher (webcore tier) ──────────────────────────────────────────────
-// `bun.jsc.WebCore.AutoFlusher` — port of `src/event_loop/AutoFlusher.zig`.
-//
-// The lower-tier `bun_event_loop::auto_flusher` takes a `&mut DeferredTaskQueue`
-// directly to avoid an event_loop→jsc upward dependency. This tier restores the
-// original Zig signature (`vm: *jsc.VirtualMachine`) and reaches the queue via
-// `vm.event_loop().deferred_tasks`, so call sites in `FileSink` /
-// `HTTPServerWritable` keep their Zig shape.
 pub use bun_event_loop::auto_flusher;
 use bun_event_loop::deferred_task_queue::DeferredRepeatingTask;
 
@@ -225,12 +191,6 @@ impl AutoFlusher {
     }
 }
 
-// ─── HasAutoFlusher impls ────────────────────────────────────────────────────
-// `HTTPServerWritable` exposes an inherent `pub fn on_auto_flush(&mut self) ->
-// bool`; the trait impl is just a thunk. `FileSink::on_auto_flush` instead
-// takes the canonical `*mut FileSink` directly (no `&mut self` — see its doc
-// comment / the `borrow = ptr` note on `impl_streaming_writer_parent!`).
-
 impl HasAutoFlusher for file_sink::FileSink {
     #[inline]
     fn auto_flusher(&self) -> &AutoFlusher {
@@ -316,21 +276,8 @@ pub use file_sink::FileSink;
 pub use byte_blob_loader::ByteBlobLoader;
 pub use byte_stream::ByteStream;
 
-// TODO: make this JSGlobalObject local for better security
-// Zig: `bun.ObjectPool(bun.ByteList, null, true, 8)` — `null` init goes on
-// `ObjectPoolType` (already impl'd for `Vec<u8>` in bun_collections), `true`
-// is THREADSAFE, `8` is MAX_COUNT. `object_pool!` wires the per-monomorphization
-// thread-local storage; the bare `ObjectPool<Vec<u8>, true, 8>` alias used to
-// default to `UnwiredStorage` and panic on first `get_if_exists()`/`full()`
-// from `streams::HTTPSServerWritable::send`.
 bun_collections::object_pool!(pub ByteListPool: Vec<u8>, threadsafe, 8);
 
-// ─── compiling submodules ────────────────────────────────────────────────────
-// Zig: `pub const FetchHeaders = @import("../jsc/FetchHeaders.zig").FetchHeaders;` (opaque {}).
-// Re-export the crate-local jsc shim's opaque type until `bun_jsc::fetch_headers`
-// is green; the shim's `#[repr(transparent)] struct FetchHeaders(usize)` matches the
-// opaque-handle ABI used by the `WebCore__FetchHeaders__*` extern fns.
-// TODO(port): bun_jsc::fetch_headers — swap to `pub use bun_jsc::fetch_headers::FetchHeaders;`.
 pub use crate::jsc::FetchHeaders;
 
 #[path = "webcore/EncodingLabel.rs"]
@@ -361,13 +308,6 @@ pub use form_data::{AsyncFormData, FormData};
 pub mod script_execution_context;
 
 #[doc(hidden)]
-#[path = "webcore/s3/multipart_options.rs"]
-pub mod multipart_options_impl;
-// PORT NOTE: inner `#[path]` inside an inline `mod s3 { }` resolves relative to
-// `<this-file's-dir>/s3/`, which would point at `src/runtime/s3/...` (does not
-// exist). Declare the file mods at this level (where `#[path]` is relative to
-// `src/runtime/`) and re-export them under `s3`.
-#[doc(hidden)]
 #[path = "webcore/s3/client.rs"]
 pub mod __s3_client;
 #[doc(hidden)]
@@ -385,6 +325,9 @@ pub mod __s3_multipart;
 #[doc(hidden)]
 #[path = "webcore/s3/simple_request.rs"]
 pub mod __s3_simple_request;
+#[doc(hidden)]
+#[path = "webcore/s3/multipart_options.rs"]
+pub mod multipart_options_impl;
 pub mod s3 {
     pub use super::multipart_options_impl as multipart_options;
     pub use super::multipart_options_impl::MultiPartUploadOptions;
@@ -412,11 +355,6 @@ pub mod s3 {
 #[path = "webcore/streams.rs"]
 pub mod streams;
 
-// NOTE(port): the Zig `comptime { WebSocketClient.exportAll(); ... }` block forces export of
-// `extern "C"` symbols from `src/http/websocket_http_client.zig`. In Rust, those become
-// `#[unsafe(no_mangle)] pub extern "C" fn` in `bun_http::websocket_http_client` and need no
-// force-reference here. Dropped per PORTING.md §Don't translate.
-
 pub enum PathOrFileDescriptor {
     // PORT NOTE: `jsc.ZigString.Slice` → `bun_core::zig_string::Slice` (= `ZigStringSlice`).
     Path(bun_core::zig_string::Slice),
@@ -441,10 +379,6 @@ impl Pipe {
 
 pub type Function = fn(ctx: NonNull<()>, stream: streams::Result);
 
-// TODO(port): Zig `Wrap(comptime Type, comptime function)` takes a *comptime fn pointer* as a
-// generic argument, which stable Rust cannot express. Reshaped: callers implement `PipeHandler`
-// for their type instead of passing a free fn. TODO(refactor): audit call sites
-// (`Wrap(Foo, Foo.onPipe).init(self)` → `Wrap::<Foo>::init(self)`).
 pub(crate) trait PipeHandler {
     fn on_pipe(&mut self, stream: streams::Result);
 }

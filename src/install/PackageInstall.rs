@@ -80,12 +80,6 @@ pub enum Method {
     /// On Linux, fast.
     Hardlink,
 
-    /// Slowest if single-threaded
-    /// Note that copyfile does technically support recursion
-    /// But I suspect it is slower in practice than manually doing it because:
-    /// - it adds syscalls
-    /// - it runs in userspace
-    /// - it reads each dir twice incase the first pass modifies it
     Copyfile,
 
     /// Used for file: when file: points to a parent directory
@@ -246,13 +240,6 @@ impl Step {
     }
 }
 
-// PORTING.md §Global mutable state: install-main-thread enum. `RacyCell`
-// (no `Atomic<Method>`) — writers are the CLI option-load and the
-// clonefile/hardlink fallback in `install_with_method`, all on the install
-// main thread; isolated_install workers snapshot via `supported_method()`
-// once at startup. Stored as the `repr(u8)` discriminant so reads/writes are
-// lock-free atomics (S015: AtomicU8 instead of RacyCell — single-writer path
-// so `Relaxed` adds no contention).
 pub(crate) static SUPPORTED_METHOD: AtomicU8 = AtomicU8::new(if cfg!(target_os = "macos") {
     Method::Clonefile as u8
 } else {
@@ -283,11 +270,6 @@ struct InstallDirState {
     // PORT NOTE: `Walker` has no `Default`; Zig used `undefined`. Wrap in Option.
     walker: Option<Walker>,
     subdir: Dir,
-    // PORT NOTE: Zig's `buf: bun.windows.WPathBuffer = undefined` is in-place
-    // (result-location, no zero-fill). A by-value `WPathBuffer` here would
-    // memset+move ~128 KB through `Default::default()` per package. Use the
-    // thread-local pool guard (heap-backed, uninit) so construction is O(1)
-    // and the struct stays small enough to return by value.
     #[cfg(windows)]
     buf: bun_paths::w_path_buffer_pool::Guard,
     #[cfg(windows)]
@@ -325,16 +307,6 @@ impl Default for InstallDirState {
 
 // ───────────────────────────── helpers ─────────────────────────────
 
-/// Zig: `node_fs_for_package_installer().mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false)`.
-///
-/// Port of the NodeFS recursive-mkdir algorithm (node_fs.zig:4080) restricted to the
-/// `Ctx == void, return_path = false` instantiation used here. The previous routing to
-/// `bun_sys::make_path_w` was wrong: that helper transcodes to UTF-8, strips the `\\?\`
-/// prefix and forward-iterates components via `mkdirat(Fd::cwd(), comp)`, so the first
-/// component is `"C:"` (drive-relative — wrong dir) or `"UNC"` (creates a literal
-/// `UNC\server\share\...` tree under CWD). NodeFS instead calls `CreateDirectoryW` on
-/// the FULL absolute path and on `ENOENT` walks back to the first existing ancestor,
-/// then forward — never touching the filesystem root.
 #[cfg(windows)]
 fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
     use sys::E;
@@ -360,10 +332,6 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
         },
     }
 
-    // Zig routes through `node_fs_for_package_installer()`, whose `working_mem`
-    // is `&this.sync_error_buf` — a buffer in the threadlocal NodeFS struct,
-    // not stack. Use the thread-local WPathBuffer pool so we don't add 64 KB
-    // of stack on ThreadPool worker threads (HardLinkWindowsInstallTask::run).
     let mut working_mem = bun_paths::w_path_buffer_pool::get();
     working_mem[..usize::from(len)].copy_from_slice(path);
 
@@ -380,27 +348,21 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
                     working_mem[usize::from(i)] = bun_paths::SEP_WINDOWS as u16;
                     break;
                 }
-                Err(err) => {
-                    match err.get_errno() {
-                        E::EEXIST => {
-                            // node_fs.zig:4159-4172 — on Windows, if the existing
-                            // entry is a *file*, bail with ENOTDIR instead of
-                            // forward-walking under it. `parent` is still
-                            // NUL-terminated (separator not yet restored).
-                            let mut tmp = bun_paths::path_buffer_pool::get();
-                            let narrow = strings::from_wpath(&mut tmp[..], parent.as_slice());
-                            if let Ok(false) = sys::directory_exists_at(Fd::INVALID, narrow) {
-                                return Err(sys::Error::from_code(E::ENOTDIR, sys::Tag::mkdir));
-                            }
-                            working_mem[usize::from(i)] = bun_paths::SEP_WINDOWS as u16;
-                            break;
+                Err(err) => match err.get_errno() {
+                    E::EEXIST => {
+                        let mut tmp = bun_paths::path_buffer_pool::get();
+                        let narrow = strings::from_wpath(&mut tmp[..], parent.as_slice());
+                        if let Ok(false) = sys::directory_exists_at(Fd::INVALID, narrow) {
+                            return Err(sys::Error::from_code(E::ENOTDIR, sys::Tag::mkdir));
                         }
-                        E::ENOENT => {
-                            working_mem[usize::from(i)] = bun_paths::SEP_WINDOWS as u16;
-                        }
-                        _ => return Err(err),
+                        working_mem[usize::from(i)] = bun_paths::SEP_WINDOWS as u16;
+                        break;
                     }
-                }
+                    E::ENOENT => {
+                        working_mem[usize::from(i)] = bun_paths::SEP_WINDOWS as u16;
+                    }
+                    _ => return Err(err),
+                },
             }
         }
         i -= 1;
@@ -451,19 +413,10 @@ fn open_dir_a(dir: Fd, subpath: &[u8]) -> Result<Dir, bun_core::Error> {
         .map_err(Into::into)
 }
 
-// macOS clonefileat(2) — routed through the safe `sys::clonefileat` wrapper
-// (takes `Fd`/`&ZStr`, returns `Maybe<()>`). The Zig source matched on the raw
-// `int` return + thread-local errno; the wrapper preserves the errno via
-// `Error::get_errno()`, so the per-errno branching below is unchanged.
-
 // ───────────────────────────── NewTaskQueue ─────────────────────────────
 
 pub struct NewTaskQueue<TaskType> {
     pub thread_pool: &'static ThreadPool,
-    /// One-shot, first-write-wins handoff of the failed task from a worker
-    /// thread to the consumer that called `wait()`. A `Mutex<Option<Box<_>>>`
-    /// makes ownership explicit (vs. the original `AtomicPtr`, which forced
-    /// every reader to remember `Box::from_raw` and risked leaks/double-free).
     pub errored_task: bun_threading::Guarded<Option<Box<TaskType>>>,
     pub wait_group: WaitGroup,
 }
@@ -502,10 +455,6 @@ pub trait HasWorkPoolTask {
 
 #[cfg(windows)]
 pub(crate) struct HardLinkWindowsInstallTask {
-    /// Layout: `[src .. , 0, dest .. , 0]`. `src` and `dest` are reconstructed
-    /// on demand from `src_len` instead of storing self-referential pointers
-    /// (which would be invalidated when this `Box<[u16]>` is moved into `Self`
-    /// and again whenever `&mut self` reasserts uniqueness over it).
     bytes: Box<[u16]>,
     src_len: usize,
     basename: u16,
@@ -708,10 +657,6 @@ impl UninstallTask {
         // SAFETY: task points to the `task` field of an UninstallTask.
         let uninstall_task: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
 
-        // PORT NOTE: declared *before* the Box is reclaimed so it drops *after* the
-        // Box — Rust drops locals in reverse declaration order. Zig's `defer task.deinit()`
-        // runs before `defer { decrementPendingTasks(); wake() }`, i.e. the task is freed
-        // before the main thread can observe pending_tasks==0.
         scopeguard::defer! {
             let pm = crate::package_manager::get();
             // SAFETY: `pending_tasks` is `AtomicU32`; raw-pointer field projection
@@ -979,11 +924,6 @@ impl<'a> PackageInstall<'a> {
         let mut body_pool = Npm::Registry::BodyPool::get();
         let mutable: &mut MutableString = &mut body_pool;
 
-        // Read the file
-        // Return false on any error.
-        // Don't keep it open while we're parsing the JSON.
-        // The longer the file stays open, the more likely it causes issues for
-        // other processes on Windows.
         let Some(source) =
             self.get_installed_package_json_source(root_node_modules_dir, mutable, resolution_tag)
         else {
@@ -995,13 +935,6 @@ impl<'a> PackageInstall<'a> {
 
         initialize_store();
 
-        // PORT NOTE: Zig passed `allocator` (= `bun.default_allocator`, the global
-        // mimalloc heap). `Arena::new()` here was creating + destroying a fresh
-        // `mi_heap` per package — measurable on no-op installs (~390× heap churn
-        // on create-next/elysia). `borrowing_default()` wraps `mi_heap_main()`
-        // with a no-op Drop, matching the Zig semantics exactly. The lexer
-        // scratch frees its own buffers on `Lexer::deinit()` via the checker's
-        // Drop, so nothing leaks.
         let bump = bun_alloc::Arena::borrowing_default();
         let Ok(mut package_json_checker) =
             bun_json::PackageJSONVersionChecker::init(&bump, source, &mut log)
@@ -1095,11 +1028,6 @@ impl<'a> PackageInstall<'a> {
                         let base_len = entry.basename.len();
                         stackpath[..path_len].copy_from_slice(entry.path.as_bytes());
                         stackpath[path_len] = 0;
-                        // `stackpath[path_len] == 0` written above; both views are
-                        // shared-only (used for `.as_ptr()` into FFI), so the
-                        // overlapping borrows of `stackpath` are sound — replaces
-                        // two raw `from_raw_mut` reconstructions over the same
-                        // buffer (which were UB-adjacent as aliased `&mut`s).
                         let path_ = ZStr::from_buf(&stackpath, path_len);
                         let basename = ZStr::from_buf(&stackpath[path_len - base_len..], base_len);
                         match sys::clonefileat(entry.dir, basename, destination_dir_.fd(), path_) {
@@ -1171,10 +1099,6 @@ impl<'a> PackageInstall<'a> {
                 sys::Errno::EXDEV => Err(bun_core::err!("NotSupported")), // not same file system
                 sys::Errno::EOPNOTSUPP => Err(bun_core::err!("NotSupported")),
                 sys::Errno::ENOENT => Err(bun_core::err!("FileNotFound")),
-                // We first try to delete the directory
-                // But, this can happen if this package contains a node_modules folder
-                // We want to continue installing as many packages as we can, so we shouldn't block while downloading
-                // We use the slow path in this case
                 sys::Errno::EEXIST => self.install_with_clonefile_each_dir(destination_dir),
                 sys::Errno::EACCES => Err(bun_core::err!("AccessDenied")),
                 _ => Err(bun_core::err!("Unexpected")),
@@ -1262,10 +1186,6 @@ impl<'a> PackageInstall<'a> {
             ) {
                 Ok(d) => d,
                 Err(err) => {
-                    // PORT NOTE: Zig closed cached_package_dir/walker explicitly here because the
-                    // caller's `defer state.deinit()` is placed AFTER the `is_fail()` early-return.
-                    // In Rust, Drop on the caller's `state` runs unconditionally on that early
-                    // return, so explicit close here would double-close. Drop handles it.
                     return InstallResult::fail(err, Step::OpeningDestDir, None);
                 }
             };
@@ -1366,10 +1286,6 @@ impl<'a> PackageInstall<'a> {
         #[cfg(not(windows))]
         type WinOffset = ();
 
-        // PORT NOTE: reshaped for borrowck — Zig passed two overlapping slices into the
-        // same buffer (`head` is the whole buffer, `to_copy_into` is its tail). Creating
-        // two live `&mut [u16]` that alias is UB in Rust, so pass head buffer + tail
-        // offset and reslice inside.
         fn copy(
             destination_dir_: &Dir,
             walker: &mut Walker,
@@ -1622,10 +1538,6 @@ impl<'a> PackageInstall<'a> {
         #[cfg(not(windows))]
         type WinOffset = ();
 
-        // PORT NOTE: reshaped for borrowck — Zig passed two overlapping slices into the
-        // same buffer (`head` is the whole buffer, `to_copy_into` is its tail). Creating
-        // two live `&mut [u16]` that alias is UB in Rust, so pass head buffer + tail
-        // offset and reslice inside.
         fn copy(
             destination_dir: &Dir,
             walker: &mut Walker,
@@ -1642,11 +1554,6 @@ impl<'a> PackageInstall<'a> {
             let _ = destination_dir;
             #[cfg(windows)]
             let queue = HardLinkWindowsInstallTask::init_queue();
-            // PORT NOTE: on Windows, tasks already pushed to `queue` are running on
-            // worker threads; an early `?` here would return before `queue.wait()`,
-            // letting the caller re-enter `init_queue()` and reset the WaitGroup
-            // while workers are still inside `complete_one()` (data race on the
-            // counter/condvar). Capture loop errors and always fall through to wait.
             #[cfg(windows)]
             let mut loop_err: Option<bun_core::Error> = None;
 
@@ -1843,10 +1750,6 @@ impl<'a> PackageInstall<'a> {
         #[cfg(not(windows))]
         type Head2Char = u8;
 
-        // PORT NOTE: reshaped for borrowck — Zig passed two overlapping slices into the
-        // same buffer (`head` is the whole buffer, `to_copy_into` is its tail). Creating
-        // two live `&mut` that alias is UB in Rust, so pass head buffer + tail offset
-        // and reslice inside.
         fn copy(
             destination_dir: &Dir,
             walker: &mut Walker,
@@ -2044,28 +1947,6 @@ impl<'a> PackageInstall<'a> {
                 // if it fails, that means the directory doesn't exist or was inaccessible
             }
             Ok(_) => {
-                // Uninstall can sometimes take awhile in a large directory
-                // tree. Since we're renaming the directory to a randomly
-                // generated name, we can delete it in another thread without
-                // worrying about race conditions or blocking the main thread.
-                //
-                // This should be a slight improvement to CI environments.
-                //
-                // on macOS ARM64 in a project with Gatsby, @mui/icons-material, and Next.js:
-                //
-                // ❯ hyperfine "bun install --ignore-scripts" "bun-1.1.2 install --ignore-scripts" --prepare="rm -rf node_modules/**/package.json" --warmup=2
-                // Benchmark 1: bun install --ignore-scripts
-                //   Time (mean ± σ):      2.281 s ±  0.027 s    [User: 0.041 s, System: 6.851 s]
-                //   Range (min … max):    2.231 s …  2.312 s    10 runs
-                //
-                // Benchmark 2: bun-1.1.2 install --ignore-scripts
-                //   Time (mean ± σ):      3.315 s ±  0.033 s    [User: 0.029 s, System: 2.237 s]
-                //   Range (min … max):    3.279 s …  3.356 s    10 runs
-                //
-                // Summary
-                //   bun install --ignore-scripts ran
-                //     1.45 ± 0.02 times faster than bun-1.1.2 install --ignore-scripts
-                //
                 let absolute_path = path::resolve_path::join_abs_string::<path::platform::Auto>(
                     bun_fs::FileSystem::instance().top_level_dir(),
                     &[&self.node_modules.path, temp_path.as_bytes()],
@@ -2182,15 +2063,6 @@ impl<'a> PackageInstall<'a> {
         // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
         let symlinked_path = self.cache_dir_subpath;
         let mut to_buf = PathBuffer::uninit();
-        // Zig: `this.cache_dir.realpath(symlinked_path, &to_buf)` — open the target relative
-        // to cache_dir, then resolve its canonical path.
-        // PORT NOTE: reshaped from an IIFE — returning a borrow of `to_buf` from an
-        // `FnMut` closure is rejected by borrowck, so inline the open/getFdPath/close.
-        // PORT NOTE: Zig `std.fs.Dir.realpath` returns std-style error names
-        // (`error.FileNotFound`, `error.AccessDenied`, …), not raw errno tags.
-        // `bun_sys::Error::into()` would yield `ENOENT`/`EACCES`, so map the
-        // openat errno to the std name to preserve the user-visible error tag
-        // (test/cli/install/bun-link.test.ts asserts on `FileNotFound:`).
         let realpath_err = |e: bun_sys::Error| -> bun_core::Error {
             use sys::E;
             match e.get_errno() {
@@ -2204,13 +2076,6 @@ impl<'a> PackageInstall<'a> {
             }
         };
         let to_path: &[u8] = {
-            // Zig: `std.fs.Dir.realpath` opens with `.filter = .any` (Windows) /
-            // `O_PATH` (Linux). `symlinked_path` is always a package *directory*;
-            // bare `O::RDONLY` on Windows routes to the file-open NtCreateFile arm
-            // which requests `FILE_WRITE_ATTRIBUTES` (may be denied on RO dirs).
-            // `O::DIRECTORY` routes to `open_dir_at_windows_nt_path`
-            // (`FILE_LIST_DIRECTORY | SYNCHRONIZE`), matching the spec's directory
-            // open, then `get_fd_path` resolves via `GetFinalPathNameByHandleW`.
             let fd = match sys::openat(
                 self.cache_dir,
                 symlinked_path,

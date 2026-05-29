@@ -9,13 +9,6 @@ use bun_threading::Guarded;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 
-// PORT NOTE: reshaped for borrowck — Zig had separate `lock: bun.Mutex` and
-// `map: AutoHashMap` fields with manual lock()/unlock() around every access.
-// In Rust the map is wrapped in a `Guarded` (mutex + value).
-//
-// Key is `[u8; 16]` (the UUID bytes) rather than `UUID` directly because
-// upstream `bun_jsc::UUID` does not yet derive `Hash + Eq`; using the raw
-// byte array avoids touching the upstream crate.
 pub struct ObjectURLRegistry {
     map: Guarded<HashMap<[u8; 16], Box<Entry>>>,
 }

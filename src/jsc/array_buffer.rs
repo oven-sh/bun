@@ -44,22 +44,7 @@ impl Default for ArrayBuffer {
     }
 }
 
-// TODO(port): move to <jsc>_sys
-//
-// PORT NOTE (aliasing): Zig declares these with `*jsc.JSGlobalObject` (mutable
-// pointer), but `JSGlobalObject` is an opaque ZST handle on the Rust side — the
-// `&JSGlobalObject` reference covers zero bytes, and all mutation happens inside
-// C++ on memory Rust never observes. Declaring the FFI parameter as
-// `*const JSGlobalObject` (ABI-identical) lets `&JSGlobalObject` coerce directly
-// without a `&T as *const T as *mut T` provenance laundering cast. This matches
-// the pattern used by `JSGlobalObject`'s own extern block in `JSGlobalObject.rs`.
 unsafe extern "C" {
-    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `addr`/`len` are an opaque mmap region
-    // C++ stores into the Buffer's `ArrayBufferContents` (adopted, freed via
-    // munmap by JSC) — same round-trip-pointer contract as
-    // `Bun__makeArrayBufferWithBytesNoCopy` below. The public wrapper that
-    // produces `addr` already discharges the validity proof.
     safe fn JSBuffer__fromMmap(global: &JSGlobalObject, addr: *mut c_void, len: usize) -> JSValue;
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to non-null `*const`); remaining args are by-value scalars.
@@ -100,14 +85,6 @@ unsafe extern "C" {
         ptr: *mut u8,
         len: usize,
     ) -> JSValue;
-    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `ptr`/`len`/`ctx` are opaque
-    // round-trip pointers C++ stores into the new `ArrayBufferContents` and
-    // forwards to `dealloc` on GC (never dereferenced as Rust data on this
-    // path) — same contract as `Zig__GlobalObject__create`'s `console`/`worker_ptr`.
-    // The public wrappers (`make_*_with_bytes_no_copy`) are already safe and
-    // forward these raw pointers verbatim, so the validity obligation lives at
-    // that layer.
     safe fn Bun__makeArrayBufferWithBytesNoCopy(
         global: &JSGlobalObject,
         ptr: *mut c_void,
@@ -246,11 +223,6 @@ impl ArrayBuffer {
             return Self::create_buffer(global, b"");
         }
 
-        // mmap() is kind of expensive to do
-        // It creates a new memory mapping.
-        // If there is a lot of repetitive memory allocations in a tight loop, it performs poorly.
-        // So we clone it when it's small.
-        // `stat.st_size` is `i64` on POSIX, `u64` on the libuv stat struct.
         if (size as i64) < Self::MMAP_THRESHOLD as i64 {
             let result =
                 Self::to_js_buffer_from_fd(fd, usize::try_from(size).expect("int cast"), global);
@@ -307,10 +279,6 @@ impl ArrayBuffer {
         std::io::Cursor::new(slice)
     }
 
-    // PORT NOTE: Zig took `comptime kind: JSType`. Restored via
-    // `#![feature(adt_const_params)]` — `JSType` derives `ConstParamTy`, so
-    // `KIND` is a true const-generic and the `match` const-folds (Zig's
-    // `@compileError` arm becomes a post-mono `panic!` on the unreachable arm).
     pub fn create<const KIND: JSType>(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
         crate::mark_binding!();
         match KIND {
@@ -428,13 +396,6 @@ impl ArrayBuffer {
         }
     }
 
-    /// Take ownership of a mimalloc-backed `Box<[u8]>` and wrap it as an
-    /// `ArrayBuffer` without copying. The buffer is released via
-    /// [`MarkedArrayBuffer_deallocator`] when the resulting JS object is
-    /// collected (see [`ArrayBuffer::to_js`] / [`ArrayBuffer::to_js_unchecked`]).
-    ///
-    /// Prefer this over `Box::leak` + [`ArrayBuffer::from_bytes`] at call sites
-    /// so the ownership transfer is explicit.
     pub fn from_owned_bytes(bytes: Box<[u8]>, typed_array_type: JSType) -> ArrayBuffer {
         let len = bytes.len();
         // Ownership transfers to JSC; `to_js` installs a deallocator that
@@ -451,11 +412,6 @@ impl ArrayBuffer {
     }
 
     pub fn to_js_unchecked(self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
-        // The reason for this is
-        // JSC C API returns a detached arraybuffer
-        // if you pass it a zero-length TypedArray
-        // we don't ever want to send the user a detached arraybuffer
-        // that's just silly.
         if self.byte_len == 0 {
             if self.typed_array_type == JSType::ArrayBuffer {
                 return Self::create::<{ JSType::ArrayBuffer }>(ctx, b"");
@@ -474,10 +430,6 @@ impl ArrayBuffer {
                 self.ptr.cast(),
                 self.byte_len,
                 Some(MarkedArrayBuffer_deallocator),
-                // PORT NOTE: Zig passes `&bun.default_allocator` as opaque ctx; the
-                // deallocator ignores it (mi_free needs no ctx). Any non-null
-                // sentinel would do; pass the data ptr itself for symmetry with
-                // `MarkedArrayBuffer::to_js`.
                 self.ptr.cast(),
             );
         }
@@ -565,15 +517,6 @@ impl ArrayBuffer {
         Self::from_typed_array(ctx, value)
     }
 
-    /// The equivalent of
-    ///
-    /// ```js
-    ///    new ArrayBuffer(view.buffer, view.byteOffset, view.byteLength)
-    /// ```
-    // PORT NOTE: Zig `byteSlice(self: *const @This()) []u8` is sound under Zig's
-    // aliasing model but cannot be transliterated to `&self -> &mut [_]` in Rust
-    // (forbidden aliased-`&mut` per PORTING.md §Forbidden). Split into a shared
-    // accessor (`&self -> &[u8]`) and an exclusive one (`&mut self -> &mut [u8]`).
     #[inline]
     pub fn byte_slice(&self) -> &[u8] {
         if self.is_detached() {
@@ -594,11 +537,6 @@ impl ArrayBuffer {
         unsafe { core::slice::from_raw_parts_mut(self.ptr, self.byte_len) }
     }
 
-    /// The equivalent of
-    ///
-    /// ```js
-    ///    new ArrayBuffer(view.buffer, view.byteOffset, view.byteLength)
-    /// ```
     #[inline]
     pub fn slice(&self) -> &[u8] {
         self.byte_slice()
@@ -609,19 +547,11 @@ impl ArrayBuffer {
         self.byte_slice_mut()
     }
 
-    /// Zig `asU16`: `@alignCast(asU16Unaligned())`. `@alignCast` is a checked
-    /// cast in Zig safe builds, so we debug-assert the same precondition here
-    /// before handing out a naturally-aligned `&mut [u16]`. Callers that cannot
-    /// guarantee alignment must use [`as_u16_unaligned`] instead.
     #[inline]
     pub fn as_u16(&mut self) -> &mut [u16] {
         bun_core::Unaligned::slice_align_cast_mut(self.as_u16_unaligned())
     }
 
-    /// Zig `asU16Unaligned() []align(1) u16`. Returns a slice of
-    /// [`Unaligned<u16>`](bun_core::Unaligned) — Rust forbids forming
-    /// `&[u16]` over a possibly-odd address, so the align(1) wrapper carries
-    /// the "load via `read_unaligned`" obligation to the caller.
     #[inline]
     pub fn as_u16_unaligned(&mut self) -> &mut [bun_core::Unaligned<u16>] {
         if self.is_detached() {
@@ -884,12 +814,6 @@ impl TypedArrayType {
             TypedArrayType::TypeDataView => C::kJSTypedArrayTypeNone,
         }
     }
-
-    // LAYERING: Zig's `toNapi` (array_buffer.zig:524) maps to
-    // `napi_typedarray_type`, which is defined in `bun_runtime` (a higher-tier
-    // crate that depends on `bun_jsc`). The conversion lives next to its target
-    // type as `napi_typedarray_type::from_typed_array_type` in
-    // `bun_runtime::napi` to avoid the dep cycle.
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1000,10 +924,6 @@ impl MarkedArrayBuffer {
     }
 
     pub fn to_node_buffer(&self, global: &JSGlobalObject) -> JSValue {
-        // `JSValue::create_buffer` takes `&mut [u8]` (ownership transfers to JSC
-        // via the deallocator). `ArrayBuffer` is `Copy` over a raw pointer, so
-        // copy the descriptor and project a mutable slice — matches Zig
-        // `jsc.JSValue.createBuffer(ctx, this.buffer.byteSlice())`.
         let mut buf = self.buffer;
         JSValue::create_buffer(global, buf.byte_slice_mut())
     }
@@ -1039,11 +959,6 @@ impl MarkedArrayBuffer {
 
 // `no_mangle` dropped: 0 C++ refs (phase_c_exports.rs mention is a comment).
 pub use bun_alloc::c_thunks::mi_free_bytes as MarkedArrayBuffer_deallocator;
-
-// LAYERING: `BlobArrayBuffer_deallocator` (array_buffer.zig:646) releases a
-// `Blob::Store` ref. `Store` is a `bun_runtime` type, so the `#[no_mangle]`
-// export lives next to it at `bun_runtime::webcore::blob::Store` — `bun_jsc`
-// cannot own this symbol without a dep cycle. C++ links by name only.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Free functions

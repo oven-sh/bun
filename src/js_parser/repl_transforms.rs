@@ -20,10 +20,6 @@ use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, S, Stmt};
 use crate::p::P;
 
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
-    /// Apply REPL-mode transforms to the AST.
-    /// This transforms code for interactive evaluation:
-    /// - Wraps the last expression in { value: expr } for result capture
-    /// - Wraps code with await in async IIFE with variable hoisting
     pub fn apply_repl_transforms<'bump>(
         &mut self,
         parts: &mut BumpVec<'bump, js_ast::Part>,
@@ -251,11 +247,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     }
                 }
                 StmtData::SImport(import_data) => {
-                    // Convert static imports to dynamic imports for REPL evaluation:
-                    //   import X from 'mod'      -> var X = (await import('mod')).default
-                    //   import { a, b } from 'mod' -> var {a, b} = await import('mod')
-                    //   import * as X from 'mod'   -> var X = await import('mod')
-                    //   import 'mod'              -> await import('mod')
                     let path_str: &'static [u8] = self.import_records.items()
                         [import_data.import_record_index as usize]
                         .path
@@ -521,10 +512,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         Ok(())
     }
 
-    /// Convert named imports to individual var assignments from the dynamic import
-    /// import { a, b as c } from 'mod' ->
-    ///   var a; var c;  (hoisted)
-    ///   var __mod = await import('mod'); a = __mod.a; c = __mod.b;  (inner)
     #[allow(clippy::too_many_arguments)]
     fn repl_convert_named_imports<'bump>(
         &mut self,

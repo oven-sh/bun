@@ -126,33 +126,12 @@ impl ColumnDefinition41 {
         self.fixed_length_fields_length = reader.encoded_len_int()?;
         self.character_set = reader.int::<u16>()?;
         self.column_length = reader.int::<u32>()?;
-        // PORT NOTE: Zig FieldType is a NON-exhaustive `enum(u8)` so `@enumFromInt` accepts
-        // any byte. Rust `#[repr(u8)] enum` is exhaustive, so unknown bytes go through
-        // `from_raw`'s match and error here instead. This diverges from Zig (which keeps
-        // the value) but is sound; if a new server sends an unknown type, we fail loudly
-        // rather than carry an invalid discriminant. TODO(port): switch FieldType to a
-        // `#[repr(transparent)] struct(u8)` newtype to match Zig's non-exhaustive
-        // semantics exactly.
         let type_byte = reader.int::<u8>()?;
         self.column_type = FieldType::from_raw(type_byte)
             .ok_or_else(|| bun_core::err!("UnknownMySQLFieldType"))?;
         self.flags = ColumnFlags::from_int(reader.int::<u16>()?);
         self.decimals = reader.int::<u8>()?;
 
-        // PORT NOTE: Zig called `name_or_index.deinit()` before reassigning; in Rust the
-        // assignment below drops the previous value automatically.
-        // PORT NOTE: reshaped for borrowck — Zig passed `this.name` by value; pass by ref here.
-        // PORT NOTE: `ColumnIdentifier::init` consumes its `Data` (Zig moved by-value
-        // and `errdefer name.deinit()`). We can't move `self.name` while `&mut self`
-        // is borrowed, so feed it a Temporary view of the same bytes.
-        //
-        // The server re-sends column definitions on every COM_STMT_EXECUTE, so a
-        // reused prepared statement re-decodes into the same slot once per query.
-        // Skip the `name_or_index` rebuild when the previously-owned name already
-        // matches — `ColumnIdentifier::init` would produce a byte-identical
-        // `Name(Owned(..))`, so this is a pure allocation elision. Without it the
-        // per-column free/alloc churn shows up as steady RSS growth under the
-        // ASAN quarantine (test/regression/issue/28632).
         let unchanged = matches!(&self.name_or_index,
             ColumnIdentifier::Name(existing) if existing.slice() == self.name.slice());
         let mut changed = false;

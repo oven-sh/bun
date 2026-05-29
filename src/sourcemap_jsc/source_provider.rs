@@ -13,11 +13,6 @@ use bun_sourcemap::{
 
 unsafe extern "C" {
     fn BakeGlobalObject__isBakeGlobalObject(global: *mut JSGlobalObject) -> bool;
-    /// Returns the opaque `bake::production::PerThread*` previously attached
-    /// via `BakeGlobalObject__attachPerThreadData`. C++ stores it as a raw
-    /// pointer (see `Bake::ProductionPerThread`); only `bun_runtime` knows the
-    /// concrete layout, so here it's `*mut c_void` and the field access is
-    /// dispatched through `RuntimeHooks::bake_per_thread_source_map`.
     fn BakeGlobalObject__getPerThreadData(global: *mut JSGlobalObject) -> *mut core::ffi::c_void;
     fn BakeSourceProvider__getSourceSlice(this: *mut BakeSourceProvider) -> BunString;
 }
@@ -56,12 +51,6 @@ impl BakeSourceProvider {
         // SAFETY: `global` is a `Bake::GlobalObject` (checked above), so the
         // attached `PerThread*` is non-null and live for the bake build session.
         let pt = unsafe { BakeGlobalObject__getPerThreadData(global) };
-        // PORT NOTE: `PerThread`'s fields name `bun_bundler::OutputFile`, which
-        // lives above this crate (forward-dep cycle). The field access
-        // (`pt.source_maps.get(filename)` →
-        // `pt.bundled_outputs[idx].value.asSlice()`) is dispatched through the
-        // existing `bun_jsc::RuntimeHooks` vtable per PORTING.md §Dispatch
-        // (cold path — error-stack source-map resolution).
         let hooks = bun_jsc::virtual_machine::runtime_hooks().expect("RuntimeHooks not installed");
         // SAFETY: `pt` is the live `*mut PerThread` per above; called on the JS
         // thread.

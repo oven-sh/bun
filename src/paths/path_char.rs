@@ -11,14 +11,6 @@
 
 use bun_core::strings;
 
-/// A path code unit: `u8` (UTF-8/WTF-8) or `u16` (WTF-16, Windows).
-///
-/// Supertrait `PathByte` provides `Copy + Eq + 'static` plus `from_u8`. This
-/// trait adds the closed-set operations every path-generic fn in the codebase
-/// reaches for: ASCII comparison, case folding, widening to `u32`, the
-/// `bun.strings.literal(T, "...")` const-widened static, and the one
-/// transcoding write (`write_u8_part`) that lets `u16` call sites memcpy a
-/// UTF-8 part without an `if T::IS_U16` branch.
 pub trait PathChar: strings::PathByte + Ord {
     /// `true` iff `Self == u16` (WTF-16). Replaces Zig's `if (T == u16)`.
     const IS_U16: bool;
@@ -60,11 +52,6 @@ pub trait PathChar: strings::PathByte + Ord {
         matches!(self.to_ascii(), Some(b) if b.is_ascii_alphabetic())
     }
 
-    /// `bun.strings.literal(T, "...")` — yields a `&'static [Self]` for an
-    /// ASCII byte literal. `u8` returns the input slice; `u16` const-widens
-    /// the **closed set** of literals actually passed by callers (see the
-    /// `match` in the `u16` impl). Zero allocation; matches Zig's comptime
-    /// `Holder.value` static-per-call-site emission.
     fn lit(s: &'static [u8]) -> &'static [Self];
 
     /// Write a UTF-8 path part into `dest` (transcoding to UTF-16 when
@@ -109,12 +96,6 @@ impl PathChar for u16 {
     }
     #[inline]
     fn lit(s: &'static [u8]) -> &'static [u16] {
-        // Zig's `bun.strings.literal(u16, str)` is `std.unicode.utf8ToUtf16LeStringLiteral`
-        // — a comptime constant. Rust cannot widen an arbitrary `&'static [u8]` at
-        // const time, so dispatch on the closed set of ASCII literals actually
-        // passed through `T::lit` across the codebase. Each gets one static,
-        // exactly as Zig emits one `Holder.value` per call site. Zero runtime
-        // allocation; `Box::leak` is forbidden here (PORTING.md §Forbidden).
         macro_rules! w {
             ($($b:literal),* $(,)?) => {{ static W: &[u16] = &[$($b as u16),*]; W }};
         }

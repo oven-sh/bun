@@ -15,19 +15,6 @@ use crate::debug_allocator_data;
 // MOVE_DOWN: bun_core::ZStr → bun_core (move-in pass).
 use crate::ZStr;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Process-wide top-level directory (cwd at startup). Storage lives at T0 so
-// `bun_sys::File::read_from_user_input` reads it directly; the resolver's
-// `FileSystem::init` writes it once via `set_top_level_dir`.
-// ──────────────────────────────────────────────────────────────────────────
-
-// Stored behind a `RwLock<&'static [u8]>` rather than a split (AtomicPtr,
-// AtomicUsize) pair: `install::PackageManager` calls `fs.set_top_level_dir()`
-// during workspace discovery (potentially after worker threads exist), so a
-// reader could otherwise observe an OLD len with a NEW ptr (or vice-versa) and
-// build an out-of-bounds `from_raw_parts`. The read path is cold (display /
-// path-relative formatting) so one uncontended read-lock is cheaper than a UB
-// window; writes are rare and serial.
 static TOP_LEVEL_DIR: crate::RwLock<&'static [u8]> = crate::RwLock::new(b".");
 
 /// Record the top-level directory (interned `'static` slice). Idempotent;
@@ -54,12 +41,6 @@ pub static CRASH_HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 #[cfg(windows)]
 pub static WINDOWS_SEGFAULT_HANDLE: core::sync::atomic::AtomicPtr<core::ffi::c_void> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-
-// ──────────────────────────────────────────────────────────────────────────
-// crash_handler primitives (moved from ptr/safety/collections/sys)
-// StoredTrace + dump_stack_trace + panicking state are pure data + libc; the
-// platform-specific symbolication / SEH bits stay in bun_crash_handler (T>core).
-// ──────────────────────────────────────────────────────────────────────────
 
 /// Zig: `std.builtin.StackTrace` — slice of return addresses + cursor.
 #[derive(Clone, Copy)]
@@ -153,18 +134,6 @@ impl Default for DumpStackTraceOptions {
 /// Zig-spec name (`crash_handler.WriteStackTraceLimits`); also re-exported from `bun_crash_handler`.
 pub type WriteStackTraceLimits = DumpStackTraceOptions;
 
-/// Zig: `crash_handler.dumpStackTrace`. T0 fallback prints raw return
-/// addresses — **no symbolication** (the `backtrace` crate is not a T0 dep,
-/// and `std::backtrace` cannot resolve a stored address list). This is a
-/// deliberate debug-UX downgrade vs the Zig spec for the *stored*-trace path
-/// (ref_count leak reports); the *current*-stack path below
-/// uses `std::backtrace` and stays symbolicated. Crash-report paths that need
-/// llvm-symbolizer / pdb-addr2line call `bun_crash_handler::dump_stack_trace`
-/// directly — that crate sits above us so it owns the rich impl without a hook.
-///
-/// `limits.stop_at_jsc_llint` / `skip_stdlib` / `skip_*_patterns` are accepted
-/// for signature parity but **ignored** here (they require symbol names to
-/// match against). Only `frame_count` is honoured.
 pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
     crate::output::flush();
     let n = trace
@@ -179,14 +148,6 @@ pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
     }
 }
 
-/// Capture and dump the current call stack. Dispatches to
-/// `bun_crash_handler::dump_current_stack_trace` (matching Zig
-/// `fd.zig`/`ref_count.zig` which call `bun.crash_handler.dumpCurrentStackTrace`
-/// directly). The upward call is routed through a link-time `extern "Rust"`
-/// symbol defined by `bun_crash_handler` so the function pointer lives in
-/// read-only `.text` instead of a writable `AtomicPtr` slot — memory corruption
-/// cannot redirect it. Under `cfg(test)` (this crate's standalone test binary
-/// does not link `bun_crash_handler`) a stub note is printed instead.
 pub fn dump_current_stack_trace(first_address: Option<usize>, limits: DumpStackTraceOptions) {
     #[cfg(not(test))]
     {
@@ -230,12 +191,6 @@ pub fn sleep_forever_if_another_thread_is_crashing() {
     }
 }
 
-// ─── SignalCode — single source of truth (Zig: src/sys/SignalCode.zig) ────
-// Zig declares ONE `enum(u8) { …, _ }` and derives the name table via
-// `@tagName` + `ComptimeEnumMap`. Rust has no enum reflection, so the 31
-// (name,number) pairs live in ONE X-macro below; every consumer — the closed
-// enum here, the open newtype in `bun_sys`, `SIGNAL_NAMES`, `from_raw`,
-// `from_name` — is generated from it. Never re-spell a signal pair elsewhere.
 #[macro_export]
 macro_rules! for_each_signal {
     ($cb:ident) => {
@@ -288,11 +243,6 @@ macro_rules! __define_signal_code {
 }
 for_each_signal!(__define_signal_code);
 
-// ─── analytics::features (MOVE_DOWN from bun_analytics) ───────────────────
-// Zig: src/analytics/analytics.zig::Features — bag of `pub var X: usize`.
-// Port as atomic counters so cross-thread `.fetch_add` is sound. Only the
-// counters are tier-0; `builtin_modules` (EnumSet over jsc HardcodedModule)
-// stays in bun_analytics (depends on tier-6).
 pub mod features {
     use core::sync::atomic::AtomicUsize;
     macro_rules! feat { ($($name:ident),* $(,)?) => { $(pub static $name: AtomicUsize = AtomicUsize::new(0);)* } }
@@ -371,11 +321,6 @@ macro_rules! mark_binding {
         $crate::mark_binding!(::core::panic::Location::caller().file())
     };
     ($fn_name:expr) => {
-        // Zig: `Output.scoped(.JSC, .hidden)` (jsc.zig:169) — opt-in via
-        // BUN_DEBUG_JSC=1. The `JSC` scope is owned by bun_core. Gate on
-        // `debug_assertions` (== `Environment::ENABLE_LOGS`) — never on a Cargo
-        // feature, since `cfg!(feature = ..)` is resolved against the *calling*
-        // crate and would warn (or silently no-op) in crates without it.
         if cfg!(debug_assertions) && $crate::Global::JSC_SCOPE.is_visible() {
             $crate::Global::JSC_SCOPE.log(::core::format_args!(
                 "[JSC] {} ({}:{})\n",
@@ -451,10 +396,6 @@ pub const package_json_version_with_canary: &str = if cfg!(debug_assertions) {
     version_string
 };
 
-// PORT NOTE: Zig sliced `git_sha[0..@min(len, 8)]` inline; we use the
-// pre-computed `GIT_SHA_SHORT` (same value) since const slicing of a const
-// `&str` by a runtime-ish min() is awkward in stable Rust.
-/// The version and a short hash in parenthesis.
 pub const package_json_version_with_sha: &str = if env::GIT_SHA.is_empty() {
     package_json_version
 } else if cfg!(debug_assertions) {
@@ -487,10 +428,6 @@ pub const package_json_version_with_revision: &str = if env::GIT_SHA.is_empty() 
     formatcp!("{}+{}", version_string, env::GIT_SHA_SHORT)
 };
 
-// Node-style platform string. Distinct from Environment.os.nameString() on
-// Android: the kernel-level OS enum stays .linux (so syscall switches keep
-// working), but user-facing strings — npm user-agent, process.platform —
-// must be "android" so native-addon postinstalls don't fetch glibc binaries.
 pub const os_name: &str = if cfg!(target_os = "android") {
     "android"
 } else {
@@ -590,11 +527,6 @@ pub fn add_exit_callback(function: ExitFn) {
     Bun__atexit(function);
 }
 
-/// Callbacks `Bun__onExit` runs BEFORE `run_exit_callbacks()`. Spec
-/// `Global.zig:220` hard-codes `bun.jsc.Node.FSEvents.closeAndWait()` ahead of
-/// `runExitCallbacks()`; that crate sits above us, so it pushes its callback
-/// here at first-loop creation (data moved down — same `Vec<ExitFn>` shape as
-/// `ON_EXIT_CALLBACKS`, no fn-ptr type-erase).
 static PRE_EXIT_CALLBACKS: crate::Mutex<Vec<ExitFn>> = crate::Mutex::new(Vec::new());
 
 pub fn add_pre_exit_callback(function: ExitFn) {
@@ -623,11 +555,6 @@ pub(crate) fn is_exiting() -> bool {
     IS_EXITING.load(Ordering::Relaxed)
 }
 
-// libc process-termination entry points used by `exit` /
-// `raise_ignoring_panic_handler_raw` below. All take by-value `c_int` or no
-// args and are `noreturn`/kernel-validated — no memory-safety preconditions,
-// so `safe fn` discharges the link-time proof and the call sites are plain
-// calls. `#[link_name]` avoids colliding with this module's own `pub fn exit`.
 unsafe extern "C" {
     #[link_name = "abort"]
     safe fn libc_abort() -> !;
@@ -684,20 +611,10 @@ pub fn raise_ignoring_panic_handler(sig: crate::SignalCode) -> ! {
     raise_ignoring_panic_handler_raw(sig as c_int)
 }
 
-/// Re-raise `sig` (raw `c_int`) after restoring TTY/crash state. Zig's
-/// `SignalCode` is a *non-exhaustive* `enum(u8)`, so callers may forward any
-/// signal byte (incl. Linux RT signals 32..=64) that has no `crate::SignalCode`
-/// discriminant. Mirrors `raiseIgnoringPanicHandler(@enumFromInt(sig))`.
 pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     Output::flush();
     Output::source::stdio::restore();
 
-    // Clear the crash handler's segfault hooks so the re-raised signal goes to
-    // SIG_DFL instead of recursing into the panic handler. Storage moved down
-    // from `bun_crash_handler` — it sets `CRASH_HANDLER_INSTALLED` on init and
-    // we do the libc reset ourselves (no fn-ptr hook). Mirrors
-    // `crash_handler.zig::resetSegfaultHandler`: skip when ASAN owns the
-    // signals (we never installed over them); on Windows remove the VEH.
     #[cfg(unix)]
     if CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) && !crate::env::ENABLE_ASAN {
         // SAFETY: zeroed sigaction with SIG_DFL is a valid disposition.
@@ -714,10 +631,6 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     if CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) && !crate::env::ENABLE_ASAN {
         let handle = WINDOWS_SEGFAULT_HANDLE.swap(core::ptr::null_mut(), Ordering::Relaxed);
         if !handle.is_null() {
-            // `Handle` is an opaque cookie returned by
-            // `AddVectoredExceptionHandler`; the kernel validates it and
-            // returns 0 on a stale/garbage value — no memory-safety
-            // preconditions, so `safe fn` discharges the link-time proof.
             unsafe extern "system" {
                 safe fn RemoveVectoredExceptionHandler(Handle: *mut core::ffi::c_void) -> u32;
             }
@@ -758,10 +671,6 @@ pub fn mimalloc_cleanup(force: bool) {
 }
 // Versions are now handled by build-generated header (bun_dependency_versions.h)
 
-// Enabling huge pages slows down bun by 8x or so
-// Keeping this code for:
-// 1. documentation that an attempt was made
-// 2. if I want to configure allocator later
 #[inline]
 pub fn configure_allocator(_: AllocatorConfiguration) {}
 
@@ -793,11 +702,6 @@ unsafe impl Sync for SyncCStr {}
 pub(crate) static Bun__userAgent: SyncCStr =
     SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
 
-/// Prevent the linker from dead-code-eliminating `#[no_mangle]` symbols that are
-/// only ever called from C/C++ (so rustc sees no Rust caller). Port of Zig's
-/// `std.mem.doNotOptimizeAway` pattern (Global.zig:224). Expands to one
-/// `core::hint::black_box(f as *const ())` per path — purely a side-effect, so
-/// invoke inside a `fix_dead_code_elimination()` fn wired from `run_command`.
 #[macro_export]
 macro_rules! keep_symbols {
     ($($f:path),* $(,)?) => {

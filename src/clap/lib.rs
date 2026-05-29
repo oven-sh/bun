@@ -18,12 +18,6 @@ pub use streaming::StreamingClap;
 #[doc(hidden)]
 pub use bun_clap_macros::{__parse_param_impl, __parse_params_impl};
 
-/// Parse a single param spec string (e.g. `"-h, --help  Display this help"`)
-/// into a const `Param<Help>` literal at compile time. This is the Rust
-/// equivalent of Zig's comptime `clap.parseParam(...) catch unreachable`.
-///
-/// The argument **must** be a string literal; parse errors surface as compile
-/// errors at the call site.
 #[macro_export]
 macro_rules! parse_param {
     ($lit:literal $(,)?) => {
@@ -40,12 +34,6 @@ macro_rules! param {
     };
 }
 
-/// Const-time `Param<Help>` slice concatenation — the Rust analogue of Zig's
-/// comptime `a ++ b ++ c` over param tables. Produces a `&'static [Param<Help>]`
-/// baked into rodata; no `LazyLock`, no heap, no init closure in `.text`.
-///
-/// Every `$part` must be a `const`-evaluable `&[Param<Help>]` (a `const` item or
-/// `&[literal, …]`); referencing a `static` is rejected by const-eval (E0013).
 #[macro_export]
 macro_rules! concat_params {
     ($($part:expr),* $(,)?) => {{
@@ -56,43 +44,8 @@ macro_rules! concat_params {
     }};
 }
 
-/// Build a `&'static ConvertedTable` from a const-evaluable
-/// `&[Param<Help>]` at compile time — the Rust analogue of Zig's
-/// `ComptimeClap(Id, params)` type-generator. The converted `[Param<usize>; N]`
-/// array, the three category counts, the short-name index, *and* the sorted
-/// long-name hash index all land in rodata, so [`parse_with_table`] does no
-/// heap allocation, no sorting, no locking, and `args.flag(b"--foo")`
-/// resolves via O(log n) binary search at runtime (or O(1) when paired with
-/// [`comptime::find_param_index`] inside `const { }`).
-///
-/// ```ignore
-/// pub const AUTO_PARAMS: &[Param<Help>] = concat_params!(...);
-/// pub static AUTO_TABLE: &ConvertedTable = comptime_table!(AUTO_PARAMS);
-/// ```
-///
-/// Pass `, cold` for every table off the trivial-script / `bun --version`
-/// cold-start path (`bun run` / `bun build` / `bun test` / `bun install` /
-/// `bun pm` / `bun x` / …) so it stays in plain `.rodata` instead of padding
-/// the contiguous `.rodata.startup` run (see the per-arm notes below):
-///
-/// ```ignore
-/// pub static RUN_TABLE: &ConvertedTable = comptime_table!(RUN_PARAMS, cold);
-/// ```
 #[macro_export]
 macro_rules! comptime_table {
-    // Hot table — the default-command param table that `bun <file>` and
-    // `bun --version` dereference on cold start. Cluster every nested `__CONV` /
-    // `__LONG` / `__TABLE` static into `.rodata.startup`: with
-    // `-Zfunction-sections` each `static` otherwise lands in its own
-    // `.rodata.<sym>` input section that fat-LTO emits in crate-alphabetical
-    // order — one minor fault per scattered table on first touch. Pinning them
-    // adjacent lets the trivial-script cold path fault the converted arrays,
-    // long-name index, and `ConvertedTable` header in with one shared
-    // fault-around window. Non-PIE `bun` has zero runtime relocations, so these
-    // stay in plain rodata even with the `&'static [u8]` help strings they point
-    // at. Linux-only: the section-name syntax is ELF-specific (mirrors
-    // `bun_core::err!`'s `.bun_err` clustering). Use sparingly — only
-    // `AUTO_TABLE` should take this arm; everything else passes `, cold`.
     ($params:expr) => {
         $crate::comptime_table!(
             @build
@@ -100,12 +53,6 @@ macro_rules! comptime_table {
             $params
         )
     };
-    // Cold tables — `bun run` / `bun build` / `bun test` / `bun install` /
-    // `bun pm` / `bun x` and friends. `.rodata.startup` is deliberately one
-    // contiguous block faulted in with a single read-around on every cold start
-    // (including `bun --version`); padding it with param tables those paths
-    // never touch only grows that run. Leave these in plain `.rodata` —
-    // `src/startup.order` still clusters the ones a sampled cold path hits.
     ($params:expr, cold) => {
         $crate::comptime_table!(@build { } $params)
     };
@@ -176,15 +123,6 @@ pub const fn __param_slices_concat<const N: usize>(parts: &[&[Param<Help>]]) -> 
     out
 }
 
-/// Parse a `;`-separated list of param spec strings into a
-/// `&'static [Param<Help>]` at compile time.
-///
-/// ```ignore
-/// static PARAMS: &[Param<Help>] = parse_params! {
-///     "-h, --help          Display this help";
-///     "-v, --version       Print the version";
-/// };
-/// ```
 #[macro_export]
 macro_rules! parse_params {
     ($($lit:literal);* $(;)?) => {
@@ -268,27 +206,6 @@ pub enum Values {
     OneOptional,
 }
 
-/// Represents a parameter for the command line.
-/// Parameters come in three kinds:
-///   * Short ("-a"): Should be used for the most commonly used parameters in your program.
-///     * They can take a value three different ways.
-///       * "-a value"
-///       * "-a=value"
-///       * "-avalue"
-///     * They chain if they don't take values: "-abc".
-///       * The last given parameter can take a value in the same way that a single parameter can:
-///         * "-abc value"
-///         * "-abc=value"
-///         * "-abcvalue"
-///   * Long ("--long-param"): Should be used for less common parameters, or when no single
-///     character can describe the paramter.
-///     * They can take a value two different ways.
-///       * "--long-param value"
-///       * "--long-param=value"
-///   * Positional: Should be used as the primary parameter of the program, like a filename or
-///     an expression to parse.
-///     * Positional parameters have both names.long and names.short == None.
-///     * Positional parameters must take a value.
 #[derive(Clone, Copy)]
 pub struct Param<Id> {
     pub id: Id,
@@ -308,12 +225,6 @@ impl<Id: Default> Default for Param<Id> {
     }
 }
 
-// NOTE: the runtime spec parser (`fn parse_param` / `parse_long_names` /
-// `parse_param_rest` / `ParseParamError` / `TokenizeAny`) was removed — the
-// canonical implementation lives in `bun_clap_macros` and runs at compile time
-// via `parse_param!` / `param!` / `parse_params!` above. All param specs are
-// string literals, so there is no runtime caller.
-
 #[cfg(test)]
 fn expect_param(expect: Param<Help>, actual: Param<Help>) {
     assert_eq!(expect.id.msg, actual.id.msg);
@@ -327,11 +238,6 @@ fn expect_param(expect: Param<Help>, actual: Param<Help>) {
     }
 }
 
-/// Optional diagnostics used for reporting useful errors
-// PORT NOTE: Zig `Diagnostic` borrows `arg`/`name.long` from the arg iterator. Rust
-// can't tie that lifetime through `&mut Diagnostic` without invariance headaches, and
-// this is an error-path-only struct, so it owns its bytes instead. The `name: Names`
-// field is flattened to `short`/`long` because `Names.long` is `&'static`.
 #[derive(Default)]
 pub struct Diagnostic {
     pub arg: Vec<u8>,
@@ -340,12 +246,6 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    /// Default diagnostics reporter when all you want is English with no colors.
-    /// Use this as a reference for implementing your own if needed.
-    ///
-    /// Error path only — never reached on the trivial-script / `bun -p` cold
-    /// start. `#[cold]` + `#[inline(never)]` so the formatting machinery lands
-    /// in `.text.unlikely`, away from the cold-start working set.
     #[cold]
     #[inline(never)]
     pub fn report<W>(&self, _stream: W, err: bun_core::Error) -> Result<(), bun_core::Error> {
@@ -396,15 +296,7 @@ impl Diagnostic {
 
 #[derive(Clone, Copy)]
 pub struct Help {
-    /// The description text exactly as written in the param spec — may still
-    /// contain `<tag>` colour markup. Used by [`help`]/[`help_ex`], which (like
-    /// Zig's `clap.help`) emit it verbatim, and as the source for the ANSI form
-    /// built lazily by [`pretty_help_desc`] on the `bun --help` colour path.
     pub msg: &'static [u8],
-    /// `msg` with `<tag>` colour markup stripped — the non-TTY / piped help form.
-    /// Precomputed at compile time by `parse_param!` (the strip is the only
-    /// transform that needs to be ready without a TTY); the ANSI-coloured form is
-    /// derived from `msg` on demand instead of being baked into rodata.
     pub msg_plain: &'static [u8],
     pub value: &'static [u8],
 }
@@ -428,29 +320,12 @@ pub struct ParseOptions<'a> {
     pub stop_after_positional_at: usize,
 }
 
-// Help/usage/error rendering — none of this is on the cold-start hot chain
-// (`bun -p '1+1'` / `bun --version` / plain `bun <file>` never call into the
-// help or diagnostics path). Mark every entry point `#[cold]` + `#[inline(never)]`
-// so rustc emits them in `.text.unlikely.*` sections that the linker clusters
-// together, keeping them out of the pages faulted in on a normal invocation.
 #[cold]
 #[inline(never)]
 fn get_help_simple(param: &Param<Help>) -> &'static [u8] {
     param.id.msg
 }
 
-/// The param description with `<tag>` colour markup resolved — ANSI escapes when
-/// stdout is a colour-capable TTY, stripped otherwise.
-///
-/// The tag-stripped form ([`Help::msg_plain`]) is precomputed in rodata; the
-/// ANSI form is *not* — it is rewritten from [`Help::msg`] here, only when colour
-/// output is actually requested. That `<tag>`→ANSI rewrite only ever runs on
-/// `bun --help` / `bun run --help`; `--print` and ordinary runs never reach this
-/// path, so they pay neither the per-invocation reparse nor the extra rodata a
-/// baked-in `msg_ansi` array would cost on every flag and subcommand. (Zig did
-/// the rewrite at `comptime` via `Output.prettyFmt` inside
-/// `clap.simpleHelpBunTopLevel`; the colour case is rare enough that doing it
-/// lazily at runtime is the better trade for binary size.)
 #[cold]
 #[inline(never)]
 fn pretty_help_desc(param: &Param<Help>) -> std::borrow::Cow<'static, [u8]> {
@@ -504,12 +379,6 @@ impl<Id: 'static> Args<Id> {
     }
 }
 
-/// Same as `parse_ex` but uses the `args::OsIterator` by default.
-///
-/// **Cold path** — the startup hot set uses [`parse_with_table`] against a
-/// rodata [`comptime_table!`]. This entry point performs a runtime conversion
-/// (`ConvertedTable::for_params`) and is only used by non-startup commands
-/// (`bun install`, `bun create`), so it's `#[cold]` + `#[inline(never)]`.
 #[cold]
 #[inline(never)]
 pub fn parse<Id: 'static>(
@@ -554,10 +423,6 @@ pub fn parse_with_table<Id: 'static>(
     Ok(Args { clap, exe_arg })
 }
 
-/// Parses the command line arguments passed into the program based on an
-/// array of `Param`s.
-///
-/// **Cold path** — see [`parse`]; the startup hot path is [`parse_with_table`].
 #[cold]
 #[inline(never)]
 pub fn parse_ex<Id: 'static, I>(
@@ -572,12 +437,6 @@ where
     ComptimeClap::<Id>::parse(params, iter, opt)
 }
 
-/// Will print a help message in the following format:
-///     -s, --long <valueText> helpText
-///     -s,                    helpText
-///     -s <valueText>         helpText
-///         --long             helpText
-///         --long <valueText> helpText
 #[cold]
 #[inline(never)]
 pub fn help_full<W, Id, E, C>(
@@ -823,12 +682,6 @@ pub fn simple_help(params: &[Param<Help>]) {
         let spaces_after = vec![b' '; num_spaces_after];
 
         simple_print_param(param).expect("unreachable");
-        // Zig's `Output.pretty("  {s}  {s}", …)` (clap.zig:567) only runs prettyFmt
-        // over the comptime template, so `<tag>` markers inside `desc_text` leak
-        // through verbatim there. That is observably wrong (`bun run --help` prints
-        // literal `<d>$cwd<r>`); `pretty_help_desc` resolves the `<tag>` markup
-        // (ANSI on a colour TTY, stripped otherwise) so `--help` output is
-        // tag-clean regardless of which helper a command uses.
         let desc = pretty_help_desc(param);
         Output::pretty(format_args!(
             "  {}  {}",
@@ -841,10 +694,6 @@ pub fn simple_help(params: &[Param<Help>]) {
 #[cold]
 #[inline(never)]
 pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
-    // TODO(port): Zig evaluates `computed_max_spacing` at `comptime` and emits
-    // `@compileError` on overflow, plus uses `inline for` + comptime string
-    // concat (`space_buf[..n] ++ desc_text`). None of that is const-evaluable
-    // in Rust over a slice param. Runtime equivalent below; could macro-gen.
     const MAX_SPACING: usize = 30;
     const SPACE_BUF: &[u8; MAX_SPACING] = b"                              ";
 
@@ -866,10 +715,6 @@ pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
                 let total_len = param_display_width(param);
                 let num_spaces_after = MAX_SPACING - total_len;
 
-                // Zig: Output.pretty(space_buf[0..n] ++ desc_text, .{}) — the concat
-                // is the *format string*, so `<tag>` markers inside `desc_text` are
-                // rewritten at `comptime`. Mirror that via `pretty_help_desc`, which
-                // resolves the markup (ANSI on a colour TTY, stripped otherwise).
                 let desc = pretty_help_desc(param);
                 Output::pretty(format_args!(
                     "{}{}",
@@ -888,11 +733,6 @@ pub fn help<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> Result<(),
     help_ex(stream, params, get_help_simple, get_value_simple)
 }
 
-/// Will print a usage message in the following format:
-/// [-abc] [--longa] [-d <valueText>] [--longb <valueText>] <valueText>
-///
-/// First all none value taking parameters, which have a short name are
-/// printed, then non positional parameters and finally the positinal.
 #[cold]
 #[inline(never)]
 pub fn usage_full<W, Id, E, C>(

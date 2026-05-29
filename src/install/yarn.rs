@@ -1,23 +1,18 @@
 use bun_collections::VecExt;
 use std::io::Write as _;
 
-use bun_collections::{HashMap, StringHashMap};
-use bun_core::Error;
-use bun_install::bin::Bin;
-use bun_install::dependency::{self, Dependency, DependencyExt as _};
-use bun_install::install::{self, DependencyID, PackageID, PackageManager};
-use bun_install::integrity::Integrity;
-// PORT NOTE: `bun_install::lockfile` is the column-accessor stub used by the
-// audit/why CLI walkers; the yarn migrator needs the real Lockfile/Tree/
-// LoadResult enum, so import from `lockfile_real` and alias it back to
-// `lockfile` so the qualified `lockfile::DependencySlice` etc. paths below
-// resolve against the ported types.
 use crate::Origin;
 use crate::lockfile_real::package::meta::HasInstallScript;
 use crate::lockfile_real::package::{
     Meta as PackageMeta, Package as LockfilePackage, PackageColumns as _,
 };
 use crate::lockfile_real::{self as lockfile, LoadResult, Lockfile, tree, tree::Tree};
+use bun_collections::{HashMap, StringHashMap};
+use bun_core::Error;
+use bun_install::bin::Bin;
+use bun_install::dependency::{self, Dependency, DependencyExt as _};
+use bun_install::install::{self, DependencyID, PackageID, PackageManager};
+use bun_install::integrity::Integrity;
 use bun_install::npm;
 // PORT NOTE: `Package.resolution` is the file-backed `resolution_real::ResolutionType<u64>`
 // (tag + zero-padded `Value` union), constructed via `init(TaggedValue::*)`; the
@@ -30,11 +25,6 @@ use bun_core::strings;
 use bun_paths::PathBuffer;
 use bun_semver::{self as Semver, SlicedString, String as SemverString};
 use bun_sys::Fd;
-
-// TODO(port): lifetime — Entry/YarnLock borrow from the input `data: &[u8]` passed to
-// `migrate_yarn_lockfile`. LIFETIMES.tsv had no rows for this file (no *T fields), so
-// `'a` here is the BORROW_PARAM classification applied to slice fields. Verify the few
-// owned slices (specs inner strings, file, git_repo_name) don't need `Box<[u8]>` instead.
 
 pub struct YarnLock<'a> {
     pub entries: Vec<Entry<'a>>,
@@ -472,13 +462,6 @@ impl<'a> YarnLock<'a> {
                             );
                         } else if Entry::is_git_dependency(value) {
                             let git_info = Entry::parse_git_url(self, value)?;
-                            // TODO(port): dropped logic — Zig reassigns `url` to the
-                            // allocPrint'd `https://github.com/{path}` buffer for the
-                            // `github:` branch and stores that as `resolved`. Here
-                            // `git_info.url` still borrows the stripped input slice and
-                            // `owned_url` is discarded, so github: URLs resolve INCORRECTLY.
-                            // Fix: change Entry.resolved to Cow<'a, [u8]> (or store the
-                            // owned buffer on Entry) so `owned_url` can be assigned here.
                             entry.resolved = Some(git_info.url);
                             entry.commit = git_info.commit;
                             if let Some(repo_name) = git_info.repo {
@@ -699,12 +682,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     install::initialize_store();
     bun_core::analytics::Features::yarn_migration_inc(1);
 
-    // PORT NOTE: reshaped for borrowck. Zig keeps a single `var string_buf =
-    // this.stringBuf()` for the whole function, but in Rust that would hold
-    // `&mut this.buffers.string_bytes` + `&mut this.string_pool` for the
-    // function's lifetime and lock out every other `this.*` access. Instead,
-    // construct a fresh `Buf` per append via this macro so the mutable borrow
-    // ends immediately after each call.
     macro_rules! sbuf {
         () => {
             Semver::string::Buf {
@@ -1087,10 +1064,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
         let name_hash = string_hash(name_to_use);
 
-        // PORT NOTE: reshaped for borrowck — compute the resolution before the
-        // `this.packages.append(...)` call so the per-field `sbuf!()` borrows of
-        // `this.buffers.string_bytes` don't overlap the two-phase reservation
-        // on `this.packages`.
         let pkg_name = sbuf!().append_with_hash(name_to_use, name_hash)?;
         let resolution = 'blk: {
             if entry.workspace {
@@ -1514,10 +1487,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         versions.sort_by_key(|a| a.package_id);
 
         let original_name_hash = string_hash(base_name);
-        // PORT NOTE: reshaped for borrowck — Zig matches on the entry only to
-        // call `existing_ids.deinit()` before `remove`; Rust's `remove` drops
-        // the value (and thus the `Ids` Vec) automatically, so the match is
-        // unnecessary and we avoid the overlapping `get_mut`/`remove` borrow.
         let _ = this.package_index.remove(&original_name_hash);
     }
 

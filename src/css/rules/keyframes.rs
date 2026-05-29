@@ -12,11 +12,6 @@ use super::ArrayList;
 // KeyframesName
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `<keyframes-name> = <custom-ident> | <string>`
-// PORT NOTE: Zig threaded the parser-input lifetime; this stores
-// `&'static [u8]` per PORTING.md §AST crates and the rules/mod.rs
-// `CssRule<R>` lifetime-erasure note.
-// TODO(refactor): re-thread `'bump` here.
 pub enum KeyframesName {
     /// `<custom-ident>` of a `@keyframes` name.
     Ident(CustomIdent),
@@ -181,10 +176,6 @@ impl KeyframeSelector {
 // blocked_on: css::derive_parse (DeriveParse comptime macro replacement).
 
 impl KeyframeSelector {
-    // Zig: `pub const parse = css.DeriveParse(@This()).parse;`
-    // PORT NOTE: `DeriveParse` is a comptime type-generator producing `parse` from
-    // variant introspection. Expanded by hand here: try the tuple variant
-    // (`Percentage`) first, then fall back to keyword idents (`from`/`to`).
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<KeyframeSelector> {
         if let Ok(p) = input.try_parse(Percentage::parse) {
             return Ok(KeyframeSelector::Percentage(p));
@@ -327,15 +318,6 @@ impl KeyframesRule {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct KeyframesListParser;
-
-// PORT NOTE: in Zig these are nested `pub const DeclarationParser = struct { ... }`
-// namespaces that the css parser duck-types via `@hasDecl`. In Rust they become
-// trait impls on `KeyframesListParser`.
-//
-// blocked_on: css::{DeclarationParser, AtRuleParser, QualifiedRuleParser,
-// RuleBodyItemParser} trait signatures (css_parser.rs round-5 surface),
-// Parser::parse_comma_separated, DeclarationBlock::parse, ParserOptions::default
-// arena threading.
 
 const _: () = {
     use css::css_parser::{

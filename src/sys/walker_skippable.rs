@@ -61,10 +61,6 @@ impl Walker {
                 Err(err) => return Err(err),
                 Ok(res) => {
                     if let Some(base) = res {
-                        // Some filesystems (NFS, FUSE, bind mounts) don't provide
-                        // d_type and return DT_UNKNOWN. Optionally resolve via
-                        // fstatat so callers get accurate types for recursion.
-                        // This only affects POSIX; Windows always provides types.
                         #[cfg(not(windows))]
                         let kind: sys::EntryKind = if base.kind == sys::EntryKind::Unknown
                             && self.resolve_unknown_entry_types
@@ -201,11 +197,6 @@ impl Drop for Walker {
     }
 }
 
-/// Recursively iterates over a directory.
-/// `self` must have been opened with `OpenDirOptions{.iterate = true}`.
-/// Must call `Walker.deinit` when done.
-/// The order of returned file system entries is undefined.
-/// `self` will not be closed after walking it.
 pub fn walk(
     self_: Fd,
     skip_filenames: &[&OSPathSlice],

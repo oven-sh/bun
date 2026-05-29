@@ -484,10 +484,6 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                                     );
                                     // 16-color ansi, foreground text color
                                     break 'color BunString::clone_latin1(&[
-                                        // 0x1b is the escape character
-                                        // 38 is the foreground color code
-                                        // 5 is the 16-color mode
-                                        // {d} is the color index
                                         0x1b,
                                         b'[',
                                         b'3',

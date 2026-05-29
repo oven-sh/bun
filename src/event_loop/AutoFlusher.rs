@@ -19,29 +19,14 @@ pub trait HasAutoFlusher: Sized {
     fn on_auto_flush(this: *mut Self) -> bool;
 }
 
-/// Erase a typed `T::on_auto_flush` to the `DeferredRepeatingTask` ABI
-/// (`unsafe extern "C" fn(*mut c_void) -> bool`). Mirrors Zig's
-/// `@ptrCast(&Type.onAutoFlush)` at the `postTask` call site, but via a
-/// monomorphic `extern "C"` trampoline rather than a fn-ptr cast so the
-/// calling convention is honest.
 #[inline]
 pub(crate) fn erase_flush_callback<T: HasAutoFlusher>() -> DeferredRepeatingTask {
-    // Body is fully safe (`cast` + safe trait call); a safe `extern "C"` fn
-    // item coerces to the `DeferredRepeatingTask` fn-ptr slot. `ctx` is
-    // exactly the `*mut T` registered by
-    // `register_deferred_microtask_with_type_unchecked` below;
-    // `DeferredTaskQueue::run` feeds it back unchanged — the deref happens
-    // inside the `HasAutoFlusher` impl, not here.
     extern "C" fn trampoline<T: HasAutoFlusher>(ctx: *mut c_void) -> bool {
         T::on_auto_flush(ctx.cast::<T>())
     }
     trampoline::<T>
 }
 
-// PORT NOTE (b0): Zig passed `*jsc.VirtualMachine` and reached
-// `vm.event_loop().deferred_tasks`. To break the event_loop→jsc upward edge,
-// callers now pass the `DeferredTaskQueue` directly (it lives in this crate).
-// Higher-tier call sites do `&mut vm.event_loop().deferred_tasks` themselves.
 pub(crate) fn register_deferred_microtask_with_type<T: HasAutoFlusher>(
     this: &mut T,
     deferred: &mut DeferredTaskQueue,
@@ -88,13 +73,6 @@ pub(crate) fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>
     debug_assert!(!found_existing);
 }
 
-// ─── associated-fn facade ─────────────────────────────────────────────────
-// Zig call sites read `AutoFlusher.registerDeferredMicrotaskWithType(Self, this, vm)`
-// — i.e. namespaced on the struct. Mirror that as inherent associated fns so
-// callers can write `AutoFlusher::register_deferred_microtask_with_type::<T>(…)`.
-// These are the *lower-tier* signatures (queue passed directly); the higher-tier
-// `vm`-taking wrappers live in `bun_runtime::webcore` to avoid the
-// event_loop→jsc upward dependency.
 impl AutoFlusher {
     #[inline]
     pub fn register_deferred_microtask_with_type<T: HasAutoFlusher>(

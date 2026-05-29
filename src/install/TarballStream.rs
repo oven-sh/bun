@@ -61,13 +61,6 @@ enum Phase {
     Done,
 }
 
-// PORT NOTE: `extract_task` / `package_manager` are raw pointers, not
-// `&'a mut` / `&'a`. The Zig original stores `*Task` / `*PackageManager`
-// (freely-aliasing). This struct is heap-allocated (`heap::alloc`),
-// crosses threads via `drain_task`, and self-destroys in `finish()`, so a
-// borrowed lifetime cannot be sound. Holding `&'a mut Task` here while
-// `populate_result` materialises another `&mut Task` from a raw copy of it
-// would be aliased UB; raw pointers match the Zig aliasing contract.
 pub struct TarballStream {
     // ---------------------------------------------------------------------
     // Cross-thread producer state (HTTP → worker)
@@ -93,15 +86,6 @@ pub struct TarballStream {
     /// it runs out of input and decides to yield.
     draining: AtomicBool,
 
-    // ---------------------------------------------------------------------
-    // Drain-side state (touched only by one drain task at a time)
-    // ---------------------------------------------------------------------
-    /// Bytes currently being consumed by libarchive. Populated by swapping
-    /// with `pending` under the mutex so the HTTP thread can keep appending
-    /// while libarchive decompresses without the lock held. libarchive's
-    /// read callback hands out `reading[read_pos..]` and advances
-    /// `read_pos`; the slice must remain valid until the next callback, so
-    /// we only recycle this buffer on the *following* swap.
     reading: Vec<u8>,
     read_pos: usize,
 
@@ -118,10 +102,6 @@ pub struct TarballStream {
     #[cfg(unix)]
     use_pwrite: bool,
     use_lseek: bool,
-    /// Per-entry write cursors, carried across `write_data_block` calls so
-    /// the sparse-file handling in `close_output_file` matches
-    /// `Archive.readDataIntoFd` exactly (which tracks these across its own
-    /// block loop). Reset in `begin_entry` when a new output file is opened.
     entry_actual_offset: i64,
     entry_final_offset: i64,
 
@@ -144,10 +124,6 @@ pub struct TarballStream {
     want_first_dirname: bool,
     npm_mode: bool,
 
-    /// Symlinks created so far during this extraction. Later entries whose
-    /// path traverses one of these are skipped: the per-target check in
-    /// `make_symlink` is purely lexical, so once a link is on disk the kernel
-    /// would follow it and a chained link could escape the extraction root.
     #[cfg(unix)]
     created_symlinks: Vec<Vec<u8>>,
 
@@ -160,21 +136,12 @@ pub struct TarballStream {
     /// arrives and no drain is currently in flight.
     drain_task: thread_pool::Task,
 
-    /// Completion task that carries the final result back to the main
-    /// thread. Populated by `finish()` and pushed onto `resolve_tasks` there.
-    /// BACKREF — `*mut Task` constructed via `ParentRef::from_raw_mut` so the
-    /// read-only `request_extract()` accessor in `open_destination` goes
-    /// through safe `Deref`; `finish()` recovers the raw via `as_mut_ptr()`.
     extract_task: bun_ptr::ParentRef<Task>,
     network_task: *mut NetworkTask,
     package_manager: *mut PackageManager,
 }
 
 impl TarballStream {
-    /// Minimum Content-Length for which the streaming path is used. Below
-    /// this the whole body is buffered as before; the resumable libarchive
-    /// state machine is only worth its per-chunk overhead for tarballs that
-    /// would otherwise consume a noticeable amount of memory.
     pub(crate) fn min_size() -> usize {
         // env_var.get() returns Option<u64> in the Rust port even when a default
         // is configured (Zig collapses it at comptime); the var has a 2 MiB
@@ -187,14 +154,6 @@ impl TarballStream {
         network_task: *mut NetworkTask,
         manager: *mut PackageManager,
     ) -> *mut TarballStream {
-        // Caller guarantees `extract_task` is live for the lifetime of this
-        // stream (it is published back to the main thread only in `finish()`);
-        // see Zig `init` which takes `*Task`. Wrapped once as `ParentRef` so
-        // the union read goes through the centralised tag-checked
-        // `request_extract()` accessor; `extract` is the active `Request`
-        // variant for streaming tarballs (set by `enqueueExtractNPMPackage`,
-        // `tag == Tag::Extract`). Safe `From<NonNull>` construction — caller
-        // passes a non-null `*mut Task` (Zig `*Task`).
         let extract_task = bun_ptr::ParentRef::<Task>::from(
             core::ptr::NonNull::new(extract_task).expect("extract_task non-null (Zig *Task)"),
         );
@@ -309,12 +268,6 @@ impl TarballStream {
             if (*this).draining.swap(true, Ordering::AcqRel) {
                 return;
             }
-            // `addr_of_mut!` (not `&mut (*this).drain_task`) so the raw
-            // pointer inherits `this`'s full-struct provenance: the
-            // thread-pool callback recovers the parent `*mut TarballStream`
-            // via `offset_of!`, which is OOB for a
-            // pointer whose provenance is limited to the `drain_task` field
-            // bytes. See ThreadPool.rs:442 for the same pattern.
             (*(*this).package_manager)
                 .thread_pool
                 .schedule(thread_pool::Batch::from(core::ptr::addr_of_mut!(
@@ -343,11 +296,6 @@ impl TarballStream {
         unsafe {
             loop {
                 if (*this).fail.is_none() && (*this).phase != Phase::Done {
-                    // Only pull bytes into `reading` while libarchive is still
-                    // going to consume them. After EOF/failure `step()` is
-                    // never called again, so appending here would let
-                    // `reading` grow by one HTTP chunk per wakeup for the
-                    // remainder of the download.
                     let more = Self::take_pending(this);
 
                     if let Err(err) = Self::step(this) {
@@ -363,10 +311,6 @@ impl TarballStream {
                         // worker until the HTTP thread delivers the next
                         // chunk.
                         (*this).draining.store(false, Ordering::Release);
-                        // Close the race between clearing `draining` and a
-                        // chunk arriving: if `pending` is non-empty now, try
-                        // to reclaim the flag ourselves instead of waiting
-                        // for the next schedule.
                         (*this).mutex.lock();
                         let again = !(*this).pending.is_empty() || (*this).closed;
                         (*this).mutex.unlock();
@@ -377,35 +321,17 @@ impl TarballStream {
                     }
                 }
 
-                // Terminal: archive finished or extraction failed. libarchive
-                // will not be called again, so `reading` is dead — drop it
-                // now rather than carrying its capacity until `finish()`.
-                // `reading` is drain-local (only the read callback touches
-                // it, and that runs inside `step()`), so this needs no lock.
                 (*this).reading = Vec::new();
                 (*this).read_pos = 0;
 
                 (*this).mutex.lock();
-                // Hash any bytes that arrived after libarchive hit
-                // end-of-archive so the integrity digest covers the full
-                // response (tar zero-padding, gzip footer). Skip this once
-                // an error is recorded — the digest won't be checked anyway.
                 if (*this).fail.is_none() && !(*this).pending.is_empty() {
                     (*this).hasher.update(&(*this).pending);
                 }
-                // After EOF/failure we stop feeding libarchive but must keep
-                // consuming (and discarding) chunks until the HTTP thread
-                // closes the stream; freeing ourselves earlier would let the
-                // next `notify` dereference a dead pointer.
                 (*this).pending.clear();
                 let closed = (*this).closed;
                 let http_err = (*this).http_err;
                 (*this).mutex.unlock();
-                // A transport error that arrives *after* libarchive reached
-                // EOF (e.g. the server RSTs the connection once the last
-                // byte is on the wire) must not override a successful
-                // extraction; the integrity check in `populate_result()` is
-                // the sole arbiter of correctness once `Done` is reached.
                 if let Some(e) = http_err {
                     if (*this).fail.is_none() && (*this).phase != Phase::Done {
                         (*this).fail = Some(e);
@@ -466,13 +392,6 @@ impl TarballStream {
                 core::mem::swap(&mut (*this).reading, &mut (*this).pending);
                 (*this).read_pos = 0;
             } else {
-                // libarchive still holds a slice into `reading` (the read
-                // callback contract keeps the last-returned buffer valid until
-                // the next call). Appending would realloc and invalidate that
-                // slice, so instead shift the unconsumed tail down and append
-                // in place — the callback is not running concurrently with us
-                // (single drain at a time) and will be re-primed with the new
-                // base on its next invocation.
                 let read_pos = (*this).read_pos;
                 (*this).reading.drain_front(read_pos);
                 (*this).read_pos = 0;
@@ -529,10 +448,6 @@ impl TarballStream {
                                 return Ok(());
                             }
                             lib::Result::Ok | lib::Result::Warn => {
-                                // libarchive returned OK/WARN with a valid entry
-                                // pointer owned by `archive`; it stays valid until
-                                // the next `read_next_header`. No other Rust
-                                // reference to it exists.
                                 (*this).begin_entry(&mut *entry)?;
                             }
                             lib::Result::Failed | lib::Result::Fatal => {
@@ -695,10 +610,6 @@ impl TarballStream {
 
     fn close_output_file(&mut self) {
         if let Some(fd) = self.out_fd {
-            // Same trailing-hole handling as `Archive.readDataIntoFd`:
-            // extend the file to cover the furthest block we were asked
-            // to write even if the pwrite/lseek fallback path left
-            // `actual_offset` behind.
             if self.entry_final_offset > self.entry_actual_offset {
                 let _ = bun_sys::ftruncate(fd, self.entry_final_offset);
             }
@@ -718,11 +629,6 @@ impl TarballStream {
 
         if self.want_first_dirname {
             self.want_first_dirname = false;
-            // GitHub's archive API always emits an explicit `repo-sha/`
-            // directory entry first, which is what the buffered path
-            // relies on. Take only the leading component so a tarball
-            // whose first member is `repo-sha/file` (no directory entry)
-            // still yields the correct cache-folder name.
             let mut root_it = pathname[..]
                 .split(|c| *c == ('/' as OSPathChar))
                 .filter(|s| !s.is_empty());
@@ -766,12 +672,6 @@ impl TarballStream {
             self.out_fd = None;
             return Ok(());
         }
-        // tokenizeScalar.rest() — need byte offset of remainder, not just
-        // iterator. `split().filter()` loses that, so use a manual
-        // index-of-first-'/' + skip-leading-'/' instead. The result is fed
-        // straight to `normalize_buf_t` (which takes `&[OSPathChar]`, not a
-        // NUL-terminated slice) so there is no need to reconstruct an
-        // `OSPathSliceZ` suffix view here.
         let rest: &[OSPathChar] = tokenize_rest_after_first(&pathname[..]);
 
         let mut norm_buf = OSPathBuffer::uninit();
@@ -787,11 +687,6 @@ impl TarballStream {
             self.out_fd = None;
             return Ok(());
         }
-        // `normalize_buf_t` collapses interior `..` but leaves a leading `..`
-        // on a relative input. Reject those so `openat(dest_fd, ...)` can
-        // never escape the temp extraction root. `Archiver.extractToDir`
-        // sees the same normalised path; this check is belt-and-braces on
-        // top of the integrity gate.
         if path.len() >= 2
             && path[0] == ('.' as OSPathChar)
             && path[1] == ('.' as OSPathChar)
@@ -819,10 +714,6 @@ impl TarballStream {
         let path_slice: &[OSPathChar] = &path[..];
         let dest = self.dest.unwrap();
 
-        // Reject any entry whose path traverses a symlink created earlier in
-        // this extraction; the kernel would follow it and the entry could land
-        // outside the extraction root. Same defense as the buffered extractor
-        // in `Archiver::extract_to_dir`.
         #[cfg(unix)]
         if bun_libarchive::path_traverses_created_symlink(path_slice, &self.created_symlinks) {
             self.phase = Phase::WantData;
@@ -883,12 +774,6 @@ impl TarballStream {
         Ok(())
     }
 
-    /// Write one data block from `archive_read_data_block`. Mirrors the
-    /// sparse/pwrite handling in `Archive.readDataIntoFd` but operates on a
-    /// single block so it can be interleaved with ARCHIVE_RETRY yields.
-    /// `entry_actual_offset` / `entry_final_offset` persist across calls so
-    /// `close_output_file` can perform the same trailing `ftruncate` the
-    /// buffered path does after its block loop.
     fn write_data_block(&mut self, fd: Fd, block: &lib::Block) -> Result<(), bun_core::Error> {
         let file = bun_sys::File::borrow(&fd);
         let data = block.bytes;
@@ -1011,13 +896,6 @@ impl TarballStream {
                     .delete_tree((*this).tmpname.as_bytes());
             }
 
-            // The `Box<TarballStream>` lives in `(*network).tarball_stream`
-            // (runTasks.rs:1863 stores `Some(heap::take(init(..)))` there). Take
-            // it out via the Option and drop the Box — this both runs `Drop` and
-            // leaves `tarball_stream = None` so `HiveArray::put`'s
-            // `drop_in_place<NetworkTask>` (1e76047) does not double-free a
-            // dangling Box. Before 1e76047 the dangling `Some` was harmless
-            // (overwritten on next `get()`); now it use-after-frees.
             debug_assert!(
                 (*network).tarball_stream.as_deref().map(std::ptr::from_ref)
                     == Some(this.cast_const()),
@@ -1208,12 +1086,6 @@ impl Drop for TarballStream {
     }
 }
 
-// Safe-fn: only ever invoked by `ThreadPool` via the `callback` fn-pointer
-// with the `*mut Task` we registered in `init()` (`drain_task.callback =
-// drain_callback`). The thread-pool contract — not the Rust caller —
-// guarantees `task` is live and points at `TarballStream.drain_task`, so the
-// preconditions of both unsafe ops below are discharged locally. Safe `fn`
-// coerces to the `unsafe fn(*mut Task)` field type.
 fn drain_callback(task: *mut thread_pool::Task) {
     // SAFETY: thread-pool callback contract — `task` points to
     // `TarballStream.drain_task`; recover the parent via offset_of.
@@ -1306,10 +1178,6 @@ extern "C" fn archive_read_callback(
         return 0;
     }
 
-    // Tell libarchive to unwind with a resumable status. The BUN PATCHes
-    // in vendor/libarchive make every layer (filter_ahead → gzip → tar)
-    // preserve its state and propagate ARCHIVE_RETRY to our `step()`
-    // loop, which then returns so this worker can be reused.
     lib::Result::Retry as lib::la_ssize_t
 }
 
@@ -1320,13 +1188,6 @@ fn open_output_file(
     mode: Mode,
     nofollow: bool,
 ) -> Result<Fd, bun_core::Error> {
-    // `path_traverses_created_symlink` is a lexical check: on filesystems that
-    // alias differently-encoded names (Unicode NFC/NFD normalization on
-    // APFS/HFS+), a path component can reach a created symlink without
-    // byte-matching its recorded path. Once this extraction has created any
-    // symlink, ask the kernel to refuse to follow symlinks while opening file
-    // entries. `NOFOLLOW_ANY` is 0 on non-Darwin targets. Same defense as the
-    // buffered extractor in `Archiver::extract_to_dir`.
     let flags = if nofollow {
         O::WRONLY | O::CREAT | O::TRUNC | O::NOFOLLOW_ANY
     } else {
@@ -1421,13 +1282,6 @@ fn make_symlink(
         return false;
     }
     {
-        // Normalize `symlink_dir/target` as a *relative* path with leading
-        // `..` preserved, and reject targets that climb above the extraction
-        // root. A fake absolute root cannot be used here: POSIX normalization
-        // clamps excess `..` at `/`, so a target like `../../packages/x`
-        // would normalize back under the fake root while the kernel still
-        // resolves the raw `..` components and escapes the extraction
-        // directory.
         let symlink_dir = bun_paths::dirname(path_slice).unwrap_or(b"");
         let target_bytes = target.as_bytes();
         let mut seen_named_component = false;
@@ -1506,12 +1360,6 @@ fn apply_windows_npm_path_escapes(path: OSPathZMut) {
     }
 }
 
-// `std.mem.tokenizeScalar(OSPathChar, s, '/')` followed by one `next()` then
-// `.rest()`: Zig's `TokenIterator.rest()` first SKIPS any delimiters at the
-// current index (vendor/zig/lib/std/mem.zig) before returning
-// `buffer[index..]`, so for `"package/index.js"` the result is `"index.js"`
-// (no leading `/`).
-// TODO(port): Phase B — hoist into bun_str or bun_paths if reused elsewhere.
 fn tokenize_rest_after_first(s: &[OSPathChar]) -> &[OSPathChar] {
     let mut i = 0;
     while i < s.len() && s[i] == ('/' as OSPathChar) {

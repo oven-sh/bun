@@ -76,37 +76,6 @@ impl CallFrame {
         }
     }
 
-    /// From JavaScriptCore/interpreter/CallFrame.h
-    ///
-    ///   |          ......            |   |
-    ///   +----------------------------+   |
-    ///   |           argN             |   v  lower address
-    ///   +----------------------------+
-    ///   |           arg1             |
-    ///   +----------------------------+
-    ///   |           arg0             |
-    ///   +----------------------------+
-    ///   |           this             |
-    ///   +----------------------------+
-    ///   | argumentCountIncludingThis |
-    ///   +----------------------------+
-    ///   |          callee            |
-    ///   +----------------------------+
-    ///   |        codeBlock           |
-    ///   +----------------------------+
-    ///   |      return-address        |
-    ///   +----------------------------+
-    ///   |       callerFrame          |
-    ///   +----------------------------+  <- callee's cfr is pointing this address
-    ///   |          local0            |
-    ///   +----------------------------+
-    ///   |          local1            |
-    ///   +----------------------------+
-    ///   |          localN            |
-    ///   +----------------------------+
-    ///   |          ......            |
-    ///
-    /// The proper return type of this should be []Register, but
     #[inline]
     fn as_unsafe_js_value_array(&self) -> *const JSValue {
         // SAFETY: CallFrame is an opaque handle whose address IS the base of the
@@ -139,10 +108,6 @@ impl CallFrame {
         }
     }
 
-    /// Do not use this function. Migration path:
-    /// arguments(n).ptr[k] -> arguments_as_array::<n>()[k]
-    /// arguments(n).slice() -> arguments()
-    /// arguments(n).mut() -> `let mut args = arguments_as_array::<n>(); &mut args`
     pub fn arguments_old<const MAX: usize>(&self) -> Arguments<MAX> {
         let slice = self.arguments();
         debug_assert!(MAX <= 15);
@@ -283,27 +248,12 @@ impl<'a> Iterator<'a> {
     }
 }
 
-/// This is an advanced iterator struct which is used by various APIs. In
-/// Node.fs, `will_be_async` is set to true which allows string/path APIs to
-/// know if they have to do threadsafe clones.
-///
-/// Prefer `Iterator` for a simpler iterator.
 pub struct ArgumentsSlice<'a> {
-    /// Backing storage for the remaining-args view. Both [`Self::init`] and
-    /// [`Self::init_async`] borrow — `all: &'a [JSValue]` already ties this
-    /// struct's lifetime to the source slice, so the heap-owned dupe Zig's
-    /// `initAsync` does buys nothing here (it could not outlive `'a`). Kept as
-    /// `Cow` so a future caller that does own its args can pass `Owned`
-    /// without changing the type.
     remaining_buf: Cow<'a, [JSValue]>,
     /// Cursor into `remaining_buf`; advances on `eat()`. Replaces Zig's
     /// `remaining.ptr += 1` reslice (which a `Cow` can't express in-place).
     remaining_start: usize,
     pub vm: &'a VirtualMachine,
-    /// Zig: `bun.ArenaAllocator` (= `std.heap.ArenaAllocator`), which is **lazy** —
-    /// `init()` allocates nothing. The Rust `bun_alloc::Arena` is a `MimallocArena`
-    /// whose `new()` calls `mi_heap_new()` eagerly, so we keep it `None` until a
-    /// caller actually needs scratch storage (currently none do in the Rust port).
     pub arena: Option<bun_alloc::Arena>,
     pub all: &'a [JSValue],
     pub threw: bool,
@@ -374,10 +324,6 @@ impl<'a> ArgumentsSlice<'a> {
     }
 
     pub fn init_async(vm: &'a VirtualMachine, slice: &'a [JSValue]) -> ArgumentsSlice<'a> {
-        // Spec (CallFrame.zig:258-265): `.remaining = bun.default_allocator.dupe(jsc.JSValue, slice)`.
-        // In the Rust port `all: &'a [JSValue]` already pins the struct lifetime to `slice`, so a
-        // heap-owned dupe of `remaining` cannot outlive `slice` anyway — borrow instead of copying.
-        // `all` stays borrowed (matches Zig) so `protect_eat` index math holds.
         ArgumentsSlice {
             remaining_buf: Cow::Borrowed(slice),
             remaining_start: 0,
@@ -421,12 +367,6 @@ impl<'a> Drop for ArgumentsSlice<'a> {
     }
 }
 
-// TODO(port): move to jsc_sys
-//
-// `CallFrame`/`VM`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles;
-// `&T` is ABI-identical to non-null `*const T`. Out-params are exclusive `&mut`
-// to plain `#[repr(C)]` PODs. `describeFrame` returns a raw C string that the
-// caller must NUL-scan, so it stays `unsafe fn`.
 unsafe extern "C" {
     safe fn Bun__CallFrame__isFromBunMain(cf: &CallFrame, vm: &VM) -> bool;
     safe fn Bun__CallFrame__getCallerSrcLoc(

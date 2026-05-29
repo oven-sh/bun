@@ -192,11 +192,6 @@ pub enum BrotliDecoderResult {
     needs_more_output = 3,
 }
 
-// NOTE: brotli_c.zig (translate-c output) defines this error-code table three times
-// (loose `BROTLI_DECODER_*` consts, a subset `BrotliDecoderErrorCode` enum, and the
-// full `BrotliDecoderErrorCode2` enum). They are intentionally collapsed here into the
-// single complete enum below; `BrotliDecoderErrorCode` is kept as an alias for FFI
-// signatures. Do not re-add the duplicates on a mechanical re-port.
 pub type BrotliDecoderErrorCode = BrotliDecoderErrorCode2;
 
 #[repr(i32)] // Zig: enum(c_int)

@@ -1,22 +1,12 @@
 use crate::string::{ZStr, strings};
 use bun_alloc::AllocError;
 
-/// VTable surface for `bun.ast.E.String` (CYCLEBREAK b0: GENUINE upward dep on
-/// `bun_ast::E::String`). Low tier defines the interface; high tier
-/// (`bun_js_parser`) provides `impl EStringRef for E::String`.
-/// PERF(port): was inline concrete type — cold path (formatter/writer).
 pub trait EStringRef {
     fn is_utf8(&self) -> bool;
     fn slice(&mut self) -> &[u8];
     fn slice16(&mut self) -> &[u16];
 }
 
-/// Layout-identical to Zig's `std.posix.iovec_const`
-/// (`extern struct { base: [*]const u8, len: usize }`), which is defined
-/// unconditionally for every target — it does NOT alias `uv_buf_t`/`WSABUF`
-/// on Windows (those have reversed field order and a `u32` len). The Zig
-/// spec `MutableString.toSocketBuffers` returns this shape on all platforms,
-/// so there is no `cfg(windows)` split.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct SocketBuffer {
@@ -32,11 +22,6 @@ pub struct MutableString {
     // Zig field `std.mem.Allocator` param — deleted (global mimalloc).
     pub list: Vec<u8>,
 }
-
-// Zig: `Npm.Registry.BodyPool = ObjectPool(MutableString, MutableString.init2048, true, 8)`
-// (src/install/npm.zig). The `bun_collections::pool::ObjectPoolType` impl
-// lives in `bun_collections` (trait owner) to avoid a `bun_core →
-// bun_collections` dep cycle now that `MutableString` is in `bun_core`.
 
 impl MutableString {
     pub fn init2048() -> Result<MutableString, AllocError> {
@@ -65,13 +50,6 @@ impl MutableString {
 
     // Zig `deinit` only freed `list`; `Vec<u8>` drops automatically — no `Drop` impl needed.
 
-    /// Zig: `self.list.expandToCapacity()` — set `len = capacity` so callers
-    /// can index into the spare region (e.g. `read()` into `&mut list[n..]`).
-    ///
-    /// Matches Zig semantics: the new tail is left **uninitialized** — callers
-    /// must treat `list[old_len..]` as write-only until overwritten (typically
-    /// by `read()`). The previous port zero-filled here, which memset the
-    /// entire pooled scratch buffer before every `package.json` read.
     #[inline]
     pub fn expand_to_capacity(&mut self) {
         // Zero only the spare region so the exposed tail is defined (Zig's
@@ -156,10 +134,6 @@ impl MutableString {
     /// identifier, you're going to potentially cause trouble with non-BMP code
     /// points in target environments that don't support bracketed Unicode escapes.
     pub fn ensure_valid_identifier(str: &[u8]) -> Result<Box<[u8]>, AllocError> {
-        // TODO(port): Zig returned `[]const u8` which could be either the input
-        // borrow or a fresh allocation. Rust cannot express that without a
-        // lifetime + Cow; for now we always return owned `Box<[u8]>` and copy
-        // on the borrow paths. Consider `Cow<'a, [u8]>`.
         if str.is_empty() {
             return Ok(Box::<[u8]>::from(b"_".as_slice()));
         }
@@ -308,10 +282,6 @@ impl MutableString {
     }
 
     pub fn inflate(&mut self, amount: usize) -> Result<(), AllocError> {
-        // Zig MutableString.inflate: `list.resize(amount)` leaves new bytes
-        // uninitialized. Callers always overwrite the inflated region, so the
-        // zero-fill here is technically redundant — but it lowers to a single
-        // memset and avoids `clippy::uninit_vec` / a `set_len` over uninit bytes.
         self.list.resize(amount, 0);
         Ok(())
     }
@@ -543,13 +513,6 @@ impl<'a> BufferedWriter<'a> {
 
         if pending.len() >= Self::MAX {
             self.flush()?;
-            // PORT NOTE: Zig wrote into `this.remain()[0..bytes.len*2]` here,
-            // which after `flush()` is `this.buffer[0..bytes.len*2]` — but
-            // `bytes.len*2 > MAX`, so that indexes past the stack buffer. This
-            // looks like a latent bug in the Zig (should write into
-            // `context.list`). Porting the apparent intent: write into the
-            // freshly-reserved context.list tail.
-            // TODO(port): confirm and fix upstream.
             let old = self.context.list.len();
             // SAFETY: copy_utf16_into_utf8 writes <= bytes.len*2; trimmed below.
             let tail =

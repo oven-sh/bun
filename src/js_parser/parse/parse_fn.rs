@@ -117,11 +117,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 p.pop_and_discard_scope(scope_index);
 
-                // Discard the fake block scope introduced above. A forward declaration
-                // emits nothing (`S::TypeScript`), so the block must be removed from
-                // `scopes_in_order` too — a plain `pop_scope()` only updates
-                // `current_scope` and would leave the block orphaned in the scope order,
-                // desyncing the visit pass (scope mismatch / pop past the topmost scope).
                 if has_if_scope {
                     p.pop_and_discard_scope(if_stmt_scope_index);
                 }
@@ -136,12 +131,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.pop_scope();
 
-        // Only declare the function after we know if it had a body or not. Otherwise
-        // TypeScript code such as this will double-declare the symbol:
-        //
-        //     function foo(): void;
-        //     function foo(): void {}
-        //
         if let Some(n) = name.as_mut() {
             let kind = if is_generator || is_async {
                 js_ast::symbol::Kind::GeneratorOrAsyncFunction
@@ -363,10 +352,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             func.args = bun_ast::StoreSlice::new_mut(args.into_bump_slice_mut());
         }
 
-        // Reserve the special name "arguments" in this scope. This ensures that it
-        // shadows any variable called "arguments" in any parent scopes. But only do
-        // this if it wasn't already declared above because arguments are allowed to
-        // be called "arguments", in which case the real "arguments" is inaccessible.
         if !p.current_scope().members.contains_key(arguments_str) {
             func.arguments_ref = Some(
                 p.declare_symbol_maybe_generated::<false>(

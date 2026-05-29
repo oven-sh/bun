@@ -44,10 +44,6 @@ impl<A> MaybeOwned<A> {
     /// will occur.
     pub const BORROWED: Self = Self::init_borrowed();
 
-    /// Creates a `MaybeOwned` allocator that owns memory, and forwards to a specific
-    /// allocator.
-    ///
-    /// Allocations are forwarded to `parent_alloc`.
     pub fn init_owned(parent_alloc: A) -> Self {
         Self {
             _parent: Some(parent_alloc),
@@ -77,10 +73,5 @@ impl<A> MaybeOwned<A> {
         }
     }
 }
-
-// Zig `deinit` only forwarded to `bun.memory.deinit(parent_alloc)` on the owned field.
-// Per PORTING.md (Idiom map: `pub fn deinit`), that is exactly field drop glue on
-// `_parent: Option<A>`, so no explicit `Drop` impl — keeping one would also forbid
-// moving `self._parent` out in `into_parent(self)`.
 
 // ported from: src/bun_alloc/maybe_owned.zig

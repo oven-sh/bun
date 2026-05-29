@@ -23,12 +23,6 @@ use core::fmt;
 /// paths compose with the rest of the codebase via `?`.
 pub type Result<T = ()> = core::result::Result<T, bun_core::Error>;
 
-// ════════════════════════════════════════════════════════════════════════════
-// trait Write — canonical definition lives in `bun_core::io` so leaf crates
-// (`bun_core`, `bun_collections`, `bun_url`) can implement it without an
-// upward dep on this crate. Re-exported here so downstream keeps spelling it
-// `bun_io::Write` / `bun_io::IntLe`.
-// ════════════════════════════════════════════════════════════════════════════
 pub use bun_core::write::{IntBe, IntLe, Write};
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -71,10 +65,6 @@ impl Write for DiscardingWriter {
 // FixedBufferStream — cursor over an in-memory buffer
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Port of Zig `std.io.FixedBufferStream(B)` — a seekable cursor over a byte
-/// buffer that can act as both a reader (when `B: AsRef<[u8]>`) and a writer
-/// (when `B: AsMut<[u8]>`). `pos` and `buffer` are public to mirror the Zig
-/// struct fields.
 pub struct FixedBufferStream<B> {
     pub buffer: B,
     pub pos: usize,
@@ -221,16 +211,6 @@ impl<B: AsMut<[u8]>> Write for FixedBufferStream<B> {
 // BufWriter — borrowed-buffer buffered writer
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Buffered writer over a caller-provided scratch slice.
-///
-/// Port of Zig `std.fs.File.writerStreaming(&buf)` / `std.io.BufferedWriter`:
-/// the caller owns the byte buffer (typically a stack `[0u8; 4096]`), so this
-/// type performs **no heap allocation**. Writes accumulate into `buf` and are
-/// flushed to `inner` when full or on explicit [`flush`](Write::flush).
-///
-/// `Drop` does **not** flush — matching Zig semantics, where forgetting to
-/// `flush()` is a bug the caller owns (and flushing in `Drop` would swallow the
-/// error). Callers must `writer.flush()?` before the buffer goes out of scope.
 pub struct BufWriter<'a, W: Write> {
     buf: &'a mut [u8],
     pos: usize,
@@ -308,12 +288,6 @@ impl<'a, W: Write> Write for BufWriter<'a, W> {
 // FmtAdapter — core::fmt::Write → bun_io::Write bridge
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Wrap a `core::fmt::Write` sink (typically `&mut core::fmt::Formatter`) so it
-/// can be passed where a byte-level [`Write`] is expected.
-///
-/// Bytes are routed through `write_str` after a UTF-8 check; non-UTF-8 input is
-/// lossily decoded (same behaviour as Zig's `{s}` formatter on arbitrary
-/// bytes — it never fails on encoding, only on the underlying writer).
 pub struct FmtAdapter<'a, W: ?Sized = fmt::Formatter<'a>> {
     inner: &'a mut W,
 }
@@ -338,11 +312,6 @@ impl<W: fmt::Write + ?Sized> fmt::Write for FmtAdapter<'_, W> {
     }
 }
 
-// `W: Sized` (no `?Sized`) — together with [`AsFmt`] (the inverse adapter),
-// `?Sized` here would let rustc probe the infinite tower
-// `FmtAdapter<AsFmt<FmtAdapter<AsFmt<…>>>>` when checking `dyn Write: Write`,
-// which is E0275. Every caller wraps a concrete sized formatter, so dropping
-// `?Sized` on this side breaks the cycle without losing any instantiation.
 impl<W: fmt::Write> Write for FmtAdapter<'_, W> {
     fn write_all(&mut self, buf: &[u8]) -> Result<()> {
         // Fast path: valid UTF-8 (overwhelmingly the case for our printers).
@@ -368,21 +337,6 @@ impl<W: fmt::Write> Write for FmtAdapter<'_, W> {
 // AsFmt — bun_io::Write → core::fmt::Write bridge
 // ════════════════════════════════════════════════════════════════════════════
 
-/// View a byte sink (`W: bun_io::Write`) as a `core::fmt::Write`.
-///
-/// Inverse of [`FmtAdapter`]. Use this when a callee is typed against
-/// `impl core::fmt::Write` (e.g. `Display`, const-generic colour formatters,
-/// `Msg::write_format`) but you hold a `bun_io::Write` byte sink — `Vec<u8>`,
-/// `bun_core::io::Writer`, `&mut dyn Write`, etc.
-///
-/// `write_str` routes through `write_all(s.as_bytes())`; the underlying I/O
-/// error is stashed in [`err`](AsFmt::err) so callers that care can recover it
-/// instead of seeing only the unit `fmt::Error`. Callers that don't care just
-/// drop the wrapper.
-///
-/// Erased to `dyn Write` (not generic over `W`) so this type does not pair
-/// with [`FmtAdapter`]'s `impl Write` to form an infinite
-/// `FmtAdapter<AsFmt<…>>` tower (E0275) — see the note on that impl.
 pub struct AsFmt<'a> {
     sink: &'a mut dyn Write,
     /// Last I/O error from the underlying sink, if `write_str` failed.
@@ -390,10 +344,6 @@ pub struct AsFmt<'a> {
 }
 
 impl<'a> AsFmt<'a> {
-    /// Wrap any `bun_io::Write` sink. Takes `&mut dyn Write` directly so the
-    /// unsize coercion happens at the call site (where the concrete `W` is
-    /// known) rather than inside a `?Sized` generic — that lets both `&mut Vec`
-    /// (auto-coerced) and an existing `&mut dyn Write` pass with one signature.
     #[inline]
     pub fn new(sink: &'a mut dyn Write) -> Self {
         Self { sink, err: None }

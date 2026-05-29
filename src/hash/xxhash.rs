@@ -29,11 +29,6 @@ impl XxHash64 {
     }
 }
 
-/// Streaming `std.hash.XxHash64` — used by the bundler's `ContentHasher`
-/// (length-prefixed chunk hashing across many `update()` calls before a single
-/// `digest()`), plus the dev-server source-map hash and the resolver stat hash.
-/// Wraps `bun_highway::XxHash64State` so the workspace has exactly one xxhash
-/// implementation; output is bit-identical to Zig's `std.hash.XxHash64`.
 pub struct XxHash64Streaming(bun_highway::XxHash64State);
 
 impl XxHash64Streaming {

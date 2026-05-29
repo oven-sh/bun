@@ -10,10 +10,6 @@ bun_core::declare_scope!(Loop, visible);
 
 // ───────────────────────────── PosixLoop ─────────────────────────────
 
-// TODO(port): Zig has field-level `align(16)` on `internal_loop_data` and
-// `ready_polls`. Rust cannot align individual fields directly; `#[repr(C, align(16))]`
-// covers the struct head, but `ready_polls` may need explicit padding to match
-// the C layout in usockets. Verify with a static size/offset assertion.
 #[repr(C, align(16))]
 pub struct PosixLoop {
     pub internal_loop_data: InternalLoopData,
@@ -65,10 +61,6 @@ pub trait LoopHandler {
     const POST: Option<unsafe extern "C" fn(*mut Loop)> = None;
 }
 
-// `impl PosixLoop` is posix-only: every method calls into `c::*` whose
-// signatures are typed `*mut Loop`, and on Windows `Loop = WindowsLoop` so
-// `&mut PosixLoop` does not coerce. Windows callers go through the
-// `impl WindowsLoop` block below (same surface, different routing).
 #[cfg(not(windows))]
 impl PosixLoop {
     pub fn uncork(&mut self) {
@@ -85,14 +77,6 @@ impl PosixLoop {
         self.internal_loop_data.iteration_nr
     }
 
-    /// Copy out the ready-poll event at `current_ready_poll`.
-    ///
-    /// Safe back-reference accessor consolidating the C-dispatch
-    /// `(*loop_).ready_polls[(*loop_).current_ready_poll]` raw-deref pattern
-    /// into one short-lived `&self` borrow. `EventType` is POD (`epoll_event`
-    /// / `kevent64_s` / `kevent` — all `Copy` in `libc`), so the by-value
-    /// return is a stack copy the caller may borrow across re-entrant handler
-    /// dispatch without aliasing the loop.
     #[inline]
     pub fn current_ready_event(&self) -> EventType {
         let idx = usize::try_from(self.current_ready_poll).expect("int cast");
@@ -225,11 +209,6 @@ impl PosixLoop {
         };
     }
 
-    /// Free everything queued on `loop->data.closed_head` /
-    /// `closed_connecting_head`. Normally `loop_post()` does this once per
-    /// tick; at process/Worker teardown the loop has stopped, so
-    /// `closeAllSocketGroups()` must drain it explicitly or every just-closed
-    /// `us_socket_t` (libc-allocated) shows up as an LSAN leak.
     pub fn drain_closed_sockets(&mut self) {
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_internal_free_closed_sockets(self) };
@@ -243,10 +222,6 @@ impl PosixLoop {
         unsafe { c::us_loop_close_all_groups(self) != 0 }
     }
 
-    // PORT NOTE: Zig `nextTick` took a `comptime deferCallback: fn(UserType) void` and
-    // synthesized a per-callsite `extern "C"` trampoline that casts `*anyopaque` → `UserType`.
-    // Rust cannot monomorphize an `extern "C"` fn over a fn-pointer const generic on stable,
-    // so callers provide the C-ABI trampoline directly.
     pub fn next_tick(
         &mut self,
         user_data: *mut c_void,
@@ -320,12 +295,6 @@ impl PosixLoop {
     }
 }
 
-/// Replaces Zig `fn NewHandler(comptime UserType, comptime callback_fn) type`.
-/// Stores the loop ref and the C-ABI callback so it can be unregistered later.
-///
-/// Stores `*mut Loop` (not `&Loop`) to mirror Zig's freely-aliasing `loop: *Loop`
-/// — the loop is C-owned/heap-allocated and the FFI remove calls mutate it, so a
-/// shared `&Loop` would make the `*const → *mut` cast UB when written through.
 pub struct Handler {
     pub loop_: *mut Loop,
     ctx: *mut c_void,
@@ -384,12 +353,6 @@ impl WindowsLoop {
         self.internal_loop_data.iteration_nr
     }
 
-    /// Shared borrow of the backing libuv loop.
-    ///
-    /// `uv_loop` is a back-reference set once by C `us_create_loop` and never
-    /// reassigned for the `WindowsLoop`'s lifetime, so projecting `&uv::Loop`
-    /// from `&self` is sound. Consolidates the `unsafe { (*self.uv_loop).… }`
-    /// pattern (one `unsafe`, N safe callers).
     #[inline]
     pub fn uv(&self) -> &uv::Loop {
         // SAFETY: `uv_loop` is non-null after `us_create_loop` and remains
@@ -398,11 +361,6 @@ impl WindowsLoop {
         unsafe { &*self.uv_loop }
     }
 
-    /// Exclusive borrow of the backing libuv loop. Used only for the
-    /// `active_handles` bookkeeping field (Bun-private; libuv itself only
-    /// reads it inside `uv__loop_alive`). `&mut self` provides exclusivity
-    /// over the wrapper; the `uv_loop_t` is the per-thread singleton so no
-    /// other Rust `&mut` to it is live on this thread.
     #[inline]
     fn uv_mut(&mut self) -> &mut uv::Loop {
         // SAFETY: see `uv()` for liveness; `&mut self` is the sole Rust
@@ -583,12 +541,6 @@ pub(crate) type DeferCb = unsafe extern "C" fn(ctx: *mut c_void);
 mod c {
     use super::*;
 
-    // `Loop` (= `PosixLoop`/`WindowsLoop`) is a sized `#[repr(C)]` mirror of the
-    // C struct (NOT an opaque ZST with `UnsafeCell`), so the safe-fn-with-`&mut`
-    // pattern does not apply: `&mut Loop` at the FFI boundary would emit LLVM
-    // `noalias` over real fields, and the reentrant callees (`us_loop_run`,
-    // `us_loop_close_all_groups`, …) dispatch Rust callbacks that touch the same
-    // loop via `Loop::get()`. Keep all loop-taking decls as raw `*mut Loop`.
     unsafe extern "C" {
         pub(super) fn us_create_loop(
             hint: *mut c_void,
@@ -619,13 +571,6 @@ mod c {
         pub(super) fn uws_loop_date_header_timer_update(loop_: *mut Loop);
     }
 }
-// Re-exported raw externs for cross-thread callers (e.g. bun_http's
-// `HTTPThread::wakeup`, bun_io's `WindowsWaker`) that hold only a `*mut Loop`
-// and MUST NOT form a `&mut Loop` via `Loop::wakeup`/`Loop::run` — see the
-// noalias warning on `mod c` above. `us_loop_run` is included because the
-// event-loop thread parks inside it while worker threads call
-// `us_wakeup_loop` concurrently; routing either through a `&mut self`
-// receiver would create two live `&mut Loop` to the same singleton (UB).
 pub use c::{us_loop_run, us_wakeup_loop};
 
 // ported from: src/uws_sys/Loop.zig

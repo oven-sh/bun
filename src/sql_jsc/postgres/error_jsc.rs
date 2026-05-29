@@ -15,11 +15,6 @@ pub(crate) fn create_postgres_error(
         b"code",
         bun_string_jsc::create_utf8_for_js(global, options.code)?,
     );
-    // PORT NOTE: Zig used `inline for (std.meta.fields(PostgresErrorOptions))` + `@typeInfo`
-    // to reflect over every optional field and `put` it by name when `Some`. Rust has no
-    // field reflection; expand by hand. Property names must match the Zig struct field
-    // names verbatim (camelCase: `internalPosition`, `internalQuery`, `dataType`) since
-    // the JS consumer reads `options.internalPosition` etc.
     let optional_fields: [(&'static [u8], Option<&[u8]>); 16] = [
         (b"errno", options.errno),
         (b"detail", options.detail),

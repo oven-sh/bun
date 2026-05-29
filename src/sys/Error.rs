@@ -91,10 +91,6 @@ impl IntoErrnoInt for u16 {
 impl IntoErrnoInt for i32 {
     #[inline]
     fn into_errno_int(self) -> Int {
-        // PORT NOTE: matches Error.zig fromCodeInt:
-        // `@intCast(if (Environment.isWindows) @abs(errno) else errno)` — only Windows
-        // (libuv negative codes) takes the absolute value; on POSIX a negative errno is
-        // a caller bug and `@intCast` would trap in safe builds, so panic here too.
         #[cfg(windows)]
         {
             self.unsigned_abs() as Int
@@ -107,11 +103,6 @@ impl IntoErrnoInt for i32 {
 }
 
 impl Error {
-    /// `Error::new(errno, tag)` — Windows-only call sites in `sys/lib.rs` and
-    /// `sys_uv.rs` were ported from `Maybe(T).errEnum`/`.errno`, which in Zig
-    /// accept `anytype` for the code. Dispatch via `IntoErrnoInt` so a single
-    /// constructor covers `E`, `SystemErrno`, raw `u16` (libuv `ReturnCode::errno`)
-    /// and `i32`.
     #[inline]
     pub fn new<C: IntoErrnoInt>(errno: C, syscall_tag: Tag) -> Error {
         Error {
@@ -121,10 +112,6 @@ impl Error {
         }
     }
 
-    /// `Some(err)` when a libuv `ReturnCode` is negative; `None` on success.
-    /// `ReturnCode::errno()` already maps the `UV_E*` code to the POSIX `E`
-    /// discriminant, so `from_libuv` stays at its default `false` (matches Zig
-    /// `ReturnCode.toError`, libuv.zig).
     #[cfg(windows)]
     #[inline]
     pub fn from_uv_rc(rc: crate::windows::libuv::ReturnCode, syscall_tag: Tag) -> Option<Error> {
@@ -179,11 +166,6 @@ impl Error {
         // discriminant constructor and fall back to SUCCESS for unmapped values.
         #[cfg(windows)]
         {
-            // `self.errno` already stores an E/SystemErrno *discriminant* (set via `E as Int`).
-            // Zig does `@as(E, @enumFromInt(this.errno))` — a direct discriminant cast. Do NOT
-            // route through `SystemErrno::init`: on Windows its u16/i32 entry points are the
-            // Win32/WSA/uv-error→errno *mapper*, not a discriminant validator, and would
-            // corrupt the value (e.g. EPERM=1 → Win32 INVALID_FUNCTION → EISDIR).
             E::try_from_raw(self.errno).unwrap_or(E::SUCCESS)
         }
         #[cfg(not(windows))]
@@ -253,11 +235,6 @@ impl Error {
         }
     }
 
-    /// Rust-only (no Zig `withDest`). Unlike `with_path`/`with_path_dest` (which
-    /// match Zig and reset `fd`/`from_libuv`), this only overlays `dest` and
-    /// preserves every other field — chained on a libuv-sourced error
-    /// (`from_libuv=true`, errno in the 4000-range) it must keep `from_libuv`
-    /// so `name()`/`msg()` still route through the uv→errno mapper.
     #[inline]
     pub fn with_dest(&self, dest: &[u8]) -> Error {
         Error {
@@ -313,10 +290,6 @@ impl Error {
                 let translated = crate::windows::translate_uv_error_to_e(-c_int::from(self.errno));
                 return Some(SystemErrno::from_raw(translated as u16));
             }
-            // `self.errno` may be out-of-range (TODO_ERRNO etc.); validate first.
-            // Do NOT call `SystemErrno::init` here — on Windows its u16/i32 entry points map
-            // Win32/WSA error codes to errnos and would corrupt a value that is already a
-            // SystemErrno discriminant (e.g. discriminant 1/EPERM → Win32(1) → EISDIR).
             E::try_from_raw(self.errno).map(|e| SystemErrno::from_raw(e as u16))
         }
         #[cfg(not(windows))]
@@ -355,10 +328,6 @@ impl Error {
         Some(coreutils_error_map::COREUTILS_ERROR_MAP[system_errno].as_bytes())
     }
 
-    /// Shared scaffolding for [`to_shell_system_error`] and [`to_system_error`].
-    /// Fills `errno`/`syscall`/`code`/`path`/`dest`/`fd`, leaves `message` empty,
-    /// and returns the looked-up `(code, label)` so each caller can build its own
-    /// `message` (shell: static label; node: formatted stack buffer).
     fn fill_system_error_common(
         &self,
         map: &enum_map::EnumMap<SystemErrno, &'static str>,
@@ -489,10 +458,6 @@ impl Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // We want to reuse the code from SystemError for formatting.
-        // But, we do not want to call String.createUTF8 on the path/dest strings
-        // because we're intending to pass them to writer.print()
-        // which will convert them back into UTF*.
         let mut that = self.without_path().to_shell_system_error();
         debug_assert!(that.path.tag() != bun_core::Tag::WTFStringImpl);
         debug_assert!(that.dest.tag() != bun_core::Tag::WTFStringImpl);
@@ -510,10 +475,6 @@ impl fmt::Display for Error {
 
 // ported from: src/sys/Error.zig
 
-// ──────────────────────────────────────────────────────────────────────────
-// `bun_core::output::ErrName` impls — orphan rule lets the higher tier (sys)
-// implement the lower-tier trait for its own types.
-// ──────────────────────────────────────────────────────────────────────────
 impl bun_core::output::ErrName for Error {
     fn name(&self) -> &[u8] {
         Error::name(self)
@@ -538,19 +499,11 @@ impl bun_core::output::ErrName for &Error {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// `ReturnCodeExt` — Zig's `ReturnCode::toError(.tag) ?Error` lives here (not
-// in `bun_libuv_sys`) because `Error`/`Tag` are higher-tier types.
-// ──────────────────────────────────────────────────────────────────────────
 #[cfg(windows)]
 pub trait ReturnCodeExt: Sized {
     /// `Some(err)` when negative; `None` on success. Mirrors Zig
     /// `ReturnCode.toError` — `from_libuv` stays at default `false`.
     fn to_error(self, syscall_tag: Tag) -> Option<Error>;
-    /// `Maybe(void)`-shape adapter: `Ok(())` on success, `Err` on negative rc.
-    /// Mirrors Zig's libuv wrappers (`Pipe.init` etc.) that hand back
-    /// `bun.sys.Maybe(void)` directly — `bun_libuv_sys` returns the raw
-    /// `ReturnCode` for layering, this trait promotes it.
     #[inline]
     fn to_result(self, syscall_tag: Tag) -> crate::Result<()> {
         match self.to_error(syscall_tag) {
@@ -564,10 +517,6 @@ pub trait ReturnCodeExt: Sized {
     fn as_err(self, syscall_tag: Tag) -> Option<Error> {
         self.to_error(syscall_tag)
     }
-    /// Zig: `rc.errEnum()` — translate the negative libuv errno to `bun.sys.E`.
-    /// `bun_libuv_sys::ReturnCode::err_enum()` only yields the raw `u16`
-    /// (layering: it can't name `E`); this overlay is what call sites that
-    /// mirror Zig's `req.result.errEnum()` actually want.
     fn err_enum_e(self) -> Option<crate::E>;
 }
 #[cfg(windows)]

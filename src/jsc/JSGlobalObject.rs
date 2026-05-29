@@ -16,29 +16,8 @@ use crate::{
 use bun_core::{Output, StackCheck, fmt as bun_fmt, perf};
 use bun_core::{OwnedString, String as BunString, strings};
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Opaque FFI handle (Nomicon pattern; !Send + !Sync + !Unpin).
-//
-// `UnsafeCell` opts the (zero) bytes out of the noalias/readonly guarantee so
-// `&JSGlobalObject → *mut JSGlobalObject` (and any C++ write behind it) is
-// sound under Stacked Borrows. Rust never reads or writes these bytes
-// directly; all access is via FFI.
-// ──────────────────────────────────────────────────────────────────────────────
 bun_opaque::opaque_ffi! { pub struct JSGlobalObject; }
 
-/// VM-lifetime handle to a `JSGlobalObject`, stored as a raw pointer.
-///
-/// Replaces the `&'static`-lifetime `JSGlobalObject` borrows scattered across
-/// heap structs. `'static` was a lie — the global lives as long as its
-/// `VirtualMachine`, not the process — and the lie forced every constructor to
-/// erase a short-lived `&JSGlobalObject` to `'static`. `GlobalRef`
-/// centralises that one `unsafe` inside [`Deref`] (the global outlives any
-/// struct that holds a `GlobalRef`; see `LIFETIMES.tsv` JSC_BORROW), and the
-/// `From<&JSGlobalObject>` impl makes construction safe at every call site.
-///
-/// `Copy` so it drops in for the old reference fields; `!Send + !Sync` via
-/// `BackRef<JSGlobalObject>` (since `JSGlobalObject: !Sync`), matching
-/// `JSGlobalObject`'s own auto-traits (single JS thread).
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct GlobalRef(bun_ptr::BackRef<JSGlobalObject>);
@@ -60,10 +39,6 @@ impl core::ops::Deref for GlobalRef {
     type Target = JSGlobalObject;
     #[inline(always)]
     fn deref(&self) -> &JSGlobalObject {
-        // Constructed only from a live `&JSGlobalObject`; the global is owned
-        // by the VM and outlives every JSC_BORROW holder (LIFETIMES.tsv).
-        // `BackRef::get` encapsulates the single deref for what was previously
-        // ~90 lifetime erasures to `'static`.
         self.0.get()
     }
 }
@@ -91,14 +66,6 @@ impl JSGlobalObject {
     }
 
     pub fn throw_stack_overflow(&self) -> JsError {
-        // Wrap the raw FFI throw in a validation scope (mirrors `VM::throw_error`).
-        // The Rust `#[bun_jsc::host_fn]` thunk inserts an `ExceptionValidationScope`
-        // one frame above us that the Zig `toJSHostFn` does not; with that scope
-        // present `~ThrowScope` inside `JSGlobalObject__throwStackOverflow` no
-        // longer sees its previous scope as above `topEntryFrame`, so it
-        // `simulateThrow()`s and leaves `m_needExceptionCheck` set. Observe the
-        // exception here so the caller's scope dtor doesn't assert "unchecked
-        // exception" under `BUN_JSC_validateExceptionChecks=1`.
         crate::validation_scope!(scope, self);
         JSGlobalObject__throwStackOverflow(self);
         scope.assert_exception_presence_matches(true);
@@ -234,17 +201,6 @@ impl JSGlobalObject {
         self.throw_value(err)
     }
 
-    /// Throw `TypeError: <name> is not constructable` with
-    /// `.code = "ERR_ILLEGAL_CONSTRUCTOR"`.
-    ///
-    /// Canonical body for hand-written `pub fn constructor` stubs whose
-    /// `.classes.ts` entry has `construct: true` but the class is not
-    /// user-instantiable. Matches the C++ default
-    /// (`JSDOMConstructorNotConstructable`, ErrorCode.cpp:2428) and Node.js.
-    ///
-    /// NOTE: do NOT add a stub that calls this when `.classes.ts` declares
-    /// `noConstructor: true` / `construct: false` — codegen omits the
-    /// `${T}Class__construct` thunk entirely, so the stub would be dead code.
     #[cold]
     pub fn throw_illegal_constructor(&self, name: &str) -> JsError {
         crate::ErrorCode::ILLEGAL_CONSTRUCTOR
@@ -356,10 +312,6 @@ impl JSGlobalObject {
         .throw()
     }
 
-    /// Throw an `ERR_INVALID_ARG_VALUE` when the invalid value is a property of an object.
-    /// Message depends on whether `expected` is present.
-    /// - "The property "{argname}" is invalid. Received {value}"
-    /// - "The property "{argname}" is invalid. Expected {expected}, received {value}"
     pub fn throw_invalid_argument_property_value(
         &self,
         argname: &[u8],
@@ -394,15 +346,7 @@ impl JSGlobalObject {
         }
     }
 
-    /// Returns a +1-ref'd `BunString` describing `value`'s type for error messages.
-    /// The result is wrapped in [`OwnedString`] so the ref is released on drop —
-    /// `bun_core::String` is `Copy` and has no `Drop`, so a bare `BunString`
-    /// here would leak (Zig spec does `defer actual_string_value.deref()`).
     pub fn determine_specific_type(global: &Self, value: JSValue) -> JsResult<OwnedString> {
-        // The C++ side opens a `DECLARE_THROW_SCOPE`; under
-        // `BUN_JSC_validateExceptionChecks=1` its dtor sets `m_needExceptionCheck`, so we
-        // must have a Rust-side scope live across the FFI call (and query it) rather than
-        // post-hoc `has_exception()` (whose own scope ctor would assert first).
         crate::top_scope!(scope, global);
         // `errdefer str.deref()` → wrapping immediately in OwnedString releases the
         // +1 ref on the early-return path below.
@@ -453,10 +397,6 @@ impl JSGlobalObject {
         .throw()
     }
 
-    /// "The {argname} argument must be of type {typename}. Received {value}"
-    ///
-    /// Accepts `&str`, `&[u8]`, or `b"..."` for `argname`/`typename` — Zig call
-    /// sites pass `[]const u8` literals, so the Rust port takes `AsRef<[u8]>`.
     pub fn throw_invalid_argument_type_value(
         &self,
         argname: impl AsRef<[u8]>,
@@ -781,10 +721,6 @@ impl JSGlobalObject {
         self.throw_value(err)
     }
 
-    /// Throw an Error from a formatted string.
-    ///
-    /// Note: If you are throwing an error within somewhere in the Bun API,
-    /// chances are you should be using `.err(...).throw()` instead.
     pub fn throw(&self, args: Arguments<'_>) -> JsError {
         let instance = self.create_error_instance(args);
         if instance.is_empty() {
@@ -795,28 +731,10 @@ impl JSGlobalObject {
     }
 
     pub fn throw_pretty(&self, args: Arguments<'_>) -> JsError {
-        // PORT NOTE: Zig switched on `Output.enable_ansi_colors_stderr` and
-        // rewrote the *format string* at comptime (`Output.prettyFmt(fmt,
-        // enabled)`). Rust can't rewrite the format string of an
-        // already-captured `Arguments<'_>`, so render first, then run the
-        // `<tag>` → ANSI/strip pass at runtime via `pretty_fmt_rt`.
-        //
-        // Zig routed through `createErrorInstance` which catches a mid-format
-        // `WriteFailed` (e.g. user `Symbol.toPrimitive` throws while
-        // stringifying the Received value). `pretty_fmt_rt` would `format!`
-        // into a `String`, and `format!` panics if a `Display` impl returns
-        // `fmt::Error` when the underlying writer didn't — so render via
-        // fallible `write!` here and mirror Zig's catch: clear the pending JS
-        // exception and throw with whatever was written so far.
         let enabled = Output::enable_ansi_colors_stderr();
         use core::fmt::Write;
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
         if write!(WriteVec(&mut buf), "{}", args).is_err() {
-            // if an exception occurs in the middle of formatting the error
-            // message, it's better to just return what we have than an error
-            // about an error. Clear any pending JS exception (e.g. from
-            // Symbol.toPrimitive) so that throwValue doesn't hit
-            // assertNoException.
             let _ = self.clear_exception_except_termination();
         }
         let pretty = Output::pretty_fmt_rt(buf.as_slice(), enabled);
@@ -828,10 +746,6 @@ impl JSGlobalObject {
         self.throw_value(instance)
     }
 
-    /// Queue a native callback as a microtask. The Zig version monomorphises a
-    /// `callconv(.c)` trampoline at comptime over `Function`; in Rust callers
-    /// supply the C-ABI trampoline directly so the wrapper need only erase the
-    /// context pointer type.
     pub fn queue_microtask_callback<C>(
         &self,
         ctx_val: *mut C,
@@ -952,17 +866,6 @@ impl JSGlobalObject {
         JSC__JSGlobalObject__generateHeapSnapshot(self)
     }
 
-    /// DEPRECATED — use [`TopExceptionScope`](crate::TopExceptionScope) to check for exceptions
-    /// and signal exceptions by returning `JsError`.
-    ///
-    /// **Under `BUN_JSC_validateExceptionChecks=1`**: the C++ side
-    /// (`JSGlobalObject__hasException`) constructs a temporary `TopExceptionScope`, whose
-    /// ctor *does* call `verifyExceptionCheckNeedIsSatisfied` — so this asserts if
-    /// `vm.m_needExceptionCheck` was left set by a prior un-scoped FFI call. The remaining
-    /// call sites in the port (1:1 with the `.zig` spec) follow `JsResult`-returning helpers
-    /// that already opened a scope and cleared the bit, so they are sound. New code must not
-    /// pair this with a raw `extern "C"` throwing call — use the generated
-    /// [`crate::cpp`] wrappers or [`top_scope!`](crate::top_scope) instead.
     pub fn has_exception(&self) -> bool {
         JSGlobalObject__hasException(self)
     }
@@ -971,14 +874,6 @@ impl JSGlobalObject {
         JSGlobalObject__clearException(self)
     }
 
-    /// Clear the currently active exception off the VM unless it is a
-    /// termination exception.
-    ///
-    /// Returns `true` if the exception was cleared, `false` if it was a
-    /// termination exception. Use `clear_exception` to unconditionally clear
-    /// exceptions.
-    ///
-    /// It is safe to call this function when no exception is present.
     pub fn clear_exception_except_termination(&self) -> bool {
         JSGlobalObject__clearExceptionExceptTermination(self)
     }
@@ -1030,16 +925,6 @@ impl JSGlobalObject {
         Some(value)
     }
 
-    /// This is for the common scenario you are calling into JavaScript, but there is
-    /// no logical way to handle a thrown exception other than to treat it as unhandled.
-    ///
-    /// The pattern:
-    ///
-    ///     let result = match value.call(...) {
-    ///         Ok(v) => v,
-    ///         Err(err) => return global.report_active_exception_as_unhandled(err),
-    ///     };
-    ///
     pub fn report_active_exception_as_unhandled(&self, err: JsError) {
         let exception = self.take_exception(err);
         if !exception.is_termination_exception() {
@@ -1073,19 +958,6 @@ impl JSGlobalObject {
         JSC__JSGlobalObject__bunVM(self)
     }
 
-    /// Raw-pointer variant of [`Self::bun_vm`]. Returns the per-thread
-    /// `*mut VirtualMachine` so callers that need to mutate VM fields don't
-    /// launder provenance through `&VirtualMachine -> *mut` (UB under Stacked
-    /// Borrows). Spec `JSGlobalObject.zig:617` returns `*VirtualMachine`
-    /// (mutable); this preserves that intent.
-    ///
-    /// Reads the thread-local directly (one `mov fs:[OFF]`) instead of calling
-    /// `JSC__JSGlobalObject__bunVM`: cross-language LTO does not inline that
-    /// C++ shim into Rust callers (905 out-of-line `callq` sites in the
-    /// release binary vs the symbol not even existing in the Zig build), and
-    /// the FFI result is provably the same singleton — debug-asserted below
-    /// and in [`Self::bun_vm`]. Same-thread callers only; cross-thread paths
-    /// must use [`Self::bun_vm_concurrently`].
     #[inline]
     pub fn bun_vm_ptr(&self) -> *mut VirtualMachine {
         debug_assert!(
@@ -1102,27 +974,10 @@ impl JSGlobalObject {
         self.bun_vm()
     }
 
-    /// Returns the Bun `VirtualMachine` owning this global as a safe
-    /// `&'static`. The VM is a per-thread singleton allocated once in
-    /// `VirtualMachine::init` and never freed while a global exists, so the
-    /// `'static` lifetime is sound. Mutation goes through
-    /// [`JsCell`](crate::JsCell)-wrapped fields or
-    /// [`VirtualMachine::as_mut`]; legacy raw-pointer paths use
-    /// [`Self::bun_vm_ptr`].
-    ///
-    /// Reads the thread-local directly instead of calling
-    /// `JSC__JSGlobalObject__bunVM` — cross-language LTO does not inline the
-    /// C++ shim, and the two are address-equal by construction (asserted in
-    /// debug builds). Same-thread callers only; cross-thread paths must use
-    /// [`Self::bun_vm_concurrently`].
     #[inline]
     pub fn bun_vm(&self) -> &'static VirtualMachine {
         #[cfg(debug_assertions)]
         {
-            // if this fails
-            // you most likely need to run
-            //   make clean-jsc-bindings
-            //   make bindings -j10
             if let Some(vm_) = VirtualMachine::get_or_null() {
                 // SAFETY: address-equality only — neither pointer is dereferenced.
                 debug_assert!(self.bun_vm_unsafe() == vm_.cast::<c_void>());
@@ -1156,10 +1011,6 @@ impl JSGlobalObject {
     }
 
     pub fn handle_rejected_promises(&self) {
-        // JSC__JSGlobalObject__handleRejectedPromises catches and reports its
-        // own exceptions; the only thing that escapes is a TerminationException
-        // (worker terminate() or process.exit()), and the request flag may
-        // already be cleared by the time we observe it. Nothing actionable here.
         let _ = crate::from_js_host_call_generic(self, || {
             JSC__JSGlobalObject__handleRejectedPromises(self)
         });
@@ -1189,10 +1040,6 @@ impl JSGlobalObject {
         ZigGlobalObject__readableStreamToFormData(self, value, content_type)
     }
 
-    /// Returns a freshly-created `napi_env` owned by this global, for use by
-    /// the FFI module. The concrete `NapiEnv` struct lives in `bun_runtime`
-    /// (which depends on `bun_jsc`), so this returns the raw pointer untyped;
-    /// callers in `bun_runtime` cast to `*mut NapiEnv`.
     pub fn make_napi_env_for_ffi(&self) -> *mut c_void {
         ZigGlobalObject__makeNapiEnvForFFI(self)
     }
@@ -1236,11 +1083,6 @@ impl JSGlobalObject {
         .throw()
     }
 
-    // PORT NOTE: Zig's `validateBigIntRange` / `validateIntegerRange` / `getInteger`
-    // take `comptime T: type` plus a `comptime range: IntegerRange` with
-    // `comptime_int` bounds and use @typeInfo for signedness, comptime @max/@min
-    // clamping, and @compileError on bad ranges. Ported as plain generics over
-    // `T: bun_core::Integer`; the comptime bounds checks become `debug_assert!`.
     pub fn validate_big_int_range<T: bun_core::Integer>(
         &self,
         value: JSValue,
@@ -1312,10 +1154,6 @@ impl JSGlobalObject {
         // PORT NOTE: comptime field_name.len == 0 → @compileError.
         debug_assert!(!field_name.is_empty(), "field_name must not be empty");
         let always_allow_zero = range.always_allow_zero;
-        // Zig passes the *unclamped* `range.min`/`range.max` to `throwRangeError`
-        // (not `min_t`/`max_t`). Zig's `comptime` guaranteed these fit in the
-        // formatter's `i64` range; preserve that as a checked narrowing so an
-        // out-of-range bound surfaces as a panic rather than silent wrap.
         let min = i64::try_from(range.min)
             .expect("validate_integer_range: range.min exceeds i64 (Zig comptime invariant)");
         let max = i64::try_from(range.max)
@@ -1508,11 +1346,6 @@ impl JSGlobalObject {
 // see one nominal type (the previous local duplicate diverged from lib.rs).
 pub use crate::GregorianDateTime;
 
-/// Spec `JSGlobalObject.BunPluginTarget` (JSGlobalObject.zig:265). The enum is
-/// defined once in `bun_bundler::transpiler` (the lowest tier that names it,
-/// for `Linker::link`'s call into `PluginResolver::on_resolve`) and re-exported
-/// here so the C++ FFI signature and all `bun_jsc` callers share one nominal
-/// type — no mirror enum, no transmute.
 pub use bun_bundler::transpiler::BunPluginTarget;
 
 // PORT NOTE: no `Default` derive — Zig's `code: jsc.Node.ErrorCode` has NO default
@@ -1529,17 +1362,8 @@ pub enum ThreadKind {
     Other,
 }
 
-// Unified with the crate-root definitions (lib.rs) — re-exported here so
-// `bun_jsc::js_global_object::{IntegerRange, ValidateObjectOpts}` keep
-// resolving for any caller that named them via this path. The previous local
-// `ValidateObjectOpts` diverged from lib.rs (`nullable` vs `allow_nullable`),
-// splitting the public API across two incompatible structs.
 pub use crate::{IntegerRange, ValidateObjectOpts};
 
-/// `bun.webcore.ScriptExecutionContext.Identifier` (ported here, not in
-/// `bun_runtime`, because `JSGlobalObject::script_execution_context_identifier`
-/// must return it without a forward dep). `bun_runtime::webcore` re-exports
-/// this and layers `global_object()` / `bun_vm()` accessors on top.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct ScriptExecutionContextIdentifier(pub u32);
@@ -1610,21 +1434,6 @@ pub(crate) extern "C" fn Zig__GlobalObject__onCrash() {
     panic!("A C++ exception occurred");
 }
 
-// PORT NOTE (LAYERING): `getBodyStreamOrBytesForWasmStreaming` deals entirely
-// in `webcore` types (`Response`, `Body.Value`, `Blob`, `ReadableStream`)
-// which live in `bun_runtime`. The exported `extern "C"` symbol
-// `Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming` is therefore
-// defined in `bun_runtime::webcore::wasm_streaming` rather than here, to
-// avoid a forward dep cycle. See `src/runtime/webcore/wasm_streaming.rs`.
-
-// ──────────────────────────────────────────────────────────────────────────────
-// extern "C" declarations
-// ──────────────────────────────────────────────────────────────────────────────
-// `safe fn`: parameters are either value types (`JSValue`, scalars) or Rust
-// references (`&JSGlobalObject`, `&ZigString`) which are ABI-identical to
-// non-null pointers and carry the validity guarantee the C++ side requires.
-// Functions taking nullable raw pointers / `(ptr,len)` pairs / opaque ctx that
-// the C++ side dereferences stay `unsafe` and are wrapped at the call site.
 unsafe extern "C" {
     safe fn JSGlobalObject__throwStackOverflow(this: &JSGlobalObject);
     safe fn JSGlobalObject__throwOutOfMemoryError(this: &JSGlobalObject);
@@ -1635,11 +1444,6 @@ unsafe extern "C" {
         value: JSValue,
     ) -> BunString;
 
-    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `Option<&BunString>` is ABI-identical
-    // to a nullable `*const BunString` via the guaranteed null-pointer
-    // optimization (C++ reads `nullptr` as "no namespace"); `&BunString` is a
-    // non-null `*const BunString` borrow.
     safe fn Bun__runOnLoadPlugins(
         global: &JSGlobalObject,
         namespace_: Option<&BunString>,
@@ -1730,10 +1534,6 @@ unsafe extern "C" {
     safe fn JSGlobalObject__tryTakeException(this: &JSGlobalObject) -> JSValue;
     safe fn JSGlobalObject__requestTermination(this: &JSGlobalObject);
 
-    // safe: `console`/`worker_ptr` are opaque round-trip pointers C++ stores into
-    // the new ZigGlobalObject (never dereferenced as Rust data here — same
-    // contract as `Zig__GlobalObject__createForTestIsolation` below); remaining
-    // args are by-value scalars.
     safe fn Zig__GlobalObject__create(
         console: *mut c_void,
         context_id: i32,
@@ -1766,10 +1566,6 @@ unsafe extern "C" {
 impl ScriptExecutionContextIdentifier {
     /// Returns `None` if the context referred to by `self` no longer exists.
     pub fn global_object(self) -> Option<GlobalRef> {
-        // FFI call returns a valid pointer or null; the JSGlobalObject is owned
-        // by the VM and outlives any ScriptExecutionContext id pointing at it.
-        // `JSGlobalObject` is an opaque ZST handle so the deref is the
-        // centralised `opaque_ref` proof.
         let p = ScriptExecutionContextIdentifier__getGlobalObject(self.0);
         (!p.is_null()).then(|| GlobalRef::from(JSGlobalObject::opaque_ref(p)))
     }

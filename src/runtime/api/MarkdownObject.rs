@@ -70,10 +70,6 @@ pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
     )
 }
 
-/// `Bun.markdown.ansi(text, theme?)` — render markdown to an ANSI-colored
-/// terminal string. `theme` is an optional object: `{ colors?, hyperlinks?,
-/// light?, columns? }`. By default colors are enabled, hyperlinks are
-/// disabled (the caller doesn't know if stdout is a TTY), and columns is 80.
 #[bun_jsc::host_fn]
 pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let [input_value, theme_value] = callframe.arguments_as_array::<2>();
@@ -218,12 +214,6 @@ fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<
             }
         }
 
-        // Handle remaining boolean options (autolinks/headings are only settable via compound options above)
-        // TODO(port): comptime reflection over md::Options bool fields — Zig used
-        // `inline for (@typeInfo(md.Options).@"struct".fields)` to iterate every bool
-        // field (excluding the six handled above), checking both camelCase and
-        // snake_case keys. This list could be generated from md::Options
-        // (proc-macro or hand-maintained const slice in bun_md).
         for (snake, camel, set) in md::Options::BOOL_FIELD_SETTERS {
             // skip the compound-only fields
             if matches!(
@@ -249,17 +239,6 @@ fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<
     Ok(options)
 }
 
-// TODO(port): `camelCaseOf` was a comptime fn producing `&'static [u8]` from a
-// snake_case literal. In Rust this should be `const_format::map_ascii_case!` or
-// a `macro_rules!` mapper. The only caller is the reflection loop above, which
-// is itself TODO'd to use a precomputed table that already carries the camelCase
-// form, so this helper is intentionally omitted.
-
-/// `Bun.markdown.render(text, callbacks, options?)` — render markdown with custom callbacks.
-///
-/// Each callback receives the accumulated children as a string plus an optional
-/// metadata object, and returns a string. The final result is the concatenation
-/// of all callback outputs.
 #[bun_jsc::host_fn]
 pub(crate) fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let [input_value, callbacks_value, opts_value] = callframe.arguments_as_array::<3>();
@@ -312,11 +291,6 @@ pub(crate) fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
     create_utf8_for_js(global_this, result)
 }
 
-/// `Bun.markdown.react(text, components?, options?)` — returns a React Fragment element
-/// containing the parsed markdown as children.
-// TODO(port): Zig used `jsc.MarkedArgumentBuffer.wrap(renderReactImpl)` to generate
-// the host-fn shim that allocates a MarkedArgumentBuffer. Here we hand-roll the
-// equivalent until bun_jsc provides a `#[marked_args]` attribute.
 #[bun_jsc::host_fn]
 pub(crate) fn render_react(
     global_this: &JSGlobalObject,
@@ -418,17 +392,6 @@ fn render_ast(
     Ok(renderer.get_result())
 }
 
-/// Renderer that builds an object AST from markdown.
-///
-/// In plain mode (`react_version == None`), each element becomes:
-/// `{ type: "tagName", props: { ...metadata, children: [...] } }`
-///
-/// In React mode (`react_version != None`), each element becomes a valid React element
-/// created via a cached JSC Structure with putDirectOffset:
-/// `{ $$typeof: Symbol.for('react.element'), type: "tagName", key: null, ref: null, props: { ...metadata, children: [...] } }`
-///
-/// Uses HTML tag names (h1-h6, p, blockquote, a, em, strong, etc.).
-/// Text content is plain JS strings in children arrays.
 struct ParseRenderer<'a> {
     global_object: &'a JSGlobalObject,
     marked_args: &'a mut MarkedArgumentBuffer,
@@ -509,10 +472,6 @@ impl Default for ParseStackEntry {
     }
 }
 
-// PORT NOTE: Zig used a hand-rolled `*anyopaque + VTable`; the Rust `bun_md`
-// `Renderer` is `&mut dyn RendererImpl`, so the trait already gives us
-// `&mut self` — the `*_impl` bodies below are plain methods, no pointer
-// round-trip needed.
 impl<'a> md::types::RendererImpl for ParseRenderer<'a> {
     fn enter_block(
         &mut self,
@@ -717,10 +676,6 @@ impl<'a> ParseRenderer<'a> {
         // Determine HTML tag index for cached string
         let tag_index = get_block_type_tag(block_type, entry.data);
 
-        // For headings, compute slug before counting props
-        // PORT NOTE: own the slug bytes — leave_heading() borrows the tracker mutably,
-        // and we need self again below for get_block_component(). Mirrors the Zig
-        // path which allocator-allocated the slug.
         let slug: Option<Vec<u8>> = if block_type == md::BlockType::H {
             self.heading_tracker.leave_heading().map(|s| s.to_vec())
         } else {
@@ -1017,11 +972,6 @@ impl<'a> ParseRenderer<'a> {
     }
 }
 
-/// Renderer that calls JavaScript callbacks for each markdown element.
-/// Uses a content-stack pattern: each enter pushes a new buffer, text
-/// appends to the top buffer, and each leave pops the buffer, calls
-/// the JS callback with the accumulated children, and appends the
-/// callback's return value to the parent buffer.
 struct JsCallbackRenderer<'a> {
     global_object: &'a JSGlobalObject,
     // PORT NOTE: #allocator field dropped — global mimalloc.
@@ -1586,10 +1536,6 @@ impl<'a> JsCallbackRenderer<'a> {
                 Ok(Some(BunMarkdownMeta__createLink(g, href, title)))
             }
             md::SpanType::Img => {
-                // Image meta shares shape with link (src/href are both the first
-                // field). We use a separate cached structure would require a
-                // second slot, so just fall back to the generic path here —
-                // images are rare enough that it doesn't matter.
                 let obj = JSValue::create_empty_object(g, 2);
                 obj.put(g, b"src", create_utf8_for_js(g, detail.href)?);
                 if !detail.title.is_empty() {

@@ -14,16 +14,6 @@ use crate::linker_context_mod::debug;
 use crate::{Index, LinkerContext};
 use bun_ast::Index as AstIndex;
 
-// PORT NOTE: Zig `entry.*` / `@memcpy` are bitwise copies of arena-backed
-// `CssImportOrder` values (the inner `Vec`s point into bump arenas and are
-// never individually freed). Rust's `Vec` has `Drop`, so a literal `*entry`
-// is not `Copy`. We replicate the Zig bitwise-copy semantics here.
-// `conditions` slabs come from `deep_clone_conditions`, which allocates them
-// from the `LinkerGraph` arena (`graph.heap`). The `Vec` headers aliasing a
-// slab are `mem::forget`'d everywhere (`CssImportOrder::drop` + the
-// post-`visit()` forget below); the slab itself is bulk-freed with the arena.
-// `wip_order`/`order` shuffles use `len`-truncation rather than
-// `clear_retaining_capacity` so moved-from slots are never dropped.
 #[inline(always)]
 unsafe fn bitwise_copy<T>(src: &T) -> T {
     // SAFETY: `src` is a valid aligned `&T`; the `unsafe fn` contract requires
@@ -50,28 +40,6 @@ fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImportOrde
     order.append(wip);
 }
 
-/// CSS files are traversed in depth-first postorder just like JavaScript. But
-/// unlike JavaScript import statements, CSS "@import" rules are evaluated every
-/// time instead of just the first time.
-///
-///      A
-///     / \
-///    B   C
-///     \ /
-///      D
-///
-/// If A imports B and then C, B imports D, and C imports D, then the CSS
-/// traversal order is D B D C A.
-///
-/// However, evaluating a CSS file multiple times is sort of equivalent to
-/// evaluating it once at the last location. So we basically drop all but the
-/// last evaluation in the order.
-///
-/// The only exception to this is "@layer". Evaluating a CSS file multiple
-/// times is sort of equivalent to evaluating it once at the first location
-/// as far as "@layer" is concerned. So we may in some cases keep both the
-/// first and last locations and only write out the "@layer" information
-/// for the first location.
 pub fn find_imported_files_in_css_order<'a>(
     this: &'a mut LinkerContext,
     temp_arena: &'a Arena,
@@ -85,12 +53,6 @@ pub fn find_imported_files_in_css_order<'a>(
         css_asts: &'a [crate::bundled_ast::CssCol],
         all_import_records: &'a [bun_ast::import_record::List<'a>],
 
-        // PORT NOTE: Zig's `graph: *LinkerGraph` is never read in `visit()`;
-        // dropped here to avoid an aliasing `&mut this.graph` borrow against
-        // `arena`/`css_asts` (which already borrow `this.graph`).
-        // `BackRef` (not `&'a Graph`) so the visitor's `'a` borrow stays
-        // disjoint from `LinkerContext` (constructed from the raw `parse_graph`
-        // backref, valid for the link step).
         parse_graph: bun_ptr::BackRef<Graph<'a>>,
 
         has_external_import: bool,
@@ -116,15 +78,6 @@ pub fn find_imported_files_in_css_order<'a>(
                 source_index.get(),
                 self.input_file_pretty(source_index),
             );
-            // The CSS specification strangely does not describe what to do when there
-            // is a cycle. So we are left with reverse-engineering the behavior from a
-            // real browser. Here's what the WebKit code base has to say about this:
-            //
-            //   "Check for a cycle in our import chain. If we encounter a stylesheet
-            //   in our parent chain with the same URL, then just bail."
-            //
-            // So that's what we do here. See "StyleRuleImport::requestStyleSheet()" in
-            // WebKit for more information.
             for visited_source_index in self.visited.slice() {
                 if visited_source_index.get() == source_index.get() {
                     debug!(
@@ -145,17 +98,6 @@ pub fn find_imported_files_in_css_order<'a>(
             };
             let top_level_rules = &repr.rules;
 
-            // TODO: should we even do this? @import rules have to be the first rules in the stylesheet, why even allow pre-import layers?
-            // Any pre-import layers come first
-            // if len(repr.AST.LayersPreImport) > 0 {
-            //     order = append(order, cssImportOrder{
-            //         kind:                   cssImportLayers,
-            //         layers:                 repr.AST.LayersPreImport,
-            //         conditions:             wrappingConditions,
-            //         conditionImportRecords: wrappingImportRecords,
-            //     })
-            // }
-
             // PORT NOTE: `defer { _ = visitor.visited.pop(); }` — explicit pop at end.
             // The defer is registered AFTER the `orelse return` above, so skipping the
             // pop on that early-return path matches the original semantics.
@@ -173,10 +115,6 @@ pub fn find_imported_files_in_css_order<'a>(
                         // If this import has conditions, fork our state so that the entire
                         // imported stylesheet subtree is wrapped in all of the conditions
                         if import_rule.has_conditions() {
-                            // Fork our state. `visit` stores a bitwise copy of
-                            // `nested_conditions` into `self.order`; the slab is
-                            // arena-owned, so wrap the local header in
-                            // `ManuallyDrop` to avoid a double-free.
                             let mut nested_conditions = core::mem::ManuallyDrop::new(
                                 deep_clone_conditions(wrapping_conditions, self.arena),
                             );
@@ -213,11 +151,6 @@ pub fn find_imported_files_in_css_order<'a>(
 
                     // Record external depednencies
                     if !record.flags.contains(ImportRecordFlags::IS_INTERNAL) {
-                        // If this import has conditions, append it to the list of overall
-                        // conditions for this external import. Note that an external import
-                        // may actually have multiple sets of conditions that can't be
-                        // merged. When this happens we need to generate a nested imported
-                        // CSS file using a data URL.
                         if import_rule.has_conditions() {
                             let mut all_conditions =
                                 deep_clone_conditions(wrapping_conditions, self.arena);
@@ -284,10 +217,6 @@ pub fn find_imported_files_in_css_order<'a>(
             }
             // Accumulate imports in depth-first postorder
             self.order.push(CssImportOrder {
-                // PORT NOTE: `crate::Index` (= `bun_ast::Index`) and the
-                // `bun_ast::Index` carried by `CssImportOrderKind::SourceIndex`
-                // are TYPE_ONLY mirrors of the same Zig `bun.ast.Index`;
-                // both are `#[repr(transparent)]` over `u32`.
                 kind: CssImportOrderKind::SourceIndex(AstIndex(source_index.get())),
                 // PORT NOTE: Zig `wrapping_conditions.*` is a bitwise struct copy.
                 // SAFETY: arena-backed `Vec` header; `CssImportOrder` suppresses
@@ -337,10 +266,6 @@ pub fn find_imported_files_in_css_order<'a>(
 
     debug_css_order(this, &order, CssOrderDebugStep::BeforeHoisting);
 
-    // CSS syntax unfortunately only allows "@import" rules at the top of the
-    // file. This means we must hoist all external "@import" rules to the top of
-    // the file when bundling, even though doing so will change the order of CSS
-    // evaluation.
     if has_external_import {
         // Pass 1: Pull out leading "@layer" and external "@import" rules
         let mut is_at_layer_prefix = true;
@@ -378,21 +303,11 @@ pub fn find_imported_files_in_css_order<'a>(
     }
     debug_css_order(this, &order, CssOrderDebugStep::AfterHoisting);
 
-    // Next, optimize import order. If there are duplicate copies of an imported
-    // file, replace all but the last copy with just the layers that are in that
-    // file. This works because in CSS, the last instance of a declaration
-    // overrides all previous instances of that declaration.
     {
         let mut source_index_duplicates: ArrayHashMap<u32, Vec<u32>> = ArrayHashMap::new();
         let mut external_path_duplicates: StringArrayHashMap<Vec<u32>> = StringArrayHashMap::new();
 
         let mut i: u32 = order.len() as u32;
-        // PORT NOTE: reshaped for borrowck — `order.at(i)` and `order.mut_(i)`
-        // cannot overlap, and `is_conditional_import_redundant` needs to read
-        // both `entry.conditions` and `order.at(j).conditions`. Hold raw
-        // pointers into the Vec buffer (Zig used the same pattern via
-        // `*const` slice returns); `order.mut_(i)` only writes `.kind` and
-        // never reallocates, so the conditions pointer stays valid.
         let order_ptr = order.as_mut_ptr();
         'next_backward: while i != 0 {
             i -= 1;
@@ -409,14 +324,6 @@ pub fn find_imported_files_in_css_order<'a>(
                         // SAFETY: j < order.len; see note above.
                         let later = unsafe { &(*order_ptr.add(j as usize)).conditions };
                         if is_conditional_import_redundant(&entry.conditions, later) {
-                            // This import is redundant, but it might have @layer rules.
-                            // So we should keep the @layer rules so that the cascade ordering of layers
-                            // is preserved
-                            //
-                            // PORT NOTE: `crate::bun_css::LayerName` (lifetime-erased
-                            // shadow) and `::bun_css::LayerName` are distinct nominal
-                            // types until the ungate shadow is removed; cast through
-                            // `NonNull` to satisfy `Layers::borrow`.
                             let layer_names_ptr = core::ptr::NonNull::from(
                                 &css_asts[idx.get() as usize].as_deref().unwrap().layer_names,
                             )
@@ -458,14 +365,6 @@ pub fn find_imported_files_in_css_order<'a>(
     // copy instead of the last copy like other things in CSS.
     {
         struct DuplicateEntry {
-            // PORT NOTE: lifetime-erased slice header — borrows either
-            // `css_asts[..].layer_names` (real `::bun_css::LayerName`) or
-            // `Layers::inner()` (shadow `LayerName`). Both nominal types should
-            // be reconciled; until then we compare via
-            // `LayerName::eql` on the shadow type and cast at the boundary.
-            // `RawSlice` (vs raw `*const [_]`) so reads go through safe
-            // `.slice()` under the back-reference invariant: the borrowed
-            // storage (`css_asts` arena / `Layers` Vec) outlives this loop.
             layers: bun_ptr::RawSlice<LayerName>,
             indices: Vec<u32>,
         }
@@ -482,21 +381,6 @@ pub fn find_imported_files_in_css_order<'a>(
                 CssImportOrderKind::Layers(layers) => {
                     // Truncate the conditions at the first anonymous layer
                     for (i, conditions) in entry.conditions.slice().iter().enumerate() {
-                        // The layer is anonymous if it's a "layer" token without any
-                        // children instead of a "layer(...)" token with children:
-                        //
-                        //   /* entry.css */
-                        //   @import "foo.css" layer;
-                        //
-                        //   /* foo.css */
-                        //   @layer foo;
-                        //
-                        // We don't need to generate this (as far as I can tell):
-                        //
-                        //   @layer {
-                        //     @layer foo;
-                        //   }
-                        //
                         if conditions.has_anonymous_layer() {
                             // SAFETY: `i < entry.conditions.len() <= capacity`;
                             // shrinking exposes no uninitialized range. The
@@ -508,32 +392,6 @@ pub fn find_imported_files_in_css_order<'a>(
                         }
                     }
 
-                    // If there are no layer names for this file, trim all conditions
-                    // without layers because we know they have no effect.
-                    //
-                    // (They have no effect because this is a `.layer` import with no rules
-                    //  and only layer declarations.)
-                    //
-                    //   /* entry.css */
-                    //   @import "foo.css" layer(foo) supports(display: flex);
-                    //
-                    //   /* foo.css */
-                    //   @import "empty.css" supports(display: grid);
-                    //
-                    // That would result in this:
-                    //
-                    //   @supports (display: flex) {
-                    //     @layer foo {
-                    //       @supports (display: grid) {}
-                    //     }
-                    //   }
-                    //
-                    // Here we can trim "supports(display: grid)" to generate this:
-                    //
-                    //   @supports (display: flex) {
-                    //     @layer foo;
-                    //   }
-                    //
                     if layers.inner().len() == 0 {
                         let mut i: u32 = entry.conditions.len() as u32;
                         while i != 0 {
@@ -558,10 +416,6 @@ pub fn find_imported_files_in_css_order<'a>(
                 _ => {}
             }
 
-            // Omit redundant "@layer" rules with the same set of layer names. Note
-            // that this tests all import order entries (not just layer ones) because
-            // sometimes non-layer ones can make following layer ones redundant.
-            // layers_post_import
             let layers_key: *const [LayerName] = match &entry.kind {
                 CssImportOrderKind::SourceIndex(idx) => {
                     // PORT NOTE: see LayerName nominal-type note above.
@@ -621,27 +475,6 @@ pub fn find_imported_files_in_css_order<'a>(
                     &wip_order.at(duplicate_index as usize).conditions,
                 ) {
                     if !matches!(entry.kind, CssImportOrderKind::Layers(_)) {
-                        // If an empty layer is followed immediately by a full layer and
-                        // everything else is identical, then we don't need to emit the
-                        // empty layer. For example:
-                        //
-                        //   @media screen {
-                        //     @supports (display: grid) {
-                        //       @layer foo;
-                        //     }
-                        //   }
-                        //   @media screen {
-                        //     @supports (display: grid) {
-                        //       @layer foo {
-                        //         div {
-                        //           color: red;
-                        //         }
-                        //       }
-                        //     }
-                        //   }
-                        //
-                        // This can be improved by dropping the empty layer. But we can
-                        // only do this if there's nothing in between these two rules.
                         if j == duplicates.len() - 1
                             && duplicate_index as usize == wip_order.len() - 1
                         {
@@ -741,16 +574,6 @@ pub fn find_imported_files_in_css_order<'a>(
     order
 }
 
-/// Zig: `wrapping_conditions.deepCloneInfallible(visitor.arena)`.
-///
-/// The returned list is later bitwise-copied into `CssImportOrder` entries via
-/// `bitwise_copy(wrapping_conditions)`, so callers `mem::forget` the local after
-/// the recursive `visit()` to keep the aliased buffer alive. The slab is
-/// allocated from `arena` (`LinkerGraph::arena()` = `graph.heap`, which
-/// outlives every chunk) and is bulk-freed with the arena — every `Vec` header
-/// aliasing it must be `mem::forget`'d (see `CssImportOrder::drop`). Reserves
-/// one extra slot for the single `append_assume_capacity` each call site
-/// performs, so the header never reallocates.
 #[inline]
 fn deep_clone_conditions(list: &Vec<ImportConditions>, arena: &Arena) -> Vec<ImportConditions> {
     let cap = list.len() as usize + 1;
@@ -806,35 +629,6 @@ fn import_conditions_are_equal(a: &[ImportConditions], b: &[ImportConditions]) -
     true
 }
 
-/// Given two "@import" rules for the same source index (an earlier one and a
-/// later one), the earlier one is masked by the later one if the later one's
-/// condition list is a prefix of the earlier one's condition list.
-///
-/// For example:
-///
-///    // entry.css
-///    @import "foo.css" supports(display: flex);
-///    @import "bar.css" supports(display: flex);
-///
-///    // foo.css
-///    @import "lib.css" screen;
-///
-///    // bar.css
-///    @import "lib.css";
-///
-/// When we bundle this code we'll get an import order as follows:
-///
-///  1. lib.css [supports(display: flex), screen]
-///  2. foo.css [supports(display: flex)]
-///  3. lib.css [supports(display: flex)]
-///  4. bar.css [supports(display: flex)]
-///  5. entry.css []
-///
-/// For "lib.css", the entry with the conditions [supports(display: flex)] should
-/// make the entry with the conditions [supports(display: flex), screen] redundant.
-///
-/// Note that all of this deliberately ignores the existence of "@layer" because
-/// that is handled separately. All of this is only for handling unlayered styles.
 pub(crate) fn is_conditional_import_redundant(
     earlier: &Vec<ImportConditions>,
     later: &Vec<ImportConditions>,
@@ -852,37 +646,14 @@ pub(crate) fn is_conditional_import_redundant(
             let same_supports = ImportConditions::supports_eql(a, b);
             let same_media = a.media.eql(&b.media);
 
-            // If the import conditions are exactly equal, then only keep
-            // the later one. The earlier one is redundant. Example:
-            //
-            //   @import "foo.css" layer(abc) supports(display: flex) screen;
-            //   @import "foo.css" layer(abc) supports(display: flex) screen;
-            //
-            // The later one makes the earlier one redundant.
             if same_supports && same_media {
                 continue;
             }
 
-            // If the media conditions are exactly equal and the later one
-            // doesn't have any supports conditions, then the later one will
-            // apply in all cases where the earlier one applies. Example:
-            //
-            //   @import "foo.css" layer(abc) supports(display: flex) screen;
-            //   @import "foo.css" layer(abc) screen;
-            //
-            // The later one makes the earlier one redundant.
             if same_media && b.supports.is_none() {
                 continue;
             }
 
-            // If the supports conditions are exactly equal and the later one
-            // doesn't have any media conditions, then the later one will
-            // apply in all cases where the earlier one applies. Example:
-            //
-            //   @import "foo.css" layer(abc) supports(display: flex) screen;
-            //   @import "foo.css" layer(abc) supports(display: flex);
-            //
-            // The later one makes the earlier one redundant.
             if same_supports && b.media.media_queries.is_empty() {
                 continue;
             }

@@ -35,20 +35,10 @@ pub struct Framework {
 }
 
 pub struct Html {
-    /// SHARED (LIFETIMES.tsv): DevServer increments the route's intrusive
-    /// refcount via `.initRef(html)` when storing; `.deref()` on drop.
-    /// Stored as raw ptr because `HTMLBundleRoute` does not yet impl
-    /// `bun_ptr::RefCounted` (gated server-side).
-    // TODO(port): bun_ptr::RefPtr<HTMLBundleRoute> once RefCounted impl is real.
     pub html_bundle: *mut HTMLBundleRoute,
     pub bundled_file: incremental_graph::ClientFileIndex,
     pub script_injection_offset: Option<ByteOffset>,
     pub bundled_html_text: Option<Box<[u8]>>,
-    /// SHARED (LIFETIMES.tsv): deinit calls `cached_response.deref()`.
-    /// Stored as [`BackRef`](bun_ptr::BackRef) — the slot holds an intrusive
-    /// ref (bumped at store time, released in `invalidate_client_bundle`/drop),
-    /// so while `Some` the pointee strictly outlives the field; readers go
-    /// through safe `Option::as_deref` (no raw `NonNull::as_ref`).
     pub cached_response: Option<bun_ptr::BackRef<StaticRoute>>,
 }
 
@@ -81,12 +71,6 @@ impl Data {
 }
 
 impl RouteBundle {
-    /// `RouteBundle.invalidateClientBundle` (RouteBundle.zig:122).
-    ///
-    /// PORT NOTE: takes `&mut SourceMapStore` rather than `&mut DevServer` —
-    /// the Zig body only touches `dev.source_maps`, and the two keystone
-    /// `DevServer` structs (`dev_server::DevServer` / `dev_server_body::DevServer`)
-    /// both expose that field but cannot be named here without a cycle.
     pub fn invalidate_client_bundle(&mut self, source_maps: &mut source_map_store::SourceMapStore) {
         if let Some(bundle) = self.client_bundle.take() {
             source_maps.unref(self.source_map_id());
@@ -116,22 +100,12 @@ impl RouteBundle {
 #[derive(Clone, Copy)]
 pub(crate) enum UnresolvedIndex {
     Framework(framework_router::RouteIndex),
-    /// BACKREF (Zig `*HTMLBundle.Route`): `getOrPutRouteBundle` writes
-    /// `dev_server_id` back through this pointer and `.initRef(html)` takes
-    /// its own ref when stored. Carried as a raw mutable pointer (not `&`/
-    /// `&mut`) so the writeback doesn't require a `&const → &mut` cast and
-    /// the borrow doesn't conflict with `&mut DevServer`.
     Html(*mut HTMLBundleRoute),
 }
 
 pub struct RouteBundle {
     pub server_state: State,
     pub data: Data,
-    /// SHARED (LIFETIMES.tsv): deinit calls `blob.deref()`.
-    /// Stored as [`BackRef`](bun_ptr::BackRef) — the slot holds an intrusive
-    /// ref (bumped at store time, released in `invalidate_client_bundle`/drop),
-    /// so while `Some` the pointee strictly outlives the field; readers go
-    /// through safe `Option::as_deref` (no raw `NonNull::as_ref`).
     pub client_bundle: Option<bun_ptr::BackRef<StaticRoute>>,
     pub client_script_generation: u32,
     pub active_viewers: u32,
@@ -166,9 +140,3 @@ impl RouteBundle {
         cost
     }
 }
-
-// `deinit` is fully subsumed by Drop:
-//   - client_bundle / cached_response: Option<Arc<StaticRoute>> drop = .deref()
-//   - Framework: StrongOptional fields drop = .deinit()
-//   - Html: bundled_html_text Box<[u8]> drop = allocator.free()
-//           html_bundle RefPtr drop = .deref()

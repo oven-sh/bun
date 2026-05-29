@@ -6,15 +6,6 @@ use bun_ast::Ref;
 use bun_core::strings;
 use bun_wyhash::Wyhash;
 
-// ──────────────────────── arena-slice newtype boilerplate ────────────────
-// `DashedIdent` / `Ident` / `CustomIdent` are DISTINCT CSS value types per
-// spec (their `parse`/`to_css` differ intentionally — `--` prefix check,
-// plain ident, CSS-wide-keyword rejection respectively) but share an
-// identical `*const [u8]` arena-slice newtype shell. This macro stamps out
-// the struct + the byte-identical `v()`/`deep_clone`/`hash`/`as_slice`
-// boilerplate; per-type `parse`/`to_css` live in separate inherent `impl`
-// blocks below (Rust allows multiple inherent impls). Precedent:
-// `generics.rs` `ident_eql_impl!` already macroizes the shared `CssEql`.
 macro_rules! arena_slice_newtype {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
@@ -26,18 +17,6 @@ macro_rules! arena_slice_newtype {
         }
 
         impl $name {
-            /// Borrow the underlying arena-owned slice.
-            ///
-            /// `v` is always a non-null fat pointer into the parser's bump arena
-            /// (constructed from `expect_ident()` source text or copied from
-            /// another instance). Arena bytes are immutable and outlive every
-            /// value produced from them, so handing out `&[u8]` is sound.
-            ///
-            /// NOTE: the borrow is tied to `&self`. Call sites that must return
-            /// the slice with the `'static` placeholder lifetime (e.g.
-            /// `IdentOrRef::{debug_ident,as_str,as_original_string}`,
-            /// `Printer::lookup_ident_or_ref`, `SelectorParser::namespace_for_prefix`)
-            /// still go through the raw `v` field directly until `'bump` is threaded.
             #[inline]
             pub fn v(&self) -> &[u8] {
                 // SAFETY: arena-owned, never null, immutable for the parse session
@@ -46,10 +25,6 @@ macro_rules! arena_slice_newtype {
             }
 
             pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-                // PORT NOTE: Zig `css.implementDeepClone` — field-wise. The
-                // `*const [u8]` slice is arena-owned (never mutated, freed on
-                // arena reset), so identity copy is correct (matches generics.zig
-                // "const strings" fast-path).
                 *self
             }
 
@@ -68,20 +43,6 @@ macro_rules! arena_slice_newtype {
     };
 }
 
-// ───────────────────────── DashedIdentReference ──────────────────────────
-// `properties::css_modules::Specifier` is real (parse/to_css/eql/hash); the
-// `from` field below uses it directly. `parse_with_options` honors
-// `ParserOptions.css_modules.dashed_idents`. `to_css` resolves the
-// import-record path up front and hands it to `CssModule::reference_dashed`
-// (borrowck — see PORT NOTE on that method).
-
-/// A CSS [`<dashed-ident>`](https://www.w3.org/TR/css-values-4/#dashed-idents) reference.
-///
-/// Dashed idents are used in cases where an identifier can be either author defined _or_ CSS-defined.
-/// Author defined idents must start with two dash characters ("--") or parsing will fail.
-///
-/// In CSS modules, when the `dashed_idents` option is enabled, the identifier may be followed by the
-/// `from` keyword and an argument indicating where the referenced identifier is declared (e.g. a filename).
 #[derive(Debug, Clone, Copy)]
 pub struct DashedIdentReference {
     /// The referenced identifier.
@@ -149,11 +110,6 @@ impl DashedIdentReference {
             let ident_v = unsafe { crate::arena_str(self.ident.v) };
             let source_index = dest.loc.source_index;
             let bump = dest.arena;
-            // PORT NOTE: Zig `referenceDashed` took `*Printer` and called
-            // `dest.importRecord()` internally. Rust borrowck forbids handing
-            // `dest` to a method on `dest.css_module`, so resolve the path
-            // here and pass the slice down. The `?` preserves the Zig
-            // `try dest.importRecord(...)` error path.
             use crate::properties::css_modules::Specifier;
             let specifier_path: Option<&[u8]> = match &self.from {
                 Some(Specifier::ImportRecordIndex(idx)) => {
@@ -180,19 +136,9 @@ impl DashedIdentReference {
 pub use DashedIdent as DashedIdentFns;
 
 arena_slice_newtype! {
-    /// A CSS [`<dashed-ident>`](https://www.w3.org/TR/css-values-4/#dashed-idents) declaration.
-    ///
-    /// Dashed idents are used in cases where an identifier can be either author defined _or_ CSS-defined.
-    /// Author defined idents must start with two dash characters ("--") or parsing will fail.
     DashedIdent
 }
 
-// TODO(port): Zig `pub fn HashMap(comptime V: type) type` returned an
-// ArrayHashMapUnmanaged with a custom string-hash context. Inherent assoc
-// type aliases are unstable in Rust; expose as a free type alias instead.
-// bun_collections::ArrayHashMap is wyhash-keyed; verify the hasher matches
-// std.array_hash_map.hashString or supply a custom Hash impl.
-// blocked_on: bun_collections::ArrayHashMap surface
 pub type DashedIdentHashMap<V> = bun_collections::ArrayHashMap<DashedIdent, V>;
 
 impl DashedIdent {
@@ -234,24 +180,10 @@ impl Ident {
 
 // ───────────────────────────── IdentOrRef ────────────────────────────────
 
-/// Encodes an `Ident` or the bundler's `Ref` into 16 bytes.
-///
-/// It uses the top bit of the pointer to denote whether it's an ident or a ref
-///
-/// If it's an `Ident`, then `__ref_bit == false` and `__len` is the length of the slice.
-///
-/// If it's `Ref`, then `__ref_bit == true` and `__len` is the bit pattern of the `Ref`.
-///
-/// In debug mode, if it is a `Ref` we will also set the `__ptrbits` to point to the original
-/// []const u8 so we can debug the string. This should be fine since we use arena
 #[repr(transparent)]
 #[derive(Clone, Copy, Default)]
 pub struct IdentOrRef(u128);
 
-// Zig packed struct(u128) field layout, LSB-first:
-//   __ptrbits: u63  -> bits  0..63
-//   __ref_bit: bool -> bit   63
-//   __len:     u64  -> bits 64..128
 const PTRBITS_MASK: u128 = (1u128 << 63) - 1;
 const REF_BIT: u128 = 1u128 << 63;
 
@@ -314,11 +246,6 @@ impl IdentOrRef {
             unsafe { crate::arena_str(self.as_ident().unwrap().v) }
         }
     }
-
-    // NOTE: no `#[cfg(not(debug_assertions))]` variant. Zig's `@compileError` is lazy (fires only
-    // if the body is analyzed); Rust's `compile_error!` fires at expansion and would break every
-    // release build. Omitting the fn in release yields a name-resolution error at the call site,
-    // which is the closest Rust equivalent.
 
     pub fn from_ident(ident: Ident) -> Self {
         let s = ident.v();
@@ -455,13 +382,6 @@ impl core::fmt::Display for IdentOrRef {
 
 pub use CustomIdent as CustomIdentFns;
 
-/// ASCII-case-insensitive check for the words reserved from the
-/// [`<custom-ident>`](https://www.w3.org/TR/css-values-4/#custom-idents)
-/// production: the CSS-wide keywords + `default`.
-///
-/// `default` is *not* a CSS-wide keyword (cf. [`CSSWideKeyword`]); it is
-/// reserved separately by css-values-4. `none` is *not* in this set —
-/// `<keyframes-name>` / `<single-animation-name>` callers check it themselves.
 #[inline]
 pub(crate) fn is_reserved_custom_ident(s: &[u8]) -> bool {
     strings::eql_any_case_insensitive_ascii(

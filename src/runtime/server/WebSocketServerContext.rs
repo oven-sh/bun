@@ -70,11 +70,6 @@ impl Handler {
         self.vm.get()
     }
 
-    /// Zig: `handler.active_connections +|= n` through a `*Handler`.
-    /// PORT NOTE: takes `&self` and casts away const — the field is owned by
-    /// `ServerConfig.websocket` and only ever touched on the JS thread, so the
-    /// data race the borrow-checker would flag here is a false positive.
-    /// TODO(port): convert `active_connections` to `Cell<usize>`.
     #[inline]
     pub fn active_connections_saturating_add(&self, n: usize) {
         // SAFETY: single-threaded JS heap; see PORT NOTE above. `addr_of!` avoids
@@ -110,11 +105,6 @@ impl Handler {
             return;
         }
 
-        // Zig signature is `vm: *jsc.VirtualMachine` (mutable). VirtualMachine is the
-        // process-lifetime singleton (LIFETIMES.tsv = STATIC) and is only touched on the JS
-        // thread; `uncaught_exception` needs `&mut` to bump counters / set flags. Derive the
-        // mutable pointer from the stored BackRef (== `vm`) rather than casting the
-        // shared ref, which rustc's invalid_reference_casting lint rejects.
         let _ = vm;
         let mut vm_ref = self.vm;
         // SAFETY: process-lifetime singleton; sole `&mut` on the JS thread.
@@ -256,10 +246,6 @@ static DECOMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
     b"256KB" => uws::DEDICATED_COMPRESSOR_256KB,
 };
 
-// TODO(port): phf custom hasher — Zig used `.getWithEql(zig_string, ZigString.eqlComptime)`,
-// which compares a ZigString (possibly UTF-16) against the literal keys. Here we go through
-// `ZigString::as_bytes_if_latin1()` (or equivalent) and look up in the phf map; verify
-// UTF-16-backed ZigStrings still match.
 fn lookup_zig_string(
     table: &phf::Map<&'static [u8], i32>,
     key: &bun_core::ZigString,
@@ -274,12 +260,6 @@ pub(crate) fn on_create(
     global_object: &JSGlobalObject,
     object: JSValue,
 ) -> JsResult<WebSocketServerContext> {
-    // PORT NOTE: Zig wrote `var server = WebSocketServerContext{};` (all field defaults,
-    // `globalObject`/`handler.vm`/`handler.globalObject` left `undefined`) and then assigned
-    // `server.handler` on the next line. Rust cannot leave `&JSGlobalObject` fields
-    // uninitialized, so we construct the struct with the handler and explicit defaults
-    // up front. The top-level `global_object` is provisionally set to the param; server.zig
-    // overwrites it after `on_create` returns anyway.
     let handler = Handler::from_js(global_object, object)?;
     let mut server = WebSocketServerContext {
         global_object,

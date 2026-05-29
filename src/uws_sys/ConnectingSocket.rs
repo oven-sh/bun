@@ -2,10 +2,6 @@ use core::ffi::{c_uint, c_void};
 
 use crate::{Loop, SocketGroup, SocketKind};
 
-// `us_connecting_socket_t` — a connect in flight (DNS / non-blocking
-// `connect()` / happy-eyeballs). No I/O is possible yet; on success the loop
-// promotes it to a `us_socket_t` and fires `onOpen`, on failure
-// `onConnectingError`.
 bun_opaque::opaque_ffi! { pub struct ConnectingSocket; }
 
 impl ConnectingSocket {
@@ -13,10 +9,6 @@ impl ConnectingSocket {
         us_connecting_socket_close(self)
     }
 
-    /// Returns the owning `SocketGroup`. Raw pointer because the group is
-    /// shared by every socket it owns (Zig `*SocketGroup` freely aliases);
-    /// materializing `&mut SocketGroup` here would alias with other sockets'
-    /// borrows of the same group.
     pub fn group(&mut self) -> *mut SocketGroup {
         us_connecting_socket_group(self)
     }
@@ -76,11 +68,6 @@ impl ConnectingSocket {
     }
 }
 
-// All shims take only a non-null `us_connecting_socket_t*` plus value types.
-// `ConnectingSocket` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>`, so `&mut
-// ConnectingSocket` is ABI-identical to a non-null pointer (no readonly/noalias
-// attribute). Declaring the shims with reference params and `safe fn` moves the
-// validity proof into the type signature.
 unsafe extern "C" {
     pub(crate) safe fn us_connecting_socket_close(s: &mut ConnectingSocket);
     pub(crate) safe fn us_connecting_socket_group(s: &mut ConnectingSocket) -> *mut SocketGroup;

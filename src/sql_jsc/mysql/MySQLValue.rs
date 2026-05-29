@@ -140,24 +140,8 @@ pub enum Value {
     // Decimal(Decimal),
 }
 
-/// BLOB parameter bytes. `MySQLQuery.bind()` fills every `Value` before
-/// `execute.write()` reads any of them, and converting later parameters
-/// can run user JS (array index getters, toJSON, toString coercion). That
-/// JS could `transfer()`/detach an earlier ArrayBuffer, or drop the last
-/// JS reference to it and force GC, while we still hold a borrowed slice
-/// into it. Pinning the backing `ArrayBuffer` makes it non-detachable for
-/// the duration (`transfer()` then hands the user a copy), and the
-/// caller's stack-scoped `MarkedArgumentBuffer` roots the wrapper so GC
-/// can't sweep the cell whose `RefPtr<ArrayBuffer>` keeps the storage
-/// alive — `params` is on the malloc heap and isn't scanned. `Drop`
-/// unpins.
 pub struct Bytes {
     pub slice: ZigStringSlice,
-    /// JS ArrayBuffer/view to `unpinArrayBuffer` in `Drop`. `JSValue::ZERO`
-    /// when the slice is owned (FastTypedArray dupe), borrowed from a
-    /// Blob store (nothing to unpin), or empty. GC rooting of this value
-    /// is the caller's responsibility via the `MarkedArgumentBuffer`
-    /// passed to `from_js`.
     pub pinned: JSValue,
 }
 
@@ -234,10 +218,6 @@ impl Value {
             }
             // Value::Decimal(dec) => return dec.to_binary(field_type),
             Value::StringData(data) | Value::BytesData(data) => {
-                // TODO(port): Zig returned `data` by value (copy of Data union);
-                // `bun_sql::shared::Data` is not `Clone` in the Rust port, so
-                // return a `Temporary` aliasing the same bytes. `to_data` callers
-                // must keep `self` alive until the returned `Data` is consumed.
                 let s = data.slice();
                 return Ok(if s.is_empty() {
                     Data::Empty
@@ -392,12 +372,6 @@ impl Value {
             | FieldType::MYSQL_TYPE_LONG_BLOB
             | FieldType::MYSQL_TYPE_BLOB => {
                 if value.js_type().is_array_buffer_like() {
-                    // Later parameters in the same bind loop may run user
-                    // JS (toString/toJSON/getters) that can transfer() or
-                    // detach this buffer before execute.write() reads it.
-                    // Pin the backing ArrayBuffer so it stays non-detachable
-                    // until Value drop unpins it; borrowing the slice is
-                    // then safe without a copy. See `Bytes`.
                     let mut ptr: *const u8 = core::ptr::null();
                     let mut len: usize = 0;
                     return match JSC__JSValue__borrowBytesForOffThread(value, &mut ptr, &mut len) {
@@ -413,11 +387,6 @@ impl Value {
                             .map_err(|_| any_mysql_error::Error::OutOfMemory)?,
                             pinned: JSValue::ZERO,
                         })),
-                        // Oversize/Wasteful/DataView/JSArrayBuffer — pinned
-                        // by the helper. Root the wrapper so GC can't
-                        // collect it (and free the backing store despite
-                        // the pin) if user JS drops the last reference from
-                        // a later parameter.
                         2 => {
                             roots.append(value);
                             Ok(Value::Bytes(Bytes {
@@ -439,10 +408,6 @@ impl Value {
                             format_args!("File blobs are not supported"),
                         )));
                     }
-                    // Blob byte stores are immutable from JS (no detach),
-                    // but user JS running for a later parameter could drop
-                    // the last reference and force GC. Root the wrapper so
-                    // the store survives until execute.write() has read it.
                     roots.append(value);
                     return Ok(Value::Bytes(Bytes {
                         slice: ZigStringSlice::from_utf8_never_free(blob.shared_view()),
@@ -501,63 +466,32 @@ impl DateTime {
 
     pub fn from_binary(val: &[u8]) -> DateTime {
         match val.len() {
-            4 => {
-                // Byte 1: [year LSB]     (8 bits of year)
-                // Byte 2: [year MSB]     (8 bits of year)
-                // Byte 3: [month]        (8-bit unsigned integer, 1-12)
-                // Byte 4: [day]          (8-bit unsigned integer, 1-31)
-                DateTime {
-                    year: u16::from_le_bytes(
-                        val[0..2].try_into().expect("infallible: size matches"),
-                    ),
-                    month: val[2],
-                    day: val[3],
-                    ..Default::default()
-                }
-            }
-            7 => {
-                //                     Byte 1: [year LSB]     (8 bits of year)
-                // Byte 2: [year MSB]     (8 bits of year)
-                // Byte 3: [month]        (8-bit unsigned integer, 1-12)
-                // Byte 4: [day]          (8-bit unsigned integer, 1-31)
-                // Byte 5: [hour]         (8-bit unsigned integer, 0-23)
-                // Byte 6: [minute]       (8-bit unsigned integer, 0-59)
-                // Byte 7: [second]       (8-bit unsigned integer, 0-59)
-                DateTime {
-                    year: u16::from_le_bytes(
-                        val[0..2].try_into().expect("infallible: size matches"),
-                    ),
-                    month: val[2],
-                    day: val[3],
-                    hour: val[4],
-                    minute: val[5],
-                    second: val[6],
-                    ..Default::default()
-                }
-            }
-            11 => {
-                //                     Byte 1:    [year LSB]      (8 bits of year)
-                // Byte 2:    [year MSB]      (8 bits of year)
-                // Byte 3:    [month]         (8-bit unsigned integer, 1-12)
-                // Byte 4:    [day]           (8-bit unsigned integer, 1-31)
-                // Byte 5:    [hour]          (8-bit unsigned integer, 0-23)
-                // Byte 6:    [minute]        (8-bit unsigned integer, 0-59)
-                // Byte 7:    [second]        (8-bit unsigned integer, 0-59)
-                // Byte 8-11: [microseconds]  (32-bit little-endian unsigned integer
-                DateTime {
-                    year: u16::from_le_bytes(
-                        val[0..2].try_into().expect("infallible: size matches"),
-                    ),
-                    month: val[2],
-                    day: val[3],
-                    hour: val[4],
-                    minute: val[5],
-                    second: val[6],
-                    microsecond: u32::from_le_bytes(
-                        val[7..11].try_into().expect("infallible: size matches"),
-                    ),
-                }
-            }
+            4 => DateTime {
+                year: u16::from_le_bytes(val[0..2].try_into().expect("infallible: size matches")),
+                month: val[2],
+                day: val[3],
+                ..Default::default()
+            },
+            7 => DateTime {
+                year: u16::from_le_bytes(val[0..2].try_into().expect("infallible: size matches")),
+                month: val[2],
+                day: val[3],
+                hour: val[4],
+                minute: val[5],
+                second: val[6],
+                ..Default::default()
+            },
+            11 => DateTime {
+                year: u16::from_le_bytes(val[0..2].try_into().expect("infallible: size matches")),
+                month: val[2],
+                day: val[3],
+                hour: val[4],
+                minute: val[5],
+                second: val[6],
+                microsecond: u32::from_le_bytes(
+                    val[7..11].try_into().expect("infallible: size matches"),
+                ),
+            },
             _ => panic!("Invalid datetime length: {}", val.len()),
             // TODO(port): Zig used bun.Output.panic; confirm bun_core panic helper
         }
@@ -643,10 +577,6 @@ impl DateTime {
         )
     }
 
-    /// `from_unix_timestamp`/`gregorian_date` can only represent
-    /// 1970-01-01T00:00:00Z through 9999-12-31T23:59:59Z (the MySQL DATETIME
-    /// maximum). Anything outside that window panics on an integer cast, so
-    /// reject it with a catchable error instead.
     fn check_range(ts: i64, global_object: &JSGlobalObject) -> Result<(), any_mysql_error::Error> {
         const MAX_DATETIME_UNIX_TIMESTAMP: i64 = 253_402_300_799;
         if !(0..=MAX_DATETIME_UNIX_TIMESTAMP).contains(&ts) {
@@ -855,10 +785,6 @@ impl Decimal {
     }
 
     pub fn to_binary(&self, _field_type: FieldType) -> Result<Data, bun_core::Error> {
-        // Zig: `bun.todoPanic(@src(), "Decimal.toBinary not implemented", .{});`
-        // Intentional shipped runtime "feature not yet implemented" — not a
-        // porting placeholder. The `Decimal` arm of `Value` is commented out,
-        // so this is unreachable today.
         bun_core::todo_panic!("Decimal.toBinary not implemented")
     }
 
@@ -918,10 +844,6 @@ unsafe extern "C" {
     /// By-value `JSValue`; C++ side null-checks and reads its own heap state.
     /// No caller-side preconditions → `safe fn`.
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
-    /// 0 = detached/null, 1 = FastTypedArray (GC-movable — caller should dupe;
-    /// no unpin needed), 2 = pinned ArrayBuffer (caller must `unpinArrayBuffer`).
-    /// Out-params are `&mut` (same ABI as `*mut`), so the only obligation left
-    /// is on the *returned* slice, not the call itself → `safe fn`.
     safe fn JSC__JSValue__borrowBytesForOffThread(
         v: JSValue,
         out_ptr: &mut *const u8,

@@ -27,10 +27,6 @@ pub type Map = ArrayHashMap<bun_semver::String, FieldEntry>;
 // PORT NOTE: Zig used `bun.Semver.String.ArrayHashContext` + store_hash=false;
 // `bun_collections::ArrayHashMap` is wyhash-keyed — TODO(port): confirm context match.
 
-// `Encoding`, `get_boundary`, and `AsyncFormData` are JSC-free and live in the
-// lower-tier `bun_core::form_data` so `Body`/`Request`/`Response` can name them
-// without depending on `bun_runtime`. Re-exported here so `crate::webcore::
-// form_data::*` callers see the same nominal types.
 pub use bun_core::form_data::{AsyncFormData, Encoding, get_boundary};
 
 /// JSC-touching extension on `AsyncFormData` (lives in this crate because it
@@ -230,10 +226,6 @@ pub fn to_js_from_multipart_data(
                 let mut blob = Blob::create(value_str, wrap.global, false);
                 let filename = ZigString::init_utf8(filename_str);
 
-                // PORT NOTE: Zig used a labeled `:brk` block returning a borrowed
-                // `[]const u8`. `MimeType.value` is now `Cow<'static,[u8]>`, so
-                // split the two ownership cases instead of unifying through a
-                // single `&[u8]` (avoids borrowing a temporary).
                 if !field.content_type.is_empty() {
                     let ct = field.content_type.slice(buf);
                     blob.content_type_allocated.set(true);
@@ -280,24 +272,10 @@ pub fn to_js_from_multipart_data(
                     (&raw mut blob).cast::<c_void>(),
                     &filename,
                 );
-                // PORT NOTE: Zig `defer blob.detach()` — no early returns in
-                // this branch, so call explicitly at scope end.
-                // `append_blob` dupes the content type, so the copy boxed above
-                // is solely owned by this stack-local and must be released here
-                // (Zig stored a borrowed slice and had nothing to free).
                 blob.detach();
                 blob.free_content_type();
             } else {
-                let value = ZigString::init_utf8(
-                    // > Each part whose `Content-Disposition` header does not
-                    // > contain a `filename` parameter must be parsed into an
-                    // > entry whose value is the UTF-8 decoded without BOM
-                    // > content of the part. This is done regardless of the
-                    // > presence or the value of a `Content-Type` header and
-                    // > regardless of the presence or the value of a
-                    // > `charset` parameter.
-                    strings::without_utf8_bom(value_str),
-                );
+                let value = ZigString::init_utf8(strings::without_utf8_bom(value_str));
                 wrap.form.append(&key, &value);
             }
         }
@@ -438,12 +416,6 @@ pub fn for_each_multipart_entry<C>(
                 && strings::eql_case_insensitive_ascii(key, b"content-type", true)
             {
                 let trimmed = strings::trim(value, b"; \t");
-                // Only an exact `\r\n` terminates a header line above, so a bare
-                // CR or LF can survive into the value. Reject anything outside
-                // printable ASCII so it cannot reach `blob.content_type` and be
-                // reflected verbatim into outgoing request headers. HTAB stays
-                // allowed: it is valid optional whitespace inside a field value
-                // and cannot start a new header line.
                 if trimmed
                     .iter()
                     .all(|&b| b == b'\t' || (0x20..=0x7E).contains(&b))

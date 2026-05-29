@@ -22,16 +22,6 @@ use crate::webcore::AutoFlusher;
 
 bun_core::declare_scope!(NodeHTTPResponse, visible);
 
-/// Intrusive ref-counted; `ref_count` is managed by `ref_` / `deref` below
-/// (FFI rule — `*mut NodeHTTPResponse` is the m_ctx payload of a
-/// `.classes.ts` wrapper). `deinit` runs when count hits zero.
-///
-/// `#[JsClass(no_constructor)]` wires the import-side `${T}__fromJS` /
-/// `__fromJSDirect` / `__create` externs into a `JsClass` impl plus an
-/// inherent `to_js_ptr(*mut Self, &JSGlobalObject)`; `noConstructor: true`
-/// in `server.classes.ts` means no `${T}__getConstructor` is exported.
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 #[bun_jsc::JsClass(no_constructor)]
 pub struct NodeHTTPResponse {
     pub ref_count: Cell<u32>,
@@ -47,10 +37,6 @@ pub struct NodeHTTPResponse {
     pub promise: JsCell<StrongOptional>, // Strong.Optional
     pub server: AnyServer,
 
-    /// When you call pause() on the node:http IncomingMessage
-    /// We might've already read from the socket.
-    /// So we need to buffer that data.
-    /// This should be pretty uncommon though.
     pub buffered_request_body_data_during_pause: JsCell<Vec<u8>>,
     pub bytes_written: Cell<usize>,
 
@@ -199,27 +185,11 @@ fn vm_get<'a>() -> &'a mut VirtualMachine {
     VirtualMachine::get().as_mut()
 }
 
-/// `&mut` to this thread's VM for `Ref::ref/unref` etc. Takes `_global` for
-/// call-site symmetry with the .zig spec but reads the thread-local directly:
-/// `VirtualMachine::as_mut()` ignores its receiver and re-reads the TLS slot,
-/// so routing through `global.bun_vm()` was pure overhead on the per-request
-/// path (`NodeHTTPResponse__createForJS` disasm showed the `bunVM` FFI result
-/// dropped on the floor).
 #[inline(always)]
 fn bun_vm_mut(_global: &JSGlobalObject) -> &mut VirtualMachine {
     VirtualMachine::get_mut()
 }
 
-/// `globalObject.ERR(.CODE, msg, .{}).throw()` — the actual error-construction
-/// body, kept non-generic and out of line.
-///
-/// Every caller is an error branch that is essentially never taken on the
-/// node:http response hot path (`write_head` / `write_or_end` / `cork`). Marking
-/// this `#[cold]` + `#[inline(never)]` keeps the `ErrorBuilder::throw` codegen —
-/// message formatting (`core::fmt`), error-code table lookup, JS error object
-/// allocation — physically separated from those hot functions so it neither
-/// bloats them nor pollutes their icache footprint. Being non-generic also means
-/// it's emitted once instead of once per `T`.
 #[cold]
 #[inline(never)]
 fn err_throw_cold(global: &JSGlobalObject, code: ErrorCode, msg: &'static str) -> jsc::JsError {
@@ -259,12 +229,6 @@ fn on_drain_shim(this: *mut NodeHTTPResponse, off: u64, resp: uws::AnyResponse) 
     unsafe { (*this.cast_const()).on_drain(off, resp) }
 }
 
-// R-2: `HasAutoFlusher` (which requires `fn auto_flusher(&mut self)`) is no
-// longer implemented here — the deferred-task registration is inlined in
-// `register_auto_flush` / `unregister_auto_flush` below so the whole path is
-// `&self`. The `DeferredRepeatingTask` trampoline that the trait would have
-// generated is local. Body discharges its own preconditions; a safe
-// `extern "C" fn` coerces to the `DeferredRepeatingTask` pointer at `post_task`.
 extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
     // SAFETY: `ctx` is the `*const NodeHTTPResponse` registered by
     // `register_auto_flush`; `DeferredTaskQueue::run` feeds it back unchanged
@@ -272,14 +236,6 @@ extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
     unsafe { (*(ctx.cast_const().cast::<NodeHTTPResponse>())).on_auto_flush() }
 }
 
-/// Unpack the `AnyServer` tagged-pointer u64 handed across FFI from C++.
-///
-/// Zig: `AnyServer{ .ptr = AnyServer.Ptr.from(@ptrFromInt(any_server_tag)) }`
-/// where `Ptr = bun.TaggedPointerUnion(.{HTTPServer, HTTPSServer,
-/// DebugHTTPServer, DebugHTTPSServer})`. The packed repr is bits 0..49 = ptr,
-/// bits 49..64 = tag, with tag = `1024 - index` (see `bun_ptr::tagged_pointer`).
-/// The Rust `AnyServer` stores `(tag, ptr)` unpacked, so map the wire tag back
-/// to `AnyServerTag` here.
 #[inline]
 fn any_server_from_packed(packed: u64) -> AnyServer {
     let repr = bun_ptr::TaggedPointer::from(packed);
@@ -296,11 +252,6 @@ fn any_server_from_packed(packed: u64) -> AnyServer {
     }
 }
 
-/// `jsc.Codegen.JSNodeHTTPResponse` cached-property accessors.
-/// `codegen_cached_accessors!` emits `on_{data,aborted,writable}_{get,set}_cached`
-/// thin wrappers over the C++ `NodeHTTPResponsePrototype__on*{Get,Set}CachedValue`
-/// `WriteBarrier<Unknown>` slots, named to match the Zig spelling so the
-/// `.zig` ↔ `.rs` diff lines up.
 pub mod js {
     bun_jsc::codegen_cached_accessors!("NodeHTTPResponse"; onData, onAborted, onWritable);
 }
@@ -508,11 +459,6 @@ impl NodeHTTPResponse {
 
     pub(crate) fn should_request_be_pending(&self) -> bool {
         let flags = self.flags.get();
-        // Once the socket is closed or has been adopted by the WebSocket
-        // layer, the HTTP request/response cycle is over — no further uws
-        // callbacks will arrive on `raw_response` to balance the
-        // IS_REQUEST_PENDING ref, so report not-pending so
-        // `mark_request_as_done()` can release it.
         if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
             return false;
         }
@@ -551,17 +497,6 @@ impl NodeHTTPResponse {
         // defer this.deref(); — moved to end of fn body.
         self.update_flags(|f| f.remove(Flags::IS_REQUEST_PENDING));
 
-        // The async path (`on_node_http_request_with_upgrade_ctx`) stashes the
-        // handler's pending promise here and registers `then2` reactions that
-        // are responsible for releasing the server-handler ref (one of the
-        // initial 3). When the request is torn down via abort/socket-close
-        // those reactions may never fire (the JS-side resolve chain is broken
-        // once the socket is gone), which would strand that ref forever and
-        // leak the whole `NodeHTTPResponse` allocation. Treat a still-held
-        // promise as the ownership token for that ref: drop the strong root
-        // and release the ref here. `on_resolve`/`on_reject` observe the
-        // empty slot and skip their own deref, so a late settlement is a
-        // no-op rather than a double release.
         let had_async_promise = self.promise.with_mut(|p| {
             let had = p.has();
             p.deinit();
@@ -699,12 +634,6 @@ impl NodeHTTPResponse {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // PORT NOTE: `arguments_undef::<3>()` returns `Arguments<3>` — a 32-byte
-        // `[JSValue; 3]` + `len` aggregate — *by value*, which `cargo asm` shows
-        // lowered to a per-`writeHead` `vmovups` stack copy on the node:http hot
-        // path. The borrowed `arguments()` slice (ptr+len, 16 bytes) carries the
-        // same information; missing / `null` slots are padded to `undefined`
-        // inline below exactly as the `Arguments<3>` form did.
         let arguments = callframe.arguments();
 
         if self.is_requested_completed_or_ended() {
@@ -753,11 +682,6 @@ impl NodeHTTPResponse {
             200
         };
 
-        // Hot path: src/js/node/_http_server.ts always sets `response.statusMessage`,
-        // so we always land here with a short JS string. `to_slice()` would do
-        // 2×ref + 2×deref FFI (OwnedString + ZigStringSlice::WTF); instead hold
-        // the +1 from `to_bun_string` in an `OwnedString` and borrow the bytes
-        // without the inner ref bump (Zig: `defer str.deref()` + `toUTF8`).
         let status_message_str;
         let status_message_slice;
         let status_message_bytes: &[u8] = if !status_message_value.is_undefined() {
@@ -815,10 +739,6 @@ impl NodeHTTPResponse {
                 b"HM"
             };
 
-            // Zig spec (NodeHTTPResponse.zig:455/491): 256-byte stackFallback +
-            // `{d} {s}` (plain memcpy). The previous Vec + write! + BStr-Display
-            // path showed up at 0.54% incl in perf (core::fmt vtable + BStr UTF-8
-            // chunk-validation). status_code is 100..=999 → always 3 digits.
             let mut itoa_buf = bun_core::fmt::ItoaBuf::new();
             let code = bun_core::fmt::itoa(&mut itoa_buf, status_code);
             let n = code.len() + 1 + message.len();
@@ -915,20 +835,6 @@ impl NodeHTTPResponse {
 
         if self.flags.get().contains(Flags::REQUEST_HAS_COMPLETED) {
             if EVENT == AbortEvent::Abort {
-                // The socket is gone — no further uws callback will arrive to
-                // balance the IS_REQUEST_PENDING ref. `on_request_complete()`
-                // can set REQUEST_HAS_COMPLETED while `body_read_state` is
-                // still `.pending` (e.g. the request body's last chunk was
-                // buffered during pause before `res.end()` — the
-                // `Expect: 100-continue` path), in which case
-                // `mark_request_as_done()` never ran there and both that ref
-                // and the server's pending-request counter are stranded. The
-                // synchronous `set_closed()` from `JSNodeHTTPServerSocket::
-                // onClose` has already flipped SOCKET_CLOSED, so
-                // `should_request_be_pending()` is now false; let the gate
-                // re-evaluate. Clear `raw_response` first so the
-                // `clear_on_data_callback` reached from `mark_request_as_done`
-                // can't touch the dead socket.
                 self.raw_response.set(None);
                 self.mark_request_as_done_if_necessary();
             }
@@ -969,12 +875,6 @@ impl NodeHTTPResponse {
             self.on_data_or_aborted(b"", true, AbortEvent::Abort, js_this);
         }
 
-        // Deferred tail (Zig defer order is preserved up to one reorder: the
-        // outer `defer raw_response = None` is hoisted above `deref()` because
-        // `mark_request_as_done_if_necessary()` + `deref()` can drop the last
-        // ref when the JS wrapper has already finalized; nothing between them
-        // reads `raw_response`, so the swap is observably equivalent and
-        // avoids a post-destroy write).
         if EVENT == AbortEvent::Abort {
             self.mark_request_as_done_if_necessary();
             self.raw_response.set(None);
@@ -1047,13 +947,6 @@ impl NodeHTTPResponse {
             self.buffered_request_body_data_during_pause.get().len()
         );
         if self.buffered_request_body_data_during_pause.get().len() > 0 {
-            // Zig spec: `createBuffer` then `.{}` — `bun.ByteList` has no Drop, so the
-            // assignment just forgets the storage and ownership transfers to JSC. A Rust
-            // `Vec` *does* Drop, so the prior `create_buffer(slice_mut)` + `= Vec::new()`
-            // freed the backing allocation while JSC still pointed at it (mimalloc
-            // free-list pointer overwrote the first 8 bytes — test-http-pause.js saw
-            // `'�\x01xУ\x02\x00\x00Body from Client'`). Move the Vec out and hand the
-            // boxed slice to JSC so the deallocator owns the only free.
             let bytes = self
                 .buffered_request_body_data_during_pause
                 .replace(Vec::new());
@@ -1396,14 +1289,6 @@ impl NodeHTTPResponse {
             );
         }
 
-        // Loosely mimicking this code:
-        //      function _writeRaw(data, encoding, callback, size) {
-        //        const conn = this[kSocket];
-        //        if (conn?.destroyed) {
-        //          // The socket was destroyed. If we're still trying to write to it,
-        //          // then we haven't gotten the 'close' event yet.
-        //          return false;
-        //        }
         if self.flags.get().contains(Flags::SOCKET_CLOSED) || self.raw_response.get().is_none() {
             return Ok(if IS_END {
                 JSValue::UNDEFINED
@@ -1460,10 +1345,6 @@ impl NodeHTTPResponse {
             break 'brk None;
         };
 
-        // Construct in place (Zig result-location semantics) — returning
-        // `JsResult<Option<StringOrBuffer>>` by value here lowered to ~128B of
-        // `vmovups` stack copies per `res.end()`; the `_into` out-param form
-        // writes straight into this slot.
         let mut string_or_buffer = crate::node::StringOrBuffer::EMPTY;
         if !input_value.is_undefined_or_null() {
             let mut encoding = crate::node::Encoding::Utf8;
@@ -1744,10 +1625,6 @@ impl NodeHTTPResponse {
         }
         self.update_flags(|f| f.remove(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
 
-        // Every site that unrefs `body_read_ref` also transitions `body_read_state` out of `.pending`
-        // or sets `is_data_buffered_during_pause_last`, both of which are rejected by the guard above.
-        // So reaching here, `body_read_ref` is still held from create(). Do not re-acquire it or
-        // `this.ref()` — there would be no balancing release (PR #18564 removed the paired derefs).
         debug_assert!(self.body_read_ref.get().has);
     }
 
@@ -1773,10 +1650,6 @@ impl NodeHTTPResponse {
         false
     }
 
-    // R-2: inlined `AutoFlusher::register_deferred_microtask_with_type_unchecked`
-    // — that helper now takes `&T`, but this type has its own
-    // `on_auto_flush_trampoline` (extra `self.ref_()`) so the inline body
-    // stays.
     fn register_auto_flush(&self) {
         if self.auto_flusher.get().registered.get() {
             return;
@@ -1883,10 +1756,6 @@ impl NodeHTTPResponse {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // PORT NOTE: borrow the `arguments()` slice (ptr+len) instead of
-        // materialising `Arguments<1>` by value — `cork` runs on every
-        // `res.end()`, so the small-aggregate copy + bounds branch are pure
-        // per-request overhead with no upstream equivalent.
         let Some(&corked_fn) = callframe.arguments().first() else {
             return Err(global_object.throw_not_enough_arguments("cork", 1, 0));
         };
@@ -1914,13 +1783,6 @@ impl NodeHTTPResponse {
         let mut result: JSValue = JSValue::ZERO;
         let mut is_exception: bool = false;
 
-        // R-2: this method takes `&self`, so the `noalias` miscompile
-        // (b818e70e1c57) is structurally impossible — `&T` is `readonly`, not
-        // `noalias`, so re-entrant writes through other `&self` views are
-        // sound. No `black_box` launder is needed; it was a hard optimization
-        // barrier on the node:http hot path (`cork` runs on every `res.end()`)
-        // that forced `self` to memory and blocked inlining/regalloc of the
-        // cork prologue, with no equivalent in upstream Zig.
         let this = bun_ptr::BackRef::from(ptr::NonNull::from(self));
         // BACKREF: `this` is the live `m_ctx` heap payload; `ref_()` keeps it
         // alive across re-entry.
@@ -2001,11 +1863,6 @@ impl NodeHTTPResponse {
     }
 }
 
-// `AnyRefCounted` bridge so `bun_ptr::finalize_js_box*` / `RefPtr` accept this
-// type. Hand-written (not `#[derive(CellRefCounted)]`) because the existing
-// `&self`-receiver `deref()` above is called from ~10 sites that route through
-// `as_ctx_ptr()`-derived provenance; converting them to `unsafe deref(*mut)`
-// is a separate sweep.
 impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
     type DestructorCtx = ();
     #[inline]

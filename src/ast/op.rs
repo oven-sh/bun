@@ -212,10 +212,6 @@ impl Level {
 
     #[inline]
     const fn from_raw(n: u8) -> Level {
-        // Callers only pass values derived from a valid `Level` discriminant
-        // ±1 (`sub`/`add_f`); decode by exhaustive match so an out-of-range
-        // shift traps in release too (matches Zig's safety-checked
-        // `@enumFromInt`) instead of fabricating an invalid discriminant.
         match n {
             0 => Level::Lowest,
             1 => Level::Comma,
@@ -274,10 +270,6 @@ impl Op {
     }
 }
 
-// Zig: `pub const TableType: std.EnumArray(Op.Code, Op) = undefined;`
-// This declared an `undefined` value (vestigial / used only for @TypeOf at callsites).
-// Ported as a type alias since Rust statics cannot be uninitialized.
-// TODO(port): verify no callsite reads TableType as a value.
 pub type TableType = Table;
 
 /// `.rodata` `[Op; Code::COUNT]` indexed by [`Code`] discriminant. Exposes the

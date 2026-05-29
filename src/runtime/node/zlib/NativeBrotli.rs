@@ -46,13 +46,6 @@ impl Default for Context {
     }
 }
 
-// ─── gated: JsClass payload + host fns + Context method bodies ────────────
-// `NativeBrotli` carries `#[bun_jsc::JsClass]`; `impl Context` calls
-// `Error::init(&str, ..)` and uses brotli-C variant names that diverge from
-// `bun_brotli_sys` (e.g. `BrotliDecoderResult::Error` vs `::err`). Unblocking
-// requires aligning those signatures.
-// TODO(blocked): un-gate once bun_jsc JsClass + Error::init str overload + brotli_c variant names settle.
-
 mod _impl {
     use super::*;
     use core::cell::Cell;
@@ -66,16 +59,6 @@ mod _impl {
     use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
     use crate::node::util::validators;
 
-    // Intrusive refcount: `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`.
-    // In Rust the handle type is `bun_ptr::IntrusiveRc<NativeBrotli>`; the
-    // `ref_count` field below is read/written by that wrapper, and `deinit` is the
-    // drop body invoked when the count reaches zero.
-    // TODO(port): wire `ref`/`deref` via `bun_ptr::IntrusiveRc` impl.
-
-    // `.classes.ts`-backed: the C++ JSCell wrapper (JSNativeBrotli) is generated;
-    // this struct is the `m_ctx` payload. Codegen provides toJS/fromJS/fromJSDirect.
-    // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-    // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
     #[bun_jsc::JsClass]
     #[derive(bun_ptr::CellRefCounted)]
     #[ref_count(destroy = Self::destroy_on_zero)]
@@ -98,17 +81,7 @@ mod _impl {
         pub task: JsCell<WorkPoolTask>,
     }
 
-    // `const impl = CompressionStream(@This())` — Zig mixin that provides
-    // write / runFromJSThread / writeSync / reset / close / setOnError /
-    // getOnError / finalize / emitError. In Rust these are generic associated
-    // fns on `CompressionStream::<NativeBrotli>` (see node_zlib_binding.rs).
-    // TODO(port): expose via inherent-looking methods so .classes.ts codegen can resolve them.
-
     impl NativeBrotli {
-        // PORT NOTE: no `#[bun_jsc::host_fn]` — the free-fn shim it emits calls
-        // a bare `constructor(...)` which cannot resolve inside an `impl` block.
-        // The `#[bun_jsc::JsClass]` derive already emits the construct shim that
-        // calls `<Self>::constructor(__g, __f)`.
         pub fn constructor(
             global_this: &JSGlobalObject,
             callframe: &CallFrame,
@@ -188,11 +161,6 @@ mod _impl {
                     .throw());
             }
 
-            // this does not get gc'd because it is stored in the JS object's
-            // `this._writeState`. and the JS object is tied to the native handle
-            // as `_handle[owner_symbol]`.
-            // `flush_write_result` writes two u32s through this pointer, so the
-            // caller-supplied array must hold at least 2 elements.
             let write_result_value = arguments.ptr[1];
             let Some(mut write_result_buf) = write_result_value.as_array_buffer(global_this) else {
                 return Err(global_this.throw_invalid_argument_type_value(
@@ -283,12 +251,6 @@ mod _impl {
             Ok(JSValue::UNDEFINED)
         }
 
-        /// `CellRefCounted::destroy` target (refcount hit zero). Runs `deinit`
-        /// then frees the Box-allocated payload — matches Zig
-        /// `bun.ptr.RefCount(.., deinit, .{}).deref()` → `deinit()` + `bun.destroy(this)`.
-        ///
-        /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-        /// whose generated trait `destroy` upholds the sole-owner contract.
         fn destroy_on_zero(this: *mut Self) {
             // SAFETY: refcount hit zero ⇒ no other borrow remains.
             unsafe { (*this).deinit() };
@@ -298,10 +260,6 @@ mod _impl {
 
         /// RefCount destructor body (called when ref_count → 0).
         fn deinit(&mut self) {
-            // this_value / poll_ref have Drop impls; explicit calls kept for
-            // ordering parity with Zig.
-            // TODO(port): confirm Strong/CountedKeepAlive Drop ordering is benign
-            // and remove explicit deinit calls.
             self.this_value.set(StrongOptional::empty());
             drop(self.poll_ref.replace(CountedKeepAlive::default()));
             self.stream.with_mut(|s| match s.mode {
@@ -418,10 +376,6 @@ mod _impl {
         }
 
         pub fn set_flush(&mut self, flush: c_int) {
-            // Caller passes a valid BrotliEncoderOperation discriminant (Node
-            // zlib constants 0..=3). Exhaustive match — `Op` is `#[repr(u32)]`
-            // so the prior `c_int` bit-cast was a width hazard anyway. Out-of-
-            // range traps to match Zig `this.flush = @enumFromInt(flush)`.
             self.flush = match flush {
                 0 => Op::process,
                 1 => Op::flush,
@@ -557,17 +511,9 @@ mod _impl {
         }
     }
 
-    // ─── CompressionStream mixin glue ─────────────────────────────────────────
-    // Stamps `impl CompressionContext for Context`, `impl Taskable`/
-    // `CompressionStreamImpl for NativeBrotli`, and `pub mod js { … }` (the
-    // `NativeBrotliPrototype__*CachedValue` accessors).
     crate::__impl_compression_stream!(NativeBrotli, Context, "NativeBrotli");
 
     fn code_for_error(err: c::BrotliDecoderErrorCode2) -> *const core::ffi::c_char {
-        // Zig: `inline for (std.meta.fieldNames(E), std.enums.values(E)) |n, v|
-        //          if (err == v) return "ERR_BROTLI_DECODER_" ++ n;`
-        // Rust has no enum reflection — expand the table by hand. Keep in sync
-        // with `bun_brotli::c::BrotliDecoderErrorCode2`.
         use c::BrotliDecoderErrorCode2 as E;
         let s: &core::ffi::CStr = match err {
             E::NO_ERROR => c"ERR_BROTLI_DECODER_NO_ERROR",
@@ -612,10 +558,6 @@ mod _impl {
         s.as_ptr()
     }
 
-    /// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
-    /// (see `CompressionStream::write` in node_zlib_binding.rs). Zig: `.callback = undefined`.
-    /// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
-    /// struct-init site; the body never dereferences the pointer.
     fn noop_task_callback(_task: *mut WorkPoolTask) {}
 
     crate::__compression_stream_mixin_reexports!(NativeBrotli);

@@ -61,11 +61,6 @@ unsafe extern "C" {
 #[derive(Clone, Copy)]
 pub struct Options {
     pub max_colors: u16,
-    /// Floyd–Steinberg error diffusion. Hides banding on gradients at the
-    /// cost of grain on flat areas; off by default to match Sharp's
-    /// `palette:true` default.
-    // PORT NOTE: Zig field default `= false`; Rust has no per-field defaults,
-    // callers must pass explicitly.
     pub dither: bool,
 }
 
@@ -114,10 +109,6 @@ pub(crate) fn quantize(
         let ch = b.widest_channel();
         // Partial sort by the chosen channel, then cut at the midpoint.
         let slice = &mut order[b.lo as usize..b.hi as usize];
-        // PORT NOTE: std.sort.pdq + SortCtx.less → slice::sort_unstable_by_key
-        // (also pdqsort). Zig's SortCtx struct is captured by the closure.
-        // u32 ×4 overflows past ~1.07B pixels (allowed when the user raises
-        // `maxPixels`); the other order-index sites already widen first.
         slice.sort_unstable_by_key(|&p| rgba[p as usize * 4 + ch as usize]);
         let mid = b.lo + (b.hi - b.lo) / 2;
         boxes[pick] = shrink(rgba, &order, b.lo, mid);
@@ -175,17 +166,6 @@ pub(crate) fn quantize(
     })
 }
 
-/// Floyd–Steinberg error diffusion. Serial in raster order — each pixel's
-/// quantisation error is pushed to its yet-unvisited neighbours with the
-/// classic 7/3/5/1 ÷16 kernel:
-///
-///         ·   X   7
-///         3   5   1
-///
-/// Serpentine scan (alternate L→R / R→L per row) so the diffusion direction
-/// flips each row, avoiding the directional artefacts a fixed scan produces.
-/// The diffusion itself can't be vectorised (data dependence on the previous
-/// pixel), but the per-pixel palette search goes through the highway kernel.
 fn map_floyd_steinberg(
     rgba: &[u8],
     w: u32,
@@ -194,13 +174,6 @@ fn map_floyd_steinberg(
     k: u16,
     indices: &mut [u8],
 ) -> Result<(), AllocError> {
-    // Two rows of accumulated error, ×4 channels. i32 not i16: when the
-    // palette doesn't span the source range (e.g. colors:2, both entries near
-    // 0, source has 255s) the residual grows without bound across the row —
-    // each pixel's error is `cand − nearest`, and `cand = src + carried` keeps
-    // climbing. i16 overflows there; two w×4 i32 rows are still negligible.
-    // `cur` carries error pushed *into* the current row from the row above;
-    // `nxt` collects error for the row below.
     let stride: usize = w as usize * 4;
     let mut cur: Vec<i32> = vec![0i32; stride];
     let mut nxt: Vec<i32> = vec![0i32; stride];

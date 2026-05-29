@@ -13,10 +13,6 @@ const TAG_RAD: u8 = 2;
 const TAG_GRAD: u8 = 4;
 const TAG_TURN: u8 = 8;
 
-/// A CSS [`<angle>`](https://www.w3.org/TR/css-values-4/#angles) value.
-///
-/// Angles may be explicit or computed by `calc()`, but are always stored and serialized
-/// as their computed value.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, crate::generics::CssHash, crate::generics::DeepClone)]
 pub enum Angle {

@@ -5,28 +5,6 @@
 // were translated against the crate's public surface and refer to it by name.
 extern crate self as bun_css;
 
-/// Case-insensitive ASCII byte-slice dispatch — the fix for Zig's
-/// `css.todo_stuff.match_ignore_ascii_case` sentinel and a drop-in port of
-/// rust-cssparser's `match_ignore_ascii_case!`.
-///
-/// Expands to an `if / else if / else` chain over
-/// [`bun_core::strings::eql_case_insensitive_ascii_check_length`] (length-checked,
-/// ASCII-fold only, byte-wise — identical to Zig's
-/// `bun.strings.eqlCaseInsensitiveASCIIICheckLength`). The whole macro is an
-/// expression; arms may `return`, `break 'label`, or yield a value.
-///
-/// Supports `|`-alternation and Rust-style `if` guards on arms; the trailing
-/// `_ =>` fallback is mandatory.
-///
-/// ```ignore
-/// crate::match_ignore_ascii_case! { unit, {
-///     b"deg"                       => Ok(Angle::Deg(value)),
-///     b"dppx" | b"x"               => Ok(Resolution::Dppx(value)),
-///     b"local" if mods.is_some()   => PseudoClass::Local { .. },
-///     _                            => Err(location.new_unexpected_token_error(token)),
-/// }}
-/// ```
-// TODO(port): swap body to phf when CI hasher lands.
 #[macro_export]
 macro_rules! match_ignore_ascii_case {
     ($name:expr, { $( $($lit:literal)|+ $(if $guard:expr)? => $arm:expr ,)* _ => $fallback:expr $(,)? }) => {{
@@ -93,11 +71,6 @@ pub use css_parser::{
     ParserState, enum_property_util, nth, parse_utility, signfns, void_wrap,
 };
 
-// ─── selectors/ crate-root surface ────────────────────────────────────────
-// The selector grammar references these via `bun_css::*` (Zig's flat `css.*`
-// namespace). `Str` is the arena-borrowed `[]const u8` slice alias; here
-// it's `*const [u8]` (matches `error.rs` / `values::ident` field shape) and
-// becomes `&'bump [u8]` once the arena lifetime is plumbed.
 pub(crate) type Str = *const [u8];
 
 /// Dereference an arena-owned [`Str`] into a slice borrow.
@@ -134,12 +107,8 @@ pub use generics as generic;
 pub use generics::{implement_deep_clone, implement_eql, implement_hash};
 // Same-name trait + derive macro re-export so `#[derive(bun_css::DeepClone)]`
 // (and `use bun_css::DeepClone;` at leaf sites) brings both into scope.
-pub use generics::{CssEql, DeepClone};
-// Keyword-enum / `union(enum)` derive macros (port of Zig's `DefineEnumProperty`
-// / `DeriveParse` / `DeriveToCss` comptime fns). The `EnumProperty` *trait* is
-// re-exported above from `css_parser`; the *derive* of the same name lives in
-// the proc-macro crate.
 pub use bun_css_derive::{DefineEnumProperty, Parse, ToCss};
+pub use generics::{CssEql, DeepClone};
 // Serializer + dtoa helpers live in the parser hub but are referenced as
 // `css::serializer` / `css::f32_length_with_5_digits` from value modules.
 pub use css_parser::{dtoa_short, f32_length_with_5_digits, serializer, to_css};
@@ -155,20 +124,12 @@ pub mod printer;
 #[path = "values/mod.rs"]
 pub mod values;
 
-/// Data-only value-type stubs re-exported through `values::{color,ident,url}`
-/// while the real `values/*.rs` files stay gated on the calc lattice. These
-/// were the previous `gated_mod!(values, ...)` body — now a real module so
-/// printer.rs / css_parser.rs can name the types.
 pub mod values_stub {
     /// Re-export the real `values/color.rs` surface so any remaining
     /// `values_stub::color::*` paths resolve to the canonical types.
     pub mod color {
         pub use crate::values::color::*;
 
-        /// `Result(CssColor)` — Zig: `pub const ParseResult = Result(CssColor);`
-        /// where `Result(T) = Maybe(T, ParseError(ParserError))` (css_parser.zig:278).
-        /// `Maybe` is now un-gated as `core::result::Result`, so this is a
-        /// straight type alias to the real `values::color::ParseResult`.
         pub type CssColorParseResult = crate::values::color::ParseResult;
 
         /// https://drafts.csswg.org/css-color/#hsl-to-rgb (`hue` is 0..1 here).
@@ -177,11 +138,6 @@ pub mod values_stub {
         pub use crate::css_parser::color::hsl_to_rgb;
     }
 
-    /// Re-export of the real `values/ident.rs` — the data-only stub that used
-    /// to live here (so `generics::ident_eql` could compile) is obsolete:
-    /// `values::ident` is un-gated and `generics.rs` imports it directly.
-    /// The stub `IdentOrRef` had diverged (tagged enum vs packed-u128), so
-    /// this also removes a latent type-confusion hazard.
     pub mod ident {
         pub use crate::values::ident::*;
     }
@@ -209,10 +165,6 @@ impl core::fmt::Display for PrintErr {
 }
 impl core::error::Error for PrintErr {}
 
-/// `PrintErr!T` return shape (Zig: `PrintErr!void`) used by every `to_css`
-/// path. Distinct from `css_parser::PrintResult<T> = Maybe<T, PrinterError>`,
-/// which carries the rich `Err<PrinterErrorKind>` — this is just the bubbled
-/// signal (the *kind* lives in `Printer.error_kind`).
 pub(crate) type PrintResult<T = ()> = core::result::Result<T, PrintErr>;
 
 pub use dependencies::Dependency;
@@ -245,11 +197,6 @@ pub use targets::{Browsers, Features, Targets};
 pub use css_parser::BundlerStyleSheet;
 pub use properties::PropertyIdTag;
 pub use rules::import::ImportConditions;
-
-// ───────────────────────────── VendorPrefix ─────────────────────────────
-// Hoisted from css_parser.rs so leaf modules (targets, prefixes) can compile
-// without pulling in the 6k-line parser hub. css_parser.rs re-exports this
-// when it un-gates.
 
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -319,13 +266,6 @@ impl VendorPrefix {
         self.bits()
     }
 
-    /// Detects a leading vendor prefix on `name` (case-insensitive, ASCII) and
-    /// returns it together with the slice that follows the prefix.
-    ///
-    /// Returns `(VendorPrefix::NONE, name)` when no prefix matches. Prefix forms
-    /// are the canonical dash-terminated spellings (`-webkit-`, `-moz-`, `-o-`,
-    /// `-ms-`); callers that previously matched without the trailing dash were
-    /// only correct because their input domain was already constrained.
     #[inline]
     pub fn strip_from(name: &[u8]) -> (VendorPrefix, &[u8]) {
         use bun_core::strings::starts_with_case_insensitive_ascii as has;
@@ -342,11 +282,6 @@ impl VendorPrefix {
         }
     }
 }
-
-// ───────────────────────── Core lexer/location types ─────────────────────────
-// Hoisted from css_parser.rs / rules/mod.rs so leaf modules (error, dependencies)
-// compile without the 6k-line parser hub. css_parser.rs `pub use crate::{..}`s
-// these when it un-gates.
 
 /// Line/column within a single source. Column is 1-based, line is 0-based.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -391,11 +326,6 @@ pub struct Dimension {
     pub unit: &'static [u8],
 }
 
-/// CSS lexer token. Data-only definition hoisted out of `css_parser.rs`; the
-/// `to_css*`/`eql`/`hash` impls stay in `css_parser.rs` (gated) since they
-/// depend on `serializer::*` and `generics`.
-// TODO(port): every &'static [u8] payload borrows the parser arena/source;
-// thread `<'a>` once the bumpalo arena lifetime is plumbed.
 #[derive(Clone, Debug)]
 pub enum Token {
     Ident(&'static [u8]),

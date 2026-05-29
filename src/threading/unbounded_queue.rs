@@ -29,14 +29,6 @@ pub unsafe trait Node: Sized {
     unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering);
 }
 
-/// Intrusive next-pointer field for [`UnboundedQueue<T>`] nodes.
-///
-/// Embed this as a field in `T` and implement [`Linked`] (which only needs to
-/// project to that field) instead of open-coding all four [`Node`] accessors.
-/// Centralizes the `AtomicPtr` storage so node types no longer need
-/// `addr_of_mut!`/`AtomicPtr::from_ptr` casts over a plain `*mut T` field.
-///
-/// `#[repr(transparent)]` so it has the same layout as the `?*T` it ports.
 #[repr(transparent)]
 pub struct Link<T>(AtomicPtr<T>);
 
@@ -155,11 +147,6 @@ impl<T: Node> Batch<T> {
     }
 }
 
-/// Per-arch cache-half-line aligned wrapper — Zig's `align(queue_padding_length)`
-/// on `UnboundedQueue.back`/`.front`. Rust cannot express per-field alignment
-/// with a non-literal const, so this newtype is `#[repr(align(N))]`-cfg'd to
-/// half the target's cache-line size, keeping producer (CAS on `back`)
-/// and consumer (swap on `front`) on separate cache halves.
 #[cfg_attr(
     any(
         target_arch = "x86_64",

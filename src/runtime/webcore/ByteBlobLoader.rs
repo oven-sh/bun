@@ -15,12 +15,6 @@ pub struct ByteBlobLoader {
     pub done: bool,
     pub pulled: bool,
 
-    /// https://github.com/oven-sh/bun/issues/14988
-    /// Necessary for converting a ByteBlobLoader from a Blob -> back into a Blob
-    /// Especially for DOMFormData, where the specific content-type might've been serialized into the data.
-    // TODO(port): Zig stored either an owned dupe or a borrowed slice from `blob` gated by
-    // `content_type_allocated`. Collapsed to always-owned `Box<[u8]>`; the flag is kept for
-    // structural parity (transferred to Blob in to_any_blob).
     pub content_type: Box<[u8]>,
     pub content_type_allocated: bool,
 }
@@ -87,13 +81,6 @@ impl ByteBlobLoader {
         // PORT NOTE: Zig did `var blobe = blob.*; blobe.resolveSize();` — `Blob` is not
         // `Clone` in Rust, so use the non-mutating `resolved_size()` helper instead.
         let (offset, size) = blob.resolved_size();
-        // Zig borrowed `blob.content_type` when `!blob.content_type_allocated`
-        // and tracked ownership via the flag. The Rust port collapsed
-        // `content_type` to an always-owned `Box<[u8]>` (we dupe in both
-        // arms), so the flag must be `true` whenever the box is non-empty —
-        // it's later transferred verbatim to a `Blob` in `to_any_blob`, and a
-        // `false` there strands the `into_raw`'d allocation behind
-        // `Blob::free_content_type`'s `content_type_allocated` gate.
         let (content_type, content_type_allocated) = if blob.content_type_was_set.get() {
             let ct = blob.content_type_slice();
             (Box::<[u8]>::from(ct), !ct.is_empty())
@@ -210,10 +197,6 @@ impl ByteBlobLoader {
         self.clear_data();
     }
 
-    // Kept as inherent method (not `Drop`) — invoked via `SourceContext::deinit_fn`.
-    // Only side-effect teardown lives here; the enclosing `Box<Source>` is freed by
-    // the caller (`NewSource::decrement_count`) *after* this returns. Freeing the
-    // parent here would deallocate the storage backing `&mut self` (dangling UAF).
     pub fn deinit(&mut self) {
         self.clear_data();
     }

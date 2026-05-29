@@ -34,18 +34,6 @@ pub enum CacheBehavior {
     LoadFromMemoryFallbackToDisk,
 }
 
-/// By-value snapshot of the `PackageManager` fields the disk-fallback path of
-/// [`PackageManifestMap::by_name_hash_allow_expired`] reads.
-///
-/// Zig threads `pm: *PackageManager` and reads these directly. In Rust every
-/// caller is `pm.manifests.by_name…(pm, …)`, so accepting `&mut PackageManager`
-/// (or `&mut *raw`) would alias the `&mut self` receiver — Stacked-Borrows UB
-/// regardless of which fields the body touches. Capturing the four scalars by
-/// value lets callers split `&mut pm.manifests` from `&pm.lockfile` /
-/// `&pm.options` with safe disjoint-field borrows and keeps this map free of a
-/// `PackageManager` dependency.
-///
-/// Construct via `PackageManager::manifest_disk_cache_ctx`.
 #[derive(Clone, Copy)]
 pub struct DiskCacheCtx {
     pub enable_manifest_cache: bool,
@@ -113,12 +101,6 @@ impl PackageManifestMap {
         )
     }
 
-    /// Memory-only lookup — equivalent to Zig
-    /// `byNameHash(this, pm, scope, hash, .load_from_memory, _)` with
-    /// `is_expired = null`, but without the `ctx`/`scope` parameters: the
-    /// `.load_from_memory` arm never reads them. Exposed separately so callers
-    /// holding `&mut PackageManager` can borrow only the disjoint
-    /// `pm.manifests` field.
     pub fn by_name_hash_in_memory(
         &mut self,
         name_hash: PackageNameHash,
@@ -148,13 +130,6 @@ impl PackageManifestMap {
         )
     }
 
-    /// Zig: `byNameHashAllowExpired(this, pm: *PackageManager, ...)`.
-    ///
-    /// PORT NOTE: reshaped for borrowck — Zig passes `pm` and reads
-    /// `pm.options.enable.*`, `pm.getCacheDirectory()`, and
-    /// `pm.timestamp_for_manifest_cache_control` on the disk-fallback arm.
-    /// Those scalars are hoisted into [`DiskCacheCtx`] so callers never hold
-    /// `&mut pm.manifests` and a `PackageManager` borrow simultaneously.
     pub fn by_name_hash_allow_expired(
         &mut self,
         ctx: DiskCacheCtx,

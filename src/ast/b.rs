@@ -6,30 +6,6 @@ use crate::{ExprNodeIndex, flags};
 // Re-exported so callers can spell `js_ast::b::ArrayBinding` (Zig: `B.Array.Item`).
 pub use crate::ArrayBinding;
 
-/// B is for Binding! Bindings are on the left side of variable
-/// declarations (s_local), which is how destructuring assignments
-/// are represented in memory. Consider a basic example.
-///
-/// ```text
-/// let hello = world;
-///     ^       ^
-///     |       E.Identifier
-///     B.Identifier
-/// ```
-///
-/// Bindings can be nested
-///
-/// ```text
-///            B.Array
-///            | B.Identifier
-///            | |
-/// let { foo: [ bar ] } = ...
-///     ----------------
-///     B.Object
-/// ```
-// Zig: `union(Binding.Tag)` — tag enum lives on `Binding::Tag`.
-// PORT NOTE: arena values are referenced via `StoreRef<T>` (LIFETIMES.tsv: ARENA)
-// rather than a threaded `&'bump mut T`.
 #[derive(Copy, Clone, bun_core::EnumTag)]
 #[enum_tag(existing = super::binding::Tag)]
 pub enum B {
@@ -49,14 +25,6 @@ impl Default for B {
     }
 }
 
-// ── Layout guards ─────────────────────────────────────────────────────────
-// Three `StoreRef<T>` variants (`#[repr(transparent)] NonNull<T>`, 8-byte
-// payload) + one ZST → 1-byte discriminant + 8-byte payload = 9, align(8)
-// rounds to 16. `Binding` = `B` (16, align 8) + `Loc` (i32) → 20 → 24.
-// Matches `expr::Data`/`stmt::Data`: every pointer payload is non-nullable,
-// so `Option<B>` packs into the same 16 bytes via the NonNull niche (and
-// would continue to even under a future `#[repr(u8)]`, unlike the prior
-// `*mut T` form which relied solely on spare-tag-value niche).
 const _: () = assert!(core::mem::size_of::<B>() == 16);
 const _: () = assert!(core::mem::size_of::<super::binding::Binding>() == 24);
 const _: () = assert!(
@@ -130,15 +98,6 @@ impl B {
         // PORT NOTE: `symbol_table: anytype` — forwarded to `Ref::get_symbol` and
         // `Expr::Data::write_to_hasher`; bound mirrors `Expr::Data::write_to_hasher`.
     {
-        // Local mirror of `bun.writeAnyToHasher`. Zig fed anonymous tuples
-        // through `std.mem.asBytes`, but Rust tuples have *uninitialized*
-        // padding bytes (e.g. `(Tag /*u8*/, usize)` has 7 on 64-bit), so
-        // forming a `&[u8]` over them is UB. Instead we feed each scalar
-        // field individually and bound on `NoUninit` so the compiler proves
-        // every byte is initialized — same pattern as `expr::Data::write_to_hasher`.
-        // The hash is only used in-process for React Fast Refresh, so the
-        // byte-stream change vs. Zig is immaterial (and the old stream was
-        // nondeterministic anyway).
         #[inline(always)]
         fn raw<H: bun_core::Hasher + ?Sized, T: bun_core::NoUninit>(h: &mut H, v: T) {
             h.update(bun_core::bytes_of(&v));

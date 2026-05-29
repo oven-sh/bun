@@ -31,19 +31,7 @@ pub struct Theme<'a> {
     /// refers to a local file (absolute or ./relative path, or file://).
     /// Falls through to the text alt for remote URLs.
     pub kitty_graphics: bool,
-    /// Optional lookup table mapping http(s) image URLs to already-
-    /// downloaded local file paths. Populated by a pre-scan pass (see
-    /// `collectImageUrls` + the CLI entry point) so `emitImage` can
-    /// send remote images through Kitty's `t=f` path. When null, http
-    /// and https URLs fall through to the alt-text fallback.
-    // LIFETIMES.tsv: BORROW_PARAM. Zig type is
-    // `bun.StringHashMapUnmanaged([]const u8)` — keys are URL bytes,
-    // values are file-path bytes.
     pub remote_image_paths: Option<&'a StringHashMap<Box<[u8]>>>,
-    /// Base directory used to resolve relative image `src` paths. When
-    /// null, falls back to the process cwd. The CLI entry point sets
-    /// this to the markdown file's directory so `![](./img.png)` works
-    /// regardless of where `bun ./some/dir/file.md` is invoked from.
     pub image_base_dir: Option<&'a [u8]>,
 }
 
@@ -219,12 +207,6 @@ const SPAN_DEL: u32 = 1 << 2;
 const SPAN_U: u32 = 1 << 3;
 const SPAN_CODE: u32 = 1 << 4;
 
-/// Upper bound on the visible indentation (blockquote bars + list indent)
-/// emitted at the start of each rendered line. Nesting deeper than this is
-/// unreadable on any terminal, and without a cap every line's prefix grows
-/// with the nesting depth — a document of pathologically nested lists or
-/// quotes (e.g. `- - - - …` repeated thousands of times) would otherwise
-/// produce output quadratic in the input size.
 const MAX_INDENT_COLS: u32 = 128;
 
 struct InlineStyle {
@@ -426,10 +408,6 @@ impl<'a> AnsiRenderer<'a> {
             BlockType::Hr => {
                 self.ensure_blank_line();
                 self.write_indent();
-                // columns == 0 is the "disable wrapping" sentinel, not a
-                // zero-width rule — fall back to 60 in that case.
-                // Subtract the indent that writeIndent() just emitted so
-                // a rule inside a blockquote / list item doesn't overflow.
                 let indent_cols = self.current_indent();
                 let width: u32 = if self.theme.columns == 0 {
                     60u32.saturating_sub(indent_cols)
@@ -592,10 +570,6 @@ impl<'a> AnsiRenderer<'a> {
                     self.link_href = resolve_href(&detail).ok();
                     if self.theme.colors && self.theme.hyperlinks {
                         if let Some(href) = &self.link_href {
-                            // OSC 8 hyperlink start
-                            // PORT NOTE: reshaped for borrowck — clone the
-                            // bytes so write_raw_no_color(&mut self) doesn't
-                            // alias `&self.link_href`.
                             let href = href.clone();
                             self.write_raw_no_color(b"\x1b]8;;");
                             self.write_raw_no_color(&href);
@@ -732,10 +706,6 @@ impl<'a> AnsiRenderer<'a> {
                 let decoded = sanitize_source_text(decoded, &mut decoded_sanitized);
                 self.write_content(decoded);
             }
-            // Inline code spans are atomic — don't let writeWrapped split
-            // them at internal spaces. writeStyled with empty prefix routes
-            // the content through the active buffer + updates col in one
-            // pass, without the paragraph word-wrap logic.
             TextType::Code => self.write_styled(b"", content),
             // LaTeX math spans are atomic like .code — don't let
             // writeWrapped split `$E = mc^2$` at internal spaces.
@@ -806,10 +776,6 @@ impl<'a> AnsiRenderer<'a> {
                 self.last_was_newline = true;
                 self.col = 0;
                 i += 1;
-                // Always re-emit the indent after a newline, even when
-                // this is the final byte of `data` — a hard break
-                // (`text(.br)`) arrives as a lone "\n" and the next
-                // text() call starts at col=0 with no indent pushed.
                 self.write_indent();
                 continue;
             }
@@ -903,11 +869,6 @@ impl<'a> AnsiRenderer<'a> {
         }
     }
 
-    /// Route bytes to the active inline sink. Spans inside a table cell,
-    /// heading, or image must write to that buffer so structural code
-    /// (flushTable/flushHeading/emitImage) emits them at the right spot.
-    /// ANSI escape bytes are dropped inside image alt text since alt text
-    /// is plain.
     fn emit_inline(&mut self, bytes: &[u8]) {
         if bytes.is_empty() {
             return;
@@ -970,10 +931,6 @@ impl<'a> AnsiRenderer<'a> {
             && !self.in_code_block
             && self.image_depth == 0;
 
-        // Pre-wrap before opening the style: an atomic span (`.code`,
-        // `.latexmath`, link href fallback) is emitted in one piece via
-        // emitInline, so if it would overflow we must break to a fresh
-        // line first — otherwise the terminal hard-wraps mid-span.
         if in_main_flow && self.theme.columns > 0 && !text_.is_empty() {
             let tw = visible_width(text_);
             if tw > 0 {
@@ -1090,11 +1047,6 @@ impl<'a> AnsiRenderer<'a> {
         self.last_was_newline = data[data.len() - 1] == b'\n';
     }
 
-    /// Emit a short text chunk through the active buffer and update col
-    /// WITHOUT the pre-wrap guard that writeStyled uses. This is the
-    /// right path for closing delimiters (`]]`, `$`, `$$`) that must
-    /// stay attached to whatever they close — otherwise a wrap can push
-    /// the closer onto a new line and orphan it.
     fn write_no_wrap(&mut self, text_: &[u8]) {
         if text_.is_empty() {
             return;
@@ -1130,10 +1082,6 @@ impl<'a> AnsiRenderer<'a> {
         self.out.write(data);
     }
 
-    /// Re-emit the currently active inline styles from span_flags, the
-    /// link-styling state, and — when buffering a heading — the heading's
-    /// bold + color wrapper. Used after a nested span closes so the outer
-    /// style doesn't get wiped, and after writeIndent emits its own reset.
     fn reapply_styles(&mut self) {
         if !self.theme.colors {
             return;
@@ -1189,10 +1137,6 @@ impl<'a> AnsiRenderer<'a> {
         }
     }
 
-    /// Quote bars and indent spaces to draw for the current block stack,
-    /// capped at MAX_INDENT_COLS visible columns total. writeIndent and
-    /// currentIndent must agree on these numbers so the wrap math matches
-    /// what was actually emitted.
     fn indent_counts(&self) -> (u32, u32) {
         let quote_bars = self.quote_depth.min(MAX_INDENT_COLS / 2);
         let other_indent = self.list_indent_cols.min(MAX_INDENT_COLS - quote_bars * 2);
@@ -1322,11 +1266,6 @@ impl<'a> AnsiRenderer<'a> {
         }
     }
 
-    /// Find the nearest enclosing ul/ol in the block stack (walking
-    /// from innermost outward, skipping the current li at the top).
-    // PORT NOTE: reshaped for borrowck — returns an index into
-    // block_stack instead of `&mut BlockContext` so callers can call
-    // other &mut self methods between accesses.
     fn find_parent_list(&self) -> Option<usize> {
         let len = self.block_stack.len();
         if len == 0 {
@@ -1349,10 +1288,6 @@ impl<'a> AnsiRenderer<'a> {
 
     fn flush_heading(&mut self) {
         let level = self.heading_level;
-        // Temporarily zero heading_level so writeIndent()'s reapplyStyles()
-        // routes emitInline() to self.out instead of heading_buf. Otherwise
-        // inside a blockquote the bold+color writes reach heading_buf and
-        // may realloc its backing array, dangling the `content` slice below.
         self.heading_level = 0;
         // PORT NOTE: reshaped for borrowck — take ownership of heading_buf
         // so write_indent(&mut self) doesn't alias `content`.
@@ -1669,11 +1604,6 @@ impl<'a> AnsiRenderer<'a> {
         // hard-wrap the whole row and shred the borders.
         let mut segments: Vec<Vec<&[u8]>> = vec![Vec::new(); widths.len()];
 
-        // Per-cell ANSI state snapshotted at the START of each segment.
-        // `state_at[col][line]` is the SGR/OSC 8 state that was active
-        // when rendering reached the beginning of that segment. Needed
-        // so a cell that wraps mid-span can re-open the style on the
-        // continuation line.
         let mut state_at: Vec<Vec<CellAnsiState>> = vec![Vec::new(); widths.len()];
 
         let mut lines: usize = 1;
@@ -1688,13 +1618,6 @@ impl<'a> AnsiRenderer<'a> {
             while !rest.is_empty() {
                 let mut cut = visible_index_at(rest, w);
                 if cut < rest.len() {
-                    // Prefer breaking at the last word boundary inside the
-                    // cut so words stay intact when there's room. Must use
-                    // an escape-aware scanner — a raw lastIndexOfChar(' ')
-                    // would find spaces inside an OSC 8 URL (valid via the
-                    // `[text](<url with space>)` angle-bracket syntax) and
-                    // truncate mid-sequence, leaving a never-terminated
-                    // hyperlink opener that corrupts the rest of the row.
                     if let Some(sp) = last_word_break_outside_escapes(&rest[0..cut]) {
                         if sp > 0 {
                             cut = sp;
@@ -1775,10 +1698,6 @@ impl<'a> AnsiRenderer<'a> {
                 };
                 self.write_padding(left);
                 self.out.write(seg);
-                // Close everything still open at the end of this segment
-                // — `\x1b[0m` for SGR and `\x1b]8;;\x1b\\` for OSC 8 so
-                // the padding, trailing space, and border are not part
-                // of an active hyperlink.
                 if self.theme.colors {
                     let mut end_state = opens;
                     end_state.scan(seg);
@@ -1874,11 +1793,6 @@ impl<'a> AnsiRenderer<'a> {
     // ========================================
 
     fn emit_image(&mut self) {
-        // Snapshot alt + link fields now — emitImage drops out of the
-        // image context before writing, so image_alt / image_depth checks
-        // in emitInline would otherwise still divert output.
-        // PORT NOTE: reshaped for borrowck — take ownership of buffered
-        // fields so &mut self methods below don't alias.
         let alt = core::mem::take(&mut self.image_alt);
         let src = self.image_src.take();
         let title = self.image_title.take();
@@ -1889,25 +1803,9 @@ impl<'a> AnsiRenderer<'a> {
 
         let has_src = src.as_deref().is_some_and(|s| !s.is_empty());
 
-        // Kitty Graphics Protocol path: for local files, emit an APC
-        // sequence that tells the terminal to read the file directly
-        // and display it inline. Only attempts this when:
-        //   1. colors + kitty_graphics are enabled (needs ESC support)
-        //   2. src is a file: URI or a non-URL path
-        //   3. the file exists on disk
-        // If the image is actually displayed, we're done — the image
-        // itself is the content, no caption/alt text needed.
-        // Skip Kitty inside table cells / headings: the APC payload
-        // would be counted as visible width by flushTable/flushHeading,
-        // blowing up the column / underline size. Images in cells
-        // always fall back to alt-text rendering.
         let kitty_allowed = !self.in_cell && self.heading_level == 0;
         if kitty_allowed && self.theme.colors && self.theme.kitty_graphics && has_src {
             let s = src.as_deref().unwrap();
-            // data:image/png;base64,... → transmit payload directly via
-            // t=d so no temp file needs to live on disk. Other data:
-            // formats (jpeg/gif/webp) don't map to a Kitty format code
-            // for direct transmission, so fall through to alt text.
             if let Some(payload) = extract_png_data_url_base64(s) {
                 self.emit_kitty_image_direct(payload);
                 self.image_depth = saved_depth;
@@ -1940,20 +1838,6 @@ impl<'a> AnsiRenderer<'a> {
             }
         }
 
-        // Fallback: image can't be rendered inline. Show the alt text
-        // (or title, or "(image)") wrapped in the OSC 8 hyperlink so
-        // the src URL stays clickable. A magenta camera marker makes it
-        // obvious this is a missing/unrendered image. (U+1F4F7 instead
-        // of U+1F5BC "FRAME WITH PICTURE" because 1F5BC is classified
-        // Narrow in EastAsianWidth.txt — visibleWidth would undercount
-        // it as 1 column and wrapping would fire one column too late.)
-        // Skip the OSC 8 wrapper when src is a `data:` URI — those
-        // payloads are megabytes of base64 and would exceed typical
-        // terminal OSC parameter limits (64KB–1MB), causing rendering
-        // artifacts, hangs, or garbage output.
-        // Also skip when we're inside an enclosing link span
-        // (`[![alt](img)](url)`) — emitting our own OSC 8 would overwrite
-        // the outer link destination for subsequent text on that line.
         let link_ok = self.theme.colors
             && self.theme.hyperlinks
             && has_src
@@ -1970,10 +1854,6 @@ impl<'a> AnsiRenderer<'a> {
             b"[img] "
         };
         self.write_styled(ansi_b::MAGENTA, img_marker);
-        // Route alt/title through writeContent so word-wrap applies and
-        // any hard breaks (`\n` captured from .br events) get a proper
-        // writeIndent() afterwards — otherwise long alts overflow and
-        // continuation lines inside blockquotes lose the `│ ` prefix.
         if !alt.is_empty() {
             self.write_content(&alt);
         } else if let Some(t) = &title {
@@ -1997,10 +1877,6 @@ impl<'a> AnsiRenderer<'a> {
         self.image_title = title;
     }
 
-    /// Emit a Kitty Graphics Protocol transmit-and-display sequence for
-    /// the absolute file `path`. Uses `t=f` (transmission medium = regular
-    /// file by path) so the terminal reads the file directly. Terminals
-    /// that don't understand the APC sequence silently drop it.
     fn emit_kitty_image_file(&mut self, path: &[u8]) {
         // Base64-encode the file path (Kitty expects the payload to be b64).
         let encoded = {
@@ -2020,10 +1896,6 @@ impl<'a> AnsiRenderer<'a> {
         self.write_indent();
     }
 
-    /// Emit a Kitty Graphics Protocol transmit-and-display sequence with
-    /// the PNG bytes encoded directly in the APC payload via `t=d`. The
-    /// `base64_payload` is already the base64 body of a `data:image/png`
-    /// URL, so we forward it as-is — no temp file, no re-encoding.
     fn emit_kitty_image_direct(&mut self, base64_payload: &[u8]) {
         self.write_raw_no_color(b"\x1b_Ga=T,t=d,f=100,q=2;");
         self.write_raw_no_color(base64_payload);
@@ -2037,10 +1909,6 @@ impl<'a> AnsiRenderer<'a> {
 
 // Drop is automatic for AnsiRenderer — all owned fields are Vec/Box.
 
-/// ANSI state active at a given byte offset inside a cell's buffer.
-/// Tracked so a cell that wraps mid-span can re-emit the same opens
-/// on the continuation segment AND close any open OSC 8 link before
-/// the border character — `\x1b[0m` doesn't terminate OSC 8.
 #[derive(Copy, Clone, Default)]
 struct CellAnsiState<'s> {
     flags: u8,
@@ -2109,10 +1977,6 @@ impl<'s> CellAnsiState<'s> {
                 return;
             }
             if bytes[i + 1] == b'[' {
-                // CSI ... m (SGR). Scan until final byte.
-                // ECMA-48 final bytes are 0x40–0x7E; the parameter
-                // separator ';' is 0x3B and is already excluded by
-                // the range check.
                 let seq_start = i;
                 let mut j = i + 2;
                 while j < bytes.len() {
@@ -2240,13 +2104,6 @@ impl<'s> CellAnsiState<'s> {
     }
 }
 
-/// Find the last space byte in `bytes` that lies OUTSIDE any ANSI
-/// escape sequence (CSI or OSC). The table wrapper uses this to pick
-/// a word-break point without splitting an OSC 8 opener mid-URL —
-/// `[text](<url with space>)` is valid CommonMark and produces an
-/// OSC 8 href that literally contains a space byte, so a naive
-/// byte scan would break the sequence in half and leave the
-/// terminal stuck in persistent hyperlink mode.
 fn last_word_break_outside_escapes(bytes: &[u8]) -> Option<usize> {
     let mut last: Option<usize> = None;
     let mut i: usize = 0;
@@ -2483,12 +2340,6 @@ pub fn detect_light_background() -> bool {
     false
 }
 
-/// Detect whether the current terminal likely supports the Kitty
-/// Graphics Protocol. Checked heuristics:
-///   - `KITTY_WINDOW_ID` set (native Kitty)
-///   - `TERM` contains "kitty"
-///   - `TERM_PROGRAM=WezTerm` or `ghostty` (compatible terminals)
-///   - `TERM_PROGRAM=ghostty`
 pub fn detect_kitty_graphics() -> bool {
     // TERM=dumb is the standard opt-out for any ESC handling — bail
     // before any env match or probe runs.
@@ -2526,14 +2377,6 @@ pub fn detect_kitty_graphics() -> bool {
     probe_kitty_graphics()
 }
 
-/// Write a Kitty Graphics Protocol query to stdout and wait briefly
-/// for a response on stdin. Returns true only when the terminal
-/// answers with an OK. stdin and stdout must both be TTYs for the
-/// probe to run.
-///
-/// The query transmits a 1×1 placeholder image with id=31 and reads
-/// the reply with a short timeout. Raw mode is applied + restored
-/// around the read so the bytes don't echo to the user's terminal.
 fn probe_kitty_graphics() -> bool {
     // Zig: `if (comptime !bun.Environment.isPosix) return false;`
     #[cfg(not(unix))]
@@ -2550,11 +2393,6 @@ fn probe_kitty_graphics() -> bool {
             return false;
         }
 
-        // Save the parent's termios before flipping stdin to raw. If the
-        // parent (a TUI, tmux/Zellij pane, etc.) already had raw mode on,
-        // restoring to a fixed .normal would corrupt it — instead reapply
-        // exactly what we read. tcgetattr failing means stdin isn't a real
-        // TTY in a way we can snapshot; skip probing entirely.
         let saved_termios = match bun_sys::posix::tcgetattr(0) {
             Ok(t) => t,
             Err(_) => return false,
@@ -2606,25 +2444,11 @@ fn probe_kitty_graphics() -> bool {
     }
 }
 
-/// Resolve an image `src` from markdown to an absolute file path on
-/// disk if it refers to a local file, otherwise return null. Handles
-/// `file://` URIs and relative paths. Relative paths resolve against
-/// `base_dir` when non-null (typically the markdown file's directory),
-/// falling back to the process cwd. The returned slice is owned by the
-/// caller.
 fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[u8]>> {
-    // Reject remote schemes. A renderer-level prefetch pass can feed
-    // http(s) URLs into the renderer via a lookup table as local paths.
-    // data: URIs are handled separately in emitImage via direct Kitty
-    // transmission (t=d) to avoid creating temp files.
     if src.starts_with(b"http://") || src.starts_with(b"https://") || src.starts_with(b"data:") {
         return None;
     }
 
-    // Strip file:// prefix + optional `localhost` authority, then
-    // percent-decode. RFC 8089 allows `file://localhost/path`
-    // (equivalent to `file:///path`) and real-world file URLs
-    // contain %XX escapes for spaces and other reserved chars.
     let mut path: &[u8] = src;
     if src.starts_with(b"file://") {
         path = &src[b"file://".len()..];
@@ -2639,11 +2463,6 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
     // Percent-decode the path so file:///foo/bar%20baz works.
     let decoded = bun_url::PercentEncoding::decode_alloc(path).ok()?;
 
-    // Resolve to an absolute path. bun.path.joinAbsString returns a
-    // slice in a threadlocal buffer — dupe it before leaving this fn.
-    // Prefer the markdown file's directory when provided; otherwise fall
-    // back to cwd so `Bun.markdown.ansi()` callers without a source path
-    // still work.
     let mut cwd_buf = bun_paths::PathBuffer::uninit();
     let base: &[u8] = if let Some(d) = base_dir {
         d
@@ -2656,11 +2475,6 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
     let joined =
         bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(base, &[&decoded]);
     let abs = Box::<[u8]>::from(joined);
-    // Stat instead of plain exists() so a directory like `./assets/` gets
-    // rejected. bun.sys.exists wraps access(path, F_OK) which returns true
-    // for any entry, including directories — and emitKittyImageFile sets
-    // q=2 so the terminal silently drops directory paths without falling
-    // through to alt text.
     let mut zbuf = bun_paths::PathBuffer::uninit();
     let abs_z = bun_paths::resolve_path::z(&abs, &mut zbuf);
     match bun_sys::stat(abs_z) {
@@ -2678,11 +2492,6 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
 // Public entry point
 // ========================================
 
-/// Extract the base64 body of a `data:image/png;base64,...` URI. Returns
-/// a slice into `src` (no allocation) that's the direct payload Kitty
-/// can consume via `t=d,f=100`. Non-PNG data URIs return null because
-/// Kitty's format codes (`f=100` PNG, `f=24` RGB, `f=32` RGBA) don't
-/// cover JPEG/GIF/WebP binary input.
 fn extract_png_data_url_base64(src: &[u8]) -> Option<&[u8]> {
     if !src.starts_with(b"data:") {
         return None;

@@ -91,13 +91,6 @@ impl Yes {
     /// Write 4 chunks then bounce to the event loop so we don't hog the main
     /// thread. Spec: yes.zig `writeNoIO`.
     fn write_no_io_loop(interp: &Interpreter, cmd: NodeId) -> Yield {
-        // Spec: yes.zig `writeOnceNoIO` — `.err` arm formats via
-        // `fmtErrorArena(.yes, "{s}\n", .{e.name()})` and routes through
-        // `writeFailingError`.
-        //
-        // Split-borrow the Cmd so the tiled buffer (in `impl_`) and `stdout`
-        // are accessible simultaneously — Zig passes `this.buffer[0..]`
-        // zero-copy, and matching that matters for `yes` throughput.
         let err = {
             let cmd_node = interp.as_cmd_mut(cmd);
             let shell = cmd_node.base.shell;
@@ -250,12 +243,6 @@ impl YesTask {
         }
     }
 
-    /// Spec: yes.zig `YesTask.runFromMainThread`.
-    ///
-    /// `this` must be a live `YesTask` whose storage is stable inside
-    /// `Box<Yes>` in the interpreter arena, with `interp` initialised by
-    /// [`Yes::start`]. Reached only via the concurrent-task dispatch installed
-    /// in [`enqueue`](Self::enqueue).
     pub(crate) fn run_from_main_thread(this: &Self) {
         // SAFETY: `interp` was set in `Yes::start` and outlives the task.
         let (interp, cmd) = unsafe { (&*this.interp, this.cmd) };

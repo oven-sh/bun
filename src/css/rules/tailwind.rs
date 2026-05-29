@@ -39,11 +39,6 @@ pub enum TailwindStyleName {
     /// This injects Tailwind's utility classes and any utility classes registered
     /// by plugins.
     Utilities,
-    /// Use this directive to control where Tailwind injects the hover, focus,
-    /// responsive, dark mode, and other variants of each class.
-    ///
-    /// If omitted, Tailwind will append these classes to the very end of
-    /// your stylesheet by default.
     Variants,
 }
 

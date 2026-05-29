@@ -106,24 +106,6 @@ impl RGBA {
     }
 }
 
-/// Convert a unit-interval f32 (nominally 0.0..=1.0) to a u8 in 0..=255.
-///
-/// Whilst scaling by 256 and flooring would provide an equal distribution of
-/// integers to percentage inputs, this is not what Gecko does so we instead
-/// multiply by 255 and round (adding 0.5 and flooring is equivalent to rounding).
-///
-/// Chrome does something similar for the alpha value, but not the rgb values.
-///
-/// See <https://bugzilla.mozilla.org/show_bug.cgi?id=1340484>
-///
-/// Clamping to 256 and rounding after would let 1.0 map to 256, and
-/// `256.0_f32 as u8` saturates (historically UB):
-/// <https://github.com/rust-lang/rust/issues/10184>
-///
-/// NaN → 0 (clamp passes NaN through; `NaN as u8` saturates to 0).
-///
-/// NOTE: this *rounds*. Do **not** use for thumbhash, whose spec truncates
-/// (`thumbhash.zig:256` `@intFromFloat`).
 #[inline]
 pub(crate) fn clamp_unit_f32(val: f32) -> u8 {
     (val * 255.0).round().clamp(0.0, 255.0) as u8
@@ -161,25 +143,6 @@ pub enum FloatColor {
     Hwb(HWB),
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Variant dispatch — single source of truth for (Variant ↔ Payload type ↔
-// css-name ↔ hash-ordinal). Every match-over-all-variants in this file is
-// driven from the three `impl_variant_dispatch!` invocations below; do NOT
-// hand-roll a new copy.
-//
-// Mirrors Zig's `switch (color.*) { inline else => |*v| v.into(T) }` shape
-// (color.zig:3213 `ColorspaceConversions`) which the original Rust port
-// regressed into 14 textual copies inside `define_colorspace!`.
-//
-// ROW ORDER IS LOAD-BEARING: ordinals feed `CssColor::hash` (Wyhash).
-// css-name is NOT derivable from the ident: `XyzD65` serializes as `"xyz"`
-// (Safari-15 compat), and `FloatColor::Rgb`'s payload type is `SRGB`.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Marker for any `T` that has the full `From<_>` lattice over every concrete
-/// colorspace payload (every `define_colorspace!` type does, via the handwritten
-/// + generated `From` impls). Lets `convert_to::<T>()` dispatch `v.into()`
-/// uniformly without re-stamping the match per `T`.
 pub trait FromAnyColorspace:
     From<LAB>
     + From<LCH>
@@ -881,10 +844,6 @@ impl CssColor {
     }
 
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // PORT NOTE: Zig `css.implementHash` — variant-tag prefix + payload fields.
-        // Hash the discriminant + the active variant's f32 components explicitly;
-        // never reinterpret a `repr(Rust)` enum as raw bytes (unspecified layout /
-        // padding → UB and non-deterministic hashes).
         #[inline]
         fn hash_components(
             hasher: &mut bun_wyhash::Wyhash,
@@ -995,13 +954,6 @@ impl ColorFallbackKind {
         })
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Colorspace traits (replaces Zig comptime mixins: DefineColorspace,
-// BoundedColorGamut, UnboundedColorGamut, HslHwbColorGamut, DeriveInterpolate,
-// RecangularPremultiply, PolarPremultiply, AdjustPowerlessLAB/LCH,
-// ColorspaceConversions, ColorIntoMixin, ImplementIntoCssColor)
-// ──────────────────────────────────────────────────────────────────────────
 
 /// Trait every colorspace implements. The Zig used `@field(this, "x")` over the
 /// first three struct fields plus `alpha`; here we expose them by index.
@@ -1554,15 +1506,6 @@ impl FloatColor {
         SRGB::from_float_color(self)
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Colorspace structs (LAB, SRGB, HSL, HWB, SRGBLinear, P3, A98, ProPhoto,
-// Rec2020, XYZd50, XYZd65, LCH, OKLAB, OKLCH)
-//
-// In Zig each struct manually wires `pub const X = mixin.X` for ~12 mixin
-// items. In Rust the trait impls below cover that surface; the per-type
-// declarations collapse into a `define_colorspace!` macro invocation.
-// ──────────────────────────────────────────────────────────────────────────
 
 macro_rules! define_colorspace {
     (
@@ -2705,14 +2648,6 @@ pub fn write_predefined(predefined: &PredefinedColor, dest: &mut Printer) -> Res
 use bun_core::powf as bun_powf;
 
 pub(crate) fn gam_srgb(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
-    // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L31
-    // convert an array of linear-light sRGB values in the range 0.0-1.0
-    // to gamma corrected form
-    // https://en.wikipedia.org/wiki/SRGB
-    // Extended transfer function:
-    // For negative values, linear portion extends on reflection
-    // of axis, then uses reflected pow below that
-
     fn gam_srgb_component(c: f32) -> f32 {
         let abs = c.abs();
         if abs > 0.0031308 {
@@ -2734,14 +2669,6 @@ pub(crate) fn gam_srgb(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
 }
 
 pub(crate) fn lin_srgb(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
-    // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L11
-    // convert sRGB values where in-gamut values are in the range [0 - 1]
-    // to linear light (un-companded) form.
-    // https://en.wikipedia.org/wiki/SRGB
-    // Extended transfer function:
-    // for negative values, linear portion is extended on reflection of axis,
-    // then reflected power function is used.
-
     fn lin_srgb_component(c: f32) -> f32 {
         let abs = c.abs();
         if abs < 0.04045 {
@@ -2780,18 +2707,6 @@ const D50: [f32; 3] = [
     1.00000,
     ((1.0f64 - 0.3457f64 - 0.3585f64) / 0.3585f64) as f32,
 ];
-
-// ──────────────────────────────────────────────────────────────────────────
-// Handwritten conversions (Zig `color_conversions` namespace).
-//
-// In Zig, `ColorIntoMixin(T, .Space).into(target)` looked up `intoXXX` in
-// (a) handwritten `color_conversions.convert_<Space>`, then
-// (b) generated `generated_color_conversions.convert_<Space>`, then
-// (c) the type itself.
-//
-// In Rust we express each conversion as `impl From<Src> for Dst`. The
-// handwritten ones are below; generated ones live in `color_generated.rs`.
-// ──────────────────────────────────────────────────────────────────────────
 
 impl From<RGBA> for SRGB {
     fn from(rgb: RGBA) -> SRGB {
@@ -3047,10 +2962,6 @@ impl From<P3> for PredefinedColor {
 }
 impl From<P3> for XYZd65 {
     fn from(p3_: P3) -> XYZd65 {
-        // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L91
-        // convert linear-light display-p3 values to CIE XYZ
-        // using D65 (no chromatic adaptation)
-        // http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html
         const MATRIX: [f32; 9] = [
             0.4865709486482162,
             0.26566769316909306,
@@ -3097,13 +3008,6 @@ impl From<A98> for XYZd65 {
         let g = lin_a98rgb_component(a98.g);
         let b = lin_a98rgb_component(a98.b);
 
-        // convert an array of linear-light a98-rgb values to CIE XYZ
-        // http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html
-        // has greater numerical precision than section 4.3.5.3 of
-        // https://www.adobe.com/digitalimag/pdfs/AdobeRGB1998.pdf
-        // but the values below were calculated from first principles
-        // from the chromaticity coordinates of R G B W
-        // see matrixmaker.html
         const MATRIX: [f32; 9] = [
             0.5766690429101305,
             0.1855582379065463,
@@ -3134,13 +3038,6 @@ impl From<ProPhoto> for PredefinedColor {
 }
 impl From<ProPhoto> for XYZd50 {
     fn from(prophoto_: ProPhoto) -> XYZd50 {
-        // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L118
-        // convert an array of prophoto-rgb values
-        // where in-gamut colors are in the range [0.0 - 1.0]
-        // to linear light (un-companded) form.
-        // Transfer curve is gamma 1.8 with a small linear portion
-        // Extended transfer function
-
         fn lin_pro_photo_component(c: f32) -> f32 {
             const ET2: f32 = 16.0 / 512.0;
             let abs = c.abs();
@@ -3156,10 +3053,6 @@ impl From<ProPhoto> for XYZd50 {
         let g = lin_pro_photo_component(prophoto.g);
         let b = lin_pro_photo_component(prophoto.b);
 
-        // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L155
-        // convert an array of linear-light prophoto-rgb values to CIE XYZ
-        // using  D50 (so no chromatic adaptation needed afterwards)
-        // http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html
         const MATRIX: [f32; 9] = [
             0.7977604896723027,
             0.13518583717574031,
@@ -3190,11 +3083,6 @@ impl From<Rec2020> for PredefinedColor {
 }
 impl From<Rec2020> for XYZd65 {
     fn from(rec2020_: Rec2020) -> XYZd65 {
-        // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L235
-        // convert an array of rec2020 RGB values in the range 0.0 - 1.0
-        // to linear light (un-companded) form.
-        // ITU-R BT.2020-2 p.4
-
         fn lin_rec2020_component(c: f32) -> f32 {
             const A: f32 = 1.09929682680944;
             const B: f32 = 0.018053968510807;
@@ -3213,10 +3101,6 @@ impl From<Rec2020> for XYZd65 {
         let g = lin_rec2020_component(rec2020.g);
         let b = lin_rec2020_component(rec2020.b);
 
-        // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L276
-        // convert an array of linear-light rec2020 values to CIE XYZ
-        // using  D65 (no chromatic adaptation)
-        // http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html
         const MATRIX: [f32; 9] = [
             0.6369580483012914,
             0.14461690358620832,
@@ -3328,11 +3212,6 @@ impl From<XYZd50> for ProPhoto {
             1.2119675456389454,
         ];
         fn gam_pro_photo_component(c: f32) -> f32 {
-            // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L137
-            // convert linear-light prophoto-rgb  in the range 0.0-1.0
-            // to gamma corrected form
-            // Transfer curve is gamma 1.8 with a small linear portion
-            // TODO for negative values, extend linear portion on reflection of axis, then add pow below that
             const ET: f32 = 1.0 / 512.0;
             let abs = c.abs();
             if abs >= ET {
@@ -3425,10 +3304,6 @@ impl From<XYZd65> for A98 {
         ];
 
         fn gam_a98_component(c: f32) -> f32 {
-            // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L193
-            // convert linear-light a98-rgb  in the range 0.0-1.0
-            // to gamma corrected form
-            // negative values are also now accepted
             let sign: f32 = if c < 0.0 { -1.0 } else { 1.0 };
             sign * bun_powf(c.abs(), 256.0 / 563.0)
         }
@@ -3635,16 +3510,6 @@ impl From<OKLCH> for OKLAB {
         }
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// ConvertTo (kept for parity; in Rust the `.into()` dispatch above replaces
-// `ColorIntoMixin(T, .Space).into(target)`).
-// ──────────────────────────────────────────────────────────────────────────
-
-// PORT NOTE: `ColorIntoMixin` resolved conversions at comptime via @hasDecl
-// across handwritten + generated tables. In Rust this is the union of the
-// `impl From<Src> for Dst` blocks above plus `color_generated.rs`; the
-// generated file fills the transitive gaps the macro requires.
 
 crate::css_eql_partialeq!(CssColor);
 

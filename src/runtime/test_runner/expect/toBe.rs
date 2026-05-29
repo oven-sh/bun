@@ -87,10 +87,6 @@ impl Expect {
             return this.throw(global_this, signature, format_args!("\n\n{}\n", diff_format));
         }
 
-        // PORT NOTE: Zig shares one `*Formatter` across both `toFmt` calls; in Rust the
-        // `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias
-        // the same backing formatter. Use a second formatter for the received value —
-        // `make_formatter` is a trivial struct init with no shared state between values.
         let mut formatter2 = super::make_formatter(global_this);
         return this.throw(
             global_this,

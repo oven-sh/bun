@@ -4,10 +4,6 @@ bun_core::declare_scope!(Postgres, visible);
 
 // TODO(port): lifetime — `Other` borrows from the input `tag` slice passed to `init`.
 pub enum CommandTag<'a> {
-    // For an INSERT command, the tag is INSERT oid rows, where rows is the
-    // number of rows inserted. oid used to be the object ID of the inserted
-    // row if rows was 1 and the target table had OIDs, but OIDs system
-    // columns are not supported anymore; therefore oid is always 0.
     Insert(u64),
     // For a DELETE command, the tag is DELETE rows where rows is the number
     // of rows deleted.
@@ -51,12 +47,6 @@ enum KnownCommand {
 }
 
 impl KnownCommand {
-    // Zig: bun.ComptimeEnumMap(KnownCommand) — comptime perfect hash over
-    // @tagName bytes. 8 keys is too small for `phf` to pay for itself (its
-    // SipHash + double indirect dominate); a length-gated byte compare is
-    // branch-predictable and lets LLVM lower each arm to a single wide
-    // integer compare. Within every length bucket the first byte is already
-    // unique, so each `==` short-circuits on the first word anyway.
     #[inline]
     fn from_bytes(bytes: &[u8]) -> Option<KnownCommand> {
         match bytes.len() {

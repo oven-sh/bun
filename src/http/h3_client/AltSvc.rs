@@ -43,17 +43,6 @@ impl From<ParseError> for bun_core::Error {
     }
 }
 
-/// Parse the first usable `h3` alternative out of an `Alt-Svc` field-value, or
-/// `None` if none / `clear`. Tolerant of extra whitespace and unknown params.
-///
-/// ```text
-///   Alt-Svc       = clear / 1#alt-value
-///   alt-value     = protocol-id "=" alt-authority *( OWS ";" OWS parameter )
-///   alt-authority = quoted-string containing [uri-host] ":" port
-/// ```
-///
-/// Returns `Err(ParseError::Clear)` for the literal `clear` so the caller can
-/// drop the cache entry.
 pub fn parse(field_value: &[u8]) -> Result<Option<Entry>, ParseError> {
     let value = strings::trim(field_value, b" \t");
     if value.is_empty() {
@@ -136,12 +125,6 @@ struct Record {
 // PORTING.md §Global mutable state: HTTP-thread-only map → RacyCell.
 static CACHE: bun_core::RacyCell<Option<StringHashMap<Record>>> = bun_core::RacyCell::new(None);
 
-/// Borrow the (lazily-initialized) per-HTTP-thread cache. PORTING.md §Global
-/// mutable state: only ever accessed from the single HTTP thread (see module
-/// doc), so the `&'static mut` is the unique live borrow at every call site.
-/// Callers must not hold the result across a call that re-enters this
-/// accessor (per-statement reborrow shape — same contract the prior `*mut`
-/// API imposed, now centralized here).
 fn cache() -> &'static mut StringHashMap<Record> {
     // SAFETY: HTTP-thread only; lazy init cannot race. Every call site is a
     // per-statement reborrow (audited in r3); no two `&mut` overlap.

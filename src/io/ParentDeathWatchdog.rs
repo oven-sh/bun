@@ -67,11 +67,6 @@ pub fn is_enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
 
-/// The original parent pid to watch from contexts that have no event loop
-/// (`bun run` blocking in `spawnSync`, etc.). Returns null when no-orphans
-/// isn't enabled or there is no parent worth watching. Both Linux and macOS
-/// use this from `spawnSync` so the pgroup-kill cleanup path runs even though
-/// Linux already has a SIGKILL PDEATHSIG backstop.
 pub fn ppid_to_watch() -> Option<libc::pid_t> {
     #[cfg(not(unix))]
     {
@@ -87,17 +82,6 @@ pub fn ppid_to_watch() -> Option<libc::pid_t> {
     }
 }
 
-/// `bun run`/`bunx` set this to the script's pgid (= script pid, since we
-/// `setpgid(0,0)` in the child) so the exit callback can `kill(-pgid, KILL)`.
-/// Process-group membership survives reparenting to launchd/init, so this
-/// reaches grandchildren that the libproc/procfs walk would miss once the
-/// script itself has exited. Stack-disciplined for nested `spawnSync` (e.g.
-/// `pre`/`post` lifecycle scripts) — though in practice depth is 1.
-///
-/// `[AtomicI32; 4]` instead of `RacyCell<[pid_t; 4]>`: `pid_t` is `i32` on
-/// every Unix target, and per-slot atomics let push/read use safe
-/// `.store()/.load()` instead of an `unsafe` raw-pointer deref. Ordering stays
-/// Relaxed — `SYNC_PGIDS_LEN` is the publish point.
 static SYNC_PGIDS_BUF: [core::sync::atomic::AtomicI32; 4] =
     [const { core::sync::atomic::AtomicI32::new(0) }; 4];
 static SYNC_PGIDS_LEN: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
@@ -132,11 +116,6 @@ pub fn pop_sync_pgid() {
     }
 }
 
-/// SIGKILL every registered script pgroup + the macOS uniqueid-tracked set.
-/// Scoped to the `spawnSync` script(s) — does NOT call `kill_descendants()`,
-/// which is rooted at `getpid()` and would take out unrelated `Bun.spawn`
-/// siblings when `spawnSync` is reached from inside a live VM (e.g.
-/// `ffi.zig:getSystemRootDirOnce` shelling out to `xcrun`).
 pub fn kill_sync_script_tree() {
     #[cfg(unix)]
     {
@@ -188,11 +167,6 @@ unsafe extern "C" {
     safe fn waitpid(pid: libc::pid_t, status: &mut c_int, options: c_int) -> libc::pid_t;
 }
 
-// `should_default_spawn_pdeathsig` moved down to `bun_spawn_sys::pdeathsig::
-// should_default()` (lowest tier that reads it). The thread-scoping rationale
-// — `PR_SET_PDEATHSIG` fires on the *thread*'s exit, so defaulting it from a
-// JS Worker would kill children on `worker.terminate()` — is documented there.
-
 #[cfg(target_os = "macos")]
 static EVENT_LOOP_INSTALLED: AtomicBool = AtomicBool::new(false);
 /// Singleton instance — `FilePoll.Owner` needs a real pointer, but we have no
@@ -201,15 +175,6 @@ static EVENT_LOOP_INSTALLED: AtomicBool = AtomicBool::new(false);
 static INSTANCE: bun_core::RacyCell<ParentDeathWatchdog> =
     bun_core::RacyCell::new(ParentDeathWatchdog);
 
-/// Called from `main()` before the CLI starts. Checks the env var and enables
-/// the watchdog as early as possible so the Linux `prctl` window is minimal.
-/// `bunfig.toml`'s `[run] noOrphans` and the `--no-orphans` flag call
-/// `enable()` directly later in startup if the env var wasn't set.
-///
-/// `#[inline]`: this is on the unconditional startup path and is just an
-/// env-var flag check that almost always early-returns. Folding it into
-/// `main()` avoids a cross-crate call frame on every process start; the
-/// rare-taken arm body lives in `#[cold] enable()`.
 #[inline]
 pub fn install() {
     #[cfg(unix)]
@@ -221,13 +186,6 @@ pub fn install() {
     }
 }
 
-/// Idempotent. Arms the watchdog: Linux `prctl(PR_SET_PDEATHSIG)`, exit-time
-/// descendant reaper, and (lazily) the macOS kqueue parent watch. Safe to call
-/// from `main()` (env-var path) and again from bunfig / CLI flag parsing.
-///
-/// `#[cold] #[inline(never)]`: only reached when no-orphans is opted into;
-/// keeps the prctl/setenv/getppid body out of the inlined `install()` fast
-/// path so `main()` stays small.
 #[cold]
 #[inline(never)]
 pub fn enable() {
@@ -247,13 +205,6 @@ pub fn enable() {
         // the flag through. No-op if we got here via the env var.
         let _ = libc::setenv(c"BUN_FEATURE_FLAG_NO_ORPHANS".as_ptr(), c"1".as_ptr(), 1);
 
-        // PR_SET_CHILD_SUBREAPER is NOT armed here — it's process-wide and would
-        // make every orphaned grandchild reparent to us, but only the spawnSync
-        // wait loop has a `wait4(-1, WNOHANG)` to reap them. `bun foo.js` /
-        // `--filter` / `bun test` would accumulate zombies. Subreaper is armed
-        // per-script in `spawnPosix` (just before the spawn) and cleared on return.
-        // Descendant cleanup runs on every clean exit regardless of whether we end
-        // up watching a parent (Bun may have been spawned directly by launchd/init).
         bun_core::add_exit_callback(on_process_exit);
 
         let ppid = libc::getppid();
@@ -266,13 +217,6 @@ pub fn enable() {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            // PR_SET_PDEATHSIG: kernel sends SIGKILL when the thread that forked
-            // us exits. Persists across exec; cleared on fork (Bun's own children
-            // do not inherit it). SIGKILL is uncatchable so user code can't
-            // swallow it. The macOS path goes through Global.exit instead and so
-            // also runs the descendant reaper; on Linux the SIGKILL case relies on
-            // env-var inheritance — Bun-spawning-Bun chains self-reap because each
-            // link sets its own PDEATHSIG.
             if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong) != 0 {
                 return;
             }
@@ -331,12 +275,7 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
             crate::file_poll::Pollable::Process,
             true,
         ) {
-            bun_sys::Result::Ok(()) => {
-                // Do not keep the event loop alive on this poll's behalf — the
-                // watchdog must never prevent Bun from exiting when there is no
-                // other work. `register()` only bumps the *active* count when
-                // `.keeps_event_loop_alive` was set beforehand, which we didn't.
-            }
+            bun_sys::Result::Ok(()) => {}
             Err(err) => {
                 // ESRCH: parent already gone before we registered — treat as fired.
                 if err.get_errno() == bun_sys::E::ESRCH {
@@ -363,24 +302,6 @@ extern "C" fn on_process_exit() {
     kill_sync_pgroups_and_descendants();
 }
 
-/// Walk the process tree rooted at `getpid()` and SIGKILL every descendant.
-///
-/// Pid-reuse safety: enumeration is a point-in-time snapshot, so a pid we
-/// collect could exit and be recycled by an unrelated process before we
-/// signal it. To avoid killing an innocent process we use a
-/// stop-verify-kill pattern:
-///   1. Enumerate children of `parent`.
-///   2. For each child `c`: SIGSTOP it, then re-read `c`'s ppid. If it's no
-///      longer `parent`, the pid was recycled in the (microsecond) window
-///      between enumerate and STOP — undo with SIGCONT and skip. Otherwise
-///      `c` is now frozen and confirmed ours; recurse into it.
-///   3. Once the whole tree is frozen, SIGKILL each pid (leaves-first).
-///      SIGKILL terminates stopped processes directly — no SIGCONT needed —
-///      and unlike SIGTERM can't be trapped or ignored.
-/// A frozen process can neither exit (so its pid can't be reused) nor fork
-/// (so its child set is stable while we recurse), which is what makes the
-/// verify step sufficient. The only forking process is `self`, and we're in
-/// the exit handler — not forking.
 pub(crate) fn kill_descendants() {
     #[cfg(unix)]
     {
@@ -434,11 +355,6 @@ pub(crate) fn kill_descendants() {
     }
 }
 
-/// Linux-only: enumerate our direct children into `out`. Used by `spawnPosix`
-/// to snapshot pre-existing siblings before arming subreaper, so the post-wait
-/// `kill_subreaper_adoptees` can tell adopted orphans apart from `Bun.spawn`
-/// siblings (both have ppid==us). Returns the slice written; empty on
-/// non-Linux or enumeration failure.
 pub fn snapshot_children(out: &mut [libc::pid_t]) -> &[libc::pid_t] {
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
@@ -452,18 +368,6 @@ pub fn snapshot_children(out: &mut [libc::pid_t]) -> &[libc::pid_t] {
     }
 }
 
-/// Linux-only: SIGKILL every direct child of ours that isn't in `siblings`,
-/// plus its entire subtree. Called from `spawnPosix`'s defer *before*
-/// disarming subreaper, so subreaper-adopted setsid daemons (ppid==us) are
-/// killed while we can still find them — closing the window where the
-/// daemon's intermediate parent exits between disarm and `on_process_exit` →
-/// `kill_descendants()` and the daemon escapes to init.
-///
-/// `siblings` is the pre-arm `snapshot_children()` set; anything not in it was
-/// either the script (already reaped) or adopted via subreaper during this
-/// spawnSync. A `Bun.spawn` from a Worker thread *during* spawnSync would
-/// also land here and be killed — `--no-orphans` is opt-in aggressive cleanup
-/// and would kill it at process-exit via `kill_descendants()` anyway.
 pub fn kill_subreaper_adoptees(siblings: &[libc::pid_t]) {
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
@@ -474,10 +378,6 @@ pub fn kill_subreaper_adoptees(siblings: &[libc::pid_t]) {
         let self_pid = getpid();
         let mut buf: [libc::pid_t; 4096] = [0; 4096];
 
-        // Iterate: kill non-sibling direct children's subtrees, reap, re-read.
-        // After we kill an adoptee's subtree, anything that raced (forked between
-        // enumerate and STOP) reparents to us and shows up next pass. Bounded by
-        // tree depth; 64 is far past any sane chain.
         let mut rounds: u8 = 64;
         while rounds > 0 {
             let Some(n) = list_child_pids(self_pid, &mut buf) else {
@@ -509,10 +409,6 @@ pub fn kill_subreaper_adoptees(siblings: &[libc::pid_t]) {
     }
 }
 
-/// Freeze-walk-kill the subtree rooted at `root` (inclusive). Same SIGSTOP +
-/// ppid-verify + leaves-first-SIGKILL discipline as `kill_descendants()`, just
-/// not rooted at ourselves. `expected_ppid_of_root` lets the caller verify
-/// `root` itself before recursing (ppid==us for subreaper adoptees).
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn kill_tree_rooted_at(root: libc::pid_t, expected_ppid_of_root: libc::pid_t) {
     let mut to_visit: Vec<libc::pid_t> = Vec::new();
@@ -532,10 +428,6 @@ fn kill_tree_rooted_at(root: libc::pid_t, expected_ppid_of_root: libc::pid_t) {
     to_kill.push(root);
     let _ = to_visit.try_reserve(1);
     to_visit.push(root);
-    // PORT NOTE: Zig swallowed OOM on the to_visit push; Rust push() after a
-    // failed try_reserve would still attempt (and abort on OOM). In practice
-    // a 1-element reserve never fails; matching exact Zig OOM semantics is
-    // not worth the complexity here.
 
     let mut buf: [libc::pid_t; 4096] = [0; 4096];
     while !to_visit.is_empty() && to_kill.len() < 4096 {
@@ -667,10 +559,6 @@ fn list_child_pids(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize
     }
 }
 
-/// Linux: read `/proc/<parent>/task/<tid>/children` for every thread of
-/// `parent`. Each file is a space-separated list of child pids whose
-/// `getppid()` is `parent` and which were created by that specific thread.
-/// Requires CONFIG_PROC_CHILDREN (enabled on every distro kernel that matters).
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize> {
     use std::io::Write;

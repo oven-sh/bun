@@ -10,11 +10,6 @@ use crate::api::crypto::evp::Algorithm as EvpAlgorithm;
 use crate::crypto::evp;
 use crate::node::Encoding as NodeEncoding;
 
-// ── local shims ──────────────────────────────────────────────────────────
-// `bun.ComptimeStringMap.fromJSCaseInsensitive` — the upstream
-// `bun_jsc::comptime_string_map_jsc` only exposes the case-sensitive `from_js`;
-// the case-insensitive variant is still cfg-gated. Map keys are all lower-case
-// ASCII, so lower the probe and do a direct phf lookup (mirrors PBKDF2.rs).
 fn algorithm_from_js_case_insensitive(
     global: &JSGlobalObject,
     input: JSValue,
@@ -44,10 +39,6 @@ fn get_optional_slice(
     }
 }
 
-/// `JSValue.getOptionalInt(_, _, u64)` — local shim. Spec (`JSValue.zig:1896`)
-/// delegates to `validateIntegerRange` with `[0, MAX_SAFE_INTEGER]`; that
-/// helper is defined on the cfg-gated `JSGlobalObject` impl, so inline the
-/// minimal u64 path here.
 fn get_optional_int_u64(
     target: JSValue,
     global: &JSGlobalObject,
@@ -203,10 +194,6 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
         }
     };
 
-    // Encode the token
-    // `csrf::TokenFormat::to_node_encoding()` returns the cycle-broken
-    // `bun_core::NodeEncoding`, not `crate::node::Encoding` (which owns
-    // `encode_with_max_size`). Map locally to the runtime enum instead.
     let node_encoding = match encoding {
         csrf::TokenFormat::Base64 => NodeEncoding::Base64,
         csrf::TokenFormat::Base64Url => NodeEncoding::Base64url,

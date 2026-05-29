@@ -54,11 +54,6 @@ impl WorkspaceMap {
     }
 
     pub(crate) fn insert(&mut self, key: &[u8], value: Entry) -> Result<(), bun_alloc::AllocError> {
-        // Zig has a debug-only `bun.sys.exists(key)` check here, but `key` is
-        // relative to the workspace root while `exists` resolves against process
-        // cwd — false positive whenever the two differ (e.g. `bun unlink` from a
-        // workspace package). Existence is already verified by the caller via
-        // `process_workspace_name`, so the check is dropped.
         let entry = self.map.get_or_put(key)?;
         if !entry.found_existing {
             *entry.key_ptr = Box::<[u8]>::from(key);
@@ -254,13 +249,6 @@ impl WorkspaceMap {
             );
             #[cfg(windows)]
             let rel_input_path: &[u8] = {
-                // `rel_input_path` is a shared borrow into the thread-local
-                // `relative_to_common_path_buf()`. Deriving a `&mut` from
-                // `rel_input_path.as_ptr().cast_mut()` and writing through it is
-                // Stacked-Borrows UB (SharedReadOnly provenance), and the still-live
-                // shared ref would alias it. Instead capture the length, drop the
-                // shared borrow, take a single fresh `&mut` reborrow from the raw
-                // threadlocal pointer, mutate, then downgrade to `&[u8]`.
                 let len = rel_input_path.len();
                 let _ = rel_input_path;
                 // SAFETY: thread-local scratch; this is the only live borrow on this
@@ -294,12 +282,6 @@ impl WorkspaceMap {
             let mut arena = Arena::new();
             // PERF(port): was arena bulk-free per-iteration via reset(.retain_capacity)
             for (i, user_pattern) in workspace_globs.iter().enumerate() {
-                // PORT NOTE: Zig `defer arena.reset()` ran *after* iter.deinit()/walker.deinit() at
-                // end of each iter. In Rust, walker/iter borrow `&arena` and Drop at scope exit,
-                // so resetting here (top of next iter) ensures they drop before invalidation.
-                // Last iter's allocs are freed when `arena` itself drops after the loop.
-                // Spec is `.reset(.retain_capacity)` — keep the `mi_heap` warm
-                // across glob patterns × matched dirs.
                 arena.reset_retain_with_limit(8 * 1024 * 1024);
                 let glob_pattern: &[u8] = if user_pattern.len() == 0 {
                     b"package.json"
@@ -479,14 +461,6 @@ impl WorkspaceMap {
                         );
                     #[cfg(windows)]
                     let workspace_path: &[u8] = {
-                        // `workspace_path` is a shared borrow into the thread-local
-                        // `relative_to_common_path_buf()`. Deriving a `&mut` from
-                        // `workspace_path.as_ptr().cast_mut()` and writing through it is
-                        // Stacked-Borrows UB (SharedReadOnly provenance), and the
-                        // still-live shared ref would alias it. Instead capture the
-                        // length, drop the shared borrow, take a single fresh `&mut`
-                        // reborrow from the raw threadlocal pointer, mutate, then
-                        // downgrade to `&[u8]`.
                         let len = workspace_path.len();
                         let _ = workspace_path;
                         // SAFETY: thread-local scratch; this is the only live borrow on
@@ -547,10 +521,6 @@ fn ignored_workspace_paths(path: &[u8]) -> bool {
     false
 }
 
-// PORT NOTE: Zig `glob.GlobWalker(ignoredWorkspacePaths, glob.walk.SyscallAccessor, false)` —
-// the comptime ignore-filter fn param was lowered to a runtime fn-pointer field on
-// `bun_glob::GlobWalker` (const-generic fn ptrs are unstable). Supplied via
-// `init_with_cwd(..., Some(ignored_workspace_paths))`.
 type GlobWalker = glob::GlobWalker<glob::walk::SyscallAccessor, false>;
 
 // ported from: src/install/lockfile/Package/WorkspaceMap.zig

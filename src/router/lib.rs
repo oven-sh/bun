@@ -1,9 +1,4 @@
 #![warn(unused_must_use)]
-// This is a Next.js-compatible file-system router.
-// It uses the filesystem to infer entry points.
-// Despite being Next.js-compatible, it's not tied to Next.js.
-// It does not handle the framework parts of rendering pages.
-// All it does is resolve URL paths to the appropriate entry point and parse URL params/query.
 use core::cmp::Ordering;
 use core::ptr::NonNull;
 use std::cell::RefCell;
@@ -16,12 +11,6 @@ use bun_url::PathnameScanner;
 
 use bun_http_types::URLPath::URLPath;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Cross-crate name aliases. These are pure re-exports of real lower-tier types
-// (no shadow structs); kept as a private module so Zig-shaped paths
-// (`bun_ast::Log`, `Fs::Entry`, `api::LoadedRouteConfig`) read naturally.
-// ──────────────────────────────────────────────────────────────────────────
-// `bun.hash(bytes)` — std.hash.Wyhash seed 0. NOT Wyhash11 (different algo).
 #[inline]
 fn wyhash(input: &[u8]) -> u64 {
     bun_wyhash::hash(input)
@@ -82,11 +71,6 @@ pub struct RouteConfig {
     /// This is combined with "origin" when printing import paths.
     pub asset_prefix_path: Box<[u8]>,
 
-    // TODO: do we need a separate list for data-only extensions?
-    // e.g. /foo.json just to get the data for the route, without rendering the html
-    // I think it's fine to hardcode as .json for now, but if I personally were writing a framework
-    // I would consider using a custom binary format to minimize request size
-    // maybe like CBOR
     pub extensions: Box<[Box<[u8]>]>,
     pub routes_enabled: bool,
 
@@ -210,14 +194,6 @@ fn index_route_hash() -> u32 {
     wyhash(b"$$/index-route$$-!(@*@#&*%-901823098123") as u32
 }
 
-// Param/List are lifetime-parameterized: `name` borrows the route name
-// (DirnameStore-backed) and `value` borrows the *request URL buffer*. The Zig
-// version stores raw slices with no ownership; the correct Rust port is a
-// borrowed `&'a [u8]`, not a forged `'static`.
-//
-// `bun_url::route_param::Param<'a>` is now lifetime-generic (TYPE_ONLY
-// move-down landed); collapse the local copy to a re-export so the param list
-// type matches `PathnameScanner::init`.
 pub use bun_url::route_param;
 pub use route_param::Param;
 
@@ -332,11 +308,6 @@ impl<'a> Router<'a> {
                         let _ = watcher.start();
                     }
                 }
-
-                // ctx.matched_route = route;
-                // RequestContextType.JavaScriptHandler.enqueue(ctx, server, &params_list) catch {
-                //     server.javascript_enabled = false;
-                // };
             }
         }
 
@@ -358,10 +329,6 @@ struct RouteIndex {
     hash: u32,
 }
 
-// TODO(b2-blocked): bun_collections::MultiArrayElement derive — proc-macro not
-// yet landed, so MultiArrayList<RouteIndex> can't expose per-field column
-// accessors. Hand-rolled SoA struct (semantically identical to Zig's
-// MultiArrayList(RouteIndex)) until the derive exists.
 #[derive(Default)]
 pub struct RouteIndexList {
     // The `Box` is load-bearing: `Routes::index` / `Routes::static_` hold
@@ -426,25 +393,11 @@ impl RouteIndexList {
 
 pub struct Routes {
     pub list: RouteIndexList,
-    /// Index into `list`'s columns where dynamic routes begin (sorted after
-    /// static). Stored as an offset+len instead of materialized slices to avoid
-    /// a self-referential struct — Zig sliced `route_list.items(.route)[i..]`
-    /// directly; in Rust we re-slice on each `match_dynamic` call.
     pub dynamic_start: Option<usize>,
     pub dynamic_len: usize,
 
-    /// completely static children of indefinite depth
-    /// `"blog/posts"`
-    /// `"dashboard"`
-    /// `"profiles"`
-    /// this is a fast path?
     pub static_: StringHashMap<*const Route>,
 
-    /// Corresponds to "index.js" on the filesystem.
-    /// Spec (router.zig:386-396) stores `index: ?*Route` — a raw pointer
-    /// co-owned with `list` (points into a `Box<Route>` owned by
-    /// `list.route`). Stored as `NonNull` (not `&'a Route`) so `Routes` claims
-    /// no borrow it doesn't actually take; matches `static_` above.
     pub index: Option<NonNull<Route>>,
     pub index_id: Option<usize>,
 
@@ -661,13 +614,6 @@ impl<'a> RouteLoader<'a> {
             let new_route = Box::new(route);
             let new_route_ptr: *const Route = &raw const *new_route;
 
-            // Handle static routes with uppercase characters by ensuring exact case still matches
-            // Longer-term:
-            // - We should have an option for controlling this behavior
-            // - We should have an option for allowing case-sensitive matching
-            // - But the default should be case-insensitive matching
-            // This hack is below the engineering quality bar I'm happy with.
-            // It will cause unexpected behavior.
             if new_route.has_uppercase {
                 if let Some(existing) = self.static_list.get(&new_route.name[1..]) {
                     let source = bun_ast::Source::init_empty_file(new_route.abs_path.slice());
@@ -989,26 +935,11 @@ impl TinyPtr {
     }
 }
 
-// On Windows we need to normalize this path to have forward slashes.
-// Zig heap-allocates a separate buffer (`allocator.dupe`) so it doesn't mutate
-// memory it doesn't own (router.zig:537-547). The Rust port interns the
-// normalized path into `DirnameStore` (process-lifetime arena) instead, so
-// `abs_path` is uniformly a `PathString` over `'static` bytes on every
-// platform — keeping `RouteIndexList.filepath: &'static [u8]` sound and
-// avoiding the borrow-then-move at `RouteLoader::load_all`.
 pub type AbsPath = PathString;
 
 pub struct Route {
-    /// Public display name for the route.
-    /// "/", "/index" is "/"
-    /// "/foo/index.js" becomes "/foo"
-    /// case-sensitive, has leading slash
     pub name: &'static [u8],
 
-    /// Name used for matching.
-    /// - Omits leading slash
-    /// - Lowercased
-    /// This is [inconsistent with Next.js](https://github.com/vercel/next.js/issues/21498)
     pub match_name: PathString,
 
     pub basename: &'static [u8],
@@ -1067,11 +998,6 @@ impl Route {
 
         let public_dir = strings::trim(public_dir_, SEP_STR.as_bytes());
 
-        // this is a path like
-        // "/pages/index.js"
-        // "/pages/foo/index.ts"
-        // "/pages/foo/bar.tsx"
-        // the name we actually store will often be this one
         ROUTE_BUFS.with_borrow_mut(|bufs| {
             let route_file_buf = &mut bufs.route_file_buf;
             let public_path: &[u8] = 'brk: {
@@ -1127,10 +1053,6 @@ impl Route {
             let is_index = name.is_empty();
 
             let mut has_uppercase = false;
-            // PORT NOTE: reshaped for borrowck — both arms intern via DirnameStore
-            // (process-lifetime arena → `&'static`), so the post-if bindings are
-            // 'static and the route_file_buf borrow is dropped before the
-            // abs-path block below needs it mutably.
             let (public_path, name, match_name): (&'static [u8], &'static [u8], &'static [u8]) =
                 if !name.is_empty() {
                     validation_result = match Pattern::validate(&name[1..], log) {
@@ -1147,10 +1069,6 @@ impl Route {
                     let name_offset = name.as_ptr() as usize - public_path.as_ptr() as usize;
                     let name_len = name.len();
 
-                    // PORT NOTE: DirnameStore::append returns `&'static [u8]` (process-
-                    // lifetime arena), so rebinding here drops the borrow on
-                    // `route_file_buf` and avoids needing lifetime transmutes
-                    // below.
                     let dirname_store = FileSystem::instance().dirname_store();
                     let public_path: &'static [u8] =
                         dirname_store.append(public_path).expect("unreachable");
@@ -1178,12 +1096,6 @@ impl Route {
                 };
 
             if abs_path_str.is_empty() {
-                // PORT NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
-                // becomes a scopeguard owning the Option<File>; `needs_close` is a
-                // Cell so the drop closure can read it while the body still mutates.
-                // The guard is inverted: when the fd belongs to the cache
-                // (`needs_close == false`), `into_raw()` so we do not close
-                // someone else's fd.
                 let needs_close = core::cell::Cell::new(true);
                 let mut file = scopeguard::guard(None::<bun_sys::File>, |f| {
                     if !needs_close.get() {
@@ -1355,10 +1267,6 @@ pub mod sorter {
         let a_name = a.match_name.slice();
         let b_name = b.match_name.slice();
 
-        // route order determines route match order
-        // - static routes go first because we match those first
-        // - dynamic, catch-all, and optional catch all routes are sorted lexicographically, except "[", "]" appear last so that deepest routes are tested first
-        // - catch-all & optional catch-all appear at the end because we want to test those at the end.
         match (a.kind as u8).cmp(&(b.kind as u8)) {
             Ordering::Equal => match a.kind {
                 // static + dynamic are sorted alphabetically
@@ -1427,11 +1335,6 @@ pub struct Match<'a> {
     pub basename: &'a [u8],
 
     pub hash: u32,
-    // PORT NOTE: raw `*mut` (not `&'a mut`) to match Zig's `*Param.List`.
-    // `MatchedRoute` (bun_runtime) stores this self-referentially — a
-    // `&'a mut List` here would be invalidated under Stacked Borrows the
-    // moment any `&mut MatchedRoute` is taken. Callers that need a borrow
-    // go through `params()`/`params_mut()`.
     pub params: *mut route_param::List<'a>,
     pub redirect_path: Option<&'a [u8]>,
     pub query_string: &'a [u8],
@@ -1465,11 +1368,6 @@ impl<'a> Match<'a> {
     #[inline]
     #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn detach_lifetime(self) -> Match<'static> {
-        // `d` stays `unsafe fn` so a safe-signature wrapper does not hide the
-        // lifetime-widen; the outer fn carries `#[allow(unsafe_op_in_unsafe_fn)]`
-        // so the direct call sites below need no per-line `unsafe { }`. The
-        // `.map` closure body is not an unsafe context, so that one site spells
-        // `unsafe { d(s) }` explicitly.
         #[inline(always)]
         unsafe fn d(s: &[u8]) -> &'static [u8] {
             // SAFETY: caller contract on `detach_lifetime` — every borrowed
@@ -1521,13 +1419,6 @@ impl<'a> Match<'a> {
         strings::trim_left(self.pathname, b"/")
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Traits introduced to replace Zig's `comptime T: type` duck-typing
-// (Resolver, Server, RequestContext).
-// TODO(refactor): colocate these with the canonical types in
-// bun_resolver / bun_runtime.
-// ──────────────────────────────────────────────────────────────────────────
 
 pub trait ResolverLike {
     // `bun_resolver::fs::FileSystem` is a singleton in Zig, so `'static` here
@@ -2094,10 +1985,6 @@ mod tests {
         // inline for (fields) |field| { ... }
         for (name, value) in data {
             let name_b = name.as_bytes();
-            // if (std.fs.path.dirname(field.name)) |dir| { try cwd.makePath(dir); }
-            // PORT NOTE: `std.fs.path.dirname` returns null for paths without a
-            // separator; replicate with rposition on '/' (test fixture paths
-            // are always forward-slash).
             if let Some(slash) = name_b.iter().rposition(|&c| c == b'/') {
                 if slash > 0 {
                     cwd.make_path(&name_b[..slash])?;
@@ -2174,11 +2061,6 @@ mod tests {
                 let _ = unsafe { &*log }.print(bun_core::output::error_writer());
             });
 
-            // const opts = Options.BundleOptions{ .target = .browser, ... };
-            // PORT NOTE: the resolver-side `BundleOptions` subset omits
-            // `loaders`/`define`/`log`/`routes`/`entry_points`/`out_extensions`/
-            // `transform_options` — none are read by `Resolver::init1` or the
-            // dir-info walk, so `Default` + `target` is the faithful projection.
             let opts = bun_resolver::options::BundleOptions {
                 target: bun_ast::Target::Browser,
                 external: bun_resolver::options::ExternalModules::default(),

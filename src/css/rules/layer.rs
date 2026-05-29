@@ -12,10 +12,6 @@ use crate::{PrintErr, Printer, SmallList};
 /// notation (`a.b.c`) creates sublayers.
 #[derive(Default)]
 pub struct LayerName {
-    // TODO(port): arena lifetime — Zig `[]const u8` segments borrow the parser
-    // arena. Thread `'bump` once `CssRuleList` re-gains its arena lifetime;
-    // until then segments are laundered through `&'static [u8]` like every
-    // other CSS slice in this crate.
     pub v: SmallList<&'static [u8], 1>,
 }
 
@@ -39,10 +35,6 @@ impl PartialEq for LayerName {
 }
 impl Eq for LayerName {}
 
-// PORT NOTE: trait `Clone` (not just inherent `deep_clone`) so the bundler's
-// `Chunk::Layers::to_owned` can `deep_clone_with(|l| l.clone())`. Segments are
-// arena-borrowed `&'static [u8]` (Copy), so this is the same shallow
-// `SmallList` copy as `deep_clone` / `clone_with_import_records`.
 impl Clone for LayerName {
     fn clone(&self) -> Self {
         LayerName { v: self.v.clone() }
@@ -51,15 +43,6 @@ impl Clone for LayerName {
 
 impl LayerName {
     pub fn clone_with_import_records(&self, bump: &Arena, _: &mut Vec<ImportRecord>) -> Self {
-        // `[]const u8` segments are arena-borrowed, not owned, so the Zig
-        // `deepClone` here was a shallow `SmallList` copy. No import records to
-        // rewrite — layer names contain no URLs.
-        //
-        // Allocate the segment-pointer slab from `bump` (not the global
-        // allocator): callers store the result in arena-owned `ImportConditions`
-        // / `BundlerCssRule` slabs whose elements are never `Drop`'d (the
-        // bundler `mem::forget`s / `set_len(0)`s them at chunk teardown), so a
-        // global heap spill here would leak.
         LayerName {
             v: SmallList::from_arena_iter(bump, self.v.slice().iter().copied()),
         }

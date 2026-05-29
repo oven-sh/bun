@@ -5,10 +5,6 @@
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
-/// Local helper: `bun_semver::String` → JS string. Mirrors
-/// `bun_semver_jsc::SemverStringJsc::to_js`, but that crate stubs its own JSC
-/// types, so its `JSGlobalObject`/`JSValue` are not the
-/// `bun_jsc` ones. Inline the body here against the real `bun_jsc` types.
 #[inline]
 fn semver_string_to_js(
     s: bun_semver::String,
@@ -170,11 +166,6 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     };
     let name_slice = name_value.to_slice(global)?;
 
-    // PORT NOTE: reshaped for borrowck — Zig built `name`/`alias`/`buf` as
-    // overlapping slices into a StringBuilder's single allocation. Rust's
-    // `StringBuilder::append` returns `&[u8]` borrowing `&mut self`, so we
-    // can't hold two appended slices at once. Instead, build into an owned
-    // `Vec<u8>` and reslice by offset (same memory layout, no aliasing fight).
     let owned_buf: Vec<u8>;
     let (buf, name, alias): (&[u8], &[u8], &[u8]) = if name_value.is_string() {
         let nlen = name_slice.slice().len();

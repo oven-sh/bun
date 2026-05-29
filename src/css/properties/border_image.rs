@@ -34,17 +34,6 @@ pub struct BorderImage {
 }
 
 impl BorderImage {
-    // TODO(port): PropertyFieldMap / VendorPrefixMap were comptime anonymous-struct
-    // tables consumed via @field reflection by the shorthand codegen. Replace with
-    // a trait impl (e.g. `impl ShorthandProperty for BorderImage`).
-    // PropertyFieldMap:
-    //   source -> PropertyIdTag::BorderImageSource
-    //   slice  -> PropertyIdTag::BorderImageSlice
-    //   width  -> PropertyIdTag::BorderImageWidth
-    //   outset -> PropertyIdTag::BorderImageOutset
-    //   repeat -> PropertyIdTag::BorderImageRepeat
-    // VendorPrefixMap: all fields = true
-
     pub(crate) fn parse(input: &mut css::Parser) -> Result<BorderImage> {
         // PORT NOTE: Zig passed `{}` ctx + a no-op callback struct; collapsed to a closure.
         Self::parse_with_callback(input, |_: &mut css::Parser| false)

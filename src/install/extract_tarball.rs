@@ -62,10 +62,6 @@ impl ExtractTarball {
         }
         let mut result = self.extract(log, bytes)?;
 
-        // Compute and store SHA-512 integrity hash for GitHub / URL / local tarballs
-        // so the lockfile can pin the exact tarball content. On subsequent installs
-        // the hash stored in the lockfile is forwarded via this.integrity and verified
-        // above, preventing a compromised server from silently swapping the tarball.
         match self.resolution.tag {
             ResolutionTag::Github | ResolutionTag::RemoteTarball | ResolutionTag::LocalTarball => {
                 if self.integrity.tag.is_supported() {
@@ -122,10 +118,6 @@ pub(crate) fn build_url_with_printer<R, E>(
         }
     }
 
-    // default_format = "{s}/{s}/-/"
-    // `bun_fmt::s` writes bytes straight through — registry hosts, package names
-    // and semver tags are pre-validated ASCII, so we don't need `bstr::BStr`'s
-    // Utf8Chunks scan (Zig `{s}` parity).
     let registry = s(registry);
     let full_name = s(full_name);
     let name = s(name);
@@ -191,10 +183,6 @@ pub(crate) fn uses_streaming_extraction() -> bool {
 }
 
 impl ExtractTarball {
-    /// Derive the display name and a filesystem-safe basename for this
-    /// package. Shared by the buffered `extract()` path below and the
-    /// streaming extractor in `TarballStream.rs` so both pick identical
-    /// temp-dir and cache-folder names.
     pub fn name_and_basename(&self) -> (&[u8], &[u8]) {
         let name: &[u8] = if !self.name.slice().is_empty() {
             self.name.slice()
@@ -475,10 +463,6 @@ impl ExtractTarball {
                 }
             }
 
-            // Explicitly close the temp extraction dir before the rename. On
-            // Windows a still-open handle to the source directory can fail
-            // `NtSetInformationFile` with EBUSY; spelling out the close keeps
-            // the timing visible instead of relying on block-end Drop.
             drop(extract_destination);
 
             if PackageManager::verbose_install() {
@@ -564,10 +548,6 @@ impl ExtractTarball {
             // Now that we've extracted the archive, we rename.
             #[cfg(windows)]
             {
-                // Windows EBUSY/SHARING_VIOLATION on `NtSetInformationFile` is
-                // transient when a concurrent process (another `bun install`
-                // sharing the cache, AV, the Search Indexer) is closing its
-                // handle to the destination. Back off briefly between retries.
                 const MAX_RETRIES: u32 = 4;
                 let mut retries: u32 = 0;
                 let mut path2_buf = WPathBuffer::uninit();
@@ -625,12 +605,6 @@ impl ExtractTarball {
                                         // before we attempt to delete the destination, let's close the source dir.
                                         let _ = sys::close(dir_to_move);
 
-                                        // We tried to move the folder over
-                                        // but it didn't work!
-                                        // so instead of just simply deleting the folder
-                                        // we rename it back into the temp dir
-                                        // and then delete that temp dir
-                                        // The goal is to make it more difficult for an application to reach this folder
                                         let mut tempdest_buf = PathBuffer::uninit();
                                         tempdest_buf[0..tmpname.len()]
                                             .copy_from_slice(tmpname.as_bytes());
@@ -656,10 +630,6 @@ impl ExtractTarball {
                                             }
                                         }
                                         retries += 1;
-                                        // 10ms, 20ms, 40ms, 80ms — long enough
-                                        // for a concurrent close to land,
-                                        // short enough to not slow a legit
-                                        // failure noticeably.
                                         std::thread::sleep(std::time::Duration::from_millis(
                                             10u64 << (retries - 1),
                                         ));
@@ -692,15 +662,6 @@ impl ExtractTarball {
             }
             #[cfg(not(windows))]
             {
-                // Attempt to gracefully handle duplicate concurrent `bun install` calls
-                //
-                // By:
-                // 1. Rename from temporary directory to cache directory and fail if it already exists
-                // 2a. If the rename fails, swap the cache directory with the temporary directory version
-                // 2b. Delete the temporary directory version ONLY if we're not using a provided temporary directory
-                // 3. If rename still fails, fallback to racily deleting the cache directory version and then renaming the temporary directory version again.
-                //
-
                 if create_subdir {
                     if let Some(folder) = bun_paths::Dirname::dirname(folder_name) {
                         let _ = bun_sys::make_path::make_path(cache_dir, folder);

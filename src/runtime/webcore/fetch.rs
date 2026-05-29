@@ -88,19 +88,11 @@ use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
 // Local extension shims (upstream methods not yet ported / not in scope)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Intern an `SSLConfig` into the (single, canonical) `bun_http` registry.
-/// DEDUP(D202): the runtime-tier struct and registry were folded into
-/// `bun_http::ssl_config`, so this is now a thin alias — kept to avoid
-/// churning the call site below.
 #[inline]
 fn ssl_config_intern_for_http(config: SSLConfig) -> http::ssl_config::SharedPtr {
     http::ssl_config::global_registry::intern(config)
 }
 
-/// Build the refcounted `bun_s3_signing::S3Credentials` from the lower-tier
-/// `bun_dotenv::S3Credentials` POD mirror. The dotenv crate (T2) cannot name
-/// `bun_s3_signing` types (would be an upward dep), so the conversion lives at
-/// the call site here in T6.
 pub(crate) fn s3_credentials_from_env(
     env: &bun_dotenv::S3Credentials,
 ) -> bun_s3_signing::S3Credentials {
@@ -115,10 +107,6 @@ pub(crate) fn s3_credentials_from_env(
     )
 }
 
-/// RAII guard for the `+1` `AbortSignal` ref taken in `extract_signal`. Zig had
-/// `defer { if (signal) |sig| sig.unref(); }` covering every exit path; this is
-/// the Rust equivalent. `take()` disarms the guard when ownership is handed to
-/// `FetchOptions`.
 struct SignalRef(Option<NonNull<AbortSignal>>);
 impl SignalRef {
     #[inline]
@@ -200,10 +188,6 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
 
     let mut allocated = false;
     let mime_type = MimeType::MimeType::init(data_url.mime_type, true, Some(&mut allocated));
-    // PORT NOTE: `mime_type.value` is `Cow<'static, [u8]>`; Blob.content_type is
-    // `*const [u8]` discriminated by `content_type_allocated` (Blob's Drop reclaims
-    // via `heap::take` when set). Use `heap::alloc` (paired alloc/free), not
-    // leaking.
     blob.content_type.set(match mime_type.value {
         std::borrow::Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
         std::borrow::Cow::Owned(v) => {
@@ -280,10 +264,6 @@ pub(crate) fn bun_fetch_preconnect(
             .throw());
     }
 
-    // PORT NOTE: bun.handleOom(url_str.toOwnedSlice(...)) → to_owned_slice() aborts on OOM.
-    // `preconnect` takes a `URL<'static>` that borrows a `Box<[u8]>` href and
-    // assumes ownership when `is_url_owned == true` (it reconstructs the Box
-    // to free it). Hand the allocation off via `heap::alloc`.
     let href_box: Box<[u8]> = url_str.to_owned_slice().into_boxed_slice();
     let href_raw: *mut [u8] = bun_core::heap::into_raw(href_box);
     // SAFETY: `href_raw` is a freshly-leaked Box<[u8]>; we either pass ownership
@@ -448,11 +428,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut range: Option<bun_core::ZBox> = None;
     let mut unix_socket_path: ZigStringSlice = ZigStringSlice::empty();
 
-    // PORT NOTE: Zig freely reassigns `url_proxy_buffer` while `url`/`proxy`
-    // still point into it (or into the buffer about to replace it). Detach the
-    // borrow-checker by parsing through a raw-pointer slice; the caller is
-    // responsible for keeping the backing allocation alive (it always becomes
-    // the new `url_proxy_buffer` before the old one is dropped).
     macro_rules! parse_url_detached {
         ($slice:expr) => {{
             let s: &[u8] = $slice;
@@ -466,11 +441,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut ssl_config: Option<http::ssl_config::SharedPtr> = None;
     let mut reject_unauthorized = vm.get_tls_reject_unauthorized();
     let mut check_server_identity: JSValue = JSValue::ZERO;
-
-    // PORT NOTE: the Zig `defer { ... }` block here freed signal/unix_socket_path/
-    // url_proxy_buffer/headers/body/hostname/range/ssl_config on every exit path.
-    // In Rust, all of these are owning types whose Drop runs on early return
-    // (`signal` via `SignalRef`).
 
     let options_object: Option<JSValue> = 'brk: {
         if let Some(options) = args.next_eat() {
@@ -522,13 +492,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'brk None;
     };
 
-    // Every arm carries a +1 (`from_js`/`dupe_ref`/`StringOrURL::from_js`); Zig
-    // released it via `defer url_str.deref()`. `bun_core::String` is `Copy`
-    // with NO `Drop`, so wrap in `OwnedString` for the scope-exit deref —
-    // without it the +1 leaks the WTFStringImpl, and when the input JS string
-    // is a substring sharing an `ExternalStringImpl` (e.g. a slice of a
-    // `TextDecoder.decode()` result), that leaked +1 transitively pins the
-    // external buffer past `~VM`.
     let url_str: bun_core::OwnedString = bun_core::OwnedString::new('extract_url: {
         if let Some(str) = url_str_optional {
             break 'extract_url str;
@@ -1147,18 +1110,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSValue::ZERO);
     }
 
-    // We do this 2nd to last instead of last so that if it's a FormData
-    // object, we can still insert the boundary.
-    //
-    // We must always get the Body before the Headers That way, we can set
-    // the Content-Type header from the Blob if no Content-Type header is
-    // set in the Headers
-    //
-    // which is important for FormData.
-    // https://github.com/oven-sh/bun/issues/2264
-    //
-    // body: BodyInit | null | undefined;
-    //
     let mut body = 'extract_body: {
         if let Some(options) = options_object {
             if let Some(body__) = options.fast_get(global_this, jsc::BuiltinName::Body)? {
@@ -1572,12 +1523,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ));
     }
 
-    // PORT NOTE: Zig kept a separate `http_body = body` shallow alias and later
-    // detached `body` after `FetchTasklet.queue`. With Rust move semantics the
-    // alias is unnecessary: `body` is mutated in place for the sendfile/readfile
-    // paths and then *moved* into `FetchOptions`, so the trailing `body.detach()`
-    // and the debug ref-count check that depended on the alias are dropped.
-
     if body.is_s3() {
         'prepare_body: {
             // is a S3 file we can use chunked here
@@ -1615,10 +1560,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
     if body.needs_to_read_file() {
         'prepare_body: {
-            // PORT NOTE: Zig used the VM's `nodeFS().sync_error_buf` as scratch
-            // for `path.sliceZ()`; we use a local `PathBuffer` instead (the
-            // `vm.node_fs()` accessor is gated behind a jsc↔runtime cycle and
-            // the buffer is just NUL-termination scratch).
             let mut open_path_buf = PathBuffer::uninit();
             let opened_fd_res: bun_sys::Result<bun_sys::Fd> = {
                 let store = body.store().expect("needs_to_read_file implies store");
@@ -1704,21 +1645,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             }
 
-            // The sendfile path above moves `opened_fd` into `SendFile` (which
-            // owns its lifecycle and breaks out of `'prepare_body`). On this
-            // read-file path we are the sole owner of the fresh fd: `read_file`
-            // is handed it as an `Fd` and never takes ownership. Wrap it in an
-            // RAII guard so any future early return between here and the read
-            // can't leak it.
             let opened_fd = scopeguard::guard(opened_fd, |fd| fd.close());
 
             // TODO: make this async + lazy
             let blob_offset = body.any_blob().blob().offset.get();
             let blob_size = body.any_blob().blob().size.get();
-            // PORT NOTE: Zig used `globalThis.bunVM().nodeFS()`; that accessor is
-            // a jsc↔runtime cycle. `read_file` with an `Fd` path only touches
-            // `self.sync_error_buf` for path-variant inputs, so a fresh `NodeFS`
-            // is sufficient here.
             let mut node_fs = node::fs::NodeFS::default();
             // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
             let mut rf_args = node::fs::args::ReadFile::default();
@@ -1838,10 +1769,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 promise,
                 global: global_this,
             });
-            // Shim: Zig used `@ptrCast(&Wrapper.resolve)` to erase both the
-            // `*@This()` payload type and the `JSTerminated!void` error union when
-            // coercing to `?*const fn (S3UploadResult, *anyopaque) void`. In Rust we
-            // can't safely transmute away the `Result` return, so erase it explicitly.
             fn s3_stream_wrapper_resolve(result: s3::S3UploadResult<'_>, ctx: *mut libc::c_void) {
                 // SAFETY: ctx was produced by `heap::alloc(s3_stream)` below; the
                 // 'static lifetime is a raw-pointer fiction matching the Zig @ptrCast.
@@ -1899,11 +1826,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // PORT NOTE: `defer allocator.free(old_buffer)` → drop(old_buffer) at end of scope.
             let mut buffer = vec![0u8; result.url.len() + proxy_.href.len()];
             buffer[0..result.url.len()].copy_from_slice(&result.url);
-            // PORT NOTE: upstream Zig (fetch.zig:1373) has `buffer[proxy_.href.len..]`
-            // which is an off-by-one typo — it only happens to not crash because
-            // `bun.copy` debug-asserts `dest.len >= src.len` rather than equality.
-            // `copy_from_slice` requires exact length, so we use the correct
-            // `result.url.len()` offset (the obvious upstream fix).
             buffer[result.url.len()..].copy_from_slice(proxy_.href);
             url_proxy_buffer = buffer;
 
@@ -1949,12 +1871,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     let promise_val = promise.value();
 
-    // PORT NOTE: `FetchOptions.{url,proxy}` are `ZigURL<'static>` borrowing the
-    // `url_proxy_buffer: Box<[u8]>` stored alongside them — a self-referential
-    // struct. `Vec::into_boxed_slice` may realloc when `cap > len` (the
-    // proxy-string path above triggers this), so the existing `url`/`proxy`
-    // slices may dangle after the conversion. Convert to `Box<[u8]>` first
-    // (stable heap address), then re-parse the URLs from the boxed buffer.
     let url_len = url.href.len(); // fat-pointer len read; no deref
     let has_proxy = proxy.is_some();
     let url_proxy_boxed: Box<[u8]> = core::mem::take(&mut url_proxy_buffer).into_boxed_slice();
@@ -2016,19 +1932,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     );
     // PORT NOTE: `catch |err| bun.handleOom(err)` — FetchTasklet::queue aborts on OOM.
 
-    // PORT NOTE: Zig followed with a debug ref-count assertion on `body.store()`
-    // and a `body.detach()` reset. With Rust move semantics `body` has been
-    // *moved* into `FetchOptions` (no shallow alias), so neither applies — the
-    // FetchTasklet now owns the single live reference.
-
     Ok(promise_val)
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// S3 ReadableStream upload Wrapper (was a fn-local struct in Zig)
-// PORT NOTE: hoisted to module level — Rust does not allow `impl` blocks
-// inside fn bodies for types referenced by external fn pointers.
-// ──────────────────────────────────────────────────────────────────────────
 
 struct S3StreamWrapper<'a> {
     promise: jsc::JSPromiseStrong,

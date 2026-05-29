@@ -26,34 +26,14 @@ use core::ffi::c_void;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSInternalPromise, JSValue, ZigStackFrame};
 
-// ─── VirtualMachine.zig ──────────────────────────────────────────────────────
-//
-// `#[no_mangle] extern "C"` thunks for these are emitted by
-// `src/codegen/generate-host-exports.ts` into `generated_host_exports.rs`;
-// the safe-signature impls below are what the thunks call. Each `// HOST_EXPORT`
-// marker is the scrape input — keep it on the line immediately above `pub fn`.
-
 /// `export fn Bun__isMainThreadVM() callconv(.c) bool { return get().is_main_thread; }`
 // HOST_EXPORT(Bun__isMainThreadVM, c)
 pub fn is_main_thread_vm() -> bool {
     VirtualMachine::get().as_mut().is_main_thread
 }
 
-/// `export fn Bun__drainMicrotasksFromJS(global, callframe) callconv(jsc.conv) JSValue`
-///
-/// Returns plain `JSValue` (not `JsResult`) so the generated thunk is a bare
-/// deref+call with no `ExceptionValidationScope` — matching the .zig spec's
-/// bare `callconv(jsc.conv)` body and the prior `#[bun_jsc::host_call]`
-/// rewrite. `drain_microtasks()` runs arbitrary microtasks; wrapping in a
-/// scope would trip `assert_exception_presence_matches(false)` if one left an
-/// exception pending while we return `UNDEFINED`.
 // HOST_EXPORT(Bun__drainMicrotasksFromJS)
 pub fn drain_microtasks_from_js(global: &JSGlobalObject, _cf: &CallFrame) -> JSValue {
-    // Hot path (~2×/request via cork callback chain): pass the incoming
-    // `global` straight through instead of re-deriving it via
-    // TLS→vm→event_loop→vm→global (4 dependent loads — perf root-cause #1).
-    // `as_mut()` ignores its receiver and re-reads the TLS slot anyway, so go
-    // straight to the thread-local for the VM.
     let vm = VirtualMachine::get_mut();
     let jsc_vm = global.vm();
     let _ = vm
@@ -159,20 +139,6 @@ pub fn close_child_ipc(global: &JSGlobalObject) {
         unsafe { (*current_ipc).data.close_socket_next_tick(true) };
     }
 }
-
-// ─── sql_jsc bridge — `bun_sql_jsc::jsc::SqlRuntimeHooks` vtable ─────────────
-//
-// `bun_sql_jsc` cannot name `RuntimeState` / `socket::SSLConfig` /
-// `webcore::Blob` (this crate depends on it). Instead of Rust→Rust
-// `extern "C"` re-decls (which let the two sides silently disagree on pointee
-// layout), the low tier defines [`bun_sql_jsc::jsc::SqlRuntimeHooks`] and this
-// crate registers a `&'static` instance from [`crate::jsc_hooks::
-// `__BUN_SQL_RUNTIME_HOOKS`. Every fn-pointer signature is type-checked at the
-// struct-literal below.
-//
-// Opaque-pointer protocol for `SSLConfig`: `ssl_config_from_js` returns a
-// `Box<socket::SSLConfig>::into_raw`; the SQL side holds it as `*mut c_void`
-// and frees via `ssl_config_free`. Scalar accessors borrow into that box.
 
 pub(crate) mod sql_hooks {
     use super::*;
@@ -334,12 +300,6 @@ pub fn on_reject_entry_point_result(
     // SAFETY: bun_vm() never null for a Bun-owned global.
     bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
 }
-
-// ─── bindgenv2 dispatch shims (GeneratedBindings.zig: `bindgen_*_dispatch*`) ─
-//
-// These satisfy the `extern "C"` refs C++ emits from
-// `Generated*Bindings.cpp`. Each forwards to the real Rust port of the named
-// fn and maps `JsResult` → bool/JSValue per the bindgen ABI.
 
 /// `NodeModuleModule._stat(path) -> i32` (0=file, 1=dir, -ENOENT otherwise).
 ///
@@ -696,21 +656,6 @@ pub fn bindgen_node_os_dispatch_set_priority2(
     )
 }
 
-// ─── js2native bindgen create-callback exports (GeneratedJS2Native.zig) ──────
-//
-// `js2native_bindgen_<ns>_<fn>` returns a freshly-minted `JSFunction` wrapping
-// the C++-side `bindgen_<ns>_js<Fn>` host fn. The C++ side already exports the
-// host fn (it lives in `Generated*Bindings.cpp`); we just call
-// `NewRuntimeFunction` here.
-//
-// ABI: `generate-js2native.ts` declares these on the C++ side as
-// `extern "C" SYSV_ABI ...(Zig::GlobalObject*)` (the `callJS2Native` switch
-// dispatches through them), so the Rust thunk MUST be `jsc` (sysv64 on
-// win-x64), not plain `c`. With `c`, the win-x64 callee read `global` from
-// RCX while C++ passed it in RDI → garbage `&JSGlobalObject` propagated into
-// `Bun__CreateFFIFunctionValue` → `getVM(garbage)` segfault on first
-// `bun:internal-for-testing` import.
-
 bun_jsc::jsc_abi_extern! {
     // C++-side host fns (Generated*Bindings.cpp).
     fn bindgen_Fmt_jsc_jsFmtString(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
@@ -742,9 +687,3 @@ pub fn js2native_bindgen_dev_server_get_deinit_count(global: &JSGlobalObject) ->
         None,
     )
 }
-
-// `Bun__Chrome__autoDetect` / `Bun__Chrome__ensure` — exported from
-// `crate::webview::chrome_process` (mod webview is declared in lib.rs).
-//
-// `Bun__JSSourceMap__find` — exported from `bun_sourcemap_jsc::js_source_map`
-// via `#[bun_jsc::host_fn(export = ...)]`.

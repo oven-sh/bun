@@ -16,10 +16,6 @@ pub enum ImplementationVisibility {
     PrivateRecursive = 2,
 }
 
-/// In WebKit: Intrinsic.h
-//
-// Zig: `enum(u8) { none, _ }` — non-exhaustive; any u8 is a valid bit pattern,
-// so a Rust `#[repr(u8)] enum` would be UB for unknown values. Use a newtype.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Intrinsic(u8);
@@ -41,13 +37,6 @@ pub struct CreateJSFunctionOptions {
     pub constructor: Option<JSHostFn>,
 }
 
-// TODO(port): move to jsc_sys
-//
-// `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; the remaining
-// params are by-value scalars / `#[repr(C)]` PODs / fn-ptrs, so all three
-// shims are declared `safe fn`. `getSourceCode` writes a `ZigString` view into
-// the `&mut` out-param on success and leaves it untouched on failure — `&mut
-// ZigString` is ABI-identical to a non-null `*mut ZigString`.
 unsafe extern "C" {
     safe fn JSFunction__createFromZig(
         global: &JSGlobalObject,
@@ -65,10 +54,6 @@ unsafe extern "C" {
 }
 
 impl JSFunction {
-    // TODO(port): Zig accepted `implementation` as either `JSHostFnZig` (safe) or
-    // `JSHostFn` (raw ABI) via comptime `@TypeOf` dispatch, calling `jsc.toJSHostFn`
-    // for the safe form. In Rust, callers produce a `JSHostFn` via `#[bun_jsc::host_fn]`,
-    // so we take the raw fn pointer type directly.
     pub fn create(
         global: &JSGlobalObject,
         fn_name: impl Into<BunString>,

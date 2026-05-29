@@ -45,10 +45,6 @@ impl Default for RuntimeTranspilerCache {
     }
 }
 
-// Low tier (`bun_ast`) names no `bun_jsc` types; `bun_jsc` provides the
-// `Jsc` arm. Cold path: at most twice per parse; callee does file I/O.
-// `parser_options` is `*const ()` because `parser::Options` would be a forward
-// edge here; the jsc impl casts it back.
 bun_dispatch::link_interface! {
     pub TranspilerCacheImpl[Jsc] {
         fn get(source: &Source, parser_options: NonNull<()>, used_jsx: bool) -> bool;
@@ -58,14 +54,6 @@ bun_dispatch::link_interface! {
 }
 
 impl RuntimeTranspilerCache {
-    /// Build the dispatch handle for the set-once `r#impl` slot.
-    ///
-    /// Centralises the raw-pointer obligation so the three public entry
-    /// points below stay safe.
-    /// `this` is always derived from a live `&self` / `&mut self` in those
-    /// callers and the returned `Copy` handle is consumed immediately, so
-    /// the `link_interface!` liveness contract (owner valid for every
-    /// dispatch through the handle) is upheld.
     #[inline]
     fn handle(kind: TranspilerCacheImplKind, this: *mut Self) -> TranspilerCacheImpl {
         // SAFETY: `this` is non-null, aligned, and live for the immediate

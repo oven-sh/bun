@@ -1,9 +1,5 @@
 use bun_core::strings;
 
-// PORT NOTE: Zig stored a `std.mem.TokenIterator(u8, .scalar)` field. The Rust
-// equivalent (`slice::Split<'_, u8, _>` + `.filter(..)`) has an unnameable
-// closure type, so we store the remaining input slice and inline the
-// tokenize-by-',' logic in `next()`. Behavior is identical.
 pub struct HeaderValueIterator<'a> {
     remaining: &'a [u8],
 }

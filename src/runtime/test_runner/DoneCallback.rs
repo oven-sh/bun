@@ -53,11 +53,6 @@ impl DoneCallback {
     }
 }
 
-// Raw C-ABI shim for [`BunTest::bun_test_done_callback`] so it can be passed
-// as a `JSHostFn` pointer to `JSFunction::create` (Zig used comptime
-// `toJSHostFn`; Rust mints the thunk explicitly and routes the result through
-// `to_js_host_fn_result` for `JsResult` → `JSValue` mapping + debug exception
-// assertions).
 bun_jsc::jsc_host_abi! {
     unsafe fn __jsc_host_bun_test_done_callback(
         g: *mut JSGlobalObject,

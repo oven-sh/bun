@@ -51,17 +51,6 @@ impl From<ScanImportsAndExportsError> for crate::linker_context_mod::LinkError {
 }
 bun_core::named_error_set!(ScanImportsAndExportsError);
 
-/// Short-lived `&mut [T]` deref of a `split_raw()` column pointer at a single
-/// use site.
-///
-/// SoA columns are physically disjoint (`COLUMN_OFFSET_PER_CAP`); the backing
-/// buffer is never reallocated inside this function (only column *element*
-/// contents grow, e.g. `Vec<Part>::append`). The pointers come from
-/// `split_raw()`, which derives them by raw `add` on the heap buffer base —
-/// root/SharedRW provenance, no `&mut` intermediate — so they survive the
-/// interleaved `&mut LinkerContext` method calls in steps 3-5 under Stacked
-/// Borrows. (Decaying `split_mut()`'s `&mut [T]` to raw would *not*: the child
-/// Unique tag is popped the first time another column accessor runs.)
 macro_rules! col {
     ($p:expr) => {
         // SAFETY: see module-level note. Caller ensures no aliasing `&mut` to
@@ -89,12 +78,6 @@ pub fn scan_imports_and_exports(
     // PERF(port): was zero-copy slice; profile.
     let mut reachable: Vec<Index> = this.graph.reachable_files.slice().to_vec();
 
-    // ── cache SoA column base pointers ────────────────────────────────────
-    // `MultiArrayList` never reallocates inside this function (only column
-    // *element* contents grow, e.g. `Vec<Part>::append`). So these raw
-    // column pointers are valid for the whole body. `split_raw()` derives
-    // each `*mut [T]` directly from the buffer base (root provenance) — see
-    // the `col!` doc-comment for why `split_mut()` is not used here.
     let ast = this.graph.ast.split_raw();
     let meta = this.graph.meta.split_raw();
     let files = this.graph.files.split_raw();
@@ -186,26 +169,6 @@ pub fn scan_imports_and_exports(
 
                 match record.kind {
                     ImportKind::Stmt => {
-                        // Importing using ES6 syntax from a file without any ES6 syntax
-                        // causes that module to be considered CommonJS-style, even if it
-                        // doesn't have any CommonJS exports.
-                        //
-                        // That means the ES6 imports will become undefined instead of
-                        // causing errors. This is for compatibility with older CommonJS-
-                        // style bundlers.
-                        //
-                        // We emit a warning in this case but try to avoid turning the module
-                        // into a CommonJS module if possible. This is possible with named
-                        // imports (the module stays an ECMAScript module but the imports are
-                        // rewritten with undefined) but is not possible with star or default
-                        // imports:
-                        //
-                        //   import * as ns from './empty-file'
-                        //   import defVal from './empty-file'
-                        //   console.log(ns, defVal)
-                        //
-                        // In that case the module *is* considered a CommonJS module because
-                        // the namespace object must be created.
                         if (record
                             .flags
                             .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
@@ -259,10 +222,6 @@ pub fn scan_imports_and_exports(
 
             let kind = col_ref!(exports_kind)[id];
 
-            // If the output format doesn't have an implicit CommonJS wrapper, any file
-            // that uses CommonJS features will need to be wrapped, even though the
-            // resulting wrapper won't be invoked by other files. An exception is
-            // made for entry point files in CommonJS format (or when in pass-through mode).
             if kind == ExportsKind::Cjs
                 && (!col_ref!(entry_point_kinds)[id].is_entry_point()
                     || output_format == Format::Iife
@@ -295,10 +254,6 @@ pub fn scan_imports_and_exports(
             );
         }
 
-        // Step 2: Propagate dynamic export status for export star statements that
-        // are re-exports from a module whose exports are not statically analyzable.
-        // In this case the export star must be evaluated at run time instead of at
-        // bundle time.
         {
             let _trace = perf::trace("Bundler.WrapDependencies");
             // SAFETY: `split_raw()`-derived column ptrs carry root provenance
@@ -337,14 +292,6 @@ pub fn scan_imports_and_exports(
                     let _ = dependency_wrapper.has_dynamic_exports_due_to_export_star(source_index);
                 }
 
-                // Even if the output file is CommonJS-like, we may still need to wrap
-                // CommonJS-style files. Any file that imports a CommonJS-style file will
-                // cause that file to need to be wrapped. This is because the import
-                // method, whatever it is, will need to invoke the wrapper. Note that
-                // this can include entry points (e.g. an entry point that imports a file
-                // that imports that entry point).
-                // `import_records` is a `&'a [_]` (Copy) field — copy it out so
-                // the loop borrow does not overlap `&mut dependency_wrapper`.
                 let import_records = dependency_wrapper.import_records;
                 for record in import_records[id].as_slice() {
                     if record.source_index.is_valid() {
@@ -444,10 +391,6 @@ pub fn scan_imports_and_exports(
                 }
                 let export_kind = col_ref!(exports_kind)[source_index];
                 let mut flag = col_ref!(flags)[source_index];
-                // If we're exporting as CommonJS and this file was originally CommonJS,
-                // then we'll be using the actual CommonJS "exports" and/or "module"
-                // symbols. In that case make sure to mark them as such so they don't
-                // get minified.
                 if (output_format == Format::Cjs)
                     && col_ref!(entry_point_kinds)[source_index].is_entry_point()
                     && export_kind == ExportsKind::Cjs
@@ -486,20 +429,6 @@ pub fn scan_imports_and_exports(
             }
         }
 
-        // Step 5: Create namespace exports for every file. This is always necessary
-        // for CommonJS files, and is also necessary for other files if they are
-        // imported using an import star statement.
-        // Note: `do` will wait for all to finish before moving forward
-        //
-        // PORT NOTE: Zig dispatched via `worker_pool.each(arena, this,
-        // doStep5, reachable_files)` (parallel fan-out, blocks until done).
-        // `do_step5` only touches distinct SoA rows per `source_index` (the
-        // columns are pre-sized and never reallocate during this step),
-        // matching the Zig invariant. We pass `*mut LinkerContext` through a
-        // `Sync` wrapper; the callee derefs it to `&LinkerContext` (shared)
-        // for reads and writes per-row cells via raw `split_raw()` pointers —
-        // mirroring `GenerateChunkCtx` (`generate_js_renamer` likewise never
-        // forms `&mut LinkerContext`).
         {
             #[repr(transparent)]
             struct Step5Ctx<'a>(*mut LinkerContext<'a>);
@@ -527,12 +456,6 @@ pub fn scan_imports_and_exports(
                 &mut reachable[..],
             );
         }
-
-        // Zig calls `takeAstOwnership` here because `doStep5` appends to
-        // `part.dependencies`/`declared_symbols` with the worker allocator.
-        // In the Rust port those are global-allocator `Vec`s (thread-safe to
-        // grow) and `do_step_5` never pushes to the arena-backed `PartList`/
-        // import-record columns, so no transfer is needed.
     }
 
     if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
@@ -606,20 +529,10 @@ pub fn scan_imports_and_exports(
                 break 'brk count;
             };
 
-            // Allocate the identifier-name buffer from the linker arena so it is
-            // reclaimed when the link pass ends (Zig: `this.arena().alloc(u8, ...)`).
-            // The slices handed out below are stored in `Symbol.original_name: *const [u8]`,
-            // which is arena-lifetime by construction.
             let string_buffer: &mut [u8] = this
                 .graph
                 .arena()
                 .alloc_slice_fill_default::<u8>(string_buffer_len);
-            // PORT NOTE: `StringBuilder::drop` reconstructs a `Box<[u8]>` from
-            // `ptr`/`cap` and frees it via the global arena. Here the
-            // backing buffer is arena-owned (bumpalo), so dropping would hand
-            // mimalloc a pointer it never allocated. Wrap in `ManuallyDrop` —
-            // the arena reclaims the storage on reset, matching Zig's implicit
-            // no-destructor semantics.
             let mut builder = core::mem::ManuallyDrop::new(bun_core::StringBuilder {
                 len: 0,
                 cap: string_buffer.len(),
@@ -665,11 +578,6 @@ pub fn scan_imports_and_exports(
                 }
             }
 
-            // If this isn't CommonJS, then rename the unused "exports" and "module"
-            // variables to avoid them causing the identically-named variables in
-            // actual CommonJS files from being renamed. This is purely about
-            // aesthetics and is not about correctness. This is done here because by
-            // this point, we know the CommonJS status will not change further.
             if wrap != WrapKind::Cjs
                 && export_kind != ExportsKind::Cjs
                 && output_format != Format::InternalBakeDev
@@ -733,10 +641,6 @@ pub fn scan_imports_and_exports(
                     let r#ref: Ref = col_ref!(imports_to_bind_list)[id].keys()[itb_i];
                     let import_source_index;
                     let import_ref;
-                    // `BackRef<[Dependency]>` — points into the `imports_to_bind`
-                    // value column, which is not mutated for the rest of this
-                    // loop body; the backref invariant (pointee outlives holder)
-                    // lets the inner-loop reads go through safe `Deref`.
                     let re_exports_ptr: bun_ptr::BackRef<[Dependency]>;
                     {
                         let import: &ImportData =
@@ -747,11 +651,6 @@ pub fn scan_imports_and_exports(
                     }
 
                     if let Some(named_import) = col_ref!(named_imports)[id].get(&r#ref) {
-                        // `local_parts_with_uses` and the `top_level_symbol_to_parts`
-                        // result are both arena-backed AstVec slices that this loop
-                        // body never resizes; capture them as BackRefs (same
-                        // discipline as `re_exports_ptr` above) so we can take
-                        // `&mut col!(parts_list)[id]` without cloning.
                         let local_parts: bun_ptr::BackRef<[u32]> =
                             bun_ptr::BackRef::new(named_import.local_parts_with_uses.slice());
                         let parts_declaring_symbol: bun_ptr::BackRef<[u32]> = bun_ptr::BackRef::new(
@@ -822,10 +721,6 @@ pub fn scan_imports_and_exports(
                     for part_index in top_to_parts {
                         // PERF(port): was appendAssumeCapacity
                         dependencies.push(Dependency {
-                            // PORT NOTE: `crate::Index` ↔ `bun_ast::Index` are both
-                            // `#[repr(transparent)] u32` newtypes ported from the
-                            // same Zig `ast.Index`; bridge by `.value` until B-3
-                            // collapses them to a single re-export.
                             source_index: bun_ast::Index(target_source_index.get()),
                             part_index: *part_index,
                         });
@@ -931,13 +826,6 @@ pub fn scan_imports_and_exports(
                                 && col_ref!(ast_flags_list)[other_id]
                                     .contains(AstFlags::FORCE_CJS_TO_ESM)
                             {
-                                // If the CommonJS module was converted to ESM
-                                // and the developer `import("cjs_module")`, then
-                                // they may have code that expects the default export to return the CommonJS module.exports object
-                                // That module.exports object does not exist.
-                                // We create a default object with getters for each statically-known export
-                                // This is kind of similar to what Node.js does
-                                // Once we track usages of the dynamic import, we can remove this.
                                 if !col_ref!(named_exports)[other_id].contains(b"default") {
                                     col!(flags)[other_id].needs_synthetic_default_export = true;
                                 }
@@ -950,18 +838,6 @@ pub fn scan_imports_and_exports(
                                     runtime_require_uses += 1;
                                 }
 
-                                // If this wasn't originally a "require()" call, then we may need
-                                // to wrap this in a call to the "__toESM" wrapper to convert from
-                                // CommonJS semantics to ESM semantics.
-                                //
-                                // Unfortunately this adds some additional code since the conversion
-                                // is somewhat complex. As an optimization, we can avoid this if the
-                                // following things are true:
-                                //
-                                // - The import is an ES module statement (e.g. not an "import()" expression)
-                                // - The ES module namespace object must not be captured
-                                // - The "default" and "__esModule" exports must not be accessed
-                                //
                                 if kind != ImportKind::Require
                                     && (kind != ImportKind::Stmt
                                         || rec_flags
@@ -1031,11 +907,6 @@ pub fn scan_imports_and_exports(
                             to_esm_uses += 1;
                         }
 
-                        // If this is an ESM wrapper, also depend on the exports object
-                        // since the final code will contain an inline reference to it.
-                        // This must be done for "require()" and "import()" expressions
-                        // but does not need to be done for "import" statements since
-                        // those just cause us to reference the exports directly.
                         if other_flags.wrap == WrapKind::Esm && kind != ImportKind::Stmt {
                             this.graph.generate_symbol_import_and_use(
                                 source_index,
@@ -1045,15 +916,6 @@ pub fn scan_imports_and_exports(
                                 Index::source(other_source_index),
                             )?;
 
-                            // If this is a "require()" call, then we should add the
-                            // "__esModule" marker to behave as if the module was converted
-                            // from ESM to CommonJS. This is done via a wrapper instead of
-                            // by modifying the exports object itself because the same ES
-                            // module may be simultaneously imported and required, and the
-                            // importing code should not see "__esModule" while the requiring
-                            // code should see "__esModule". This is an extremely complex
-                            // and subtle set of transpiler interop issues. See for example
-                            // https://github.com/evanw/esbuild/issues/1591.
                             if kind == ImportKind::Require {
                                 col!(import_records_list)[id].as_mut_slice()
                                     [import_record_index as usize]
@@ -1065,11 +927,6 @@ pub fn scan_imports_and_exports(
                     } else if kind == ImportKind::Stmt
                         && export_kind == ExportsKind::EsmWithDynamicFallback
                     {
-                        // This is an import of a module that has a dynamic export fallback
-                        // object. In that case we need to depend on that object in case
-                        // something ends up needing to use it later. This could potentially
-                        // be omitted in some cases with more advanced analysis if this
-                        // dynamic export fallback object doesn't end up being needed.
                         this.graph.generate_symbol_import_and_use(
                             source_index,
                             part_index as u32,
@@ -1103,10 +960,6 @@ pub fn scan_imports_and_exports(
                         }
 
                         if other_export_kind.is_esm_with_dynamic_fallback() {
-                            // This looks like "__reExport(exports_a, exports_b)". Make sure to
-                            // pull in the "exports_b" symbol into this export star. This matters
-                            // in code splitting situations where the "export_b" symbol might live
-                            // in a different chunk than this export star.
                             this.graph.generate_symbol_import_and_use(
                                 source_index,
                                 part_index as u32,
@@ -1309,13 +1162,6 @@ impl<'a> ExportStarContext<'a> {
                 continue;
             }
 
-            // Export stars from a CommonJS module don't work because they can't be
-            // statically discovered. Just silently ignore them in this case.
-            //
-            // We could attempt to check whether the imported file still has ES6
-            // exports even though it still uses CommonJS features. However, when
-            // doing this we'd also have to rewrite any imports of these export star
-            // re-exports as property accesses off of a generated require() call.
             if col_ref!(self.exports_kind)[other_id] == ExportsKind::Cjs {
                 continue;
             }
@@ -1402,10 +1248,6 @@ impl<'a> ExportStarContext<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// CSS "composes:" validation. The body reaches into
-// `bun_css::BundlerStyleSheet.{composes,local_scope,local_properties}`.
-// ──────────────────────────────────────────────────────────────────────────
 mod __css_validation {
     use super::*;
     use crate::bun_css::css_properties::css_modules::Specifier;
@@ -1490,32 +1332,6 @@ mod __css_validation {
         validate_composes_from_properties(this, id as u32, css_ast, import_records_list, css_asts);
     }
 
-    /// CSS modules spec says that the following is undefined behavior:
-    ///
-    /// ```css
-    /// .foo {
-    ///     composes: bar;
-    ///     color: red;
-    /// }
-    ///
-    /// .bar {
-    ///     color: blue;
-    /// }
-    /// ```
-    ///
-    /// Specfically, composing two classes that both define the same property is undefined behavior.
-    ///
-    /// We check this by recording, at parse time, properties that classes use in the `PropertyUsage` struct.
-    /// Then here, we compare the properties of the two classes to ensure that there are no conflicts.
-    ///
-    /// There is one case we skip, which is checking the properties of composing from the global scope (`composes: X from global`).
-    ///
-    /// The reason we skip this is because it would require tracking _every_ property of _every_ class (not just CSS module local classes).
-    /// This sucks because:
-    /// 1. It introduces a performance hit even if the user did not use CSS modules
-    /// 2. Composing from the global scope is pretty rare
-    ///
-    /// We should find a way to do this without incurring performance penalties to the common cases.
     fn validate_composes_from_properties(
         this: &mut LinkerContext,
         index: IndexInt,

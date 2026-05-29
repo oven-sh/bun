@@ -47,16 +47,6 @@ impl AnyTask {
 }
 
 impl AnyTask {
-    /// Zig: `AnyTask.New(T, Callback).init(ctx)`.
-    ///
-    /// Builds an [`AnyTask`] from a typed `*mut T` context and a typed
-    /// callback, erasing both to `c_void` in one place. This is the direct
-    /// stable-Rust analogue of Zig's `comptime Callback` generator: instead of
-    /// monomorphising a `wrap` shim per `(Type, Callback)` pair, the typed
-    /// `fn` pointer itself is reinterpreted as the erased one — `*mut T` and
-    /// `*mut c_void` are ABI-identical for all `T: Sized`, so
-    /// `fn(*mut T) -> R` and `fn(*mut c_void) -> R` have identical
-    /// `extern "Rust"` ABI and the transmute is sound.
     #[inline]
     pub fn from_typed<T>(ctx: *mut T, callback: fn(*mut T) -> JsResult<()>) -> Self {
         Self {

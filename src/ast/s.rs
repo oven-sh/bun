@@ -184,24 +184,7 @@ pub struct Switch {
     pub cases: StoreSlice<Case>, // arena-owned
 }
 
-/// This object represents all of these types of import statements:
-///
-///    import 'path'
-///    import {item1, item2} from 'path'
-///    import * as ns from 'path'
-///    import defaultItem, {item1, item2} from 'path'
-///    import defaultItem, * as ns from 'path'
-///    import defer * as ns from 'path'
-///
-/// Many parts are optional and can be combined in different ways. The only
-/// restriction is that you cannot have both a clause and a star namespace.
 pub struct Import {
-    /// If this is a star import: This is a Ref for the namespace symbol. The Loc
-    /// for the symbol is StarLoc.
-    ///
-    /// Otherwise: This is an auto-generated Ref for the namespace representing
-    /// the imported file. In this case StarLoc is nil. The NamespaceRef is used
-    /// when converting this module to a CommonJS module.
     pub namespace_ref: Ref,
     pub default_name: Option<LocRef>,      // = None
     pub items: StoreSlice<ClauseItem>,     // arena-owned; = &[]
@@ -262,10 +245,6 @@ impl Default for Local {
 
 impl Local {
     pub fn can_merge_with(&self, other: &Local) -> bool {
-        // Don't merge "using" / "await using" declarations. Merging them is
-        // spec-compliant but matches esbuild's behavior of keeping them
-        // separate, and avoids any downstream pass assuming one decl per
-        // `using` statement.
         if self.kind.is_using() {
             return false;
         }

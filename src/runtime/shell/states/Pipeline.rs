@@ -89,15 +89,6 @@ impl Pipeline {
         }
     }
 
-    /// Set up N-1 pipes, dupe the shell env per child, spawn each
-    /// Cmd/Assigns/Subshell/If/CondExpr with stdin/stdout wired to the right
-    /// pipe ends.
-    ///
-    /// Spec (Pipeline.zig `next()` `.starting_cmds`): spawns exactly ONE child
-    /// per call and returns that child's `start()` Yield. The trampoline's
-    /// `drain_pipelines` (Yield.rs) re-enters `Pipeline::next` to spawn the
-    /// next child once the current one suspends — so every child's start-yield
-    /// is driven, never dropped.
     fn next_starting(interp: &Interpreter, this: NodeId, idx: u32) -> Yield {
         let (node, parent_shell, evtloop) = {
             let me = interp.as_pipeline(this);
@@ -113,11 +104,6 @@ impl Pipeline {
             .count();
 
         if cmd_count == 0 {
-            // Spec (Pipeline.zig start()): empty pipeline finishes with 0.
-            // Return `Next(this)` so the trampoline sees `is_done`, removes us
-            // from the pipeline stack, and `next()` bubbles to the parent.
-            // Calling `child_done(parent, ..)` directly here would free this
-            // node while it's still on `pipeline_stack`.
             interp.as_pipeline_mut(this).state = PipelineState::Done { exit_code: 0 };
             return Yield::Next(this);
         }
@@ -126,12 +112,6 @@ impl Pipeline {
         if idx == 0 && interp.as_pipeline(this).cmds.is_none() {
             let mut pipes: Vec<Pipe> = Vec::with_capacity(cmd_count.saturating_sub(1));
             for _ in 0..cmd_count.saturating_sub(1) {
-                // Spec (Pipeline.zig initializePipes 291-313): on POSIX use a
-                // UNIX stream socketpair via `socketpairForShell` — on macOS
-                // that variant intentionally skips SO_NOSIGPIPE so the
-                // subprocess writing to a closed read end is killed by SIGPIPE
-                // (like a real shell) instead of seeing EPIPE and printing
-                // "Broken pipe" to stderr; on Windows use pipe().
                 #[cfg(windows)]
                 let r = bun_sys::pipe();
                 #[cfg(unix)]
@@ -143,10 +123,6 @@ impl Pipeline {
                             closefd(p[0]);
                             closefd(p[1]);
                         }
-                        // Leave `StartingCmds` so `drain_pipelines` doesn't
-                        // re-enter `next_starting` and retry the failing
-                        // syscall in a loop (spec: setupCommands → start →
-                        // .waiting_write_err → suspended).
                         interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr;
                         interp.throw(ShellErr::new_sys(&e));
                         return Yield::failed();
@@ -227,12 +203,6 @@ impl Pipeline {
         } {
             Ok(d) => d,
             Err(e) => {
-                // Spec (Pipeline.zig setupCommands 132-140): on dupe failure,
-                // close the pipe ends not yet wrapped in an IOReader/IOWriter,
-                // deref `cmd_io`, transition to `.waiting_write_err`, and
-                // suspend. Without the state transition `drain_pipelines`
-                // would re-enter at the same `idx`, re-wrapping the same fds
-                // in fresh IOReader/IOWriter each iteration.
                 drop(child_io);
                 {
                     let me = interp.as_pipeline_mut(this);
@@ -315,19 +285,9 @@ impl Pipeline {
             }
             (me.exited_count >= n && n > 0, n)
         };
-        // We duped a ShellExecEnv per child in `next_starting`. Cmd/If/CondExpr
-        // do NOT free `base.shell` in their own `deinit`, so free it here
-        // (spec: Pipeline.zig childDone() lines 236-250). Subshell frees its
-        // own; Assigns is skipped per spec.
         Self::deinit_child_duped_env(interp, child);
         interp.deinit_node(child);
         if all_done {
-            // Exit code = last command's exit code (bash semantics).
-            // Spec (Pipeline.zig childDone 258-266): the back-scan loop is
-            // `var i = len-1; while (i > 0) : (i -= 1)` — note `> 0`, not
-            // `>= 0` — so for a single-runnable pipeline the loop body never
-            // runs and `last_exit_code` stays 0. Mirror that exactly: only
-            // inspect `cmds[len-1]` when `len >= 2`.
             let exit = {
                 let me = interp.as_pipeline(this);
                 match me.cmds.as_ref() {

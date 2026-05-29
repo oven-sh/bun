@@ -35,21 +35,6 @@ bun_output::declare_scope!(fs_watch, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORTING.md §Global mutable state: singleton ptr → `AtomicCell`, guarded by
-// `DEFAULT_MANAGER_MUTEX`. `fs.watch()` is reachable from Worker JS threads
-// (each Worker is its own OS thread + VM), so the unguarded read+write the
-// Zig original gets away with is a data race in Rust. Mirror the posix
-// `path_watcher.rs` pattern: every `DEFAULT_MANAGER` access holds the mutex.
-// `AtomicCell<*mut _>` (Acquire/Release on the pointer word) means even an
-// unsynchronized racing reader observes either null or a fully-published
-// pointer — and lets every load/store be safe code (`RacyCell` required an
-// `unsafe` block per access for the same single-word op).
-//
-// NOTE: the manager binds to one VM's `uv_loop`, so it is a per-VM resource —
-// `watch()` allocates a fresh manager whenever the caller's `vm` differs from
-// the one stored here (last caller wins the slot), so a Worker never mutates
-// another VM's manager or drives its uv_loop cross-thread. Promoting this to
-// true per-VM storage (e.g. `RareData`) is the longer-term fix.
 static DEFAULT_MANAGER: bun_core::AtomicCell<*mut PathWatcherManager> =
     bun_core::AtomicCell::new(ptr::null_mut());
 static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
@@ -72,11 +57,6 @@ impl PathWatcherManager {
         bun_core::heap::into_raw(Box::new(PathWatcherManager {
             watchers: StringArrayHashMap::default(),
             vm,
-            // A manager can be displaced from `DEFAULT_MANAGER` by a `watch()`
-            // call from a different VM; without this the displaced manager
-            // would never be freed. Set here — on the owning thread, before the
-            // pointer is published — to avoid a cross-thread write at
-            // displacement time.
             deinit_on_last_watcher: true,
         }))
     }
@@ -106,10 +86,6 @@ impl PathWatcherManager {
         }
     }
 
-    /// Tear down the manager. Takes a raw pointer because it frees `self`.
-    ///
-    /// NOTE: not `impl Drop` — this type is always held via `*mut` (global static + BACKREF from
-    /// PathWatcher) and self-frees via `heap::take`.
     unsafe fn deinit(this: *mut PathWatcherManager) {
         // enable to create a new manager
         {
@@ -368,10 +344,6 @@ impl PathWatcher {
         // bun.assert evaluates its argument before the inline early-return, so this runs in release too.
         // SAFETY: `this` is a freshly-allocated valid pointer; uv_loop comes from the VM.
         unsafe {
-            // `ptr::addr_of_mut!` (not `&mut (*this).handle`): libuv stashes this pointer and
-            // hands it back to `uv_event_callback`, which `from_field_ptr!`-offsets it to recover
-            // the parent `PathWatcher`. Deriving via `addr_of_mut!` keeps `this`'s whole-allocation
-            // provenance so that container-of access stays in-bounds under Stacked Borrows.
             let rc = uv::uv_fs_event_init(manager.vm.uv_loop(), ptr::addr_of_mut!((*this).handle));
             debug_assert!(rc == uv::ReturnCode::zero());
             (*this).handle.data = this.cast::<c_void>();
@@ -498,11 +470,6 @@ pub fn watch(
     #[cfg(not(windows))]
     compile_error!("win_watcher should only be used on Windows");
 
-    // DEFAULT_MANAGER is only read/written while holding DEFAULT_MANAGER_MUTEX
-    // (see static decl). The guard covers the whole registration — not just the
-    // slot load — because `PathWatcher::init` below mutates the manager's
-    // `watchers` map, and `fs.watch()` is reachable from Worker threads: two
-    // Workers releasing the lock before that mutation would alias `&mut *manager`.
     let _g = DEFAULT_MANAGER_MUTEX.lock_guard();
     let existing = DEFAULT_MANAGER.load();
     // The manager is bound to one VM's uv_loop; reusing it from a different VM

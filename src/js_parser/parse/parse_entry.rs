@@ -35,17 +35,6 @@ pub type TSXImportScanner<'a> = P<'a, true, true>;
 // In AST crates, ListManaged(T) backed by the arena → bumpalo Vec.
 type BumpVec<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
 
-/// Stack-local in-place `P` constructor (Zig: `var p: ParserType = undefined;
-/// try ParserType.init(.., &p)`). `P` is ~5 KiB; the previous
-/// `let mut p = P::init(..)?` shape forced 2-3 by-value moves of the whole
-/// struct (ASM-verified: `_scan_imports` 14168-B frame, 5× `memcpy`). This
-/// macro reserves an uninitialized slot on the caller's stack, has `P::init`
-/// write to it directly, and yields a `&mut P` borrow that runs `P::drop` via
-/// `scopeguard` on scope exit — no `Self`-sized moves, no heap.
-///
-/// On `init` `Err`, the slot is still uninitialized so the guard's
-/// `assume_init_drop` would be UB; the macro `?`-returns *before* arming the
-/// guard. (`P::init` itself only fails before `out.write` — see its doc.)
 macro_rules! init_p {
     ($ty:ty; $($arg:expr),* $(,)?) => {{
         let mut __slot = MaybeUninit::<$ty>::uninit();
@@ -61,10 +50,6 @@ macro_rules! init_p {
 pub struct Parser<'a> {
     pub options: Options<'a>,
     pub lexer: js_lexer::Lexer<'a>,
-    /// Raw pointer alias of `lexer.log`. Zig held two `*Log` pointers; Rust
-    /// cannot hold two live `&'a mut Log`, so both the parser- and lexer-side
-    /// handles are `NonNull` and dereferenced at use sites (see `log_mut` /
-    /// `Lexer::log()`). The pointee outlives `'a` (see `init`).
     pub log: core::ptr::NonNull<bun_ast::Log>,
     pub source: &'a bun_ast::Source,
     pub define: &'a Define,
@@ -106,20 +91,11 @@ pub struct Options<'a> {
     /// able to customize what import sources are used.
     pub framework: Option<&'a options::Framework>, // TYPE_ONLY: was bun_runtime::bake::Framework
 
-    /// REPL mode: transforms code for interactive evaluation
-    /// - Wraps lone object literals `{...}` in parentheses
-    /// - Hoists variable declarations for REPL persistence
-    /// - Wraps last expression in { value: expr } for result capture
-    /// - Wraps code with await in async IIFE
     pub repl_mode: bool,
 }
 
 impl<'a> Default for Options<'a> {
     fn default() -> Self {
-        // Zig: `macro_context = undefined` — modeled as `None`; caller must set
-        // before use. This impl exists so `_parse` can `core::mem::take` the
-        // real options out of `Parser` (moving the heap-owning `jsx: Pragma`
-        // by value) instead of bitwise-copying it and double-freeing on drop.
         Options {
             jsx: options::JSX::Pragma::default(),
             ts: false,
@@ -149,25 +125,6 @@ impl<'a> Default for Options<'a> {
 }
 
 impl<'a> Options<'a> {
-    /// Field-by-field clone for the bundler's empty-file fallback
-    /// (ParseTask.zig:335-342: `getEmptyAST(..., opts, ...)` after
-    /// `caches.js.parse(..., opts, ...)` returned null). Zig passed `opts` by
-    /// value (bitwise copy) to *both* calls; in Rust `parse()` consumes `opts`,
-    /// and `Options` is not `Clone` because `macro_context` is `&'a mut`.
-    ///
-    /// Co-located with the struct so adding a field is a hard error here —
-    /// the struct-literal below has no `..Default::default()` tail. Callers
-    /// take this snapshot *before* moving `opts` into `parse()`.
-    ///
-    /// Intentionally NOT carried over (lazy-export / `to_lazy_export_ast` does
-    /// not consult them; carrying them would alias or double-own):
-    /// - `macro_context` (`&'a mut`) — macro evaluation runs only on the full
-    ///   parse path.
-    /// - `features.replace_exports` — visit-pass-only; the lazy stub has no
-    ///   user statements to rewrite.
-    /// - `features.bundler_feature_flags` — `import { feature } from
-    ///   "bun:bundle"` cannot appear in a synthetic single-expr AST.
-    /// - `features.runtime_transpiler_cache` — full-parse cache hook only.
     pub fn clone_for_lazy_export(&self) -> Options<'a> {
         let f = &self.features;
         Options {
@@ -286,11 +243,6 @@ impl<'a> Options<'a> {
             bundle: false,
             code_splitting: false,
             package_version: b"",
-            // Zig: `macro_context: *MacroContextType() = undefined` — uninitialized
-            // raw pointer the caller overwrites before any read. In Rust,
-            // materializing an invalid `&mut T` is immediate UB regardless of
-            // use, so model "not yet set" as `None`; callers must assign `Some(_)`
-            // before any read site `.unwrap()`s it.
             macro_context: None,
             warn_about_unbundled_modules: true,
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
@@ -307,10 +259,6 @@ impl<'a> Options<'a> {
     }
 }
 
-// ── live `Parser::init` ───────────────────────────────────────────────────
-// Zig held two aliasing `*Log` pointers (parser + lexer). Rust models this as
-// `NonNull<Log>` on both sides — neither stores a long-lived `&mut`, so no
-// Stacked-Borrows tag is invalidated when accesses interleave.
 impl<'a> Parser<'a> {
     pub fn init(
         options: Options<'a>,
@@ -345,13 +293,6 @@ impl<'a> Parser<'a> {
     }
 }
 
-// ── live `Parser::parse` / `Parser::scan_imports` symbols ────────────────
-// `parse()` is the real const-generic dispatcher (Zig: `if (ts && jsx.parse)
-// _parse(TSXParser) else …`). `_parse` carries the correct `<const TS, JX>`
-// shape but its body is blocked on `P::{init, prepare_for_visit_pass,
-// append_part, to_ast, …}` (gated in P.rs); the full ported body is preserved
-// per-method-gated in the impl block below and replaces this stub once that
-// surface lands.
 impl<'a> Parser<'a> {
     #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
     pub fn parse(mut self) -> Result<crate::Result<'a>, Error> {
@@ -363,10 +304,6 @@ impl<'a> Parser<'a> {
             return self._parse::<true>();
         }
 
-        // JSX is no longer part of the parser's monomorphization (it only
-        // affects a few expr arms — see `parser.rs`); `P::init` reads the
-        // transform mode off `options.jsx.parse` at runtime, so the only
-        // remaining comptime split is TypeScript.
         #[cfg(not(target_arch = "wasm32"))]
         {
             if self.options.ts {
@@ -395,15 +332,6 @@ impl<'a> Parser<'a> {
         scan_pass: &'a mut ScanPassResult,
     ) -> Result<(), Error> {
         type Pi<'a, const TS: bool> = P<'a, TS, true>;
-        // Zig moves lexer/options by value into `P` (Parser.zig) and only
-        // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
-        // on `Parser.lexer`. In Rust, `Lexer` owns `Vec`s and `Options` owns
-        // `jsx: Pragma` boxes, so a bitwise `ptr::read` would double-free
-        // when `self` later drops. Move them out, leaving inert placeholders.
-        //
-        // The inert placeholder lexer is given its *own* arena-allocated `Log`
-        // so it does not alias `self.log` at all — keeps the placeholder fully
-        // disjoint from the real `Log` handed to `P` and never read again.
         let lexer = core::mem::replace(
             &mut self.lexer,
             js_lexer::Lexer::init_without_reading(
@@ -429,10 +357,6 @@ impl<'a> Parser<'a> {
         // We don't have accurate symbol counts.
         // So we don't have a good way to distinguish between a type-only import and not.
         if TS {
-            // Pre-size the name-keyed usage map so the scan pass doesn't
-            // re-hash it one identifier reference at a time (≈ one tracked
-            // symbol per 16 source bytes). `ensure_total_capacity` is a no-op
-            // when the map already retains enough capacity from a prior file.
             let _ = scan_pass
                 .used_symbols
                 .ensure_total_capacity(self.source.contents.len() / 16);
@@ -445,10 +369,6 @@ impl<'a> Parser<'a> {
             ..Default::default()
         };
 
-        // Parsing seems to take around 2x as much time as visiting.
-        // Which makes sense.
-        // June 4: "Parsing took: 18028000"
-        // June 4: "Rest of this took: 8003000"
         match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
             Ok(_) => {}
             Err(e) => {
@@ -468,13 +388,6 @@ impl<'a> Parser<'a> {
         //
         if TS {
             for import_record in p.import_records.items_mut() {
-                // Mark everything as unused
-                // Except:
-                // - export * as ns from 'foo';
-                // - export * from 'foo';
-                // - import 'foo';
-                // - import("foo")
-                // - require("foo")
                 let new_unused = import_record.flags.contains(ImportRecordFlags::IS_UNUSED)
                     || (import_record.kind == bun_ast::ImportKind::Stmt
                         && !import_record
@@ -542,14 +455,6 @@ impl<'a> Parser<'a> {
         runtime_api_call: &'static [u8],
         symbols: js_ast::symbol::List<'a>,
     ) -> Result<crate::Result<'a>, Error> {
-        // TODO(port): narrow error set
-        // Zig moves lexer/options by value into `P` (Parser.zig) and only
-        // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
-        // on `Parser.lexer`. In Rust we move them out and leave inert
-        // placeholders so `self` may drop without double-free.
-        //
-        // The placeholder lexer gets its own arena `Log` so it does not alias
-        // `self.log` (see `_scan_imports`).
         let lexer = core::mem::replace(
             &mut self.lexer,
             js_lexer::Lexer::init_without_reading(
@@ -638,11 +543,6 @@ impl<'a> Parser<'a> {
         context: *mut c_void,
         callback: &dyn Fn(*mut c_void, &mut TSXParser, &mut [js_ast::Part]) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        // See `_scan_imports`: move lexer/options out, leaving inert
-        // placeholders so `self` may drop without double-free.
-        //
-        // The placeholder lexer gets its own arena `Log` so it does not alias
-        // `self.log` (see `_scan_imports`).
         let lexer = core::mem::replace(
             &mut self.lexer,
             js_lexer::Lexer::init_without_reading(
@@ -701,11 +601,6 @@ impl<'a> Parser<'a> {
         if p.log().errors > 0 {
             #[cfg(target_arch = "wasm32")]
             {
-                // If the logger is backed by console.log, every print appends a newline.
-                // so buffering is kind of mandatory here
-                // TODO(port): Zig builds a custom GenericWriter wrapping Output::print and a
-                // buffered writer over it. Provide a `bun_core::Output::buffered()`
-                // that returns an `impl core::fmt::Write` flushed on drop.
                 for msg in p.log().msgs.as_slice() {
                     let mut m: bun_ast::Msg = *msg;
                     let _ = m.write_format(Output::writer(), true);
@@ -729,19 +624,6 @@ impl<'a> Parser<'a> {
     }
 
     fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
-        // TODO(port): narrow error set
-        // TODO(port): bun_crash_handler::current_action — `Action` stores
-        // `&'static [u8]` but `self.source.path.text` is `'a`; widen
-        // the lifetime on `Action` (Zig held the same pointer). Once unblocked:
-        //   let _restore = bun_crash_handler::scoped_action(Action::Parse(self.source.path.text));
-        // (`ActionGuard` restores the previous action on Drop — no scopeguard.)
-
-        // Zig moves lexer/options by value into `P` (Parser.zig:339) and only
-        // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
-        // on `Parser.lexer`. `parse()` consumes `self` by value, so we
-        // destructure here and hand the owned `lexer`/`options` straight to
-        // `P::init` — no `ptr::read`/`mem::replace` placeholder dance, no
-        // double-free hazard.
         let Parser {
             options,
             lexer,
@@ -778,14 +660,6 @@ impl<'a> Parser<'a> {
         p.binary_expression_simplify_stack = BumpVec::with_capacity_in(47, p.arena);
 
         // (Zig asserted the stack-fallback arena owns the buffer; not applicable here.)
-
-        // defer {
-        //     if (p.allocated_names_pool) |pool| {
-        //         pool.data = p.allocated_names;
-        //         pool.release();
-        //         p.allocated_names_pool = null;
-        //     }
-        // }
 
         // Consume a leading hashbang comment
         let mut hashbang: &[u8] = b"";
@@ -837,10 +711,6 @@ impl<'a> Parser<'a> {
         };
         let mut parse_tracer = bun_core::perf::trace("JSParser::parse");
 
-        // Parsing seems to take around 2x as much time as visiting.
-        // Which makes sense.
-        // June 4: "Parsing took: 18028000"
-        // June 4: "Rest of this took: 8003000"
         let stmts: &'a mut [Stmt] = match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
             Ok(s) => s.into_bump_slice_mut(),
             Err(e) => {
@@ -863,11 +733,6 @@ impl<'a> Parser<'a> {
 
         parse_tracer.end();
 
-        // Halt parsing right here if there were any errors
-        // This fixes various conditions that would cause crashes due to the AST being in an invalid state while visiting
-        // In a number of situations, we continue to parsing despite errors so that we can report more errors to the user
-        //   Example where NOT halting causes a crash: A TS enum with a number literal as a member name
-        //     https://discord.com/channels/876711213126520882/876711213126520885/1039325382488371280
         if p.log().errors > orig_error_count {
             return Err(err!("SyntaxError"));
         }
@@ -902,71 +767,12 @@ impl<'a> Parser<'a> {
             });
         }
 
-        // When "using" declarations appear at the top level, we change all TDZ
-        // variables in the top-level scope into "var" so that they aren't harmed
-        // when they are moved into the try/catch statement that lowering will
-        // generate.
-        //
-        // This is necessary because exported function declarations must be hoisted
-        // outside of the try/catch statement because they can be evaluated before
-        // this module is evaluated due to ESM cross-file function hoisting. And
-        // these function bodies might reference anything else in this scope, which
-        // must still work when those things are moved inside a try/catch statement.
-        //
-        // Before:
-        //
-        //   using foo = get()
-        //   export function fn() {
-        //     return [foo, new Bar]
-        //   }
-        //   class Bar {}
-        //
-        // After ("fn" is hoisted, "Bar" is converted to "var"):
-        //
-        //   export function fn() {
-        //     return [foo, new Bar]
-        //   }
-        //   try {
-        //     var foo = get();
-        //     var Bar = class {};
-        //   } catch (_) {
-        //     ...
-        //   } finally {
-        //     ...
-        //   }
-        //
-        // This is also necessary because other code might be appended to the code
-        // that we're processing and expect to be able to access top-level variables.
         p.will_wrap_module_in_try_catch_for_using = p.should_lower_using_declarations(stmts);
 
-        // Bind symbols in a second pass over the AST. I started off doing this in a
-        // single pass, but it turns out it's pretty much impossible to do this
-        // correctly while handling arrow functions because of the grammar
-        // ambiguities.
-        //
-        // Note that top-level lowered "using" declarations disable tree-shaking
-        // because we only do tree-shaking on top-level statements and lowering
-        // a top-level "using" declaration moves all top-level statements into a
-        // nested scope.
         if !p.options.tree_shaking || p.will_wrap_module_in_try_catch_for_using {
             // When tree shaking is disabled, everything comes in a single part
             p.append_part(&mut parts, stmts)?;
         } else {
-            // Preprocess TypeScript enums to improve code generation. Otherwise
-            // uses of an enum before that enum has been declared won't be inlined:
-            //
-            //   console.log(Foo.FOO) // We want "FOO" to be inlined here
-            //   const enum Foo { FOO = 0 }
-            //
-            // The TypeScript compiler itself contains code with this pattern, so
-            // it's important to implement this optimization.
-
-            // PORT NOTE: `Loc` lacks `Hash` (logger crate), so the
-            // `scopes_in_order_for_enum` lookups linear-scan `keys()` —
-            // matches Zig's ArrayHashMap linear behaviour at small N (one
-            // entry per top-level `enum`). `scope_order_to_visit` is
-            // `&'a [_]` (a `Copy` cursor) so save/restore is a plain value
-            // copy, mirroring the Zig `[]ScopeOrder` slice value.
             let arena = p.arena;
             let mut preprocessed_enums: BumpVec<BumpVec<'a, js_ast::Part>> = BumpVec::new_in(arena);
             let mut preprocessed_enum_i: usize = 0;
@@ -1031,14 +837,6 @@ impl<'a> Parser<'a> {
                             // will take place before any other statements are evaluated.
                             &mut before
                         } else {
-                            // If we aren't doing any format conversion, just keep these statements
-                            // inline where they were. Exports are sorted so order doesn't matter:
-                            // https://262.ecma-international.org/6.0/#sec-module-namespace-exotic-objects.
-                            // However, this is likely an aesthetic issue that some people will
-                            // complain about. In addition, there are code transformation tools
-                            // such as TypeScript and Babel with bugs where the order of exports
-                            // in the file is incorrectly preserved instead of sorted, so preserving
-                            // the order of exports ourselves here may be preferable.
                             &mut parts
                         };
 
@@ -1117,14 +915,6 @@ impl<'a> Parser<'a> {
         let mut uses_filename =
             p.symbols.as_slice()[p.filename_ref.inner_index() as usize].use_count_estimate > 0;
 
-        // Handle dirname and filename at bundle-time
-        // We always inject it at the top of the module
-        //
-        // This inlines
-        //
-        //    var __dirname = "foo/bar"
-        //    var __filename = "foo/bar/baz.js"
-        //
         if p.options.bundle || !p.options.features.commonjs_at_runtime {
             if uses_dirname || uses_filename {
                 let count = (uses_dirname as usize) + (uses_filename as usize);
@@ -1286,12 +1076,6 @@ impl<'a> Parser<'a> {
                         for export_ref in p.commonjs_named_exports.values().iter() {
                             needs_decl_count += export_ref.needs_decl as usize;
                         }
-                        // This is a workaround for packages which have broken ESM checks
-                        // If they never actually assign to exports.foo, only check for it
-                        // and the package specifies type "module"
-                        // and the package uses ESM syntax
-                        // We should just say
-                        // You're ESM and lying about it.
                         if p.options.module_type == options::ModuleType::Esm
                             || p.has_es_module_syntax
                         {
@@ -1317,28 +1101,6 @@ impl<'a> Parser<'a> {
         }
 
         if parts.len() < 4 && parts.len() > 0 && p.options.features.unwrap_commonjs_to_esm {
-            // Specially handle modules shaped like this:
-            //
-            //   CommonJS:
-            //
-            //    if (process.env.NODE_ENV === 'production')
-            //         module.exports = require('./foo.prod.js')
-            //     else
-            //         module.exports = require('./foo.dev.js')
-            //
-            // Find the part containing the actual module.exports = require() statement,
-            // skipping over parts that only contain comments, directives, and empty statements.
-            // This handles files like:
-            //
-            //    /*!
-            //     * express
-            //     * MIT Licensed
-            //     */
-            //    'use strict';
-            //    module.exports = require('./lib/express');
-            //
-            // When tree-shaking is enabled, each statement becomes its own part, so we need
-            // to look across all parts to find the single meaningful statement.
             struct StmtAndPart {
                 stmt: Stmt,
                 part_idx: usize,
@@ -1383,23 +1145,10 @@ impl<'a> Parser<'a> {
                                             if id.ref_.eql(p.module_ref)))
                             {
                                 let redirect_import_record_index: Option<u32> = 'inner_brk: {
-                                    // general case:
-                                    //
-                                    //      module.exports = require("foo");
-                                    //
                                     if let js_ast::ExprData::ERequireString(req) = &right.data {
                                         break 'inner_brk Some(req.import_record_index);
                                     }
 
-                                    // special case: a module for us to unwrap
-                                    //
-                                    //      module.exports = require("react/jsx-runtime")
-                                    //                       ^ was converted into:
-                                    //
-                                    //      import * as Foo from 'bar';
-                                    //      module.exports = Foo;
-                                    //
-                                    // This is what fixes #3537
                                     if let js_ast::ExprData::EIdentifier(id) = &right.data {
                                         if p.import_records.len() == 1
                                             && p.imports_to_convert_from_require.len() == 1
@@ -1441,15 +1190,6 @@ impl<'a> Parser<'a> {
                 && p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate == 1
             {
                 'outer_part_loop: for part in parts.iter_mut() {
-                    // Specially handle modules shaped like this:
-                    //
-                    //    doSomeStuff();
-                    //    module.exports = require('./foo.js');
-                    //
-                    // An example is react-dom/index.js, which does a DCE check.
-                    // Snapshot the StoreSlice (Copy) so the `&mut` borrow over the
-                    // arena slice doesn't conflict with the `part.stmts = …` rewrite
-                    // below.
                     let part_stmts_ss = part.stmts;
                     let part_stmts: &mut [Stmt] = part_stmts_ss.slice_mut();
                     if part_stmts.len() > 1 {
@@ -1552,25 +1292,9 @@ impl<'a> Parser<'a> {
                 }
             }
         } else if p.options.bundle && parts.is_empty() {
-            // This flag is disabled because it breaks circular export * as from
-            //
-            //  entry.js:
-            //
-            //    export * from './foo';
-            //
-            //  foo.js:
-            //
-            //    export const foo = 123
-            //    export * as ns from './foo'
-            //
             if false
             /* TODO(port): feature_flag — Zig gates with comptime FeatureFlags.export_star_redirect (false) */
             {
-                // If the file only contains "export * from './blah'
-                // we pretend the file never existed in the first place.
-                // the semantic difference here is in export default statements
-                // note: export_star_import_records are not filled in yet
-
                 if !before.is_empty() && p.import_records.len() == 1 {
                     let export_star_redirect: Option<&S::ExportStar> = 'brk: {
                         let mut export_star: Option<&S::ExportStar> = None;
@@ -1741,15 +1465,6 @@ impl<'a> Parser<'a> {
                     exports_kind = js_ast::ExportsKind::Esm;
                 }
                 options::ModuleType::Unknown => {
-                    // Divergence from esbuild and Node.js: we default to ESM
-                    // when there are no exports.
-                    //
-                    // However, this breaks certain packages.
-                    // For example, the checkpoint-client used by
-                    // Prisma does an eval("__dirname") but does not export
-                    // anything.
-                    //
-                    // If they use an import statement, we say it's ESM because that's not allowed in CommonJS files.
                     let uses_any_import_statements = 'brk: {
                         for import_record in p.import_records.items() {
                             if import_record.flags.intersects(
@@ -1793,14 +1508,6 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // Handle dirname and filename at runtime.
-        //
-        // If we reach this point, it means:
-        //
-        // 1) we are building an ESM file that uses __dirname or __filename
-        // 2) we are targeting bun's runtime.
-        // 3) we are not bundling.
-        //
         if exports_kind == js_ast::ExportsKind::Esm && (uses_dirname || uses_filename) {
             debug_assert!(!p.options.bundle);
             let count = (uses_dirname as usize) + (uses_filename as usize);
@@ -1915,11 +1622,6 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            // if they didn't use any of the jest globals, don't inject it, I guess.
-            // PORT NOTE: Zig used `inline for (comptime std.meta.fieldNames(Jest))` — comptime
-            // reflection over Jest's Ref fields. Rust iterates the static `Jest::FIELDS`
-            // table (`&[(&'static str, fn(&Jest) -> Ref)]`) instead; declaration order
-            // matches the Zig struct so emitted clause/property order is identical.
             let items_count: usize = {
                 let mut count: usize = 0;
                 for (_name, get_ref) in Jest::FIELDS {
@@ -2095,10 +1797,6 @@ impl<'a> Parser<'a> {
             });
 
             if i > 0 {
-                // PORT NOTE: snapshot to break the `&mut self` ↔ `&self.runtime_imports`
-                // borrow overlap in `generate_import_stmt(symbols: &Sym)`; the callee
-                // never touches `self.runtime_imports`, so the clone is purely a
-                // borrow-checker workaround (Zig passed by value here).
                 let symbols = p.runtime_imports.clone();
                 p.generate_import_stmt(
                     RuntimeImports::NAME,
@@ -2118,12 +1816,6 @@ impl<'a> Parser<'a> {
             && p.options.features.auto_import_jsx
             && p.options.jsx.runtime == options::JSX::Runtime::Automatic
         {
-            // PORT NOTE: `generate_import_stmt` takes `&mut self` plus `import_path: &'a [u8]`
-            // and `symbols: &Sym`, so the Pragma-owned `Box<[u8]>` paths are copied into the
-            // bump arena (giving them the required `'a` lifetime) and `jsx_imports` is moved
-            // out via `take` (it is `Default`) to avoid an overlapping `&self.jsx_imports`
-            // borrow. The callee never reads `self.jsx_imports`, so the take/restore is
-            // semantically a no-op vs. the Zig.
             let import_source: &'a [u8] = p.arena.alloc_slice_copy(p.options.jsx.import_source());
             let package_name: &'a [u8] = p.arena.alloc_slice_copy(&p.options.jsx.package_name);
             let jsx_imports = core::mem::take(&mut p.jsx_imports);
@@ -2244,21 +1936,10 @@ impl<'a> Parser<'a> {
         )?))
     }
 
-    // PORT NOTE: associated fn (was `&self` reading `self.lexer.source.contents`)
-    // because `_parse` consumes `self` by value and destructures it before this
-    // call site; the source contents are passed explicitly.
-    // called from gated `_parse` body above
     fn has_bun_pragma(contents: &[u8], has_hashbang: bool) -> Option<crate::AlreadyBundled> {
         const BUN_PRAGMA: &[u8] = b"// @bun";
         let end = contents.len();
 
-        // pragmas may appear after a hashbang comment
-        //
-        //   ```js
-        //   #!/usr/bin/env bun
-        //   // @bun
-        //   const myCode = 1;
-        //   ```
         let mut cursor: usize = 0;
         if has_hashbang {
             while contents[cursor] != b'\n' {

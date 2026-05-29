@@ -236,11 +236,6 @@ impl Image {
         }
     }
 
-    // TODO(port): `css.DeriveParse(@This()).parse` — hand-expanded: try each
-    // variant in Zig field order (none/url/gradient/image-set).
-    // blocked_on: `Url::parse` (gated on `Parser::add_import_record`). The
-    // gradient/image-set arms are real; the url arm un-gates with url.rs.
-
     pub fn parse(input: &mut css::Parser) -> Result<Image> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
@@ -287,10 +282,6 @@ impl crate::small_list::ImageFallback for Image {
     }
 }
 
-/// A CSS [`image-set()`](https://drafts.csswg.org/css-images-4/#image-set-notation) value.
-///
-/// `image-set()` allows the user agent to choose between multiple versions of an image to
-/// display the most appropriate resolution or file type that it supports.
 pub struct ImageSet {
     /// The image options to choose from.
     // PERF(port): was ArrayListUnmanaged fed arena — profile if hot
@@ -398,10 +389,6 @@ impl ImageSetOption {
     pub(crate) fn parse(input: &mut css::Parser) -> Result<ImageSetOption> {
         let start_position = input.input.tokenizer.get_position();
         let loc = input.current_source_location();
-        // PORT NOTE: `expect_url_or_string` returns a borrow of the parser, so
-        // it can't be used as a `try_parse` callback directly (the result type
-        // `R` may not borrow the closure arg). Erase the borrow via `*const`
-        // — token slices are arena-static (see `css_parser::src_str`).
         let image = if let Ok(url) =
             input.try_parse(|p| p.expect_url_or_string().map(std::ptr::from_ref::<[u8]>))
         {

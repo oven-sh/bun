@@ -7,12 +7,6 @@ const _: () = assert!(cfg!(target_endian = "little"));
 // NOTE: the packed layout assumes 64-bit pointers (`__ptr` occupies the upper 64 bits of the u128).
 const _: () = assert!(mem::size_of::<usize>() == 8);
 
-/// This is a string type that stores up to 15 bytes inline on the stack, and heap allocates if it is longer.
-///
-/// Zig layout (`packed struct(u128)`, little-endian bit order):
-///   bits   0..32  = `__len: u32`
-///   bits  32..64  = `cap: u32`
-///   bits  64..128 = `__ptr: [*]u8`  (bit 127 is the inlined tag)
 #[repr(transparent)]
 pub struct SmolStr(u128);
 
@@ -254,10 +248,6 @@ pub trait JsonWriter {
 
 // ---------------------------------------------------------------------------
 
-/// Zig layout (`packed struct(u128)`, little-endian bit order):
-///   bits   0..120 = `data: u120`   (15 inline bytes)
-///   bits 120..127 = `__len: u7`
-///   bit  127      = `_tag: u1`
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Inlined(u128);

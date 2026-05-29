@@ -119,11 +119,6 @@ impl Scripts {
         false
     }
 
-    /// return: (first_index, total, entries)
-    /// PORT NOTE: Zig also passed `*const Lockfile` (for `allocator`); the
-    /// allocator is gone in Rust and the parameter was already unused — drop
-    /// it so callers can split-borrow `lockfile.{packages, scripts}` while
-    /// this only reads `lockfile_buf`.
     pub fn get_script_entries(
         &self,
         lockfile_buf: &[u8],
@@ -234,11 +229,6 @@ impl Scripts {
                 else {
                     break 'brk cwd_.slice();
                 };
-                // Resolve the canonical path, then close the directory HANDLE.
-                // (Zig spec at Scripts.zig:209-210 leaks `cwd_handle`; we fix
-                // that here rather than faithfully porting the leak — `Fd` is
-                // `Copy` with no `Drop`, so without this explicit close one
-                // kernel directory HANDLE leaks per script-bearing package.)
                 let path = bun_sys::get_fd_path(cwd_handle, &mut cwd_buf);
                 let _ = bun_sys::close(cwd_handle);
                 match path {
@@ -260,11 +250,6 @@ impl Scripts {
         None
     }
 
-    // Zig: `comptime Builder: type, builder: Builder` — duck-typed over any
-    // builder with `.count` / `.append`. Generic over `bun_semver::StringBuilder`
-    // so both `lockfile_real::StringBuilder` and `bun_semver::semver_string::Builder`
-    // are accepted (both impl the trait).
-    // PORT NOTE: `json` is `Copy` (matches Zig by-value `Expr`).
     pub fn parse_count<B: bun_semver::StringBuilder>(builder: &mut B, json: Expr) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
             if scripts_prop.expr.is_object() {
@@ -351,11 +336,6 @@ impl Scripts {
         log: &mut bun_ast::Log,
         folder_path: &mut bun_paths::AutoAbsPath,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        // PORT NOTE: Zig threaded `allocator` for JSON parsing; the Rust JSON
-        // parser uses a bump arena. Scoped here since the AST is consumed
-        // immediately into the string builder. `json_buf` is hoisted so the
-        // source bytes outlive the parsed `Expr` (which may borrow them).
         let bump = bun_alloc::Arena::new();
         let json_buf;
         let json: Expr = {
@@ -425,11 +405,6 @@ pub enum PrintFormat {
     Untrusted,
 }
 
-// PORT NOTE: `Clone` — Zig had borrowed slices so `list.*` was a shallow
-// pointer copy. The Rust port owns `cwd`/`package_name`/`items`, but
-// `runTasks.rs` (`.run_scripts` arm) and `lifecycle_script_runner` need a
-// by-value copy while the original allocation in `Store.entries.scripts`
-// must stay live for the post-install pass, so a deep clone is required.
 #[derive(Clone)]
 pub struct List {
     pub items: [Option<Box<[u8]>>; SCRIPT_NAMES_LEN],
@@ -497,17 +472,6 @@ impl List {
         }
         self.items[self.first_index as usize].as_ref().unwrap()
     }
-
-    // pub fn deinit(this: Package.Scripts.List, std.mem.Allocator param) void {
-    //     for (this.items) |maybe_item| {
-    //         if (maybe_item) |item| {
-    //             allocator.free(item);
-    //         }
-    //     }
-    //
-    //     allocator.free(this.cwd);
-    // }
-    // (Commented out in Zig too; Box<[u8]> fields drop automatically.)
 
     pub fn append_to_lockfile(&self, lockfile: &mut Lockfile) {
         for (i, maybe_script) in self.items.iter().enumerate() {

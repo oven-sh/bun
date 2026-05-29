@@ -27,14 +27,6 @@ use bun_sys::FdExt;
 
 use crate::webcore::blob::store::Bytes as BlobStoreBytes;
 
-/// Intrusive thread-safe ref-counted memfd allocator.
-///
-/// `ref_count` must stay at this field offset for `bun_ptr::IntrusiveArc<Self>`.
-//
-// Zig: `bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{})`
-// → intrusive *atomic* refcount. Blob stores (and thus this allocator, smuggled
-// through `StdAllocator.ptr`) cross threads, so the single-threaded `RefCount`
-// flavor would data-race on ref/deref.
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct LinuxMemFdAllocator {
@@ -135,10 +127,6 @@ impl LinuxMemFdAllocator {
         // pass `libc::MAP_*` directly. `.TYPE = .SHARED` is forced below.
         flags: i32,
     ) -> sys::Result<BlobStoreBytes> {
-        // memfd + mmap are POSIX-only; on Windows `should_use()` always
-        // returns false so this path is unreachable. Guard the body so
-        // `libc::MAP_*`/`PROT_*` (which don't exist on `*-windows-msvc`)
-        // never participate in name resolution.
         #[cfg(windows)]
         {
             let _ = (this, len, offset, flags);
@@ -152,10 +140,6 @@ impl LinuxMemFdAllocator {
             let page = bun_alloc::page_size();
             size = (size + page - 1) & !(page - 1);
 
-            // Zig: `flags_mut.TYPE = .SHARED;` — `TYPE` is the low-4-bit field of
-            // `std.posix.MAP`, so this *replaces* it (not OR). Mask out the
-            // existing TYPE bits first so e.g. an incoming `MAP_PRIVATE` (0x02)
-            // becomes `MAP_SHARED` (0x01), not `MAP_SHARED_VALIDATE` (0x03).
             #[cfg(any(target_os = "linux", target_os = "android"))]
             const MAP_TYPE: i32 = libc::MAP_TYPE;
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -284,11 +268,6 @@ impl LinuxMemFdAllocator {
                 }
             }
 
-            // PORT NOTE: Zig's `Self.new` returns a raw `*Self` (refcount=1).
-            // `into_raw()` extracts the `heap::alloc` pointer and transfers
-            // the +1 to us (RefPtr has no `Drop`); on `Ok` that ref moves into
-            // `res.allocator`, on `Err` we `deref` it explicitly — exactly the
-            // Zig flow.
             let memfd: *mut Self = Self::new(fd, bytes.len()).into_raw();
 
             // SAFETY: `memfd` is the `heap::alloc` pointer
@@ -318,13 +297,6 @@ impl LinuxMemFdAllocator {
     }
 }
 
-// ─── AllocatorInterface ─────────────────────────────────────────────────────
-// Zig defined a private `AllocatorInterface` struct holding alloc/free/VTable.
-// `bun_alloc::AllocatorVTable` is the `std.mem.Allocator.VTable` shape; the
-// vtable functions are kept as raw-ptr free functions matching Zig's
-// `*anyopaque` signatures so that `free` retains the `heap::alloc` *mut
-// provenance it needs to drop `self`.
-
 mod allocator_interface {
     use super::*;
 
@@ -341,15 +313,6 @@ mod allocator_interface {
     /// allocator. The region is unmapped on return; the caller must not access
     /// it afterwards.
     unsafe fn free(ptr: *mut c_void, buf: &mut [u8], _alignment: Alignment, _ret_addr: usize) {
-        // Zig: `var self: *Self = @ptrCast(@alignCast(ptr)); defer self.deref();`
-        // — runs after munmap regardless of result.
-        //
-        // PORT NOTE: takes the raw vtable data pointer (Zig's `*anyopaque`)
-        // directly rather than `&self`. `deref` may free the allocation, which
-        // requires `*mut Self` with full `heap::alloc` provenance; deriving
-        // it from a `&self` (`as *const _ as *mut _`) would be SharedReadOnly
-        // provenance and the `heap::take` → `Drop` write would be UB under
-        // Stacked Borrows.
         let this = ptr.cast::<LinuxMemFdAllocator>();
         match sys::munmap(buf.as_mut_ptr(), buf.len()) {
             Ok(()) => {}

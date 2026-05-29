@@ -55,12 +55,6 @@ use store::{Entry as StoreEntry, EntryColumns as _, Node as StoreNode, NodeColum
 
 bun_output::define_scoped_log!(log, IsolatedInstall, visible);
 
-// ───────────────────────────────────────────────────────────────────────────
-// Inner helper types (hoisted from fn body — Rust does not allow local
-// struct decls that borrow outer locals via closures the same way; field
-// order matches the Zig declarations).
-// ───────────────────────────────────────────────────────────────────────────
-
 #[derive(Clone, Copy)]
 struct QueuedNode {
     parent_id: store::node::Id,
@@ -107,18 +101,6 @@ struct WorkFrame {
     child: u32,
 }
 
-/// Compute entry_hash for the global virtual store. The hash makes a
-/// global-store directory name unique to this entry's *resolved* dependency
-/// closure, so two projects that resolve `react@18.3.1` to the same set of
-/// transitive versions share one on-disk entry, while a project that
-/// resolves a transitive dep to a different version gets its own.
-///
-/// Eligibility propagates: an entry is only global-store-eligible (hash != 0)
-/// when the package itself comes from an immutable cache (npm/git/tarball,
-/// unpatched, no lifecycle scripts) *and* every dependency it links to is
-/// also eligible. The second condition matters because dep symlinks live
-/// inside the global entry; baking a project-local path (workspace, folder)
-/// into a shared directory would break for every other consumer.
 struct WyhashWriter<'a> {
     hasher: &'a mut Wyhash,
 }
@@ -138,10 +120,6 @@ impl<'a> std::io::Write for WyhashWriter<'a> {
     }
 }
 
-/// `RunTasksCallbacks` impl for the isolated-install loop. Mirrors the Zig
-/// anonymous-struct call shape `{ .onExtract = onPackageExtracted, .onResolve = {},
-/// .onPackageManifestError = {}, .onPackageDownloadError = onPackageDownloadError,
-/// .progress_bar = false, .manifests_only = false }` with `Ctx == *Store.Installer`.
 pub(crate) struct StoreRunTasksCallbacks<'a>(core::marker::PhantomData<&'a mut ()>);
 
 impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
@@ -266,18 +244,6 @@ pub(crate) fn install_isolated_packages(
 
         let mut dep_ids_sort_buf: Vec<DependencyID> = Vec::new();
 
-        // For each package, the peer dependency names declared anywhere in its
-        // transitive closure that are not satisfied within that closure (i.e., the
-        // walk-up in the loop below would continue past this package).
-        //
-        // A node's `peers` set (the second-pass dedup key) is exactly the resolved
-        // package for each of these names as seen from the node's ancestor chain, so
-        // two nodes with the same package and the same ancestor resolution for each
-        // name will produce identical subtrees and identical second-pass entries.
-        //
-        // The universe of distinct peer-dependency names is small even in large
-        // lockfiles, so each per-package set is a bitset over that universe and the
-        // fixpoint is bitwise OR/ANDNOT on a contiguous buffer.
         let mut peer_name_idx: ArrayHashMap<PackageNameHash, ()> = ArrayHashMap::default();
         for dep in dependencies {
             if dep.behavior.is_peer() {
@@ -290,10 +256,6 @@ pub(crate) fn install_isolated_packages(
             DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
 
         if peer_name_count != 0 {
-            // The runtime child of a peer edge is whichever package an ancestor's
-            // dependency with that name resolves to, which may be an `npm:`-aliased
-            // target whose package name differs. Index resolutions by *dependency*
-            // name so the union below covers every package a peer could become.
             let mut peer_targets: Vec<Vec<PackageID>> = vec![Vec::new(); peer_name_count as usize];
             debug_assert_eq!(dependencies.len(), resolutions.len());
             for (dep, &res) in dependencies.iter().zip(resolutions) {
@@ -486,10 +448,6 @@ pub(crate) fn install_isolated_packages(
             if entry.dep_id != invalid_dependency_id {
                 let entry_dep = &dependencies[entry.dep_id as usize];
 
-                // A `workspace:` protocol reference does not own the workspace's
-                // dependencies when root also declares that workspace; the
-                // root-declared entry does. (If root does not declare it, the
-                // protocol reference is the only one and must keep them.)
                 if entry_dep.version.tag == VersionTag::Workspace
                     && !entry_dep.behavior.is_workspace()
                     && root_declares_workspace.is_set(entry.pkg_id as usize)
@@ -592,10 +550,6 @@ pub(crate) fn install_isolated_packages(
                             }
                         }
 
-                        // The skipped subtree would have walked up through this
-                        // ancestor chain marking each node with its leaking peers.
-                        // DFS guarantees `dedupe_node`'s subtree is fully processed,
-                        // so its `peers` is exactly that set; propagate it here.
                         let set_ctx = store::node::TransitivePeerOrderedArraySetCtx {
                             string_buf,
                             pkg_names,
@@ -760,11 +714,6 @@ pub(crate) fn install_isolated_packages(
 
             for &peer_dep_id in &peer_dep_ids {
                 let (resolved_pkg_id, auto_installed) = 'resolved_pkg_id: {
-                    // Go through the peers parents looking for a package with the same name.
-                    // If none is found, use current best version. Parents visited must have
-                    // the package id for the chosen peer marked as a transitive peer. Nodes
-                    // are deduplicated only if their package id and their transitive peer package
-                    // ids are equal.
                     let peer_dep = &dependencies[peer_dep_id as usize];
 
                     // TODO: double check this
@@ -821,11 +770,6 @@ pub(crate) fn install_isolated_packages(
                                 // TODO: add warning if not satisfies()!
                                 break 'resolved_pkg_id (ids.pkg_id, false);
                             }
-
-                            // It didn't find a matching name and auto installed
-                            // from somewhere this peer can't reach. Choose best
-                            // version. Only mark all parents if resolution is
-                            // different from this transitive peer.
 
                             let best_version = resolutions[peer_dep_id as usize];
 
@@ -1200,12 +1144,6 @@ pub(crate) fn install_isolated_packages(
 
             let mut states = vec![State::Unvisited; store.entries.len()].into_boxed_slice();
 
-            // Iterative DFS so dependency cycles (which the isolated graph permits)
-            // can't overflow the stack and are handled deterministically: a back-edge
-            // contributes the dependency *name* to the parent's hash but not the
-            // child's own hash (still being computed). Two entries that only differ
-            // by which side of a cycle they sit on still get distinct hashes via
-            // their own store-path bytes.
             let mut stack: Vec<StackFrame> = Vec::new();
 
             for _root_id in 0..store.entries.len() {
@@ -1240,10 +1178,6 @@ pub(crate) fn install_isolated_packages(
                             | ResolutionTag::Github
                             | ResolutionTag::LocalTarball
                             | ResolutionTag::RemoteTarball => 'eligible: {
-                                // Patched packages and packages with lifecycle scripts
-                                // mutate (or may mutate) their install directory, so a
-                                // shared global copy would either diverge from the
-                                // patch or be mutated underneath other projects.
                                 if lockfile.patched_dependencies.count() > 0 {
                                     let mut name_version_buf = PathBuffer::uninit();
                                     // TODO(port): std.fmt.bufPrint returned the written
@@ -1261,11 +1195,6 @@ pub(crate) fn install_isolated_packages(
                                             &name_version_buf.0[..n]
                                         }
                                         Err(_) => {
-                                            // Overflow is implausible (PathBuffer ≫
-                                            // any name+version), but if it ever fired
-                                            // the safe answer is "not eligible" rather
-                                            // than letting a possibly-patched package
-                                            // slip into the shared store.
                                             break 'eligible false;
                                         }
                                     };
@@ -1275,18 +1204,6 @@ pub(crate) fn install_isolated_packages(
                                         break 'eligible false;
                                     }
                                 }
-                                // Intentionally *not* gated on `do.run_scripts`
-                                // (a later install without `--ignore-scripts`
-                                // would run the postinstall through the project
-                                // symlink and mutate the shared directory) *or*
-                                // on `meta.hasInstallScript()` (that flag is not
-                                // serialised in `bun.lock`, so it reads `false`
-                                // on every install after the first; a trusted
-                                // scripted package would flip from project-local
-                                // on the cold install to global on the warm one).
-                                // Over-excludes the rare "trusted but actually no
-                                // scripts" case in exchange for not needing a
-                                // lockfile-format change.
                                 let (dep_name, dep_name_hash) = if dep_id != invalid_dependency_id {
                                     (
                                         dependencies[dep_id as usize].name.slice(string_buf),
@@ -1320,12 +1237,6 @@ pub(crate) fn install_isolated_packages(
                             continue;
                         }
 
-                        // Seed the hash with this entry's own store-path string so
-                        // entries with identical dep sets but different package
-                        // versions never collide. Hashed through a writer so an
-                        // unusually long store path (long scope + git URL + peer
-                        // hash) can't overflow a fixed buffer and feed
-                        // uninitialized stack bytes into the hash.
                         stack[top_idx].hasher = Wyhash::init(0x9E3779B97F4A7C15);
                         {
                             let mut hw = WyhashWriter {
@@ -1334,12 +1245,6 @@ pub(crate) fn install_isolated_packages(
                             write!(hw, "{}", store::entry::fmt_store_path(id, &store, lockfile))
                                 .expect("unreachable");
                         }
-                        // The store path for `.npm` is just `name@version`, which
-                        // is *not* unique across registries (an enterprise proxy
-                        // can serve a patched `foo@1.0.0`). Fold in the tarball
-                        // integrity so a cross-registry / cross-tarball collision
-                        // gets a different global directory instead of reusing the
-                        // first project's bytes.
                         stack[top_idx]
                             .hasher
                             .update(bun_core::bytes_of(&pkg_metas[pkg_id as usize].integrity));
@@ -1373,11 +1278,6 @@ pub(crate) fn install_isolated_packages(
                                 entry_hashes[idx] = 0;
                             }
                             State::InProgress => {
-                                // Cycle back-edge: the dep's hash isn't known yet.
-                                // Fold a placeholder; the SCC pass below replaces
-                                // every cycle member's hash with one that's
-                                // independent of which edge happened to be the
-                                // back-edge in this DFS.
                                 stack[top_idx]
                                     .hasher
                                     .update(bun_core::bytes_of(&dep_name_hash));
@@ -1417,25 +1317,6 @@ pub(crate) fn install_isolated_packages(
                 }
             }
 
-            // SCC pass: the DFS hash above is visit-order-dependent for cycle
-            // members (which edge becomes the back-edge depends on which member
-            // the outer loop reached first, which depends on entry IDs, which
-            // depend on the *whole project's* dependency set). That's harmless
-            // for correctness — different orderings just give different keys —
-            // but it means a package that's part of an npm cycle never shares a
-            // global entry across projects, defeating the feature for chunks of
-            // the ecosystem (`es-abstract`↔`object.assign`, the babel core
-            // cycle, etc.).
-            //
-            // Tarjan's algorithm groups entries into strongly-connected
-            // components. For singleton SCCs the pass-1 hash is already
-            // visit-order-independent and is left alone. For multi-member SCCs
-            // every member gets the same hash, computed from the sorted member
-            // store-paths plus the sorted external-dep hashes — inputs that are
-            // identical regardless of which member the project happened to list
-            // first. The dep symlinks inside the SCC then point at siblings with
-            // the same hash suffix, so they resolve in any project that produces
-            // the same SCC closure.
             {
                 let n: u32 = u32::try_from(store.entries.len()).expect("int cast");
                 let mut tarjan_index = vec![u32::MAX; n as usize].into_boxed_slice();
@@ -1503,13 +1384,6 @@ pub(crate) fn install_isolated_packages(
                                 on_stack[m as usize] = false;
                             }
                             if members.len() == 1 {
-                                // Singleton SCC. Tarjan emits SCCs in reverse
-                                // topological order, so every dep's hash is final
-                                // by now (including any cycle-member deps that
-                                // just got their SCC hash). Recompute this entry's
-                                // hash from those final values so a dependent of
-                                // a cycle picks up the order-independent SCC hash
-                                // rather than the pass-1 placeholder.
                                 let m = members[0];
                                 if entry_hashes[m as usize] != 0 {
                                     let mut sub = Wyhash::init(0x9E3779B97F4A7C15);
@@ -1555,12 +1429,6 @@ pub(crate) fn install_isolated_packages(
                                     }
                                 }
                             } else if members.len() > 1 {
-                                // One order-independent hash for the whole SCC:
-                                // collect a sub-hash per member (store path +
-                                // integrity), collect every external-dep hash,
-                                // sort both lists, then hash the concatenation.
-                                // Sorting by *content* (not entry index) is what
-                                // makes this stable across projects.
                                 scc_ext.clear_retaining_capacity();
                                 let mut member_sub: Vec<u64> = Vec::new();
                                 let mut any_ineligible = false;
@@ -1599,10 +1467,6 @@ pub(crate) fn install_isolated_packages(
                                         if entry_hashes[di] == 0 {
                                             any_ineligible = true;
                                         }
-                                        // Dep symlinks inside the entry are named
-                                        // by the dependency *alias*, so two SCCs
-                                        // that reach the same external entry under
-                                        // different aliases must hash differently.
                                         let mut ext = Wyhash::init(0);
                                         ext.update(bun_core::bytes_of(
                                             &dependencies[dep.dep_id as usize].name_hash,
@@ -1642,12 +1506,6 @@ pub(crate) fn install_isolated_packages(
                 }
             }
 
-            // Ineligibility can surface mid-cycle: A→B→A where B turns out to
-            // depend on a workspace package. The DFS above already finalised A's
-            // hash via the `.in_progress` back-edge before B was marked
-            // ineligible, so A would wrongly land in the global store with a
-            // dangling dep symlink. Close the gap with a fixed-point pass: any
-            // entry that still links to an ineligible dep becomes ineligible too.
             let mut changed = true;
             while changed {
                 changed = false;
@@ -1713,16 +1571,6 @@ pub(crate) fn install_isolated_packages(
 
                 #[cfg(windows)]
                 {
-                    // Windows:
-                    // 1. create 'node_modules/.old_modules-{hex}'
-                    // 2. for each entry in 'node_modules' rename into 'node_modules/.old_modules-{hex}'
-                    // 3. for each workspace 'node_modules' rename into 'node_modules/.old_modules-{hex}/old_{basename}_modules'
-
-                    // PORT NOTE: Zig builds a separate `RelPath(.{.unit=.u16})`
-                    // for `mkdirat` because Zig's `sys.mkdirat` on Windows takes
-                    // `[:0]const u16`. The Rust `sys::mkdirat`/`renameat` take
-                    // `&ZStr` (u8) and widen internally, so a single u8
-                    // `AutoRelPath` covers both the mkdir and rename targets.
                     let mut rename_path = AutoRelPath::from(b"node_modules").assume_ok();
                     let rand = fast_random();
                     rename_path
@@ -1741,13 +1589,6 @@ pub(crate) fn install_isolated_packages(
                     else {
                         break 'is_new_bun_modules true;
                     };
-                    // Windows HANDLE-leak audit: `Fd` is `Copy` (no Drop) and the
-                    // `WrappedIterator` from `sys::iterate_dir` does not own/close it.
-                    // The Zig spec (isolated_install.zig:1299) likewise lacks a
-                    // `defer node_modules.close()`, so this leak is pre-existing in
-                    // the spec — fixed in both per the audit. The guard fires on
-                    // normal fall-through to step 3 and on every
-                    // `break 'is_new_bun_modules true` early exit.
                     let _close_node_modules = scopeguard::guard(node_modules, |fd| {
                         use bun_sys::FdExt as _;
                         fd.close();
@@ -1820,12 +1661,6 @@ pub(crate) fn install_isolated_packages(
                 }
                 #[cfg(not(windows))]
                 {
-                    // Posix:
-                    // 1. rename existing 'node_modules' to temp location
-                    // 2. create new 'node_modules' directory
-                    // 3. rename temp into 'node_modules/.old_modules-{hex}'
-                    // 4. attempt renaming 'node_modules/.old_modules-{hex}/.cache' to 'node_modules/.cache'
-                    // 5. rename each workspace 'node_modules' into 'node_modules/.old_modules-{hex}/old_{basename}_modules'
                     let mut temp_node_modules_buf = PathBuffer::uninit();
                     let temp_node_modules = paths::fs::FileSystem::tmpname(
                         b"tmp_modules",
@@ -1962,10 +1797,6 @@ pub(crate) fn install_isolated_packages(
 
         if manager.options.log_level.show_progress() {
             progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-            // `Progress::start` returns `&mut Node` (points into `progress.root`);
-            // keep it as a safe reborrow — it's only used to spawn the three
-            // children below and is dead before the `manager.*` writes that
-            // follow (NLL), so no raw-ptr round-trip is needed.
             let root_node = progress.start(b"", 0);
             download_node = root_node.start(ProgressStrings::download(), 0);
             install_node = root_node.start(ProgressStrings::install(), store.entries.len());
@@ -1986,13 +1817,6 @@ pub(crate) fn install_isolated_packages(
         let entry_dependencies = entries.items_dependencies();
         let entry_hoisted = entries.items_hoisted();
 
-        // PORT NOTE: reshaped for borrowck — Zig holds `*Lockfile` (mut) while
-        // also keeping immutable column slices into it. Reborrow through a
-        // `BackRef` so `string_buf` / `pkgs` don't tie up `&mut lockfile` for
-        // the `Installer { lockfile, .. }` move below. `BackRef` is the
-        // canonical non-owning back-pointer wrapper; the lockfile lives for
-        // the full scope and the column buffers sliced here are read-only
-        // across the install loop (never mutated through `installer.lockfile`).
         let lockfile_ptr: *mut Lockfile = lockfile;
         let lockfile_ref = bun_ptr::BackRef::<Lockfile>::from(
             core::ptr::NonNull::new(lockfile_ptr).expect("lockfile BACKREF non-null"),
@@ -2011,16 +1835,6 @@ pub(crate) fn install_isolated_packages(
         // TODO: delete
         let mut seen_workspace_ids: HashMap<PackageID, ()> = HashMap::default();
 
-        // PORT NOTE: reshaped — Zig does `allocator.alloc(Task, n)` then
-        // `task.* = .{..}` in-place, which is safe because Zig has no drop
-        // glue and no validity invariants on uninit memory. In Rust,
-        // `installer::Task` carries `result: Result` (Drop via `TaskError`
-        // payloads) and a non-nullable fn-ptr in `thread_pool::Task`, so
-        // `assume_init()` on uninit memory is instant UB and a subsequent
-        // `*task = ..` would drop garbage. Instead, fully initialize each
-        // slot via `MaybeUninit::write` with a null `installer` back-pointer
-        // placeholder, finalize the slice, move it into `Installer`, then
-        // patch the back-pointer in a second loop once `installer` exists.
         let tasks: Box<[installer::Task]> = {
             let mut uninit: Box<[core::mem::MaybeUninit<installer::Task>]> =
                 Box::new_uninit_slice(store.entries.len());
@@ -2046,10 +1860,6 @@ pub(crate) fn install_isolated_packages(
         let installed = DynamicBitSet::init_empty(lockfile.packages.len())?;
         let trusted_dependencies_from_update_requests =
             manager.find_trusted_dependencies_from_update_requests();
-        // Reuse the `NonNull` already stored in `manager.scripts_node` rather
-        // than taking a fresh `&mut scripts_node` below — a second `&mut` from
-        // the local would pop the stored raw's Stacked Borrows tag, and the
-        // run-tasks tick callback dereferences that raw via `scripts_node_mut()`.
         let scripts_node_ptr = manager.scripts_node;
         // `Installer.manager` is a BACKREF raw pointer; copying `manager_ptr`
         // does not move `manager`, so the body keeps using `manager` via the
@@ -2088,19 +1898,6 @@ pub(crate) fn install_isolated_packages(
             summary: Default::default(),
             task_queue: Default::default(),
         };
-        // No long-lived `&mut PackageManager` reborrow here — `installer.start_task()`,
-        // `on_task_complete()`, and `on_task_fail()` below all reach the manager through
-        // `installer.manager_mut()` (the BACKREF), so a shadow `&mut` held across those
-        // calls would alias. Use `installer.manager()` / `installer.manager_mut()`
-        // per-statement instead.
-        // (Drop handles installer.deinit())
-
-        // PORT NOTE: reshaped for borrowck — Zig writes `installer: &installer`
-        // into `installer.tasks[i]`; in Rust the back-pointer is taken before
-        // the `tasks` borrow. `Task.installer` is typed
-        // `BackRef<Installer<'static>>` (raw back-ref, no real `'static` data),
-        // so erase the lifetime via a void-pointer cast — `*mut T` is invariant
-        // and won't coerce on its own.
         let installer_ptr: *mut store::Installer<'static> =
             (&raw mut installer).cast::<()>().cast();
         let installer_backref =
@@ -2109,12 +1906,6 @@ pub(crate) fn install_isolated_packages(
             task.installer = installer_backref;
         }
 
-        // PORT NOTE: hoisted — Zig lazily calls `globalLinkDirPath()` inside
-        // `appendStorePath` (worker threads, via `*const Installer`). Rust
-        // can't take `&mut PackageManager` from `&self` there, so ensure the
-        // global link dir once on the main thread before any `.symlink`
-        // resolution can be reached by a task. Guarded so installs without
-        // `link:` deps don't touch the global dir (matches Zig laziness).
         if pkg_resolutions
             .iter()
             .any(|r| r.tag == ResolutionTag::Symlink)
@@ -2221,10 +2012,6 @@ pub(crate) fn install_isolated_packages(
                 | ResolutionTag::Github
                 | ResolutionTag::LocalTarball
                 | ResolutionTag::RemoteTarball => {
-                    // PORT NOTE: Zig used `inline ... => |pkg_res_tag|` to monomorphize the
-                    // body per-tag. Rust collapses to a single arm with a runtime
-                    // `pkg_res.tag` re-match where the body branches. // PERF(port): was
-                    // comptime monomorphization — profile if hot.
                     let pkg_res_tag = pkg_res.tag;
 
                     let patch_info =
@@ -2232,16 +2019,6 @@ pub(crate) fn install_isolated_packages(
 
                     let uses_global_store = installer.entry_uses_global_store(entry_id);
 
-                    // An entry that lost global-store eligibility since the
-                    // previous install (newly patched, newly trusted, a dep
-                    // that became a workspace package) still has a stale
-                    // `node_modules/.bun/<storepath>` symlink/junction into
-                    // `<cache>/links/`. The existence check below would pass
-                    // *through* it and skip the task, leaving the project to
-                    // run against the shared entry (and, if the task did run,
-                    // write the new project-local tree through the link into
-                    // the shared cache). Treat the stale link as
-                    // needs-install so `link_package` detaches and rebuilds.
                     let has_stale_gvs_link = !uses_global_store
                         && 'stale: {
                             if installer.global_store_path.is_none() {
@@ -2271,26 +2048,29 @@ pub(crate) fn install_isolated_packages(
                         };
 
                     let needs_install = installer.manager().options.enable.force_install()
-                        // A freshly-created `node_modules/.bun` only implies the
-                        // *project-local* entries are missing; global virtual-
-                        // store entries persist across `rm -rf node_modules` and
-                        // should still take the cheap symlink-only path.
                         || (is_new_bun_modules && !uses_global_store)
                         || has_stale_gvs_link
                         || matches!(patch_info, installer::PatchInfo::Remove(_))
                         || 'needs_install: {
                             let mut store_path: AbsPath = AbsPath::init_top_level_dir();
                             if uses_global_store {
-                                // Global entries are built under a per-process
-                                // staging path and renamed into place as the
-                                // final step, so the directory existing at its
-                                // final path is the completeness signal.
-                                installer.append_global_store_entry_path(&mut store_path, entry_id, installer::Which::Final);
-                                break 'needs_install !sys::directory_exists_at(Fd::cwd(), store_path.slice_z())
-                                    .ok()
-                                    .unwrap_or(false);
+                                installer.append_global_store_entry_path(
+                                    &mut store_path,
+                                    entry_id,
+                                    installer::Which::Final,
+                                );
+                                break 'needs_install !sys::directory_exists_at(
+                                    Fd::cwd(),
+                                    store_path.slice_z(),
+                                )
+                                .ok()
+                                .unwrap_or(false);
                             }
-                            installer.append_real_store_path(&mut store_path, entry_id, installer::Which::Final);
+                            installer.append_real_store_path(
+                                &mut store_path,
+                                entry_id,
+                                installer::Which::Final,
+                            );
                             // PORT NOTE: reshaped for borrowck — Zig `save()` returns a
                             // `ResetScope` holding `*Path`; capture the length instead so
                             // `store_path` stays unborrowed.
@@ -2308,7 +2088,10 @@ pub(crate) fn install_isolated_packages(
                                 installer::PatchInfo::Remove(_) => unreachable!(),
                                 installer::PatchInfo::Patch(patch) => {
                                     let mut hash_buf: install::BuntagHashBuf = Default::default();
-                                    let hash = install::buntaghashbuf_make(&mut hash_buf, patch.contents_hash);
+                                    let hash = install::buntaghashbuf_make(
+                                        &mut hash_buf,
+                                        patch.contents_hash,
+                                    );
                                     store_path.set_length(scope_for_patch_tag_path);
                                     store_path.append(&*hash).assume_ok();
                                     !sys::exists_z(store_path.slice_z())
@@ -2318,10 +2101,6 @@ pub(crate) fn install_isolated_packages(
 
                     if !needs_install {
                         if uses_global_store {
-                            // Warm hit: the global virtual store already holds
-                            // this entry's files, dep symlinks, and bin links.
-                            // The only per-install work is the project-level
-                            // `node_modules/.bun/<storepath>` → global symlink.
                             match installer.link_project_to_global_store(entry_id) {
                                 bun_sys::Result::Ok(()) => {}
                                 bun_sys::Result::Err(err) => {
@@ -2497,10 +2276,6 @@ pub(crate) fn install_isolated_packages(
                             );
                         }
                         ResolutionTag::Github => {
-                            // Zig (isolated_install.zig:1759) reads `pkg_res.value.git` here as
-                            // a raw union pun (`git`/`github` arms share `Repository` layout);
-                            // Rust's `.git()` accessor adds a `debug_assert_eq!(tag, Git)` that
-                            // fires under `Github`, so use the tag-correct `.github()` instead.
                             let url = installer.manager().alloc_github_url(pkg_res.github());
                             // (Drop frees url)
                             match installer.manager_mut().enqueue_tarball_for_download(

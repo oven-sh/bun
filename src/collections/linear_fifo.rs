@@ -14,12 +14,6 @@ use bun_alloc::AllocError;
 // conservative minimum on every platform Bun ships on.
 const PAGE_SIZE_MIN: usize = 4096;
 
-/// Mirrors Zig's `LinearFifoBufferType = union(enum)`.
-///
-/// In the Zig original this is a *comptime* value that selects a struct layout
-/// (`buf: [N]T` vs `buf: []T`, `std.mem.Allocator` param vs `void`). Rust cannot
-/// branch struct layout on a const-generic enum payload, so dispatch is done
-/// via the [`LinearFifoBuffer`] trait below; this enum is kept for API parity.
 pub enum LinearFifoBufferType {
     /// The buffer is internal to the fifo; it is of the specified size.
     Static(usize),
@@ -29,12 +23,6 @@ pub enum LinearFifoBufferType {
     Dynamic,
 }
 
-/// Backing-storage abstraction replacing Zig's `comptime buffer_type` switch.
-/// `POWERS_OF_TWO` mirrors the Zig `powers_of_two` const inside the returned
-/// struct; `DYNAMIC` mirrors `buffer_type == .Dynamic`.
-// TODO(port): the Zig fn returns structurally different layouts per variant;
-// trait+assoc-consts is the closest stable-Rust encoding. Phase B: confirm all
-// in-tree callers are covered by the three impls below.
 pub trait LinearFifoBuffer<T> {
     const POWERS_OF_TWO: bool;
     const DYNAMIC: bool;
@@ -59,11 +47,6 @@ pub trait LinearFifoBuffer<T> {
     }
 }
 
-/// Reinterpret `&[MaybeUninit<T>]` as `&[T]`. `MaybeUninit<T>` has identical
-/// layout to `T`; exposing uninitialized bytes as `T` is sound only when any
-/// bit pattern is a valid `T` (in-tree LinearFifo users are byte buffers —
-/// see the `StaticBuffer` TODO below). Centralises the four per-buffer-kind
-/// casts behind one audited block.
 #[inline(always)]
 fn assume_init_slice<T>(s: &[MaybeUninit<T>]) -> &[T] {
     // SAFETY: see fn doc.
@@ -79,11 +62,6 @@ fn assume_init_slice_mut<T>(s: &mut [MaybeUninit<T>]) -> &mut [T] {
     unsafe { &mut *(ptr::from_mut::<[MaybeUninit<T>]>(s) as *mut [T]) }
 }
 
-/// Shift `slice[1..]` down to `slice[0..len-1]` (memmove). Used by
-/// `ordered_remove_item` for the four wrap/non-wrap segment shifts. Not
-/// `slice::copy_within` because that requires `T: Copy`; this fifo permits
-/// move-only `T` (the duplicated tail slot is logically discarded by the
-/// subsequent `count -= 1`).
 #[inline(always)]
 fn shift_down_one<T>(slice: &mut [T]) {
     if slice.len() <= 1 {
@@ -111,11 +89,6 @@ fn poison<T>(slice: &mut [T], n: usize) {
 
 // ── .Static ───────────────────────────────────────────────────────────────────
 
-/// `buffer_type == .Static` — inline `[T; N]` storage.
-// TODO(port): Zig leaves the array `undefined`; we use MaybeUninit and expose
-// it as &[T] via pointer cast. Sound only for `T` whose any-bit-pattern is
-// valid (in-tree users are byte buffers). Phase B: bound `T: Copy` or rework
-// accessors to MaybeUninit if a non-POD T appears.
 pub struct StaticBuffer<T, const N: usize>([MaybeUninit<T>; N]);
 
 impl<T, const N: usize> LinearFifoBuffer<T> for StaticBuffer<T, N> {
@@ -153,10 +126,6 @@ impl<'a, T> LinearFifoBuffer<T> for SliceBuffer<'a, T> {
 
 // ── .Dynamic ──────────────────────────────────────────────────────────────────
 
-/// `buffer_type == .Dynamic` — heap-allocated, growable.
-///
-/// Zig stores `std.mem.Allocator` param + `buf: []T`. Per §Allocators (non-AST
-/// crate) the allocator param is dropped and global mimalloc backs `Box`.
 pub struct DynamicBuffer<T>(Box<[MaybeUninit<T>]>);
 
 impl<T> LinearFifoBuffer<T> for DynamicBuffer<T> {
@@ -201,11 +170,6 @@ pub struct LinearFifo<T, B: LinearFifoBuffer<T>> {
 // PORT NOTE: Zig's `SliceSelfArg = if (.Static) *Self else Self` exists because
 // returning a slice into a by-value `Self` would dangle when buf is inline. In
 // Rust every accessor takes `&self`/`&mut self`, so the distinction disappears.
-
-// TODO(port): Reader/Writer std.Io adapters. Zig exposes
-// `pub const Reader = std.Io.GenericReader(*Self, error{}, readFn)` and a
-// matching Writer. Phase B: impl `bun_io::Read`/`bun_io::Write` (and
-// `core::fmt::Write`) on `LinearFifo<u8, B>`.
 
 impl<T, const N: usize> LinearFifo<T, StaticBuffer<T, N>> {
     /// `init` for `.Static`.
@@ -253,20 +217,11 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         self.buf.len()
     }
 
-    /// Allocated capacity of the backing buffer (Zig: `fifo.buf.len`).
-    /// Distinct from [`readable_length`] (live items) and
-    /// [`writable_length`] (free slots) — `capacity == readable + writable`.
-    /// Used by GC `memoryCost` reporting where the *allocation* size, not the
-    /// occupancy, is what matters.
     #[inline]
     pub fn capacity(&self) -> usize {
         self.buf.len()
     }
 
-    /// Rewind `head` to 0 when the queue is empty so the next `write` can use
-    /// the full contiguous buffer without wrapping. Perf-only micro-opt; a
-    /// no-op when items remain. Mirrors the `head = 0` post-drain idiom in
-    /// `src/jsc/Task.zig` `tickQueueWithCount`.
     #[inline]
     pub fn reset_head_if_empty(&mut self) {
         if self.count == 0 {
@@ -285,18 +240,6 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             unsafe { ptr::copy(buf.as_ptr().add(head), buf.as_mut_ptr(), count) };
             self.head = 0;
         } else {
-            // Zig: `var tmp: [page_size_min / 2 / @sizeOf(T)]T = undefined;`
-            // Stable Rust cannot size a stack array by `size_of::<T>()`, so use
-            // a fixed byte scratch and compute the element count at runtime.
-            // PERF(port): was stack array sized by page_size/2/sizeof(T) — same
-            // byte footprint here, no heap.
-            //
-            // The scratch is a `[MaybeUninit<u8>; _]` (alignment 1). Reading or
-            // writing through it as `*mut T` would violate
-            // `ptr::copy_nonoverlapping`'s alignment precondition for any
-            // `align_of::<T>() > 1`, so the tmp↔buf transfers are done at byte
-            // granularity instead — `*mut u8` only requires 1-byte alignment,
-            // which both the scratch and `buf` (cast down from `*T`) satisfy.
             let mut tmp_bytes = [MaybeUninit::<u8>::uninit(); PAGE_SIZE_MIN / 2];
             let tmp_ptr: *mut u8 = tmp_bytes.as_mut_ptr().cast::<u8>();
             let t_size = mem::size_of::<T>();
@@ -710,10 +653,6 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             } else {
                 index %= buf_len;
             }
-            // Length of the wrapped prefix `buf[0..wrap_len)`. The readable
-            // region is split into the tail `buf[head..buf_len)` and this
-            // prefix; `wrap_len <= head` (since `count <= buf_len`) so the
-            // prefix never overlaps the tail.
             let wrap_len = head + count - buf_len;
             let buf = self.buf.as_mut_slice();
             if index < head {
@@ -734,12 +673,6 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         self.count -= 1;
     }
 
-    /// Pump data from a reader into a writer
-    /// stops when reader returns 0 bytes (EOF)
-    /// Buffer size must be set before calling; a buffer length of 0 is invalid.
-    // TODO(port): `src_reader: anytype, dest_writer: *std.Io.Writer`. Phase B:
-    // bind to `bun_io::Read`/`bun_io::Write` (or whatever the byte-stream traits
-    // land as). Stubbed with generic bounds matching the called methods.
     pub fn pump<R, W, E>(&mut self, mut src_reader: R, dest_writer: &mut W) -> Result<(), E>
     where
         R: FnMut(&mut [T]) -> Result<usize, E>,
@@ -893,10 +826,6 @@ mod tests {
         }
     }
 
-    // 16-slot static buffer: `POWERS_OF_TWO` is true, matching the in-tree
-    // `weak_refs` FIFO in the dev server's source-map store (cap 16), the one
-    // real caller of `ordered_remove_item`. `i32` elements make every shift
-    // observable (distinct values), unlike a buffer of repeated bytes.
     type WrapFifo = LinearFifo<i32, StaticBuffer<i32, 16>>;
 
     /// Drains the FIFO into a `Vec` without mutating it, preserving FIFO order.
@@ -906,12 +835,6 @@ mod tests {
             .collect()
     }
 
-    // Regression for the wrapped-branch bounds bug: `ordered_remove_item` used
-    // `count - head` / `head - count` for the wrapped-prefix length instead of
-    // the correct `head + count - buf_len`. In wrapped layouts that panics with
-    // an out-of-range slice index (and in narrow cases silently corrupts
-    // contents). The two sub-branches are `index < head` (item in the wrapped
-    // prefix) and `index >= head` (item in the tail segment).
     #[test]
     fn ordered_remove_item_wrapped_tail_branch_head_lt_count() {
         // write 12, read 8, write 10 -> head=8, count=14, buf_len=16.

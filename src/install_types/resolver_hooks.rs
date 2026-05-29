@@ -32,11 +32,6 @@ pub type TruncatedPackageNameHash = u32;
 pub const INVALID_PACKAGE_ID: PackageID = PackageID::MAX;
 pub const INVALID_DEPENDENCY_ID: DependencyID = DependencyID::MAX;
 
-// ─── ExternalSlice ────────────────────────────────────────────────────────
-// MOVE_DOWN of `install/ExternalSlice.zig` — `(off, len)` index pair into a
-// flat backing buffer (lockfile string-bytes / dependencies / resolutions).
-// Generic over element type; storage is two u32s with a phantom marker.
-
 #[repr(C)]
 pub struct ExternalSlice<T> {
     pub off: u32,
@@ -44,10 +39,6 @@ pub struct ExternalSlice<T> {
     _marker: PhantomData<T>,
 }
 
-// Manual impls: the Zig `extern struct { off: u32, len: u32 }` is unconditionally
-// copyable/comparable regardless of `Type`. `#[derive]` would add spurious
-// `T: Copy/Clone/Default/PartialEq` bounds via `PhantomData<T>`, breaking
-// by-value `self` methods for non-`Copy` element types (e.g. `Dependency`).
 impl<T> Copy for ExternalSlice<T> {}
 impl<T> Clone for ExternalSlice<T> {
     #[inline]
@@ -134,10 +125,6 @@ impl<T> ExternalSlice<T> {
     }
 
     pub fn init(buf: &[T], in_: &[T]) -> Self {
-        // if cfg!(debug_assertions) {
-        //     debug_assert!(buf.as_ptr() as usize <= in_.as_ptr() as usize);
-        //     debug_assert!((in_.as_ptr() as usize + in_.len()) <= (buf.as_ptr() as usize + buf.len()));
-        // }
         Self {
             off: ((in_.as_ptr() as usize - buf.as_ptr() as usize) / core::mem::size_of::<T>())
                 as u32,
@@ -323,23 +310,6 @@ pub enum DependencyVersionTag {
     Catalog = 9,
 }
 
-/// Resolver-visible projection of `install::dependency::Version`. The resolver
-/// only reads `.tag` and round-trips the whole value through [`AutoInstaller`]
-/// methods; the parsed `Version.Value` union is install-internal and is stored
-/// here as an opaque inline buffer so the struct stays `Send`/`Clone`.
-///
-/// `#[repr(C)]` + identical field order make this layout-compatible with
-/// `bun_install::dependency::Version`; `bun_install::auto_installer` asserts
-/// `size_of`/`align_of` equality at compile time so the lockfile dependency
-/// buffer can be reinterpreted without copying.
-// ─── Dependency.Version.Value payload types ───────────────────────────────
-// MOVE_DOWN from `bun_install::dependency` — every variant is either a
-// `Semver.String` handle, a `Repository`, or a `Semver.Query.Group` (all
-// lower-tier `bun_semver` data), so the full union is spellable here. Putting
-// the real union in this crate lets the resolver inspect
-// `value.npm.version.is_exact()` directly (Zig: `package_json.zig:926`) and
-// round-trip the parsed value through [`AutoInstaller`] without type erasure.
-
 #[derive(Clone, Copy)]
 pub enum URI {
     Local(SemverString),
@@ -412,11 +382,6 @@ impl TarballInfo {
     }
 }
 
-/// Port of `install/dependency.zig` `Version.Value` — untagged; discriminant
-/// lives in [`DependencyVersion::tag`]. The `npm` arm owns a `Box` linked list
-/// (`Semver.Query.Group`) and is `ManuallyDrop`-wrapped because the union has
-/// no tag; [`DependencyVersion`]'s `Drop`/`Clone` dispatch on `tag` to free /
-/// deep-copy it. `git`/`github` (`Repository`) hold no heap data.
 #[repr(C)]
 pub union DependencyVersionValue {
     pub uninitialized: (),
@@ -492,13 +457,6 @@ impl Drop for DependencyVersion {
 }
 
 impl DependencyVersion {
-    // Tag-checked accessors for the untagged [`DependencyVersionValue`] union.
-    // Every payload is POD/arena-backed (`SemverString` handles, `Repository`,
-    // `ManuallyDrop<NpmInfo>` over an arena-owned linked list), so reading the
-    // "wrong" variant is not UB — it yields garbage. `_mut` variants let the
-    // handful of mutate-in-place call sites (`runTasks.rs` package-name
-    // back-patching, `Package.rs` workspace resolution) write through the
-    // active arm without an `unsafe` block apiece.
     bun_core::extern_union_accessors! {
         tag: tag as DependencyVersionTag, value: value;
         Npm       => npm: NpmInfo,            mut npm_mut;
@@ -526,10 +484,6 @@ impl DependencyVersion {
     }
 }
 
-/// Field order mirrors `bun_install::dependency::Dependency` (`name_hash`,
-/// `name`, `version`, `behavior`) and both are `#[repr(C)]` so the lockfile's
-/// `&[bun_install::Dependency]` is reinterpretable as `&[Self]` (asserted in
-/// `bun_install::auto_installer`).
 #[repr(C)]
 #[derive(Default)]
 pub struct Dependency {
@@ -552,15 +506,6 @@ impl Clone for Dependency {
 }
 
 impl Dependency {
-    /// Sorting order for dependencies is:
-    /// 1. [`peerDependencies`, `optionalDependencies`, `devDependencies`, `dependencies`]
-    /// 2. name ASC
-    /// "name" must be ASC so that later, when we rebuild the lockfile, we
-    /// insert it back in reverse order without an extra sorting pass.
-    ///
-    /// MOVE_DOWN of `install/dependency.zig` `isLessThan` so the lockfile
-    /// stringifier (`bun.lock.rs`) can sort `&[Dependency]` without an upward
-    /// `bun_install` edge or an extension trait.
     pub fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool {
         let behavior = lhs.behavior.cmp(rhs.behavior);
         if behavior != Ordering::Equal {
@@ -582,13 +527,6 @@ impl Dependency {
         lhs.name.slice(string_buf).cmp(rhs.name.slice(string_buf))
     }
 }
-
-// ─── npm::{Negatable, OperatingSystem, Libc, Architecture} ────────────────
-// MOVE_DOWN from `bun_install::npm` (port of `install/npm.zig`) so both
-// `bun_resolver` (package.json `os`/`cpu` arrays) and `bun_install` (manifest
-// parsing, lockfile serialization) name the SAME bit-layout. The bit positions
-// are load-bearing — they round-trip through `bun.lock` and the npm manifest
-// cache; the Zig spec starts at `1 << 1` (bit 0 is never set).
 
 /// Common shape of [`OperatingSystem`]/[`Architecture`]/[`Libc`] (Zig: `enum(uN)
 /// { none = 0, all = all_value, _ }` open-enum with associated bit consts).
@@ -694,10 +632,6 @@ impl<T: NegatableEnum> Negatable<T> {
             return;
         };
 
-        // Zig spec (src/install/npm.zig:551-555): `this.* = .{ .added = …, .removed = … }`
-        // resets `had_wildcard` / `had_unrecognized_values` to their defaults whenever a
-        // recognised token is applied. Match the spec literally so `["any","linux"]`
-        // collapses to LINUX (wildcard cleared).
         if is_not {
             *self = Self {
                 added: self.added,
@@ -772,28 +706,6 @@ pub trait NegatableExt: NegatableEnum {
 }
 impl<T: NegatableEnum> NegatableExt for T {}
 
-// ─── negatable_names! ─────────────────────────────────────────────────────
-// Single source of truth for the name↔bit table of a `NegatableEnum` newtype.
-//
-// Zig has ONE table per type (`pub const NameMap = bun.ComptimeStringMap(uN, .{...})`,
-// src/install/npm.zig) which comptime-derives BOTH `.kvs` (sorted iteration array,
-// walked by `Negatable.toJson` / bun.lock stringify) AND `.get()` (length-gated lookup).
-// The Rust port had forked that into a hand-maintained `NAME_MAP_KVS` const + a
-// hand-unrolled `lookup_name` match per type — two parallel tables with an
-// add-a-variant-forget-the-other drift hazard.
-//
-// This macro restores the single-source property: caller supplies ONE
-// `b"name" => BIT` list (already in `(key.len asc, bytewise asc)` order — that
-// order is LOAD-BEARING: `Negatable::to_json` iterates it to serialize bun.lock
-// `"os"/"cpu"/"libc"` arrays and must stay byte-identical with Zig's
-// `precomputed.sorted_kvs`, src/collections/comptime_string_map.zig:21-27,66).
-// The macro then expands BOTH the inherent `NAME_MAP_KVS` const (kept inherent
-// so non-trait callers like `lockfile_json_stringify_for_debugging` still
-// path-qualify it) AND the full `NegatableEnum` impl, whose `lookup_name`
-// length-gates exactly like Zig `ComptimeStringMap.get`: one `usize` compare
-// per bucket boundary, byte-compare only on length match, early-out once the
-// sorted table passes the requested length. ≤11 entries per type — `phf::Map`
-// would be a hash + indirect load + slice compare for at most 4 candidates.
 macro_rules! negatable_names {
     ($ty:ident : $int:ty => [ $( $key:literal => $bit:ident ),+ $(,)? ]) => {
         impl $ty {
@@ -1007,14 +919,6 @@ negatable_names! { Architecture: u16 => [
     b"arm64" => ARM64, b"ppc64" => PPC64, b"s390x" => S390X, b"mipsel" => MIPSEL,
 ] }
 
-// ─── Repository (data) ────────────────────────────────────────────────────
-// MOVE_DOWN from `bun_install::repository` — the on-disk lockfile shape
-// (`extern struct` of five `Semver.String` handles). Install-tier behaviour
-// (git CLI exec, parse, fmt, download/checkout) stays in
-// `bun_install::repository::RepositoryExt`; only data + buffer-relative
-// comparators live here so [`ResolutionValue`] / [`DependencyVersionValue`]
-// name a real type instead of an opaque blob.
-
 #[repr(C)]
 #[derive(Copy, Default)]
 pub struct Repository {
@@ -1096,11 +1000,6 @@ pub struct VersionedURLType<SemverInt: bun_semver::version::VersionInt> {
     pub version: bun_semver::VersionType<SemverInt>,
 }
 
-// Manual `Copy`/`Clone` so the inherent buffer-relative `clone(&self, buf,
-// builder)` below does not collide with a derived `clone(&self)` at
-// method-resolution time, and to avoid the spurious `SemverInt: Copy` bound
-// `#[derive]` would add (it is `Copy` via `VersionInt`, but the derive macro
-// can't see through the trait bound).
 impl<SemverInt: bun_semver::version::VersionInt> Copy for VersionedURLType<SemverInt> {}
 impl<SemverInt: bun_semver::version::VersionInt> Clone for VersionedURLType<SemverInt> {
     #[inline]
@@ -1173,11 +1072,6 @@ pub enum ResolutionTag {
     SingleFileModule = 100,
 }
 
-/// Port of `install/resolution.zig` `Resolution.Value` (extern union). Every
-/// payload is `()`, a `Semver.String` handle, a [`Repository`], or a
-/// [`VersionedURLType`] — all lower-tier `bun_semver` data, so the real union
-/// lives here (not an opaque `[u64; N]`). `bun_install::resolution` re-exports
-/// this and wraps it with constructors/formatters.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union ResolutionValue<I: VersionInt> {
@@ -1377,18 +1271,6 @@ pub struct TaskCallbackContext {
     pub root_request_id: u32,
 }
 
-/// Port of `install.zig` `PackageManager.WakeHandler` — opaque
-/// (ctx-ptr + 2 fn-ptrs) handle the runtime installs to nudge the JS event
-/// loop when a network task completes. The resolver only stores and forwards
-/// it; the fields are `Option` so `Default` is all-None (Zig: `.{ }`).
-///
-/// `handler`'s second parameter (`*PackageManager`) is erased to
-/// `*mut c_void` because that concrete type lives in `bun_install` (a higher
-/// tier); `bun_install::PackageManager::wake` casts at the call site.
-/// `on_dependency_error`'s `Dependency` parameter is *not* erased — the type
-/// lives in this crate — so callers pass the borrow directly.
-// Clone: bitwise OK — `context` is a non-owning opaque backref the runtime
-// installed; the handler fn-ptrs are POD.
 #[derive(Default, Copy, Clone)]
 pub struct WakeHandler {
     pub context: Option<NonNull<c_void>>,
@@ -1413,23 +1295,9 @@ impl WakeHandler {
     pub fn get_on_dependency_error(
         &self,
     ) -> unsafe fn(*mut c_void, &Dependency, DependencyID, bun_core::Error) {
-        // PORT NOTE: Zig casts `t.handler` (the wrong field) to the dep-error fn type — this is
-        // a Zig bug. The port reads `on_dependency_error` instead; preserving the bug would
-        // require an unsound transmute between fn-pointer signatures.
-        // TODO(port): upstream fix to PackageManager.zig
         self.on_dependency_error.unwrap()
     }
 }
-
-// ─── DependencyGroup (lockfile::Package::DependencyGroup) ─────────────────
-//
-// Canonical {package.json key, snake_case field, Behavior bit} triple for the
-// four dependency sections. Callers that iterate sections build their OWN
-// ordered slice from the named constants below — there is intentionally no
-// single `ALL` array because iteration order is load-bearing and diverges per
-// caller (PackageJSONEditor precedence ≠ migration.rs scan order ≠ `bun pack`
-// edit order). `FOUR` is provided only as an *unordered set* for callers that
-// genuinely do not care about precedence.
 
 #[derive(Clone, Copy)]
 pub struct DependencyGroup {
@@ -1469,10 +1337,6 @@ impl DependencyGroup {
     /// matters (it usually does — see module comment).
     pub const FOUR: [Self; 4] = [Self::DEPENDENCIES, Self::DEV, Self::OPTIONAL, Self::PEER];
 
-    /// Reverse map a [`Behavior`] back to the package.json section key. Tests
-    /// dev → optional → peer → prod (Zig: `update_interactive_command.zig`
-    /// `dep.behavior.isDev()` chain); falls through to `"dependencies"` for
-    /// PROD/WORKSPACE/BUNDLED/empty.
     #[inline]
     pub fn prop_for_behavior(b: Behavior) -> &'static [u8] {
         if b.is_dev() {
@@ -1513,15 +1377,6 @@ pub enum EnqueueResult {
 
 // ─── AutoInstaller trait ──────────────────────────────────────────────────
 
-/// Everything `bun_resolver`'s auto-install path needs from
-/// `bun_install::PackageManager` + its `Lockfile`. `bun_install` implements
-/// this for `PackageManager` (see `bun_install::auto_installer`); the
-/// resolver holds `Option<NonNull<dyn AutoInstaller>>` and only enters the
-/// auto-install path when it is set.
-///
-/// No method has a default body — this is a pure capability interface, not a
-/// stub. Calling through an unset `Option` is statically prevented by
-/// `Resolver::use_package_manager()`.
 pub trait AutoInstaller {
     // ── Lockfile reads ────────────────────────────────────────────────────
     fn lockfile_packages_len(&self) -> usize;
@@ -1541,10 +1396,6 @@ pub trait AutoInstaller {
     /// (inline small-string), so both inputs share the bound `'a`.
     fn lockfile_str<'a>(&'a self, s: &'a SemverString) -> &'a [u8];
 
-    // ── Lockfile writes ───────────────────────────────────────────────────
-    /// Port of `lockfile.appendPackage(Package.fromPackageJSON(...))` —
-    /// collapsed because `Package` itself is install-internal. Returns the
-    /// id assigned to the appended package.
     fn lockfile_append_from_package_json(
         &mut self,
         package_json: &dyn PackageJsonView,
@@ -1583,10 +1434,6 @@ pub trait AutoInstaller {
         behavior: Behavior,
     ) -> EnqueueResult;
 
-    // ── Dependency parsing (install/dependency.zig) ───────────────────────
-    // `&mut self`: `parse_with_tag` records `npm:`-aliased deps into
-    // `pm.known_npm_aliases` (dependency.zig:905), so the impl needs a
-    // mutable manager handle even though parsing is otherwise pure.
     fn parse_dependency(
         &mut self,
         name: SemverString,
@@ -1609,10 +1456,6 @@ pub trait AutoInstaller {
     fn infer_dependency_tag(&self, dependency: &[u8]) -> DependencyVersionTag;
 }
 
-/// Read-only view of `bun_resolver::PackageJSON` that
-/// [`AutoInstaller::lockfile_append_from_package_json`] needs. Defined here
-/// (not in `bun_resolver`) so `bun_install` can name it without depending on
-/// the resolver crate at the trait-definition layer.
 pub trait PackageJsonView {
     fn name(&self) -> &[u8];
     fn version(&self) -> &[u8];

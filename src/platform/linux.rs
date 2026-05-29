@@ -8,18 +8,6 @@ use core::sync::atomic::{AtomicU8, Ordering};
 
 use bun_core::Fd;
 
-// Zig: `pub const MemFdAllocator = bun.allocators.LinuxMemFdAllocator;`
-// LAYERING: `LinuxMemFdAllocator` lives in `bun_runtime::allocators` (it pulls in
-// `bun_core`/`bun_sys`/`bun_ptr`); `bun_platform` is below `bun_runtime` so cannot
-// re-export it. The alias has no consumers — `Blob`/`Store` already path through
-// `crate::allocators::linux_mem_fd_allocator` directly.
-
-/// Re-encode a glibc `syscall(2)` wrapper return into the raw-kernel convention used by
-/// Zig's `std.os.linux.syscallN`: on error the kernel returns `-errno` in the result
-/// register (i.e. a value in `-4095..=-1`), whereas glibc's wrapper translates that to
-/// `-1` and stashes the code in thread-local `errno`. Callers of these functions
-/// (`bun.sys.getErrno` for `usize`, and the C `epoll_kqueue.c` loop for `isize`) decode
-/// errno *from the return value*, so we must put it back in-band.
 #[inline(always)]
 fn encode_raw_errno(rc: c_long) -> isize {
     if rc == -1 {
@@ -29,11 +17,6 @@ fn encode_raw_errno(rc: c_long) -> isize {
     }
 }
 
-/// splice() moves data between two file descriptors without copying
-/// between kernel address space and user address space.  It
-/// transfers up to len bytes of data from the file descriptor fd_in
-/// to the file descriptor fd_out, where one of the file descriptors
-/// must refer to a pipe.
 #[allow(dead_code)]
 pub(crate) fn splice(
     fd_in: c_int,

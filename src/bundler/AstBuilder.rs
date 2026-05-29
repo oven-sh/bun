@@ -56,12 +56,6 @@ pub struct AstBuilder<'a, 'bump> {
     pub hmr_api_ref: Ref,
 }
 
-// stub fields for ImportScanner duck typing
-//
-// Zig used `comptime` zero-sized fields (`options`, `import_items_for_namespace`)
-// and a `parser_features` decl so `ImportScanner.scan` could duck-type over both
-// the real parser and `AstBuilder`. In Rust this becomes a trait that both impl.
-// TODO(port): define `ImportScannerHost` trait in `bun_js_parser` and impl it here.
 impl<'a, 'bump> AstBuilder<'a, 'bump> {
     // stub for ImportScanner duck typing — Zig: `comptime import_items_for_namespace: struct { fn get(_, _) ?Map { return null; } }`
     pub fn import_items_for_namespace_get(
@@ -273,10 +267,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         Ok(ref_)
     }
 
-    // PORT NOTE: returns `BundledAst<'static>` (== `JSAst`) directly. The only
-    // `'arena`-carrying field, `url_for_css`, is always set to `b""` here, and
-    // every other field stores arena data via raw pointers / `StoreSlice`, so
-    // nothing borrows `&mut self` past this call.
     pub fn to_bundled_ast(
         &mut self,
         target: options::Target,
@@ -286,13 +276,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         let module_scope = self.current_scope;
 
         let mut parts = bun_ast::PartList::with_capacity_in(2, self.bump);
-        // PORT NOTE: Zig grew len then wrote `parts.mut(i).* = ...`, which is a
-        // bitwise store on the SoA slot. In Rust `*parts.mut_(i) = ...` first
-        // *drops* the (uninitialized) prior `Part` — and `Part` carries Drop
-        // fields (`Vec`/`HashMap`), so that drop frees garbage and corrupts the
-        // heap (observed downstream as `printStmt` reading a junk `Stmt`
-        // discriminant from an arena allocation that was clobbered). Append
-        // into the reserved capacity instead so no drop runs.
         parts.push(Part::default());
         parts.push(Part {
             // overwritten below with the arena-backed copy (`stmts_in_bump`)
@@ -323,41 +306,12 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         let module_scope_ref = unsafe { &*module_scope };
         let generated_len = module_scope_ref.generated.len();
         top_level_symbols_to_parts.ensure_total_capacity(generated_len)?;
-        // PORT NOTE: reshaped — Zig grew `entries` then wrote keys/values columns
-        // in lockstep + `reIndex`. Rust `ArrayHashMap` keeps keys/values in private
-        // `Vec`s and rebuilds hashes on every `put_assume_capacity`, so a plain
-        // pre-reserved insert loop is equivalent (and `re_index` is a no-op here).
-        // Zig shallow-copied a single `Vec(u32){1}`; `Vec` is move-only
-        // in Rust, so allocate a fresh one per key.
         for &ref_ in module_scope_ref.generated.slice() {
             top_level_symbols_to_parts
                 .put_assume_capacity(ref_, bun_alloc::AstAlloc::vec_from_slice(&[1]));
         }
         top_level_symbols_to_parts.re_index()?;
 
-        // For more details on this section, look at js_parser.toAST
-        // This is mimicking how it calls ImportScanner
-        //
-        // PORT NOTE: Zig duck-typed `ImportScanner.scan(AstBuilder, ...)` and
-        // `ConvertESMExportsForHmr.{convertStmt,finalize}` over `AstBuilder`
-        // via `anytype`. The Rust `ImportScanner` is currently monomorphized
-        // over the concrete `P<'_, TS, J, SCAN>` parser only (see
-        // ImportScanner.rs:30), so the equivalent transform is open-coded here
-        // for the stmt shapes `AstBuilder` callers actually emit (`S.Import`,
-        // `S.Local{is_export}`, `S.ExportDefault(expr)`). Without this, the
-        // generated server-component proxy keeps raw `export` keywords inside
-        // the HMR function wrapper and JSC rejects the chunk with
-        // `SyntaxError: Unexpected keyword 'export'`.
-        // TODO(port): replace with a `ParserLike` trait so the real
-        // `ImportScanner`/`ConvertESMExportsForHmr` can accept `AstBuilder`.
-        //
-        // PORT NOTE: Zig assigned `p.stmts.items` directly — its
-        // `ArrayListUnmanaged` storage is owned by `worker.allocator` and
-        // outlives the `AstBuilder` stack value. Rust's `Vec<Stmt>` would
-        // drop with `self`, leaving `parts[1].stmts` dangling once the
-        // builder goes out of scope (UAF in the printer). Copy the `Copy`
-        // `Stmt`s/`*mut Scope`s into the bump arena so the returned
-        // `BundledAst` owns them with parser-arena lifetime.
         if self.hot_reloading {
             // get a estimate on how many statements there are going to be
             let prealloc_count = self.stmts.len() + 2;
@@ -396,11 +350,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         hmr_stmts.push(*stmt);
                     }
                     bun_ast::StmtData::SLocal(mut st) if st.is_export => {
-                        // convertStmt: strip `export`, then visitBindingToExport
-                        // for each decl. AstBuilder only emits `B.Identifier`
-                        // bindings with `kind != .import` and
-                        // `has_been_assigned_to == false`, so the simple
-                        // `'abc,'` arm of visitRefToExport applies.
                         st.is_export = false;
                         for i in 0..st.decls.len_u32() as usize {
                             let binding = st.decls.slice()[i].binding;
@@ -514,14 +463,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             let stmts_in_bump: &mut [Stmt] = self.bump.alloc_slice_copy(hmr_stmts.as_slice());
             parts[1].stmts = bun_ast::StoreSlice::new_mut(stmts_in_bump);
         } else {
-            // Non-HMR path: mirror `ImportScanner.scan(AstBuilder, p, stmts,
-            // false, false, {})` for the stmt shapes AstBuilder callers emit
-            // (`S.Import`, `S.Local{is_export}`, `S.ExportDefault`). The Zig
-            // duck-typed scanner is what populates `named_exports` /
-            // `named_imports` / `import_records_for_current_part`; without it
-            // the linker can't bind imports against this generated module
-            // (e.g. `import { ssrManifest } from "bun:bake/server"` →
-            // "No matching export"). See PORT NOTE above re: monomorphization.
             let in_stmts = core::mem::take(&mut self.stmts);
             for stmt in in_stmts.iter() {
                 match stmt.data {
@@ -593,10 +534,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             flags: Default::default(),
             target,
             top_level_await_keyword: Range::NONE,
-            // .nested_scope_slot_counts = if (p.options.features.minify_identifiers)
-            //     renamer.assignNestedScopeSlots(p.arena, p.scopes.items[0], p.symbols.items)
-            // else
-            //     js_ast.SlotCounts{},
             nested_scope_slot_counts: Default::default(),
             hashbang: b"".into(),
             css: None,

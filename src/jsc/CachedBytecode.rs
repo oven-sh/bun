@@ -34,10 +34,6 @@ unsafe extern "C" {
 }
 
 impl CachedBytecode {
-    // PORT NOTE: the returned `&'static [u8]` actually borrows from the
-    // `CachedBytecode` handle and is invalidated when `deref()` is called —
-    // identical to the Zig `[]const u8` + `*CachedBytecode` pair. Callers own
-    // the handle and must call `deref()` (or drop via `allocator()`) to free.
     pub fn generate_for_esm(
         source_provider_url: &mut BunString,
         input: &[u8],
@@ -114,20 +110,6 @@ impl CachedBytecode {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Zig exposed a `std.mem.Allocator` VTable here so callers could store the
-// bytecode slice alongside an "allocator" whose `.free()` decrements the
-// CachedBytecode refcount. This is a Zig-specific ownership-tracking idiom.
-//
-// PORT NOTE: the Zig `VTable.free` slot called `CachedBytecode__deref(ctx)` and
-// `VTable.alloc` panicked. The Rust `bun_alloc::Allocator` marker trait has no
-// `alloc`/`free` methods to dispatch through — so the "free → deref" semantics
-// cannot ride the trait object. Call sites that would have freed through this
-// allocator must instead call `deref()` on the `NonNull<CachedBytecode>` handle
-// directly. `is_instance` is preserved for the vtable-identity check in
-// `bun_safety::alloc::has_ptr`.
-// ──────────────────────────────────────────────────────────────────────────
-
 impl bun_alloc::Allocator for CachedBytecode {}
 
 impl CachedBytecode {
@@ -139,15 +121,6 @@ impl CachedBytecode {
     }
 }
 
-/// Link-time entry point for lower-tier crates (declared `extern "Rust"` in
-/// `bun_bundler`). Generic "generate JSC bytecode off the main JS thread"
-/// helper: marks the calling thread as a bytecode-only thread (so WTF timer
-/// callbacks don't try to reach a non-existent VM), initializes JSC, generates
-/// bytecode for the given output `format`, copies the bytes into an owned
-/// buffer, and releases the C++ handle.
-///
-/// Symbol is definer-prefixed (`__bun_jsc_*`) per LAYERING_AUDIT — the body is
-/// jsc-internal setup, not bundler logic.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_generate_cached_bytecode(
     format: Format,

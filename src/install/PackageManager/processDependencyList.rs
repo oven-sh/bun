@@ -324,18 +324,6 @@ impl PackageManager {
                             Global::crash();
                         }
                     };
-                    // PORT NOTE (spec parity): Zig writes
-                    //   var scripts = manager.lockfile.packages.items(.scripts)[package_id.*];
-                    // which COPIES the `Scripts` struct into a local; the
-                    // subsequent `parseAlloc` / `.filled = true` mutate the
-                    // local and are never stored back, so
-                    // `lockfile.packages[id].scripts` is not updated. This is
-                    // a latent dead-store bug in processDependencyList.zig,
-                    // but we match it exactly so .rs/.zig observable behavior
-                    // agree. The `builder` appends still land in
-                    // `lockfile.buffers.string_bytes`, preserving that side
-                    // effect. (Hoisted above `string_builder()` for borrowck —
-                    // `parse_count`/`allocate` don't touch `packages`.)
                     debug_assert!(*package_id != INVALID_PACKAGE_ID);
                     let mut scripts: Scripts =
                         self.lockfile.packages.items_scripts()[*package_id as usize];
@@ -427,10 +415,6 @@ impl PackageManager {
         Ok(())
     }
 
-    /// Zig: `callbacks` was `comptime anytype` with a
-    /// `@TypeOf(callbacks) != void and @TypeOf(callbacks.onResolve) != void`
-    /// check. Modeled as `Option<impl FnOnce(C)>` — only `onResolve` is ever
-    /// read, and the void path is `None`.
     pub fn process_dependency_list<C>(
         &mut self,
         dep_list: TaskCallbackList,
@@ -457,13 +441,6 @@ impl PackageManager {
         Ok(())
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Free-function re-export surface — Zig declares these at file scope with an
-// explicit `*PackageManager` first param. Thin shims over the
-// `impl PackageManager` bodies above so `pub use process_dependency_list::{…}`
-// in `PackageManager.rs` resolves (matching the directories/enqueue pattern).
-// ──────────────────────────────────────────────────────────────────────────
 
 #[inline]
 pub fn process_extracted_tarball_package(

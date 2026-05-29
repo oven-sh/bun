@@ -8,11 +8,6 @@ use bun_core::output as Output;
 use bun_core::output::enable_ansi_colors_stderr;
 use bun_core::pretty_fmt;
 
-// PORT NOTE: `Header::clone` / `Request::clone` / `Response::clone` need the
-// unbound-lifetime `append_raw` so they can interleave appends and stash the
-// raw ptr/len pairs — the Zig original returns aliasing `[]const u8` with no
-// lifetime tracking. The buffer is heap-owned; callers keep the builder (or
-// its moved-out buffer) alive while the returned slices are in use.
 pub use bun_core::StringBuilder;
 
 // FFI surface over vendor/picohttpparser. Hand-written (three functions, two
@@ -87,10 +82,6 @@ use bun_core::strings;
 // Header
 // ──────────────────────────────────────────────────────────────────────────
 
-/// NOTE: layout MUST match `c::phr_header` exactly (see static asserts below).
-/// Zig used `name: []const u8` / `value: []const u8` and relied on Zig's slice
-/// ABI being `{ptr, len}`. Rust `&[u8]` has no guaranteed field order in
-/// `#[repr(C)]`, so we spell the fields out and expose `.name()` / `.value()`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Header {
@@ -108,13 +99,6 @@ impl Default for Header {
 }
 
 impl Header {
-    /// All-zero sentinel — name/value are empty slices. Used by callers to
-    /// initialize fixed-size header arrays before filling them.
-    ///
-    /// Uses `null()` (not `b"".as_ptr()`) so the const evaluates to all-zero
-    /// bytes — `[Header::ZERO; N]` statics land in `.bss` instead of `.data`,
-    /// matching Zig's `var buf: [N]Header = undefined`. `name()`/`value()` go
-    /// through `ffi::slice`, which tolerates `(null, 0)`.
     pub const ZERO: Self = Self {
         name_ptr: core::ptr::null(),
         name_len: 0,

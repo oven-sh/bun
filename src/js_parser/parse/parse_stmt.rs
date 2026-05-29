@@ -23,31 +23,7 @@ use js_ast::expr::EFlags;
 // TODO(port): narrow error set
 type Result<T> = core::result::Result<T, bun_core::Error>;
 
-// Zig: `pub fn ParseStmt(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block. The 25+ per-token `t_*` helpers are private; only `parse_stmt` is
-// surfaced. Round-G un-gated the simpler `t_*` bodies; phase-d ported the remaining
-// `t_export`/`t_import`/fallthrough bodies inline (the `_draft_heavy` staging mod is gone).
-
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    // PORT NOTE on `#[inline]` / `#[inline(never)]` / `#[cold]` annotations across the `t_*` arms:
-    // `parse_stmt` is invoked once per leading statement token; profiling showed its
-    // stack-adjust prologue/epilogue dominating because LLVM was hoisting the larger
-    // (and rarely-taken) `t_*` bodies inline, ballooning `parse_stmt`'s frame. Keep the
-    // rare / heavy arms out-of-line so `parse_stmt` stays a thin dispatcher, and fold the
-    // trivial forwarders in so the `parse_stmts_up_to → parse_stmt → t_* → parse_*` chain
-    // loses a hop on the hot statements (`;`, `function`, `var`, `const`, `return`, …).
-    //
-    // `P` is monomorphized over `(TYPESCRIPT, SCAN_ONLY)` (JSX is a runtime field, not a
-    // type parameter — see `parser.rs`), so every `#[inline(never)]`
-    // `t_*` becomes 2-3 sibling symbols that the linker would otherwise interleave with the
-    // hot ones. Anything that can't fire on a plain `bun run` of a `.js`/`.ts` script — the
-    // TS-only keyword forms (`enum`, `@decorator`, `type`/`namespace`/`module`/`declare`),
-    // `with` (illegal in strict/module code), `do … while`, `debugger`, and `label:` — is
-    // additionally `#[cold]` so LLVM parks all of those instantiations together in
-    // `.text.unlikely`, leaving the bytes that actually execute on startup dense instead of
-    // spread across sibling monomorphizations that fault-around drags in.
-
     #[inline]
     fn t_semicolon(p: &mut Self) -> Result<Stmt> {
         p.lexer.next()?;
@@ -86,36 +62,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let scope_index = p.scopes_in_order.len();
             let ts_decorators = p.parse_type_script_decorators()?;
 
-            // If this turns out to be a "declare class" statement, we need to undo the
-            // scopes that were potentially pushed while parsing the decorator arguments.
-            // That can look like any one of the following:
-            //
-            //   "@decorator declare class Foo {}"
-            //   "@decorator declare abstract class Foo {}"
-            //   "@decorator export declare class Foo {}"
-            //   "@decorator export declare abstract class Foo {}"
-            //
-            // PORT NOTE: spec stores the Vec<Expr> directly into `opts.ts_decorators.values`.
-            // `DeferredTsDecorators::values` is currently typed `&'a [Expr]` (parser.rs), so until
-            // that field is widened to `ExprNodeList` we copy into the arena (Expr is `Copy`) and
-            // let `ts_decorators` drop normally — no `mem::forget` / `from_raw_parts` lifetime
-            // laundering (forbidden per PORTING.md §Forbidden patterns).
             let ts_decorators_slice: &'a [Expr] = p.arena.alloc_slice_copy(ts_decorators.slice());
             opts.ts_decorators = Some(DeferredTsDecorators {
                 values: ts_decorators_slice,
                 scope_index,
             });
 
-            // "@decorator class Foo {}"
-            // "@decorator abstract class Foo {}"
-            // "@decorator declare class Foo {}"
-            // "@decorator declare abstract class Foo {}"
-            // "@decorator export class Foo {}"
-            // "@decorator export abstract class Foo {}"
-            // "@decorator export declare class Foo {}"
-            // "@decorator export declare abstract class Foo {}"
-            // "@decorator export default class Foo {}"
-            // "@decorator export default abstract class Foo {}"
             if p.lexer.token != T::TClass
                 && p.lexer.token != T::TExport
                 && !(Self::IS_TYPESCRIPT_ENABLED && p.lexer.is_contextual_keyword(b"abstract"))
@@ -204,10 +156,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn t_if(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         let mut current_loc = loc;
         let mut root_if: Option<Stmt> = None;
-        // PORT NOTE: `StoreRef` (arena back-pointer with safe `Deref`/`DerefMut`)
-        // into the previous iteration's `S::If` allocation — borrowck cannot
-        // express the cross-iteration back-reference, but the arena keeps every
-        // node alive for `'a`.
         let mut current_if: Option<js_ast::StoreRef<S::If>> = None;
 
         loop {
@@ -813,13 +761,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         p.lexer.next()?;
 
-        // TypeScript decorators only work on class declarations
-        // "@decorator export class Foo {}"
-        // "@decorator export abstract class Foo {}"
-        // "@decorator export default class Foo {}"
-        // "@decorator export default abstract class Foo {}"
-        // "@decorator export declare class Foo {}"
-        // "@decorator export declare abstract class Foo {}"
         if opts.ts_decorators.is_some()
             && p.lexer.token != T::TClass
             && p.lexer.token != T::TDefault
@@ -919,10 +860,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             | StmtIdentifier::SAbstract
                             | StmtIdentifier::SModule
                             | StmtIdentifier::SInterface => {
-                                // "export namespace Foo {}"
-                                // "export abstract class Foo {}"
-                                // "export module Foo {}"
-                                // "export interface Foo {}"
                                 opts.is_export = true;
                                 return p.parse_stmt(opts);
                             }
@@ -1052,14 +989,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     };
                                 }
                             }
-                            // "interface" turned out not to start an interface
-                            // declaration: the nested statement came back as an
-                            // expression statement ("export default interface = 2",
-                            // "export default interface => 1") or a labeled statement
-                            // ("export default interface: 0"). None of these can be a
-                            // default export value, so report a syntax error instead of
-                            // building an S.ExportDefault that the visit and print
-                            // passes don't support.
                             _ => {
                                 let r = js_lexer::range_of_identifier(p.source, stmt.loc);
                                 p.log().add_range_error_fmt(
@@ -1261,10 +1190,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.expect_or_insert_semicolon()?;
 
                     if Self::IS_TYPESCRIPT_ENABLED {
-                        // export {type Foo} from 'bar';
-                        // ->
-                        // nothing
-                        // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
                         if export_clause.clauses.is_empty() && export_clause.had_type_only_exports {
                             return Ok(p.s(S::TypeScript {}, loc));
                         }
@@ -1324,10 +1249,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.expect_or_insert_semicolon()?;
 
                 if Self::IS_TYPESCRIPT_ENABLED {
-                    // export {type Foo};
-                    // ->
-                    // nothing
-                    // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
                     if export_clause.clauses.is_empty() && export_clause.had_type_only_exports {
                         return Ok(p.s(S::TypeScript {}, loc));
                     }
@@ -1482,20 +1403,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 p.lexer.next()?;
 
-                // "import defer * as ns from 'path'"
-                //
-                // https://tc39.es/proposal-defer-import-eval/
-                //
-                // `defer` is only a phase keyword when followed by `*`; in
-                // every other position (`import defer from 'x'`,
-                // `import defer, {x} from 'y'`) it is an ordinary default
-                // binding named `defer`. Compare the raw token so
-                // `def\u0065r` is not treated as the phase keyword.
-                //
-                // `opts.is_export` rules out `export import defer * as ...`
-                // (only reachable via the TypeScript `export import foo = bar`
-                // re-entry) so it falls through to the import-equals handler
-                // and errors there.
                 if default_name_raw == b"defer" && p.lexer.token == T::TAsterisk && !opts.is_export
                 {
                     // Same scope restriction as `import * as ns from 'path'`:
@@ -1734,10 +1641,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    /// Cold TS-only statement keywords reached from `parse_stmt_fallthrough` once the
-    /// leading identifier has been recognised as one of the contextual statement keywords.
-    /// Returns `Some(stmt)` when the keyword form was consumed; `None` means the caller
-    /// should fall through to treating the already-parsed expression as an `SExpr`.
     #[cold]
     #[inline(never)]
     fn parse_stmt_fallthrough_ts_keyword(
@@ -1760,10 +1663,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_lexer::TypescriptStmtKeyword::TsStmtNamespace
             | js_lexer::TypescriptStmtKeyword::TsStmtModule => {
-                // "namespace Foo {}"
-                // "module Foo {}"
-                // "declare module 'fs' {}"
-                // "declare module 'fs';"
                 if !p.lexer.has_newline_before
                     && (opts.is_module_scope || opts.is_namespace_scope)
                     && (p.lexer.token == T::TIdentifier
@@ -1831,34 +1730,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(decs) = &opts.ts_decorators {
                     p.discard_scopes_up_to(decs.scope_index);
                 } else {
-                    // The statement is dropped below (or reduced to just its bindings
-                    // for "export declare var" inside a namespace), so discard any
-                    // scopes it recorded or the visit pass will hit a scope order
-                    // mismatch (e.g. "declare foo: bar" parses a labeled statement
-                    // that records a Label scope).
                     p.discard_scopes_up_to(scope_index);
                 }
 
-                // Unlike almost all uses of "declare", statements that use
-                // "export declare" with "var/let/const" inside a namespace affect
-                // code generation. They cause any declared bindings to be
-                // considered exports of the namespace. Identifier references to
-                // those names must be converted into property accesses off the
-                // namespace object:
-                //
-                //   namespace ns {
-                //     export declare const x
-                //     export function y() { return x }
-                //   }
-                //
-                //   (ns as any).x = 1
-                //   console.log(ns.y())
-                //
-                // In this example, "return x" must be replaced with "return ns.x".
-                // This is handled by replacing each "export declare" statement
-                // inside a namespace with an "export var" statement containing all
-                // of the declared bindings. That "export var" statement will later
-                // cause identifiers to be transformed into property accesses.
                 if opts.is_namespace_scope && opts.is_export {
                     let mut decls: G::DeclList = bun_alloc::AstAlloc::vec();
                     match &stmt.data {

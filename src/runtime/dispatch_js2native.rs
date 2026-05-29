@@ -74,11 +74,6 @@ pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_uv_error_to_e as sys_sys_
 pub use bun_http_jsc::headers_jsc::h2_live_counts as http_h2_client_testing_ap_is_live_counts;
 pub use bun_http_jsc::headers_jsc::h3_quic_live_counts as http_h3_client_testing_ap_is_quic_live_counts;
 
-// ── src/bun.zig getUseSystemCA ──────────────────────────────────────────────
-/// Port of `src/bun.zig:getUseSystemCA`. Lives here (not in `src/bun.rs`)
-/// because the flag it reads — `cli::Arguments::Bun__Node__UseSystemCA` — is
-/// owned by `bun_runtime`; placing the body in a lower crate would invert the
-/// dependency edge.
 pub(crate) fn bun_get_use_system_ca(
     _global: &JSGlobalObject,
     _frame: &CallFrame,
@@ -104,10 +99,6 @@ pub use css::prefix_test as css_jsc_css_internals_prefix_test;
 pub use css::prefix_test_with_options as css_jsc_css_internals_prefix_test_with_options;
 pub use css::test_with_options as css_jsc_css_internals_test_with_options;
 
-// ── src/collections/linear_fifo.zig TestingAPIs (test-only) ─────────────────
-// `LinearFifo` has no JSC consumer of its own; this `bun:internal-for-testing`
-// probe lives in `bun_runtime` (which depends on both `bun_collections` and
-// `bun_jsc`) rather than inventing a JSC edge into the collections crate.
 pub use crate::linear_fifo_testing::ordered_remove_probe as collections_linear_fifo_testing_ap_is_ordered_remove_probe;
 
 // ported from: generated_js2native.rs

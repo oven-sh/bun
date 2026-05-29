@@ -11,10 +11,6 @@ bun_opaque::opaque_ffi! {
     pub struct Stream;
 }
 
-// `Stream` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so `&mut Stream` is
-// ABI-identical to a non-null `*mut Stream` with no `noalias`/`readonly`
-// attribute. Shims taking only the handle + value types are `safe fn`; the
-// (ptr,len) writers keep raw signatures.
 unsafe extern "C" {
     safe fn us_quic_stream_socket(s: &mut Stream) -> *mut Socket;
     safe fn us_quic_stream_shutdown(s: &mut Stream);

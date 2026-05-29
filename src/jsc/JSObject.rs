@@ -47,13 +47,6 @@ impl JSObject {
         JSValue::from_cell(self)
     }
 
-    /// Marshall a struct instance into a JSObject, copying its properties.
-    ///
-    /// Each field will be encoded with `jsc::to_js`. Fields whose types have a
-    /// `to_js` method will have it called to encode.
-    ///
-    /// This method is equivalent to `Object.create(...)` + setting properties,
-    /// and is only intended for creating POJOs.
     pub fn create<T: PojoFields>(
         pojo: &T,
         global: &JSGlobalObject,
@@ -61,14 +54,6 @@ impl JSObject {
         Self::create_from_struct_with_prototype::<T, false>(pojo, global)
     }
 
-    /// Marshall a struct into a JSObject, copying its properties. Its
-    /// `__proto__` will be `null`.
-    ///
-    /// Each field will be encoded with `jsc::to_js`. Fields whose types have a
-    /// `to_js` method will have it called to encode.
-    ///
-    /// This is roughly equivalent to creating an object with
-    /// `Object.create(null)` and adding properties to it.
     pub fn create_null_proto<T: PojoFields>(
         pojo: &T,
         global: &JSGlobalObject,
@@ -76,38 +61,16 @@ impl JSObject {
         Self::create_from_struct_with_prototype::<T, true>(pojo, global)
     }
 
-    /// Marshall a struct instance into a JSObject. `pojo` is borrowed.
-    ///
-    /// Each field will be encoded with `jsc::to_js`. Fields whose types have a
-    /// `to_js` method will have it called to encode.
-    ///
-    /// This method is equivalent to `Object.create(...)` + setting properties,
-    /// and is only intended for creating POJOs.
-    ///
-    /// The object's prototype with either be `null` or `ObjectPrototype`
-    /// depending on whether `null_prototype` is set. Prefer using the object
-    /// prototype (`null_prototype = false`) unless you have a good reason not
-    /// to.
     fn create_from_struct_with_prototype<T: PojoFields, const NULL_PROTOTYPE: bool>(
         pojo: &T,
         global: &JSGlobalObject,
     ) -> JsResult<&'static mut JSObject> {
-        // TODO(port): Zig used `@typeInfo(T).@"struct"` to enumerate fields at
-        // comptime. Rust has no field reflection; `PojoFields` is expected to be
-        // provided by a `#[derive(PojoFields)]` proc-macro that emits an inline
-        // `put(b"name", JSValue::from_any(global, &self.name)?)?;` per field.
-
         let val = if NULL_PROTOTYPE {
             JSValue::create_empty_object_with_null_prototype(global)
         } else {
             JSValue::create_empty_object(global, T::FIELD_COUNT)
         };
         debug_assert!(val.is_object());
-        // `val.is_object()` asserted above in debug; JSC guarantees these
-        // constructors return a JSObject cell. A cell-tagged JSValue's payload
-        // IS the cell pointer (NotCellMask bits are zero). `JSObject` is an
-        // `opaque_ffi!` ZST handle; `opaque_mut` is the centralised
-        // non-null-ZST deref proof (zero-byte `&mut` cannot alias).
         let obj = JSObject::opaque_mut(val.0 as *mut JSObject);
 
         let cell = obj.to_js();
@@ -147,11 +110,6 @@ impl JSObject {
         global: &JSGlobalObject,
         properties: &T,
     ) -> JsResult<()> {
-        // TODO(port): Zig used `std.meta.fieldNames(@TypeOf(properties))` +
-        // `@field(properties, field)`. Relies on the `JSValueFields` derive.
-        // PORT NOTE: Zig's `put` signature forces each field to already be a JSValue —
-        // there is NO `fromAny` encoding here (unlike `create`). Hence a separate trait
-        // from `PojoFields` that yields raw JSValues without conversion.
         properties.put_fields(|name, value| self.put(global, name, value))
     }
 
@@ -203,10 +161,6 @@ impl JSObject {
 
     #[track_caller]
     pub fn get_index(this: JSValue, global_this: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
-        // we don't use `call_zero_is_throw`, because it would assert that if there is an
-        // exception then the JSValue is zero. the function this ends up calling can return
-        // undefined with an exception:
-        // https://github.com/oven-sh/WebKit/blob/397dafc9721b8f8046f9448abb6dbc14efe096d3/Source/JavaScriptCore/runtime/JSObjectInlines.h#L112
         crate::top_scope!(scope, global_this);
         let value = JSC__JSObject__getIndex(this, global_this, i);
         scope.return_if_exception()?;
@@ -320,20 +274,6 @@ extern "C" fn initializer_call<Ctx: ObjectInitializer>(
     }
 }
 
-/// Compile-time field enumeration for POJO marshalling.
-///
-/// Zig used `@typeInfo(T)` to iterate struct fields and called
-/// `JSValue.fromAny(global, @TypeOf(property), property)` per field.
-/// Rust has no built-in reflection, so types opt in via
-/// `#[derive(bun_jsc::PojoFields)]`.
-///
-/// The derive must emit a sequence of
-/// `put(b"name", JSValue::from_any(global, &self.name)?)?;` calls — one per
-/// field, in declaration order — so each encoded JSValue lives only on the
-/// stack between `from_any` and `put` (matching Zig's `inline for`; never
-/// collected into a `Vec<JSValue>`, which would sit on the Rust heap and be
-/// invisible to JSC's conservative stack scan).
-// TODO(port): proc-macro — implement `#[derive(PojoFields)]` in bun_jsc.
 pub trait PojoFields {
     const FIELD_COUNT: usize;
     /// Invoke `put(field_name, encoded_value)` once per struct field, encoding
@@ -346,12 +286,6 @@ pub trait PojoFields {
     ) -> JsResult<()>;
 }
 
-/// Compile-time field enumeration for structs whose fields are **already**
-/// `JSValue` (Zig's `putAllFromStruct` — `@field(properties, field)` is passed
-/// straight to `put()` with no `fromAny` encoding).
-///
-/// Separate from [`PojoFields`] because that trait encodes; this one does not.
-// TODO(port): proc-macro — implement `#[derive(JSValueFields)]` in bun_jsc.
 pub trait JSValueFields {
     /// Invoke `put(field_name, self.<field>)` once per struct field. Fields are
     /// `JSValue` and forwarded as-is.

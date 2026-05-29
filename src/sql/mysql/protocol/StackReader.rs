@@ -6,10 +6,6 @@ use super::any_mysql_error::Error as AnyMySQLError;
 use super::new_reader::{NewReader, ReaderContext};
 use crate::shared::data::Data;
 
-// TODO(port): lifetime — `offset`/`message_start` are caller-owned `usize` on the
-// stack (LIFETIMES.tsv has no entry; classified BORROW_PARAM). Zig passes `@This()`
-// by value (Copy) and mutates through `*usize`; modeled here as `&'a Cell<usize>`
-// to keep `Copy` + interior mutability without `unsafe`.
 #[derive(Clone, Copy)]
 pub struct StackReader<'a> {
     pub buffer: &'a [u8],

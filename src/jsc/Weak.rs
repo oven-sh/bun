@@ -33,21 +33,10 @@ impl WeakImpl {
         .expect("Bun__WeakRef__new returned null")
     }
 
-    /// Read the weakly-held `JSValue` (or `JSValue::ZERO` if collected).
-    ///
-    /// Safe: every `NonNull<WeakImpl>` in this crate originates from
-    /// [`WeakImpl::init`] and is held by a [`Weak<T>`] that drops it via
-    /// [`WeakImpl::destroy`] before releasing the slot — so any
-    /// `NonNull<WeakImpl>` reachable here is a live C++ `JSC::Weak` handle.
-    /// Same contract as [`crate::strong::Impl::get`].
     pub(crate) fn get(this: NonNull<WeakImpl>) -> JSValue {
         Bun__WeakRef__get(WeakImpl::opaque_ref(this.as_ptr()))
     }
 
-    /// Clear the weakly-held value without freeing the handle.
-    ///
-    /// Safe for the same reason as [`WeakImpl::get`] — the handle is live by
-    /// construction; `clear` is idempotent and does not invalidate `this`.
     pub(crate) fn clear(this: NonNull<WeakImpl>) {
         Bun__WeakRef__clear(WeakImpl::opaque_ref(this.as_ptr()))
     }
@@ -58,14 +47,6 @@ impl WeakImpl {
     }
 }
 
-// TODO(port): move to jsc_sys
-//
-// `WeakImpl` is an opaque `UnsafeCell`-backed ZST handle (`&WeakImpl` is
-// ABI-identical to non-null `*const WeakImpl`; C++ slot mutation is interior).
-// `new` is `safe fn`: `&JSGlobalObject` is the non-null handle proof, and `ctx`
-// is an opaque round-trip pointer C++ only stores and forwards to the finalizer
-// (never dereferenced as Rust data) — same contract as `JSC__VM__holdAPILock`.
-// `delete` consumes the allocation and so stays `unsafe fn`.
 unsafe extern "C" {
     fn Bun__WeakRef__delete(this: *mut WeakImpl);
     safe fn Bun__WeakRef__new(

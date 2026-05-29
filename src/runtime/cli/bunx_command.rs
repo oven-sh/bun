@@ -33,11 +33,6 @@ bun_output::declare_scope!(bunx, visible);
 
 pub(crate) struct BunxCommand;
 
-/// bunx-specific options parsed from argv.
-//
-// PORT NOTE: string fields borrow from `argv` (process-lifetime). The porting
-// convention forbids struct lifetime params, so they are typed `&'static [u8]`.
-// TODO(port): lifetime — these borrow argv, not true 'static.
 pub struct Options {
     /// CLI arguments to pass to the command being run.
     // PORT NOTE: `Box<[u8]>` to match `ContextData::passthrough` /
@@ -75,12 +70,6 @@ impl Default for Options {
 }
 
 impl Options {
-    /// Create a new `Options` instance by parsing CLI arguments. `ctx` may be mutated.
-    ///
-    /// ## Exits
-    /// - `--revision` or `--version` flags are passed without a target
-    ///   command also being provided. This is not a failure.
-    /// - Incorrect arguments are passed. Prints usage and exits with a failure code.
     fn parse(ctx: &mut ContextData, argv: &[&'static ZStr]) -> Result<Options, AllocError> {
         let mut found_subcommand_name = false;
         let mut maybe_package_name: Option<&'static [u8]> = None;
@@ -222,13 +211,6 @@ pub(crate) enum GetBinNameError {
 bun_core::named_error_set!(GetBinNameError);
 
 impl BunxCommand {
-    /// Adds `create-` to the string, but also handles scoped packages correctly.
-    /// Always clones the string in the process.
-    ///
-    /// Returned `Vec<u8>` is NUL-terminated: `v[v.len()-1] == 0` and the content
-    /// occupies `v[..v.len()-1]` (matches Zig `[:0]const u8` from `allocSentinel`).
-    // TODO(port): return owned `bun_core::ZString` / `Box<ZStr>` once that type exists,
-    // instead of a Vec<u8> with a trailing-NUL convention.
     pub(crate) fn add_create_prefix(input: &[u8]) -> Result<Vec<u8>, AllocError> {
         const PREFIX_LENGTH: usize = b"create-".len();
 
@@ -279,13 +261,6 @@ impl BunxCommand {
     #[cfg(windows)]
     const NANOSECONDS_CACHE_VALID: i128 = (Self::SECONDS_CACHE_VALID as i128) * 1_000_000_000;
 
-    /// `bin` keys (and the `name` fallback) in package.json are command
-    /// names, not paths. The bunx cache lives in a world-writable temp dir,
-    /// so a crafted package.json there could yield a key like
-    /// `../../../../tmp/x` or `/tmp/x`; `bun_which::which` resolves
-    /// slash-containing names against the cwd, escaping `node_modules/.bin`
-    /// and skipping the cache-ownership check before execution. Reject
-    /// anything that isn't a plain file name.
     fn is_safe_bin_name(name: &[u8]) -> bool {
         !name.is_empty()
             && name != b"."
@@ -545,21 +520,6 @@ impl BunxCommand {
         }
     }
 
-    /// Refuse to execute a binary resolved from inside the bunx cache unless
-    /// it is owned by the current user.
-    ///
-    /// The bunx cache lives under the world-writable temp dir at a predictable
-    /// path. Another local user could pre-create that path. Bun's bin linker
-    /// creates `.bin/<name>` entries as *symlinks* on Unix
-    /// (`Linker::create_symlink`), so a regular-file-only check would mark every
-    /// legitimate cache hit as untrusted and reinstall on every invocation.
-    /// Accept either a symlink or a regular file owned by the current uid; for
-    /// symlinks, also follow once and require the target to be a uid-owned
-    /// regular file so an attacker-planted, uid-matching link can't redirect
-    /// execution outside the cache.
-    ///
-    /// On non-Unix targets there is no comparable shared world-writable temp
-    /// dir / uid model, so the check is a no-op there.
     #[cfg(unix)]
     fn is_trusted_cached_binary(destination: &ZStr, uid: libc::uid_t) -> bool {
         let lstat_ok = |st: &bun_sys::Stat| {
@@ -639,10 +599,6 @@ impl BunxCommand {
         debug_assert!(update_requests.len() == 1); // One positional cannot parse to multiple requests
         let update_request = &mut update_requests[0];
 
-        // if you type "tsc" and TypeScript is not installed:
-        // 1. Install TypeScript
-        // 2. Run tsc
-        // BUT: Skip this transformation if --package was explicitly specified
         if opts.specified_package.is_none() {
             if update_request.name == b"tsc" {
                 update_request.name = b"typescript".as_slice();
@@ -653,17 +609,6 @@ impl BunxCommand {
             }
         }
 
-        // When the user types a scoped package like `@foo/bar`, the initial bin
-        // name ("bar") is only a guess — the package's actual bin may be named
-        // something else entirely. In that case we must not search the original
-        // system $PATH with the guessed name, or we may match an unrelated system
-        // binary (e.g. `bunx @uidotsh/install` would otherwise run /usr/bin/install).
-        // We still search local node_modules/.bin directories, since many scoped
-        // packages do link their bin under the unscoped name.
-        //
-        // Only the branch that strips the scope from the package name is a guess;
-        // explicit `--package` bins and hardcoded aliases like `tsc`/`claude` are
-        // known-good bin names and should still be searchable in the system $PATH.
         let mut initial_bin_name_is_a_guess = false;
         let initial_bin_name: &[u8] = if let Some(bin_name) = opts.binary_name {
             bin_name
@@ -740,12 +685,6 @@ impl BunxCommand {
         // PORT NOTE: reshaped for borrowck — Zig held a borrowed slice into env.map and
         // later overwrote PATH with a new allocation; here we own PATH as a Vec<u8>.
 
-        // `configurePathForRun` builds PATH by appending ORIGINAL_PATH to a set of
-        // `*/node_modules/.bin` directories (plus the bun-node shim dir). Capture just
-        // that prepended portion here — it is used below to search for guessed bin
-        // names without risking a collision with an unrelated binary in the user's
-        // system $PATH. A trailing delimiter may remain; `bun.which` tokenizes on the
-        // delimiter so empty segments are ignored.
         let local_bin_dirs: Vec<u8> =
             if !original_path.is_empty() && strings::ends_with(&path, &original_path) {
                 path[0..path.len() - original_path.len()].to_vec()
@@ -777,11 +716,6 @@ impl BunxCommand {
 
             let mut v = Vec::new();
             if has_banned_char {
-                // This branch gets hit usually when a URL is requested as the package
-                // See https://github.com/oven-sh/bun/issues/3675
-                //
-                // But the requested version will contain the url.
-                // The colon will break all platforms.
                 write!(
                     &mut v,
                     "{}@{}@{}",
@@ -873,21 +807,6 @@ impl BunxCommand {
         };
         // PORT NOTE: `defer ctx.allocator.free(PATH_FOR_BIN_DIRS)` — Vec drops automatically.
 
-        // The bunx cache path is at the following location
-        //
-        //   <temp_dir>/bunx-<uid>-<package_fmt>/node_modules/.bin/<bin>
-        //
-        // Reasoning:
-        // - Prefix with "bunx" to identify the bunx cache, make it easier to "rm -r"
-        //   - Suffix would not work because scoped packages have a "/" in them, and
-        //     before Bun 1.1 this was practically impossible to clear the cache manually.
-        //     It was easier to just remove the entire temp directory.
-        // - Use the uid to prevent conflicts between users. If the paths were the same
-        //   across users, you run into permission conflicts
-        //   - If you set permission to 777, you run into a potential attack vector
-        //     where a user can replace the directory with malicious code.
-        //
-        // If this format changes, please update cache clearing code in package_manager_command.zig
         #[cfg(unix)]
         // SAFETY: getuid() is always safe to call (no preconditions, never fails)
         let uid = unsafe { libc::getuid() };
@@ -975,14 +894,6 @@ impl BunxCommand {
         bun_output::scoped_log!(bunx, "try run existing? {}", look_for_existing_bin);
         if look_for_existing_bin {
             'try_run_existing: {
-                // Similar to "npx":
-                //
-                //  1. Try the bin in the current node_modules and then we try the bin in the global cache
-                //
-                // PORT NOTE: Zig kept a single `?[:0]const u8 destination_` and
-                // `orelse`d the cache probe. NLL can't see that the buffer
-                // borrow is dead in the `None` arm, so we fold both probes into
-                // one labeled block instead.
                 let dest_or_cache: Option<&ZStr> = 'find: {
                     // Only use the system-installed version if there is no version specified
                     if update_request.version.literal.is_empty() {
@@ -1023,10 +934,6 @@ impl BunxCommand {
                     // If this directory was installed by bunx, we want to perform cache invalidation on it
                     // this way running `bunx hello` will update hello automatically to the latest version
                     if strings::has_prefix(out, bunx_cache_dir) {
-                        // Refuse to execute a cached binary that wasn't created by the
-                        // current user (another local user could have pre-created the
-                        // path); fall through to a fresh install instead. See
-                        // `is_trusted_cached_binary` for the full rationale.
                         if !Self::is_trusted_cached_binary(destination, uid) {
                             bun_output::scoped_log!(
                                 bunx,
@@ -1156,13 +1063,6 @@ impl BunxCommand {
                                     }
                                 };
 
-                                // Only use the system-installed version if there is no version specified.
-                                // `package_name_for_bin` is the real bin name from the target package's
-                                // own package.json. Search only local node_modules/.bin directories for
-                                // it — not the system $PATH, because the real bin name may itself collide
-                                // with an unrelated system binary when the package lives only in the bunx
-                                // cache (handled by the `orelse` absolute-path probe below) and not in a
-                                // local node_modules.
                                 let dest_or_cache2: Option<&ZStr> = 'find2: {
                                     if update_request.version.literal.is_empty() {
                                         if let Some(d) = bun_which::which(
@@ -1191,11 +1091,6 @@ impl BunxCommand {
                                 };
                                 if let Some(destination) = dest_or_cache2 {
                                     let out: &[u8] = destination.as_bytes();
-                                    // Same hardening as the first cache probe: this path
-                                    // resolves the package's *real* bin name (which may
-                                    // differ from the package name), so it is just as
-                                    // reachable for a binary planted by another local user
-                                    // in the world-writable bunx cache.
                                     if strings::has_prefix(out, bunx_cache_dir)
                                         && !Self::is_trusted_cached_binary(destination, uid)
                                     {
@@ -1239,13 +1134,6 @@ impl BunxCommand {
         }
         // If we've reached this point, it means we couldn't find an existing binary to run.
         // Next step is to install, then run it.
-
-        // NOTE: npx prints errors like this:
-        //
-        //     npm error npx canceled due to missing packages and no YES option: ["foo@1.2.3"]
-        //     npm error A complete log of this run can be found in: [folder]/debug.log
-        //
-        // Which is not very helpful.
 
         if opts.no_install {
             Output::err_generic(
@@ -1392,11 +1280,6 @@ impl BunxCommand {
                     bun_crash_handler::suppress_reporting();
                 }
 
-                // Zig: `.signaled => |signal| Global.raiseIgnoringPanicHandler(signal)` —
-                // unconditionally noreturn. Zig's `SignalCode` is non-exhaustive
-                // `enum(u8)` so RT signals (>31) are valid payloads; forward the
-                // raw byte instead of lossy `signal_code()` so this arm always
-                // diverges with the *actual* signal.
                 Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(*sig));
             }
             SpawnStatus::Err(err) => {
@@ -1426,10 +1309,6 @@ impl BunxCommand {
             unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
         };
 
-        // Similar to "npx":
-        //
-        //  1. Try the bin in the global cache
-        //     Do not try $PATH because we already checked it above if we should
         if let Some(destination) = bun_which::which(
             &mut path_buf,
             bunx_cache_dir,
@@ -1441,10 +1320,6 @@ impl BunxCommand {
             absolute_in_cache_dir,
         ) {
             let out: &[u8] = destination.as_bytes();
-            // The install we just ran should have created this symlink as the
-            // current user, but the cache lives in a world-writable temp dir; an
-            // attacker can race the install and plant a uid-mismatched entry.
-            // Bail out to the generic error rather than execute it.
             if Self::is_trusted_cached_binary(destination, uid) {
                 let stored = fs.dirname_store.append_slice(out)?;
                 Run::run_binary(

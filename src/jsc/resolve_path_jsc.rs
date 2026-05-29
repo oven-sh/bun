@@ -19,10 +19,6 @@ pub(crate) extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
     let cwd: &[u8] = bun_paths::fs::FileSystem::instance().top_level_dir();
     let _ = global_object; // bun_vm() retained for future direct field access
 
-    // The input is user-controlled and may be arbitrarily long. The
-    // threadlocal `join_buf` is only 4096 bytes, so allocate a buffer sized
-    // to fit. Zig used a StackFallbackAllocator(4096) here.
-    // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
     let mut buf = vec![0u8; cwd.len() + str.slice().len() + 2];
 
     let out_slice = resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(

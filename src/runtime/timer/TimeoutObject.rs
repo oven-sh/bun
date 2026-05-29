@@ -2,14 +2,6 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Kind;
 
-/// `jsc.Codegen.JSTimeout` — the `.classes.ts` codegen module for this type.
-///
-/// `toJS` / `fromJS` / `fromJSDirect` and the `Timeout__create` /
-/// `Timeout__fromJS` / `Timeout__fromJSDirect` externs are emitted by
-/// `#[bun_jsc::JsClass(name = "Timeout")]` on the struct below (see
-/// `jsc_macros::js_class_hooks`); only the cached-property accessors —
-/// `${name}GetCached` / `${name}SetCached` per `cache: true` prop — are
-/// declared here.
 pub mod js {
     // One `${snake}_get_cached` / `${snake}_set_cached` pair per cached prop,
     // each wrapping `TimeoutPrototype__${prop}{Get,Set}CachedValue` and mapping
@@ -24,10 +16,6 @@ pub mod js {
     );
 }
 
-// Struct + `RefCounted`/`Default` impls + the forwarder host-fns
-// (`to_primitive`/`do_ref`/`do_unref`/`has_ref`/`get_destroyed`/`dispose`/
-// `constructor`/`finalize`/`ref_`/`deref`/`deinit`/`init_with`) — see
-// `impl_timer_object!` in `super` (timer/mod.rs).
 super::impl_timer_object!(TimeoutObject, TimeoutObject, "Timeout");
 
 impl TimeoutObject {
@@ -56,11 +44,6 @@ impl TimeoutObject {
         this.internals.cancel(global.bun_vm_ptr());
         Ok(frame.this())
     }
-
-    // Cached-property getters/setters — codegen passes `this_value` (the JS
-    // wrapper) so the cached `WriteBarrier` slot on the C++ side can be read/written.
-    // Signature does not match the standard `host_fn(getter/setter)` shape; the
-    // `#[JsClass]` derive emits the C-ABI shims directly.
 
     pub fn get_on_timeout(_this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
         js::callback_get_cached(this_value).unwrap()

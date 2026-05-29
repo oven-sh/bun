@@ -291,10 +291,6 @@ impl<'a> Snapshots<'a> {
                 match &mut stmt.data {
                     bun_ast::StmtData::SExpr(expr) => {
                         if let bun_ast::ExprData::EBinary(e_binary) = &mut expr.value.data {
-                            // PORT NOTE: deref `StoreRef` once to a plain `&mut E::Binary`
-                            // so the borrow checker can see `.left`/`.right` as disjoint
-                            // field projections (custom `DerefMut` blocks split-borrows
-                            // otherwise).
                             let e_binary = &mut **e_binary;
                             if e_binary.op == bun_ast::Op::Code::BinAssign {
                                 let (left, right) = (&mut e_binary.left, &mut e_binary.right);
@@ -576,12 +572,6 @@ impl<'a> Snapshots<'a> {
                         vm.transpiler.options.jsx.clone(),
                         bun_ast::Loader::Js,
                     );
-                    // PORT NOTE: `P::init` takes an out-param (Zig:
-                    // `var p: ParserType = undefined; try ParserType.init(.., &p)`)
-                    // since 9a98701c980c — `P` is ~5 KiB and the previous
-                    // `let p = P::init(..)?` shape forced 2-3 by-value moves.
-                    // Mirror `init_p!` from `js_parser/parse/parse_entry.rs` here
-                    // (that macro is crate-local).
                     let mut __parser_slot =
                         core::mem::MaybeUninit::<js_parser::TSXParser<'_>>::uninit();
                     // `P::init` writes a fully-initialized value on `Ok`. On `Err` we

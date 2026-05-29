@@ -94,12 +94,6 @@ impl Async {
                     let me = interp.as_async(this);
                     (me.base.shell, me.io.clone(), me.node)
                 };
-                // Spec (Async.zig next() `.exec` arm, child==null): init the
-                // child WITHOUT starting it, store it, enqueue self, return
-                // suspended. The child is started on the NEXT event-loop tick
-                // via the `StartChild` arm above. Restricted to
-                // pipeline/cmd/if/condexpr — other Expr variants panic
-                // (Async.zig:102-104).
                 let child = match node.get() {
                     ast::Expr::Pipeline(p) => Pipeline::init(interp, shell, *p, this, io),
                     ast::Expr::Cmd(c) => Cmd::init(interp, shell, *c, this, io),

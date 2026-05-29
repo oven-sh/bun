@@ -12,36 +12,6 @@ use bun_collections::VecExt;
 
 use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 
-/// For CommonJS, all statements are copied `inside_wrapper_suffix` and this returns.
-/// The conversion logic is completely different for format .internal_bake_dev
-///
-/// For ESM, this function populates all three lists:
-/// 1. outside_wrapper_prefix: all import statements, unmodified.
-/// 2. inside_wrapper_prefix: a var decl line and a call to `module.retrieve`
-/// 3. inside_wrapper_suffix: all non-import statements
-///
-/// The imports are rewritten at print time to fit the packed array format
-/// that the HMR runtime can decode. This encoding is low on JS objects and
-/// indentation.
-///
-/// 1 ┃ "module/esm": [ [
-///   ┃   'module_1', 1, "add",
-///   ┃   'module_2', 2, "mul", "div",
-///   ┃   'module_3', 0, // bare or import star
-///     ], [ "default" ], [], (hmr) => {
-/// 2 ┃   var [module_1, module_2, module_3] = hmr.imports;
-///   ┃   hmr.onUpdate = [
-///   ┃     (module) => (module_1 = module),
-///   ┃     (module) => (module_2 = module),
-///   ┃     (module) => (module_3 = module),
-///   ┃   ];
-///
-/// 3 ┃   console.log("my module", module_1.add(1, module_2.mul(2, 3));
-///   ┃   module.exports = {
-///   ┃     default: module_3.something(module_2.div),
-///   ┃   };
-///     }, false ],
-///        ----- "is the module async?"
 pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
     c: &mut LinkerContext,
     stmts: &mut StmtList,

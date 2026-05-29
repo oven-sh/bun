@@ -12,35 +12,10 @@ use bun_sys::Fd;
 
 use crate::array_buffer::MarkedArrayBuffer;
 
-// ──────────────────────────────────────────────────────────────────────────
-// RAII for `protect()`/`unprotect()` pairs taken by `to_thread_safe()`.
-//
-// Zig's async-fs path calls `args.toThreadSafe()` (which `JSValue.protect()`s
-// any borrowed JS-backed buffers so the work-pool thread may read them) and
-// later `args.deinitAndUnprotect()` to release. In Rust the "deinit" half is
-// already `Drop`; only the JS-side `unprotect()` needs an explicit hook, and
-// pairing it with the protect via a guard type removes the leak hazard on
-// every early return between `toThreadSafe` and the manual cleanup.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Undo the `JSValue::protect()` calls taken by [`to_thread_safe`](
-/// PathLike::to_thread_safe) (or an `args::*` type's `to_thread_safe`).
-///
-/// Implementations release **only** the JS-GC protect refcount — owned Rust
-/// payloads (Vec, `SliceWithUnderlyingString`, …) are freed by the type's own
-/// `Drop`, which runs immediately after when the value is held in a
-/// [`ThreadSafe<T>`].
 pub trait Unprotect {
     fn unprotect(&mut self);
 }
 
-/// RAII guard returned by `into_thread_safe()`: a `T` whose JS-backed buffers
-/// have been `protect()`ed. `Drop` calls [`Unprotect::unprotect`] then drops
-/// the inner `T` normally — the Rust spelling of Zig's
-/// `defer args.deinitAndUnprotect()`.
-///
-/// `repr(transparent)` so identity-casts in the const-generic dispatch macros
-/// (see `node_fs.rs`'s `args_as!`) remain bit-exact.
 #[repr(transparent)]
 pub struct ThreadSafe<T: Unprotect>(T);
 
@@ -116,10 +91,6 @@ impl Clone for PathLike {
                 pinned: false,
             }),
             Self::SliceWithUnderlyingString(s) => {
-                // `dupe_ref()` alone leaves `utf8` empty (lib.rs:1603) — a
-                // cloned PathLike would then return b"" from `slice()`. Clone
-                // the utf8 view explicitly (bumps a WTF ref / copies an owned
-                // buffer) alongside the bumped `underlying` ref.
                 Self::SliceWithUnderlyingString(SliceWithUnderlyingString {
                     utf8: s.utf8.clone_ref(),
                     underlying: s.underlying.dupe_ref(),
@@ -184,15 +155,6 @@ impl PathLike {
         }
     }
 
-    /// `PathLike.toThreadSafe()` (types.zig:557) — promote any borrowed-JS
-    /// payload to a thread-safe representation. For `Buffer` the variant is
-    /// kept and the backing JS value is `protect()`ed (paired with
-    /// [`Unprotect::unprotect`]); the discriminant is preserved so callers
-    /// matching on `Buffer` after this call see the same shape as Zig.
-    ///
-    /// Prefer [`Self::into_thread_safe`] which returns a [`ThreadSafe`] guard;
-    /// this in-place form exists for nested calls from container types'
-    /// `to_thread_safe`.
     pub fn to_thread_safe(&mut self) {
         match self {
             Self::SliceWithUnderlyingString(s) => {

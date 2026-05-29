@@ -14,12 +14,6 @@
 
 use super::codecs;
 
-/// Sub-block-aware bit reader. GIF wraps the LZW bitstream in length-
-/// prefixed sub-blocks (≤255 bytes each, terminated by a 0 block), and
-/// codes are LSB-first across byte boundaries — so this pulls one byte at
-/// a time from the sub-block stream into a 32-bit accumulator.
-// PORT NOTE: stack-local helper; `'a` borrows the input byte slice for the
-// duration of the decode call.
 struct Bits<'a> {
     src: &'a [u8],
     /// Index into `src` of the next byte to consume.
@@ -83,11 +77,6 @@ impl<'a> Bits<'a> {
     }
 }
 
-/// One node per dictionary entry. The classic LZW dict is "string = previous
-/// string + one byte"; we store `(prefix, suffix)` and reconstruct each string
-/// by walking `prefix` back to a root code (< clear). 4096 codes is the GIF
-/// hard cap (12-bit codes), so the table is fixed-size — heap-allocated in
-/// `decode_frame` (12 KiB) to keep WorkPool stacks small.
 struct Dict {
     prefix: [u16; 4096],
     suffix: [u8; 4096],
@@ -103,12 +92,6 @@ impl Dict {
         let mut code = code_;
         let mut n: usize = 0;
         while code >= clear {
-            // The chain is bounded ≤4096 because every entry was written with
-            // `prefix[avail] = p` where p < avail at the time (see the
-            // `if (avail < 4096)` block in decode), so following `prefix`
-            // strictly decreases. Hostile streams can't break that — `code >
-            // avail` is rejected before emit() is called. Asserted so a future
-            // edit that loosens the rejection trips loudly.
             debug_assert!(n < 4096);
             scratch[n] = self.suffix[code as usize];
             code = self.prefix[code as usize];
@@ -168,10 +151,6 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
                         trns = Some(bytes[i + 4]);
                     }
                 }
-                // Skip sub-blocks regardless of label. Widen `n` first — a
-                // legal max-size 255-byte sub-block (XMP/ICC application
-                // extensions emit these) would overflow `1 + u8` and either
-                // panic or spin a WorkPool thread forever.
                 while i < bytes.len() {
                     let n: usize = bytes[i] as usize;
                     i += 1 + n;
@@ -279,10 +258,6 @@ fn decode_frame(
             break;
         }
 
-        // Emit the string for `code`. If `code == avail` (the K-ω-K case: the
-        // encoder referenced the entry it's about to create), the string is
-        // prev's expansion + prev's first byte — so we emit prev, then append
-        // its own first byte.
         let first: u8;
         if code < avail {
             let r = dict.emit(code, clear, &mut idx[written..], &mut scratch);
@@ -300,10 +275,6 @@ fn decode_frame(
             return Err(codecs::Error::DecodeFailed); // out-of-range code
         }
 
-        // Add prev+first to the dictionary, then bump code width when the
-        // table fills the current width's range. GIF uses *deferred* clear:
-        // once avail hits 4096 the encoder may keep emitting 12-bit codes
-        // without growing further until it sends a clear.
         if let Some(p) = prev {
             if avail < 4096 {
                 dict.prefix[avail as usize] = p;
@@ -317,20 +288,10 @@ fn decode_frame(
         prev = Some(code);
     }
     bits.drain();
-    // A short or truncated stream (early EOI/eof) leaves `idx[written..]` as
-    // raw mimalloc bytes. Those would be mapped through an attacker-controlled
-    // palette into the output — a heap-memory disclosure. Filling with the
-    // transparent index (or 0) makes the unfilled region transparent/background
-    // instead, which is what browsers do for short frames.
     if written < npix {
         idx[written..].fill(trns.unwrap_or(0));
     }
 
-    // ── interlace reorder ──────────────────────────────────────────────────
-    // GIF interlacing writes rows in 4 passes (every 8th from 0, every 8th
-    // from 4, every 4th from 2, every 2nd from 1). The decoded `idx` is in
-    // pass order; remap to scan order while expanding so we don't allocate a
-    // second index buffer.
     let mut out = vec![0u8; npix * 4].into_boxed_slice();
 
     let mut pal: [[u8; 4]; 256] = [[0, 0, 0, 255]; 256];

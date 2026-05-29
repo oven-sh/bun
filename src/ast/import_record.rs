@@ -24,18 +24,8 @@ pub struct ImportRecord {
 
     pub source_index: Index,
 
-    /// `js_printer::printBundledImport` reads this. The Zig field was removed
-    /// from `ImportRecord` but the printer body referencing it is dead (never
-    /// analysed by Zig's lazy compilation). Kept here so the eagerly-compiled
-    /// Rust port of that body type-checks; always 0 in practice.
-    // TODO(port): delete once `printBundledImport` is confirmed dead and removed.
     pub module_id: u32,
 
-    /// The original import specifier as written in source code (e.g., "./foo.js").
-    /// This is preserved before resolution overwrites `path` with the resolved path.
-    /// Used for metafile generation.
-    // TODO(port): lifetime — Zig `[]const u8` defaulting to "", never freed in this file.
-    // Likely a borrow into parser-owned source text; using &'static [u8] as a placeholder.
     pub original_path: &'static [u8],
 
     /// Pack all boolean flags into 2 bytes to reduce padding overhead.
@@ -46,16 +36,6 @@ pub struct ImportRecord {
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
     pub struct Flags: u16 {
-        /// True for the following cases:
-        ///
-        ///   try { require('x') } catch { handle }
-        ///   try { await import('x') } catch { handle }
-        ///   try { require.resolve('x') } catch { handle }
-        ///   import('x').catch(handle)
-        ///   import('x').then(_, handle)
-        ///
-        /// In these cases we shouldn't generate an error if the path could not be
-        /// resolved.
         const HANDLES_IMPORT_ERRORS = 1 << 0;
 
         const IS_INTERNAL = 1 << 1;
@@ -95,10 +75,6 @@ bitflags::bitflags! {
         /// If true, this import can be removed if it's unused
         const IS_EXTERNAL_WITHOUT_SIDE_EFFECTS = 1 << 11;
 
-        /// Tell the printer to print the record as "foo:my-path" instead of "path"
-        /// where "foo" is the namespace
-        ///
-        /// Used to prevent running resolve plugins multiple times for the same path
         const PRINT_NAMESPACE_IN_PATH = 1 << 12;
 
         const WRAP_WITH_TO_ESM = 1 << 13;

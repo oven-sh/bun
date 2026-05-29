@@ -211,26 +211,6 @@ pub(crate) static PURE_GLOBAL_IDENTIFIER_MAP: phf::Map<&'static [u8], PureGlobal
     b"SVGUseElement" => PureGlobalIdentifierValue::Other,
     b"SVGViewElement" => PureGlobalIdentifierValue::Other,
 
-    // Other browser APIs
-    //
-    // This list contains all globals present in modern versions of Chrome, Safari,
-    // and Firefox except for the following properties, since they have a side effect
-    // of triggering layout (https://gist.github.com/paulirish/5d52fb081b3570c81e3a):
-    //
-    //   - scrollX
-    //   - scrollY
-    //   - innerWidth
-    //   - innerHeight
-    //   - pageXOffset
-    //   - pageYOffset
-    //
-    // The following globals have also been removed since they sometimes throw an
-    // exception when accessed, which is a side effect (for more information see
-    // https://stackoverflow.com/a/33047477):
-    //
-    //   - localStorage
-    //   - sessionStorage
-    //
     b"AnalyserNode" => PureGlobalIdentifierValue::Other,
     b"Animation" => PureGlobalIdentifierValue::Other,
     b"AnimationEffect" => PureGlobalIdentifierValue::Other,

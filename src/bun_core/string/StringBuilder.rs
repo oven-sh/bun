@@ -5,14 +5,6 @@ use core::slice;
 use crate::string::{String as BunString, StringPointer, ZStr};
 use bun_simdutf_sys::simdutf;
 
-/// Two-phase string builder: callers first `count()` every slice they will
-/// append, then `allocate()` once, then `append()` each slice. Returned slices
-/// point into the single backing buffer.
-///
-// TODO(port): the `append*` methods return `&[u8]` borrowing `self.ptr` while
-// also taking `&mut self`. Zig hands out aliasing slices freely; in Rust this
-// needs either an explicit `'a` on the builder, interior mutability (`Cell<usize>`
-// for len), or callers must use `StringPointer` offsets instead.
 #[derive(Default)]
 pub struct StringBuilder {
     pub len: usize,
@@ -48,10 +40,6 @@ impl StringBuilder {
     }
 
     pub fn count16_z(&mut self, slice: &[u16]) {
-        // PORT NOTE: WStr has no len method on its DST slice yet; callers pass &[u16].
-        // Zig's `elementLengthUTF16IntoUTF8` is the same simdutf length call when input
-        // is valid; for WTF-16 with lone surrogates the slow path overestimates by 0-1
-        // bytes which is fine for a capacity reservation.
         self.cap += simdutf::length::utf8::from::utf16::le(slice) + 1;
     }
 
@@ -77,12 +65,6 @@ impl StringBuilder {
             // SAFETY: buf_ptr[count] == 0 written above.
             Some(unsafe { ZStr::from_raw_mut(buf_ptr, count) })
         } else {
-            // Fallback: WTF-16 → WTF-8 via the slow path that handles lone surrogates.
-            // Zig allocated from `fallback_allocator` and handed ownership to the
-            // caller; the Rust signature returns a borrow into `self`, so we copy
-            // the WTF-8 bytes into the builder's reserved buffer (count16_z reserved
-            // enough — simdutf's length estimate is an upper bound for WTF-16) and
-            // drop the temporary Vec normally. No `mem::forget`.
             let out = crate::string::strings::to_utf8_alloc(slice);
             let len = out.len();
             let avail = self.cap - self.len;
@@ -306,17 +288,7 @@ impl StringBuilder {
         unsafe { slice::from_raw_parts_mut(ptr.as_ptr().add(self.len), self.cap - self.len) }
     }
 
-    /// Transfer ownership of the underlying memory to a slice.
-    ///
-    /// After calling this, you are responsible for freeing the underlying memory.
-    /// This StringBuilder should not be used after calling this function.
     pub fn move_to_slice(&mut self) -> Box<[u8]> {
-        // TODO(port): Zig wrote into `*[]u8` out-param and reset self. Here we
-        // reconstruct the Box (allocated in init_capacity/allocate) and hand it back.
-        //
-        // `take()` first: `*self = Self::default()` drops the old value, and
-        // `Drop` frees the buffer when `ptr` is still `Some` — leaving it set
-        // here would free the allocation we're about to hand back.
         let Some(ptr) = self.ptr.take() else {
             *self = Self::default();
             return Box::default();

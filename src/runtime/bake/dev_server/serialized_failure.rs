@@ -12,12 +12,6 @@ use super::incremental_graph::{ClientFileIndex, ServerFileIndex};
 use super::route_bundle;
 use crate::bake::Side;
 
-/// `SerializedFailure.Owner` — `packed struct(u32)` (1-bit side + 31-bit idx).
-///
-/// Distinct from `Packed` (2-bit kind + 30-bit data) below: this encoding only
-/// covers `Client`/`Server` owners and is used as the `bundling_failures` map
-/// key (Zig hashed via `ArrayHashContextViaOwner`; the port keys the map by
-/// this newtype directly).
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
 pub struct OwnerPacked(pub u32);
@@ -119,12 +113,6 @@ impl Packed {
 // Zig: comptime { assert(@as(u32, @bitCast(Packed{ .kind = .none, .data = 1 })) == 1); }
 const _: () = assert!(Packed::new(PackedKind::None, 1).bits() == 1);
 
-/// Stored in `dev.bundling_failures` keyed by its `OwnerPacked`.
-///
-/// PERF(port): Zig's `SerializedFailure` is a slice header (`data: []u8`) and
-/// gets shallow-copied between `bundling_failures` and the `failures_added`/
-/// `failures_removed` lists. The Rust port owns `data` as `Box<[u8]>`, so
-/// `Clone` deep-copies — profile if this shows up on a hot path.
 #[derive(Clone, Default)]
 pub struct SerializedFailure {
     /// Wire-format bytes (length-prefixed; first 4 bytes encode `Owner.Packed`).
@@ -280,21 +268,3 @@ fn write_string32(data: &[u8], w: &mut Writer) {
     _ = w.write_int_le::<u32>(u32::try_from(data.len()).expect("int cast"));
     w.extend_from_slice(data);
 }
-
-// fn writeJsValue(value: JSValue, global: *jsc.JSGlobalObject, w: *Writer) !void {
-//     if (value.isAggregateError(global)) {
-//         //
-//     }
-//     if (value.jsType() == .DOMWrapper) {
-//         if (value.as(bun.api.BuildMessage)) |build_error| {
-//             _ = build_error; // autofix
-//             //
-//         } else if (value.as(bun.api.ResolveMessage)) |resolve_error| {
-//             _ = resolve_error; // autofix
-//             @panic("TODO");
-//         }
-//     }
-//     _ = w; // autofix
-//
-//     @panic("TODO");
-// }

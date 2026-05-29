@@ -38,11 +38,6 @@ pub use xxhash::{XxHash3, XxHash32, XxHash64, XxHash64Streaming};
 
 #[cfg(test)]
 pub(crate) mod verify {
-    //! SMHasher verification routine — mirrors `vendor/zig/lib/std/hash/verify.zig`.
-    //!
-    //! Fill `buf[i] = i`; hash each prefix with `seed = 256 - i`; concat the
-    //! little-endian bytes; hash the concat with `seed = 0`; truncate to u32.
-
     pub(crate) fn smhasher_32(hash: impl Fn(&[u8], u32) -> u32) -> u32 {
         let mut buf = [0u8; 256];
         let mut buf_all = [0u8; 256 * 4];

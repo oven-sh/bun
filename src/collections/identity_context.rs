@@ -63,10 +63,6 @@ impl ArrayIdentityContextU64 {
 // so expose as a free path alias instead. Callers: `identity_context::U64`.
 pub type U64 = ArrayIdentityContextU64;
 
-// ArrayHashMap requires `C: ArrayHashContext<K>`, so wire the inherent impls
-// above into the trait. Kept as separate inherent + trait impls so direct
-// `ArrayIdentityContext::hash(...)` calls (which predate the trait) still
-// resolve without ambiguity.
 impl crate::array_hash_map::ArrayHashContext<u32> for ArrayIdentityContext {
     #[inline]
     fn hash(&self, key: &u32) -> u32 {

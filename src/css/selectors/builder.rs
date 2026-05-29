@@ -26,22 +26,7 @@ use crate::selector::parser::{
     SpecificityAndFlags, compute_specificity,
 };
 
-/// Top-level SelectorBuilder struct. This should be stack-allocated by the
-/// consumer and never moved (because it contains a lot of inline data that
-/// would be slow to memmov).
-///
-/// After instantiation, callers may call the push_simple_selector() and
-/// push_combinator() methods to append selector data as it is encountered
-/// (from left to right). Once the process is complete, callers should invoke
-/// build(), which transforms the contents of the SelectorBuilder into a heap-
-/// allocated Selector and leaves the builder in a drained state.
 pub struct SelectorBuilder<Impl: ValidSelectorImpl> {
-    /// The entire sequence of simple selectors, from left to right, without combinators.
-    ///
-    /// We make this large because the result of parsing a selector is fed into a new
-    /// Arc-ed allocation, so any spilled vec would be a wasted allocation. Also,
-    /// Components are large enough that we don't have much cache locality benefit
-    /// from reserving stack space for fewer of them.
     simple_selectors: SmallList<GenericComponent<Impl>, 32>,
 
     /// The combinators, and the length of the compound selector to their left.
@@ -129,24 +114,9 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
         if parsed_part {
             flags |= SelectorFlags::HAS_PART;
         }
-        // `build_with_specificity_and_flags()` will
-        // PORT NOTE: Zig had `defer this.deinit()` here to free SmallList capacity
-        // after building. In Rust, `Drop` on `SelectorBuilder` handles this when the
-        // builder goes out of scope; the call below already drains the contents.
         self.build_with_specificity_and_flags(SpecificityAndFlags { specificity, flags })
     }
 
-    /// Builds a selector with the given specificity and flags.
-    ///
-    /// PERF:
-    ///     Recall that this code is ported from servo, which optimizes for matching speed, so
-    ///     the final AST has the components of the selector stored in reverse order, which is
-    ///     optimized for matching.
-    ///
-    ///     We don't really care about matching selectors, and storing the components in reverse
-    ///     order requires additional allocations, and undoing the reversal when serializing the
-    ///     selector. So we could just change this code to store the components in the same order
-    ///     as the source.
     pub(crate) fn build_with_specificity_and_flags(
         &mut self,
         spec: SpecificityAndFlags,
@@ -201,13 +171,6 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
             }
         }
 
-        // This function should take every component from `self.simple_selectors`
-        // and place it into `components` and return it.
-        //
-        // This means that we shouldn't leak any `GenericComponent<Impl>`, so
-        // it is safe to just set the length to 0.
-        //
-        // Combinators don't need to be deinitialized because they are simple enums.
         self.simple_selectors.set_len(0);
         self.combinators.set_len(0);
 

@@ -9,12 +9,6 @@ use bun_http::Headers;
 use bun_http::headers::{EntryList, api};
 use bun_jsc::{CallFrame, FetchHeaders, HTTPHeaderName, JSGlobalObject, JSValue, JsResult};
 
-/// Port of `Headers.from` (Headers.zig). Moved up from `bun_http` so it can
-/// name `FetchHeaders` directly instead of dispatching through a vtable.
-///
-/// `body_content_type` is `Some(ct)` only when the body has a *user-set*
-/// content-type (callers gate on `has_content_type_from_user()` before passing
-/// `content_type()`); `None` means no body or no user-set content-type.
 pub fn from_fetch_headers(
     fetch_headers: Option<&FetchHeaders>,
     body_content_type: Option<&[u8]>,
@@ -62,10 +56,6 @@ pub fn from_fetch_headers(
     headers.buf.reserve_exact(buf_len as usize);
     // SAFETY: capacity reserved above; bytes are fully initialized by copyTo / the copy below.
     unsafe { headers.buf.set_len(buf_len as usize) };
-    // PORT NOTE: reshaped for borrowck — Zig took two column slices off one `sliced` view.
-    // The Rust `Slice::items` returns `&mut [F]` from `&self`; the two columns are
-    // disjoint allocations so simultaneous access is sound, but borrowck can't see
-    // that. Take raw column pointers up front and slice in scoped blocks.
     let sliced = headers.entries.slice();
     // SAFETY: `Name`/`Value` columns are both `StringPointer`; `Slice::items_raw`
     // contract is satisfied. Disjoint backing memory ⇒ no aliasing.
@@ -105,13 +95,6 @@ pub fn from_fetch_headers(
     headers
 }
 
-/// Build a `WebCore::FetchHeaders` from `bun.http.Headers` storage.
-///
-/// PORT NOTE: `FetchHeaders` (opaque C++ handle) was moved into `bun_jsc`, so
-/// the prior dep-cycle on `bun_runtime` no longer applies. The C++ side
-/// receives raw `StringPointer` column pointers; `bun_http_types` and
-/// `bun_string` both re-export the canonical `bun_core::StringPointer`, so no
-/// layout cast is needed.
 pub fn to_fetch_headers(
     this: &Headers,
     global: &JSGlobalObject,
@@ -167,11 +150,6 @@ impl H2TestingAPIs {
 pub(crate) struct H3TestingAPIs;
 
 impl H3TestingAPIs {
-    /// Named distinctly from H2's `live_counts` because generate-js2native.ts
-    /// mangles `[^A-Za-z]` to `_`, so `H2Client.zig` and `H3Client.zig` produce
-    /// the same path prefix and the function name has to differ.
-    // TODO(port): once a `#[bun_jsc::host_fn]` proc-macro lands, annotate this so the
-    // extern "C" thunk is emitted (currently no proc-macro crate exists).
     pub(crate) fn quic_live_counts(
         global: &JSGlobalObject,
         _frame: &CallFrame,

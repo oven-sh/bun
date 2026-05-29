@@ -19,11 +19,6 @@ use crate::extract_tarball;
 use crate::npm::{self as npm, PackageManifest};
 use crate::{ExtractTarball, PackageManager, PatchTask, TarballStream, Task};
 
-// Adapter so `StringOrTinyString::init_append_if_needed` can intern overflow
-// names into the resolver's filename arena (Zig: `*FileSystem.FilenameStore`,
-// fs.zig:77). The bun_sys-level `FilenameStore` exposes `append` /
-// `append_lower_case` but doesn't itself implement `strings::Appender` (that
-// impl lives in `bun_resolver`, which this crate can't reach without a cycle).
 pub struct FilenameStoreAppender<'a>(pub &'a FilenameStore);
 impl strings::Appender for FilenameStoreAppender<'_> {
     fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
@@ -43,23 +38,6 @@ pub(crate) fn filename_store_appender() -> FilenameStoreAppender<'static> {
 }
 
 pub struct NetworkTask {
-    // Self-referential: borrows `url_buf` / leaked header content owned by
-    // sibling fields, so the lifetime is erased to `'static`.
-    //
-    // PORT NOTE: `MaybeUninit` because the slot comes from `HiveArrayFallback`
-    // as *uninitialized* memory (often zero-page on first mmap, but not
-    // guaranteed — `get()`'s heap fallback is `Box::new_uninit()`) and is
-    // overwritten by plain `=` in `for_manifest`/`for_tarball`. Zig has no
-    // destructors so the `= undefined` field was simply overwritten;
-    // `MaybeUninit<T>` is the spec-correct mapping for that semantic — unlike
-    // `ManuallyDrop<T>`, it suppresses `T`'s validity invariant, so
-    // materializing `&mut NetworkTask` after `write_init` (which leaves this
-    // field bitwise-untouched) is sound even though `AsyncHTTP` contains
-    // niche-bearing fields (`Decompressor` enum, `Option<NonNull>`). The
-    // HTTP-thread bitwise copy in `notify`
-    // (`ptr::write(real, ptr::read(async_http))`) targets the inner `AsyncHTTP`
-    // directly via `*mut AsyncHTTP`, which is sound because `MaybeUninit<T>`
-    // is `#[repr(transparent)]`.
     pub unsafe_http_client: MaybeUninit<AsyncHTTP<'static>>,
     pub response: HTTPClientResult<'static>,
     pub task_id: crate::package_manager_task::Id,
@@ -85,19 +63,7 @@ pub struct NetworkTask {
     /// to a worker running libarchive. `None` when streaming extraction is
     /// disabled or this task is not a tarball download.
     pub tarball_stream: Option<Box<TarballStream>>,
-    /// Extract `Task` pre-created on the main thread so the HTTP thread can
-    /// schedule it on the worker pool as soon as the first body chunk arrives.
-    // PORT NOTE: `'static` matches `PreallocatedTaskStore =
-    // HiveArrayFallback<Task<'static>, 64>` which this slot is borrowed from
-    // and returned to (`discard_unused_streaming_state`).
     pub streaming_extract_task: *mut Task<'static>,
-    /// Set by the HTTP thread the first time it commits this request to
-    /// the streaming path. Once true, `notify` never pushes this task to
-    /// `async_network_task_queue` — the extract Task published by
-    /// `TarballStream.finish()` owns the NetworkTask's lifetime instead
-    /// (its `resolve_tasks` handler returns it to the pool). Also read by
-    /// the main-thread fallback / retry paths in `runTasks.zig` to assert
-    /// the stream was never started.
     pub streaming_committed: bool,
     /// Backing store for the streaming signal the HTTP client polls.
     pub signal_store: http::signals::Store,
@@ -133,18 +99,9 @@ pub enum Callback {
 pub struct DedupeMapEntry {
     pub is_required: bool,
 }
-// Zig: `std.HashMap(Task.Id, DedupeMapEntry, IdentityContext(Task.Id), 80)`
-// TODO(port): IdentityContext (hash = value bits) + 80% load factor — verify
-// `bun_collections::HashMap` exposes an identity hasher, or newtype `task::Id`
-// with a pass-through `Hash` impl.
 pub(crate) type DedupeMap = HashMap<crate::package_manager_task::Id, DedupeMapEntry>;
 
 impl NetworkTask {
-    /// Access the HTTP client after `for_manifest`/`for_tarball` (or `notify`'s
-    /// bitwise copy) has initialized it. All callers in this module and
-    /// `runTasks` are post-init by construction; the field is `MaybeUninit`
-    /// only to keep `&mut NetworkTask` sound between `write_init` and the
-    /// `for_*` overwrite.
     #[inline]
     pub fn http(&self) -> &AsyncHTTP<'static> {
         // SAFETY: every caller is reached only after `unsafe_http_client` was
@@ -193,12 +150,6 @@ impl NetworkTask {
         // passes to every completion callback; live for this call.
         let async_http = unsafe { &mut *async_http };
         if let Some(stream) = this.tarball_stream.as_deref_mut() {
-            // Runs on the HTTP thread. With response-body streaming enabled,
-            // `notify` is called once per body chunk (has_more=true) and once
-            // more at the end (has_more=false). `result.body` is our own
-            // `response_buffer`; the HTTP client reuses it for the next
-            // chunk, so we must consume + reset it before returning.
-
             // `metadata` is only populated on the first callback that
             // carries response headers. Cache the status code so both the
             // main thread and later chunk callbacks can see it.
@@ -209,11 +160,6 @@ impl NetworkTask {
 
             let chunk = this.response_buffer.list.as_slice();
 
-            // Only commit to streaming extraction once we've seen a 2xx
-            // status *and* the tarball is large enough to be worth the
-            // overhead. For small bodies, or any 4xx/5xx / transport error,
-            // fall back to the buffered path so the existing retry and
-            // error-reporting code in runTasks.zig keeps working.
             let ok_status = stream.status_code >= 200 && stream.status_code <= 299;
             let big_enough = match result.body_size {
                 http::BodySize::ContentLength(len) => len >= TarballStream::min_size(),
@@ -226,16 +172,6 @@ impl NetworkTask {
             if committed || (ok_status && big_enough && result.fail.is_none()) {
                 if result.has_more {
                     if !chunk.is_empty() {
-                        // The drain task is scheduled by `onChunk`
-                        // (guarded by its own `draining` atomic) so it
-                        // runs at most once at a time, releases the
-                        // worker on ARCHIVE_RETRY, and is re-enqueued by
-                        // the next chunk. Pending-task accounting stays
-                        // balanced: this NetworkTask is never pushed to
-                        // `async_network_task_queue` once committed, so
-                        // its `incrementPendingTasks()` is satisfied by
-                        // the extract Task that `TarballStream.finish()`
-                        // publishes to `resolve_tasks`.
                         this.streaming_committed = true;
                         // SAFETY: `stream` is the live heap-allocated
                         // `TarballStream` owned by this task. `on_chunk`
@@ -251,49 +187,18 @@ impl NetworkTask {
                     return;
                 }
 
-                // Final callback. If we've already started streaming, hand
-                // over the last bytes and close; the drain task will run
-                // once more, finish up and push to `resolve_tasks`. If not
-                // (whole body arrived in one go, or too small), leave
-                // `response_buffer` intact so the buffered extractor
-                // handles it.
                 if committed {
                     // SAFETY: see the `on_chunk` call above — `stream` is
                     // live and `on_chunk` takes `*mut Self` to match Zig's
                     // freely-aliasing `*TarballStream` contract.
                     unsafe { TarballStream::on_chunk(stream, chunk, true, result.fail) };
-                    // Do NOT touch `this` — or anything it owns — after
-                    // this point: `on_chunk(…, true, …)` sets `closed` and
-                    // schedules a drain that may reach `finish()` on a
-                    // worker thread before we return here. `finish()`
-                    // frees `response_buffer`, publishes the extract Task
-                    // to `resolve_tasks`, and the main thread's processing
-                    // of that Task returns this NetworkTask to
-                    // `preallocated_network_tasks` (poisoning it under
-                    // ASAN). The NetworkTask is therefore *not* pushed to
-                    // `async_network_task_queue` here; the extract Task
-                    // owns its lifetime from now on.
                     return;
                 }
             } else if result.has_more {
-                // Non-2xx response (or too small to stream) still
-                // delivering its body: accumulate in `response_buffer`
-                // (we did *not* reset above) so the main thread can
-                // inspect it. Do not enqueue until the stream ends.
                 return;
             }
-            // Fall through to the normal completion path for anything that
-            // did not commit: the buffered extractor / retry logic in
-            // runTasks.zig handles it exactly as it would without
-            // streaming support.
         }
 
-        // BACKREF — PackageManager owns this task and outlives it. `notify`
-        // runs on the HTTP thread, so we never materialize a `&mut
-        // PackageManager` here (the main thread may hold one concurrently);
-        // field access goes through `addr_of!` and the cross-thread
-        // `wake_raw` path, mirroring `TarballStream::finish` /
-        // `isolated_install::Installer::Task::callback`.
         let pm = this.package_manager.as_mut_ptr();
         // Zig: `defer this.package_manager.wake();` — moved to end of fn (no
         // early returns past this point).
@@ -348,10 +253,6 @@ const DEFAULT_HEADERS_BUF: &str = concat!(
 const EXTENDED_HEADERS_BUF: &str = concat!("Accept", "application/json, */*");
 
 fn append_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) {
-    // PORT NOTE: Zig `appendFmt("Authorization", "Bearer {s}", .{scope.token})`
-    // writes raw bytes; routing through `format_args!`/`BStr` Display would be
-    // lossy for non-UTF-8 tokens (U+FFFD expands 1→3 bytes) and overrun the
-    // exact byte count reserved by `count_auth`. Use raw-byte append.
     if !scope.token.is_empty() {
         header_builder.append_bytes_value("Authorization", b"Bearer ", &scope.token);
     } else if !scope.auth.is_empty() {
@@ -417,11 +318,6 @@ impl NetworkTask {
         let log = pm.log_mut();
 
         self.url_buf = 'blk: {
-            // Not all registries support scoped package names when fetching the manifest.
-            // registry.npmjs.org supports both "@storybook%2Faddons" and "@storybook/addons"
-            // Other registries like AWS codeartifact only support the former.
-            // "npm" CLI requests the manifest with the encoded name.
-            // PERF(port): was ArenaAllocator + stackFallback(512) — profile in Phase B
             let encoded_name_storage;
             let encoded_name: &[u8] = if strings::index_of_char(name, b'/').is_some() {
                 encoded_name_storage = name.replace(b"/", b"%2f");
@@ -623,16 +519,8 @@ impl NetworkTask {
         // HTTP client below (`ManuallyDrop`), so it genuinely outlives this frame.
         let headers_buf: &'static [u8] =
             unsafe { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
-        // PORT NOTE: Zig has no destructors — `header_builder.content` is
-        // intentionally leaked (ownership transfers to the HTTP client).
-        // Forget it so `StringBuilder::drop` doesn't free the buffer that
-        // `headers_buf` / `last_modified` now alias.
         let _ = ManuallyDrop::new(core::mem::take(&mut header_builder.content));
         let completion_callback = self.get_completion_callback();
-        // TODO(port): narrow error set
-        // PORT NOTE: MaybeUninit overwrite — see field doc; old slot value is
-        // either uninitialized (fresh hive slot) or a stale bitwise copy from
-        // `notify`, neither of which is safe/meaningful to drop.
         self.unsafe_http_client = MaybeUninit::new(AsyncHTTP::init(
             http::Method::GET,
             url,
@@ -773,22 +661,6 @@ impl NetworkTask {
             return Err(ForTarballError::InvalidURL);
         }
 
-        // Only attach the registry `Authorization` header when the tarball URL
-        // origin matches the configured registry scope origin. The npm manifest
-        // is registry-controlled, so a malicious registry could otherwise point
-        // the tarball at an attacker-controlled host and receive the scope
-        // credentials. The empty-`tarball_url` branch builds the URL from
-        // `scope.url.href()`, so its origin matches and authorized downloads
-        // keep working.
-        //
-        // Compare (protocol, hostname, effective port) rather than the raw
-        // `URL.origin` slice — `origin` is a borrowed prefix of the input
-        // string and is not normalized for default ports, so a tarball URL of
-        // `https://host:443/...` would not byte-match a `.npmrc` registry of
-        // `https://host/...` even though they are the same origin. Some
-        // registries emit `dist.tarball` URLs with the default port spelled
-        // out; without normalization those installs lose the `Authorization`
-        // header and fail with 401.
         let send_auth = matches!(authorization, Authorization::AllowAuthorization) && {
             let tarball = URL::parse(&self.url_buf);
             let registry = scope.url.url();
@@ -818,10 +690,6 @@ impl NetworkTask {
             header_buf =
                 unsafe { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
         }
-        // PORT NOTE: Zig has no destructors — `header_builder.content` is
-        // intentionally leaked (ownership transfers to the HTTP client).
-        // Forget it so `StringBuilder::drop` doesn't free the buffer that
-        // `header_buf` now aliases.
         let _ = ManuallyDrop::new(core::mem::take(&mut header_builder.content));
 
         // SAFETY: lifetime extension — `url_buf` is a heap allocation owned by
@@ -837,23 +705,6 @@ impl NetworkTask {
         };
 
         if extract_tarball::uses_streaming_extraction() {
-            // Tell the HTTP client to invoke `notify` for every body chunk
-            // instead of buffering the whole response. `notify` pushes each
-            // chunk into `tarball_stream`, which schedules a drain task on
-            // `thread_pool`; the drain task calls into libarchive until it
-            // reports ARCHIVE_RETRY (out of input), then returns so the
-            // worker can be reused for other install work. The next chunk
-            // reschedules it and libarchive — whose state lives on the heap
-            // — resumes exactly where it stopped.
-            //
-            // The stream itself is created by the caller (see
-            // `generateNetworkTaskForTarball`) because it needs the
-            // pre-allocated `Task` that carries the final result.
-            //
-            // Only wire up the one signal we need; `Signals.Store.to()`
-            // would also publish `aborted`/`cert_errors`/etc., which makes
-            // the HTTP client allocate an abort-tracker id and changes
-            // keep-alive behaviour we don't want here.
             self.signal_store = http::signals::Store::default();
             self.signal_store
                 .response_body_streaming

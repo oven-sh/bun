@@ -5,12 +5,6 @@ use bun_js_parser::lexer as js_lexer;
 use bun_parsers::json_parser;
 use enumset::{EnumSet, EnumSetType};
 
-// D042: `options::jsx::{Pragma, Runtime, ImportSource, RUNTIME_MAP, ...}` is
-// the canonical `bun_options_types::jsx` module. The previous local `Pragma`
-// (with `Vec` factory/fragment + empty defaults) diverged from spec — Zig
-// `JSX.Pragma{}` defaults to `["React","createElement"]`/`["React","Fragment"]`.
-// Unification corrects that; `merge_jsx` already uses `JsxFieldSet` (not
-// emptiness) to track was-set, so behavior is preserved.
 pub mod options {
     pub use bun_options_types::jsx;
 }
@@ -23,21 +17,6 @@ pub enum JsonMode {
     Jsonc,
 }
 
-/// Port of `cache::Json` (cache.zig:283). Moved down from `bun_bundler::cache`
-/// so the resolver names it directly — `bun_parsers::json_parser` is
-/// lower-tier than the resolver, so no cycle exists.
-///
-/// Zig's `Json` is stateless and threads `bun.default_allocator` through every
-/// call; the Rust `json_parser` arena-allocates into a `&bun_alloc::Arena`, so
-/// this struct owns one. The arena is **never reset** — package.json/tsconfig
-/// ASTs are cached process-long ("DirInfo cache is reused globally / so we
-/// cannot free these", package_json.zig).
-///
-/// The arena is lazy-initialized on first `parse()`. `Resolver::for_worker`
-/// creates one `CacheSet` (and thus one `JsonCache`) per bundler worker thread,
-/// but those workers share the global `DirInfo` cache and almost never call
-/// `parse_*` themselves — eagerly constructing `Arena::new()` here costs one
-/// `mi_heap_new` per worker (≈11 empty heaps on a typical build/elysia run).
 pub struct JsonCache {
     bump: Option<bun_alloc::Arena>,
 }
@@ -119,10 +98,6 @@ impl JsonCache {
     }
 }
 
-// Heuristic: you probably don't have 100 of these
-// Probably like 5-10
-// Array iteration is faster and deterministically ordered in that case.
-// TODO(port): bun.StringArrayHashMap — confirm bun_collections key/value ownership for byte-slice keys
 pub(crate) type PathsMap = ArrayHashMap<Box<[u8]>, Vec<Box<[u8]>>>;
 
 // Zig: `fn FlagSet(comptime Type: type) type { return std.EnumSet(std.meta.FieldEnum(Type)); }`
@@ -146,20 +121,9 @@ pub struct TSConfigJSON {
     /// The absolute path of "compilerOptions.baseUrl"
     pub base_url: Box<[u8]>,
 
-    /// This is used if "Paths" is non-nil. It's equal to "BaseURL" except if
-    /// "BaseURL" is missing, in which case it is as if "BaseURL" was ".". This
-    /// is to implement the "paths without baseUrl" feature from TypeScript 4.1.
-    /// More info: https://github.com/microsoft/TypeScript/issues/31869
     pub base_url_for_paths: Box<[u8]>,
 
     pub extends: Box<[u8]>,
-    /// The verbatim values of "compilerOptions.paths". The keys are patterns to
-    /// match and the values are arrays of fallback paths to search. Each key and
-    /// each fallback path can optionally have a single "*" wildcard character.
-    /// If both the key and the value have a wildcard, the substring matched by
-    /// the wildcard is substituted into the fallback path. The keys represent
-    /// module-style path names and the fallback paths are relative to the
-    /// "baseUrl" value in the "tsconfig.json" file.
     pub paths: PathsMap,
 
     pub jsx: options::jsx::Pragma,
@@ -261,18 +225,6 @@ impl TSConfigJSON {
         out
     }
 
-    /// Support ${configDir}, but avoid allocating when possible.
-    ///
-    /// https://github.com/microsoft/TypeScript/issues/57485
-    ///
-    /// https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-5.html#the-configdir-template-variable-for-configuration-files
-    ///
-    /// https://github.com/oven-sh/bun/issues/11752
-    ///
-    // Note that the way tsc does this is slightly different. They replace
-    // "${configDir}" with "./" and then convert it to an absolute path sometimes.
-    // We convert it to an absolute path during module resolution, so we shouldn't need to do that here.
-    // https://github.com/microsoft/TypeScript/blob/ef802b1e4ddaf8d6e61d6005614dd796520448f8/src/compiler/commandLineParser.ts#L3243-L3245
     fn str_replacing_templates(
         input: Box<[u8]>,
         source: &bun_ast::Source,
@@ -317,24 +269,11 @@ impl TSConfigJSON {
         Ok(Box::from(&written[..len]))
     }
 
-    // PORT NOTE: Zig `Expr.asString(allocator)` allocates and never frees (the
-    // resolver owns the JSON AST for its lifetime). The live Rust `Expr` query
-    // API exposes `as_utf8_string_literal() -> Option<&[u8]>` instead — the
-    // tsconfig parser forces UTF-8 (cache.zig:313 `force_utf8=true`), so every
-    // `EString` is already a flat UTF-8 slice and we can copy at the boundary.
     pub fn parse(
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         json_cache: &mut JsonCache,
     ) -> Result<Option<Box<TSConfigJSON>>, bun_core::Error> {
-        // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
-        // format that appears to be defined by the implementation details of the
-        // TypeScript compiler.
-        //
-        // Attempt to parse it anyway by modifying the JSON parser, but just for
-        // these particular files. This is likely not a completely accurate
-        // emulation of what the TypeScript compiler does (e.g. string escape
-        // behavior may also be different).
         let json: bun_ast::Expr = match json_cache.parse_tsconfig(log, source).ok().flatten() {
             Some(e) => e,
             None => return Ok(None),
@@ -347,18 +286,6 @@ impl TSConfigJSON {
             paths: PathsMap::default(),
             ..Default::default()
         };
-        // errdefer allocator.free(result.paths) — handled by Drop on `result`.
-        //
-        // PERF(port): Zig (and the first Rust port) re-scans each JSON object's
-        // property vector once per field — `expr.asProperty(...)` is an O(n)
-        // linear scan, and there are ~11 of them on `compilerOptions` plus 2 on
-        // the top-level object, so a typical tsconfig walks `compilerOptions`
-        // ~11×. Instead, do a single pass over each object's property list,
-        // recording the *first* occurrence of each key we care about (matching
-        // `asProperty`'s "first match wins" semantics via the `Option::is_none`
-        // guards), then handle them below in the original fixed order so any
-        // inter-field ordering (`baseUrl` before `paths`, `jsx` before
-        // `jsxImportSource`) is preserved.
         let mut extends_value: Option<bun_ast::Expr> = None;
         let mut compiler_opts: Option<bun_ast::Expr> = None;
         if let bun_ast::ExprData::EObject(obj) = &json.data {
@@ -495,11 +422,6 @@ impl TSConfigJSON {
             // https://www.typescriptlang.org/docs/handbook/jsx.html#basic-usages
             if let Some(jsx_prop) = jsx_v {
                 if let Some(str) = jsx_prop.as_utf8_string_literal() {
-                    // PERF(port): Zig allocs `vec![0u8; str.len()]` to lowercase
-                    // before the map lookup. `RUNTIME_MAP`'s keys are all
-                    // lowercase ASCII and the longest (`b"react-jsxdev"`) is 12
-                    // bytes, so a longer value can't match — lowercase into a
-                    // fixed stack buffer (returns `None` when it can't fit).
                     if let Some((str_lower, len)) = strings::ascii_lowercase_buf::<12>(str) {
                         // - We don't support "preserve" yet
                         if let Some(runtime) = options::jsx::RUNTIME_MAP.get(&str_lower[..len]) {
@@ -617,27 +539,6 @@ impl TSConfigJSON {
                             continue;
                         };
 
-                        // The "paths" field is an object which maps a pattern to an
-                        // array of remapping patterns to try, in priority order. See
-                        // the documentation for examples of how this is used:
-                        // https://www.typescriptlang.org/docs/handbook/module-resolution.html#path-mapping.
-                        //
-                        // One particular example:
-                        //
-                        //   {
-                        //     "compilerOptions": {
-                        //       "baseUrl": "projectRoot",
-                        //       "paths": {
-                        //         "*": [
-                        //           "*",
-                        //           "generated/*"
-                        //         ]
-                        //       }
-                        //     }
-                        //   }
-                        //
-                        // Matching "folder1/file2" should first check "projectRoot/folder1/file2"
-                        // and then, if that didn't work, also check "projectRoot/generated/folder1/file2".
                         match &value_prop.data {
                             bun_ast::ExprData::EArray(e_array) => {
                                 let array = e_array.items.slice();
@@ -668,11 +569,6 @@ impl TSConfigJSON {
                                         }
                                     }
                                     if !values.is_empty() {
-                                        // Invalid patterns are filtered out above, so count <= array.len.
-                                        // Shrink the allocation so the slice stored in the map is exactly
-                                        // what was allocated — callers that later free these values (the
-                                        // extends-merge in resolver.zig) pass the stored slice to
-                                        // Allocator.free, which requires the original length.
                                         values.shrink_to_fit();
                                         let _ = result.paths.put(Box::from(key), values);
                                     }
@@ -740,11 +636,6 @@ impl TSConfigJSON {
         if text.is_empty() {
             return Ok(Box::default());
         }
-        // foo.bar == 2
-        // foo.bar. == 2
-        // foo == 1
-        // foo.bar.baz == 3
-        // foo.bar.baz.bun == 4
         let parts_count =
             text.iter().filter(|&&b| b == b'.').count() + usize::from(text[text.len() - 1] != b'.');
         let mut parts: Vec<Box<[u8]>> = Vec::with_capacity(parts_count);

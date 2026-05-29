@@ -14,20 +14,6 @@ use crate::node::fs::{
 pub(crate) type NodeFSFunction =
     fn(this: &Binding, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>;
 
-// Zig: `const NodeFSFunctionEnum = std.meta.DeclEnum(node.fs.NodeFS);`
-// PORT NOTE: Rust has no `DeclEnum`/`@field`/`@typeInfo` reflection. The
-// (`args::*`, `ret::*`, `NodeFS::<method>`, `async_::*`) quadruples that the
-// Zig comptime block reflected per `function_name` are spelled out once in
-// `node_fs.rs` (the `NodeFS::dispatch` table + `async_::*` aliases) and reused
-// here via the `node_fs_bindings!` macro at the bottom of this file.
-
-/// Returns bindings to call jsc.Node.fs.NodeFS.<function>.
-/// Async calls use a thread pool.
-// Zig: `fn Bindings(comptime function_name) type { return struct { runSync, runAsync } }`
-// PORT NOTE: collapsed to two free generic fns; the `comptime function_name`
-// becomes a `const F: NodeFSFunctionEnum`, and the reflected `Arguments` /
-// return type become `A: FsArgument` / `R: FsReturn`.
-
 /// `Bindings(FunctionEnum).runSync`.
 fn run_sync<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum>(
     this: &Binding,
@@ -64,13 +50,6 @@ where
     }
 }
 
-/// `Bindings(FunctionEnum).runAsync` for every operation except `.cp` /
-/// `.readdir` (those have bespoke entry points below).
-///
-/// `create_task` is `async_::<FunctionName>::create` — passed in because the
-/// Windows path picks `UVFSRequest` for a handful of fds-only ops while
-/// everything else uses `AsyncFSTask`, and that choice is encoded in the
-/// `async_::*` type aliases rather than derivable from `F` alone.
 fn run_async<A: FsArgument>(
     this: &Binding,
     global: &JSGlobalObject,
@@ -81,14 +60,6 @@ fn run_async<A: FsArgument>(
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
     let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
     slice.will_be_async = true;
-
-    // Zig uses a `deinit: bool` flag + conditional `defer` to keep `slice`
-    // alive past return when ownership transfers to the Task. The Rust port
-    // mirrors this with `ManuallyDrop`: dropped only on the early-return
-    // error/abort branches; on the success path the Task owns `args` (whose
-    // protected JSValues are released by `Drop for ThreadSafe<A>` when the
-    // Task completes), and `slice` is intentionally not dropped — its
-    // `Drop`-unprotect would race that.
 
     let mut args = match <A as FsArgument>::from_js(global, &mut slice) {
         Ok(a) => a,
@@ -139,12 +110,6 @@ where
     run_sync::<R, A, F>
 }
 
-// R-2 (host-fn re-entrancy): every JS-exposed binding takes `&self`; the
-// single mutable field `node_fs` is wrapped in `JsCell` so the
-// `sync_error_buf` scratch buffer and `&mut NodeFS` syscall dispatches are
-// projected through interior mutability instead of `&mut Binding`. The
-// codegen shim still emits `this: &mut NodeJSFS` — `&mut T` auto-coerces to
-// `&T` so the impls below compile against either.
 #[bun_jsc::JsClass(name = "NodeJSFS", no_constructor)]
 #[derive(Default)]
 pub struct Binding {

@@ -2,12 +2,6 @@ use crate::postgres::AnyPostgresError;
 use crate::postgres::protocol::new_reader::{NewReader, ReaderContext};
 use crate::shared::Data;
 
-// Zig: `context: anytype` + `comptime forEach: fn(@TypeOf(context), u32, ?*Data) AnyPostgresError!bool`
-// Opaque-context pattern (PORTING.md §anytype): unbounded `<C>`; context is forwarded by value
-// to the callback each iteration, so require `C: Copy`.
-// `comptime ContextType: type, reader: NewReader(ContextType)` is the paired-param spelling of a
-// generic reader → `reader: &mut NewReader<R>`.
-// `comptime forEach: fn(...)` → `impl FnMut` (monomorphized, matches Zig comptime).
 pub fn decode<C: Copy, R: ReaderContext>(
     context: C,
     reader: &mut NewReader<R>,

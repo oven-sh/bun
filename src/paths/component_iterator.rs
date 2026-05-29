@@ -11,11 +11,6 @@
 
 use crate::PathChar;
 
-/// Runtime equivalent of Zig's `comptime path_type: PathType`. The hot
-/// `is_sep` branch inlines to a single compare on POSIX and two compares on
-/// Windows; we keep it a runtime enum (vs. a const-generic) so one
-/// monomorphisation per `T` covers both — call sites that hard-code the
-/// format still constant-fold via inlining.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PathFormat {
     Posix,
@@ -62,12 +57,6 @@ pub struct ComponentIterator<'a, T> {
 }
 
 impl<'a, T: PathChar> ComponentIterator<'a, T> {
-    /// After `init`, `next` returns the first component after the root
-    /// (no need to call `first`). To iterate backwards, call `last` first.
-    ///
-    /// For Windows paths, returns `BadPathName` if `path` has an explicit
-    /// namespace prefix (`\\.\`, `\\?\`, `\??\`) or is a UNC path with more
-    /// than two leading separators. POSIX `init` is infallible.
     pub fn init(path: &'a [T], fmt: PathFormat) -> Result<Self, bun_core::Error> {
         let root_end = match fmt {
             PathFormat::Posix => {
@@ -227,18 +216,6 @@ pub enum MakePathStep<E> {
     NotFound(E),
 }
 
-/// Port of the `std.fs.Dir.makePath` back-then-forward walk, parameterised
-/// over the per-prefix `mkdir` step so callers supply `mkdirat` /
-/// `NtCreateFile(FILE_OPEN_IF)` / `CreateDirectoryW` themselves.
-///
-/// Starts at `it.last()`; on `Created`/`Exists` advances via `next()`
-/// (returning `Ok(())` when there is none), on `NotFound(e)` steps back via
-/// `previous()` (returning `Err(e)` when there is none — i.e. the very first
-/// component's parent does not exist).
-///
-/// `mkdir` is invoked with `component.path`: a borrowed prefix slice into the
-/// original input, never NUL-terminated. Callers that need a sentinel must
-/// copy into a scratch buffer.
 pub fn make_path_with<'a, T: PathChar, E>(
     mut it: ComponentIterator<'a, T>,
     mut mkdir: impl FnMut(&'a [T]) -> Result<MakePathStep<E>, E>,
@@ -263,12 +240,6 @@ pub fn make_path_with<'a, T: PathChar, E>(
         }
     }
 }
-
-// ─── Windows root parsing ───────────────────────────────────────────────────
-// Direct port of `std.os.windows.{getNamespacePrefix, getUnprefixedPathType}`
-// + the `.windows` arm of `ComponentIterator.init`. Kept private — callers
-// only see `ComponentIterator::init`; for ad-hoc root-length probing
-// `resolve_path::windows_filesystem_root_t` already exists.
 
 fn windows_root_end<T: PathChar>(path: &[T]) -> Result<usize, bun_core::Error> {
     #[inline(always)]

@@ -25,11 +25,6 @@ pub(crate) static ENABLE_SOURCE_MAPS: AtomicBool = AtomicBool::new(false);
 /// Zig: `comptime { @export(&jsFunctionFindSourceMap, .{ .name = "Bun__JSSourceMap__find" }) }`
 #[bun_jsc::host_fn(export = "Bun__JSSourceMap__find")]
 pub(crate) fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // Node.js doesn't enable source maps by default.
-    // In Bun, we do use them for almost all files since we transpile almost all files
-    // If we enable this by default, we don't have a `payload` object since we don't internally create one.
-    // This causes Next.js to emit errors like the below on start:
-    //       .next/server/chunks/ssr/[root-of-the-server]__012ba519._.js: Invalid source map. Only conformant source maps can be used to filter stack frames. Cause: TypeError: payload is not an Object. (evaluating '"sections" in payload')
     if !ENABLE_SOURCE_MAPS.load(Ordering::Relaxed) {
         return Ok(JSValue::UNDEFINED);
     }
@@ -84,11 +79,6 @@ pub(crate) fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsR
     // Rust Box allocation aborts on OOM (handleOom semantics).
     let fake_sources_array: Box<[bstring::String]> = Box::new([source_url_string.dupe_ref()]);
 
-    // PORT NOTE: Zig stores an intrusive `*ParsedSourceMap` (+1 ref from
-    // `SavedSourceMap.get`) and `deinit` calls `sourcemap.deref()`. The Rust
-    // port models that ownership as `Arc<ParsedSourceMap>` (LIFETIMES.tsv);
-    // `SavedSourceMap::get` already hands back the +1 as an `Arc`, and `Drop`
-    // on the field releases it — no manual `deref_()` needed.
     let this = Box::new(JSSourceMap {
         sourcemap: source_map,
         sources: fake_sources_array,
@@ -197,10 +187,6 @@ impl JSSourceMap {
         Ok(source_map)
     }
 
-    // ── codegen accessors (provided by `#[bun_jsc::JsClass]` once it lands) ──
-    // TODO(port): bun_jsc::JsClass — generate-classes.ts emits the real
-    // `*_set_cached`/`to_js` thunks; these forward to extern stubs so the
-    // constructor body type-checks today.
     #[inline]
     fn to_js(this: Box<Self>, global: &JSGlobalObject) -> JSValue {
         // Codegen body (ZigGeneratedClasses.zig:21141): `SourceMap__create(global, this)`.
@@ -351,18 +337,7 @@ fn get_line_column(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<[i32;
     ])
 }
 
-// TODO(port): move to sourcemap_jsc_sys (or bun_jsc_sys)
-//
-// Codegen-emitted helpers (`SourceMap__create`, `*SetCachedValue`) are defined
-// in ZigGeneratedClasses.cpp with `extern JSC_CALLCONV` (= `"C" SYSV_ABI` on
-// Windows-x64), so they must be imported via `jsc_abi_extern!` to get the
-// matching `extern "sysv64"` cfg-arm — plain `extern "C"` here would call them
-// with the win64 ABI and corrupt arguments.
 bun_jsc::jsc_abi_extern! {
-    // Codegen-emitted constructor thunk (`js.toJS` → `SourceMap__create` in
-    // ZigGeneratedClasses.zig); ownership of `ctx` transfers to the C++ JSCell.
-    // `ctx` is type-erased to `*mut ()` (C++ stores it as `void* m_ctx`) to keep
-    // the extern FFI-safe — `JSSourceMap` itself has Rust-only field layout.
     fn SourceMap__create(globalObject: *mut JSGlobalObject, ctx: *mut ()) -> JSValue;
 
     // Codegen-emitted cached-value setters (see `js.payloadSetCached` in

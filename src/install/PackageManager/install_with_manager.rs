@@ -33,10 +33,6 @@ use crate::package_manager::Options::Enable;
 use crate::package_manager::{Options, WorkspaceFilter};
 use bun_install_types::NodeLinker::NodeLinker;
 
-// Free-function "methods" on `*PackageManager` that the Zig source calls via
-// UFCS (`manager.foo(...)`) but which the Rust port hosts in sibling modules
-// to avoid one giant `impl PackageManager` block. Import them under their Zig
-// names so the body reads the same as the spec.
 use crate::package_manager_real::run_tasks::{RunTasksCallbacks, run_tasks};
 use crate::package_manager_real::{
     enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre, save_lockfile,
@@ -188,16 +184,7 @@ pub fn install_with_manager(
                 let source_copy = root_package_json_entry.source.clone();
 
                 let mut resolver: () = ();
-                // PORT NOTE: Zig passes `manager`, `manager.log` and a fresh
-                // stack `lockfile` simultaneously. Route through raw ptrs so
-                // borrowck doesn't see overlapping `&mut PackageManager` /
-                // `&mut Lockfile` (Zig `*T` semantics).
                 {
-                    // `log_mut()` reads the BACKREF `self.log: *mut Log` and
-                    // returns the disjoint CLI `Log` allocation (lifetime
-                    // decoupled from `&self`), so call it safely through
-                    // `manager` *before* establishing the raw-ptr split — no
-                    // borrow on `*manager` survives into the `&mut *mgr` below.
                     let log = manager.log_mut();
                     let mgr: *mut PackageManager = manager;
                     maybe_root.parse(
@@ -219,11 +206,6 @@ pub fn install_with_manager(
                 // fresh `lockfile` simultaneously. Route through raw ptrs to satisfy
                 // borrowck; `Diff::generate` is ported in lockfile_real::package.
                 manager.summary = {
-                    // `log_mut()` returns the disjoint CLI `Log` allocation
-                    // (BACKREF field, lifetime decoupled from `&self`); read it
-                    // and the `to_update` scalar safely through `manager`
-                    // *before* establishing the raw-ptr split so no borrow on
-                    // `*manager` survives into `mgr`'s `&mut` reborrows below.
                     let log = manager.log_mut();
                     let to_update = manager.to_update;
                     let mgr: *mut PackageManager = manager;
@@ -257,12 +239,6 @@ pub fn install_with_manager(
 
                 had_any_diffs = manager.summary.has_diffs();
 
-                // Split-borrow `manager.lockfile` so the `StringBuilder`
-                // (which owns `buffers.string_bytes` + `string_pool`) and the
-                // remaining lockfile columns can coexist without raw-pointer
-                // reborrows. `manager.{summary, known_npm_aliases,
-                // patched_dependencies_to_remove}` are disjoint top-level
-                // fields and can be accessed alongside `manager.lockfile`.
                 let summary = &manager.summary;
                 let known_npm_aliases = &mut manager.known_npm_aliases;
                 let patched_dependencies_to_remove = &mut manager.patched_dependencies_to_remove;
@@ -370,10 +346,6 @@ pub fn install_with_manager(
                     let old_resolutions: Vec<PackageID> =
                         old_resolutions_list.get(lf.resolutions).to_vec();
 
-                    // PORT NOTE: Zig slices raw spare capacity via `.items.ptr[off .. off + len]`,
-                    // `@memset`s it (no drop), then extends `.items.len`. `extend_from_fn`
-                    // mirrors that: writes into `spare_capacity_mut()` then bumps `len`, so we
-                    // never form `&mut [T]` over uninitialized storage and never drop garbage.
                     debug_assert_eq!(lf.dependencies.len(), off as usize);
                     debug_assert_eq!(lf.resolutions.len(), off as usize);
                     bun_core::vec::extend_from_fn(lf.dependencies, len as usize, |_| {
@@ -484,11 +456,6 @@ pub fn install_with_manager(
 
                     builder.clamp();
 
-                    // `enqueueDependencyWithMain` can reach `Lockfile.Package.fromNPM`,
-                    // which grows `buffers.dependencies` and may reallocate it.
-                    // Iterate by index against a snapshot of the original length and
-                    // copy each entry to the stack so neither the loop nor the callee
-                    // ever reads through a pointer into the old backing storage.
                     if manager.summary.overrides_changed && !all_name_hashes.is_empty() {
                         let dependencies_len = manager.lockfile.buffers.dependencies.len();
                         for dependency_i in 0..dependencies_len {
@@ -603,11 +570,6 @@ pub fn install_with_manager(
         .print(std::ptr::from_mut(Output::error_writer()))?;
     manager.log_mut().reset();
 
-    // This operation doesn't perform any I/O, so it should be relatively cheap.
-    // PORT NOTE: Zig copies the `*Lockfile` pointer, leaving `manager.lockfile` intact so both
-    // old and new lockfiles are live for the later `eql(lockfile_before_clean, ...)` checks.
-    // In Rust `manager.lockfile: Box<Lockfile>` would move; compute the new lockfile first, then
-    // `mem::replace` so `lockfile_before_clean` owns the old box and `manager.lockfile` the new.
     let new_lockfile = {
         let mgr: *mut PackageManager = manager;
         // SAFETY: `lockfile`, `update_requests`, and `*log` are disjoint storage
@@ -650,11 +612,6 @@ pub fn install_with_manager(
 
     // append scripts to lockfile before generating new metahash
     manager.load_root_lifecycle_scripts(&root);
-    // Zig: `defer { if (root_lifecycle_scripts) |s| allocator.free(s.package_name) }`.
-    // `List.package_name` is `Box<[u8]>`, so dropping the whole `Option<List>`
-    // at scope exit frees it. Route through a raw provenance root because
-    // `manager: &mut` is reborrowed many times below; the guard fires once on
-    // the way out and is the only access at that point.
     let mgr_for_root_scripts_cleanup: *mut PackageManager = manager;
     scopeguard::defer! {
         // SAFETY: `mgr_for_root_scripts_cleanup` was derived from the live
@@ -668,10 +625,6 @@ pub fn install_with_manager(
         root_scripts.append_to_lockfile(&mut manager.lockfile);
     }
     {
-        // PORT NOTE: reshaped for borrowck — Zig holds shared slices into
-        // `packages.items(.resolution/.meta/.scripts)` while pushing into
-        // `manager.lockfile.scripts`. Field-level split borrow keeps the two
-        // disjoint columns alive simultaneously without raw-pointer routing.
         let lockfile = &mut *manager.lockfile;
         let packages = &lockfile.packages;
         let string_bytes = lockfile.buffers.string_bytes.as_slice();
@@ -694,10 +647,6 @@ pub fn install_with_manager(
                 debug_assert!(first_index != -1);
             }
 
-            // Zig's two arms differ only in whether the `first_index != -1`
-            // guard wraps the inner loop; in the `add_node_gyp` arm the
-            // assert already guarantees it, so a single guarded loop matches
-            // both paths exactly.
             if first_index != -1 {
                 // PERF(port): was `inline for` over comptime entries — profile if hot
                 for (i, maybe_entry) in entries.into_iter().enumerate() {
@@ -753,10 +702,6 @@ pub fn install_with_manager(
         }
     }
 
-    // BACKREF: `manager.lockfile` is a `Box<Lockfile>` whose allocation is
-    // never replaced for the remainder of this function (only its fields
-    // mutate). Wrap once as `ParentRef` so the two `save_lockfile` read sites
-    // below deref through the safe abstraction instead of per-site raw deref.
     let lockfile_before_install = bun_ptr::ParentRef::<Lockfile>::new(&*manager.lockfile);
 
     let save_format = load_result.save_format(&manager.options);
@@ -926,12 +871,6 @@ impl RunTasksCallbacks for InstallWaitCallbacks {
 }
 
 struct RunAndWaitClosure<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool> {
-    // PORT NOTE: Zig stores `*PackageManager` here while the caller also holds the same
-    // pointer to call `sleepUntil`. Storing `&mut PackageManager` would alias the outer
-    // borrow in `run_and_wait`. Keep a raw pointer; `run_and_wait` derives this pointer
-    // first and then reborrows *through it* for the `sleep_until` receiver, so both the
-    // receiver and the callback's reborrow share the same raw provenance root (Zig `*T`
-    // semantics). See `run_and_wait` for the remaining `tick`/`event_loop` overlap note.
     manager: *mut PackageManager,
     err: Option<bun_core::Error>,
 }
@@ -956,10 +895,6 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
 
         this.drain_dependency_list();
 
-        // PORT NOTE: void RunTasksCallbacks — Zig passes an anon struct with
-        // `void` hooks and `progress_bar = true`. The Rust trait dispatch needs a
-        // concrete `RunTasksCallbacks` impl; `extract_ctx` collapses to `()` so we
-        // do NOT pass `this` as both receiver and ctx (would alias `&mut`).
         let log_level = this.options.log_level;
         if let Err(err) = run_tasks::<InstallWaitCallbacks>(this, &mut (), CHECK_PEERS, log_level) {
             closure.err = Some(err);
@@ -992,12 +927,6 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
     }
 
     fn run_and_wait(this: &mut PackageManager) -> Result<(), bun_core::Error> {
-        // Derive the raw pointer first and route *every* manager access through it.
-        // Previously `closure.manager` was taken from `this`, then `this` was reborrowed
-        // into `sleep_until`'s `&mut self` — under Stacked Borrows that reborrow popped
-        // the raw pointer's tag, so the later `&mut *closure.manager` in `is_done` used
-        // an invalidated provenance. Now `mgr` is the root: both the `sleep_until`
-        // receiver and the closure share it, and `this` is never touched again.
         let mgr: *mut PackageManager = this;
         let mut closure = RunAndWaitClosure::<CHECK_PEERS, ONLY_PRE_PATCH> {
             manager: mgr,
@@ -1028,14 +957,6 @@ fn wait_for_peers(this: &mut PackageManager) -> Result<(), bun_core::Error> {
     RunAndWaitClosure::<true, false>::run_and_wait(this)
 }
 
-// Outlined cold so the install fast path (`install_with_manager` tail) does not
-// pull `bun_core::output`'s panic/format machinery into its own body. The
-// function is additionally split so that the no-op path — a repeat
-// `bun install` with nothing to do, which prints only the single
-// "Checked N installs" line — touches ~2 i-cache pages instead of the ~5 the
-// monolithic body required: every other output section (tree, added, removed,
-// failures, fallback timestamp, blocked-scripts) lives in its own
-// `#[cold] #[inline(never)]` helper that LLVM places in `.text.unlikely`.
 #[cold]
 #[inline(never)]
 fn print_install_summary(
@@ -1123,22 +1044,7 @@ fn print_summary_tree(
     install_summary: &PackageInstallSummary,
     log_level: Options::LogLevel,
 ) -> Result<(), bun_core::Error> {
-    // PORT NOTE: reshaped for borrowck — Zig builds `Printer` borrowing
-    // `this.lockfile` / `this.options` while also passing `this` (the
-    // PackageManager) to `Tree::print`. Route through a single `*mut
-    // PackageManager` provenance root and reborrow disjoint fields
-    // through it (Zig `*T` semantics): `Tree::print` only reads
-    // `manager.{updating_packages, workspace_name_hash}` and writes
-    // `manager.track_installed_bin`, none of which overlap `lockfile` /
-    // `options` / `update_requests`.
     let mgr: *mut PackageManager = this;
-    // `mgr` is the sole provenance root from here through the `Tree::print`
-    // call; the `Printer` reborrows shared `lockfile` / `options` /
-    // `update_requests`, and the `&mut *mgr` passed to `Tree::print` only
-    // touches disjoint `PackageManager` fields. Wrapped once as `ParentRef`
-    // so the three read-only field reborrows go through safe `Deref`
-    // instead of three per-site raw projections. Safe `From<NonNull>`
-    // construction — `mgr` was just derived from `&mut *this`.
     let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
         core::ptr::NonNull::new(mgr).expect("derived from &mut, non-null"),
     );
@@ -1348,10 +1254,6 @@ pub(crate) fn get_workspace_filters(
     Ok((workspace_filters, install_root_dependencies))
 }
 
-/// Adds a contextual error for a dependency resolution failure.
-/// This provides better error messages than just propagating the raw error.
-/// The error is logged to manager.log, and the install will fail later when
-/// manager.log.hasErrors() is checked.
 #[cold]
 #[inline(never)]
 fn add_dependency_error(
@@ -1389,16 +1291,6 @@ fn add_dependency_error(
         );
     }
 }
-
-// ─── cold install branches ────────────────────────────────────────────────
-// These are the rarely-taken arms of `install_with_manager` (lockfile load
-// error reporting, building a brand-new lockfile, the network resolve loop,
-// the security scanner, `--lockfile-only`, yarn.lock writing, root lifecycle
-// scripts). Hoisting them out of the function body and tagging them
-// `#[cold] #[inline(never)]` keeps LLVM from interleaving their code with the
-// hot verify-and-exit path during fat-LTO emission, so a no-op
-// `bun install` / `bun install --frozen-lockfile` (node_modules already up to
-// date) faults in far fewer distinct `.text` pages.
 
 #[cold]
 #[inline(never)]
@@ -1454,10 +1346,6 @@ fn report_lockfile_load_error(
 #[cold]
 #[inline(never)]
 fn record_updating_package_versions(manager: &mut PackageManager) {
-    // existing lockfile, get the original version is updating
-    // PORT NOTE: reshaped for borrowck — Zig holds `*Lockfile` while
-    // also mutating `manager.updating_packages`. Field-level split
-    // borrow keeps the disjoint columns alive without raw pointers.
     let lockfile: &Lockfile = &manager.lockfile;
     let updating_packages = &mut manager.updating_packages;
     let packages = lockfile.packages.slice();
@@ -1639,12 +1527,6 @@ fn resolve_pending_tasks(
         wait_for_everything_except_peers(manager)?;
     }
 
-    // Resolving a peer dep can create a NEW package whose own peer deps
-    // get re-queued to `peer_dependencies` during `drainDependencyList`.
-    // When all manifests are cached (synchronous resolution), no I/O tasks
-    // are spawned, so `pendingTaskCount() == 0`. We must drain the peer
-    // queue iteratively here — entering the event loop (`waitForPeers`)
-    // with zero pending I/O would block forever.
     while manager.peer_dependencies.readable_length() > 0 {
         manager.process_peer_dependency_list()?;
         manager.drain_dependency_list();
@@ -1802,10 +1684,6 @@ fn write_yarn_lock_with_progress(
     manager: &mut PackageManager,
     log_level: Options::LogLevel,
 ) -> Result<(), bun_core::Error> {
-    // PORT NOTE: reshaped for borrowck — Zig holds `*Progress.Node` (returned by
-    // `progress.start`) across `writeYarnLock(manager)`. `Progress::start` returns
-    // `&mut self.root`, so re-access it via `manager.progress.root` after the
-    // `&mut manager` borrow ends instead of keeping a live `&mut Node`.
     let mut node_started = false;
     if log_level.show_progress() {
         manager.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
@@ -1849,10 +1727,6 @@ fn run_root_lifecycle_scripts(
         // have finished, and lockfiles have been saved
         let optional = false;
         let output_in_foreground = true;
-        // PORT NOTE: Zig passes `scripts.*` (deref-copy of the List).
-        // `spawn_package_lifecycle_scripts` consumes by-value; `.take()`
-        // moves it out (Zig only frees `package_name` afterwards, which is
-        // owned by the List in Rust and drops with it).
         manager.spawn_package_lifecycle_scripts(
             ctx,
             scripts,

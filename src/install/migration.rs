@@ -204,12 +204,6 @@ type IdMap = StringHashMap<IdMapValue>;
 struct IdMapValue {
     /// index into the old package-lock.json package entries.
     old_json_index: u32,
-    /// this is the new package id for the bun lockfile
-    ///
-    /// - if this new_package_id is set to `package_id_is_link`, it means it's a link
-    /// and to get the actual package id, you need to lookup `.resolved` in the hashmap.
-    /// - if it is `package_id_is_bundled`, it means it's a bundled dependency that was not
-    /// marked by npm, which can happen to some transitive dependencies.
     new_package_id: u32,
 }
 
@@ -501,12 +495,6 @@ pub(crate) fn migrate_npm_lockfile<'a>(
     // The package index is overallocated, but we know the upper bound
     this.package_index.reserve(package_idx as usize);
 
-    // dependency on `resolved`, a dependencies version tag might change, requiring
-    // new strings to be allocated.
-    // PORT NOTE: reshaped for borrowck — `string_buf()` borrows `this` mutably,
-    // so we re-acquire it locally where needed instead of holding it across
-    // other `this.*` mutations.
-
     if let Some(wksp) = &workspace_map {
         this.workspace_paths.reserve(wksp.count());
         this.workspace_versions.reserve(wksp.count());
@@ -576,10 +564,6 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                 if !strings::eql_long(&wksp_entry.name, pkg_name, true) {
                                     let pkg_name_hash = string_hash(pkg_name);
                                     if !this.workspace_paths.contains(&pkg_name_hash) {
-                                        // Package resolve path is an entry in the workspace map, but
-                                        // the package name is different. This package doesn't exist
-                                        // in node_modules, but we still allow packages to resolve to it's
-                                        // resolution.
                                         let mut sb = this.string_buf();
                                         let appended = sb.append(resolved_str)?;
                                         this.workspace_paths.insert(pkg_name_hash, appended);
@@ -839,22 +823,10 @@ pub(crate) fn migrate_npm_lockfile<'a>(
         debug_assert!(this.packages.len() == package_idx as usize);
     }
 
-    // ignoring length check because we pre-allocated it. the length may shrink later
-    // so it's faster if we ignore the underlying length buffer and just assign it at the very end.
-    // PORT NOTE: reshaped for borrowck — track cursor indices into reserved capacity instead of
-    // shrinking slices via pointer arithmetic.
     let dependencies_base: *mut Dependency = this.buffers.dependencies.as_mut_ptr();
     let resolutions_base: *mut PackageID = this.buffers.resolutions.as_mut_ptr();
     let mut deps_cursor: usize = 0;
     let mut res_cursor: usize = 0;
-    // TODO(port): Stacked-Borrows audit — these raw ptrs into
-    // `buffers.{dependencies,resolutions}` and the `packages` columns below are
-    // held across `&mut self` calls to `string_buf()` / `get_or_put_id()`. The
-    // fields actually touched are disjoint (string_bytes/string_pool resp.
-    // package_index + read of resolutions), so this is sound under Tree
-    // Borrows and matches the Zig spec, but SB retags through `Unique<T>`.
-    // Fix by split-borrowing the disjoint fields (see the `bin` path above) or
-    // by setting Vec lengths up-front and indexing safely.
 
     // pre-initialize the dependencies and resolutions to `unset_package_id`
     #[cfg(debug_assertions)]
@@ -868,11 +840,6 @@ pub(crate) fn migrate_npm_lockfile<'a>(
         }
     }
 
-    // PORT NOTE: MultiArrayList column access — re-borrow the (disjoint) `resolution`,
-    // `meta`, `dependencies` and `resolutions` columns of `this.packages` at each use
-    // site via the generated `items_*` / `items_*_mut` accessors. Capacity is fixed
-    // (no further append until end of fn), so the slices stay valid; re-acquiring per
-    // statement keeps the borrows disjoint from the `&mut self` calls below.
     let pkg_count = this.packages.len();
 
     #[cfg(debug_assertions)]
@@ -1154,12 +1121,6 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
                             let behavior = dep_key.behavior;
 
-                            // PORT NOTE: capture tag and git/github owner before moving
-                            // `version` into the buffer (Zig copies the struct by value; Rust
-                            // moves it). The owner is needed when `version.tag` is git/github
-                            // but the package's `resolved` URL infers as something else, in
-                            // which case Zig reads `res_version.value.{git,github}.owner` from
-                            // the original parsed dependency version.
                             let version_tag = version.tag;
                             let version_git_owner = match version_tag {
                                 DepTag::Git => version.git().owner,
@@ -1273,13 +1234,6 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                         DepTag::Catalog => return Err(err!("InvalidNPMLockfile")),
 
                                         DepTag::Npm | DepTag::DistTag => {
-                                            // It is theoretically possible to hit this in a case where the resolved dependency is NOT
-                                            // an npm dependency, but that case is so convoluted that it is not worth handling.
-                                            //
-                                            // Deleting 'package-lock.json' would completely break the installation of the project.
-                                            //
-                                            // We assume that the given URL is to *some* npm registry, or the resolution is to a workspace package.
-                                            // If it is a workspace package, then this branch will not be hit as the resolution was already set earlier.
                                             let dep_actual_version = dep_pkg
                                                 .get(b"version")
                                                 .ok_or_else(|| err!("InvalidNPMLockfile"))?
@@ -1561,10 +1515,6 @@ pub(crate) fn migrate_npm_lockfile<'a>(
         } else {
             #[cfg(debug_assertions)]
             {
-                // Assertion from appendPackage. If we do this too early it will always fail as we dont have the resolution written
-                // but after we write all the data, there is no excuse for this to fail.
-                //
-                // If this is hit, it means getOrPutID was not called on this package id. Look for where 'resolution[i]' is set
                 debug_assert!(
                     this.get_package_id(this.packages.items_name_hash()[i], None, r)
                         .is_some()
@@ -1577,12 +1527,6 @@ pub(crate) fn migrate_npm_lockfile<'a>(
     }
 
     this.resolve(log)?;
-
-    // if (Environment.isDebug) {
-    //     const dump_file = try std.fs.cwd().createFileZ("after-clean.json", .{});
-    //     defer dump_file.close();
-    //     try std.json.stringify(this, .{ .whitespace = .indent_2 }, dump_file.writer());
-    // }
 
     #[cfg(debug_assertions)]
     {

@@ -81,10 +81,6 @@ pub fn generate_chunk_json(
     let chunk_values = chunk.files_with_parts_in_chunk.values();
     for (file_source_index, bytes_in_output) in chunk_keys.iter().zip(chunk_values.iter()) {
         let file_source_index = *file_source_index;
-        // Counters are `AtomicUsize` because they're populated by the parallel
-        // codegen workers; metafile emission runs strictly after the
-        // `wait_for_all` join in `generate_chunks_in_parallel`, so a relaxed
-        // load observes the final value.
         let bytes_in_output = bytes_in_output.load(core::sync::atomic::Ordering::Relaxed);
         if file_source_index as usize >= sources.len() {
             continue;
@@ -198,10 +194,6 @@ pub fn generate_chunk_json(
     Ok(json.into_boxed_slice())
 }
 
-/// Assembles the final metafile JSON from pre-built chunk fragments.
-/// Called after all chunks have been generated in parallel.
-/// Chunk references (unique_keys) are resolved to their final output paths.
-/// The caller is responsible for freeing the returned slice.
 pub fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> Result<Box<[u8]>, bun_core::Error> {
     // Use StringJoiner so we can use breakOutputIntoPieces to resolve chunk references
     let mut j = StringJoiner::default();
@@ -421,10 +413,6 @@ pub fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> Result<Box<[u8]>
         u32::try_from(chunks.len()).expect("int cast"),
     )?;
 
-    // Get final output with all chunk references resolved.
-    // PORT NOTE: Zig passes `&chunks[0]` as the dummy chunk and `chunks` as the
-    // full slice (aliased). `code()` takes both as `&` now, so pass `&chunks[0]`
-    // directly — overlapping shared borrows are fine.
     let code_result = intermediate.code(
         None,
         parse_graph,
@@ -447,16 +435,6 @@ fn write_json_string(writer: &mut impl Write, str: &[u8]) -> std::io::Result<()>
         bfmt::format_json_string_utf8(str, Default::default())
     )
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Minimal `std.json.Value`-shaped tree for `generate_markdown`.
-//
-// PORT NOTE: Zig's `generateMarkdown` re-parses the metafile JSON via
-// `std.json.parseFromSlice(std.json.Value, …)` — a generic dynamic-tree parse.
-// The Rust crates available here (`bun_parsers::json`) only expose an
-// AST-expr parser, so a small self-contained Value/parser is provided below
-// covering exactly the subset the metafile format uses.
-// ──────────────────────────────────────────────────────────────────────────
 
 enum JsonValue {
     Null,
@@ -710,13 +688,6 @@ impl<'a> JsonParser<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// generate_markdown helper structs (local to the function in Zig; hoisted here)
-// PORT NOTE: lifetime <'a> ties borrowed slices to the parsed JSON value's
-// lifetime. The Zig originals were anonymous structs holding []const u8 that
-// borrowed from the std.json parse arena.
-// ──────────────────────────────────────────────────────────────────────────
-
 struct InputFileInfo<'a> {
     path: &'a [u8],
     bytes_in_output: u64,
@@ -739,10 +710,6 @@ struct PathOnly<'a> {
     path: &'a [u8],
 }
 
-/// Generates a markdown visualization of the module graph from metafile JSON.
-/// This is a post-processing step that parses the JSON and produces LLM-friendly output.
-/// Designed to help diagnose bundle bloat, dependency chains, and entry point analysis.
-/// The caller is responsible for freeing the returned slice.
 pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Error> {
     let root = match JsonParser::parse(metafile_json) {
         Ok(v) => v,

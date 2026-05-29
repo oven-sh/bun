@@ -38,27 +38,10 @@ fn pico_header_new(name: &[u8], value: &[u8]) -> PicoHeader {
     PicoHeader::new(name, value)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// MultiPartUploadOptions
-// Moved from bun_runtime::webcore::s3::multipart_options.
-// Pure config (no JSC deps), so it lives here at the signing tier; runtime
-// re-exports it. Source of truth: src/runtime/webcore/s3/multipart_options.zig
-// ──────────────────────────────────────────────────────────────────────────
-
 #[derive(Clone, Copy, Debug)]
 pub struct MultiPartUploadOptions {
     /// more than 255 doesn't make sense — http thread cannot handle more than that
     pub queue_size: u8,
-    /// In the AWS S3 client SDK this is set in bytes but the min is still 5 MiB.
-    /// ```js
-    /// var params = {Bucket: 'bucket', Key: 'key', Body: stream};
-    /// var options = {partSize: 10 * 1024 * 1024, queueSize: 1};
-    /// s3.upload(params, options, function(err, data) {
-    ///   console.log(err, data);
-    /// });
-    /// ```
-    /// See <https://docs.aws.amazon.com/AWSJavaScriptSDK/latest/AWS/S3.html#upload-property>.
-    /// The value is in MiB; min is 5 and max 5120 (but we limit to 4 GiB aka 4096).
     pub part_size: u64,
     /// default is 3, max 255
     pub retry: u8,
@@ -84,23 +67,9 @@ impl Default for MultiPartUploadOptions {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// AWSSignatureCache — storage moved DOWN from `bun_jsc::rare_data`.
-//
-// Zig (`credentials.zig:485`) reached `jsc.VirtualMachine.getMainThreadVM()
-// orelse get()).rareData().awsCache` inline. The "per-VM" placement was
-// nominal: the lookup always picked the *main-thread* VM, so the cache was
-// process-global in practice. Hosting it here as a `static` makes the
-// layering honest — `bun_s3_signing` reads its own data, no upward hook.
-// ──────────────────────────────────────────────────────────────────────────
-
 use bun_collections::StringArrayHashMap;
 use bun_core::Mutex;
 
-/// Memoised SigV4 derived signing key, keyed by `(numeric_day,
-/// region+service+secret)`. PORTING.md §Concurrency: lock owns the data — Zig
-/// had a sidecar `bun.Mutex` next to `cache`/`date`; here the mutex wraps
-/// both.
 #[derive(Default)]
 pub struct AWSSignatureCache(Mutex<AWSSignatureCacheInner>);
 
@@ -111,14 +80,6 @@ struct AWSSignatureCacheInner {
 }
 
 impl AWSSignatureCache {
-    /// Returns the cached 32-byte derived signing key for `key` if it was set
-    /// for `numeric_day`.
-    ///
-    /// PORT NOTE: Zig returned `cache.getKey(key)` (a borrow into map storage)
-    /// past `lock.unlock()` — racy against a concurrent `set` rehashing the
-    /// map. Return the 32-byte *value* by copy instead; the only consumer
-    /// (`sign` below) wants the digest, and a fixed-size copy avoids handing
-    /// out a guard.
     pub fn get(&self, numeric_day: u64, key: &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]> {
         let inner = self.0.lock();
         if inner.date == 0 || inner.date != numeric_day {
@@ -145,10 +106,6 @@ impl AWSSignatureCache {
 // Drop: `StringArrayHashMap` drops its owned `Box<[u8]>` keys automatically;
 // Zig's `deinit { date = 0; clean(); cache.deinit() }` is fully covered.
 
-/// Process-global instance. Zig hung this off `RareData` but always reached it
-/// via `getMainThreadVM()`, so it was a singleton in practice.
-/// `StringArrayHashMap::new` is not `const`, so lazy-init the inner on first
-/// use; the outer `Mutex` itself is const-constructible.
 static AWS_SIGNATURE_CACHE: std::sync::LazyLock<AWSSignatureCache> =
     std::sync::LazyLock::new(AWSSignatureCache::default);
 
@@ -162,11 +119,6 @@ fn aws_cache_set(day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN]) {
     AWS_SIGNATURE_CACHE.set(day, key, digest)
 }
 
-/// BoringSSL `ENGINE*` for `EVP_Digest`. Zig lazily `ENGINE_new()`'d one per
-/// VM via `RareData::boringEngine`; BoringSSL's `EVP_Digest` ignores the
-/// `impl` argument entirely (it's an OpenSSL-compat shim — see
-/// `vendor/boringssl/include/openssl/digest.h`: "BoringSSL does not support
-/// engines"). Passing null is bit-identical, so the upward hook is dropped.
 #[inline]
 fn boring_engine() -> *mut bun_sha_hmac::sha::ffi::ENGINE {
     core::ptr::null_mut()
@@ -176,10 +128,6 @@ fn boring_engine() -> *mut bun_sha_hmac::sha::ffi::ENGINE {
 // S3Credentials
 // ──────────────────────────────────────────────────────────────────────────
 
-// `bun.ptr.RefCount(...)` mixin → IntrusiveRc handles ref/deref; when count hits
-// zero the boxed allocation is dropped, which drops the Box<[u8]> fields. The
-// Zig `deinit` body only freed those fields + `bun.destroy(this)`, so no
-// explicit Drop body is needed here.
 #[derive(bun_ptr::RefCounted)]
 pub struct S3Credentials {
     // Intrusive refcount; managed by bun_ptr::IntrusiveRc<S3Credentials>.
@@ -197,11 +145,6 @@ pub struct S3Credentials {
     pub virtual_hosted_style: bool,
 }
 
-// PORT NOTE: Zig `S3Credentials` is a value type with `[]const u8` fields and is
-// freely copied (e.g. `default_credentials.*`). The Rust port owns its bytes via
-// `Box<[u8]>`, so a manual `Clone` deep-copies them and resets `ref_count` — the
-// intrusive count only applies to heap (`IntrusiveRc`) instances; a fresh value
-// must start at 1.
 impl Clone for S3Credentials {
     fn clone(&self) -> Self {
         Self {
@@ -237,10 +180,6 @@ impl Default for S3Credentials {
 }
 
 impl S3Credentials {
-    /// Construct a value (refcount = 1) from owned field data. Exists so
-    /// higher-tier callers (e.g. `bun_runtime`) can build the refcounted
-    /// signing credentials from the lower-tier `bun_dotenv::S3Credentials`
-    /// POD mirror without naming the private `ref_count` field.
     #[allow(clippy::too_many_arguments)]
     pub fn new_value(
         access_key_id: Box<[u8]>,
@@ -556,11 +495,6 @@ impl S3Credentials {
                     [0..DIGESTED_HMAC_256_LEN]
                     .try_into()
                     .expect("infallible: size matches");
-                // PORT NOTE: intentionally diverges from Zig. In Zig, `key` is a slice into
-                // `tmp_buffer` which has since been overwritten by the `AWS4{secret}` bufPrint,
-                // so Zig passes corrupted bytes to `cache.set` (latent bug → cache never hits).
-                // We recompute the correct `{region}{service}{secret}` key here.
-                // TODO(port): fix the overwritten-key bug in credentials.zig as well.
                 let key = buf_print(
                     &mut tmp_buffer,
                     format_args!(
@@ -978,10 +912,6 @@ fn get_amz_date() -> DateResult {
     }
 }
 
-// Port of Zig std.time.epoch.{EpochSeconds, EpochDay, YearAndDay} → Gregorian Y/M/D from
-// Unix-epoch seconds. Uses Howard Hinnant's `civil_from_days` algorithm (public domain),
-// which is what Zig's stdlib derives from. Matches credentials.zig:116-123 exactly for the
-// fields getAMZDate consumes.
 fn epoch_to_utc_components(secs: u64) -> (u32, u32, u32, u32, u32, u32, u64) {
     // returns (year, month(1-based), day(1-based), hours, minutes, seconds, seconds_into_day)
     let day_seconds = secs % 86_400;
@@ -1286,10 +1216,6 @@ pub struct S3CredentialsWithOptions {
     pub options: MultiPartUploadOptions,
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
-    // Self-referential views: these `?[]const u8` fields are NOT freed in Zig
-    // `deinit`; they borrow into the sibling `_*_slice: ZigStringSlice` fields
-    // below. `RawSlice` encodes that non-owning contract (and gives callers
-    // `.as_deref()` instead of an open-coded `unsafe { &*p }`).
     pub content_disposition: Option<RawSlice<u8>>,
     pub content_type: Option<RawSlice<u8>>,
     pub content_encoding: Option<RawSlice<u8>>,
@@ -1317,10 +1243,6 @@ pub struct S3CredentialsWithOptions {
 // SignedHeaders — runtime port of Zig comptime lookup table
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Headers must be in alphabetical order per AWS Signature V4 spec.
-// TODO(port): Zig `packed struct(u7)` (all-bool fields). Kept as a plain struct for
-// readability of `key.field` accesses in SignedHeaders/CanonicalRequest; could move to
-// bitflags!/`#[repr(transparent)] u8`. `bits()` below preserves the u7 layout.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct SignedHeadersKey {
     pub content_disposition: bool,

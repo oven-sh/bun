@@ -724,11 +724,6 @@ impl PmPkgCommand {
             return Ok(());
         }
 
-        // PORT NOTE: Zig's `path[0] = ""` writes were an ownership-transfer hack to neuter the
-        // caller's `defer allocator.free(part)` (manual move semantics). In Zig, `current_key`
-        // is a VALUE copy of the slice descriptor taken before the clear, so `root.get(current_key)`
-        // still sees the original key. That defer is gone in Rust (Drop handles it), so the
-        // clears are deleted and `path` no longer needs interior mutation here.
         let (head, remaining_path) = path.split_first_mut().unwrap();
         let current_key: &[u8] = head;
 
@@ -887,11 +882,6 @@ impl PmPkgCommand {
             return Ok(false);
         }
         let old_len = old_props.len();
-        // G::Property is !Copy/!Clone in Rust. Zig bitwise-copies each kept
-        // entry and leaves the old buffer to the arena. Mirror that: take the
-        // old list, ptr::read kept entries into the new list, then forget the
-        // old buffer (CLI is one-shot — leak is intentional, see
-        // load_package_json).
         let old = core::mem::ManuallyDrop::new(bun_alloc::AstAlloc::take(&mut e_obj.properties));
         let mut new_props: G::PropertyList = G::PropertyList::init_capacity(old_len - 1);
         for prop in old.slice() {

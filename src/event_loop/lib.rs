@@ -8,22 +8,8 @@ pub mod DeferredTaskQueue;
 pub mod EventLoopTimer;
 pub mod ManagedTask;
 
-// ────────────────────────────────────────────────────────────────────────────
-// AnyEventLoop / SpawnSyncEventLoop / MiniEventLoop.
-// `InternalLoopData::set_parent_event_loop`
-// is reached via the lower-tier `set_parent_raw(tag, ptr)` +
-// `EventLoopHandle::into_tag_ptr()`. Windows-only `MiniVM::platform_event_loop`
-// (`uws::Loop::uv_loop`) remains `#[cfg(windows)]`-guarded with a
-// `TODO(port)` marker; the POSIX build is gate-free.
-// ────────────────────────────────────────────────────────────────────────────
-
 #[path = "MiniEventLoop.rs"]
 pub mod MiniEventLoop;
-// Module renamed `any_event_loop` so the *type* `AnyEventLoop` can be re-exported
-// at crate root without colliding (modules and types share the type namespace).
-// Downstream callers use `bun_event_loop::AnyEventLoop` as a type / for
-// associated fns (`::init()`, `::js_current()`, `::as_handle()`), never as a
-// module path, so the snake_case module name is internal.
 #[path = "SpawnSyncEventLoop.rs"]
 pub mod SpawnSyncEventLoop;
 #[path = "AnyEventLoop.rs"]
@@ -43,10 +29,6 @@ pub use DeferredTaskQueue as deferred_task_queue;
 pub use MiniEventLoop::{EventLoopKind, PIPE_READ_BUFFER_SIZE, PipeReadBuffer, PlatformEventLoop};
 pub use any_event_loop::{AnyEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr};
 
-// JS-event-loop arm of `AnyEventLoop` / `EventLoopHandle`. `bun_event_loop` is
-// a lower tier than `bun_jsc`, so it cannot name `jsc::EventLoop` /
-// `jsc::VirtualMachine` directly. Owner is an erased `*mut jsc::EventLoop`;
-// `bun_jsc::event_loop` provides the `Jsc` arm.
 bun_dispatch::link_interface! {
     pub JsEventLoop[Jsc] {
         fn iteration_number() -> u64;

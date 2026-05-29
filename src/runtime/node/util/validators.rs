@@ -35,12 +35,6 @@ pub(crate) fn throw_err_invalid_arg_type_with_message(
         .throw()
 }
 
-// PORT NOTE: Zig took `comptime name_fmt: string, name_args: anytype` and did
-// comptime string concatenation (`"The \"" ++ name_fmt ++ "\" ..."`) plus tuple
-// concatenation (`name_args ++ .{expected_type, actual_type}`). Rust cannot
-// concat a caller-supplied format string at compile time, so callers pass the
-// already-formatted name as anything `Display`-able (e.g. `&str` or
-// `format_args!(...)`) and we embed it via `{}`.
 #[cold]
 pub(crate) fn throw_err_invalid_arg_type(
     global_this: &JSGlobalObject,
@@ -100,10 +94,6 @@ fn throw_range_error_min_max<V: bun_core::fmt::OutOfRangeValue>(
     )
 }
 
-// PORT NOTE: Zig had `comptime min_value: ?i64, comptime max_value: ?i64` with a
-// `comptime { @compileError }` bounds check. `Option<i64>` is not a valid const-
-// generic type on stable, so demoted to runtime params + debug_assert.
-// PERF(port): was comptime monomorphization.
 pub(crate) fn validate_integer(
     global_this: &JSGlobalObject,
     value: JSValue,
@@ -498,10 +488,6 @@ pub(crate) fn validate_function(
     Ok(value)
 }
 
-/// Zig used `@typeInfo(T).@"enum".fields` to iterate variants and match by
-/// `@tagName`. Rust has no field reflection; enums opt in via this trait.
-/// Implementors should typically `#[derive(strum::EnumString, strum::VariantNames)]`
-/// and provide `VALUES_INFO` as the `|`-joined variant names.
 pub(crate) trait StringEnum: Sized {
     /// `|`-joined list of variant names (matches Zig's comptime-built `values_info`).
     const VALUES_INFO: &'static str;

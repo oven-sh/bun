@@ -14,14 +14,6 @@ use crate::{Binding, E, Expr, Index, Ref, Scope, Stmt, symbol};
 
 pub use crate::flags as Flags;
 
-// ───────────────────────────────────────────────────────────────────────────
-// StoreRef — arena-owned pointer into a node Store / bump arena.
-//
-// Thin `NonNull<T>` newtype — `Copy`, `Deref`/`DerefMut`. The pointee lives
-// until the owning Store/arena is `reset()`; callers must not hold a `StoreRef`
-// across that boundary. Matches Zig's `*T` payloads in `Expr.Data`.
-// ───────────────────────────────────────────────────────────────────────────
-
 #[repr(transparent)]
 pub struct StoreRef<T>(NonNull<T>);
 
@@ -45,10 +37,6 @@ impl<T> StoreRef<T> {
     pub const fn from_non_null(p: NonNull<T>) -> Self {
         StoreRef(p)
     }
-    /// Wrap a raw pointer. Panics if `p` is null. Alignment and arena-lifetime
-    /// are caller-tracked just like the already-safe `from_non_null` /
-    /// `From<NonNull<T>>` constructors — the only invariant `unsafe` was
-    /// guarding here was non-null, which we now check.
     #[inline]
     pub fn from_raw(p: *mut T) -> Self {
         StoreRef(NonNull::new(p).expect("StoreRef::from_raw: null pointer"))
@@ -58,11 +46,6 @@ impl<T> StoreRef<T> {
     pub fn from_bump(r: &mut T) -> Self {
         StoreRef(NonNull::from(r))
     }
-    /// Consume a `Box<T>` whose payload must outlive every Store reset
-    /// (Zig `deepClone(default_allocator)` semantics). Ownership transfers to
-    /// the returned `StoreRef`; the allocation is process-lifetime by design
-    /// and is never dropped — mirrors `bun.default_allocator.create(T)` with
-    /// no paired `destroy`. Prefer `from_bump` for arena-backed nodes.
     #[inline]
     pub fn from_box(b: Box<T>) -> Self {
         StoreRef(bun_core::heap::into_raw_nn(b))
@@ -133,10 +116,6 @@ pub type ExprNodeIndex = Expr;
 pub type StmtNodeIndex = Stmt;
 pub type BindingNodeIndex = Binding;
 
-// ─── arena-slice helpers ────────────────────────────────────────────────────
-// Legacy alias: AST string fields now uniformly use `StoreStr` (safe `Deref`
-// wrapper around an arena `[u8]`). Kept as a type alias so existing field
-// declarations / call sites that spell `ArenaStr` continue to compile.
 pub(crate) type ArenaStr = StoreStr;
 #[inline]
 pub(crate) const fn empty_arena_str() -> ArenaStr {
@@ -144,16 +123,6 @@ pub(crate) const fn empty_arena_str() -> ArenaStr {
 }
 // (former `empty_arena_slice_mut<T>()` removed — use `StoreSlice::<T>::EMPTY`.)
 
-// ─── StoreStr — arena-owned string slice (StoreRef's [u8] sibling) ──────────
-//
-// AST string fields (`E::Dot.name`, `E::String.data`, …) borrow from the parse
-// arena and are bulk-freed at `Store::reset()`. `StoreStr` mirrors
-// `StoreRef<T>` (raw `NonNull<T>`) and `StmtNodeList` (`StoreSlice<Stmt>`): a
-// thin lifetime-erased pointer with safe construction and `Deref<Target=[u8]>`
-// under the same callers-must-not-outlive-the-arena contract that `StoreRef`
-// already imposes. Avoids cascading `<'arena>` through `Expr`/`Stmt`/`Data`
-// (~100 types, 12 downstream crates) — that cascade is the follow-up round
-// once `StoreRef` itself carries `'arena`.
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct StoreStr {
@@ -199,10 +168,6 @@ impl StoreStr {
         self.len
     }
 
-    /// Re-borrow as `&[u8]`. Same safety contract as `StoreRef::get`: the
-    /// pointee lives until arena reset, which the caller must not cross.
-    /// Takes `self` by value (it's `Copy`) so the returned borrow is not tied
-    /// to a stack temporary — mirrors `StoreRef::Deref`'s arena contract.
     #[inline]
     pub fn slice<'a>(self) -> &'a [u8] {
         // SAFETY: StoreStr invariant — `ptr` is non-null, points at `len`
@@ -215,11 +180,6 @@ impl StoreStr {
     pub fn as_raw(self) -> *const [u8] {
         core::ptr::slice_from_raw_parts(self.ptr.as_ptr(), self.len)
     }
-
-    // (former `from_raw(*const [u8])` removed — the StoreSlice migration is
-    // complete; `js_printer::renamer::NameStr` now constructs via the safe
-    // `StoreStr::new(&[u8])`, so the raw-fat-pointer back-door has no
-    // remaining callers.)
 }
 
 impl Default for StoreStr {
@@ -312,15 +272,6 @@ impl core::fmt::Debug for StoreStr {
     }
 }
 
-// ─── StoreSlice<T> — arena-owned typed slice (StoreStr's generic sibling) ───
-//
-// Generalizes `StoreStr` to `[T]` for AST list fields (`E::Arrow.args`,
-// per-node `[Stmt]`/`[Expr]` views, …) that borrow from the parse arena.
-// Same contract as `StoreRef`/`StoreStr`: safe `::new`,
-// raw `NonNull<T>` + `u32` length, `Deref<Target=[T]>`, valid until the
-// owning arena resets. The `u32` length matches Zig's `[]T` (`u32` len under
-// `-Dwasm32` and the AST's practical bounds) and keeps the field at 12 bytes
-// on 64-bit instead of 16 — relevant for hot AST nodes.
 #[repr(C)]
 pub struct StoreSlice<T> {
     ptr: core::ptr::NonNull<T>,
@@ -393,10 +344,6 @@ impl<T> StoreSlice<T> {
         self.len
     }
 
-    /// Re-borrow as `&[T]`. Same safety contract as `StoreStr::slice` /
-    /// `StoreRef::get`: the pointee lives until arena reset, which the caller
-    /// must not cross. Takes `self` by value (Copy) so the returned borrow is
-    /// not tied to a stack temporary.
     #[inline]
     pub fn slice<'a>(self) -> &'a [T] {
         // SAFETY: StoreSlice invariant — `ptr` is non-null, points at `len`
@@ -405,14 +352,6 @@ impl<T> StoreSlice<T> {
         unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len as usize) }
     }
 
-    /// Re-borrow as `&mut [T]`. Same `StoreRef` contract as [`slice`]: the
-    /// pointee lives until arena reset, and the single-threaded parser/visitor
-    /// pass holds at most one live `&mut` per node (mirrors `StoreRef`'s safe
-    /// `DerefMut`, which already encodes this invariant). The arena hands out
-    /// unique allocations and `StoreSlice` is `Copy`, so aliasing cannot be
-    /// *statically* checked — but neither can `StoreRef::deref_mut`'s, and the
-    /// two share one safety story. Callers must not overlap a `slice_mut()`
-    /// borrow with another `slice()`/`slice_mut()` of the same allocation.
     #[inline]
     pub fn slice_mut<'a>(self) -> &'a mut [T] {
         // SAFETY: StoreSlice invariant — `ptr` is non-null, points at `len`
@@ -490,40 +429,7 @@ impl<T: core::fmt::Debug> core::fmt::Debug for StoreSlice<T> {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// This is the index to the automatically-generated part containing code that
-/// calls "__export(exports, { ... getters ... })". This is used to generate
-/// getters on an exports object for ES6 export statements, and is both for
-/// ES6 star imports and CommonJS-style modules. All files have one of these,
-/// although it may contain no statements if there is nothing to export.
 pub const NAMESPACE_EXPORT_PART_INDEX: u32 = 0;
-
-// There are three types.
-// 1. Expr (expression)
-// 2. Stmt (statement)
-// 3. Binding
-// Q: "What's the difference between an expression and a statement?"
-// A:  > Expression: Something which evaluates to a value. Example: 1+2/x
-//     > Statement: A line of code which does something. Example: GOTO 100
-//     > https://stackoverflow.com/questions/19132/expression-versus-statement/19224#19224
-
-// Expr, Binding, and Stmt each wrap a Data:
-// Data is where the actual data where the node lives.
-// There are four possible versions of this structure:
-// [ ] 1.  *Expr, *Stmt, *Binding
-// [ ] 1a. *Expr, *Stmt, *Binding something something dynamic dispatch
-// [ ] 2.  *Data
-// [x] 3.  Data.(*) (The union value in Data is a pointer)
-// I chose #3 mostly for code simplification -- sometimes, the data is modified in-place.
-// But also it uses the least memory.
-// Since Data is a union, the size in bytes of Data is the max of all types
-// So with #1 or #2, if S.Function consumes 768 bits, that means Data must be >= 768 bits
-// Which means "true" in code now takes up over 768 bits, probably more than what v8 spends
-// Instead, this approach means Data is the size of a pointer.
-// It's not really clear which approach is best without benchmarking it.
-// The downside with this approach is potentially worse memory locality, since the data for the node is somewhere else.
-// But it could also be better memory locality due to smaller in-memory size (more likely to hit the cache)
-// only benchmarks will provide an answer!
-// But we must have pointers somewhere in here because can't have types that contain themselves
 
 /// Slice that stores capacity and length in the same space as a regular slice.
 pub type ExprNodeList = Vec<Expr, bun_alloc::AstAlloc>;
@@ -576,26 +482,10 @@ impl Default for LocRef {
 }
 
 pub struct ClauseItem {
-    /// The local alias used for the imported/exported symbol in the current module.
-    /// For imports: `import { foo as bar }` - "bar" is the alias
-    /// For exports: `export { foo as bar }` - "bar" is the alias
-    /// For re-exports: `export { foo as bar } from 'path'` - "bar" is the alias
     pub alias: ArenaStr,
     pub alias_loc: crate::Loc,
-    /// Reference to the actual symbol being imported/exported.
-    /// For imports: `import { foo as bar }` - ref to the symbol representing "foo" from the source module
-    /// For exports: `export { foo as bar }` - ref to the local symbol "foo"
-    /// For re-exports: `export { foo as bar } from 'path'` - ref to an intermediate symbol
     pub name: LocRef,
 
-    /// This is the original name of the symbol stored in "Name". It's needed for
-    /// "SExportClause" statements such as this:
-    ///
-    ///   export {foo as bar} from 'path'
-    ///
-    /// In this case both "foo" and "bar" are aliases because it's a re-export.
-    /// We need to preserve both aliases in case the symbol is renamed. In this
-    /// example, "foo" is "OriginalName" and "bar" is "Alias".
     pub original_name: ArenaStr,
 }
 
@@ -850,21 +740,8 @@ pub enum ExportsKind {
     // allowed but may return undefined.
     Cjs,
 
-    // All export names are known explicitly. Calling "require()" on this module
-    // generates an exports object (stored in "exports") with getters for the
-    // export names. Named imports to this module are only allowed if they are
-    // in the set of export names.
     Esm,
 
-    // Some export names are known explicitly, but others fall back to a dynamic
-    // run-time object. This is necessary when using the "export * from" syntax
-    // with either a CommonJS module or an external module (i.e. a module whose
-    // export names are not known at compile-time).
-    //
-    // Calling "require()" on this module generates an exports object (stored in
-    // "exports") with getters for the export names. All named imports to this
-    // module are allowed. Direct named imports reference the corresponding export
-    // directly. Other imports go through property accesses on "exports".
     EsmWithDynamicFallback,
 
     // Like "EsmWithDynamicFallback", but the module was originally a CommonJS
@@ -1049,11 +926,6 @@ pub type BindingList = Vec<Binding>;
 // PERF(port): Zig `std.array_list.Managed` — these may be arena-backed in
 // callers; revisit with bumpalo::collections::Vec if profiling shows churn.
 
-/// Each file is made up of multiple parts, and each part consists of one or
-/// more top-level statements. Parts are used for tree shaking and code
-/// splitting analysis. Individual parts of a file can be discarded by tree
-/// shaking and can be assigned to separate chunks (i.e. output files) by code
-/// splitting.
 pub struct Part {
     pub stmts: StoreSlice<Stmt>,
     pub scopes: StoreSlice<*mut Scope>, // TODO(port): &'bump mut [&'bump mut Scope]
@@ -1061,20 +933,11 @@ pub struct Part {
     /// Each is an index into the file-level import record list
     pub import_record_indices: PartImportRecordIndices,
 
-    /// All symbols that are declared in this part. Note that a given symbol may
-    /// have multiple declarations, and so may end up being declared in multiple
-    /// parts (e.g. multiple "var" declarations with the same name). Also note
-    /// that this list isn't deduplicated and may contain duplicates.
     pub declared_symbols: DeclaredSymbolList,
 
     /// An estimate of the number of uses of all symbols used within this part.
     pub symbol_uses: PartSymbolUseMap,
 
-    /// This tracks property accesses off of imported symbols. We don't know
-    /// during parsing if an imported symbol is going to be an inlined enum
-    /// value or not. This is only known during linking. So we defer adding
-    /// a dependency on these imported symbols until we know whether the
-    /// property access is an inlined enum value or not.
     pub import_symbol_property_uses: PartSymbolPropertyUseMap,
 
     /// The indices of the other parts in this file that are needed if this part
@@ -1182,22 +1045,11 @@ pub struct NamedImport {
     /// Parts within this file that use this import
     pub local_parts_with_uses: bun_alloc::AstVec<u32>,
 
-    /// The original export name from the source module being imported.
-    /// Examples:
-    /// - `import { foo } from 'module'` → alias = "foo"
-    /// - `import { foo as bar } from 'module'` → alias = "foo" (original export name)
-    /// - `import * as ns from 'module'` → alias_is_star = true, alias = ""
-    /// This field is used by the bundler to match imports with their corresponding
-    /// exports and for error reporting when imports can't be resolved.
     pub alias: Option<ArenaStr>,
     pub alias_loc: Option<crate::Loc>,
     pub namespace_ref: Option<Ref>,
     pub import_record_index: u32,
 
-    /// If true, the alias refers to the entire export namespace object of a
-    /// module. This is no longer represented as an alias called "*" because of
-    /// the upcoming "Arbitrary module namespace identifier names" feature:
-    /// https://github.com/tc39/ecma262/pull/2154
     pub alias_is_star: bool,
 
     /// It's useful to flag exported imports because if they are in a TypeScript
@@ -1260,11 +1112,6 @@ bun_core::impl_tag_error!(ToJSError);
 
 bun_core::named_error_set!(ToJSError);
 
-/// Say you need to allocate a bunch of tiny arrays
-/// You could just do separate allocations for each, but that is slow
-/// With std.ArrayList, pointers invalidate on resize and that means it will crash.
-/// So a better idea is to batch up your allocations into one larger allocation
-/// and then just make all the arrays point to different parts of the larger allocation
 pub struct Batcher<T> {
     pub head: StoreSlice<T>,
 }
@@ -1319,13 +1166,6 @@ impl<T> Batcher<T> {
 // Zig: `pub fn NewBatcher(comptime Type: type) type` → Rust generic struct above.
 pub type NewBatcher<T> = Batcher<T>;
 
-// ═════════════════════════════════════════════════════════════════════════
-// Symbols pulled DOWN from higher-tier
-// crates so lower-tier callers (css, interchange, js_parser itself) can
-// resolve them here without forming a cycle. Ground truth for each port is
-// the named .zig file, NOT the sibling .rs (which may already forward-ref).
-// ═════════════════════════════════════════════════════════════════════════
-
 // ─── from bun_jsc::math (src/jsc/jsc.zig) ───────────────────────────────────
 pub mod math {
     /// `Number.MAX_SAFE_INTEGER` (2^53 - 1)
@@ -1346,8 +1186,4 @@ pub mod math {
         Bun__JSC__operationMathPow(x, y)
     }
 }
-// ─── from bun_bundler::v2::MangledProps (src/bundler/bundle_v2.zig) ─────────
-// Zig: `std.AutoArrayHashMapUnmanaged(Ref, []const u8)`
-// LIFETIMES.tsv: value slices point into the parser arena → `StoreStr`
-// (arena-owned, no `'bump` cascade).
 pub type MangledProps = ArrayHashMap<Ref, StoreStr>;

@@ -87,10 +87,6 @@ impl Editor {
     ) -> Option<Editor> {
         let path_env = env.get(b"PATH")?;
 
-        // PORT NOTE: borrowck — `which` ties its return to `&'a mut *buf`; on a
-        // miss we need `buf` again next iteration but NLL conservatively keeps
-        // the borrow live (Polonius case). Re-borrow through a raw pointer; on
-        // a hit we return immediately so only one `&mut` is ever live.
         let buf_ptr: *mut PathBuffer = buf;
         for &editor in &DEFAULT_PREFERENCE_LIST {
             if let Some(path) = BIN_NAME[editor] {
@@ -293,11 +289,6 @@ impl Editor {
         }
 
         spawned.argc = i;
-        // TODO(port): std.process.Child is banned (PORTING.md: no std::process).
-        // Zig stored `std.process.Child.init(args_buf[0..i], default_allocator)` here and
-        // spawned a detached std.Thread to run it. TODO(port): replace with
-        // crate::process::spawn (async) or a bun_threading worker that owns
-        // SpawnedEditorContext and calls bun.spawnSync.
         let spawned_ptr = bun_core::heap::into_raw(spawned);
         // PORT NOTE: Zig used `std.Thread.spawn(.{}, autoClose, .{spawned})` then `.detach()`.
         // bun_threading has no detached-spawn helper; std::thread::spawn matches semantics
@@ -431,17 +422,6 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
         argv[j] = unsafe { bun_core::ffi::slice(p, l) };
     }
 
-    // TODO(port): Zig called `child_process.spawn()` then `.wait()` via std.process.Child.
-    // Mapped to sync::spawn (bun.spawnSync) per src/CLAUDE.md guidance.
-    // FIXME(windows-leak): Zig's autoClose (open.zig:329-335) used std.process.Child
-    // directly (CreateProcessW) and never created a uv loop. The sync::spawn substitution
-    // requires a `WindowsOptions.loop_`; `MiniEventLoop::init_global` heap-allocates a
-    // MiniEventLoop + uv_loop_t into a thread-local that is NEVER torn down. Because this
-    // runs on a fresh detached std::thread per `Editor::open()` call, every editor-open on
-    // Windows leaks one MiniEventLoop + uv_loop_t (+ DotEnv Loader/Map if env was null).
-    // Proper fix needs either (a) a MiniEventLoop teardown helper (none exists today), or
-    // (b) plumbing the caller's existing EventLoopHandle through SpawnedEditorContext
-    // (signature change to Editor::open + callers). Both are out-of-scope for this file.
     let owned_argv: Vec<Box<[u8]>> = argv[0..spawned.argc]
         .iter()
         .map(|s| s.to_vec().into_boxed_slice())
@@ -549,10 +529,6 @@ impl EditorContext {
 
     pub fn detect_editor(&mut self, env: &mut dot_env::Loader) {
         let mut buf = PathBuffer::uninit();
-        // PORT NOTE: borrowck — `by_path_for_editor`/`by_fallback` tie `out`'s lifetime
-        // to `&'a mut buf`. On the `false` path NLL conservatively keeps `buf` borrowed
-        // (Polonius case). Re-borrow through a raw pointer at each call site; on a hit
-        // we return immediately so only one `&mut` is ever live.
         let buf_ptr: *mut PathBuffer = &raw mut buf;
         let mut out: &[u8] = b"";
 

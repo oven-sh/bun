@@ -6,14 +6,6 @@ use crate::properties::{Property, PropertyId, PropertyIdTag};
 use crate::{DeclarationList, PropertyHandlerContext};
 use bun_alloc::ArenaVecExt as _;
 
-// `RectShorthand`/`SizeShorthand` mirror Zig's `css.DefineRectShorthand` /
-// `css.DefineSizeShorthand` comptime mixins. The marker traits stay (some
-// callers name `<T as RectShorthand>::Value`). The rect-shorthand structs
-// below are stamped out by `define_rect_shorthand!` (struct + PROPERTY_FIELD_MAP
-// + deep_clone/eql + parse/to_css + RectShorthand impl); the size-shorthand
-// structs keep hand-written bodies and get parse/to_css from
-// `impl_size_shorthand!`. Both macros live in the parent `properties/mod.rs`
-// (shared with `border.rs`).
 pub trait RectShorthand {
     type Value;
 }
@@ -66,25 +58,6 @@ impl_size_shorthand!(
     inline_start,
     inline_end
 );
-
-// ──────────────────────────────────────────────────────────────────────────
-// Shorthand value types
-// ──────────────────────────────────────────────────────────────────────────
-//
-// Zig used `css.DefineRectShorthand(@This(), V)` / `css.DefineSizeShorthand(@This(), V)`
-// as comptime mixins that inject `parse` + `toCss`. In Rust those become trait
-// impls (`RectShorthand` / `SizeShorthand`) that provide default `parse`/`to_css`.
-// The trait comes first (PORTING.md §Comptime reflection); a `#[derive]` could
-// replace the manual impls.
-//
-// `implementDeepClone` / `implementEql` are field-wise reflection helpers →
-// `#[derive(Clone, PartialEq)]`; the `DeepClone`/`CssEql` trait impls are
-// bridged via `bridge_clone_partialeq!` in `generics.rs`.
-//
-// `PropertyFieldMap` (an anonymous struct mapping field-name → PropertyIdTag)
-// becomes an associated const slice; consumers that did `@field(map, name)`
-// will look up by name. // TODO(port): if consumers need O(1) by-field access,
-// switch to per-type associated consts.
 
 define_rect_shorthand! {
     /// A value for the [inset](https://drafts.csswg.org/css-logical/#propdef-inset) shorthand property.
@@ -360,26 +333,6 @@ pub type PaddingHandler = SizeHandler<PaddingSpec>;
 pub type ScrollMarginHandler = SizeHandler<ScrollMarginSpec>;
 pub type InsetHandler = SizeHandler<InsetSpec>;
 
-// ──────────────────────────────────────────────────────────────────────────
-// NewSizeHandler — Zig `fn(comptime ...) type { return struct { ... } }`
-// ──────────────────────────────────────────────────────────────────────────
-//
-// The Zig generator took 11 `comptime PropertyIdTag` parameters, a
-// `comptime PropertyCategory`, and an optional `{feature, shorthand_feature}`
-// pair, and used `@field` / `@tagName` / `@unionInit` to project in/out of
-// the `Property` tagged union by tag name at compile time.
-//
-// Rust cannot reflect on enum variants by `PropertyIdTag` value, so the
-// per-variant projection is moved into a `SizeHandlerSpec` trait. The
-// generic body (`handle_property` / `flush` / helpers) is preserved 1:1 and
-// calls through `S::*`. Each concrete handler is a zero-sized marker type
-// implementing the spec.
-//
-// TODO(port): a `macro_rules! size_handler_spec!` could generate the four
-// `SizeHandlerSpec` impls from the same 13-argument table the Zig used,
-// eliminating the per-spec extract/construct boilerplate. Left explicit for
-// reviewability.
-
 /// Selector for the four physical slots on `SizeHandler` (Zig used a
 /// `comptime field: []const u8` and `@field(this, field)`).
 #[derive(Copy, Clone)]
@@ -399,11 +352,6 @@ enum LogicalSlot {
     InlineEnd,
 }
 
-/// Compile-time configuration for one `SizeHandler` instantiation.
-///
-/// Replaces the 13 `comptime` parameters of Zig's `NewSizeHandler` and the
-/// `@field(property, @tagName(X_prop))` / `@unionInit(Property, @tagName(X_prop), v)`
-/// reflection it performed.
 pub trait SizeHandlerSpec {
     // ---- comptime tag parameters ----
     const TOP: PropertyIdTag;
@@ -430,25 +378,12 @@ pub trait SizeHandlerSpec {
     /// `shorthand_extra.?.shorthand_feature`.
     const SHORTHAND_FEATURE: Option<Feature>;
 
-    // ---- value-type bindings (Zig: `X_prop.valueType()`) ----
-    // In every instantiation in this file the longhand value type is
-    // `LengthPercentageOrAuto`, so the generic body below uses that
-    // concretely. If a future spec needs a different `valueType()`, lift it
-    // to an associated type here.
-
     /// Zig: `shorthand_prop.valueType()` (the 4-field rect struct).
     type Shorthand;
     /// Zig: `block_shorthand.valueType()` (the 2-field block struct).
     type BlockShorthand;
     /// Zig: `inline_shorthand.valueType()` (the 2-field inline struct).
     type InlineShorthand;
-
-    // ---- @field / @unionInit replacements ----
-    // Each pair is the Rust spelling of:
-    //   `@field(property, @tagName(X_prop))`       → extract_x
-    //   `@unionInit(Property, @tagName(X_prop), v)` → make_x
-    // TODO(port): these are pure mechanical pattern-matches over `Property`;
-    // could generate via macro.
 
     fn extract_top(p: &Property) -> &LengthPercentageOrAuto;
     fn extract_bottom(p: &Property) -> &LengthPercentageOrAuto;
@@ -574,10 +509,6 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) -> bool {
-        // Zig: `switch (@as(PropertyIdTag, property.*))` — the *raw* union
-        // discriminant, ported as `Property::variant_tag()`. The `.unparsed`
-        // arm needs the inner `property_id` to decide whether the unparsed
-        // value belongs to this handler, so it stays a structural match.
         if let Property::Unparsed(unparsed) = property {
             let id = unparsed.property_id.tag();
             if id == S::TOP
@@ -830,11 +761,6 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         self.flush(dest, context);
     }
 
-    // PORT NOTE: reshaped — Zig's single `flushHelper` (generic over `comptime field: []const u8`
-    // via `@field(this, field)`) is split into `flush_helper_physical` + `flush_helper_logical`
-    // because the physical slots hold `Option<LengthPercentageOrAuto>` and the logical slots hold
-    // `Option<Property>`; Rust cannot express `@field` over heterogeneous Option payloads generically.
-
     /// Zig `flushHelper` for the four physical slots (`top`/`bottom`/`left`/`right`).
     fn flush_helper_physical(
         &mut self,
@@ -844,10 +770,6 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
-        // PERF(port): `category` was comptime monomorphization — profile if hot.
-        // If the category changes betweet logical and physical,
-        // or if the value contains syntax that isn't supported across all targets,
-        // preserve the previous value as a fallback.
         if category != self.category
             || (self.physical_slot_is_some(field)
                 && context.targets.browsers.is_some()
@@ -866,10 +788,6 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
-        // PERF(port): `category` was comptime monomorphization — profile if hot.
-        // If the category changes betweet logical and physical,
-        // or if the value contains syntax that isn't supported across all targets,
-        // preserve the previous value as a fallback.
         if category != self.category
             || (self.logical_slot_is_some(field)
                 && context.targets.browsers.is_some()
@@ -1111,10 +1029,6 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             LogicalSidePair::Inline => (S::INLINE_START, S::INLINE_END),
         };
 
-        // Zig: `@as(PropertyIdTag, start.*.?) == start_prop` — raw
-        // discriminant. `variant_tag()` keeps `Unparsed` distinct so an
-        // unparsed longhand falls through to the else branch and is appended
-        // as-is, instead of hitting `unreachable!()` in `extract_*`.
         if start
             .as_ref()
             .map(|p| p.variant_tag() == start_prop)
@@ -1183,16 +1097,6 @@ enum LogicalSidePair {
     Block,
     Inline,
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Spec instantiations
-// ──────────────────────────────────────────────────────────────────────────
-//
-// PORT NOTE: the `extract_*` / `make_*` / `shorthand_*` bodies are pure
-// `@field` / `@unionInit` token-pasting in Zig (`NewSizeHandler`).
-// `size_handler_spec_projections!` expands them from the 11 `Property`
-// variant idents + 3 shorthand value-type idents that the Zig
-// `NewSizeHandler(...)` call sites passed positionally.
 
 macro_rules! size_handler_spec_projections {
     (

@@ -138,10 +138,6 @@ impl HPACK {
         Ok(offset)
     }
 
-    /// Adjust the encoder's dynamic-table capacity after init. Evicts entries
-    /// to fit; the caller is responsible for emitting the RFC 7541 §6.3
-    /// Dynamic Table Size Update opcode at the start of the next header block
-    /// so the peer's decoder evicts in lockstep.
     pub fn set_encoder_max_capacity(&mut self, max_capacity: u32) {
         lshpack_wrapper_enc_set_max_capacity(self, max_capacity as c_uint);
     }
@@ -151,14 +147,6 @@ impl HPACK {
     // `HpackHandle`, so the raw destructor is private to `HpackHandle::drop`.
 }
 
-/// Owning handle for an `HPACK` instance returned by [`HPACK::init`].
-///
-/// `HPACK::init` allocates via the C wrapper (`lshpack_wrapper_init`, which
-/// `mi_malloc`s the struct and `lshpack_{enc,dec}_init`s its internals). The
-/// matching teardown is `lshpack_wrapper_deinit`, which runs the lshpack
-/// cleanup hooks before freeing — **not** a bare `mi_free`. Wrapping the raw
-/// pointer in `Box<HPACK>` (and letting `Box`'s `Drop` free it) therefore
-/// leaks the encoder/decoder's internal allocations. Use this handle instead.
 pub struct HpackHandle(core::ptr::NonNull<HPACK>);
 
 impl HpackHandle {
@@ -203,13 +191,6 @@ impl Drop for HpackHandle {
 // concurrently (callers serialize on the owning `H2FrameParser`).
 unsafe impl Send for HpackHandle {}
 
-// Non-Option fn pointers: the C ABI repr is identical to `Option<fn>`, but the
-// type guarantees non-null, which is the only precondition `lshpack_wrapper_init`
-// has — letting it be declared `safe fn` below.
-// `alloc` has no caller precondition (mi_malloc is total over usize), so its
-// pointer type is safe; `free` retains a caller contract because `mi_free`
-// requires "ptr is mimalloc-owned or null" — discharged by the C wrapper,
-// not by Rust's type system.
 type LshpackWrapperAlloc = extern "C" fn(size: usize) -> *mut c_void;
 type LshpackWrapperFree = unsafe extern "C" fn(ptr: *mut c_void);
 
@@ -226,10 +207,6 @@ unsafe extern "C" {
     // Frees `self_` (lshpack_{enc,dec}_cleanup + mi_free) — ownership transfer,
     // so this keeps its raw-pointer signature and caller-side safety obligation.
     fn lshpack_wrapper_deinit(self_: *mut HPACK);
-    // `self_`/`output` are tightened to references (ABI-identical thin ptrs) so
-    // those preconditions are type-discharged; the (src,src_len) pair still
-    // carries an in-bounds-read contract that the C ABI cannot encode, so the
-    // declaration stays unsafe.
     fn lshpack_wrapper_decode(
         self_: &mut HPACK,
         src: *const u8,

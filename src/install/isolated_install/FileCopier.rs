@@ -8,11 +8,6 @@ use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_paths::{self, OSPathChar, OSPathSlice};
 use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skippable::Walker};
 
-// `bun.AbsPath(.{ .sep = .auto, .unit = .os })` / `bun.Path(...)` are
-// comptime-configured path-builder types. `.unit = .os` means u8 on POSIX,
-// u16 on Windows — encoded via `OSPathChar` so `slice()`/`slice_z()` produce
-// the platform-native width. `.sep = .auto` normalizes `/` → `\` on Windows
-// during `from`/`append`, which is load-bearing for the Win32 calls below.
 type AbsPathAutoOs =
     bun_paths::AbsPath<OSPathChar, { bun_paths::path_options::PathSeparators::AUTO }>;
 type PathAutoOs = bun_paths::Path<
@@ -54,14 +49,6 @@ impl FileCopier {
     // resources and drops automatically, so no explicit `Drop` impl is needed.
 
     pub fn copy(&mut self) -> sys::Result<()> {
-        // Zig: `bun.MakePath.makeOpenPath(FD.cwd().stdDir(), this.dest_subpath.sliceZ(), .{})`.
-        // `make_open_path` is u8-only; on Windows the OS-unit path is u16 so
-        // narrow it via the same infallible `from_w_path` transcode that
-        // `bun_sys::make_path_w` uses (bun.zig:2319). Zig stays in u16 the
-        // whole way and has no error path here, so don't synthesise EINVAL on
-        // conversion — store paths are built from UTF-8 package names and are
-        // always WTF-8 round-trippable. On POSIX `OSPathChar == u8` and
-        // `slice_z()` already yields `&ZStr`, so deref-coerce to `&[u8]`.
         #[cfg(windows)]
         let mut dest_u8_buf = bun_paths::path_buffer_pool::get();
         #[cfg(windows)]
@@ -153,12 +140,6 @@ impl FileCopier {
                     _ => continue,
                 }
 
-                // PORT NOTE: reshaped for borrowck — Zig's `var s = path.save();
-                // defer s.restore();` returns a `ResetScope` that holds
-                // `&mut Path`, which would keep `self.src_path` /
-                // `self.dest_subpath` exclusively borrowed for the rest of the
-                // iteration. Capture the saved length and restore via
-                // `set_length` after the body.
                 let src_saved_len = self.src_path.len();
                 let _ = self.src_path.append(entry.path.as_slice());
 
@@ -190,16 +171,6 @@ impl FileCopier {
                         ) {
                             sys::Result::Ok(()) => sys::Result::Ok(()),
                             sys::Result::Err(first_err) => {
-                                // Retry after creating the parent directory.
-                                // For root-level files (`index.js`,
-                                // `package.json`, `LICENSE`) `dirname` is
-                                // null and there is no missing parent to
-                                // create — `dest_dir` itself was already
-                                // opened above — so the original error is the
-                                // real failure and must propagate. Silently
-                                // continuing here would let a staged
-                                // global-store entry be renamed into place
-                                // with files missing.
                                 match bun_paths::Dirname::dirname::<u16>(entry.path.as_slice()) {
                                     None => sys::Result::Err(first_err),
                                     Some(entry_dirname) => {

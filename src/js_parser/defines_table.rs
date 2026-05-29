@@ -191,15 +191,6 @@ pub static GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING: &[&[&[u8]]] 
     // Haven't seen a bundle size improvement from adding more to this list yet.
 ];
 
-// PORTING.md §Concurrency: `OnceLock` for lazily-initialised statics (Zig used
-// const struct literals; `DefineData` is not const-constructible in Rust).
-//
-// `DefineData` is not `Send`/`Sync` in general (it carries `ExprData`, whose
-// boxed variants hold `NonNull<_>`). The four instances stored here only ever
-// use the inline `EUndefined` / `ENumber` variants and `original_name = None`,
-// so they contain no raw pointers and are trivially shareable. Wrap in a local
-// newtype to satisfy `OnceLock<T: Sync + Send>` without globally relaxing
-// `DefineData`'s auto-traits.
 #[repr(transparent)]
 struct SyncDefineData(defines::IdentifierDefine);
 // SAFETY: only constructed below with pointer-free `ExprData` payloads

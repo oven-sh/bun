@@ -28,10 +28,6 @@ use crate::api::html_rewriter;
 use crate::api::server;
 use crate::webcore::body;
 
-// Zig's `server.HTTPServer.RequestContext` etc. are nested types on each
-// `NewServer(..)` instantiation. The Rust port flattens that to a single
-// generic `NewRequestContext<ThisServer, SSL, DEBUG, HTTP3>`; alias the six
-// concrete monomorphizations here so the tag↔type mapping stays readable.
 type HTTPServerRequestContext = server::NewRequestContext<server::HTTPServer, false, false, false>;
 type HTTPSServerRequestContext = server::NewRequestContext<server::HTTPSServer, true, false, false>;
 type DebugHTTPServerRequestContext =
@@ -43,10 +39,6 @@ type HTTPSServerH3RequestContext =
 type DebugHTTPSServerH3RequestContext =
     server::NewRequestContext<server::DebugHTTPSServer, true, true, true>;
 
-/// Must match Bun::NativePromiseContext::Tag in NativePromiseContext.h.
-/// One entry per concrete native type — the tag is packed into the pointer's
-/// upper bits via CompactPointerTuple so the cell stays at one pointer of
-/// storage beyond the JSCell header.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Tag {
@@ -84,10 +76,6 @@ pub(crate) trait NativePromiseContextType {
     const TAG: Tag;
 }
 
-// PORT NOTE (layering): blanket-impl over `ThisServer` so that ANY server
-// type (mod.rs::NewServer or server_body::NewServer) yields the same Tag —
-// the tag depends only on (SSL, DBG, H3), never on the server type. This is
-// the Zig semantics (the Zig Tag enum cases name the (ssl,debug,h3) tuple).
 const fn npc_tag_for(ssl: bool, dbg: bool, h3: bool) -> Tag {
     match (ssl, dbg, h3) {
         (false, false, false) => Tag::HTTPServerRequestContext,
@@ -110,11 +98,6 @@ impl NativePromiseContextType for body::ValueBufferer<'_> {
     const TAG: Tag = Tag::BodyValueBufferer;
 }
 
-// TODO(port): move to <runtime>_sys
-// `&JSGlobalObject` is ABI-identical to a non-null pointer. `ctx` is stored
-// opaquely (never dereferenced by the C++ side), so the FFI itself has no
-// pointer-validity precondition — the ref-count contract is documented on
-// `create()` below, not on the FFI call.
 unsafe extern "C" {
     safe fn Bun__NativePromiseContext__create(
         global: &JSGlobalObject,
@@ -137,38 +120,11 @@ pub(crate) fn take<T>(cell: JSValue) -> Option<NonNull<T>> {
     NonNull::new(Bun__NativePromiseContext__take(cell).cast::<T>())
 }
 
-/// Called from the C++ destructor when a cell is collected with a non-null
-/// pointer (i.e., `take()` was never called — the Promise was GC'd without
-/// settling).
-///
-/// The destructor runs during GC sweep, so it is NOT safe to do anything
-/// that might touch the JSC heap. RequestContext.deref() can trigger
-/// deinit() which detaches responses, unrefs bodies, and calls back into
-/// the server — all of which may unprotect JS values or allocate. We must
-/// defer that work to the event loop.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__NativePromiseContext__destroy(ctx: *mut c_void, tag: u8) {
     DeferredDerefTask::schedule(ctx, Tag::from_raw(tag));
 }
 
-/// Defers the GC-triggered deref to the next event-loop tick so it runs
-/// outside the sweep phase.
-///
-/// Zero-allocation: the ctx pointer and our Tag are packed into the task's
-/// `ptr` slot (pointer in high bits, tag in low 3 bits — the target types
-/// are all >= 8-byte aligned). See PosixSignalTask for the same trick with
-/// signal numbers.
-///
-/// Layout of `Task.ptr` (read back as `usize` in dispatch):
-///
-///     bits 63..3           bits 2..0
-///     ┌────────────────────┬─────────┐
-///     │ ctx ptr (aligned)  │ our Tag │
-///     └────────────────────┴─────────┘
-///
-/// Zig packed both into a 49-bit bitfield via `setUintptr`; the Rust `Task`
-/// stores `{ tag, ptr }` as separate fields, so the discriminant is carried
-/// in `Task.tag` and only the ctx|Tag packing remains in `Task.ptr`.
 pub(crate) struct DeferredDerefTask;
 
 impl Taskable for DeferredDerefTask {
@@ -191,10 +147,6 @@ impl DeferredDerefTask {
         let addr = ctx as usize;
         debug_assert!(addr & Self::TAG_MASK == 0);
 
-        // Zig stamped the discriminant via `Task.init(&marker)` then overwrote
-        // the packed `_ptr` bitfield with `setUintptr(@truncate(addr | tag))`.
-        // The Rust `Task` is a plain `{ tag, ptr }` pair (no bitfield packing),
-        // so build it directly — dispatch unpacks via `task.ptr as usize`.
         let task = Task::new(
             <DeferredDerefTask as Taskable>::TAG,
             (addr | (tag as usize)) as *mut (),
@@ -222,10 +174,6 @@ impl DeferredDerefTask {
                     (*ctx.cast::<DebugHTTPSServerRequestContext>()).deref()
                 }
                 Tag::BodyValueBufferer => {
-                    // ValueBufferer is embedded by value inside HTMLRewriter's
-                    // BufferOutputSink, with the owner pointer stored in .ctx.
-                    // The pending-promise ref was taken on the owner, so we
-                    // release it there.
                     let bufferer = &*ctx.cast::<body::ValueBufferer<'_>>();
                     html_rewriter::BufferOutputSink::deref(
                         bufferer.ctx.cast::<html_rewriter::BufferOutputSink>(),

@@ -21,13 +21,6 @@ pub trait ConcurrentPromiseTaskContext: Sized {
     fn then(&mut self, promise: &mut JSPromise) -> Result<(), JsTerminated>;
 }
 
-/// A generic task that runs work on a thread pool and resolves a JavaScript Promise with the result.
-/// This allows CPU-intensive operations to be performed off the main JavaScript thread while
-/// maintaining a Promise-based API for JavaScript consumers.
-///
-/// The Context type must implement:
-/// - `run(*Context)` - performs the work on the thread pool
-/// - `then(*Context, jsc.JSPromise)` - resolves the promise with the result on the JS thread
 pub struct ConcurrentPromiseTask<'a, Context: ConcurrentPromiseTaskContext> {
     // Zig: `ctx: *Context` — heap-allocated by caller (e.g. `bun.new(CopyFile, ...)`).
     // Owned here so dropping the task frees the context (matches Zig `Context.deinit()` → `bun.destroy`).

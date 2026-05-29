@@ -93,10 +93,6 @@ pub mod mysql {
         #[path = "StmtPrepareOKPacket.rs"]
         pub mod stmt_prepare_ok_packet;
 
-        // ── flat re-exports for `bun_sql_jsc` ──────────────────────────────
-        // sql_jsc names most of these via `bun_sql::mysql::protocol::Foo`
-        // (mirroring Zig's flat `MySQLProtocol.zig` namespace), so surface
-        // them here as well as via their leaf modules.
         pub use any_mysql_error::{AnyMySQLError, Error};
         pub use auth_switch_request::AuthSwitchRequest;
         pub use auth_switch_response::AuthSwitchResponse;

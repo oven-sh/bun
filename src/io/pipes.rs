@@ -70,18 +70,6 @@ impl PollOrFd {
         #[cfg(all(not(target_os = "macos"), not(windows)))]
         let close_async = true;
         if matches!(self, PollOrFd::Poll(_)) {
-            // workaround kqueue bug.
-            // 1) non-blocking FIFO
-            // 2) open for writing only = fd 2, nonblock
-            // 3) open for reading only = fd 3, nonblock
-            // 4) write(3, "something") = 9
-            // 5) read(2, buf, 9) = 9
-            // 6) read(2, buf, 9) = -1 (EAGAIN)
-            // 7) ON ANOTHER THREAD: close(3) = 0,
-            // 8) kevent(2, EVFILT_READ, EV_ADD | EV_ENABLE | EV_DISPATCH, 0, 0, 0) = 0
-            // 9) ??? No more events for fd 2
-            // PORT NOTE: reshaped for borrowck — take ownership of the Box before
-            // calling deinit_force_unregister, then leave self = Closed.
             let old = core::mem::replace(self, PollOrFd::Closed);
             if let PollOrFd::Poll(poll) = old {
                 #[cfg(target_os = "macos")]

@@ -24,12 +24,6 @@ use crate::Mutex;
 #[cfg(windows)]
 use crate::windows_sys as windows;
 
-// `HANDLE` is an opaque kernel handle (kernel32 validates and returns 0/FALSE
-// on a non-console handle); every out-param is `&mut T` to a `#[repr(C)]` POD,
-// ABI-identical to the Win32 `LP*` pointer (thin non-null). The reference type
-// encodes the only pointer-validity precondition, so `safe fn` discharges the
-// link-time proof. (`bun_windows_sys::kernel32` declares these with `*mut`;
-// redeclared locally so the legacy-conhost cursor path below is plain calls.)
 #[cfg(windows)]
 #[link(name = "kernel32")]
 unsafe extern "system" {
@@ -61,30 +55,14 @@ unsafe extern "system" {
     ) -> windows::BOOL;
 }
 
-// Progress's terminal handle is the canonical `output::File` (vtable-backed
-// stderr/File from `OutputSinkVTable`). The duplicate `ProgressTerminalVTable`
-// from B-0 round 1 is removed; tty/ansi/winsize route through the new
-// `OutputSinkVTable` slots so `bun_core` stays T0 (no `bun_sys` dep).
 pub use crate::output::File;
 use crate::output::output_sink;
 
 impl File {
-    /// `std.io.tty.supportsAnsiEscapeCodes()` — on unix this is `isatty()`;
-    /// on Windows it requires `ENABLE_VIRTUAL_TERMINAL_PROCESSING` (set by
-    /// `Output.Source.init`). We route through the sink so the platform check
-    /// lives in `bun_sys`.
     #[inline]
     pub fn supports_ansi_escape_codes(self) -> bool {
         #[cfg(windows)]
         {
-            // Zig std.fs.File.supportsAnsiEscapeCodes(): query the live console
-            // mode for ENABLE_VIRTUAL_TERMINAL_PROCESSING — a *capability*
-            // check. Do NOT proxy through ENABLE_ANSI_COLORS_STDERR: that is a
-            // color-*preference* flag (NO_COLOR/FORCE_COLOR/tty) and never
-            // inspects whether SetConsoleMode(VT) actually succeeded, so it
-            // would pick the wrong branch in `Progress::start` on legacy
-            // conhost (emit raw escapes) or under NO_COLOR on a VT terminal
-            // (force the SetConsoleCursorPosition path).
             let mut mode: windows::DWORD = 0;
             GetConsoleMode(self.console_handle(), &mut mode) != 0
                 && (mode & windows::ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0
@@ -124,11 +102,6 @@ pub struct Progress {
     /// Whether the terminal supports ANSI escape codes.
     pub supports_ansi_escape_codes: bool,
 
-    /// If the terminal is "dumb", don't print output.
-    /// This can be useful if you don't want to print all
-    /// the stages of code generation if there are a lot.
-    /// You should not use it if the user should see output
-    /// for example showing the user what tests run.
     pub dont_print_on_dumb: bool,
 
     pub root: Node,
@@ -228,23 +201,11 @@ impl Default for Node {
 }
 
 impl Node {
-    /// Raw pointer to the owning `Progress`.
-    ///
-    /// A `&`/`&mut`-returning accessor is intentionally **not** provided:
-    /// `Progress` embeds `root: Node` and `refresh_with_held_lock` walks the
-    /// `recently_updated_child` chain, so materializing a `&mut Progress` while
-    /// any `&Node`/`&mut Node` is live would alias. Callers must go through the
-    /// raw pointer and keep each access narrowly scoped.
     #[inline]
     pub fn context_ptr(&self) -> *mut Progress {
         self.context
     }
 
-    /// Shared reference to the parent node, or `None` for the root.
-    ///
-    /// Safe for read-only use (atomic field access, walking `parent.parent()`).
-    /// For paths that must call `&mut self` methods on the parent (e.g.
-    /// `complete_one`), use [`parent_ptr`](Self::parent_ptr) instead.
     #[inline]
     pub fn parent(&self) -> Option<&Node> {
         // SAFETY: parent backref points into caller-provided storage that
@@ -261,12 +222,6 @@ impl Node {
         self.parent
     }
 
-    /// Create a new child progress node. Thread-safe.
-    /// Call `Node.end` when done.
-    /// TODO solve https://github.com/ziglang/zig/issues/2765 and then change this
-    /// API to set `self.parent.recently_updated_child` with the return value.
-    /// Until that is fixed you probably want to call `activate` on the return value.
-    /// Passing 0 for `estimated_total_items` means unknown.
     pub fn start(&mut self, name: &'static [u8], estimated_total_items: usize) -> Node {
         Node {
             context: self.context,
@@ -410,11 +365,6 @@ impl Node {
 }
 
 impl Progress {
-    /// Create a new progress node.
-    /// Call `Node.end` when done.
-    /// TODO solve https://github.com/ziglang/zig/issues/2765 and then change this
-    /// API to return Progress rather than accept it as a parameter.
-    /// `estimated_total_items` value of 0 means unknown.
     pub fn start(&mut self, name: &'static [u8], estimated_total_items: usize) -> &mut Node {
         // TODO(port): std.fs.File.stderr() / supportsAnsiEscapeCodes() / isTty() —
         // map to bun_sys::File equivalents.
@@ -703,17 +653,6 @@ impl Progress {
         self.columns_written = 0;
     }
 
-    /// Allows the caller to freely write to stderr until `unlock_stderr()` is
-    /// called. During the lock, the progress information is cleared from the
-    /// terminal.
-    ///
-    /// PORT NOTE: Zig splits the lock/unlock across fn boundaries.
-    /// `crate::Mutex` (std::sync wrapper) has no raw `unlock()`, and storing a
-    /// guard on `self` is self-referential. There are currently **no callers**
-    /// of `lock_stderr`/`unlock_stderr` in either the Zig or Rust trees, so
-    /// this clears the terminal under a scoped lock and `unlock_stderr` is a
-    /// no-op. If a caller materializes, refactor to return the guard (or move
-    /// `update_mutex` to a raw `bun_threading::Mutex` once layering allows).
     pub fn lock_stderr(&mut self) {
         let ctx_ptr = std::ptr::from_mut::<Self>(self);
         let _g = self.update_mutex.lock();

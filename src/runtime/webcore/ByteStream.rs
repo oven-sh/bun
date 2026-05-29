@@ -10,16 +10,6 @@ use crate::webcore::{blob, readable_stream};
 
 bun_output::declare_scope!(ByteStream, visible);
 
-/// R-2 (`sharedThis`): every JS-reachable inherent method takes `&self` so a
-/// re-entrant JS call (e.g. `pending.run()` → JS → `onPull`) cannot stack two
-/// `&mut ByteStream`. Fields mutated on those paths are wrapped in `Cell`
-/// (Copy scalars / raw ptrs) or [`JsCell`] (non-Copy). `high_water_mark` /
-/// `size_hint` are written only at init time (before the JS wrapper exists)
-/// and stay bare.
-///
-/// The `SourceContext` trait still spells its callbacks `&mut self` (shared
-/// across `ByteBlobLoader` / `FileReader`); the trait impl below auto-derefs
-/// to the `&self` inherent bodies.
 pub struct ByteStream {
     pub buffer: JsCell<Vec<u8>>,
     pub has_received_last_chunk: Cell<bool>,
@@ -58,10 +48,6 @@ impl Default for ByteStream {
     }
 }
 
-/// `webcore.ReadableStream.NewSource(@This(), "Bytes", onStart, onPull, onCancel, deinit, null, drain, memoryCost, toBufferedValue)`
-// TODO(port): `NewSource` is a Zig comptime type-generator that wires callbacks into a
-// `.classes.ts` wrapper. In Rust this becomes `ReadableStream::Source<ByteStream>` where
-// `ByteStream: ReadableStreamSourceContext` (trait with `on_start`/`on_pull`/... methods).
 pub type Source = readable_stream::NewSource<ByteStream>;
 
 impl readable_stream::SourceContext for ByteStream {
@@ -135,10 +121,6 @@ impl ByteStream {
             return streams::Start::Ready;
         }
 
-        // For HTTP, the maximum streaming response body size will be 512 KB.
-        // #define LIBUS_RECV_BUFFER_LENGTH 524288
-        // For HTTPS, the size is probably quite a bit lower like 64 KB due to TLS transmission.
-        // We add 1 extra page size so that if there's a little bit of excess buffered data, we avoid extra allocations.
         let page_size: blob::SizeType =
             blob::SizeType::try_from(bun_sys::page_size()).expect("int cast");
         streams::Start::ChunkSize((512 * 1024 + page_size).min(self.high_water_mark.max(page_size)))
@@ -238,10 +220,6 @@ impl ByteStream {
                             "ByteStream.onData owned_and_done and action.fulfill()"
                         );
 
-                        // Zig: `std.array_list.Managed(u8).fromOwnedSlice(bun.default_allocator, @constCast(chunk))`
-                        // PORT NOTE: reshaped for borrowck — move the owned Vec<u8> into `buffer`
-                        // directly instead of round-tripping through `chunk` (which would borrow
-                        // `stream`).
                         self.buffer.set(owned.move_to_list_managed());
                         let mut blob = self.to_any_blob().unwrap();
                         return action.fulfill(self.parent_const().global_this(), &mut blob);
@@ -276,10 +254,6 @@ impl ByteStream {
 
         if self.pending.get().state == streams::PendingState::Pending {
             debug_assert!(self.buffer.get().is_empty());
-            // Re-derive the destination from the GC-rooted view instead of trusting the
-            // raw pointer captured at pull time: JS can detach or transfer the backing
-            // ArrayBuffer between the pull and the data arriving, leaving
-            // `pending_buffer` dangling. A detached view re-derives to an empty slice.
             let global = self.parent_const().global_this();
             let mut pending_view = self
                 .pending_value
@@ -336,10 +310,6 @@ impl ByteStream {
 
             bun_output::scoped_log!(ByteStream, "ByteStream.onData pending.run()");
 
-            // R-2: `Pending::run` resolves a JS promise (re-enters JS); the
-            // `with_mut` borrow is `UnsafeCell`-backed so `noalias` is
-            // suppressed on `&self`, which is the load-bearing fix vs the old
-            // `&mut self` form.
             self.pending.with_mut(|p| p.run());
 
             return Ok(());
@@ -510,14 +480,6 @@ impl ByteStream {
         self.buffer.get().capacity()
     }
 
-    /// NOTE: not `impl Drop` — `ByteStream` is the `context` payload of a `.classes.ts`
-    /// `ReadableStreamSource`; teardown is driven by the GC finalizer via `Source::finalize`,
-    /// which calls this. Per §JSC, `.classes.ts` payloads use `finalize`, not `deinit`/`Drop`.
-    ///
-    /// R-2: stays `&mut self` — this is the destructor path (called once from
-    /// `SourceContext::deinit_fn(&mut self)` after the ref-count hits zero), so
-    /// no JS re-entry can alias `self`; and `parent().deinit()` needs unique
-    /// `Box` provenance.
     pub(crate) fn finalize(&mut self) {
         bun_jsc::mark_binding!();
         if self.buffer.get().capacity() > 0 {

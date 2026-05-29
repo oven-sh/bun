@@ -68,11 +68,6 @@ pub fn write_output_files_to_disk(
             return Err(e);
         }
     };
-    // Optimization: when writing to disk, we can re-use the memory
-    // PERF(port): MaxHeapAllocator reuses the largest allocation between
-    // iterations. Verify bun_alloc::MaxHeapAllocator semantics
-    // match (init/reset/deinit). DynAlloc is currently `()` so the arena
-    // handles below are placeholders; allocation routes through global mimalloc.
     let mut max_heap_allocator = MaxHeapAllocator::init();
     let mut _max_heap_allocator_source_map = MaxHeapAllocator::init();
     let mut _max_heap_allocator_inline_source_map = MaxHeapAllocator::init();
@@ -82,11 +77,6 @@ pub fn write_output_files_to_disk(
     let bv2: &mut BundleV2 =
         unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
 
-    // PORT NOTE: Zig passes `chunk` (an element of `chunks`) and `chunks`
-    // together into `code()`/`code_standalone()`. The callee now takes
-    // `&Chunk` / `&[Chunk]` (read-only), so iterate by index and reborrow
-    // shared; the only per-chunk mutation is the `intermediate_output`
-    // take/restore done via `chunks[i]`.
     let chunks_len = chunks.len();
 
     for chunk_index_in_chunks_list in 0..chunks_len {
@@ -118,10 +108,6 @@ pub fn write_output_files_to_disk(
         }
 
         let _trace2 = bun_core::perf::trace("Bundler.writeChunkToDisk");
-        // PERF(port): Zig `defer max_heap_allocator.reset()` — reset the reusable
-        // buffer after each chunk. `MaxHeapAllocator::scope()` returns an RAII
-        // guard that resets on drop and derefs to the arena, so when
-        // `code_allocator` is wired up it can borrow through `_code_allocator`.
         let _code_allocator = max_heap_allocator.scope();
 
         let rel_parent =
@@ -505,10 +491,6 @@ pub fn write_output_files_to_disk(
                 }
             }),
             entry_point_index: if output_kind == options::OutputKind::EntryPoint {
-                // TODO(port): `bake_types::Framework` is missing
-                // `server_components`; once it lands, restore the
-                // `if c.framework.is_some_and(|fw| fw.server_components.is_some()) { 3 } else { 1 }`
-                // branch.
                 let offset: u32 = 1;
                 Some(chunk.entry_point.source_index() - offset)
             } else {

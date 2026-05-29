@@ -40,13 +40,6 @@ fn estring_to_owned(s: &E::EString, bump: &Bump) -> Box<[u8]> {
     Box::<[u8]>::from(s.string(bump).expect("OOM"))
 }
 
-/// Port of `resolver/package_json.zig` `PackageJSON.parseMacrosJSON`.
-///
-/// Re-ported here against the value-shaped `bun_ast::Expr` (the
-/// tree produced by the TOML/JSON parsers) and returning the
-/// `bun_options_types::context::MacroMap` shape so the result slots directly
-/// into `ctx.debug.macros` without crossing the `bun_ast::Expr` /
-/// `StringArrayHashMap` newtype boundary that `bun_resolver`'s copy uses.
 fn parse_macros_json(
     macros: &Expr,
     log: &mut bun_ast::Log,
@@ -348,11 +341,6 @@ impl<'a> Parser<'a> {
         Ok(api::StringMap { keys, values })
     }
 
-    // PORT NOTE: `comptime cmd: Command.Tag` demoted to a runtime arg —
-    // `bun_options_types::command_tag::Tag` does not derive `ConstParamTy` (it
-    // already derives `enum_map::Enum`, which conflicts). The Zig original
-    // monomorphised over `cmd` purely to dead-code-eliminate untaken arms; the
-    // runtime branches below are equivalent and the few hot fields are tiny.
     pub(crate) fn parse(&mut self, cmd: CommandTag) -> Result<(), bun_core::Error> {
         bun_analytics::features::bunfig.fetch_add(1, Ordering::Relaxed);
 
@@ -1120,12 +1108,6 @@ impl Bunfig {
         let log: &mut bun_ast::Log = unsafe { &mut *log_ptr };
         let log_count = log.errors + log.warnings;
 
-        // Zig passes `bun.default_allocator` here — no side `mi_heap`. The Rust
-        // port previously called `Arena::new()` (= `mi_heap_new` +
-        // `mi_heap_destroy` on drop), which perf attributed ~1.6% of
-        // `bun -e ''` startup to. Borrow the process default heap instead so
-        // TOML/JSON parse allocations route through plain `mi_malloc`, matching
-        // Zig. Parsed config lives for the process lifetime either way.
         let bump = Bump::borrowing_default();
 
         let ext = source.path.name().ext;
@@ -1184,11 +1166,6 @@ impl Bunfig {
         parser.parse(cmd)
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// `[install]` / `[install.scopes]` registry parsing and `[serve.static]`.
-// Split into a second `impl` block purely to keep `parse(cmd)` readable.
-// ─────────────────────────────────────────────────────────────────────────────
 
 impl<'a> Parser<'a> {
     fn parse_registry_url_string(
@@ -1259,12 +1236,6 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_install(&mut self, install_obj: &Expr) -> Result<(), bun_core::Error> {
-        // PORT NOTE: Zig held `*BunInstall` and `*Parser` simultaneously.
-        // The helper methods (`expect*`, `add_error`, `parse_registry`) take
-        // `&mut self`, which under Stacked Borrows would invalidate any
-        // long-lived `&mut` derived from `self.ctx.install`. Move the box
-        // out so the install borrow is provably disjoint from `self`, then
-        // restore it on every exit path.
         let mut install = self.ctx.install.take().expect("install slot primed");
         let result = self.parse_install_inner(&mut install, install_obj);
         self.ctx.install = Some(install);

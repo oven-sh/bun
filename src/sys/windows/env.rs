@@ -16,12 +16,6 @@ pub(crate) static ORIG_ENVIRON: bun_core::RacyCell<Option<(*mut *mut c_char, usi
 
 static ENV_CONVERTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-/// Converts all strings in `std.os.environ` to WTF-8.
-///
-/// This function should be called only once, at program startup, before any code that needs to
-/// access the environment runs.
-///
-/// This function is Windows-only.
 pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
     assert!(
         !ENV_CONVERTED.load(core::sync::atomic::Ordering::Relaxed),
@@ -57,11 +51,6 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
         // and returns `Vec<u8>` directly — no `?` here.
         break 'blk bun_core::strings::to_utf8_alloc(wtf16_slice);
     };
-    // Stacked Borrows: leak FIRST as a *shared* `&'static [u8]`, then derive every interior
-    // pointer from that one shared borrow. Shared reborrows (`&wtf8_buf[len..]`) push
-    // SharedReadOnly tags that coexist — unlike `&mut wtf8_buf[len..]`, a later sibling
-    // reborrow does not invalidate previously-pushed `str_ptr`s. Zig has no equivalent
-    // aliasing model so the spec's `@ptrCast(wtf8_buf[len..].ptr)` is fine there.
     let wtf8_buf: &'static [u8] = Box::leak(wtf8_buf.into_boxed_slice());
     let mut len: usize = 0;
 

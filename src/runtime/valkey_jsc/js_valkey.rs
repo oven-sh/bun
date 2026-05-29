@@ -22,19 +22,8 @@ use super::valkey_command_body::Command;
 use bun_jsc::url::URL;
 use bun_valkey::valkey_protocol as protocol;
 
-/// `bun.JSTerminated!T`
-// PORT NOTE: widened to `JsResult<T>` to match `valkey.rs`; narrow once
-// `ValkeyClient::{fail,on_open,on_close,start}` are tightened to the
-// `jsc::JsTerminatedResult` alias from `bun_jsc::event_loop`.
 type JsTerminatedResult<T> = jsc::JsResult<T>;
 
-/// Narrow `valkey::ValkeyClient`'s `JsResult<()>` (its local `JsTerminated<T>`
-/// alias) back to the spec'd `bun.JSTerminated!void`. The inner client only
-/// ever propagates `JsError::Terminated` (originating from `JSPromise::reject`
-/// / `resolve`); the other variants are unreachable on this path.
-// PORT NOTE: while `JsTerminatedResult` is widened to `JsResult` (see above),
-// this is effectively identity-with-OOM-crash. Once both aliases tighten to
-// `jsc::JsTerminatedResult`, restore the `JsTerminated::JSTerminated` mapping.
 #[inline]
 fn narrow_terminated(r: JsResult<()>) -> JsTerminatedResult<()> {
     r.map_err(|e| match e {
@@ -56,11 +45,6 @@ fn vm_event_loop_ctx() -> bun_io::EventLoopCtx {
     bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
 }
 
-/// Scope-guarded `ref/deref` over a raw pointer — sidesteps the
-/// `scopeguard`-captures-`&self` borrowck conflict that pervades this file.
-/// Mirrors Zig's `defer this.deref()` which had no aliasing restriction.
-// R-2: takes `*const` now that every `JSValkeyClient` method is `&self`;
-// `deref()` (and `ref_()`) already only need a shared receiver.
 #[inline]
 fn deref_guard(
     this: *const JSValkeyClient,
@@ -88,10 +72,6 @@ pub struct SubscriptionCtx {
     pub original_enable_auto_pipelining: bool,
 }
 
-/// `jsc.Codegen.JSRedisClient` — the generate-classes.ts output now emits a
-/// `js_RedisClient` module with snake-case `*_set_cached`/`*_get_cached`
-/// free-fns plus `to_js`/`from_js`. Re-exported here as `Js` (mirrors Zig's
-/// `pub const js = jsc.Codegen.JSRedisClient`).
 pub use crate::generated_classes::js_RedisClient as Js;
 
 // SAFETY: `SubscriptionCtx` lives at `JSValkeyClient._subscription_ctx`
@@ -164,12 +144,6 @@ impl SubscriptionCtx {
         self.subscription_callback_map().clear(global_object)
     }
 
-    /// Remove a specific receive handler.
-    ///
-    /// Returns: The total number of remaining handlers for this channel, or null if there were no
-    /// listeners originally registered.
-    ///
-    /// Note: This function will empty out the map entry if there are no more handlers registered.
     pub fn remove_receive_handler(
         &self,
         global_object: &JSGlobalObject,
@@ -306,10 +280,6 @@ impl SubscriptionCtx {
         let vm = VirtualMachine::get();
         let _exit = vm.enter_event_loop_scope();
 
-        // After we go through every single callback, we will have to update the poll ref.
-        // The user may, for example, unsubscribe in the callbacks, or even stop the client.
-        // `BackRef` (Copy + Deref) detaches the borrow so the guard closure is
-        // safe even though intervening JS may re-enter `&self`.
         let parent_br = BackRef::new(self.parent());
         let _update = scopeguard::guard(parent_br, |p| p.update_poll_ref());
 
@@ -357,21 +327,6 @@ impl SubscriptionCtx {
 // JSValkeyClient
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Valkey client wrapper for JavaScript
-// PORT NOTE: `#[bun_jsc::JsClass]` is hand-rolled in `mod.rs` (the codegen
-// macro's 2-arg `constructor` shim doesn't fit the `js_this` flow here).
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut RedisClient` — `&mut T`
-// auto-derefs to `&T` so the impls below compile against either. `JsCell` is
-// `#[repr(transparent)]`, so `from_field_ptr!`/`owner!` recovery (dispatch.rs,
-// `ValkeyClient::parent`) sees identical offsets.
-//
-// `#[repr(C)]`: declared layout must match the Zig original — `client` MUST be
-// at offset 0. `ValkeyClient::parent()` recovers the outer pointer via
-// `from_field_ptr!`, but belt-and-suspenders against any path that assumes
-// `*mut JSValkeyClient` and `*mut ValkeyClient` alias (the socket ext slot did
-// — see `connect()` below).
 #[repr(C)]
 pub struct JSValkeyClient {
     pub client: JsCell<valkey::ValkeyClient>,
@@ -447,12 +402,6 @@ impl JSValkeyClient {
 
     // ─── R-2 interior-mutability helpers ────────────────────────────────────
 
-    /// Mutable projection of the inner protocol client through `&self`.
-    ///
-    /// `ValkeyClient` is the protocol state machine (not itself JS-exposed);
-    /// every method on it still takes `&mut self`. This is the single audited
-    /// escape hatch — callers must keep the returned borrow short and not hold
-    /// it across a call that re-enters JS and re-derives the same client.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(super) fn client_mut(&self) -> &mut valkey::ValkeyClient {
@@ -462,14 +411,6 @@ impl JSValkeyClient {
         unsafe { self.client.get_mut() }
     }
 
-    // Factory function to create a new Valkey client from JS
-    // PORT NOTE: no `#[bun_jsc::host_fn]` here — the free-fn shim it emits
-    // calls `constructor(...)` unqualified (fails inside `impl`). Codegen
-    // wires the constructor via `RedisClientImpl::constructor` (see
-    // generated_classes.rs), which passes the freshly-allocated wrapper cell
-    // as `js_this`. `callframe.this()` is *not* the wrapper here — using it
-    // would mis-target the cached `subscriptionCallbackMap` slot in
-    // `SubscriptionCtx::init`.
     pub fn constructor(
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -501,12 +442,6 @@ impl JSValkeyClient {
         // `defer url_str.deref();` — bun_core::String drops on scope exit.
         let mut fallback_url_buf = [0u8; 2048];
 
-        // Parse and validate the URL using URL.zig's fromString which returns null for invalid URLs
-        // TODO(markovejnovic): The following check for :// is a stop-gap. It is my expectation
-        // that URL.fromString returns null if the protocol is not specified. This is not, in-fact,
-        // the case right now and I do not understand why. It will take some work in JSC to
-        // understand why this is happening, but since I need to uncork valkey, I'm adding this as
-        // a stop-gap.
         let parsed_url: NonNull<URL> = 'get_url: {
             let url_slice = url_str.to_utf8();
             let url_byte_slice = url_slice.slice();
@@ -764,10 +699,6 @@ impl JSValkeyClient {
         Ok(new_client_ptr)
     }
 
-    /// Clone this client while remaining in the initial disconnected state.
-    ///
-    /// Note that this does not create an object with an associated this_value.
-    /// You may need to populate it yourself.
     pub fn clone_without_connecting(
         &self,
         global_object: &JSGlobalObject,
@@ -778,12 +709,6 @@ impl JSValkeyClient {
         let client = self.client.get();
         let sub_ctx = self._subscription_ctx.get();
 
-        // PORT NOTE: in Zig, `username`/`password`/`address.hostname` are sub-slices
-        // into the single `connection_strings` allocation, so the spec dupes
-        // `connection_strings` once and `rebaseSlice`s the sub-slices into the copy.
-        // The Rust `ValkeyClient` (see valkey.rs:290-299) instead owns each field
-        // as an independent `Box<[u8]>`, so the rebase arithmetic would compute a
-        // garbage offset and read OOB. Clone each owned buffer directly.
         let connection_strings_copy: Box<[u8]> = Box::<[u8]>::from(&client.connection_strings[..]);
         let username: Box<[u8]> = Box::<[u8]>::from(&client.username[..]);
         let password: Box<[u8]> = Box::<[u8]>::from(&client.password[..]);
@@ -931,10 +856,6 @@ impl JSValkeyClient {
     }
 
     pub fn get_or_create_subscription_ctx(&self) -> JsResult<&SubscriptionCtx> {
-        // PORT NOTE: Zig treats _subscription_ctx as Optional here but the field is not
-        // optional in the struct definition above. Original:
-        //   `if (this._subscription_ctx) |*ctx| { return ctx; }`
-        // Preserve the return-existing intent so we don't unconditionally reinit.
         if self._subscription_ctx.get().is_subscriber {
             return Ok(self._subscription_ctx.get());
         }
@@ -998,10 +919,6 @@ impl JSValkeyClient {
 
         // If was manually closed, reset that flag
         self.client_mut().flags.is_manually_closed = false;
-        // Explicit connect() should also clear the sticky `failed` flag so the
-        // client can recover after prior connection attempts exhausted retries.
-        // Without this, every subsequent command rejects with "Connection has
-        // failed" forever — see https://github.com/oven-sh/bun/issues/29925.
         self.client_mut().flags.failed = false;
         let self_br = BackRef::new(self);
         let _update = scopeguard::guard(self_br, |p| p.update_poll_ref());
@@ -1057,12 +974,6 @@ impl JSValkeyClient {
         Ok(JSValue::UNDEFINED)
     }
 
-    // PORT NOTE: `onconnect`/`onclose` are declared with `this: true` in
-    // valkey.classes.ts, so the codegen thunk passes the JS wrapper cell as
-    // `this_value` (between `&self` and `global`). No `host_fn` attribute —
-    // the extern "C" shim lives in generated_classes.rs. Setter now returns
-    // `()` — `IntoHostSetterReturn for ()` ⇒ `true` at the ABI, identical to
-    // the old `-> bool { true }`.
     bun_jsc::cached_prop_hostfns! {
         crate::generated_classes::js_RedisClient;
         (get_on_connect, set_on_connect => onconnect_get_cached, onconnect_set_cached),
@@ -1507,10 +1418,6 @@ impl JSValkeyClient {
         self.ref_();
         // socket close can potentially call JS so we need to enqueue the deinit
         struct Holder {
-            // BACKREF — JSValkeyClient is intrusively ref-counted (RefCount + @fieldParentPtr
-            // recovery in SubscriptionCtx::parent). The `self.ref_()` above / `(*ctx).deref()`
-            // in run() keep it alive across the task hop, exactly as the Zig does.
-            // PORT NOTE: LIFETIMES.tsv lists this as SHARED; update to BACKREF.
             ctx: *const JSValkeyClient,
             task: jsc::AnyTask::AnyTask,
         }
@@ -1560,11 +1467,6 @@ impl JSValkeyClient {
         this.this_value.with_mut(|t| t.finalize());
         this.client_mut().flags.finalized = true;
         this.close_socket_next_tick();
-        // We do not need to free the subscription context here because we're
-        // guaranteed to have freed it by virtue of the fact that we are
-        // garbage collected now and the subscription context holds a reference
-        // to us. If we still had a subscription context, we would never be
-        // garbage collected.
         debug_assert!(!this._subscription_ctx.get().is_subscriber);
     }
 
@@ -1585,11 +1487,6 @@ impl JSValkeyClient {
         let _d = deref_guard(self);
 
         let is_tls = self.client.get().tls != valkey::TLS::None;
-        // PORT NOTE: `vm.rare_data()` needs `&mut VirtualMachine`; `client.vm`
-        // is `&'static`. Cast through raw — the per-thread VM is single-owner
-        // on the JS thread, and `valkey_group` only touches the embedded
-        // `SocketGroup` field + `vm.uws_loop()` (disjoint from anything we
-        // hold). Same pattern as `Bun__RareData__postgresGroup`.
         let vm_ptr = std::ptr::from_ref::<VirtualMachine>(self.client.get().vm).cast_mut();
         // SAFETY: per-thread VM, accessed from the JS thread; `rare_data()`
         // lazy-inits the box.
@@ -1602,10 +1499,6 @@ impl JSValkeyClient {
             }
         };
 
-        // PORT NOTE: reshaped for borrowck — the Zig matched on `self.client.tls`
-        // and called `self.client_fail`/`on_valkey_close` from inside the arm.
-        // Populate `_secure` first, then handle the failure branch outside the
-        // borrow of `self.client.tls`.
         let tls_ctx_failed = if let valkey::TLS::Custom(ref custom) = self.client.get().tls {
             // Reuse across reconnect — the SSL_CTX is the only thing the
             // old `_socket_ctx` cache existed to preserve.
@@ -1663,14 +1556,6 @@ impl JSValkeyClient {
                 (*p).update_poll_ref();
             }
         });
-        // PORT NOTE: the socket ext slot is typed `ExtSlot<JSValkeyClient>`
-        // (uws_handlers.rs `Valkey<SSL> = NsHandler<JSValkeyClient, …>`); store
-        // the OUTER pointer, not the inner `ValkeyClient`, or dispatch will
-        // mis-type and re-offset it (`on_open` → `this.client_mut()` adds
-        // `offsetof(JSValkeyClient, client)` again → garbage `&mut ValkeyClient`).
-        // Reshaped for borrowck — `address` is a field of `client`; go through a
-        // raw pointer. `Address::connect` only reads host/path bytes and forwards
-        // `owner_ptr` opaquely (no overlapping write).
         let owner_ptr: *mut JSValkeyClient = std::ptr::from_ref::<JSValkeyClient>(self).cast_mut();
         let client_ptr: *mut valkey::ValkeyClient = self.client.as_ptr();
         // SAFETY: `client_ptr` is live; `group` is the lazy-initialised per-VM
@@ -1772,21 +1657,8 @@ impl JSValkeyClient {
     ///
     /// This requires this_value to be alive.
     pub fn update_poll_ref(&self) {
-        // TODO(markovejnovic): This function is such a crazy cop out. We really
-        // should be treating valkey as a state machine, with well-defined
-        // state and modes in which it tracks and manages its own lifecycle.
-        // This is a mess beyond belief and it is incredibly fragile.
         let has_pending_commands = self.client.get().has_any_pending_commands();
 
-        // isDeletable may throw an exception, and if it does, we have to assume
-        // that the object still has references. Best we can do is hope nothing
-        // catastrophic happens.
-        //
-        // Once the JS wrapper has been finalized, the subscription callback map
-        // (stored on the JS object) is gone. Reading it would hit `unreachable`
-        // in `subscriptionCallbackMap()` because `this_value.tryGet()` returns
-        // null for a finalized ref. Short-circuit here: a finalized client has
-        // no subscriptions by definition.
         let subs_deletable: bool = self.client.get().flags.finalized
             || !self
                 ._subscription_ctx
@@ -1814,17 +1686,6 @@ impl JSValkeyClient {
         // Orthogonal to this, we need to manage the strong reference to the JS object.
         match self.client.get().status {
             valkey::Status::Connecting | valkey::Status::Connected => {
-                // Whenever we're connected, we need to keep the object alive.
-                //
-                // TODO(markovejnovic): This is a leak.
-                // Note this is an intentional leak. Unless the user manually
-                // closes the connection, the object will stay alive forever,
-                // even if it falls out of scope. This is kind of stupid, since
-                // if the object is out of scope, and isn't subscribed upon,
-                // how exactly is the user going to call anything on the object?
-                //
-                // It is 100% safe to drop the strong reference there and let
-                // the object be GC'd, but we're not doing that now.
                 debug!("upgrading this_value since we are connected/connecting");
                 self.this_value.with_mut(|t| t.upgrade(&self.global_object));
             }
@@ -1843,13 +1704,6 @@ impl JSValkeyClient {
         }
     }
 }
-
-// PORT NOTE: Zig's `pub const X = fns.X;` × ~160 binds each command host-fn
-// into the JSValkeyClient namespace. In Rust those are already inherent
-// methods on `JSValkeyClient` via the `impl JSValkeyClient` block in
-// `js_valkey_functions.rs`, so no re-export is needed (and `pub use` of impl
-// methods is not legal Rust). Keep `fns` referenced so the sibling module is
-// linked into the build.
 
 // ───────────────────────────────────────────────────────────────────────────
 // SocketHandler
@@ -1914,11 +1768,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
                     return Self::fail_handshake_with_verify_error(this, vm, &ssl_error);
                 }
 
-                // Certificate chain is valid; verify the hostname matches the
-                // certificate. Prefer the SNI servername if one was set, otherwise
-                // fall back to the host from the connection URL. Unix-domain
-                // sockets have no hostname to verify, so skip the identity check
-                // for redis+tls+unix:// / valkey+tls+unix:// connections.
                 let ssl_ptr: *mut boringssl::c::SSL = this
                     .client
                     .get()
@@ -1938,10 +1787,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
                         valkey::Address::Unix(_) => b"",
                     }
                 };
-                // URL.host() serialises IPv6 literals with surrounding brackets
-                // (e.g. "[::1]"). Strip them so checkServerIdentity can recognise
-                // the value as an IP and match against IP SAN entries; this
-                // mirrors what connectAnon already does before getaddrinfo.
                 if hostname.len() >= 2
                     && hostname[0] == b'['
                     && hostname[hostname.len() - 1] == b']'
@@ -1987,10 +1832,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),
                 Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
                 Err(jsc::JsError::Thrown) => {
-                    // Clear any pending exception since we can't convert it to
-                    // JS, but still fail-close the connection so we never fall
-                    // through to the authenticated state after a rejected
-                    // handshake.
                     this.global_object.clear_exception();
                     this.client_mut().flags.is_authenticated = false;
                     this.client_mut().flags.is_manually_closed = true;

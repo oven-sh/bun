@@ -24,10 +24,6 @@ pub struct Stream {
     // FFI handle into lsquic; bound from `callbacks.onStreamOpen`, closed via `abort`.
     pub qstream: Option<NonNull<quic::Stream>>,
 
-    /// Slices into the lsquic-owned hset buffer; valid only for the duration
-    /// of the `onStreamHeaders` callback that populated it. `cloneMetadata`
-    /// deep-copies synchronously inside that callback, so nothing reads these
-    /// after they go stale.
     pub decoded_headers: Vec<picohttp::Header>,
     pub body_buffer: Vec<u8>,
     pub status_code: u16,
@@ -41,10 +37,6 @@ pub struct Stream {
 }
 
 impl Stream {
-    /// Zig: `pub const new = bun.TrivialNew(@This());`
-    /// Heap-allocates a `Stream` and returns the raw pointer; ownership is held
-    /// by `ClientSession.pending` until `ClientSession::detach` reclaims it via
-    /// `heap::take`.
     pub fn new(session: &mut ClientSession, client: &mut HttpClient<'_>) -> *mut Stream {
         bun_core::heap::into_raw(Box::new(Stream {
             session: bun_ptr::BackRef::new_mut(session),
@@ -60,12 +52,6 @@ impl Stream {
         }))
     }
 
-    /// Mutable access to the bound lsquic stream handle.
-    ///
-    /// INVARIANT: `qstream` is set in `callbacks::on_stream_open` and remains
-    /// valid until `callbacks::on_stream_close` / `ClientSession::detach`
-    /// nulls it. The `quic::Stream` is an FFI-owned allocation distinct from
-    /// `self`, so the returned `&mut` does not alias `self`. HTTP-thread-only.
     #[inline]
     pub fn qstream_mut<'s>(&self) -> Option<&'s mut quic::Stream> {
         // Route through the shared `client_session::quic_stream_mut` accessor;
@@ -74,14 +60,6 @@ impl Stream {
             .map(|qs| super::client_session::quic_stream_mut(qs.as_ptr()))
     }
 
-    /// Mutable access to the owning `ClientSession`.
-    ///
-    /// INVARIANT: `session` is a set-once `BackRef` recorded in
-    /// `Stream::new`; the session owns this `Stream` (in `pending`) and
-    /// strictly outlives it. The session is a distinct heap allocation from
-    /// `self`, so the returned `&mut` does not alias any borrow of `self`.
-    /// HTTP-thread-only — sole live `&mut ClientSession`. Centralises the
-    /// `BackRef::get_mut` upgrade repeated in every lsquic callback.
     #[inline]
     pub fn session_mut<'s>(&self) -> &'s mut ClientSession {
         // Route through the shared `client_session::session_mut` accessor

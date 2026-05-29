@@ -175,13 +175,6 @@ impl PackageManager {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Free-function re-export surface — Zig declares these at file scope with an
-// explicit `*PackageManager` first param. Thin shims over the
-// `impl PackageManager` bodies above so `pub use progress_mod::{...}` in
-// `PackageManager.rs` resolves (matching the directories/enqueue pattern).
-// ──────────────────────────────────────────────────────────────────────────
-
 #[inline]
 pub fn set_node_name<const IS_FIRST: bool>(
     this: &mut PackageManager,

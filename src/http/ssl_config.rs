@@ -44,20 +44,12 @@ pub struct SSLConfig {
     pub requires_custom_request_ctx: bool,
     pub is_using_default_ciphers: bool,
     pub low_memory_mode: bool,
-    /// Memoized `content_hash()`. Interior-mutable because it's lazily filled
-    /// through `Arc<SSLConfig>` (shared ref) by the intern registry's hash
-    /// context. Zig used a plain `u64` mutated via `*SSLConfig` (Zig pointers
-    /// freely alias); Rust needs `UnsafeCell`-backed storage here.
     pub cached_hash: AtomicU64,
 }
 
 /// Casing alias for callers that snake_cased the type name.
 pub type SslConfig = SSLConfig;
 
-/// Atomic shared pointer with weak support. Refcounting and allocation are
-/// managed non-intrusively by `Arc`; the `SSLConfig` struct itself has no
-/// refcount field. Mirrors `bun.ptr.shared.WithOptions(*SSLConfig,
-/// .{ .atomic = true, .allow_weak = true })`.
 #[derive(Clone)]
 #[repr(transparent)]
 pub struct SharedPtr(Arc<SSLConfig>);
@@ -352,14 +344,6 @@ impl SSLConfig {
         hash
     }
 
-    /// Destructor. Called by `Arc` on strong 1->0 for interned configs,
-    /// and directly on value-type configs (e.g. `ServerConfig.ssl_config`).
-    ///
-    /// For interned configs, we MUST remove from the registry before freeing
-    /// the string fields, since concurrent `intern()` calls may read those
-    /// fields for content comparison while we're still in the map. For
-    /// non-interned configs, `remove()` is a cheap no-op (pointer-identity
-    /// check fails).
     pub fn deinit(&mut self) {
         global_registry::remove(self);
         free_string(&mut self.server_name);
@@ -508,34 +492,9 @@ fn clone_string(s: CStrPtr) -> CStrPtr {
     bun_core::dupe_z(cstr_bytes(s))
 }
 
-/// Weak dedup cache. Each map entry stores a weak pointer on its key's
-/// backing allocation. `upgrade()` on that weak pointer is memory-safe
-/// because the weak ref keeps the allocation alive (even if strong==0 and
-/// `Drop` is running on another thread). The mutex only protects map
-/// structure and the invariant that entry content is intact while in the
-/// map.
 pub mod global_registry {
     use super::*;
 
-    // PORT NOTE: Zig used `ArrayHashMapUnmanaged<*SSLConfig, WeakPtr, MapContext>`
-    // where `MapContext` hashes/compares by *content* through the raw-pointer
-    // key. That shape is UB in Rust: when an interned `Arc`'s strong count hits
-    // 0, std `Arc` materializes a `&mut SSLConfig` (via `drop_in_place`)
-    // *before* `Drop::drop` reaches `remove()`'s mutex; a concurrent `intern()`
-    // probing the map would then form a `&SSLConfig` to the same allocation via
-    // the raw key, aliasing that live `&mut`. Zig's model tolerates
-    // read-while-deinit-blocked (.zig:336-341/.zig:356); Rust's does not.
-    //
-    // The Rust shape stores `(u64 content_hash, Weak)` and probes by:
-    //   1. fast u64 hash filter,
-    //   2. `Weak::upgrade()` (so the comparand is a fresh strong `Arc`),
-    //   3. `is_same()` on the upgraded value.
-    // `remove()` matches by `Weak::as_ptr` identity, never dereferencing.
-    //
-    // Backed by a flat `Vec` (linear scan): the number of distinct SSL configs
-    // per process is tiny (typically <16) and `ArrayHashMap` is also linear
-    // for `eql` collisions, so this is the same complexity class.
-    // PERF(port): was ArrayHashMapUnmanaged.
     static REGISTRY: Mutex<Vec<(u64, WeakPtr)>> = Mutex::new(Vec::new());
 
     /// Takes a by-value SSLConfig, wraps it in a `SharedPtr` (strong=1), and
@@ -576,12 +535,6 @@ pub mod global_registry {
                     }
                     // Hash collision, different content — keep scanning.
                 } else {
-                    // strong==0: existing is dying. Its `drop()` is blocked in
-                    // `remove()` waiting for this mutex, so its slot is still
-                    // here. We can't `is_same()` it (would alias `&mut`), but
-                    // a hash match with a dying entry is a strong hint this is
-                    // the same config — replace the slot. The dying config's
-                    // `remove()` will pointer-mismatch and no-op when it runs.
                     found_idx = Some(i);
                     break;
                 }
@@ -604,11 +557,6 @@ pub mod global_registry {
         result
     }
 
-    /// Called from `SSLConfig::deinit()` on strong 1->0. If `intern()` replaced
-    /// our slot while we blocked on the mutex, the pointer-identity check
-    /// fails and we skip (intern already disposed our weak ref).
-    ///
-    /// No-op for configs that were never interned.
     pub(super) fn remove(config: &SSLConfig) {
         // Read memoized hash via the atomic — never recompute here (we're
         // inside `Drop::drop`, holding `&mut SSLConfig`, and recomputation
@@ -622,13 +570,10 @@ pub mod global_registry {
         }
         // Zig: `getIndexContext` then pointer-identity check. We never
         // dereference stored weaks here — only compare `Weak::as_ptr`.
-        let Some(idx) = configs.iter().position(|(h, weak)| {
-            // Hash filter only applies if this config was hashed (interned
-            // configs always are; non-interned configs have hash==0 and won't
-            // match any stored entry's nonzero hash, but check identity anyway
-            // for robustness).
-            (hash == 0 || *h == hash) && Weak::as_ptr(weak) == self_ptr
-        }) else {
+        let Some(idx) = configs
+            .iter()
+            .position(|(h, weak)| (hash == 0 || *h == hash) && Weak::as_ptr(weak) == self_ptr)
+        else {
             return;
         };
         let (_, weak) = configs.swap_remove(idx);

@@ -127,13 +127,6 @@ pub(crate) fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> J
         }
     };
 
-    // PORT NOTE: Zig built a borrowing `bun.URL` struct literal (host/hostname/
-    // href/origin/protocol all slicing `registry`). The Rust `Scope.url` field
-    // is `OwnedURL`, which stores only the href buffer and re-derives components
-    // via `URL::parse` on demand. `load_by_file`/`read_all` only consult
-    // `scope.url_hash` and `scope.url.href().len()`, so copying the raw href is
-    // sufficient and drops the unsafe lifetime-extension hack the earlier draft
-    // needed.
     let scope = npm::registry::Scope {
         url_hash: npm::registry::Scope::hash(strings::without_trailing_slash(registry.slice())),
         url: bun_url::OwnedURL::from_href(Box::from(registry.slice())),

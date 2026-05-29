@@ -99,10 +99,6 @@ pub const SYNC_INTERVAL: usize = 64;
 
 pub const HEADER_SIZE: usize = 32;
 
-/// `read_varint`'s 1-byte fast path reads `bytes[pos]` unconditionally; the
-/// exception cursors in `WindowReader` advance to one byte past their last
-/// varint, so a 1-byte tail pad keeps that read in-bounds for a window at the
-/// very end of the stream.
 const STREAM_TAIL_PAD: usize = 1;
 
 /// The blob is stored in the SavedSourceMap table as a tagged pointer to its
@@ -197,12 +193,6 @@ impl InternalSourceMap {
         }
     }
 
-    /// Only call this when the blob was heap-allocated by `Builder`/`from_vlq` (e.g.
-    /// entries in `SavedSourceMap`). Do NOT call on views over the standalone
-    /// module graph section or any other borrowed memory.
-    // TODO(port): conditional ownership — intentionally NOT `impl Drop` because
-    // `InternalSourceMap` is a Copy view and may borrow non-owned memory. Could
-    // split into an owning newtype with `impl Drop`.
     pub fn free_owned(self) {
         // SAFETY: caller guarantees the blob was produced by Builder/from_vlq via
         // the global allocator with this exact length.
@@ -218,32 +208,17 @@ impl InternalSourceMap {
         self.total_len()
     }
 
-    /// Sanity-check a blob's outer header against its actual length. See the
-    /// module-level [`is_valid_blob`] for details.
-    ///
-    /// Associated-fn alias so callers can write `InternalSourceMap::is_valid_blob(..)`
-    /// (Zig: `pub fn isValidBlob` is a decl on the file-struct `@This()`).
     #[inline]
     pub fn is_valid_blob(blob: &[u8]) -> bool {
         is_valid_blob(blob)
     }
 
-    /// Decode a standard VLQ "mappings" string and re-encode it as an
-    /// `InternalSourceMap` blob. See the module-level [`from_vlq`] for details.
-    ///
-    /// Associated-fn alias so callers can write `InternalSourceMap::from_vlq(..)`
-    /// (Zig: `pub fn fromVLQ` is a decl on the file-struct `@This()`).
     #[inline]
     pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, FromVlqError> {
         from_vlq(vlq, input_line_count_hint)
     }
 }
 
-/// Sanity-check the blob's outer header (total_len, sync_count, stream_offset)
-/// against its actual length so a *truncated* embedded section in a `--compile`
-/// binary degrades to "no sourcemap". This does not walk per-window
-/// `SyncEntry.byte_offset`/section lengths; the blob is self-produced at build
-/// time, and a tampered executable already implies arbitrary execution.
 pub fn is_valid_blob(blob: &[u8]) -> bool {
     if blob.len() < HEADER_SIZE {
         return false;
@@ -388,10 +363,6 @@ mod win_hdr {
     pub(super) const GEN_COL_LANE_OFF: usize = 32;
 }
 
-/// Parses a window header and steps through its deltas in order. Exception
-/// streams are consumed in order, so a reader is forward-only.
-// TODO(port): lifetime — `bytes`/`base`/`src_idx_mask` borrow the blob; kept as
-// raw pointers to avoid struct lifetime params.
 #[derive(Copy, Clone)]
 struct WindowReader {
     bytes: *const [u8],
@@ -611,12 +582,6 @@ impl Default for FindCacheKey {
     }
 }
 
-/// Per-caller decode cache. A single stack trace typically touches a handful
-/// of distinct windows (frames at different depths in the same file, or in
-/// different small files), so a one-slot cache thrashes. This is a small
-/// fully-associative set keyed by `(blob ptr, sync_idx)` with round-robin
-/// eviction; once a window is decoded it stays warm across the whole stack and
-/// across subsequent stacks until evicted. ~21 KB per `SavedSourceMap`.
 pub struct FindCache {
     /// Parallel key array kept hot and contiguous so the associative scan is a
     /// single 256-byte sweep; the heavyweight `FindCacheSlot` payloads live in
@@ -787,12 +752,6 @@ impl InternalSourceMap {
     }
 }
 
-/// Stateful forward cursor. `move_to` is cheap when successive targets are
-/// monotonically non-decreasing in generated position; otherwise it reseeks via
-/// the sync index.
-///
-/// Invariant: when `has_state`, `reader` is positioned such that calling
-/// `advance_one()` produces the mapping immediately after `peek orelse state`.
 pub struct Cursor {
     map: InternalSourceMap,
     state: State,
@@ -929,20 +888,6 @@ fn emit_vlq(
     *prev = current;
 }
 
-// `#[repr(C)]` pins declaration order so the per-mapping read/modify/write set
-// (`generated_line`, `pending_generated_line_delta`, `count`, `pending_n` —
-// 13 bytes) lands at offset 0 in the head cache line, with `sync_entries`'
-// NonNull ptr (the `Option<Builder>` niche) immediately after in the *same*
-// line. The inlined `VLQSourceMap::append`/`append_line_separator` (Chunk.zig
-// 103/107 are `pub inline fn`) thus touch one line on the fast path instead of
-// straddling the five 256-byte `pending_*` lanes. (benches: lint/create-vue)
-//
-// The pending window is stored column-wise — five parallel `[i32; SYNC_INTERVAL]`
-// lanes rather than one `[State; SYNC_INTERVAL]` array of 20-byte rows. So
-// `append_mapping`'s per-mapping store is five naturally-aligned i32 writes that
-// never straddle a cache line, and `flush_window`'s `cur - prev` deltas walk
-// each lane as a contiguous, prefetcher-friendly stream. Only `[0..pending_n]`
-// of each lane are live; the rest hold stale/zero values that nothing reads.
 #[repr(C)]
 pub struct Builder {
     /// Absolute generated line of the last mapping appended; carried across
@@ -1048,30 +993,6 @@ impl Builder {
 
         let n_deltas: usize = n as usize - 1;
 
-        // PERF: worst-case capacity assuming *every* optional section is present
-        // and every varint is maximal. Reserving up front lets us grab `buf_ptr`
-        // before the delta loop and emit *all* lanes in a single pass: each lane
-        // gets its own worst-case sub-range of the spare buffer, written through a
-        // dedicated cursor, and once the loop is done — true lengths now known —
-        // the lanes are compacted into the on-disk (contiguous) layout. This
-        // removes the post-loop re-walks (orig_line / orig_col / src_idx / gen_line
-        // exceptions) of a materialized `Delta` array, and the array itself.
-        //
-        // Sub-range bases relative to `buf_ptr` (MV == MAX_VARINT_LEN):
-        //   gen_col_lane : [GEN_COL_LANE_OFF              .. + nd*MV)
-        //   orig_line    : [orig_line_base               .. + nd*MV)
-        //   orig_col     : [orig_col_base                .. + nd*MV)
-        //   gen_line exc : [gen_line_base                .. + nd*(1+MV) + 1)   (+1 = 0xFF terminator)
-        //   src_idx      : [src_idx_base                 .. + 8 + nd*MV)       (8 = leading bitmask)
-        // `cap` is the sum, identical to the previous "all flags set" bound.
-        // Each cursor stays inside its sub-range: a lane emits <= nd varints of
-        // <= MV bytes, gen_line adds a 1-byte index per pair plus the terminator,
-        // src_idx adds the 8-byte mask. The compaction destinations are always
-        // <= the corresponding source base (each preceding lane's true length is
-        // <= its reserved width), so `ptr::copy` (memmove) is sound even though
-        // regions abut, and the runs are copied in layout order so a copy never
-        // clobbers a not-yet-copied source. `commit_spare(w)` exposes only the
-        // compacted prefix, so over-reserving costs nothing committed.
         let gen_col_base = win_hdr::GEN_COL_LANE_OFF;
         let orig_line_base = gen_col_base + n_deltas * MAX_VARINT_LEN;
         let orig_col_base = orig_line_base + n_deltas * MAX_VARINT_LEN;
@@ -1207,10 +1128,6 @@ impl Builder {
                 .write_unaligned((orig_col_len as u16).to_ne_bytes());
         }
 
-        // Compact: gen_col is already in place; pull each later lane left so the
-        // streams sit back-to-back, the layout the reader (`WindowReader::parse`)
-        // walks. Destinations are <= sources and runs are moved in order, so
-        // `ptr::copy` is sound (see the cap/sub-range comment above).
         let mut w = gen_col_base + gen_col_len;
         // SAFETY: every copy stays within the reserved `cap` and never reads past
         // a lane's written prefix; `dst <= src` for each so overlap is fine.
@@ -1231,10 +1148,6 @@ impl Builder {
         self.pending_n = 0;
     }
 
-    /// Serialize into the single-allocation blob layout. The first 24 header
-    /// bytes are left for `Chunk.Builder.generateChunk` to fill in (length,
-    /// count, input line count) so this path flows through the existing
-    /// `Chunk.buffer` plumbing unchanged.
     pub fn finalize(&mut self) -> &mut MutableString {
         // PORT NOTE: reshaped for borrowck — Zig early-returns `&self.finalized.?`
         // before populating; we check first then fall through to the trailing borrow.
@@ -1301,14 +1214,6 @@ impl From<FromVlqError> for bun_core::Error {
     }
 }
 
-/// Decode a standard VLQ "mappings" string and re-encode it as an
-/// InternalSourceMap blob. Used by `bun build --compile` to convert the
-/// bundler's JSON sourcemap once at build time so the standalone executable
-/// can remap stack traces without ever materializing a `Mapping.List`.
-///
-/// 1-field segments are skipped (no original location). The 5th field
-/// (`name_index`) is decoded but discarded; nothing in the stack-trace remap
-/// path reads it.
 pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, FromVlqError> {
     let mut builder = Builder::init();
 

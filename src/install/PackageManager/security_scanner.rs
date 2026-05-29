@@ -5,11 +5,6 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-// PORT NOTE: `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
-// uws wrapper — `WindowsLoop` on Windows, `PosixLoop` on POSIX), not
-// `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
-// on Windows. The inherent `loop_()` projects `.uv_loop` from the uws wrapper
-// on Windows so `BufferedReaderParent::loop_` returns the libuv loop directly.
 use crate::bun_fs::FileSystem;
 use crate::bun_json::{Expr, ExprData};
 use crate::package_manager_real::Command::Context as CommandContext;
@@ -949,17 +944,9 @@ fn attempt_security_scan_with_retry(
 
 pub struct SecurityScanSubprocess<'a> {
     manager: &'a mut PackageManager,
-    /// Stable storage for the io-layer opaque `bun_io::EventLoopHandle`
-    /// (which carries `*const EventLoopHandle`). `manager.event_loop` is an
-    /// `AnyEventLoop` — different layout — so its address is NOT a valid
-    /// substitute. Mirrors the pattern in `StaticPipeWriter::io_evtloop`.
     event_loop_handle: EventLoopHandle,
     code: Box<[u8]>,
     json_data: Box<[u8]>,
-    /// Intrusive `*mut Process` (Zig `?*Process`). `Process` is
-    /// `ThreadSafeRefCounted` and Box-allocated by `to_process`; wrapping in
-    /// `Arc` would be UB (no `ArcInner` header). We hold one ref and `deref()`
-    /// it in `Drop`.
     process: Option<*mut Process>,
     ipc_reader: BufferedReader,
     ipc_data: Vec<u8>,
@@ -973,16 +960,8 @@ pub struct SecurityScanSubprocess<'a> {
     json_writer: Option<RefPtr<StaticPipeWriter>>,
 }
 
-// Zig: `pub const StaticPipeWriter = jsc.Subprocess.NewStaticPipeWriter(@This());`
-// The comptime type generator is the generic `subprocess::StaticPipeWriter<P>`;
-// monomorphize on `'static` because the writer stores `*mut P` (raw backref —
-// lifetime is erased anyway) and the type alias must name a concrete `P`.
 pub(crate) type StaticPipeWriter = subprocess::StaticPipeWriter<SecurityScanSubprocess<'static>>;
 
-// Wire the writer's `on_close` callback back to this type. Raw `*mut Self`
-// because the call is re-entrant: it may fire synchronously inside
-// `StaticPipeWriter::start()` while `finish_spawn` still has `&mut self` on
-// the stack (small JSON fits the pipe buffer → write completes → close).
 impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
     const POLL_OWNER_TAG: bun_io::PollTag = bun_io::PollTag::SecurityScanStaticPipeWriter;
     unsafe fn on_close_io(this: *mut Self, kind: subprocess::StdioKind) {
@@ -1014,10 +993,6 @@ impl<'a> Drop for SecurityScanSubprocess<'a> {
             }
         }
         if let Some(w) = self.json_writer.take() {
-            // Zig `deinit` only ran via `attemptSecurityScanWithRetry`'s
-            // `defer scanner.deinit()`, which set `json_writer = null` first via
-            // `onCloseIO`. Guard for parity: `RefPtr` has no auto-`Drop`, so
-            // explicit `deref()` matches Zig `deref()`.
             w.deref();
         }
         // code, json_data drop automatically (Box<[u8]>)
@@ -1044,14 +1019,6 @@ impl<'a> SecurityScanSubprocess<'a> {
         let parent: *mut Self = self;
         self.ipc_reader.set_parent(parent.cast());
 
-        // Two extra pipes for communicating with the scanner subprocess:
-        // - fd 3: child writes JSON response, parent reads
-        // - fd 4: parent writes packages JSON, child reads until EOF
-        //
-        // We can't inline the packages JSON into the code string because it can exceed
-        // command-line length limits (>1MB), and we can't use stdin because scanners
-        // may need stdin for their own setup (e.g. interactive prompts).
-
         // fd 3 output pipe: bun.sys.pipe() + .pipe (inherit_fd) on both platforms.
         let ipc_output_fds = match bun_sys::pipe() {
             Err(_) => return Err(err!("IPCPipeFailed")),
@@ -1067,10 +1034,6 @@ impl<'a> SecurityScanSubprocess<'a> {
         argv0_buf.push(0);
         let mut argv3_buf: Vec<u8> = self.code.to_vec();
         argv3_buf.push(0);
-        // Element type MUST be bare `*const c_char` (null sentinel), never
-        // `Option<*const c_char>`: raw pointers are already nullable, and
-        // `Option<*const T>` is a 2-word (tag, ptr) pair — casting that to
-        // `Argv` interleaves discriminant words and EFAULTs in the kernel.
         let mut argv: [*const core::ffi::c_char; 5] = [
             argv0_buf.as_ptr().cast(),
             c"--no-install".as_ptr(),
@@ -1095,10 +1058,6 @@ impl<'a> SecurityScanSubprocess<'a> {
         Ok(())
     }
 
-    /// Posix fd 4: .buffer stdio creates a nonblocking socketpair inside the
-    /// spawn machinery. The child's end is dup'd to fd 4 and closed in the
-    /// parent by spawn's to_close_at_end list (process.zig:1460). The parent's
-    /// end comes back via spawned.extra_pipes.
     #[cfg(unix)]
     fn spawn_posix(
         &mut self,
@@ -1144,12 +1103,6 @@ impl<'a> SecurityScanSubprocess<'a> {
         })
     }
 
-    /// Windows fd 4: .buffer stdio for extra_fds sets UV_OVERLAPPED_PIPE on the
-    /// child's handle (process.zig:1702), which breaks sync reads in the child.
-    /// Instead, create the pipe ourselves with asymmetric flags so only the
-    /// parent's write end is overlapped. Child inherits the non-overlapped read
-    /// end via .pipe (inherit_fd); parent wraps the overlapped write end in a
-    /// uv.Pipe for IOCP-based async writes.
     #[cfg(windows)]
     fn spawn_windows(
         &mut self,
@@ -1162,21 +1115,11 @@ impl<'a> SecurityScanSubprocess<'a> {
         let mut json_fds: [uv::uv_file; 2] = [0; 2];
         // SAFETY: FFI — `json_fds` is a 2-element out-array; flags are valid.
         let pipe_rc = unsafe { uv::uv_pipe(&mut json_fds, 0, uv::UV_NONBLOCK_PIPE as i32) };
-        // Use the translating overlay (`ReturnCodeExt::err_enum_e`) — the inherent
-        // `ReturnCode::err_enum()` returns the raw |uv_code| (e.g. 4071 for
-        // UV_EINVAL on Windows) without mapping to POSIX `bun.sys.E`, which would
-        // make `errno_to_zig_err` index the wrong table. Zig's `rc.errEnum()`
-        // (libuv.zig) routes through `translateUVErrorToE`; this matches it.
         if let Some(e) = pipe_rc.err_enum_e() {
             ipc_output_fds[0].close();
             ipc_output_fds[1].close();
             return Err(bun_core::errno_to_zig_err(e as i32));
         }
-        // Track ownership with optionals: None means the fd has been transferred
-        // or closed, so the errdefer skips it. Prevents double-close on error paths
-        // after pipe.open() takes ownership or after the explicit closes below.
-        // State is moved INTO the guard so later `= None` mutations are observed
-        // by the cleanup closure (PORTING.md: errdefer side-effects → scopeguard state).
         let mut fds = scopeguard::guard(
             (
                 Some(Fd::from_uv(json_fds[0])), // .0 = child_read_fd
@@ -1194,12 +1137,6 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let pipe_ptr: *mut uv::Pipe =
             bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));
-        // errdefer pipe.closeAndDestroy() — guard owns the raw Box ptr; libuv's
-        // close callback frees the heap allocation, so do NOT re-box on the
-        // cleanup path (would double-free). Disarmed only after finish_spawn
-        // succeeds, matching the Zig errdefer scope exactly: it must stay armed
-        // across `ipc_reader.start()` inside finish_spawn (the pre-writer error
-        // window) so a registered-but-unowned uv handle is never leaked.
         let mut pipe = scopeguard::guard(pipe_ptr, |p| {
             // SAFETY: p is the live Box-allocated uv_pipe_t; close_and_destroy
             // schedules uv_close + frees the allocation.
@@ -1257,16 +1194,6 @@ impl<'a> SecurityScanSubprocess<'a> {
             .flags
             .insert(bun_io::pipe_reader::WindowsFlags::NONBLOCKING);
 
-        // Hand the pipe to StaticPipeWriter lazily: the closure captures only the
-        // raw `*mut uv::Pipe` (Copy, no Drop) and reconstitutes the Box at the
-        // exact `StaticPipeWriter::create` call site inside `finish_spawn`. If
-        // `finish_spawn` errors before that point (`ipc_reader.start()`), the
-        // closure drops as a no-op and the still-armed errdefer guard performs
-        // `close_and_destroy` — matching Zig, where `errdefer pipe.closeAndDestroy()`
-        // covers the entire `try finishSpawn(...)` call. After the writer takes
-        // the pipe, post-create errors leave the writer leaked at refcount >= 1
-        // (RefPtr has no Drop), so the Box is never auto-freed and the guard's
-        // `close_and_destroy` remains the sole cleanup, again matching Zig.
         self.finish_spawn(&mut spawned, ipc_output_fds[0], move || {
             // SAFETY: `pipe_ptr` is the same allocation produced by
             // heap::alloc above and has not been freed; ownership transfers
@@ -1290,13 +1217,6 @@ impl<'a> SecurityScanSubprocess<'a> {
         // SpawnResult; Rust uses the unified `spawn::SpawnResult`.
         spawned: &mut spawn::SpawnResult,
         ipc_read_fd: Fd,
-        // Deferred constructor: Zig passes `json_stdio_result` by value (a tagged
-        // union holding a raw `*uv.Pipe` on Windows — inert on drop). Rust's
-        // `WindowsStdioResult::Buffer(Box<uv::Pipe>)` would auto-free the
-        // allocation without `uv_close()` if `ipc_reader.start()` below failed,
-        // leaking a registered libuv handle. Taking a thunk and calling it only
-        // at the `StaticPipeWriter::create` site keeps the caller's
-        // `close_and_destroy` errdefer authoritative for the pre-writer window.
         make_json_stdio: impl FnOnce() -> StdioResult,
     ) -> Result<(), Error> {
         // Allocate the blob copy before registering any event loop callbacks. If
@@ -1322,11 +1242,6 @@ impl<'a> SecurityScanSubprocess<'a> {
         let event_loop = EventLoopHandle::from_any(&mut self.manager.event_loop);
         let process: *mut Process = std::mem::take(spawned).to_process(event_loop, false);
 
-        // Derive the raw backref once and use it for all subsequent field
-        // access. `start()`/`watch_or_reap()` below may re-enter
-        // `on_close_io`/`on_process_exit` via this pointer while we are still
-        // inside this frame, so from here on we touch `*self` only through
-        // `parent` to keep a single provenance path (no overlapping `&mut`).
         let parent: *mut Self = self;
         // SAFETY: `process` is the freshly-allocated intrusive `*mut Process`
         // (refcount == 1, owned by us); `parent` was just derived from
@@ -1336,12 +1251,6 @@ impl<'a> SecurityScanSubprocess<'a> {
             (*parent).process = Some(process);
         }
 
-        // Zig: `this.json_writer = StaticPipeWriter.create(...)` — assign the
-        // field BEFORE `start()`. `start()` may complete the write synchronously
-        // (small JSON fits the 64KB pipe buffer on POSIX) and re-enter
-        // `on_close_io` via the `parent` backref; that callback must observe
-        // `json_writer.is_some()` to decrement `remaining_fds`, otherwise
-        // `is_done()` never returns true and `sleep_until` hangs.
         let writer =
             StaticPipeWriter::create(event_loop, parent.cast(), make_json_stdio(), json_source);
         // Keep a duped ref locally so no borrow on `(*parent).json_writer` is
@@ -1350,11 +1259,6 @@ impl<'a> SecurityScanSubprocess<'a> {
         // SAFETY: see `parent` note above.
         unsafe { (*parent).json_writer = Some(writer) };
 
-        // errdefer if (this.json_writer) |w| { w.source.detach(); w.deref(); this.json_writer = null; }
-        // PORT NOTE: guard mirrors the Zig errdefer over the FIELD (not a local),
-        // including its `if (this.json_writer)` check — `start()` may already
-        // have re-entered and nulled it. State is the `parent` backref; disarmed
-        // via `into_inner` on the success path.
         let guard = scopeguard::guard(parent, |parent| {
             // SAFETY: `parent` points at the live `self` of `finish_spawn`; the
             // guard only fires on early return inside this fn.
@@ -1436,11 +1340,6 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 
     pub fn get_read_buffer(&mut self) -> &mut [core::mem::MaybeUninit<u8>] {
-        // PORT NOTE: Zig returns `unusedCapacitySlice()` (uninitialized spare
-        // capacity as `[]u8`); Rust forbids `&mut [u8]` over uninit bytes, so
-        // expose `&mut [MaybeUninit<u8>]`. Caller (BufferedReader) only writes
-        // into this region, never reads uninit bytes.
-        // Vec::reserve already amortises by doubling; the explicit cap+4096 dance is unnecessary.
         self.ipc_data.uv_alloc_spare(4096)
     }
 
@@ -1454,34 +1353,6 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.exit_status = Some(status);
 
         if !self.has_received_ipc {
-            // PORT NOTE (intentional divergence from Zig spec): the spec tears
-            // down `ipc_reader` here unconditionally. That races process-exit
-            // against fd-3-readable: `ipc_reader.start()` only registers a
-            // poll on POSIX (no sync read), and `MiniEventLoop::tick_once`
-            // skips the uws tick whenever a concurrent task (the WaiterThread
-            // exit notification) is already queued. So a fast-exiting scanner
-            // under CI load reaches this branch with the JSON still sitting in
-            // the kernel pipe buffer, and `deinit()` drops it on the floor —
-            // `handle_results` then reports "exited without sending data".
-            //
-            // Two earlier band-aids (fcbbb52f0b2b sync drain; 230c8ef7f7df
-            // EINTR/EAGAIN retry) caught the common case but left a window:
-            // the bounded EAGAIN spin can give up before the kernel makes the
-            // write-end close visible, and tearing down at that point still
-            // discards the payload (or truncates it mid-JSON).
-            //
-            // Fix: try a best-effort sync drain (waitpid has returned, so the
-            // write end is closed and a blocking-ish drain is bounded), but
-            // ONLY tear down the reader if the drain actually reached EOF.
-            // If it bailed early (EAGAIN limit / unexpected errno / fd already
-            // invalid) leave the FilePoll registered: the next `tick_once`
-            // has no pending task, so it ticks uws, the poll delivers
-            // readable+HUP, `read_with_fn` drains to `Ok(0)`, and
-            // `on_reader_done` decrements `remaining_fds` exactly once.
-            //
-            // Windows reads via libuv (async) and the fd here is a uv-owned
-            // pipe handle — skip the sync drain there and keep the spec's
-            // teardown (the libuv exit/read ordering is not the failing path).
             #[cfg(not(windows))]
             {
                 let fd = self.ipc_reader.get_fd();
@@ -1520,20 +1391,9 @@ impl<'a> SecurityScanSubprocess<'a> {
                     }
                     self.has_received_ipc = !self.ipc_data.is_empty();
                     if !saw_eof {
-                        // Drain bailed before EOF — payload may be incomplete
-                        // and the write-end close not yet visible. Leave the
-                        // reader's poll in place; `on_reader_done` fires once
-                        // the event loop sees readable+HUP and performs the
-                        // single `remaining_fds -= 1` for fd 3. (`is_done()`
-                        // stays false until then; `tick_once` has no pending
-                        // task so it ticks uws on the next round.)
                         return;
                     }
                 }
-                // fd == INVALID falls through to the spec teardown below:
-                // the reader was never started (or already torn down), so
-                // there is no poll to wait on and `on_reader_done` will not
-                // fire — decrement here or `sleep_until` hangs.
             }
             // Must use deinit() (close-without-reporting), NOT close(): close()
             // would re-enter on_reader_done and decrement remaining_fds a

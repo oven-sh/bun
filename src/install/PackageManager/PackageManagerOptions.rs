@@ -9,11 +9,6 @@ use super::command_line_arguments::{self, CommandLineArguments};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::{Features, Npm};
 
-// PORT NOTE: `string` fields are `[]const u8` borrowed from CLI args / bunfig config,
-// which live for the process lifetime. There is no `deinit` on Options. Mapped to
-// `&'static [u8]` per PORTING.md (no lifetime params on structs).
-// TODO(port): lifetime — if any source is not truly 'static, add a lifetime parameter.
-
 pub struct Options {
     pub log_level: LogLevel,
     pub global: bool,
@@ -235,11 +230,6 @@ impl Options {
         self.log_level != LogLevel::Silent && self.do_.contains(Do::SUMMARY)
     }
 
-    /// Resolve the registry scope for a (possibly @-scoped) package name.
-    ///
-    /// Hoisted onto `Options` so callers that already hold a borrow of
-    /// `pm.lockfile` can disjointly borrow `pm.options` instead of needing the
-    /// whole `&PackageManager`.
     pub fn scope_for_package_name(&self, name: &[u8]) -> &Npm::registry::Scope {
         if name.is_empty() || name[0] != b'@' {
             return &self.scope;
@@ -375,11 +365,6 @@ pub(crate) fn open_global_bin_dir(
     ))
 }
 
-// PORT NOTE: Zig borrowed `[]const u8` from `Api.BunInstall` (process-lifetime
-// arena). Rust `BunInstall` owns `Box<[u8]>`; Options stores `&'static [u8]`
-// per the "no struct lifetime params" porting convention. Park a clone for the
-// lifetime of the install command (matches Zig's never-reset config arena) via
-// the named hand-off helper.
 #[inline]
 fn leak_static(s: &[u8]) -> &'static [u8] {
     bun_core::heap::release(s.to_vec().into_boxed_slice())
@@ -391,10 +376,6 @@ impl Options {
         log: &mut bun_ast::Log,
         env: &mut DotEnvLoader,
         maybe_cli: Option<CommandLineArguments>,
-        // Spec PackageManagerOptions.zig:224 `bun_install_: ?*Api.BunInstall` —
-        // every access below is a read of `config.*`; no field is ever written.
-        // Taking `&` (not `&mut`) keeps provenance coherent with the bundler/
-        // resolver storage (`Option<NonNull<api::BunInstall>>`).
         bun_install_: Option<&Api::BunInstall>,
         subcommand: Subcommand,
     ) -> Result<(), bun_alloc::AllocError> {
@@ -551,11 +532,6 @@ impl Options {
                 self.minimum_release_age_excludes =
                     Some(&*bun_core::heap::release(leaked.into_boxed_slice()));
             }
-
-            // `PnpmMatcher` is move-only; `config` is `&` here so the matchers
-            // are taken by the owning caller (`PackageManager::init`) right
-            // after `load()` returns. The runtime auto-install path never uses
-            // the isolated linker, so it has nothing to transfer.
 
             if let Some(global_dir) = config.global_dir.as_deref() {
                 self.explicit_global_directory = leak_static(global_dir);
@@ -964,11 +940,6 @@ bitflags::bitflags! {
 
         const EXACT_VERSIONS         = 1 << 7;
         const ONLY_MISSING           = 1 << 8;
-        /// Isolated linker only: materialize package entries once into a shared
-        /// `<cache>/links/` directory and symlink `node_modules/.bun/<pkg>` into
-        /// it, instead of clonefiling every package into every project on every
-        /// install. Off by default; set BUN_INSTALL_GLOBAL_STORE=1 or
-        /// `install.globalStore = true` in bunfig to enable.
         const GLOBAL_VIRTUAL_STORE   = 1 << 9;
         // _: u6 padding
     }

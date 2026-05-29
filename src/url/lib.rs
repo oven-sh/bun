@@ -19,10 +19,6 @@ use bun_core::io::Write as _;
 
 // ── route_param (moved from bun_router) ───────────────────────────────────
 pub mod route_param {
-    // PORT NOTE: name/value borrow from the route template + the live request
-    // path; lifetime-generic so `bun_router` (the only producer) can fill them
-    // from non-'static buffers. Downstream that only stores literals can use
-    // `Param<'static>`.
     #[derive(Clone, Copy)]
     pub struct Param<'a> {
         pub name: &'a [u8],
@@ -34,10 +30,6 @@ pub mod route_param {
 }
 pub use route_param::List as ParamsList;
 
-// ── whatwg (WTF::URL FFI shim, MOVE_DOWN from bun_jsc) ────────────────────
-// Ground truth: src/jsc/URL.zig. The JS-value entry points (`hrefFromJS`, `fromJS`)
-// stay in tier-6 `bun_jsc` as extension methods — they need JSValue/JSGlobalObject.
-// Everything else is a thin extern-"C" wrapper around WTF::URL and is JSC-agnostic.
 pub mod whatwg {
     use super::BunString as String;
     use super::strings;
@@ -79,14 +71,6 @@ pub mod whatwg {
         fn URL__originLength(latin1_slice: *const u8, len: usize) -> u32;
     }
 
-    // PORT NOTE: Zig takes `bun.String` by value then `var input = str; f(&input)` to
-    // obtain a mutable address for C ABI. We take `&String` (matching existing call sites
-    // in this crate) and — since `bun_core::String: Copy` — bit-copy into a mutable
-    // local and pass `&mut local`. This mirrors the Zig spec exactly and avoids casting
-    // a shared-ref-derived pointer to `*mut` (read-only provenance). The C++ side
-    // (`BunString::toWTFString() const`) does not mutate, but the local-copy form is
-    // sound regardless.
-
     /// Percent-encodes the URL, punycode-encodes the hostname, and returns the normalized
     /// href. If parsing fails, the returned String's tag is `Dead`.
     pub fn href_from_string(str: &String) -> String {
@@ -106,10 +90,6 @@ pub mod whatwg {
         let mut input = *str;
         URL__pathFromFileURL(&mut input)
     }
-    /// Returns the origin (`scheme://host[:port]`) prefix of `slice` as a borrowed
-    /// subslice, or `None` if `slice` does not parse as a valid WHATWG URL.
-    ///
-    /// Backed by `WTF::URL::pathStart()` via `URL__originLength` (BunString.cpp).
     #[inline]
     pub fn origin_from_slice(slice: &[u8]) -> Option<&[u8]> {
         // A valid URL will not have non-ASCII bytes in its origin, so it suffices
@@ -154,25 +134,9 @@ pub mod whatwg {
         pub fn search(&self) -> String {
             URL__search(self)
         }
-        /// Returns the host WITHOUT the port.
-        ///
-        /// Note that this does NOT match JS behavior, which returns the host with the port. See
-        /// `hostname` for the JS equivalent of `host`.
-        ///
-        /// ```text
-        /// URL("http://example.com:8080").host() => "example.com"
-        /// ```
         pub fn host(&self) -> String {
             URL__host(self)
         }
-        /// Returns the host WITH the port.
-        ///
-        /// Note that this does NOT match JS behavior which returns the host without the port. See
-        /// `host` for the JS equivalent of `hostname`.
-        ///
-        /// ```text
-        /// URL("http://example.com:8080").hostname() => "example.com:8080"
-        /// ```
         pub fn hostname(&self) -> String {
             URL__hostname(self)
         }
@@ -239,24 +203,12 @@ impl<'a> Default for URL<'a> {
     }
 }
 
-/// An owning URL — holds the normalized `href` buffer that the borrowed
-/// `URL<'_>` view slices into. Port of `URL.fromString`'s ownership model:
-/// Zig returned a `URL` borrowing from a fresh allocation the caller had to
-/// `allocator.free(url.href)`; in Rust, `OwnedURL` owns that buffer and
-/// `Drop` frees it.
 #[derive(Default, Clone)]
 pub struct OwnedURL {
     href: Box<[u8]>,
 }
 
 impl OwnedURL {
-    /// Borrow as a parsed `URL` view. All slices in the returned `URL` borrow
-    /// `self.href`.
-    // PERF(port): re-parses on each call. Zig parsed once into a borrowing
-    // struct the caller held alongside the buffer; Rust cannot express that
-    // self-reference without unsafe lifetime extension (PORTING.md §Forbidden).
-    // Callers in practice call this once and hold the borrow — if this shows
-    // up on a hot path, store component `(u32, u32)` offsets here instead.
     #[inline]
     pub fn url(&self) -> URL<'_> {
         URL::parse(&self.href)
@@ -269,10 +221,6 @@ impl OwnedURL {
     pub fn into_href(self) -> Box<[u8]> {
         self.href
     }
-    /// Construct from an already-normalized href buffer (the tail of
-    /// `URL::from_string` after `to_owned_slice`). Exposed so out-of-crate
-    /// producers can build an `OwnedURL` without the `href` field being
-    /// public.
     #[inline]
     pub fn from_href(href: Box<[u8]>) -> Self {
         Self { href }
@@ -295,11 +243,6 @@ impl<'a> URL<'a> {
     #[inline(always)]
     #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn erase_lifetime<'b>(self) -> URL<'b> {
-        // Field-by-field reconstruction — every slice is `(ptr, len)`, so the
-        // value is bitwise unchanged; only the borrow-checker tag widens.
-        // `d` stays `unsafe fn` so a safe-signature wrapper does not hide the
-        // lifetime-widen; the outer fn carries `#[allow(unsafe_op_in_unsafe_fn)]`
-        // so the dozen call sites below need no per-line `unsafe { }`.
         #[inline(always)]
         unsafe fn d<'b>(s: &[u8]) -> &'b [u8] {
             // SAFETY: caller contract on `erase_lifetime` — every slice the
@@ -360,11 +303,6 @@ impl<'a> URL<'a> {
         self.href.len() == Self::BLOB_SPECIFIER_LEN && self.href.starts_with(b"blob:")
     }
 
-    // PORT NOTE: ownership — Zig returns a `URL` borrowing from a freshly-allocated
-    // owned slice (`href.toOwnedSlice`); caller frees `url.href` later. Per
-    // PORTING.md §Forbidden (no Box::leak / mem::forget / unsafe lifetime
-    // extension), Rust returns an `OwnedURL` that owns the buffer; callers borrow
-    // via `.url()` and Drop frees it.
     pub fn from_string(input: &BunString) -> Result<OwnedURL, bun_core::Error> {
         let href = whatwg::href_from_string(input);
         if href.tag() == BunStringTag::Dead {
@@ -449,14 +387,6 @@ impl<'a> URL<'a> {
         }
     }
 
-    /// Zig: `std.fmt.allocPrint(alloc, "{s}://{f}/{s}/", .{
-    ///     url.displayProtocol(), url.displayHost(),
-    ///     std.mem.trim(u8, url.pathname, "/") })`.
-    ///
-    /// `display_host()` yields a `bun_core::fmt::HostFormatter` (impls
-    /// `Display`); the other two pieces are raw byte slices, so we assemble
-    /// into a `Vec<u8>` directly rather than going through `format!` and
-    /// risking lossy UTF-8 round-trips.
     pub fn href_without_auth(&self) -> Box<[u8]> {
         let proto = self.display_protocol();
         let path = strings::trim(self.pathname, b"/");
@@ -853,12 +783,6 @@ impl<'a> URL<'a> {
                 self.port = &str[colon as usize + 1..i as usize];
             }
         } else {
-            // look for the first "/" or "?"
-            // if we have a slash or "?", anything before that is the host
-            // anything before the colon is the hostname
-            // anything after the colon but before the slash is the port
-            // the origin is the scheme before the slash
-
             let mut colon_i: Option<u32> = None;
             while (i as usize) < str.len() {
                 colon_i = if colon_i.is_none() && str[i as usize] == b':' {
@@ -901,11 +825,6 @@ pub struct Param {
     pub value: api::StringPointer,
 }
 
-// PERF(port): Zig uses `std.MultiArrayList(Param)` for SoA cache-friendly column
-// scans. bun_collections::MultiArrayList exists but requires `MultiArrayElement`
-// (no derive macro yet). Using Vec<Param> (AoS) for now — semantically identical;
-// revisit once `` lands.
-// TODO(port): bun_collections::MultiArrayList derive
 pub(crate) type ParamList = Vec<Param>;
 
 /// QueryString array-backed hash table that does few allocations and preserves the original order
@@ -954,15 +873,6 @@ thread_local! {
 impl QueryStringMap {
     pub fn get_name_count(&mut self) -> usize {
         self.list.len()
-        // if (this.name_count == null) {
-        //     var count: usize = 0;
-        //     var iterate = this.iter();
-        //     while (iterate.next(&_name_count) != null) {
-        //         count += 1;
-        //     }
-        //     this.name_count = count;
-        // }
-        // return this.name_count.?;
     }
 
     pub fn iter(&self) -> Iterator<'_> {
@@ -1287,13 +1197,6 @@ impl QueryStringMap {
     }
 }
 
-// Browsers typically limit URL lengths to around 64k
-// PORT NOTE: Zig `StaticBitSet(2048)` resolves to `ArrayBitSet(usize, 2048)`.
-// bun_collections::StaticBitSet currently aliases IntegerBitSet (≤64 bits), so
-// pick ArrayBitSet directly. 2048 / 64 == 32 masks.
-/// Hard cap on parsed query-string parameters, enforced in `init` /
-/// `init_with_scanner` so the fixed-size `VisitedMap` bitset is never indexed
-/// out of bounds.
 const MAX_QUERY_STRING_PARAMS: usize = 2048;
 type VisitedMap = ArrayBitSet<MAX_QUERY_STRING_PARAMS, { num_masks_for(MAX_QUERY_STRING_PARAMS) }>;
 
@@ -1451,14 +1354,6 @@ impl PercentEncoding {
                             && input[i + 1].is_ascii_hexdigit()
                             && input[i + 2].is_ascii_hexdigit())
                         {
-                            // i do not feel good about this
-                            // create-react-app's public/index.html uses %PUBLIC_URL% in various tags
-                            // This is an invalid %-encoded string, intended to be swapped out at build time by webpack-html-plugin
-                            // We don't process HTML, so rewriting this URL path won't happen
-                            // But we want to be a little more fault tolerant here than just throwing up an error for something that works in other tools
-                            // So we just skip over it and issue a redirect
-                            // We issue a redirect because various other tooling client-side may validate URLs
-                            // We can't expect other tools to be as fault tolerant
                             if i + b"PUBLIC_URL%".len() < input.len()
                                 && &input[i + 1..][..b"PUBLIC_URL%".len()] == b"PUBLIC_URL%"
                             {
@@ -1502,11 +1397,6 @@ impl PercentEncoding {
         Ok(written)
     }
 }
-
-// TODO(port): FormData re-export removed — bun_runtime (T6) is upward.
-// Callers should import from bun_runtime::webcore::form_data
-// directly (or move-in pass relocates FormData here if it belongs at T2).
-// pub use bun_runtime::webcore::form_data::FormData;
 
 // ══════════════════════════════════════════════════════════════════════════
 // Scanners

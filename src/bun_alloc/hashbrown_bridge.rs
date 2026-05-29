@@ -24,10 +24,6 @@
 use core::alloc::{Allocator, Layout};
 use core::ptr::NonNull;
 
-/// Implement `allocator_api2::alloc::Allocator` for a type that already
-/// implements `core::alloc::Allocator`, by delegation. Only the two methods
-/// hashbrown actually calls are forwarded; the rest keep the polyfill's
-/// default bodies (which themselves call back into `allocate`/`deallocate`).
 macro_rules! bridge_allocator_api2 {
     ($t:ty) => {
         // SAFETY: every method is a 1:1 forward to the corresponding
@@ -65,14 +61,6 @@ macro_rules! bridge_allocator_api2 {
     };
 }
 
-// `crate::DefaultAlloc` is the existing ZST marker for `bun.default_allocator`
-// (Zig); here it gains `core::alloc::Allocator` (forwarding to
-// `std::alloc::Global`, since `#[global_allocator] = Mimalloc` makes that the
-// process default) plus the api2 bridge, so a single `A` type can back both a
-// `hashbrown::HashMap<_, _, _, A>` table and its `Box<[u8], A>` keys.
-// `std::alloc::Global` can't be used directly: orphan rules forbid us
-// implementing the polyfill trait on it, and `allocator_api2::alloc::Global`
-// doesn't implement `core::alloc::Allocator`.
 use crate::DefaultAlloc;
 
 // SAFETY: thin forwarder to `std::alloc::Global`, which upholds the

@@ -6,10 +6,6 @@ use bun_sys::windows::libuv as uv;
 use bun_uws_sys::WindowsLoop;
 
 use crate::posix_event_loop as posix;
-// Shared scaffolding lives in `posix_event_loop` (platform-agnostic types);
-// only `FilePoll`/`Store`/`KeepAlive`/`Closer`/`Loop`/`Waker` are redefined
-// here. `Flags`/`Owner`/etc. are re-aliased below from `posix` for callers
-// that name them via this module.
 pub use crate::posix_event_loop::{
     AllocatorType, EventLoopCtx, OpaqueCallback, get_vm_ctx, js_vm_ctx,
 };
@@ -17,11 +13,6 @@ pub use crate::posix_event_loop::{
 bun_core::declare_scope!(KeepAlive, visible);
 bun_core::declare_scope!(FilePoll, visible);
 
-// Zig `windows_event_loop.zig:1` — `pub const Loop = uv.Loop;` — the raw
-// `uv_loop_t`. (`WindowsLoop` is the uws wrapper that *owns* a `*mut uv::Loop`
-// in its `.uv_loop` field; callers that hold a `WindowsLoop*` project that
-// field themselves. See `VirtualMachine::event_loop_handle` /
-// `SpawnSyncEventLoop` which store/compare the inner `uv::Loop` pointer.)
 pub type Loop = uv::Loop;
 
 // `KeepAlive` (struct + 14-method impl) was duplicated here and in
@@ -136,11 +127,6 @@ impl FilePoll {
         let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
         self.flags = FlagsSet::default();
         self.fd = Fd::INVALID;
-        // All `self` field writes are done. Decay `self` to a raw slot pointer
-        // *before* materializing `&mut Store` so the `&mut Store` borrow (which
-        // covers the inline hive buffer) is the only live unique reference into
-        // that allocation when `Store::put` runs. `self` is never touched after
-        // this line — `Store::put` itself accesses `this` only via raw-pointer ops.
         let this: ptr::NonNull<FilePoll> = ptr::NonNull::from(&mut *self);
         // `file_polls_mut()` is the per-thread set-once `Store` back-pointer
         // (`BackRef`-shaped); `&mut self` has been retired to `this` above so
@@ -177,11 +163,6 @@ impl FilePoll {
     }
 
     pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
-        // `loop_mut()` — crate-private nonnull-asref accessor (single deref in
-        // `EventLoopCtx`); the uws loop is a disjoint allocation from `self`.
-        // Stacked-Borrows: `self` may live inside `Store.hive`'s inline buffer,
-        // so `&mut Store` is materialised only *after* `&mut self` is retired
-        // inside `deinit_possibly_defer` (via `file_polls_mut()`).
         let loop_ = vm.loop_mut();
         self.deinit_possibly_defer(vm, loop_);
     }
@@ -200,13 +181,6 @@ impl FilePoll {
         !self.flags.contains(Flags::HasIncrementedPollCount)
     }
 
-    /// Only intended to be used from EventLoop.Pollable
-    // PORT NOTE: Zig takes `*Loop = *uv.Loop` here (`vm.event_loop_handle.?`),
-    // but the cycle-broken `EventLoopCtx::platform_event_loop` vtable is typed
-    // `*mut bun_uws_sys::Loop` (the uws `WindowsLoop` wrapper) so the
-    // impl-crate bodies (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`)
-    // type-check. `WindowsLoop::sub_active`/`add_active` proxy straight through
-    // to `(*self.uv_loop).{sub,add}_active`, so accept the wrapper here.
     pub fn deactivate(&mut self, loop_: &mut WindowsLoop) {
         debug_assert!(self.flags.contains(Flags::HasIncrementedPollCount));
         loop_.sub_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
@@ -368,11 +342,6 @@ impl Store {
 }
 
 pub struct Waker {
-    // `BackRef<WindowsLoop>`: `WindowsLoop::get()` hands out the shared
-    // process-global singleton; the pointee strictly outlives every `Waker`.
-    // Safe `Deref` only — `wait`/`wake` route the raw `as_ptr()` straight to
-    // the C entry points so no `&mut WindowsLoop` is ever materialised (a
-    // concurrent `wake()` from a worker thread cannot alias).
     loop_: bun_ptr::BackRef<WindowsLoop>,
 }
 // SAFETY: `Waker::wake()` only forwards to `WindowsLoop::wakeup()`, which is
@@ -390,10 +359,6 @@ impl Waker {
         })
     }
 
-    /// The libuv loop backing the process-global `WindowsLoop`. Exposed so
-    /// callers that need a bare `uv_loop_t*` (e.g. `BundleThread`'s keep-alive
-    /// timer) can wire libuv handles without holding a `&WindowsLoop` borrow
-    /// against the shared global.
     #[inline]
     pub fn uv_loop(&self) -> *mut uv::Loop {
         // `BackRef` deref is safe (pointee outlives holder); `uv_loop` is a
@@ -434,10 +399,6 @@ impl Waker {
     }
 }
 
-// Local extern shims for `Waker`: the canonical decls live in
-// `bun_uws_sys::loop_::c` but that module is crate-private. Re-declaring the
-// two symbols here lets `Waker::{wait,wake}` pass the raw `*mut WindowsLoop`
-// without round-tripping through a `&mut self` receiver (see comments above).
 mod waker_c {
     use super::WindowsLoop;
     unsafe extern "C" {

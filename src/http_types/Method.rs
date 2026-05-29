@@ -50,11 +50,6 @@ pub enum Method {
 
 pub type Set = EnumSet<Method>;
 
-// PORT NOTE: Zig's private `with_body`/`with_request_body` EnumSet consts are
-// folded directly into `has_body()`/`has_request_body()` as `matches!` —
-// `EnumSet::remove` is not const on stable, and the consts were never read
-// outside those two predicates.
-
 impl Method {
     /// Port of Zig `@tagName(method)` — uppercase HTTP method token. `M_SEARCH`
     /// renders as `"M-SEARCH"` (the wire form, matching the Zig enum name
@@ -132,24 +127,6 @@ impl Method {
         Self::which(str)
     }
 
-    /// Port of Zig `bun.ComptimeStringMap(Method, …).get`: length-gated, then a
-    /// flat byte-pattern match on the entries of that exact length. Zig builds
-    /// the dispatch at `comptime`; the previous Rust port used a `phf::Map`,
-    /// which costs a SipHash13 round per lookup (`phf_shared::hash` ≈ 0.6 %
-    /// self-time in a Bun.serve hello-world profile, called twice per request).
-    /// The wire form is RFC 9110 case-sensitive uppercase, so the per-request
-    /// hot path takes the upper arm; the all-lower entries exist only for
-    /// `new Request("get", …)` JS-side convenience and match the Zig table
-    /// exactly (mixed-case still rejects).
-    ///
-    /// `#[inline]`: the Zig `ComptimeStringMapWithKeyType` lookup is fully
-    /// inlined into `NodeHTTPResponse.createForJS` (no separate symbol in the
-    /// release binary). Without the hint LLVM keeps this as a ~600-byte
-    /// out-of-line call because the full match tree looks heavy, even though
-    /// every per-request caller only ever exercises the len=3 `b"GET"` arm —
-    /// trivially branch-predicted once the outer `match str.len()` is visible
-    /// at the call site. Showed up as 8 self-time samples (0.09 %) in the
-    /// `server/node-http` bench from the call alone.
     #[inline]
     pub fn which(str: &[u8]) -> Option<Method> {
         use Method::*;
@@ -280,16 +257,6 @@ pub(crate) unsafe extern "C" fn Bun__HTTPMethod__from(str: *const u8, len: usize
 
 // Zig `comptime { _ = Bun__HTTPMethod__from; }` force-reference dropped — Rust links what's `pub`.
 
-// ═══════════════════════════════════════════════════════════════════════
-// HTTPHeaderName — moved from bun_runtime::webcore::FetchHeaders.
-// Source: src/jsc/FetchHeaders.zig
-//
-// `enum(u8)` discriminant crosses the FFI boundary to
-// `WebCore__FetchHeaders__put`/`fastHas`/`fastGet` — order MUST match
-// WebCore's `HTTPHeaderNames.in` exactly. The `fastGet`/`fastHas`/`put`
-// methods that consume this enum stay on `FetchHeaders` (T6).
-// ═══════════════════════════════════════════════════════════════════════
-
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum HeaderName {
@@ -395,11 +362,6 @@ pub enum HeaderName {
 mod tests {
     use super::Method;
 
-    /// Exhaustive parity check for `Method::which`: every variant round-trips
-    /// via its uppercase wire form and the all-lower convenience form, and
-    /// nothing else slips through. Guards the length-gated match against
-    /// transcription mistakes (the previous `phf::Map` build would have
-    /// rejected typos at compile time; the open-coded match does not).
     #[test]
     fn which_roundtrip() {
         for m in enumset::EnumSet::<Method>::all() {

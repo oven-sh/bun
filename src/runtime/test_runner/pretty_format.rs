@@ -13,11 +13,6 @@ use bun_core::{strings, ZigString, ZigStringSlice};
 use super::expect;
 use crate::webcore::BlobExt as _;
 
-/// Local shim over `Output::pretty_fmt` that (a) accepts the const-generic
-/// `ENABLE_ANSI_COLORS` form callers in this file were written against and
-/// (b) returns a value that is `Display`, `Deref<Target=[u8]>`, *and* has an
-/// `.as_bytes()` method — covering all three call shapes in this file
-/// (`format_args!("{}", …)`, `writer.write_all(&…)`, `….as_bytes()`).
 #[inline]
 fn pretty_fmt_const<const ENABLE_ANSI_COLORS: bool>(s: &str) -> PrettyStr {
     PrettyStr(Output::pretty_fmt_rt(s, ENABLE_ANSI_COLORS).0)
@@ -43,11 +38,6 @@ impl core::fmt::Display for PrettyStr {
 
 use bun_jsc::c_api::{JSObjectGetPropertyAtIndex, JSObjectGetProxyTarget};
 
-/// `Expect*.js.*GetCached` accessors (Zig: `ExpectAny.js.constructorValueGetCached` etc.)
-/// — generate-classes.ts emits these per-type for `cache: true` props
-/// (jest.classes.ts). The Rust port has no inherent associated modules, so each
-/// matcher gets a sibling `expect_js::*` module the same way `mod.rs` does for
-/// `Expect`.
 mod expect_js {
     pub(super) mod any {
         ::bun_jsc::codegen_cached_accessors!("ExpectAny"; constructorValue);
@@ -159,10 +149,6 @@ impl JestPrettyFormat {
         options: FormatOptions,
     ) -> JsResult<()> {
         let mut fmt: Formatter;
-        // Zig: defer { if (fmt.map_node) |node| { node.data = fmt.map; node.data.clearRetainingCapacity(); node.release(); } }
-        // (.zig:79-85). Realized as `impl Drop for Formatter` below — the pool
-        // node is acquired lazily inside `print_as` and swapped back on every
-        // exit path of this function (early return, `?` propagation, happy path).
 
         if len == 1 {
             fmt = Formatter::new(global);
@@ -286,14 +272,6 @@ impl JestPrettyFormat {
 pub mod visited {
     use super::*;
 
-    // PORT NOTE: JSValue keys live on heap; safe because every visited value is also
-    // on the stack frame during format() — conservative scan still sees them. Mirrors Zig 1:1.
-    //
-    // `HashMap<JSValue, ()>` is a foreign type, so we cannot impl the foreign
-    // `ObjectPoolType` trait on it directly (orphan rule). A `#[repr(transparent)]`
-    // newtype with `Deref`/`DerefMut` keeps every call site (`.clear()`,
-    // `.get_or_put()`, `.remove()`, `mem::take`) unchanged. Same trick as
-    // `src/http/zlib.rs::PooledMutableString`.
     #[repr(transparent)]
     #[derive(Default)]
     pub struct Map(pub HashMap<JSValue, ()>);
@@ -324,10 +302,6 @@ pub mod visited {
         }
     }
 
-    // Mirrors Zig's `ObjectPool(Map, Map.init, true, 16)` — thread-local free
-    // list, capped at 16 nodes. `object_pool!` wires the per-monomorphization
-    // storage; without it `ObjectPool<Map, true, 16>` defaults to
-    // `UnwiredStorage` which panics on first `get_node()`.
     bun_collections::object_pool!(pub Pool: Map, threadsafe, 16);
     pub type PoolNode = <Pool as bun_collections::pool::ObjectPoolTrait>::Node;
 }
@@ -379,12 +353,6 @@ impl<'a> Formatter<'a> {
     }
 }
 
-// Mirrors the top-level Zig defer in `JestPrettyFormat.format` (.zig:79-85):
-// `defer { if (fmt.map_node) |node| { node.data = fmt.map; node.data.clearRetainingCapacity(); node.release(); } }`
-// The node is acquired lazily inside `print_as` via `visited::Pool::get_node()`;
-// releasing here covers every exit path of `format` (early `len == 1` return,
-// `?` propagation from `Tag::get`/`fmt.format`, and the happy path) without
-// the borrow-aliasing a `scopeguard` would introduce.
 impl Drop for Formatter<'_> {
     fn drop(&mut self) {
         if let Some(mut node) = self.map_node.take() {
@@ -402,14 +370,6 @@ impl Drop for Formatter<'_> {
     }
 }
 
-/// `Display` adapter equivalent to Zig's `JestPrettyFormat.Formatter.ZigFormatter`.
-///
-/// The Zig spec (`pretty_format.zig:243-263`) takes `self: ZigFormatter` *by
-/// value* with a raw `*Formatter` field, so writing through `self.formatter.*`
-/// carries no aliasing constraint. `Display::fmt` only gives us `&self`, so the
-/// mutable handle is parked behind a `Cell` and moved out for the duration of
-/// the call — this preserves unique-borrow provenance without the
-/// `&shared → *const → *mut` cast that would be UB under Stacked Borrows.
 pub struct ZigFormatter<'a, 'b> {
     pub formatter: Cell<Option<&'a mut Formatter<'b>>>,
     pub global: &'b JSGlobalObject,
@@ -438,11 +398,6 @@ impl core::fmt::Display for ZigFormatter<'_, '_> {
             .take()
             .expect("ZigFormatter::fmt re-entered or used after consumption");
 
-        // PORT NOTE (.zig:249): `self.formatter.remaining_values = &[_]JSValue{self.value}` —
-        // assigning a stack-local slice into `Formatter<'b>` would require `'b: 'local`,
-        // which borrowck rejects. The single-value path never reads `remaining_values`
-        // (only `StringPossiblyFormatted` consumes it, and `ZigFormatter` always emits a
-        // single tag), so leaving it `&[]` is observationally equivalent.
         formatter.remaining_values = &[];
         formatter.global_this = self.global;
 
@@ -574,10 +529,6 @@ impl Tag {
             }
 
             return Ok(TagResult {
-                // TODO: we print InternalFunction as Object because we have a lot of
-                // callable namespaces and printing the contents of it is better than [Function: namespace]
-                // ideally, we would print [Function: namespace] { ... } on all functions, internal and js.
-                // what we'll do later is rid of .Function and .Class and handle the prefix in the .Object formatter
                 tag: if js_type == JSType::InternalFunction { Tag::Object } else { Tag::Function },
                 cell: js_type,
             });
@@ -875,10 +826,6 @@ impl<'a> Formatter<'a> {
     }
 }
 
-// PORT NOTE: split lifetimes — `&'a mut Formatter<'a>` is invariant and forces
-// the borrow of `self` at the call site to outlive `'a`, cascading into bogus
-// borrowck errors throughout `print_as`. Using a distinct `'f` for the
-// Formatter's own lifetime keeps the iter borrow local.
 pub struct MapIterator<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool> {
     pub formatter: &'a mut Formatter<'f>,
     pub writer: &'a mut W,
@@ -1170,19 +1117,10 @@ impl<'a> Formatter<'a> {
         if self.failed {
             return Ok(());
         }
-        // PORT NOTE: reshaped for borrowck — `WrappedWriter` borrows both writer_
-        // and &mut self.estimated_line_length; we use a local wrapper and sync
-        // `failed` at scope exit. estimated_line_length is unused by WrappedWriter
-        // methods in this file, so we leave it None here.
         let mut writer = WrappedWriter::new(writer_);
 
         if FORMAT.can_have_circular_references() {
             if self.map_node.is_none() {
-                // PORT NOTE: `visited::Pool::get()` returns an RAII `PoolGuard` that
-                // would release on scope exit; the Zig spec stashes the raw node on
-                // `self` and releases it from `JestPrettyFormat::format`'s defer, so
-                // take the raw node directly. `data` is initialized by
-                // `Map::INIT` (see `visited::Map: ObjectPoolType`).
                 let node = core::ptr::NonNull::new(visited::Pool::get_node())
                     .expect("ObjectPool::get_node never returns null");
                 self.map_node = Some(node);
@@ -1212,10 +1150,6 @@ impl<'a> Formatter<'a> {
             }
         }
 
-        // PORT NOTE: Zig `defer { if (Format.canHaveCircularReferences()) _ = this.map.remove(value); }`
-        // (.zig:890-894) is realized by wrapping the match in a closure and unconditionally
-        // calling `self.map.remove(&value)` after it returns (Ok or Err). A scopeguard
-        // cannot be used here because it would hold `&mut self` across the match body.
         let result: JsResult<()> = (|| {
             match FORMAT {
                 Tag::StringPossiblyFormatted => {
@@ -1544,10 +1478,6 @@ impl<'a> Formatter<'a> {
                         let prev_quote_strings = self.quote_strings;
                         self.quote_strings = true;
 
-                        // PORT NOTE: Zig registers `defer this.indent -|= 1` (.zig:1120) and
-                        // `defer this.quote_strings = prev_quote_strings` (.zig:1128) so state is
-                        // restored even when `Tag.get` / `format` throw. Wrap the fallible body in
-                        // a closure and restore unconditionally afterward to match.
                         let inner: JsResult<()> = (|| {
                             {
                                 // SAFETY: `r#ref` is a live JSObjectRef for `value`; index 0 is
@@ -1648,11 +1578,6 @@ impl<'a> Formatter<'a> {
                     self.add_for_new_line(1);
                 }
                 Tag::Private => {
-                    // .zig:1190-1278 — per-type `writeFormat` dispatch for Bun-native cells.
-                    // Downcast via the `JsClass`/FFI hooks on each type; the `write_format`
-                    // bodies re-enter this formatter through the `ConsoleFormatter` impl
-                    // below for nested values, so the byte sink is wrapped in `AsFmt` (a
-                    // `core::fmt::Write` view of the same writer).
                     if let Some(response) = value.as_::<crate::webcore::Response>() {
                         // SAFETY: `as_` returned non-null; the GC keeps the cell alive while
                         // `value` is on the stack (conservative scan). `write_format` does not
@@ -2028,10 +1953,6 @@ impl<'a> Formatter<'a> {
                         self.indent += 1;
                         let old_quote_strings = self.quote_strings;
                         self.quote_strings = true;
-                        // PORT NOTE: Zig registers `defer this.indent -|= 1` and
-                        // `defer this.quote_strings = old_quote_strings` here so state
-                        // is restored even when `fastGet` / `Tag.get` / `format` throw.
-                        // Wrap the fallible body and restore unconditionally afterward.
                         let inner: JsResult<()> = (|| {
                         self.write_indent(writer.ctx).expect("unreachable");
 
@@ -2199,11 +2120,6 @@ impl<'a> Formatter<'a> {
                         let prev_quote_strings = self.quote_strings;
                         self.quote_strings = true;
 
-                        // PORT NOTE: Zig registers `defer this.quote_strings = prev_quote_strings`
-                        // (and nested `defer this.indent -|= 1` scopes) so state is restored on
-                        // every exit, including thrown exceptions. Wrap the fallible body in a
-                        // closure (Ok(true) ⇒ children path printed the closing tag, so the
-                        // trailing " />" is skipped) and restore unconditionally afterward.
                         let inner: JsResult<bool> = (|| {
                         let Some(props_obj) = props.get_object() else { return Ok(false); };
                         let mut props_iter = JSPropertyIterator::init(
@@ -2277,11 +2193,6 @@ impl<'a> Formatter<'a> {
                                     // count_without_children is necessary to prevent printing an extra newline
                                     // if there are children and one prop and the child prop is the last prop
                                     iter_i + 1 < count_without_children
-                                        // 3 is arbitrary but basically
-                                        //  <input type="text" value="foo" />
-                                        //  ^ should be one line
-                                        // <input type="text" value="foo" bar="true" baz={false} />
-                                        //  ^ should be multiple lines
                                         && iter_i > 3
                                     {
                                         writer.write_all(b"\n");
@@ -2451,25 +2362,6 @@ impl<'a> Formatter<'a> {
                     let prev_quote_strings = self.quote_strings;
                     self.quote_strings = true;
 
-                    // We want to figure out if we should print this object
-                    // on one line or multiple lines
-                    //
-                    // The 100% correct way would be to print everything to
-                    // a temporary buffer and then check how long each line was
-                    //
-                    // But it's important that console.log() is fast. So we
-                    // do a small compromise to avoid multiple passes over input
-                    //
-                    // We say:
-                    //
-                    //   If the object has at least 2 properties and ANY of the following conditions are met:
-                    //      - total length of all the property names is more than
-                    //        14 characters
-                    //     - the parent object is printing each property on a new line
-                    //     - The first property is a DOM object, ESM namespace, Map, Set, or Blob
-                    //
-                    //   Then, we print it each property on a new line, recursively.
-                    //
                     let prev_always_newline_scope = self.always_newline_scope;
                     let always_newline =
                         self.always_newline_scope || self.good_time_for_a_new_line();
@@ -2661,10 +2553,6 @@ impl<'a> Formatter<'a> {
         // PORT NOTE: defer this.globalThis = prevGlobalThis — restored at end.
         self.global_this = global_this;
 
-        // This looks incredibly redundant. We make the JestPrettyFormat.Formatter.Tag a
-        // comptime var so we have to repeat it here. The rationale there is
-        // it _should_ limit the stack usage because each version of the
-        // function will be relatively small
         let r = match result.tag {
             Tag::StringPossiblyFormatted => self
                 .print_as::<W, { Tag::StringPossiblyFormatted }, ENABLE_ANSI_COLORS>(
@@ -2742,13 +2630,6 @@ impl<'a> Formatter<'a> {
     }
 }
 
-/// Bridge so the `Response`/`Request`/`Blob`/`BuildArtifact` `write_format`
-/// hooks (typed `F: bun_jsc::ConsoleFormatter`) can re-enter this formatter
-/// for nested values. The trait is the layering seam — it lives in `bun_jsc`,
-/// the webcore types call through it generically, and this file supplies the
-/// test-runner-specific dispatch. Mirrors the `bun_jsc::console_object`
-/// `Formatter` impl (`src/jsc/lib.rs`) one-for-one, mapping the
-/// `bun_jsc::FormatTag` enum onto this file's smaller `Tag` set.
 impl bun_jsc::ConsoleFormatter for Formatter<'_> {
     #[inline]
     fn global_this(&self) -> &JSGlobalObject { self.global_this }
@@ -2778,10 +2659,6 @@ impl bun_jsc::ConsoleFormatter for Formatter<'_> {
         cell: JSType,
     ) -> JsResult<()> {
         use bun_jsc::FormatTag as Ft;
-        // Map the wider `console_object::Tag` onto this file's `Tag`. Only the
-        // variants the `write_format` hooks actually emit are reachable
-        // (Boolean / Double / Object / Private / String); the rest collapse
-        // onto `Object` so any future caller still renders something useful.
         let local = match tag {
             Ft::StringPossiblyFormatted => Tag::StringPossiblyFormatted,
             Ft::String => Tag::String,
@@ -2828,14 +2705,6 @@ impl bun_jsc::ConsoleFormatter for Formatter<'_> {
     }
 }
 
-/// Duck-type surface that [`JestPrettyFormat::print_asymmetric_matcher`] needs
-/// from a formatter. Spec `pretty_format.zig:2005` takes the formatter via
-/// `anytype`, so it monomorphises over both `JestPrettyFormat.Formatter` and
-/// `ConsoleObject.Formatter`. This trait is the Rust spelling of that
-/// duck-typing — implemented for both [`Formatter`] (this module) and
-/// [`bun_jsc::console_object::Formatter`] so the same body serves the test
-/// runner *and* `console.log`'s `.Private` arm (via the
-/// `RuntimeHooks::console_print_runtime_object` hook).
 pub trait AsymmetricMatcherFormatter {
     fn amf_add_for_new_line(&mut self, n: usize);
     fn amf_global_this(&self) -> &JSGlobalObject;
@@ -2932,11 +2801,6 @@ impl JestPrettyFormat {
         M: AsymmetricMatcherFormatter,
         W: bun_io::Write,
     {
-        // PORT NOTE: Zig (.zig:2005-2013) passes both `*WrappedWriter` and the raw inner
-        // writer, which alias. In Rust that would be two live `&mut W` to the same target
-        // (UB / borrowck violation), so we accept only the wrapped writer and reach the
-        // raw `&mut W` via `writer.ctx` for `print_as` calls — single borrow chain.
-
         if let Some(matcher) = value.as_class_ref::<expect::ExpectAnything>() {
             let flags = matcher.flags.get();
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);

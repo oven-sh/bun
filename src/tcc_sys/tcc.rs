@@ -13,22 +13,6 @@ pub type TCCErrorFunc = Option<unsafe extern "C" fn(opaque: *mut c_void, msg: *c
 /// Zig: `fn ErrorFunc(Ctx: type) type { return fn (ctx: ?*Ctx, msg: [*:0]const u8) callconv(.c) void; }`
 pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char);
 
-// `libtcc.a` is only built where `cfg.tinycc` is true (`scripts/build/config.ts`):
-// not Windows/aarch64 (TinyCC has no aarch64-pe-coff backend), not Android, not
-// FreeBSD (the vendored fork doesn't support those targets). On those platforms
-// these `extern "C"` decls would be undefined at link. Zig's `comptime
-// !Environment.enable_tinycc` early-returns in `ffi.zig` keep the *Zig*
-// callers off the analysis graph, so the Zig externs never get emitted; Rust
-// has no lazy analysis — `bun_runtime::ffi::ffi_body::{Source::add,
-// CompileC::compile}` are reachable from `extern "C"` JS bindings and the
-// monomorphized refs land in `libbun_rust.a` regardless of any
-// `if !ENABLE_TINYCC { return }` runtime guard. Swap the `extern` block for
-// stub *definitions* on those targets so the link resolves; the gated Rust
-// callers never reach them at runtime (they early-return with "not available
-// in this build"), and the `unreachable!()` makes any future gate regression
-// loud rather than silently UB.
-//
-// Keep this predicate in sync with `cfg.tinycc` in `scripts/build/config.ts`.
 macro_rules! tcc_externs {
     ($($(#[$attr:meta])* fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)?;)*) => {
         #[cfg(not(any(target_os = "android", target_os = "freebsd", all(windows, target_arch = "aarch64"))))]
@@ -268,11 +252,6 @@ impl State {
         unsafe { tcc_set_error_func(self, opaque, erased) }
     }
 
-    // NOTE: get_error_func / get_error_opaque wrappers removed — the underlying
-    // tcc_get_error_func / tcc_get_error_opaque symbols were dropped from the vendored
-    // libtcc.h and would fail to link if referenced. (tcc.zig:125-131 carries the same
-    // dead wrappers, surviving only via lazy analysis.)
-
     /// Set options as from command line (multiple supported)
     pub fn set_options(&mut self, str_: &ZStr) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState; str_ is NUL-terminated.
@@ -305,27 +284,11 @@ impl State {
         Ok(())
     }
 
-    /// Define preprocessor symbol 'sym'. value can be NULL, sym can be "sym=val"
-    ///
-    /// ```c
-    /// #define sym value
-    /// ```
     pub fn define_symbol(&mut self, sym: &ZStr, value: &ZStr) {
         // SAFETY: self is a valid *mut TCCState; sym/value are NUL-terminated.
         unsafe { tcc_define_symbol(self, sym.as_ptr(), value.as_ptr()) }
     }
 
-    /// Define multiple preprocessor symbols with integer values.
-    ///
-    /// Zig: `defineSymbolsComptime(s, symbols: anytype)` — iterated anonymous-struct fields via
-    /// `@typeInfo`/`@field` and dispatched on field type at comptime. Per PORTING.md §Comptime
-    /// reflection, homogenized to a slice + plain `for` since every call site passes ints (the
-    /// Zig `.pointer` arm at tcc.zig:192 is dead and itself buggy — it passes `s` twice).
-    ///
-    /// ## Example
-    /// ```ignore
-    /// state.define_symbols(&[("foo", 1), ("baz", 42)]);
-    /// ```
     pub fn define_symbols(&mut self, symbols: &[(&str, i64)]) {
         // Zig: `var buf: [256]u8 = undefined;`
         let mut buf = [0u8; 256];
@@ -355,11 +318,6 @@ impl State {
         }
     }
 
-    /// Undefine preprocess symbol 'sym'
-    ///
-    /// ```c
-    /// #undef sym
-    /// ```
     pub fn undefine_symbol(&mut self, sym: &ZStr) {
         // SAFETY: self is a valid *mut TCCState; sym is NUL-terminated.
         unsafe { tcc_undefine_symbol(self, sym.as_ptr()) }
@@ -367,11 +325,6 @@ impl State {
 
     // ======================== Compiling ========================
 
-    /// Add a file (C file, dll, object, library, ld script).
-    ///
-    /// ## Errors
-    /// - File not found
-    /// - Syntax/formatting error
     pub fn add_file(&mut self, filename: &ZStr) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState; filename is NUL-terminated.
         if unsafe { tcc_add_file(self, filename.as_ptr()) } != 0 {
@@ -436,20 +389,6 @@ impl State {
         Ok(())
     }
 
-    /// Add multiple symbols to the compiled program.
-    ///
-    /// Zig: `addSymbolsComptime(s, symbols: anytype)` — iterated anonymous-struct fields via
-    /// `@typeInfo`/`@field` at comptime. Per PORTING.md §Comptime reflection, homogenized to a
-    /// slice of `(name, *const c_void)` + plain `for` since every call site passes opaque
-    /// function/data pointers.
-    ///
-    /// ## Example
-    /// ```ignore
-    /// state.add_symbols(&[
-    ///     ("add", add as *const c_void),
-    ///     ("sub", sub as *const c_void),
-    /// ])?;
-    /// ```
     pub fn add_symbols(&mut self, symbols: &[(&str, *const c_void)]) -> Result<(), Error> {
         // Zig field names are `[:0]const u8` (comptime NUL-terminated); copy into a stack buffer
         // to recover that invariant for the C ABI.

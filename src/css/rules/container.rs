@@ -65,10 +65,6 @@ pub enum ContainerSizeFeatureId {
     Orientation,
 }
 
-// `QueryFeature<FeatureId>` requires `FeatureId: FeatureIdTrait` at the type
-// level, so this impl must be present for `ContainerSizeFeature` to resolve.
-// `value_type` inlines the Zig `DeriveValueType` reflection; `to_css`/`from_str`
-// delegate to `enum_property_util` (driven by the `EnumProperty` derive).
 impl crate::media_query::FeatureIdTrait for ContainerSizeFeatureId {
     // Zig: pub const valueType = css.DeriveValueType(@This(), ValueTypeMap).valueType;
     // PORT NOTE: DeriveValueType is comptime reflection over ValueTypeMap; expanded inline.

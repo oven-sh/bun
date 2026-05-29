@@ -339,10 +339,6 @@ impl Parser<'_> {
 
     pub fn build_ref_def_hashtable(&mut self) -> Result<(), AllocError> {
         let mut off: usize = 0;
-        // PORT NOTE: reshaped for borrowck — take a raw pointer to block_bytes so we
-        // can call &mut self methods (normalize_label, parse_ref_def via self.buffer)
-        // while iterating the byte buffer. The Zig code mutates headers in-place via
-        // pointer casts; we preserve that with raw pointer arithmetic.
         let bytes_ptr = self.block_bytes.as_mut_ptr();
         let bytes_len = self.block_bytes.len();
 

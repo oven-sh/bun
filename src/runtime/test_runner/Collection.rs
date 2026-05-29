@@ -19,10 +19,6 @@ pub struct Collection {
     pub locked: bool,
     pub describe_callback_queue: Vec<QueuedDescribe>,
     pub current_scope_callback_queue: Vec<QueuedDescribe>,
-    // The two queues above are self-referential — their `NonNull<DescribeScope>` fields point
-    // into the tree rooted at `root_scope`. They are stored as raw `NonNull` (not `&`) so that
-    // `active_scope_mut()` may hand out `&mut DescribeScope` to the same nodes without
-    // invalidating any live shared-reference tags under Stacked Borrows.
 
     pub root_scope: Box<DescribeScope>,
     pub active_scope: NonNull<DescribeScope>,
@@ -32,11 +28,6 @@ pub struct Collection {
 
 pub struct QueuedDescribe {
     callback: DeprecatedStrong, // jsc.Strong.Deprecated
-    /// Raw cursor into `Collection.root_scope`'s tree. Stored as `NonNull` (not `&DescribeScope`)
-    /// because `Collection::active_scope_mut()` hands out `&mut` to the same node while these
-    /// queue entries are live; a `&` here would be invalidated by that `&mut` (Stacked Borrows).
-    /// The pointee is a `Box<DescribeScope>` inside `TestScheduleEntry::Describe`, so its address
-    /// is stable for the lifetime of the owning `Collection`.
     active_scope: NonNull<DescribeScope>,
     /// See `active_scope` — same invariants. Derived from the `&mut DescribeScope` returned by
     /// `append_describe`, so it carries write-capable provenance (later assigned to
@@ -137,11 +128,6 @@ impl Collection {
                 bstr::BStr::new(self.active_scope().base.name.as_deref().unwrap_or(b"(unnamed)")),
             ));
 
-            // Store raw NonNull cursors (not `&`) so later `active_scope_mut()` calls on the same
-            // node do not invalidate them. Both pointees live in `root_scope`'s Box-allocated tree
-            // and outlive every QueuedDescribe stored in `self`. `new_scope` is `&mut`, so the
-            // resulting NonNull carries write-capable provenance (later assigned to
-            // `self.active_scope` in `step()` and mutated through).
             self.current_scope_callback_queue.push(QueuedDescribe {
                 active_scope: self.active_scope,
                 callback: DeprecatedStrong::init(cb),

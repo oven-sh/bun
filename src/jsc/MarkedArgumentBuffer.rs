@@ -70,14 +70,6 @@ impl MarkedArgumentBuffer {
     }
 }
 
-/// Port of `MarkedArgumentBuffer.wrap`.
-///
-/// Zig's `wrap` is a `comptime` fn that takes a
-/// `fn(*JSGlobalObject, *CallFrame, *MarkedArgumentBuffer) bun.JSError!JSValue`
-/// and returns a `jsc.JSHostFnZig`. Rust cannot parameterize a `fn` item by a const
-/// fn-pointer, so this is a macro that expands to a `#[bun_jsc::host_fn]` wrapper.
-// TODO(port): consider a proc-macro attribute (`#[bun_jsc::with_marked_argument_buffer]`)
-// instead of `macro_rules!` once the host_fn codegen is settled.
 #[macro_export]
 macro_rules! marked_argument_buffer_wrap {
     ($function:path) => {{

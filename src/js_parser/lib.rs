@@ -7,12 +7,6 @@
 //! `StoreSlice<T>` / `StoreStr` here. TODO(refactor): thread a crate-wide
 //! `'bump` and rewrite these to `&'bump [T]` / `&'bump mut [T]`.
 
-// `lexer::NewLexer<J: JsonOptionsT>` projects trait associated consts into
-// eight `const bool` slots (Zig: `NewLexer(comptime json_options)`). Field
-// access on a `const J: JSONOptions` param is rejected by nightly-2025-12-10
-// ("overly complex generic constant"); assoc-const projection on a *type*
-// param works under `generic_const_exprs`. `adt_const_params` keeps
-// `JSONOptions: ConstParamTy` for value-level reification.
 #![feature(adt_const_params, generic_const_exprs)]
 #![allow(incomplete_features)]
 
@@ -36,10 +30,6 @@ pub mod visit;
 pub use p::P;
 pub use parse::parse_entry::{Options as ParserOptions, Parser};
 
-// `pub const Macro = @import("../js_parser_jsc/Macro.zig");`
-// Full impl lives in *_jsc; this stub re-exposes the JSC-free constants and a
-// placeholder `MacroContext` so lower-tier crates (bundler, transpiler) that
-// only need the namespace strings / a context handle stay unblocked.
 #[allow(non_snake_case)]
 pub mod Macro {
     /// Zig: `pub const namespace: string = "macro";`
@@ -52,13 +42,6 @@ pub mod Macro {
         str_.starts_with(NAMESPACE_WITH_COLON)
     }
 
-    /// Spec `bundler_jsc/PluginRunner.zig:MacroJSCtx` (= `JSC.JSValue`).
-    ///
-    /// `JSValue` is `#[repr(transparent)] i64` (PORTING.md §JSC types). This
-    /// newtype carries the encoded bits at the lowest tier that needs them so
-    /// `Transpiler::ParseOptions.macro_js_ctx` and `MacroContext.javascript_object`
-    /// share one canonical type without `bun_js_parser` / `bun_bundler` taking a
-    /// `bun_jsc` dep. Higher tiers convert with `JSValue(ctx.0)` / `MacroJSCtx(v.0)`.
     #[repr(transparent)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug)]
     pub struct MacroJSCtx(pub i64);
@@ -73,25 +56,10 @@ pub mod Macro {
         }
     }
 
-    /// Lower-tier handle for `js_parser_jsc::Macro::MacroContext`.
-    ///
-    /// Real fields (`env`, `macros`, `remap`, `resolver`, `bump`) reference
-    /// `Transpiler` and JSC types that live in crates which depend on
-    /// `bun_js_parser`. To break the dep cycle the higher-tier `_jsc` crate
-    /// owns that state behind `data`; the visit pass reaches it via
-    /// link-time-resolved `extern "Rust"` fns so `visitExpr.rs` stays a
-    /// faithful port of `visitExpr.zig:415` / `:1443` without an upward
-    /// import. `javascript_object` is surfaced here so `Transpiler::parse` can
-    /// thread `this_parse.macro_js_ctx` through (spec transpiler.zig:938-940)
-    /// without this crate depending on `bun_jsc::JSValue`.
     pub struct MacroContext {
         /// Encoded `JSC.JSValue` (the caller-supplied macro JS context).
         /// `bun_js_parser_jsc` reinterprets the bits as a `JSValue`.
         pub javascript_object: MacroJSCtx,
-        /// Opaque pointer to the higher-tier macro-runner state
-        /// (resolver/env/macros/remap/bump). Allocated by `init` and leaked
-        /// (matches Zig's process-lifetime `default_allocator`);
-        /// `bun_js_parser` never dereferences it.
         pub data: *mut core::ffi::c_void,
     }
     impl Default for MacroContext {
@@ -104,21 +72,11 @@ pub mod Macro {
         }
     }
     unsafe extern "Rust" {
-        /// Defined `#[no_mangle]` in `bun_js_parser_jsc::Macro`. `transpiler`
-        /// is `*mut bun_bundler::Transpiler<'_>` — erased because this crate
-        /// cannot name it (dep-cycle).
-        // NOT `safe fn`: callee derefs `transpiler` as `&mut Transpiler<'_>` —
-        // caller must guarantee it is non-null, exclusively borrowed, and of
-        // that exact concrete type.
         fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> MacroContext;
         // NOT `safe fn`: when non-null, `data` must be the exact `Box::into_raw`
         // value produced by `__bun_macro_context_init` and uniquely owned
         // (callee `Box::from_raw`s it → double-free / aliasing UB otherwise).
         fn __bun_macro_context_deinit(data: *mut core::ffi::c_void);
-        // All args are safe Rust-ABI types (refs/slices/by-value); the only
-        // raw pointer involved is `ctx.data`, which is a struct invariant
-        // maintained by `init`/`Default` — not a caller precondition. The
-        // `#[no_mangle]` body in `bun_js_parser_jsc` is itself a safe `pub fn`.
         safe fn __bun_macro_context_call(
             ctx: &mut MacroContext,
             import_record_path: &[u8],
@@ -129,10 +87,6 @@ pub mod Macro {
             caller: bun_ast::Expr,
             function_name: &[u8],
         ) -> Result<bun_ast::Expr, bun_core::Error>;
-        // NOT `safe fn`: callee derefs `data` unconditionally as
-        // `&MacroContext` — caller must guarantee non-null + produced by
-        // `__bun_macro_context_init` + the backing `Transpiler.options` table
-        // outlives the returned `'static` borrow.
         fn __bun_macro_context_get_remap(
             data: *mut core::ffi::c_void,
             path: &[u8],
@@ -143,13 +97,6 @@ pub mod Macro {
         safe fn __bun_macro_collect_vm_garbage();
     }
 
-    /// Sweep this thread's bundler-macro VM so JS-wrapper-owned native boxes
-    /// (e.g. a `new Bun.Transpiler()` constructed inside a macro body) are
-    /// finalized before the worker thread's TLS root vanishes. Only call from
-    /// `bun_bundler::ThreadPool::Worker::deinit` after both per-worker
-    /// `MacroContext` boxes are freed — every other `MacroContext::deinit`
-    /// path is either inside JS execution or inside a GC sweep, where
-    /// re-entering `run_gc(true)` is unsound.
     #[inline]
     pub fn collect_vm_garbage() {
         __bun_macro_collect_vm_garbage();
@@ -179,12 +126,6 @@ pub mod Macro {
                 function_name,
             )
         }
-        /// Zig: `pub fn init(transpiler: *Transpiler) MacroContext`.
-        ///
-        /// `T` is always `bun_bundler::Transpiler<'_>`; generic so callers in
-        /// `bun_bundler`/`bun_runtime` compile without `bun_js_parser` taking
-        /// an upward dep on the bundler. The `_jsc` crate reads the concrete
-        /// type back inside `__bun_macro_context_init`.
         #[inline]
         pub fn init<T>(transpiler: &mut T) -> Self {
             // SAFETY: `transpiler` is a live `&mut T` (exclusive, non-null,
@@ -198,10 +139,6 @@ pub mod Macro {
                 )
             }
         }
-        /// Free the boxed higher-tier state behind `data`. Only call when the
-        /// owning `Transpiler` is a short-lived bytewise clone (e.g. the
-        /// off-thread `RuntimeTranspilerStore` worker) — the long-lived
-        /// `vm.transpiler` instance leaks it intentionally (process-lifetime).
         #[inline]
         pub fn deinit(self) {
             // SAFETY: `self.data` is either null (callee no-ops) or the exact
@@ -210,10 +147,6 @@ pub mod Macro {
             // possible.
             unsafe { __bun_macro_context_deinit(self.data) }
         }
-        /// Zig: `pub fn getRemap(self: *MacroContext, path: []const u8) ?MacroRemapEntry`.
-        /// Returns `'static` so callers can keep the result across `&mut self`
-        /// parser calls without a borrowck conflict; the table lives in
-        /// `Transpiler.options` which outlives every parse.
         #[inline]
         pub fn get_remap(&self, path: &[u8]) -> Option<&'static MacroRemapEntry> {
             if self.data.is_null() {
@@ -235,17 +168,6 @@ pub mod Macro {
 }
 use bun_ast::{Ast, Ref};
 
-// NOTE: shadows the prelude `Result` for this module — all error-union return
-// types in this file are spelled `core::result::Result<T, E>` to disambiguate.
-//
-// PERF NOTE: `bun_ast::Ast` is ~1 KB (40+ fields incl. Scope, NamedImports,
-// NamedExports, CharFreq, several HashMaps). Storing it inline made this enum
-// ~1 KB and forced a ~1 KB memmove at every layer of the return chain
-// `P::to_ast → _parse → parse → cache::JavaScript::parse → Transpiler::parse_*`
-// (Zig sidesteps this via result-location semantics; Rust does not). Boxing the
-// `Ast` variant collapses `Result` to 16 B so only a thin pointer is moved up
-// the stack — one mimalloc-arena alloc per parsed module is far cheaper than
-// 4+ kilobyte memmoves. The other variants are already tiny.
 pub enum Result<'a> {
     AlreadyBundled(AlreadyBundled),
     Cached,
@@ -276,13 +198,6 @@ impl<'a, const IS_TS: bool, const SCAN: bool> bun_ast::expr::EqlParser
 
 pub mod defines_table;
 
-// ─── from bun_bundler::defines (src/bundler/defines.zig) ────────────────────
-// B-3 UNIFIED: canonical `Define` / `DefineData` / `DotDefine` live here so the
-// parser (`P.define: &'a Define`) and the bundler (`BundleOptions.define:
-// Box<Define>`) share one nominal type. `bun_bundler::defines` re-exports these
-// and layers the json-parse / dotenv `init` on top via an extension trait. The
-// pure-global fallback table also lives at this tier (`defines_table`) so
-// `for_identifier` reads its own const — no cross-crate hook.
 pub mod defines {
     use bun_collections::{StringArrayHashMap, StringHashMap};
     use bun_core::strings;
@@ -307,10 +222,6 @@ pub mod defines {
         pub data: DefineData,
     }
 
-    /// Zig: `packed struct(u8)` — `_padding: u3, valueless: bool,
-    /// can_be_removed_if_unused: bool, call_can_be_unwrapped_if_unused:
-    /// E.CallUnwrap (u2), method_call_must_be_replaced_with_undefined: bool`.
-    /// Packed LSB-first → bit positions below match the Zig layout exactly.
     #[repr(transparent)]
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub struct Flags(u8);
@@ -384,14 +295,6 @@ pub mod defines {
     #[derive(Clone)]
     pub struct DefineData {
         pub value: ExprData,
-        // Zig stored `original_name_ptr: ?[*]const u8` + `original_name_len: u32`
-        // borrowing into caller-owned strings (defines.zig:24-25 — the 48→40-byte
-        // packing trick). The Rust port owns the `RawDefines` value bytes
-        // (`Box<[u8]>`), so borrowing would be a use-after-free once the
-        // `RawDefines` map is dropped after `Define::init`. Own the bytes here
-        // instead — these are tiny startup-time copies.
-        // Kept `pub` so the bundler-side `parse`/`from_input` (which live a
-        // tier up for json-parser access) can construct directly.
         pub original_name: Option<Box<[u8]>>,
         pub flags: Flags,
     }
@@ -645,12 +548,6 @@ pub mod defines_full_draft {
     #[derive(Clone)]
     pub struct DefineData {
         pub value: expr::Data,
-        // Zig stored `original_name_ptr: ?[*]const u8` + `original_name_len: u32`
-        // borrowing into caller-owned strings (defines.zig:24-25 — the 48→40-byte
-        // packing trick). The Rust port owns the `RawDefines` value bytes
-        // (`Box<[u8]>`), so borrowing would be a use-after-free once the
-        // `RawDefines` map is dropped after `Define::init`. Own the bytes here
-        // instead — these are tiny startup-time copies.
         pub original_name: Option<Box<[u8]>>,
         pub flags: DefineDataFlags,
     }
@@ -747,11 +644,6 @@ pub mod defines_full_draft {
             }
         }
 
-        // REFACTOR_BUN_AST: `bun_js_parser` is a sibling of `bun_parsers`, so the
-        // JSON-value branch takes a parser callback (the bundler passes
-        // `bun_parsers::json::parse_env_json`). With the unified `Expr` type,
-        // the result is the same `bun_ast::Expr` the rest of the parser uses —
-        // the former `json_data_to_expr_data` lift is gone.
         pub fn parse(
             key: &[u8],
             value_str: &[u8],
@@ -964,10 +856,6 @@ pub mod defines_full_draft {
     }
 }
 
-// ─── from bun_js_printer::renamer (src/js_printer/renamer.zig) ──────────────
-// Only the slot-assignment helpers the parser calls (`P.rs:6658`) live here;
-// the full `NumberRenamer`/`MinifyRenamer` machinery stays in `bun_js_printer`
-// (it depends on the printer's name-buffer and reserved-names tables).
 pub mod renamer {
     use bun_ast::SlotCounts;
     use bun_ast::base::Ref;
@@ -983,11 +871,6 @@ pub mod renamer {
         let mut slot_counts = SlotCounts::default();
         let mut sorted_members: Vec<u32> = Vec::new();
 
-        // Temporarily set the nested scope slots of top-level symbols to valid so
-        // they aren't renamed in nested scopes. This prevents us from accidentally
-        // assigning nested scope slots to variables declared using "var" in a nested
-        // scope that are actually hoisted up to the module scope to become a top-
-        // level symbol.
         const VALID_SLOT: u32 = 0;
         for member in module_scope.members.values() {
             symbols[member.ref_.inner_index() as usize].nested_scope_slot = VALID_SLOT;

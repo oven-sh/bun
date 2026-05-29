@@ -4,18 +4,6 @@ use core::ptr::NonNull;
 
 use bun_core::{self, err, slice_as_bytes};
 
-// ──────────────────────────────────────────────────────────────────────────
-// Re-exports from the printer crate
-//
-// `js_printer` is the sole *producer* of ModuleInfo records (it walks the AST
-// during printing); the bundler/runtime only consume the resulting bytes. The
-// canonical builder type therefore lives in `bun_js_printer` (moved down to
-// bun_js_printer), and is re-exported here so that bundler-side callers — which
-// thread a `&mut ModuleInfo` into `js_printer::Options { module_info }` — see
-// the *same* nominal type. The duplicate that used to live in this file caused
-// `expected ModuleInfo, found analyze_transpiled_module::ModuleInfo` (E0308) at
-// the print boundary.
-// ──────────────────────────────────────────────────────────────────────────
 pub use bun_js_printer::analyze_transpiled_module::{
     FetchParameters, ModuleInfo, ModulePhase, StringID, VarKind,
 };
@@ -146,16 +134,6 @@ pub enum ModuleInfoError {
 }
 bun_core::named_error_set!(ModuleInfoError);
 
-/// All slice fields are **self-referential** views into `owner`
-/// (`Owner::AllocatedSlice`) or into the parent `ModuleInfo`'s `Vec` storage
-/// (`Owner::ModuleInfo`). They are stored as [`bun_ptr::RawSlice`] (raw fat
-/// pointers) because Rust references cannot express the self-borrow.
-///
-/// Alignment: the on-disk format pads every multi-byte field to a 4-byte
-/// offset, and [`Self::create`] allocates the backing buffer with 4-byte
-/// alignment ([`MODULE_INFO_ALIGN`]), so every `RawSlice<T>` here is properly
-/// aligned for `T` and `.slice()` is sound. (Zig used `[]align(1) const T`
-/// because its allocator didn't guarantee the base; we do instead.)
 pub struct ModuleInfoDeserialized {
     pub strings_buf: bun_ptr::RawSlice<u8>,
     pub strings_lens: bun_ptr::RawSlice<u32>,
@@ -179,18 +157,6 @@ pub enum Owner {
 }
 
 impl ModuleInfoDeserialized {
-    // ── safe accessors ───────────────────────────────────────────────────
-    // All slice fields are non-null self-referential views into `self.owner`
-    // (see struct docs). They are initialized in every constructor (`create` /
-    // `into_deserialized`), the backing allocation is immutable and outlives
-    // `&self`, and no `&mut` alias to that storage is ever handed out — so
-    // materialising `&[T]` for `'_ self` (via `RawSlice::slice`) is sound.
-    //
-    // Alignment: every constructor guarantees each view is aligned for its
-    // element type — `create` allocates a `MODULE_INFO_ALIGN`-aligned buffer
-    // and `bytes_as_slice` rejects misaligned sub-slices; `into_deserialized`
-    // borrows from typed `Vec<T>` storage which is naturally aligned.
-
     #[inline]
     pub fn strings_buf(&self) -> &[u8] {
         self.strings_buf.slice()
@@ -232,10 +198,6 @@ impl ModuleInfoDeserialized {
         unsafe {
             match (*this).owner {
                 Owner::ModuleInfo(mi) => {
-                    // PORT NOTE: Zig recovered the parent via
-                    // `@fieldParentPtr("_deserialized", self)`. The Rust port
-                    // stores the `*mut ModuleInfo` directly because the printer
-                    // crate's `ModuleInfo` no longer embeds this struct.
                     drop(bun_core::heap::take(mi));
                     drop(bun_core::heap::take(this));
                 }
@@ -320,11 +282,6 @@ impl ModuleInfoDeserialized {
         // Disarm the errdefer: ownership moves into the result.
         let duped_raw = scopeguard::ScopeGuard::into_inner(guard);
 
-        // All seven views borrow `duped_raw` (the boxed allocation moved into
-        // `owner` below); they stay valid and at a stable address for the
-        // lifetime of every `RawSlice` copied from this struct. `RawSlice::new`
-        // erases the borrow lifetime — the structural invariant is upheld by
-        // `owner` outliving the views.
         Ok(Box::new(ModuleInfoDeserialized {
             strings_buf: bun_ptr::RawSlice::new(strings_buf),
             strings_lens: bun_ptr::RawSlice::new(strings_lens),
@@ -381,10 +338,6 @@ impl ModuleInfoDeserialized {
     }
 }
 
-/// Maximum element alignment appearing in the serialized format
-/// (`u32` / `StringID` / `FetchParameters`). The writer pads every multi-byte
-/// field to this boundary, and [`dupe_aligned`] allocates the backing buffer
-/// at this alignment, so every typed sub-slice is properly aligned.
 const MODULE_INFO_ALIGN: usize = core::mem::align_of::<u32>();
 
 // Compile-time guard: if a wider element type is ever added to the format,
@@ -433,14 +386,6 @@ unsafe fn free_aligned_dup(slice: *mut [u8]) {
     }
 }
 
-/// Reinterpret a byte sub-slice of the [`MODULE_INFO_ALIGN`]-aligned backing
-/// buffer as `&[T]`. Returns `BadModuleInfo` if `bytes` is not aligned for `T`
-/// or its length is not a multiple of `size_of::<T>()` (i.e. the format's
-/// internal padding was violated).
-///
-/// (Zig used `std.mem.bytesAsSlice` → `[]align(1) const T`; Rust has no
-/// under-aligned reference type, so we guarantee alignment instead via
-/// `bytemuck::try_cast_slice`, which checks both alignment and size.)
 #[inline]
 fn bytes_as_slice<T: bytemuck::AnyBitPattern>(bytes: &[u8]) -> Result<&[T], ModuleInfoError> {
     bytemuck::try_cast_slice(bytes).map_err(|_| ModuleInfoError::BadModuleInfo)
@@ -482,10 +427,6 @@ impl ModuleInfoExt for ModuleInfo {
         drop(unsafe { bun_core::heap::take(this) });
     }
     fn into_deserialized(mut self: Box<Self>) -> Box<ModuleInfoDeserialized> {
-        // PORT NOTE: Zig wrote a self-referential `_deserialized` view inside
-        // `ModuleInfo` during `finalize()`. The Rust printer-crate `ModuleInfo`
-        // exposes a borrowed `as_deserialized()` instead; here we materialise the
-        // raw-pointer FFI shape and tie its lifetime to the leaked `Box<ModuleInfo>`.
         if !self.finalized {
             let _ = self.finalize();
         }

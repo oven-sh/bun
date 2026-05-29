@@ -51,23 +51,12 @@ fn start_manifest_task(
     needs_extended_manifest: bool,
 ) -> Result<(), StartManifestTaskError> {
     let task_id = Task::Id::for_manifest(pkg_name);
-    // PORT NOTE: Zig passes the *raw packed-struct bit* `dep.behavior.optional`
-    // — not `Behavior.isOptional()` (which is `optional && !peer`). For
-    // optional-peer deps the raw bit is `true` but `is_optional()` is `false`,
-    // which would flip both the dedupe-map `is_required` bookkeeping and
-    // `for_manifest`'s error-suppression branch. Mirror runTasks.rs and read
-    // the raw flag.
     let is_optional = dep.behavior.contains(Behavior::OPTIONAL);
     if run_tasks::has_created_network_task(manager, task_id, is_optional) {
         return Ok(());
     }
     manager.start_progress_bar_if_none();
 
-    // PORT NOTE: reshaped for borrowck — Zig writes the whole struct via `.* = .{}`
-    // and reads `manager` again for `scopeForPackageName`. `get_network_task()`
-    // borrows `&mut manager.preallocated_network_tasks`, so compute everything
-    // that needs `&manager` *before* taking that borrow, then populate the pool
-    // slot through a raw pointer (matches `runTasks::generate_network_task_for_tarball`).
     let scope = bun_ptr::BackRef::new(manager.scope_for_package_name(pkg_name));
     // Backref address only — stored, not dereffed in this function.
     // TODO(port): lifetime — BACKREF.
@@ -126,19 +115,8 @@ pub fn populate_manifest_cache(
     // TODO(port): narrow error set
     let log_level = manager.options.log_level;
 
-    // PORT NOTE: heavy borrowck overlap — Zig holds slices into
-    // `manager.lockfile` while the loop body calls `&mut`-taking methods on
-    // `manager`. The lockfile lives in `Box<Lockfile>` (stable address) and is
-    // not resized by anything below, so derive the slices through a raw
-    // provenance root and reborrow `manager` per-call.
     let cache_ctx = manager.manifest_disk_cache_ctx();
     let manager_ptr: *mut PackageManager = manager;
-    // BACKREF wrapper over the same provenance root for the read-only
-    // `options` projections in the loop body — collapses four per-site raw
-    // `(*manager_ptr).options` derefs into safe `Deref` through
-    // `ParentRef::get()`. Mutation (`manifests`, whole-`&mut PackageManager`)
-    // still goes through `manager_ptr` directly. Safe `From<NonNull>`
-    // construction — `manager_ptr` was just derived from `&mut *manager`.
     let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
         core::ptr::NonNull::new(manager_ptr).expect("derived from &mut, non-null"),
     );
@@ -182,11 +160,6 @@ pub fn populate_manifest_cache(
                 // `start_manifest_task` call — read via the BACKREF `mgr_ref`.
                 let needs_extended_manifest = mgr_ref.options.minimum_release_age_ms.is_some();
 
-                // `scope_for_package_name` borrows only `options` (via the
-                // BACKREF `mgr_ref`); `manifests` is a disjoint field projected
-                // from the same raw provenance root. `by_name`'s `pm`-derived
-                // reads are hoisted into the by-value `cache_ctx`, so the call
-                // holds only `&mut manifests`.
                 let scope =
                     bun_ptr::BackRef::new(mgr_ref.options.scope_for_package_name(pkg_name_slice));
                 // SAFETY: `manifests` is disjoint from `options`/`lockfile`;
@@ -296,10 +269,6 @@ pub fn populate_manifest_cache(
                 // callback, so this is the unique live borrow.
                 let manager = unsafe { &mut *closure.manager };
                 let log_level = manager.options.log_level;
-                // PORT NOTE: void RunTasksCallbacks — `extract_ctx` is unit. Do NOT pass
-                // `manager` as both receiver and ctx (aliased &mut). Zig passed
-                // `(comptime *PackageManager, closure.manager)`; the generic context
-                // pair collapses to `&mut ()` in Rust.
                 if let Err(err) = run_tasks::run_tasks::<ManifestsOnlyCallbacks>(
                     manager,
                     &mut (),

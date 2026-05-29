@@ -39,19 +39,7 @@ pub(crate) const MAX_HEX_HASH_LEN: usize = const_format::formatcp!("{:x}", u64::
 pub(crate) const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + bun_hash_tag.len() + 1;
 pub(crate) type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 
-// `std.fs.Dir` aliases on `PatchTask`/`ApplyPatch` are *borrowed views* of the
-// `PackageManager`-owned cache/temp directory descriptors. Store the raw `Fd`
-// so the task's drop never closes a descriptor it doesn't own. Use
-// `Dir::borrow(&fd)` where a `&Dir` is needed.
-
 pub struct PatchTask {
-    /// BACKREF (Zig: `*PackageManager`). Stored as `BackRef` because the task
-    /// is held via raw pointer through the intrusive thread-pool queue while
-    /// the manager is concurrently borrowed `&mut` on the main thread; a `&`
-    /// reference here would alias that exclusive borrow under Stacked Borrows.
-    /// Constructed via `BackRef::new_mut` so the underlying pointer carries
-    /// write provenance for `PackageManager::wake_raw(*mut Self)`, which
-    /// writes the event-loop wake flag.
     pub manager: bun_ptr::BackRef<PackageManager>,
     /// Borrowed view of the manager's temp directory fd (see comment at top of file).
     pub tempdir: Fd,
@@ -264,11 +252,6 @@ impl PatchTask {
             let _ = apply
                 .logger
                 .print(std::ptr::from_mut(Output::error_writer()));
-            // PORT NOTE: Zig called `apply.logger.deinit()` here under `defer`. The `Log` is a
-            // field and will be dropped with the task; explicit early drop is skipped to avoid
-            // double-drop. If `Log::deinit` is reset-to-empty (idempotent), an explicit
-            // `apply.logger.clear()` could be restored here.
-            // TODO(port): confirm Log drop semantics
         }
     }
 
@@ -414,12 +397,6 @@ impl PatchTask {
         Ok(())
     }
 
-    // 1. Parse patch file
-    // 2. Create temp dir to do all the modifications
-    // 3. Copy un-patched pkg into temp dir
-    // 4. Apply patches to pkg in temp dir
-    // 5. Add bun tag for patch hash
-    // 6. rename() newly patched pkg to cache
     pub fn apply(&mut self) -> Result<(), bun_alloc::AllocError> {
         let Callback::Apply(patch) = &mut self.callback else {
             unreachable!()
@@ -480,10 +457,6 @@ impl PatchTask {
         };
 
         let (resolution_label, resolution_tag) = {
-            // TODO: fix this threadsafety issue.
-            // PORT NOTE: not `self.manager()` — `&mut self.callback` is live.
-            // BACKREF; the lockfile is read-only while apply tasks run
-            // off-thread (same contract as the Zig pointer dereference here).
             let manager = self.manager.get();
             let resolution: &Resolution =
                 &manager.lockfile.packages.items_resolution()[patch.pkg_id as usize];
@@ -504,15 +477,6 @@ impl PatchTask {
 
         // 3. copy the unpatched files into temp dir
         let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath_without_patch_hash.as_zstr();
-        // PORT NOTE: borrowck — `tempdir_name` borrows `tmpname_buf` mutably, but
-        // `PackageInstall` also wants `&mut tmpname_buf[..]` for
-        // `destination_dir_subpath_buf`. Zig aliased the two; `PackageInstall`
-        // assumes `destination_dir_subpath` is a prefix slice *into*
-        // `destination_dir_subpath_buf` (see `verifyGitResolution` /
-        // `verifyPackageJSONNameAndVersion`). Rust can't express that aliasing
-        // with `&ZStr` + `&mut [u8]`, so use a separate buffer but mirror the
-        // prefix bytes so the invariant holds for any future call that reaches
-        // those paths.
         let mut dest_subpath_buf = [0u8; 1024];
         dest_subpath_buf[..tempdir_name.len() + 1]
             .copy_from_slice(tempdir_name.as_bytes_with_nul());

@@ -193,10 +193,6 @@ impl GetErrno for usize {
     }
 }
 
-// glibc system call wrapper returns i32/int
-// the errno is stored in a thread local variable
-//
-// TODO: the inclusion of  'u32' and 'isize' seems suspicious
 impl_get_errno_libc!(i32, u32, isize, i64);
 // c_int == i32 on all our targets; Zig listed both explicitly but Rust impl coherence forbids the duplicate.
 // may need to drop one or cfg-gate it. Zig listed both explicitly.

@@ -38,10 +38,6 @@ pub struct TextDecoder {
     pub lead_byte: Cell<Option<u8>>,
     pub lead_surrogate: Cell<Option<u16>>,
 
-    // WebKit `PAL::TextCodec` for every other encoding. The codec owns the
-    // streaming state (lead byte, ISO-2022-JP mode, GB18030 first/second/third),
-    // so it must live across `{stream: true}` chunks. Created lazily on first
-    // decode, dropped when a flushing decode ends the stream and in `Drop`.
     codec: Cell<Option<NonNull<TextCodec>>>,
 
     // Read-only after construction (set in `constructor` before the JS wrapper
@@ -209,11 +205,6 @@ impl TextDecoder {
         let arguments_buf = callframe.arguments_old::<2>();
         let arguments = arguments_buf.slice();
 
-        // Evaluate options.stream before reading the input bytes. Reading `stream`
-        // can invoke a user-defined getter that detaches/transfers the input's
-        // ArrayBuffer; capturing the byte pointer before that getter runs leaves
-        // `decodeSlice` reading through a stale pointer into memory that may have
-        // been freed or reused. Node.js reads options first as well.
         let stream = 'stream: {
             if arguments.len() > 1 && arguments[1].is_object() {
                 if let Some(stream_value) =
@@ -274,10 +265,6 @@ impl TextDecoder {
                     return Ok(ZigString::init(buffer_slice).to_js(global_this));
                 }
 
-                // It's unintuitive that we encode Latin1 as UTF16 even though the engine natively supports Latin1 strings...
-                // However, this is also what WebKit seems to do.
-                //
-                // => The reason we need to encode it is because TextDecoder "latin1" is actually CP1252, while WebKit latin1 is 8-bit utf-16
                 let out_length = strings::element_length_cp1252_into_utf16(buffer_slice);
                 let mut bytes = vec![0u16; out_length].into_boxed_slice();
 
@@ -362,13 +349,6 @@ impl TextDecoder {
                         }
                     }
                     let len = decoded.len();
-                    // `to_external_u16` returns `jsEmptyString` and never
-                    // calls `free_global_string` for `len == 0`, so a
-                    // zero-length decode (e.g. a buffered partial sequence
-                    // with `stream: true`, or all-replaced bytes when
-                    // `fatal: false`) would strand the `Vec`'s reserved
-                    // backing store. Drop it here and return the canonical
-                    // empty string instead.
                     if len == 0 {
                         drop(decoded);
                         return Ok(ZigString::EMPTY.to_js(global_this));
@@ -440,10 +420,6 @@ impl TextDecoder {
             _ => {
                 let encoding_name = EncodingLabel::get_label(self.encoding);
 
-                // The codec carries streaming state (lead bytes, escape mode),
-                // so reuse the one from the previous `{stream: true}` chunk.
-                // Create it lazily on first use — matches WebKit's
-                // `if (!m_codec) m_codec = newTextCodec(...)`.
                 let codec_ptr = match self.codec.get() {
                     Some(ptr) => ptr,
                     None => {
@@ -472,11 +448,6 @@ impl TextDecoder {
                 // so it derefs on scope exit (matches Zig `defer result.result.deref()`).
                 let result_str = OwnedString::new(result.result);
 
-                // A flushing decode ends the stream. Per WHATWG Encoding the
-                // next `decode()` starts with a fresh decoder, so drop this
-                // codec now — otherwise mode state that the C++ codec does not
-                // reset on flush (e.g. `m_iso2022JPDecoderState`) would leak
-                // into the next stream.
                 if FLUSH {
                     self.codec.set(None);
                     // SAFETY: `codec_ptr` came from `TextCodec::create` above

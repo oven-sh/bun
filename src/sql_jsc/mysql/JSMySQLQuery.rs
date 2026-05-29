@@ -14,26 +14,13 @@ use bun_sql::postgres::command_tag::CommandTag;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 
 use super::js_mysql_connection::MySQLConnection;
-use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
-use crate::postgres::command_tag_jsc::CommandTagJsc as _;
-// PORT NOTE: `my_sql_query` exports both the `MySQLQuery` *struct* and a
-// `declare_scope!`-generated `MySQLQuery` *static* (ScopedLogger). Importing
-// the name once pulls in both namespaces, so the `debug!` macro below resolves
-// against the imported static — no second `declare_scope!` here.
 use super::my_sql_query::MySQLQuery;
 use super::my_sql_statement::MySQLStatement;
+use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
+use crate::postgres::command_tag_jsc::CommandTagJsc as _;
 
 bun_core::define_scoped_log!(debug, MySQLQuery);
 
-// TODO(port): #[bun_jsc::JsClass] — proc-macro emits shims typed against
-// `bun_jsc::{JSGlobalObject, CallFrame, JSValue, JsError}`, which are distinct
-// from this crate's local `crate::jsc::*` mirror types until `crate::jsc`
-// becomes `pub use bun_jsc as jsc;` (see lib.rs TODO). Re-enable then.
-//
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut JSMySQLQuery` — `&mut T` auto-derefs to `&T`
-// so the impls below compile against either.
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct JSMySQLQuery {
@@ -51,11 +38,6 @@ pub struct JSMySQLQuery {
 // struct-level `#[ref_count(destroy = …)]` attribute.
 
 impl JSMySQLQuery {
-    /// RAII `ref()`/`deref()` bracket around `self`. One audited
-    /// `ScopedRef::new` here replaces N per-site
-    /// `unsafe { ScopedRef::new(self.as_ctx_ptr()) }` — `&self` is the live
-    /// m_ctx payload by construction, so the [`ScopedRef::new`] precondition
-    /// (live, non-null) is always satisfied.
     #[inline]
     pub fn ref_guard(&self) -> bun_ptr::ScopedRef<Self> {
         // SAFETY: `&self` ⇒ the allocation is live and non-null.
@@ -181,10 +163,6 @@ impl JSMySQLQuery {
                 "run must be called with 2 arguments connection and target"
             )));
         }
-        // `from_js_ref` wraps the m_ctx payload in a `ParentRef` — the backing
-        // JSC wrapper is rooted by `arguments[0]` for this frame, satisfying the
-        // `ParentRef` outlives-holder invariant. R-2: shared `&` only — every
-        // `MySQLConnection` method reached below is `&self` post-migration.
         let Some(connection) = js_mysql_connection::from_js_ref(arguments[0]) else {
             return Err(global_object.throw(format_args!("connection must be a MySQLConnection")));
         };
@@ -451,15 +429,6 @@ impl JSMySQLQuery {
 
         let columns_value = self.get_columns().unwrap_or(JSValue::UNDEFINED);
         let binding_value = self.get_binding().unwrap_or(JSValue::UNDEFINED);
-        // R-2: `JsCell::with_mut` scopes the `&mut MySQLQuery` to the closure
-        // body. `run_query` may run user JS (binding getters), which could
-        // re-enter another host-fn on this `JSMySQLQuery`; that re-entrant call
-        // would form a fresh `&Self` — sound, since the noalias attribute is
-        // suppressed by the `UnsafeCell` in `JsCell`. A re-entrant `with_mut`
-        // on `self.query` would still alias; `set_mode_from_js` is the only
-        // such path and is not reachable from a binding getter in well-formed
-        // SQL usage. This mirrors the pre-R-2 behaviour but with the *outer*
-        // `&mut self` UB structurally eliminated.
         if let Err(err) = self
             .query
             .with_mut(|q| q.run_query(connection, global_object, columns_value, binding_value))
@@ -611,10 +580,6 @@ impl JSMySQLQuery {
     fn vm_mut(&self) -> &'static mut VirtualMachine {
         VirtualMachine::get_mut()
     }
-    /// `&mut EventLoop` for `run_callback`. Routes through the inherent safe
-    /// `VirtualMachine::event_loop_mut` accessor — the loop is a disjoint heap
-    /// allocation owned by the JS-thread VM singleton stored in `self.vm`;
-    /// single-thread affinity ⇒ no two `&mut EventLoop` coexist.
     #[inline]
     fn event_loop(&self) -> &mut crate::jsc::EventLoop {
         self.vm().event_loop_mut()

@@ -21,11 +21,6 @@ use bun_ast::StmtNodeList;
 // Slice fields are `StoreStr` / `StoreSlice<T>` (see ast/mod.rs). All slices
 // are arena-owned and outlive the visit pass.
 
-// ─── arena slice ↔ BumpVec helpers ──────────────────────────────────────────
-// `StmtNodeList = StoreSlice<Stmt>` (arena-owned). Zig's `ListManaged.fromOwnedSlice`
-// adopts the existing backing storage; bumpalo Vec cannot, so we copy. The arena
-// reclaims both at end-of-parse.
-// PERF(port): was fromOwnedSlice (no copy) — profile if hot.
 #[inline]
 fn stmts_to_list<'a>(arena: &'a bun_alloc::Arena, ptr: StmtNodeList) -> StmtList<'a> {
     bun_alloc::vec_from_iter_in(ptr.iter().copied(), arena)
@@ -34,11 +29,6 @@ fn stmts_to_list<'a>(arena: &'a bun_alloc::Arena, ptr: StmtNodeList) -> StmtList
 fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
     StmtNodeList::from_bump(list)
 }
-
-// Zig: `pub fn VisitStmt(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block. The 30+ per-variant `s_*` helpers are private; only
-// `visit_and_append_stmt` is surfaced. Full draft body preserved under  mod _draft below.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // Thin alias of `current_scope_mut()` kept for local readability.
@@ -65,11 +55,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let was_after_after_const_local_prefix = p.cur_scope().is_after_const_local_prefix;
         p.cur_scope().is_after_const_local_prefix = true;
 
-        // Zig: `switch (@as(Stmt.Tag, stmt.data))` with `inline else` reflection over @tagName.
-        // PORT NOTE: reshaped for borrowck — `Stmt::Data` is `Copy` (`StoreRef<T>` is a thin
-        // `NonNull`); take a copy of the enum so the StoreRef payload can be DerefMut'd
-        // without aliasing the `&mut Stmt` we also pass through. The deref'd `&mut S::*`
-        // points into the arena, not into `*stmt`.
         let data_copy = stmt.data;
         match data_copy {
             StmtData::SDirective(_) | StmtData::SComment(_) | StmtData::SEmpty(_) => {
@@ -163,10 +148,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::ExportEquals,
     ) -> Result<(), Error> {
-        // "module.exports = value"
-        // Zig: p.@"module.exports"(stmt.loc) — mapped to `module_exports`
-        // PORT NOTE: Zig evaluates lhs before rhs at the call site; preserve that order
-        // (`module_exports` builds via `new_expr`, `visit_expr` mutates parser state).
         let lhs = p.module_exports(stmt.loc);
         p.visit_expr(&mut data.value);
         stmts.push(Stmt::assign(lhs, data.value));
@@ -626,10 +607,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.create_default_name(stmt.loc).expect("unreachable");
                         }
 
-                        // Capture the original function name before any `mem::take` below resets
-                        // `func.func` to its default. The Zig spec copies `func.func` by value into
-                        // the E.Function expr, leaving `func.func.name` intact for the
-                        // react_fast_refresh temp-var emission that follows.
                         let func_name = func.func.name;
 
                         if let Some(hook) = react_hook_data.as_mut() {
@@ -678,27 +655,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             && (ReactRefresh::is_componentish_name(name)
                                 || name == js_ast::ClauseItem::DEFAULT_ALIAS)
                         {
-                            // If server components or react refresh had wrapped the value (convert to .expr)
-                            // then a temporary variable must be emitted.
-                            //
-                            // > export default _s(function App() { ... }, "...")
-                            // > $RefreshReg(App, "App.tsx:default")
-                            //
-                            // > const default_export = _s(function App() { ... }, "...")
-                            // > export default default_export;
-                            // > $RefreshReg(default_export, "App.tsx:default")
                             let ref_ = if let js_ast::StmtOrExpr::Expr(e) = data.value {
                                 'emit_temp_var: {
                                     let ref_to_use = 'brk: {
                                         if let Some(loc_ref) = func_name {
-                                            // Input:
-                                            //
-                                            //  export default function Foo() {}
-                                            //
-                                            // Output:
-                                            //
-                                            //  const Foo = _s(function Foo() {})
-                                            //  export default Foo;
                                             if let Some(r) = loc_ref.ref_ {
                                                 break 'brk r;
                                             }
@@ -834,10 +794,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.create_default_name(stmt.loc).expect("unreachable");
                         }
 
-                        // We only inject a name into classes when decorator lowering
-                        // needs one: legacy TS decorators (`has_decorators`) or
-                        // standard decorator lowering, which also covers classes with
-                        // only auto-accessor fields and no decorators.
                         if class.class.has_decorators
                             || class.class.should_lower_standard_decorators
                         {
@@ -922,10 +878,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.is_control_flow_dead = true;
         }
 
-        // Spec (visitStmt.zig:517-520) unconditionally points p.react_refresh.hook_ctx_storage
-        // at this stack-local before visit_func and defer-restores it. Field is now
-        // `Option<NonNull<_>>` (Copy) matching Zig's `?*?HookContext`, so save/set/restore
-        // are trivial; no `'a` constraint to fight.
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
         let prev_hook_storage = p.react_refresh.hook_ctx_storage;
         p.react_refresh.hook_ctx_storage = Some(core::ptr::NonNull::from(&mut react_hook_data));
@@ -1191,10 +1143,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.enclosing_namespace_arg_ref
                             .expect("infallible: in namespace"),
                     );
-                    // TODO: is it necessary to lowerAssign? why does esbuild do it _most_ of the time?
-                    // PORT NOTE: ToExprWrapper is Copy; pass by value to avoid borrowing `*p`
-                    // across `p.s(...)`. The `*mut P` ctx is derived from the live `&mut Self`
-                    // here so its provenance is a child of the active Unique borrow.
                     let wrapper = p.to_expr_wrapper_namespace;
                     let ctx = core::ptr::addr_of_mut!(*p).cast::<core::ffi::c_void>();
                     let lhs = Binding::to_expr(&d.binding, ctx, wrapper);
@@ -1673,14 +1621,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.push_scope_for_visit_pass(js_ast::scope::Kind::With, data.body_loc)
             .expect("unreachable");
 
-        // This can be many different kinds of statements.
-        // example code:
-        //
-        //      with(this.document.defaultView || Object.create(null))
-        //         with(this.document)
-        //           with(this.form)
-        //             with(this.element)
-        //
         data.body = p.visit_single_stmt(data.body, StmtsKind::None);
 
         p.pop_scope();
@@ -1762,13 +1702,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 data.no = Some(p.visit_single_stmt(no, StmtsKind::None));
             }
 
-            // Trim an "else" clause whose body was emptied by dead-code
-            // elimination. This avoids emitting `else {}` for e.g.
-            // `if (true) { A } else { B }` where B was pruned. Gated on
-            // the union of DCE and minify_syntax so the pre-existing
-            // `deadCodeElimination: false, minify: { syntax: true }`
-            // configuration (which already dropped the `else {}`)
-            // doesn't regress to `else ;`.
             if p.options.features.dead_code_elimination || p.options.features.minify_syntax {
                 if let Some(no2) = data.no {
                     let no_is_empty = match no2.data {
@@ -2189,12 +2122,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // that scope. We don't want that to cause the const local prefix to end.
         p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
 
-        // Track cross-module enum constants during bundling. This
-        // part of the code is different from esbuilt in that we are
-        // only storing a list of enum indexes. At the time of
-        // referencing, `esbuild` builds a separate hash map of hash
-        // maps. We are avoiding that to reduce memory usage, since
-        // enum inlining already uses alot of hash maps.
         if p.current_scope == p.module_scope && p.options.bundle {
             p.top_level_enums
                 .push(data.name.ref_.expect("infallible: ref bound"));
@@ -2205,10 +2132,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Zig: defer p.popScope(); — moved to end (no early returns).
         p.record_declared_symbol(data.arg);
 
-        // Scan ahead for any variables inside this namespace. This must be done
-        // ahead of time before visiting any statements inside the namespace
-        // because we may end up visiting the uses before the declarations.
-        // We need to convert the uses into property accesses on the namespace.
         let values = data.values.slice_mut();
         for value in values.iter() {
             if value.ref_.is_valid() {
@@ -2397,10 +2320,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         p.record_declared_symbol(data.name.ref_.expect("infallible: ref bound"));
 
-        // Scan ahead for any variables inside this namespace. This must be done
-        // ahead of time before visiting any statements inside the namespace
-        // because we may end up visiting the uses before the declarations.
-        // We need to convert the uses into property accesses on the namespace.
         let child_stmts: &[Stmt] = data.stmts.slice();
         for child_stmt in child_stmts.iter() {
             if let StmtData::SLocal(local) = child_stmt.data {

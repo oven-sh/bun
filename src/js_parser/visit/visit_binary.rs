@@ -11,14 +11,6 @@ use bun_ast::{
     expr::{Equality, LooseEql, StrictEql},
 };
 
-// PORT NOTE: The Zig `CreateBinaryExpressionVisitor(comptime ts, comptime jsx, comptime scan_only) type`
-// returned an anonymous namespace struct whose only public item was `BinaryExpressionVisitor`.
-// Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so `BinaryExpressionVisitor` carries
-// the parser generics directly.
-// Diff readers should map:
-//   Zig: CreateBinaryExpressionVisitor(TS, JSX, SCAN).BinaryExpressionVisitor
-//   Rust: BinaryExpressionVisitor<'arena, TS, J, SCAN>
-
 /// Try to optimize "typeof x === 'undefined'" to "typeof x > 'u'" or similar
 /// Returns the optimized expression if successful, None otherwise
 fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
@@ -80,10 +72,6 @@ fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bo
     ))
 }
 
-// PORT NOTE: `Expr.Data.eql(left, right, p, .{loose,strict})` — thin adapter
-// from the `const STRICT: bool` shape used at the four call sites below to the
-// canonical `ExprData::eql<P, K: EqlKindT>` (Expr.rs). Kept as a free fn so
-// the call sites don't each repeat the `LooseEql`/`StrictEql` type-select.
 #[inline]
 fn data_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
     left: &ExprData,
@@ -98,10 +86,6 @@ fn data_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, const SCAN_ONLY: boo
 }
 
 pub struct BinaryExpressionVisitor {
-    /// Arena handle to the in-place `E::Binary` node (Zig: `*E.Binary`).
-    /// `StoreRef` is the safe arena back-reference: `Copy` + `Deref`/`DerefMut`
-    /// encapsulate the AST-store invariant, so call sites need no raw-pointer
-    /// round-trip to forge an `'arena` borrow.
     pub e: StoreRef<E::Binary>,
     pub loc: bun_ast::Loc,
     // PORT NOTE: Zig field name `in` is a Rust keyword; renamed to `in_`.
@@ -119,11 +103,6 @@ impl BinaryExpressionVisitor {
         v: &mut Self,
         p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
     ) -> Expr {
-        // `v.e: StoreRef<E::Binary>` is the safe arena back-reference (Copy).
-        // Snapshot the handle for the identity check / tail re-wrap, then take
-        // the working `&mut` via `StoreRef::DerefMut` — the arena-backref
-        // invariant is encapsulated there. The borrow is on the `v.e` field
-        // only, so `v.loc` reads below split-borrow cleanly.
         let e_handle: StoreRef<E::Binary> = v.e;
         let e_ptr: *mut E::Binary = e_handle.as_ptr();
         let e_ = &mut *v.e;
@@ -211,10 +190,6 @@ impl BinaryExpressionVisitor {
 
         match e_.op {
             Op::Code::BinComma => {
-                // "(1, 2)" => "2"
-                // "(sideEffects(), 2)" => "(sideEffects(), 2)"
-                // "(0, this.fn)" => "this.fn"
-                // "(0, this.fn)()" => "(0, this.fn)()"
                 if p.options.features.minify_syntax {
                     if let Some(simplified_left) = SideEffects::simplify_unused_expr(p, e_.left) {
                         if simplified_left.is_empty() {

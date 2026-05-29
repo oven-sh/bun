@@ -106,10 +106,6 @@ fn update_package_json_and_install_with_manager_with_updates_and_update_requests
 fn update_package_json_and_install_with_manager_with_updates(
     manager: &mut PackageManager,
     ctx: Command::Context,
-    // PORT NOTE: reshaped for borrowck — Zig was `*[]UpdateRequest`. Taking by
-    // value lets us hand ownership to `manager.update_requests` (which the Rust
-    // port types as `Box<[UpdateRequest]>`) and re-borrow afterwards without
-    // aliasing `&mut manager`.
     mut updates: Vec<UpdateRequest>,
     subcommand: Subcommand,
     original_cwd: &[u8],
@@ -124,13 +120,6 @@ fn update_package_json_and_install_with_manager_with_updates(
         Global::crash();
     }
 
-    // PORT NOTE: reshaped for borrowck — `get_with_path` returns `&mut MapEntry`
-    // borrowed from `manager.workspace_package_json_cache`, but we then need
-    // `&mut *manager` for `PackageJSONEditor::edit` / `do_patch_commit` while still
-    // holding the entry. Zig held `*MapEntry` and `*PackageManager` simultaneously
-    // (no aliasing rules); mirror that by demoting to `*mut MapEntry` and re-
-    // borrowing at point of use. The cache map is not mutated again until the
-    // next `get_with_path` call below, so the pointer remains valid.
     let current_package_json_ptr: *mut MapEntry =
         match manager.workspace_package_json_cache.get_with_path(
             manager.log_mut(),
@@ -246,20 +235,10 @@ fn update_package_json_and_install_with_manager_with_updates(
                 for list in LISTS {
                     if let Some(query) = current_package_json_root.as_property(list) {
                         if query.expr.data.is_e_object() {
-                            // PORT NOTE: reshaped for borrowck — Zig held `data.e_object` (a
-                            // `*E.Object`) across writes to both the inner list and the parent
-                            // object. `StoreRef<E::Object>` is `Copy` and derefs to a raw arena
-                            // pointer, so taking it once mirrors that exactly.
                             let mut e_object = query.expr.data.as_e_object();
                             let dependencies = e_object.properties.slice_mut();
                             let mut i: usize = 0;
                             let mut new_len = dependencies.len();
-                            // PORT NOTE: Zig copies `dependencies[i] = dependencies[new_len - 1]`
-                            // and iterates to the original length. `G::Property` is not `Copy` in
-                            // Rust, so we `swap` instead — but the swapped-out matched element
-                            // lands in the truncated tail and MUST NOT be revisited (it would
-                            // match again and over-truncate). Bounding by `new_len` yields the
-                            // same result as Zig for the unique-key case package.json guarantees.
                             while i < new_len {
                                 let key = dependencies[i].key.unwrap();
                                 if key.data.is_e_string() {
@@ -363,10 +342,6 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     manager.to_update = subcommand == Subcommand::Update;
 
-    // PORT NOTE: reshaped for borrowck — Zig stored a slice header (`manager.update_requests
-    // = updates.*`) so both names alias the same backing array; the Rust field is owning
-    // (`Box<[UpdateRequest]>`), so we transfer ownership here and re-borrow from
-    // `manager.update_requests` after `install_with_manager` (which is the only writer).
     manager.update_requests = updates.into_boxed_slice();
 
     let mut buffer_writer = js_printer::BufferWriter::init();
@@ -397,30 +372,11 @@ fn update_package_json_and_install_with_manager_with_updates(
         }
     };
 
-    // There are various tradeoffs with how we commit updates when you run `bun add` or `bun remove`
-    // The one we chose here is to effectively pretend a human did:
-    // 1. "bun add react@latest"
-    // 2. open lockfile, find what react resolved to
-    // 3. open package.json
-    // 4. replace "react" : "latest" with "react" : "^16.2.0"
-    // 5. save package.json
-    // The Smarter™ approach is you resolve ahead of time and write to disk once!
-    // But, turns out that's slower in any case where more than one package has to be resolved (most of the time!)
-    // Concurrent network requests are faster than doing one and then waiting until the next batch
     let mut new_package_json_source: Vec<u8> = package_json_writer
         .ctx
         .written_without_trailing_zero()
         .to_vec();
-    // Zig: `manager.allocator.dupe(u8, …)` — heap-owned, never freed (process-lifetime).
-    // The cache entry (`Cow<'static, [u8]>`) outlives this stack frame, and
-    // `new_package_json_source` is reassigned below on the add/update/link path, so we
-    // must store an *owning* copy to avoid a dangling borrow. PERF(port): one extra
-    // alloc+copy vs Zig's single dupe — profile if hot.
     current_package_json.source.contents = Cow::Owned(new_package_json_source.clone());
-    // PORT NOTE: Zig edited `current_package_json.root` in place above; the Rust
-    // port edited a promoted copy (`current_package_json_root`), so re-parse the
-    // printed source so the cached AST (consumed by `FolderResolver` for workspace
-    // members during `install_with_manager`) reflects the new dependency list.
     if let Err(err) = current_package_json.reparse_root(manager.log_mut()) {
         Output::pretty_errorln(format_args!(
             "package.json failed to parse due to error {}",
@@ -689,10 +645,6 @@ fn update_package_json_and_install_with_manager_with_updates(
             node_modules_buf[b"node_modules".len()] = bun_paths::SEP;
             let name_hashes = manager.lockfile.packages.items_name_hash();
             for request in updates.iter() {
-                // If the package no longer exists in the updated lockfile, delete the directory
-                // This is not thorough.
-                // It does not handle nested dependencies
-                // This is a quick & dirty cleanup intended for when deleting top-level dependencies
                 if !name_hashes
                     .iter()
                     .any(|h| *h == bun_semver::semver_string::Builder::string_hash(request.name))
@@ -809,11 +761,6 @@ pub fn update_package_json_and_install_and_cli(
     let manager: &mut PackageManager = &mut *manager_ptr;
 
     if manager.options.should_print_command_name() {
-        // Zig: `"..." ++ Global.package_json_version_with_sha ++ "..."` (comptime concat).
-        // `concatcp!` yields `&'static str`, but `format_args!` requires a string *literal*
-        // for its template. Splice the version as a runtime arg instead — this matches the
-        // approach taken by every other CLI subcommand banner (see e.g. `outdated_command.rs`,
-        // `update_interactive_command.rs`).
         Output::prettyln(format_args!(
             "<r><b>bun {} <r><d>v{}<r>\n",
             <&'static str>::from(subcommand),
@@ -840,39 +787,12 @@ pub fn update_package_json_and_install_and_cli(
         Global::exit(1);
     }
 
-    // Check if we need to print a warning like:
-    //
-    // > warn: To run "vite", add the global bin folder to $PATH:
-    // >
-    // > fish_add_path "/private/tmp/test"
-    //
     if subcommand.can_globally_install_packages() {
         if manager.options.global {
             if !manager.options.bin_path.is_empty() {
                 if let TrackInstalledBin::Basename(basename) = &manager.track_installed_bin {
                     let mut path_buf = PathBuffer::uninit();
                     let needs_to_print = if let Some(path_env) = bun_core::env_var::PATH.get() {
-                        // This is not perfect
-                        //
-                        // If you already have a different binary of the same
-                        // name, it will not detect that case.
-                        //
-                        // The problem is there are too many edgecases with filesystem paths.
-                        //
-                        // We want to veer towards false negative than false
-                        // positive. It would be annoying if this message
-                        // appears unnecessarily. It's kind of okay if it doesn't appear
-                        // when it should.
-                        //
-                        // If you set BUN_INSTALL_BIN to "/tmp/woo" on macOS and
-                        // we just checked for "/tmp/woo" in $PATH, it would
-                        // incorrectly print a warning because /tmp/ on macOS is
-                        // aliased to /private/tmp/
-                        //
-                        // Another scenario is case-insensitive filesystems. If you
-                        // have a binary called "esbuild" in /tmp/TeST and you
-                        // install esbuild, it will not detect that case if we naively
-                        // just checked for "esbuild" in $PATH where "$PATH" is /tmp/test
                         bun_which::which(
                             &mut path_buf,
                             path_env,

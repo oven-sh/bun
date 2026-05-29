@@ -31,10 +31,6 @@ impl Drop for TopCtxRestore {
     }
 }
 
-/// Returns if there was no recover call in current thread.
-/// Otherwise, does not return and execution continues from the current thread
-/// recover call.
-/// Call from root source file panic handler.
 pub fn panicked() {
     if let Some(ctx) = TOP_CTX.with(|c| c.get()) {
         // SAFETY: ctx was set from a live stack frame in `call`/`call_for_test`
@@ -43,12 +39,6 @@ pub fn panicked() {
         unsafe { set_context(ctx) };
     }
 }
-
-// PORT NOTE: Zig's `ExtErrType`/`ReturnType` were comptime @typeInfo helpers
-// that extended the callee's error set with `error.Panic`. In Rust,
-// `bun_core::Error` is a NonZeroU16 tag space that already covers every error
-// name (including `Panic` via `bun_core::err!("Panic")`), so the type-level
-// extension collapses and the helpers are dropped.
 
 pub fn call_for_test(
     test_func: fn() -> Result<(), bun_core::Error>,
@@ -68,13 +58,6 @@ pub fn call_for_test(
     test_func()
 }
 
-/// Calls `func`, guarding from runtime errors.
-/// Returns `error.Panic` when recovers from runtime error.
-/// Otherwise returns the return value of func.
-// PORT NOTE: Zig signature was `call(func: anytype, args: anytype)` with
-// `@call(.auto, func, args)`. Rust cannot forward an arbitrary heterogeneous
-// argument tuple without variadics; callers should wrap the invocation in a
-// closure. Return type uses bun_core::Error (see ExtErrType note above).
 pub fn call<T>(
     func: impl FnOnce() -> Result<T, bun_core::Error>,
 ) -> Result<T, bun_core::Error> {
@@ -113,11 +96,6 @@ unsafe extern "C" {
 #[cfg(all(target_os = "linux", target_env = "musl"))]
 mod musl {
     use core::ffi::c_int;
-    // TODO(port): Zig used @cImport(@cInclude("setjmp.h")).jmp_buf — confirm
-    // exact musl jmp_buf size/align per target arch. This is a
-    // STACK VALUE (`var ctx = std.mem.zeroes(Context); setjmp(&ctx)`), not an
-    // opaque handle, so it must reserve real storage — a ZST would let setjmp
-    // scribble past the allocation. 32×u64 over-reserves vs every musl arch.
     #[repr(C, align(16))]
     pub(super) struct jmp_buf {
         _buf: [u64; 32],
@@ -174,13 +152,6 @@ unsafe fn set_context(ctx: *const Context) -> ! {
     }
 }
 
-/// Panic handler that if there is a recover call in current thread continues
-/// from recover call. Otherwise calls the default panic.
-/// Install at root source file as `pub const panic = @import("recover").panic;`
-// TODO(port): Zig exposed this as `std.debug.FullPanic(handler)` — a type
-// installed at the root file as `pub const panic`. Rust has no equivalent
-// declarative panic-handler slot; wire this via `std::panic::set_hook`
-// (or a `#[panic_handler]` in no_std) at startup.
 pub fn panic(msg: &[u8], first_trace_addr: Option<usize>) -> ! {
     panicked();
     // TODO(port): std.debug.defaultPanic — route to bun_core's default panic.

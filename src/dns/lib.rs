@@ -28,10 +28,6 @@ mod sock {
         AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM,
     };
     pub use bun_windows_sys::ws2_32::{addrinfo, freeaddrinfo};
-    // Windows SDK ships <afunix.h> (SOCKADDR_UN) since win10_rs4 but neither
-    // windows-sys nor bun_windows_sys export it. Mirror the on-the-wire layout
-    // here so address_to_string stays cfg-free below — matches Zig std's
-    // `std.os.windows.ws2_32.sockaddr_un { family: u16, path: [108]u8 }`.
     #[repr(C)]
     pub(crate) struct sockaddr_un {
         pub sun_family: u16,
@@ -99,19 +95,9 @@ impl GetAddrInfo {
     }
 }
 
-// TODO(port): Zig is `packed struct(u64)` — bit layout: family:2, socktype:2,
-// protocol:2, backend:2, flags:32 (std.c.AI), _:24. Represented here as a plain
-// struct because every use site reads fields by name; only `hash()` cared about
-// the raw bytes (handled via `to_packed_bytes`). Decide if a true
-// `#[repr(transparent)] u64` newtype is needed.
 #[derive(Clone, Copy)]
 pub struct Options {
     pub family: Family,
-    /// Leaving this unset leads to many duplicate addresses returned.
-    /// Node hardcodes to `SOCK_STREAM`.
-    /// There don't seem to be any issues in Node's repo about this
-    /// So I think it's likely that nobody actually needs `SOCK_DGRAM` as a flag
-    /// https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/cares_wrap.cc#L1609
     pub socktype: SocketType,
     pub protocol: Protocol,
     pub backend: Backend,
@@ -387,13 +373,6 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
         }
         sock::AF_INET6 => {
             let v6 = address.as_in6().unwrap(); // family() just checked
-            // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
-            // PORT NOTE: Zig formatted via std.net.Address Display ("[addr%scope]:port")
-            // then sliced the brackets/port off ("TODO: this is a hack"). Here we
-            // render the bare address directly via ares_inet_ntop, then re-append
-            // the `%scope_id` suffix that std.net.Ip6Address.format emits for
-            // nonzero scope (e.g. fe80:: link-local from getaddrinfo) — ntop
-            // only sees the 16 raw addr bytes and cannot emit it itself.
             let mut buf = [0u8; 64]; // >= INET6_ADDRSTRLEN (46) + "%4294967295" (11)
             // SAFETY: sin6_addr is a valid in6_addr; buf len fits INET6_ADDRSTRLEN.
             let n = match unsafe {
@@ -440,16 +419,6 @@ pub fn addr_info_count(addrinfo: &sock::addrinfo) -> u32 {
     count
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Order — DNS result ordering (verbatim/ipv4first/ipv6first).
-//
-// Moved down from `bun_runtime::api::dns::Resolver::Order` (src/runtime/
-// dns_jsc/dns.zig): `cli` (repl_command, Arguments)
-// needs `Order::from_string_or_die` to parse `--dns-result-order` before the
-// runtime exists. The `toJS` method stays in tier-6 (`bun_runtime::dns_jsc`)
-// as an extension; only the pure enum + string parsing live here.
-// ──────────────────────────────────────────────────────────────────────────
-
 #[repr(u8)]
 #[derive(Copy, Clone, Default, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum Order {
@@ -486,11 +455,6 @@ impl Order {
     }
 }
 
-/// Zig: `pub const internal = bun.api.dns.internal;` — the process-wide DNS
-/// cache lives in `bun_runtime` (it owns libinfo/libuv worker threads + JSC
-/// stat counters). Lower-tier crates (`bun_http`, `bun_install`) reach it via
-/// the link-time `Bun__addrinfo_*` family — same mechanism usockets C uses —
-/// rather than a `bun_runtime` crate dep, which would cycle.
 pub mod internal {
     use core::ffi::c_void;
 
@@ -501,12 +465,6 @@ pub mod internal {
     }
 
     unsafe extern "Rust" {
-        /// `bun.dns.internal.prefetch` — kick off an async DNS resolution for
-        /// `(hostname, port)` so the result is cached by the time the connect
-        /// path needs it. The resolver/event-loop machinery lives in
-        /// `bun_runtime::dns_jsc::internal::prefetch`; lower-tier crates
-        /// (`bun_install`) reach it via this link-time extern to avoid a crate
-        /// cycle. Defined `#[no_mangle]` in `bun_runtime::dns_jsc`.
         fn __bun_dns_prefetch(loop_: *mut c_void, hostname: *const u8, len: usize, port: u16);
     }
 

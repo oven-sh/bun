@@ -47,12 +47,6 @@ impl<K, V> Entry<K, V> {
         K: Copy + Default,
         V: Copy + Default,
     {
-        // PORT NOTE: Zig used `std.mem.zeroes(K)` / `undefined` — key/value of
-        // an empty entry (hash == EMPTY_HASH) are never read. Rust cannot use
-        // `mem::zeroed()` here: K may be `&[u8]` (or any `Copy` type with a
-        // niche), for which all-zero bytes violate the validity invariant
-        // regardless of whether the value is later read. Use `Default` for the
-        // unread placeholder instead.
         Self {
             hash: EMPTY_HASH,
             key: K::default(),
@@ -108,10 +102,6 @@ pub const fn static_slots(capacity: usize) -> usize {
 // StaticHashMap
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: the inline `[Entry; CAPACITY + overflow]` array length depends on
-// a const fn of `CAPACITY`, which requires nightly `feature(generic_const_exprs)`.
-// Stable workaround (same as ArrayBitSet): callers pass `SLOTS = static_slots(CAPACITY)`
-// as a second const param; a const-assert in `Default::default()` checks they match.
 pub struct StaticHashMap<
     K,
     V,

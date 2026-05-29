@@ -140,12 +140,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 false
             };
 
-            // "import { type xx } from 'mod'"
-            // "import { type xx as yy } from 'mod'"
-            // "import { type 'xx' as yy } from 'mod'"
-            // "import { type as } from 'mod'"
-            // "import { type as as } from 'mod'"
-            // "import { type as as as } from 'mod'"
             if probably_type_only_import {
                 if p.lexer.is_contextual_keyword(b"as") {
                     p.lexer.next()?;
@@ -205,10 +199,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 } else {
                     let is_identifier_inner = p.lexer.token == T::TIdentifier;
 
-                    // "import { type xx } from 'mod'"
-                    // "import { type xx as yy } from 'mod'"
-                    // "import { type if as yy } from 'mod'"
-                    // "import { type 'xx' as yy } from 'mod'"
                     let _ = p.parse_clause_alias(b"import")?;
                     p.lexer.next()?;
 
@@ -307,16 +297,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
             let original_name = alias;
 
-            // The name can actually be a keyword if we're really an "export from"
-            // statement. However, we won't know until later. Allow keywords as
-            // identifiers for now and throw an error later if there's no "from".
-            //
-            //   // This is fine
-            //   export { default } from 'path'
-            //
-            //   // This is a syntax error
-            //   export { default }
-            //
             if p.lexer.token != T::TIdentifier && first_non_identifier_loc.start == 0 {
                 first_non_identifier_loc = p.lexer.loc();
             }
@@ -367,27 +347,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             had_type_only_exports = true;
                         }
                     } else {
-                        // The name can actually be a keyword if we're really an "export from"
-                        // statement. However, we won't know until later. Allow keywords as
-                        // identifiers for now and throw an error later if there's no "from".
-                        //
-                        //   // This is fine
-                        //   export { default } from 'path'
-                        //
-                        //   // This is a syntax error
-                        //   export { default }
-                        //
                         if p.lexer.token != T::TIdentifier && first_non_identifier_loc.start == 0 {
                             first_non_identifier_loc = p.lexer.loc();
                         }
 
-                        // "export { type xx }"
-                        // "export { type xx as yy }"
-                        // "export { type xx as if }"
-                        // "export { type default } from 'path'"
-                        // "export { type default as if } from 'path'"
-                        // "export { type xx as 'yy' }"
-                        // "export { type 'xx' } from 'mod'"
                         let _ = p.parse_clause_alias(b"export").unwrap_or(b"");
                         p.lexer.next()?;
 

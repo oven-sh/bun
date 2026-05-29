@@ -62,13 +62,6 @@ pub struct Execute<'a> {
     pub params: ExecuteParams<'a>,
 }
 
-/// Stand-in for the `params: []Value` field while `Value` lives in the
-/// higher-tier `bun_sql_jsc` crate. Carries the borrowed slice as raw bytes so
-/// `len()` is real; encoding goes through the `is_null` / `to_data` hooks
-/// which the jsc-side caller fills in. TODO(refactor): replace this with a trait
-/// or move `Execute` itself up-tier (matches the Query::Execute precedent of
-/// taking `&mut [Data]`).
-// TODO(port): bun_sql_jsc::mysql::mysql_value::Value
 pub struct ExecuteParams<'a> {
     pub len: usize,
     pub ctx: *mut core::ffi::c_void,

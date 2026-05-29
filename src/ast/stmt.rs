@@ -101,13 +101,6 @@ const NONE: S::Empty = S::Empty {};
 #[cfg(debug_assertions)]
 pub static ICOUNT: AtomicUsize = AtomicUsize::new(0);
 
-/// Trait absorbing the Zig `switch (comptime StatementType)` tables in
-/// `init` / `alloc` / `allocate`. Each `S::*` payload type implements this to
-/// map itself onto the corresponding `Data` variant.
-///
-/// The Zig used three near-identical 32-arm comptime switches; in Rust the
-/// dispatch is the trait impl and the arm list is the `impl_statement_data!`
-/// invocation below — diff that list against the Zig switch.
 pub trait StatementData: Sized {
     /// Wrap an already-allocated payload (Zig `Stmt.init` / `comptime_init`).
     fn wrap_ref(ptr: StoreRef<Self>) -> Data;
@@ -151,11 +144,6 @@ impl Stmt {
             data: orig_data.arena_alloc(bump),
         }
     }
-
-    // Zig `comptime_init` — `@unionInit(Data, tag_name, origData)`. In Rust the
-    // variant constructor IS the union-init; this helper collapses to identity
-    // and is absorbed by `StatementData::wrap_ref`.
-    // TODO(port): no direct equivalent; callers use the trait.
 
     #[inline]
     pub fn alloc<T: StatementData>(orig_data: T, loc: crate::Loc) -> Stmt {
@@ -359,16 +347,6 @@ pub enum Data {
     SLazyExport(StoreRef<expr::Data>),
 }
 
-// ── Layout guards ─────────────────────────────────────────────────────────
-// Zig: `if (@sizeOf(Stmt) > 24) @compileLog(...)` (Stmt.zig:295). Every payload
-// variant is either a `StoreRef<T>` (`#[repr(transparent)] NonNull<T>`, 8 bytes,
-// niche-carrying) or a ZST, so the union is one pointer word and the repr(Rust)
-// discriminant packs alongside it for `Data` = 16. `Stmt` = `Data` (16, align 8)
-// + `Loc` (i32) → 20 → 24 after tail padding. The `Option<Data>` assert proves
-// the niche fires (33 variants < 256 + every pointer variant contributes a
-// NonNull niche), so `Option<Stmt>` / `Option<Data>` add no discriminant word.
-// Adding `#[repr(C)]`/`#[repr(u8)]` to `Data` or a nullable `*mut T` payload
-// would break this — the asserts catch it.
 const _: () = assert!(core::mem::size_of::<Data>() == 16);
 const _: () = assert!(
     core::mem::size_of::<Stmt>() <= 24,
@@ -430,12 +408,6 @@ impl PartialEq for Data {
 }
 impl Eq for Data {}
 
-// Zig field-style union accessors (`data.s_function`, `data.s_local`, …).
-// visitStmt and the printer port from Zig's `data.s_local.*` etc., which are
-// unchecked union field reads. Rust callers `.unwrap()` (or pattern-match) —
-// the `Option` is the cheapest sound encoding of Zig's UB-on-mismatch.
-// Mirrors `expr::Data::e_*()`. Returns `Option<StoreRef<T>>` (Copy) for
-// pointer-payload variants and `Option<T>` by value for inline ZST variants.
 impl Data {
     // ── StoreRef<S::*> field-style accessors ────────────────────────────
     #[inline]
@@ -919,10 +891,6 @@ impl Data {
         }
     }
 
-    // ── Inline (by-value) payload accessors ─────────────────────────────
-    // These variants store the payload directly (no `StoreRef`); all are
-    // zero-sized `Copy` types. Returned by value for symmetry with
-    // `expr::Data::e_boolean()` etc.
     #[inline]
     pub fn s_type_script(&self) -> Option<S::TypeScript> {
         if let Data::STypeScript(v) = *self {
@@ -991,11 +959,6 @@ pub mod data {
     use super::*;
     crate::thread_local_ast_store!(stmt_store::Store, "Stmt");
 }
-
-// Zig `pub fn StoredData(tag: Tag) type` — returns the payload type for a tag,
-// dereferencing pointer variants. Rust has no type-returning fns.
-// TODO(port): callers should use the `StatementData` trait or a per-variant
-// associated type; revisit once call sites are known.
 
 impl Stmt {
     pub fn cares_about_scope(&self) -> bool {

@@ -30,13 +30,6 @@ pub(crate) fn freemem() -> u64 {
     Bun__Os__getFreeMemory()
 }
 
-// ─── gated: JSC bindings + platform syscall bodies ────────────────────────
-// Every fn body builds JS objects (`JSValue::create_*`, `ZigString::*::to_js`,
-// `global.throw_value`) or reaches `bun_sys::posix::sysctlbyname` /
-// `bun_sys::c::sysinfo` / `crate::gen_::node_os` which are not yet exported.
-// CPUTimes struct + freemem() + trailing pure helpers hoisted above/below.
-// TODO(port): un-gate once bun_jsc + bun_sys::posix syscall surface land.
-
 mod _impl {
     use super::*;
     use crate::node::ErrorCode;
@@ -125,28 +118,12 @@ mod _impl {
         }
     }
 
-    // `bun.HOST_NAME_MAX` (bun.zig) — `std.posix.HOST_NAME_MAX` on unix, 256 on
-    // Windows. Neither `bun_core` nor `bun_sys` re-export it yet; 256 is a safe
-    // upper bound for the stack buffer on every platform.
-    // TODO(port): hoist into `bun_sys` once that crate grows a `HOST_NAME_MAX`.
     const HOST_NAME_MAX: usize = 256;
 
-    // Generated bindings (`bun.gen.node_os` in Zig, emitted from
-    // `node_os.bind.ts` via `src/codegen/bindgen.ts`). The C++ side
-    // (`GeneratedBindings.cpp`) defines the SYSV-ABI `bindgen_Node_os_js*` host
-    // functions, which validate/decode arguments and call back into the
-    // `bindgen_Node_os_dispatch*` Zig (now Rust) entry points. This module ports
-    // the Zig public surface — `js*` extern pointers + `create*Callback` wrappers
-    // + the `UserInfoOptions` dictionary — verbatim from
-    // `src/jsc/bindings/GeneratedBindings.zig`.
     pub mod gen_ {
         use super::{BunString, CallFrame, JSGlobalObject, JSValue, ZigString};
         use bun_jsc::host_fn;
 
-        // C++-side host fns (GeneratedBindings.cpp). `bindgen.ts` emits these as
-        // `extern "C" SYSV_ABI` (the `JSHostFunctionType` shape) — `jsc.conv` is
-        // the System V ABI on Windows-x64 and the C ABI everywhere else, matching
-        // `bun_jsc::host_fn::JsHostFn`.
         bun_jsc::jsc_abi_extern! {
             fn bindgen_Node_os_jsCpus(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
             fn bindgen_Node_os_jsFreemem(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
@@ -196,10 +173,6 @@ mod _impl {
             create_set_priority_callback,       "setPriority",       2, bindgen_Node_os_jsSetPriority;
         }
 
-        /// `t.dictionary({ encoding: t.DOMString.default("") })` from
-        /// `node_os.bind.ts`. Mirrors the `extern struct` emitted by bindgen
-        /// (`GeneratedBindings.zig` `node_os.UserInfoOptions`); the C++ side
-        /// passes a pointer to this layout, so it must stay `#[repr(C)]`.
         #[repr(C)]
         pub struct UserInfoOptions {
             pub encoding: BunString,
@@ -764,12 +737,6 @@ mod _impl {
                 }
             }
 
-            // From libuv:
-            // > Calling sysconf(_SC_GETPW_R_SIZE_MAX) would get the suggested size, but it
-            // > is frequently 1024 or 4096, so we can just use that directly. The pwent
-            // > will not usually be large.
-            // Instead of always using an allocation, first try a stack allocation
-            // of 4096, then fallback to heap.
             let mut stack_string_bytes = [0u8; 4096];
             // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
             let mut heap_bytes: Vec<u8>;
@@ -1017,11 +984,6 @@ mod _impl {
             iface.ifa_flags & libc::IFF_LOOPBACK as c_uint == libc::IFF_LOOPBACK as c_uint
         }
 
-        // The list currently contains entries for link-layer interfaces
-        //  and the IPv4, IPv6 interfaces.  We only want to return the latter two
-        //  but need the link-layer entries to determine MAC address.
-        // So, on our first pass through the linked list we'll count the number of
-        //  INET interfaces only.
         let mut num_inet_interfaces: usize = 0;
         let mut it = interface_start;
         while !it.is_null() {
@@ -1298,10 +1260,6 @@ mod _impl {
                     _ => None,
                 };
 
-                // Format the address and then, if valid, the CIDR suffix; both
-                //  the address and cidr values can be slices into this same buffer
-                // e.g. addr_str = "192.168.88.254", cidr_str = "192.168.88.254/24"
-                // TODO(port): std.net.Address → bun_sys::net::Address
                 let addr_str = bun_fmt::format_ip(
                     // bun_sys::net::Address will do ptrCast depending on the family so this is ok
                     // SAFETY: the address union backs a valid sockaddr_in/sockaddr_in6; pointer derived

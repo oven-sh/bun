@@ -68,10 +68,6 @@ impl Parser<'_> {
         off = indent_result.off;
         line.beg = off;
 
-        // Match existing containers
-        // remaining_indent tracks the indent left after subtracting each matched
-        // container's contents_indent. This ensures nested containers compare
-        // against the correct relative indentation rather than the absolute column.
         let mut remaining_indent = total_indent;
         while n_parents < self.n_containers {
             let c = &self.containers[n_parents as usize];
@@ -698,10 +694,6 @@ impl Parser<'_> {
         // here we index into line_buf via cur_line_idx.
         let line = &mut line_buf[cur_line_idx];
 
-        // Blank line ends current leaf block.
-        // Note: blank lines inside fenced code blocks are typed .fencedcode by analyzeLine,
-        // and blank lines inside HTML blocks type 1-5 are typed .html by analyzeLine.
-        // Only closing fences and actual block-ending blank lines reach here as .blank.
         if line.r#type == LineType::Blank {
             self.end_current_block()?;
             *pivot_line = Line {

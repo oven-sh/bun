@@ -2,11 +2,6 @@ use crate::css_rules::{CssRuleList, Location};
 use crate::selectors::SelectorList;
 use crate::{PrintErr, Printer};
 
-/// A [@scope](https://drafts.csswg.org/css-cascade-6/#scope-atrule) rule.
-///
-/// @scope (<scope-start>) [to (<scope-end>)]? {
-///  <stylesheet>
-/// }
 pub struct ScopeRule<R> {
     /// A selector list used to identify the scoping root(s).
     pub scope_start: Option<SelectorList>,

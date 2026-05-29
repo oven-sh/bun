@@ -177,11 +177,6 @@ pub enum HardcodedModule {
 }
 
 impl HardcodedModule {
-    /// The module loader first uses `Aliases` to get a single string during
-    /// resolution, then maps that single string to the actual module.
-    /// Do not include aliases here; Those go in `Aliases`.
-    // Zig: `pub const map = bun.ComptimeStringMap(...)`. Associated `static` is
-    // unstable (E0658); `phf::Map` is const-constructible so use an associated const.
     pub const MAP: phf::Map<&'static [u8], HardcodedModule> = phf::phf_map! {
         // Bun
         b"bun" => HardcodedModule::Bun,
@@ -272,10 +267,6 @@ impl HardcodedModule {
     };
 }
 
-/// Contains the list of built-in modules from the perspective of the module
-/// loader. This logic is duplicated for `isBuiltinModule` and the like.
-// Note: `ZStr` is a bare DST without `PartialEq`/`Debug`, so `Alias` can't
-// auto-derive them. The Zig struct doesn't define equality either.
 #[derive(Copy, Clone)]
 pub struct Alias {
     // Zig: `[:0]const u8` → `&'static ZStr` per PORTING.md type map
@@ -362,15 +353,6 @@ macro_rules! entry {
         )
     };
 }
-
-// Zig builds three `ComptimeStringMap`s by concatenating these const arrays
-// (`common ++ bun_extra ++ bun_test_extra`). `phf::phf_map!` only accepts
-// inline literal entries, so it cannot consume const slices directly.
-//
-// TODO(perf): generate `NODE_ALIASES` / `BUN_ALIASES` /
-// `BUN_TEST_ALIASES` as `phf::Map<&'static [u8], Alias>` via `phf_codegen` in
-// `build.rs`, fed from these const slices. The `get()` lookups below are the
-// only public surface, so swapping the backing store is mechanical.
 
 type AliasKv = (&'static [u8], Alias);
 

@@ -144,10 +144,6 @@ pub struct TestRunner<'a> {
 
     pub test_options: &'a TestOptions,
 
-    /// Used for --test-name-pattern to reduce allocations.
-    /// Raw `*mut` because `RegularExpression::matches` mutates its internal
-    /// cursor through C++ — storing `&'a RegularExpression` and casting back to
-    /// `*mut` at the use site would launder shared provenance into a write (UB).
     pub filter_regex: Option<core::ptr::NonNull<RegularExpression>>,
 
     pub unhandled_errors_between_tests: u32,
@@ -166,10 +162,6 @@ impl<'a> TestRunner<'a> {
         {
             return bun_core::Timespec::EPOCH;
         }
-        // PORT NOTE: bun_event_loop carries a local Timespec stub with the
-        // same `{sec, nsec}` shape as bun_core::Timespec; convert by field
-        // until the lower tier unifies on bun_core::Timespec (see
-        // src/runtime/timer/mod.rs ElTimespec alias).
         bun_core::Timespec { sec: active_file.timer.next.sec, nsec: active_file.timer.next.nsec }
     }
 
@@ -299,10 +291,6 @@ pub(crate) type FileMap = ArrayHashMap<u32, u32>;
 pub mod Jest {
     use super::*;
 
-    // Zig `pub var runner: ?*TestRunner = null`.
-    // PORTING.md §Global mutable state: JS-VM-thread-only singleton; RacyCell
-    // over `Option<NonNull<_>>` so direct `.read()` projections in
-    // `snapshot.rs` etc. keep their shape.
     pub(crate) static RUNNER: bun_core::RacyCell<Option<NonNull<TestRunner<'static>>>> =
         bun_core::RacyCell::new(None);
 
@@ -311,10 +299,6 @@ pub mod Jest {
         unsafe { RUNNER.read().map(|p| &mut *p.as_ptr()) }
     }
 
-    /// Raw-pointer accessor for callers that must not materialise
-    /// an exclusive `&mut TestRunner` because a sub-borrow of it (e.g.
-    /// `&BunTestRoot`, `&mut BunTest`) is already live — see
-    /// `BunTestRoot::on_before_print` / `BunTest::enter_file`.
     pub(crate) fn runner_ptr() -> Option<NonNull<TestRunner<'static>>> {
         // SAFETY: single-threaded JS VM; matches Zig's unguarded global access.
         unsafe { RUNNER.read() }

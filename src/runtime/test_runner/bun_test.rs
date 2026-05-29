@@ -14,10 +14,6 @@ use crate::cli::test_command::CommandLineReporter;
 use super::execution::TimespecExt as _;
 
 bun_core::declare_scope!(bun_test_group, hidden);
-// `group` in the Zig is `debug.group` (an Output.scoped). The macro form differs;
-// callers use `group_log!` / `group_begin!` / `group_end!` below.
-/// Thin macro over `debug::group::begin()` so call sites stay `group_begin!()`
-/// (Zig: `group.begin(@src())` — Rust uses `#[track_caller]` for source loc).
 macro_rules! group_begin {
     () => {
         $crate::test_runner::debug::group::begin()
@@ -34,10 +30,6 @@ pub(super) fn vm_timer<'a>() -> &'a mut crate::timer::All {
     unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }
 }
 
-/// `bun.timespec.orderIgnoreEpoch` — epoch == "no timeout", treated as +∞.
-/// Local helper so it can compare `bun_core::Timespec` against the
-/// event-loop crate's distinct `Timespec` (converted by field).
-// ElTimespec dedup is a separate ticket.
 #[inline]
 fn order_ignore_epoch(a: &Timespec, b: &ElTimespec) -> core::cmp::Ordering {
     Timespec::order_ignore_epoch(*a, Timespec { sec: b.sec, nsec: b.nsec })
@@ -119,10 +111,6 @@ pub mod js_fns {
         Ok(bun_test)
     }
 
-    /// Tags accepted by `generic_hook`. Superset of `DescribeScope::HookTag`
-    /// (adds `OnTestFinished`).
-    // PORT NOTE: was a const-generic param (`adt_const_params` is unstable);
-    // reshaped to runtime dispatch with per-tag thin host_fn wrappers below.
     #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
     pub enum GenericHookTag {
         #[strum(serialize = "beforeAll")]
@@ -158,11 +146,6 @@ pub mod js_fns {
         }
     }
 
-    // Zig: `fn genericHook(comptime tag) type { return struct { pub fn hookFn(...) } }`
-    // PORT NOTE: reshaped — `adt_const_params` is unstable, so the body takes
-    // `tag` at runtime and 5 thin `#[host_fn]` wrappers below supply the
-    // per-tag entry points (one fn per JS function, matching Zig's comptime
-    // monomorphization for JSFunction::create).
     pub fn generic_hook_impl(
         tag: GenericHookTag,
         global_this: &JSGlobalObject,
@@ -354,14 +337,6 @@ pub mod js_fns {
 /// Compat alias for sibling drafts (jest.rs) that referenced `bun_test::HookKind`.
 pub use js_fns::GenericHookTag as HookKind;
 
-/// `bun.ptr.shared.WithOptions(*BunTest, .{ .allow_weak = true, .Allocator = bun.DefaultAllocator })`
-/// → `Rc<BunTestCell>` (single-thread, weak-capable, interior-mutable).
-///
-/// Zig's `BunTestPtr.get()` hands back a freely-aliasing `*BunTest`; the Rust
-/// port mutates through this handle pervasively (re-entrantly via JS callbacks).
-/// `Rc<T>` does **not** wrap `T` in `UnsafeCell`, so the previous
-/// `Rc::as_ptr(&rc) as *mut T` + write was UB. The payload now lives in an
-/// explicit `UnsafeCell` so all writes go through interior-mutable provenance.
 pub type BunTestPtr = Rc<BunTestCell>;
 pub type BunTestPtrWeak = Weak<BunTestCell>;
 pub type BunTestPtrOptional = Option<Rc<BunTestCell>>;
@@ -378,18 +353,6 @@ impl BunTestCell {
         Rc::new(Self(UnsafeCell::new(bt)))
     }
 
-    /// Zig `BunTestPtr.get()` → `*BunTest`.
-    ///
-    /// Returns `&mut` because every call site mutates. The borrow is derived
-    /// from `UnsafeCell::get()` so provenance is valid for writes even while
-    /// other `Rc`/`Weak` handles exist.
-    ///
-    /// **Aliasing contract:** the test runner is single-threaded and this is
-    /// the moral equivalent of Zig's freely-aliasing `*T`. Callers must not
-    /// hold the returned `&mut` across a re-entrancy point (JS callback,
-    /// `Collection::step`, `Execution::step`, `BunTest::run`) that itself calls
-    /// `.get()` — re-derive afterwards instead. Prefer [`as_ptr`](Self::as_ptr)
-    /// for long-lived handles that span re-entrant calls.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn get(&self) -> &mut BunTest {
@@ -474,24 +437,11 @@ impl BunTestRoot {
         });
     }
 
-    /// Tear down `bun:test` GC roots before `global_exit()` so
-    /// `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim the
-    /// closures they pin. Releases the active file's per-test `Strong`s (the
-    /// bail path skips its `scopeguard::defer! { exit_file() }` because
-    /// `process::exit()` does not unwind), the preload-hook `Strong`s held in
-    /// `hook_scope`, and the `pending_then_refs` Vec.
     pub fn deinit_for_exit(&mut self) {
         if self.active_file.is_some() {
             self.exit_file();
         }
         self.reset_hook_scope_for_test_isolation();
-        // `pending_then_refs` holds the `+1` `RefData` ref taken at
-        // `Promise.then()` time so a never-settled promise's box stays
-        // reachable. The corresponding deref happens in
-        // `bun_test_then_or_catch` when the promise settles — which it now
-        // never will (the VM is going away). Release each orphan ourselves;
-        // any reaction that is still queued is dropped wholesale by
-        // `destructOnExit`.
         for ptr in self.pending_then_refs.borrow_mut().drain(..) {
             // SAFETY: `ptr` was produced by `IntrusiveRc::into_raw` in
             // `BunTest::run_test_callback`; it is live because the promise
@@ -527,13 +477,6 @@ impl BunTestRoot {
             .map(|p| unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*p.as_ptr()).bun_test_root)) })
             .unwrap_or_else(|| NonNull::from(&mut *self));
 
-        // Zig: active_file = .new(undefined); active_file.get().?.init(...)
-        // TODO(port): in-place init — Rc::new_cyclic or two-phase init may be
-        // needed because BunTest stores a backref to BunTestRoot.
-        // PORT NOTE: Zig stores `?*CommandLineReporter` (raw, untracked); the
-        // reporter is the global `CommandLineReporter` owned by
-        // `test_command::exec` which outlives every `BunTest`. `exit_file()`
-        // nulls this before the file is dropped.
         let reporter_ptr = NonNull::from(&mut *reporter);
         let bun_test = BunTestCell::new(BunTest::init(
             stable_root,
@@ -635,13 +578,6 @@ pub struct BunTest {
     // gpa / arena_allocator / arena dropped — see §Allocators (non-AST crate)
     // PERF(port): was arena bulk-free for per-file scratch
     pub file_id: FileId,
-    /// null if the runner has moved on to the next file but a strong reference to BunTest is still keeping it alive
-    ///
-    /// PORT NOTE: Zig stores `?*CommandLineReporter` (raw, mutable). Stored as
-    /// `NonNull` (not `&`) so callbacks (`handle_test_completed`, junit writer,
-    /// uncaught-exception handler) can write through it without deriving `&mut`
-    /// from `&` (UB). The reporter is owned by `test_command::exec`'s stack
-    /// frame, which never returns; `exit_file()` nulls this before drop.
     pub reporter: Option<NonNull<CommandLineReporter>>,
     pub timer: EventLoopTimer,
     pub result_queue: ResultQueue,
@@ -769,10 +705,6 @@ impl BunTest {
                 pending.swap_remove(pos);
             }
         }
-        // defer refdata.deref() — RefPtr<T> currently has NO Drop impl (src/ptr/ref_count.rs),
-        // so scope-exit drop is a silent no-op. Decrement the intrusive count explicitly so
-        // (a) RefData::destructor frees the box + Weak<BunTest>, and (b) a paired done() callback
-        // observes has_one_ref()==true on its turn instead of hanging.
         let refdata = scopeguard::guard(refdata, |r: RefDataPtr| r.deref());
         let has_one_ref = refdata.has_one_ref();
         let Some(this_strong) = refdata.buntest_weak.upgrade() else {
@@ -797,11 +729,6 @@ impl BunTest {
         Ok(())
     }
 
-    // PORT NOTE: `#[bun_jsc::host_fn]` proc-macro emits a free-fn wrapper that
-    // calls the annotated item by bare name; that lookup fails for associated
-    // fns inside `impl` blocks. The extern-"C" trampoline is wired separately
-    // (see the gated `Bun__TestScope__Describe2__*` statics below), so the
-    // attribute is dropped here — these are plain JsResult fns.
     fn bun_test_then(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         Self::bun_test_then_or_catch(global_this, callframe, false)?;
         Ok(JSValue::UNDEFINED)
@@ -845,10 +772,6 @@ impl BunTest {
         let Some(ref_in) = ref_in else {
             return Ok(JSValue::UNDEFINED);
         };
-        // defer this.ref = null → already taken above
-        // defer ref_in.deref() — RefPtr<T> currently has NO Drop impl, so decrement the
-        // intrusive count explicitly at scope exit (mirrors .zig:472). Without this the
-        // paired promise then/catch path never sees has_one_ref()==true and the RefData leaks.
         let ref_in = scopeguard::guard(ref_in, |r: RefDataPtr| r.deref());
 
         // dupe the ref and enqueue a task to call the done callback.
@@ -937,10 +860,6 @@ impl BunTest {
 
     pub fn run(this_strong: &BunTestPtr, global_this: &JSGlobalObject) -> JsResult<()> {
         let _g = group_begin!();
-        // Zig: `const this = this_strong.get().?` — a freely-aliasing `*BunTest`.
-        // `Collection::step` / `Execution::step` re-enter and call `.get()` on
-        // the same `Rc`, so we keep a raw `*mut` (via `UnsafeCell`) and reborrow
-        // per-use instead of holding one long-lived `&mut` that would alias.
         let this: *mut BunTest = this_strong.as_ptr();
 
         // SAFETY: `this` is `UnsafeCell::get()`-derived; single-threaded JS VM;
@@ -1048,11 +967,6 @@ impl BunTest {
                 } else {
                     false
                 };
-                // Derive a per-file shuffle PRNG from (seed, file_path) so a
-                // file's test order depends only on the path and the printed
-                // seed — not on which worker ran it or what files preceded it
-                // on that worker. This is what makes --parallel --randomize
-                // reproducible via --seed=N.
                 let mut per_file_prng: Option<bun_core::rand::DefaultPrng> = if let Some(reporter) = self.reporter {
                     'blk: {
                         // SAFETY: reporter outlives every BunTest (see field doc).
@@ -1088,10 +1002,6 @@ impl BunTest {
                 let describe_seq_start = order.sequences.len();
                 order.generate_order_describe(&mut self.collection.root_scope)?;
                 let describe_seq_end = order.sequences.len();
-                // Collect hook-entry clones boxed by `generate_order_test` so `Drop` can
-                // reclaim the Box headers. Must run before `extra_execution_entries` are
-                // spliced into the same chains, or the walk would double-free `DescribeScope`
-                // entries.
                 debug_assert!(
                     self.extra_execution_entries.is_empty(),
                     "extra_execution_entries must be spliced after the cloned-hook walk"
@@ -1138,10 +1048,6 @@ impl BunTest {
         timeout: &Timespec,
     ) -> Option<RefDataValue> {
         let _g = group_begin!();
-        // Raw `*mut` (via `UnsafeCell`) — the JS event-loop call below can
-        // re-enter `bun_test_then_or_catch` / `bun_test_done_callback` /
-        // `on_unhandled_rejection`, each of which `.get()`s the same `BunTest`.
-        // Hold a raw ptr and reborrow per-use so no two `&mut` overlap.
         let this: *mut BunTest = this_strong.as_ptr();
         let vm = global_this.bun_vm();
 
@@ -1205,13 +1111,6 @@ impl BunTest {
             }
         }
 
-        // Zig: `var dcb_ref: ?*RefData = null;` — a raw observer alias, NOT a
-        // counted handle. The single +1 from `ref()` is owned by
-        // `dcb_data.ref`; `dcb_ref` just remembers the address so the
-        // pending-promise branch can `dupe()` it and the tail can branch on
-        // "wait for done callback". `RefPtr<T>` has no `Drop`, so holding a
-        // second `RefDataPtr` here would over-count and the done-callback path
-        // would never observe `has_one_ref()`.
         let mut dcb_ref: Option<NonNull<RefData>> = None;
         if !done_callback.is_empty() && !result.is_empty() {
             if let Some(dcb_data) = DoneCallback::from_js(done_callback) {
@@ -1378,16 +1277,6 @@ impl Drop for BunTest {
     }
 }
 
-// `export const Bun__TestScope__Describe2__bunTestThen = jsc.toJSHostFn(bunTestThen);`
-//
-// PORT NOTE: Zig's `export const X = jsc.toJSHostFn(f)` mints a *function*
-// symbol named `X` (the comptime wrapper is inlined into a fresh fn item).
-// `ZigGlobalObject::promiseHandlerID` (C++) compares the fn-ptr passed to
-// `JSValue::then` against `&Bun__TestScope__Describe2__bunTestThen` by
-// identity, so the Rust thunk MUST be the symbol itself — exporting a
-// `static JSHostFn = thunk` puts the name in `.data` (nm `d`), and the address
-// C++ sees never matches the local thunk we hand to `.then()`, tripping the
-// `RELEASE_ASSERT_NOT_REACHED` at the bottom of `promiseHandlerID`.
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
     pub unsafe fn Bun__TestScope__Describe2__bunTestThen(
@@ -1448,10 +1337,6 @@ impl RefDataValue {
     pub fn sequence<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut Execution::ExecutionSequence> {
         let RefDataValue::Execution { group_index, entry_data } = self else { return None };
         let entry_data = (*entry_data)?;
-        // PORT NOTE: reshaped for borrowck — `ConcurrentGroup::sequences_mut`
-        // borrows `&mut Execution` while `group()` already holds a borrow into
-        // `execution.groups`. Read `(sequence_start, sequence_end)` first, then
-        // index `execution.sequences` directly.
         let group = buntest.execution.groups.get(*group_index)?;
         let (start, end) = (group.sequence_start, group.sequence_end);
         Some(&mut buntest.execution.sequences[start..end][entry_data.sequence_index])
@@ -1539,11 +1424,6 @@ pub struct RunTestsTask {
     pub phase: RefDataValue,
 }
 impl RunTestsTask {
-    /// `ManagedTask` callback ABI: `fn(*mut T) -> JsResult<()>`. The pointer
-    /// was `heap::alloc`'d in `run_next_tick`; reconstitute and drop here.
-    ///
-    /// `this` must be the pointer produced by `heap::into_raw` in
-    /// `run_next_tick`; ownership is consumed (the box is dropped on return).
     pub fn call(this: NonNull<RunTestsTask>) -> JsResult<()> {
         // SAFETY: `this` was produced by `heap::into_raw` in `run_next_tick` and
         // is invoked exactly once by `ManagedTask`; ownership is reclaimed here.
@@ -1996,10 +1876,6 @@ impl Default for RunOneResult {
 }
 
 pub use super::timers::fake_timers::FakeTimers;
-// PORT NOTE: Zig nested types (`Execution.ConcurrentGroup`, `Order.Cfg`, …) are
-// top-level items in the sibling Rust modules. Alias the *modules* under the
-// Zig struct names so `Execution::ConcurrentGroup` / `Order::AllOrderResult`
-// resolve as module paths without per-reference rewrites.
 pub use super::execution as Execution;
 pub use super::debug;
 pub use super::scope_functions as ScopeFunctions;

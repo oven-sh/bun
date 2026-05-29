@@ -80,10 +80,6 @@ pub(crate) extern "C" fn Bun__suppressCrashOnProcessKillSelfIfDesired() {
     }
 }
 
-// PORT NOTE: Zig `export const Foo: [*:0]const u8 = "..."` exports a static
-// pointing at rodata. Rust raw-pointer statics are `!Sync`; wrap in a
-// `#[repr(transparent)]` newtype so the C++ side still sees a single
-// `const char*`-sized symbol.
 #[repr(transparent)]
 pub(crate) struct CStrPtr(*const c_char);
 // SAFETY: the wrapped pointer always targets a `'static` NUL-terminated
@@ -274,14 +270,6 @@ mod _impl {
                 continue;
             }
 
-            // A set of execArgv args consume an extra argument, so we do not want to
-            // confuse these with script names.
-            // TODO(port): the Zig builds this set at comptime by iterating
-            // `bun.cli.Arguments.auto_params` and emitting `--long` / `-s` for every
-            // param with `takes_value != .none`. Rust cannot reflect over that list
-            // at compile time, so build the set lazily at runtime from the same
-            // `AUTO_PARAMS` table. Could swap this for a phf::Set via
-            // build.rs or a proc-macro.
             static MAP: std::sync::LazyLock<bun_collections::StringSet> =
                 std::sync::LazyLock::new(|| {
                     let mut set = bun_collections::StringSet::new();
@@ -486,12 +474,6 @@ mod _impl {
                     fs.top_level_dir =
                         unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..len + 1]) };
                 }
-                // Zig has a single `bun.fs.FileSystem.instance.top_level_dir` field that
-                // both this fn writes and `GlobWalker.init` reads. The Rust port split
-                // storage between the resolver's `FileSystem.top_level_dir` (written
-                // above) and `bun_core::TOP_LEVEL_DIR` (read by `bun_paths::fs::
-                // FileSystem::top_level_dir()` → `GlobWalker::init`). Keep them in sync
-                // so a `process.chdir()` before `new Glob(...).scan()` is observed.
                 bun_core::set_top_level_dir(fs.top_level_dir);
                 #[cfg(windows)]
                 let without_trailing_slash =
@@ -518,11 +500,6 @@ mod _impl {
         if k.tag() == bun_core::Tag::Empty {
             return;
         }
-        // Zig: `k.value.WTFStringImpl` — `value` is a private union field in Rust;
-        // `String::{is_8bit,latin1,utf16,length}` dispatch to the WTF impl when
-        // `tag == WTFStringImpl` (guaranteed here: C++ caller passes WTF-backed
-        // strings and we've already returned on `Empty`).
-        // PERF(port): was stack-fallback alloc (1025 bytes) — profile if hot.
         let mut buf1: Vec<u16> = vec![0u16; k.utf16_byte_length() + 1];
         let mut buf2: Vec<u16> = vec![0u16; v.utf16_byte_length() + 1];
         let len1: usize = if k.is_8bit() {

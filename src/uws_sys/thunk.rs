@@ -65,11 +65,6 @@ pub unsafe trait OpaqueHandle: Sized {
                 "OpaqueHandle impl must be align-1"
             )
         };
-        // Not `debug_assert!`: the ZST/align-1 contract discharges aliasing and
-        // dereferenceable-for-zero-bytes, but NOT the `&mut T` validity invariant
-        // that references are non-null. This is a *safe* fn and `AnyResponse` is a
-        // public `Copy` enum of raw pointers, so safe code can reach here with
-        // null in release builds — that must be a panic, not UB.
         assert!(!p.is_null(), "OpaqueHandle::as_handle: null uWS handle");
         // SAFETY: per trait contract `Self` is a ZST with align 1, so `p` (now
         // checked non-null above) is dereferenceable for zero bytes; the
@@ -159,34 +154,6 @@ pub unsafe fn socket_ext_owner<'a, T>(s: *mut us_socket_t) -> Option<&'a mut T> 
     unsafe { ext_owner(&*(*s).ext::<Option<NonNull<T>>>()) }
 }
 
-// ───────────────────────── safe-surface trampoline ──────────────────────────
-//
-// S005: the primitives above are `unsafe fn` because each call site must
-// re-assert the uWS callback contract. For the common, *non-re-entrant*
-// dispatch path (single-threaded event loop, handler does not call back into
-// uWS on the same socket while holding `&mut Owner`) that contract is uniform
-// and can be discharged once at the type level instead of at every call site.
-// `ExtSlot<T>` is that type-level discharge: choosing it as `Handler::Ext`
-// moves the proof obligation from ~30 `unsafe { ext_owner(ext) }` blocks to
-// the one `unsafe` inside `owner_mut()`.
-
-/// Typed-safe wrapper for the `Option<NonNull<T>>` word stored in a uWS socket
-/// ext slot. The newtype is the safe-surface entry point for the
-/// `socket.ext(**T).*` pattern: choosing `type Ext = ExtSlot<T>` in a
-/// [`crate::vtable::Handler`] impl asserts the **non-re-entrancy contract** —
-/// that the handler bodies do not re-enter uWS dispatch on the same socket
-/// while a `&mut T` borrowed from this slot is live (re-entrant consumers must
-/// keep `type Ext = Option<NonNull<T>>` and pass `*mut T` onward; see
-/// `RawPtrHandler`).
-///
-/// Because the inner field is private and there is no public safe constructor,
-/// safe Rust cannot fabricate an `ExtSlot<T>` containing a dangling pointer;
-/// every `&mut ExtSlot<T>` reachable from safe code was materialised by the
-/// `vtable::Trampolines` layer from C-allocated socket ext memory (via
-/// `(*s).ext::<ExtSlot<T>>()`), and `calloc`-zero is `None`. That makes
-/// [`Self::owner_mut`] sound as a *safe* fn — the one `unsafe { p.as_mut() }`
-/// inside discharges the same invariant every former
-/// `unsafe { thunk::ext_owner(ext) }` call site repeated open-coded.
 #[repr(transparent)]
 pub struct ExtSlot<T>(Option<NonNull<T>>);
 

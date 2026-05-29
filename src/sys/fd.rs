@@ -37,24 +37,7 @@ pub enum MakeLibUvOwnedError {
 }
 bun_core::named_error_set!(MakeLibUvOwnedError);
 
-// ──────────────────────────────────────────────────────────────────────────
-// FdExt — syscall-touching methods on `bun_core::Fd`.
-//
-// In Zig these were inherent methods on `bun.FD` (Zig allows `pub const close
-// = bun.sys.close` aliasing). Rust can't impl inherent methods on a foreign
-// type, so they live behind an extension trait. Import via
-// `use bun_sys::FdExt;` at call sites; or call `bun_sys::close(fd)` directly.
-// ──────────────────────────────────────────────────────────────────────────
 pub trait FdExt: Copy + Sized {
-    /// fd function will NOT CLOSE stdin/stdout/stderr.
-    /// Expects a VALID file descriptor object.
-    ///
-    /// Do not use fd on JS-provided file descriptors (e.g. in `fs.closeSync`).
-    /// For those cases, the developer may provide a faulty value, and we must
-    /// forward EBADF to them. For internal situations, we should never hit
-    /// EBADF since it means we could have replaced the file descriptor,
-    /// closing something completely unrelated; fd would cause weird behavior
-    /// as you see EBADF errors in unrelated places.
     fn close(self);
     /// fd function will NOT CLOSE stdin/stdout/stderr.
     /// Use fd API to implement `node:fs` close.
@@ -182,10 +165,6 @@ impl FdExt for Fd {
                     }
                     DecodeWindows::Windows(handle) => {
                         unsafe extern "system" {
-                            // safe: by-value `HANDLE` only; bad/stale handle →
-                            // `STATUS_INVALID_HANDLE`, never UB (mirrors POSIX
-                            // `close(fd)` → `EBADF`, which is `safe fn` in
-                            // `safe_libc`).
                             safe fn NtClose(Handle: bun_windows_sys::HANDLE) -> NTSTATUS;
                         }
                         match NtClose(handle) {
@@ -326,20 +305,6 @@ impl FdOptionalExt for Optional {
 // TODO(port): no Rust equivalent (std::fs is banned). Callers use
 // `Fd::from_native(handle)` / `fd.native()` directly.
 
-// The following functions are from bun.sys but with the 'f' prefix dropped
-// where it is relevant. In Zig they are aliased onto `FD` as inherent methods.
-// In Rust, callers use the free fns in `bun_sys` directly:
-//   chmod→fchmod, chmodat→fchmodat, chown→fchown, directoryExistsAt, dup,
-//   dupWithFlags, existsAt, existsAtType, fcntl, getFcntlFlags, getFileSize,
-//   linkat, linkatTmpfile, lseek, mkdirat, mkdiratA, mkdiratW, mkdiratZ,
-//   openat, pread, preadv, pwrite, pwritev, read, readNonblocking, readlinkat,
-//   readv, recv, recvNonBlock, renameat, renameat2, send, sendNonBlock,
-//   sendfile, stat→fstat, statat→fstatat, symlinkat, truncate→ftruncate,
-//   unlinkat, updateNonblocking, write, writeNonblocking, writev,
-//   getFdPath, getFdPathW, getFdPathZ.
-// TODO: move these methods defined in bun.sys.File to bun.sys, then delete
-// bun.sys.File. (Zig comment carried over.)
-
 // ──────────────────────────────────────────────────────────────────────────
 // HashMapContext — identity hash for Fd keys (matches Zig).
 // ──────────────────────────────────────────────────────────────────────────
@@ -389,15 +354,6 @@ impl Prehashed {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// MovableIfWindowsFd — represents an FD that may be moved into libuv ownership.
-//
-// On Windows we use libuv and often pass file descriptors to functions like
-// `uv_pipe_open`, `uv_tty_init`. But `uv_pipe` and `uv_tty` **take ownership
-// of the file descriptor**. This can easily cause use-after-frees, double
-// closing the FD, etc. So this type represents an FD that could possibly be
-// moved to libuv. On POSIX this is just a wrapper over Fd and does nothing.
-// ──────────────────────────────────────────────────────────────────────────
 pub struct MovableIfWindowsFd {
     #[cfg(windows)]
     inner: Option<Fd>,
@@ -513,10 +469,5 @@ pub(crate) fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwne
     }
     Ok(out)
 }
-
-// fd → path bodies moved down to `bun_core::fd_path_raw[_w]` (libc/kernel32-
-// only; PORTING.md "move storage down"). `bun_sys` keeps the richer
-// `get_fd_path[_w]` returning `Maybe<&mut [u8/u16]>` for callers that want
-// `bun_sys::Error` with a syscall tag.
 
 // ported from: src/sys/fd.zig

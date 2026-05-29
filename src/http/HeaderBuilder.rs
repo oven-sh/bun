@@ -47,11 +47,6 @@ impl HeaderBuilder {
         });
     }
 
-    /// Append a header whose value is `prefix ++ value` (raw bytes).
-    ///
-    /// This exists because `append_fmt` would route through `core::fmt`/`BStr`
-    /// Display, which is lossy for non-UTF-8 bytes (U+FFFD replacement) and
-    /// would desync the byte length pre-reserved by `count`.
     pub fn append_bytes_value(&mut self, name: impl AsRef<[u8]>, prefix: &[u8], value: &[u8]) {
         let name = name.as_ref();
         let name_ptr = api::StringPointer {

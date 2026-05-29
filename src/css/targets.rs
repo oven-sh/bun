@@ -157,21 +157,6 @@ impl Targets {
     }
 }
 
-/// Browser versions to compile CSS for.
-///
-/// Versions are represented as a single 24-bit integer, with one byte
-/// per `major.minor.patch` component.
-///
-/// # Example
-///
-/// This example represents a target of Safari 13.2.0.
-///
-/// ```ignore
-/// Browsers {
-///   safari: Some((13 << 16) | (2 << 8)),
-///   ..Browsers::default()
-/// }
-/// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Browsers {
     pub android: Option<u32>,
@@ -213,10 +198,6 @@ impl Browsers {
                 }
 
                 let number_part = &str[2..];
-                // Zig: `try std.fmt.parseInt(u16, number_part, 10)` — propagates
-                // error.InvalidCharacter / error.Overflow. Preserve the tag for
-                // @errorName snapshot compat (do NOT collapse to UnsupportedCSSTarget).
-                // TODO(port): narrow error set (InvalidCharacter | Overflow)
                 let year = strings::parse_int::<u16>(number_part, 10)
                     .ok()
                     .ok_or_else(|| bun_core::err!("InvalidCharacter"))?;
@@ -467,13 +448,6 @@ impl Default for Features {
 }
 
 impl Features {
-    /// Map a `compat::Feature` enum variant to the same-named `Features` bitflag.
-    ///
-    /// Zig did this via `@field(feature, @tagName(compat_feature)) = true` reflection
-    /// inside `shouldCompileSame` (a `comptime` parameter, so a non-matching variant
-    /// was a compile error). Rust takes the variant at runtime, so the table is
-    /// hand-written: every `compat::Feature` whose snake_case tag matches a
-    /// `Features` field gets an arm; any other variant is a programmer error.
     pub fn from_compat(compat_feature: css::compat::Feature) -> Features {
         use css::compat::Feature;
         match compat_feature {

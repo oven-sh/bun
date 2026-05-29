@@ -1,14 +1,8 @@
 // maybe rename to `PackageJSONCache` if we cache more than workspaces
 
+use crate::bun_json::Expr;
 use bun_collections::StringHashMap;
 use bun_core::Error;
-// `Expr` here is the JSON parser's AST node (`bun_ast::Expr`, re-
-// exported via `crate::bun_json`). It is intentionally NOT `bun_ast::Expr`
-// — that lives in a higher-tier crate and is a distinct type. Consumers of
-// `MapEntry.root` (e.g. `Package::parse_with_json`) take the lower-tier
-// `bun_json::Expr`, so storing the parser-crate type here would create a
-// cross-tier mismatch.
-use crate::bun_json::Expr;
 // LAYERING: `Indentation` lives in `bun_ast::js_printer` (T2, MOVE_DOWN from
 // `bun_js_printer::PrintJsonOptions` see no mismatch.
 use bun_ast::Indentation;
@@ -24,22 +18,7 @@ pub struct MapEntry {
     pub root: Expr,
     pub source: Source,
     pub indentation: Indentation,
-    /// Owns the path bytes that `source.path.{text,pretty,name.*}` borrow.
-    /// In Zig the duped path is stored as `entry.key_ptr.*` and `toSource`
-    /// is called on that same allocation, so the source's path slices stay
-    /// valid for the entry's lifetime. `StringHashMap` boxes its own key,
-    /// so keep the `dupeZ` alive here instead.
     _path_storage: bun_core::ZBox,
-    /// Owns the arena that backs decoded string bytes inside `root`.
-    /// Zig passes `bun.default_allocator` to the JSON parser so escape-decoded
-    /// `E.String.data` slices live forever; `deepClone` does *not* dupe them.
-    /// In Rust the parser takes a `&Arena`, so the arena must outlive the
-    /// cached AST — hold it here so it drops with the entry.
-    ///
-    /// Public so editors that splice new `Expr` nodes into `root`
-    /// (e.g. `update_interactive_command::update_package_json_files_from_updates`)
-    /// can allocate those nodes here instead of in the resettable `Store` —
-    /// the cached `root` outlives `initialize_store()` resets.
     pub json_arena: bun_alloc::Arena,
     /// Superseded `source.contents` buffers, pinned so cached `root` slices
     /// stay valid; freed when the entry drops.
@@ -60,11 +39,6 @@ impl Default for MapEntry {
 }
 
 impl MapEntry {
-    /// Re-parse `self.source.contents` into `self.root`.
-    ///
-    /// `updatePackageJSONAndInstall` edits a copy of `root`, prints it, and
-    /// writes the printed JSON back into `source.contents`. The caller then
-    /// invokes this to restore the invariant `root == parse(source)`.
     pub fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
         let json_bump = bun_alloc::Arena::new();
         let parsed = parse_package_json(&self.source, log, &json_bump, false)?;
@@ -76,13 +50,6 @@ impl MapEntry {
 
 pub type Map = StringHashMap<MapEntry>;
 
-// PORT NOTE: Zig `JSON.parsePackageJSONUTF8WithOpts` takes `comptime opts:
-// js_lexer.JSONOptions`; the Rust port (`bun_parsers::json`) spells those
-// out as 8 const-generic bools. The only field this module varies at runtime
-// is `guess_indentation` (because `GetJSONOptions` was demoted from comptime
-// to runtime), so dispatch on that one bool here and keep the rest fixed to
-// match the Zig call sites (.is_json/.allow_comments/.allow_trailing_commas
-// = true, others default false).
 fn parse_package_json(
     source: &Source,
     log: &mut Log,
@@ -177,20 +144,10 @@ impl WorkspacePackageJSONCache {
             &buf[..abs_package_json_path.len()]
         };
 
-        // PORT NOTE: reshaped for borrowck — Zig `getOrPut` reserves a slot
-        // first and `remove`s on failure while still holding `entry.value_ptr`.
-        // Rust cannot hold the entry borrow across `self.map.remove`, so check
-        // membership up front and only insert into the map after a successful
-        // read+parse. Net map state is identical on every path.
         if self.map.contains_key(path) {
             return GetResult::Entry(self.map.get_mut(path).unwrap());
         }
 
-        // Zig: `allocator.dupeZ(u8, path)` — owned NUL-terminated copy reused
-        // both as the map key and the path handed to `File.toSource`. The
-        // returned `Source` *borrows* its `path` slices from this allocation,
-        // so it must outlive the cached `MapEntry` (stored as
-        // `value.path_storage` below).
         let key = bun_core::ZBox::from_bytes(path);
 
         // MOVE_DOWN: `bun.sys.File.toSource` lives in `bun_logger` (T1 → T2

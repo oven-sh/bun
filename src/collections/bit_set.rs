@@ -112,29 +112,10 @@ fn set_range_value_masks(masks: &mut [usize], range: Range, value: bool) {
 
 // ───────────────────────────── StaticBitSet ─────────────────────────────
 
-/// Returns the optimal static bit set type for the specified number
-/// of elements.  The returned type will perform no allocations,
-/// can be copied by value, and does not require deinitialization.
-/// Both possible implementations fulfill the same interface.
-///
-// TODO(port): Zig's `StaticBitSet(size)` returns `IntegerBitSet(size)` when
-// `size <= @bitSizeOf(usize)` and `ArrayBitSet(usize, size)` otherwise. Stable
-// Rust cannot select a struct definition from a const generic. Callers should
-// pick `IntegerBitSet<N>` or `ArrayBitSet<N>` directly; this alias resolves to
-// the array form (always correct, possibly one word larger than needed for
-// N <= 64).
 pub type StaticBitSet<const SIZE: usize> = IntegerBitSet<SIZE>; // TODO(b2): callers needing >64 bits use ArrayBitSet<SIZE, {num_masks_for(SIZE)}> directly
 
 // ───────────────────────────── IntegerBitSet ─────────────────────────────
 
-/// A bit set with static size, which is backed by a single integer.
-/// This set is good for sets with a small size, but may generate
-/// inefficient code for larger sets, especially in debug mode.
-///
-// TODO(port): Zig uses `std.meta.Int(.unsigned, size)` for an exact-width
-// backing integer (u0..u65535). Rust has no arbitrary-width ints; we back with
-// `usize` and rely on `SIZE <= usize::BITS`. Phase B may swap to a trait that
-// picks u8/u16/u32/u64/u128.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct IntegerBitSet<const SIZE: usize> {
@@ -381,10 +362,6 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
         result
     }
 
-    /// Iterates through the items in the set, according to the options.
-    /// The default options (.{}) will iterate indices of set bits in
-    /// ascending order.  Modifications to the underlying bit set may
-    /// or may not be observed by the iterator.
     pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(
         self,
     ) -> SingleWordIterator<SIZE, DIR_FWD> {
@@ -448,15 +425,6 @@ pub const fn num_masks_for(bit_length: usize) -> usize {
     bit_length.div_ceil(usize::BITS as usize)
 }
 
-/// A bit set with static size, which is backed by an array of usize.
-/// This set is good for sets with a larger size, but may use
-/// more bytes than necessary if your set is small.
-///
-// TODO(port): Zig is generic over `MaskIntType`; every in-tree caller uses
-// `usize`. Dropped the type parameter. Phase B can re-generify if needed.
-// TODO(port): `[usize; NUM_MASKS]` requires
-// `#![feature(generic_const_exprs)]`. Phase B may instead take NUM_MASKS as a
-// second const generic and assert `NUM_MASKS == num_masks_for(SIZE)`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ArrayBitSet<const SIZE: usize, const NUM_MASKS: usize> {
@@ -749,10 +717,6 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
         result
     }
 
-    /// Iterates through the items in the set, according to the options.
-    /// The default options (.{}) will iterate indices of set bits in
-    /// ascending order.  Modifications to the underlying bit set may
-    /// or may not be observed by the iterator.
     pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(
         &self,
     ) -> BitSetIterator<'_, KIND_SET, DIR_FWD> {
@@ -768,15 +732,6 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
 
 // ──────────────────────── DynamicBitSetUnmanaged ────────────────────────
 
-/// A bit set with runtime-known size, backed by an allocated slice
-/// of usize.  The allocator must be tracked externally by the user.
-///
-// TODO(port): the Zig type stores `masks: [*]MaskInt` where `masks[-1]` holds
-// the true allocation length (needed because Zig's allocator API requires the
-// original length on free). The Rust port keeps the same layout because
-// `List` constructs borrowed views into a shared buffer that must look like
-// freestanding `DynamicBitSetUnmanaged`s. Phase B may refactor to `Vec<usize>`
-// once `List` is reworked.
 pub struct DynamicBitSetUnmanaged {
     /// The number of valid items in this bit set
     pub bit_length: usize,
@@ -784,22 +739,10 @@ pub struct DynamicBitSetUnmanaged {
     /// The bit masks, ordered with lower indices first.
     /// Padding bits at the end must be zeroed.
     pub masks: *mut usize,
-    // This pointer is one usize after the actual allocation.
-    // That slot holds the size of the true allocation, which
-    // is needed by Zig's allocator interface in case a shrink
-    // fails.
 }
 
 const DYN_MASK_BITS: u32 = usize::BITS;
 
-// Never modified — the Zig comment about needing `static mut` was a Zig
-// limitation (no const-ptr → mut-ptr cast at comptime). All writes through
-// `self.masks` are guarded by `num_masks() > 0`, which is false for the empty
-// sentinel (bit_length == 0). Kept in a `RacyCell` (not `.rodata`) so that
-// forming a `*mut usize` to it remains a legally-mutable pointer target —
-// writing through a pointer derived from an immutable `static` would be UB
-// even if it never happens at runtime, and it lets `masks_slice_mut` form a
-// zero-length `&mut [usize]` without provenance hazards.
 static EMPTY_MASKS_DATA: bun_core::RacyCell<[usize; 2]> = bun_core::RacyCell::new([0, 0]);
 
 #[inline(always)]
@@ -840,11 +783,6 @@ impl DynamicBitSetUnmanaged {
         unsafe { slice::from_raw_parts(self.masks, n) }
     }
 
-    /// Borrow the mask words as an exclusive slice of length `num_masks(bit_length)`.
-    ///
-    /// Note: two `DynamicBitSetUnmanaged` values may share storage (see
-    /// `DynamicBitSetList::at`). Callers must not hold a `masks_slice_mut()`
-    /// borrow on one view while another aliasing view is read or written.
     #[inline(always)]
     pub fn masks_slice_mut(&mut self) -> &mut [usize] {
         let n = Self::num_masks(self.bit_length);
@@ -854,23 +792,11 @@ impl DynamicBitSetUnmanaged {
         unsafe { slice::from_raw_parts_mut(self.masks, n) }
     }
 
-    /// Raw pointer to the mask words. Use this (not `masks_slice{,_mut}`) when
-    /// `self` and another `DynamicBitSetUnmanaged` may point at the same
-    /// storage and both are accessed in the same operation — forming
-    /// overlapping `&mut [usize]` / `&[usize]` would be UB.
     #[inline(always)]
     pub fn masks_ptr(&self) -> *mut usize {
         self.masks
     }
 
-    /// `self.masks[i] = f(self.masks[i], other.masks[i])` for every mask word.
-    /// Centralises the binary set-op loop (`set_union` / `set_intersection` /
-    /// `set_exclude` / `toggle_set` / `copy_into`) behind a single audited
-    /// raw-pointer access. Raw pointers — not `masks_slice{,_mut}` — because
-    /// `other.masks` may alias `self.masks` when both are views from the same
-    /// `DynamicBitSetList`; forming overlapping `&mut [usize]` / `&[usize]`
-    /// would be UB. `f` receives copied `usize` values, so the per-index read
-    /// happens-before the write even when `src == dst`.
     #[inline(always)]
     fn zip_masks_raw(&mut self, other: &Self, mut f: impl FnMut(usize, usize) -> usize) {
         let num_masks = Self::num_masks(self.bit_length);
@@ -1162,19 +1088,11 @@ impl DynamicBitSetUnmanaged {
         self.masks_slice_mut()[num_masks - 1] &= last_item_mask;
     }
 
-    /// Performs a union of two bit sets, and stores the
-    /// result in the first one.  Bits in the result are
-    /// set if the corresponding bits were set in either input.
-    /// The two sets must both be the same bit_length.
     pub fn set_union(&mut self, other: &Self) {
         debug_assert!(other.bit_length == self.bit_length);
         self.zip_masks_raw(other, |a, b| a | b);
     }
 
-    /// Performs an intersection of two bit sets, and stores
-    /// the result in the first one.  Bits in the result are
-    /// set if the corresponding bits were set in both inputs.
-    /// The two sets must both be the same bit_length.
     pub fn set_intersection(&mut self, other: &Self) {
         debug_assert!(other.bit_length == self.bit_length);
         self.zip_masks_raw(other, |a, b| a & b);
@@ -1259,11 +1177,6 @@ impl DynamicBitSetUnmanaged {
         true
     }
 
-    /// Iterates through the items in the set, according to the options.
-    /// The default options (.{}) will iterate indices of set bits in
-    /// ascending order.  Modifications to the underlying bit set may
-    /// or may not be observed by the iterator.  Resizing the underlying
-    /// bit set invalidates the iterator.
     pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(
         &self,
     ) -> BitSetIterator<'_, KIND_SET, DIR_FWD> {
@@ -1280,21 +1193,6 @@ impl DynamicBitSetUnmanaged {
     }
 }
 
-/// Do not resize the bitsets!
-///
-/// Single buffer for multiple bitsets of equal length. Does not
-/// implement all methods of DynamicBitSetUnmanaged and should
-/// be used carefully.
-///
-/// `buf` is a raw heap allocation rather than `Box<[usize]>` because `at()` /
-/// `set()` / `set_union()` hand out and write through `*mut usize` views while
-/// only holding `&self`. With `Box<[usize]>`, the only way to reach the data
-/// from `&self` is `Deref` → `&[usize]` → `as_ptr()`, which yields a pointer
-/// with shared-read-only provenance — writing through it (as the old code did
-/// via `.cast_mut()`) is UB under Stacked Borrows. Owning the allocation as a
-/// raw pointer means the heap words are never covered by a `&`/`&mut`
-/// reference, so reads and writes through `at()`-derived pointers carry the
-/// original allocation's full read-write provenance.
 pub struct DynamicBitSetList {
     buf: ptr::NonNull<usize>,
     buf_len: usize,
@@ -1336,15 +1234,6 @@ impl DynamicBitSetList {
         })
     }
 
-    /// Borrow the `i`th bitset as a non-owning `DynamicBitSetUnmanaged` view.
-    ///
-    /// The returned view's `masks` pointer aliases `self.buf`. It is a raw
-    /// pointer with no lifetime, so the borrow checker will **not** prevent
-    /// use-after-free: the caller must ensure `self` is not dropped (and `buf`
-    /// not reallocated — impossible today, no resize API) while the view is
-    /// live. All current callers (`hoisted_install`, `isolated_install`,
-    /// `PackageInstaller::can_run_scripts`) satisfy this by keeping the list
-    /// alive for the view's entire use. The view must not be `deinit`ed.
     pub fn at(&self, i: usize) -> core::mem::ManuallyDrop<DynamicBitSetUnmanaged> {
         debug_assert!(i < self.n, "DynamicBitSetList::at index out of bounds");
         let num_masks = DynamicBitSetUnmanaged::num_masks(self.bit_length);
@@ -1443,13 +1332,6 @@ pub enum AutoBitSet {
     Dynamic(DynamicBitSetUnmanaged),
 }
 
-// ─── two-arm forward helper ────────────────────────────────────────────
-// Zig had `switch (this.*) { inline else => |*b| b.method() }` for the
-// symmetric arms (setAll/count/findFirstSet/Iterator.next). The Rust port
-// regressed those to open-coded matches; this macro restores the collapse
-// and is applied to every method whose Static/Dynamic arms are textually
-// identical. Asymmetric arms (clone, raw_bytes, has_intersection, Drop)
-// stay open-coded — they genuinely differ.
 macro_rules! auto_forward {
     ($self:expr, |$b:ident| $body:expr) => {
         match $self {
@@ -1549,10 +1431,6 @@ impl AutoBitSet {
     }
 }
 
-// Both enum arms already produce the SAME concrete `BitSetIterator<'a,K,D>`
-// (see ArrayBitSet::iterator / DynamicBitSetUnmanaged::iterator), so the
-// wrapper enum was a no-op layer of indirection. Keep the public name as a
-// type alias for any external callers.
 pub(crate) type AutoBitSetIterator<'a, const KIND_SET: bool, const DIR_FWD: bool> =
     BitSetIterator<'a, KIND_SET, DIR_FWD>;
 
@@ -1567,13 +1445,6 @@ impl Drop for AutoBitSet {
 
 // ───────────────────────────── DynamicBitSet ─────────────────────────────
 
-/// A bit set with runtime-known size, backed by an allocated slice
-/// of usize.  Thin wrapper around DynamicBitSetUnmanaged which keeps
-/// track of the allocator instance.
-///
-// TODO(port): in Rust the managed/unmanaged split disappears (global
-// allocator). This wrapper is kept for diff parity; Phase B may collapse it
-// into `DynamicBitSetUnmanaged` and re-export under both names.
 #[derive(Default)]
 pub struct DynamicBitSet {
     /// The number of valid items in this bit set
@@ -1688,18 +1559,10 @@ impl DynamicBitSet {
         self.unmanaged.toggle_all();
     }
 
-    /// Performs a union of two bit sets, and stores the
-    /// result in the first one.  Bits in the result are
-    /// set if the corresponding bits were set in either input.
-    /// The two sets must both be the same bit_length.
     pub fn set_union(&mut self, other: &Self) {
         self.unmanaged.set_union(&other.unmanaged);
     }
 
-    /// Performs an intersection of two bit sets, and stores
-    /// the result in the first one.  Bits in the result are
-    /// set if the corresponding bits were set in both inputs.
-    /// The two sets must both be the same bit_length.
     pub fn set_intersection(&mut self, other: &Self) {
         self.unmanaged.set_intersection(&other.unmanaged);
     }
@@ -1722,11 +1585,6 @@ impl DynamicBitSet {
         self.unmanaged.eql(&other.unmanaged)
     }
 
-    /// Iterates through the items in the set, according to the options.
-    /// The default options (.{}) will iterate indices of set bits in
-    /// ascending order.  Modifications to the underlying bit set may
-    /// or may not be observed by the iterator.  Resizing the underlying
-    /// bit set invalidates the iterator.
     pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(
         &self,
     ) -> BitSetIterator<'_, KIND_SET, DIR_FWD> {
@@ -1736,10 +1594,6 @@ impl DynamicBitSet {
 
 // ───────────────────────────── IteratorOptions ─────────────────────────────
 
-/// Options for configuring an iterator over a bit set
-// TODO(port): Zig passes a `comptime options: IteratorOptions` struct. Stable
-// Rust adt_const_params is unstable; split into two const-generic enum params
-// (`KIND`, `DIRECTION`) at every callsite.
 #[derive(Clone, Copy, Default)]
 pub struct IteratorOptions {
     /// determines which bits should be visited
@@ -1835,10 +1689,6 @@ impl<'a, const KIND_SET: bool, const DIR_FWD: bool> BitSetIterator<'a, KIND_SET,
         }
     }
 
-    // Load the next word.  Don't call this if there
-    // isn't a next word.  If the next word is the
-    // last word, mask off the padding bits so we
-    // don't visit them.
     #[inline(always)]
     fn next_word<const IS_FIRST_WORD: bool>(&mut self) {
         let mut word = if DIR_FWD {

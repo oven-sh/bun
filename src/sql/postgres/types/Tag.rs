@@ -81,11 +81,6 @@ impl Tag {
     // pub const tid: Tag = Tag(27);
     pub const xid: Tag = Tag(28);
     pub const cid: Tag = Tag(29);
-    // pub const oidvector: Tag = Tag(30);
-    // pub const pg_type: Tag = Tag(71);
-    // pub const pg_attribute: Tag = Tag(75);
-    // pub const pg_proc: Tag = Tag(81);
-    // pub const pg_class: Tag = Tag(83);
     pub const json: Tag = Tag(114);
     pub const xml: Tag = Tag(142);
     pub const point: Tag = Tag(600);
@@ -131,11 +126,6 @@ impl Tag {
     pub const tid_array: Tag = Tag(1010);
     pub const xid_array: Tag = Tag(1011);
     pub const cid_array: Tag = Tag(1012);
-    // pub const oidvector_array: Tag = Tag(1013);
-    // pub const pg_type_array: Tag = Tag(210);
-    // pub const pg_attribute_array: Tag = Tag(270);
-    // pub const pg_proc_array: Tag = Tag(272);
-    // pub const pg_class_array: Tag = Tag(273);
     pub const json_array: Tag = Tag(199);
     pub const xml_array: Tag = Tag(143);
     pub const point_array: Tag = Tag(1017);
@@ -297,41 +287,8 @@ impl Tag {
 
     // Zig: pub const toJSTypedArrayType / toJS / fromJS = @import("../../../sql_jsc/...").*;
     // Deleted per PORTING.md — these become extension-trait methods in `bun_sql_jsc`.
-
-    // PORT NOTE: `byteArrayType` / `pgArrayType` / `PostgresBinarySingleDimensionArray`
-    // are not ported. The Zig version overlaid an `extern struct` of i32 fields onto a
-    // `[]const u8` wire buffer via `@ptrCast(@alignCast(@constCast(...)))` and byte-swapped
-    // in place. In Rust that is UB on two axes: (1) the recv buffer carries no 4-byte
-    // alignment guarantee, and (2) writing through a pointer derived from `&[u8]` violates
-    // Stacked Borrows / lets LLVM elide the writes via the `readonly` parameter attribute
-    // (observed: release-asan left `len` un-swapped → 192MB OOB memcpy in SQLClient.cpp).
-    // The sole caller — `bun_sql_jsc::postgres::DataCell::from_bytes_typed_array` — instead
-    // does explicit unaligned field reads + copies into an owned buffer. See that function
-    // for the wire layout and the original `.int4_array => i32` / `.float4_array => f32`
-    // element-type mapping.
 }
 
-// Zig: `fn PostgresBinarySingleDimensionArray(comptime T: type) type { return extern struct { ... } }`
-// Not ported — see PORT NOTE on `Tag` above. Kept here only as documentation of the
-// wire header shape the Zig code overlaid:
-//
-//   struct array_int4 {
-//     int4_t ndim;        /* Number of dimensions */
-//     int4_t _ign;        /* offset for data, removed by libpq */
-//     Oid    elemtype;    /* type of element in the array */
-//     /* First dimension */
-//     int4_t size;        /* Number of elements */
-//     int4_t index;       /* Index of first element */
-//     int4_t first_value; /* Beginning of integer data */
-//   };
-
-/// `@bitCast(@byteSwap(@as(Int, @bitCast(val))))` — wire-order byte swap for
-/// the element types the Zig `PostgresBinarySingleDimensionArray` was instantiated
-/// with (`i32` / `f32`; see Zig `byteArrayType`). Used by
-/// `bun_sql_jsc::postgres::DataCell::from_bytes_typed_array`. Replaces the old
-/// generic `byte_swap_same_size` `transmute_copy` shim with safe
-/// `to_bits`/`from_bits`, and the per-element `ptr::{read,write}_unaligned`
-/// casts with safe `from_ne_bytes`/`to_ne_bytes` slice round-trips.
 pub trait WireByteSwap: Copy {
     fn wire_byte_swap(self) -> Self;
     /// Safe replacement for `ptr::read_unaligned(bytes.as_ptr().cast::<Self>())`:

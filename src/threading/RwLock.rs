@@ -33,14 +33,6 @@ struct RawRwLock {
     semaphore: Semaphore,
 }
 
-// Bit layout of `state` (matches Zig exactly):
-//
-//   bit 0                : IS_WRITING — a writer holds the lock
-//   bits 1..=COUNT_BITS  : pending-writer count (WRITER_MASK)
-//   bits COUNT_BITS+1..  : active-reader  count (READER_MASK)
-//
-// `COUNT_BITS` = ⌊(usize::BITS − 1) / 2⌋ so both counts fit side-by-side
-// alongside the IS_WRITING bit (31 each on 64-bit, 15 each on 32-bit).
 const COUNT_BITS: u32 = (usize::BITS - 1) / 2;
 const COUNT_MAX: usize = (1usize << COUNT_BITS) - 1;
 
@@ -238,11 +230,6 @@ impl<T> RwLock<T> {
     }
 }
 
-/// RAII shared-read guard. `Deref<Target = T>` only.
-///
-/// `!Send` to match `parking_lot` and because the write-side guard must be
-/// `!Send` (Darwin `os_unfair_lock` requires unlock on the locking thread);
-/// keeping both guards `!Send` avoids surprising asymmetry.
 pub struct RwLockReadGuard<'a, T> {
     lock: &'a RwLock<T>,
     _not_send: PhantomData<*const ()>,
@@ -264,10 +251,6 @@ impl<'a, T> Drop for RwLockReadGuard<'a, T> {
     }
 }
 
-/// RAII exclusive-write guard. `Deref` + `DerefMut`.
-///
-/// `!Send`: dropping on another thread would call `Mutex::unlock()` off the
-/// locking thread, which Darwin `os_unfair_lock` / Windows `SRWLOCK` forbid.
 pub struct RwLockWriteGuard<'a, T> {
     lock: &'a RwLock<T>,
     _not_send: PhantomData<*const ()>,

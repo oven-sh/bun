@@ -6,14 +6,6 @@
 //! chainable mutators, `ConcurrentPromiseTask` plumbing — is re-exported as
 //! the public surface of this module.
 
-// ─── codec dispatch surface ──────────────────────────────────────────────────
-//
-// `codecs.rs` owns the shared `Decoded`/`Encoded`/`Error`/`DecodeHint`/
-// `EncodeOptions` shapes plus the format-agnostic dispatch (`decode`, `encode`,
-// `resize`, `Filter`, `Format`). Per-format files (`codec_*.rs`), the platform
-// backends, and `Image.rs` all import via `super::codecs` so there is exactly
-// one `codecs::Error` type at every boundary.
-
 #[path = "codecs.rs"]
 pub mod codecs;
 
@@ -45,15 +37,6 @@ pub mod exif;
 pub mod quantize;
 #[path = "thumbhash.rs"]
 pub mod thumbhash;
-
-// ─── JS-facing `Image` class + pipeline task ─────────────────────────────────
-//
-// `Image.rs` owns the `#[bun_jsc::JsClass]`-derived `Image` payload plus the
-// pipeline/task state types. Re-exported here so `crate::image::Image` is the
-// JsClass-bearing struct (Body.rs / Blob.rs downcast to it).
-//
-// `pub` so generated_classes.rs can re-export `crate::image::image_body::Image`
-// directly — codegen addresses the defining module, not the flattened re-export.
 
 #[path = "Image.rs"]
 pub mod image_body;

@@ -27,11 +27,6 @@ pub struct Cmd {
     pub redirection_fd: Option<*mut CowFd>,
     pub exec: Exec,
     pub exit_code: Option<ExitCode>,
-    /// PORT NOTE: in Zig this guarded the `spawn_arena` (an `ArenaAllocator`
-    /// holding argv/env scratch). The Rust port heap-allocates argv as
-    /// `Vec<Vec<u8>>` so there is no arena to free, but the flag is kept to
-    /// preserve `bufferedOutputClose`'s control-flow split (post-spawn vs
-    /// pre-spawn completion).
     pub spawn_arena_freed: bool,
 }
 
@@ -60,11 +55,6 @@ pub enum Exec {
 }
 
 impl Cmd {
-    /// Borrow the AST node this `Cmd` was built from.
-    ///
-    /// `node` is a [`BackRef`](bun_ptr::BackRef) into the parsed-script arena,
-    /// which is owned by the `Interpreter` and outlives every `Cmd` slot (the
-    /// arena is dropped only in `Interpreter::deinit`).
     #[inline]
     pub fn ast_node(&self) -> &ast::Cmd {
         self.node.get()
@@ -75,22 +65,10 @@ impl Cmd {
 pub struct SubprocExec {
     pub child: *mut ShellSubprocess,
     pub buffered_closed: BufferedIoClosed,
-    /// NodeId-arena backrefs so the legacy `&mut self` subprocess callbacks
-    /// (`buffered_output_close` / `on_exit`) can hand a [`Yield`] back to the
-    /// trampoline. The Zig version called `this.next().run()` directly; here
-    /// the `Cmd` lives inside `interp.nodes`, so we stash the indices and
-    /// return `Yield::Next(this_id)` for the caller (`PipeReader::run_yield`)
-    /// to drive.
     pub interp: *mut Interpreter,
     pub this_id: NodeId,
 }
 
-/// Spec: Cmd.zig `BufferedIoClosed`.
-///
-/// Tracks which subprocess stdio pipes are still open. Each `Option` is `None`
-/// if that fd was *not* piped (e.g. inherited / fd-backed), so it never gates
-/// completion. `Some(state)` means it was piped and must reach `Closed` before
-/// [`Cmd::has_finished`] returns true.
 #[derive(Default)]
 pub struct BufferedIoClosed {
     pub stdin: Option<bool>,
@@ -169,13 +147,6 @@ impl BufferedIoClosed {
         self.stdin = Some(true);
     }
 
-    /// Spec: `BufferedIoClosed.close` `.stdout`/`.stderr` arms.
-    ///
-    /// `readable` is the subprocess's `stdout`/`stderr` `Readable`; if it was
-    /// a pipe its buffered bytes are taken (ownership moves into
-    /// `state.Closed`) and, if the shell-side IO is `.pipe` and the AST
-    /// redirect didn't send this stream elsewhere, also tee'd into the
-    /// command-substitution aggregate buffer.
     fn close_out(
         slot: &mut Option<BufferedIoState>,
         readable: &mut Readable,
@@ -379,15 +350,6 @@ impl Cmd {
                 CmdState::ExpandingArgs { ref mut idx } => {
                     *idx += 1;
                     let new_idx = *idx;
-                    // Spec (Cmd.zig childDone 400-409): when the sole
-                    // `name_and_args` atom is a `.simple == .cmd_subst`, stash
-                    // `e.out_exit_code` so an empty-argv command consisting
-                    // only of `$(cmd)` propagates `cmd`'s exit code via the
-                    // empty-argv0 branch in `transition_to_exec` (POSIX: "if
-                    // there is no command name, but the command contained a
-                    // command substitution, the command shall complete with
-                    // the exit status of the last command substitution
-                    // performed").
                     {
                         let n = interp.as_cmd(this).ast_node();
                         if new_idx == 1
@@ -404,10 +366,6 @@ impl Cmd {
                     // argv words (glob/IFS); preserved here verbatim.
                     let me = interp.as_cmd_mut(this);
                     if out.bounds.is_empty() {
-                        // Spec (Expansion.zig pushCurrentOut 652): an empty
-                        // expansion that did *not* see a `""` literal pushes
-                        // no arg at all — `$unset` vanishes, only `""` yields
-                        // an empty argv word.
                         if !out.buf.is_empty() || out.has_quoted_empty {
                             me.args.push(out.buf);
                         }
@@ -422,10 +380,6 @@ impl Cmd {
                 }
                 CmdState::ExpandingRedirect { ref mut idx } => {
                     *idx += 1;
-                    // Spec (Expansion.zig pushCurrentOut): NUL-terminate a
-                    // non-empty result; leave an empty expansion empty so the
-                    // ambiguous-redirect check in `Builtin::init_redirections`
-                    // still fires.
                     let mut buf = out.buf;
                     if !buf.is_empty() && buf.last() != Some(&0) {
                         buf.push(0);
@@ -479,22 +433,10 @@ impl Cmd {
             return Builtin::start(interp, this);
         }
 
-        // ── Subprocess path (Spec: Cmd.zig `initSubproc` lines 487-546) ────
-        // PORT NOTE: `SpawnArgs` borrows only the local `arena` (its
-        // `interp`/`argv` fields are raw pointers), so `interp: &mut
-        // Interpreter` is freely re-borrowable at every step before
-        // `spawn_async`. Re-enter the arena via `interp.as_cmd{,_mut}(this)`
-        // for each short-lived access instead of caching raw `*mut Cmd`.
         let event_loop = interp.event_loop;
 
         let arena = bun_alloc::Arena::new();
         let mut spawn_args = SpawnArgs::default::<false>(&arena, interp.as_ctx_ptr(), event_loop);
-        // Cache the raw `*mut ShellExecEnv` and deref it directly so the
-        // `cwd: &[u8]` stored in `spawn_args` is decoupled from any borrow of
-        // `*interp` — `Base::shell()` would tie the slice's lifetime to
-        // `&interp`, blocking every `interp.as_cmd_mut(...)` below for the
-        // life of `spawn_args`. The env is a separate heap allocation that
-        // outlives this Cmd, so the slice remains valid across reborrows.
         let shell_ptr: *mut ShellExecEnv = interp.as_cmd(this).base.shell;
         // SAFETY: `shell_ptr` is the live env owned by this Cmd's scope chain.
         spawn_args.cwd = unsafe { &*shell_ptr }.cwd();
@@ -523,10 +465,6 @@ impl Cmd {
                 format_args!("bun: command not found: {}\n", bstr::BStr::new(&first_arg)),
             );
         };
-        // CreateProcessW runs `.bat`/`.cmd` files through `cmd.exe`, which
-        // re-tokenizes the command line with shell metacharacter rules
-        // (BatBadBut). libuv's MSVCRT-style quoting cannot make that safe, so
-        // reject arguments that cmd.exe would reinterpret.
         if cfg!(windows) && bun_which::is_batch_file(&resolved) {
             let unsafe_arg: Option<Vec<u8>> = interp
                 .as_cmd(this)
@@ -584,17 +522,6 @@ impl Cmd {
             }
         }
 
-        // Stage the exec slot *before* spawning so PipeReader / process-exit
-        // callbacks (which deref `cmd_parent.exec`) see a populated `Subproc`
-        // with the correct `child` once `spawn_async` writes through
-        // `out_subproc`. `interp` is left null until `spawn_async` and the
-        // `did_exit_immediately` handling have returned: a synchronous
-        // `Cmd::on_exit` reached via the process exit handler would otherwise
-        // drive the trampoline (`Yield::run(&*interp)`) while this frame
-        // still holds `&Interpreter`, tearing the Cmd down (and freeing
-        // `child`) underneath the live `subproc` borrow. With `interp` null,
-        // `on_exit` records `exit_code`/`state = Done` and returns; we resume
-        // via the Yield we hand back below.
         let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
         let buffered_closed = BufferedIoClosed::from_stdio(&spawn_args.stdio);
         interp.as_cmd_mut(this).exec = Exec::Subproc(Box::new(SubprocExec {
@@ -604,17 +531,6 @@ impl Cmd {
             this_id: this,
         }));
 
-        // Derive the raw backrefs `spawn_async` needs from a single
-        // short-lived `&mut Cmd` borrow, then let it end before the call so no
-        // `&Interpreter` is live across the re-entrant spawn. `child_out`
-        // points into the `Box<SubprocExec>` heap allocation, which is
-        // address-stable for the lifetime of the Cmd (only dropped in
-        // `deinit`). argv pointers borrow `cmd.args[i]` storage, which is not
-        // reallocated between here and `spawn_process`.
-        //
-        // `cmd_parent` is `(interp, NodeId)` rather than the spec's `*ShellCmd`
-        // — the Cmd lives inline in `interp.nodes: Vec<Node>`, and a raw
-        // `*mut Cmd` would dangle on the next `alloc_node` reallocation.
         let child_out: *mut *mut ShellSubprocess = {
             let cmd = interp.as_cmd_mut(this);
             spawn_args.argv.reserve_exact(cmd.args.len() + 1);
@@ -636,11 +552,6 @@ impl Cmd {
         };
 
         let mut did_exit_immediately = false;
-        // `spawn_async` is re-entrant: `watch()`/`read_all()` may fire
-        // `on_process_exit` / `buffered_output_close` which reach back into
-        // `interp` via the raw backrefs on `SubprocExec`. By NLL the `interp`
-        // borrow above is dead here, so those callbacks do not alias a live
-        // `&mut`.
         let spawn_result = ShellSubprocess::spawn_async(
             event_loop,
             &mut shellio,
@@ -685,11 +596,6 @@ impl Cmd {
             }
         }
 
-        // Publish the interpreter backref now that all synchronous spawn-time
-        // callbacks have returned, so subsequent async pipe-close /
-        // process-exit notifications can drive the trampoline themselves. If a
-        // synchronous callback already finished the command (`state = Done`),
-        // resume here instead — the callback couldn't, with `interp` null.
         let me = interp.as_cmd_mut(this);
         if let Exec::Subproc(exec) = &mut me.exec {
             exec.interp = interp_ptr;
@@ -700,10 +606,6 @@ impl Cmd {
         Yield::suspended()
     }
 
-    /// Spec: Cmd.zig `initRedirections` (lines 548-640). Applies the AST
-    /// redirect (`> file`, `< ${blob}`, `2>&1`, …) onto the subprocess stdio
-    /// triple. Returns `Ok(Some(yield))` when the redirect failed and a
-    /// failing-error write was queued; `Err` when a JS exception was raised.
     fn init_subproc_redirections(
         interp: &Interpreter,
         this: NodeId,
@@ -883,10 +785,6 @@ impl Cmd {
         Yield::Next(this)
     }
 
-    /// Spec: interpreter.zig `ShellAsyncSubprocessDone.runFromMainThread` body.
-    /// Main-thread re-entry for a subprocess exit posted from off-thread —
-    /// equivalent to [`Self::on_exec_done`] but drives the trampoline itself
-    /// since the dispatcher discards the [`Yield`].
     pub fn on_subprocess_done(interp: &Interpreter, this: NodeId, exit_code: ExitCode) {
         Self::on_exec_done(interp, this, exit_code).run(interp);
     }
@@ -922,21 +820,8 @@ impl Cmd {
             // subprocess box was returned. Nothing to tear down.
             Exec::Subproc(_) => {}
         }
-        // PORT NOTE: spec frees `spawn_arena` here unless `spawn_arena_freed`.
-        // Argv/env are heap-owned `Vec`s in the port; nothing arena-backed to
-        // free.
-        // `base.shell` is borrowed (or, when parent is Pipeline, freed by
-        // `Pipeline::child_done` before this runs) — never freed here.
         me.base.end_scope();
     }
-
-    // ── Subprocess callbacks (legacy `*Cmd` backref shape) ────────────────
-    // Spec: Cmd.zig `bufferedInputClose` / `bufferedOutputClose` / `onExit`.
-    // `ShellSubprocess` / `PipeReader` hold a `*mut Cmd` backref and call
-    // these via `&mut self`. The NodeId-arena port stashes `(interp, this_id)`
-    // on `SubprocExec` so the resulting `Yield` can be driven by the caller's
-    // `PipeReader::run_yield` without aliasing `&Interpreter` against
-    // `&mut self`.
 
     /// Spec: Cmd.zig `hasFinished`.
     pub fn has_finished(&self) -> bool {
@@ -969,15 +854,6 @@ impl Cmd {
             OutKind::Stderr => self.buffered_output_close_stderr(err),
         }
         if self.has_finished() {
-            // Spec: `if (!spawn_arena_freed)` enqueues a
-            // `ShellAsyncSubprocessDone` task; else returns
-            // `parent.childDone(this, exit_code)` directly. Both paths land in
-            // `Cmd::next` → `CmdState::Done` → `interp.child_done(...)`. In
-            // the NodeId-arena port we set `state = Done` and hand the Yield
-            // back to the caller (`PipeReader::run_yield`), which drives the
-            // trampoline with the `*mut Interpreter` it already holds —
-            // semantically the `else` branch (post-spawn `spawn_arena_freed`
-            // is always true by the time a pipe closes).
             self.state = CmdState::Done;
             let this_id = match &self.exec {
                 Exec::Subproc(sub) => sub.this_id,
@@ -985,11 +861,6 @@ impl Cmd {
                 // through `Builtin::done` → `on_exec_done`.
                 _ => return Yield::suspended(),
             };
-            // PORT NOTE: the `!spawn_arena_freed` arm
-            // (`ShellAsyncSubprocessDone::enqueue`) is unreachable here in
-            // practice — `initSubproc` sets `spawn_arena_freed = true` before
-            // any pipe can close. Kept as the same `Yield::Next` since the
-            // task body (`runFromMainThread`) is identical.
             let _ = self.spawn_arena_freed;
             return Yield::Next(this_id);
         }

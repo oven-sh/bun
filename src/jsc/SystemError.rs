@@ -38,10 +38,6 @@ impl Default for SystemError {
     }
 }
 
-/// Reshape the T1 `bun_sys::SystemError` (non-`#[repr(C)]`, different field
-/// order) into the `#[repr(C)]` extern layout C++ reads. In Zig there is one
-/// `jsc.SystemError`; the Rust port split data (T1) from the JSC bridge (T6) —
-/// this `From` is the canonical layering seam (see PORTING.md §_jsc bridge).
 impl From<bun_sys::SystemError> for SystemError {
     fn from(e: bun_sys::SystemError) -> Self {
         Self {
@@ -96,10 +92,6 @@ impl SystemError {
         self.dest.ref_();
     }
 
-    /// Bitwise-copy + bump every `bun_core::String` ref. Mirrors Zig
-    /// `var v = this.*; v.ref();` (used by `Body.ValueError.dupe`).
-    /// `bun_core::String` has no `Clone` impl (intrusive WTF refcount), so
-    /// `#[derive(Clone)]` is unavailable; this is the manual equivalent.
     pub fn dupe(&self) -> SystemError {
         // SAFETY: `SystemError` is `#[repr(C)]` and every field is either `c_int`
         // (trivially copyable) or `bun_core::String` — a `#[repr(C)]` smart-ptr
@@ -118,10 +110,6 @@ impl SystemError {
         result
     }
 
-    /// Like `to_error_instance` but populates the error's stack trace with async
-    /// frames from the given promise's await chain. Use when creating an error
-    /// from native code at the top of the event loop (threadpool callback) to
-    /// reject a promise — otherwise the error will have an empty stack.
     pub fn to_error_instance_with_async_stack(
         &self,
         global: &JSGlobalObject,
@@ -132,25 +120,6 @@ impl SystemError {
         value
     }
 
-    /// This constructs the ERR_SYSTEM_ERROR error object, which has an `info`
-    /// property containing the details of the system error:
-    ///
-    /// SystemError [ERR_SYSTEM_ERROR]: A system error occurred: {syscall} returned {errno} ({message})
-    /// {
-    ///     name: "ERR_SYSTEM_ERROR",
-    ///     info: {
-    ///         errno: -{errno},
-    ///         code: {code},        // string
-    ///         message: {message},  // string
-    ///         syscall: {syscall},  // string
-    ///     },
-    ///     errno: -{errno},
-    ///     syscall: {syscall},
-    /// }
-    ///
-    /// Before using this function, consider if the Node.js API it is
-    /// implementing follows this convention. It is exclusively used
-    /// to match the error code that `node:os` throws.
     pub fn to_error_instance_with_info_object(&self, global: &JSGlobalObject) -> JSValue {
         // Zig: defer this.deref();
         let result = SystemError__toErrorInstanceWithInfoObject(self, global);
@@ -159,13 +128,6 @@ impl SystemError {
     }
 }
 
-/// `uws.us_bun_verify_error_t.toJS` — wrap a uSockets handshake-verify error
-/// (`{code,reason}` C strings) as a JS `SystemError`.
-///
-/// LAYERING: lives here (not `bun_runtime::socket::uws_jsc`) so both
-/// `bun_runtime` and `bun_sql_jsc` import the single canonical body — both
-/// crates already depend on `bun_jsc` + `bun_uws`, and the body touches
-/// nothing higher-tier. Spec: `src/runtime/socket/uws_jsc.zig`.
 pub fn verify_error_to_js(
     err: &bun_uws::us_bun_verify_error_t,
     global: &JSGlobalObject,
@@ -184,10 +146,6 @@ pub fn verify_error_to_js(
 
 impl fmt::Display for SystemError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // PORT NOTE: bun.Output.prettyFmt is a comptime color-tag → ANSI transformer that
-        // takes (fmt_str, comptime enable_colors) and returns a comptime-expanded format
-        // string; `bun_core::pretty_fmt!` is the Rust equivalent. The runtime bool → comptime
-        // dispatch (`switch (b) { inline else => |c| ... }`) is preserved as an if/else.
         if !self.path.is_empty() {
             // TODO: remove this hardcoding
             if bun_core::Output::enable_ansi_colors_stderr() {

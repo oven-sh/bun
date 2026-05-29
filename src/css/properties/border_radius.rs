@@ -11,11 +11,6 @@ use crate::css_values::rect::Rect;
 use crate::css_values::size::Size2D;
 use bun_alloc::ArenaVecExt as _;
 
-/// A value for the [border-radius](https://www.w3.org/TR/css-backgrounds-3/#border-radius) property.
-// PORT NOTE: `Size2D<T>` carries no `Clone`/`PartialEq` derives (it exposes
-// inherent `deep_clone`/`eql` instead, matching the Zig protocol surface), so
-// `BorderRadius` can't `#[derive]` them either. The handler below uses
-// `Size2D::deep_clone`/`Size2D::eql` directly.
 pub struct BorderRadius {
     /// The x and y radius values for the top left corner.
     pub top_left: Size2D<LengthPercentage>,
@@ -100,10 +95,6 @@ impl BorderRadius {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // PORT NOTE: Zig built `Rect(*const LengthPercentage)` and reused
-        // `Rect.toCss`. `Rect::<&T>::to_css` would need `&T: ToCss + PartialEq`;
-        // inline the 4-side serialization to avoid that bound (logic is identical
-        // to `values::rect::Rect::to_css`).
         #[inline]
         fn write_rect(
             top: &LengthPercentage,
@@ -178,10 +169,6 @@ pub struct BorderRadiusHandler {
 // token-level field/variant access. Rust has no field-by-name reflection, so these are
 // macro_rules! that paste the field ident and the corresponding Property variant ident.
 
-// PORT NOTE: `Size2D::is_compatible` is bounded on `T: values::protocol::IsCompatible`,
-// which `LengthPercentage` (= `DimensionPercentage<LengthValue>`) does not yet impl.
-// Hand-roll the per-component check via `LengthPercentage::is_compatible` (inherent
-// method) until that protocol impl lands.
 #[inline]
 fn size2d_lp_is_compatible(
     val: &Size2D<LengthPercentage>,

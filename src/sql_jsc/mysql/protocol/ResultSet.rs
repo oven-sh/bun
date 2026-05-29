@@ -249,10 +249,6 @@ impl<'a> Row<'a> {
                     ..SQLDataCell::default()
                 };
             }
-            // NEWDECIMAL is always sent as an ASCII decimal string regardless of the
-            // column's BINARY flag / charset. Computed decimals (SUM/AVG/arithmetic/CAST)
-            // carry the BINARY flag and charset 63, so the catch-all arm's binary-charset
-            // heuristic would wrongly return them as a Buffer.
             MYSQL_TYPE_NEWDECIMAL => {
                 let slice = value.slice();
                 *cell = SQLDataCell {
@@ -284,10 +280,6 @@ impl<'a> Row<'a> {
                 }
             }
             _ => {
-                // Only treat as binary if character_set indicates the binary pseudo-charset.
-                // The BINARY flag alone is insufficient because VARCHAR/CHAR columns
-                // with _bin collations (e.g., utf8mb4_bin) also have the BINARY flag set,
-                // but should return strings, not buffers.
                 if column.flags.contains(ColumnFlags::BINARY)
                     && column.character_set == decode_binary_value::BINARY_CHARSET
                 {
@@ -329,10 +321,6 @@ impl<'a> Row<'a> {
         for (index, value) in cells.iter_mut().enumerate() {
             if let Some(result) = decode_length_int(reader.peek()) {
                 let column = &self.columns[index];
-                // The NULL marker is the single literal byte 0xfb. A 251-byte
-                // value is length-encoded as `0xfc 0xfb 0x00` and also decodes
-                // to value 251, so the marker must be distinguished by its
-                // 1-byte encoding or row decoding desynchronizes.
                 if result.bytes_read == 1 && result.value == 0xfb {
                     // NULL value
                     reader.skip(result.bytes_read);

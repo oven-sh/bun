@@ -27,10 +27,6 @@ pub(crate) const S_ATTR_NO_DEAD_STRIP: u32 = 0x1000_0000;
 
 pub(crate) const LC_REQ_DYLD: u32 = 0x8000_0000;
 
-/// Zig `std.macho.LC` is a non-exhaustive `enum(u32)`. On-disk load commands
-/// can carry arbitrary tag values, so model it as bare `u32` constants instead
-/// of a Rust `enum` (which would make `read_unaligned` of unknown discriminants
-/// instant UB).
 pub mod LC {
     use super::LC_REQ_DYLD;
     pub use bun_sys::macho::LC_SEGMENT_64 as SEGMENT_64;

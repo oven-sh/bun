@@ -6,41 +6,6 @@ use crate::args::ArgIter;
 use crate::streaming::{self, StreamingClap};
 use crate::{Names, Param, ParseOptions, Values};
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Compile-time conversion (Zig parity)
-//
-// Zig's `ComptimeClap(Id, params)` is a comptime type-generator: it iterates
-// `params` *at comptime* to (a) re-index every param's `id` to its slot within
-// its category (flag / single / multi) and (b) emit a struct with fixed-size
-// array fields. `findParam` is `inline for`, so every `args.flag("--foo")`
-// compiles to a constant index — zero runtime cost.
-//
-// An earlier draft of this port did all of this at runtime: `convert_params` heap-allocated
-// a `Vec<Param<usize>>` on every CLI start, and `find_param` linear-scanned it
-// for every `flag()`/`option()` lookup (~190 lookups × ~100 params on the
-// `bun run` path). perf put this at ~0.25 % of `bun --version` cycles vs ~0 %
-// in Zig.
-//
-// This module restores the comptime semantics on stable Rust:
-//
-//   * `count_flags` / `count_single` / `count_multi` / `convert_params_array`
-//     / `find_param_index` are all `const fn`, so a param table declared with
-//     `concat_params!` can be converted to a `static [Param<usize>; N]` and a
-//     name lookup can be folded to a constant via `const { find_param_index(..) }`.
-//
-//   * `comptime_table!` (in `lib.rs`) packages the const-fn output as a
-//     `&'static ConvertedTable` — the Rust analogue of the Zig comptime
-//     `converted_params` const baked into the generated type.
-//
-//   * Every per-subcommand table in `runtime/cli/Arguments.rs` is now a
-//     `pub static *_TABLE: &ConvertedTable = comptime_table!(*_PARAMS)`, and
-//     `Arguments::parse` enters via `clap::parse_with_table`, so the startup
-//     hot path (`bun --version`, `bun run …`) never touches the heap-backed
-//     `for_params` / `build` / `Mutex` registry below. That path is retained
-//     only for the cold non-startup callers (`bun create`, `bun install`)
-//     that still pass a raw `&'static [Param<Id>]`.
-// ─────────────────────────────────────────────────────────────────────────────
-
 use bun_core::strings::const_bytes_eq as bytes_eq;
 
 #[inline]
@@ -137,16 +102,6 @@ pub const fn convert_params_array<Id, const N: usize>(params: &[Param<Id>]) -> [
     out
 }
 
-/// Compile-time name → converted-param index. This is the Rust analogue of
-/// Zig's `inline for` `findParam` and is intended to be called inside a
-/// `const { }` block so the loop folds to a literal:
-///
-/// ```ignore
-/// const IDX: usize = find_param_index(TABLE.converted, b"--help");
-/// ```
-///
-/// Panics (at const-eval, i.e. a build error) if `name` is not in `converted`
-/// — matching Zig's `@compileError("no param '…'")`.
 pub(crate) const fn find_param_index(converted: &[Param<usize>], name: &[u8]) -> usize {
     if name.len() > 2 && name[0] == b'-' && name[1] == b'-' {
         let (_, key) = name.split_at(2);
@@ -197,11 +152,6 @@ pub const fn count_long_entries<Id>(params: &[Param<Id>]) -> usize {
     n
 }
 
-/// Build the sorted-by-hash long-name → param-index lookup at compile time.
-/// `M` must equal [`count_long_entries`]`(params)`. Index `i` corresponds 1:1
-/// with `convert_params_array(params)[i]` (both preserve input order). Uses
-/// insertion sort — `M` is bounded by the number of CLI flags (~120) and this
-/// runs at const-eval, never at runtime.
 pub const fn build_long_index<Id, const M: usize>(params: &[Param<Id>]) -> [LongEntry; M] {
     let mut out = [LongEntry { hash: 0, idx: 0 }; M];
     let mut w = 0;
@@ -280,10 +230,6 @@ pub struct LongEntry {
     idx: u16,
 }
 
-/// Pre-converted param table. Either fully `const`-built via
-/// [`comptime_table!`](crate::comptime_table) (rodata, zero runtime cost) or
-/// lazily built once per unique input slice via [`ConvertedTable::for_params`]
-/// and interned for the process lifetime.
 pub struct ConvertedTable {
     pub converted: &'static [Param<usize>],
     pub n_flags: usize,
@@ -297,11 +243,6 @@ pub struct ConvertedTable {
 }
 
 impl ConvertedTable {
-    /// Build a table entirely at compile time. All four arguments come from
-    /// the `const fn`s above via [`comptime_table!`](crate::comptime_table),
-    /// so the converted param array, category counts, sorted long-name hash
-    /// index, and short-name direct index all land in rodata — full Zig
-    /// `ComptimeClap` parity with zero runtime work.
     pub const fn from_const(
         converted: &'static [Param<usize>],
         n_flags: usize,
@@ -319,12 +260,6 @@ impl ConvertedTable {
         }
     }
 
-    /// Look up (or build + intern) the converted table for a `'static` param
-    /// slice. **Cold path** — the startup hot set (`Arguments::parse`) goes
-    /// through [`comptime_table!`](crate::comptime_table) +
-    /// [`ComptimeClap::parse_with_table`] and never reaches this. Kept for the
-    /// handful of non-startup callers (`bun create`, `bun install`) that still
-    /// hand a raw `&'static [Param<Id>]` to `clap::parse`.
     #[cold]
     pub fn for_params<Id>(params: &'static [Param<Id>]) -> &'static ConvertedTable {
         let key = (params.as_ptr() as usize, params.len());
@@ -399,12 +334,6 @@ impl ConvertedTable {
                 });
             }
         }
-        // Insertion sort by hash (matches the const-eval `build_long_index`
-        // path). `long.len()` is bounded by the per-command flag count (~tens),
-        // and this is a one-shot cold operation, so an O(n²) insertion sort is
-        // free — and it avoids dragging the generic `slice::sort_unstable`
-        // (pdqsort) instantiation onto the `bun install` / `bun create` arg
-        // path, which is the only place this `#[cold]` builder runs.
         {
             let mut j = 1;
             while j < long.len() {
@@ -430,10 +359,6 @@ impl ConvertedTable {
         }))
     }
 
-    /// Runtime name resolution. O(1) for shorts, O(log n) for longs (with a
-    /// final byte-compare to reject hash collisions). Const-built tables now
-    /// carry a rodata `long_index` too, so the linear-scan fallback is only
-    /// reachable from a hand-rolled `from_const(.., &[])`.
     #[inline]
     fn find(&self, name: &[u8]) -> &'static Param<usize> {
         if name.len() == 2 && name[0] == b'-' {
@@ -517,28 +442,11 @@ pub struct ComptimeClap<Id> {
     pub pos: Box<[&'static [u8]]>,
     pub passthrough_positionals: Box<[&'static [u8]]>,
     // `mem.Allocator param` field deleted — global mimalloc (see PORTING.md §Allocators).
-
-    // Zig captures `converted_params` as a comptime const on the returned type. Rust
-    // carries it as a `&'static` table — either rodata (`comptime_table!`) or
-    // interned-once via the ptr-keyed registry — so `flag`/`option` resolve via
-    // hashed lookup instead of an O(n) scan, and no per-parse `Vec` is allocated.
     table: &'static ConvertedTable,
     _id: PhantomData<Id>,
 }
 
 impl<Id> ComptimeClap<Id> {
-    /// `iter` must yield `&'static [u8]` (process-lifetime args, e.g. `OsIterator`)
-    /// because parsed values are stored by reference.
-    ///
-    /// `params` must be `'static` (every in-tree table is a `static`/`const`
-    /// item); the converted form is interned once per unique slice.
-    ///
-    /// **Cold path** — the startup hot set goes through
-    /// [`comptime_table!`](crate::comptime_table) + [`parse_with_table`]
-    /// (`bun --version`, `bun run …`). Only non-startup callers that still hand a
-    /// raw `&'static [Param<Id>]` (`bun install`, `bun create`) reach this, so
-    /// it's marked `#[cold]` to keep the runtime-conversion machinery
-    /// (`for_params` registry, `build`) out of the startup hot cluster.
     #[cold]
     pub fn parse<I>(
         params: &'static [Param<Id>],
@@ -635,11 +543,6 @@ impl<Id> ComptimeClap<Id> {
             _id: PhantomData,
         })
     }
-
-    // Zig `deinit` only freed `multi_options[*]` and `pos` (not `passthrough_positionals` —
-    // likely a leak in the deprecated Zig). All are owned here, so `Drop` handles it;
-    // body deleted per PORTING.md §Idiom map (`pub fn deinit` → `impl Drop`, empty body
-    // when it only frees owned fields).
 
     #[inline]
     pub fn flag(&self, name: &[u8]) -> bool {

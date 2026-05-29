@@ -6,10 +6,6 @@ use bun_collections::VecExt;
 use bun_core::zstr;
 use bun_threading::{Mutex, Semaphore, UnboundedQueue};
 
-// Zig: `const Event = bun.jsc.Node.fs.Watcher.Event` /
-//      `const EventType = @import("./path_watcher.zig").PathWatcher.EventType`.
-// Both siblings are wired into `crate::node`, and intra-crate module cycles are
-// fine in Rust, so import the real shapes instead of mirroring them.
 use super::node_fs_watcher::Event;
 use super::path_watcher::EventType;
 
@@ -169,14 +165,6 @@ impl CoreFoundation {
     pub fn get() -> CoreFoundation {
         *FSEVENTS_CF.get_or_init(init_core_foundation)
     }
-
-    // We Actually never deinit it
-    // pub fn deinit(this: *CoreFoundation) void {
-    //     if(this.handle) | ptr| {
-    //         this.handle = null;
-    //         _  = std.c.dlclose(this.handle);
-    //     }
-    // }
 }
 
 // Clone/Copy: bitwise OK — `handle` is a leaked dlopen handle held for the
@@ -216,14 +204,6 @@ impl CoreServices {
     pub fn get() -> CoreServices {
         *FSEVENTS_CS.get_or_init(init_core_services)
     }
-
-    // We Actually never deinit it
-    // pub fn deinit(this: *CoreServices) void {
-    //     if(this.handle) | ptr| {
-    //         this.handle = null;
-    //         _  = std.c.dlclose(this.handle);
-    //     }
-    // }
 }
 
 // Write-once fn-ptr tables; `OnceLock` provides the one-init + acquire/release
@@ -527,12 +507,6 @@ impl FSEventsLoop {
         // SAFETY: event_flags is an array of length num_events per FSEvents API
         let event_flags = unsafe { bun_core::ffi::slice(event_flags.cast_const(), num_events) };
 
-        // Hold the mutex for the whole iteration. `unregisterWatcher` on the
-        // main thread nulls the entry under this same mutex and then the
-        // caller immediately frees the FSEventsWatcher (and its path buffer),
-        // so without this lock we can read `handle.path` / call `handle.emit`
-        // on freed memory. Holding the lock also prevents `registerWatcher`
-        // from reallocating the `watchers` buffer mid-iteration.
         let _guard = loop_.mutex.lock_guard();
 
         for watcher in loop_.watchers.slice() {
@@ -678,28 +652,10 @@ impl FSEventsLoop {
             };
 
             let latency: CFAbsoluteTime = 0.05;
-            // Explanation of selected flags:
-            // 1. NoDefer - without this flag, events that are happening continuously
-            //    (i.e. each event is happening after time interval less than `latency`,
-            //    counted from previous event), will be deferred and passed to callback
-            //    once they'll either fill whole OS buffer, or when this continuous stream
-            //    will stop (i.e. there'll be delay between events, bigger than
-            //    `latency`).
-            //    Specifying this flag will invoke callback after `latency` time passed
-            //    since event.
-            // 2. FileEvents - fire callback for file changes too (by default it is firing
-            //    it only for directory changes).
-            //
             let flags: FSEventStreamCreateFlags = (K_FS_EVENT_STREAM_CREATE_FLAG_NO_DEFER
                 | K_FS_EVENT_STREAM_CREATE_FLAG_FILE_EVENTS)
                 as FSEventStreamCreateFlags;
 
-            //
-            // NOTE: It might sound like a good idea to remember last seen StreamEventId,
-            // but in reality one dir might have last StreamEventId less than, the other,
-            // that is being watched now. Which will cause FSEventStream API to report
-            // changes to files from the past.
-            //
             let r#ref = (cs.fs_event_stream_create)(
                 ptr::null_mut(),
                 Self::_events_cb,
@@ -771,10 +727,6 @@ impl FSEventsLoop {
                 return;
             }
         }
-        // PORT NOTE: reshaped for borrowck — enqueue after dropping the guard so we
-        // can take &mut self twice. Zig held the lock through enqueueTaskConcurrent;
-        // safe to release first since enqueue only pushes to a lock-free queue and
-        // signals CF, and `_schedule` re-acquires the mutex on the CF thread.
         let task = Task::new(self, FSEventsLoop::_schedule);
         self.enqueue_task_concurrent(task);
     }
@@ -799,11 +751,6 @@ impl FSEventsLoop {
                 }
             }
 
-            // Rebuild the FSEventStream on the CF thread so it stops firing for
-            // the path we just removed. Without this the stream keeps delivering
-            // events for freed paths until another register happens to
-            // reschedule. `_events_cb` tolerates the interim (it sees `null` and
-            // skips) because both sides hold `this.mutex`.
             if !self.has_scheduled_watchers {
                 self.has_scheduled_watchers = true;
             } else {
@@ -855,21 +802,9 @@ impl Drop for FSEventsLoop {
 }
 
 pub struct FSEventsWatcher {
-    /// Borrowed from the owning `PathWatcher` (Zig: `[]const u8`). The
-    /// PathWatcher heap-allocates this watcher and only frees it after `Drop`
-    /// (→ `unregister_watcher`) has run, so the bytes outlive every read in
-    /// `_events_cb` / `_schedule` — `RawSlice` invariant. The backing buffer is
-    /// a `ZBox`, so `path.slice().as_ptr()` is NUL-terminated (required by
-    /// `CFStringCreateWithFileSystemRepresentation`).
     pub path: bun_ptr::RawSlice<u8>,
     pub callback: Callback,
     pub flush_callback: UpdateEndCallback,
-    // Zig: `loop: ?*FSEventsLoop`. Stored as a raw pointer because the loop is
-    // shared with the CFRunLoop thread and mutated through `unregister_watcher`
-    // on drop; holding a `&'static FSEventsLoop` and casting it to `*mut` would
-    // be UB (write through pointer derived from shared ref). `Cell` so
-    // `FSEventsLoop::drop` can null it through a shared `BackRef` (the watcher
-    // is otherwise only read via `&self` on the CF thread under the mutex).
     pub loop_: core::cell::Cell<Option<NonNull<FSEventsLoop>>>,
     pub recursive: bool,
     pub ctx: *mut c_void,
@@ -953,10 +888,6 @@ pub fn watch(
     if loop_.is_null() {
         loop_ = FSEventsLoop::init()?;
         FSEVENTS_DEFAULT_LOOP.store(loop_, Ordering::Release);
-        // First loop ever created → arrange `close_and_wait` to run from
-        // `Bun__onExit`. Spec `Global.zig:220` runs it BEFORE
-        // `runExitCallbacks()`, so push to the pre-exit list rather than
-        // the generic atexit list (storage lives in bun_core; forward dep).
         bun_core::Global::add_pre_exit_callback(close_and_wait_on_exit);
     }
     // SAFETY: `loop_` is the heap-allocated global default loop (just created or

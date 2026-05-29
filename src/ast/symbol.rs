@@ -6,71 +6,16 @@ use crate::base::Ref;
 use crate::g as G;
 
 pub struct Symbol {
-    /// This is the name that came from the parser. Printed names may be renamed
-    /// during minification or to avoid name collisions. Do not use the original
-    /// name during printing.
-    // Arena-owned slice (parser/AST crate). `StoreStr` is the lifetime-erased
-    // `[u8]` wrapper used uniformly across AST string fields; it derefs to
-    // `[u8]` and is valid until the owning arena resets.
     pub original_name: crate::StoreStr,
 
-    /// This is used for symbols that represent items in the import clause of an
-    /// ES6 import statement. These should always be referenced by EImportIdentifier
-    /// instead of an EIdentifier. When this is present, the expression should
-    /// be printed as a property access off the namespace instead of as a bare
-    /// identifier.
-    ///
-    /// For correctness, this must be stored on the symbol instead of indirectly
-    /// associated with the Ref for the symbol somehow. In ES6 "flat bundling"
-    /// mode, re-exported symbols are collapsed using MergeSymbols() and renamed
-    /// symbols from other files that end up at this symbol must be able to tell
-    /// if it has a namespace alias.
     pub namespace_alias: Option<G::NamespaceAlias>,
 
-    /// Used by the parser for single pass parsing.
-    ///
-    /// `Cell` because union-find (`merge`/`follow`) mutates this through
-    /// `&Symbol` while other shared refs to the same table are live. `Ref` is
-    /// `Copy`, so `Cell<Ref>` is zero-cost and lets those algorithms run
-    /// without raw-pointer writes.
     pub link: Cell<Ref>,
 
-    /// An estimate of the number of uses of this symbol. This is used to detect
-    /// whether a symbol is used or not. For example, TypeScript imports that are
-    /// unused must be removed because they are probably type-only imports. This
-    /// is an estimate and may not be completely accurate due to oversights in the
-    /// code. But it should always be non-zero when the symbol is used.
     pub use_count_estimate: u32,
 
-    /// This is for generating cross-chunk imports and exports for code splitting.
-    ///
-    /// Do not use this directly. Use `chunkIndex()` instead.
-    ///
-    /// `AtomicU32` (not plain `u32`) because [`Map::assign_chunk_index`] is
-    /// invoked from worker threads in
-    /// `compute_cross_chunk_dependencies::walk()` while other threads hold a
-    /// shared `&LinkerGraph` (and thus `&Symbol`). The linker invariant is
-    /// that all declarations of a given top-level symbol are placed in a
-    /// single chunk, so cross-thread writes target disjoint slots — but the
-    /// invariant is data-dependent, not type-checked, and a plain `u32` write
-    /// through a slot reachable from `&` is UB regardless. Relaxed ordering
-    /// is sufficient: the worker-pool join supplies the happens-before edge
-    /// to the post-pass reader (`compute_cross_chunk_dependencies_with_chunk_metas`).
     pub chunk_index: AtomicU32,
 
-    /// This is used for minification. Symbols that are declared in sibling scopes
-    /// can share a name. A good heuristic (from Google Closure Compiler) is to
-    /// assign names to symbols from sibling scopes in declaration order. That way
-    /// local variable names are reused in each global function like this, which
-    /// improves gzip compression:
-    ///
-    ///   function x(a, b) { ... }
-    ///   function y(a, b, c) { ... }
-    ///
-    /// The parser fills this in for symbols inside nested scopes. There are three
-    /// slot namespaces: regular symbols, label symbols, and private symbols.
-    ///
-    /// Do not use this directly. Use `nestedScopeSlot()` instead.
     pub nested_scope_slot: u32,
 
     pub did_keep_name: bool,
@@ -86,78 +31,8 @@ pub struct Symbol {
     /// Renaming can also break any identifier used inside a "with" statement.
     pub must_not_be_renamed: bool,
 
-    /// We automatically generate import items for property accesses off of
-    /// namespace imports. This lets us remove the expensive namespace imports
-    /// while bundling in many cases, replacing them with a cheap import item
-    /// instead:
-    ///
-    ///   import * as ns from 'path'
-    ///   ns.foo()
-    ///
-    /// That can often be replaced by this, which avoids needing the namespace:
-    ///
-    ///   import {foo} from 'path'
-    ///   foo()
-    ///
-    /// However, if the import is actually missing then we don't want to report a
-    /// compile-time error like we do for real import items. This status lets us
-    /// avoid this. We also need to be able to replace such import items with
-    /// undefined, which this status is also used for.
     pub import_item_status: ImportItemStatus,
 
-    /// --- Not actually used yet -----------------------------------------------
-    /// Sometimes we lower private symbols even if they are supported. For example,
-    /// consider the following TypeScript code:
-    ///
-    ///   class Foo {
-    ///     #foo = 123
-    ///     bar = this.#foo
-    ///   }
-    ///
-    /// If "useDefineForClassFields: false" is set in "tsconfig.json", then "bar"
-    /// must use assignment semantics instead of define semantics. We can compile
-    /// that to this code:
-    ///
-    ///   class Foo {
-    ///     constructor() {
-    ///       this.#foo = 123;
-    ///       this.bar = this.#foo;
-    ///     }
-    ///     #foo;
-    ///   }
-    ///
-    /// However, we can't do the same for static fields:
-    ///
-    ///   class Foo {
-    ///     static #foo = 123
-    ///     static bar = this.#foo
-    ///   }
-    ///
-    /// Compiling these static fields to something like this would be invalid:
-    ///
-    ///   class Foo {
-    ///     static #foo;
-    ///   }
-    ///   Foo.#foo = 123;
-    ///   Foo.bar = Foo.#foo;
-    ///
-    /// Thus "#foo" must be lowered even though it's supported. Another case is
-    /// when we're converting top-level class declarations to class expressions
-    /// to avoid the TDZ and the class shadowing symbol is referenced within the
-    /// class body:
-    ///
-    ///   class Foo {
-    ///     static #foo = Foo
-    ///   }
-    ///
-    /// This cannot be converted into something like this:
-    ///
-    ///   var Foo = class {
-    ///     static #foo;
-    ///   };
-    ///   Foo.#foo = Foo;
-    ///
-    /// --- Not actually used yet -----------------------------------------------
     pub private_symbol_must_be_lowered: bool,
 
     pub remove_overwritten_function_declaration: bool,
@@ -165,12 +40,6 @@ pub struct Symbol {
     /// Used in HMR to decide when live binding code is needed.
     pub has_been_assigned_to: bool,
 }
-
-// TODO(port): Zig asserts @sizeOf(Symbol) == 88 and @alignOf(Symbol) == @alignOf([]const u8).
-// Rust default repr reorders fields and Option<NamespaceAlias> niche may differ
-// (likely needs #[repr(C)] or manual packing if the size is load-bearing).
-// const _: () = assert!(core::mem::size_of::<Symbol>() == 88);
-// const _: () = assert!(core::mem::align_of::<Symbol>() == core::mem::align_of::<crate::StoreStr>());
 
 const INVALID_CHUNK_INDEX: u32 = u32::MAX;
 pub const INVALID_NESTED_SCOPE_SLOT: u32 = u32::MAX;
@@ -264,35 +133,9 @@ pub enum Kind {
     /// in. For example, using "window" without declaring it will be unbound.
     Unbound,
 
-    /// This has special merging behavior. You're allowed to re-declare these
-    /// symbols more than once in the same scope. These symbols are also hoisted
-    /// out of the scope they are declared in to the closest containing function
-    /// or module scope. These are the symbols with this kind:
-    ///
-    /// - Function arguments
-    /// - Function statements
-    /// - Variables declared using "var"
     Hoisted,
     HoistedFunction,
 
-    /// There's a weird special case where catch variables declared using a simple
-    /// identifier (i.e. not a binding pattern) block hoisted variables instead of
-    /// becoming an error:
-    ///
-    ///   var e = 0;
-    ///   try { throw 1 } catch (e) {
-    ///     print(e) // 1
-    ///     var e = 2
-    ///     print(e) // 2
-    ///   }
-    ///   print(e) // 0 (since the hoisting stops at the catch block boundary)
-    ///
-    /// However, other forms are still a syntax error:
-    ///
-    ///   try {} catch (e) { let e }
-    ///   try {} catch ({e}) { var e }
-    ///
-    /// This symbol is for handling this weird special case.
     CatchIdentifier,
 
     /// Generator and async functions are not hoisted, but still have special
@@ -376,10 +219,6 @@ pub struct Use {
 }
 
 pub type List<'a> = bun_alloc::ArenaVec<'a, Symbol>;
-/// `Map.symbols_for_source` storage. Decoupled from [`List`] (which is
-/// arena-backed): the linker clones every per-source symbol table here so it
-/// can mutate them independently of the parsed `BundledAst.symbols`, and those
-/// clones are owned for the link lifetime — global allocator, no arena tag.
 pub type NestedList = Vec<Vec<Symbol>>;
 
 impl Symbol {
@@ -396,13 +235,6 @@ impl Symbol {
 
 #[derive(Default)]
 pub struct Map {
-    // This could be represented as a "map[Ref]Symbol" but a two-level array was
-    // more efficient in profiles. This appears to be because it doesn't involve
-    // a hash. This representation also makes it trivial to quickly merge symbol
-    // maps from multiple files together. Each file only generates symbols in a
-    // single inner array, so you can join the maps together by just make a
-    // single outer array containing all of the inner arrays. See the comment on
-    // "Ref" for more detail.
     pub symbols_for_source: NestedList,
 }
 
@@ -435,15 +267,6 @@ impl Map {
         bun_core::output::flush();
     }
 
-    // Takes `&self` (not `&mut self`) — the only caller
-    // (`computeCrossChunkDependencies::walk`) runs concurrently across worker
-    // threads. `Symbol.chunk_index` is `AtomicU32`, so the per-slot write is a
-    // sound interior mutation through `&Symbol`; no raw-pointer or `&mut Map`
-    // escape is needed. Relaxed ordering: see the field doc — the worker-pool
-    // join is the only required happens-before edge, and the linker invariant
-    // places all declarations of a given symbol in a single chunk (same
-    // worker), so cross-thread writes target disjoint slots. A
-    // `debug_assert!` documents that invariant.
     pub fn assign_chunk_index(&self, decls_: &crate::DeclaredSymbolList, chunk_index: u32) {
         use crate::DeclaredSymbol;
         struct Iterator<'a> {
@@ -454,11 +277,6 @@ impl Map {
         impl Iterator<'_> {
             pub(crate) fn next(&mut self, ref_: Ref) {
                 let symbol = self.map.get_const(ref_).unwrap();
-                // Thread-confinement invariant: a top-level symbol's
-                // declarations are all assigned to one chunk, so any prior
-                // value is either INVALID or this same chunk (overwrite from a
-                // sibling `var` decl in the same chunk — see esbuild comment in
-                // `walk`). If this fires, two chunks raced on one symbol.
                 debug_assert!(
                     {
                         let prev = symbol.chunk_index.load(Ordering::Relaxed);
@@ -486,11 +304,6 @@ impl Map {
             return new;
         }
 
-        // Union-find with path compression. `link` is `Cell<Ref>`, so all link
-        // reads/writes go through safe shared access (`get_const`). Backing
-        // storage is never reallocated during merge, so re-looking-up after the
-        // recursive call is cheap and the borrow ends before the `&mut self`
-        // recursion.
         let old_link = self.get_const(old).unwrap().link.get();
         if old_link.is_valid() {
             let merged = self.merge(old_link, new);
@@ -520,17 +333,6 @@ impl Map {
         new
     }
 
-    // Returns a raw *mut Symbol because callers (merge/follow/assign_chunk_index/
-    // get_with_link) hold aliasing pointers into the NestedList and/or recurse through
-    // &mut self while holding the pointer. Mirrors Zig's `*const Map -> ?*Symbol`
-    // (interior mutability via Vec's raw `[*]T` ptr field).
-    //
-    // SOUNDNESS: the *mut is derived directly from `Vec.ptr: NonNull<T>` — a raw
-    // pointer field whose provenance is independent of the `&self` borrow used to read
-    // it. We deliberately do NOT go through `.slice()`/`.at()` (which produce `&[T]`/`&T`
-    // and would yield read-only provenance, making any later write UB). Callers may write
-    // through the result as long as the backing storage is not reallocated and they do
-    // not materialize overlapping `&mut`.
     pub fn get(&self, ref_: Ref) -> Option<*mut Symbol> {
         if Ref::is_source_index_null(ref_.source_index()) || ref_.is_source_contents_slice() {
             return None;
@@ -583,13 +385,6 @@ impl Map {
         }
     }
 
-    // PORT NOTE: Zig aliased the caller's stack `[1]List` slot directly; that's
-    // unsound in Rust (would dangle on return). Take ownership of `list` and
-    // box it into a one-element NestedList instead.
-    // PERF(port): one extra allocation vs Zig — profile (single
-    // caller is the printer one-shot, cold).
-    // OWNERSHIP: returned `Map` is *owned*; the `Vec<List>` allocated here leaks if a
-    // consumer parks it in `ManuallyDrop` (e.g. renamer.rs `MinifyRenamer.symbols`).
     pub fn init_with_one_list(list: Vec<Symbol>) -> Map {
         Self::init_list(vec![list])
     }
@@ -600,10 +395,6 @@ impl Map {
         }
     }
 
-    /// Safe `&mut` lookup via the `Vec`/`Vec<Symbol>` backing storage. Mirrors
-    /// [`get_const`] but returns a unique borrow tied to `&mut self`, so callers
-    /// that only need to flip a flag (e.g. `must_not_be_renamed`) don't need the
-    /// raw `*mut Symbol` from [`get`] + an open-coded `(*ptr).field = ...`.
     pub fn get_mut(&mut self, ref_: Ref) -> Option<&mut Symbol> {
         if Ref::is_source_index_null(ref_.source_index()) || ref_.is_source_contents_slice() {
             return None;
@@ -633,10 +424,6 @@ impl Map {
     }
 
     pub fn follow_all(&mut self) {
-        // TODO(port): bun_perf::trace("Symbols.followAll") — RAII guard
-        // `link` is `Cell<Ref>`, so we can iterate the table by shared ref and
-        // mutate `link` in place; `follow()` only takes `&self` and only touches
-        // `link`, so the nested shared borrows coexist.
         for symbols in self.symbols_for_source.iter() {
             for symbol in symbols.iter() {
                 if !symbol.has_link() {
@@ -648,14 +435,6 @@ impl Map {
         }
     }
 
-    /// Equivalent to followSymbols in esbuild.
-    ///
-    /// PORT NOTE: Zig's body is naturally recursive (`follow(symbol.link)`).
-    /// Reshaped to an iterative two-phase walk so the per-hop work is just two
-    /// raw pointer adds and a load — no call frame, no `Option` unwrap, no
-    /// repeated tag/null guards. Semantics are identical to Zig's: every node
-    /// on the path from `ref_` to the union-find root has its `link` rewritten
-    /// to the root (full path compression).
     pub fn follow(&self, ref_: Ref) -> Ref {
         // Entry guard — `ref_` may be `Ref::None` / a SourceContentsSlice ref
         // (callers pass arbitrary Refs read out of AST nodes). After this,
@@ -671,15 +450,6 @@ impl Map {
             return ref_;
         }
 
-        // Phase 1: find the root. `link.is_valid()` holds here. The only
-        // writers of `Symbol::link` are (a) the default `Ref::NONE`
-        // (tag=Invalid — rejected by `is_valid()` above), (b) `merge()`,
-        // which stores a Ref that came from `declare_symbol` / `new_symbol` /
-        // `LinkerGraph::generate_symbol`, and (c) prior `follow()` path
-        // compression, which stores a `root` that itself satisfied (b). All
-        // such refs satisfy the in-bounds contract (see `get_const`):
-        // `(source_index, inner_index)` with tag ∈ {Symbol, AllocatedName},
-        // never `SourceContentsSlice` and never the null source sentinel.
         let outer = self.symbols_for_source.as_slice();
         let lookup = |r: Ref| -> &Symbol {
             debug_assert!(!r.is_source_contents_slice());
@@ -695,21 +465,11 @@ impl Map {
             root = next;
         }
 
-        // Phase 2: path compression. Rewrite `link` on the entry node and every
-        // intermediate node to point directly at `root` (matches the Zig
-        // recursion's post-order `symbol.link = link` writes). The `!=` gate
-        // mirrors Zig's `if (!symbol.link.eql(link))` to avoid a redundant
-        // store when the chain was already length-1. `link` is `Cell<Ref>`, so
-        // writes go through `&Symbol` safely.
         if !link.eql(root) {
             symbol.link.set(root);
             loop {
                 let p = lookup(link);
                 let next = p.link.get();
-                // `next.eql(root)` ⇔ `p.link` already points at root —
-                // mirrors Zig's post-order `if (!symbol.link.eql(link))` gate
-                // and saves a redundant store on the last intermediate plus
-                // the otherwise-wasted lookup of `root` itself.
                 if next.eql(root) || !next.is_valid() {
                     break;
                 }

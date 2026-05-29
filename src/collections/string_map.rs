@@ -49,10 +49,6 @@ impl StringMap {
         self.map.count()
     }
 
-    /// Zig `insert` / `put`: dupe `value`; dupe `key` only when `dupe_keys`
-    /// and the key is new. (When `dupe_keys == false` Zig stored a borrowed
-    /// slice; here `Box<[u8]>` forces a copy regardless — the flag is kept for
-    /// API parity and to skip the redundant second copy.)
     pub fn insert(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
         let entry = self.map.get_or_put(key)?;
         // get_or_put already boxed `key` on miss; the Zig `dupe_keys` branch

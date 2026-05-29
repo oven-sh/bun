@@ -19,16 +19,6 @@ pub static MAP: phf::Map<&'static [u8], FetchRedirect> = phf::phf_map! {
 // Deleted per PORTING.md — `to_js` is an extension-trait method living in
 // `bun_http_jsc`; the base type carries no jsc reference.
 
-// ═══════════════════════════════════════════════════════════════════════
-// CommonAbortReason — moved from bun_jsc.
-// Source: src/jsc/CommonAbortReason.zig
-//
-// `enum(u8)` discriminant crosses the FFI boundary to
-// `WebCore__CommonAbortReason__toJS` and `WebCore__AbortSignal__signal`.
-// `to_js()` stays in `bun_jsc` as an extension-trait method (it names
-// `*JSGlobalObject` / `JSValue`, both T6).
-// ═══════════════════════════════════════════════════════════════════════
-
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum CommonAbortReason {

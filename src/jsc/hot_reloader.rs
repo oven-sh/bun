@@ -55,22 +55,6 @@ impl ImportWatcher {
         }
     }
 
-    /// Look up the cached fd (and `package_json` column) for `hash` under the
-    /// watcher's mutex, snapshotting both before returning.
-    ///
-    /// The watcher thread's `flush_evictions` (called from `on_file_update`)
-    /// closes the cached fd in pass 1 and `swap_remove`s the entry in pass 2.
-    /// `on_file_update` orders `flush_evictions` *before* `enqueue` so the JS
-    /// thread cannot observe the closed-fd window for the *same* event, but
-    /// nothing serializes a *subsequent* event's `flush_evictions` against the
-    /// JS thread's previous-event reload that re-added the entry: the JS
-    /// thread can read the cached fd here while the watcher thread is between
-    /// pass 1 (close) and pass 2 (remove), surfacing as `EBADF reading
-    /// "<path>"` in `transpiler.rs:read_file_with_allocator` (hot.test.ts
-    /// "should work with sourcemap generation" on debian-aarch64). Zig has
-    /// the same race (`ModuleLoader.zig:173-174` reads unlocked); the port
-    /// closes it by locking the same mutex `append_file_maybe_lock<true>` and
-    /// `flush_evictions` take.
     pub fn snapshot_fd_and_package_json(
         &self,
         hash: bun_watcher::HashType,
@@ -255,24 +239,11 @@ impl HotReloaderCtx for VirtualMachine {
 /// name below is the type-erased view used by `HotReloaderCtx::reload`.
 pub type HotReloadTask = Task<VirtualMachine, EventLoop, false>;
 
-/// Replaces Zig's structural duck-typing on `Ctx` (`this.ctx.eventLoop()`,
-/// `this.ctx.bun_watcher`, `this.ctx.bustDirCache`, `this.ctx.getLoaders`,
-/// `this.ctx.reload`) with an explicit trait bound. Implemented by
-/// `VirtualMachine` and `bun.bake.DevServer`.
-///
-/// `bun_watcher_mut` collapses the three-way `@TypeOf(this.ctx.bun_watcher)`
-/// reflection in `getContext` (ImportWatcher / Option / bare) into one method
-/// the impl picks the right arm of.
 pub trait HotReloaderCtx {
     type EventLoop;
 
     fn event_loop(&self) -> *mut Self::EventLoop;
 
-    /// Safe `&EventLoop` accessor. The event loop is owned by the `Ctx` (a
-    /// sibling field on `VirtualMachine`, or unreachable for the
-    /// `RELOAD_IMMEDIATELY` BundleV2 instantiation) and outlives the reloader,
-    /// so callers go through this instead of dereferencing the raw
-    /// `event_loop()` pointer at each site.
     fn event_loop_ref(&self) -> &Self::EventLoop;
 
     /// Zig: `this.ctx.bun_watcher` field, with comptime `@TypeOf` reflection
@@ -296,11 +267,6 @@ pub trait HotReloaderCtx {
         false
     }
 
-    // ── enable_hot_module_reloading accessors ────────────────────────────
-    // Zig's `enableHotModuleReloading` reaches into `ctx.bun_watcher` and
-    // `ctx.transpiler.{fs, env, resolver.watcher}` via structural duck-typing.
-    // The methods below expose just enough surface for the generic body.
-
     /// Zig: `this.bun_watcher != .none` / `this.bun_watcher != null`.
     fn is_watcher_enabled(&self) -> bool;
 
@@ -308,10 +274,6 @@ pub trait HotReloaderCtx {
     /// project root path.
     fn watcher_top_level_dir(&self) -> &'static [u8];
 
-    /// Zig: assigns `this.bun_watcher = .{ .hot/.watch = w }` (or `= w` for
-    /// non-ImportWatcher ctxs) and `this.transpiler.resolver.watcher =
-    /// ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(w)`.
-    /// Returns the now-installed `*mut Watcher` so the caller can `start()` it.
     fn install_bun_watcher(
         &mut self,
         watcher: Box<Watcher>,
@@ -340,12 +302,6 @@ impl HotReloaderEventLoop for EventLoop {
     }
 }
 
-/// `bun build --watch` instantiates `NewHotReloader<BundleV2, AnyEventLoop, true>`
-/// (bundle_v2.zig:50). With `RELOAD_IMMEDIATELY = true`, `Task::enqueue` diverges
-/// via `bun_core::reload_process()` before any concurrent task is enqueued, and
-/// in the Zig spec `enqueueTaskConcurrent` is `unreachable` (hot_reloader.zig:161).
-/// `BundleV2` doesn't even define `eventLoop()` — Zig's lazy compilation never
-/// instantiates it. Match that here.
 impl HotReloaderEventLoop for bun_event_loop::AnyEventLoop<'static> {
     fn enqueue_task_concurrent(_this: &Self, _task: core::ptr::NonNull<ConcurrentTask>) {
         unreachable!()
@@ -374,26 +330,8 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> HotReloadTaskView
     }
 }
 
-/// When non-null, `on_file_update` records the absolute path of every file
-/// it sees change before triggering a reload. Used by `bun test --changed
-/// --watch` so the restarted process can narrow its changed-file set to
-/// what the watcher actually observed (instead of re-querying git, which
-/// would re-run every test affected by any uncommitted change, not just
-/// the one that was just edited).
-///
-/// Set by `test_command.zig` on the main thread before the watcher thread
-/// starts; after that point only the watcher thread touches it. Its
-/// contents are written to `watch_changed_trigger_file` immediately
-/// before `reload_process`; the new process reads and deletes that file.
-// Zig was `?*bun.StringSet`; written once on main thread before watcher thread
-// starts, then watcher-thread-only. `OnceLock` carries the publish.
 pub static WATCH_CHANGED_PATHS: std::sync::OnceLock<WatchChangedPaths> = std::sync::OnceLock::new();
 
-/// `Send + Sync` newtype around the arena-allocated `StringSet` pointer so it
-/// can sit inside a `OnceLock`. The set is written once on the main thread
-/// before the watcher thread starts, then mutated only from the watcher
-/// thread — never concurrently — so cross-thread publication of the raw
-/// pointer is sound.
 pub struct WatchChangedPaths(core::ptr::NonNull<StringSet>);
 impl WatchChangedPaths {
     #[inline]
@@ -401,13 +339,6 @@ impl WatchChangedPaths {
         Self(core::ptr::NonNull::from(set))
     }
 
-    /// Reborrow the wrapped `StringSet`. Single audited `unsafe` for the
-    /// set-once `NonNull` deref so the two callers below
-    /// (`record_changed_path`, `flush_changed_paths_for_reload`) are safe.
-    ///
-    /// Soundness: published exactly once via `OnceLock` before the watcher
-    /// thread starts; thereafter only the watcher thread reaches the callers,
-    /// so the `&mut` is exclusive. Lives in the process-lifetime CLI arena.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     fn get_mut(&self) -> &mut StringSet {
@@ -425,15 +356,6 @@ unsafe impl Send for WatchChangedPaths {}
 // publish, so no two threads ever hold `&mut StringSet` concurrently.
 unsafe impl Sync for WatchChangedPaths {}
 
-/// Absolute path of the temp file `flush_changed_paths_for_reload` writes
-/// the changed-path list into. The same path is exported via the
-/// `BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE` env var so the restarted
-/// process can find it. Set alongside `WATCH_CHANGED_PATHS` by
-/// `test_command.zig`; the string must outlive the process.
-///
-/// Init-once-then-read-only (main thread sets, watcher thread reads), so
-/// `OnceLock` per PORTING.md §Global mutable state. `&ZStr` is a fat pointer
-/// (`ZStr` is `[u8]`-backed), so `AtomicCell` would not fit anyway.
 pub static WATCH_CHANGED_TRIGGER_FILE: std::sync::OnceLock<&'static ZStr> =
     std::sync::OnceLock::new();
 
@@ -488,10 +410,6 @@ unsafe extern "C" {
     safe fn BunDebugger__willHotReload();
 }
 
-// TODO(port): in Zig this was a `pub var` inside the generic struct, giving one
-// static per monomorphization. Rust can't put a static in a generic impl; both
-// HotReloader and WatchReloader now share this. Revisit if the per-type split
-// was load-bearing.
 static CLEAR_SCREEN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
@@ -518,16 +436,6 @@ pub struct MainFile {
     pub file: &'static [u8],
     pub hash: bun_watcher::HashType,
 
-    /// On macOS, vim's atomic save triggers a race condition:
-    /// 1. Old file gets NOTE_RENAME (file renamed to temp name: a.js -> a.js~)
-    /// 2. We receive the event and would normally trigger reload immediately
-    /// 3. But the new file hasn't been created yet - reload fails with ENOENT
-    /// 4. New file gets created and written (a.js)
-    /// 5. Parent directory gets NOTE_WRITE
-    ///
-    /// To fix this: when the entrypoint gets NOTE_RENAME, we set this flag
-    /// and skip the reload. Then when the parent directory gets NOTE_WRITE,
-    /// we check if the file exists and trigger the reload.
     pub is_waiting_for_dir_change: bool,
 }
 
@@ -570,10 +478,6 @@ impl MainFile {
 pub struct Task<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
     pub count: u8,
     pub hashes: [u32; 8],
-    // TODO(port): in Zig this field's type is `[8][]const u8` only when
-    // `Ctx == bun.bake.DevServer`, else `void`. Rust can't branch a field
-    // type on a generic parameter without specialization; storing it
-    // unconditionally for now.
     pub paths: [&'static [u8]; 8],
     /// Left `None` until [`Self::enqueue`] populates it on the heap copy.
     pub concurrent_task: Option<ConcurrentTask>,
@@ -599,22 +503,6 @@ where
         }
     }
 
-    /// Per-field raw read of the reloader's `pending_count`.
-    ///
-    /// `reloader` is a BACKREF: the `NewHotReloader` heap-allocates every
-    /// `Task` (via [`Self::enqueue`]) and is itself leaked for the process
-    /// lifetime in `enable_hot_module_reloading`, so it strictly outlives
-    /// every `Task` it spawns. The pointer is never null (set in
-    /// [`Self::init_empty`] / copied in [`Self::enqueue`]).
-    ///
-    /// We deliberately do **not** expose a whole-struct `&NewHotReloader`
-    /// accessor: [`Self::run`] executes on the JS event-loop thread while the
-    /// watcher thread may be inside `on_file_update(&mut self)` writing
-    /// non-`UnsafeCell` fields (`main.is_waiting_for_dir_change`, `tombstones`).
-    /// Materializing `&NewHotReloader` on the JS thread would assert those
-    /// bytes are frozen, which is a data race / Stacked-Borrows violation even
-    /// though this side never reads them. Instead, project to the single
-    /// `AtomicU32` field via `addr_of!` so no `&NewHotReloader` is formed.
     #[inline]
     fn pending_count(&self) -> &AtomicU32 {
         // SAFETY: BACKREF — see doc comment above. `addr_of!` forms a place
@@ -657,15 +545,6 @@ where
     }
 
     pub fn run(&mut self) {
-        // Since we rely on the event loop for hot reloads, there can be
-        // a delay before the next reload begins. In the time between the
-        // last reload and the next one, we shouldn't schedule any more
-        // hot reloads. Since we reload literally everything, we don't
-        // need to worry about missing any changes.
-        //
-        // Note that we set the count _before_ we reload, so that if we
-        // get another hot reload request while we're reloading, we'll
-        // still enqueue it.
         while self.pending_count().swap(0, Ordering::Relaxed) > 0 {
             let ctx = self.ctx_ptr();
             // SAFETY: ctx outlives reloader (BACKREF).
@@ -681,17 +560,6 @@ where
 
         if RELOAD_IMMEDIATELY {
             Output::flush();
-            // Zig: `if (comptime Ctx == ImportWatcher) { if (ctx.rare_data) |rare|
-            // rare.closeAllListenSocketsForWatchMode(); }`. That comptime guard is
-            // *never* true for any actual instantiation (Ctx is VirtualMachine or
-            // BundleV2, never ImportWatcher itself), so the call is dead code in
-            // the spec. Match spec literally: no-op for every Ctx.
-            //
-            // PORT NOTE: this is almost certainly a Zig typo — the intent was
-            // likely `@TypeOf(ctx.bun_watcher) == ImportWatcher`, which would
-            // close listen sockets before exec()-restarting under --watch on a
-            // VirtualMachine. But fixing that here would diverge from observable
-            // Zig behaviour; revisit upstream first.
             flush_changed_paths_for_reload();
             bun_core::reload_process(
                 CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
@@ -712,20 +580,10 @@ where
         }));
         // SAFETY: `that` was just allocated above and is exclusively owned here.
         unsafe {
-            // PORT NOTE: `JscTask::init` requires `Taskable`, but const-generic
-            // `Task<Ctx, _, _>` can't implement it (one tag per monomorphization).
-            // The Zig source tagged the concrete `HotReloader.HotReloadTask` —
-            // use the raw `(tag, ptr)` constructor.
             let concurrent = (*that).concurrent_task.insert(ConcurrentTask {
                 task: JscTask::new(task_tag::HotReloadTask, that.cast::<()>()),
                 ..Default::default()
             });
-            // TODO(port): `&that.concurrent_task` is an interior pointer into a
-            // Box-allocated Task; event loop must not outlive `that`. Matches Zig.
-            //
-            // Inlines `NewHotReloader::enqueue_task_concurrent` to avoid forming
-            // a whole-struct `&NewHotReloader` (see `Self::pending_count` doc).
-            // `RELOAD_IMMEDIATELY` already diverged above so its guard is dead here.
             let ctx = self.ctx_ptr();
             // SAFETY: ctx outlives reloader (BACKREF); `event_loop()` returns
             // the live event-loop pointer owned by `Ctx`.
@@ -884,11 +742,6 @@ where
         }
     }
 
-    /// Single audited `&mut Ctx` reborrow through the [`BackRef`]. The owning
-    /// context outlives this reloader (set once at init, never reassigned —
-    /// see field doc), and `&mut self` ensures no other reborrow through this
-    /// reloader is live. Centralizes the per-call-site `BackRef::get_mut`
-    /// deref previously open-coded at each `bust_dir_cache` site.
     #[inline]
     fn ctx_mut(&mut self) -> &mut Ctx {
         // SAFETY: BACKREF invariant — ctx outlives the reloader; `&mut self`
@@ -925,24 +778,7 @@ where
         let hashes = slice.items_hash();
         let parents = slice.items_parent_hash();
         let file_descriptors = slice.items_fd();
-        // PORT NOTE: reshaped for borrowck — `ctx` is held as a raw pointer so
-        // `self` can be reborrowed inside the loop body for tombstone access,
-        // and so the deferred `flush_evictions` doesn't hold `&mut Watcher`
-        // across the loop.
         let ctx: *mut Watcher = std::ptr::from_mut(self.get_context());
-        // Zig: `defer current_task.enqueue();` — wrap the Task itself in the guard
-        // so any exit path (including future early-returns) flushes the buffered
-        // hashes. Dereferenced as `&mut *current_task` for the loop body below.
-        //
-        // PORT NOTE: declared *before* `_flush` (inverting the Zig defer order)
-        // so `flush_evictions()` runs **before** `enqueue()` on drop. The Zig
-        // order (`enqueue` → `Output.flush` → `flushEvictions`) opens a window
-        // where the JS thread can pick up the concurrent task, look the file up
-        // in the watchlist, and read the cached fd while this thread is still
-        // about to `close()` + `swap_remove()` it in `flush_evictions` —
-        // surfacing as `EBADF`/`EISDIR reading "<path>"` in hot.test.ts under
-        // load. Evicting first is side-effect-free: `enqueue` carries hashes
-        // (not indices) and never reads the watchlist.
         let mut current_task = scopeguard::guard(
             Task::<Ctx, EventLoopType, RELOAD_IMMEDIATELY>::init_empty(self),
             |mut t| t.enqueue(),
@@ -1006,10 +842,6 @@ where
                         record_changed_path(file_path);
                         if IS_KQUEUE {
                             if event.op.contains(WatchOp::RENAME) {
-                                // Special case for entrypoint: defer reload until we get
-                                // a directory write event confirming the file exists.
-                                // This handles vim's save process which renames the old file
-                                // before the new file is re-created with a different inode.
                                 if self.main.hash == current_hash && !RELOAD_IMMEDIATELY {
                                     self.main.is_waiting_for_dir_change = true;
                                     continue;
@@ -1042,10 +874,6 @@ where
                         let mut affected_buf: [&[u8]; 128] = [b"".as_slice(); 128];
                         let mut entries_option: Option<*mut Fs::EntriesOption> = None;
 
-                        // PORT NOTE: the Zig labeled block produced a slice whose
-                        // element type differs by platform (`[]const u8` on kqueue,
-                        // `?[:0]u8` on inotify). Split into two locals; only one is
-                        // populated per cfg.
                         let mut affected_kqueue: &[&[u8]] = &[];
                         let mut affected_inotify: &[ChangedFilePath] = &[];
                         let _ = (&mut affected_kqueue, &mut affected_inotify);
@@ -1062,22 +890,9 @@ where
                                 }
 
                                 if event.op.contains(WatchOp::WRITE) {
-                                    // Check if the entrypoint now exists after an atomic save.
-                                    // If we previously got a NOTE_RENAME on the entrypoint (vim renamed
-                                    // the file), this directory write event signals that the new
-                                    // file has been re-created. Verify it exists and trigger reload.
                                     if self.main.is_waiting_for_dir_change
                                         && self.main.dir_hash == current_hash
                                     {
-                                        // Zig: `if (bun.sys.faccessat(fd, basename) == .result)`.
-                                        // That compares the Maybe(bool) *tag*, ignoring the
-                                        // payload — `.result(true)` and `.result(false)` both
-                                        // match (faccessat only yields `.err` on NAMETOOLONG).
-                                        // Match spec literally: `.is_ok()`. The comment above
-                                        // says "Verify it exists", and this is likely a latent
-                                        // Zig bug, but spec parity wins; in practice the
-                                        // branch is harmless (re-watching a missing entrypoint
-                                        // is a no-op downstream).
                                         let mut name_buf = [0u8; 256];
                                         let basename = bun_paths::basename(self.main.file);
                                         let exists = if basename.len() < name_buf.len() {
@@ -1162,23 +977,6 @@ where
                             strings::paths::without_trailing_slash_windows_path(file_path),
                         );
 
-                        // The watched entrypoint has a per-file inotify watch on its inode.
-                        // An atomic rename (`rename(tmp, entrypoint)`) or a rm+recreate over
-                        // the entrypoint replaces that inode, so the kernel drops the
-                        // per-file watch (IN_DELETE_SELF + IN_IGNORED). When the file event
-                        // and this directory event land in separate inotify-read batches,
-                        // `flush_evictions` runs in between and the entry is gone from the
-                        // watchlist before the recreated file is seen below — so the reload
-                        // for the recreated entrypoint would be dropped and `--hot` would
-                        // deadlock waiting for a reload that never happens.
-                        //
-                        // Recover the same way the kqueue path does (see
-                        // `is_waiting_for_dir_change` above): if this directory event names
-                        // the entrypoint and the file now exists, enqueue an entrypoint
-                        // reload unconditionally — `main.hash` is a stored field, independent
-                        // of whether the per-file watchlist entry survived. The per-file
-                        // watch itself is re-armed on the JS thread by
-                        // `VirtualMachine::add_main_to_watcher_if_needed` after the reload.
                         if !IS_KQUEUE && self.main.hash != 0 && self.main.dir_hash == current_hash {
                             let main_basename = bun_paths::basename(self.main.file);
                             for changed_name_ in affected_inotify {
@@ -1238,11 +1036,6 @@ where
                                     .get(PathName::find_extname(changed_name))
                                     .copied()
                                     .unwrap_or(bun_ast::Loader::File);
-                                // PORT NOTE: Zig declares `prev_entry_id` per-iteration and
-                                // reassigns it just before `break`; the write is dead there
-                                // too (hot_reloader.zig:535/563). Keep the shape for
-                                // fidelity; the post-assignment `_ = prev_entry_id` below
-                                // documents the intentional dead store.
                                 let mut prev_entry_id: usize = usize::MAX;
                                 if loader != bun_ast::Loader::File {
                                     // Zig leaves these `undefined` / overwritten; both arms
@@ -1299,12 +1092,6 @@ where
                                             _on_file_update_path_buf
                                                 [file_path_without_trailing_slash.len()] = SEP;
 
-                                            // PORT NOTE: Zig copies `changed_name` starting at
-                                            // index `len` (overlapping the just-written SEP)
-                                            // and then slices `len + changed_name.len + 1`
-                                            // bytes — this includes one byte past the copy.
-                                            // Ported verbatim.
-                                            // TODO(port): verify intended off-by-one in Zig source
                                             _on_file_update_path_buf
                                                 [file_path_without_trailing_slash.len()
                                                     ..file_path_without_trailing_slash.len()
@@ -1352,18 +1139,9 @@ where
                 }
             }
         }
-
-        // Drop order (LIFO): `_flush` guard → Output::flush() +
-        // ctx.flush_evictions(), then `current_task` guard → enqueue(). See
-        // PORT NOTE on `current_task` above for why this inverts the Zig
-        // defer order.
     }
 }
 
-/// `Watcher::init` stores the `NewHotReloader` as its opaque context and
-/// dispatches file-change/error callbacks through this trait. In Zig this
-/// was structural (`@hasDecl(T, "onFileUpdate")`); the Rust watcher uses
-/// `WatcherContext` instead.
 impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> bun_watcher::WatcherContext
     for NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
 where
@@ -1383,14 +1161,6 @@ where
         Self::on_error(self, &err);
     }
 }
-
-// ── `bun build --watch` (Ctx = BundleV2) ─────────────────────────────────
-// Zig: `pub const Watcher = bun.jsc.hot_reloader.NewHotReloader(BundleV2,
-// EventLoop, true)` (bundle_v2.zig:50). `RELOAD_IMMEDIATELY = true` means the
-// watcher thread `execve()`s on the first change (Task::enqueue diverges), so
-// `event_loop()` / `reload()` are never reached; Zig doesn't even define
-// `BundleV2.eventLoop()` (lazy compilation prunes it). The bundler crate (T5)
-// can't name this generic, so it calls in via the `#[no_mangle]` hook below.
 
 impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     type EventLoop = bun_event_loop::AnyEventLoop<'static>;
@@ -1451,11 +1221,6 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         watcher: Box<Watcher>,
         _reload_immediately: bool,
     ) -> *mut Watcher {
-        // Zig (the non-ImportWatcher arm, hot_reloader.zig:330):
-        //   this.bun_watcher = Watcher.init(...);
-        //   this.transpiler.resolver.watcher = ResolveWatcher(...).init(this.bun_watcher.?);
-        // `watcher_nn` is a fresh non-null heap allocation; live for the
-        // process (BundleV2 is leaked under --watch — see `generate_from_cli`).
         let watcher_nn = bun_core::heap::into_raw_nn(watcher);
         let watcher_ptr: *mut Watcher = watcher_nn.as_ptr();
         self.bun_watcher = Some(watcher_nn);

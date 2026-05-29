@@ -40,12 +40,6 @@ bun_core::impl_tag_error!(RedisError);
 bun_core::named_error_set!(RedisError);
 
 impl From<bun_core::Error> for RedisError {
-    /// Reverse of the `RedisError → bun_core::Error` interning above so the
-    /// `JSValkeyClient::send` → `valkey_error_to_js` path round-trips through
-    /// `bun_core::Error` (Zig's open `!` set) without losing the variant.
-    /// Unknown names collapse to `ConnectionClosed` — the only non-`RedisError`
-    /// producer on the `send` path is the offline-queue OOM, which `OutOfMemory`
-    /// already covers.
     fn from(e: bun_core::Error) -> Self {
         e.name().parse().unwrap_or(RedisError::ConnectionClosed)
     }
@@ -232,10 +226,6 @@ impl<'a> ValkeyReader<'a> {
         }
     }
 
-    /// Current read offset into the underlying buffer.
-    ///
-    /// Mirrors the public `pos` field on the Zig `ValkeyReader` struct; callers
-    /// use this to compute how many bytes a `read_value` call consumed.
     #[inline]
     pub fn pos(&self) -> usize {
         self.pos
@@ -340,21 +330,10 @@ impl<'a> ValkeyReader<'a> {
     /// deeply nested responses.
     const MAX_NESTING_DEPTH: usize = 128;
 
-    /// Maximum accepted length for a single RESP blob (`$`, `=`, `!`).
-    /// Matches the Redis/Valkey server default `proto-max-bulk-len` of 512 MB.
-    /// Declared lengths above this fail the parse so the connection state
-    /// machine stops buffering instead of growing the read buffer toward an
-    /// attacker-chosen size.
     const MAX_BULK_LEN: i64 = 512 * 1024 * 1024;
 
     const MAX_LINE_LEN: usize = 512 * 1024;
 
-    /// Caps an aggregate's `Vec::with_capacity` so the total bytes reserved
-    /// across the whole parse — every nesting level combined — never exceed
-    /// the input buffer's size. Re-applying a per-level "remaining buffer"
-    /// cap at each of up to `MAX_NESTING_DEPTH` levels would let a hostile
-    /// server amplify a few KB of nested aggregate headers carrying huge
-    /// declared lengths into gigabytes of reserved capacity.
     fn take_prealloc_budget(&mut self, len: usize, element_size: usize) -> usize {
         let cap = len.min(self.prealloc_budget / element_size.max(1));
         self.prealloc_budget -= cap * element_size;
@@ -593,17 +572,6 @@ pub enum ScanResult {
     NeedMoreData,
 }
 
-/// Incrementally locates the end of the next complete RESP reply without
-/// materializing any values.
-///
-/// `on_data` re-runs the tree parser over the accumulated read buffer on every
-/// socket callback. Without this scanner, an aggregate reply (`*N`, `%N`, `~N`,
-/// `>N`, `|N`) whose elements arrive in separate TCP segments is re-parsed from
-/// its header each time — O(N^2) element parses for an N-element reply, which a
-/// hostile server can use to pin the JS thread. The scanner persists its byte
-/// offset and the stack of in-progress aggregates across calls so each buffered
-/// byte is examined a bounded number of times; the allocating parser only runs
-/// once a full reply is known to be present.
 #[derive(Default)]
 pub struct ReplyScanner {
     /// Byte offset of the next unscanned element, relative to the start of the
@@ -671,10 +639,6 @@ impl ReplyScanner {
         }
     }
 
-    /// Skip a single element starting at `reader.pos`. Returns `Some(n)` for an
-    /// aggregate expecting `n` further child values, or `None` for a
-    /// fully-skipped scalar. `InvalidResponse` means the element is not yet
-    /// fully buffered.
     fn scan_one(reader: &mut ValkeyReader<'_>, depth: usize) -> Result<Option<u64>, RedisError> {
         let type_byte = reader.read_byte()?;
         let ty = RESPType::from_byte(type_byte).ok_or(RedisError::InvalidResponseType)?;
@@ -803,12 +767,6 @@ pub enum SubscriptionPushMessage {
 }
 
 impl SubscriptionPushMessage {
-    // PERF(port): Zig's `bun.ComptimeStringMap` lowers this 3-entry table to a
-    // length-then-bytes switch at compile time. An earlier port used
-    // `phf::Map`, which pays a SipHash + indirect probe per lookup — overkill
-    // for three keys whose lengths are all distinct (7/9/11). A length-gated
-    // match rejects the miss case on a single `usize` compare and confirms the
-    // hit with one fixed-size byte compare, matching the Zig codegen.
     #[inline]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         match bytes.len() {

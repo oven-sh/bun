@@ -45,14 +45,6 @@ pub(crate) fn loader_resolver(input: &[u8]) -> Result<api::Loader, bun_core::Err
     Ok(option_loader.to_api())
 }
 
-/// Resolve `filename` against `cwd`, open it, read its full contents, close it,
-/// and return the buffer.
-///
-/// PORT NOTE: the Zig original (`std.fs.path.resolve` + `std.posix.toPosixPath`
-/// + `bun.openFileZ` + `readToEndAlloc`) is itself non-idiomatic for the Bun
-/// codebase. Reimplemented on top of `bun_paths::resolve_path` +
-/// `bun_sys::File::read_from`, which is the cross-platform path the rest of the
-/// runtime uses.
 pub fn read_file(cwd: &[u8], filename: &[u8]) -> Result<Vec<u8>, bun_core::Error> {
     let mut buf = PathBuffer::uninit();
     let outpath = resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut *buf, &[filename]);
@@ -80,16 +72,6 @@ pub(crate) fn resolve_jsx_runtime(s: &[u8]) -> Result<api::JsxRuntime, bun_core:
 
 pub(crate) type ParamType = clap::Param<clap::Help>;
 
-// ─── param tables ────────────────────────────────────────────────────────────
-// Zig built these at comptime via `clap.parseParam("...") catch unreachable`
-// concatenated with `++`. `bun_clap::parse_param!` expands to a const
-// `Param<Help>` literal, and `concat_params!` is a const-fn slice concat, so
-// every table — leaf and combined — lands in rodata with zero runtime init.
-//
-// All tables are `const` (const-eval cannot read `static`s) so they can feed
-// both `concat_params!` and `comptime_table!`. The single rodata copy of each
-// is the `static __CONV` / `static __TABLE` inside `comptime_table!` below.
-
 // Zig: `if (Environment.show_crash_trace) debug_params else [_]ParamType{}`.
 // `SHOW_CRASH_TRACE` is a `const bool`, so the dead branch is eliminated.
 macro_rules! maybe_debug_params {
@@ -102,10 +84,6 @@ macro_rules! maybe_debug_params {
     };
 }
 
-// PORT NOTE: `builtin.have_error_return_tracing` is a Zig-only concept. Rust
-// has no error-return tracing, but `bun_crash_handler::VERBOSE_ERROR_TRACE`
-// still gates extra crash diagnostics. Expose the flag in crash-trace builds
-// (debug/test/asan), which is the closest analogue.
 const VERBOSE_ERROR_TRACE_PARAMS: &[ParamType] = &[parse_param!(
     "--verbose-error-trace             Dump error return traces"
 )];
@@ -625,31 +603,6 @@ pub(crate) const TEST_PARAMS: &[ParamType] = concat_params!(
 pub(crate) const BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
     concat_params!(BASE_PARAMS_, RUNTIME_PARAMS_, TRANSPILER_PARAMS_);
 
-// ─── pre-converted tables (rodata) ───────────────────────────────────────────
-// Zig built these at comptime as part of the `ComptimeClap(Id, params)` type.
-// `comptime_table!` converts `*_PARAMS` → `[Param<usize>; N]` + category counts
-// + short-index entirely at const-eval, so `parse_with_table` does zero runtime
-// conversion / allocation / sorting / locking. perf: `ConvertedTable::build` +
-// quicksort + RawVec::grow was 8.7 % of `bun --version` userland samples.
-//
-// `.rodata.startup`: `comptime_table!` clusters the default-command table's
-// nested `__CONV` / `__LONG` / `__TABLE` payloads there (see `src/clap/lib.rs`),
-// otherwise each gets its own `.rodata.<sym>` input section that fat-LTO
-// scatters across distinct pages in crate order. Pinning AUTO next to its
-// `__TABLE` payload packs the trivial-script / `bun --version` arg-parse
-// working set onto a couple of shared fault-around pages. Non-PIE `bun` has
-// zero runtime relocations, so a `&'static` pointer literal stays in plain
-// rodata even in `.rodata.startup`. Linux-only: ELF section syntax.
-//
-// Only `AUTO_TABLE` lives in `.rodata.startup`. `.rodata.startup` is
-// deliberately one contiguous block faulted in with a single read-around on
-// every cold start (including `bun --version` / `bun .` / `bun <file>`) —
-// padding it with tables those paths never touch just grows that run. So
-// `RUN_TABLE` (`bun run` / `bun x`), the subcommand tables (`build` / `test`)
-// and the `BASE_RUNTIME_TRANSPILER` catch-all (`install` / `pm` / …) are all
-// built with `comptime_table!(.., cold)` and stay in plain `.rodata`, where
-// `src/startup.order` can still cluster the ones a sampled cold path actually
-// hits without weighing down the `.rodata.startup` fault-around window.
 #[cfg_attr(
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".rodata.startup")
@@ -676,10 +629,6 @@ pub(crate) fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
     }
 }
 
-// ─── exported FFI globals (written by parse(), read from C++) ────────────────
-// `AtomicBool` has the same size/alignment/bit-validity as `bool`, so the
-// `#[no_mangle]` symbol layout is unchanged for the C++ side that reads these
-// as plain `bool`. Rust writes go through `.store(.., Relaxed)`.
 #[unsafe(no_mangle)]
 pub(crate) static Bun__Node__ZeroFillBuffers: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
@@ -704,21 +653,8 @@ pub(crate) static Bun__Node__CAStore: core::sync::atomic::AtomicU8 =
 pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-// ─── bunfig loading ──────────────────────────────────────────────────────────
-// their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
-// call them without a tier-6 dependency. Re-export here so existing
-// `crate::cli::arguments::load_config*` callers are unaffected.
 pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_cmd_args};
 
-/// Parse `argv` into `api::TransformOptions` for the given subcommand.
-///
-/// PORT NOTE: `comptime cmd: Command.Tag` demoted to runtime arg (no
-/// `ConstParamTy` on `Tag`). The Zig original monomorphised over `cmd` so each
-/// subcommand got a dedicated param-table reference and dead-code-eliminated the
-/// other arms; here `command::tag_params(cmd)` does the runtime lookup, and the
-/// per-`cmd` blocks below are guarded by `if matches!(cmd, …)` instead of
-/// `if comptime cmd == …`.
-// PERF(port): was comptime monomorphization.
 pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions, bun_core::Error> {
     let mut diag = clap::Diagnostic::default();
     let table = tag_table(cmd);
@@ -764,10 +700,6 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         bun_crash_handler::VERBOSE_ERROR_TRACE.store(true, core::sync::atomic::Ordering::Relaxed);
     }
 
-    // ── --cwd ────────────────────────────────────────────────────────────────
-    // PORT NOTE: Zig stored a `[:0]u8` (NUL-terminated, owned). The Rust
-    // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`
-    // (sentinel dropped per schema.rs), so we dupe into a plain `Box<[u8]>`.
     let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {
         let mut outbuf = PathBuffer::uninit();
         let cwd_len = bun_sys::getcwd(&mut *outbuf)?;
@@ -1536,10 +1468,6 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     Ok(opts)
 }
 
-/// Cold path: `bun test` option-group parsing — timeout / coverage / reporter /
-/// shard / parallel / seed / etc. Split out of [`parse`] so the `bun run <script>`
-/// and bare-`bun <file>` hot path (`USES_GLOBAL_OPTIONS` ⇒ `parse` runs on every
-/// invocation) doesn't carry the test-runner flag handling in its instruction pages.
 #[cold]
 #[inline(never)]
 fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
@@ -1834,10 +1762,6 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
 }
 
-/// Cold path: `bun build` option-group parsing — bundler flags, `--app` (Bake),
-/// `--compile` / `CompileTarget`, sourcemap / format / minify, Windows executable
-/// metadata, etc. Split out of [`parse`] for the same reason as
-/// [`parse_test_command_options`].
 #[cold]
 #[inline(never)]
 fn parse_build_command_options(

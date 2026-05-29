@@ -17,40 +17,11 @@ pub type Tty = uv::uv_tty_t;
 
 pub enum Source {
     Pipe(Box<Pipe>),
-    /// `BackRef` not `Box`: the stdin tty (fd 0) lives in static storage
-    /// (`stdin_tty::value()`), and Box-from-static is UB. Heap-allocated ttys
-    /// use `heap::alloc`; destroy paths gate `heap::take` on `!is_stdin_tty()`.
-    /// In both cases the `Tty` strictly outlives every `Source` that holds it
-    /// (process-static, or freed only by the libuv close callback after the
-    /// `Source` is dropped), so the `BackRef` invariant holds and `Deref`
-    /// yields `&Tty` without a per-site `unsafe`.
     Tty(bun_ptr::BackRef<Tty>),
     File(Box<File>),
     SyncFile(Box<File>),
 }
 
-/// File source for async file I/O operations using libuv.
-///
-/// Manages a single `uv_fs_t` through a state machine that ensures:
-/// - Only one operation uses the `fs` field at a time
-/// - The `fs` is properly deinitialized before reuse
-/// - Cancellation is only attempted when an operation is in-flight
-///
-/// Typical usage pattern:
-/// 1. Check `can_start()` - returns true if ready for a new operation
-/// 2. Call `prepare()` - marks fs as in-use
-/// 3. Set up buffer and call `uv_fs_read()` or `uv_fs_write()`
-/// 4. In callback, call `complete()` first to clean up
-/// 5. Process the result
-///
-/// Cancellation:
-/// - Call `stop()` to cancel an in-flight operation
-/// - The callback will still fire with UV_ECANCELED
-/// - Always call `complete()` in the callback regardless of cancellation
-///
-/// Cleanup:
-/// - Call `detach()` if parent is destroyed before operation completes
-/// - File will automatically close itself after the operation finishes
 #[repr(C)]
 pub struct File {
     /// The fs_t for I/O operations (reads/writes) and state-machine-managed closes.
@@ -224,10 +195,6 @@ impl File {
 }
 
 impl Source {
-    /// Exclusive borrow of the `Tty` arm. `BackRef` already gives safe `Deref`
-    /// for shared reads; mutation still needs the per-site exclusivity
-    /// guarantee (single-threaded uv loop, no other `&Tty` live), so this
-    /// remains the one centralised `unsafe` for tty mutation.
     #[inline]
     fn tty_mut(tty: &mut bun_ptr::BackRef<Tty>) -> &mut Tty {
         // SAFETY: `BackRef` invariant guarantees liveness/alignment; the uv
@@ -360,10 +327,6 @@ impl Source {
             return bun_sys::Result::Err(err);
         }
 
-        // Heap-allocated tty: ownership is handed to libuv (the close callback
-        // `heap::take`s it). The `BackRef` invariant — pointee outlives every
-        // holder — is upheld because the only holder is the `Source::Tty` arm,
-        // which is dropped before the close callback fires.
         bun_sys::Result::Ok(bun_ptr::BackRef::from(bun_core::heap::into_raw_nn(tty)))
     }
 
@@ -462,10 +425,6 @@ pub mod stdin_tty {
     }
 
     pub(super) fn get_stdin_tty(loop_: *mut uv::Loop) -> bun_sys::Result<bun_ptr::BackRef<Tty>> {
-        // Zig spec (source.zig:247-248): `lock.lock(); defer lock.unlock();`
-        // bun_threading::Mutex::lock() returns `()` — must use lock_guard() for RAII
-        // unlock-on-drop, otherwise the mutex is held forever and the next call
-        // (e.g. Source__setRawModeStdin → open_tty(stdin)) deadlocks/UB-relocks.
         let _guard = LOCK.lock_guard();
 
         if !INITIALIZED.swap(true, Ordering::Relaxed) {
@@ -484,25 +443,12 @@ pub mod stdin_tty {
     }
 }
 
-/// Zig spec (source.zig:357) calls `bun.jsc.VirtualMachine.get().uvLoop()` directly,
-/// which is a T6 dependency. PORTING.md §Forbidden bans dep-cycle fn-ptr hooks, so
-/// the uv loop is taken as a parameter instead; the C++ caller
-/// (`ProcessBindingTTYWrap.cpp`) supplies `defaultGlobalObject()->uvLoop()`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> c_int {
     let mut tty = match Source::open_tty(uv_loop, Fd::stdin()) {
         bun_sys::Result::Ok(tty) => tty,
         bun_sys::Result::Err(e) => return e.errno as c_int,
     };
-    // UV_TTY_MODE_RAW_VT is a variant of UV_TTY_MODE_RAW that enables control
-    // sequence processing on the TTY implementer side, rather than having libuv
-    // translate keypress events into control sequences, aligning behavior more
-    // closely with POSIX platforms. This is also required to support some
-    // control sequences at all on Windows, such as bracketed paste mode. The
-    // Node.js readline implementation handles differences between these modes.
-    // `tty` is the static stdin tty (fd 0 → `get_stdin_tty`), live for the
-    // process — same invariant the `Source::Tty` arm relies on, so reuse the
-    // shared `tty_mut` accessor.
     if let Some(err) = Source::tty_mut(&mut tty)
         .set_mode(if raw {
             uv::TtyMode::Vt

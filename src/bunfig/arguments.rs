@@ -62,10 +62,6 @@ fn load_bunfig(
     bun_ast::expr::data::Store::create();
     let _store_reset = bun_ast::StoreResetGuard::new();
 
-    // PORT NOTE: reshaped for borrowck — `defer { ctx.log.level = original }`
-    // would capture `&mut *ctx.log` past the `Bunfig::parse(.., ctx)` reborrow.
-    // Route through the raw `*mut Log` (process-lifetime, set in
-    // `create_context_data()`); the guard restores `level` on unwind/return.
     let log_ptr: *mut bun_ast::Log = ctx.log;
     debug_assert!(!log_ptr.is_null());
     // SAFETY: `ctx.log` is the process-global Log written once during
@@ -202,11 +198,6 @@ pub fn load_config(
             ctx.args.absolute_working_dir = Some(Box::<[u8]>::from(&secondbuf[..cwd_len]));
         }
 
-        // PORT NOTE: reshaped for borrowck — `join_abs_string_buf` ties the
-        // returned slice's lifetime to both `cwd` (borrowed from `ctx.args`)
-        // and `config_buf`. We only need the length to NUL-terminate and
-        // re-wrap, so capture `joined.len()` and drop the `ctx` borrow before
-        // the `&mut ctx` call below.
         config_path_len = {
             let awd: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap();
             let parts: [&[u8]; 2] = [awd, config_path_];

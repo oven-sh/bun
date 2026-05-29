@@ -23,35 +23,16 @@ use bun_picohttp as picohttp;
 
 use crate::h3_client::h3_client;
 
-/// Upgrade an lsquic-supplied `*mut quic::Socket` callback argument to `&mut`.
-///
-/// INVARIANT: every `extern "C"` callback in this module receives a non-null
-/// `quic::Socket` pointer that lsquic guarantees live for the callback's
-/// duration; all callbacks run on the HTTP thread, so the `&mut` is the sole
-/// live borrow. Routes through the shared
-/// [`client_session::quic_socket_mut`] accessor.
 #[inline(always)]
 fn qsocket_arg<'a>(qs: *mut quic::Socket) -> &'a mut quic::Socket {
     super::client_session::quic_socket_mut(qs)
 }
 
-/// Upgrade an lsquic-supplied `*mut quic::Stream` callback argument to `&mut`.
-/// Same INVARIANT as [`qsocket_arg`] (lsquic-owned, live for the callback,
-/// HTTP-thread-only). Routes through the shared
-/// [`client_session::quic_stream_mut`] accessor.
 #[inline(always)]
 fn qstream_arg<'a>(s: *mut quic::Stream) -> &'a mut quic::Stream {
     super::client_session::quic_stream_mut(s)
 }
 
-/// Recover the `ClientSession` from a `quic::Socket`'s ext slot.
-///
-/// INVARIANT: the slot is set by `ClientContext::connect` and lives until
-/// `on_conn_close` clears it; the `ClientSession` is heap-owned and outlives
-/// the callback. lsquic invokes these callbacks on the HTTP thread, so the
-/// returned `&mut` is the sole live borrow. The session is a distinct
-/// allocation from the `quic::Socket`, so the returned borrow does not alias
-/// the `&mut quic::Socket` the caller still holds.
 #[inline]
 fn session_of<'a>(qs: &mut quic::Socket) -> Option<&'a mut ClientSession> {
     // Route through `client_session::session_mut` (one centralised unsafe);
@@ -60,13 +41,6 @@ fn session_of<'a>(qs: &mut quic::Socket) -> Option<&'a mut ClientSession> {
     (*qs.ext::<ClientSession>()).map(|p| session_mut(p.as_ptr()))
 }
 
-/// Recover the h3 `Stream` from a `quic::Stream`'s ext slot.
-///
-/// INVARIANT: the slot is set in `on_stream_open` (and cleared in `detach`);
-/// the `Stream` is heap-owned by its `ClientSession` (`pending` list) and lives
-/// until `detach()`. HTTP-thread only, and a distinct allocation from the
-/// `quic::Stream`, so the returned `&mut` neither aliases the caller's
-/// `&mut quic::Stream` nor any other live borrow.
 #[inline]
 fn stream_of<'a>(s: &mut quic::Stream) -> Option<&'a mut Stream> {
     // Route through `client_session::stream_mut` (one centralised unsafe);
@@ -106,11 +80,6 @@ extern "C" fn on_hsk_done(qs: *mut quic::Socket, ok: c_int) {
     }
 }
 
-/// Peer sent GOAWAY: this connection won't accept new streams (RFC 9114
-/// §5.2). Mark the session unusable now so the next `connect()` opens a fresh
-/// one instead of waiting for `on_conn_close`, which only fires after lsquic's
-/// draining period. Stay in the registry so abort/body-chunk lookups still
-/// reach in-flight streams; `on_conn_close` does the actual unregister/deref.
 extern "C" fn on_goaway(qs: *mut quic::Socket) {
     let qs = qsocket_arg(qs);
     let Some(session) = session_of(qs) else {

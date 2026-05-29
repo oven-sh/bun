@@ -73,10 +73,6 @@ impl Expect {
             return Ok(JSValue::UNDEFINED);
         }
 
-        // Zig shares one `*Formatter` (raw pointer) across both `toFmt` calls; in Rust
-        // `ZigFormatter` holds `&'a mut Formatter`, so two live adapters cannot alias the same
-        // backing formatter. Use a second formatter for the received value — `make_formatter` is
-        // a trivial struct init and the formatters carry no shared state between values.
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         // `defer formatter.deinit()` — handled by Drop.
@@ -100,11 +96,6 @@ impl Expect {
             RECEIVED_DIFFERENCE,
         );
 
-        // TODO(refactor): Zig `this.throw(global, signature, fmt, .{args})` passes fmt-string +
-        // tuple separately. Rust `format_args!` requires a literal fmt string, so SUFFIX_FMT cannot
-        // be threaded as a runtime arg. Decide `Expect::throw` signature — likely
-        // `fn throw(&self, &JSGlobalObject, &str, fmt::Arguments) -> JsResult<JSValue>` and inline
-        // SUFFIX_FMT into the `format_args!` call (or make `throw!` a macro).
         if not {
             let signature = get_signature("toBeCloseTo", "<green>expected<r>, precision", true);
             return this.throw_fmt(

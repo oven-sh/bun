@@ -24,12 +24,6 @@ pub struct ResolvedSource {
 
     pub is_commonjs_module: bool,
 
-    /// When .tag is .common_js_custom_extension, this is special-cased to hold
-    /// the JSFunction extension. It is kept alive by
-    /// - This structure is stored on the stack
-    /// - There is a JSC::Strong reference to it
-    // PORT NOTE: bare JSValue field is sound here — ResolvedSource is #[repr(C)] and lives
-    // on the stack while crossing to C++ (see comment above + headers-handwritten.h).
     pub cjs_custom_extension_index: JSValue,
 
     pub allocator: *mut c_void,
@@ -46,10 +40,6 @@ pub struct ResolvedSource {
     pub bytecode_cache: *mut u8,
     pub bytecode_cache_size: usize,
     pub module_info: *mut c_void,
-    /// The file path used as the source origin for bytecode cache validation.
-    /// JSC validates bytecode by checking if the origin URL matches exactly what
-    /// was used at build time. If empty, the origin is derived from source_url.
-    /// This is converted to a file:// URL on the C++ side.
     pub bytecode_origin_path: BunString,
 }
 
@@ -74,25 +64,6 @@ impl Default for ResolvedSource {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// RAII owner for the +1 `BunString` refs inside a `ResolvedSource`.
-//
-// `ResolvedSource` itself MUST stay `#[repr(C), Copy]` (it crosses to C++ by
-// value through `Errorable<ResolvedSource>`), so it cannot have `Drop`. That
-// makes every Rust-side construction a leak hazard: `source_code` is a fresh
-// `String::clone_utf8/clone_latin1` (+1 WTF refcount holding the entire
-// transpiled module text — kilobytes-to-megabytes), and any error path or
-// early return between construction and `into_ffi()` would orphan it.
-//
-// Hold the in-flight value as `OwnedResolvedSource`; the only way to extract
-// the raw `ResolvedSource` for FFI is `into_ffi()` (consumes, forgets). If the
-// owner is dropped instead, every contained `BunString` is `deref()`d.
-//
-// The `module_info` pointer (a `Box<ModuleInfoDeserialized>` leaked via
-// `heap::into_raw`) is intentionally NOT freed here — its ownership protocol
-// is separate (C++ calls `Bun__free_module_info` on success; on Rust-side drop
-// it would still leak today, tracked separately).
-// ──────────────────────────────────────────────────────────────────────────
 #[repr(transparent)]
 #[derive(Default)]
 pub struct OwnedResolvedSource(ResolvedSource);
@@ -107,10 +78,6 @@ impl From<ResolvedSource> for OwnedResolvedSource {
 }
 
 impl OwnedResolvedSource {
-    /// Hand the raw value to C++ (which takes over the `deref()` obligation
-    /// per `headers-handwritten.h` `BunString::deref` callers in
-    /// `Zig::ResolvedSource` consumers). After this, Rust must not touch the
-    /// strings.
     #[inline]
     pub fn into_ffi(self) -> ResolvedSource {
         core::mem::ManuallyDrop::new(self).0

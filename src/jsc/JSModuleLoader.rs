@@ -6,13 +6,6 @@ bun_opaque::opaque_ffi! {
     pub struct JSModuleLoader;
 }
 
-// TODO(port): move to jsc_sys
-//
-// `JSGlobalObject` is an opaque ZST handle on the Rust side; Rust never reads or
-// writes bytes through it. C++ mutates VM state internally, but that is outside
-// Rust's aliasing model, so these externs take `*const JSGlobalObject` (matching
-// the convention in `JSGlobalObject.rs`) rather than forcing callers to launder
-// `&JSGlobalObject` through a `*const _ as *mut _` cast.
 unsafe extern "C" {
     fn JSC__JSModuleLoader__evaluate(
         globalObject: *const JSGlobalObject,
@@ -26,10 +19,6 @@ unsafe extern "C" {
         exception: *mut JSValue,
     ) -> JSValue;
 
-    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `Option<&BunString>` is ABI-identical
-    // to a nullable `*const BunString` via the guaranteed null-pointer optimization.
-    // The returned `*mut JSInternalPromise` is nullable; callers check before deref.
     safe fn JSC__JSModuleLoader__loadAndEvaluateModule(
         arg0: &JSGlobalObject,
         arg1: Option<&BunString>,
@@ -110,11 +99,6 @@ impl JSModuleLoader {
             .ok_or(JsError::Thrown)
     }
 
-    /// Raw-pointer variant of [`Self::import`]. Returns the FFI
-    /// `*mut JSInternalPromise` directly so callers that need to store or pass
-    /// a mutable cell pointer (e.g. `VirtualMachine::pending_internal_promise`)
-    /// don't launder provenance through `&T -> *mut T`. Mirrors
-    /// [`Self::load_and_evaluate_module_ptr`].
     pub fn import_ptr(
         global_object: *mut JSGlobalObject,
         module_name: &BunString,

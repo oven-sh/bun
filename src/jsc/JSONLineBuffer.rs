@@ -1,15 +1,6 @@
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::strings;
 
-/// Buffer for newline-delimited data that tracks scan positions to avoid O(n²) scanning.
-/// Each byte is scanned exactly once. We track:
-/// - newline_pos: position of first known newline (if any)
-/// - scanned_pos: how far we've scanned (bytes before this have been checked)
-/// - head: offset into the buffer where unconsumed data starts (avoids copying on each consume)
-///
-/// When data arrives, we only scan the NEW bytes.
-/// When we consume a message, we just advance `head` instead of copying.
-/// Compaction only happens when head exceeds a threshold.
 #[derive(Default)]
 pub struct JSONLineBuffer {
     pub data: Vec<u8>,
@@ -124,13 +115,6 @@ impl JSONLineBuffer {
         self.head as usize >= self.data.len()
     }
 
-    /// Notify the buffer that `nread` bytes were written directly into the
-    /// tail of `data` (via `data.uv_alloc_spare_u8()`).
-    ///
-    /// Takes a length, not a `&[u8]`, because the only caller's slice would
-    /// alias `&mut self.data` — and only the length is used here. Passing the
-    /// slice through would re-introduce the Stacked-Borrows hazard the
-    /// `on_read` refactor removed.
     pub fn notify_written(&mut self, nread: usize) {
         // SAFETY: caller (libuv on_read) wrote `nread` bytes into the uv_alloc_spare* slice.
         unsafe { self.data.uv_commit(nread) };

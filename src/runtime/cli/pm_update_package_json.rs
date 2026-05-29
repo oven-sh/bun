@@ -40,24 +40,9 @@ pub fn update_package_json_and_install_catch_error(
 }
 
 pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> Result<(), Error> {
-    // TODO(port): narrow error set
-    // PERF(port): Zig used `switch (subcommand) { inline else => |cmd| ... }` to monomorphize
-    // `CommandLineArguments.parse` per subcommand. Calling with runtime `subcommand` here; if
-    // `parse` requires `<const CMD: Subcommand>`, expand to a `match`.
     let mut cli = CommandLineArguments::parse(subcommand)?;
 
-    // The way this works:
-    // 1. Run the bundler on source files
-    // 2. Rewrite positional arguments to act identically to the developer
-    //    typing in the dependency names
-    // 3. Run the install command
     if cli.analyze {
-        // PORT NOTE: hoisted from Zig fn-local `const Analyzer = struct {...}`.
-        // `ctx`/`cli` are stored as raw `*mut` (Zig: freely-aliasing `*T`) because
-        // `BuildCommand::exec` holds `command::get()` (the same `ContextData`) across
-        // the `on_fetch` callback, and `DependenciesScanner.entry_points` owns a copy
-        // of `cli.positionals[1..]` for the duration of the scan; storing `&mut` here
-        // would assert exclusivity we don't have.
         struct Analyzer {
             ctx: *mut ContextData,
             cli: *mut CommandLineArguments,
@@ -69,12 +54,6 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
                 result: &mut DependenciesScannerResult<'_, '_>,
             ) -> Result<(), Error> {
                 let this = self;
-                // TODO: add separate argument that makes it so positionals[1..] is not done and instead the positionals are passed
-                //
-                // Process-lifetime storage for the rewritten positionals. Zig:
-                // `bun.default_allocator.alloc(string, keys.len + 1)` with no matching
-                // free — `Global::exit(0)` follows immediately. `OnceLock` (not
-                // leaked) per PORTING.md §Forbidden.
                 static OWNED_KEYS: std::sync::OnceLock<Vec<Box<[u8]>>> = std::sync::OnceLock::new();
                 static POSITIONALS: std::sync::OnceLock<Vec<&'static [u8]>> =
                     std::sync::OnceLock::new();
@@ -116,10 +95,6 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
             }
         }
 
-        // PORT NOTE: `DependenciesScanner.entry_points` is `Box<[Box<[u8]>]>`; Zig
-        // borrowed `cli.positionals[1..]` directly. Clone the argv slices into an owned
-        // buffer (small one-shot list — no perf concern) so `cli` is not borrowed across
-        // the `&mut analyzer` setup.
         let entry_points: Box<[Box<[u8]>]> = cli.positionals[1..]
             .iter()
             .map(|s| Box::<[u8]>::from(*s))

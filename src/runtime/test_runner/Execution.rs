@@ -84,10 +84,6 @@ bun_core::declare_scope!(jest, visible);
 
 pub struct Execution {
     pub groups: Box<[ConcurrentGroup]>,
-    // PORT NOTE: was `pub(self)`; widened so `RefDataValue::sequence` can
-    // split-borrow `groups`/`sequences` without re-entering `sequences_mut`.
-    /// the entries themselves are owned by BunTest, which owns Execution.
-    // Zig: `#sequences` (private field)
     pub sequences: Box<[ExecutionSequence]>,
     pub group_index: usize,
 }
@@ -274,10 +270,6 @@ impl Result {
     }
 }
 
-// Recover the parent `BunTest` from `&mut self`. Returns `NonNull` (not
-// `&mut BunTest`) because `self` *is* `BunTest.execution`, so materializing a
-// `&mut BunTest` while `&mut self` is live would be aliased-`&mut` UB. Callers
-// must dereference at point-of-use into disjoint fields only.
 bun_core::impl_field_parent! { Execution => BunTest.execution; fn nonnull bun_test; }
 
 impl Execution {
@@ -357,11 +349,6 @@ impl Execution {
                 return step_group(buntest_strong, global_this, &mut now);
             }
             _ => {
-                // determine the active sequence,group
-                // advance the sequence
-                // step the sequence
-                // if the group is complete, step the group
-
                 let Some((sequence_ptr, group_ptr)) =
                     this.get_current_and_valid_execution_sequence(data)
                 else {
@@ -759,13 +746,6 @@ impl Execution {
         sequence.flaky_attempt_count = saved_flaky_attempt_count;
         sequence.flaky_attempts_buf = saved_flaky_attempts_buf;
 
-        // Snapshot counters are keyed by full test name and incremented on every
-        // toMatchSnapshot() call. Without this reset, retries / repeats would
-        // increment the counter to N on attempt N and look for a key that does
-        // not exist (https://github.com/oven-sh/bun/issues/23705).
-        // Zeroing all entries matches Jest (SnapshotState.clear() on test_retry,
-        // jestjs/jest#7493). Concurrent tests never touch the counts map — see
-        // SnapshotInConcurrentGroup in expect.zig.
         if let Some(runner) = super::jest::Jest::runner() {
             runner.snapshots.reset_counts();
         }

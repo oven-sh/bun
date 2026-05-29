@@ -67,13 +67,6 @@ pub type ResultW = sys::Result<Option<IteratorResultW>>;
 pub type Iterator = NewIterator<false>;
 pub type IteratorW = NewIterator<true>;
 
-/// Cross-platform marker for the const-bool→buffer-type selection. On Windows
-/// this is the real `Select<B>` machinery (see the `windows` `platform` mod);
-/// on every other target the per-platform `NewIterator<B>` carries no
-/// associated-type bound, so `WrappedSelect<B>` is a vacuous always-satisfied
-/// blanket — present only so `NewWrappedIterator`/`iterate` can spell a single
-/// `where` clause that propagates the Windows bound without cfg-splitting
-/// every impl.
 #[cfg(windows)]
 pub use platform::SelectImpl as WrappedSelect;
 #[cfg(not(windows))]
@@ -89,12 +82,6 @@ mod platform {
     use super::*;
     use core::ptr::addr_of;
 
-    /// Zig: `buf: [8192]u8 align(@alignOf(posix.system.dirent))`.
-    /// Darwin's `struct dirent` (64-bit ino) leads with `d_ino: u64` (align 8);
-    /// a bare `[u8; N]` field has alignment 1, so wrap it to force 8-byte
-    /// alignment for the *first* record. Subsequent records are only 4-byte
-    /// aligned by the kernel (`d_reclen` rounds to 4), so reads still go
-    /// through `read_unaligned`.
     #[repr(C, align(8))]
     pub struct DirentBuf(pub [u8; 8192]);
 
@@ -133,11 +120,6 @@ mod platform {
                         return Ok(None);
                     }
 
-                    // getdirentries64() writes to the last 4 bytes of the
-                    // buffer to indicate EOF. If that value is not zero, we
-                    // have reached the end of the directory and we can skip
-                    // the extra syscall.
-                    // https://github.com/apple-oss-distributions/xnu/blob/94d3b452840153a99b38a3a9659680b2a006908e/bsd/vfs/vfs_syscalls.c#L10444-L10470
                     const GETDIRENTRIES64_EXTENDED_BUFSIZE: usize = 1024;
                     const _: () = assert!(8192 >= GETDIRENTRIES64_EXTENDED_BUFSIZE);
                     self.received_eof = false;
@@ -337,11 +319,6 @@ mod platform {
 mod platform {
     use super::*;
 
-    /// Zig: `buf: [8192]u8 align(@alignOf(linux.dirent64))`.
-    /// `dirent64` leads with `d_ino: u64` (align 8); a bare `[u8; N]` field has
-    /// alignment 1, so wrap it to force 8-byte alignment of the buffer base.
-    /// The kernel pads `d_reclen` to a multiple of 8, so every record stays
-    /// 8-aligned as long as the base is.
     #[repr(C, align(8))]
     pub struct DirentBuf(pub [u8; 8192]);
     const _: () =
@@ -543,20 +520,11 @@ mod platform {
     {
         pub dir: Fd,
 
-        // This structure must be aligned on a LONGLONG (8-byte) boundary.
-        // If a buffer contains two or more of these structures, the
-        // NextEntryOffset value in each entry, except the last, falls on an
-        // 8-byte boundary.
-        // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_directory_information
         pub buf: [u8; 8192],
         pub index: usize,
         pub end_index: usize,
         pub first: bool,
         pub name_data: <Select<USE_WINDOWS_OSPATH> as WindowsOsPath>::NameData,
-        /// Optional kernel-side wildcard filter passed to NtQueryDirectoryFile.
-        /// Evaluated by FsRtlIsNameInExpression (case-insensitive, supports `*` and `?`).
-        /// Only honored on the first call (RestartScan=TRUE); sticky for the handle lifetime.
-        // TODO(port): lifetime — caller-owned UTF-16 slice; stored as raw ptr+len.
         pub name_filter: Option<(*const u16, usize)>,
     }
 
@@ -571,11 +539,6 @@ mod platform {
         ) -> sys::Result<Option<<Select<USE_WINDOWS_OSPATH> as WindowsOsPath>::Entry>> {
             loop {
                 if self.index >= self.end_index {
-                    // The I/O manager only fills the IO_STATUS_BLOCK on IRP
-                    // completion. When NtQueryDirectoryFile fails with an
-                    // NT_ERROR status (e.g. parameter validation), the block
-                    // is left untouched, so zero-initialize it rather than
-                    // reading uninitialized stack if the call fails.
                     let mut io: IO_STATUS_BLOCK = bun_core::ffi::zeroed();
                     if self.first {
                         // > Any bytes inserted for alignment SHOULD be set to zero, and the receiver MUST ignore them
@@ -698,12 +661,6 @@ mod platform {
                     self.index = self.buf.len();
                 }
 
-                // Some filesystem / filter drivers have been observed returning
-                // FILE_DIRECTORY_INFORMATION entries with an out-of-range
-                // FileNameLength (well beyond the 255-WCHAR NTFS component
-                // limit). Clamp to what fits in name_data (destination) and to
-                // what remains in buf (source) so a misbehaving driver cannot
-                // walk us past the end of either buffer.
                 let max_name_u16 = <Select<USE_WINDOWS_OSPATH> as WindowsOsPath>::max_name_u16();
                 let name_byte_offset =
                     entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileName);
@@ -712,11 +669,6 @@ mod platform {
                 let name_len_u16 = (file_name_length / 2)
                     .min(max_name_u16)
                     .min(buf_remaining_u16);
-                // name_byte_offset + name_len_u16*2 ≤ buf.len() by clamp above.
-                // `buf` follows the 8-byte `Fd` in a `repr(C, align(8))` struct so
-                // it is itself 8-byte aligned, and per MS docs each record (and
-                // thus its FileName at offset 64) lands on an 8-byte boundary —
-                // bytemuck checks the u8→u16 alignment at runtime.
                 let dir_info_name: &[u16] = bytemuck::cast_slice(
                     &self.buf[name_byte_offset..name_byte_offset + name_len_u16 * 2],
                 );
@@ -728,10 +680,6 @@ mod platform {
                 let kind = {
                     let isdir = file_attributes & FILE_ATTRIBUTE_DIRECTORY != 0;
                     let islink = file_attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0;
-                    // on windows symlinks can be directories, too. We prioritize the
-                    // "sym_link" kind over the "directory" kind
-                    // this will coerce into either .file or .directory later
-                    // once the symlink is read
                     if islink {
                         EntryKind::SymLink
                     } else if isdir {
@@ -763,10 +711,6 @@ mod platform {
 
     pub struct NewIterator<const USE_WINDOWS_OSPATH: bool> {
         pub dir: Fd,
-        // NOTE: even if this buffer were aligned to align_of::<dirent_t>(), entries after
-        // the first land at `size_of::<dirent_t>() + d_namlen` offsets (arbitrary), so the
-        // header is read via `read_unaligned` below regardless. The Zig original expresses
-        // the same thing with a `*align(1) dirent_t` cast.
         pub buf: [u8; 8192],
         pub cookie: u64,
         pub index: usize,
@@ -856,16 +800,6 @@ mod platform {
 }
 
 pub use platform::NewIterator;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Wrapped iterator — selects the underlying `NewIterator<B>` and provides a
-// uniform `init`/`next`/`set_name_filter` surface.
-//
-// Zig parametrized this on a `PathType` enum (`.u8` / `.u16`). Rust's stable
-// const generics don't admit user enums, so we map to a `bool` (`false` ==
-// `.u8`, `true` == `.u16`) and split the `next()` impl per-value to avoid
-// inherent associated types.
-// ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PathType {

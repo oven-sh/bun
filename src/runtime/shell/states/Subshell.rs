@@ -82,10 +82,6 @@ impl Subshell {
         log!("Subshell {} next state={}", this, state_tag);
         match interp.as_subshell(this).state {
             SubshellState::Idle => {
-                // Spec (Subshell.zig start()): spawn Script directly with
-                // `this.base.shell`. The env was already duped at construction
-                // (by `init_dupe_shell_state` or by Pipeline) — do NOT dupe
-                // again here.
                 let (shell, io, node) = {
                     let me = interp.as_subshell(this);
                     (me.base.shell, me.io.clone(), me.node)

@@ -13,10 +13,6 @@ use super::ref_counted_str::RefCountedStr;
 
 bun_core::declare_scope!(EnvStrLog, hidden);
 
-/// Packed `u128` layout (Zig `packed struct(u128)`, LSB-first):
-/// - bits  0..48  : `ptr` (u48)
-/// - bits 48..64  : `tag` (u16)
-/// - bits 64..128 : `len` (usize)
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct EnvStr(u128);
@@ -109,12 +105,6 @@ impl EnvStr {
             return Self::pack(0, Tag::Empty, 0);
         }
 
-        // PORT NOTE: Zig left `len` defaulted to 0 here (only `ptr` + `tag` set); the slice
-        // length is recovered via RefCountedStr::byte_slice(). Preserve that.
-        // PORT NOTE: Zig handed the borrowed slice to RefCountedStr which assumed ownership
-        // of its backing allocation. Rust cannot transfer ownership through `&[u8]`, so we
-        // dupe here; revisit `init_ref_counted`'s ownership contract (likely
-        // change the param to `Box<[u8]>`).
         Self::pack(
             to_ptr(RefCountedStr::init(Box::<[u8]>::from(str)) as *const c_void),
             Tag::Refcounted,
@@ -123,11 +113,6 @@ impl EnvStr {
     }
 
     pub fn slice(&self) -> &[u8] {
-        // PORT NOTE: the returned slice borrows either external memory (Tag::Slice) or the
-        // RefCountedStr buffer. Tying the return lifetime to `&self` prevents the caller from
-        // conjuring `&'static [u8]` (PORTING.md §Forbidden: lifetime-extension via raw-pointer
-        // deref). `EnvStr` is still `Copy`, so this is a best-effort bound — the caller is
-        // responsible for keeping the backing storage alive (same contract as Zig's `slice()`).
         match self.tag() {
             Tag::Empty => b"",
             Tag::Slice => self.cast_slice(),
@@ -168,11 +153,6 @@ impl EnvStr {
         }
     }
 
-    /// Shared-borrow accessor for the ref-counted backing — centralises the
-    /// `unsafe { &*self.cast_ref_counted() }` back-ref deref under the
-    /// `Tag::Refcounted ⇒ live heap RefCountedStr` invariant. Returns `None`
-    /// for `Slice`/`Empty`. The borrow is tied to `&self` (best-effort: `EnvStr`
-    /// is `Copy`, so the caller is still responsible for keeping the +1 alive).
     #[inline]
     fn as_ref_counted(&self) -> Option<&RefCountedStr> {
         if self.tag() == Tag::Refcounted {

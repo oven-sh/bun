@@ -53,10 +53,6 @@ pub unsafe trait OwnedTask: IntrusiveWorkTask + Send + 'static {
     /// `self` frees it (Zig: `bun.destroy(this)` at end of callback).
     fn run(self: Box<Self>);
 
-    /// The C-ABI thread-pool callback shim. Generic over `Self`; recovers the
-    /// owning `Box<Self>` from the intrusive `*mut Task` and dispatches to
-    /// [`OwnedTask::run`]. This is the **single** `Box::from_raw` for every
-    /// `OwnedTask` implementor.
     #[doc(hidden)]
     unsafe fn __callback(task: *mut Task) {
         // SAFETY: `task` points to the `Task` field inside a `Box<Self>` that
@@ -68,16 +64,6 @@ pub unsafe trait OwnedTask: IntrusiveWorkTask + Send + 'static {
     }
 }
 
-/// Implements [`IntrusiveWorkTask`] for a struct that embeds an intrusive
-/// `task: Task` field. Expands to [`bun_core::intrusive_field!`] + a marker
-/// impl; brings [`IntrusiveWorkTask::from_task_ptr`] into scope for the
-/// type's `fn(*mut Task)` trampolines.
-///
-/// ```ignore
-/// intrusive_work_task!(ReadFile, task);
-/// intrusive_work_task!([Ctx] CryptoJob<Ctx>, task);
-/// intrusive_work_task!(['a] AsyncHTTP<'a>, task);
-/// ```
 #[macro_export]
 macro_rules! intrusive_work_task {
     // Generic/lifetime form. The leading `[..]` disambiguates from the
@@ -95,18 +81,6 @@ macro_rules! intrusive_work_task {
     };
 }
 
-/// Implements [`OwnedTask`] (and the required `Send`) for a struct that
-/// embeds an intrusive `task: Task` field and is scheduled fire-and-forget
-/// via [`WorkPool::schedule_owned`]. Expands to [`intrusive_work_task!`] +
-/// `unsafe impl Send` + the `run` forward — the implementor supplies only an
-/// inherent `fn run_owned(self: Box<Self>)`.
-///
-/// The `Send` impl is part of the macro because every `OwnedTask` is *by
-/// construction* sent to a worker thread — Zig's `WorkPool.schedule` had no
-/// such bound and the per-type fields (raw `*mut EventLoop`, `*const
-/// JSGlobalObject`) are auto-`!Send` only nominally. The safety obligation
-/// ("all fields are sound to move across threads") is restated once here
-/// rather than at every `WorkPool::schedule(addr_of_mut!((*p).task))` site.
 #[macro_export]
 macro_rules! owned_task {
     ([$($gen:tt)*] $ty:ty, $field:ident) => {
@@ -158,15 +132,7 @@ impl WorkPool {
         Self::get().schedule(Batch::from(task));
     }
 
-    /// Schedule a heap-allocated task by value. The pool takes ownership of
-    /// the `Box`; [`OwnedTask::run`] receives it back on a worker thread.
-    /// Replaces the open-coded `Box::into_raw` + `&raw mut (*p).task` +
-    /// `container_of`-in-callback pattern.
     pub fn schedule_owned<T: OwnedTask>(mut task: Box<T>) {
-        // Install the monomorphized shim via the safe accessor — no raw
-        // byte-offset write. `node` is left as the caller initialized it
-        // (always `Node::default()`); the Zig path never reset it at schedule
-        // time either.
         task.task_mut().callback = T::__callback;
         // The single into_raw for every OwnedTask scheduler call. Derive the
         // intrusive `*mut Task` *after* into_raw so provenance covers the full

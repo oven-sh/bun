@@ -5,11 +5,6 @@ use crate::properties::PropertyId;
 use crate::{PrintErr, Printer};
 use bun_alloc::ArenaPtr;
 
-/// A [`<supports-condition>`](https://drafts.csswg.org/css-conditional-3/#typedef-supports-condition),
-/// as used in the `@supports` and `@import` rules.
-// PORT NOTE: Zig threaded the parser-input lifetime (`[]const u8` slices borrow
-// the source). Currently uses `&'static [u8]` per PORTING.md §AST crates;
-// TODO(refactor): re-thread `'i` once `PropertyId<'i>` and the parser arena are real.
 pub enum SupportsCondition {
     /// A `not` expression.
     Not(Box<SupportsCondition, ArenaPtr>),
@@ -35,10 +30,6 @@ pub enum SupportsCondition {
 pub struct Declaration {
     /// The property id for the declaration.
     pub property_id: PropertyId,
-    /// The raw value of the declaration.
-    ///
-    /// What happens if the value is a URL? A URL in this context does nothing
-    /// e.g. `@supports (background-image: url('example.png'))`
     pub value: &'static [u8],
 }
 
@@ -56,10 +47,6 @@ impl Declaration {
 
 impl Declaration {
     pub(crate) fn eql(&self, other: &Self) -> bool {
-        // PORT NOTE: Zig `css.implementEql` field-walk, hand-expanded.
-        // `PropertyId` carries its own tag+prefix `PartialEq` (see
-        // properties_generated.rs `impl PartialEq for PropertyId`); `value` is
-        // byte-slice equality.
         self.property_id == other.property_id && self.value == other.value
     }
 }
@@ -74,10 +61,6 @@ impl SupportsCondition {
     }
 
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> SupportsCondition {
-        // PORT NOTE: `css.implementDeepClone` variant-walk (hand-rolled —
-        // `#[derive(DeepClone)]` can't be used while `Selector`/`Unknown`
-        // carry `&'static [u8]`; the blanket `&'bump [u8]` impl doesn't unify
-        // with a fresh `'__bump`).
         let alloc = ArenaPtr::new(bump);
         match self {
             Self::Not(c) => Self::Not(Box::new_in(c.deep_clone(bump), alloc)),
@@ -101,16 +84,7 @@ impl SupportsCondition {
 }
 
 impl SupportsCondition {
-    // blocked_on: generics::CssHash for PropertyId — `#[derive(CssHash)]` /
-    // `implement_hash` need every field type to provide `.hash(&mut Wyhash)`.
-    // `PropertyId` only impls `core::hash::Hash` today. TODO(refactor): add
-    // `impl CssHash for PropertyId` then swap to `#[derive(CssHash)]`.
-
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // PORT NOTE: Zig `css.implementHash` variant-walk, hand-expanded because
-        // `#[derive(CssHash)]` would require `PropertyId: CssHash` (it only
-        // provides `core::hash::Hash`). Semantics match the Zig reflection:
-        // hash the discriminant, then field-wise structural hash.
         use core::hash::{Hash, Hasher};
         core::mem::discriminant(self).hash(hasher);
         match self {
@@ -130,10 +104,6 @@ impl SupportsCondition {
     }
 
     pub fn eql(&self, other: &SupportsCondition) -> bool {
-        // PORT NOTE: Zig `css.implementEql` variant-walk, hand-expanded because
-        // `#[derive(CssEql)]` would require `PropertyId: CssEql` (it only
-        // provides the custom tag+prefix `PartialEq`). Semantics match the Zig
-        // reflection: tag mismatch → false, then field-wise structural eq.
         match (self, other) {
             (Self::Not(a), Self::Not(b)) => a.eql(b),
             (Self::And(a), Self::And(b)) | (Self::Or(a), Self::Or(b)) => {
@@ -233,11 +203,6 @@ impl SupportsCondition {
         }
 
         let name = property_id.name();
-        // PORT NOTE: `inline for (css.VendorPrefix.FIELDS) |field| { if @field(prefix, field) ... }`
-        // iterates the packed-struct bool fields at comptime. VendorPrefix ports to
-        // bitflags!; iterate the ordered single-bit table directly (same pattern as
-        // rules/style.rs). The Zig also builds `var p = VendorPrefix{}; @field(p, field) = true;`
-        // but never reads it — dead store dropped.
         dest.write_separated(
             css::VendorPrefix::FIELDS
                 .iter()
@@ -463,14 +428,6 @@ impl<R> SupportsRule<R> {
     where
         R: for<'b> crate::generics::DeepClone<'b>,
     {
-        // The condition-merge/dedup port is still pending, but the nested rules
-        // must be minified so compiling nesting away for the targets stays
-        // bounded by `MAX_SELECTOR_EXPANSION`. `@supports` preserves the `&`
-        // resolution context at print time (`to_css` below recurses into
-        // `self.rules` without clearing `dest.ctx`), so style rules nested
-        // behind it multiply against the enclosing nesting levels exactly like
-        // plain nested rules — leaving them unvisited here lets the printer
-        // expand them exponentially.
         self.rules.minify(context, parent_is_unused)
     }
 }

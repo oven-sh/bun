@@ -15,16 +15,6 @@ use core::fmt::Arguments;
 
 use crate::{JSGlobalObject, JSPromise, JSValue, JsError};
 
-// ──────────────────────────────────────────────────────────────────────────
-// `JSGlobalObject` is currently defined twice during the port: the legacy
-// opaque stub at `crate::JSGlobalObject` (lib.rs) and the real port at
-// `crate::js_global_object::JSGlobalObject`. Both are `#[repr(C)]` zero-sized
-// opaque handles to the same C++ `JSC::JSGlobalObject`, so they are ABI-
-// identical and a `&T → *mut c_void` reinterpret is sound. `ErrorCode::fmt`
-// et al. are called from both sides; this trait erases the nominal split
-// until the stub is removed and `js_global_object::JSGlobalObject` becomes
-// the sole re-export.
-// ──────────────────────────────────────────────────────────────────────────
 pub trait GlobalObjectRef {
     /// Raw `JSC::JSGlobalObject*` for FFI.
     fn as_global_ptr(&self) -> *mut c_void;
@@ -45,10 +35,6 @@ impl GlobalObjectRef for crate::JSGlobalObject {
 
 type ErrorCodeInt = u16;
 
-/// `@import("ErrorCode").Error` — `enum(u16)` in Zig codegen, `Bun::ErrorCode`
-/// in C++. Modelled as a newtype-over-`u16` so the same type can also carry
-/// the legacy `anyerror`-derived sentinels (`PARSER_ERROR` / `JS_ERROR_OBJECT`)
-/// from `src/jsc/ErrorCode.zig` without an exhaustive-match obligation.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct ErrorCode(pub ErrorCodeInt);
@@ -686,10 +672,6 @@ impl ErrorCode {
     pub const COUNT: u16 = 312;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// `ERR_`-prefixed aliases — some callers spell the full Node code string,
-// some use the Zig-style stripped name. Both resolve to the same discriminant.
-// ──────────────────────────────────────────────────────────────────────────
 impl ErrorCode {
     pub const ERR_ACCESS_DENIED: ErrorCode = ErrorCode::ACCESS_DENIED;
     pub const ERR_AMBIGUOUS_ARGUMENT: ErrorCode = ErrorCode::AMBIGUOUS_ARGUMENT;
@@ -1038,19 +1020,6 @@ impl ErrorCode {
         ErrorCode::SECRETS_INTERACTION_NOT_ALLOWED;
     pub const ERR_SECRETS_AUTH_FAILED: ErrorCode = ErrorCode::SECRETS_AUTH_FAILED;
     pub const ERR_SECRETS_INTERACTION_REQUIRED: ErrorCode = ErrorCode::SECRETS_INTERACTION_REQUIRED;
-
-    // NOTE: `ERR_SYSTEM_ERROR` / `ERR_CHILD_CLOSED_BEFORE_REPLY` intentionally
-    // do NOT live here. They belong to the unrelated Zig enum
-    // `jsc.Node.ErrorCode` (src/runtime/node/nodejs_error_code.zig →
-    // `bun_runtime::node::nodejs_error_code::ErrorCode`), not to the
-    // ErrorCode.ts-derived table this type mirrors. Adding them here with
-    // out-of-range discriminants (≥ Self::COUNT) is a memory-safety bug: the
-    // C++ side does `errors[static_cast<size_t>(code)]` against a fixed
-    // `errors[COUNT]` array with no bounds check (ErrorCode.cpp /
-    // ErrorCode+Data.h), so any such value reaching `ErrorCode::fmt()` →
-    // `Bun__createErrorWithCode` reads past the array and past
-    // `ErrorCodeCache::internalField`. Callers needing those tags must use
-    // `bun_runtime::node::nodejs_error_code::ErrorCode` directly.
 }
 
 /// `error.code` string table — index-aligned with the consts above and with
@@ -1408,16 +1377,8 @@ impl ErrorCode {
             .unwrap_or("ERR_UNKNOWN")
     }
 
-    /// `Error.fmt(this, globalThis, fmt, args)` (codegen ErrorCode.zig) —
-    /// formats `args` into a `bun.String`, hands it to
-    /// `Bun__createErrorWithCode`, and returns the constructed Error JSValue.
-    /// The C++ side picks the ctor / `.name` / `.code` from `errors[self.0]`.
     pub fn fmt<G: GlobalObjectRef + ?Sized>(self, global: &G, args: Arguments<'_>) -> JSValue {
         let mut message = bun_core::String::create_format(args);
-        // `G` is one of the two `#[repr(C)]` opaque ZST `JSGlobalObject`
-        // handles (see `GlobalObjectRef` doc); `opaque_ref` is the safe
-        // ZST-handle deref proof (panics on null). C++ clones the impl into a
-        // JSString; Zig wrapper does `defer message.deref()`, mirrored below.
         let global = JSGlobalObject::opaque_ref(global.as_global_ptr().cast::<JSGlobalObject>());
         let v = Bun__createErrorWithCode(global, self, &mut message);
         message.deref();
@@ -1445,10 +1406,6 @@ impl core::fmt::Display for ErrorCode {
     }
 }
 
-// safe fn: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-// ABI-identical to non-null `*mut`); `bun_core::String` is `#[repr(C)]` and
-// the C++ side reads it in-place (clones the impl into a JSString); `ErrorCode`
-// is a by-value `#[repr(u16)]` POD.
 unsafe extern "C" {
     safe fn Bun__createErrorWithCode(
         global: &JSGlobalObject,
@@ -1488,29 +1445,11 @@ impl<'a, G: GlobalObjectRef + ?Sized> ErrorBuilder<'a, G> {
     #[inline]
     pub fn reject(self) -> JSValue {
         let v = self.code.fmt(self.global, self.args);
-        // `G` is one of the two `#[repr(C)]` opaque ZST `JSGlobalObject`
-        // handles (see `GlobalObjectRef` doc); both name the same C++ object,
-        // so reinterpreting the pointer for `JSPromise::rejected_promise`
-        // (which is still typed against the lib.rs stub) is sound. `opaque_ref`
-        // is the safe ZST-handle deref (panics on null).
         let global: &JSGlobalObject =
             JSGlobalObject::opaque_ref(self.global.as_global_ptr().cast::<JSGlobalObject>());
         JSPromise::rejected_promise(global, v).to_js()
     }
 }
-
-// Zig: comptime { @export(&ErrorCode.ParserError, .{ .name = "Zig_ErrorCodeParserError" }); ... }
-//
-// Gated off: in Zig these are `@intFromEnum(ErrorCode.from(error.ParserError))`
-// — i.e. derived from the anyerror integer so that the value C++ compares
-// against (`extern "C" ZigErrorCode Zig_ErrorCodeParserError;`,
-// headers-handwritten.h) is exactly what `from()` produces. The Rust `from()`
-// above currently maps via `code.errno`, which never yields the hard-coded
-// 0xFFFE/0xFFFD placeholders, so exporting them would make C++ parser-error
-// detection silently never match. Until `bun_core::Error` gains the
-// NonZeroU16 anyerror interning (`err!("ParserError").as_u16()`) and these
-// constants can be derived from the same source as `from()`, keep the Zig-side
-// `@export` authoritative and do not let C++ link against bogus Rust statics.
 
 #[unsafe(no_mangle)]
 pub(crate) static Zig_ErrorCodeParserError: ErrorCodeInt = ErrorCode::PARSER_ERROR;

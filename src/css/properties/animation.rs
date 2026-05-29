@@ -38,14 +38,6 @@ pub struct Animation {
 }
 
 impl Animation {
-    // TODO(port): PropertyFieldMap / VendorPrefixMap were comptime anonymous-struct
-    // metadata consumed by reflection in the shorthand codegen. Replace these with
-    // a derive macro (e.g. #[derive(Shorthand)]) that emits the field→PropertyIdTag
-    // and field→has-vendor-prefix tables.
-    // PORT NOTE: PropertyFieldMap dropped — `PropertyIdTag::Animation*` variants
-    // are not yet generated (animation longhands are unparsed-only for now), and
-    // the table was unread comptime metadata. Re-add when the variants land.
-
     pub const VENDOR_PREFIX_MAP: &'static [(&'static str, bool)] = &[
         ("name", true),
         ("duration", true),
@@ -224,10 +216,6 @@ impl Animation {
     }
 }
 
-/// A value for the [animation-name](https://drafts.csswg.org/css-animations/#animation-name) property.
-// PORT NOTE: no `#[derive(PartialEq, Eq, Hash)]` — `CustomIdent`/`CSSString`
-// carry raw `*const [u8]` arena pointers; derived eq/hash would compare by
-// pointer. Hand-written `eql`/`hash` below compare by content.
 #[derive(Clone, Copy)]
 pub enum AnimationName {
     /// The `none` keyword.
@@ -291,10 +279,6 @@ impl AnimationName {
         {
             return Ok(AnimationName::None);
         }
-        // PORT NOTE: `expect_string` returns a slice borrowing `&mut self`, which
-        // `try_parse`'s `R` type param can't carry. Erase the lifetime through a
-        // raw pointer inside the closure; the slice lives in the input arena and
-        // outlives this parse (CSSString = &'static [u8]).
         if let Ok(s) = input.try_parse(|i| i.expect_string().map(std::ptr::from_ref::<[u8]>)) {
             return Ok(AnimationName::String(s));
         }
@@ -479,15 +463,6 @@ pub enum AnimationTimeline {
 }
 
 impl AnimationTimeline {
-    // Port of `css.DeriveParse(@This()).parse` — void variants (`auto`, `none`)
-    // declared first → tried first via ident match; payloads follow in
-    // declaration order (`DashedIdent`, `ScrollTimeline`, `ViewTimeline`).
-    // Upstream `ScrollTimeline` / `ViewTimeline` carry no `parse`, so the Zig
-    // `DeriveParse` instantiation is dead code (`generic.parseFor` would
-    // `@compileError` if compiled — `Animation` is unreferenced in
-    // properties_generated.zig). We stop at `DashedIdent` here; if scroll()/
-    // view() ever become live they need real function-syntax parsing, not the
-    // derived field-sequence fallback.
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         let state = input.state();
         if let Ok(ident) = input.expect_ident() {
@@ -510,12 +485,6 @@ impl AnimationTimeline {
             AnimationTimeline::Auto => dest.write_str(b"auto"),
             AnimationTimeline::None => dest.write_str(b"none"),
             AnimationTimeline::DashedIdent(d) => d.to_css(dest),
-            // Upstream Zig `ScrollTimeline` / `ViewTimeline` have no `toCss`;
-            // `DeriveToCss` would delegate to `generic.toCss` → `T.toCss` and
-            // `@compileError` if this arm were ever instantiated. Mirror that:
-            // these variants are currently unconstructible via `parse()`, and
-            // emitting bare space-separated fields here would be wrong CSS
-            // (spec syntax is `scroll(...)` / `view(...)`).
             AnimationTimeline::Scroll(_) | AnimationTimeline::View(_) => {
                 unreachable!("ScrollTimeline / ViewTimeline have no toCss in spec (uninstantiated)")
             }

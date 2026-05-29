@@ -17,13 +17,6 @@ use crate::{DependencyID, PackageID, PackageNameHash, Resolution, invalid_packag
 use super::PackageManager;
 use super::options::LogLevel;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Free-function re-export surface — Zig declares these at file scope with an
-// explicit `*PackageManager` first param. Thin shims over the
-// `impl PackageManager` bodies below so `pub use resolution::{...}` in
-// `PackageManager.rs` resolves (matching the directories/enqueue pattern).
-// ──────────────────────────────────────────────────────────────────────────
-
 #[inline]
 pub fn format_later_version_in_cache<'a>(
     this: &'a mut PackageManager,
@@ -102,13 +95,6 @@ impl PackageManager {
                     return None;
                 }
 
-                // PORT NOTE: reshaped for borrowck — Zig calls
-                // `this.manifests.byNameHash(this, …, .load_from_memory, …)`,
-                // which in Rust would require simultaneous `&mut self.manifests`
-                // (receiver) and `&mut self` (arg). The memory-only path touches
-                // nothing on `PackageManager` besides the map, so use the
-                // disjoint-borrow helper and read `self.options` / `self.lockfile`
-                // alongside the held `&mut self.manifests` field borrow.
                 let manifest = self.manifests.by_name_hash_in_memory(name_hash)?;
 
                 if let Some(latest_version) = manifest
@@ -192,10 +178,6 @@ impl PackageManager {
             if total > 0 {
                 // PERF(port): was ensureUnusedCapacity — profile if hot
                 let len_before = tags_buf.len();
-                // `clone_into` writes exactly `total` bytes (build.len + pre.len)
-                // into `available` and advances it; zero-fill the tail first so
-                // we can hand it out as a safe `&mut [u8]` instead of slicing
-                // raw spare capacity.
                 tags_buf.resize(len_before + total, 0);
                 let mut available = &mut tags_buf[len_before..];
                 let new_version = version.clone_into(name, &mut available);
@@ -238,10 +220,6 @@ impl PackageManager {
         // TODO: make this fewer passes
         {
             let tags_slice: &[u8] = tags_buf.as_slice();
-            // Zig: `std.sort.pdq(..., sortGt)` — `sortGt` is `order == .gt`, so
-            // pdq sorts descending. Use the total-order helper with swapped args
-            // (`b.order(a)`) so equal keys yield `Equal`; a two-way Less/Greater
-            // closure is not antisymmetric and may panic since Rust 1.81.
             installed_versions.sort_by(|a, b| semver::Version::order_fn(tags_slice, *b, *a));
         }
         let npm_query = version.npm();

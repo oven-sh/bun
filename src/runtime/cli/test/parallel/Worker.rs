@@ -26,38 +26,18 @@ use super::file_range::FileRange;
 use super::frame;
 
 pub struct Worker {
-    // TODO(port): LIFETIMES.tsv classifies this BACKREF → *const, but the Zig
-    // mutates through it (live_workers, onWorkerExit, frame). Should use either
-    // *mut or interior mutability on Coordinator.
-    // PORT NOTE: `Coordinator<'a>` carries borrowed slices; the lifetime is
-    // erased to `'static` here because this is a raw backref pointer that is
-    // only ever dereferenced unsafely (constructor casts via `as *const _`).
     pub coord: *const Coordinator<'static>,
     pub idx: u32,
     // Intrusive-refcounted (`ThreadSafeRefCount`); `to_process` returns a
     // `heap::alloc`ed `*mut Process`. Matches Zig `?*bun.spawn.Process`.
     pub process: Option<*mut Process>,
 
-    /// Bidirectional IPC over fd 3. POSIX: usockets adopted from a socketpair.
-    /// Windows: `uv.Pipe` (the parent end of `.buffer` extra-fd, full-duplex).
-    /// Commands and results both flow through this channel; backpressure is
-    /// handled by the loop, so a busy worker writing thousands of `test_done`
-    /// frames never truncates and the coordinator never blocks.
-    // TODO(port): Zig `Channel(Worker, "ipc")` — second comptime arg is the
-    // field name for `container_of` recovery. Rust side likely uses
-    // `offset_of!(Worker, ipc)` or an explicit owner-ptr.
     pub ipc: Channel<Worker>,
     pub out: WorkerPipe,
     pub err: WorkerPipe,
 
     /// Index into `Coordinator.files` currently running on this worker.
     pub inflight: Option<u32>,
-    /// Contiguous slice of `Coordinator.files` owned by this worker. `files`
-    /// is sorted lexicographically so adjacent indices share parent dirs (and
-    /// likely imports); each worker walks its range front-to-back. When the
-    /// range is empty the worker steals one file from the *end* of whichever
-    /// range has the most remaining — the end is furthest from that worker's
-    /// hot region.
     pub range: FileRange,
     /// `std.time.milliTimestamp()` at the most recent dispatch; drives lazy
     /// scale-up.
@@ -106,10 +86,6 @@ impl Worker {
                     (*p).close();
                 }
             }
-            // Reset to fresh state after deinit so reapWorker's `!respawned`
-            // cleanup (which can't tell whether start() ran) doesn't deinit on
-            // undefined ArrayList memory.
-            // PORT NOTE: assignment drops the old value (≡ Zig deinit + reinit).
             let self_ptr: *const Worker = std::ptr::from_ref::<Worker>(this);
             this.ipc = Channel::default();
             this.out = WorkerPipe::new(PipeRole::Stdout, self_ptr);
@@ -118,10 +94,6 @@ impl Worker {
 
         #[cfg(unix)]
         {
-            // `.buffer` extra_fd creates an AF_UNIX socketpair; the parent end is
-            // adopted into a usockets `Channel`.
-            // PORT NOTE: SpawnOptions.extra_fds is `Box<[Stdio]>` (owned) in the
-            // Rust port, so the `extra_fd_stdio` field is no longer borrowed here.
             this.extra_fd_stdio = [Stdio::Buffer];
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
@@ -187,22 +159,9 @@ impl Worker {
         }
         #[cfg(not(unix))]
         {
-            // Windows: `.ipc` extra_fd creates a duplex `uv.Pipe` (named pipe
-            // under the hood, UV_READABLE | UV_WRITABLE | UV_OVERLAPPED) and
-            // initialises the parent end with uv_pipe_init(loop, ipc=1) — the
-            // same dance Bun.spawn({ipc}) / process.send() use. The child opens
-            // CRT fd 3 with uv_pipe_init(ipc=1) + uv_pipe_open in Channel.adopt.
-            // Both ends agreeing on the libuv IPC framing is what matters; our
-            // own [u32 len][u8 kind] frames ride inside it unchanged.
             use bun_sys::windows::libuv as uv;
 
             let ipc_pipe = bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));
-            // Zig spec: `errdefer if (this.ipc.backend.pipe == null) ipc_pipe.closeAndDestroy();`
-            // The guard owns the raw Box ptr; `close_and_destroy` handles both
-            // never-initialized (loop_ null → free directly) and initialized
-            // (uv_close + free in callback). Disarmed only after `adopt_pipe`
-            // succeeds and the Channel takes ownership. The guard captures only
-            // the raw ptr, so it nests cleanly under the outer `this` guard.
             let ipc_pipe_guard = scopeguard::guard(ipc_pipe, |p| {
                 // SAFETY: `p` is the live Box-allocated uv_pipe_t; sole owner
                 // on every error path (extra_pipes is drained back to raw below).
@@ -244,15 +203,6 @@ impl Worker {
                 Output::err(e, "spawnProcess failed for test worker", ());
                 bun_core::err!("SpawnFailed")
             })?;
-            // Zig `defer spawned.extra_pipes.deinit()` only freed the ArrayList
-            // backing (items were raw `*uv.Pipe` with no destructor). The Rust
-            // port made `WindowsStdioResult::Buffer` hold `Box<uv::Pipe>`, and
-            // `spawn_process_windows` does `heap::take(ipc_pipe)` into it — so
-            // the Vec now holds a second `Box` to the SAME heap address that
-            // `ipc_pipe_guard` / `adopt_pipe` claim. Drain the Vec and release
-            // each Box back to a raw ptr so the Vec drop is inert and
-            // `ipc_pipe_guard` remains the sole owner across the
-            // `start_with_pipe` error window below.
             for item in core::mem::take(&mut spawned.extra_pipes) {
                 if let spawn::WindowsStdioResult::Buffer(p) = item {
                     let raw = bun_core::heap::into_raw(p);
@@ -281,18 +231,9 @@ impl Worker {
                 }
                 .map_err(|_| bun_core::err!("PipeStartFailed"))?;
             }
-            // `ipc_pipe` was Box-allocated via heap::into_raw above and
-            // initialised by spawn_process; ownership of the *mut Pipe transfers
-            // to the Channel on success (it does the Box::from_raw internally).
-            // On failure the caller still owns it (Channel.rs:294) and the
-            // `ipc_pipe_guard` errdefer performs `close_and_destroy`.
             if !this.ipc.adopt_pipe(coord.vm, ipc_pipe) {
                 return Err(bun_core::err!("ChannelAdoptFailed"));
             }
-            // Channel now owns the Box; disarm the errdefer so end-of-block
-            // doesn't double-close. Any later error (watch_or_reap) is handled
-            // by the outer `this` guard, whose `Channel::default()` assignment
-            // drops the old Channel and `close_and_destroy`s the pipe via Drop.
             let _ = scopeguard::ScopeGuard::into_inner(ipc_pipe_guard);
         }
 
@@ -325,11 +266,6 @@ impl Worker {
         match process.watch_or_reap() {
             Ok(_) => {}
             Err(e) => {
-                // Surface to the caller (spawnWorker / onWorkerExit) instead of
-                // synchronously firing onExit() — that would re-enter
-                // onWorkerExit() → start(), which under persistent EMFILE
-                // recurses unboundedly while spawning real processes each frame.
-                // Resource cleanup is handled by the function-scope errdefer.
                 this.alive = false;
                 // SAFETY: see above.
                 unsafe { (*coord_ptr.cast_mut()).live_workers -= 1 };
@@ -491,10 +427,6 @@ impl Default for WorkerPipe {
     }
 }
 
-// `bun.io.BufferedReader.init(WorkerPipe)` — vtable parent. Maps the Zig
-// `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
-// Callbacks touch only fields disjoint from `reader` (worker backref / done
-// flag); worker/coord backrefs are valid for the pipe's lifetime.
 bun_io::impl_buffered_reader_parent! {
     TestParallelWorkerPipe for WorkerPipe;
     has_on_read_chunk = true;

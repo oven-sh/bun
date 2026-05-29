@@ -15,13 +15,6 @@ use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{LitByteStr, LitStr, Path, Token, parse_macro_input};
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Parsed representation — build-time IR; the public `Param<Help>` / `Names` /
-// `Values` / `Help` shapes live in `bun_clap` (this proc-macro crate cannot
-// depend on it without a cycle, and the public types borrow `&'static` data
-// that does not exist at macro-expansion time).
-// ─────────────────────────────────────────────────────────────────────────────
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Values {
     None,
@@ -264,15 +257,6 @@ fn byte_str_b(s: &[u8]) -> LitByteStr {
     LitByteStr::new(s, Span::call_site())
 }
 
-/// 1:1 port of `bun_core::output::pretty_fmt_runtime` — rewrites Bun's `<tag>`
-/// colour markup to ANSI escape sequences when `is_enabled`, or strips it when
-/// not. Run here at macro-expansion time with `is_enabled = false` so each param
-/// description's tag-stripped form (`Help::msg_plain`) is a `const` byte literal
-/// in rodata. The ANSI form is *not* baked in — it is rare (only `bun --help` on
-/// a colour TTY) and would otherwise roughly triple the help-string rodata, so
-/// `bun_clap::pretty_help_desc` derives it from `Help::msg` on demand instead.
-/// (Zig did the equivalent rewrite at `comptime` via `Output.prettyFmt` inside
-/// `clap.simpleHelpBunTopLevel`.)
 fn pretty_rewrite(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
     use bun_output_tags::{RESET, color_for_bytes};
     let mut out: Vec<u8> = Vec::with_capacity(fmt.len() * 2);
@@ -321,12 +305,6 @@ fn pretty_rewrite(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
                     is_reset = true;
                     ""
                 } else {
-                    // Unknown tag: Zig's comptime `prettyFmt` would `@compileError`
-                    // here, but `pretty_fmt_runtime` (the path this replaces) drops
-                    // it silently and so does Zig's actual `clap.simpleHelp`. Match
-                    // the lenient runtime behaviour — a compile error would be
-                    // stricter than what shipped, and param specs don't carry
-                    // unknown tags anyway.
                     ""
                 };
                 if is_enabled {

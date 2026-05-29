@@ -10,10 +10,6 @@ use bun_core::strings;
 use bun_http::Method;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult};
 
-// Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
-// generic bool. The proc-macro only matches `true`/`false` literals, so
-// monomorphized callers (`<const C: bool>`) branch here. Both arms yield
-// `&'static str`.
 macro_rules! pfmt {
     ($fmt:expr, $colors:expr) => {
         if $colors {
@@ -380,13 +376,6 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
         if aws_options.changed_credentials {
             break 'brk blob::Store::init_s3(path, None, aws_options.credentials).expect("oom");
         } else {
-            // PORT NOTE: Zig `initS3WithReferencedCredentials` bumps the
-            // intrusive ref on `default_credentials` (a `*S3Credentials`).
-            // The Rust `Store::S3` field is `Rc<S3Credentials>` (separate rc
-            // layer), so we can't share the existing intrusive allocation —
-            // deep-clone the value instead and let `init_s3` `Rc::new` it.
-            // PERF(port): was intrusive ref-bump (no copy) — profile if hot
-            // once Store.rs migrates `Rc<S3Credentials>` → `IntrusiveRc`.
             break 'brk blob::Store::init_s3(path, None, default_credentials.clone()).expect("oom");
         }
     };
@@ -410,11 +399,6 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
                         blob.content_type_was_set.set(true);
                         // SAFETY: bun_vm() returns the live VM raw ptr.
                         if let Some(entry) = global.bun_vm().as_mut().mime_type(str.slice()) {
-                            // PORT NOTE: `MimeType.value` is `Cow<'static, [u8]>`; the
-                            // canonical-table hit (via `Compact::to_mime_type`) is always
-                            // `Borrowed(&'static)`. If a future table source ever yields
-                            // `Owned`, hand the buffer to the blob's allocated-content-type
-                            // path so `Blob::deinit` reclaims it.
                             match entry.value {
                                 std::borrow::Cow::Borrowed(s) => {
                                     blob.content_type.set(std::ptr::from_ref::<[u8]>(s));
@@ -477,11 +461,6 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
                         blob.content_type_was_set.set(true);
                         // SAFETY: bun_vm() returns the live VM raw ptr.
                         if let Some(entry) = global.bun_vm().as_mut().mime_type(str.slice()) {
-                            // PORT NOTE: `MimeType.value` is `Cow<'static, [u8]>`; the
-                            // canonical-table hit (via `Compact::to_mime_type`) is always
-                            // `Borrowed(&'static)`. If a future table source ever yields
-                            // `Owned`, hand the buffer to the blob's allocated-content-type
-                            // path so `Blob::deinit` reclaims it.
                             match entry.value {
                                 std::borrow::Cow::Borrowed(s) => {
                                     blob.content_type.set(std::ptr::from_ref::<[u8]>(s));
@@ -545,11 +524,6 @@ impl S3BlobStatTask {
                 this.promise.resolve(global, JSValue::FALSE)?;
             }
             s3::S3StatResult::Success(_) => {
-                // calling .exists() should not prevent it to download a bigger file
-                // this would make it download a slice of the actual value, if the file changes before we download it
-                // if (this.blob.size == Blob.max_size) {
-                //     this.blob.size = @truncate(stat.size);
-                // }
                 this.promise.resolve(global, JSValue::TRUE)?;
             }
             s3::S3StatResult::Failure(err) => {
@@ -743,10 +717,6 @@ pub(crate) fn get_presign_url_from(
     let mut expires: usize = 86400; // 1 day default
 
     let s3 = this.store.get().as_ref().unwrap().data.as_s3();
-    // Zig: `.{ .credentials = s3.getCredentials().*, .request_payer = s3.request_payer }`.
-    // `acl`/`storage_class`/`content_*` deliberately stay at their `None`
-    // defaults here — they are only seeded from the store when extra_options
-    // is provided (via `getCredentialsWithOptions` below).
     let mut credentials_with_options = s3::S3CredentialsWithOptions {
         credentials: (**s3.get_credentials()).clone(),
         request_payer: s3.request_payer,
@@ -830,10 +800,6 @@ pub(crate) fn get_bucket_name(this: &Blob) -> Option<&[u8]> {
     Some(bucket)
 }
 
-// PORT NOTE: `#[bun_jsc::host_fn(getter|method)]` requires `Self` (impl-block
-// context). These are free fns on `*Blob` exported manually as `JSS3File__*`
-// (see `@export` block below) and called as `s3_file::get_*` from `Blob::get_*`,
-// so the proc-macro shim is not used here — the raw ABI shim is hand-wired.
 pub(crate) fn get_bucket(this: &Blob, global: &JSGlobalObject) -> JsResult<JSValue> {
     if let Some(name) = get_bucket_name(this) {
         return bun_jsc::bun_string_jsc::create_utf8_for_js(global, name);
@@ -958,13 +924,6 @@ pub(crate) fn has_instance(_: JSValue, _global: &JSGlobalObject, value: JSValue)
     blob.is_s3()
 }
 
-// @export block — symbols exported with C linkage and JSC calling convention.
-// JSS3File__presign     -> raw shim wrapping get_presign_url (method-with-context)
-// JSS3File__construct   -> construct
-// JSS3File__hasInstance -> has_instance
-// JSS3File__bucket      -> get_bucket
-// JSS3File__stat        -> raw shim wrapping get_stat (method-with-context)
-
 pub mod exports {
     use super::*;
 
@@ -1031,10 +990,6 @@ pub mod exports {
 // C++ side defines `SYSV_ABI EncodedJSValue` (JSS3File.cpp).
 bun_jsc::jsc_abi_extern! {
     safe fn BUN__createJSS3File(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue;
-    // `&JSGlobalObject` discharges the only deref'd-param precondition; `blob`
-    // is stored opaquely as `void* m_ctx` (module-private — sole caller is
-    // `to_js_unchecked`, whose own signature carries the ownership-transfer
-    // contract). Matches the `*__createObject` precedent.
     safe fn BUN__createJSS3FileUnsafely(
         global: &JSGlobalObject,
         blob: *mut core::ffi::c_void,

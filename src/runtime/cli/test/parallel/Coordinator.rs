@@ -83,11 +83,6 @@ impl<'a> Coordinator<'a> {
 
     /// The worker (spawned or not) whose range has the most files remaining.
     fn find_steal_victim(&mut self) -> Option<*mut Worker> {
-        // PORT NOTE: callers (assign_work) hold a live `&mut Worker` pointing
-        // into `self.workers`. `iter_mut()` would materialize a second
-        // `&mut Worker` for that same slot — instant UB under Stacked Borrows
-        // regardless of what the loop body does. Iterate via raw pointers
-        // instead, mirroring Zig's `for (this.workers) |*v|` (raw `*Worker`).
         let mut victim: Option<*mut Worker> = None;
         let mut most: u32 = 0;
         let base: *mut Worker = self.workers.as_mut_ptr();
@@ -138,12 +133,6 @@ impl<'a> Coordinator<'a> {
         }
     }
 
-    /// SIGINT/SIGTERM: terminate every worker (and its descendants) and exit.
-    /// Workers run in their own process group, so kill(-pid, SIGTERM) reaches
-    /// everything they spawned. Kernel-level safety nets cover the case where
-    /// the coordinator can't run this (SIGKILL): PDEATHSIG on Linux,
-    /// kill-on-close Job Object on Windows. macOS has neither; the process
-    /// group kill here plus stdin EOF in the worker loop is the best effort.
     fn abort_all(&mut self) -> ! {
         abort_handler::uninstall();
         for w in self.workers[..self.spawned_count as usize].iter_mut() {
@@ -192,10 +181,6 @@ impl<'a> Coordinator<'a> {
         true
     }
 
-    /// Once every live worker has been busy for at least `scale_up_after_ms`,
-    /// spawn the remaining workers. A suite of trivially fast files therefore
-    /// runs on one worker with zero spawn overhead; the first slow file
-    /// triggers full scale-up so longer suites aren't staircased.
     fn maybe_scale_up(&mut self) {
         if self.spawned_count >= self.parallel_limit {
             return;
@@ -235,13 +220,6 @@ impl<'a> Coordinator<'a> {
         if let Some(idx) = w.range.pop_front() {
             return w.dispatch(idx, self.files[idx as usize].slice());
         }
-        // Steal the back half of the largest remaining range as a contiguous
-        // block. The thief walks it forward via popFront, so both workers keep
-        // directory locality and total steals are O(K log N) instead of O(N).
-        // Stealing from not-yet-spawned workers is fine — their range is just
-        // an unclaimed reservation.
-        // PORT NOTE: reshaped for borrowck — find_steal_victim returns *mut so
-        // we can borrow `w` and the victim disjointly.
         if let Some(v_ptr) = self.find_steal_victim() {
             // SAFETY: v_ptr points into self.workers. `w` cannot be the victim:
             // `w.range` is empty here (pop_front just returned None) while the
@@ -271,10 +249,6 @@ impl<'a> Coordinator<'a> {
             if self.bail == 1 { "" } else { "s" }
         ));
         Output::flush();
-        // PORT NOTE: reachable from on_frame/account_crash with the caller's
-        // `w: &mut Worker` still live and used afterward; iter_mut() here
-        // would create a second `&mut Worker` for `w`'s slot (UB). Iterate
-        // via raw pointers — mirrors Zig `for (this.workers[..]) |*other|`.
         let base: *mut Worker = self.workers.as_mut_ptr();
         let n = self.spawned_count as usize;
         for i in 0..n {
@@ -379,18 +353,10 @@ impl<'a> Coordinator<'a> {
 
                 self.flush_captured(w);
 
-                // A worker can write file_done and crash before the coordinator
-                // reads the frame; onWorkerExit() will already have called
-                // accountCrash() and cleared inflight. Ignore the buffered frame
-                // so we don't double-count.
                 if w.inflight != Some(idx) {
                     return;
                 }
 
-                // PORT NOTE: reshaped for borrowck — `summary()` mutably borrows
-                // `self.reporter`, so the unhandled-errors counter (also on
-                // `self.reporter.jest`) and `bail_out()` must run after the
-                // summary borrow is released.
                 {
                     let summary = self.reporter.summary();
                     summary.pass += pass;
@@ -409,10 +375,6 @@ impl<'a> Coordinator<'a> {
                 if self.bail > 0 && fail_now >= self.bail {
                     self.bail_out();
                 }
-                // A dead worker can deliver a buffered file_done during the
-                // pre-reap drain; don't dispatch into it (stdin is gone, the
-                // file index would be consumed and skipped). reapWorker()
-                // handles the next dispatch via respawn.
                 if w.alive {
                     self.assign_work(w);
                 }
@@ -473,15 +435,6 @@ impl<'a> Coordinator<'a> {
         if let Some(idx) = w.inflight {
             self.break_dots();
             self.ensure_header(idx);
-            // A worker dying mid-file is never silently retried. If a test
-            // intentionally exits (process.exit) that file is marked failed
-            // and the run continues in a fresh worker. If the worker was
-            // killed by a fatal signal — SIGILL/SIGTRAP from Bun's own panic
-            // handler, SIGSEGV/SIGBUS/SIGFPE from native code, SIGABRT from a
-            // JSC/WTF assertion — that's a Bun or addon bug and must not be
-            // masked by the rest of the suite passing: abort the whole run so
-            // the exit status reflects the crash. SIGKILL is treated as a
-            // regular failure (commonly the OOM killer or the user).
             let panicked = is_panic_status(status);
             self.account_crash(idx, status);
             Output::flush();
@@ -520,10 +473,6 @@ impl<'a> Coordinator<'a> {
             if !self.bailed && self.live_workers == 0 {
                 self.abort_queued_files(b"no live workers");
             }
-            // Explicit early release: `w` is a borrowed slot in self.workers, so
-            // Drop won't fire until Coordinator teardown. Assigning defaults
-            // drops the old values now (pipe FDs, capture buffer) to match the
-            // Zig's explicit deinit() calls.
             w.ipc = Default::default();
             w.out = WorkerPipe::new(PipeRole::Stdout, core::ptr::null());
             w.err = WorkerPipe::new(PipeRole::Stderr, core::ptr::null());
@@ -548,12 +497,6 @@ impl<'a> Coordinator<'a> {
         }
     }
 
-    /// A worker was killed by a crash signal — treat this as a Bun bug, not
-    /// a test failure. Print the panic banner (even if --bail already set
-    /// `bailed`), terminate every other worker, and mark all remaining
-    /// files as aborted so the run ends immediately with a non-zero exit
-    /// and the panic's stderr (already flushed via flushCaptured) is the
-    /// last meaningful output, not buried under hundreds of later passes.
     fn abort_on_worker_panic(&mut self, file_idx: u32, status: &SpawnStatus) {
         self.break_dots();
         let mut buf = [0u8; 32];
@@ -566,17 +509,6 @@ impl<'a> Coordinator<'a> {
             bstr::BStr::new(self.rel_path(file_idx)),
         ));
         Output::flush();
-        // .shutdown() only takes effect between files, so a worker that's
-        // mid-file would keep producing output after the panic banner.
-        // Terminate the whole process group (same as the SIGINT path) so the
-        // run ends now; reapWorker() will account each inflight file as a
-        // crash when the exit arrives. Runs even if --bail already set
-        // `bailed`, since bailOut() only shutdown()s idle workers and would
-        // leave inflight ones running past the banner.
-        // PORT NOTE: reachable from reap_worker with the caller's
-        // `w: &mut Worker` still live and used afterward; iter_mut() would
-        // create a second `&mut Worker` for `w`'s slot (UB). Iterate via raw
-        // pointers — mirrors Zig `for (this.workers[..]) |*other|`.
         let base: *mut Worker = self.workers.as_mut_ptr();
         let n = self.spawned_count as usize;
         for i in 0..n {
@@ -616,10 +548,6 @@ impl<'a> Coordinator<'a> {
     /// Mark every not-yet-dispatched file as failed so `drive()` can exit
     /// instead of spinning when no live worker remains to make progress.
     fn abort_queued_files(&mut self, reason: &[u8]) {
-        // PORT NOTE: reachable from reap_worker/abort_on_worker_panic with the
-        // caller's `w: &mut Worker` still live and used afterward; iter_mut()
-        // would create a second `&mut Worker` for `w`'s slot (UB). Iterate via
-        // raw pointers — mirrors Zig `for (this.workers) |*w|`.
         let base: *mut Worker = self.workers.as_mut_ptr();
         let len = self.workers.len();
         for i in 0..len {
@@ -681,15 +609,6 @@ impl<'a> Coordinator<'a> {
     }
 }
 
-/// Fatal signals that indicate Bun itself (or a native addon) crashed,
-/// as opposed to the test calling process.exit() or being SIGKILL'd by
-/// the OOM killer. Bun's panic handler ends in @trap() → SIGILL on
-/// POSIX; JSC/WTF assertion failures abort() → SIGABRT. On Windows
-/// neither surfaces as a signal — abort() is exit code 3 and NTSTATUS
-/// fault codes arrive as a plain exit status, both indistinguishable
-/// from process.exit(N) — so this classification is effectively
-/// POSIX-only and Windows worker crashes fall into the non-panic
-/// per-file-failure branch.
 fn is_panic_status(status: &SpawnStatus) -> bool {
     let Some(sig) = status.signal_code() else {
         return false;
@@ -735,11 +654,6 @@ fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] 
     }
 }
 
-/// Coordinator-side SIGINT/SIGTERM handling. The signal handler only sets a
-/// flag; `Coordinator::drive` checks it and tears down workers itself so we
-/// don't do non-signal-safe work in the handler. Linux PDEATHSIG and the
-/// Windows Job Object are the safety net for when the coordinator can't run
-/// this (SIGKILL).
 pub mod abort_handler {
     use super::*;
 

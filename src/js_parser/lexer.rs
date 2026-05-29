@@ -123,18 +123,6 @@ impl Default for JSONOptions {
     }
 }
 
-/// Zig's `NewLexer(comptime json_options)` and `NewLexer_(comptime ...bools)` return a struct
-/// type. In Rust we model this as a generic over the eight comptime bools.
-///
-/// `Lexer` (below) is the default instantiation (`NewLexer(.{})`).
-///
-/// nightly-2025-12-10 rejects field projection (`J.is_json`) on a
-/// `const J: JSONOptions` parameter inside a generic-const expression
-/// ("overly complex generic constant"), even with `generic_const_exprs`.
-/// The Zig comptime-struct param is therefore modeled as a *type* parameter
-/// implementing [`JsonOptionsT`], whose associated consts *are* accepted in
-/// const-argument position under `generic_const_exprs`. Callers define a ZST
-/// per option set and `impl JsonOptionsT for It { const IS_JSON: bool = true; … }`.
 pub trait JsonOptionsT {
     const IS_JSON: bool = false;
     const ALLOW_COMMENTS: bool = false;
@@ -162,10 +150,6 @@ pub trait JsonOptionsT {
 pub struct DefaultJsonOptions;
 impl JsonOptionsT for DefaultJsonOptions {}
 
-// The `J: JsonOptionsT` bound on a type alias triggers the `type_alias_bounds`
-// lint (bounds on aliases aren't enforced at use sites), but the bound is
-// load-bearing here: the const expressions below need it in scope to resolve
-// `<J as JsonOptionsT>::*`. Silence the lint locally.
 #[allow(type_alias_bounds)]
 pub type NewLexer<'a, J: JsonOptionsT = DefaultJsonOptions> = LexerType<
     'a,
@@ -241,26 +225,6 @@ pub struct ScanResult<'a> {
     pub contents: &'a [u8],
 }
 
-// PORT NOTE: Zig's `FakeArrayList16` (fixed-slice writer with the `append` surface of an
-// ArrayList) is dead — every `decodeEscapeSequences` callsite in lexer.zig passes
-// `std.array_list.Managed(u16)`. Dropped instead of porting; `decode_escape_sequences` is
-// monomorphized to `Vec<u16>`.
-
-/// POD snapshot of all backtrack-relevant lexer state.
-///
-/// Zig backtracks via `const old = lexer.*; ...; lexer.* = old;` — a full struct
-/// copy. Rust can't do that here because `LexerType` holds `log: &'a mut Log`
-/// (non-`Clone`, non-`Copy`, unique borrow). Instead, callers do:
-///
-/// ```ignore
-/// let snap = p.lexer.snapshot();
-/// /* speculative parse */
-/// p.lexer.restore(&snap);
-/// ```
-///
-/// This struct is `Copy` and intentionally excludes `log`, `source`, `arena`
-/// (shared/unique borrows that never change across a backtrack) and the three
-/// growable `Vec` buffers (captured as lengths only — `restore()` truncates).
 #[derive(Clone, Copy)]
 pub struct LexerSnapshot<'a> {
     pub current: usize,
@@ -297,11 +261,6 @@ pub struct LexerSnapshot<'a> {
     pub comments_to_preserve_before_len: usize,
 }
 
-/// The lexer struct produced by `NewLexer_`.
-///
-/// `'a` is the lifetime of the source contents (arena/source-owned slices like
-/// `identifier` and `string_literal_raw_content` borrow from the source or from
-/// the parser arena). The `Log` is *not* tied to `'a`; see the `log` field doc.
 pub struct LexerType<
     'a,
     const IS_JSON: bool,
@@ -313,35 +272,8 @@ pub struct LexerType<
     const WAS_ORIGINALLY_MACRO: bool,
     const GUESS_INDENTATION: bool,
 > {
-    // err: ?LexerType.Error,
-    /// Raw pointer to the caller-owned `Log`. Zig held a `*Log` here while the
-    /// parser held a second aliasing `*Log`; Rust cannot store two `&mut Log`
-    /// to the same allocation (Stacked-Borrows UB), so both the lexer and the
-    /// parser keep `NonNull<Log>` and reborrow at use sites via `log()`. The
-    /// `init*` constructors take a plain `&mut Log` (not tied to `'a`); the
-    /// caller must keep the pointee alive for the lexer's lifetime — see
-    /// `init_without_reading`.
     pub log: core::ptr::NonNull<Log>,
     pub source: &'a Source,
-    /// Cached `source.contents()` slice. Zig stores `source: logger.Source` by
-    /// value with `contents: []const u8` (flat ptr+len), so the per-byte
-    /// `it.source.contents.ptr[current]` is one direct load and the
-    /// `noalias *LexerType` lets LLVM keep it register-resident across the
-    /// whole `next()` switch. With `source: &'a Source` plus
-    /// `Source.contents: Cow<'static,[u8]>`, every inlined `step()` was a
-    /// 3-load dependent chain (`self.source` → Cow tag/ptr → Cow len) that
-    /// LLVM could not hoist (perf-annotate showed `mov 0x70(%rbx),%rax` at
-    /// ~8% of `next()` cycles). Caching the deref'd `&'a [u8]` here collapses
-    /// that to a single fat-ptr field load — but a *struct field* load LLVM
-    /// still won't hoist out of the token loop (perf-annotate of `next()`
-    /// showed `mov 0x80(%rbx),%rsi` at ~7.7% of its samples). The hot paths
-    /// therefore copy this into a local `let contents: &[u8]` once per
-    /// `next()` / `scan_single_line_comment()` / `parse_string_literal()`
-    /// call and thread it by value into every hot sub-scanner
-    /// (`step_with()`, `next_codepoint_with()`, `parse_string_literal_inner()`,
-    /// `parse_numeric_literal_or_dot()`), so the ptr+len stays in a register
-    /// for the whole token loop, matching Zig codegen. `source` is kept for
-    /// error-reporting paths that need `path` / `identifier_name`.
     pub contents: &'a [u8],
     pub current: usize,
     pub start: usize,
@@ -373,10 +305,6 @@ pub struct LexerType<
     pub string_literal_raw_format: StringLiteralRawFormat,
     pub temp_buffer_u16: Vec<u16>,
 
-    /// Only used for JSON stringification when bundling
-    /// This is a zero-bit type unless we're parsing JSON.
-    // TODO(port): Zig uses `if (is_json) bool else void` for zero-cost when !is_json.
-    // PERF(port): always-bool here wastes 1 byte in non-JSON instantiations — profile if hot.
     pub is_ascii_only: bool,
     pub track_comments: bool,
     pub all_comments: Vec<Range>,
@@ -473,10 +401,6 @@ impl<
 }
 
 lexer_impl_header! {
-    /// Reborrow the shared `Log`. The `&self` receiver lets call sites pass
-    /// other `self.*` fields as arguments without a borrow-checker conflict;
-    /// callers must not hold two results of `log()` (or a result alongside the
-    /// parser's `P::log()`) live at once.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn log(&self) -> &mut Log {
@@ -558,10 +482,6 @@ lexer_impl_header! {
         }
     }
 
-    /// Rewind to a prior `snapshot()`. Mirrors Zig's `this.* = original.*` then
-    /// patches back the growable buffers — here we copy each scalar field and
-    /// truncate the Vecs to their snapshotted lengths. `log`/`source`/`arena`
-    /// are left untouched.
     pub fn restore(&mut self, original: &LexerSnapshot<'a>) {
         // TODO(port): keep this list in sync with the struct fields.
         self.current = original.current;
@@ -639,15 +559,6 @@ lexer_impl_header! {
             let width = iter.width;
             match iter.c {
                 0x0D => {
-                    // From the specification:
-                    //
-                    // 11.8.6.1 Static Semantics: TV and TRV
-                    //
-                    // TV excludes the code units of LineContinuation while TRV includes
-                    // them. <CR><LF> and <CR> LineTerminatorSequences are normalized to
-                    // <LF> for both TV and TRV. An explicit EscapeSequence is needed to
-                    // include a <CR> or <CR><LF> sequence.
-
                     // Convert '\r\n' into '\n'
                     let next_i: usize = iter.i as usize + 1;
                     iter.i += (next_i < text.len() && text[next_i] == b'\n') as u32;
@@ -679,12 +590,6 @@ lexer_impl_header! {
                             continue;
                         }
                         0x76 => {
-                            // Vertical tab is invalid JSON
-                            // We're going to allow it.
-                            // if (comptime is_json) {
-                            //     lexer.end = start + iter.i - width2;
-                            //     try lexer.syntaxError();
-                            // }
                             buf.push(0x0B);
                             continue;
                         }
@@ -760,10 +665,6 @@ lexer_impl_header! {
 
                             iter.c = i32::try_from(value).expect("int cast");
                             if is_bad {
-                                // `octal_start` is text-relative like `iter.i`;
-                                // map back to absolute source position the same
-                                // way every sibling error path does (e.g.
-                                // `start + hex_start` in the `\u{}` branch).
                                 self.add_range_error(
                                     Range {
                                         loc: Loc {
@@ -837,10 +738,6 @@ lexer_impl_header! {
                                     self.syntax_error()?;
                                 }
 
-                                // `iter.i` is the byte offset of `{` inside `text`;
-                                // back up past `\` and `u` only. `width3` is the
-                                // width of `{` itself, which `iter.i` already points
-                                // at — subtracting it lands one character too early.
                                 let hex_start = (iter.i as usize)
                                     .saturating_sub(width as usize)
                                     .saturating_sub(width2 as usize);
@@ -977,12 +874,6 @@ lexer_impl_header! {
         Ok(())
     }
 
-    // PERF: heavy sub-scanner — the per-byte string body loop plus the
-    // escape/`\r\n`/`</script` slow paths. Keep it *out* of `next()` so that
-    // body stays small enough to partial-inline at the parser's call sites
-    // (see the note on `next()`); `parse_string_literal::<QUOTE>` is the only
-    // caller and stays `#[inline]`, so what folds into `next()` is just the
-    // token-kind set + the call here.
     #[inline(never)]
     fn parse_string_literal_inner<const QUOTE: i32>(
         &mut self,
@@ -1125,10 +1016,6 @@ lexer_impl_header! {
         } else {
             self.token = T::TNoSubstitutionTemplateLiteral;
         }
-        // quote is 0 when parsing JSON from .env
-        // .env values may not always be quoted.
-        // PERF: keep the source slice register-resident through the hot string
-        // body loop — see `next_codepoint_with`.
         let contents: &'a [u8] = self.contents;
         self.step_with(contents);
 
@@ -1170,23 +1057,6 @@ lexer_impl_header! {
         &self.contents[self.current..]
     }
 
-    /// PORT NOTE: split into an `#[inline(always)]` ASCII/EOF fast path plus
-    /// an outlined multibyte tail. `step()` is called from ~50 sites inside
-    /// the giant `next()` switch and inlines into it; with the multibyte
-    /// decode in the same body LLVM declined to inline `next_codepoint`
-    /// (showing as a separate ~2.7% symbol). The fast path is now 4 insns
-    /// (bounds cmp, load, cmp 0x80, store) so it folds into every `step()`
-    /// site, matching Zig's per-byte `ptr[current]` increment.
-    ///
-    /// PERF: takes `contents: &[u8]` by value (a `Copy` fat-ptr) instead of
-    /// reloading `self.contents` from the struct. With `self.contents`, every
-    /// inlined site re-emitted `mov 0x80(%rbx),%rsi` to fetch the slice ptr+len
-    /// (perf-annotate of `next()` showed that single load at ~7.7% of `next()`
-    /// samples) — LLVM couldn't prove the field load loop-invariant across the
-    /// intervening `&mut self` writes. As a by-value SSA parameter it stays in
-    /// a register for the whole token loop, matching Zig's `noalias *Lexer`
-    /// codegen. Callers outside the hot loop use the thin `step()` wrapper
-    /// below, which loads `self.contents` once.
     #[inline(always)]
     fn next_codepoint_with(&mut self, contents: &[u8]) -> CodePoint {
         let len = contents.len();
@@ -1215,12 +1085,6 @@ lexer_impl_header! {
     fn step_with(&mut self, contents: &[u8]) {
         self.code_point = self.next_codepoint_with(contents);
 
-        // Track the approximate number of newlines in the file so we can preallocate
-        // the line offset table in the printer for source maps. The line offset table
-        // is the #1 highest allocation in the heap profile, so this is worth doing.
-        // This count is approximate because it handles "\n" and "\r\n" (the common
-        // cases) but not "\r" or " " or " ". Getting this wrong is harmless
-        // because it's only a preallocation. The array will just grow if it's too small.
         self.approximate_newline_count += (self.code_point == 0x0A) as usize;
     }
 
@@ -1370,18 +1234,6 @@ lexer_impl_header! {
 
         // result.contents = result.contents; (no-op)
 
-        // Escaped keywords are not allowed to work as actual keywords, but they are
-        // allowed wherever we allow identifiers or keywords. For example:
-        //
-        //   // This is an error (equivalent to "var var;")
-        //   var var;
-        //
-        //   // This is an error (equivalent to "var foo;" except for this rule)
-        //   var foo;
-        //
-        //   // This is an fine (equivalent to "foo.var;")
-        //   foo.var;
-        //
         result.token = if tables::keyword(result.contents).is_some() {
             T::TEscapedKeyword
         } else {
@@ -1517,34 +1369,12 @@ lexer_impl_header! {
         Ok(())
     }
 
-    /// PERF: `next()` is the dispatch boundary between the parser and the
-    /// lexer's inner scanners; the parser calls it from hundreds of sites
-    /// (directly and via `expect()`). We deliberately *don't* mark it
-    /// `#[inline(never)]` — that turned every `lexer.next()` site into a real
-    /// call + caller-saved-register spill, whereas Zig's `pub fn next` is
-    /// partial-inlinable at leaf call sites (the EOF/`TSemicolon`/`TIdentifier`
-    /// fast tails fold into the caller and the bulky switch stays out of line).
-    /// To make that tractable for LLVM we instead anchor `#[inline(never)]` /
-    /// `#[cold]` on the *heavy, rare* sub-scanners (`scan_identifier_with_escapes`,
-    /// `parse_string_literal_inner`, `add_*error`) so this body stays small
-    /// enough that the partial-inliner extracts a clean cold region instead of
-    /// splitting the identifier scanner out as its own symbol (the failure mode
-    /// observed in `build/create-next` profiles that originally motivated the
-    /// `#[inline(never)]` here). The genuinely hot, tiny scanners
-    /// (`latin1_identifier_continue_length`, `parse_numeric_literal_or_dot`,
-    /// `parse_string_literal::<QUOTE>`) stay `#[inline]`/`#[inline(always)]` so
-    /// they merge *into* this body the way Zig's comptime monomorphisation does.
     pub fn next(&mut self) -> Result<(), Error> {
         self.has_newline_before = self.end == 0;
         self.has_pure_comment_before = false;
         self.has_no_side_effect_comment_before = false;
         self.prev_token_was_await_keyword = false;
 
-        // PERF: bind the source slice once so every inlined `step()` in the
-        // token loop below reads a register-resident `Copy` fat-ptr instead of
-        // reloading `self.contents` (`mov 0x80(%rbx),%rsi`) at ~50 sites. See
-        // `next_codepoint_with`. `self.contents` is never reassigned during a
-        // `next()` call, so `contents == self.contents` throughout.
         let contents: &[u8] = self.contents;
 
         loop {
@@ -1967,12 +1797,6 @@ lexer_impl_header! {
                             continue;
                         }
                         0x2A => {
-                            // The `/* ... */` scan loop + its SIMD skip is pulled
-                            // out of line so it doesn't bloat the hot ASCII
-                            // identifier / whitespace / punctuator arms of
-                            // `next()` (`scan_single_line_comment` is outlined the
-                            // same way). The JSON-comments error path stays here
-                            // because it must `return` from `next()`.
                             self.scan_multi_line_comment_body()?;
                             if IS_JSON {
                                 if !ALLOW_COMMENTS {
@@ -2233,19 +2057,6 @@ lexer_impl_header! {
 
                     self.end = self.current;
                     self.token = T::TSyntaxError;
-                    // Mirror the `next_inside_jsx_element` fix (#30959): advance
-                    // `code_point`/`current` past the bad byte so a subsequent
-                    // recovery `next()` dispatches on the *following* byte rather
-                    // than re-dispatching on the still-in-`code_point` bad byte.
-                    // In the main lexer the byte that falls through to this arm
-                    // is invalid in main-lexer context too, so re-dispatch
-                    // currently stays in `TSyntaxError` and the duplicate-scope
-                    // panic isn't reachable — but keeping the `current > end`
-                    // invariant consistent across both dispatch tables means
-                    // future recovery code doesn't have to reason about one arm
-                    // that leaves the lexer with `current == end`. `end` was
-                    // already advanced above, so the error range `[start, end)`
-                    // is unchanged.
                     self.step_with(contents);
                 }
             }
@@ -2404,15 +2215,6 @@ lexer_impl_header! {
         }
     }
 
-    /// Scans the body of a `/* ... */` block comment, starting with
-    /// `self.code_point` positioned on the `*` of the opening `/*`. On a
-    /// successful close (`*/`) it returns with the iterator just past the `/`.
-    ///
-    /// PERF: pulled out of `next()` (which is the single largest non-JSC symbol)
-    /// so the multi-line body + its SIMD skip don't share I-cache with the hot
-    /// ASCII identifier / whitespace / punctuator arms. `#[inline(never)]`
-    /// (not `#[cold]`) because block comments, while rare per-token, are common
-    /// enough in real source that we don't want the branch pessimized.
     #[inline(never)]
     fn scan_multi_line_comment_body(&mut self) -> Result<(), Error> {
         // PERF: keep the source slice register-resident — see `next_codepoint_with`.
@@ -2458,12 +2260,6 @@ lexer_impl_header! {
         }
     }
 
-    /// Handles the legacy `-->` HTML single-line close comment: emits the
-    /// warning and consumes the rest of the line. Entered with `self.code_point`
-    /// on the `>` of `-->`.
-    ///
-    /// PERF: this is essentially never taken in real code — keep it fully out of
-    /// `next()`'s body so it never costs the hot arms any I-cache.
     #[cold]
     #[inline(never)]
     fn scan_legacy_html_close_comment(&mut self) {
@@ -2484,12 +2280,6 @@ lexer_impl_header! {
         }
     }
 
-    /// This scans a "// comment" in a single pass over the input.
-    ///
-    /// PERF: outlined for the same reason as `scan_multi_line_comment_body` —
-    /// keep the SIMD newline scan, arena allocation, and pragma scanning out of
-    /// `next()`'s hot ASCII arms. `#[inline(never)]` (not `#[cold]`) because
-    /// `//` comments are common enough that we don't want the branch pessimized.
     #[inline(never)]
     fn scan_single_line_comment(&mut self) {
         // PERF: keep the source slice register-resident — see `next_codepoint_with`.
@@ -2518,10 +2308,6 @@ lexer_impl_header! {
                     0x23 | 0x40 => {
                         if !IS_JSON {
                             let pragma_trigger_pos = self.end; // Position OF #/@
-                            // Use remaining() which starts *after* the consumed #/@
-                            // PORT NOTE: reshaped for borrowck — `remaining()` borrows
-                            // `self.contents`; `scan_pragma` needs `&mut self`.
-                            // Detach via `StoreStr` (arena-owned, lives for parse).
                             let chunk = js_ast::StoreStr::new(self.remaining());
                             let offset =
                                 self.scan_pragma(pragma_trigger_pos, chunk.slice(), true);
@@ -2680,10 +2466,6 @@ lexer_impl_header! {
         Ok(lex)
     }
 
-    /// `log` is *not* tied to `'a`: the lexer stores it as `NonNull<Log>` (see
-    /// the `log` field doc) and the caller must keep the pointee alive for the
-    /// lexer's lifetime. The looser bound lets `'a` (which `Ast<'a>` borrows
-    /// through `arena`) outlive a stack-local scratch log.
     pub fn init_without_reading(
         log: &mut Log,
         source: &'a Source,
@@ -2754,10 +2536,6 @@ lexer_impl_header! {
                 Ok(js_ast::E::String::init(self.string_literal_raw_content))
             }
             StringLiteralRawFormat::Utf16 => {
-                // string_literal_raw_content is already parsed, duplicated, and utf-16.
-                // It was created via `cast_slice::<u16, u8>` from an arena `[u16]` dupe,
-                // so the pointer is u16-aligned and `cast_slice` back is sound (panics
-                // if that invariant is ever broken — strictly safer than the raw cast).
                 let utf16: &[u16] = bytemuck::cast_slice::<u8, u16>(self.string_literal_raw_content);
                 Ok(js_ast::E::String::init_utf16(utf16))
                 // TODO(port): exact constructor name on js_ast::E::String for utf16
@@ -2768,10 +2546,6 @@ lexer_impl_header! {
                 debug_assert!(self.temp_buffer_u16.is_empty());
                 let mut tmp = core::mem::take(&mut self.temp_buffer_u16);
                 tmp.reserve(self.string_literal_raw_content.len());
-                // `string_literal_raw_content` starts one byte after the opening
-                // quote/backtick (see `base` in `parse_string_literal`); pass the
-                // content-start offset so `start + iter.i` inside the decoder
-                // lines up with absolute positions in the source.
                 let res = self.decode_escape_sequences(
                     self.string_literal_start + 1,
                     self.string_literal_raw_content,
@@ -3025,10 +2799,6 @@ lexer_impl_header! {
                             self.step();
                         }
 
-                        // Parse JSX namespaces. These are not supported by React or TypeScript
-                        // but someone using JSX syntax in more obscure ways may find a use for
-                        // them. A namespaced name is just always turned into a string so you
-                        // can't use this feature to reference JavaScript identifiers.
                         if self.code_point == 0x3A {
                             self.step();
 
@@ -3056,19 +2826,6 @@ lexer_impl_header! {
 
                     self.end = self.current;
                     self.token = T::TSyntaxError;
-                    // Advance `code_point`/`current` past the bad byte so that a
-                    // subsequent recovery `next()` (e.g. via `expect(...)` inside
-                    // `parse_jsx_prop_value_identifier`) dispatches on the *following*
-                    // byte instead of re-dispatching on the still-in-`code_point` bad
-                    // byte. Without this step the recovery `next()` synthesises a
-                    // zero-length token at the offset of the next byte, and the byte
-                    // after that then gets tokenised a second time at the same
-                    // `start` — the parser pushes two `FunctionArgs` scopes at that
-                    // offset in `parse_paren_expr` and trips the strict-monotonicity
-                    // debug assertion in `push_scope_for_parse_pass` (see #30959).
-                    // `end` was already advanced above, so the step below only moves
-                    // `current`/`code_point` forward and leaves the error range
-                    // `[start, end)` intact.
                     self.step();
                 }
             }
@@ -3355,11 +3112,6 @@ lexer_impl_header! {
                     base = 16;
                 }
 
-                // PORT NOTE: std.fmt.parseInt(i32, ..) — bytes-based parser; source bytes are
-                // not guaranteed UTF-8 so we never round-trip through &str (PORTING.md §Strings).
-                // Also reject values outside the Unicode range (0..=0x10FFFF); otherwise
-                // `push_codepoint_utf16` hits `debug_assert`s in `u16_lead`/`u16_trail`
-                // (release builds would silently encode garbage surrogate pairs).
                 cursor.c = match bun_core::parse_int::<i32>(number, base) {
                     Ok(v) if (0..=0x10FFFF).contains(&v) => v,
                     Ok(_) => {
@@ -3513,15 +3265,6 @@ lexer_impl_header! {
             return text;
         }
 
-        // From the specification:
-        //
-        // 11.8.6.1 Static Semantics: TV and TRV
-        //
-        // TV excludes the code units of LineContinuation while TRV includes
-        // them. <CR><LF> and <CR> LineTerminatorSequences are normalized to
-        // <LF> for both TV and TRV. An explicit EscapeSequence is needed to
-        // include a <CR> or <CR><LF> sequence.
-        // TODO(port): MutableString — using arena-backed Vec<u8> here.
         let mut bytes: Vec<u8> = text.to_vec();
         let mut end: usize = 0;
         let mut i: usize = 0;
@@ -3549,11 +3292,6 @@ lexer_impl_header! {
         // PERF(port): Zig used MutableString.toOwnedSliceLength — extra copy here.
     }
 
-    // PERF: single caller (`next()`'s `0x2E | 0x30..=0x39` arm) per
-    // monomorphization. `#[inline]` makes the body available cross-CGU so
-    // LLVM's single-caller heuristic merges it into `next()` like Zig does;
-    // the hot `T::TDot` early-return then sits inside `next()`'s jump table
-    // with no call overhead.
     #[inline]
     fn parse_numeric_literal_or_dot(&mut self, contents: &[u8]) -> Result<(), Error> {
         // Number or dot;
@@ -3981,22 +3719,6 @@ pub fn range_of_identifier(source: &Source, loc: Loc) -> Range {
         r.len = i32::try_from(cursor.i).expect("int cast");
     }
 
-    // const offset = @intCast(usize, loc.start);
-    // var i: usize = 0;
-    // for (text) |c| {
-    //     if (isIdentifierStart(@as(CodePoint, c))) {
-    //         for (source.contents[offset + i ..]) |c_| {
-    //             if (!isIdentifierContinue(c_)) {
-    //                 r.len = std.math.lossyCast(i32, i);
-    //                 return r;
-    //             }
-    //             i += 1;
-    //         }
-    //     }
-    //
-    //     i += 1;
-    // }
-
     r
 }
 
@@ -4147,12 +3869,6 @@ impl PragmaArg {
     }
 }
 
-/// Byte offset of the next character `scan_multi_line_comment_body` has to
-/// inspect one code point at a time: the first `*` (potential `*/`
-/// terminator), `\r` / `\n` (newline tracking for ASI), or non-ASCII byte
-/// (U+2028/U+2029 and other multi-byte sequences). Returns `text_.len()` when
-/// the rest of the input has no such byte — the comment is unterminated, so
-/// the caller's next `step()` lands on EOF and reports the error.
 fn skip_to_interesting_character_in_multiline_comment(text_: &[u8]) -> usize {
     bun_highway::index_of_interesting_character_in_multiline_comment(text_).unwrap_or(text_.len())
 }

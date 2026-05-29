@@ -4,14 +4,6 @@ use crate::parser::FindSymbolResult;
 use bun_ast as js_ast;
 use bun_ast::{Ref, Scope};
 
-// PORT NOTE: Zig's `fn Symbols(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// is the file-split mixin pattern: a fieldless namespace whose associated fns all take `*P` as the
-// first arg, where `P = js_parser.NewParser_(ts, jsx, scan_only)`. In Rust this is a plain
-// `impl<const ...> P<...> { }` block — multiple impl blocks on the same type across files in one
-// crate are allowed.
-//
-// adt_const_params: lowered `const JSX: JSXTransformType` → `J: JsxT` (sealed trait + ZST).
-
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn find_symbol(
         &mut self,
@@ -65,10 +57,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     break 'brk member.ref_;
                 }
 
-                // Is the symbol a member of this scope's TypeScript namespace?
-                // `scope.ts_namespace` is only assigned behind `IS_TYPESCRIPT_ENABLED`
-                // guards, so the probe is dead for JS inputs — gate it so the
-                // load+branch fold away in the `TYPESCRIPT == false` monomorphization.
                 if Self::IS_TYPESCRIPT_ENABLED {
                     if let Some(mut ts_namespace) = scope.ts_namespace {
                         let ts = &*ts_namespace;
@@ -76,12 +64,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let Some(member) = exported.get(name) {
                             if member.data.is_enum() == ts.is_enum_scope {
                                 declare_loc = member.loc;
-                                // If this is an identifier from a sibling TypeScript namespace, then we're
-                                // going to have to generate a property access instead of a simple reference.
-                                // Lazily-generate an identifier that represents this property access.
-                                // PORT NOTE: reshaped for borrowck — Zig's getOrPut returns key/value
-                                // pointers while we also call self.new_symbol (&mut self). Split into
-                                // get-then-insert so the &mut self borrow does not overlap the map borrow.
                                 if let Some(existing) = ts.property_accesses.get(name) {
                                     break 'brk *existing;
                                 }
@@ -145,10 +127,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             break 'brk new_ref;
         };
 
-        // If we had to pass through a "with" statement body to get to the symbol
-        // declaration, then this reference could potentially also refer to a
-        // property on the target object of the "with" statement. We must not rename
-        // it or we risk changing the behavior of the code.
         if is_inside_with_scope {
             self.symbols[ref_.inner_index() as usize].must_not_be_renamed = true;
         }

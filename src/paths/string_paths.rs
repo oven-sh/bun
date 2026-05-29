@@ -19,13 +19,6 @@ pub trait Ch: PathChar + Into<u32> + bun_core::NoUninit {}
 impl Ch for u8 {}
 impl Ch for u16 {}
 
-/// Borrow `wbuf[..len]` as a `&WStr`, where `wbuf[len] == 0`. Safe-surface
-/// form of [`WStr::from_raw`] for the dominant call shape in this module: a
-/// stack `WPathBuffer` filled to `len` with a NUL written at `wbuf[len]`.
-/// The slice borrow proves `wbuf[..=len]` lies in one allocation and ties the
-/// returned lifetime to it; the NUL is debug-asserted (release relies on the
-/// caller upholding the documented `wbuf[len] == 0` precondition — same
-/// contract as Zig `[:0]const u16` slicing). Mirrors [`ZStr::from_buf`].
 #[inline(always)]
 pub(crate) fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
     WStr::from_buf(wbuf, len)
@@ -51,13 +44,6 @@ fn has_prefix_ascii_t<T: Ch>(s: &[T], prefix: &[u8]) -> bool {
     true
 }
 
-/// Checks if a path is missing a windows drive letter. For windows APIs,
-/// this is used for an assertion, and PosixToWinNormalizer can help make
-/// an absolute path contain a drive letter.
-///
-/// Thin wrapper over the canonical [`crate::strings`] impl that additionally
-/// debug-asserts the Zig precondition `Platform.windows.isAbsoluteT(chars)`
-/// (bun_core can't, as `bun_paths` would be a tier-0 cycle there).
 #[inline]
 pub fn is_windows_absolute_path_missing_drive_letter<T: Ch + From<u8>>(chars: &[T]) -> bool {
     debug_assert!(crate::Platform::Windows.is_absolute_t(chars));
@@ -333,12 +319,6 @@ pub(crate) fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
     // simdutf primitive + WTF-8 fallback) to avoid a `bun_simdutf` crate dep.
     let mut count = crate::strings::convert_utf8_to_utf16_in_buffer(&mut wbuf[..cap], utf8).len();
 
-    // Many Windows APIs expect normalized path slashes, particularly when the
-    // long path prefix is added or the nt object prefix. To make this easier,
-    // but a little redundant, this function always normalizes the slashes here.
-    //
-    // An example of this is GetFileAttributesW(L"C:\\hello/world.txt") being OK
-    // but GetFileAttributesW(L"\\\\?\\C:\\hello/world.txt") is NOT
     resolve_path::dangerously_convert_path_to_windows_in_place::<u16>(&mut wbuf[..count]);
 
     if ADD_TRAILING_LASH && count > 0 && wbuf[count - 1] != u16::from(b'\\') {

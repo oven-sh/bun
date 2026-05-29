@@ -94,13 +94,6 @@ pub enum ConnectResult {
 }
 
 impl SocketGroup {
-    /// Initialise an embedded group. `owner_ptr` is what `group.owner::<T>()`
-    /// recovers inside handlers — pass the embedding struct so dispatch can
-    /// find it from a raw `*us_socket_t`.
-    // TODO(port): Zig accepted `owner_ptr: anytype` (any single-item pointer or
-    // null) with comptime @typeInfo validation. Rust callers cast at the call
-    // site; consider a typed `init_with_owner<T>(&mut self, ..., owner: &mut T)`
-    // helper if ergonomics warrant.
     pub fn init(&mut self, loop_: *mut Loop, vt: Option<&'static VTable>, owner_ptr: *mut c_void) {
         // SAFETY: C initializes all fields of `self` in-place; `self` is a valid
         // `#[repr(C)]` slot embedded in the caller.
@@ -144,14 +137,6 @@ impl SocketGroup {
         self.loop_
     }
 
-    /// Recover the embedding owner. Only valid for groups whose `init` passed a
-    /// non-null owner (Listener, uWS App/Context). Per-kind VM groups in
-    /// `RareData` pass null, so callers must know which they have.
-    ///
-    /// Returns a raw pointer; the cast itself is sound for any `T`. The caller
-    /// must still deref it with the correct `T` (the type whose pointer was
-    /// passed to `init`) — that obligation lives at the deref site, not here,
-    /// so this accessor is a safe fn.
     pub fn owner<T>(&self) -> *mut T {
         debug_assert!(!self.ext.is_null());
         self.ext.cast::<T>()
@@ -222,10 +207,6 @@ impl SocketGroup {
         options: c_int,
         socket_ext_size: c_int,
     ) -> ConnectResult {
-        // context.c writes 1 here on the synchronous path (DNS already resolved
-        // → real `us_socket_t*` returned), 0 when it hands back a
-        // `us_connecting_socket_t*` placeholder. Named to match the C side so
-        // the branches read the right way round — see PR review #3161005603.
         let mut has_dns_resolved: c_int = 0;
         // SAFETY: forwarding to C; `host` is a valid NUL-terminated C string.
         let ptr = unsafe {
@@ -318,10 +299,6 @@ unsafe extern "C" {
         ext: *mut c_void,
     );
     fn us_socket_group_deinit(group: *mut SocketGroup);
-    // `SocketGroup` is a sized `#[repr(C)]` mirror (not an opaque ZST) — keep
-    // raw `*mut` so the FFI boundary does not emit `noalias` over real fields;
-    // `close_all` reenters Rust callbacks that touch this group via aliasing
-    // pointers (`us_socket_group(s)`).
     fn us_socket_group_close_all(group: *mut SocketGroup);
     fn us_socket_group_listen(
         group: *mut SocketGroup,

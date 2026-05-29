@@ -74,12 +74,6 @@ impl PBKDF2 {
         true
     }
 
-    // Zig `deinit()` only freed `password`/`salt`; both are `StringOrBuffer`
-    // whose `Drop` releases the slice/WTF ref, so the explicit hook is gone —
-    // dropping `PBKDF2` is sufficient for the sync path. The async path holds
-    // `ThreadSafe<PBKDF2>`, whose `Drop` additionally unprotects JS-rooted
-    // buffers via the `Unprotect` impl below.
-
     pub(crate) fn from_js(
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
@@ -315,10 +309,6 @@ impl AnyTaskJobCtx for Pbkdf2Ctx {
 
 pub(crate) type Job = AnyTaskJob<Pbkdf2Ctx>;
 
-/// Zig `Job.create` — heap-allocate, init the promise, ref the loop, and hand
-/// to the work pool. Returns the live job so the caller can read
-/// `(*job).ctx.promise.value()` before the JS-thread completion fires.
-/// Free fn (not `impl Job`) because `AnyTaskJob<_>` is a foreign type.
 pub(crate) fn create_job(global_this: &JSGlobalObject, data: PBKDF2) -> *mut Job {
     let job = AnyTaskJob::create(
         global_this,

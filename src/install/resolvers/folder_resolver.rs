@@ -39,10 +39,6 @@ pub(crate) struct PackageWorkspaceSearchPathFormatter<'a> {
 impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut joined = [0u8; MAX_PATH_BYTES + 2];
-        // Zig: `getPtr(@truncate(String.Builder.stringHash(...)))` — key type is
-        // `PackageNameHash` (u64), so the @truncate is identity.
-        // Caller constructs this formatter only when
-        // `self.version.tag == .workspace` (Zig: `formatter.version.value.workspace`).
         let workspace = self.version.workspace();
         let str_to_use = self
             .manager
@@ -76,11 +72,6 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
             let quoted = QuotedFormatter { text: paths.rel };
             fmt::Display::fmt(&quoted, f)
         } else {
-            // Zig: `writer.writeAll(paths.rel)` writes raw bytes. `fmt::Formatter`
-            // only accepts `&str`, so non-UTF-8 path bytes are emitted lossily
-            // (U+FFFD) via `bstr::BStr`'s Display. Both current callers pass
-            // `quoted = true`, so this branch is unreached today; if a future
-            // caller needs byte-exact output it must use an `io::Write` sink.
             write!(f, "{}", bstr::BStr::new(paths.rel))
         }
     }
@@ -160,10 +151,6 @@ impl ResolverContext for CacheFolderResolver {
     }
 }
 
-/// Unifies `NewResolver<TAG>` and `CacheFolderResolver` for
-/// `read_package_json_from_disk` (Zig: `comptime ResolverType: type`). The
-/// associated const `IS_WORKSPACE` replaces the
-/// `if (comptime ResolverType == WorkspaceResolver)` check.
 pub(crate) trait FolderResolverImpl: ResolverContext {
     const IS_WORKSPACE: bool;
 }
@@ -273,18 +260,6 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
 
     let mut package: LockfilePackage = Default::default();
 
-    // PORT NOTE: Zig passed `manager.lockfile`, `manager`, `manager.log` as
-    // three separate args; Rust borrowck rejects the overlap on `&mut self`,
-    // so split via raw pointer once here. `lockfile` and `log` are disjoint
-    // fields of `PackageManager`, and `parse{,_with_json}` only reaches
-    // `manager` through the `pm` argument (no re-entrant access to
-    // `lockfile`/`log` via `pm`).
-    //
-    // `log_mut()` reads the BACKREF `self.log: *mut Log` and returns the
-    // disjoint CLI `Log` allocation (lifetime decoupled from `&self`); call it
-    // safely *before* establishing `manager_ptr` so `log` is derived from a
-    // separate allocation and is unaffected by the `&mut *manager_ptr`
-    // reborrows below.
     let log: &mut bun_ast::Log = manager.log_mut();
     let manager_ptr: *mut PackageManager = manager;
 
@@ -401,20 +376,6 @@ pub fn get_or_put(
     // replace before getting hash. rel may or may not be contained in abs
     #[cfg(windows)]
     let (abs, rel): (&ZStr, &[u8]) = {
-        // Zig (folder_resolver.zig:249-252) does `@constCast(abs)` /
-        // `@constCast(rel)` and mutates in place — well-defined in Zig, which
-        // has no provenance-based aliasing model. In Rust, writing through
-        // `(&ZStr).as_ptr().cast_mut()` / `(&[u8]).as_ptr().cast_mut()` is UB
-        // under Stacked/Tree Borrows: those pointers carry read-only
-        // provenance, and the optimizer may assume `abs`'s bytes are
-        // unchanged when computing `hash(abs.as_bytes())` below.
-        //
-        // Instead: capture lengths, let the shared borrows of `joined` die,
-        // then take a fresh `&mut joined[..abs_len]` (write provenance) and
-        // mutate that. `rel` points into FileSystem's thread-local relative
-        // buffer which we only ever see as `&[u8]`, so copy it into a local
-        // we own and convert the copy — same pattern as
-        // WorkspacePackageJSONCache::get_with_path.
         let abs_len = paths.abs.len();
         let rel_len = paths.rel.len();
         rel_buf[..rel_len].copy_from_slice(paths.rel);

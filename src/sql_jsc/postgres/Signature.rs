@@ -24,17 +24,7 @@ impl Signature {
     // handles this automatically — no explicit `Drop` impl needed.
 
     pub fn hash(&self) -> u64 {
-        // PORT NOTE: Zig `std.hash.Wyhash.init(0)` + `update` + `final`. The
-        // `bun_wyhash` crate exposes the streaming API as `Wyhash11` (and a
-        // stateless `hash`); for now use the one-shot `bun_wyhash::hash` over
-        // a concatenated byte view.
-        // `Int4` (= u32) is `NoUninit`; safe `&[u32]` → `&[u8]` view (matches
-        // Zig `std.mem.sliceAsBytes`).
         let fields_bytes: &[u8] = bun_core::cast_slice(&self.fields[..]);
-        // PERF(port): Zig fed two slices into a streaming Wyhash; bun_wyhash
-        // currently lacks the std-compatible streaming `Wyhash` type. Concatenate
-        // into a temp Vec until `bun_wyhash::Wyhash` (streaming, seed-0) lands.
-        // TODO(port): bun_wyhash::Wyhash (streaming std-compatible API)
         let mut buf: Vec<u8> = Vec::with_capacity(self.name.len() + fields_bytes.len());
         buf.extend_from_slice(&self.name);
         buf.extend_from_slice(fields_bytes);

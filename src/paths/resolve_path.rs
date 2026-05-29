@@ -16,15 +16,6 @@ thread_local! {
     static PARSER_BUFFER: UnsafeCell<[u8; 1024]> = const { UnsafeCell::new([0u8; 1024]) };
 }
 
-/// Project `&'static mut` into a thread-local `UnsafeCell<[u8; N]>` scratch
-/// buffer. One `unsafe` site for all `PARSER_BUFFER` / `PARSER_JOIN_INPUT_BUFFER`
-/// / `JOIN_BUF` accessors (nonnull-asref reduction: 6 sites → 1).
-///
-/// The `'static` output lifetime is the honest contract: the buffer is
-/// thread-local storage that lives for the thread's lifetime, and the returned
-/// slice is "valid until the next call on this thread" (Zig threadlocal-var
-/// pointer semantics — see module PORT NOTE above). Callers uphold the
-/// single-live-borrow-per-thread invariant.
 #[inline]
 fn tl_buf_mut<const N: usize>(b: &UnsafeCell<[u8; N]>) -> &'static mut [u8; N] {
     // SAFETY: thread-local UnsafeCell ⇒ this thread is the sole accessor;
@@ -162,15 +153,6 @@ pub(crate) fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
         return Some(b".");
     }
 
-    // The above won't work for a case like this:
-    // /app/public/index.js
-    // /app/public
-    // It will return:
-    // /app/
-    // It should return:
-    // /app/public/
-    // To detect /app/public is actually a folder, we do one more loop through the strings
-    // and say, "do one of you have a path separator after what we thought was the end?"
     for str in input {
         if str.len() > index {
             if is_path_separator(str[index]) {
@@ -293,15 +275,6 @@ pub(crate) fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) 
         return P::P.separator_string().as_bytes();
     }
 
-    // The above won't work for a case like this:
-    // /app/public/index.js
-    // /app/public
-    // It will return:
-    // /app/
-    // It should return:
-    // /app/public/
-    // To detect /app/public is actually a folder, we do one more loop through the strings
-    // and say, "do one of you have a path separator after what we thought was the end?"
     let mut idx = input.len(); // Use this value as an invalid value.
     for (i, str) in input.iter().enumerate() {
         if str.len() > index {
@@ -328,12 +301,6 @@ pub fn get_if_exists_longest_common_path<'a>(input: &[&'a [u8]]) -> Option<&'a [
     get_if_exists_longest_common_path_generic::<platform::Loose>(input)
 }
 
-// PORT NOTE: bun.ThreadlocalBuffers(struct {...}) heap-allocates on first use and
-// stores only a pointer in TLS. Represented as three independent lazily-boxed
-// thread-locals so that `relative_platform_buf` can hold disjoint `&mut` to
-// from/to buffers while `relative_to_common_path_buf()` is borrowed elsewhere
-// without aliasing a single parent payload. Only 3×8 bytes in static TLS instead
-// of 3×PathBuffer (see test/js/bun/binary/tls-segment-size).
 struct LazyPathBuf(core::cell::Cell<*mut PathBuffer>);
 
 impl Drop for LazyPathBuf {
@@ -369,10 +336,6 @@ fn lazy_path_buf(c: &LazyPathBuf) -> &'static mut PathBuffer {
     unsafe { &mut *p }
 }
 
-/// Raw pointer into the thread-local scratch buffer. Callers reborrow
-/// per-access — PORTING.md §Global mutable state. Valid until the next call on
-/// this thread; do not hold across re-entry (matches Zig threadlocal-var
-/// pointer semantics).
 #[inline]
 pub fn relative_to_common_path_buf() -> *mut PathBuffer {
     RELATIVE_TO_COMMON_PATH_BUF.with(lazy_path_buf)
@@ -575,10 +538,6 @@ pub fn relative_normalized_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     relative_to_common_path::<ALWAYS_COPY, P>(common_path, from, to, buf)
 }
 
-// PORT NOTE: result borrows either the thread-local common-path buf ('static)
-// or `to` (when !ALWAYS_COPY and result==to). Return lifetime is `'a` (=to's),
-// since 'static: 'a. Zig's "valid until next call" semantics still applies for
-// the buf-backed case.
 pub fn relative_normalized<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     from: &'a [u8],
     to: &'a [u8],
@@ -684,10 +643,6 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
             break 'brk &relative_from_buf[0..path_len + 1];
         }
     } else {
-        // PORT NOTE: Zig aliased relative_from_buf as both input (normalize result)
-        // and output (join target). Reshape: normalize into relative_to_buf scratch,
-        // then join into relative_from_buf. Safe because normalized_to is computed
-        // afterwards (overwrites relative_to_buf anyway).
         let norm_len = normalize_string_buf::<true, P, true>(from, &mut relative_to_buf[..]).len();
         join_abs_string_buf::<P>(
             Fs::FileSystem::instance().top_level_dir(),
@@ -716,10 +671,6 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
             break 'brk &relative_to_buf[0..path_len + 1];
         }
     } else {
-        // PORT NOTE: Zig aliased relative_to_buf as both input (normalize result)
-        // and output (join target). Reshape: normalize into `buf` scratch (caller
-        // output buffer, untouched until the final relative_normalized_buf call
-        // and disjoint from both threadlocals), then join into relative_to_buf.
         let norm_len = normalize_string_buf::<true, P, true>(to, buf).len();
         join_abs_string_buf::<P>(
             Fs::FileSystem::instance().top_level_dir(),
@@ -958,10 +909,6 @@ impl<T: PathChar> Default for NormalizeOptions<T> {
     }
 }
 
-// TODO(port): return type was `if (options.zero_terminate) [:0]T else []T`.
-// Rust cannot vary the return type on a const-generic bool without specialization;
-// we always return `&mut [T]` and write the NUL when `ZERO_TERMINATE`. Callers
-// that need `&ZStr`/`&WStr` re-wrap with `from_raw`.
 pub fn normalize_string_generic_tz<
     'a,
     T: PathChar,
@@ -980,10 +927,6 @@ pub fn normalize_string_generic_tz<
     // PERF(port): Zig built `sep_str` at comptime; we build per-call.
 
     if is_windows && cfg!(debug_assertions) {
-        // this is here to catch a potential mistake by the caller
-        //
-        // since it is theoretically possible to get here in release
-        // we will not do this check in release.
         debug_assert!(!strings::has_prefix_t::<T>(path_, T::lit(b":\\")));
     }
 
@@ -1171,12 +1114,6 @@ pub enum Platform {
     Nt,
 }
 
-// PORT NOTE: Zig used `comptime _platform: Platform` const-generics. Nightly
-// `adt_const_params` is now enabled crate-wide (see lib.rs), so `Platform`
-// derives `ConstParamTy` and `<const PLATFORM: Platform>` is the preferred
-// form for new code. The `PlatformT` sealed-trait shim below is kept for
-// existing call sites that haven't been migrated yet — both monomorphize
-// identically (`P::P` is a true `const Platform`).
 mod sealed {
     pub trait Sealed {}
 }
@@ -1428,22 +1365,10 @@ pub fn join_abs<'a, P: PlatformT>(cwd: &'a [u8], part: &[u8]) -> &'a [u8] {
     join_abs_string::<P>(cwd, &[part])
 }
 
-/// Convert parts of potentially invalid file paths into a single valid filpeath
-/// without querying the filesystem
-/// This is the equivalent of path.resolve
-///
-/// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
-// PORT NOTE: result borrows the thread-local buffer ('static) OR returns `cwd`
-// directly when `parts.is_empty()`. Return tied to `cwd`'s lifetime ('static: 'a).
 pub fn join_abs_string<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a [u8] {
     PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf::<P>(cwd, tl_buf_mut(b), parts))
 }
 
-/// Convert parts of potentially invalid file paths into a single valid filpeath
-/// without querying the filesystem
-/// This is the equivalent of path.resolve
-///
-/// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
 pub fn join_abs_string_z<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a ZStr {
     PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf_z::<P>(cwd, tl_buf_mut(b), parts))
 }
@@ -1621,11 +1546,6 @@ pub(crate) fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(
     normalize_string_node_t::<T, P>(&temp_buf[0..written], buf)
 }
 
-/// Scratch buffer for `_join_abs_string_buf`'s unnormalized concatenation.
-/// Zig used `std.heap.stackFallback(MAX_PATH_BYTES * 2)`; we draw from the
-/// thread-local `path_buffer_pool` for the common case and only heap-allocate
-/// when the concatenation would overflow a single `PathBuffer`. The pooled
-/// buffer is not re-zeroed — callers write every byte they later read.
 enum JoinScratch {
     Pooled(crate::path_buffer_pool::Guard),
     Heap(Vec<u8>),
@@ -1662,11 +1582,6 @@ pub fn join_abs_string_buf<'a, P: PlatformT>(
     _join_abs_string_buf::<false, P>(cwd, buf, parts)
 }
 
-/// Like `join_abs_string_buf`, but returns null when the *normalized* result is
-/// too large for `buf`. Use this when `parts` may contain user-controlled
-/// input of arbitrary length. `..` segments are handled correctly: a path
-/// whose unnormalized length exceeds `buf.len` but normalizes down will still
-/// succeed.
 pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     cwd: &'a [u8],
     buf: &'a mut [u8],
@@ -1683,10 +1598,6 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
         return Some(join_abs_string_buf::<P>(cwd, buf, parts));
     }
 
-    // Slow path: allocate a large scratch for the result. The inner
-    // join_abs_string_buf will heap-allocate its own temp buffer for the concat
-    // since `total > MAX_PATH_BYTES * 2 > sfa inline size` is likely here.
-    // PERF(port): was stack-fallback alloc — profile if hot
     let mut scratch = vec![0u8; total];
     let joined = join_abs_string_buf::<P>(cwd, &mut scratch, parts);
     if joined.len() > buf.len() {
@@ -1742,10 +1653,6 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
         && parts[0].len() == 1
         && parts[0][0] == SEP_POSIX
     {
-        // PORT NOTE: Zig returned the literal `"/"` (`[:0]const u8` — NUL-backed).
-        // Rust `b"/"` is NOT NUL-terminated and not in `buf`, breaking callers
-        // that assume buf-backing (`ZStr::from_raw`, trailing-slash check).
-        // Write into `buf` so the result is always buf-backed and sentinel-safe.
         buf[0] = b'/';
         if IS_SENTINEL {
             buf[1] = 0;
@@ -1844,19 +1751,6 @@ fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
         return cwd;
     }
 
-    // path.resolve is a bit different on Windows, as there are multiple possible filesystem roots.
-    // When you resolve(`C:\hello`, `C:world`), the second arg is a drive letter relative path, so
-    // the result of such is `C:\hello\world`, but if you used D:world, you would switch roots and
-    // end up with `D:\world`. this root handling basically means a different algorithm.
-    //
-    // to complicate things, it seems node.js will first figure out what the last root is, then
-    // in a separate search, figure out the last absolute path.
-    //
-    // Given the case `resolve("/one", "D:two", "three", "F:four", "five")`
-    // Root is "F:", cwd is "/one", then join all paths that dont exist on other drives.
-    //
-    // Also, the special root "/" can match into anything, but we have to resolve it to a real
-    // root at some point. That is what the `root_of_part.len == 0` check is doing.
     let (root, set_cwd, n_start) = 'base: {
         let root = 'root: {
             let mut n = parts.len();
@@ -1928,11 +1822,6 @@ fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
         temp_buf[out..out + part_without_vol.len()].copy_from_slice(part_without_vol);
         out += part_without_vol.len();
     }
-
-    // if (out > 0 and temp_buf[out - 1] != '\\') {
-    //     temp_buf[out] = '\\';
-    //     out += 1;
-    // }
 
     let result = normalize_string_buf::<false, platform::Windows, true>(&temp_buf[0..out], buf);
     let result_len = result.len();
@@ -2090,12 +1979,6 @@ pub(crate) fn normalize_string_node_t<'a, T: PathChar, P: PlatformT>(
     &mut buf[buf_off..buf_off + out_len]
 }
 
-/// Port of `resolve_path.zig:basename` — **NOT** `std.fs.path.basename` (see
-/// [`crate::basename`] for that). Differs in two load-bearing ways: treats
-/// `\` as a separator on all platforms (`is_sep_any`), and returns `b"/"`
-/// (not `b""`) when the input is all separators. Shell builtins
-/// (`basename`/`mv`/`cp`) rely on both for POSIX-shell-correct `basename /`.
-/// Do not dedup against `crate::basename`.
 pub fn basename(path: &[u8]) -> &[u8] {
     if path.is_empty() {
         return &[];
@@ -2135,29 +2018,6 @@ pub(crate) fn last_index_of_sep_t<T: PathChar>(path: &[T]) -> Option<usize> {
     }
 }
 
-/// The use case of this is when you do
-///     "import '/hello/world'"
-/// The windows disk designator is missing!
-///
-/// Defaulting to C would work but the correct behavior is to use a known disk designator,
-/// via an absolute path from the referrer or what not.
-///
-/// I've made it so that trying to read a file with a posix path is a debug assertion failure.
-///
-/// To use this, stack allocate the following struct, and then call `resolve`.
-///
-/// ```ignore
-/// let mut normalizer = PosixToWinNormalizer::default();
-/// let result = normalizer.resolve(b"C:\\dev\\bun", b"/dev/bun/test/etc.js");
-/// ```
-///
-/// When you are certain that using the current working directory is fine, you can use
-///
-/// ```ignore
-/// let result = normalizer.resolve_cwd(b"/dev/bun/test/etc.js");
-/// ```
-///
-/// This API does nothing on Linux (it has a size of zero)
 #[derive(Default)]
 pub struct PosixToWinNormalizer {
     #[cfg(windows)]
@@ -2358,24 +2218,6 @@ impl PosixToWinNormalizer {
 
 // ResolvePath__joinAbsStringBufCurrentPlatformBunString: see src/jsc/resolve_path_jsc.zig
 // (reaches into the VM for cwd; paths/ is JSC-free).
-
-// ─────────────────────────────────────────────────────────────────────────────
-// In-place separator rewrites.
-//
-// `slashes_to_{posix,windows}_in_place` are the two PRIMITIVES — unconditional,
-// no host-OS gating, no drive-letter touch. They are the Rust analogue of Zig's
-// `std.mem.replaceScalar(T, buf, '\\', '/')` (and inverse), which is what Zig
-// callers handroll at the sites this dedup targets.
-//
-// The four pre-existing public fns below are now thin wrappers over the
-// primitives so that Zig grep-parity (`platformToPosixInPlace`,
-// `dangerouslyConvertPathTo{Posix,Windows}InPlace`, `posixToPlatformInPlace`)
-// is preserved without a fourth/fifth copy of the loop body.
-//
-// Encoding safety: both 0x2F ('/') and 0x5C ('\\') are single-unit ASCII in
-// UTF-8 and UTF-16 and never appear as a sub-unit of a multi-unit sequence, so
-// a scalar replace is sound for `u8` and `u16` alike.
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Unconditional `'\\' → '/'` in place. No host-OS gate, no drive-letter touch.
 #[inline]

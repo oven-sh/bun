@@ -444,11 +444,6 @@ crate::css_eql_partialeq!(
     BackgroundRepeat,
 );
 
-/// A [`<repeat-style>`](https://www.w3.org/TR/css-backgrounds-3/#typedef-repeat-style) value,
-/// used within the `background-repeat` property to represent how a background image is repeated
-/// in a single direction.
-///
-/// See [BackgroundRepeat](BackgroundRepeat).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 pub enum BackgroundRepeatKeyword {
     /// The image is repeated in this direction.
@@ -605,11 +600,6 @@ pub struct BackgroundHandler {
     pub flushed_properties: BackgroundProperty,
     pub has_any: bool,
 }
-
-// PORT NOTE: the Zig uses comptime field-name strings + @field for `flushHelper` /
-// `initSmallListHelper` / `push`. Rust cannot index struct fields by string at runtime;
-// these helpers are expanded into small per-field macros below. A derive macro
-// could replace them.
 
 macro_rules! init_small_list_helper {
     ($this:expr, $field:ident, $length:expr) => {{
@@ -930,11 +920,6 @@ impl BackgroundHandler {
                         },
                     });
                 }
-                // Zig: defer { clearRetainingCapacity on each list } — values were moved
-                // by-value into `backgrounds` above, so clearing prevents double-free.
-                // In Rust we cloned, so the originals will Drop normally; no explicit clear
-                // needed for correctness. Leaving as-is.
-                // PERF(port): was arena bulk-free / move-then-clear — profile if hot.
 
                 if self.flushed_properties.is_empty() {
                     let mut fallbacks =

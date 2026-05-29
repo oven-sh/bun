@@ -16,11 +16,6 @@ use crate as resolver;
 use crate::fs;
 use bun_alloc::Arena as Bump;
 
-// ── bun_install types (MOVE_DOWN: bun_install_types) ──────────────────────
-// Note: bun_resolver cannot depend on bun_install (would loop). The
-// auto-install path is dormant until `bun_install` writes `r.package_manager`;
-// all install-tier value types are the canonical `bun_install_types` shapes.
-
 pub use ::bun_install_types::resolver_hooks::{
     Architecture, AutoInstaller, Behavior as DepBehavior, Dependency, DependencyGroup,
     DependencyVersion, DependencyVersionTag, OperatingSystem,
@@ -40,12 +35,6 @@ pub mod install_stubs {
         pub use ::bun_install_types::resolver_hooks::DependencyVersionTag as Tag;
     }
 }
-// TODO(port): bun_bundler::options::{Framework, RouteConfig} — local opaque
-// FORWARD_DECL: legacy `options::Framework` and friends. The Zig
-// `package_json.zig:loadFramework*` block references `options.Framework`, which
-// no longer exists in `options.zig` (removed upstream); the loaders have no
-// callers. Port the field-shape locally so the bodies compile as-written —
-// MOVE_DOWN to `bun_options_types` if/when `bun_bundler` revives these.
 pub mod options {
     use bun_options_types::schema::api;
 
@@ -161,11 +150,6 @@ pub struct DependencyMap {
 }
 
 impl Clone for DependencyMap {
-    /// Zig copies `DependencyMap` by value (the inner `ArrayHashMap` is a
-    /// pointer + len, so the copy aliases the same backing storage). Rust
-    /// owns the storage, so we deep-clone the small key/value vecs instead —
-    /// `SemverString`/`Dependency` are POD over `source_buf`, so semantics
-    /// match the Zig shallow copy.
     fn clone(&self) -> Self {
         Self {
             map: self.map.clone().expect("OOM"),
@@ -182,14 +166,6 @@ pub type DependencyHashMap =
 pub struct PackageJSON {
     pub name: Box<[u8]>,
     pub source: bun_ast::Source,
-    /// PORT NOTE: owns the file bytes that `source.contents` (and the
-    /// `&'static [u8]` map values below) borrow. Replaces the prior
-    /// `mem::forget` leak — forbidden per docs/PORTING.md §Forbidden patterns.
-    /// Zig (`package_json.zig:615`) used `bun.default_allocator` and never
-    /// freed on success because the DirInfo cache is process-lifetime; here the
-    /// `PackageJSON` itself is the owner so the bytes free if it ever drops.
-    // TODO(port): lifetime — once `bun_ast::Source::contents` becomes
-    // `Cow<'static, [u8]>`, fold this into `source` and drop the re-borrow.
     pub source_contents: Box<[u8]>,
     pub main_fields: MainFieldMap,
     pub module_type: ModuleType,
@@ -206,43 +182,12 @@ pub struct PackageJSON {
 
     pub side_effects: SideEffects,
 
-    // Populated if the "browser" field is present. This field is intended to be
-    // used by bundlers and lets you redirect the paths of certain 3rd-party
-    // modules that don't work in the browser to other modules that shim that
-    // functionality. That way you don't have to rewrite the code for those 3rd-
-    // party modules. For example, you might remap the native "util" node module
-    // to something like https://www.npmjs.com/package/util so it works in the
-    // browser.
-    //
-    // This field contains a mapping of absolute paths to absolute paths. Mapping
-    // to an empty path indicates that the module is disabled. As far as I can
-    // tell, the official spec is an abandoned GitHub repo hosted by a user account:
-    // https://github.com/defunctzombie/package-browser-field-spec. The npm docs
-    // say almost nothing: https://docs.npmjs.com/files/package.json.
-    //
-    // Note that the non-package "browser" map has to be checked twice to match
-    // Webpack's behavior: once before resolution and once after resolution. It
-    // leads to some unintuitive failure cases that we must emulate around missing
-    // file extensions:
-    //
-    // * Given the mapping "./no-ext": "./no-ext-browser.js" the query "./no-ext"
-    //   should match but the query "./no-ext.js" should NOT match.
-    //
-    // * Given the mapping "./ext.js": "./ext-browser.js" the query "./ext.js"
-    //   should match and the query "./ext" should ALSO match.
-    //
     pub browser_map: BrowserMap,
 
     pub exports: Option<ExportsMap>,
     pub imports: Option<ExportsMap>,
 }
 
-// PORT NOTE: hand-rolled `Default` because `#[derive(Default)]` would zero
-// `package_manager_package_id` (a valid lockfile id — typically the root
-// package). Spec `package_json.zig:68` declares the field default as
-// `Install.invalid_package_id` (= `u32::MAX`); `node_fallbacks.rs` relies on
-// `..Default::default()` matching that. Likewise `arch`/`os` default to
-// `*::all()` (zig:65-66).
 impl Default for PackageJSON {
     fn default() -> Self {
         PackageJSON {
@@ -427,22 +372,6 @@ impl SideEffects {
     }
 }
 
-// ── Local extension shims so `parse` can call shapes that live in higher-tier
-//    crates (full FileSystem). Bodies forward to bun_paths. ────────────────
-//
-// PORT NOTE: the former `JsonCachePackageJsonExt` shim trait is removed —
-// `JsonCacheVTable` now has a real `parse_package_json` slot and `JsonCache`
-// exposes the inherent forwarder (tsconfig_json.rs).
-// `bun_bundler::cache::JSON_CACHE_VTABLE` wires it to `bun_parsers::json`.
-
-/// The Zig body calls the threadlocal-buffer `abs`/`join`/`normalize` and
-/// immediately dupes the result. Thin extension trait that delegates to
-/// `bun_paths::resolve_path` and returns owned `Box<[u8]>` so no `'static`
-/// lifetime is fabricated from a threadlocal scratch buffer (forbidden per
-/// docs/PORTING.md §Forbidden patterns — "`unsafe { &*(p as *const _) }` to
-/// extend a lifetime"). `crate::fs::FileSystem` already has an inherent
-/// borrowing `abs(&self) -> &[u8]` (lib.rs); that wins method resolution at
-/// call-sites that only need a transient borrow.
 pub trait FileSystemPackageJsonExt {
     fn abs_owned(&self, parts: &[&[u8]]) -> Box<[u8]>;
     fn join(&self, parts: &[&[u8]]) -> &'static [u8];
@@ -462,11 +391,6 @@ impl FileSystemPackageJsonExt for crate::fs::FileSystem {
         resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Loose>(parts)
     }
     fn normalize(&self, str: &[u8]) -> Box<[u8]> {
-        // PORT NOTE: Zig `FileSystem.normalize` (fs.zig) is
-        // `path_handler.normalizeString(str, true, .auto)` — collapses `.`/`..`/dup-separators
-        // only; it does NOT join against cwd. Writes into a threadlocal buffer;
-        // caller immediately dupes. Return owned to avoid laundering the
-        // threadlocal borrow into `'static`.
         let out = resolve_path::resolve_path::normalize_string::<
             true,
             resolve_path::resolve_path::platform::Auto,
@@ -1094,11 +1018,6 @@ impl PackageJSON {
                 return None;
             }
         };
-        // PORT NOTE: reshaped for borrowck — `mem::take` the contents (leaving
-        // `Contents::Empty` behind) so `entry` stays whole for the close-guard.
-        // Immediately convert to owned `Box<[u8]>`: `use_shared_buffer = false`
-        // above guarantees `Contents::Owned`/`Empty`, so the match is exhaustive
-        // in practice (the catch-all copy is unreachable but defensive).
         let entry_contents: Box<[u8]> = match core::mem::take(&mut entry.contents) {
             crate::cache::Contents::Owned(v) => v.into_boxed_slice(),
             crate::cache::Contents::Empty => Box::default(),
@@ -1182,11 +1101,6 @@ impl PackageJSON {
         // owned value is reconstructed at the bottom (Source isn't `Clone`).
         let json_source = &json_source;
 
-        // Note: we tried rewriting this to be fewer loops over all the properties (asProperty loops over each)
-        // The end result was: it's not faster! Sometimes, it's slower.
-        // It's hard to say why.
-        // Feels like a codegen issue.
-        // or that looping over every property doesn't really matter because most package.jsons are < 20 properties
         if let Some(version_json) = json.as_property(b"version") {
             if let Some(version_str) = version_json.expr.as_utf8_string_literal() {
                 if !version_str.is_empty() {
@@ -1253,22 +1167,7 @@ impl PackageJSON {
             }
         }
 
-        // Read the "browser" property
-        // Since we cache parsed package.json in-memory, we have to read the "browser" field
-        // including when `target` is not `browser` since the developer may later
-        // run a build for the browser in the same process (like the DevServer).
         {
-            // We both want the ability to have the option of CJS vs. ESM and the
-            // option of having node vs. browser. The way to do this is to use the
-            // object literal form of the "browser" field like this:
-            //
-            //   "main": "dist/index.node.cjs.js",
-            //   "module": "dist/index.node.esm.js",
-            //   "browser": {
-            //     "./dist/index.node.cjs.js": "./dist/index.browser.cjs.js",
-            //     "./dist/index.node.esm.js": "./dist/index.browser.esm.js"
-            //   },
-            //
             if let Some(browser_prop) = json.as_property(b"browser") {
                 match &browser_prop.expr.data {
                     js_ast::ExprData::EObject(obj) => {
@@ -1286,18 +1185,6 @@ impl PackageJSON {
                                 continue;
                             };
 
-                            // Normalize the path so we can compare against it without getting
-                            // confused by "./". There is no distinction between package paths and
-                            // relative paths for these values because some tools (i.e. Browserify)
-                            // don't make such a distinction.
-                            //
-                            // This leads to weird things like a mapping for "./foo" matching an
-                            // import of "foo", but that's actually not a bug. Or arguably it's a
-                            // bug in Browserify but we have to replicate this bug because packages
-                            // do this in the wild.
-                            // PORT NOTE: inherent `FileSystem::normalize` (fs.rs)
-                            // returns a threadlocal-backed `&[u8]` and shadows the
-                            // owned-returning trait method; UFCS to get the `Box`.
                             let key: Box<[u8]> =
                                 FileSystemPackageJsonExt::normalize(r_fs, _key_str);
 
@@ -1567,10 +1454,6 @@ impl PackageJSON {
                     package_json.dependencies.map = DependencyHashMap::default();
                     // TODO(port): lifetime — source_buf borrows json_source.contents
                     package_json.dependencies.source_buf = contents_static;
-                    // PORT NOTE: Zig used `SemverString.ArrayHashContext` (compares against
-                    // `source_buf`); ArrayHashMap has no `*_context` variant yet — the
-                    // generic `put_assume_capacity` path is sufficient because keys are
-                    // `SemverString` (offset+len into `source_buf`, hashed by content).
                     package_json
                         .dependencies
                         .map
@@ -1603,12 +1486,6 @@ impl PackageJSON {
                                     let sliced_str =
                                         Semver::SlicedString::init(version_str, version_str);
 
-                                    // Zig's `Dependency.parse` accepts `?*PackageManager`;
-                                    // the parser body lives in install-tier so route through
-                                    // the AutoInstaller vtable when one is wired. When it
-                                    // isn't, still record the dependency name (with an
-                                    // uninitialized-tag version) — `bun run --filter` reads
-                                    // only the map keys to compute workspace ordering.
                                     let dependency_version = match r.auto_installer() {
                                         Some(pm) => pm.parse_dependency(
                                             name,
@@ -1655,10 +1532,6 @@ impl PackageJSON {
         // bytes (`contents_static`, see SAFETY note above). Inline the
         // string-map walk so values borrow the source buffer, not a temp bump.
         if include_scripts {
-            // Local: build a `StringArrayHashMap<&'static [u8]>` for the named
-            // top-level object property. Values are JSON string literals, so
-            // `as_utf8_string_literal()` (no bump) returns slices into
-            // `contents_static`.
             let property_string_map =
                 |name: &[u8]| -> Option<Box<StringArrayHashMap<&'static [u8]>>> {
                     let prop = json.as_property(name)?;
@@ -1677,13 +1550,6 @@ impl PackageJSON {
                         else {
                             continue;
                         };
-                        // Zig `asPropertyStringMap` drops entries where the key
-                        // OR the value is empty (expr.zig: `key.len > 0 and
-                        // value.len > 0`). An empty-valued script
-                        // (`{"scripts":{"build":""}}`) must NOT become a real
-                        // (empty) script — Zig reports "Script not found".
-                        // (npm actually runs empty scripts and exits 0; we
-                        // intentionally diverge here to match released Bun.)
                         if key.is_empty() || value.is_empty() {
                             continue;
                         }
@@ -1795,11 +1661,6 @@ impl<'a> Visitor<'a> {
             }
             js_ast::ExprData::EObject(e_obj) => {
                 let prop_len = e_obj.properties.len_u32() as usize;
-                // PORT NOTE: reshaped for borrowck — Zig used MultiArrayList column slices;
-                // EntryDataMapList is a Vec<MapEntry> placeholder until
-                // bun_collections::MultiArrayList lands. Push whole entries instead of
-                // writing through three parallel column slices.
-                // TODO(port): bun_collections::MultiArrayList column accessors
                 let mut map_data: EntryDataMapList = Vec::with_capacity(prop_len);
                 let mut expansion_keys: Vec<MapEntry> = Vec::with_capacity(prop_len);
                 let mut is_conditional_sugar = false;
@@ -1986,10 +1847,6 @@ pub struct ESModule<'a> {
 #[derive(Clone)]
 pub struct Resolution {
     pub status: Status,
-    // PORT NOTE: Zig returned slices into threadlocal PathBuffers / the package.json source
-    // buffer. In Rust the source-buffer case (`EntryData::String(Box<[u8]>)`) is owned by a
-    // possibly-temporary `Entry`, so borrowing would dangle. Copy out into an owned buffer.
-    // TODO(perf): thread a real `'a` lifetime once `EntryData::String` is `&'a [u8]`.
     pub path: Box<[u8]>,
     pub debug: ResolutionDebug,
 }
@@ -2112,11 +1969,6 @@ impl<'a> Package<'a> {
         }
     }
 
-    /// Allocate a fresh string buffer and clone `name`/`version`/`subpath`
-    /// into it as offset-encoded `Semver::String`s. Mirrors the inline
-    /// `count` → `allocate` → `clone` Builder dance the resolver does at the
-    /// auto-install pending sites (resolver.zig), exposed as the `esm.copy`
-    /// helper that `PendingResolution::init` expects.
     pub fn copy(self) -> Result<(PackageExternal, Vec<u8>), bun_core::Error> {
         let mut builder = Semver::semver_string::Builder::default();
         self.count(&mut builder);
@@ -2163,14 +2015,6 @@ impl<'a> Package<'a> {
 
     pub fn parse_version(specifier_after_name: &[u8]) -> Option<&[u8]> {
         if let Some(slash) = strings::index_of_char(specifier_after_name, b'/') {
-            // "foo@/bar" is not a valid specifier\
-            // "foo@/"   is not a valid specifier
-            // "foo/@/bar" is not a valid specifier
-            // "foo@1/bar" is a valid specifier
-            // "foo@^123.2.3+ba-ab/bar" is a valid specifier
-            //      ^^^^^^^^^^^^^^
-            //    this is the version
-
             let remainder = &specifier_after_name[0..slash as usize];
             if !remainder.is_empty() && remainder[0] == b'@' {
                 return Some(&remainder[1..]);
@@ -2199,10 +2043,6 @@ impl<'a> Package<'a> {
             return None;
         }
 
-        // A version delimiter `@` is only valid within the package-name portion of
-        // the specifier. Searching the entire specifier misparses wildcard subpaths
-        // whose matched substring contains `@` (e.g. `test-pkg/@scope/sub/index.js`
-        // or `ember-source/@ember/renderer/...`) as if the package had a version.
         let offset: usize = if package.name.is_empty() || package.name[0] != b'@' {
             0
         } else {
@@ -2309,13 +2149,6 @@ struct ModuleBufs {
 }
 
 thread_local! {
-    // PORT NOTE: bun.ThreadlocalBuffers — Zig heap-allocates the buffer struct on first use and
-    // stores only a pointer in TLS so the static-TLS template stays small (PE/COFF has no
-    // TLS-BSS; ELF PT_TLS MemSiz scales with this — see test/js/bun/binary/tls-segment-size).
-    // resolve_target / resolve_target_reverse are RECURSIVE (Map/Array arms call themselves), so a
-    // RefCell + escaped `&mut PathBuffer` would create aliased `&mut` at the inner call → UB.
-    // Use raw-pointer access; only form `&mut PathBuffer` inside the non-recursive `String` arms
-    // where the buffers are actually written (no overlap with a live outer `&mut`).
     static MODULE_BUFS: core::cell::Cell<*mut ModuleBufs> =
         const { core::cell::Cell::new(core::ptr::null_mut()) };
 }
@@ -2646,10 +2479,6 @@ impl<'a> ESModule<'a> {
                     ));
                     log.increase_indent();
                 }
-                // PORT NOTE: Zig had `defer log.decrease_indent()` capturing the unwrapped
-                // `*DebugLogs`. Rust scopeguard cannot hold the &mut across the recursive
-                // `&mut self` calls below; manual decrease at each return below.
-                // TODO(port): errdefer — verify all return paths decrease_indent.
                 macro_rules! dedent {
                     () => {
                         if let Some(log) = self.debug_logs.as_deref_mut() {
@@ -2681,12 +2510,6 @@ impl<'a> ESModule<'a> {
                     }
                 }
 
-                // If the wildcard match (or trailing-slash remainder) taken from
-                // the import specifier contains any ".", ".." or "node_modules"
-                // segments, throw an Invalid Module Specifier error. Node's
-                // PACKAGE_TARGET_RESOLVE applies the same validation to
-                // patternMatch; without it the specifier can substitute "../"
-                // segments into the target and escape the package directory.
                 if !subpath.is_empty() {
                     if let Some(invalid) = find_invalid_subpath_segment(subpath) {
                         if let Some(log) = self.debug_logs.as_deref_mut() {
@@ -2744,14 +2567,6 @@ impl<'a> ESModule<'a> {
                                 },
                             };
                         } else {
-                            // PORT NOTE: Zig used `.auto` here, carried over as a
-                            // latent Windows bug (#30839): this branch runs when an
-                            // `imports` target is itself a package specifier
-                            // (e.g. `@myproject/resolver`) that we hand back to
-                            // package-resolve. Per the Node.js packages spec these
-                            // are URL-like specifiers and must keep forward slashes;
-                            // `Auto` normalizes them to `\` on Windows and the
-                            // scoped-name match fails, falling through to `main`.
                             let parts2 = [str, subpath];
                             let result = resolve_path::resolve_path::join_string_buf::<
                                 resolve_path::platform::Posix,
@@ -2972,32 +2787,6 @@ impl<'a> ESModule<'a> {
                         && matches!(&last_map_entry_value.data, EntryData::Map(m) if !m.list.is_empty())
                         && !last_map_entry_value.keys_start_with_dot()
                     {
-                        // If a top-level condition did match but no sub-condition matched,
-                        // complain about the sub-condition instead of the top-level condition.
-                        // This leads to a less confusing error message. For example:
-                        //
-                        //   "exports": {
-                        //     "node": {
-                        //       "require": "./dist/bwip-js-node.js"
-                        //     }
-                        //   },
-                        //
-                        // We want the warning to say this:
-                        //
-                        //   note: None of the conditions provided ("require") match any of the
-                        //         currently active conditions ("default", "import", "node")
-                        //   14 |       "node": {
-                        //      |               ^
-                        //
-                        // We don't want the warning to say this:
-                        //
-                        //   note: None of the conditions provided ("browser", "electron", "node")
-                        //         match any of the currently active conditions ("default", "import", "node")
-                        //   7 |   "exports": {
-                        //     |              ^
-                        //
-                        // More information: https://github.com/evanw/esbuild/issues/1484
-                        // PORT NOTE: reshaped for borrowck — return_target points into slice; clone keys below
                         return_target = last_map_entry_value;
                     }
 
@@ -3146,10 +2935,6 @@ fn find_invalid_segment(path_: &[u8]) -> Option<&[u8]> {
     None
 }
 
-// Like `find_invalid_segment`, but for the wildcard match (`patternMatch`)
-// extracted from the import specifier rather than for a target string from
-// package.json: every segment is validated, including the first, and a
-// separator-less single-segment path is allowed.
 fn find_invalid_subpath_segment(path_: &[u8]) -> Option<&[u8]> {
     let mut path = path_;
     while !path.is_empty() {
@@ -3169,10 +2954,6 @@ fn find_invalid_subpath_segment(path_: &[u8]) -> Option<&[u8]> {
     None
 }
 
-// Node's PACKAGE_TARGET_RESOLVE rejects ".", "..", and "node_modules" segments
-// case-insensitively and including percent-encoded variants. Decode the segment
-// before comparing so spellings like "%2e%2e" or ".%2E" cannot survive the check
-// only to be decoded into ".." by `finalize`.
 fn is_invalid_segment(segment: &[u8]) -> bool {
     let mut decoded = [0u8; 12];
     let mut len = 0usize;

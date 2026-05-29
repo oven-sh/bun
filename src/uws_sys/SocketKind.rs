@@ -64,11 +64,6 @@ pub enum SocketKind {
 }
 
 impl SocketKind {
-    /// Checked conversion from the raw `u8` returned by C (`us_socket_kind`).
-    /// Mirrors Zig's `@enumFromInt`, which traps on out-of-range values in
-    /// safe builds. An invalid discriminant in a `#[repr(u8)]` enum is
-    /// immediate UB in Rust, so this is an exhaustive match — LLVM folds the
-    /// contiguous arms to a single range-check + reinterpret.
     #[inline]
     pub fn from_u8(v: u8) -> Self {
         match v {
@@ -117,15 +112,6 @@ impl SocketKind {
     }
 }
 
-// `unsigned char kind` on us_socket_t — full byte, not the flags bitfield.
-// Zig: `comptime bun.assert(@typeInfo(SocketKind).@"enum".fields.len <= 256)`.
-// In Rust, `#[repr(u8)]` already refuses to compile with >256 variants, so the
-// invariant is enforced by the type system; no explicit assert needed.
-
-/// The four kinds whose handlers live in C++ are also referenced from C++
-/// (`packages/bun-uws/src/SocketKinds.h`). Export their ordinals so the C++
-/// side links against the Rust source of truth instead of mirroring literals
-/// that silently rot if this enum is reordered.
 #[unsafe(no_mangle)]
 pub(crate) static BUN_SOCKET_KIND_DYNAMIC: u8 = SocketKind::Dynamic as u8;
 #[unsafe(no_mangle)]

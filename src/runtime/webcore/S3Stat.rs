@@ -59,11 +59,6 @@ impl S3Stat {
 
 impl Drop for S3Stat {
     fn drop(&mut self) {
-        // `bun_core::String` is `#[derive(Copy)]` with NO `Drop` impl
-        // (src/string/lib.rs), so dropping the Box alone would leak the +1
-        // WTFStringImpl refs taken by `clone_utf8` in `init`. Release them
-        // explicitly, mirroring Zig's `this.etag.deref(); this.contentType.deref();`.
-        // The default `JsFinalize::finalize` (`drop(self)`) runs this on GC.
         self.etag.deref();
         self.content_type.deref();
     }

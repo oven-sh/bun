@@ -17,13 +17,6 @@ const PATH_INT_LEN_BITS: u32 = {
 
 const USE_SMALL_PATH_STRING_: bool = (usize::BITS - PATH_INT_LEN_BITS) >= 53;
 
-// const PathStringBackingIntType = if (use_small_path_string_) u64 else u128;
-// Zig picks the backing integer at comptime: u64 if 53 ptr bits + len bits fit
-// (MAX_PATH_BYTES ≤ 2048 → ≤ 11 len bits); u128 otherwise (Linux/Android
-// MAX_PATH_BYTES=4096 → 13 len bits → 64-13=51 < 53; Windows → way more).
-// Stable Rust cannot select a type from a const bool, so cfg by OS — this list
-// MUST track `MAX_PATH_BYTES` in `bun_core/util.rs`. The const-assert below
-// verifies they agree.
 #[cfg(any(
     target_os = "linux",
     target_os = "android",
@@ -108,24 +101,11 @@ impl PathString {
         Self(ptr | len)
     }
 
-    /// Take ownership of `bytes`, store its raw pointer/len, and forget the
-    /// allocation. The returned PathString must be paired with
-    /// [`deinit_owned`] (typically by the containing struct's `Drop`) to avoid
-    /// a leak — this mirrors Zig, where `Bytes.deinit` runs
-    /// `default_allocator.free(stored_name.slice())`.
-    ///
-    /// PathString itself stays `Copy` (it is a packed pointer), so ownership
-    /// is a contract on the *container*, not enforced by the type.
     #[inline]
     pub fn init_owned(bytes: Vec<u8>) -> Self {
         if bytes.is_empty() {
             return Self::EMPTY;
         }
-        // Shed any unused capacity so the (ptr,len) pair fully describes the
-        // allocation and `deinit_owned` can reconstruct it without tracking
-        // capacity separately. `heap::alloc` (not `leak`) is the explicit
-        // ownership-transfer-to-raw API; the matching `heap::take` lives
-        // in `deinit_owned`.
         let raw: *mut [u8] = crate::heap::into_raw(bytes.into_boxed_slice());
         // SAFETY: `raw` is a fresh non-null allocation; reborrow only to pack
         // ptr+len into the backing int.

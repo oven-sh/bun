@@ -2,13 +2,6 @@ use super::any_mysql_error::Error as AnyMySQLError;
 use super::encode_int::decode_length_int;
 use crate::shared::data::Data;
 
-/// Trait capturing the structural interface that Zig's `NewReaderWrap` took as
-/// seven comptime fn params (`markMessageStartFn_`, `peekFn_`, `skipFn_`,
-/// `ensureCapacityFn_`, `readFunction_`, `readZ_`, `setOffsetFromStart_`).
-///
-/// In Zig, `NewReader(Context)` reflected `Context.markMessageStart` etc. via
-/// `@hasDecl`; in Rust the trait bound IS that check (see PORTING.md §Comptime
-/// reflection).
 pub trait ReaderContext: Copy {
     fn mark_message_start(self);
     // `&self` (not `self`) so the returned borrow can be tied to the context's
@@ -21,13 +14,6 @@ pub trait ReaderContext: Copy {
     fn set_offset_from_start(self, offset: usize);
 }
 
-// PORT NOTE: Zig's `NewReaderWrap(Context, fn, fn, fn, fn, fn, fn, fn) type`
-// returned an anonymous `struct { wrapped: Context, ... }`. In Rust the comptime
-// fn-pointer params collapse into the `ReaderContext` trait above, and the
-// returned struct becomes this generic wrapper. `NewReader(Context)` (which
-// checked `@hasDecl(Context, "is_wrapped")` to avoid double-wrapping) is
-// subsumed: callers name `NewReader<C>` directly and the type system prevents
-// accidental double-wrap.
 #[derive(Clone, Copy)]
 pub struct NewReader<C: ReaderContext> {
     pub wrapped: C,
@@ -88,11 +74,6 @@ impl<C: ReaderContext> NewReader<C> {
         Ok(I::from_ne_slice(&data.slice()[..I::SIZE]))
     }
 
-    /// Zig `reader.int(u24)`. MySQL's binary result-row protocol transmits
-    /// `MYSQL_TYPE_INT24` as a fixed 4-byte field; Zig consumes `@sizeOf(u24)`
-    /// (== 4, ABI size rounds 24 bits up to 4-byte alignment) and decodes the
-    /// low 3 bytes. Consuming only 3 leaves the cursor 1 byte behind and
-    /// corrupts every subsequent column.
     pub fn int_u24(self) -> Result<u32, AnyMySQLError> {
         let data = self.read(4)?;
         let s = data.slice();
@@ -136,31 +117,9 @@ impl<C: ReaderContext> NewReader<C> {
     }
 }
 
-/// Helper trait replacing Zig's `comptime Int: type` + `@typeInfo(Int).int.bits`
-/// reflection in `int()`. The canonical native-endian int codec lives in
-/// `bun_core`; re-exported here under the protocol-local name so callers
-/// (`int<I: ReadableInt>()` and `bun_sql::ReadableInt`) keep their paths.
-/// MySQL's u24/i24 are NOT routed through this trait — see `int_u24`/`int_i24`.
 pub use bun_core::NativeEndianInt as ReadableInt;
 
-/// Zig: `fn NewReader(comptime Context: type) type` — returned `Context` unchanged
-/// if it already had `is_wrapped`, else `NewReaderWrap(Context, Context.fn...)`.
-///
-/// In Rust this is just the `NewReader<C>` struct above; the `@hasDecl` early-return
-/// is unnecessary because Rust callers name the concrete type. Kept as a type alias
-/// for diff parity.
 pub type NewReaderOf<C> = NewReader<C>;
-
-// ─── decoderWrap ──────────────────────────────────────────────────────────────
-//
-// Zig: `fn decoderWrap(comptime Container, comptime decodeFn) type` returned a
-// struct with `decode` / `decodeAllocator` that auto-wrapped `context` into
-// `.{ .wrapped = context }` when `Context` lacked `is_wrapped`.
-//
-// PORT NOTE: the `@hasDecl(Context, "is_wrapped")` branch collapses — in Rust,
-// callers either already have a `NewReader<C>` or a bare `C: ReaderContext`, and
-// `Into<NewReader<C>>` covers both. The allocator-taking variant drops its
-// `std.mem.Allocator` param per PORTING.md §Allocators (non-AST crate).
 
 impl<C: ReaderContext> From<C> for NewReader<C> {
     fn from(wrapped: C) -> Self {

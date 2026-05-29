@@ -316,20 +316,11 @@ impl PasswordObject {
                     },
                     encoding: pwhash::Encoding::Phc,
                 };
-                // warning: argon2's code may spin up threads if paralellism is set to > 0
-                // we don't expose this option
-                // but since it parses from phc format, it's possible that it will be set
-                // eventually we should do something that about that.
                 let out_bytes = pwhash::argon2::str_hash(password, hash_options, &mut outbuf)?;
                 Ok(Box::<[u8]>::from(out_bytes))
             }
             AlgorithmValue::Bcrypt(cost) => {
                 let mut outbuf = [0u8; 4096];
-                // bcrypt silently truncates passwords longer than 72 bytes
-                // we use SHA512 to hash the password if it's longer than 72 bytes
-                // PORT NOTE: reshaped for borrowck — Zig aliased `outbuf` for both the
-                // SHA digest and the remaining output slice; here the digest gets its own
-                // 64-byte buffer (SHA512::final wants `&mut [u8; DIGEST]`).
                 let mut digest = [0u8; SHA512::DIGEST];
                 let mut password_to_use = password;
                 let outbuf_slice: &mut [u8];
@@ -503,14 +494,6 @@ pub(crate) extern "C" fn JSPasswordObject__create(global_object: &JSGlobalObject
     object
 }
 
-// ─── PasswordOp: generic hash/verify off-thread job ───────────────────────
-//
-// HashJob/HashResult and VerifyJob/VerifyResult in the Zig source are
-// byte-for-byte twins differing only in (a) extra input fields, (b) success
-// payload type + JS conversion, (c) the verb in the error message. Collapse
-// both into one `PasswordJob<Op>` / `PasswordResult<Op>` parameterised on a
-// `PasswordOp` carrying exactly those three axes.
-
 trait PasswordOp: 'static {
     /// Success payload (`Box<[u8]>` for hash, `bool` for verify).
     type Value;
@@ -592,10 +575,6 @@ struct PasswordJob<Op: PasswordOp> {
 
 impl<Op: PasswordOp> Drop for PasswordJob<Op> {
     fn drop(&mut self) {
-        // promise: Drop on JSPromiseStrong handles deinit.
-        // bun.freeSensitive — volatile-zero the buffer then free; take the Box so
-        // the field's own Drop sees an empty slice afterwards. Any op-owned
-        // sensitive buffers (`prev_hash`) are freed by the op's own `Drop`.
         bun_alloc::free_sensitive(core::mem::take(&mut self.password));
     }
 }
@@ -763,11 +742,6 @@ pub(crate) fn js_password_object_hash(
         algorithm = AlgorithmValue::from_js(global_object, arguments[1])?;
     }
 
-    // TODO: this most likely should error like `hashSync` instead of stringifying.
-    //
-    // fromJS(...) orelse {
-    //   return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
-    // }
     let password_to_hash = StringOrBuffer::from_js_to_owned_slice(global_object, arguments[0])?;
     // errdefer bun.default_allocator.free(password_to_hash) — Box<[u8]> drops on `?`.
 
@@ -867,18 +841,8 @@ pub(crate) fn js_password_object_verify(
         };
     }
 
-    // TODO: this most likely should error like `verifySync` instead of stringifying.
-    //
-    // fromJS(...) orelse {
-    //   return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
-    // }
     let owned_password = StringOrBuffer::from_js_to_owned_slice(global_object, arguments[0])?;
 
-    // TODO: this most likely should error like `verifySync` instead of stringifying.
-    //
-    // fromJS(...) orelse {
-    //   return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
-    // }
     let owned_hash = match StringOrBuffer::from_js_to_owned_slice(global_object, arguments[1]) {
         Ok(h) => h,
         Err(err) => {

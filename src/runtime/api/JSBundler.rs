@@ -41,17 +41,8 @@ pub mod js_bundler {
         }
     }
 
-    /// A map of file paths to their in-memory contents.
-    /// LAYERING: the data-only struct (`map: StringHashMap<Box<[u8]>>`) and
-    /// `get`/`contains`/`resolve` live in `bun_bundler::bundle_v2` so the
-    /// bundler thread can read it without depending on `bun_runtime`. Only
-    /// the JS-aware `from_js` constructor lives here.
     pub use bun_bundler::bundle_v2::api::JSBundler::FileMap;
 
-    /// Parse the `files` option from JavaScript.
-    /// Expected format: `Record<string, string | Blob | File | TypedArray | ArrayBuffer>`.
-    /// Uses async (`from_js_async`) parsing so the resulting bytes are owned —
-    /// the bundler runs on a separate thread and must not borrow JS heap memory.
     pub(crate) fn file_map_from_js(
         global_this: &JSGlobalObject,
         files_value: JSValue,
@@ -92,12 +83,6 @@ pub mod js_bundler {
                     return Err(global_this.throw_invalid_arguments(format_args!("Expected file content to be a string, Blob, File, TypedArray, or ArrayBuffer")));
                 }
             };
-            // Async mode guarantees `blob_or_string` owns its bytes (Blob data is
-            // copied, JS strings are decoded). Extract them into the lower-tier
-            // map and release the wrapper immediately so no JSC handle crosses
-            // threads.
-            // PERF(port): Zig stores the `BlobOrStringOrBuffer` directly; here we
-            // make one extra owned copy to keep `bun_bundler` free of JSC types.
             let bytes: Box<[u8]> = blob_or_string.slice().to_vec().into_boxed_slice();
             drop(blob_or_string);
 
@@ -951,23 +936,12 @@ pub mod js_bundler {
                 }
             }
 
-            // if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
-            //     defer slice.deinit();
-            //     this.appendSliceExact(slice.slice()) catch unreachable;
-            // } else {
-            //     this.appendSliceExact(globalThis.bunVM().transpiler.fs.top_level_dir) catch unreachable;
-            // }
-
             if let Some(slice) = config.get_optional_slice(global_this, b"publicPath")? {
                 this.public_path.append_slice_exact(slice.slice())?;
                 drop(slice);
             }
 
             if let Some(naming) = config.get_truthy(global_this, "naming")? {
-                // Zig kept a separate `owned_*: OwnedString` buffer per template
-                // and pointed `template.data` (a `[]const u8`) into it. Rust's
-                // `PathTemplate.data` is already `Box<[u8]>` (owned), so build
-                // straight into it — no self-referential borrow, no clone.
                 let with_dot_slash = |s: &[u8]| -> Box<[u8]> {
                     if s.starts_with(b"./") {
                         Box::<[u8]>::from(s)
@@ -1059,11 +1033,6 @@ pub mod js_bundler {
                     },
                 )?;
 
-                // `loader_iter.i` is the property position, not a dense index of yielded
-                // entries. With `skip_empty_name = true` (or a skipped property getter),
-                // writing at `loader_iter.i` would leave earlier slots uninitialized and
-                // later freed as garbage. Use ArrayLists so the stored slice is always
-                // exactly what was appended.
                 let mut loader_names: Vec<Box<[u8]>> = Vec::new();
                 // errdefer: Vec<Box<[u8]>> drops automatically
                 let mut loader_values: Vec<api::Loader> = Vec::new();
@@ -1203,20 +1172,6 @@ pub mod js_bundler {
                             return Err(global_this.throw_invalid_arguments(format_args!("cannot use compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for compile.outfile")));
                         }
 
-                        // PORT NOTE (diverges from Zig spec — flake fix): when no
-                        // `outdir`/`outfile` was given, the Zig path stores only
-                        // the basename here and `doCompilation` later resolves it
-                        // against the process-wide `top_level_dir`. Under the JS
-                        // API that means every `Bun.build({compile: true,
-                        // entrypoints: [tmp + "/app.js"]})` from any test process
-                        // writes the *same* `<cwd>/app`, so concurrently-running
-                        // test files race on the executable (observed flake in
-                        // bun-build-compile-sourcemap.test.ts). Placing the
-                        // auto-derived executable next to its entry point — the
-                        // only path the caller actually supplied — keeps each
-                        // build's output inside its own (temp) directory and is
-                        // also the more intuitive default for a programmatic API.
-                        // Explicit `outfile`/`outdir` are unaffected.
                         let entry_dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                             entry_point,
                         );
@@ -1311,12 +1266,6 @@ pub mod js_bundler {
 
         let vm = global_this.bun_vm();
 
-        // Detect and prevent calling Bun.build from within a macro during bundling.
-        // This would cause a deadlock because:
-        // 1. The bundler thread (singleton) is processing the outer Bun.build
-        // 2. During parsing, it encounters a macro and evaluates it
-        // 3. The macro calls Bun.build, which tries to enqueue to the same singleton thread
-        // 4. The singleton thread is blocked waiting for the macro to complete -> deadlock
         if vm.macro_mode {
             return Err(global_this.throw(format_args!("Bun.build cannot be called from within a macro during bundling.\n\n\
                  This would cause a deadlock because the bundler is waiting for the macro to complete,\n\
@@ -1330,10 +1279,6 @@ pub mod js_bundler {
 
         let event_loop = vm.event_loop();
 
-        // `BundleV2.generateFromJavaScript` — the completion-task struct lives in
-        // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its
-        // fields name `Config`/`Plugin`/`HTMLBundle::Route`; lower-tier crates
-        // cannot depend on those).
         let completion =
             crate::api::js_bundle_completion_task::create_and_schedule_completion_task(
                 config,
@@ -1360,27 +1305,10 @@ pub mod js_bundler {
         build(global_this, arguments.slice())
     }
 
-    // PORT NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by
-    // `bun_bundler::bundle_v2::api::JSBundler` so that `BundleV2` can operate
-    // on them directly (`on_resolve_async`/`on_load_async`). `dispatch()` and
-    // `run_on_js_thread()` are also inherent methods there — they only need
-    // `bun_event_loop` types and the `Plugin` opaque, neither of which is a T6
-    // dependency. Only the JSC-aware bits (`on_defer`, `JSBundlerPlugin__*`
-    // C-ABI exports) live here.
     pub use bun_bundler::bundle_v2::api::JSBundler::{
         Load, LoadSuccess, LoadValue, MiniImportRecord, Resolve, ResolveSuccess, ResolveValue,
     };
 
-    /// `&mut BundleV2` for the live backref stored on `Resolve`/`Load`.
-    ///
-    /// Centralises the `*mut BundleV2 → &mut` deref so the C++-called thunks
-    /// (`JSBundlerPlugin__onResolveAsync`, `on_defer`, `…__onLoadAsync`,
-    /// `…__addError`, `on_notify_defer_raw`) stay safe at the call site. `bv2`
-    /// is the back-reference set in `Resolve::init`/`Load::init`; the
-    /// `BundleV2` heap allocation outlives every plugin callback (owner-
-    /// creates-child, single-JS-thread). The `BundleV2` storage is heap-
-    /// disjoint from `Resolve`/`Load`, so the returned `&mut` does not alias
-    /// the caller's `&mut Resolve`/`&mut Load`.
     #[inline]
     fn bv2_mut<'a>(bv2: *mut BundleV2<'static>) -> &'a mut BundleV2<'static> {
         // SAFETY: see fn doc — live backref (owner-creates-child), single
@@ -1388,15 +1316,6 @@ pub mod js_bundler {
         unsafe { &mut *bv2 }
     }
 
-    /// `&mut Plugin` for the live `BundleV2` backref stored on `Resolve`/`Load`.
-    ///
-    /// Centralises the `Option<NonNull> → &mut T` deref so the three callers
-    /// (`JSBundlerPlugin__onResolveAsync`, `on_defer`,
-    /// `JSBundlerPlugin__onLoadAsync`) stay safe at the call site. `plugins`
-    /// is `Some` whenever the plugin chain is dispatched (asserted by
-    /// `enqueue_on_js_loop_for_plugins`). The `Plugin` storage is heap-
-    /// disjoint from `Resolve`/`Load`, so the returned `&mut` does not alias
-    /// the caller's `&mut Resolve`/`&mut Load`.
     #[inline]
     fn bv2_plugin<'a>(bv2: *mut BundleV2<'static>) -> &'a mut Plugin {
         // SAFETY: see fn doc — `plugins.is_some()`, disjoint heap.
@@ -1595,11 +1514,6 @@ pub mod js_bundler {
     /// lower-tier crate; JSC-aware methods are added here via `PluginJscExt`.
     pub use bun_bundler::bundle_v2::api::JSBundler::Plugin;
 
-    // `Plugin` is an `opaque_ffi!` handle (`repr(C)` + `UnsafeCell` marker), so
-    // `&mut Plugin`/`&Plugin` are ABI-identical to non-null pointers and the
-    // validity proof lives in the type. `runSetupFunction` and `globalObject`
-    // take `&Plugin` so `add_plugin` can hold a shared reborrow alongside the
-    // returned `&JSGlobalObject` without an `unsafe` escape hatch.
     unsafe extern "C" {
         safe fn JSBundlerPlugin__create(
             global: &JSGlobalObject,
@@ -1692,11 +1606,6 @@ pub mod js_bundler {
                 Err(JsError::Terminated) => return Err(JsError::Terminated),
             };
 
-            // Zig (JSBundler.zig:1572-1582) opens an explicit `TopExceptionScope`
-            // before the FFI call and `returnIfException`s after; the C++ side has
-            // a `DECLARE_THROW_SCOPE` whose dtor sets `m_needExceptionCheck` under
-            // `BUN_JSC_validateExceptionChecks=1`, so a post-hoc `has_exception()`
-            // (whose own scope ctor asserts) is wrong.
             bun_jsc::top_scope!(scope, global_this);
             let value = JSBundlerPlugin__runOnEndCallbacks(
                 self,
@@ -1763,16 +1672,6 @@ pub mod js_bundler {
         }
     }
 
-    /// Convert a JS exception value into a `logger.Msg`. If the conversion itself
-    /// throws (e.g. `Symbol.toPrimitive` on the thrown object throws), clear that
-    /// secondary exception and return a generic fallback message so
-    /// `onResolveAsync`/`onLoadAsync` is still called and the bundler's
-    /// pending-item counter is decremented. Returning early here would cause
-    /// `Bun.build` to hang forever waiting on the counter.
-    ///
-    /// Runs on the JS thread, so allocations go through the global heap (Zig
-    /// passes `bun.default_allocator`); the bundler arena is owned by another
-    /// thread.
     fn plugin_msg_from_js(plugin: &mut Plugin, file: &[u8], exception: JSValue) -> bun_ast::Msg {
         let global = plugin.global_object();
         match bun_ast_jsc::msg_from_js(global, file.to_vec(), exception) {
@@ -1857,10 +1756,6 @@ pub struct BuildArtifact {
     pub sourcemap: bun_jsc::StrongOptional,
 }
 
-/// `BuildArtifact.kind` — what role an output file plays. Single canonical
-/// definition lives in `bun_bundler::options` (it backs
-/// `OutputFile.output_kind`); re-exported so `crate::api::OutputKind`
-/// callers stay unchanged.
 pub use bun_bundler::options::OutputKind;
 
 /// `JSValue::as(Blob)` BuildArtifact fallback (JSValue.zig:467) — declared

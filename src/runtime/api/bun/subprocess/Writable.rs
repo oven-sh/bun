@@ -29,27 +29,11 @@ pub enum Writable<'a> {
 }
 
 impl<'a> Writable<'a> {
-    /// Shared borrow of the `Pipe` payload's `FileSink`.
-    ///
-    /// `Writable::Pipe` holds a +1 intrusive ref on the `FileSink` for the
-    /// variant's entire lifetime — released only by an explicit
-    /// `FileSink::deref` *after* the variant has been overwritten (see
-    /// `on_close` / `Subprocess::on_close_io`). The pointee is therefore live
-    /// and pinned for any caller still holding the `Writable::Pipe` payload —
-    /// i.e. the owner-outlives-holder `BackRef` invariant holds (single JS
-    /// thread).
     #[inline]
     pub(super) fn pipe_sink(pipe: NonNull<FileSink>) -> bun_ptr::BackRef<FileSink> {
         bun_ptr::BackRef::from(pipe)
     }
 
-    /// Mutable counterpart to [`pipe_sink`](Self::pipe_sink).
-    ///
-    /// Same invariant: `Writable::Pipe` holds a +1 intrusive ref on the
-    /// `FileSink` for the variant's lifetime, and the sink lives in its own
-    /// allocation (disjoint from both the `Writable` value and the parent
-    /// `Subprocess`), so projecting `&mut` here cannot alias any other live
-    /// borrow. Single JS-mutator thread — no concurrent `&mut FileSink`.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(in crate::api) fn pipe_sink_mut(pipe: &NonNull<FileSink>) -> &mut FileSink {
@@ -57,13 +41,6 @@ impl<'a> Writable<'a> {
         unsafe { &mut *pipe.as_ptr() }
     }
 
-    /// Release one intrusive ref on a `FileSink` held by `Writable::Pipe`
-    /// (or freshly returned from `FileSink::create*`). Centralises the
-    /// `unsafe { FileSink::deref(ptr) }` so callers stay safe — same
-    /// invariant as [`pipe_sink`](Self::pipe_sink): the `NonNull` was
-    /// produced by `FileSink::create*` (heap-boxed, dealloc provenance) and
-    /// carries a +1 intrusive ref the caller is now discharging. Single
-    /// JS-mutator thread; the sink may be freed on return.
     #[inline]
     pub(in crate::api) fn pipe_release(pipe: NonNull<FileSink>) {
         // SAFETY: see fn doc — +1-intrusive-ref'd heap allocation with
@@ -71,17 +48,6 @@ impl<'a> Writable<'a> {
         unsafe { FileSink::deref(pipe.as_ptr()) };
     }
 
-    /// Mutable borrow of the `Buffer` payload's `StaticPipeWriter`.
-    ///
-    /// Centralises the `RefPtr → &mut T` deref so the per-match-arm `unsafe`
-    /// blocks (`ref`/`unref`/`close`/`finalize` and `Subprocess::on_close_io`/
-    /// `on_process_exit`) collapse to this one site. `RefPtr` deliberately has
-    /// no `DerefMut` (shared ownership); the invariant that makes `&mut` sound
-    /// here is that `Writable::Buffer` holds the *only* strong ref for the
-    /// variant's lifetime (created by `StaticPipeWriter::create`, released by
-    /// `buffer.deref()` only after the variant is overwritten), the writer
-    /// lives in its own heap allocation disjoint from `Writable`/`Subprocess`,
-    /// and access is single-JS-mutator-thread.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(in crate::api) fn buffer_writer_mut<'b>(
@@ -134,15 +100,6 @@ impl<'a> Writable<'a> {
         }
     }
 
-    // When the stream has closed we need to be notified to prevent a use-after-free
-    // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
-    //
-    // PORT NOTE: reshaped for borrowck — Zig `@fieldParentPtr("stdin", this)`
-    // recovers `*Subprocess` from `*Writable` and freely interleaves access to
-    // both. In Rust, deriving the parent from `&mut self` is out-of-provenance
-    // (the `&mut` only covers the `stdin` field). Instead the `SignalHandler`
-    // impl is on `Subprocess` and hands us the parent directly; field accesses
-    // here are disjoint and sequential so a plain `&Subprocess` suffices.
     pub fn on_close(process: &Subprocess<'a>, _: Option<bun_sys::Error>) {
         if let Some(this_jsvalue) = process.this_value.get().try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
@@ -150,14 +107,6 @@ impl<'a> Writable<'a> {
             }
         }
 
-        // Moving the payload out and writing `.Ignore` here hoists Zig's
-        // trailing `this.* = .{.ignore}` ahead of `on_stdin_destroyed` — in
-        // Zig that write follows a `deref()` that may free `process`, which
-        // would be a write-after-free. The only observable difference is
-        // `has_pending_activity_stdio()` seeing `Ignore` (== false) instead of
-        // a just-deref'd `Buffer` (== true) inside
-        // `update_has_pending_activity`, which is the state it converges to
-        // immediately after anyway.
         match process.stdin.replace(Writable::Ignore) {
             Writable::Buffer(buffer) => {
                 buffer.deref();
@@ -187,11 +136,6 @@ impl<'a> Writable<'a> {
 
         let global = event_loop.global_ref();
 
-        // `FileSink::create` / `StaticPipeWriter::create` take
-        // `bun_event_loop::EventLoopHandle`, not `&bun_jsc::EventLoop`; erase to
-        // the vtable-backed handle once and reuse for all arms (both platforms).
-        // `event_loop` is a `&jsc::EventLoop` for the live per-thread loop;
-        // erasing to `*mut ()` and back is the `EventLoopHandle::init` contract.
         let evtloop = bun_event_loop::EventLoopHandle::init(
             std::ptr::from_ref::<EventLoop>(event_loop)
                 .cast_mut()
@@ -379,11 +323,6 @@ impl<'a> Writable<'a> {
                 super::source_from_array_buffer(core::mem::take(array_buffer)),
             ))),
             Stdio::Memfd(_) => {
-                // Transfer ownership: Zig's `Writable.init` never calls
-                // `stdio.deinit()`. `Stdio`'s Drop would close the memfd, so
-                // take it out via ManuallyDrop (same pattern as the Blob arm)
-                // to keep the caller's `stdio[0]` drop from double-closing the
-                // fd that Writable now owns.
                 let owned = core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
                 let Stdio::Memfd(fd) = &*owned else {
                     unreachable!()
@@ -451,11 +390,6 @@ impl<'a> Writable<'a> {
                             &subprocess.process().status,
                         )
                     };
-                    // Rust `FileSink::to_js` takes its own per-wrapper +1 (Zig's
-                    // `toJS` *transfers* the create-time +1). Release the
-                    // enum's create-time +1 now that the wrapper holds its own
-                    // — mirrors Blob.rs:1899-1902. `stdin` was already swapped
-                    // to `Ignore` above so `on_close` won't double-release.
                     let js = Self::pipe_sink_mut(&pipe_nn).to_js(global_this);
                     Self::pipe_release(pipe_nn);
                     js
@@ -495,10 +429,6 @@ impl<'a> Writable<'a> {
         }
     }
 
-    // PORT NOTE: reshaped for borrowck — see `on_close`. Zig
-    // `@fieldParentPtr("stdin", this)` is replaced by the caller passing the
-    // parent; deriving it from `&mut self` on `Writable` would be
-    // out-of-provenance.
     pub fn finalize(subprocess: &Subprocess<'a>) {
         if let Some(this_jsvalue) = subprocess.this_value.get().try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
@@ -558,13 +488,6 @@ impl<'a> Writable<'a> {
     }
 }
 
-// PORT NOTE: Zig wires `pipe.signal = Signal.init(&subprocess.stdin)` and the
-// callbacks then `@fieldParentPtr` back to the `Subprocess`. Registering the
-// `*mut Writable` and recovering the parent inside the callback is
-// out-of-provenance in Rust (the `&mut Writable` formed by the vtable thunk
-// only carries provenance for the `stdin` field). Register the `*mut
-// Subprocess` instead — `signal.ptr` carries whole-allocation provenance and
-// `on_close`/`finalize`/`to_js` raw-project `stdin` from it.
 impl<'a> SignalHandler for Subprocess<'a> {
     fn on_close(&mut self, err: Option<bun_sys::Error>) {
         Writable::on_close(self, err)

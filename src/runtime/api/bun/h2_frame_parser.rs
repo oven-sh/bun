@@ -31,12 +31,6 @@ use bun_ptr::IntrusiveRc;
 
 bun_output::declare_scope!(H2FrameParser, visible);
 
-// ──────────────────────────────────────────────────────────────────────────
-// Codegen modules — `jsc.Codegen.JSH2FrameParser` / `JSTCPSocket` / `JSTLSSocket`.
-// Hand-rolled extern bindings to the C++ shims emitted by generate-classes.ts
-// (see `${TypeName}__fromJS` etc. in build/*/codegen/ZigGeneratedClasses.cpp);
-// replace with the macro-derived modules once the .rs codegen backend lands.
-// ──────────────────────────────────────────────────────────────────────────
 #[allow(non_snake_case, non_camel_case_types, dead_code)]
 pub mod JSH2FrameParser {
     use super::{JSGlobalObject, JSValue};
@@ -94,16 +88,6 @@ const MAX_PAYLOAD_SIZE_WITHOUT_FRAME: usize = 16384 - FrameHeader::BYTE_SIZE - 1
 enum BunSocket {
     #[default]
     None,
-    // BACKREF — the socket strictly outlives the H2FrameParser while attached:
-    // `Tls`/`Tcp` are kept alive by the `IntrusiveRc<H2FrameParser>` stored in
-    // the socket's `native_callback` slot (released in `detach_native_socket`),
-    // and `*Writeonly` are kept alive by the manual `ref_()`/`deref()` pair in
-    // `attach_to_native_socket` / `detach_native_socket`. `BackRef` makes the
-    // shared-only deref safe at every read site (all `NewSocket` methods used
-    // here take `&self`). LIFETIMES.tsv: SHARED — intrusive refcount, *T
-    // crosses FFI; `NewSocket<SSL>` does not implement `bun_ptr::RefCounted`
-    // (hand-rolled `ref_()/deref()` on a `Cell<u32>`), so `IntrusiveArc` cannot
-    // wrap it.
     Tls(bun_ptr::BackRef<TLSSocket>),
     TlsWriteonly(bun_ptr::BackRef<TLSSocket>),
     Tcp(bun_ptr::BackRef<TCPSocket>),
@@ -119,11 +103,6 @@ unsafe extern "C" {
     safe fn Bun__wrapAbortError(global_object: &JSGlobalObject, cause: JSValue) -> JSValue;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Local shim for `globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE*, fmt, .{}).throw()`
-// (Zig codegen surfaces these as per-code helper methods on JSGlobalObject; the
-// Rust ErrorCode table exposes them via `JscErrorCode::*` instead.)
-// ──────────────────────────────────────────────────────────────────────────
 pub(crate) struct H2ErrBuilder<'a> {
     global: &'a JSGlobalObject,
     code: JscErrorCode,
@@ -307,12 +286,6 @@ impl UInt31WithReserved {
     fn init(value: u32, reserved: bool) -> Self {
         Self((value & 0x7fff_ffff) | if reserved { 0x8000_0000 } else { 0 })
     }
-    /// PORT NOTE (intentional divergence): Zig's `toUInt32()` is `@bitCast` of
-    /// `packed struct(u32){ reserved: bool, uint31: u31 }`, which on little-endian places
-    /// `reserved` in bit 0 and yields `(uint31 << 1) | reserved`. That is a latent RFC 7540
-    /// §6.3 bug in Zig's deprecated PRIORITY path — the wire format wants the reserved/E
-    /// bit at bit 31. We keep the RFC-compliant `(reserved << 31) | uint31` layout here, which
-    /// already matches `from_bytes`/`write` and the on-wire `StreamPriority.stream_identifier`.
     #[inline]
     fn to_uint32(self) -> u32 {
         self.0
@@ -400,13 +373,6 @@ impl FrameHeader {
         buf[5..9].copy_from_slice(&self.stream_identifier.to_be_bytes());
         writer.write_all(&buf).is_ok()
     }
-    /// Decode a complete 9-byte big-endian frame header.
-    ///
-    /// Zig accumulates raw wire bytes directly into the packed `struct(u72)`
-    /// across two `from()` calls and byte-swaps at the end. `FrameHeader` here
-    /// is not `#[repr(packed)]` (its `length` is a widened `u32`), so the
-    /// caller assembles the 9 raw bytes on the stack and hands us the finished
-    /// buffer instead — no per-instance or thread-local scratch needed.
     #[inline]
     fn decode(raw: &[u8; Self::BYTE_SIZE]) -> Self {
         Self {
@@ -596,10 +562,6 @@ fn is_valid_response_pseudo_header(name: &[u8]) -> bool {
     name == b":status"
 }
 
-// PERF(port): was phf::Map<&[u8], ()> used only via .contains_key() on a 5-entry
-// set. phf hashes the full key (SipHash) before compare; with 5 keys whose
-// lengths are {5,7,7,9,10} a length-gated match rejects most misses on a single
-// usize compare and hits in ≤2 slice compares — cheaper than the hash.
 #[inline]
 fn is_valid_request_pseudo_header(name: &[u8]) -> bool {
     match name.len() {
@@ -666,19 +628,6 @@ fn is_forbidden_connection_specific_header(name: &[u8], value: &[u8]) -> bool {
 
 const SINGLE_VALUE_HEADERS_LEN: usize = 40;
 
-/// Returns a stable index in `0..SINGLE_VALUE_HEADERS_LEN` for headers that
-/// must carry only a single value, or `None` otherwise. The index is used
-/// solely to address a per-request `[bool; SINGLE_VALUE_HEADERS_LEN]` bitset
-/// for duplicate detection — the concrete numeric value has no other meaning.
-///
-/// PERF(port): Zig used `ComptimeStringMap.indexOf`, which compiles to a
-/// length-gated switch. The Phase-A draft used a `phf::Map` but, because phf
-/// does not expose stable indices, had to fall back to a *linear*
-/// `.entries().position()` scan — 40 slice compares per header per HTTP/2
-/// request. The hand-rolled match below restores the Zig dispatch shape: one
-/// `usize` length compare rejects every miss whose length has no entries, and
-/// the largest same-length bucket is 5 entries (len 7), so a hit costs at
-/// most 5 short slice compares and a miss typically costs 0–2.
 fn single_value_headers_index_of(name: &[u8]) -> Option<usize> {
     match name.len() {
         2 => match name {
@@ -1270,10 +1219,6 @@ const MAX_BUFFER_SIZE: u32 = 32768;
 type H2FrameParserHiveAllocator = HiveArrayFallback<H2FrameParser, 256>;
 
 thread_local! {
-    // Boxed so only a pointer lives in static TLS — these two buffers are 32 KB
-    // combined and would otherwise dominate PT_TLS MemSiz on every thread
-    // (see test/js/bun/binary/tls-segment-size). Lazily allocated on first
-    // HTTP/2 access; threads that never touch h2 pay nothing.
     static CORK_BUFFER: RefCell<Box<[u8; 16386]>> = RefCell::new(Box::new([0u8; 16386]));
     static CORK_OFFSET: Cell<u16> = const { Cell::new(0) };
     static CORKED_H2: Cell<Option<*mut H2FrameParser>> = const { Cell::new(None) };
@@ -1281,10 +1226,6 @@ thread_local! {
     static SHARED_REQUEST_BUFFER: RefCell<Box<[u8; 16384]>> = RefCell::new(Box::new([0u8; 16384]));
 }
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut H2FrameParser` until Phase 1 lands —
-// `&mut T` auto-derefs to `&T` so the impls below compile against either.
 #[bun_jsc::JsClass]
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = Self::deinit_raw)]
@@ -1350,12 +1291,6 @@ pub struct H2FrameParser {
 }
 
 impl H2FrameParser {
-    /// `RefCounted` destructor thunk: `deinit` takes `&self`, not `*mut Self`.
-    ///
-    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-    /// whose generated trait `destroy` upholds the sole-owner contract
-    /// (refcount hit zero; `this` is the sole owner of the `heap::alloc`
-    /// allocation). `deinit` frees `this` via `heap::take`.
     #[inline]
     fn deinit_raw(this: *mut Self) {
         // SAFETY: refcount hit zero; sole owner.
@@ -1368,10 +1303,6 @@ impl H2FrameParser {
         self.global_this
     }
 
-    /// `self`'s address as `*mut Self` for uSockets / deferred-task ctx slots.
-    /// The callbacks deref it as `&*const` (shared) — see `on_auto_flush_trampoline`
-    /// — so no write provenance is required; the `*mut` spelling is purely to
-    /// match the C signature. All mutation goes through `Cell`/`JsCell` fields.
     #[inline]
     fn as_ctx_ptr(&self) -> *mut Self {
         std::ptr::from_ref::<Self>(self).cast_mut()
@@ -1394,23 +1325,7 @@ impl H2FrameParser {
     }
 }
 
-/// The streams hashmap may mutate when growing we use this when we need to make sure its safe to iterate over it
-///
-/// Zig walks the raw bucket array by index so a rehash mid-loop can't
-/// invalidate the iterator. `bun_collections::HashMap` is backed by
-/// `std::collections::HashMap`, which exposes no bucket index and randomises
-/// iteration order on every mutation, so the bucket trick can't be ported
-/// faithfully. Instead we snapshot the stream IDs at `init` and re-look-up
-/// each one on demand: streams removed mid-loop are skipped, streams added
-/// mid-loop are not visited, and nothing is yielded twice. That's the
-/// guarantee the call sites actually rely on (flush / emit-to-all / detach).
 pub(crate) struct StreamResumableIterator {
-    // PORT NOTE: Zig's `parser: *H2FrameParser` freely aliases. R-2: `streams`
-    // is now `JsCell`-backed, so a shared backref suffices and the in-loop
-    // body can keep its own `&H2FrameParser` without provenance gymnastics.
-    // `ParentRef` encapsulates the back-pointer invariant (parser outlives the
-    // iterator — every call site constructs the iterator from a live `&Self`
-    // and drains it in the same scope) so `next()` derefs through safe `Deref`.
     parser: bun_ptr::ParentRef<H2FrameParser>,
     ids: Vec<u32>,
     index: usize,
@@ -1491,23 +1406,7 @@ pub struct Stream {
 }
 
 pub(crate) struct SignalRef {
-    // LIFETIMES.tsv: SHARED — AbortSignal is intrusively refcounted across FFI/codegen.
-    // `AbortSignal` is an opaque C++ type whose ref/unref go through
-    // `WebCore__AbortSignal__ref/unref`; it does not (and cannot) implement
-    // `bun_ptr::RefCounted`, so balance refs by hand in `attach_signal` / `Drop`
-    // (mirrors Zig `*AbortSignal`). `BackRef` captures the backref invariant
-    // (signal is `ref_()`'d in `attach_signal` and outlives this struct until
-    // `Drop` calls `detach()`/`unref()`), so reads go through safe `Deref`.
-    // TODO(port): wrap in a dedicated smart-pointer once AbortSignal grows one.
     signal: bun_ptr::BackRef<AbortSignal>,
-    // LIFETIMES.tsv: SHARED — H2FrameParser carries an intrusive RefCount and is
-    // recovered via `from_field_ptr!` from the auto-flusher. It uses a hand-rolled
-    // `Cell<u32>` ref count (not `bun_ptr::RefCount<Self>`), so `IntrusiveRc`'s
-    // `RefCounted` bound is unsatisfiable. `ParentRef` captures the backref
-    // invariant (parser is `ref_()`'d in `attach_signal` and outlives the
-    // `SignalRef` until `Drop` calls `deref()`), so reads go through safe
-    // `Deref`; the explicit `ref_()/deref()` balancing stays (mirrors Zig
-    // `*H2FrameParser`).
     parser: bun_ptr::ParentRef<H2FrameParser>,
     stream_id: u32,
 }
@@ -1538,10 +1437,6 @@ impl SignalRef {
 
 impl Drop for SignalRef {
     fn drop(&mut self) {
-        // BackRef invariant: `signal` is the C++-refcounted AbortSignal we
-        // ref_()'d in `attach_signal`; valid until this `detach` releases our
-        // listener and unrefs. Copy the `BackRef` out first so the `&mut self`
-        // taken by `from_mut` doesn't overlap the receiver borrow.
         let signal = self.signal;
         signal.detach(std::ptr::from_mut(self).cast::<c_void>());
         // ParentRef backref — parser outlives every SignalRef (ref()'d in
@@ -1885,15 +1780,6 @@ impl Stream {
     ) {
         let global_this = client.global_this;
 
-        // PORT NOTE: `dispatch_write_callback()` below re-enters JS, which can
-        // call back into `H2FrameParser` host-fns (e.g. `writeStream`) that
-        // look this `Stream` up by id from `client.streams` and reach
-        // `queue_frame()` again with a fresh `&mut Stream` aliasing this one.
-        // R-2: `client` is now `&H2FrameParser` (UnsafeCell-backed fields), so
-        // the parser-side noalias miscompile is structurally impossible. The
-        // `Stream`-side `&mut self` alias across re-entry remains; keep the
-        // `black_box` launder on `self`/`last_frame` as defense-in-depth until
-        // `Stream` itself is celled.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` is the live `&mut self` payload; no other `&` to
         // `*this` exists between here and the dispatch call.
@@ -2049,12 +1935,6 @@ impl Stream {
         }
     }
 
-    /// Returns true if the stream can still receive data from the remote peer.
-    /// Per RFC 7540 Section 5.1:
-    /// - OPEN: both endpoints can send and receive
-    /// - HALF_CLOSED_LOCAL: local sent END_STREAM, but can still receive from remote
-    /// - HALF_CLOSED_REMOTE: remote sent END_STREAM, no more data to receive
-    /// - CLOSED: stream is finished
     pub fn can_receive_data(&self) -> bool {
         matches!(
             self.state,
@@ -2084,10 +1964,6 @@ impl Stream {
     }
 
     pub fn attach_signal(&mut self, parser: &H2FrameParser, signal: &mut AbortSignal) {
-        // `ref_()` bumps the C++ intrusive refcount and returns the same live
-        // `self` pointer with FFI (wildcard) provenance — store *that* in the
-        // `BackRef` so its validity is tied to the refcount, not to the
-        // borrowed `&mut AbortSignal` parameter's lifetime.
         let refed = core::ptr::NonNull::new(signal.ref_()).expect("AbortSignal::ref_");
         // we need a stable pointer to know what signal points to what stream_id + parser
         let mut signal_ref = Box::new(SignalRef {
@@ -2177,10 +2053,6 @@ fn hpack_error_to_core(e: &lshpack::HpackError) -> bun_core::Error {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl H2FrameParser {
-    /// Encodes a single header into the ArrayList, growing if needed.
-    /// Returns the number of bytes written, or error on failure.
-    ///
-    /// Capacity estimation: name.len + value.len + HPACK_ENTRY_OVERHEAD
     fn encode_header_into_list(
         &self,
         encoded_headers: &mut Vec<u8>,
@@ -2191,11 +2063,6 @@ impl H2FrameParser {
         // TODO(port): narrow error set
         let old_len = encoded_headers.len();
         let required = old_len + name.len() + value.len() + HPACK_ENTRY_OVERHEAD;
-        // PORT NOTE: Zig wrote into `allocatedSlice()` past `.len` then bumped `.len` on
-        // success. In Rust, materializing `&mut [u8]` over uninitialized capacity is UB and
-        // hpack.encode() needs `&mut [u8]` (not `&mut [MaybeUninit<u8>]`), so zero-extend to
-        // `required` first. On both Ok and Err we truncate so `len` never exposes scratch
-        // bytes — the `?` early-return / corrupted-len hazard from the original port is gone.
         encoded_headers.resize(required, 0);
         match self.encode(
             encoded_headers.as_mut_slice(),
@@ -2470,11 +2337,6 @@ impl H2FrameParser {
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 8];
         let mut stream = FixedBufferStream::new(&mut buffer);
 
-        // RFC 9113 section 6.8: GOAWAY frames are always sent on stream 0. A
-        // GOAWAY with a non-zero stream identifier is itself a connection
-        // error of type PROTOCOL_ERROR. The stream that triggered the GOAWAY
-        // is only used for logging above; the last processed stream id goes in
-        // the payload below.
         let frame = FrameHeader {
             type_: FrameType::HTTP_FRAME_GOAWAY as u8,
             flags: 0,
@@ -3116,12 +2978,6 @@ impl H2FrameParser {
     }
 }
 
-// PORT NOTE: raw-ptr slice — Zig's `[]const u8` payload may alias `this.readBuffer` across
-// `readBuffer.reset()` (e.g. handleHeadersFrame resets then calls decodeHeaderBlock(payload)).
-// A borrowed `&'a [u8]` tied to `&'a mut self` forces every caller into an aliasing
-// `unsafe { &mut *self_ptr }` reborrow, which under Stacked Borrows invalidates the slice the
-// moment the caller touches `self` again. Carrying a raw pointer keeps the Zig aliasing intent
-// without materialising overlapping `&mut` borrows.
 pub(crate) struct Payload {
     data_ptr: *const u8,
     data_len: usize,
@@ -3169,14 +3025,6 @@ impl NativeSocketWrite for &TCPSocket {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// R-2: `HasAutoFlusher` (which requires `fn auto_flusher(&mut self)`) is no
-// longer implemented here — the deferred-task registration is inlined in
-// `register_auto_flush` / `unregister_auto_flush` so the whole path is `&self`.
-// The `DeferredRepeatingTask` trampoline that the trait would have generated.
-// Body discharges its own preconditions; a safe `extern "C" fn` coerces to the
-// `DeferredRepeatingTask` pointer at `post_task` (matches NodeHTTPResponse.rs).
-// ──────────────────────────────────────────────────────────────────────────
 extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
     // SAFETY: `ctx` is the `*const H2FrameParser` registered by
     // `register_auto_flush`; `DeferredTaskQueue::run` feeds it back unchanged
@@ -3333,10 +3181,6 @@ impl H2FrameParser {
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
         let mut seen_regular_header = false;
 
-        // Stream-level limit violations seen mid-decode. The loop must consume
-        // the whole block regardless: the HPACK dynamic table is
-        // connection-scoped, so abandoning the block midway would desync it
-        // for every other stream. The rejection is applied once after the loop.
         let mut rejected = false;
 
         while offset < payload.len() {
@@ -3573,10 +3417,6 @@ impl H2FrameParser {
                 padding = payload[0];
                 stream.padding = Some(payload[0]);
             }
-            // RFC 7540 Section 6.1: If the length of the padding is the length of
-            // the frame payload or greater, the recipient MUST treat this as a
-            // connection error of type PROTOCOL_ERROR. Validate before computing
-            // `data_region_end = frame.length - padding` below to avoid underflow.
             if padding as usize >= frame.length as usize {
                 self.send_go_away(
                     frame.stream_identifier,
@@ -4191,10 +4031,6 @@ impl H2FrameParser {
     /// Finalize a stream whose HEADERS frame carried END_STREAM, after the
     /// complete header block has been decoded and dispatched.
     fn finish_headers_end_stream(&self, stream: &mut Stream) {
-        // The stream can be reset (req.close(), AbortSignal) between the
-        // HEADERS fragment and the CONTINUATION that completes the block;
-        // don't regress a CLOSED stream or dispatch onStreamEnd after
-        // onStreamError.
         if stream.state == StreamState::CLOSED {
             return;
         }
@@ -4633,10 +4469,6 @@ impl H2FrameParser {
         if frame_type != FrameType::HTTP_FRAME_HEADERS as u8 || !self.is_server.get() {
             return None;
         }
-        // RFC 9113 §4.3: while a header block is mid-reassembly the only legal
-        // frame is a CONTINUATION for that stream, and dispatch_frame will
-        // reject this one. Don't allocate stream state, bump last_stream_id,
-        // or fire onStreamStart for a frame that is about to be rejected.
         if self.expecting_continuation.get() != 0 {
             return None;
         }
@@ -4644,10 +4476,6 @@ impl H2FrameParser {
         if stream_identifier & 1 == 0 {
             return None;
         }
-        // Bound per-connection stream state before allocating: a peer flooding
-        // tiny HEADERS frames with fresh stream ids would otherwise grow
-        // `streams` (and the JS objects pinned by `streamStart`) without limit.
-        // Mirrors the maxSessionMemory check on the PING and request() paths.
         if self.get_session_memory_usage() > self.max_session_memory.get() as usize {
             self.send_go_away(
                 stream_identifier,
@@ -4725,10 +4553,6 @@ impl H2FrameParser {
                     .deprecated_report_extra_memory(bytes.len());
                 return Ok(bytes.len());
             }
-            // Zig writes the buffered prefix into the packed struct, then the
-            // tail at `offset = buffered_data`, then byte-swaps. Reassemble the
-            // 9 wire bytes on the stack and decode in one shot — same result,
-            // no shared scratch state.
             let needed = FrameHeader::BYTE_SIZE - buffered_data;
             let mut raw = [0u8; FrameHeader::BYTE_SIZE];
             raw[..buffered_data].copy_from_slice(&self.read_buffer.get().list[..buffered_data]);
@@ -4874,12 +4698,6 @@ impl H2FrameParser {
     }
 }
 
-// PORT NOTE: holds a `BackRef<H2FrameParser>` so the borrow of the parser ends
-// at `to_writer()`'s return — `Stream::flush_queue` interleaves field
-// reads/writes on the parser between `writer.write()` calls. R-2: `write()`
-// takes `&self` (Cell/JsCell-backed), so a shared back-reference is sufficient
-// and the `BackRef` invariant (parser outlives this struct) holds by
-// construction.
 struct DirectWriterStruct {
     writer: bun_ptr::BackRef<H2FrameParser>,
 }
@@ -7230,11 +7048,6 @@ impl H2FrameParser {
             0
         };
         let available_payload = actual_max_frame_size - priority_overhead;
-        // Reserve one byte for the pad-length field so `encoded_size +
-        // padding_overhead` never exceeds `available_payload`; otherwise the
-        // CONTINUATION branch below would slice past the end of the encoded
-        // header block. CONTINUATION frames cannot carry padding, so it is
-        // disabled whenever the block does not fit in a single HEADERS frame.
         let padding: u8 = if encoded_size >= available_payload {
             0
         } else {
@@ -7398,10 +7211,6 @@ impl H2FrameParser {
         }
         let buffer = args_list.ptr[0];
         buffer.ensure_still_alive();
-        // Zig: `defer this.incrementWindowSizeIfNeeded()`. Wrap the body in a
-        // closure so `?` short-circuits to the `result` binding instead of out
-        // of the function, and the window-size update still runs on the error
-        // path.
         let array_buffer = buffer.as_pinned_arraybuffer(global_object);
         let result = (|| {
             if let Some(array_buffer) = &array_buffer {
@@ -7480,14 +7289,6 @@ impl H2FrameParser {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Zig: `if (socket.attachNativeCallback(.{ .h2 = this })) … else { socket.ref(); writeonly }`.
-    ///
-    /// `attach_native_callback` stores an `IntrusiveRc<H2FrameParser>` (the
-    /// `init_ref` bumps `ref_count`, mirroring Zig's `h2.ref()` inside
-    /// `attachNativeCallback`); the matching `deref` happens in
-    /// `NewSocket::detach_native_callback`. When the socket already has a
-    /// native callback attached we fall back to write-only mode and take a
-    /// manual `ref()` on the socket itself, balanced by `detach_native_socket`.
     fn attach_to_native_socket<const SSL: bool>(
         &self,
         socket: *mut crate::socket::NewSocket<SSL>,
@@ -7497,10 +7298,6 @@ impl H2FrameParser {
         // `*mut` spelling is signature-only — `IntrusiveRc` only ever derefs as shared
         // (`on_native_*` callbacks take `&self`).
         let h2 = unsafe { IntrusiveRc::init_ref(self.as_ctx_ptr()) };
-        // BACKREF: `socket` is the live `m_ctx` borrowed from the JS wrapper rooted by the
-        // caller's `socket_js`; it strictly outlives the returned `BunSocket` via the
-        // attach/detach refcount protocol (see `BunSocket` docs). `NonNull::new` panics on
-        // null, matching Zig's `*TLSSocket` (never-null) field type.
         let socket_nn = NonNull::new(socket).expect("NewSocket m_ctx");
         let socket_ref = bun_ptr::BackRef::from(socket_nn);
         if socket_ref.attach_native_callback(NativeCallbacks::H2(h2)) {
@@ -7721,10 +7518,6 @@ impl H2FrameParser {
             .strong_this
             .with_mut(|s| s.set_strong(this_value, global_object));
 
-        // PORT NOTE: `HPACK::init` returns a C-allocated wrapper that must be
-        // torn down via `lshpack_wrapper_deinit` (runs `lshpack_{enc,dec}_cleanup`
-        // before freeing). Wrapping it in `heap::take` and letting `Box` drop
-        // would `mi_free` the struct but leak the encoder/decoder internals.
         this_ref.hpack.set(Some(lshpack::HpackHandle::new(
             this_ref.local_settings.get().header_table_size,
         )));
@@ -7798,15 +7591,6 @@ impl H2FrameParser {
         }
         drop(streams);
 
-        // defer: pool.put(this) / bun.destroy(this)
-        // Zig has no destructors, so `pool.put` just reclaims storage. Rust still
-        // owes Drop on the remaining fields (`handlers`, `auto_flusher`, the now-
-        // empty `streams`/`read_buffer`/`write_buffer`/`strong_this`, …);
-        // `HiveArrayFallback::put` runs `drop_in_place` before recycling the slot,
-        // and `heap::destroy` drops via `Box<T>`, so both branches drop exactly once.
-        // R-2: refcount==0, sole owner — `as_ctx_ptr()` is sound for the
-        // teardown writes (`put` / `destroy` write only via `drop_in_place`,
-        // which on `Cell`/`JsCell` fields goes through `UnsafeCell`).
         let this = self.as_ctx_ptr();
         if ENABLE_ALLOCATOR_POOL {
             POOL.with_borrow_mut(|pool| {

@@ -10,29 +10,20 @@ use std::rc::Rc;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_core::MutableString;
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, ProtectedJSValue,
     StrongOptional, SystemError, bun_string_jsc,
 };
-// PORT NOTE: `bun_jsc::VirtualMachine` is a *module* re-export
-// (`pub use self::virtual_machine as VirtualMachine;`). The struct lives at
-// `bun_jsc::virtual_machine::VirtualMachine` — import that directly so the
-// name resolves as a type at `&mut VirtualMachine` annotations and as the
-// owner of the `on_quiet_unhandled_rejection_handler_capture_value` assoc fn.
-use bun_jsc::virtual_machine::VirtualMachine;
 // `ZigString` re-exports `bun_core::ZigString`; JSC-side methods
 // (`to_js`, `with_encoding`, …) come from the `ZigStringJsc` extension trait.
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString;
-// PORT NOTE: there is no `bun_lolhtml` safe-wrapper crate yet — the safe
-// surface lives directly in `bun_lolhtml_sys::lol_html`. Code below references
-// both `lolhtml::Foo` (safe wrappers) and `lolhtml_sys::Foo` (raw opaque
-// handles); they resolve to the same module, so alias both names.
 use crate::webcore::response::HeadersRef;
 use crate::webcore::streams::{self, Signal, StreamResult, Writable};
 use crate::webcore::{self, Response};
 use bun_core::String as BunString;
+use bun_jsc::ZigStringJsc as _;
 use bun_jsc::call_frame::ArgumentsSlice;
+use bun_jsc::zig_string::ZigString;
 use bun_lolhtml_sys::lol_html as lolhtml;
 use bun_lolhtml_sys::lol_html as lolhtml_sys;
 use bun_lolhtml_sys::lol_html::Opaque as _;
@@ -61,16 +52,6 @@ fn system_error(code: &'static str, message: &'static str) -> SystemError {
 }
 
 type SelectorMap = Vec<*mut lolhtml::HTMLSelector>;
-
-// ─────────────────── wrapInstanceMethod arg-decode helpers ───────────────
-//
-// PORT NOTE: Zig's `host_fn.wrapInstanceMethod` is a comptime
-// type-directed argument decoder (see host_fn.zig:493-648). The
-// `#[bun_jsc::host_fn(method)]` proc-macro that will eventually replace it
-// hasn't landed, so the per-type decode arms used by HTMLRewriter
-// (`ZigString`, `?ContentOptions`, `JSValue`) are open-coded here as small
-// helpers. They mirror the Zig branches exactly: same error messages, same
-// undefined/null handling, same eat order.
 
 /// `wrapInstanceMethod` arm for `jsc.ZigString` — eat next arg, throw
 /// "Missing argument" if absent, "Expected string" if undefined/null,
@@ -123,21 +104,6 @@ fn eat_content_args(
     Ok((content, opts))
 }
 
-/// Emit the per-wrapper `content_handler` plus one `(${name}_, $name)` pair
-/// per lol-html content op. Restores the Zig shape (`host_fn.wrapInstanceMethod`
-/// invoked N×) that the Rust port hand-expanded for lack of comptime reflection,
-/// and additionally collapses the 5× duplicated `content_handler` body that Zig
-/// never deduped.
-///
-/// - `$Raw`      — bare ident under `lolhtml::` (also paths the raw op as
-///                 `lolhtml::$Raw::$name`, which holds for all 16 ops).
-/// - `$field`    — the `Cell<*mut lolhtml_sys::$Raw>` field on `self`.
-/// - `$null_ret` — sentinel when the raw ptr is null. **Differs per wrapper**:
-///                 `JSValue::UNDEFINED` for TextChunk/Element,
-///                 `JSValue::NULL` for DocEnd/Comment/EndTag (matches Zig).
-/// - Each op arm accepts leading attrs (doc comments, `#[allow(dead_code)]`).
-///
-/// Expands inside an `impl $Wrapper { ... }` block to associated items.
 macro_rules! lol_content_ops {
     (
         $Raw:ident, $field:ident, $null_ret:expr;
@@ -270,10 +236,6 @@ impl HTMLRewriter {
 
         let handler_ = ElementHandler::init(global, listener)?;
         let mut handler = Box::new(handler_);
-        // Take the address ONCE as a raw pointer; `NonNull` is `Copy`, so the
-        // same allocation can be passed to multiple handler slots without ever
-        // materializing aliased `&mut` (which would be UB under Stacked
-        // Borrows even if only address-taken).
         let handler_ptr: NonNull<ElementHandler> = NonNull::from(&mut *handler);
 
         let has_element = handler.on_element_callback.is_some();
@@ -346,10 +308,6 @@ impl HTMLRewriter {
         // context: Rc drop happens via field drop; builder needs explicit FFI deinit.
         // SAFETY: builder was created by Builder::init() and not yet freed.
         unsafe { lolhtml::HTMLRewriterBuilder::destroy(self.builder) };
-        // TODO(port): Zig calls context.deref() here explicitly; with Rc the
-        // drop happens when HTMLRewriter is dropped. If finalize_without_destroy
-        // is called without immediate drop, we'd want to swap context to a
-        // fresh Rc. Verify call sites.
     }
 
     pub fn begin_transform(
@@ -630,10 +588,6 @@ impl HTMLRewriterLoader {
             Ok(r) => r,
             Err(_) => {
                 let _ = output.end(None); // error already surfaced via signal/fail path
-                // PORT NOTE: Zig returned a borrowed `[]const u8` into
-                // lol-html's threadlocal last-error buffer. Rust can't return a
-                // slice tied to a temporary, so return the owning `HTMLString`
-                // (caller calls `.slice()` then `.deinit()`).
                 return Some(lolhtml::HTMLString::last_error());
             }
         };
@@ -652,10 +606,6 @@ impl HTMLRewriterLoader {
         webcore::Sink::init(self)
     }
 
-    // PORT NOTE: The Zig spec (html_rewriter.zig:346-356) does not deinit on
-    // the error path at all — matched here exactly: only the Owned* arms free,
-    // and only on success (caller wraps owned bytes in `ManuallyDrop` and
-    // takes them back out on the success path).
     fn write_bytes(&mut self, bytes: &[u8]) -> Option<bun_sys::Error> {
         // SAFETY: rewriter valid (setup() succeeded, not yet finalized).
         if unsafe { lolhtml::HTMLRewriter::write(self.rewriter, bytes) }.is_err() {
@@ -739,13 +689,6 @@ pub struct BufferOutputSink {
 impl BufferOutputSink {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    /// Single unsafe deref site for the set-once
-    /// `tmp_sync_error: Option<NonNull<JSValue>>` field, so the two callers in
-    /// `on_finished_buffering` stay safe. `tmp_sync_error` points at the
-    /// `sink_error: Cell<JSValue>` stack local in [`init`]; it is only written
-    /// through on the synchronous (`is_async == false`) path while `init` is
-    /// still on the stack, so the pointee is live and the `Cell`-derived
-    /// pointer carries `SharedReadWrite` provenance.
     #[inline]
     fn write_tmp_sync_error(sink: *mut Self, err: JSValue) {
         // SAFETY: `sink` is a live heap allocation (refcount > 0, caller
@@ -778,10 +721,6 @@ impl BufferOutputSink {
         // defer sink.deref();
         // SAFETY: `sink` is the `heap::into_raw` allocation above; refcount >= 1.
         let _sink_guard = unsafe { bun_ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
-        // PORT NOTE: do not hold a long-lived `&mut *sink` here — the same
-        // allocation is also written through the raw pointer by the lol-html
-        // output-sink callback during `bufferer.run()` and by `deref(sink)`
-        // below. Access fields via raw-pointer place expressions instead.
 
         let result = bun_core::heap::into_raw(Box::new(Response::init(
             webcore::response::Init {
@@ -799,13 +738,6 @@ impl BufferOutputSink {
 
         // SAFETY: sink was just allocated via heap::alloc above; refcount==1.
         unsafe { (*sink).response = result };
-        // PORT NOTE (Stacked Borrows): `sink_error` is written via raw pointer
-        // by the unhandled-rejection handler during `bufferer.run()` and via
-        // `tmp_sync_error` from `on_finished_buffering`. Use a `Cell` so the
-        // exported `*mut` (via `Cell::as_ptr`, i.e. `UnsafeCell::get`) carries
-        // SharedReadWrite provenance — local `.get()` reads do NOT invalidate
-        // the stored raw pointer the way a `&`/`&mut` reborrow of a plain
-        // `mut` local would.
         let sink_error: core::cell::Cell<JSValue> = core::cell::Cell::new(JSValue::ZERO);
         let sink_error_ptr: *mut JSValue = sink_error.as_ptr();
         // SAFETY: original is a live *Response passed from begin_transform; its
@@ -879,10 +811,6 @@ impl BufferOutputSink {
                 (*original).get_init_status_text().clone(),
             );
 
-            // https://github.com/oven-sh/bun/issues/3334
-            // PORT NOTE: `clone_this` takes `&mut self`, so use the `_mut`
-            // accessor (original is `*mut Response`). `clone_this` only reads
-            // `self` (FFI mutates a freshly-allocated clone, not the receiver).
             if let Some(headers) = (*original).get_init_headers_mut() {
                 let cloned = headers.clone_this(global)?;
                 (*result).set_init_headers(cloned.map(|p| HeadersRef::adopt(p)));
@@ -1147,10 +1075,6 @@ impl Drop for BufferOutputSink {
 // ──────────────────────── DocumentHandler ────────────────────────────────
 
 pub struct DocumentHandler {
-    // Callbacks are GC-rooted via `ProtectedJSValue` (RAII `JSValue::protect`/
-    // `unprotect` pair). `Option::None` ⇒ no protect was taken; `Some` drops
-    // its guard on field drop, so neither the errdefer-on-init nor a manual
-    // `Drop` impl is needed.
     pub on_doc_type_callback: Option<ProtectedJSValue>,
     pub on_comment_callback: Option<ProtectedJSValue>,
     pub on_text_callback: Option<ProtectedJSValue>,
@@ -1327,12 +1251,6 @@ pub trait WrapperLike {
     const HAS_INVALIDATE: bool = false;
 }
 
-/// Forwarding `WrapperLike` impl — every wrapper type's trait impl is a pure
-/// pass-through to inherent / `CellRefCounted`-derived / `JsClass`-codegen
-/// methods. Mirrors Zig's `HandlerCallback` comptime duck-typing (which needs
-/// no impl block at all — html_rewriter.zig:890). The optional `, invalidate`
-/// tail wires up types (Element) that hand out sub-objects which must be
-/// detached alongside the lol-html value.
 macro_rules! impl_wrapper_like {
     ($ty:ty, $raw:ty $(, $invalidate:ident)?) => {
         impl WrapperLike for $ty {
@@ -1409,15 +1327,6 @@ where
     // SAFETY: bun_vm() returns the live VM raw ptr; VM outlives this call.
     let vm = || -> &mut VirtualMachine { global.bun_vm().as_mut() };
 
-    // Use a TopExceptionScope to properly handle exceptions from the JavaScript
-    // callback (html_rewriter.zig:920-922). A post-hoc `try_take_exception()`
-    // is *not* equivalent under
-    // `BUN_JSC_validateExceptionChecks=1`: `JSGlobalObject__tryTakeException`
-    // constructs a fresh `TopExceptionScope` whose ctor calls
-    // `verifyExceptionCheckNeedIsSatisfied`, asserting if the preceding
-    // `Bun__JSValue__call` ThrowScope's `simulateThrow()` was not yet observed
-    // by an enclosing scope. Mirror the spec exactly: open the scope here, read
-    // the pending exception through it, and clear it explicitly.
     bun_jsc::top_scope!(scope, global);
 
     let cb = get_callback(this).expect("callback must be set if handler registered");
@@ -1466,10 +1375,6 @@ where
     }
 
     if !result.is_undefined_or_null() {
-        // PORT NOTE: spec is `result.isError() or result.isAggregateError(global)`
-        // (html_rewriter.zig:964) — NOT `isAnyError`, which has different
-        // coverage (Exception cells / `Symbol.error` vs cross-realm
-        // AggregateError).
         if result.is_error() || result.is_aggregate_error(global) {
             return true;
         }
@@ -1865,10 +1770,6 @@ impl Comment {
         html_string_to_js(comment.get_text(), global_object)
     }
 
-    // PORT NOTE: no `#[bun_jsc::host_fn(setter)]` — generated_classes.rs already
-    // emits `CommentPrototype__setText` via `host_setter_result` (which wants
-    // `JsResult<()>`); the proc-macro shim would emit a second, conflicting
-    // `JsResult<bool>` wrapper.
     pub fn set_text(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         let Some(comment) = lolhtml::Comment::from_ptr(self.comment.get()) else {
             return Ok(());
@@ -2004,11 +1905,6 @@ pub struct AttributeIterator {
 impl AttributeIterator {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    /// `CellRefCounted::destroy` target — detach the lol-html iterator before
-    /// freeing the Box.
-    ///
-    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-    /// whose generated trait `destroy` upholds the sole-owner contract.
     fn destroy_on_zero(this: *mut Self) {
         // SAFETY: refcount hit zero; sole owner of a `heap::alloc`'d `Self`.
         unsafe {
@@ -2103,25 +1999,12 @@ pub struct Element {
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
     pub element: Cell<*mut lolhtml_sys::Element>,
-    /// AttributeIterator instances created by `getAttributes()` that borrow
-    /// from `element`. They must be detached in `invalidate()` when the
-    /// handler returns so that JS cannot dereference the freed lol-html
-    /// attribute buffer.
-    /// R-2: `JsCell` (non-Copy `Vec`) — pushed/drained from `&self` host-fns
-    /// (`get_attributes`, `set_attribute`, `remove_attribute`). The `with_mut`
-    /// closures do not call into JS, so the short `&mut Vec` borrow cannot
-    /// overlap a re-entrant access.
     pub attribute_iterators: JsCell<Vec<*mut AttributeIterator>>,
 }
 
 impl Element {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    /// `CellRefCounted::destroy` target — invalidate borrowed sub-objects
-    /// before freeing the Box.
-    ///
-    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-    /// whose generated trait `destroy` upholds the sole-owner contract.
     fn destroy_on_zero(this: *mut Self) {
         // SAFETY: refcount hit zero; sole owner of a `heap::alloc`'d `Self`.
         unsafe {
@@ -2142,10 +2025,6 @@ impl Element {
         bun_ptr::finalize_js_box_noop(self);
     }
 
-    /// Detach every `AttributeIterator` we handed to JS. Called when the
-    /// underlying attribute buffer is about to become invalid — either because
-    /// the handler is returning, or because `setAttribute` / `removeAttribute`
-    /// is about to mutate the `Vec<Attribute>` the iterators borrow from.
     fn detach_attribute_iterators(&self) {
         // R-2: take the Vec out of the cell, drain on the stack — no `&mut`
         // projection of `self` is held across `detach()`/`deref()` (which do
@@ -2161,10 +2040,6 @@ impl Element {
         }
     }
 
-    /// Called by `handler_callback` when the handler returns. The underlying
-    /// `*LOLHTML.Element` (and the attribute buffer any `AttributeIterator`
-    /// borrows from) is only valid during handler execution, so we must null
-    /// it out here along with any iterators we handed to JS.
     pub fn invalidate(&self) {
         self.element.set(core::ptr::null_mut());
         self.detach_attribute_iterators();

@@ -181,10 +181,6 @@ impl Seq {
             out.extend_from_slice(sep.slice());
             let next = current + incr;
             if next == current {
-                // f32 rounding can make `current + incr` equal `current`
-                // (e.g. `seq 1 99999999` saturates at 2^24, or a tiny
-                // increment relative to `current`). Without this check the
-                // loop never terminates and `out` grows without bound.
                 break;
             }
             current = next;

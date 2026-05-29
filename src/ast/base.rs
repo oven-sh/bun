@@ -2,13 +2,6 @@ use crate::symbol;
 
 // ───────────────────────────────── Index ─────────────────────────────────
 
-/// In some parts of Bun, we have many different IDs pointing to different things.
-/// It's easy for them to get mixed up, so we use this type to make sure we don't.
-//
-// Zig: `packed struct(u32) { value: Int }` — single field fills the whole word,
-// so `#[repr(transparent)]` over `u32` is bit-identical. Tuple-struct shape so
-// the (many) bundler call sites that wrote `Index(n)` / `.0` keep compiling;
-// `.value()` is provided for sites that read the Zig field name.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Index(pub IndexInt);
@@ -118,34 +111,11 @@ impl Default for Index {
 
 // ───────────────────────────────── Ref ─────────────────────────────────
 
-/// -- original comment from esbuild --
-///
-/// Files are parsed in parallel for speed. We want to allow each parser to
-/// generate symbol IDs that won't conflict with each other. We also want to be
-/// able to quickly merge symbol tables from all files into one giant symbol
-/// table.
-///
-/// We can accomplish both goals by giving each symbol ID two parts: a source
-/// index that is unique to the parser goroutine, and an inner index that
-/// increments as the parser generates new symbol IDs. Then a symbol map can
-/// be an array of arrays indexed first by source index, then by inner index.
-/// The maps can be merged quickly by creating a single outer array containing
-/// all inner arrays from all parsed files.
 pub use crate::{Ref, RefInt, RefTag};
 
 // Zig: `comptime { bun.assert(None.isEmpty()); }`
 const _: () = assert!(Ref::NONE.is_empty());
 
-// ─────────────── getSymbol `anytype` dispatch → trait ───────────────
-//
-// Zig switches on `@TypeOf(symbol_table)`:
-//   *const ArrayList(Symbol) | *ArrayList(Symbol) | []Symbol → index by
-//     `ref.innerIndex()` (parser: single flat array, source_index ignored)
-//   *Symbol.Map → `map.get(ref)` (bundler: 2D, both halves used)
-//
-// Different parts of the bundler use different formats of the symbol table.
-// In the parser you only have one array, and .sourceIndex() is ignored.
-// In the bundler, you have a 2D array where both parts of the ref are used.
 pub trait SymbolTable {
     fn get_symbol(&mut self, r: Ref) -> &mut symbol::Symbol;
 }

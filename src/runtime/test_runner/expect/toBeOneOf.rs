@@ -81,10 +81,6 @@ pub(crate) fn to_be_one_of(
         return Ok(JSValue::UNDEFINED);
     }
 
-    // handle failure
-    // PORT NOTE: Zig shares one `*Formatter` across both `toFmt` calls; in Rust the
-    // `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias
-    // the same backing formatter. Use a second formatter for the second value (matches toBe.rs).
     let mut formatter = super::make_formatter(global_this);
     let mut formatter2 = super::make_formatter(global_this);
     if not {

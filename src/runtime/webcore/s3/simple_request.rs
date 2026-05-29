@@ -21,13 +21,6 @@ use bun_url::URL;
 
 use crate::webcore::s3::list_objects;
 
-// PORT NOTE: result/options structs below carry borrowed slices that are valid only for the
-// duration of the callback invocation (Zig comments say "not owned and need to be copied if used
-// after this callback"). They take an explicit `<'a>` because they are ephemeral stack-only
-// callback payloads (never heap-stored) — the borrow lifetime accurately models ownership.
-// TODO(port): revisit `<'a>` vs raw `*const [u8]` for callback payload structs if borrowck
-// reshaping proves cleaner.
-
 #[derive(Default)]
 pub struct S3StatSuccess<'a> {
     pub size: usize,
@@ -110,14 +103,6 @@ pub enum S3PartResult<'a> {
 }
 
 pub struct S3HttpSimpleTask {
-    // PORT NOTE: `http` is `MaybeUninit` because (a) Zig initialises it as `= undefined` and
-    // overwrites it later — `AsyncHTTP` contains `&'static [u8]` and `fn(...)` fields, so a
-    // zeroed/default value would be instant UB; and (b) Zig's `deinit` only calls
-    // `http.clearData()`, never a full destructor, and `httpCallback` does a no-drop bitwise
-    // overwrite. Wrapping in `MaybeUninit` lets us match those semantics exactly: write-without-
-    // drop on assignment, and `clear_data()`-only in `Drop`. Invariant: `http` is initialised by
-    // `execute_simple_s3_request` before the task pointer escapes, so every later access (in
-    // `http_callback` / `Drop`) may `assume_init`.
     pub http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
     /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
     /// the inert `Default` placeholder (overwritten before the task escapes).
@@ -469,11 +454,6 @@ impl S3HttpSimpleTask {
         // SAFETY: `async_http` is a valid live pointer for the duration of this callback;
         // `this.http` was previously initialised in `execute_simple_s3_request`.
         unsafe { core::ptr::write(this.http.as_mut_ptr(), core::ptr::read(async_http)) };
-        // PORT NOTE: Zig's `this.response_buffer = async_http.response_buffer.*` is a no-op
-        // bitwise self-copy (`async_http.response_buffer == &this.response_buffer`). In Rust the
-        // equivalent `=` would drop the live Vec before re-installing a stale bitwise duplicate
-        // (UAF + double-free), so we simply omit it — `this.response_buffer` already holds the
-        // body.
         if is_done {
             // PORT NOTE: compute the raw self-pointer before borrowing `this.concurrent_task`
             // to avoid a stacked-borrows / aliasing diagnostic on `*this`.
@@ -482,10 +462,6 @@ impl S3HttpSimpleTask {
                 this.concurrent_task
                     .from(this_ptr, AutoDeinit::ManualDeinit),
             );
-            // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
-            // is set during VM init and outlives this task. `enqueue_task_concurrent` is `&self`.
-            // `task` is the inline `concurrent_task` field of this heap request;
-            // the queue takes ownership of its `next` link.
             this.vm
                 .expect("vm set at task creation")
                 .event_loop_shared()
@@ -496,15 +472,6 @@ impl S3HttpSimpleTask {
 
 impl Drop for S3HttpSimpleTask {
     fn drop(&mut self) {
-        // Side effects beyond freeing owned fields (which Rust drops automatically):
-        // - poll_ref.unref(vm)
-        // - http.clearData()
-        // Owned-field frees from the Zig deinit (response_buffer, headers, sign_result, range,
-        // proxy_url, result.certificate_info, result.metadata) are handled by their own Drop impls.
-        // TODO(port): verify HTTPClientResult's Drop frees certificate_info/metadata.
-        // PORT NOTE: KeepAlive::unref takes an aio EventLoopCtx; the JS-loop ctx is fetched via
-        // the global hook (registered by crate::init) — same pattern as
-        // `event_loop_handle_to_ctx` in process.rs.
         self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));

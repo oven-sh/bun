@@ -28,11 +28,6 @@ pub struct ServerComponentBoundary {
     /// server's code. For server actions, this is the client's code.
     pub reference_source_index: IndexInt,
 
-    /// When `bake.Framework.ServerComponents.separate_ssr_graph` is enabled this
-    /// points to the separated module. When the SSR graph is not separate, this is
-    /// equal to `reference_source_index`
-    //
-    // TODO: Is this used for server actions.
     pub ssr_source_index: IndexInt,
 }
 

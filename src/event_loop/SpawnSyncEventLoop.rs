@@ -37,15 +37,6 @@ pub type VmEventLoopHandle = Option<NonNull<uws::Loop>>;
 #[cfg(windows)]
 pub type VmEventLoopHandle = Option<NonNull<libuv::Loop>>;
 
-// LAYERING: `bun_event_loop` sits below `bun_jsc`, so it cannot name
-// `jsc::EventLoop` / `jsc::VirtualMachine`. Zig (`SpawnSyncEventLoop.zig`) did
-// inline field access. The bodies live in `bun_jsc` as `#[no_mangle]` Rust-ABI
-// fns, declared here as `extern "Rust"` and resolved at link time — no vtable,
-// no `AtomicPtr`, no init-order hazard. PERF(port): was inline field access —
-// spawnSync is per-process-spawn, not per-tick, so the cross-crate call is fine.
-// All bodies are defined as safe `pub fn` in `bun_jsc::event_loop` (the impl
-// encapsulates the erased-pointer derefs), so the declarations are `safe fn` —
-// no caller-side `unsafe { }` needed.
 unsafe extern "Rust" {
     /// Heap-allocate and zero-init a `jsc::EventLoop` bound to `vm`, with
     /// `uws_loop` as its loop on Windows. Returns erased `*mut jsc::EventLoop`.
@@ -97,10 +88,6 @@ pub struct SpawnSyncEventLoop {
     /// Erased `*mut jsc::VirtualMachine` backref (set in `init`/`prepare`).
     vm: *mut (),
 
-    /// Completely separate uws.Loop instance - critical for avoiding recursive event loop execution
-    // TODO(port): lifetime — FFI-owned handle created via `uws::Loop::create`, freed in Drop via
-    // `Loop::deinit`. Kept as raw because `uws::Loop` is an opaque C type and its address is
-    // stored back into `internal_loop_data` (self-referential w.r.t. `event_loop`).
     uws_loop: NonNull<uws::Loop>,
 
     /// On POSIX, we need to temporarily override the VM's event_loop_handle
@@ -109,10 +96,6 @@ pub struct SpawnSyncEventLoop {
 
     #[cfg(windows)]
     uv_timer: Option<NonNull<libuv::Timer>>,
-    // ALIASING: `Cell` because on Windows the libuv timer callback (`on_uv_timer`) writes this
-    // field re-entrantly from inside `tick_with_timeout`'s uws tick while that frame still holds
-    // `&mut self` (LLVM `noalias`). Zig's `*T` freely aliases; in Rust the field must be
-    // interior-mutable so the re-entrant write is sound under Stacked Borrows.
     did_timeout: Cell<bool>,
 }
 
@@ -146,10 +129,6 @@ mod handler {
 }
 
 impl SpawnSyncEventLoop {
-    // TODO(port): in-place init — `self.event_loop` is captured by
-    // `setParentEventLoop` below, so `Self` must not move after `init` returns.
-    // Zig caller passes `undefined` storage, hence `MaybeUninit<Self>` (out-param ctor exception).
-    // TODO(refactor): consider `Pin<&mut Self>` or document the no-move invariant at the caller.
     pub fn init(
         this: &mut core::mem::MaybeUninit<Self>,
         vm: *mut (), /* SAFETY: erased *mut VirtualMachine */
@@ -178,11 +157,6 @@ impl SpawnSyncEventLoop {
         // Set up the loop's internal data to point to this isolated event loop
         // SAFETY: `this` was fully written immediately above so `assume_init_mut` is sound.
         let this = unsafe { this.assume_init_mut() };
-        // PORT NOTE: sys-level API is `set_parent_raw(tag, ptr)`; the typed
-        // `set_parent_event_loop` lives in a higher tier. Tag 1 = JS, tag 2 = mini.
-        // `this.event_loop` is the live heap-owned `*mut jsc::EventLoop`
-        // returned by `__bun_spawn_sync_create_event_loop` immediately above —
-        // never null on a successful create.
         debug_assert!(!this.event_loop.is_null(), "spawn-sync event loop alloc");
         let (tag, ptr) = EventLoopHandle::init(this.event_loop).into_tag_ptr();
         let loop_data = &mut this.uws_loop_mut().internal_loop_data;
@@ -190,26 +164,11 @@ impl SpawnSyncEventLoop {
         loop_data.jsc_vm = core::ptr::null();
     }
 
-    /// Erased `*mut bun_jsc::event_loop::EventLoop` (heap-owned via
-    /// `__bun_spawn_sync_create_event_loop`). `bun_event_loop` sits below
-    /// `bun_jsc` so the concrete type is opaque here; callers in higher tiers
-    /// cast back. See `js_bun_spawn_bindings::spawn_maybe_sync` (Zig:
-    /// `&jsc_vm.rareData().spawnSyncEventLoop(jsc_vm).event_loop`).
-    ///
-    /// Intentionally raw-ptr (no `&`-returning variant): the pointee type is
-    /// erased at this layer, and the `jsc::EventLoop` is mutated across the
-    /// `extern "Rust"` shims while this struct is live.
     #[inline]
     pub fn event_loop_ptr(&self) -> *mut () {
         self.event_loop
     }
 
-    /// Erased `*mut jsc::VirtualMachine` backref (set in `init`/`prepare`).
-    ///
-    /// Intentionally raw-ptr (no `&`-returning variant): the pointee type is
-    /// erased at this layer, and the VM is mutated re-entrantly during
-    /// `tick_with_timeout` (subprocess callbacks → JS) — a `&VirtualMachine`
-    /// here would alias under Stacked Borrows.
     #[inline]
     pub fn vm_ptr(&self) -> *mut () {
         self.vm
@@ -230,16 +189,6 @@ impl SpawnSyncEventLoop {
         unsafe { self.uws_loop.as_ref() }
     }
 
-    /// Unique borrow of the isolated `uws::Loop`.
-    ///
-    /// Re-entrancy hazard: do **NOT** call this between the Windows
-    /// `timer.data = self as *mut Self` store and the uws tick in
-    /// `tick_with_timeout`. The `&mut self` receiver reborrow here is a Unique
-    /// retag over all of `*self` under Stacked Borrows, which pops the raw
-    /// pointer's tag at `did_timeout`'s bytes and makes the re-entrant
-    /// `on_uv_timer` write UB. `tick_with_timeout` therefore copies
-    /// `self.uws_loop` out *before* that store and ticks via the raw pointer
-    /// directly. This accessor is for non-re-entrant call sites (e.g. `init`).
     #[inline]
     pub fn uws_loop_mut(&mut self) -> &mut uws::Loop {
         // SAFETY: `uws_loop` is non-null and exclusively owned by `self` for its
@@ -248,22 +197,6 @@ impl SpawnSyncEventLoop {
         unsafe { self.uws_loop.as_mut() }
     }
 
-    /// Unique borrow of the heap-owned libuv timeout timer (Windows only).
-    ///
-    /// Single deref site for the `uv_timer: Option<NonNull<_>>` field —
-    /// collapses the per-site `(*t.as_ptr()).method()` raw derefs in
-    /// `prepare_timer_on_windows` / `cleanup` / `tick_with_timeout`. The
-    /// pointee is `Box`-allocated in [`prepare_timer_on_windows`] (via
-    /// `heap::into_raw_nn`) and freed only by the `on_close_uv_timer` callback
-    /// scheduled in `Drop`, so it is valid for all of `self`'s lifetime
-    /// whenever the field is `Some`. `&mut self` ensures the returned
-    /// `&mut Timer` is the sole live Rust reference.
-    ///
-    /// Same re-entrancy hazard as [`uws_loop_mut`](Self::uws_loop_mut): do
-    /// **NOT** call between the `timer.data = self as *mut Self` store and the
-    /// uws tick in `tick_with_timeout` — the `&mut self` receiver reborrow is
-    /// a Unique retag over `*self` and would pop the raw `*mut Self`'s
-    /// Stacked-Borrows tag at `did_timeout`'s bytes.
     #[cfg(windows)]
     #[inline]
     fn uv_timer_mut(&mut self) -> Option<&mut libuv::Timer> {
@@ -419,28 +352,9 @@ impl SpawnSyncEventLoop {
             }
         }
 
-        // Suppress microtask drain for the entire tick, including the uws loop tick.
-        // On Windows, uv_run() fires callbacks inline (e.g. uv_process exit, pipe I/O)
-        // which call onProcessExit → onExit. If any code path in those callbacks
-        // reaches drainMicrotasksWithGlobal, we must already have the flag set.
-        // On POSIX, the uws tick only polls I/O; callbacks are dispatched later
-        // via the task queue, but we set the flag here uniformly for safety.
         let _suppress = SuppressMicrotaskDrain::new(self.vm);
         // PORT NOTE: Zig `defer` restores at scope exit; RAII Drop mirrors that.
 
-        // Tick the isolated uws loop with the specified timeout
-        // This will only process I/O related to this subprocess
-        // and will NOT interfere with the main event loop
-        //
-        // ALIASING: hoist the `uws_loop` pointer *before* storing `*mut Self` into `timer.data`
-        // below, so that between that store and the re-entrant `on_uv_timer` callback we touch
-        // *no* bytes of `*self` at all. Do NOT route the tick through `self.uws_loop_mut()` here:
-        // its `&mut self` receiver reborrow is a Unique retag over the full extent of `*self`
-        // under Stacked Borrows, which would pop the SharedReadWrite tag of the raw pointer just
-        // stored into `timer.data` at `did_timeout`'s bytes — making the callback's
-        // `(*this).did_timeout.set(true)` UB. The `uws::Loop` lives in a separate allocation, so
-        // forming `&mut uws::Loop` from the copied `NonNull` does not touch `*self`'s borrow
-        // stacks.
         let loop_ = self.uws_loop;
         #[cfg(windows)]
         if let Some(t) = self.uv_timer {
@@ -461,12 +375,6 @@ impl SpawnSyncEventLoop {
             let _ = ts;
             #[cfg(windows)]
             {
-                // `uv_timer` is `Some` when `timeout` is `Some` (set in
-                // `prepare_timer_on_windows`). The re-entrant `on_uv_timer`
-                // callback can only fire from inside the uws tick above; once
-                // that returns no callback runs until the next `uv_run`, so the
-                // `&mut self` receiver reborrow in `uv_timer_mut` is sound here
-                // (the raw `*mut Self` in `timer.data` is dead until restarted).
                 let t = self
                     .uv_timer_mut()
                     .expect("set in prepare_timer_on_windows");

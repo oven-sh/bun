@@ -3,52 +3,18 @@
 //!
 //! Most I/O happens on the main thread.
 
-// ════════════════════════════════════════════════════════════════════════════
-// Loop / Poll / Waker / Closer / FilePoll-vtable / heap / pipes / MaxBuf /
-// openForWriting / PipeReader / PipeWriter compile on POSIX. `source` and the
-// Windows*Reader/Writer impls are `#[cfg(windows)]`-gated (libuv-only). See
-// TODO(port) notes for remaining shims (`bun_sys::syslog`, `bun_sys::Error::oom`,
-// `bun_core::debug_warn`).
-// ════════════════════════════════════════════════════════════════════════════
-
 #![allow(unsafe_op_in_unsafe_fn)]
 // ── submodules ──────────────────────────────────────────────────────────────
-
-// ── merged from bun_io ──────────────────────────────────────────────────────
-//
-// `bun_io`'s `FilePoll`/`EventLoopCtx`/`ParentDeathWatchdog`/`Loop`/`Waker`
-// scaffolding now lives here. The two crates were at the same dependency tier
-// (both T2, neither reachable from `bun_event_loop`'s upward direction) and
-// shared every dep; the only effect of the split was forcing the
-// `bun_io::EventLoopHandle = *mut c_void` type-erasure seam between
-// `BufferedReader` and `FilePoll`, which let callers smuggle a pointer to the
-// wrong enum (`&AnyEventLoop` instead of `&EventLoopHandle`) and reinterpret
-// the discriminant — a SIGABRT-at-best bug class. With both halves in one
-// crate, `EventLoopHandle` is `EventLoopCtx` (the by-value `{kind, owner}`
-// pair) and the seam is type-checked.
 
 pub mod stub_event_loop;
 
 #[cfg(windows)]
 pub mod windows_event_loop;
 
-// `posix_event_loop` also defines the *shared* event-loop scaffolding
-// (`EventLoopCtx`, `AllocatorType`, `Owner`, `Flags`, `PollTag`, `Store`,
-// `OpaqueCallback`); `windows_event_loop` re-uses those types and only
-// overrides `FilePoll`/`KeepAlive`/`Closer`/`Loop`/`Waker`. The platform-
-// specific bits inside (kqueue/epoll wakers, fd polling) are individually
-// `#[cfg(unix)]`-gated so the module still compiles on Windows.
 mod keep_alive;
 pub mod posix_event_loop;
 pub use keep_alive::KeepAlive;
 
-// ParentDeathWatchdog is POSIX-only (uses `libc::pid_t`, `getppid`, signals);
-// Windows handles orphan death via Job Objects in `spawn`. The Zig original
-// compiles on all targets and short-circuits each fn with
-// `if (comptime !Environment.isPosix) return;`, so downstream code calls
-// `install()` / `enable()` / `is_enabled()` unconditionally. Mirror that with a
-// no-op Windows stub so the cross-platform call sites (main.rs, bunfig,
-// run_command, filter_run, dispatch) keep compiling.
 #[cfg(not(windows))]
 #[path = "ParentDeathWatchdog.rs"]
 pub mod parent_death_watchdog;
@@ -82,15 +48,6 @@ pub use posix_event_loop::{FilePoll, Loop};
 #[cfg(windows)]
 pub use windows_event_loop::{FilePoll, Loop};
 
-/// Project a `*mut bun_uws_sys::Loop` (the uws wrapper — `PosixLoop` /
-/// `WindowsLoop`) to the platform-native [`Loop`] (`us_loop_t*` on POSIX,
-/// `uv_loop_t*` on Windows).
-///
-/// On POSIX `bun_io::Loop` **is** `bun_uws_sys::Loop` (nominal identity), so
-/// this is the identity. On Windows the wrapper stores the libuv loop in its
-/// `uv_loop` field — set once in C at `us_create_loop` and immutable
-/// thereafter — which we project here so callers needn't open an `unsafe`
-/// block per site just to read a set-once field.
 #[inline]
 pub fn uws_to_native(uws: *mut bun_uws_sys::Loop) -> *mut Loop {
     #[cfg(not(windows))]
@@ -110,25 +67,10 @@ pub use posix_event_loop::{AllocatorType, Owner, PollTag, get_vm_ctx, js_vm_ctx}
 
 pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);
 
-// At crate root so the per-method `$crate::__EventLoopCtx__*` type aliases the
-// macro emits (and the impl-macro reads back) actually resolve from impl
-// crates. `Store`/`FilePoll` here are the *platform* re-exports above.
-//
-// `platform_event_loop_ptr` is typed `*mut bun_uws_sys::Loop` (the uws
-// wrapper — `PosixLoop`/`WindowsLoop`), NOT the cfg-aliased `crate::Loop`
-// re-export. On POSIX those coincide, but on Windows `crate::Loop` is the raw
-// `uv_loop_t` (Zig `windows_event_loop.zig:1`) whereas the impl bodies
-// (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`) and the Zig spec
-// (`EventLoopHandle.loop() -> *uws.Loop`) hand back the wrapper.
 bun_dispatch::link_interface! {
     pub EventLoopCtx[Js, Mini] {
         fn platform_event_loop_ptr() -> *mut bun_uws_sys::Loop;
         fn file_polls_ptr() -> *mut Store;
-        // PORT NOTE: `alloc_file_poll() -> *mut FilePoll` was removed — it
-        // returned an *uninitialized* hive slot, and any caller forming
-        // `&mut FilePoll` over it hit validity-invariant UB on the niche-
-        // bearing enum fields. `FilePoll::init` now goes through
-        // `file_polls_ptr()` + `Store::get_init` (write-before-read).
         fn increment_pending_unref_counter();
         fn ref_concurrently();
         fn unref_concurrently();
@@ -159,23 +101,6 @@ impl EventLoopCtx {
         self.file_polls_mut()
     }
 
-    // ── safe leaf wrappers (nonnull-asref) ──────────────────────────────
-    // The platform loop / poll store are per-thread, set-once back-pointers
-    // (`BackRef`-shaped). [`platform_event_loop`] cannot be a safe fn because
-    // handing out `&mut Loop` from `&self` would let a caller alias two
-    // copies; these wrappers instead perform one counter adjustment and drop
-    // the borrow before returning, so no `&mut` escapes. Collapses N
-    // identical `ctx.platform_event_loop().op()` call sites into the single
-    // deref inside [`loop_mut`].
-    //
-    // `loop_mut` is the single nonnull-asref accessor: `pub(crate)`,
-    // `&self → &mut` (so it must NOT be called twice with overlapping live
-    // results). Every in-crate caller is a leaf op — counter bump,
-    // `FilePoll::activate`/`deactivate`, `unregister` — that consumes the
-    // borrow before returning and never re-enters `EventLoopCtx`, so no two
-    // `&mut Loop` ever coexist. Widened from impl-private to crate-private so
-    // `posix_event_loop`/`windows_event_loop` route their N identical
-    // `ctx.platform_event_loop()` derefs through this single accessor.
     #[inline]
     pub(crate) fn loop_mut(&self) -> &'static mut bun_uws_sys::Loop {
         // SAFETY: per-thread set-once pointer (the uws loop singleton); the
@@ -184,13 +109,6 @@ impl EventLoopCtx {
         // before returning — see block comment above.
         unsafe { &mut *self.platform_event_loop_ptr() }
     }
-    /// Single backref-deref accessor for the per-thread `Store`. Same contract
-    /// as [`loop_mut`]: `pub(crate)`, `&self → &mut`, must NOT be called while
-    /// another `&mut Store` (or a `&mut FilePoll` that lives inside the inline
-    /// hive buffer) is live. Every in-crate caller is a leaf op that decays
-    /// any conflicting `&mut FilePoll` to a raw slot pointer first
-    /// (`deinit_possibly_defer`) or holds none (`init_with_owner`,
-    /// `alloc_file_poll`), so no two `&mut Store` ever coexist.
     #[inline]
     pub(crate) fn file_polls_mut(&self) -> &'static mut Store {
         // SAFETY: per-thread set-once pointer (`BackRef`-shaped); the event
@@ -199,15 +117,6 @@ impl EventLoopCtx {
         // discipline above — see block comment.
         unsafe { &mut *self.file_polls_ptr() }
     }
-    /// Single nonnull-asref accessor for the per-loop pipe-read scratch
-    /// buffer. Same contract as [`loop_mut`]: `pub(crate)`, the buffer is a
-    /// per-thread set-once allocation owned by the VM/Mini loop, and the
-    /// event loop is single-threaded, so no second `&mut [u8]` to it can be
-    /// live. Every in-crate caller (`PipeReader::read_*`) uses it for one
-    /// blocking syscall and drops the borrow before re-entering the loop.
-    /// `'static` matches the unbounded lifetime the inline raw-ptr derefs at
-    /// the call sites already produced; collapses their N identical
-    /// `&mut *ctx.pipe_read_buffer()` derefs into this one block.
     #[inline]
     pub(crate) fn pipe_read_buffer_mut(&self) -> &'static mut [u8] {
         // SAFETY: per-thread set-once scratch buffer (`BackRef`-shaped); the
@@ -312,10 +221,6 @@ pub mod source;
 #[path = "write.rs"]
 pub mod write;
 
-// ── re-exports for higher tiers ─────────────────────────────────────────────
-// Byte-level `Write` trait + helpers (Zig `std.Io.Writer` surface). Downstream
-// crates name these as `bun_io::Write` / `bun_io::BufWriter` /
-// `bun_io::FmtAdapter` / `bun_io::Result`.
 pub use bun_core::fmt::SliceCursor;
 pub use write::{
     AsFmt, BufWriter, DiscardingWriter, FixedBufferStream, FmtAdapter, IntBe, IntLe, Result, Write,
@@ -355,38 +260,6 @@ bun_dispatch::link_interface! {
     }
 }
 
-/// One-stop generator for a `BufferedReader` parent: emits **both** the
-/// `impl BufferedReaderParent for $T` block and the matching
-/// `link_impl_BufferedReaderParentLink!` registration. Direct port of the Zig
-/// comptime thunk-generator `BufferedReaderVTable.Fn.init(comptime Type)`
-/// (PipeReader.zig:7-45) — every parent type just declares same-named inherent
-/// methods and writes one macro invocation.
-///
-/// ## Shape
-///
-/// ```ignore
-/// bun_io::impl_buffered_reader_parent! {
-///     Variant for Ty;                 // or `Ty<'a>` (link uses `'static`)
-///     has_on_read_chunk = true|false;
-///     // ↓ omit when has_on_read_chunk = false (trait default fires)
-///     on_read_chunk    = |this, chunk, has_more| (*this).on_read_chunk(chunk, has_more);
-///     on_reader_done   = |this| (*this).on_reader_done();
-///     on_reader_error  = |this, err| (*this).on_reader_error(err);
-///     loop_            = |this| (*this).loop_();
-///     event_loop       = |this| (*this).event_loop_handle.as_event_loop_ctx();
-///     // ↓ optional — only `SubprocessPipeReader` overrides this
-///     on_max_buffer_overflow = |this, maxbuf| { ... };
-/// }
-/// ```
-///
-/// Each `|this, ..|` body runs inside the generated
-/// `unsafe fn(this: *mut Self, ..)` trait method, wrapped in an `unsafe {}`
-/// block — `this` is the raw `*mut Self` registered via `set_parent` (see the
-/// aliasing contract on [`pipe_reader::BufferedReaderParent`]). `Self` resolves
-/// to `$T` inside every body. Autoref via `(*this).method()` covers the common
-/// case where the inherent takes `&self`/`&mut self`; sites whose inherent must
-/// stay raw-pointer (e.g. `Arc::from_raw` keepalive in shell `PipeReader`)
-/// forward as `<Self>::method(this)` instead.
 #[macro_export]
 macro_rules! impl_buffered_reader_parent {
     // Single-lifetime generic: trait impl over `<'lt>`, link registered at `'static`.
@@ -546,12 +419,6 @@ mod windows_ffi {
     }
 }
 
-// ── libc shims with no preconditions ────────────────────────────────────────
-// By-value scalar args only; the kernel validates and reports failure via the
-// return value / errno — never UB. Local `safe fn` decls (vs. routing through
-// the `libc` crate's raw items) move the proof into the type signature.
-// Unused externs do not generate linker references, so per-target `#[cfg]` is
-// unnecessary; every caller is gated.
 #[cfg(unix)]
 mod safe_c {
     use core::ffi::c_int;
@@ -593,10 +460,6 @@ mod linux {
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 const EV_EOF: u16 = 0x8000;
 
-/// Kqueue event struct. Darwin's kevent64_s carries a 2-slot ext[] used for
-/// the optional generation-number assertion; FreeBSD's plain `struct kevent`
-/// has `_ext[4]` but no public accessor, and we don't use it. See
-/// `kevent_call` for the syscall difference.
 #[cfg(target_os = "freebsd")]
 type KEvent = libc::kevent;
 #[cfg(target_os = "macos")]
@@ -633,14 +496,6 @@ type EventType = linux::epoll_event;
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 type EventType = KEvent;
 
-// ─── IoRequestLoop ──────────────────────────────────────────────────────────
-// This is io.zig's `Loop` — the bare-kqueue/epoll request loop that backs
-// `Bun.file(path).text()` / `Bun.write()` & friends (and nothing else; see the
-// crate doc above). NOT the main event loop. Renamed from `Loop` so this
-// crate's `Loop` (= `posix_event_loop::Loop` = the uws `us_loop_t` everyone
-// actually means by "the loop") keeps its short name. Only one external caller
-// (`bun_runtime::webcore::Blob`).
-
 pub struct IoRequestLoop {
     pub pending: RequestQueue,
     pub waker: Waker,
@@ -652,29 +507,10 @@ pub struct IoRequestLoop {
     #[cfg(target_os = "freebsd")]
     pub kqueue_fd: Fd,
 
-    /// IO-thread-only scratch state. Wrapped in `Cell` so the tick loop can
-    /// run on `&self` (see [`on_spawn_io_thread`]): we must never hold a
-    /// process-lifetime `&mut IoRequestLoop`, because cross-thread
-    /// `schedule()` callers concurrently touch `pending`/`waker` through a
-    /// sibling raw pointer, and a live `&mut` over the whole struct would
-    /// assert `noalias` on those bytes too — UB under Stacked Borrows even
-    /// though the queue itself is lock-free. `Cell` is sound here because the
-    /// `ThreadCell` owner latch (debug-asserted in `LOOP.get()`) confines all
-    /// `tick`-side access to the IO thread.
     pub cached_now: core::cell::Cell<libc::timespec>,
     pub active: core::cell::Cell<usize>,
 }
 
-// §Concurrency: `OnceLock` for init gate; the singleton itself stays raw because
-// the IO thread mutates fields concurrently with `schedule()` callers (which only
-// touch the lock-free `pending` queue + `waker`), so wrapping the whole struct in a
-// `Mutex` would be wrong. Matches Zig `var loop: Loop = undefined;` + `std.once(load)`.
-//
-// `ThreadCell` (not `RacyCell`) to encode "IO-thread-only after init" in the
-// type. `claim()` is invoked from `on_spawn_io_thread`. Cross-thread
-// `schedule()` callers go through `get_unchecked` and touch only the
-// lock-free `pending` + `waker` (see `schedule`); `ONCE` provides the
-// happens-before for init.
 static LOOP: bun_core::ThreadCell<core::mem::MaybeUninit<IoRequestLoop>> =
     bun_core::ThreadCell::new(core::mem::MaybeUninit::uninit());
 #[cfg(not(windows))]
@@ -810,10 +646,6 @@ impl IoRequestLoop {
         unsafe { (*LOOP.get()).assume_init_ref() }.tick();
     }
 
-    /// Enqueue `request` for the IO thread to pick up. Safe to call from any
-    /// thread: only touches the lock-free `pending` queue and the
-    /// async-signal-safe `waker`. This is the *only* cross-thread entry
-    /// point — every other `IoRequestLoop` method is IO-thread-only.
     pub fn schedule(request: &mut Request) {
         Self::ensure_init();
         debug_assert!(!request.scheduled);
@@ -956,10 +788,6 @@ impl IoRequestLoop {
             for event in current_events {
                 let pollable = Pollable::from(event.u64);
                 if pollable.tag() == PollableTag::Empty {
-                    // `self` *is* `(*LOOP.get()).assume_init_ref()` (see
-                    // `on_spawn_io_thread`), and `MaybeUninit<T>` is
-                    // `repr(transparent)`, so its address equals the sentinel
-                    // stored in `load()` — no need to re-deref the cell.
                     if event.u64 == core::ptr::from_ref(self) as usize as u64 {
                         // Edge-triggered: no need to read the eventfd counter
                         continue;
@@ -976,10 +804,6 @@ impl IoRequestLoop {
         }
     }
 
-    // Zig: `Waker.getFd` / the loop's poll fd are `@compileError` on Windows
-    // (src/io/windows_event_loop.zig:368-373). Gate these so any Windows
-    // call site fails at compile time, matching the spec, rather than
-    // compiling cleanly and only panicking at runtime.
     #[cfg(not(windows))]
     pub fn pollfd(&self) -> Fd {
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1164,16 +988,6 @@ impl Request {
         }
     }
 
-    /// Atomic-ordered store of `callback` — mirrors Zig
-    /// `@atomicStore(?*const fn, &this.io_request.callback, cb, .seq_cst)`.
-    ///
-    /// The io thread reads `callback` after popping `self` from the MPSC
-    /// queue (which already provides acquire on `next`); this SeqCst fence
-    /// guarantees the callback write is visible to that read even when the
-    /// store happens on a different thread than the one that scheduled the
-    /// request. Rust has no `AtomicFnPtr`, so we lower to a volatile write
-    /// followed by a full fence (matches the existing pattern in
-    /// `webcore::blob::{read_file,write_file}`).
     #[inline]
     pub fn store_callback_seq_cst(&mut self, cb: for<'a> fn(&'a mut Request) -> Action<'a>) {
         // SAFETY: `callback` is a plain pointer-sized field on `self`;
@@ -1182,12 +996,6 @@ impl Request {
         core::sync::atomic::fence(Ordering::SeqCst);
     }
 }
-
-// ─── Intrusive io_request → parent recovery ──────────────────────────────────
-// Mirrors `bun_threading::IntrusiveWorkTask`/`intrusive_work_task!`
-// (work_pool.rs:23) — same const-offset + provided `container_of` shape — so
-// `ReadFile`/`WriteFile` use one idiom for BOTH their intrusive fields (`task`
-// and `io_request`).
 
 /// A type that embeds an intrusive `io_request: `[`Request`] field. Declares the
 /// byte offset once and provides the canonical container-of recovery used by
@@ -1218,10 +1026,6 @@ pub unsafe trait IntrusiveIoRequest: Sized {
     }
 }
 
-/// Implements [`IntrusiveIoRequest`] for a struct that embeds an intrusive
-/// `io_request: `[`Request`] field. Brings
-/// [`IntrusiveIoRequest::from_io_request`] into scope for the type's
-/// `fn(&mut Request) -> Action` trampolines.
 #[macro_export]
 macro_rules! intrusive_io_request {
     ($ty:ty, $field:ident) => {
@@ -1339,11 +1143,6 @@ pub enum PollableTag {
     WriteFile,
 }
 
-/// §Dispatch (PORTING.md): `bun.ptr.TaggedPointer` should normally be split
-/// into `(tag: u8, ptr: *mut ())`. Here the value must round-trip through a
-/// single `u64` (`epoll_event.data.u64` / `kevent.udata`), so we keep the
-/// packed addr:49 + tag:15 layout locally.
-/// PERF(port): was TaggedPointer pack — load-bearing (kernel-surface u64).
 #[cfg(not(windows))]
 #[derive(Clone, Copy)]
 struct Pollable {
@@ -1421,12 +1220,6 @@ impl Default for Poll {
 pub type Tag = PollableTag;
 
 unsafe extern "Rust" {
-    /// Hot-path dispatch for `Pollable` owners. The concrete owners
-    /// (`ReadFile` / `WriteFile`) live in `bun_runtime::webcore::blob` (T6);
-    /// io (T2) only knows the embedded `*mut Poll` and the tag. The body is
-    /// `#[no_mangle]` in `bun_runtime::dispatch` and recovers the parent
-    /// struct via `container_of(io_poll)` per spec `io.zig:626`.
-    /// PERF(port): was inline switch (cold path — Bun.write / Bun.file().text() only).
     fn __bun_io_pollable_on_ready(tag: PollableTag, poll: *mut Poll);
     fn __bun_io_pollable_on_io_error(tag: PollableTag, poll: *mut Poll, err: &sys::Error);
 }
@@ -1476,11 +1269,6 @@ pub type FlagsSet = enumset::EnumSet<Flags>;
 // TODO(port): `pub const Struct = std.enums.EnumFieldStruct(Flags, bool, false);` — a struct with
 // one `bool` field per variant. Unused in this file; provide if external callers need it.
 
-// PORT NOTE: Zig used a `comptime action: enum` const-generic. `adt_const_params`
-// is nightly-only and the body never uses ACTION in a type position — it just
-// `match`es on it — so demote to a runtime parameter (PORTING.md §Idiom-map).
-// Three call sites, each with a literal variant — trivially inlined; kqueue
-// registration is not hot enough for the lost monomorphization to matter.
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum ApplyAction {
@@ -1673,10 +1461,6 @@ impl Poll {
                 __bun_io_pollable_on_io_error(
                     tag,
                     poll,
-                    // `event.data` is a kernel-supplied errno; do NOT transmute into the
-                    // closed `sys::Errno` enum (size mismatch on darwin/freebsd where it
-                    // is `#[repr(u16)]`, and UB for unmapped discriminants). Store the
-                    // raw integer via `from_code_int` (Zig: `@enumFromInt(event.data)`).
                     &sys::Error::from_code_int(event.data as core::ffi::c_int, sys::Tag::kevent),
                 )
             };
@@ -1827,11 +1611,6 @@ pub enum FilePollKind {
     Writable,
 }
 
-/// Non-null handle into the event loop's `Store` hive. Slot is released by
-/// `deinit_force_unregister` (returns to pool), never `Drop`. Method bodies
-/// dereference into the hive — `unsafe` because nothing stops a caller holding
-/// a `FilePollRef` past `deinit_force_unregister`; a generational-index
-/// `Store::get(ref) -> Option<&mut FilePoll>` is the safe follow-up.
 #[repr(transparent)]
 #[derive(Clone, Copy)]
 pub struct FilePollRef(pub core::ptr::NonNull<FilePoll>);
@@ -1844,17 +1623,6 @@ impl FilePollRef {
                 .expect("FilePoll::init returns a fresh hive slot"),
         )
     }
-    /// Single nonnull-asref accessor for the hive slot.
-    ///
-    /// Type invariant (encapsulated `unsafe`): `self.0` was produced by
-    /// `FilePoll::init` (a fresh hive slot) and remains live until the owner
-    /// calls `deinit_force_unregister`. The event loop is single-threaded, so
-    /// no concurrent `&mut` alias exists; the only re-entrancy hazard (a poll
-    /// callback touching its own slot) is structurally avoided by every
-    /// wrapper below being a leaf accessor that does not dispatch user code.
-    /// All wrapper methods are already safe `pub fn` — this private accessor
-    /// merely collapses their N identical `unsafe { self.0.as_mut() }` blocks
-    /// into one without widening the safe-API surface.
     #[inline]
     fn inner(self) -> &'static mut FilePoll {
         // SAFETY: type invariant — see doc comment above.
@@ -1883,15 +1651,6 @@ impl FilePollRef {
     pub fn deinit_force_unregister(self) {
         self.inner().deinit_force_unregister();
     }
-    /// Single nonnull-asref accessor for the process-global uWS loop pointer.
-    ///
-    /// Type invariant (encapsulated `unsafe`): every caller of
-    /// [`unregister`](Self::unregister) / [`register_with_fd`](Self::register_with_fd)
-    /// passes `Loop::get()` (the per-thread uWS loop singleton), which is
-    /// non-null after init and lives for the program. The event loop is
-    /// single-threaded so the returned `&mut` is the sole live borrow at the
-    /// point of use. Collapses the two identical `&mut *loop_` deref blocks in
-    /// those wrappers into one.
     #[inline(always)]
     fn uws_loop_mut<'a>(loop_: *mut bun_uws_sys::Loop) -> &'a mut bun_uws_sys::Loop {
         debug_assert!(!loop_.is_null());
@@ -1980,11 +1739,6 @@ impl FilePollRef {
         }
         #[cfg(windows)]
         {
-            // Zig spec: `canEnableKeepingProcessAlive` is POSIX-only (posix_event_loop.zig:656-658);
-            // windows_event_loop.zig has no such method. The previous synthesized expression
-            // `!closed && can_ref()` reduced to `!has_incremented_poll_count` — the OPPOSITE
-            // polarity of the POSIX semantics (`keeps_event_loop_alive && has_incremented_poll_count`).
-            // All callers (PipeWriter PosixWriter, process.rs PollerPosix) are POSIX-only.
             unreachable!("FilePoll::canEnableKeepingProcessAlive is POSIX-only")
         }
     }
@@ -2012,12 +1766,6 @@ pub enum PathOrFileDescriptor {
     Path(bun_core::PathString),
     Fd(Fd),
 }
-
-// ─── Waker (moved from bun_io) ──────────────────────────────────────────────
-//
-// Ported from src/aio/posix_event_loop.zig:1272-1384 (LinuxWaker / KEventWaker)
-// and src/aio/windows_event_loop.zig:361-383 (Windows Waker). io (T2) owns the
-// Waker so `Loop::load` has no upward dep on bun_io (T3). bun_io re-exports.
 
 pub mod waker {
     #[cfg(not(windows))]
@@ -2192,25 +1940,11 @@ pub mod waker {
 
     #[cfg(windows)]
     pub struct WindowsWaker {
-        /// Process-global `WindowsLoop` singleton. `BackRef` invariant (pointee
-        /// outlives holder) holds trivially: the loop is never freed. `None`
-        /// only between [`placeholder`] and [`init`]; every dispatch path
-        /// (`wake`/`wait`/`uv_loop`) unwraps and would have UB-derefed the old
-        /// raw null anyway.
-        ///
-        /// [`placeholder`]: Self::placeholder
-        /// [`init`]: Self::init
         pub loop_: Option<bun_ptr::BackRef<bun_uws_sys::WindowsLoop>>,
     }
 
     #[cfg(windows)]
     impl WindowsWaker {
-        /// Stand-in until `init()` runs (e.g. a `BundleThread` allocated before
-        /// its real waker is created). `loop_` is `None` and must never be
-        /// dereferenced — overwrite via `ptr::write` before first
-        /// `wake()`/`wait()`/`uv_loop()`. Mirrors `LinuxWaker::placeholder` /
-        /// `KEventWaker::placeholder` so cross-platform call sites don't fall
-        /// back to `mem::zeroed()` (UB for the niche-optimised `Option<BackRef>`).
         #[allow(dead_code)]
         pub const fn placeholder() -> Self {
             Self { loop_: None }
@@ -2259,13 +1993,6 @@ pub mod waker {
             unsafe { bun_uws_sys::loop_::us_wakeup_loop(self.loop_ref().as_ptr()) };
         }
 
-        /// Raw libuv `uv_loop_t*` underlying this waker's `WindowsLoop`.
-        ///
-        /// `loop_` is the process-global singleton from `WindowsLoop::get()`
-        /// (set in [`init`]), so the returned pointer has process lifetime —
-        /// safe to hand to `uv::Timer::init` and friends without an `unsafe`
-        /// block at the call site. Mirrors Zig's `waker.loop.uv_loop` field
-        /// chain (BundleThread.zig:79).
         #[inline]
         #[allow(dead_code)]
         pub fn uv_loop(&self) -> *mut bun_sys::windows::libuv::Loop {
@@ -2275,13 +2002,6 @@ pub mod waker {
         }
     }
 }
-
-// ─── Closer (moved from bun_io) ─────────────────────────────────────────────
-//
-// Ported from src/aio/posix_event_loop.zig:1386-1406 and
-// src/aio/windows_event_loop.zig:385-411. Schedules an async fd close on the
-// thread pool (POSIX) or via uv_fs_close (Windows). io (T2) owns it so
-// `pipes::PollOrFd::close` has no upward dep on bun_io (T3).
 
 pub mod closer {
     use bun_sys::Fd;

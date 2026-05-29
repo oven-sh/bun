@@ -24,10 +24,6 @@ use bun_paths::{self as paths, PathBuffer};
 pub(crate) use crate::api::js_bundler::Plugin;
 use crate::api::js_bundler::js_bundler::PluginJscExt as _;
 
-// PORT NOTE: parent `mod.rs` already declares `dev_server` / `framework_router`
-// as sibling modules of this file; pull them in instead of re-declaring (which
-// would duplicate the module tree and fail on `framework_router` having no
-// matching filename).
 use super::{dev_server, framework_router};
 
 // PORT NOTE: `pub use dev_server as DevServer` / `framework_router as
@@ -132,11 +128,6 @@ pub(crate) fn arena_dupe_z(arena: &Arena, bytes: &[u8]) -> &'static ZStr {
 /// export default { app: ... };
 pub(crate) const API_NAME: &str = "app";
 
-// TODO(port): lifetime — many `&'static [u8]` fields below are actually backed
-// by `UserOptions.arena` (bumpalo::Bump) or `UserOptions.allocations`
-// (StringRefList). `&'static` is used to avoid struct lifetime params per
-// PORTING.md; could thread `'bump` or introduce `ArenaStr`.
-
 /// Zig version of the TS definition 'Bake.Options' in 'bake.d.ts'
 pub struct UserOptions {
     /// This arena contains some miscellaneous allocations at startup
@@ -153,10 +144,6 @@ impl Drop for UserOptions {
         // arena: dropped by Bump's Drop
         // allocations: dropped by StringRefList's Drop
         if let Some(p) = self.bundler_options.plugin {
-            // `p` is the FFI handle returned by `Plugin::create` in
-            // `parse_plugin_array`; `PluginJscExt::destroy` is its paired
-            // (safe) destructor — it null-checks via `opaque_ref` and
-            // unprotect()s the JSCell / tombstones the C++ object.
             Plugin::destroy(p.as_ptr());
         }
     }
@@ -275,13 +262,6 @@ impl StringRefList {
         strings: Vec::new(),
     };
 
-    // PORT NOTE: returned slice borrows JSC-owned storage kept alive by the
-    // `ZigStringSlice` now stored in `self.strings`; it is valid only for as
-    // long as `self` is. Callers that store the result in `Framework` /
-    // `FileSystemRouterType` / `ServerComponents` fields must thread a `'bump`
-    // lifetime (or switch those fields to `Box<[u8]>` / `ArenaStr`) — see the
-    // file-level TODO(port) above. Do NOT paper over this with a `'static`
-    // transmute (forbidden per PORTING.md §Forbidden — lifetime extension).
     pub fn track(&mut self, str: ZigStringSlice) -> &'static [u8] {
         self.strings.push(str);
         let slice = self.strings.last().unwrap().slice();
@@ -474,18 +454,8 @@ impl Default for BuildConfigSubset {
     }
 }
 
-/// A "Framework" in our eyes is simply set of bundler options that a framework
-/// author would set in order to integrate the framework with the application.
-/// Since many fields have default values which may point to static memory, this
-/// structure is always arena-allocated, usually owned by the arena in `UserOptions`
-///
-/// Full documentation on these fields is located in the TypeScript definitions.
 pub struct Framework {
     pub is_built_in_react: bool,
-    /// Spec (bake.zig:248) is `[]FileSystemRouterType` — a *mutable*
-    /// arena-owned slice that `resolve()` rewrites in place. Stored as an
-    /// owned `Vec` so `#[derive(Clone)]` deep-copies (a shared `&[T]` would
-    /// alias and make `resolve()`'s mutation UB).
     pub file_system_router_types: Vec<FileSystemRouterType>,
     // static_routers: &'static [&'static [u8]],
     pub server_components: Option<ServerComponents>,
@@ -506,10 +476,6 @@ impl Default for Framework {
 }
 
 impl Framework {
-    /// Bun provides built-in support for using React as a framework.
-    /// Depends on externally provided React
-    ///
-    /// $ bun i react@experimental react-dom@experimental react-refresh@experimental react-server-dom-bun
     pub fn react(arena: &Arena) -> Result<Framework, bun_core::Error> {
         // Cannot use .import because resolution must happen from the user's POV
         let built_in_values: &[BuiltInModule] = &[
@@ -567,13 +533,6 @@ impl Framework {
         })
     }
 
-    /// Default that requires no packages or configuration.
-    /// - If `react-refresh` is installed, enable react fast refresh with it.
-    ///     - Otherwise, if `react` is installed, use a bundled copy of
-    ///     react-refresh so that it still works.
-    /// - If any file system router types are provided, configure using
-    ///   the above react configuration.
-    /// The provided allocator is not stored.
     pub fn auto(
         arena: &Arena,
         resolver: &mut bun_resolver::Resolver,
@@ -654,11 +613,6 @@ impl Framework {
         Ok(())
     }
 
-    /// Given a Framework configuration, this returns another one with all paths resolved.
-    /// New memory allocated into provided arena.
-    ///
-    /// All resolution errors will happen before returning error.ModuleNotFound
-    /// Errors written into `r.log`
     pub fn resolve(
         &self,
         server: &mut bun_resolver::Resolver,
@@ -744,12 +698,6 @@ impl Framework {
                 return;
             }
         };
-        // `resolver::Result::path().text` is `&'static [u8]` already (resolver's
-        // `Path` alias is `bun_paths::fs::Path<'static>`, populated from the
-        // `FilenameStore` singleton). No widen needed; the previous
-        // `arena_erase` here laundered an already-`'static` slice and falsely
-        // implied arena ownership. See `bun_ptr::Interned` for the type that
-        // `Path::text` should eventually become.
         *path = result.path().unwrap().text;
     }
 
@@ -1111,11 +1059,6 @@ impl Framework {
         Ok(framework)
     }
 
-    /// Project the fields the bundler reads into the lower-tier
-    /// `bun_bundler::bake_types::Framework` view. Spec bake.zig stores the
-    /// `bake.Framework` pointer directly on `BundleOptions.framework`; in the
-    /// Rust port the bundler crate cannot name `bun_runtime::bake::Framework`
-    /// so it carries a TYPE_ONLY subset that we populate here.
     pub(crate) fn as_bundler_view(&self) -> bun_bundler::bake_types::Framework {
         use bun_bundler::bake_types as bt;
         let mut built_in_modules = bun_collections::StringArrayHashMap::new();
@@ -1195,18 +1138,9 @@ impl Framework {
         minify_syntax: Option<bool>,
         minify_identifiers: Option<bool>,
     ) -> Result<(), bun_core::Error> {
-        // PORT NOTE: Zig built `ASTMemoryAllocator.Scope` by hand and called
-        // `enter`/`exit`; the Rust port collapses that to `ASTMemoryAllocator::enter`
-        // returning the RAII `Scope`, whose `Drop` runs `exit()` at end-of-fn
-        // (Zig's `defer ast_scope.exit()`).
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        // PORT NOTE: Zig passed `out: *Transpiler` pointing at `= undefined`
-        // memory and assigned `out.* = try Transpiler.init(...)`. In Rust the
-        // caller (`DevServer::init`) hands us an uninitialized slot, so use
-        // `MaybeUninit::write` (no drop of prior bytes) then reborrow as
-        // `&mut Transpiler` for the field assignments below.
         let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
             arena,
             log,
@@ -1267,13 +1201,6 @@ impl Framework {
         out.options.minify_identifiers = minify_identifiers.unwrap_or(mode != Mode::Development);
         out.options.minify_whitespace = minify_whitespace.unwrap_or(mode != Mode::Development);
         out.options.css_chunking = true;
-        // Spec bake.zig:778 `out.options.framework = framework` stores a borrowed
-        // `*bake.Framework`. The bundler crate (lower tier) carries a TYPE_ONLY
-        // projection (`bake_types::Framework`); construct it here and give it
-        // arena lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
-        // PERF(port): interior `Box<[u8]>` in the projection are not dropped by
-        // bumpalo — bounded per-session, revisit when `bake_types::BuiltInModule`
-        // is reshaped to `&'a [u8]`.
         out.options.framework = Some(&*arena.alloc(self.as_bundler_view()));
         out.options.inline_entrypoint_import_meta_main = true;
         if let Some(ignore) = bundler_options.ignore_dce_annotations {
@@ -1413,10 +1340,6 @@ fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<&'stat
     }
 }
 
-/// `FrameworkRouter.Style.fromJS` (FrameworkRouter.zig:159-181). Thin
-/// forwarding shim — the real impl lives on `framework_router::Style::from_js`
-/// now that `FrameworkRouter.rs` is un-gated; kept so the call site in
-/// `Framework::from_js` reads the same as the Zig spec.
 #[inline]
 fn style_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<framework_router::Style> {
     framework_router::Style::from_js(value, global)
@@ -1454,17 +1377,6 @@ fn hmr_runtime_init(code: &'static ZStr) -> HmrRuntime {
 
 #[inline(always)]
 pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
-    // `runtime_embed_file!` returns `&'static str` (no NUL). The Zig
-    // `runtimeEmbedFile` (bun.zig:2938) returns `[:0]const u8` from a
-    // `bun.once`-guarded static — read once per process, never freed.
-    // Mirror that with a per-side `OnceLock` holding the NUL-terminated
-    // copy. PORTING.md §Forbidden bans leaking for `&'static`; this is the
-    // sanctioned process-lifetime-singleton pattern instead. (Under
-    // `cfg(bun_codegen_embed)` the macro expands to `include_str!`, so this
-    // costs one extra copy at first call; the cost is negligible vs. keeping
-    // a per-call-site `#[cfg]` pair in sync.)
-    // TODO(port): add a `runtime_embed_file_z!` to bun_core that yields
-    // `&'static ZStr` directly so the second copy goes away.
     use std::sync::OnceLock;
     fn nul_terminate(s: &'static str, cell: &'static OnceLock<Box<[u8]>>) -> &'static ZStr {
         let buf = cell.get_or_init(|| {
@@ -1491,11 +1403,6 @@ pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
     })
 }
 
-// PORT NOTE: `Mode`/`Side`/`Graph` are defined canonically in the parent
-// `bake/mod.rs` (which itself re-exports `Side`/`Graph` from
-// `bun_bundler::bake_types`). Re-export here so `bake_body::Mode` ≡
-// `crate::bake::Mode` and downstream callers (production.rs, build_command.rs,
-// IncrementalGraph.rs) see one nominal type.
 pub(crate) use super::Mode;
 pub(crate) use bun_bundler::bake_types::{Graph, Side};
 
@@ -1511,10 +1418,6 @@ pub(crate) fn add_import_meta_defines(
     static MODE_DEVELOPMENT: EString = EString::from_static(b"development");
     static MODE_PRODUCTION: EString = EString::from_static(b"production");
 
-    // The following are from Vite: https://vitejs.dev/guide/env-and-mode
-    // Note that it is not currently possible to have mixed
-    // modes (production + hmr dev server)
-    // TODO: BASE_URL
     define.insert(
         b"import.meta.env.DEV",
         DefineData::init_boolean(mode == Mode::Development),
@@ -1548,10 +1451,6 @@ pub(crate) fn add_import_meta_defines(
 /// Used as a staging area for building pattern strings.
 pub struct PatternBuffer {
     pub bytes: PathBuffer,
-    // Zig: std.math.IntFittingRange(0, @sizeOf(bun.PathBuffer)) — smallest int
-    // fitting MAX_PATH_BYTES. On Windows MAX_PATH_BYTES = 32767*3+1 = 98302
-    // (> u16::MAX), so u32 is required; u16 would truncate the initial index
-    // to 32766 and `slice()` would return ~64 KiB of trailing zero bytes.
     pub i: u32,
 }
 

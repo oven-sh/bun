@@ -62,10 +62,6 @@ pub enum BackendError {
 use BackendError::*;
 
 impl BackendError {
-    /// Reshape Zig's `(codecs.Error || error{BackendUnavailable})!T` into the
-    /// Rust caller's `Result<Option<T>, codecs::Error>` convention used by
-    /// `codecs.rs` (`Ok(None)` = BackendUnavailable → fall through to the
-    /// pure-Rust codec path).
     #[inline]
     pub(crate) fn split<T>(r: Result<T, Self>) -> Result<Option<T>, codecs::Error> {
         match r {
@@ -87,11 +83,6 @@ bun_core::oom_from_alloc!(BackendError);
 
 pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendError> {
     let f = factory()?;
-    // IWICStream::InitializeFromMemory takes a DWORD count; Windows ships
-    // ReleaseSafe so the @intCast below is a process abort, not silent
-    // truncation. Drop to BackendUnavailable so codecs.decode() falls
-    // through to the static decoder (bmp/gif) or surfaces UnsupportedOn
-    // Platform (tiff/heic/avif) instead of crashing on a >4 GiB input.
     if bytes.len() as u64 > u32::MAX as u64 {
         return Err(BackendUnavailable);
     }
@@ -176,13 +167,6 @@ pub(crate) fn encode(
     height: u32,
     opts: &codecs::EncodeOptions,
 ) -> Result<Vec<u8>, BackendError> {
-    // Punt to the static codecs for everything WIC can't express the same way:
-    //   • palette PNG — WIC's PNG encoder won't quantise for us;
-    //   • lossless WebP — Windows ships a WebP *decoder* only, and even where
-    //     an encoder exists there's no lossless flag in the property bag;
-    // codecs.encode() only routes .heic/.avif here; jpeg/png/webp use the
-    // static codecs unconditionally so output (and the quality scale) is
-    // identical across platforms.
     debug_assert!(opts.format == codecs::Format::Heic || opts.format == codecs::Format::Avif);
     // WritePixels/WriteSource take a UINT byte count — same DWORD ceiling
     // as CopyPixels (maxPixels-raised edge).
@@ -253,12 +237,6 @@ pub(crate) fn encode(
     if frame.set_size(width, height) < 0 {
         return Err(EncodeFailed);
     }
-    // SetPixelFormat is in/out — the codec rewrites `pf` to its native sink
-    // (the HEIF encoder wants 32bppBGRA, not RGBA). When it doesn't move,
-    // WritePixels straight from our buffer; when it does, wrap our RGBA as a
-    // WIC bitmap, let WICConvertBitmapSource do the channel swap, and feed
-    // the result via WriteSource. This is the documented dance; without it
-    // .heic()/.avif() always rejected on Windows.
     let mut pf = GUID_WICPixelFormat32bppRGBA;
     if frame.set_pixel_format(&mut pf) < 0 {
         return Err(EncodeFailed);
@@ -308,12 +286,6 @@ pub(crate) fn encode(
         return Err(EncodeFailed);
     }
 
-    // Logical length, not allocation size: GlobalSize() returns the HGLOBAL's
-    // rounded-up allocation, which is ≥ what the encoder actually wrote and
-    // would tack uninitialised heap bytes onto every output. The encoder writes
-    // sequentially from offset 0 and never seeks back, so the stream's current
-    // position IS the byte count. (MSDN GetHGlobalFromStream: "use IStream::Stat
-    // to obtain the actual size".)
     let mut pos: u64 = 0;
     if stream.cast::<IStream>().seek(0, STREAM_SEEK_CUR, &mut pos) < 0 {
         return Err(EncodeFailed);
@@ -339,13 +311,6 @@ pub(crate) fn encode(
     Ok(slice.to_vec())
 }
 
-// ───────────────────────────── COM scaffolding ──────────────────────────────
-//
-// A COM interface pointer is `*{ *const VTable }` — exactly one pointer in the
-// object, and the vtable lays out IUnknown's three slots first, then each
-// parent interface's slots, then the interface's own. Only slots we call are
-// typed; the rest are `*const c_void` placeholders so offsets stay correct.
-
 type HRESULT = i32;
 
 #[repr(C)]
@@ -370,10 +335,6 @@ struct IUnknown {
     vt: *const IUnknownVTable,
 }
 
-// VARIANT/PROPBAG2 layout is fiddly enough (union padding, BRECORD/DECIMAL
-// arms) that hand-rolling it as `extern struct` is asking for an ABI drift.
-// The C++ shim uses the SDK's own headers; we just hand it the bag pointer.
-// TODO(port): move to runtime_sys
 unsafe extern "C" {
     fn bun_wic_propbag_write_f32(props: *mut c_void, name: *const u16, value: f32) -> i32;
     fn bun_wic_propbag_write_u8(props: *mut c_void, name: *const u16, value: u8) -> i32;
@@ -421,14 +382,6 @@ fn release<T>(p: *mut T) {
     }
 }
 
-/// Non-null COM interface pointer. Exists solely to move the per-call-site
-/// `unsafe { ((*(*p).vt).Method)(p, ..) }` vtable dance into one place per
-/// method, so `decode`/`encode` read as straight-line safe code.
-///
-/// Not an owning smart pointer — release is still explicit via
-/// `scopeguard::defer! { release(p.as_ptr()) }` at the call site, matching
-/// the Zig original's `defer release(p)` shape. `Copy` so the defer-guard
-/// closure captures a copy and the handle stays usable afterwards.
 #[repr(transparent)]
 struct ComPtr<T>(ptr::NonNull<T>);
 
@@ -823,10 +776,6 @@ fn container_guid(f: codecs::Format) -> Option<*const GUID> {
         Jpeg => Some(&GUID_ContainerFormatJpeg),
         Png => Some(&GUID_ContainerFormatPng),
         Webp => Some(&GUID_ContainerFormatWebp),
-        // WIC routes HEIC and AVIF through the same HEIF container; the
-        // installed encoder (HEVC vs AV1) decides the codec. CreateEncoder
-        // returns WINCODEC_ERR_COMPONENTNOTFOUND if the extension isn't
-        // present, which surfaces as BackendUnavailable.
         Heic | Avif => Some(&GUID_ContainerFormatHeif),
         // Decode-only formats — codecs.encode() short-circuits before this
         // path, so this arm exists for switch exhaustiveness only.
@@ -860,19 +809,11 @@ unsafe extern "system" {
     fn GlobalUnlock(h: *mut c_void) -> c_int;
 }
 
-/// `WICConvertBitmapSource` is the one flat export from windowscodecs.dll we
-/// need. Loaded lazily (LoadLibraryA inside `loadFactory`) so the binary
-/// carries no import-table dependency on windowscodecs — nano-server / stripped
-/// containers without the WIC feature still launch and just fall back.
 type WICConvertBitmapSourceFn = unsafe extern "system" fn(
     dst_fmt: *const GUID,
     src: *mut IWICBitmapSource,
     out: *mut *mut IWICBitmapSource,
 ) -> HRESULT;
-// PORTING.md §Global mutable state: written once under `FACTORY_ONCE`,
-// read-only thereafter. Fn pointers are `Send + Sync + Copy`, so a plain
-// `OnceLock` gives a safe write-once slot (`.get().copied()` ⇔ the old
-// `Option<fn>` read).
 static wicConvertBitmapSource: std::sync::OnceLock<WICConvertBitmapSourceFn> =
     std::sync::OnceLock::new();
 
@@ -941,16 +882,6 @@ fn load_factory() {
         core::sync::atomic::Ordering::Relaxed,
     );
 }
-
-// ───────────────────────────── Win32 clipboard ──────────────────────────────
-//
-// JS-thread only — `OpenClipboard` is process-serialised and the static
-// `fromClipboard()` accessor calls this synchronously, so no cross-thread
-// HGLOBAL hand-off. We prefer the registered "PNG" format (Chrome/Edge/
-// Snipping Tool put it; no transcode loss) and fall back to CF_DIBV5/CF_DIB,
-// which we re-wrap as a BMP file by prepending the 14-byte BITMAPFILEHEADER
-// the clipboard omits. Either way the result is bytes the regular Bun.Image
-// decoder understands; nothing is decoded here.
 
 // TODO(port): move to runtime_sys
 #[link(name = "user32")]
@@ -1025,11 +956,6 @@ pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
             }
         }
     }
-    // 2. Packed DIB — needs a synthetic BITMAPFILEHEADER so the BMP sniffer
-    //    and decoder accept it. CF_DIBV5 first (carries alpha mask). The
-    //    clipboard is writable by any local process, so treat the payload as
-    //    hostile: a 1-byte CF_DIB or a header with biSize≈u32::MAX must drop
-    //    the format, not panic the process (Windows ships ReleaseSafe).
     for cf in [CF_DIBV5, CF_DIB] {
         // SAFETY: clipboard is open.
         let h = unsafe { GetClipboardData(cf) };
@@ -1043,10 +969,6 @@ pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
             // (free(buf) deleted — Vec drops on continue)
             continue;
         }
-        // BITMAPFILEHEADER: 'BM' · u32 file-size · 2×u16 reserved ·
-        // u32 bfOffBits. bfOffBits = 14 + biSize + colour-table; for the
-        // 24/32-bit DIBs clipboards emit there's no colour table, but a
-        // 40-byte header with BI_BITFIELDS appends 12 bytes of masks.
         let ih_size: u64 =
             u32::from_le_bytes(buf[14..18].try_into().expect("infallible: size matches")) as u64;
         let compression = u32::from_le_bytes(

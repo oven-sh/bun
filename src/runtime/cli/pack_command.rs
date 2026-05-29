@@ -5,21 +5,16 @@ use std::io::Write as _;
 use crate::cli::Command;
 use crate::cli::publish_command as Publish;
 use bun_alloc::AllocError;
+use bun_ast::{E, Expr, ExprData};
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output, Progress, fmt as bun_fmt};
 use bun_glob as glob;
 use bun_install::package_manager::LogLevel;
 use bun_install::package_manager::workspace_package_json_cache as WorkspacePackageJSONCache;
 use bun_install::{Dependency, Lockfile, PackageManager};
-use bun_parsers::json as JSON;
-// PORT NOTE: `WorkspacePackageJSONCache` returns the T2 value-subset
-// `bun_ast::Expr` (see `bun_install::bun_json`), not the full T4
-// `bun_ast::Expr`. All JSON inspection in this file uses the T2 type;
-// the two T4 sinks (`js_printer::print_json`, `Publish::normalized_package`)
-// lift via `bun_ast::Expr::from(t2_expr)` at the call site.
-use bun_ast::{E, Expr, ExprData};
 use bun_js_printer as js_printer;
 use bun_libarchive::lib::{Archive, Entry as ArchiveEntry, Result as ArchiveStatus};
+use bun_parsers::json as JSON;
 use bun_paths::{self as path, PathBuffer, SEP_STR};
 // `bun.ptr.CowString = CowSlice(u8)` — the lifetime-free struct port (init_owned/
 // borrow_subslice/length live on `cow_slice::CowSliceZ`, not on the `std::borrow::Cow`
@@ -51,11 +46,6 @@ fn dir_open_dir_z(
     dir.open_dir(path.as_bytes(), opts)
 }
 
-/// Process-lifetime bump arena for `Expr::as_string*` / `E::EString` data
-/// (Zig: `ctx.allocator`, an arena freed at process exit). `bun_alloc::Arena`
-/// (= `bumpalo::Bump`) is `!Sync`, so a `static LazyLock` is out; store the
-/// arena directly in a `thread_local!` and hand out a `'static` borrow — the
-/// CLI is single-threaded and the slot lives for the thread's lifetime.
 fn pack_bump() -> &'static bun_alloc::Arena {
     thread_local! {
         static BUMP: bun_alloc::Arena = bun_alloc::Arena::new();
@@ -76,10 +66,6 @@ fn file_to_source_at(dir: &Dir, path: &ZStr) -> bun_sys::Maybe<bun_ast::Source> 
     ))
 }
 
-/// `manager.log` deref — Zig: non-optional `*logger.Log`, set once at `init()`.
-/// Raw-pointer receiver so the borrow doesn't conflict with the simultaneous
-/// `&mut workspace_package_json_cache` borrow at the call site (mirrors Zig's
-/// freely-aliased `*PackageManager`).
 #[inline]
 fn pm_log<'a>(m: *mut PackageManager) -> &'a mut bun_ast::Log {
     // SAFETY: `m` came from `&mut PackageManager`; `log` is non-null after
@@ -120,10 +106,6 @@ pub struct Context<'a> {
     // allocator param dropped — global mimalloc (see PORTING.md §Allocators)
     pub command_ctx: Command::Context<'a>,
 
-    /// `bun pack` does not require a lockfile, but
-    /// it's possible we will need it for finding
-    /// workspace versions. This is the only valid lockfile
-    /// pointer in this file. `manager.lockfile` is incorrect
     pub lockfile: Option<&'a Lockfile>,
 
     pub bundled_deps: Vec<BundledDep>,
@@ -272,10 +254,6 @@ impl PackCommand {
             LoadResult::NotFound => None,
         };
 
-        // PORT NOTE: Zig packed both `manager` and `lockfile` into `Context` and
-        // freely aliased the `*PackageManager`; here split-borrowing through
-        // `Context` would conflict with `&mut PackageManager`, so capture the
-        // package.json path before constructing `Context`.
         let abs_pkg_json = ZBox::from_bytes(manager.original_package_json_path.as_bytes());
 
         let mut pack_ctx = Context {
@@ -380,10 +358,6 @@ pub enum PackError<const FOR_PUBLISH: bool> {
     InvalidPackageVersion,
     #[error("MissingPackageJSON")]
     MissingPackageJSON,
-    // The following two are only valid when FOR_PUBLISH == true.
-    // TODO(port): Zig modeled this as a comptime-computed error set union; Rust
-    // const-generic enums cannot conditionally include variants. Could
-    // split into two enums or gate construction.
     #[error("RestrictedUnscopedPackage")]
     RestrictedUnscopedPackage,
     #[error("PrivatePackage")]
@@ -925,11 +899,6 @@ fn iterate_bundled_deps(
         }
     };
 
-    // A set of bundled dependency locations
-    // - node_modules/is-even
-    // - node_modules/is-even/node_modules/is-odd
-    // - node_modules/is-odd
-    // - ...
     let mut dedupe: StringHashMap<()> = StringHashMap::new();
 
     let mut additional_bundled_deps: Vec<DirInfo> = Vec::new();
@@ -1854,10 +1823,6 @@ fn file_kind_tag(kind: bun_core::FileKind) -> &'static str {
     }
 }
 
-/// Heap-allocate a 512 KiB `BufferedFileReader` without materializing it on
-/// the stack. Zig: `allocator.create(BufferedFileReader)` then field-init with
-/// `.buf = undefined`. `Box::new_zeroed` maps to a `calloc` (typically a free
-/// kernel zero-page for this size) and avoids the 512 KiB stack temporary.
 fn new_boxed_buffered_file_reader(file: bun_sys::File) -> Box<BufferedFileReader> {
     // SAFETY: all-zero is a valid bit pattern for `[u8; N]`, `usize`, and
     // `File { handle: Fd }` (`Fd` is a `#[repr(C)]` integer newtype). The
@@ -1869,14 +1834,6 @@ fn new_boxed_buffered_file_reader(file: bun_sys::File) -> Box<BufferedFileReader
     b
 }
 
-/// Re-seat the underlying file and reset the buffer cursor in place — avoids
-/// the 512 KiB stack temporary that `*file_reader = BufferedFileReader { ... }`
-/// would create. Zig: `file_reader.* = .{ .unbuffered_reader = ..., .buf = undefined }`.
-///
-/// `unbuffered_reader` is a *view* of a fd that the call site owns (e.g. via
-/// a `CloseOnDrop` or a `File` whose Drop fires after the read loop). The
-/// previous fd may already be closed; disarm its `File::Drop` before
-/// overwriting so we never close a stale (potentially-recycled) fd.
 #[inline]
 fn reset_buffered_file_reader(r: &mut BufferedFileReader, file: bun_sys::File) {
     let _ = core::mem::replace(&mut r.unbuffered_reader, file).into_raw();
@@ -1928,32 +1885,18 @@ fn opt_pack_gzip_level(m: &PackageManager) -> Option<&[u8]> {
 // pack()
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(refactor): Zig used `comptime for_publish: bool` to vary the return type
-// (`Publish.Context(true)` vs `void`). Rust const generics cannot vary return
-// type directly; using an associated-type-like Option for now. Could split
-// into `pack()` and `pack_for_publish()` or use a trait.
 pub(crate) type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a, true>>;
 
 pub(crate) fn pack<const FOR_PUBLISH: bool>(
     ctx: &mut Context<'_>,
     abs_package_json_path: &ZStr,
 ) -> Result<PackReturn<'static, FOR_PUBLISH>, PackError<FOR_PUBLISH>> {
-    // PORT NOTE: reshaped for borrowck — Zig freely aliased `*PackageManager`
-    // alongside `ctx`-whole calls (`run_lifecycle_script(ctx, …)`,
-    // `iterate_bundled_deps(ctx, …)`). Round-trip the field through a raw
-    // pointer so the long-lived `manager` reborrow is decoupled from `ctx`;
-    // every interleaved `ctx` access touches disjoint fields (`command_ctx`,
-    // `bundled_deps`, `stats`) or only reads `manager` via `pm_*` helpers.
     let manager_ptr: *mut PackageManager = &raw mut *ctx.manager;
     // SAFETY: `ctx.manager` is the sole `&mut PackageManager`; CLI is
     // single-threaded and no callee retains a conflicting borrow.
     let manager: &mut PackageManager = unsafe { &mut *manager_ptr };
     let log_level = manager.options.log_level;
     let bump = pack_bump();
-    // PORT NOTE: `workspace_package_json_cache` and `log` are disjoint fields on
-    // `PackageManager` but Zig accessed them via the same `*PackageManager`
-    // alias inside one call; route through raw-pointer field projections so the
-    // two `&mut` borrows don't conflict.
     let mut json = match pm_workspace_cache(manager_ptr).get_with_path(
         pm_log(manager_ptr),
         abs_package_json_path.as_bytes(),
@@ -2077,14 +2020,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     );
     // SAFETY: `configure_env_for_run` fully initialized `this_transpiler`.
     let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
-    // `Transpiler::deinit` only frees the heap-owned `options`/`result`/
-    // `resolver.opts`/`resolve_results` fields; the `env` raw pointer
-    // (`transpiler_env` captured below) and the `log`/`fs` singletons are left
-    // intact, so running the deferred deinit at scope exit is sound even
-    // though `transpiler_env` is dereferenced past the guard's binding.
-    // `MaybeUninit` does not run `Drop` on its contents, so without this the
-    // `Arc<TransformOptions>` and resolver hash maps strand on every `bun pm
-    // pack` / `bun publish`.
     let transpiler_for_deinit: *mut bun_bundler::Transpiler<'static> = this_transpiler;
     scopeguard::defer! {
         // SAFETY: `transpiler_for_deinit` points at the initialized
@@ -2303,11 +2238,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         }
     };
 
-    // Scan for a README file so the registry receives the same
-    // `readme` / `readmeFilename` metadata that `npm publish` sends.
-    // `find_workspace_readme` opens its own directory handle because
-    // `root_dir` is iterated below and its kernel readdir offset gets
-    // exhausted.
     let workspace_readme: Option<Publish::ReadmeInfo> = if FOR_PUBLISH {
         Publish::PublishCommand::find_workspace_readme(abs_workspace_path)
     } else {
@@ -2486,10 +2416,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 package_version,
                 &mut dest_buf[..],
             );
-            // PORT NOTE: `manager`/`command_ctx` reborrowed via raw pointer —
-            // Zig freely aliased `*PackageManager`/`*ContextData` between
-            // `pack::Context` and `Publish::Context`; both are process-lifetime
-            // singletons (see `cli::command::GLOBAL_CLI_CTX`).
             return Ok(Some(Publish::Context {
                 // SAFETY: `manager_ptr` was derived from `&mut *ctx.manager`; the
                 // process-lifetime singleton outlives the returned `Publish::Context`.
@@ -2635,12 +2561,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             node = Some(progress.start(b"", pack_queue.count() + bundled_pack_queue.count() + 1));
             node.as_mut().expect("infallible: progress active").unit = Progress::Unit::Files;
         }
-        // PORT NOTE: Zig had `defer node.end()` / `defer node.completeOne()`.
-        // The loop bodies' only early exits are `continue` (where the Zig
-        // `defer` still fires) and `Global::crash()` (never returns, no
-        // unwinding). `scopeguard` captures of `&mut node` overlap the inline
-        // uses below, so call `complete_one()` explicitly at every loop-body
-        // exit and `end()` once after the loops.
 
         entry = archive_package_json(
             ctx,
@@ -3047,11 +2967,6 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
 // tarball name / destination
 // ───────────────────────────────────────────────────────────────────────────
 
-/// The output tarball filename is derived from the package.json `name` and
-/// `version` fields. Reject values that could steer the formed filename
-/// outside the destination directory (`.`/`..` path components, backslashes,
-/// drive/ADS colons, NUL); other unusual-but-harmless names (e.g. empty scope
-/// segments) keep packing as before.
 fn has_unsafe_tarball_filename_part(value: &[u8]) -> bool {
     value
         .split(|&c| c == b'/')
@@ -3344,10 +3259,6 @@ fn add_archive_entry(
         };
     }
 
-    // `file` is the caller's fd (closed by its `_close_fd` / `File` after this
-    // returns). Reset the reader's view to a sentinel so neither the next
-    // `reset_buffered_file_reader` nor `file_reader`'s eventual Drop tries to
-    // close a fd we don't own.
     reset_buffered_file_reader(file_reader, File::from_fd(Fd::invalid()));
 
     Ok(entry.clear())
@@ -3430,10 +3341,6 @@ fn edit_root_package_json(
                                         b'*' => b"",
                                         _ => unreachable!(),
                                     };
-                                    // Zig: `try std.fmt.allocPrint(allocator, "{s}{}", ...)`.
-                                    // Format on the heap then copy into the pack arena
-                                    // (`ctx.allocator` analog); `EString::init` erases the
-                                    // lifetime.
                                     let tmp = format!(
                                         "{}{}",
                                         bstr::BStr::new(prefix),

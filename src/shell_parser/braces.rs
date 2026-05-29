@@ -9,13 +9,6 @@ use bun_alloc::ArenaVec as BumpVec;
 use bun_core::SmolStr;
 use smallvec::SmallVec;
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Moved from `bun_shell` (src/shell/shell.zig):
-//   StringEncoding, SrcAscii, SrcUnicode, ShellCharIter, CharIter, has_eq_sign
-// These live here so `bun_shell` (higher tier) can depend on `shell_parser`
-// without a back-edge. `bun_shell` re-exports these under its old paths.
-// ═══════════════════════════════════════════════════════════════════════════
-
 use bun_core::immutable::CodePoint; // i32
 use bun_core::immutable::{CodepointIterator, Cursor};
 use bun_core::strings;
@@ -37,10 +30,6 @@ struct SrcAscii {
     i: usize,
 }
 
-/// Zig: `packed struct(u8) { char: u7, escaped: bool = false }`.
-// PERF(port): widened `char` to u32 so ascii/unicode share one `InputChar` shape and
-// `ShellCharIter<const E>` needs no type-level branching on `E`. Could split per
-// encoding if profiling shows it matters.
 #[derive(Copy, Clone)]
 pub struct InputChar {
     pub char: u32,
@@ -177,11 +166,6 @@ pub enum ShellCharIterState {
     Double,
 }
 
-// PERF(port): Zig selected `Src` at comptime via `switch (encoding)`. Rust const
-// generics can't pick a field type from an enum value without an aux trait, so we
-// store both arms in a small enum and branch at runtime. Could split into three
-// `impl CharIter for ShellCharIter<{StringEncoding::*}>` blocks if profiling
-// shows the branch matters.
 enum ShellSrc {
     Ascii(SrcAscii),
     Unicode(SrcUnicode),
@@ -453,13 +437,6 @@ impl Token {
         }
     }
 }
-
-// ─── JSON debug formatters ───────────────────────────────────────────────────
-// Port of Zig's `std.json.fmt(tokens)` / `std.json.fmt(ast_node)` used by
-// `Bun.$.braces(str, {tokenize:true})` / `{parse:true}` (debug-only). Zig's
-// reflection-driven JSON encoder emits tagged unions as `{"<tag>": <payload>}`
-// and bare-payload structs by field; reproduce that shape so the JS-visible
-// output is byte-compatible.
 
 fn json_escape_into(out: &mut Vec<u8>, s: &[u8]) {
     // debug-only path; canonical's run-batched write_str preserves verbatim
@@ -1194,27 +1171,6 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
 
     // FIXME: implement rollback on invalid brace
     fn tokenize_impl(&mut self) -> Result<bool, BraceLexerError> {
-        // Unclosed brace expansion algorithm
-        // {hi,hey
-        // *xx*xxx
-        //
-        // {hi, hey
-        // *xxx$
-        //
-        // {hi,{a,b} sdkjfs}
-        // *xx**x*x*$
-        //
-        // 00000100000000000010000000000000
-        // echo {foo,bar,baz,{hi,hey},oh,no
-        // xxxxx*xxx*xxx*xxx**xx*xxx**xx*xx
-        //
-        // {hi,h{ey }
-        // *xx*x*xx$
-        //
-        // - Replace chars with special tokens
-        // - If unclosed or encounter bad token:
-        //   - Start at beginning of brace, replacing special tokens back with
-        //     chars, skipping over actual closed braces
         let mut brace_stack: SmallVec<[u32; MAX_NESTED_BRACES]> = SmallVec::new();
 
         loop {

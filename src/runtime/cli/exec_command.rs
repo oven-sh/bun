@@ -12,11 +12,6 @@ use crate::command::Context;
 
 pub(crate) struct ExecCommand;
 
-/// Process-lifetime arena for the exec command's `Transpiler`. Zig passed
-/// `ctx.allocator` (== `bun.default_allocator`); the Rust port threads an
-/// `&'static Arena` per PORTING.md §AST crates. Same `Once`-guarded
-/// `RacyCell<MaybeUninit>` shape as `run_command::runner_arena` (Bump is
-/// `!Sync`, so `OnceLock` cannot hold it directly).
 fn exec_arena() -> &'static bun_alloc::Arena {
     static ONCE: std::sync::Once = std::sync::Once::new();
     // PORTING.md §Global mutable state: `Once`-guarded init; RacyCell because
@@ -94,12 +89,6 @@ impl ExecCommand {
                 Global::exit(1);
             }
         };
-
-        // if (code > 0) {
-        //     if (code != 2 and !silent) {
-        //         Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with code {d}<r>", .{ name, code });
-        //         Output.flush();
-        //     }
 
         Global::exit(u32::from(code));
         // }

@@ -30,11 +30,6 @@ use crate::windows_shim::Shebang as WinShimShebang;
 
 bun_output::declare_scope!(BinLinker, hidden);
 
-/// Normalized `bin` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
-/// Can be a:
-/// - file path (relative to the package root)
-/// - directory (relative to the package root)
-/// - map where keys are names of the binaries and values are file paths to the binaries
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Bin {
@@ -142,16 +137,6 @@ impl Bin {
         }
     }
 
-    /// Zig: `Bin.clone(buf, prev_external_strings, all_extern_strings,
-    /// extern_strings_slice, Builder, builder)`.
-    ///
-    /// PORT NOTE: the Zig API takes both the full `all_extern_strings` buffer
-    /// and a writable tail subslice into the **same** buffer — the full slice
-    /// is only used by `ExternalStringList::init` to compute the tail's
-    /// offset. In Rust those two views alias (`&[T]` overlapping `&mut [T]` is
-    /// UB under Stacked Borrows), so callers pass the precomputed offset
-    /// instead and we build the `ExternalStringList` directly. Renamed
-    /// `clone` → `clone_with_buffers` to avoid shadowing `Clone::clone`.
     pub fn clone_with_buffers<B: StringBuilder>(
         &self,
         buf: &[u8],
@@ -247,13 +232,6 @@ impl Bin {
                             (current_len + num_props).saturating_sub(extern_strings.len()),
                         )
                         .map_err(|_| AllocError)?;
-                    // PORT NOTE: reshaped for borrowck — Zig bumped `items.len += num_props`
-                    // up-front and wrote into the spare-capacity region by raw pointer
-                    // (leaving partially-init slots on mid-loop bailout); here we push
-                    // incrementally so a bailout leaves only the slots actually written.
-                    // The returned `Bin` is `Tag::None` on bailout so the slots are never
-                    // indexed either way — strictly safer/less wasteful, no caller-visible
-                    // divergence.
                     let mut i: usize = 0;
                     for bin_prop in props {
                         let Some(key_str) =
@@ -472,10 +450,6 @@ pub enum ToJsonStyle {
     MultiLine,
 }
 
-// `comptime StringBuilder: type` param maps onto the canonical
-// `bun_semver::StringBuilder` trait (count + append<T> + provided
-// append_string/append_external_string wrappers). Re-exported so
-// `bin_real::StringBuilder` paths still resolve.
 pub use bun_semver::StringBuilder;
 
 #[repr(C)]
@@ -484,34 +458,11 @@ pub union Value {
     /// no "bin", or empty "bin"
     pub none: (),
 
-    /// "bin" is a string
-    /// ```
-    /// "bin": "./bin/foo",
-    /// ```
     pub file: String,
 
-    // Single-entry map
-    ///```
-    /// "bin": {
-    ///     "babel": "./cli.js",
-    /// }
-    ///```
     pub named_file: [String; 2],
 
-    /// "bin" is a directory
-    ///```
-    /// "dirs": {
-    ///     "bin": "./bin",
-    /// }
-    ///```
     pub dir: String,
-    // "bin" is a map
-    ///```
-    /// "bin": {
-    ///     "babel": "./cli.js",
-    ///     "babel-cli": "./cli.js",
-    /// }
-    ///```
     pub map: ExternalStringList,
 }
 
@@ -555,36 +506,12 @@ pub enum Tag {
     /// no bin field
     None = 0,
 
-    /// "bin" is a string
-    /// ```
-    /// "bin": "./bin/foo",
-    /// ```
     File = 1,
 
-    // Single-entry map
-    ///```
-    /// "bin": {
-    ///     "babel": "./cli.js",
-    /// }
-    ///```
     NamedFile = 2,
 
-    /// "bin" is a directory
-    ///```
-    /// "dirs": {
-    ///     "bin": "./bin",
-    /// }
-    ///```
     Dir = 3,
 
-    // "bin" is a map of more than one
-    ///```
-    /// "bin": {
-    ///     "babel": "./cli.js",
-    ///     "babel-cli": "./cli.js",
-    ///     "webpack-dev-server": "./cli.js",
-    /// }
-    ///```
     Map = 4,
 }
 
@@ -695,13 +622,6 @@ impl<'a> NamesIterator<'a> {
     }
 }
 
-// PORT NOTE: BACKREF — Zig stores `*const ArrayList(Dependency)` /
-// `*const ArrayList(u8)` (non-exclusive). `PackageInstaller` holds a
-// `&mut Lockfile` alongside a `Box<[TreeContext]>` whose `binaries` queues
-// alias into `lockfile.buffers`; a `&'a Vec<_>` borrow here would force the
-// `TreeContext.binaries` field to carry an unsatisfiable `'static` (the
-// installer outlives no concrete lifetime for its own self-borrowed buffers).
-// `BackRef<Vec<_>>` mirrors the Zig ownership model exactly.
 pub struct PriorityQueueContext {
     pub dependencies: bun_ptr::BackRef<Vec<Dependency>>,
     pub string_buf: bun_ptr::BackRef<Vec<u8>>,
@@ -709,12 +629,6 @@ pub struct PriorityQueueContext {
 
 impl PriorityQueueContext {
     pub(crate) fn less_than(&self, a: DependencyID, b: DependencyID) -> core::cmp::Ordering {
-        // `dependencies` / `string_buf` point at
-        // `lockfile.buffers.{dependencies,string_bytes}`, which are kept alive
-        // for the entire install (the `PackageInstaller` that owns this queue
-        // also borrows the same `Lockfile`). The Vecs may be reallocated by
-        // `fix_cached_lockfile_package_slices`, which is why we re-deref the
-        // `BackRef<Vec>` (header) on every compare instead of caching a slice.
         let deps = self.dependencies.as_slice();
         let buf = self.string_buf.as_slice();
         let a_name = deps[a as usize].name.slice(buf);
@@ -757,22 +671,10 @@ pub(crate) fn normalized_bin_name(name: &[u8]) -> &[u8] {
     name
 }
 
-/// True when a `bin` entry's target value would resolve outside the package
-/// directory (absolute path or `..` traversal). The bin *value* is taken
-/// verbatim from package.json, so without this check a malicious package could
-/// point a bin link at (and chmod) an arbitrary file on disk (the bug class
-/// npm fixed as CVE-2019-16775).
 pub(crate) fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
     if path::is_absolute(target) {
         return true;
     }
-    // Windows drive-relative paths (`C:foo`, `C:..\evil`) are not "absolute"
-    // (no separator after the colon) and their `C:..` component is not a bare
-    // `..`, so they would slip past the depth walk below while still resolving
-    // outside the package directory. A colon in the *first* component can only
-    // be a drive prefix (or an NTFS alternate-data-stream on the leading
-    // segment) — reject it. Colons in later components are left alone so Unix
-    // filenames containing `:` keep working.
     if target
         .split(|&b| b == b'/' || b == b'\\')
         .next()
@@ -1004,12 +906,6 @@ impl<'a> Linker<'a> {
             bstr::BStr::new(abs_target.as_bytes())
         );
 
-        // We have to do an atomic replace here, use a randomly generated
-        // filename in the same folder, read the entire original file
-        // contents using bun.sys.File.readFrom, then write the temporary file, then
-        // overwite the old one with the new one via bun.sys.renameat. And
-        // always unlink the old one. If it fails for any reason then exit
-        // early.
         let mut tmpname_buf = [0u8; 1024];
         let Ok(tmpname) = path::fs::FileSystem::tmpname(
             path::basename(abs_target.as_bytes()),
@@ -1119,15 +1015,6 @@ impl<'a> Linker<'a> {
         abs_dest: &ZStr,
         global: bool,
     ) {
-        // PORT NOTE: Zig declares `var shim_buf: [65536]u8` and later
-        // `@ptrCast(@alignCast(...))`s it to `[*]u16` inside encode_into. In Zig
-        // `@alignCast` is a *runtime safety check* (panics in safe builds on
-        // misalignment), but in Rust constructing a `&mut [u16]` from a pointer
-        // that is not 2-aligned is *immediate language UB* — the reference
-        // validity invariant requires alignment even if never dereferenced.
-        // `[u8; N]` has `align_of == 1`, so the compiler is free to place it at
-        // an odd address. Force 2-byte alignment at the declaration site so the
-        // `*mut u16` slice construction in `encode_into` is provably sound.
         #[repr(align(2))]
         struct ShimBuf([u8; 65536]);
         let mut shim_buf = ShimBuf([0u8; 65536]);
@@ -1161,10 +1048,6 @@ impl<'a> Linker<'a> {
                         return;
                     }
 
-                    // PORT NOTE: borrowck — Zig's `save()`/`defer restore()` returns a
-                    // `ResetScope` holding `&mut Path`, which would keep
-                    // `node_modules_path` exclusively borrowed across `append()`.
-                    // Snapshot the length and restore via `set_length` after.
                     let node_modules_path_save = self.node_modules_path.len();
                     let _ = self.node_modules_path.append(b".bin");
                     // TODO(port): bun.makePath(std.fs.cwd(), ...)
@@ -1296,10 +1179,6 @@ impl<'a> Linker<'a> {
                         return;
                     }
 
-                    // PORT NOTE: reshaped for borrowck — Zig's `var s = path.save();
-                    // defer s.restore();` returns a `ResetScope` holding `&mut Path`;
-                    // capture `len()` and restore via `set_length()` so the path
-                    // can be re-borrowed for `append`/`slice` in between.
                     let node_modules_path_save = self.node_modules_path.len();
                     let _ = self.node_modules_path.append(b".bin");
                     let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
@@ -1454,29 +1333,6 @@ impl<'a> Linker<'a> {
         !strings::eql(self.target_package_name.slice(), self.package_name.slice())
     }
 
-    /// Resolve the absolute target for a bin entry inside `package_dir`.
-    ///
-    /// When redirected into a platform-specific optional dependency (native
-    /// binlink optimization), the platform package may lay the binary out
-    /// differently than the root package's `bin` field expects. esbuild
-    /// mirrors the path exactly (`bin/esbuild` in both) but other packages
-    /// ship the binary at the package root under the bin name (e.g.
-    /// `@anthropic-ai/claude-code` has `bin/claude.exe` in the root package
-    /// but `claude` at the root of `@anthropic-ai/claude-code-linux-x64`,
-    /// which has no `bin` field of its own).
-    ///
-    /// Both candidates come from the root package's `bin` entry - its
-    /// value (`target`) and its key (`bin_name`):
-    ///   1. `<package_dir>/<target>` - the path from the root `bin` field
-    ///   2. `<package_dir>/<bin_name>` - the bin name at package root
-    ///
-    /// Falls through to (1) when nothing exists so the existing
-    /// `skipped_due_to_missing_bin` retry-without-redirect path still fires.
-    // PORT NOTE: reshaped for borrowck — Zig took `*const Linker` but only read
-    // `is_native_binlink_redirect()`. Hoist that bool to a parameter so the
-    // caller can drop its `&self` borrow before mutably calling
-    // `link_bin_or_create_shim`. Result borrows the threadlocal join buffer
-    // (lifetime tied to `package_dir` per `join_abs_string_z`'s signature).
     fn resolve_bin_target<'b>(
         is_native_binlink_redirect: bool,
         package_dir: &'b [u8],
@@ -1534,10 +1390,6 @@ impl<'a> Linker<'a> {
         &self.abs_target_buf[0..off]
     }
 
-    /// Returns the offset into `self.abs_dest_buf` where the destination dir ends
-    /// (i.e. where the bin name should be written).
-    // PORT NOTE: reshaped — Zig returned a `[]u8` view (remain) into abs_dest_buf;
-    // returning an offset avoids overlapping &mut borrows of self.
     pub fn build_destination_dir(&mut self, global: bool) -> usize {
         let dest_dir_without_trailing_slash =
             strings::without_trailing_slash(self.node_modules_path.slice());

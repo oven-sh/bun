@@ -1,9 +1,5 @@
 use core::ptr::NonNull;
 
-/// Zig: `packed struct(u32) { reference_count: u31, finalized: bool }`
-/// First field occupies the low bits, so:
-///   bits 0..=30 → reference_count
-///   bit  31     → finalized
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct WeakPtrData(u32);
@@ -52,13 +48,6 @@ impl Default for WeakPtrData {
     }
 }
 
-/// Implemented by types that embed a `WeakPtrData` field and can be weakly
-/// referenced via `WeakPtr<T>`.
-///
-/// Zig expressed this as `WeakPtr(comptime T: type, data_field: []const u8)`
-/// and used `@field(value, data_field)` to reach the embedded data. Rust has
-/// no comptime field-name reflection, so the field projection becomes a trait
-/// method (typically implemented via `core::mem::offset_of!`).
 pub trait HasWeakPtrData {
     /// Return a pointer to the embedded `WeakPtrData` field on `this`.
     ///
@@ -69,16 +58,7 @@ pub trait HasWeakPtrData {
     unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData;
 }
 
-/// Allow a type to be weakly referenced. This keeps a reference count of how
-/// many weak-references exist, so that when the object is destroyed, the inner
-/// contents can be freed, but the object itself is not destroyed until all
-/// `WeakPtr`s are released. Even if the allocation is present, `WeakPtr<T>::get`
-/// will return `None` after the inner contents are freed.
 pub struct WeakPtr<T: HasWeakPtrData> {
-    // PORT NOTE: LIFETIMES.tsv classifies this field as SHARED → `Weak<T>`,
-    // but this file *is* the definition of the intrusive weak pointer; per
-    // PORTING.md §Pointers ("keep as `*mut T` + manual ref/deref over an
-    // embedded `WeakPtrData`"), the field stays a raw pointer.
     raw_ptr: Option<NonNull<T>>,
 }
 

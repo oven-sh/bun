@@ -3,15 +3,6 @@ use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
 
 use super::node_assert;
 
-/// ```ts
-/// const enum DiffType {
-///     Insert = 0,
-///     Delete = 1,
-///     Equal  = 2,
-/// }
-/// type Diff = { operation: DiffType, text: string };
-/// declare function myersDiff(actual: string, expected: string): Diff[];
-/// ```
 #[bun_jsc::host_fn]
 pub(crate) fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // PERF(port): was stack-fallback (2KB) + ArenaAllocator bulk-free.

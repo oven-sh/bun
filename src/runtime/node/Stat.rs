@@ -11,12 +11,6 @@ pub use bun_sys::PosixStat;
 const MS_PER_S: i64 = bun_core::time::MS_PER_S as i64;
 const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;
 
-/// Stats and BigIntStats classes from node:fs
-// PORT NOTE: Zig `fn StatType(comptime big: bool) type` → const-generic struct.
-// Zig's `const Float = if (big) i64 else f64;` cannot be expressed as a
-// const-generic-dependent type alias in stable Rust, so `to_time_ms` is split
-// into `to_time_ms_i64` / `to_time_ms_f64` and called from the appropriate
-// branch in `stat_to_js`. Diff readers should expect this reshape.
 pub struct StatType<const BIG: bool> {
     pub value: PosixStat,
 }
@@ -46,11 +40,6 @@ impl<const BIG: bool> StatType<BIG> {
 
     // PORT NOTE: reshaped for const-generic type selection — see struct-level note.
     fn to_time_ms_i64(ts: StatTimespec) -> i64 {
-        // On windows, Node.js purposefully misinterprets time values
-        // > On win32, time is stored in uint64_t and starts from 1601-01-01.
-        // > libuv calculates tv_sec and tv_nsec from it and converts to signed long,
-        // > which causes Y2038 overflow. On the other platforms it is safe to treat
-        // > negative values as pre-epoch time.
         #[cfg(windows)]
         let (tv_sec, tv_nsec): (i64, i64) = (
             ((ts.sec as i32) as u32) as i64,
@@ -65,11 +54,6 @@ impl<const BIG: bool> StatType<BIG> {
     }
 
     fn to_time_ms_f64(ts: StatTimespec) -> f64 {
-        // On windows, Node.js purposefully misinterprets time values
-        // > On win32, time is stored in uint64_t and starts from 1601-01-01.
-        // > libuv calculates tv_sec and tv_nsec from it and converts to signed long,
-        // > which causes Y2038 overflow. On the other platforms it is safe to treat
-        // > negative values as pre-epoch time.
         #[cfg(windows)]
         let (tv_sec, tv_nsec): (f64, f64) = (
             ((ts.sec as i32) as u32) as f64,
@@ -248,11 +232,6 @@ impl Stats {
             Stats::Small(v) => v.to_js(global),
         }
     }
-
-    // PORT NOTE: Zig defined `Stats.toJS` as a `@compileError` guard to force callers
-    // toward `toJSNewlyCreated`. Rust has no inherent-method `compile_error!`; the
-    // method is intentionally omitted so misuse is a hard "no method named `to_js`"
-    // compile error instead.
 }
 
 // ported from: src/runtime/node/Stat.zig

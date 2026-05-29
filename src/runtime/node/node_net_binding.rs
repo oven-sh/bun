@@ -15,13 +15,6 @@ use crate::socket::{Listener, NativeCallbacks, NewSocket, SocketFlags, TCPSocket
 // PORT NOTE: reshaped for borrowck — Rust forbids safe `static mut`; use AtomicBool.
 pub(crate) static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true);
 
-// This is only used to provide the getDefaultAutoSelectFamilyAttemptTimeout and
-// setDefaultAutoSelectFamilyAttemptTimeout functions, not currently read by any other code. It's
-// `threadlocal` because Node.js expects each Worker to have its own copy of this, and currently
-// it can only be accessed by accessor functions which run on each Worker's main JavaScript thread.
-//
-// If this becomes used in more places, and especially if it can be read by other threads, we may
-// need to store it as a field in the VirtualMachine instead of in a `threadlocal`.
 thread_local! {
     pub(crate) static AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_DEFAULT: Cell<u32> = const { Cell::new(250) };
 }
@@ -113,11 +106,6 @@ pub(crate) fn set_default_auto_select_family_attempt_timeout(global: &JSGlobalOb
 // PascalCase fns so both spellings resolve.
 pub use self::{BlockList as block_list, SocketAddress as socket_address};
 
-// Zig: `pub const SocketAddress = bun.jsc.Codegen.JSSocketAddress.getConstructor;`
-// Forward to the codegen'd `js_${Type}::get_constructor` wrappers — they go through
-// `jsc_abi_extern!` so the extern uses `extern "sysv64"` on win-x64 (matching
-// C++ `JSC_CALLCONV`). A bare `extern "C"` redecl here would be the wrong ABI on
-// Windows and trips `clashing_extern_declarations`.
 #[allow(non_snake_case)]
 pub fn SocketAddress(global: &JSGlobalObject) -> JSValue {
     crate::generated_classes::js_SocketAddress::get_constructor(global)

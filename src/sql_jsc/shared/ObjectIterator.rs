@@ -1,9 +1,5 @@
 use crate::jsc::{JSGlobalObject, JSObject, JSValue, JsResult};
 
-// PORT NOTE: this iterator holds bare `JSValue` fields and a borrowed
-// `&JSGlobalObject`; it is only sound when constructed on the stack for the
-// duration of a single bind/iteration pass (conservative GC stack scan keeps
-// `array`/`columns`/`current_row` alive). Never `Box` this.
 pub struct ObjectIterator<'a> {
     pub array: JSValue,
     pub columns: JSValue,

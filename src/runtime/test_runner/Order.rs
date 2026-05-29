@@ -10,10 +10,6 @@ use super::execution::{ConcurrentGroup, ExecutionSequence};
 pub struct Order {
     pub groups: Vec<ConcurrentGroup>,
     pub sequences: Vec<ExecutionSequence>,
-    // TODO(port): Zig stored `arena: std.mem.Allocator` here. test_runner is not an
-    // AST/arena crate per PORTING.md, so the field is dropped and `bun.create(arena, ...)`
-    // calls below become `heap::alloc(Box::new(...))`. In Zig these ExecutionEntry
-    // clones were bulk-freed by the arena; revisit ownership.
     pub previous_group_was_concurrent: bool,
     pub cfg: Config,
 }
@@ -269,10 +265,6 @@ pub struct Config {
     pub randomize: Option<bun_core::rand::DefaultPrng>,
 }
 
-/// Exact port of `std.Random.shuffleWithIndex(T, buf, usize)` (vendor/zig/lib/std/Random.zig).
-/// Forward Fisher-Yates: `i` from 0 to len-2, `j = intRangeLessThan(usize, i, len)`.
-/// Must produce the identical permutation to Zig for the same xoshiro256++ state so that
-/// `bun test --randomize --seed=N` is reproducible across the Zig and Rust ports.
 fn shuffle_with_index<T>(r: &mut bun_core::rand::DefaultPrng, buf: &mut [T]) {
     if buf.len() < 2 {
         return;

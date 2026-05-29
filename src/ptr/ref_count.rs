@@ -24,12 +24,6 @@ use std::collections::HashMap;
 #[cfg(debug_assertions)]
 type ArrayHashMap<K, V> = HashMap<K, V>;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Debug stack dump — calls straight into bun_core (T0 owns the std::backtrace
-// fallback). Crash-report symbolication lives in bun_crash_handler and is
-// invoked from there directly when needed.
-// ──────────────────────────────────────────────────────────────────────────
-
 #[inline]
 fn dump_stack_hook(trace: Option<&StoredTrace>, ret_addr: usize) {
     match trace {
@@ -47,11 +41,6 @@ fn dump_stack_hook(trace: Option<&StoredTrace>, ret_addr: usize) {
 // Options
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Options for `RefCount` / `ThreadSafeRefCount`.
-///
-/// PORT NOTE: Zig's `Options` also carried `destructor_ctx: ?type`. A *type*
-/// cannot be a struct field in Rust; it becomes the associated type
-/// `RefCounted::DestructorCtx` instead.
 #[derive(Default)]
 pub struct Options {
     /// Defaults to the type basename.
@@ -63,11 +52,6 @@ pub struct Options {
 // Host-type traits (replace Zig's comptime `field_name` / `destructor` params)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Implemented by types that embed a [`RefCount`] field.
-///
-/// Replaces the Zig comptime parameters `field_name: []const u8`,
-/// `destructor: anytype`, and `options: Options` passed to
-/// `RefCount(T, field_name, destructor, options)`.
 pub trait RefCounted: Sized {
     /// Zig: `options.destructor_ctx orelse void`.
     type DestructorCtx;
@@ -117,11 +101,6 @@ pub trait ThreadSafeRefCounted: Sized {
     }
 }
 
-/// Unifying trait so `RefPtr<T>` works with either ref-count flavor.
-///
-/// PORT NOTE: Zig's `RefPtr` reflected on `@FieldType(T, "ref_count")` and the
-/// private `is_ref_count == unique_symbol` marker to accept either mixin. In
-/// Rust the trait bound IS that check.
 pub trait AnyRefCounted: Sized {
     type DestructorCtx;
 
@@ -163,18 +142,6 @@ pub trait AnyRefCounted: Sized {
 // JS-wrapper finalize → intrusive-refcount release
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Release the JS wrapper's `+1` on an intrusive-refcounted `m_ctx` payload.
-///
-/// `.classes.ts` codegen hands `finalize` the payload as `Box<Self>`; the
-/// allocation may outlive that `Box` if other refs remain, so this leaks the
-/// `Box` back to a raw pointer FIRST (a panic in `before` then leaks instead of
-/// double-freeing siblings), runs `before` against a *shared* borrow, then
-/// drops one ref.
-///
-/// `before` deliberately receives `&T`, never `&mut T`: concurrent `&T` aliases
-/// may exist (e.g. work-pool threads, uws callbacks) while the GC sweeps, so
-/// forming `&mut T` here would be UB. All teardown therefore goes through
-/// `Cell`/`JsCell`/atomic fields.
 #[inline]
 pub fn finalize_js_box<T, F>(boxed: Box<T>, before: F)
 where
@@ -207,31 +174,6 @@ where
 // RefCount (single-threaded, intrusive)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Add managed reference counting to a struct type. This implements a `ref()`
-/// and `deref()` method to add to the struct itself. This mixin doesn't handle
-/// memory management, but is very easy to integrate with `Box::new` + `drop`.
-///
-/// Avoid reference counting when an object only has one owner.
-///
-/// ```ignore
-/// struct Thing {
-///     ref_count: RefCount<Thing>,
-///     other_field: u32,
-/// }
-/// impl RefCounted for Thing {
-///     type DestructorCtx = ();
-///     unsafe fn get_ref_count(this: *mut Self) -> *mut RefCount<Self> {
-///         unsafe { &raw mut (*this).ref_count }
-///     }
-///     unsafe fn destructor(this: *mut Self, _: ()) {
-///         println!("deinit {}", unsafe { (*this).other_field });
-///         drop(unsafe { heap::take(this) });
-///     }
-/// }
-/// ```
-///
-/// When `RefCount` is implemented, it can be used with `RefPtr<T>` to track
-/// where a reference leak may be happening.
 pub struct RefCount<T: RefCounted> {
     raw_count: Cell<u32>,
     thread: ThreadLock,
@@ -374,11 +316,6 @@ impl<T: RefCounted> RefCount<T> {
         assert!(self.raw_count.get() == 0);
     }
 
-    /// Sets the ref count to 0 without running the destructor.
-    ///
-    /// Only use this if you're about to free the object (e.g., with `drop(Box)`).
-    ///
-    /// Don't modify the ref count or create any `RefPtr`s after calling this method.
     pub fn clear_without_destructor(&self) {
         self.assert_single_threaded();
         self.raw_count.set(0);
@@ -426,15 +363,6 @@ impl<T: RefCounted> AnyRefCounted for T {
 // ThreadSafeRefCount (atomic, intrusive)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Add thread-safe reference counting to a struct type. This implements a
-/// `ref()` and `deref()` method to add to the struct itself. This mixin doesn't
-/// handle memory management, but is very easy to integrate with `Box::new` +
-/// `drop`.
-///
-/// See [`RefCount`]'s comment for examples & best practices.
-///
-/// Avoid reference counting when an object only has one owner.
-/// Avoid thread-safe reference counting when only one thread allocates and frees.
 pub struct ThreadSafeRefCount<T: ThreadSafeRefCounted> {
     raw_count: AtomicU32,
     #[cfg(debug_assertions)]
@@ -592,11 +520,6 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
         assert!(self.raw_count.load(Ordering::SeqCst) == 0);
     }
 
-    /// Sets the ref count to 0 without running the destructor.
-    ///
-    /// Only use this if you're about to free the object (e.g., with `drop(Box)`).
-    ///
-    /// Don't modify the ref count or create any `RefPtr`s after calling this method.
     pub fn clear_without_destructor(&self) {
         // This method should only be used if you're about to free the object.
         // You shouldn't be freeing the object if other threads might be using
@@ -740,47 +663,10 @@ pub fn noop_debug_data() -> *mut dyn DebugDataOps {
     NOOP.with(|n| n.get() as *mut dyn DebugDataOps)
 }
 
-// A blanket `impl<T: ThreadSafeRefCounted> AnyRefCounted for T` would overlap
-// with the `RefCounted` blanket above (Rust forbids overlapping blanket impls).
-// Instead, thread-safe hosts opt in via `#[derive(ThreadSafeRefCounted)]`,
-// which emits the per-type `AnyRefCounted` impl alongside the trait impl.
-//
-// Zig: `RefPtr` reflected on `@FieldType(T, "ref_count")` to accept either
-// mixin; the derive is the manual half of that dispatch.
-
 // ──────────────────────────────────────────────────────────────────────────
 // RefPtr
 // ──────────────────────────────────────────────────────────────────────────
 
-/// A pointer to an object implementing `RefCount` or `ThreadSafeRefCount`.
-/// The benefit of this over `*mut T` is that instances of `RefPtr` are tracked.
-///
-/// By using this, you gain the following memory debugging tools:
-///
-/// - `T.ref_count.dump_active_refs()` to dump all active references.
-///
-/// If you want to enforce usage of RefPtr for memory management, you
-/// can remove the forwarded `ref` and `deref` methods from `RefCount`.
-///
-/// # ⚠️ No `Drop` impl — the owned ref must be released *manually*
-///
-/// This mirrors the Zig original, which (having no destructors) never released
-/// on scope exit. `RefPtr` does **not** implement `Drop`: dropping a `RefPtr`
-/// value — including `Option::take()`-then-drop, or letting a struct field
-/// holding one go out of scope — **leaks** the strong ref it owns. On every
-/// path that gives up a `RefPtr` you must explicitly call one of:
-///
-/// - [`deref`](Self::deref) / [`deref_with_context`](Self::deref_with_context)
-///   — release the ref (and destroy `T` if it was the last);
-/// - [`leak`](Self::leak) / [`into_raw`](Self::into_raw) — hand the ref off to
-///   someone else (the inverse of [`from_raw`](Self::from_raw)).
-///
-/// Any new struct field of `RefPtr<T>` type must document, at the field site,
-/// which of its owners' methods discharges this obligation. (Newtypes like
-/// `CookieMapRef` wrap a single owned ref *and* implement `Drop` themselves —
-/// `RefPtr` itself does not.)
-///
-/// See [`RefCount`]'s comment for examples & best practices.
 pub struct RefPtr<T: AnyRefCounted> {
     pub data: NonNull<T>,
     #[cfg(debug_assertions)]
@@ -821,11 +707,6 @@ impl<T: AnyRefCounted> RefPtr<T> {
         }
         // SAFETY: data is live (we hold a ref)
         unsafe { T::rc_deref_with_context(self.as_ptr(), ctx) };
-        // make UAF fail faster (ideally integrate this with ASAN)
-        // PORT NOTE: Zig did `@constCast(self).data = undefined`. In Rust we
-        // cannot mutate through `&self` without UnsafeCell; and `RefPtr` is
-        // consumed-by-value in idiomatic use anyway.
-        // TODO(port): consider taking `self` by value and dropping.
     }
 
     pub fn dupe_ref(&self) -> Self {
@@ -881,26 +762,11 @@ impl<T: AnyRefCounted> RefPtr<T> {
         self.leak()
     }
 
-    /// Borrow the inner `*mut T` without affecting the refcount (analogous to
-    /// `Arc::as_ptr`). The pointer carries the original `heap::alloc`
-    /// provenance, so it is sound to thread it back through APIs that may
-    /// eventually `heap::take` it (e.g. allocator-vtable `free`), provided
-    /// the caller still holds a ref for the duration.
-    ///
-    /// This is the only sanctioned way to mutate the pointee: `RefPtr` is a
-    /// shared-ownership handle, so a `&mut T` accessor would alias with any
-    /// other live `RefPtr`/`&T` to the same allocation. Callers that need
-    /// mutation must go through this raw pointer and uphold the no-alias
-    /// invariant themselves.
     #[inline]
     pub fn as_ptr(&self) -> *mut T {
         self.data.as_ptr()
     }
 
-    /// Borrow the pointee immutably. Named accessor equivalent to
-    /// `<RefPtr<T> as Deref>::deref` — provided so call sites can be explicit
-    /// (the inherent `RefPtr::deref` *decrements the refcount*, so `r.deref()`
-    /// is not the borrow you want).
     #[inline]
     pub fn data(&self) -> &T {
         // SAFETY: holding a `RefPtr` means we own at least one ref, so the
@@ -928,10 +794,6 @@ impl<T: AnyRefCounted> RefPtr<T> {
         unsafe { Self::unchecked_and_unsafe_init(raw_ptr, return_address()) }
     }
 
-    /// Extract the raw pointer, giving up ownership WITHOUT decrementing
-    /// the refcount. The caller is responsible for the ref that this
-    /// RefPtr was holding. After calling this, the RefPtr is invalid
-    /// and must not be used. This is the inverse of `take_ref()`.
     pub fn leak(self) -> *mut T {
         let ptr = self.data.as_ptr();
         #[cfg(debug_assertions)]
@@ -980,13 +842,6 @@ impl<T: AnyRefCounted> core::ops::Deref for RefPtr<T> {
 // ScopedRef
 // ──────────────────────────────────────────────────────────────────────────
 
-/// RAII scope guard for an intrusive refcount: bumps on construction, derefs
-/// on `Drop`. Use to bracket a `ref_()`/`deref()` pair that protects `*T`
-/// across a re-entrant call (Zig: `this.ref(); defer this.deref();`).
-///
-/// Unlike [`RefPtr`] this is not a smart-pointer handle (no `Deref`, not
-/// stored in fields) — it exists solely so the paired deref runs on every
-/// exit path. Requires `DestructorCtx: Default` (the common unit case).
 #[must_use = "dropping immediately releases the ref"]
 pub struct ScopedRef<T: AnyRefCounted>(NonNull<T>)
 where
@@ -1076,13 +931,6 @@ pub trait DebugDataOps {
 #[cfg(debug_assertions)]
 const MAGIC_VALID: u128 = 0x2f84_e51d;
 
-/// Provides Ref tracking. This is not generic over the pointer T to reduce
-/// analysis complexity.
-// PORT NOTE: Zig parameterized on `comptime thread_safe: bool` and selected
-// `Count`/`Lock` types accordingly. Rust cannot select a type from a const
-// bool without a helper trait; instead we parameterize on the `Count` storage
-// type directly (`Cell<u32>` or `AtomicU32`). The lock and `next_id` are made
-// uniformly thread-safe (debug-only — perf irrelevant).
 #[cfg(debug_assertions)]
 pub struct DebugData<Count> {
     // TODO(port): Zig used `align(@alignOf(u32))` to reduce u128 alignment to
@@ -1158,13 +1006,6 @@ impl<Count: CountLoad> DebugDataOps for DebugData<Count> {
     }
 
     fn acquire(&mut self, return_address: usize) -> TrackedRefId {
-        // PORT NOTE: Zig's `acquire` took `count_pointer: *Count` because
-        // `RefPtr.uncheckedAndUnsafeInit` reached into `raw_ptr.ref_count.raw_count`.
-        // The dyn surface cannot name `Count`; the typed call site
-        // (RefCount::ref_/ThreadSafeRefCount::ref_) wires the count_pointer
-        // separately. Here we acquire without updating count_pointer.
-        // TODO(port): plumb count_pointer through AnyRefCounted if leak-dump
-        // needs it for RefPtr-created refs.
         let _guard = self.lock.lock();
         let id = self.alloc_id();
         self.map.insert(
@@ -1246,10 +1087,6 @@ fn generic_dump(
 // maybe_assert_no_refs
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Zig used `@hasField(T, "ref_count")` + `@hasDecl(Rc, "assertNoRefs")`
-/// reflection to make this a no-op for non-ref-counted types. In Rust the
-/// "has ref_count" check IS the trait bound.
-// TODO(port): callers that passed non-ref-counted T must simply not call this.
 pub fn maybe_assert_no_refs<T: AnyRefCounted>(ptr: &T) {
     // SAFETY: `ptr` is a live reference to T
     unsafe { T::rc_assert_no_refs(std::ptr::from_ref::<T>(ptr)) }

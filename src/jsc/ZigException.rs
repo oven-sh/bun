@@ -79,11 +79,6 @@ impl ZigException {
         }
     }
 
-    // PORT NOTE: `ZigException__fromException` is declared in headers.h but
-    // has no C++ body (bindings.cpp dropped it; the only producer is
-    // `JSC__JSValue__toZigException` which writes through an out-param). The
-    // Zig `fromException` re-export is dead code; do not port it.
-
     pub fn add_to_error_list(
         &mut self,
         error_list: &mut Vec<api::JsException>,
@@ -166,11 +161,6 @@ impl Holder {
         Self::zero()
     }
 
-    // PORT NOTE: not just `Drop` — takes `vm` parameter for `reset_arena`. Zig
-    // callers all `defer holder.deinit(vm)`; Rust callers should still call this
-    // explicitly at the tail (it does the arena reset which `Drop` cannot), but
-    // the string-ref release half is also covered by `Drop` below so an early
-    // `?`/return between population and the tail call won't leak WTF string refs.
     pub fn deinit(&mut self, vm: &mut VirtualMachine) {
         if self.loaded {
             // SAFETY: `loaded == true` ⇔ `zig_exception()` has written this slot.
@@ -224,10 +214,6 @@ impl Holder {
 }
 
 impl Drop for Holder {
-    // PORT NOTE: restores the string-ref-release half of Zig's
-    // `defer holder.deinit(vm)`. The explicit `deinit(&mut self, vm)` clears
-    // `loaded` after running, so this is a no-op on the happy path; it only
-    // fires when an early-return/`?`/panic skips the tail `deinit` call.
     fn drop(&mut self) {
         if self.loaded {
             // SAFETY: `loaded == true` ⇔ `zig_exception()` has written this slot.

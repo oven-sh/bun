@@ -39,12 +39,6 @@ pub use bun_jsc::webcore_types::store::{
 // identity-hasher variant; load factor 80 is the std default in Zig.
 pub type Map = HashMap<u64, *mut Store>;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Extension traits — `bun_runtime`-tier behaviour layered on the `bun_jsc`
-// data types. Inherent data-only methods (`size`/`shared_view`/`ref_`/`deref`/
-// `init`/…) live on the `bun_jsc` types directly.
-// ──────────────────────────────────────────────────────────────────────────
-
 pub trait StoreExt {
     fn to_any_blob(&mut self) -> Option<super::Any>;
     fn init_s3_with_referenced_credentials(
@@ -237,11 +231,6 @@ impl StoreExt for Store {
 
                 match &file.pathlike {
                     PathOrFileDescriptor::Fd(fd) => {
-                        // PORT NOTE: Zig `writer.writeStruct(fd)` writes the raw
-                        // bytes of the FD wrapper. `bun_sys::Fd` is
-                        // `#[repr(transparent)]` over an integer (`i32` posix /
-                        // `u64` windows), so its native-endian byte image is
-                        // exactly the inner field's `to_ne_bytes()`.
                         writer.write_all(&fd.0.to_ne_bytes())?;
                     }
                     PathOrFileDescriptor::Path(path) => {
@@ -322,12 +311,6 @@ impl S3Ext for S3 {
         options: Option<JSValue>,
         global_object: &JSGlobalObject,
     ) -> JsResult<S3CredentialsWithOptions> {
-        // Zig: `S3Credentials.getCredentialsWithOptions(this.getCredentials().*, this.options,
-        // options, this.acl, this.storage_class, this.request_payer, globalObject)`.
-        // The Rust associated fn (surfaced via `S3CredentialsExt` in `webcore/S3Client.rs`)
-        // takes `&S3Credentials` instead of by-value because `S3Credentials` carries a
-        // private intrusive ref-count and cannot be struct-copied; the impl deep-copies
-        // internally, matching the Zig `.*` value-copy semantics.
         use crate::webcore::s3_client::S3CredentialsExt as _;
         S3Credentials::get_credentials_with_options(
             self.get_credentials(),
@@ -503,13 +486,6 @@ impl S3Ext for S3 {
 
         let options = s3_client::get_list_objects_options_from_js(global_this, list_options)?;
 
-        // PORT NOTE: Zig passed `options` by-value to both `bun.S3.listObjects`
-        // and `Wrapper.resolvedlistOptions` (implicit struct copy).
-        // `S3ListObjectsOptions` is not `Clone` in Rust (owns `Utf8Slice`s);
-        // box the wrapper first so the options live on the heap, then hand a
-        // borrow to `list_objects` (which only reads them synchronously to
-        // build the search-params string). The wrapper retains ownership for
-        // `Drop` after the async callback — matching Zig's `deinit()`.
         let wrapper = bun_core::heap::into_raw(Box::new(Wrapper {
             promise,
             // SAFETY: `store` is a live heap `Store`; `retained` bumps the
@@ -538,10 +514,6 @@ impl BytesExt for Bytes {
     /// Mirrors Zig `Store.init(ptr[0..len], .{ .vtable = MmapFreeInterface.vtable })`.
     #[cfg(unix)]
     fn init_mmap(slice: &'static mut [u8]) -> Bytes {
-        // Stateless allocator vtable whose `free` munmap's. Same pattern as
-        // `LinuxMemFdAllocator` but without the stateful fd. Body is fully
-        // safe (`bun_sys::munmap` is a safe wrapper); the safe fn item coerces
-        // into `AllocatorVTable::free_only`'s raw fn-pointer slot.
         fn free(_: *mut core::ffi::c_void, buf: &mut [u8], _: bun_alloc::Alignment, _: usize) {
             if let bun_sys::Result::Err(err) = bun_sys::munmap(buf.as_mut_ptr(), buf.len()) {
                 bun_core::Output::debug_warn(format_args!(
@@ -574,10 +546,6 @@ impl BytesExt for Bytes {
     }
 
     fn to_internal_blob(&mut self) -> super::Internal {
-        // Zig built an `array_list.Managed(u8)` over the same allocator and
-        // zeroed self. `Internal.bytes` is `Vec<u8>` (global allocator), so
-        // round-trip only when the storage *is* the global allocator; otherwise
-        // copy + free through the original allocator (e.g. memfd → munmap).
         let bytes = if self.ptr.is_none() {
             Vec::new()
         } else if core::ptr::eq(

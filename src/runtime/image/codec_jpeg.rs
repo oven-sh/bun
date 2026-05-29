@@ -40,13 +40,6 @@ unsafe extern "C" {
     fn tj3SetCroppingRegion(h: tjhandle, r: CropRegion) -> c_int;
     fn tj3GetScalingFactors(n: *mut c_int) -> *const ScalingFactor;
     pub(crate) fn tj3Free(ptr: *mut c_void);
-    // ICC profile transport: the APP2 ICC_PROFILE marker carries the source's
-    // colour space (sRGB implicit when absent; Display-P3 / Adobe RGB / Jpegli
-    // XYB / … explicit when present). tj3GetICCProfile reads the decoded
-    // marker after TJPARAM_SAVEMARKERS is set to 2 or 4 — it allocates via
-    // libjpeg-turbo's allocator and returns it in *iccBuf for the caller to
-    // tj3Free. tj3SetICCProfile copies the bytes into the encoder's state so
-    // the input buffer can be freed immediately after.
     fn tj3GetICCProfile(h: tjhandle, icc_buf: *mut *mut u8, icc_size: *mut usize) -> c_int;
     fn tj3SetICCProfile(h: tjhandle, icc_buf: *const u8, icc_size: usize) -> c_int;
 }
@@ -154,11 +147,6 @@ pub fn decode(
 
     let mut w = src_w;
     let mut ht = src_h;
-    // DCT-domain scaling: if the pipeline will downscale, ask libjpeg-turbo
-    // for the smallest M/8 IDCT that still ≥ target. The IDCT is where the
-    // decode time goes, so this is roughly (8/M)² faster AND the RGBA
-    // buffer shrinks by the same factor — both speed and RSS win in one
-    // place. The subsequent resize pass takes it the rest of the way.
     if hint.target_w != 0 && hint.target_h != 0 && (hint.target_w < src_w || hint.target_h < src_h)
     {
         let mut n: c_int = 0;
@@ -253,16 +241,6 @@ pub fn decode(
         return Err(codecs::Error::DecodeFailed);
     }
 
-    // Extract the APP2 ICC profile (if the source carried one). The marker
-    // parser ran during tj3DecompressHeader, so this is a copy-out of
-    // already-parsed state. `tj3GetICCProfile` allocates via libjpeg-turbo's
-    // allocator; re-home into the global allocator so the rest of the
-    // pipeline can free it uniformly. A decode that simply has no profile
-    // returns non-zero with iccSize==0 — treat that as "no profile", not an
-    // error. OutOfMemory on the dupe is propagated (not swallowed) — the
-    // pixels may be Display P3 / Adobe RGB / XYB, where "no profile"
-    // silently reinterprets them as sRGB and shifts colour, which is the
-    // exact bug #30197 is about.
     let mut icc_ptr: *mut u8 = core::ptr::null_mut();
     let mut icc_size: usize = 0;
     let icc: Option<Vec<u8>> = 'blk: {
@@ -321,11 +299,6 @@ pub(crate) fn encode(
         // SAFETY: `h` is live.
         unsafe { tj3Set(h, TJPARAM_PROGRESSIVE, 1) };
     }
-    // Embed the source colour profile as an APP2/ICC_PROFILE marker. The
-    // library copies the bytes, so the caller can free `icc_profile` right
-    // after this call returns. A non-zero return here means the profile
-    // was malformed — drop it rather than fail the encode; a JPEG without a
-    // profile is still a valid JPEG (implicitly sRGB). See #30197.
     if let Some(p) = icc_profile {
         if !p.is_empty() {
             // SAFETY: `h` is live; ptr/len come from a valid `&[u8]`; the

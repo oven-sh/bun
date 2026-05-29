@@ -116,10 +116,6 @@ impl File {
     pub fn make_open(path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
         Self::make_openat(Fd::cwd(), path, flags, mode)
     }
-    /// File.zig `makeOpenat` — `openat`; on failure, `bun.makePath(dir, dirname(path))`
-    /// (errors from `makePath` are swallowed, matching `catch {}` in Zig) then
-    /// retry the open once. If `path` has no dirname, the original error is
-    /// returned.
     pub fn make_openat(dir: impl AsFd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
         let dir = dir.as_fd();
         match openat_a(dir, path, flags, mode) {
@@ -213,10 +209,6 @@ impl File {
         self.read_to_end_with_array_list(&mut v, SizeHint::ProbablySmall)?;
         Ok(v)
     }
-    /// `File.readToEndWithArrayList(buf, hint)` — like `read_all` but takes a
-    /// `SizeHint` so callers can pre-reserve. Returns total bytes appended.
-    /// File.zig:298 — `probably_small` reserves 64; `unknown_size` fstats and
-    /// reserves `size+16`.
     pub fn read_to_end_with_array_list(&self, list: &mut Vec<u8>, hint: SizeHint) -> Maybe<usize> {
         match hint {
             SizeHint::ProbablySmall => list.reserve(64),
@@ -304,10 +296,6 @@ impl File {
     pub fn stat(&self) -> Maybe<Stat> {
         fstat(self.handle)
     }
-    /// Port of `bun.sys.File.kind` (File.zig:220).
-    ///
-    /// Be careful about using this on Linux or macOS — calls `fstat()`
-    /// internally there. On Windows it routes through `GetFileType`.
     pub fn kind(&self) -> Maybe<FileKind> {
         #[cfg(windows)]
         {
@@ -349,13 +337,6 @@ impl File {
         }
         close(fd)
     }
-    /// `File.closeAndMoveTo` — atomically rename `src` → `dest` (cwd-relative),
-    /// closing the handle after the rename so `move_file_z_with_handle`'s
-    /// EXDEV fallback (fstat/lseek/copy on `from_handle`) sees a live handle.
-    /// (Zig closes first on Windows because its rename uses `MoveFileExW`; the
-    /// Rust port goes through `rename_at_w` → `NtSetInformationFile` which
-    /// opens its own source handle, so keeping `self` open across the call is
-    /// fine and avoids passing a closed handle into the EXDEV fallback.)
     pub fn close_and_move_to(
         self,
         src: &ZStr,
@@ -402,14 +383,6 @@ impl File {
             Err(e) => Err(e.into()),
         }
     }
-    /// `bun.sys.File.readFromUserInput` (File.zig:367) — normalize a
-    /// user-provided relative path against the resolver's cached
-    /// `top_level_dir` (NOT a fresh `getcwd()`), then `readFrom`.
-    ///
-    /// Zig reads `bun.fs.FileSystem.instance.top_level_dir` directly; in the
-    /// Rust crate map that lives in `bun_resolver::fs` (T5) which `bun_sys`
-    /// (T1) must not depend on (PORTING.md §Forbidden: no fn-ptr hooks to
-    /// break dep cycles). Callers pass `top_level_dir` explicitly instead.
     pub fn read_from_user_input(
         dir: impl AsFd,
         top_level_dir: &[u8],
@@ -466,10 +439,6 @@ impl File {
 pub(crate) mod tests {
     use super::*;
 
-    /// Serialize fd-touching tests: `cargo test` runs `#[test]` fns as
-    /// threads in one process; a sibling test's `open()` between a `Drop`
-    /// close and the `fstat` assertion could be allocated the just-closed fd
-    /// (POSIX lowest-fd guarantee), making the assertion spuriously fail.
     pub(crate) static FD_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn open_cwd() -> File {

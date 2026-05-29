@@ -27,15 +27,6 @@ use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
 use bun_transpiler::{self as transpiler, Transpiler};
 use bun_url::URL;
 
-/// Port of `bun.LazyBool` (bun.zig:2234) — caches the result of a getter the
-/// first time `get()` is called. Zig used `@fieldParentPtr` to recover the
-/// containing struct from the field address; Rust has no field-parent-pointer
-/// so the getter receives `&mut PackageManager` explicitly and the caller
-/// passes `self` (the field is always read via `self.ci_mode.get(self)` in
-/// PackageManager — see `is_continuous_integration`). Because the field lives
-/// inside the parent and we'd otherwise need a simultaneous `&mut self.ci_mode`
-/// + `&self` borrow, model the cache as a `Cell<Option<bool>>` and read the
-/// parent through a raw pointer (mirrors Zig's non-exclusive `*Parent`).
 pub struct LazyBool<F> {
     value: core::cell::Cell<Option<bool>>,
     getter: F,
@@ -59,28 +50,15 @@ impl LazyBool<fn(&PackageManager) -> bool> {
     }
 }
 
-// `bun.spawn.process.WaiterThread` — the force-waiter-thread flag was moved
-// down into `bun_spawn::process` (MOVE_DOWN b0); install just flips it during
-// init. The full waiter-thread machinery (queue, signalfd, loop) lives in
-// `bun_runtime::api::bun::process` and *reads* the same flag.
 use bun_spawn::process::WaiterThread;
 
 // TODO(b0): RunCommand arrives from move-in (bun_runtime::cli::RunCommand → install).
 use crate::RunCommand;
 
-/// `Command::Context` shim — Zig's `Command.Context` (= `*ContextData`) lives in
-/// `bun_runtime::cli::Command`; the option-carrying `ContextData` shape was lifted
-/// into `bun_options_types::context` so install can reference it without the CLI
-/// tier. Re-export under the Zig path so `init()` / `install_with_manager()` /
-/// `setup_global_dir()` etc. keep their `Command::Context` signatures.
 #[allow(non_snake_case)]
 pub mod Command {
     pub use bun_options_types::context::{Context, ContextData};
 
-    /// Hook (GENUINE b0): `bun_runtime::cli::Command::get()` returns the
-    /// process-global `*ContextData`. The static itself lives in tier-6
-    /// (`cli.rs`); install only needs a pointer for the bundler hook in
-    /// `update_package_json_and_install`. Registered once at startup by bun_cli.
     pub(crate) static GLOBAL_CTX: core::sync::atomic::AtomicPtr<ContextData> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
@@ -99,10 +77,6 @@ pub mod Command {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Sub-module declarations — Zig basenames preserved per PORTING.md, hence
-// explicit #[path] attrs for PascalCase / camelCase file names.
-// ──────────────────────────────────────────────────────────────────────────
 #[path = "PackageManager/CommandLineArguments.rs"]
 pub mod command_line_arguments;
 #[path = "PackageManager/install_with_manager.rs"]
@@ -144,20 +118,10 @@ pub mod options {
     pub use super::package_manager_options::*;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Only the `printHelp` text is needed by `CommandLineArguments::parse`. The
-// `exec()` body remains in bun_cli (it depends on tier-6 ScanCommand /
-// PackCommand etc. and is the *consumer* of install, not a dependency).
-// ──────────────────────────────────────────────────────────────────────────
 pub(crate) struct PackageManagerCommand;
 
 impl PackageManagerCommand {
     pub(crate) fn print_help() {
-        // the output of --help uses the following syntax highlighting
-        // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
-        // use [foo] for multiple arguments or flags for foo.
-        // use <bar> to emphasize 'bar'
-
         let intro_text = r"
 <b>Usage<r>: <b><green>bun pm<r> <cyan>[flags]<r> <blue>[\<command\>]<r>
 
@@ -209,10 +173,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.
     }
 }
 
-// `bun.resolver.DirInfo` — only stored as a raw pointer in
-// `ScriptRunEnvironment.root_dir_info`. `bun_resolver` is a lower tier than
-// `bun_install` (already a transitive dep via `bun_transpiler` → `bun_bundler`),
-// so import the real type directly instead of an opaque ZST stub.
 use bun_resolver::dir_info::DirInfo;
 
 use crate::lockfile_real::package as Package;
@@ -335,11 +295,6 @@ pub type AsyncNetworkTaskQueue = UnboundedQueue<NetworkTask /* , .next */>;
 pub(crate) type SuccessFn = fn(&mut PackageManager, DependencyID, PackageID);
 pub(crate) type FailFn = fn(&mut PackageManager, &Dependency, PackageID, Error);
 
-// Default to a maximum of 64 simultaneous HTTP requests for bun install if no proxy is specified
-// if a proxy IS specified, default to 64. We have different values because we might change this in the future.
-// https://github.com/npm/cli/issues/7072
-// https://pnpm.io/npmrc#network-concurrency (pnpm defaults to 16)
-// https://yarnpkg.com/configuration/yarnrc#networkConcurrency (defaults to 50)
 const DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL: usize = 64;
 const DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL_FOR_PROXIES: usize = 64;
 
@@ -353,11 +308,6 @@ pub struct PackageManager {
     pub cache_directory_: Option<bun_sys::Dir>, // TODO(port): std.fs.Dir → bun_sys::Dir
     pub cache_directory_path: ZBox,             // TODO(port): lifetime — singleton-leaked
     pub root_dir: &'static mut fs::DirEntry,
-    // allocator dropped per §Allocators (was `bun.default_allocator`). For the
-    // handful of sites that allocated AST nodes via `Expr.allocate(manager.allocator, …)`
-    // — i.e. nodes that must outlive `Expr.Data.Store.reset()` across workspace
-    // iterations — use `ast_arena` instead. The manager is a leaked singleton, so
-    // this arena has process lifetime, matching the Zig allocator's semantics.
     pub ast_arena: bun_alloc::Arena,
     // TODO(port): lifetime — LIFETIMES.tsv classifies this BORROW_PARAM → `&'a mut bun_ast::Log`
     // (struct gets `<'a>`). Kept as raw ptr because PackageManager is a leaked singleton stored
@@ -415,10 +365,6 @@ pub struct PackageManager {
     pub patch_calc_hash_batch: thread_pool::Batch,
     pub patch_task_fifo: PatchTaskFifo,
     pub patch_task_queue: PatchTaskQueue,
-    /// We actually need to calculate the patch file hashes
-    /// every single time, because someone could edit the patchfile at anytime
-    ///
-    /// TODO: Does this need to be atomic? It seems to be accessed only from the main thread.
     pub pending_pre_calc_hashes: AtomicU32,
     pub pending_tasks: AtomicU32,
     pub total_tasks: u32,
@@ -475,11 +421,6 @@ pub struct PackageManager {
 
     pub workspace_package_json_cache: WorkspacePackageJSONCache,
 
-    // normally we have `UpdateRequests` to work with for adding/deleting/updating packages, but
-    // if `bun update` is used without any package names we need a way to keep information for
-    // the original packages that are updating.
-    //
-    // dependency name -> original version information
     pub updating_packages: StringArrayHashMap<PackageUpdateInfo>,
 
     pub patched_dependencies_to_remove:
@@ -532,16 +473,6 @@ pub enum Subcommand {
     Info,
     Why,
     Scan,
-    // bin,
-    // hash,
-    // @"hash-print",
-    // @"hash-string",
-    // cache,
-    // @"default-trusted",
-    // untrusted,
-    // trust,
-    // ls,
-    // migrate,
 }
 
 impl Subcommand {
@@ -646,21 +577,12 @@ pub struct ScriptRunEnvironment {
     pub transpiler: Transpiler<'static>,
 }
 
-// MOVE_DOWN: data struct + accessors live in `bun_install_types::WakeHandler`
-// (single definition the resolver also stores). The `handler` second arg is
-// erased to `*mut c_void` there because that crate cannot name
-// `PackageManager`; `wake_raw()` casts it back at the call site.
 pub use bun_install_types::resolver_hooks::WakeHandler;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Globals / statics
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Port of Zig `pub var verbose_install: bool`. Set once during
-/// single-threaded CLI startup (`PackageManagerOptions::load`) and read on
-/// both the main thread and ThreadPool workers thereafter — `AtomicBool` with
-/// `Relaxed` is sufficient (no ordering against other state; the write
-/// happens-before any worker spawn).
 pub(crate) static VERBOSE_INSTALL: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
@@ -676,20 +598,6 @@ impl PackageManager {
         VERBOSE_INSTALL.store(v, core::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Reborrow the externally-owned [`bun_ast::Log`].
-    ///
-    /// `log` is `*mut Log` (not `&'a mut Log`) only because `PackageManager` is
-    /// a leaked `'static` singleton stored in a global; threading the borrow
-    /// lifetime through `static INSTANCE` is deferred (see field comment). The
-    /// `Log` itself outlives the manager — it's the CLI-scope log allocated in
-    /// `Command::init` before the manager exists.
-    ///
-    /// The returned lifetime is **decoupled** from `&self`: callers routinely
-    /// hold a borrow into `self.lockfile`/`self.options` while appending an
-    /// error, and the `Log` is a disjoint allocation. This mirrors Zig's
-    /// `*PackageManager` field-aliasing; it is the caller's responsibility not
-    /// to alias the returned `&mut Log` (single-threaded by construction —
-    /// only the main install loop touches `log`).
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn log_mut<'a>(&self) -> &'a mut bun_ast::Log {
@@ -701,13 +609,6 @@ impl PackageManager {
         unsafe { &mut *p }
     }
 
-    /// Reborrow the active progress download node (`self.progress.root`-rooted).
-    /// Panics if no download node is active — callers gate on
-    /// `options.log_level.show_progress()`, which is the same condition that
-    /// populates `downloads_node`. Lifetime is decoupled from `&self` for the
-    /// same reason as [`log_mut`]: `Progress` is a stable allocation on the
-    /// leaked-singleton manager and callers interleave node updates with
-    /// disjoint `&mut self.X` field writes.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn downloads_node_mut<'a>(&self) -> &'a mut ProgressNode {
@@ -718,16 +619,6 @@ impl PackageManager {
         unsafe { &mut *p }
     }
 
-    /// Reborrow the active scripts progress node, if any.
-    ///
-    /// Unlike [`downloads_node_mut`], this returns `Option` — `scripts_node` is
-    /// `None` until the install pass (hoisted/isolated) populates it with a
-    /// pointer to a stack-local `ProgressNode` that outlives the pass. Lifetime
-    /// is decoupled from `&self` for the same reason as [`downloads_node_mut`]:
-    /// callers interleave node updates with disjoint `&mut self.X` writes, and
-    /// the pointee lives on the *caller's* stack, not inside the manager.
-    /// Single-threaded by construction (main install loop only — see
-    /// `lifecycle_script_runner` "monotonic is okay" comments).
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn scripts_node_mut<'a>(&self) -> Option<&'a mut ProgressNode> {
@@ -738,17 +629,6 @@ impl PackageManager {
         Some(unsafe { p.as_mut() })
     }
 
-    /// Port of Zig `pub fn get() *PackageManager` (PackageManager.zig:442) —
-    /// the global singleton accessor. Associated-fn spelling that forwards to
-    /// the free [`get`] so callers can write `PackageManager::get()` (the Zig
-    /// `PackageManager.get()` call shape).
-    ///
-    /// Returns `&'static` (shared) — NOT `&'static mut`. Thread-pool workers
-    /// (`Repository` git ops, npm `SaveTask`, `UninstallTask::run`) call this
-    /// concurrently with the main thread; a shared ref is the only sound
-    /// shape. Mutating accessors (`increment_pending_tasks`, `wake`, …) take
-    /// `&self` and use interior atomics. For exclusive in-place mutation use
-    /// the raw [`get`] free fn with field projection (see its doc).
     #[inline]
     pub fn get() -> &'static PackageManager {
         // SAFETY: `holder::RAW_PTR` is written once on the main thread by
@@ -758,10 +638,6 @@ impl PackageManager {
         unsafe { &*get() }
     }
 
-    /// Port of `PackageManager.init` (src/install/PackageManager.zig:568).
-    /// Associated-fn spelling that forwards to the free [`init`] so callers
-    /// can write `PackageManager::init(ctx, cli, subcommand)` (the Zig
-    /// `PackageManager.init` call shape).
     #[inline]
     pub fn init(
         ctx: Command::Context,
@@ -772,10 +648,6 @@ impl PackageManager {
     }
 }
 
-// Zig: `const TimePasser = struct { pub var last_time: u64 = 0; };` — a one-field
-// namespace whose only consumer is `hasEnoughTimePassedBetweenWaitingMessages`.
-// PORTING.md §Global mutable state: counter → Atomic. Main-thread-only so
-// `Relaxed` matches the Zig non-atomic read/write.
 static TIME_PASSER_LAST_TIME: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 thread_local! {
@@ -802,30 +674,12 @@ pub(crate) fn cached_package_folder_name_buf() -> *mut PathBuffer {
 mod holder {
     use super::PackageManager;
     use bun_dotenv as dot_env;
-    // OWNED — global singleton, leaked.
-    // PORT NOTE: LIFETIMES.tsv prescribes `OnceLock<Box<PackageManager>>` for Holder.ptr, but
-    // Zig uses `var ptr: *PackageManager = undefined` then assigns via allocatePackageManager()
-    // and later writes `manager.* = ...` in-place. OnceLock<Box<T>> can't express
-    // allocate-then-fill (no `&mut` after set). Keep a raw ptr for now.
-    // TODO(port): in-place init — reconcile with OnceLock<Box<PackageManager>>.
-    // PORTING.md §Global mutable state: ptr written once on main thread, read
-    // from worker threads → AtomicPtr (Release/Acquire pairs the publish).
     pub(super) static RAW_PTR: core::sync::atomic::AtomicPtr<PackageManager> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
     pub(super) static INITIALIZED: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
-    // Process-lifetime env storage for `init()`. `dot_env::Loader<'a>` borrows `&'a mut Map`,
-    // so the pair is self-referential and cannot live in `OnceLock<T>` (which only yields `&T`).
-    // Mirrors Zig's `ctx.allocator.create(dot_env::Map)` / `create(dot_env::Loader)` — owned by
-    // the singleton, never freed. Avoids `Box::leak` per PORTING.md §Forbidden.
-    // TODO(port): retype `dot_env::Loader.map` to `Box<Map>` so this becomes an owned field
-    // (`Box<dot_env::Loader>`) on `PackageManager` and these statics disappear.
-    // Write-once during single-threaded init; never read afterwards (kept only
-    // to anchor the allocation). `AtomicCell<*mut T>` — payload is `Copy` and
-    // pointer-sized, so `.store()` is a safe Release write (no `RacyCell`
-    // raw-ptr deref needed).
     pub(super) static ENV_MAP: bun_core::AtomicCell<*mut dot_env::Map> =
         bun_core::AtomicCell::new(core::ptr::null_mut());
     pub(super) static ENV_LOADER: bun_core::AtomicCell<*mut dot_env::Loader<'static>> =
@@ -836,10 +690,6 @@ mod holder {
     /// PORTING.md §Forbidden — never `Box::leak` to mint `&'static`.
     pub(super) static ABS_CA_FILE_NAME: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
 
-    /// Process-lifetime storage for `http::http_thread::InitOpts.ca` C-strings
-    /// (Zig: `manager.allocator.dupeZ` per entry, never freed). The HTTP thread
-    /// reads these asynchronously after `init()` returns, so they must outlive
-    /// the local that builds them.
     pub(super) static CA: std::sync::OnceLock<Vec<bun_core::ZBox>> = std::sync::OnceLock::new();
 }
 
@@ -865,13 +715,6 @@ impl PackageManager {
         self.update_requests = Box::default();
     }
 
-    /// Zig: `pm.lockfile.loadFromCwd(pm, allocator, log, attempt_loading_from_other_lockfile)`.
-    ///
-    /// PORT NOTE: reshaped for borrowck — the Zig call passes `pm` as a separate
-    /// argument while the receiver borrows `pm.lockfile`, which is a
-    /// self-referential split borrow in Rust. Encapsulated here so callers stay
-    /// in safe code: the returned `LoadResult` mutably borrows `self` for its
-    /// lifetime, after which `self.lockfile` holds the loaded data.
     pub fn load_lockfile_from_cwd<const ATTEMPT_OTHER: bool>(
         &mut self,
     ) -> lockfile::LoadResult<'_> {
@@ -938,12 +781,6 @@ impl PackageManager {
     }
 
     pub fn http_proxy(&mut self, url: &URL<'_>) -> Option<URL<'static>> {
-        // `self.env` is `NonNull<dot_env::Loader<'static>>`; `get_http_proxy_for`
-        // returns `Option<URL<'a>>` where `'a` is the loader's map lifetime —
-        // i.e. `'static` here. The lifetime contract (env-map values are
-        // process-lifetime `Box<[u8]>`) is encapsulated in `bun_dotenv`, not at
-        // every call site (PORTING.md §Forbidden: never mint `'static` from
-        // a borrowed reference).
         self.env_mut().get_http_proxy_for(url)
     }
 
@@ -957,12 +794,6 @@ impl PackageManager {
 
     #[inline]
     pub fn is_continuous_integration(&mut self) -> bool {
-        // PORT NOTE: Zig `LazyBool.get` recovers `*PackageManager` via
-        // `@fieldParentPtr("ci_mode", self)`. Rust has no field-parent-pointer,
-        // so pass the parent explicitly. `ci_mode.value` is a `Cell` so a
-        // shared `&self` projection suffices — both the receiver `&self.ci_mode`
-        // and the `&PackageManager` arg are shared reborrows of `*self` and may
-        // freely overlap.
         let this: &PackageManager = self;
         this.ci_mode.get(this)
     }
@@ -1040,10 +871,6 @@ impl PackageManager {
         is_done_fn: fn(&mut C) -> bool,
     ) {
         Output::flush();
-        // PORT NOTE: Zig `sleepUntil(closure: anytype, isDoneFn)` passes a `*Closure` and
-        // a fn-pointer that mutates it. `AnyEventLoop::tick_raw` takes the type-erased
-        // `(*mut c_void, fn(*mut c_void) -> bool)`; trampoline through a small wrapper so
-        // `is_done_fn` receives `&mut C` and can drive `run_tasks` / record `err`.
         struct Erased<C> {
             ctx: *mut C,
             is_done: fn(&mut C) -> bool,
@@ -1083,12 +910,6 @@ impl PackageManager {
     }
 
     pub fn ensure_temp_node_gyp_script(&mut self) -> Result<(), Error> {
-        // TODO(port): narrow error set
-        // PORT NOTE: Zig `bun.once` caches the `()` result. The body itself is
-        // already idempotent (early-returns when `node_gyp_tempdir_name` is
-        // non-empty), so a simple `AtomicBool` ran-flag matches semantics.
-        // NB: not `bun_core::run_once!` — body is fallible and the contract is
-        // "2nd call = Ok(()) regardless of 1st outcome" (D006).
         if ENSURE_TEMP_NODE_GYP_SCRIPT_ONCE.swap(true, Ordering::AcqRel) {
             return Ok(());
         }
@@ -1102,13 +923,6 @@ impl PackageManager {
         // encapsulates the deref under the back-reference invariant.
         self.env.as_ref().expect("env initialised").get()
     }
-    /// Reborrow the process-global env loader.
-    ///
-    /// Lifetime is decoupled from `&self` for the same reason as [`log_mut`] /
-    /// [`downloads_node_mut`]: the loader is a singleton-leaked allocation
-    /// outside the manager (set once in `init()`), and callers interleave env
-    /// mutation with disjoint `&mut self.X` field writes (e.g. `find_commit`
-    /// takes `env`, `log`, and reads `lockfile` in the same argument list).
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn env_mut<'a>(&self) -> &'a mut dot_env::Loader<'static> {
@@ -1125,10 +939,6 @@ impl PackageManager {
 // bun.once wrappers
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): bun.once returns a struct whose .call() runs the closure exactly once
-// and caches the result. `Transpiler` is non-`Copy` and self-referential, so cache
-// a process-static raw pointer (mirrors Zig `var ..: Transpiler = undefined;`).
-// PORTING.md §Global mutable state: init-once ptr → AtomicPtr.
 static CONFIGURE_ENV_FOR_SCRIPTS_ONCE: core::sync::atomic::AtomicPtr<
     transpiler::Transpiler<'static>,
 > = core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
@@ -1138,19 +948,8 @@ fn configure_env_for_scripts_run(
     ctx: Command::Context,
     log_level: package_manager_options::LogLevel,
 ) -> Result<transpiler::Transpiler<'static>, Error> {
-    // We need to figure out the PATH and other environment variables
-    // to do that, we re-use the code from bun run
-    // this is expensive, it traverses the entire directory tree going up to the root
-    // so we really only want to do it when strictly necessary
-    // PORT NOTE: `var this_transpiler: Transpiler = undefined` — Zig leaves it uninit and
-    // RunCommand.configureEnvForRun fully initializes via out-param. Transpiler is NOT
-    // all-zero-valid POD, so `zeroed()` is wrong; use MaybeUninit and assume_init after fill.
     let mut this_transpiler_slot =
         core::mem::MaybeUninit::<transpiler::Transpiler<'static>>::uninit();
-    // Zig spec PackageManager.zig:322 passes `this.env` (a `*DotEnv.Loader`).
-    // `self.env` is `Option<BackRef<Loader>>` here; pass the raw pointer so
-    // the shim's `Transpiler::init` reuses the manager's loader instead of
-    // allocating a fresh singleton.
     let env_ptr: Option<*mut dot_env::Loader<'static>> = this.env.map(|p| p.as_ptr());
     let _ = RunCommand::configure_env_for_run(
         ctx,
@@ -1434,16 +1233,6 @@ extern "C" fn deinit_caches_at_exit() {
     unsafe { (*ptr).deinit_caches() };
 }
 
-/// Returns the raw singleton pointer (Zig: `pub fn get() *PackageManager`).
-///
-/// Intentionally returns `*mut` rather than `&'static mut`: Zig's `*T` freely
-/// aliases, and this accessor is invoked from thread-pool workers
-/// (`UninstallTask::run`, npm `SaveTask`, `Repository` git ops) concurrently
-/// with the main thread holding the `&mut PackageManager` returned by `init()`.
-/// Materializing `&'static mut` here would create aliased mutable references
-/// (UB). Callers must form their own narrowly-scoped reference via raw-pointer
-/// projection (e.g. `unsafe { &(*get()).cache_directory_path }`) and justify
-/// exclusivity / atomicity at the deref site.
 pub fn get() -> *mut PackageManager {
     // `allocate_package_manager()` is the sole writer and runs on the main
     // thread before any caller of `get()`; Acquire pairs with its Release.
@@ -1454,18 +1243,6 @@ pub fn get() -> *mut PackageManager {
 // init
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Returns `&'static mut PackageManager` — the process-singleton (held in
-/// `holder::RAW_PTR`) is leaked for the process lifetime and `init()` is called
-/// exactly once on the single CLI dispatch thread (PackageManager.zig:568). Every
-/// CLI command immediately reborrows the result as `&mut` for the command's
-/// duration; centralising the deref here removes a dozen identical
-/// `unsafe { &mut *ptr }` blocks at call sites.
-///
-/// Thread-pool workers (`UninstallTask::run`, npm `SaveTask`, `Repository` git ops)
-/// project `&(*get()).field` concurrently once tasks are scheduled — same
-/// aliasing story as before this change (the prior callers already held `&mut`
-/// across those points). The raw [`get`] accessor remains `*mut` for those
-/// worker-side projections.
 pub fn init(
     ctx: Command::Context,
     cli: CommandLineArguments,
@@ -1473,10 +1250,6 @@ pub fn init(
 ) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
     // TODO(port): narrow error set
     if cli.global {
-        // Zig: `if (ctx.install) |opts|` — non-consuming peek. `ctx.install` is
-        // `Option<Box<BunInstall>>` borrowed via `&mut ContextData`; reborrow with
-        // `as_deref()` so the boxed config remains in `ctx` for the
-        // `get_or_insert_with` calls below (npmrc loading).
         let mut explicit_global_dir: &[u8] = b"";
         if let Some(opts) = ctx.install.as_deref() {
             explicit_global_dir = opts.global_dir.as_deref().unwrap_or(explicit_global_dir);
@@ -1557,13 +1330,6 @@ pub fn init(
         let mut this_cwd: &[u8] = original_cwd;
         let mut created_package_json = false;
         let child_json: bun_sys::File = 'child: {
-            // if we are only doing `bun install` (no args), then we can open as read_only
-            // in all other cases we will need to write new data later.
-            // this is relevant because it allows us to succeed an install if package.json
-            // is readable but not writable
-            //
-            // probably wont matter as if package.json isn't writable, it's likely that
-            // the underlying directory and node_modules isn't either.
             let need_write = subcommand != Subcommand::Install || cli.positionals.len() > 1;
 
             loop {
@@ -1627,12 +1393,6 @@ pub fn init(
 
             if subcommand == Subcommand::Install {
                 if cli.positionals.len() > 1 {
-                    // this is `bun add <package>`.
-                    //
-                    // create the package json instead of return error. this works around
-                    // a zig bug where continuing control flow through a catch seems to
-                    // cause a segfault the second time `PackageManager.init` is called after
-                    // switching to the add command.
                     this_cwd = original_cwd;
                     created_package_json = true;
                     break 'child attempt_to_create_package_json_and_open()?;
@@ -1815,10 +1575,6 @@ pub fn init(
     // `bun_sys::chdir` takes a single `&ZStr` in the Rust port.
     let top_level_dir_z = ZBox::from_bytes(fs.top_level_dir());
     bun_sys::chdir(&top_level_dir_z)?;
-    // Zig: `try bun.cli.Arguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);`
-    // (PackageManager.zig:801). `loadConfig` was moved down into `bun_bunfig`
-    // (MOVE_DOWN b0) so install can call it directly — no fn-pointer hook.
-    // (`::`-qualified because `crate::bun_bunfig` is a legacy local shim mod.)
     ::bun_bunfig::arguments::load_config(
         bun_options_types::command_tag::Tag::InstallCommand,
         cli.config,
@@ -1830,11 +1586,6 @@ pub fn init(
         let cwd = &mut *CWD_BUF.get();
         cwd[..tld.len()].copy_from_slice(tld);
         cwd[tld.len()] = 0;
-        // Zig: `fs.top_level_dir = cwd_buf[0..len :0]` (PackageManager.zig:776).
-        // Route through the FsVTable setter so the resolver's cached cwd is
-        // rebound to the process-lifetime CWD_BUF (it was a transient slice
-        // until now). The slice excludes the NUL — `top_level_dir` is `[]u8`.
-        // PathBuffer is repr(transparent) over [u8; N], so the raw cast is sound.
         fs.set_top_level_dir(bun_core::ffi::slice(CWD_BUF.get().cast::<u8>(), tld.len()));
         // Zig: `bun.getFdPathZ(file, &buf)` — bun_sys exposes the non-Z form;
         // append the NUL ourselves so the static `&ZStr` invariant holds.
@@ -1994,10 +1745,6 @@ pub fn init(
             active_lifecycle_scripts,
             crate::lifecycle_script_runner::List {
                 root: core::ptr::null_mut(),
-                // `lifecycle_script_runner::List`'s heap comparator never
-                // dereferences its Zig `*PackageManager` context arg, so the
-                // Rust port models it as a ZST (`StartedAtCtx`) instead of
-                // threading a back-pointer.
                 context: crate::lifecycle_script_runner::StartedAtCtx,
             }
         );
@@ -2006,11 +1753,6 @@ pub fn init(
         wr!(log, ctx.log);
         wr!(root_dir, entries_option);
         wr!(ast_arena, bun_alloc::Arena::new());
-        // PORT NOTE: reborrow `&mut *env` so the local stays usable for
-        // the post-construction `BUN_MANIFEST_CACHE` / `options.load`
-        // reads (Zig PackageManager.zig:910 keeps using `env` after
-        // storing it in the struct). `BackRef` stores a raw pointer —
-        // ending the reborrow here does not alias the later uses.
         wr!(env, Some(bun_ptr::BackRef::new_mut(&mut *env)));
         wr!(cpu_count, cpu_count);
         wr!(
@@ -2021,11 +1763,6 @@ pub fn init(
             })
         );
         wr!(resolve_tasks, ResolveTaskQueue::default());
-        // Zig: `.lockfile = undefined` (uninit `*Lockfile`), then
-        // `manager.lockfile = try allocator.create(Lockfile)` immediately after the
-        // struct literal. `Lockfile` contains `HashMap`/`Vec`/`NonNull` fields, so a
-        // zero-bit pattern is UB; allocate the real (empty) lockfile here directly.
-        // `Lockfile::default()` ≡ `Lockfile::init_empty()`.
         wr!(lockfile, Box::new(Lockfile::default()));
         wr!(root_package_json_file, root_package_json_file);
         // .progress
@@ -2103,21 +1840,9 @@ pub fn init(
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
     }
     holder::INITIALIZED.store(true, core::sync::atomic::Ordering::Release);
-    // The per-field placement above fully initialized the singleton; the
-    // `&mut PackageManager` validity invariant now holds (Zig PackageManager.zig:850
-    // onward). We do NOT bind a long-lived `&'static mut` here: `http::HTTPThread::init`
-    // below spawns workers that deref `get()` concurrently, which would alias such a
-    // borrow under Stacked Borrows. Instead each statement forms its own narrowly-scoped
-    // reborrow via `unsafe { &mut *manager_ptr }`, dropped before the next raw-ptr use.
     {
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         let manager = unsafe { &mut *manager_ptr };
-        // Zig: `manager.event_loop.loop().internal_loop_data.setParentEventLoop(
-        //     jsc.EventLoopHandle.init(&manager.event_loop))` (PackageManager.zig:883).
-        // `r#loop()` returns the process-global `*mut uws::Loop`; build the
-        // handle from `&mut manager.event_loop` and write it back as the loop's
-        // parent so uSockets timers / lifecycle subprocess waiters can find the
-        // mini event loop on tick.
         let uws_loop = manager.event_loop.r#loop();
         // SAFETY: `uws_loop` is the live process-global `uws::Loop` (`r#loop()` above);
         // the handle's backref is `manager.event_loop`, owned by the singleton.
@@ -2158,17 +1883,6 @@ pub fn init(
         let evl = unsafe { &mut (*manager_ptr).event_loop };
         if let AnyEventLoop::Mini(mini) = evl {
             let mini_ptr: *mut MiniEventLoop<'static> = &raw mut **mini;
-            // Zig spec (PackageManager.zig:893) sets ONLY `MiniEventLoop.global`,
-            // NOT `globalInitialized`. The distinction is load-bearing: a later
-            // `initGlobal(env, top_level_dir)` (e.g. from `bun pm pack` /
-            // `pm version` lifecycle scripts → RunCommand::run_package_script_*)
-            // checks `globalInitialized` and, when false, allocates a FRESH mini
-            // with env/top_level_dir/uv-loop fully wired, then that becomes the
-            // global. If we flip `GLOBAL_INITIALIZED` here, that call returns
-            // *this* embedded mini instead — which was constructed without env,
-            // without top_level_dir, and (on Windows) without going through
-            // `init_global`'s uv-loop setup. The shell's IOWriter then opens
-            // stdout/stderr against an under-initialised loop → EBADF (exit 9).
             mini_event_loop::GLOBAL.with(|g| g.set(mini_ptr));
         }
     }
@@ -2213,10 +1927,6 @@ pub fn init(
         }
     }
 
-    // Singleton fully initialized; main thread, no workers yet. Wrapped once as
-    // `ParentRef` so the two read-only `options` projections below go through
-    // safe `Deref` instead of per-site raw deref. Safe `From<NonNull>`
-    // construction — `manager_ptr` is the live singleton address.
     let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
         NonNull::new(manager_ptr).expect("manager singleton non-null"),
     );
@@ -2268,10 +1978,6 @@ pub fn init(
         Ordering::Relaxed, // .monotonic
     );
 
-    // `InitOpts.ca: Vec<*const c_void>` (erased `[*:0]const u8`). The HTTP
-    // thread reads these asynchronously after `init` returns, so park the
-    // owning `ZBox`es in `holder::CA` for process lifetime (Zig: `dupeZ`,
-    // never freed) and project the pointers from there.
     let ca_ptrs: Vec<*const c_void> = if ca.is_empty() {
         Vec::new()
     } else {
@@ -2281,12 +1987,6 @@ pub fn init(
             .map(|v| v.iter().map(|z| z.as_ptr().cast::<c_void>()).collect())
             .unwrap_or_default()
     };
-    // `InitOpts.abs_ca_file_name: &'static [u8]` — process-lifetime config
-    // string (Zig: `allocator.dupeZ` into a leaked singleton field). Park it in
-    // `holder::ABS_CA_FILE_NAME: OnceLock<Box<[u8]>>` per PORTING.md §Forbidden
-    // (never `Box::leak` to mint `&'static`). `init()` runs once on
-    // the main thread, so `.set()` cannot race; ignore the already-set case for
-    // hot-reload re-entry (the existing CA path stays valid for the process).
     let abs_ca_file_name_static: &'static [u8] = if abs_ca_file_name.is_empty() {
         b""
     } else {
@@ -2333,11 +2033,6 @@ pub fn init(
 
 pub(crate) fn init_with_runtime(
     log: &mut bun_ast::Log,
-    // Spec PackageManager.zig:983 `bun_install: ?*Api.BunInstall` — used read-only
-    // (PackageManagerOptions.zig:load lines 224-380 only ever reads `config.*`).
-    // Upstream storage is `Option<NonNull<api::BunInstall>>` (bundler + resolver
-    // opts); taking `&mut` here would force a const→mut provenance launder at
-    // the resolver call site.
     bun_install: Option<&Api::BunInstall>,
     cli: CommandLineArguments,
     env: &mut dot_env::Loader<'static>,
@@ -2370,12 +2065,6 @@ pub(crate) fn init_with_runtime_once(
     // yields a raw `*PackageManager` with no validity invariant).
     let manager_ptr: *mut PackageManager =
         holder::RAW_PTR.load(core::sync::atomic::Ordering::Acquire);
-    // Zig: `FileSystem.instance.fs.readDirectory(top_level_dir, null, 0, true)`
-    // (PackageManager.zig:1014). Returns the resolver's BSSMap-owned
-    // `*EntriesOption` slot. On error Zig calls `Output.err` then `@panic`
-    // (lines 1019-1022) — match that: this is the runtime auto-install path
-    // where the resolver already opened `top_level_dir`, so failure is a
-    // programmer-error / fs-disappeared edge.
     let fs_instance = FileSystem::instance();
     let root_dir = match fs_instance
         .read_directory(fs_instance.top_level_dir(), 0, true)
@@ -2461,11 +2150,6 @@ pub(crate) fn init_with_runtime_once(
         wr!(log, std::ptr::from_mut(log));
         wr!(root_dir, root_dir);
         wr!(ast_arena, bun_alloc::Arena::new());
-        // PORT NOTE: reborrow `&mut *env` so the local stays usable for
-        // the post-construction `BUN_MANIFEST_CACHE` / `options.load`
-        // reads (Zig PackageManager.zig:1072 keeps using `env` after
-        // storing it in the struct). `BackRef` stores a raw pointer —
-        // ending the reborrow here does not alias the later uses.
         wr!(env, Some(bun_ptr::BackRef::new_mut(&mut *env)));
         wr!(cpu_count, cpu_count);
         wr!(
@@ -2618,19 +2302,6 @@ pub(crate) fn init_with_runtime_once(
             // When using bun, we only do staleness checks once per day
             .saturating_sub(bun_core::time::S_PER_DAY);
 
-    // Zig (PackageManager.zig:1111): `if (root_dir.entries.hasComptimeQuery("bun.lockb"))`
-    // — gate the disk load on the cached dir listing so the runtime auto-install
-    // path doesn't open()/read() a lockfile that isn't there. The Zig
-    // `manager.lockfile = load.lockfile` self-assignment is a no-op in the Rust
-    // shape (`load_from_cwd` mutates `*manager.lockfile` in place and returns a
-    // borrow of it), so `Ok` keeps the loaded value as-is.
-    // PORT NOTE: Zig calls `manager.lockfile.loadFromCwd(manager, …)` — a
-    // self-aliasing receiver+argument pair Rust forbids. Split-borrow by
-    // temporarily moving the boxed lockfile out so the `&mut PackageManager`
-    // passed in does not alias the `&mut Lockfile` receiver.
-    // PORT NOTE: `root_dir` was moved into `*manager` above (the field is
-    // an unbounded `&mut DirEntry`, so the local reborrow is for `'static` and the
-    // original binding is dead). Read it back through `manager.root_dir`.
     if manager.root_dir.has_comptime_query(b"bun.lockb") {
         let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::default()));
         match lockfile.load_from_cwd::<true>(Some(&mut *manager), log) {

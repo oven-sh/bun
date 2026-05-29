@@ -54,11 +54,6 @@ extern "C" fn free_with_default_allocator(handle: *mut libuv::uv_handle_t) {
     drop(unsafe { bun_core::heap::take(handle.cast::<libuv::uv_signal_t>()) });
 }
 
-// C++ declaration (`BunProcess.cpp:1177`):
-//   extern "C" uv_signal_t* Bun__UVSignalHandle__close(uv_signal_t*);
-// The caller discards the return, but the Rust side must still match the
-// signature — a `void`-vs-pointer return is an ABI mismatch (different
-// register usage on Win64). Return null (handle is being torn down).
 #[cfg(windows)]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__UVSignalHandle__close(

@@ -46,10 +46,6 @@ bun_core::declare_scope!(PartRanges, hidden);
 // below move the boxed buffer directly — no lifetime promotion needed.
 use crate::linker_context_mod::debug;
 
-// TODO(port): Zig's return type is `!if (is_dev_server) void else ArrayList(OutputFile)`.
-// Rust const generics cannot vary the return type, so we always return
-// `Vec<OutputFile>` and the IS_DEV_SERVER path returns an empty Vec. Could be
-// split into two monomorphized wrappers if the unused Vec matters.
 pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     c: &mut LinkerContext,
     chunks: &mut [Chunk],
@@ -322,16 +318,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
     }
 
-    // When bake.DevServer is in use, we're going to take a different code path at the end.
-    // We want to extract the source code of each part instead of combining it into a single file.
-    // This is so that when hot-module updates happen, we can:
-    //
-    // - Reuse unchanged parts to assemble the full bundle if Cmd+R is used in the browser
-    // - Send only the newly changed code through a socket.
-    // - Use IncrementalGraph to have full knowledge of referenced CSS files.
-    //
-    // When this isn't the initial bundle, concatenation as usual would produce a
-    // broken module. It is DevServer's job to create and send HMR patches.
     if IS_DEV_SERVER {
         return Ok(Vec::new());
     }
@@ -351,11 +337,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
         let mut chunk_visit_map = AutoBitSet::init_empty(chunks.len())?;
 
-        // Compute the final hashes of each chunk, then use those to create the final
-        // paths of each chunk. This can technically be done in parallel but it
-        // probably doesn't matter so much because we're not hashing that much data.
-        // PORT NOTE: reshaped for borrowck — index loop so `chunks` can be passed
-        // whole to `append_isolated_hashes_for_imported_chunks` and then indexed.
         for index in 0..chunks.len() {
             let mut hash = ContentHasher::default();
             c.append_isolated_hashes_for_imported_chunks(
@@ -369,10 +350,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             chunk.template.placeholder.hash = Some(hash.digest());
 
             let mut rel_path: Vec<u8> = Vec::new();
-            // PORT NOTE: use the byte-writer (`PathTemplate::print`) directly —
-            // routing through `Display`/`write!` goes via `from_utf8_lossy`,
-            // which would replace non-UTF-8 dir bytes with U+FFFD and corrupt
-            // the output path. Zig's `std.fmt.allocPrint` writes raw bytes.
             chunk
                 .template
                 .print(&mut rel_path)
@@ -477,10 +454,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
     }
 
-    // After final_rel_path is computed for all chunks, fix up module_info
-    // cross-chunk import specifiers. During printing, cross-chunk imports use
-    // unique_key placeholders as paths. Now that final paths are known, replace
-    // those placeholders with the resolved paths and serialize.
     if c.options.generate_bytecode_cache
         && c.options.output_format == options::Format::Esm
         && c.options.compile
@@ -555,10 +528,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // Serialize the fixed-up module_info
             js.module_info_bytes = bun_js_printer::serialize_module_info(Some(mi));
 
-            // Free the ModuleInfo now that it's been serialized to bytes.
-            // It was allocated with bun.default_allocator (not the arena),
-            // so it must be explicitly destroyed.
-            // PORT NOTE: in Rust, dropping the Option<Box<ModuleInfo>> frees it.
             js.module_info = None;
         }
     }
@@ -577,10 +546,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     let mut output_files =
         OutputFileListBuilder::init(c, chunks, c.parse_graph().additional_output_files.len())?;
 
-    // Copy the `ParentRef` out (not `c.resolver()`) so `root_path` borrows the
-    // local, not `c`, avoiding the split-borrow with `&mut *c` passed to
-    // `write_output_files_to_disk` below — `output_dir` lives in the resolver,
-    // disjoint from anything `c` mutates.
     let resolver = c.resolver.expect("resolver set in load()");
     let root_path: &[u8] = &resolver.opts.output_dir;
     let is_standalone = c.options.compile_to_standalone_html;
@@ -615,14 +580,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     };
     // defer static_route_visitor.deinit() — handled by Drop
 
-    // For standalone mode, resolve JS/CSS chunks so we can inline their content into HTML.
-    // Closing tag escaping (</script → <\\/script, </style → <\\/style) is handled during
-    // the HTML assembly step in codeWithSourceMapShifts, not here.
-    //
-    // PORT NOTE: Zig `defer` frees each buffer with `Chunk.IntermediateOutput.allocatorForSize(len)`.
-    // Rust `Vec<Option<Box<[u8]>>>` frees via `Drop` (global mimalloc); if `allocatorForSize`
-    // returns a distinct arena for large buffers, matched-arena dealloc must be
-    // restored here.
     let mut standalone_chunk_contents: Option<Vec<Option<Box<[u8]>>>> = None;
 
     if is_standalone {
@@ -636,12 +593,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 continue;
             }
             let mut ds: usize = 0;
-            // Pass `scc` so that `.asset` pieces (e.g. `import logo from "./logo.svg"` with
-            // the file loader) are resolved to data: URIs from `url_for_css` instead of
-            // being written as paths to sidecar files that don't exist in standalone mode.
-            // Sibling JS/CSS chunks may still be null at this point; `.chunk` pieces fall
-            // back to file paths when their entry in `scc` is null, matching the previous
-            // behavior for inter-chunk imports.
             let mut intermediate_output = core::mem::take(&mut chunks[ci].intermediate_output);
             let buffer = intermediate_output
                 .code_standalone(
@@ -675,11 +626,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             standalone_chunk_contents.as_deref(),
         )?;
     } else {
-        // In-memory build (also used for standalone mode)
-        // PORT NOTE: `code()` / `code_standalone()` read `chunk` (= `&chunks[i]`)
-        // and the full `&[Chunk]` slice simultaneously. Iterate by index so both
-        // can be safe shared reborrows of `chunks`; the only per-chunk mutation
-        // is the `intermediate_output` take/restore, done via `chunks[i]`.
         for chunk_index_in_chunks_list in 0..chunks.len() {
             // In standalone mode, non-HTML chunks were already resolved in the first pass.
             // Insert a placeholder output file to keep chunk indices aligned.
@@ -898,14 +844,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         && loader.is_javascript_like()
                     {
                         let mut fdpath = bun_paths::PathBuffer::uninit();
-                        // For --compile builds, the bytecode URL must match the module name
-                        // that will be used at runtime. The module name is:
-                        //   public_path + final_rel_path (e.g., "/$bunfs/root/app.js")
-                        // Without this prefix, the JSC bytecode cache key won't match at runtime.
-                        // Use the per-chunk public_path (already computed above) for browser chunks
-                        // from server builds, and normalize with cheapPrefixNormalizer for consistency
-                        // with module_info path fixup.
-                        // For non-compile builds, use the normal .jsc extension.
                         let source_provider_url = if c.options.compile {
                             let normalizer =
                                 cheap_prefix_normalizer(public_path, &chunk.final_rel_path);
@@ -972,12 +910,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 ..Default::default()
                             }));
                         } else {
-                            // an error
-                            // logger OOM-only (Zig: catch unreachable)
-                            // Split-borrow — `static_route_visitor.c` holds a
-                            // detached `&LinkerContext`; `log_disjoint` returns the
-                            // disjoint `Transpiler.log` backref so no `&mut c` is
-                            // materialized.
                             let _ = c.log_disjoint().add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,

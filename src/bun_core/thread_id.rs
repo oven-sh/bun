@@ -15,11 +15,6 @@
 //! needs a plain integer it can store in an atomic and compare against a
 //! sentinel — exactly Zig's semantics.
 
-// ── ThreadId width (mirrors Zig `std.Thread.Id` switch) ───────────────────
-//   linux / *bsd / haiku / wasi / serenity → u32
-//   macOS / iOS / watchOS / tvOS / visionOS → u64
-//   Windows                                → DWORD (u32)
-//   else                                   → usize
 #[cfg(any(
     target_os = "linux",
     target_os = "android",
@@ -107,33 +102,9 @@ pub type AtomicThreadId = core::sync::atomic::AtomicUsize;
 // Zig: `pub const invalid = std.math.maxInt(std.Thread.Id);`
 pub const INVALID: ThreadId = ThreadId::MAX;
 
-/// Per-thread cache of [`current()`]. Zig's `LinuxThreadImpl.getCurrentId()`
-/// reads a `threadlocal var tls_thread_id` set once at thread start
-/// (vendor/zig/lib/std/Thread.zig:841,885); the Rust port called the syscall
-/// (`gettid`/`pthread_threadid_np`/`GetCurrentThreadId`) on every call. The
-/// bundler's `Worker::get(ctx)` calls `current()` once per scheduled task —
-/// parse, line-offset table, quoted source contents, compile-result
-/// generation, link step 5 — so a 19 K-module build paid ~109 K `gettid`
-/// syscalls (~36 % of total syscall time on the rolldown `apps/10000` bench).
-///
-/// `0` is the unset sentinel: kernel TIDs / `pthread_threadid_np` IDs /
-/// Win32 thread IDs are all nonzero. A bare `#[thread_local]` slot (not the
-/// `thread_local!` macro) so this is a single TLS load with no `LocalKey`
-/// initialization-state branch or destructor registration — same as Zig's
-/// `threadlocal var`.
 #[thread_local]
 static TLS_THREAD_ID: core::cell::Cell<ThreadId> = core::cell::Cell::new(0);
 
-/// Returns the platform's notion of the calling thread's ID.
-///
-/// Port of Zig `std.Thread.getCurrentId()` (`PosixThreadImpl` / `WindowsThreadImpl` /
-/// `LinuxThreadImpl`). Attempts to use OS-specific primitives so the value matches what
-/// debuggers/tracers report; falls back to `pthread_self()` as a `usize` on unknown targets.
-///
-/// Cached per-thread after the first call (see [`TLS_THREAD_ID`]); subsequent
-/// calls are a single TLS read with no syscall, matching Zig's
-/// `tls_thread_id` slot. Lazy rather than set-at-spawn so threads not started
-/// by Bun's pool (FFI callbacks, the main thread) still get a valid ID.
 #[inline]
 pub fn current() -> ThreadId {
     let cached = TLS_THREAD_ID.get();

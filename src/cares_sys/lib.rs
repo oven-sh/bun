@@ -29,12 +29,6 @@ pub mod winsock {
     }
 }
 
-/// The full c-ares FFI module. The temporary inline scaffold that previously
-/// duplicated `ares_socklen_t` / `AddrInfo_hints` / `ares_inet_*` here has been
-/// collapsed to a re-export of the canonical `c_ares.rs` module now that it is
-/// un-gated. `c_ares` and `c_ares_draft` resolve to the SAME module, so the two
-/// `AddrInfo_hints` definitions are now nominally identical (previously a latent
-/// type-mismatch footgun for callers mixing the two paths).
 pub use c_ares_draft as c_ares;
 
 // Crate-root re-exports for callers that reference `bun_cares_sys::ares_inet_*`

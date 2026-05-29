@@ -19,10 +19,6 @@ pub use jsc::MarkedArrayBuffer as Buffer;
 // `jsc.ArgumentsSlice` — cursor over CallFrame args.
 pub use jsc::ArgumentsSlice;
 
-// LAYERING: `Fd::{from_js,from_js_validated,to_js}` are provided by the
-// canonical `bun_sys_jsc::FdJsc` extension trait (full range/type validation
-// per Zig `bun.FD.fromJSValidated`). Re-exported so existing
-// `crate::node::types::FdJsc` import paths keep resolving.
 pub use bun_sys_jsc::FdJsc;
 
 /// `bun_runtime`-tier required-argument helper layered on `FdJsc`. Collapses
@@ -106,10 +102,6 @@ impl BlobOrStringOrBuffer {
         let str = match StringOrBuffer::from_js_maybe_async(global, value, is_async, true)? {
             Some(s) => s,
             None => {
-                // `as_class_ref` is the safe shared-borrow downcast (centralised
-                // deref proof in `JSValue`); the JS wrapper roots the payload
-                // while `value` is on the stack. All `Blob` accessors below
-                // take `&self`.
                 let Some(blob) = value.as_class_ref::<Blob>() else {
                     return Ok(None);
                 };
@@ -265,10 +257,6 @@ impl Drop for StringOrBuffer {
     fn drop(&mut self) {
         match self {
             Self::ThreadsafeString(str) | Self::String(str) => {
-                // `SliceWithUnderlyingString` has no `Drop` of its own; release
-                // the WTF refcount in place. `str.utf8: ZigStringSlice` is then
-                // dropped by the enum's field drop glue — no need to
-                // `mem::take()` and write a ~56B default back.
                 str.underlying.deref();
             }
             Self::EncodedSlice(_encoded) => {
@@ -292,10 +280,6 @@ impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
 }
 
 impl bun_jsc::Unprotect for StringOrBuffer {
-    /// Zig `StringOrBuffer.deinitAndUnprotect`, JS-side half — undo the
-    /// `protect()` taken by [`StringOrBuffer::to_thread_safe`] /
-    /// `from_js_maybe_async(.., is_async=true)`. Owned slices are released by
-    /// `Drop`.
     #[inline]
     fn unprotect(&mut self) {
         if let Self::Buffer(buffer) = self {
@@ -389,15 +373,6 @@ impl StringOrBuffer {
         }
     }
 
-    /// Out-param core of [`from_js_maybe_async`]. Writes the decoded payload
-    /// directly into `*out` (Zig result-location semantics) and returns
-    /// `Ok(true)` on success, `Ok(false)` if `value` is not a string/buffer
-    /// type. `*out` is left untouched on `Ok(false)` / `Err`.
-    ///
-    /// Hot callers (e.g. `NodeHTTPResponse::write_or_end`) should use this
-    /// directly — returning `JsResult<Option<StringOrBuffer>>` by value lowers
-    /// to ~128B of `vmovups` stack-to-stack copies per call which the
-    /// `Option<>`-returning wrappers below cannot always NRVO away.
     #[inline]
     pub fn from_js_maybe_async_into(
         out: &mut StringOrBuffer,
@@ -417,11 +392,6 @@ impl StringOrBuffer {
                     let mut possible_clone = str;
                     let mut sliced = possible_clone.to_thread_safe_slice();
                     sliced.report_extra_memory(global.vm());
-                    // Release the ref `from_js` took. On the WTF paths above
-                    // `to_thread_safe_slice` left `str` intact (and took its
-                    // own refs as needed); on the non-WTF fall-through it
-                    // moved the value into `sliced.underlying`, so this is a
-                    // no-op. Previously a `scopeguard` did this at scope exit.
                     str.deref();
 
                     if sliced.underlying.is_empty() {
@@ -656,12 +626,6 @@ pub enum Encoding {
     Buffer,
 }
 
-// PORT NOTE: Zig used `ComptimeStringMap` (`fromJSCaseInsensitive` /
-// `inMapCaseInsensitive`). With only 13 short keys spread across 7 distinct
-// lengths (max 4 keys at len==6) a length-gated byte match beats a
-// `phf::Map`'s hash+probe — see `Encoding::from` below. The case-insensitive
-// entry points lowercase into a stack buffer first.
-
 impl From<Encoding> for bun_core::NodeEncoding {
     fn from(e: Encoding) -> Self {
         // Both enums are `#[repr(u8)]` with identical discriminant order
@@ -706,13 +670,6 @@ impl Encoding {
 
     /// Caller must verify the value is a string
     pub fn from(slice: &[u8]) -> Option<Encoding> {
-        // PERF(port): length-gated match in lieu of `phf::Map` — 13 keys over
-        // 7 distinct lengths (3..=9, max 4 collisions at len 6). The outer
-        // `match len` rejects almost every miss on a single `usize` compare;
-        // the inner byte compares are at known fixed lengths so LLVM lowers
-        // them to word-sized loads. Same pattern as `clap::find_param`
-        // (12577e958d71). Case-insensitive: lowercase into a 9-byte stack
-        // buffer first (longest key is "base64url").
         let len = slice.len();
         if len < 3 || len > 9 {
             return None;
@@ -746,11 +703,6 @@ impl Encoding {
         }
     }
 
-    /// Case-insensitive lookup against a `bun.String` without allocating.
-    /// Replaces the former `str.in_map_case_insensitive(&ENCODING_MAP)` path:
-    /// narrows UTF-16/Latin-1 code units into a stack buffer (rejecting any
-    /// non-ASCII unit — no encoding name contains one) and dispatches to
-    /// [`Encoding::from`].
     pub fn from_bun_string(s: &bun_core::String) -> Option<Encoding> {
         // NOTE: tightens the Latin-1 path to reject `>= 0x80` (was pass-through);
         // safe — no encoding name is non-ASCII, downstream match would miss anyway.
@@ -811,13 +763,6 @@ impl Encoding {
             .throw()
     }
 
-    /// Zig `encodeWithSize(comptime size, *const [size]u8)`. In Zig the two
-    /// `encodeWith*` fns differed only in their comptime stack-buffer size
-    /// (`[size*4]u8` vs `[max_size*4]u8`); in Rust both heap-allocate, so the
-    /// match-arm bodies were byte-identical for Base64url/Hex/Buffer/else and
-    /// `size` was unused past the assert. Collapsed into a thin assertion
-    /// wrapper. Kept for Zig-port symmetry; currently has no Rust callers
-    /// (CryptoHasher.rs ported all sites to `encode_with_max_size`).
     #[inline]
     pub fn encode_with_size(
         self,
@@ -862,10 +807,6 @@ impl Encoding {
                 Ok(jsc::zig_string::ZigString::init(&buf).to_js(global_object))
             }
             Self::Hex => {
-                // PORT NOTE: Zig used `bufPrint("{x}", input)` into a stack buffer.
-                // The byte-by-byte `write!` formatting machinery is pathologically
-                // slow in debug builds, so encode via LUT directly into the
-                // destination JS string buffer.
                 let (mut encoded, bytes) =
                     bun_core::String::create_uninitialized_latin1(input.len() * 2);
                 if encoded.is_dead() {
@@ -963,19 +904,8 @@ where
 
 // ──────────────────────────────────────────────────────────────────────────
 
-// LAYERING: single nominal `PathLike`/`PathOrFileDescriptor` live in
-// `bun_jsc::node_path` so `bun_jsc::webcore_types::store::File::pathlike`
-// and the `Store`/`Blob` constructors here share one type. This module
-// re-exports them and layers the JS-argument-parsing helpers via the
-// `PathLikeExt` / `PathOrFdExt` extension traits.
 pub use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
 
-/// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathLike`.
-///
-/// `to_thread_safe` / `into_thread_safe` / `slice` / `estimated_size` are
-/// inherent on the lower-tier type (see `bun_jsc::node_path`); this trait
-/// adds only the path-buffer slicers and JS-argument parsing that depend on
-/// `bun_runtime` types (`Valid`, `ArgumentsSlice` cursor flow).
 pub trait PathLikeExt {
     fn slice_z_with_force_copy<'a, const FORCE: bool>(
         &'a self,
@@ -999,10 +929,6 @@ pub trait PathLikeExt {
     where
         Self: Sized;
 
-    /// `from_js` + Node's `ERR_INVALID_ARG_VALUE` "<name> must be a string
-    /// or TypedArray" throw on `None`. Collapses the open-coded
-    /// `?.ok_or_else(|| ctx.throw_invalid_arguments(...))?` repeated 22× in
-    /// `node_fs.rs::args::*::from_js`.
     #[inline]
     fn from_js_required(
         ctx: &JSGlobalObject,
@@ -1060,11 +986,6 @@ impl PathLikeExt for PathLike {
                     && sliced[1] == b':'
                     && bun_paths::is_sep_any(sliced[2])
                 {
-                    // Add the long path syntax. This affects most of node:fs
-                    // Normalize the path directly into buf without an intermediate
-                    // buffer. The input (sliced) already has a drive letter, so
-                    // resolveCWDWithExternalBufZ would just memcpy it, making the
-                    // temporary allocation unnecessary.
                     buf[0..4].copy_from_slice(&bun_sys::windows::LONG_PATH_PREFIX_U8);
                     let n = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(
                         sliced,
@@ -1360,10 +1281,6 @@ impl PathLikeExt for PathLike {
 
             sliced.report_extra_memory(global.vm());
 
-            // It is expensive to keep both around. `utf8` here is an Owned
-            // transcoded copy (UTF-16 or non-ASCII Latin-1 input), so the
-            // returned EncodedSlice is independent of `underlying` — release
-            // the WTFStringImpl ref `to_slice` moved into it.
             let utf8 = core::mem::take(&mut sliced.utf8);
             sliced.deinit();
             Ok(Self::EncodedSlice(utf8))
@@ -1510,14 +1427,6 @@ unsafe extern "C" fn append_buffer_span(
 }
 
 impl VectorArrayBuffer {
-    /// Collect an array of ArrayBufferViews into iovecs. Every element is read
-    /// before any raw pointer is taken, so user code run by an indexed read (a
-    /// getter, a proxy trap) cannot free a backing store that has already been
-    /// captured.
-    ///
-    /// `pin` is required when the spans outlive this call (async I/O): each
-    /// element is rooted and its backing store is pinned against detach until
-    /// [`Self::release`] runs.
     pub fn from_js(
         global_object: &JSGlobalObject,
         val: JSValue,
@@ -1543,11 +1452,6 @@ impl VectorArrayBuffer {
         };
         scope.assert_exception_presence_matches(status == -1);
         if pin {
-            // The C++ side already pinned each backing store; root the views
-            // themselves so a getter-returned element that is not reachable
-            // from `value` survives until completion. Set `pinned` even on
-            // failure so `release()` balances the elements collected before
-            // the error.
             out.pinned = true;
             for view in &out.views {
                 view.protect();
@@ -1586,12 +1490,6 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
             return Err(ctx.throw_invalid_argument_type_value(b"mode", b"number", value));
         }
 
-        // An easier method of constructing the mode is to use a sequence of
-        // three octal digits (e.g. 765). The left-most digit (7 in the example),
-        // specifies the permissions for the file owner. The middle digit (6 in
-        // the example), specifies permissions for the group. The right-most
-        // digit (5 in the example), specifies the permissions for others.
-
         let mut zig_str = ZigString::EMPTY;
         value.to_zig_string(&mut zig_str, ctx)?;
         let mut slice = zig_str.slice();
@@ -1624,17 +1522,7 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
 
 // ──────────────────────────────────────────────────────────────────────────
 
-// LAYERING: `Clone for PathOrFileDescriptor` and the `SerializeTag` enum now
-// live alongside the type in `bun_jsc::node_path` (orphan rules forbid the
-// foreign-type impl here). Re-export the tag so downstream
-// `crate::node::types::PathOrFileDescriptorSerializeTag` paths keep resolving.
 pub use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
-
-// PORT NOTE: Zig copies these tagged unions by value freely; the Rust port adds
-// `Drop` for the path-owning variants, so an explicit `dupe()` is provided for
-// callers (Blob, Store::File) that need a fresh copy. Ref-counting variants are
-// bumped where the underlying type supports it; otherwise we bitwise-copy
-// (matching Zig semantics) and leave proper ref-counting to a later pass.
 
 impl PathOrFdExt for PathOrFileDescriptor {
     fn from_js(
@@ -1709,10 +1597,6 @@ impl FileSystemFlags {
             }
             let number = val.coerce_to_i32(ctx)?;
             let flags = number.max(0);
-            // On Windows, numeric flags from fs.constants (e.g. O_CREAT=0x100)
-            // use the platform's native MSVC/libuv values which differ from the
-            // internal bun.O representation. Convert them here so downstream
-            // code that operates on bun.O flags works correctly.
             #[cfg(windows)]
             {
                 return Ok(Some(FileSystemFlags(bun_libuv_sys::O::to_bun_o(flags))));
@@ -1779,10 +1663,6 @@ impl FileSystemFlags {
         Ok(None)
     }
 
-    /// Equivalent of GetValidFileMode, which is used to implement fs.access and copyFile
-    // PORT NOTE: Zig took `comptime kind: enum { access, copy_file }`; lowered to a
-    // runtime arg here so callers (`node_fs.rs`) can pass it positionally without
-    // needing `adt_const_params` const-generic dispatch.
     pub fn from_js_number_only(
         global: &JSGlobalObject,
         value: JSValue,
@@ -1833,18 +1713,6 @@ impl FileSystemFlags {
     }
 }
 
-// PERF(port): Zig used `ComptimeStringMap.getWithEql(str, ZigString.eqlComptime)`.
-// A 44-entry `phf::Map` would work, but the keys are tiny (1..=3 bytes) and
-// cluster heavily by length (6/22/16). phf's hash+probe is dominated by the
-// SipHash of the input slice; a length-gated byte match rejects on a single
-// `usize` compare and lowers the inner arms to 1-2 register compares.
-// Same pattern as `clap::find_param` (12577e958d71).
-//
-// 2-level dispatch: `len` → `(b0, b1)` tuple. The original 44 keys are 22
-// distinct values × {lower, UPPER}; mixed case (e.g. "Rs") is *not* accepted,
-// so each arm lists both case variants explicitly rather than lowercasing.
-// Every length-3 key ends in `'+'`, so that byte is checked once up front and
-// the len-3 arm reuses the same `(b0, b1)` table as len-2 with RDWR semantics.
 #[inline]
 fn lookup_file_system_flags(bytes: &[u8]) -> Option<i32> {
     match bytes.len() {
@@ -1897,25 +1765,6 @@ fn lookup_file_system_flags(bytes: &[u8]) -> Option<i32> {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-/// A class representing a directory stream.
-///
-/// Created by {@link opendir}, {@link opendirSync}, or `fsPromises.opendir()`.
-///
-/// ```js
-/// import { opendir } from 'fs/promises';
-///
-/// try {
-///   const dir = await opendir('./');
-///   for await (const dirent of dir)
-///     console.log(dirent.name);
-/// } catch (err) {
-///   console.error(err);
-/// }
-/// ```
-///
-/// When using the async iterator, the `fs.Dir` object will be automatically
-/// closed after the iterator exits.
-/// @since v12.12.0
 pub struct Dirent {
     pub name: bun_core::String,
     pub path: bun_core::String,
@@ -1926,10 +1775,6 @@ pub struct Dirent {
 // TODO(port): Zig used `std.fs.File.Kind`. std::fs is banned; map to bun_sys::FileKind.
 pub type DirentKind = bun_sys::FileKind;
 
-// TODO(port): move to runtime_sys
-// `&JSGlobalObject` / `&mut bun_core::String` are ABI-identical to non-null
-// pointers; `Option<&mut *mut JSString>` uses the niche-optimization layout
-// (`*mut *mut JSString`), so the validity proof lives in the type signature.
 unsafe extern "C" {
     safe fn Bun__JSDirentObjectConstructor(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__Dirent__toJS(

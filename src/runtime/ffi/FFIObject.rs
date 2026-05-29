@@ -24,10 +24,6 @@ unsafe fn deallocator_from_addr(addr: usize) -> jsc::c::JSTypedArrayBytesDealloc
     unsafe { core::mem::transmute::<usize, jsc::c::JSTypedArrayBytesDeallocator>(addr) }
 }
 
-/// Port of Zig `JSValue.createBufferWithCtx(global, slice, ctx, callback)` —
-/// unlike `JSValue::create_buffer` (which hard-codes `MarkedArrayBuffer_deallocator`),
-/// this variant passes the caller's (possibly null) deallocator through, so FFI-owned
-/// memory is only freed by the user-supplied callback.
 #[allow(deprecated, non_snake_case)]
 #[inline]
 fn create_buffer_with_ctx(
@@ -58,11 +54,6 @@ fn create_buffer_with_ctx(
     }
 }
 
-// ── DOM-call C++ put helpers (generated in ZigLazyStaticFunctions-inlines.h) ──
-// In Zig these are `@extern`ed by the comptime `DOMCall(...)` type-generator;
-// here we declare them directly since the `#[bun_jsc::dom_call]` proc-macro is
-// not yet implemented.
-// TODO(port): move to <area>_sys
 #[allow(non_snake_case)]
 unsafe extern "C" {
     fn FFI__ptr__put(global: *mut JSGlobalObject, value: JSValue);
@@ -96,12 +87,6 @@ pub(crate) fn new_cstring(
     }
 }
 
-// TODO(port): `DOMCall("FFI", @This(), "ptr", ...)` is a comptime type-generator that
-// emits a DOMJIT fast-path descriptor + slow-path host fn. Needs a proc-macro
-// or codegen step (`bun_jsc::dom_call!`). Represented here as a const descriptor.
-// PORT NOTE: the `DOMEffect.forRead(.TypedArrayProperties)` argument is consumed by
-// the C++ codegen, not the runtime descriptor; it lives in the generated
-// `ZigLazyStaticFunctions-inlines.h` already.
 pub(crate) const DOM_CALL: DomCall = DomCall {
     class_name: "FFI",
     function_name: "ptr",
@@ -152,11 +137,6 @@ pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
 pub mod reader {
     use super::*;
 
-    // TODO(port): same DOMCall codegen note as `DOM_CALL` above. In Zig this is an
-    // anonymous struct of 12 `DOMCall(...)` values iterated via `inline for`.
-    // PORT NOTE: the `DOMEffect.forRead(.World)` argument is encoded on the C++ side
-    // (generated `Reader__*__put` in ZigLazyStaticFunctions-inlines.h); the runtime
-    // descriptor here only needs the `put` extern.
     pub(crate) const DOM_CALLS: &[(&str, DomCall)] = &[
         (
             "u8",
@@ -416,11 +396,6 @@ pub mod reader {
         let value = unsafe { read_unaligned_at::<u64>(addr) };
         Ok(JSValue::from_uint64_no_truncate(global_object, value))
     }
-
-    // ── fast-path (DOMJIT, no type checks) readers ────────────────────────────
-    // These are `callconv(jsc.conv)` in Zig — called directly from JIT code.
-    // TODO(port): `#[bun_jsc::host_call]` emits the correct ABI ("sysv64" on
-    // win-x64, "C" elsewhere). Raw pointers are intentional (FFI boundary).
 }
 
 pub(crate) fn ptr(global_this: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JSValue {
@@ -497,10 +472,6 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
     JSValue::from_ptr_address(addr)
 }
 
-/// `union(enum)` → Rust enum.
-/// `Slice` carries a raw (ptr, len) because it points at caller-owned FFI memory
-/// of unknown lifetime — never freed by Rust.
-// TODO(port): lifetime — verify all consumers treat this as borrow-of-FFI-memory.
 enum ValueOrError {
     Err(JSValue),
     Slice(*mut u8, usize),
@@ -748,20 +719,6 @@ pub(crate) fn getter(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
     to_js(global_object)
 }
 
-// ── `fields` host-fn thunks ──────────────────────────────────────────────────
-// Zig `fields` is an anonymous struct of `jsc.host_fn.wrapStaticMethod(...)`
-// values iterated via comptime reflection in `toJS`. `wrapStaticMethod` is a
-// comptime fn-signature reflector that decodes `CallFrame` arguments into the
-// target's parameter types (see src/jsc/host_fn.zig:654). Rust has no
-// `@typeInfo`, so the eight wrappers are unrolled manually here — each body is
-// exactly what `wrapStaticMethod(.., auto_protect=false)` would emit for that
-// signature (only the `*JSGlobalObject` / `JSValue` / `?JSValue` / `ZigString`
-// arms are exercised by this table).
-
-/// Minimal `ArgumentsSlice::nextEat` — pops the next non-consumed argument.
-/// `wrapStaticMethod`'s arena/protect machinery is unused for the FFI fields
-/// (no `StringOrBuffer` params, `auto_protect=false`), so a bare cursor over
-/// `arguments_old(N).slice()` is semantically identical.
 #[inline]
 fn next_eat<'a>(iter: &mut core::slice::Iter<'a, JSValue>) -> Option<JSValue> {
     iter.next().copied()
@@ -790,12 +747,6 @@ fn eat_zig_string(
     string_value.get_zig_string(global)
 }
 
-/// Wrap a `JsHostFnZig` body into the raw `JSHostFn` ABI — runtime half of
-/// Zig's `toJSHostFn`. Mints a fresh `unsafe extern jsc.conv fn` per call site
-/// so the address is usable in the static `FIELDS` table (Rust forbids
-/// fn-pointer const generics, so this is a `macro_rules!` rather than a
-/// generic fn). Uses `jsc_host_abi!` so the thunk gets `extern "sysv64"` on
-/// Windows-x64 and `extern "C"` elsewhere — matching the `JSHostFn` typedef.
 macro_rules! wrap_host_fn {
     ($body:path) => {{
         bun_jsc::jsc_host_abi! {
@@ -813,12 +764,8 @@ macro_rules! wrap_host_fn {
 }
 
 mod fields {
-    use super::*;
-    // PORT NOTE: `print`/`callback`/`link_symbols`/`close_callback` live on
-    // `ffi_body::FFI` — not yet hoisted onto the canonical `crate::ffi::FFI`.
-    // They are static (no `&self`), so type identity is irrelevant; route to
-    // them directly until the two `FFI` structs merge.
     use super::super::ffi_body::FFI as FfiImpl;
+    use super::*;
 
     // viewSource → FFI::print(global, JSValue, ?JSValue) -> JsResult<JSValue>
     pub(super) fn view_source(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -907,10 +854,6 @@ mod fields {
     }
 }
 
-// Represented here as a const slice of (name, JSHostFn) so `to_js` can iterate.
-// PORT NOTE: cannot be `const` — `wrap_host_fn!` expands to a block expression
-// (item + cast), which const-eval rejects in array-literal position. The slice
-// is tiny and only built once in `to_js`, so the runtime cost is nil.
 #[allow(non_snake_case)]
 fn FIELDS() -> [(&'static str, jsc::JSHostFn); 8] {
     [

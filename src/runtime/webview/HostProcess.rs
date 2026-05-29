@@ -44,12 +44,6 @@ pub struct HostProcess {
 static INSTANCE: core::sync::atomic::AtomicPtr<HostProcess> =
     core::sync::atomic::AtomicPtr::new(ptr::null_mut());
 
-/// Called from WebView.closeAll() and dispatchOnExit. Socket EOF handles
-/// normal parent-death (including SIGKILL of Bun — kernel closes fds, child
-/// reads 0, CFRunLoopStop). This catches the clean-exit path where the child
-/// hasn't yet noticed EOF before we return from main(). WKWebView's own
-/// WebContent/GPU/Network helpers are XPC-connected to the child — when the
-/// child dies they get connection-invalidated and exit.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__WebViewHost__kill() {
     // SAFETY: single-threaded access (JS thread only).
@@ -65,13 +59,6 @@ pub(crate) extern "C" fn Bun__WebViewHost__kill() {
     }
 }
 
-/// Lazy: first `new Bun.WebView()` calls this via C++. Returns the parent
-/// socket fd (C++ adopts into usockets and owns it from then on), or -1.
-/// C++'s HostClient::ensureSpawned checks its own sock before calling here,
-/// so instance-already-exists → -1 means "you already have the fd, this is
-/// a bug" not "spawn failed". We deliberately don't store the fd — usockets
-/// owns it; re-returning a fd usockets may have already closed would be a
-/// use-after-close. Rust only owns process lifetime (watch + kill).
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__WebViewHost__ensure(
     global: &JSGlobalObject,

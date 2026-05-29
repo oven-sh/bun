@@ -71,30 +71,14 @@ macro_rules! debug {
 
 pub struct Installer<'a> {
     pub trusted_dependencies_mutex: Mutex,
-    /// Zig: `*Lockfile` — BACKREF. Raw pointer (not `&'a mut`) for the same
-    /// reason as `manager`: `Task::run` executes concurrently on the thread
-    /// pool and each task derefs this field; a `&'a mut` would assert
-    /// exclusivity every concurrent task violates. Mutated only for
-    /// `lockfile.trusted_dependencies` (under `trusted_dependencies_mutex`,
-    /// narrowed via `addr_of_mut!`). Never null. Read via `lockfile()`.
     pub lockfile: *mut Lockfile,
 
     pub summary: InstallSummary, // = .{ .successfully_installed = .empty }
     pub installed: Bitset,
     pub install_node: Option<&'a mut ProgressNode>,
-    /// Mirrors Zig's `?*Progress.Node`. Stored as `NonNull` (not `&mut`)
-    /// because `PackageManager.scripts_node` already holds a raw pointer to the
-    /// same stack local; materializing a second long-lived `&mut` here would
-    /// invalidate that pointer's provenance under Stacked Borrows. Currently
-    /// unread on the Rust side — kept for layout/port parity.
     pub scripts_node: Option<core::ptr::NonNull<ProgressNode>>,
     pub is_new_bun_modules: bool,
 
-    /// Zig: `*PackageManager` — BACKREF. Raw pointer (not `&'a mut`) because
-    /// `Task::run`/`Task::callback` execute concurrently on the thread pool
-    /// and each derefs this field; a `&'a mut` here would assert exclusivity
-    /// every concurrent task violates. Never null. Access via `manager()` /
-    /// `manager_mut()` (main thread only for `_mut`).
     pub manager: *mut PackageManager,
     pub command_ctx: Command::Context<'a>,
 
@@ -114,19 +98,8 @@ pub struct Installer<'a> {
     pub trusted_dependencies_from_update_requests:
         ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>>,
 
-    /// Absolute path to the global virtual store (`<cache_dir>/links`). When
-    /// non-null, npm/git/tarball entries are materialized once into this
-    /// directory and `node_modules/.bun/<storepath>` becomes a symlink into
-    /// it, so warm installs are O(packages) symlinks instead of O(files)
-    /// clonefile work.
     pub global_store_path: Option<&'a ZStr>,
 
-    /// Per-process suffix for staging global-store entries. Each entry is
-    /// built under `<cache>/links/<storepath>-<hash>.tmp-<this>/` (package
-    /// files, dep symlinks, bin links — all relative within the entry, so
-    /// they resolve identically after the rename) and renamed into place as
-    /// the final step. The directory existing at its final path is the only
-    /// completeness signal the warm-hit check needs.
     pub global_store_tmp_suffix: u64,
 }
 
@@ -233,10 +206,6 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Called from main thread when a tarball download or extraction fails.
-    /// Without this, the upfront pending-task slot for each waiting entry is
-    /// never released and the install loop blocks forever on
-    /// `pendingTaskCount() == 0`.
     pub fn on_package_download_error(
         &mut self,
         task_id: crate::package_manager_task::Id,
@@ -450,14 +419,6 @@ impl<'a> Installer<'a> {
 
     /// Called from main thread
     pub fn on_task_blocked(&mut self, entry_id: StoreEntryId) {
-        // race condition (fixed now): task decides it is blocked because one of its dependencies
-        // has not finished. before the task can mark itself as blocked, the dependency finishes its
-        // install, causing the task to never finish because resumeUnblockedTasks is called before
-        // its state is set to blocked.
-        //
-        // fix: check if the task is unblocked after the task returns blocked, and only set/unset
-        // blocked from the main thread.
-
         let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> = ArrayHashMap::default();
 
         if !self.is_task_blocked(entry_id, &mut parent_dedupe) {
@@ -562,12 +523,6 @@ impl<'a> Installer<'a> {
         self.installed.set(pkg_id as usize);
     }
 
-    // This function runs only on the main thread. The installer tasks threads
-    // will be changing values in `entry_step`, but the blocked state is only
-    // set on the main thread, allowing the code between
-    // `entry_steps[entry_id.get() as usize].load(.monotonic)`
-    // and
-    // `entry_steps[entry_id.get() as usize].store(.symlink_dependency_binaries, .monotonic)`
     pub fn resume_unblocked_tasks(&mut self) {
         let entries = &self.store.entries;
         let entry_steps = entries.items_step();
@@ -623,11 +578,6 @@ fn download_error_reason(e: bun_core::Error) -> &'static [u8] {
 
 pub struct Task {
     pub entry_id: StoreEntryId,
-    /// BACKREF: `Installer` owns `tasks[]` and outlives every `Task`. Stored as
-    /// `BackRef` so worker-thread read sites use safe `Deref`/`get()` instead of
-    /// per-site raw-pointer derefs. Constructed with a `NonNull::dangling()`
-    /// placeholder (never dereferenced) and patched to the real address before
-    /// any `start_task` call — see `isolated_install.rs`.
     pub installer: bun_ptr::BackRef<Installer<'static>>,
 
     pub task: thread_pool::Task,
@@ -674,15 +624,7 @@ impl TaskError {
             TaskError::SymlinkDependencies(err) => TaskError::SymlinkDependencies(err.clone()),
             TaskError::Binaries(err) => TaskError::Binaries(*err),
             TaskError::RunScripts(err) => TaskError::RunScripts(*err),
-            TaskError::Patching(_log) => {
-                // TODO(port): `bun_ast::Log` is non-Clone; the only caller of
-                // `TaskError::clone()` is `Yield::failure` which never receives a
-                // `Patching` payload (Patching is only constructed on the main
-                // thread via `on_package_extracted`, never passed through the
-                // task-thread `Yield::Fail` path). Preserve a fresh Log so we
-                // don't UAF a borrowed one.
-                TaskError::Patching(Log::init())
-            }
+            TaskError::Patching(_log) => TaskError::Patching(Log::init()),
             TaskError::Download(dl) => TaskError::Download(DownloadError {
                 err: dl.err,
                 url: dl.url.clone(),
@@ -829,20 +771,9 @@ impl Task {
         let installer = installer_ptr.get();
         let manager_ptr: *mut PackageManager = installer.manager;
         let lockfile_ptr: *mut Lockfile = installer.lockfile;
-        // BACKREF — `manager_ptr` is non-null and the `PackageManager` outlives
-        // every `Task` (see top-of-fn note). Wrapped once as `ParentRef` so the
-        // read-only deref sites below go through safe `Deref`/`get()` instead
-        // of per-site `unsafe { &* }`. Mutation and narrowed `addr_of_mut!`
-        // field projections still go through the raw `manager_ptr` directly
-        // (same provenance tag as `manager_ref.ptr`). Safe `From<NonNull>`
-        // construction — non-null is guaranteed by the BACKREF field invariant.
         let manager_ref = bun_ptr::ParentRef::<PackageManager>::from(
             core::ptr::NonNull::new(manager_ptr).expect("Installer.manager BACKREF is non-null"),
         );
-        // Read-only `&Lockfile` via the BACKREF accessor (centralised deref);
-        // same provenance as `&*lockfile_ptr`. `lockfile_ptr` itself is kept
-        // raw for the narrowed `addr_of_mut!((*lockfile_ptr).trusted_dependencies)`
-        // write under `trusted_dependencies_mutex` below.
         let lockfile: &Lockfile = installer.lockfile();
 
         let pkgs = lockfile.packages.slice();
@@ -969,11 +900,6 @@ impl Task {
 
                                         #[cfg(windows)]
                                         {
-                                            // Hoist a single `&mut [u16]` borrow so the raw pointer
-                                            // and length come from the SAME reborrow — calling
-                                            // `src_path.buf()` twice in the FFI arg list would take
-                                            // a fresh `&mut` for the len, invalidating the `*mut u16`
-                                            // derived from the first call under Stacked Borrows.
                                             let buf = src_path.buf();
                                             let cap = buf.len();
                                             let ptr = buf.as_mut_ptr();
@@ -1130,19 +1056,6 @@ impl Task {
                     let uses_global_store = installer.entry_uses_global_store(self.entry_id);
 
                     if !uses_global_store {
-                        // An entry can lose global-store eligibility between
-                        // installs — newly patched, newly trusted, a dep that
-                        // became a workspace package. The previous install
-                        // left `node_modules/.bun/<storepath>` as a symlink
-                        // (or junction) into the shared `<cache>/links/`
-                        // directory. Writing the new project-local tree
-                        // *through* that link would mutate the shared entry
-                        // underneath every other consumer; on Windows the
-                        // `.expect_missing` dep-symlink rewrite then bakes a
-                        // project-absolute junction target into the shared
-                        // directory, which dangles after the next
-                        // `rm -rf node_modules`. Detach first so the build
-                        // lands in a real project-local directory.
                         let mut local = AutoPath::init_top_level_dir();
                         installer.append_local_store_entry_path(&mut local, self.entry_id);
                         let is_stale_link: bool = {
@@ -1220,10 +1133,6 @@ impl Task {
                     let mut backend =
                         InstallMethod::from_u8(installer.supported_backend.load(Ordering::Relaxed));
                     'backend: loop {
-                        // PORT NOTE: reshaped for borrowck — Zig builds `dest_subpath` once
-                        // before the labeled-switch and passes it by-value (struct copy)
-                        // into each backend's helper. Rust moves it, so rebuild per
-                        // iteration; this only re-runs once on an EXDEV/OPNOTSUPP retry.
                         let mut dest_subpath = OsAutoPath::init();
                         installer.append_real_store_path(
                             &mut dest_subpath,
@@ -1465,25 +1374,8 @@ impl Task {
 
                         let mut dep_store_path = AutoAbsPath::init_top_level_dir();
 
-                        // When this entry lives in the global virtual store, its
-                        // dep symlinks must point at sibling *global* entries
-                        // (relative `../../<dep>-<hash>/...`) so the entry stays
-                        // valid for any project. Non-global parents (root,
-                        // workspace) keep pointing at the project-local
-                        // `.bun/<storepath>` indirection so `node_modules/<pkg>`
-                        // remains a relative link into `node_modules/.bun/`.
                         if installer.entry_uses_global_store(self.entry_id) {
-                            // The eligibility DFS + fixed-point pass guarantee
-                            // every dep of a global entry is itself global; if
-                            // that ever regressed the failure mode is a
-                            // dangling symlink with no install-time error.
                             debug_assert!(installer.entry_uses_global_store(dep.entry_id));
-                            // Target the dep's *final* path: the relative
-                            // `../../<dep>/...` link is computed against our
-                            // staging directory but resolves identically once
-                            // we're renamed (same parent), and the dep will
-                            // have been (or will be) renamed into that final
-                            // path by its own task.
                             installer.append_real_store_path(
                                 &mut dep_store_path,
                                 dep.entry_id,
@@ -1493,11 +1385,6 @@ impl Task {
                             installer.append_store_path(&mut dep_store_path, dep.entry_id);
                         }
 
-                        // PORT NOTE: reshaped for borrowck — Zig's
-                        // `const dest_save = dest.save(); defer dest_save.restore();`
-                        // can't coexist with `dest.undo()/dest.relative()` because
-                        // the `ResetScope` guard holds `&mut dest`. Capture the
-                        // length and restore manually.
                         let dest_saved_len = dest.len();
                         let target = {
                             dest.undo(1);
@@ -1536,11 +1423,6 @@ impl Task {
                     }
 
                     if installer.entry_uses_global_store(self.entry_id) {
-                        // The entry now exists in the shared global virtual store.
-                        // Project-local `node_modules/.bun/<storepath>` becomes a
-                        // symlink into it so that the relative `../../<dep>` links
-                        // created above (which live inside the global entry) remain
-                        // reachable from the project's node_modules.
                         match installer.link_project_to_global_store(self.entry_id) {
                             sys::Result::Ok(()) => {}
                             sys::Result::Err(err) => {
@@ -1610,14 +1492,6 @@ impl Task {
                         continue;
                     }
 
-                    // The eligibility check excludes any package whose
-                    // lifecycle scripts are trusted to run, so a global-store
-                    // entry should never reach script enqueueing. Guard it
-                    // anyway: `meta.hasInstallScript` can be a false negative
-                    // (yarn-migrated lockfiles force it to `.false`), and a
-                    // script running with cwd inside a shared content-
-                    // addressed directory would mutate every other project's
-                    // copy.
                     if installer.entry_uses_global_store(self.entry_id) {
                         step = self.next_step(current_step);
                         continue;
@@ -1703,12 +1577,6 @@ impl Task {
                             let first_index = list.first_index;
                             let clone: *mut package::scripts::List =
                                 bun_core::heap::into_raw(Box::new(list));
-                            // Each Task is the sole writer for its own `entry_id`'s
-                            // `scripts` slot; no other thread reads or writes it
-                            // until this Task reaches
-                            // `Step::RunPostInstallAndPrePostPrepare`. The column
-                            // is `Cell<Option<*mut _>>` (see Store.rs) so writing
-                            // through `&Store` provenance is a safe `.set()`.
                             entry_scripts[self.entry_id.get() as usize].set(Some(clone));
 
                             if is_trusted_through_update_request {
@@ -1828,10 +1696,6 @@ impl Task {
                         );
                     }
 
-                    // PORT NOTE: `target_node_modules_path` intentionally aliases
-                    // `node_modules_path` in the common (no-replacement) case —
-                    // mirrors the Zig `*AbsPath` aliasing. The Linker field is a
-                    // raw `*const AbsPath` for exactly this reason.
                     let target_nm_ptr: *const DefaultAbsPath =
                         match target_node_modules_path.as_ref() {
                             Some(p) => p,
@@ -1898,10 +1762,6 @@ impl Task {
                         continue;
                     }
 
-                    // This Task is the sole owner of its `entry_id`'s `scripts`
-                    // slot; written (if at all) by this same Task in
-                    // `Step::RunPreinstall` above, never touched concurrently.
-                    // `Cell::get` on a `Copy` payload — no unsafe needed.
                     let Some(list) = entry_scripts[self.entry_id.get() as usize].get() else {
                         step = self.next_step(current_step);
                         continue;
@@ -2387,10 +2247,6 @@ impl<'a> Installer<'a> {
         Ok(())
     }
 
-    /// True when this entry should live in the shared global virtual store
-    /// instead of being materialized under the project's `node_modules/.bun/`.
-    /// Root, workspace, folder, symlink, and patched packages always stay
-    /// project-local because their contents are mutable / project-specific.
     pub fn entry_uses_global_store(&self, entry_id: StoreEntryId) -> bool {
         if self.global_store_path.is_none() {
             return false;
@@ -2398,11 +2254,6 @@ impl<'a> Installer<'a> {
         self.store.entries.items_entry_hash()[entry_id.get() as usize] != 0
     }
 
-    /// Absolute path to the global virtual-store directory for `entry_id`:
-    ///   <cache>/links/<storepath>-<entry_hash>
-    /// (no trailing `/node_modules`). Pass `.staging` to get the per-process
-    /// temp sibling that the build steps write into; the final `binaries`
-    /// step renames staging → final.
     pub fn append_global_store_entry_path(
         &self,
         buf: &mut impl paths::PathLike,
@@ -2425,12 +2276,6 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Atomically publish a staged global-store entry by renaming
-    /// `<entry>.tmp-<suffix>/` → `<entry>/`. The package tree, dep symlinks,
-    /// dependency-bin links and own-bin links were all written under the
-    /// staging path; every link inside is relative to the entry directory, so
-    /// they resolve identically after the rename. The final directory
-    /// existing is the only completeness signal — no separate stamp file.
     pub fn commit_global_store_entry(&self, entry_id: StoreEntryId) -> sys::Result<()> {
         if !self.entry_uses_global_store(entry_id) {
             return sys::Result::Ok(());
@@ -2447,13 +2292,6 @@ impl<'a> Installer<'a> {
                     let _ = Fd::cwd().delete_tree(staging.slice());
                     return sys::Result::Err(err);
                 }
-                // Under --force, the existing entry may be the corrupt one
-                // we were asked to replace. Swap it aside (atomic from a
-                // reader's POV: `final` is always either the old or the new
-                // tree, never missing), publish staging, then GC the old
-                // tree. Without --force, the existing entry came from a
-                // concurrent install and is content-identical — keep it and
-                // discard ours.
                 if self.manager().options.enable.force_install() {
                     let mut old = AutoAbsPath::init();
                     let _ = old.append(self.global_store_path.as_ref().unwrap().as_bytes()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
@@ -2521,10 +2359,6 @@ impl<'a> Installer<'a> {
         let mut target_abs = AutoAbsPath::init();
         self.append_global_store_entry_path(&mut target_abs, entry_id, Which::Final);
 
-        // Absolute target so the link is independent of where node_modules
-        // lives (project root may itself be behind a symlink). Symlinker's
-        // `target` field is RelPath-typed for the common in-tree case, so
-        // call sys.symlink/symlinkOrJunction directly here.
         fn do_symlink(d: &ZStr, t: &ZStr) -> sys::Result<()> {
             #[cfg(windows)]
             {
@@ -2547,11 +2381,6 @@ impl<'a> Installer<'a> {
                     }
                 }
                 sys::Errno::EEXIST => {
-                    // Existing entry from a previous install. If it's a
-                    // symlink, replace it (stale link from a different
-                    // hash). If it's a real directory, that's the
-                    // pre-global-store layout (`bun patch` detaches
-                    // `node_modules/<pkg>`, not this path).
                     let is_symlink: bool = {
                         #[cfg(windows)]
                         {
@@ -2630,10 +2459,6 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Like `appendStoreNodeModulesPath`, but resolves to the *physical*
-    /// location of the entry's `node_modules` directory: the global virtual
-    /// store for global-eligible entries, or the project-local `.bun/` path
-    /// otherwise. See `Which` for when to pass `.staging` vs `.final`.
     pub fn append_real_store_node_modules_path(
         &self,
         buf: &mut impl paths::PathLike,
@@ -2715,12 +2540,6 @@ impl<'a> Installer<'a> {
                 buf.append(pkg_res.workspace().slice(string_buf));
             }
             ResolutionTag::Symlink => {
-                // PORT NOTE: reshaped — Zig `globalLinkDirPath()` lazily ensures
-                // the dir and mutates `*PackageManager`. `append_store_path` is
-                // `&self` (matching Zig `*const Installer`) and may run on worker
-                // threads, so the lazy init is hoisted to the main-thread caller
-                // (`isolated_install::install_packages`, before any `start_task`).
-                // Reading the cached field here is then equivalent.
                 let symlink_dir_path: &[u8] = &self.manager().global_link_dir_path;
                 debug_assert!(
                     !symlink_dir_path.is_empty(),
@@ -2744,12 +2563,6 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// The directory name for the entry store node_modules install
-    /// folder.
-    /// ./node_modules/.bun/jquery@3.7.1/node_modules/jquery
-    ///                                               ^ this one
-    /// Need to know this to avoid collisions with dependencies
-    /// with the same name as the package.
     pub fn entry_store_node_modules_package_name<'b>(
         &'b self,
         dep_id: DependencyID,

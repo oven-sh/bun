@@ -10,10 +10,6 @@ use crate::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, SystemError
 pub trait ErrorJsc {
     fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
 
-    /// Like `to_js` but populates the error's stack trace with async frames from the
-    /// given promise's await chain. Use when rejecting a promise from native code
-    /// at the top of the event loop (threadpool callback) — otherwise the error
-    /// will have an empty stack trace.
     fn to_js_with_async_stack(
         &self,
         global: &JSGlobalObject,
@@ -37,11 +33,6 @@ impl ErrorJsc for Error {
     }
 }
 
-// PORT NOTE: Zig `pub const TestingAPIs = struct { ... }` is a fieldless namespace
-// struct. Mapped to a module (not `struct + impl`) because `#[bun_jsc::host_fn]`'s
-// Free-kind shim emits `#fn_name(__g, __f)` without a `Self::` qualifier — the
-// wrapped fn must resolve unqualified at module scope (same constraint as
-// `install_jsc::install_binding::js_parse_lockfile`).
 pub mod TestingAPIs {
     use super::*;
 
@@ -108,13 +99,6 @@ pub mod TestingAPIs {
         }
     }
 
-    /// Exposes the `bun.sys.Sigaction` struct layout via a SIGUSR2 install /
-    /// readback / restore round-trip so `test/internal/sigaction-layout.test.ts`
-    /// can verify that the libc's sigaction sees the handler+flags we set
-    /// (regression test for the bionic LP64 layout fix). The Rust port uses the
-    /// `libc` crate's `sigaction`/`sigset_t` directly, which already has the
-    /// correct per-target layout (bionic included), so this is a sanity check
-    /// rather than a fix-carrier — the layout bug was Zig-stdlib-specific.
     #[bun_jsc::host_fn]
     pub fn sigaction_layout(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         #[cfg(not(unix))]

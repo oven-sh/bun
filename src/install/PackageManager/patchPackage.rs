@@ -38,11 +38,6 @@ pub struct PatchCommitResult {
     pub not_in_workspace_root: bool,
 }
 
-/// - Arg is the dir containing the package with changes OR name and version
-/// - Get the patch file contents by running git diff on the temp dir and the original package dir
-/// - Write the patch file to $PATCHES_DIR/$PKG_NAME_AND_VERSION.patch
-/// - Update "patchedDependencies" in package.json
-/// - Run install to install newly patched pkg
 pub fn do_patch_commit(
     manager: &mut PackageManager,
     pathbuf: &mut PathBuffer,
@@ -141,10 +136,6 @@ pub fn do_patch_commit(
 
     let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(&lockfile);
     let mut resolution_buf = [0u8; 1024];
-    // PORT NOTE: reshaped for borrowck — `compute_cache_dir_and_subpath` borrows
-    // `manager` mutably while the package name/resolution borrow `lockfile`
-    // (which itself sometimes aliases `manager.lockfile`). Clone the slice/
-    // resolution out first, then compute, then assemble the result tuple.
     let (cache_dir, cache_dir_subpath, changes_dir, pkg): (Fd, &ZStr, Vec<u8>, Package) =
         match arg_kind {
             PatchArgKind::Path => 'result: {
@@ -346,11 +337,6 @@ pub fn do_patch_commit(
             }
         };
 
-        // If the package has nested a node_modules folder, we don't want this to
-        // appear in the patch file when we run git diff.
-        //
-        // There isn't an option to exclude it with `git diff --no-index`, so we
-        // will `rename()` it out and back again.
         let has_nested_node_modules: bool = 'has_nested_node_modules: {
             let new_folder_handle =
                 match Dir::cwd().open_dir(new_folder, sys::OpenDirOptions::default()) {
@@ -723,12 +709,6 @@ fn escape_patch_filename(name: &[u8]) -> Option<Box<[u8]>> {
     Some(buf)
 }
 
-/// 1. Arg is either:
-///   - name and possibly version (e.g. "is-even" or "is-even@1.0.0")
-///   - path to package in node_modules
-/// 2. Calculate cache dir for package
-/// 3. Overwrite the input package with the one from the cache (cuz it could be hardlinked)
-/// 4. Print to user
 pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error> {
     let argument: &'static [u8] = manager.options.positionals[1];
 
@@ -817,12 +797,6 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
                 let mut resolver: () = ();
                 let mut package = Package::default();
                 let log = manager.log_mut();
-                // PORT NOTE: borrowck — `parse_with_json` needs `&mut Lockfile` and
-                // `&mut PackageManager` simultaneously, but the lockfile here is
-                // `manager.lockfile`. Temporarily move the Box out so the two
-                // borrows are disjoint; `parse_with_json` never reads `pm.lockfile`
-                // (it takes the lockfile as its own parameter). Restore before
-                // propagating any error so `manager` is never left half-torn.
                 let mut lockfile: Box<Lockfile> = core::mem::take(&mut manager.lockfile);
                 let parse_result = package.parse_with_json::<()>(
                     &mut lockfile,
@@ -981,19 +955,6 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
     let module_folder: &[u8] = &module_folder;
     let pkg_name: &[u8] = &pkg_name;
 
-    // The package may be installed using the hard link method,
-    // meaning that changes to the folder will also change the package in the cache.
-    //
-    // So we will overwrite the folder by directly copying the package in cache into it
-    //
-    // With the isolated linker's global virtual store, `module_folder` is
-    // reached *through* a `node_modules/.bun/<storepath>` symlink that points
-    // into `<cache>/links/`. `deleteTree(module_folder)` would follow that
-    // symlink and wipe the shared global entry (and its dep symlinks)
-    // underneath every other project, then FileCopier would write the user's
-    // edits into the shared cache. Detach first: walk up `module_folder` to
-    // find the first symlink ancestor, replace it with a real directory, and
-    // recreate the path below it so the copy lands in a project-local tree.
     detach_module_folder_from_shared_store(module_folder);
 
     if let Err(e) =
@@ -1045,10 +1006,6 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
 }
 
 fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
-    // `module_folder` reaches here normalised to forward slashes on every
-    // platform (see `pathToPosixBuf` in `preparePatch`). Re-normalise to the
-    // platform separator so `undo()`/`basename()` walk the path correctly on
-    // Windows and the lstat/getFileAttributes calls below see a native path.
     #[cfg(windows)]
     let mut native_buf = PathBuffer::uninit();
     #[cfg(windows)]
@@ -1089,12 +1046,6 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
             }
         };
         if is_symlink {
-            // Windows directory symlinks/junctions are removed with rmdir,
-            // file symlinks with unlink; on POSIX unlink covers both. If
-            // removal fails the symlink is still live, and the caller's
-            // `deleteTree` + `FileCopier` would follow it into the shared
-            // global-store entry — so fail loudly here rather than silently
-            // corrupting the cache.
             let remove_err: Option<sys::Error> = {
                 #[cfg(windows)]
                 'remove: {
@@ -1150,11 +1101,6 @@ fn overwrite_package_in_node_modules_folder(
 ) -> Result<(), bun_core::Error> {
     let _ = Fd::cwd().delete_tree(node_modules_folder_path);
 
-    // FileCopier's path fields are `.unit = .os` (u16 on Windows). `Path::from`
-    // is generic over the *input* width and converts internally, so accepting
-    // `&[u8]` and producing `Path<OSPathChar>` is intentional. `.sep = .auto`
-    // (Zig spec) is required so `/` is normalized to `\` on Windows — the inputs
-    // here arrive posix-normalized and are later passed to Win32 APIs.
     let dest_subpath = bun_paths::Path::<
         bun_paths::OSPathChar,
         { bun_paths::path_options::Kind::ANY },
@@ -1214,12 +1160,6 @@ fn overwrite_package_in_node_modules_folder(
 }
 
 type NodeModulesIterator<'a> = tree::Iterator<'a, { tree::IteratorPathStyle::NodeModules }>;
-
-// PORT NOTE: reshaped for borrowck — `tree::Iterator::next` returns an
-// `IteratorNext<'_>` borrowing the iterator's internal `path_buf`, so we
-// cannot return it from inside a `while let` (borrowck rejects the next
-// iteration's reborrow even though it's unreachable). Callers only need
-// `relative_path`, so copy it out into an owned `Vec<u8>`.
 
 fn node_modules_folder_for_dependency_ids(
     iterator: &mut NodeModulesIterator<'_>,
@@ -1362,12 +1302,6 @@ fn pkg_info_for_name_and_version(
         };
         return (pkg_id, folder);
     }
-
-    // Otherwise we have multiple matches
-    //
-    // There are two cases:
-    // a) the multiple matches are all the same underlying package (this happens because there could be multiple dependents of the same package)
-    // b) the matches are actually different packages, we'll prompt the user to select which one
 
     let (_, pkg_id) = pairs[0];
     let count: u32 = {

@@ -119,11 +119,6 @@ pub struct TransitionHandler {
     pub has_any: bool,
 }
 
-// PORT NOTE: Zig's `property`/`maybeFlush` took `comptime prop: []const u8` and used
-// `@field(this, prop)` + `val: anytype` for comptime field dispatch. Rust has no
-// `@field`, and passing both `&mut self` and `&mut self.<field>` to a generic fn
-// trips borrowck (because `flush` needs `&mut self`). Macros expand at the call
-// site exactly like the Zig comptime dispatch did.
 macro_rules! handler_maybe_flush {
     ($this:expr, $dest:expr, $context:expr, $field:ident, $val:expr, $vp:expr) => {{
         // If two vendor prefixes for the same property have different
@@ -483,10 +478,6 @@ mod transition_handler_body {
             let mut cloned = false;
 
             let prefix_to_iter = property_id.prefix().or_none();
-            // Expand vendor prefixes into multiple transitions.
-            // PORT NOTE: Zig used `inline for (VendorPrefix.FIELDS)` over packed-struct
-            // bool fields. With bitflags, iterate the individual flag bits.
-            // PERF(port): was comptime-unrolled inline-for — profile if it shows up on a hot path.
             for &prefix_flag in VendorPrefix::FIELDS {
                 if prefix_to_iter.contains(prefix_flag) {
                     let mut t = if cloned {

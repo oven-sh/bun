@@ -12,14 +12,6 @@
 //! authoritative builtin check. The phf set in `bundler/options.rs` was
 //! dead. Revive via `Alias::has` rather than re-adding a parallel table.
 
-/// One macro call below is the *only* place a module name is spelled.
-///
-/// Input is two disjoint groups so the COMPAT subset falls out without a
-/// tt-muncher: `compat` names go in all three consts, `node_only` names are
-/// the five Bun-compat exclusions (buffer/fs/path/process/test) and go only
-/// in RAW/PATTERNS. Every current consumer inserts into a hash set, so the
-/// "compat-first, exclusions-last" order vs. Zig's strict-alpha order is not
-/// observable.
 macro_rules! node_builtins_table {
     (
         compat:    [ $( $c:literal ),* $(,)? ],

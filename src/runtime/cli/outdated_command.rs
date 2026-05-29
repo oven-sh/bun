@@ -90,12 +90,6 @@ impl OutdatedCommand {
         original_cwd: &[u8],
         manager: &mut PackageManager,
     ) -> Result<(), bun_core::Error> {
-        // PORT NOTE: reshaped for borrowck — Zig calls
-        // `manager.lockfile.loadFromCwd(manager, alloc, manager.log, true)` which
-        // aliases `*PackageManager` with its `*Lockfile` field. Project disjoint
-        // raw pointers from the singleton first; `load_from_cwd` only reads
-        // `manager.options` / migration helpers and never re-borrows
-        // `manager.lockfile` through the `pm` argument.
         let pm_ptr: *mut PackageManager = manager;
         let not_silent = manager.options.log_level != LogLevel::Silent;
         let log_ptr: *mut bun_ast::Log = manager.log;
@@ -147,12 +141,7 @@ impl OutdatedCommand {
                 }
                 Global::crash();
             }
-            LoadResult::Ok(_) => {
-                // PORT NOTE: Zig reassigns `manager.lockfile = ok.lockfile`
-                // (pointer field). `load_from_cwd(&mut self, ..)` populates the
-                // lockfile in place, so the `ok.lockfile: &mut Lockfile` reborrow
-                // is the same storage and no reassignment is needed.
-            }
+            LoadResult::Ok(_) => {}
         }
 
         if Output::enable_ansi_colors_stdout() {
@@ -454,12 +443,6 @@ impl OutdatedCommand {
         let mut max_workspace: usize = 0;
         let mut has_filtered_versions: bool = false;
 
-        // PORT NOTE: reshaped for borrowck — Zig threads `*PackageManager`
-        // into `manifests.byNameAllowExpired`, freely aliasing the receiver.
-        // Hoist the four scalars that path reads into a by-value
-        // `DiskCacheCtx` so the loop body holds only disjoint field borrows
-        // (`&mut manager.manifests` against `&manager.lockfile` /
-        // `&manager.options`).
         let cache_ctx = manager.manifest_disk_cache_ctx();
         let min_age_ms = manager.options.minimum_release_age_ms;
         let needs_extended = min_age_ms.is_some();

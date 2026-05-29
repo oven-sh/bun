@@ -48,14 +48,6 @@ use core::fmt::Write as _;
 use core::marker::ConstParamTy;
 use core::mem::{MaybeUninit, size_of};
 
-// Standalone PE: depend ONLY on `bun_windows_sys` (leaf, no native C, no
-// `#[no_mangle]` exports) so the link has no libuv/simdutf/ICU roots and the
-// binary stays tiny — matching Zig's freestanding build. `crate::compat`
-// re-exports `bun_windows_sys::*` and locally declares the few items
-// (`CreateProcessW`, `STARTUPINFOW`, `TEB`/`teb()`, …) that otherwise live in
-// `bun_sys::windows`. The local `bun_core`/`bun_str` shadows bring
-// `ffi::{slice,slice_mut,zeroed}` / `RacyCell` / `w!` into scope under the
-// same paths the in-process build resolves through the extern prelude.
 #[cfg(feature = "shim_standalone")]
 use crate::bun_core;
 #[cfg(feature = "shim_standalone")]
@@ -70,10 +62,6 @@ use super::_bin_linking_shim::Flags;
 
 const DBG: bool = cfg!(debug_assertions);
 
-/// In Zig: `@import("root") == @This()` — true when this module IS the binary root
-/// (the standalone `bun_shim_impl.exe`), false when compiled into bun.exe.
-// TODO(port): this should be a cargo feature (`shim_standalone`) set only when building
-// the standalone shim binary; the `bun` crate is unavailable in standalone builds.
 const IS_STANDALONE: bool = cfg!(feature = "shim_standalone");
 
 #[cfg(not(feature = "shim_standalone"))]
@@ -116,11 +104,7 @@ mod nt {
         /// https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntreadfile
         #[link_name = "NtReadFile"]
         pub(super) fn NtReadFile(
-            FileHandle: HANDLE, // [in]
-            // PORT NOTE: Zig `?w.HANDLE` is pointer-sized via null-niche. Rust
-            // `Option<*mut c_void>` is NOT (raw pointers can already be null →
-            // no niche → 16-byte tagged enum, passed by-reference under Win64
-            // ABI). Use a plain HANDLE and pass null_mut() for "no event".
+            FileHandle: HANDLE,                  // [in]
             Event: HANDLE,                       // [in, optional]
             ApcRoutine: *mut c_void,             // [in, optional]
             ApcContext: PVOID,                   // [in, optional]
@@ -181,11 +165,6 @@ mod k32 {
 
 macro_rules! debug {
     ($fmt:literal $(, $arg:expr)* $(,)?) => {{
-        // Zig spec (`bun_shim_impl.zig`): `const dbg = builtin.mode == .Debug;`
-        // and every call site is `if (dbg) debug(...)`. The Rust port omits the
-        // per-call-site `if`, so gate the body here instead — release builds
-        // see an empty block (no `cfg!` const-assert, which fails E0080 in
-        // const-eval when `debug_assertions` is off).
         #[cfg(debug_assertions)]
         {
             #[cfg(not(feature = "shim_standalone"))]
@@ -394,11 +373,6 @@ impl core::fmt::Write for NtWriter {
 // PORTING.md §Global mutable state: standalone single-threaded shim exe (or
 // just-before-exit path when linked into bun). RacyCell — no concurrency.
 static FAILURE_REASON_DATA: bun_core::RacyCell<[u8; 512]> = bun_core::RacyCell::new([0; 512]);
-// Length of the argument written into `FAILURE_REASON_DATA[..len]`. The pointer
-// half of the original Zig `?[]const u8` is always `FAILURE_REASON_DATA.as_ptr()`,
-// so storing only the `usize` length lets this be a plain `AtomicUsize` (safe
-// `.load()`/`.store()`) instead of a `RacyCell<Option<(*const u8, usize)>>`
-// requiring unsafe `read()`/`write()`. `usize::MAX` encodes `None`.
 static FAILURE_REASON_LEN: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(usize::MAX);
 
@@ -440,11 +414,6 @@ pub(crate) enum LauncherMode {
 }
 
 impl LauncherMode {
-    // TODO(port): Zig's `RetType`/`FailRetType` returned different types per variant
-    // (`noreturn`/`void`/`ReadWithoutLaunchResult`). Stable Rust const-generics cannot
-    // associate a return type with a const value. We unify on `LauncherRet` below; the
-    // public wrappers (`try_startup_from_bun_js`, `read_without_launch`, `main`) narrow it.
-
     // PERF(port): comptime mode/reason demoted to runtime args — profile if it shows up on a hot path.
     #[cold]
     #[inline(never)]
@@ -468,11 +437,6 @@ enum LauncherRet {
     Read(ReadWithoutLaunchResult),
 }
 
-/// Abstraction over `()` (standalone), `FromBunRunContext`, and `FromBunShellContext`
-/// for the Zig `bun_ctx: anytype` parameter.
-// TODO(port): this trait approximates Zig comptime duck-typing; methods that don't apply
-// to a given impl call `unreachable!()` (matching the Zig — those code paths are gated by
-// `is_standalone`/`mode` checks that prevent the call at runtime).
 trait BunCtx {
     fn base_path(&self) -> *mut u16;
     fn base_path_len(&self) -> usize;
@@ -570,10 +534,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     let mut buf1 = MaybeUninit::<[u16; BUF1_LEN]>::uninit();
     let mut buf2 = MaybeUninit::<[u16; BUF2_U16_LEN]>::uninit();
 
-    // TODO(port): the Zig source slices these as `[comptime buf1.len..]` on a `[*]T` cast,
-    // whose semantics are unclear; from usage they are base-of-buffer raw pointers.
-    // Derive each view from a single `as_mut_ptr()` call so the raw pointers share one
-    // borrow tag (a second `as_mut_ptr()` would invalidate the first under Stacked Borrows).
     let buf1_u16: *mut u16 = buf1.as_mut_ptr().cast::<u16>();
     let buf1_u8: *mut u8 = buf1_u16.cast::<u8>();
 
@@ -695,12 +655,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         metadata_handle = bun_ctx.handle();
     }
 
-    // get a slice to where the CLI arguments are
-    // the slice will have a leading space ' arg arg2' or be empty ''
-    //
-    // We compute both the `[u16]` and `[u8]` views together so the DBG dump
-    // below can use the u16 view directly instead of reconstructing it via
-    // `from_raw_parts` from the byte view.
     let (user_arguments_u16, user_arguments_u8): (&[u16], &[u8]) = if !IS_STANDALONE {
         let a = bun_ctx.arguments();
         // `&[u16]` → `&[u8]` reinterpretation: total, panic-free `bytemuck` cast.
@@ -722,13 +676,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                         }
                     }
                 } else if cmd_line_u16[i] == ' ' as u16 && !in_quote {
-                    // there are more arguments!
-                    // if this is the end of the string then this becomes an empty slice,
-                    // otherwise it is a slice of just the arguments
-                    //
-                    // PORT NOTE: Zig ReleaseSmall reads one past `Length` here and hits the
-                    // PEB CommandLine NUL terminator, exiting the loop. Rust slice indexing
-                    // always bounds-checks, so we must guard the upper bound explicitly.
                     while i < cmd_line_u16.len() && cmd_line_u16[i] == ' ' as u16 {
                         i += 1;
                     }
@@ -764,17 +711,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     debug_assert!(user_arguments_u8.len() != 2);
     debug_assert!(user_arguments_u8.is_empty() || user_arguments_u8[0] == b' ');
 
-    // Read the metadata file into the memory right after the image path.
-    //
-    // i'm really proud of this technique, because it will create an absolute path, but
-    // without needing to store the absolute path in the '.bunx' file
-    //
-    // we do this by reusing the memory in the first buffer
-    // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.bunx!!!!!!!!!!!!!!!!!!!!!!'
-    //                                               ^^        ^     ^
-    //                                               S|        |     image_path_b_len + nt_object_prefix.len
-    //                                                |        'ptr' initial value
-    //                                               the read ptr
     let mut read_ptr: *mut u16 = 'brk: {
         let mut left = image_path_b_len / 2
             - (if IS_STANDALONE {
@@ -886,12 +822,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     };
     let read_len: usize = match read_status {
         NTSTATUS::SUCCESS => io.Information,
-        NTSTATUS::END_OF_FILE =>
-        // Supposedly .END_OF_FILE will be hit if you read exactly the amount of data left
-        // "IO_STATUS_BLOCK is filled only if !NT_ERROR(status)"
-        // https://stackoverflow.com/questions/62438021/can-ntreadfile-produce-a-short-read-without-reaching-eof
-        // In the context of this program, I don't think that is possible, but I will handle it
-        {
+        NTSTATUS::END_OF_FILE => {
             // STATUS_END_OF_FILE on a fresh sync handle at offset 0 means zero bytes were
             // written into buf1. The Zig source yields `read_max_len` here and lets the
             // (uninitialized) trailing bytes fail `is_valid()`; in Rust, reading those
@@ -925,13 +856,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         );
     }
 
-    // All three `read_len` outcomes land on initialized memory:
-    //   - SUCCESS, read_len >= 2  → inside the bytes NtReadFile just wrote.
-    //   - SUCCESS, read_len < 2   → moves *backward* into the image-path prefix we
-    //                               copied into buf1 above (initialized, junk-as-flags).
-    //   - END_OF_FILE             → lands on buf1[BUF1_LEN-1], zeroed in that arm above.
-    // The latter two yield a Flags value whose version_tag ≠ CURRENT, so `is_valid()`
-    // rejects them — same observable behavior as the Zig source, without the uninit read.
     read_ptr = read_ptr
         .cast::<u8>()
         .wrapping_add(read_len)
@@ -965,17 +889,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
     let mut spawn_command_line: *mut u16 = if !flags.has_shebang() {
         'spawn_command_line: {
-            // no shebang, which means the command line is simply going to be the joined file exe
-            // followed by the existing command line.
-            //
-            // I don't have a good example of this in practice, but it is certainly possible.
-            // (a package distributing an exe [like esbuild] usually has their own wrapper script)
-            //
-            // Instead of the above, the buffer would actually look like:
-            // BUF1: '\??"C:\Users\chloe\project\node_modules\my-cli\src\app.js"##!!!!!!!!!!'
-            //                                                                  ^^ flags
-            //                                                         zero char|
-
             // change the \ from '\??\' to '""
             // the ending quote is assumed to already exist as per the format
             // BUF1: '\??"C:\Users\chloe\project\node_modules\my-cli\src\app.js"##!!!!!!!!!!'
@@ -983,14 +896,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             // SAFETY: index 3 is within buf1.
             unsafe { *buf1_u16.add(3) = '"' as u16 };
 
-            // Copy user arguments in, overwriting old data. Remember that we ensured the arguments
-            // this started with a space.
-            // BUF1: '\??"C:\Users\chloe\project\node_modules\my-cli\src\app.js"##!!!!!!!!!!'
-            //                                                ^                 ^^
-            //                                                read_ptr (old)    |read_ptr (right now)
-            //                                                                  argument_start_ptr
-            //
-            // BUF1: '\??"C:\Users\chloe\project\node_modules\my-cli\src\app.js" --flag!!!!!'
             let argument_start_ptr: *mut u8 =
                 read_ptr.cast::<u8>().wrapping_sub(2 * 1 /* "\x00".len */);
             if (argument_start_ptr as usize) - (buf1_u8 as usize)
@@ -1062,13 +967,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             // i'm sorry, i don't have a good explanation for why this number is this number. it just is.
             const VALIDATION_LENGTH_OFFSET: u64 = 14;
 
-            // very careful here to not overflow u32, so that we properly error if you hijack the file
-            //
-            // Both lengths are byte counts of UTF-16 data written by
-            // BinLinkingShim.zig and must be even. An odd value (corrupt or
-            // tampered shim) would later misalign `write_ptr` (used to store a
-            // u16 NUL terminator) and break the even-length invariant relied on
-            // by `bytemuck::cast_slice`. Reject up front.
             if shebang_arg_len_u8 == 0
                 || (shebang_arg_len_u8 & 1) != 0
                 || (shebang_bin_path_len_bytes & 1) != 0
@@ -1083,24 +981,11 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 return LauncherMode::fail(MODE, FailReason::InvalidShimBounds);
             }
 
-            // Gated on `Launch`: in Zig the `.read_without_launch` instantiation cannot reach
-            // `bun_ctx.direct_launch_with_bun_js` (FromBunShellContext lacks the field, so it
-            // is a compile error). Rust's trait abstraction defers that to a runtime
-            // `unreachable!()`, so guard explicitly to preserve the static invariant.
             if MODE == LauncherMode::Launch
                 && !IS_STANDALONE
                 && flags.is_node_or_bun()
                 && bun_ctx.force_use_bun()
             {
-                // If we are running `bun --bun ...` and the script is already set to run
-                // in node.exe or bun.exe, we can just directly launch it by calling Run.boot
-                //
-                // This can only be done in non-standalone as standalone doesn't have the JS runtime.
-                // And if --bun was passed to any parent bun process, then %PATH% is already setup
-                // to redirect a call to node.exe -> bun.exe. So we need not check.
-                //
-                // This optimization can save an additional ~10-20ms depending on the machine
-                // as we do not have to launch a second process.
                 if DBG {
                     debug!("direct_launch_with_bun_js");
                 }
@@ -1121,23 +1006,11 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 return LauncherMode::fail(MODE, FailReason::CouldNotDirectLaunch);
             }
 
-            // Copy the shebang bin path
-            // BUF1: '\??\C:\Users\chloe\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
-            //                                                                   ^~~~^
-            //                                                                   ^ read_ptr
-            // BUF2: 'node !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!'
             read_ptr = read_ptr
                 .cast::<u8>()
                 .wrapping_sub(shebang_arg_len_u8 as usize)
                 .cast::<u16>();
 
-            // Compute the filename length and perform the BUF2 capacity check
-            // *before* the first write into buf2 so a hostile metadata file can
-            // never overrun it (the lengths feeding `advance` below come from
-            // the untrusted shim, not from anything we control).
-            //
-            // BUF1: '\??\C:\Users\chloe\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
-            //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^ ^ read_ptr
             let length_of_filename_u8 = (read_ptr as usize)
                 - (buf1_u8 as usize)
                 - 2 * (NT_OBJECT_PREFIX.len() + 1/* "\x00".len */);
@@ -1181,10 +1054,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     length_of_filename_u8,
                 )
             };
-            // `filename` is a UTF-16 byte view: its base is `buf1_u8 + 2*NT_OBJECT_PREFIX.len()`
-            // (even offset from a `*mut u16`-derived pointer ⇒ 2-aligned) and its length is the
-            // difference of two `*mut u16`-derived addresses minus an even constant ⇒ even.
-            // `bytemuck::cast_slice` checks both invariants at runtime, so no `unsafe` needed.
             let filename_u16: &[u16] = bytemuck::cast_slice(filename);
             if DBG {
                 debug!("filename and quote: '{}'", fmt16(filename_u16));
@@ -1212,10 +1081,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     length_of_filename_u8,
                 );
             }
-            // the pointer is now going to act as a write pointer for remaining data.
-            // note that it points into buf2 now, not buf1. this will write arguments and the null terminator
-            // BUF2: 'node "C:\Users\chloe\project\node_modules\my-cli\src\app.js"!!!!!!!!!!!!!!!!!!!!'
-            //                                                                    ^ write_ptr
             if DBG {
                 debug!(
                     "advance = {} + {} + {}\n",
@@ -1285,39 +1150,13 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
     #[cfg(not(feature = "shim_standalone"))]
     if MODE == LauncherMode::Launch {
-        // Prepare stdio for the child process, as after this we are going to *immediatly* exit
-        // it is likely that the c-runtime's atexit will not be called as we end the process ourselves.
-        //
-        // PORT NOTE: gated on `Launch` so `ReadWithoutLaunch` does not irreversibly mutate the
-        // parent process's stdio state. In Zig the `read_without_launch` instantiation would
-        // compile-error at the later `bun_ctx.environment` access, so it never reaches here;
-        // Rust's trait abstraction defeats that comptime guard, hence the explicit mode check.
         bun_core::output::source::stdio::restore();
-        // Declared locally as `safe fn` (the `bun_sys::windows` re-export
-        // forwards `bun_windows_sys::externs::windows_enable_stdio_inheritance`,
-        // which is not yet `safe`-qualified): zero args, zero memory-safety
-        // preconditions — the C++ shim only flips `HANDLE_FLAG_INHERIT` on the
-        // three process-lifetime standard handles. Matches the local `safe fn`
-        // redecl already used in `bun_sys::windows::become_watcher_manager`.
         unsafe extern "C" {
             safe fn windows_enable_stdio_inheritance();
         }
         windows_enable_stdio_inheritance();
     }
 
-    // I attempted to use lower level methods for this, but it really seems
-    // too difficult and not worth the stability risks.
-    //
-    // The initial (crazy) idea was something like cloning 'ProcessParameters' and then just changing
-    // the CommandLine and ImagePathName to point to the new data. would that even work??? probably not
-    // I never tested it.
-    //
-    // Resources related to the potential lower level stuff:
-    // - https://stackoverflow.com/questions/69599435/running-programs-using-rtlcreateuserprocess-only-works-occasionally
-    // - https://systemroot.gitee.io/pages/apiexplorer/d0/d2/rtlexec_8c.html
-    //
-    // Documentation for the function I am using:
-    // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw
     let mut process: w::PROCESS_INFORMATION = bun_core::ffi::zeroed();
     let mut startup_info = w::STARTUPINFOW {
         cb: size_of::<w::STARTUPINFOW>() as u32,
@@ -1432,13 +1271,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                                         // TODO: this is another place that direct_launch_with_bun_js should be used
                                     }
 
-                                    // There are many packages that specifically call for node.exe, and Bun will respect that
-                                    // but if node installed, this means the binary is unlaunchable. So before we fail,
-                                    // we will try to launch it with bun.exe
-                                    //
-                                    // This is not an issue when using 'bunx' or 'bun run', because node.exe is already
-                                    // added to the path synthetically through 'createFakeTemporaryNodeExecutable'. The path
-                                    // here applies for when the binary is launched directly (user shell, double click, etc...)
                                     debug_assert!(flags.has_shebang());
                                     if DBG {
                                         debug_assert!(
@@ -1525,12 +1357,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                         }
                     }
 
-                    // TODO: ERROR_ELEVATION_REQUIRED must take a fallback path, this path is potentially slower:
-                    // This likely will not be an issue anyone runs into for a while, because it implies
-                    // the shebang depends on something that requires UAC, which .... why?
-                    //
-                    // https://learn.microsoft.com/en-us/windows/security/application-security/application-control/user-account-control/how-it-works#user
-                    // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutew
                     w::Win32Error::ELEVATION_REQUIRED => {
                         return LauncherMode::fail(MODE, FailReason::ElevationRequired);
                     }
@@ -1563,13 +1389,6 @@ type CommandContext<'a> = bun_options_types::context::Context<'a>;
 #[cfg(feature = "shim_standalone")]
 type CommandContext<'a> = core::marker::PhantomData<&'a ()>; // unused in standalone
 
-// Zig stores `cli_context: CommandContext` where `CommandContext = *Command.Context`
-// — a raw pointer copied by value. Mirror that with `*mut ContextData` so reading
-// the field through `&self` (the `BunCtx` impl is on `&FromBunRunContext` and the
-// trait method takes `&self`, i.e. two layers of `&`) does not retag the pointee
-// to SharedReadOnly. Storing `&'a mut ContextData` and casting `*const→*mut` in
-// the accessor would violate Stacked Borrows the moment `Run.boot` writes through
-// it.
 #[cfg(not(feature = "shim_standalone"))]
 type CommandContextPtr = *mut bun_options_types::context::ContextData;
 #[cfg(feature = "shim_standalone")]
@@ -1644,14 +1463,6 @@ impl BunCtx for &FromBunRunContext {
     }
 }
 
-/// This is called from run_command.zig in bun.exe which allows us to skip the CreateProcessW
-/// call to create bun_shim_impl.exe. Instead we invoke the logic it has from an open file handle.
-///
-/// This saves ~5-12ms depending on the machine.
-///
-/// If the launch is successful, this function does not return. If a validation error occurs,
-/// this returns void, to which the caller should still try invoking the exe directly. This
-/// is to handle version mismatches where bun.exe's decoder is too new than the .bunx file.
 #[cfg(not(feature = "shim_standalone"))]
 #[allow(dead_code)]
 pub fn try_startup_from_bun_js(context: FromBunRunContext) {
@@ -1676,10 +1487,6 @@ pub struct FromBunShellContext {
     pub handle: HANDLE,
     /// Was --bun passed?
     pub force_use_bun: bool,
-    /// A pointer to memory needed to store the command line.
-    /// Matches Zig `buf: *Buf` (`*[buf2_u16_len]u16`). Kept as a raw pointer so the
-    /// `BunCtx` impl (which only sees `&Self`) can hand out a writable pointer without
-    /// laundering provenance through a shared reborrow of `&mut [_; N]`.
     pub buf: *mut FromBunShellContextBuf,
 }
 
@@ -1735,13 +1542,6 @@ pub enum ReadWithoutLaunchResult {
     CommandLine(*const u16, usize),
 }
 
-/// Given the path and handle to a .bunx file, do everything needed to execute it,
-/// *except* for spawning it. This is used by the Bun shell to skip spawning the
-/// bun_shim_impl.exe executable. The returned command line is fed into the shell's
-/// method for launching a process.
-///
-/// The cost of spawning is about 5-12ms, and the unicode conversions are way
-/// faster than that, so this is a huge win.
 #[cfg(not(feature = "shim_standalone"))]
 pub fn read_without_launch(context: FromBunShellContext) -> ReadWithoutLaunchResult {
     debug_assert!(!context.base_path_slice().starts_with(&NT_OBJECT_PREFIX));

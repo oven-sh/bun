@@ -1,22 +1,12 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 
-// Shared by Linux/Darwin/FreeBSD: libc syscall wrappers signal failure with the
-// same-width all-ones sentinel (`-1` signed / `MAX` unsigned — Zig's
-// `@bitCast(...) == -1`) and stash the real errno in a thread-local. Only the
-// per-OS INVOCATION lists differ: notably Linux keeps a bespoke `usize` impl
-// that decodes raw-syscall `-errno`-in-retval and MUST NOT route through this.
-// Declared before the `mod` lines so textual-order macro visibility reaches them.
 #[cfg(not(windows))]
 macro_rules! impl_get_errno_libc {
     ($($t:ty),+ $(,)?) => {$(
         impl $crate::GetErrno for $t {
             #[inline]
             fn get_errno(self) -> $crate::E {
-                // Zig bitcasts unsigned → SAME-width signed before `== -1`.
-                // `as i64` would zero-extend u32, never matching -1. Compare
-                // against the type's own all-ones value instead (== -1 for
-                // signed, == MAX for unsigned — both are libc's failure rc).
                 if self == !(0 as $t) {
                     $crate::E::from_raw($crate::posix::errno() as u16)
                 } else {
@@ -27,30 +17,12 @@ macro_rules! impl_get_errno_libc {
     )+};
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// __decl_uv_e! — single source of truth for the per-OS `uv_e` table.
-//
-// Each per-OS errno module invokes this once with `(IDENT = value => "DISPLAY")`
-// rows. The macro emits BOTH directions:
-//   • forward  : `pub const IDENT: i32 = value;`   (Zig: `UV_E` namespace struct)
-//   • reverse  : `pub fn name(neg_uv_err) -> Option<&'static str>`
-//                (Zig: hand-written if-chain in node_util_binding.zig:1-98)
-//
-// The reverse map additionally hard-codes the libuv-synthetic codes that are
-// target-INDEPENDENT and have no `uv_e::*` const today (`EOF`, `UNKNOWN`,
-// `EAI_*`). Node's `util.getSystemErrorName()` requires them; without this the
-// JS-visible result for `-4095` would regress to `"Unknown system error -4095"`.
-// ──────────────────────────────────────────────────────────────────────────
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __decl_uv_e {
     ( $( $ident:ident = $value:expr => $display:literal ),+ $(,)? ) => {
         $( pub const $ident: i32 = $value; )+
 
-        /// Negated libuv error code (`-UV_E*`) → user-visible name.
-        /// `None` for unmapped values (caller falls back to
-        /// `"Unknown system error N"`). Input is the raw signed value as
-        /// returned to JS — i.e. `-uv_e::FOO`.
         pub fn name(neg_uv_err: i32) -> Option<&'static str> {
             // Target-independent libuv-synthetic codes (no `uv_e::*` const).
             // Values from vendor/libuv/include/uv/errno.h.
@@ -82,24 +54,6 @@ macro_rules! __decl_uv_e {
     };
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// __uv_e_rows! — single source of truth for the 69 `(IDENT, E*, UV_E*)` rows
-// that every per-OS `uv_e` module declares.
-//
-// The (IDENT, "E…") column pair is byte-for-byte identical across
-// linux/darwin/freebsd/windows; only the middle `i32` value differs by design
-// (native `SystemErrno::$e as i32` on POSIX vs libuv-synthetic
-// `-bun_libuv_sys::UV_E*` on Windows / for codes the host OS lacks). Rather
-// than re-list the rows 4×, the caller supplies a tiny *value-producer* macro
-// `$cb!($id, $e, $uv) -> i32-expr` and this forwards each row to the existing
-// `__decl_uv_e!` expander (consts + reverse `name()` fn).
-//
-// `$id`/`$e`/`$uv` are passed as **literal** tokens (never captured as
-// `:ident`), so the per-OS `$cb` can override individual rows by literal-token
-// match — e.g. `(CHARSET, $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv }` — while
-// a final `($i:tt, $e:tt, $uv:tt)` arm handles the native default. Row order
-// mirrors the original Zig `UV_E` struct (node_util_binding.zig).
-// ──────────────────────────────────────────────────────────────────────────
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __uv_e_rows {
@@ -199,14 +153,6 @@ pub mod windows_errno;
 #[cfg(windows)]
 pub use windows_errno::{posix, *};
 
-// ──────────────────────────────────────────────────────────────────────────
-// posix — MOVE_DOWN landing for std.posix.{mode_t,E,S} + std.c._errno()
-//
-// Ground truth: Zig `std.posix` / `std.c` re-exports. Landed here so the errno
-// crate stays leaf (T0) and bun_sys (T≥1) imports forward. Windows keeps its
-// own divergent `mod posix` in windows_errno.rs (no `errno()` fn, unprefixed
-// `E`); this block is the shared POSIX-target definition.
-// ──────────────────────────────────────────────────────────────────────────
 #[cfg(not(windows))]
 #[allow(non_camel_case_types, non_snake_case)]
 pub mod posix {
@@ -217,20 +163,8 @@ pub mod posix {
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub type mode_t = u16;
 
-    /// Kernel errno enum. Zig's `std.posix.E` and Bun's `SystemErrno` share the
-    /// exact same discriminant space on each POSIX target; alias rather than
-    /// duplicate. Resolves to the per-OS `SystemErrno` via the glob re-export
-    /// above. TODO(port): Zig's `E` uses unprefixed variant names (`PERM`,
-    /// `NOENT`); `SystemErrno` uses `EPERM`, `ENOENT`. Callers matching on
-    /// `E::PERM` must migrate to `E::EPERM` (or this becomes a distinct enum).
     pub type E = crate::SystemErrno;
 
-    /// `stat` mode-flag constants and predicates (Zig: `std.posix.S`).
-    /// Values are POSIX-standard octal; identical across linux/darwin/freebsd.
-    /// Constants are typed `u32` (== `bun_core::Mode`); on Darwin/FreeBSD the
-    /// kernel `mode_t` is u16 so the upper 16 bits are always zero — every call
-    /// site already casts (`as i32`/`as u32`/`as _`) so the wider type is
-    /// harmless, and on Linux `mode_t` == `u32` so it's a drop-in re-export.
     pub use bun_core::S;
 
     /// Read the thread-local libc errno (Zig: `std.c._errno().*`).
@@ -238,14 +172,6 @@ pub mod posix {
     pub use bun_core::ffi::errno;
 }
 
-/// Zig's `getErrno(rc: anytype)` switches on `@TypeOf(rc)` to pick the errno
-/// extraction strategy. Rust has no type-switch, so we model it as a trait with
-/// per-type impls — call as `rc.get_errno()` or `get_errno(rc)`.
-///
-/// The trait declaration is target-independent; each per-OS module supplies its
-/// own `impl GetErrno for {i32,u32,isize,usize,...}` (Linux decodes raw-syscall
-/// `-errno` from `usize`, Darwin/FreeBSD read thread-local errno on `-1`,
-/// Windows ignores `rc` and reads `GetLastError()`/`WSAGetLastError()`).
 pub trait GetErrno: Copy {
     fn get_errno(self) -> E;
 }
@@ -259,14 +185,6 @@ pub fn get_errno<T: GetErrno>(rc: T) -> E {
     rc.get_errno()
 }
 
-/// Zig: `SystemError.getErrno` — `@enumFromInt(this.errno * -1)`.
-///
-/// Decode a Node-style **negated** errno (`c_int`, as written by
-/// `Error::to_system_error`) back into an `E`. The input crosses FFI
-/// (BunObject.cpp `SystemError__*`) and is NOT trusted to be a declared
-/// discriminant: Zig `@enumFromInt` is unchecked, but in Rust an out-of-range
-/// `#[repr(u16)]` enum value is immediate UB. Validate via the checked
-/// constructor and fall back to `SUCCESS` for unmapped values.
 #[inline]
 pub fn e_from_negated(errno: core::ffi::c_int) -> E {
     let n = errno.wrapping_neg();
@@ -284,12 +202,6 @@ pub fn e_from_negated(errno: core::ffi::c_int) -> E {
 }
 
 impl SystemErrno {
-    /// Zig: `@enumFromInt(n)`. Unchecked discriminant cast.
-    ///
-    /// On POSIX the enum is dense `0..MAX`, so we debug-assert `n < MAX`.
-    /// On Windows the enum is **sparse** (dense `0..=137` plus isolated `UV_E*`
-    /// discriminants in the ~3000-4095 range — see windows_errno.rs), so the
-    /// `< MAX` bound does not hold for valid tags and the assert is skipped.
     #[inline]
     pub const fn from_raw(n: u16) -> SystemErrno {
         // `as usize` on both sides papers over per-OS `MAX` typing (POSIX `u16`
@@ -305,12 +217,6 @@ impl SystemErrno {
 
 #[cfg(not(windows))]
 impl SystemErrno {
-    // TODO(port): Zig `anytype` accepted any integer width (signed or unsigned).
-    // i64 covers every concrete call site (errno-range values); revisit if a
-    // caller passes u64/usize directly.
-    //
-    // Windows defines its own `init<C: SystemErrnoInit>` (typed dispatch over
-    // DWORD/c_int/Win32Error) in windows_errno.rs, so this impl is POSIX-only.
     pub fn init(code: i64) -> Option<SystemErrno> {
         if code < 0 {
             if code <= -(Self::MAX as i64) {
@@ -330,17 +236,6 @@ impl bun_core::output::ErrName for SystemErrno {
         <&'static str>::from(*self).as_bytes()
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// system_errno_name — single source of truth for errno → "@tagName"
-//
-// Mirrors Zig `@tagName(SystemErrno)` (bun.zig:2841-2851 builds `errno_map`
-// by iterating `std.enums.values(sys.SystemErrno)`). The strum::IntoStaticStr
-// derive on each per-OS `SystemErrno` IS the table; no hand-written `&[&str]`
-// duplicate exists anywhere. bun_core (T0) consumes this through the
-// `ErrnoNames` link-interface below — bun_errno already depends on bun_core,
-// so a direct Cargo edge would cycle.
-// ──────────────────────────────────────────────────────────────────────────
 
 /// Platform errno integer → its `SystemErrno` tag name.
 /// `None` for `0` (SUCCESS), out-of-range, or (POSIX) non-positive input —
@@ -370,10 +265,6 @@ pub(crate) fn system_errno_name(errno: i32) -> Option<&'static str> {
     }
 }
 
-/// Length of the dense `0..MAX` prefix of `SystemErrno` (i.e. the size Zig's
-/// comptime `errno_map` would have on POSIX, or the dense head on Windows
-/// before the sparse UV_* range). Exposed so bun_core can pre-seed its
-/// interned `ERRNO_MAP` without a second hand-written per-OS length table.
 #[inline]
 pub(crate) const fn system_errno_max_dense() -> u32 {
     SystemErrno::MAX as u32

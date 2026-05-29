@@ -84,10 +84,6 @@ impl Expect {
             return Ok(JSValue::UNDEFINED);
         }
 
-        // PORT NOTE: Zig aliased one `*Formatter` for all three fmt adapters; Rust `to_fmt` takes
-        // `&mut Formatter` and the returned adapter holds that borrow live, so three concurrent
-        // adapters need three formatters. `make_formatter` is a trivial struct init with no shared
-        // state between values.
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         let mut formatter3 = super::make_formatter(global);

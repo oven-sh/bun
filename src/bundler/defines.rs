@@ -9,17 +9,6 @@ use crate::defines_table::{
     GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES as global_no_side_effect_property_accesses,
 };
 
-// ══════════════════════════════════════════════════════════════════════════
-// B-3 UNIFIED: `Define` / `DefineData` / `DotDefine` / `Flags` / `Options` /
-// `RawDefines` / `UserDefines` / `UserDefinesArray` are canonical in
-// `bun_js_parser::defines` (lower tier) so the parser's `P.define: &'a Define`
-// and `BundleOptions.define: Box<Define>` are the *same* nominal type. This
-// crate adds the json-parse / dotenv-vtable bodies that need
-// `bun_interchange` / `bun_dotenv` (tiered above js_parser) via the
-// `DefineExt` / `DefineDataExt` extension traits below. The pure-global table
-// moved down to `bun_js_parser::defines_table`, so `for_identifier` reads it
-// directly with no cross-crate hook.
-// ══════════════════════════════════════════════════════════════════════════
 pub use bun_js_parser::defines::{
     Define, DefineData, DotDefine, Flags, IdentifierDefine, Options, RawDefines, UserDefines,
     UserDefinesArray, are_parts_equal,
@@ -67,27 +56,12 @@ fn defines_path() -> FsPath<'static> {
 // TODO(port): inherent associated type aliases are unstable; expose as module-level alias.
 pub type Data = DefineData;
 
-// ══════════════════════════════════════════════════════════════════════════
-// `bun_dotenv::DefineStore` impls. dotenv (T2) calls through the link-interface
-// handle; bundler (T5) owns the concrete `E::String` + `DefineData` construction.
-// Mirrors src/dotenv/env_loader.zig:399 `copyForDefine` — `to_string` is a
-// `StringHashMap<DefineData>` (= UserDefines), `to_json` is a
-// `StringHashMap<Box<[u8]>>` (= RawDefines / framework defaults).
-// ══════════════════════════════════════════════════════════════════════════
-
 fn env_string_store_put(
     store: &mut UserDefinesArray,
     bump: &bun_alloc::Arena,
     key: &[u8],
     value: &[u8],
 ) -> Result<(), bun_core::Error> {
-    // Zig (env_loader.zig:461) allocates the `E.String` slab via the passed
-    // `allocator` (= `Transpiler.allocator`), NOT the thread-local
-    // `Expr.Data.Store` — `configureDefines` resets that store on return, so
-    // the env-define payloads must outlive it. Mirror with `bump` (the
-    // transpiler arena) so the slab is bulk-freed with the `Define` table
-    // instead of leaking a `Box` per env var. Value bytes alias the long-lived
-    // env-map storage.
     let value: ExprData = ExprData::EString(bun_ast::StoreRef::from_bump(
         bump.alloc(bun_ast::E::EString::init(value)),
     ));
@@ -101,13 +75,6 @@ fn env_string_store_put(
     Ok(())
 }
 
-/// Port of `Loader.copyForDefine` (env_loader.zig:399). Moved up from
-/// `bun_dotenv` so it can name `DefineData` / `E::String` directly instead of
-/// dispatching through a vtable — it only reads `loader.map.map.{keys,values}()`,
-/// all of which are public.
-///
-/// `to_json` is the framework-defaults `RawDefines` map; `to_string` is the
-/// per-env `UserDefinesArray`.
 pub fn copy_env_for_define(
     env: &bun_dotenv::Loader<'_>,
     to_json: &mut RawDefines,
@@ -139,10 +106,6 @@ pub fn copy_env_for_define(
             debug_assert!(!prefix.is_empty());
         }
 
-        // PORT NOTE: Zig's `if (key_buf_len > 0)` gate (env_loader.zig:455) is behavioral,
-        // not just a sizing optimization — when `behavior == .prefix` and NO env key starts
-        // with `prefix`, the entire second walk (including the framework-hash `else` arm)
-        // is skipped. Mirror that by pre-scanning for a prefix match before emitting.
         let any_prefix_match = if behavior == DotEnvBehavior::Prefix {
             env.map
                 .map
@@ -319,15 +282,6 @@ impl DefineExt for Define {
     }
 }
 
-/// Pre-built `ExprData` for the literal define *values* Bun auto-injects on
-/// every transpiler init: `"development"` / `"production"` / `"test"` (the
-/// `process.env.NODE_ENV` & `process.env.BUN_ENV` defaults) and `true` /
-/// `false` (the `process.browser` default). The `E::EString` payloads live in
-/// process-lifetime `static`s — producing one is allocation-free and never
-/// touches the thread-local AST store `json_parser::parse_env_json` writes into.
-/// Returns `None` for everything else (user `--define` values, env-file
-/// `NODE_ENV` overrides like `staging`, JSON object/array literals, …), which
-/// falls through to the general `parse_env_json` path in `DefineData::parse`.
 fn const_default_define_value(value_str: &[u8]) -> Option<ExprData> {
     static DEVELOPMENT: bun_ast::E::EString = bun_ast::E::EString::from_static(b"development");
     static PRODUCTION: bun_ast::E::EString = bun_ast::E::EString::from_static(b"production");
@@ -466,10 +420,6 @@ impl DefineDataExt for DefineData {
 
             return Ok(DefineData {
                 value,
-                // PORT NOTE: upstream `DefineData` now owns `original_name:
-                // Option<Box<[u8]>>` (js_parser/lib.rs:1369) instead of the
-                // borrowed `ptr`/`len` pair (Zig's 48→40-byte packing). Dupe
-                // the value bytes — these are tiny startup-time copies.
                 original_name: if !value_str.is_empty() {
                     Some(Box::<[u8]>::from(value_str))
                 } else {
@@ -485,15 +435,6 @@ impl DefineDataExt for DefineData {
             });
         }
 
-        // Fast path for the compile-time-constant literal define *values* that
-        // Bun auto-injects on every transpiler init (`"development"` /
-        // `"production"` / `"test"` for `process.env.NODE_ENV` & `BUN_ENV`, and
-        // `true` / `false` for `process.browser`) — the entire default define
-        // set on the `bun run` path. Build the `DefineData` straight from
-        // process-lifetime statics: skips the `bump.alloc_slice_copy` +
-        // `json_parser::parse_env_json` + `Expr::deep_clone` round-trip and,
-        // crucially, never touches the thread-local AST `Expr`/`Stmt` stores
-        // (created lazily below only when a value really needs JSON parsing).
         if let Some(value) = const_default_define_value(value_str) {
             let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(value.tag());
             return Ok(DefineData {
@@ -513,38 +454,15 @@ impl DefineDataExt for DefineData {
             });
         }
 
-        // Zig parsed against a stack-local `Source` then `Expr.Data.deepClone`d
-        // into the arena. We dupe `value_str` into `bump` first so every string
-        // slice the JSON lexer hands back already points into the long-lived
-        // arena (the `E::String.data` bytes survive without per-string dup).
-        //
-        // `parse_env_json` builds `E::String`/`E::Object` nodes in the
-        // thread-local AST `Expr`/`Stmt` stores, so create them now — done
-        // lazily here (idempotent no-ops once created) instead of eagerly in
-        // `Transpiler::configure_defines`, since most inits resolve every define
-        // through the fast path above and never need an AST store.
         bun_ast::Expr::data_store_create();
         bun_ast::Stmt::data_store_create();
         let arena_value: &[u8] = bump.alloc_slice_copy(value_str);
         let source = bun_ast::Source {
-            // `Source.contents` is typed `&'static [u8]` as a stand-in for an
-            // arena lifetime (see logger/lib.rs `Str` note). `arena_value` lives in `bump`,
-            // which the caller (`Define::init`) owns for the lifetime of the
-            // `Define` table — i.e. as long as any `ExprData` produced here is
-            // reachable. Route through `StoreStr` for the lifetime erasure.
             contents: std::borrow::Cow::Borrowed(bun_ast::StoreStr::new(arena_value).slice()),
             path: defines_path(),
             ..Default::default()
         };
         let expr = bun_parsers::json_parser::parse_env_json(&source, log, bump)?;
-        // The `deep_clone` is load-bearing even though `.data` bytes already
-        // live in `bump`: `parse_env_json` → `new_expr` → `Expr::init` allocates
-        // the `E::String` *payload* (the `StoreRef` target) in the thread-local
-        // AST store, which `configure_defines` resets on return via
-        // `StoreResetGuard`. Before the `bun_ast` unification this was masked by
-        // `.into()` deep-walking T2→T4 and re-boxing the payload; now `.into()`
-        // is identity, so without `deep_clone` the `DefineData.value` dangles
-        // into a freed slab and `process.env.NODE_ENV` reads garbage.
         let data: ExprData = expr.data.deep_clone(bump)?;
         let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(data.tag());
         Ok(DefineData {

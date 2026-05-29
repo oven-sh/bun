@@ -1,10 +1,5 @@
 use bun_core::MutableString;
 
-// PORT NOTE: Zig used `bun.ObjectPool(MutableString, initMutableString, false, 4)` and
-// recovered the node via `container_of`. `MutableString` is a foreign type so we
-// cannot impl `ObjectPoolType` for it directly (orphan rule); a `#[repr(transparent)]`
-// newtype lets us cast `*mut PooledMutableString` ↔ `*mut MutableString` at the API
-// boundary.
 mod buffer_pool {
     use super::*;
     use bun_collections::ObjectPoolType;

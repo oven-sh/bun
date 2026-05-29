@@ -46,19 +46,6 @@ impl ElfFile {
         Ok(Box::new(ElfFile { data }))
     }
 
-    /// If PT_INTERP points into a Nix/Guix store path, rewrite it to the
-    /// standard FHS path so `bun build --compile` output stays portable when
-    /// the bun binary itself was patchelf'd (NixOS autoPatchelfHook). See #24742.
-    ///
-    /// Skipped when the host system itself uses a Nix/Guix store interpreter
-    /// (i.e. the running bun process has a store-path PT_INTERP): on NixOS
-    /// `/lib64/ld-linux-x86-64.so.2` is a stub that refuses to run generic
-    /// binaries, so normalizing there would break locally-run compiled output
-    /// (#29290). Cross-compile-style portability is preserved on any non-Nix
-    /// Linux host that happens to have a patchelf'd bun installed.
-    ///
-    /// Store paths are always longer than the FHS path, so this is an in-place
-    /// shrink — no segment moves. No-op for any other interpreter.
     pub fn normalize_interpreter(&mut self) {
         // Don't rewrite on Nix/Guix hosts — the FHS path is a stub loader there.
         if host_uses_nix_store_interpreter() {
@@ -192,24 +179,6 @@ impl ElfFile {
         }
     }
 
-    /// Find the `.bun` section and write `payload` so the kernel `mmap`s it at
-    /// exec time alongside the rest of the binary. Stores the data's vaddr at
-    /// the original BUN_COMPILED location so the runtime can dereference it
-    /// directly.
-    ///
-    /// We extend the existing writable `PT_LOAD` to cover the appended payload
-    /// rather than creating a new segment (by repurposing `PT_GNU_STACK`).
-    /// Earlier versions added a late `PT_LOAD`; WSL1's kernel ELF loader
-    /// rejects that shape with `ENOEXEC` at `execve` time before anything in
-    /// the binary runs (#29963). Growing an already-valid `PT_LOAD` — the shape
-    /// a linker would natively produce — keeps compiled binaries loadable on
-    /// WSL1 while preserving the mmap-at-execve contract (no file I/O at
-    /// startup, works with execute-only permissions).
-    ///
-    /// We always append rather than writing in-place because `.bun` is in the
-    /// middle of a `PT_LOAD` segment — sections like `.dynamic`, `.got`,
-    /// `.got.plt` come after it, and expanding in-place would invalidate their
-    /// absolute virtual addresses.
     pub fn write_bun_section(&mut self, payload: &[u8]) -> Result<(), ElfError> {
         let ehdr = read_ehdr(&self.data);
         let bun_section = self.find_bun_section(ehdr)?;
@@ -220,11 +189,6 @@ impl ElfFile {
         let new_content_size: u64 = header_size + payload.len() as u64;
         let aligned_new_size = align_up(new_content_size, page_size);
 
-        // Locate the writable PT_LOAD we'll extend. .bun lives in this
-        // segment already (BlobHeader is `aligned(16K)` + PROGBITS with WA
-        // flags). Growing an existing PT_LOAD is the layout a linker would
-        // naturally produce; WSL1's kernel loader rejects binaries that
-        // instead add a late PT_LOAD by repurposing PT_GNU_STACK (#29963).
         let phdr_size = size_of::<Elf64_Phdr>();
         let mut rw_phdr_index: Option<usize> = None;
         let mut rw_phdr: Elf64_Phdr = Elf64_Phdr::ZEROED;
@@ -251,50 +215,14 @@ impl ElfFile {
             return Err(ElfError::NoWritableLoadSegment);
         };
 
-        // Place the new data at a page-aligned virtual address past every
-        // existing mapping. page_size is ≥ 128 so this also guarantees the
-        // 128-byte alignment that JSC's bytecode cache requires — see
-        // `target_mod = 120` in StandaloneModuleGraph.zig, which assumes the
-        // payload starts on a 128-byte boundary so bytecode at payload-offset
-        // 120 lands 128-aligned once the 8-byte `[u64 size]` header is
-        // accounted for. A non-page-aligned `new_vaddr` (e.g. one inheriting
-        // `rw_phdr.p_vaddr`'s residue mod 128) would SIGSEGV in JSC bytecode
-        // deserialization on aarch64.
-        //
-        // `new_file_offset` follows the segment's existing (vaddr - offset)
-        // delta, so the kernel's mmap at `rw_phdr.p_offset → rw_phdr.p_vaddr`
-        // covers our new payload continuously once we grow p_filesz.
         let new_vaddr = align_up(max_vaddr_end, page_size);
         let offset_in_segment = new_vaddr - rw_phdr.p_vaddr;
         let new_file_offset = rw_phdr.p_offset + offset_in_segment;
 
-        // Sanity: `max_vaddr_end` already reflects the RW segment's full
-        // memsz range (the loop above folds every PT_LOAD), so new_vaddr is
-        // past it by construction. This guard catches pathological inputs
-        // (e.g. corrupt ELF with rw_phdr.p_vaddr past max_vaddr_end).
         if new_vaddr < rw_phdr.p_vaddr + rw_phdr.p_memsz {
             return Err(ElfError::NewVaddrCollides);
         }
 
-        // File layout after this function returns:
-        //
-        //   [0, old_rw_file_end)                      original content, unchanged
-        //                                             (RW segment's file-backed bytes)
-        //   [old_rw_file_end, new_file_offset)        zero fill
-        //                                             (becomes file-backed inside the
-        //                                              extended RW PT_LOAD; must read as
-        //                                              zero to keep BSS semantics)
-        //   [new_file_offset, +aligned_new_size)      [u64 LE size][payload][zero pad]
-        //                                             (new .bun contents — vaddr = new_vaddr)
-        //   [payload_end, +moved_tail_size)           relocated non-ALLOC sections + old
-        //                                             section header table
-        //
-        // Anything past `old_rw_file_end` in the input — non-ALLOC sections
-        // like `.comment`, `.symtab`, `.strtab`, `.shstrtab`, debug info,
-        // plus the section header table — has to be moved out of the way
-        // because that file range now lives inside the extended RW PT_LOAD.
-        // Leaving it in place would mmap it into what was previously BSS
-        // (zero-initialized statics), corrupting the process.
         let old_rw_file_end = rw_phdr.p_offset + rw_phdr.p_filesz;
         let old_file_size: u64 = self.data.len() as u64;
         if old_rw_file_end > old_file_size {
@@ -317,11 +245,6 @@ impl ElfFile {
             .reserve(total_new_size_usz.saturating_sub(self.data.len()));
         self.data.resize(total_new_size_usz, 0);
 
-        // Relocate the tail (non-ALLOC sections + old shdr table) past the
-        // payload. Do this BEFORE zero-filling and writing the payload — if
-        // `new_file_offset < old_file_size` (debug binaries with hundreds of
-        // MB of debug info past the RW segment), the destination overlaps
-        // the source, so memmove is required.
         if moved_tail_size != 0 {
             self.data.copy_within(
                 usize::try_from(move_src_start).expect("int cast")
@@ -354,22 +277,11 @@ impl ElfFile {
                 .fill(0);
         }
 
-        // Write the vaddr of the appended data at the ORIGINAL .bun section location
-        // (where BUN_COMPILED symbol points). At runtime, BUN_COMPILED.size will be
-        // this vaddr (always non-zero), which the runtime dereferences as a pointer.
-        // Non-standalone binaries have BUN_COMPILED.size = 0, so 0 means "no data".
         write_u64_le(
             &mut self.data[usize::try_from(bun_section_offset).expect("int cast")..][..8],
             new_vaddr,
         );
 
-        // Update every section header whose sh_offset pointed into the moved
-        // tail so tools like `readelf -S`, `objdump`, and `gdb` still find
-        // the right bytes. Special-case the .bun header — it moves to the
-        // payload's new position, not to the shifted tail.
-        //
-        // The section header table itself is part of the moved tail, so we
-        // compute its new location from e_shoff's old value.
         let old_shdr_offset: u64 = ehdr.e_shoff;
         let shdr_table_size = ehdr.e_shnum as u64 * size_of::<Elf64_Shdr>() as u64;
         if old_shdr_offset < move_src_start || old_shdr_offset + shdr_table_size > move_src_end {
@@ -402,13 +314,6 @@ impl ElfFile {
             );
         }
 
-        // Extend the existing writable PT_LOAD to cover the appended payload.
-        // Keep p_offset/p_vaddr/p_paddr/p_align unchanged; only grow filesz
-        // and memsz. Equal values are fine — the extension is entirely
-        // file-backed (no new BSS gap).
-        //
-        // PT_GNU_STACK is deliberately left alone; repurposing it into a
-        // separate late PT_LOAD is what breaks WSL1 (#29963).
         {
             let new_segment_size = offset_in_segment + aligned_new_size;
             let extended = Elf64_Phdr {
@@ -522,11 +427,6 @@ fn read_ehdr(data: &[u8]) -> Elf64_Ehdr {
     read_struct(&data[..size_of::<Elf64_Ehdr>()])
 }
 
-/// Full ELF64-LE header validation (magic + class + endian). This is the strict
-/// check used before parsing program/section headers — NOT a format sniff. Do
-/// not route `macho::utils::is_elf` through this; that function is intentionally
-/// a 4-byte-magic-only sniff used for elf-vs-macho dispatch and must accept
-/// 32-bit/BE ELF.
 fn validate_elf64_le(data: &[u8]) -> Result<(), ElfError> {
     if data.len() < size_of::<Elf64_Ehdr>() {
         return Err(ElfError::InvalidElfFile);
@@ -543,27 +443,6 @@ fn validate_elf64_le(data: &[u8]) -> Result<(), ElfError> {
     Ok(())
 }
 
-/// True iff the host bun is running on is managed by Nix or Guix — in which
-/// case the "generic" FHS linker path `/lib64/ld-linux-x86-64.so.2` is a stub
-/// that rejects generic binaries, and rewriting PT_INTERP to it would break
-/// locally-run `bun build --compile` output. See #29290.
-///
-/// Checks (any one is sufficient):
-///   1. `BUN_DEBUG_FORCE_NIX_HOST` — test-only override used by #29290's
-///      regression test to exercise this branch without writing to `/etc`.
-///   2. The running bun process's own PT_INTERP (via `/proc/self/exe`). NixOS
-///      `autoPatchelfHook` rewrites installed binaries to `/nix/store/...`
-///      loaders; this is the most precise signal.
-///   3. `/etc/NIXOS` — canonical NixOS marker, present on every NixOS system
-///      regardless of how bun itself was installed (e.g. a statically-linked
-///      bun built elsewhere).
-///   4. `/gnu/store` directory — Guix's equivalent of /nix/store.
-///
-/// Result is cached — this is called once per `bun build --compile`.
-///
-/// Always `false` on non-Linux hosts: `bun build --compile` for a Linux target
-/// can run on macOS/Windows, in which case the host's linker layout is
-/// irrelevant and we want to normalize for portability (#24742).
 fn host_uses_nix_store_interpreter() -> bool {
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
@@ -575,11 +454,6 @@ fn host_uses_nix_store_interpreter() -> bool {
         static COMPUTED: AtomicU8 = AtomicU8::new(0); // 0 unknown, 1 no, 2 yes
 
         fn check() -> bool {
-            // Test-only override: lets #29290's regression test force the
-            // Nix-host branch without mutating `/etc/NIXOS` on the shared
-            // rootfs (which would poison concurrent test workers).
-            // PORT NOTE: env_var .get() returns Option<bool> (nullability
-            // collapsed in the macro port); default-false makes None ≡ false.
             if env_var::BUN_DEBUG_FORCE_NIX_HOST.get() == Some(true) {
                 return true;
             }

@@ -30,10 +30,6 @@ pub const HTTP_BUFFER_POOLING: bool = true;
 
 pub const DISABLE_LOLHTML: bool = false;
 
-/// There is, what I think is, a bug in getaddrinfo()
-/// on macOS that specifically impacts localhost and not
-/// other ipv4 hosts. This is a workaround for that.
-/// "localhost" fails to connect.
 pub const HARDCODE_LOCALHOST_TO_127_0_0_1: bool = false;
 
 /// React will issue warnings in development if there are multiple children
@@ -49,42 +45,6 @@ pub const SAME_TARGET_BECOMES_DESTRUCTURING: bool = true;
 
 pub const HELP_CATCH_MEMORY_ISSUES: bool = env::ENABLE_ASAN || env::IS_DEBUG;
 
-/// This performs similar transforms as https://github.com/rollup/plugins/tree/master/packages/commonjs
-///
-/// Though, not exactly the same.
-///
-/// There are two scenarios where this kicks in:
-///
-/// 1) You import a CommonJS module using ESM.
-///
-/// Semantically, CommonJS expects us to wrap everything in a closure. That
-/// bloats the code. We want to make the generated code as small as we can.
-///
-/// To avoid that, we attempt to unwrap the CommonJS module into ESM.
-///
-/// But, we can't always do that. When you have cyclical require() or directly
-/// mutate exported bindings, we can't unwrap it.
-///
-/// However, in the simple case, where you do something like
-///
-///     exports.foo = 123;
-///     exports.bar = 456;
-///
-/// We can unwrap it into
-///
-///    export const foo = 123;
-///    export const bar = 456;
-///
-/// 2) You import a CommonJS module using CommonJS.
-///
-/// This is a bit more complicated. We want to avoid the closure wrapper, but
-/// it's really difficult to track down all the places where you mutate the
-/// exports object. `require.cache` makes it even more complicated.
-/// So, we just wrap the entire module in a closure.
-///
-/// But what if we previously unwrapped it?
-///
-/// In that case, we wrap it again in the printer.
 pub const UNWRAP_COMMONJS_TO_ESM: bool = true;
 
 /// https://sentry.engineering/blog/the-case-for-debug-ids
@@ -99,12 +59,6 @@ pub const DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES: bool = true;
 
 pub const RUNTIME_TRANSPILER_CACHE: bool = true;
 
-/// On Windows, node_modules/.bin uses pairs of '.exe' + '.bunx' files.  The
-/// fast path is to load the .bunx file within `bun.exe` instead of
-/// `bun_shim_impl.exe` by using `bun_shim_impl.tryStartupFromBunJS`
-///
-/// When debugging weird script runner issues, it may be worth disabling this in
-/// order to isolate your bug.
 pub const WINDOWS_BUNX_FAST_PATH: bool = true;
 
 // TODO: fix Windows-only test failures in fetch-preconnect.test.ts

@@ -22,16 +22,6 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     lexical_variables: &mut VariableEnvironment,
     res: &ModuleInfoDeserialized,
 ) -> *mut JSModuleRecord {
-    // Ownership of `res` stays with the caller; this function only reads it.
-    // The caller (BunAnalyzeTranspiledModule.cpp) decides whether to free
-    // immediately or keep it alive on the SourceProvider for the isolation
-    // SourceProvider cache.
-
-    // Slice-field validity / alignment caveats are documented on the
-    // `ModuleInfoDeserialized` accessors.
-    // TODO(port): switch element reads to `read_unaligned` per the upstream
-    // note in `analyze_transpiled_module.rs` if a strict-alignment target is
-    // ever added.
     let strings_buf: &[u8] = res.strings_buf();
     let strings_lens: &[u32] = res.strings_lens();
     let requested_modules_keys: &[StringID] = res.requested_modules_keys();

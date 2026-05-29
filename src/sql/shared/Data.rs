@@ -8,10 +8,6 @@ pub(crate) type InlineStorage = BoundedArray<u8, 15>;
 #[derive(Default)]
 pub enum Data {
     Owned(Vec<u8>),
-    // TODO(port): lifetime — `Temporary` borrows external bytes (see `substring`, which
-    // returns a `Data` aliasing `self`). Stored as a `RawSlice` (encapsulated fat
-    // pointer; safe `.slice()` projection under the borrowed-backing-outlives-holder
-    // invariant). TODO(refactor): revisit whether a `<'a>` lifetime on `Data` is acceptable.
     Temporary(RawSlice<u8>),
     InlineStorage(InlineStorage),
     #[default]

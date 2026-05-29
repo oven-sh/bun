@@ -12,11 +12,6 @@ pub struct MediaRule<R> {
     pub loc: Location,
 }
 
-// ─── behavior bodies ──────────────────────────────────────────────────────
-// PORT NOTE: `minify` lives in `rules/mod.rs` (hoisted next to `CssRuleList::
-// minify` so the dispatch can call it without re-exporting `MinifyContext`
-// here). `to_css` un-gated this round — `MediaList::{always_matches,to_css}`
-// and `CssRuleList::to_css` are both real now.
 impl<R> MediaRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if dest.minify && self.query.always_matches() {

@@ -30,17 +30,6 @@ pub enum KnownGlobal {
     RegExp,
 }
 
-// `pub const map = bun.ComptimeEnumMap(KnownGlobal);`
-//
-// PERF(port): Zig's `ComptimeEnumMap` lowers to a comptime-generated switch.
-// An earlier port used `phf::Map<&[u8], _>`, which on every probe computes a 128-bit
-// SipHash of the name, two modular reductions, a bounds check, and a final
-// slice compare. `minify_global_constructor` calls this for every `new Ident`
-// expression in the input, and the overwhelming majority of probes are
-// *misses* (any user-defined class). A length-gated match rejects those on a
-// single `usize` compare and at most 1-3 fixed-size byte compares — no hash,
-// no indirection. 21 keys, ≤3 per length bucket: well within the range where
-// open-coded dispatch beats `phf`.
 #[inline]
 pub(crate) fn lookup(name: &[u8]) -> Option<KnownGlobal> {
     match name.len() {
@@ -295,14 +284,7 @@ impl KnownGlobal {
                 // Just remove 'new' for Function
                 Some(Self::call_from_new(e, loc))
             }
-            KnownGlobal::RegExp => {
-                // Don't optimize RegExp - the semantics are too complex:
-                // - new RegExp(re) creates a copy, but RegExp(re) returns the same instance
-                // - This affects object identity and lastIndex behavior
-                // - The difference only applies when flags are undefined
-                // Keep the original new RegExp() call to preserve correct semantics
-                None
-            }
+            KnownGlobal::RegExp => None,
             KnownGlobal::WeakSet | KnownGlobal::WeakMap => {
                 let n = e.args.len_u32();
 
@@ -352,12 +334,6 @@ impl KnownGlobal {
                         | js_ast::expr::PrimitiveType::Boolean
                         | js_ast::expr::PrimitiveType::Number
                         | js_ast::expr::PrimitiveType::String => {
-                            // "new Date('')" is pure
-                            // "new Date(0)" is pure
-                            // "new Date(null)" is pure
-                            // "new Date(true)" is pure
-                            // "new Date(false)" is pure
-                            // "new Date(undefined)" is pure
                             e.can_be_unwrapped_if_unused = js_ast::CanBeUnwrapped::IfUnused;
                         }
                         _ => {
@@ -424,13 +400,6 @@ impl KnownGlobal {
                         | js_ast::expr::PrimitiveType::Boolean
                         | js_ast::expr::PrimitiveType::Number
                         | js_ast::expr::PrimitiveType::String => {
-                            // "new Response('')" is pure
-                            // "new Response(0)" is pure
-                            // "new Response(null)" is pure
-                            // "new Response(true)" is pure
-                            // "new Response(false)" is pure
-                            // "new Response(undefined)" is pure
-
                             e.can_be_unwrapped_if_unused = js_ast::CanBeUnwrapped::IfUnused;
                         }
                         _ => {

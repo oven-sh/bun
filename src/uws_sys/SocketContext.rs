@@ -10,12 +10,6 @@ use bun_boringssl_sys::SSL_CTX;
 
 use crate::create_bun_socket_error_t;
 
-/// `[mtime_sec, mtime_nsec, size]` for the SSL cache-key digest (spec
-/// `SocketContext.zig:81`: `bun.sys.stat(path)` → `st.mtime() ++ st.size`).
-/// Body moved DOWN from `bun_sys` — it only needs `libc::stat`, which this
-/// crate already links, so the former link-time hook bought nothing. Returns
-/// `None` on stat failure (digest feeds zeros — `create_ssl_context` will then
-/// fail on the same path and the entry never reaches the cache).
 #[cfg(unix)]
 fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     // SAFETY: POD, zero-valid — `libc::stat` is all-integer; `stat(2)` writes it.
@@ -38,17 +32,6 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
 fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     use bun_windows_sys as fs;
     use bun_windows_sys::FILETIME;
-    // Spec parity: `bun.sys.stat` on Windows is libuv `uv_fs_stat`, which opens
-    // via `CreateFileW` *without* `FILE_FLAG_OPEN_REPARSE_POINT` and therefore
-    // follows symlinks to the target. `GetFileAttributesExW` does NOT follow
-    // reparse points — it would return the link's own mtime/size and miss an
-    // in-place cert rotation behind a symlink (stale SSL_CTX served). Match
-    // libuv: open query-only, `GetFileInformationByHandle`, close.
-    //
-    // `bun_core::to_w_path_normalized` lives above this crate, so widen
-    // inline: UTF-8→UTF-16LE (≤ input.len() code units), normalize `/`→`\`,
-    // NUL-terminate. Heap-allocated (cold init path; avoids a 64KB stack
-    // `WPathBuffer` and the wrong-unit `MAX_PATH_BYTES` previously used here).
     let bytes = path.as_bytes();
     let mut wbuf = vec![0u16; bytes.len() + 1];
     let n = bun_core::strings::convert_utf8_to_utf16_in_buffer(&mut wbuf, bytes).len();
@@ -80,13 +63,6 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
         return None;
     }
     let ft: FILETIME = data.ftLastWriteTime;
-    // FILETIME = 100ns ticks since 1601-01-01. Feed raw ticks split as
-    // `[sec_field, nsec_field, size]` — the digest only needs *some*
-    // deterministic encoding of mtime, not the libuv POSIX-epoch split the
-    // deleted `__bun_uws_stat_file` produced. The SSL-context cache keyed on
-    // this digest is in-memory process-lifetime only (spec `SocketContext.zig`
-    // — no on-disk persistence), so cross-version byte-compat of the key is
-    // irrelevant; only stability *within* a process matters.
     let ticks = (u64::from(ft.dwHighDateTime) << 32) | u64::from(ft.dwLowDateTime);
     let size = (u64::from(data.nFileSizeHigh) << 32) | u64::from(data.nFileSizeLow);
     Some([
@@ -145,27 +121,12 @@ impl Default for BunSocketContextOptions {
 }
 
 impl BunSocketContextOptions {
-    /// Build a BoringSSL `SSL_CTX*` from these options. Caller owns one ref
-    /// and releases with `SSL_CTX_free` — the passphrase is freed inside this
-    /// call once private-key load completes, so plain `SSL_CTX_free` is
-    /// correct on every path.
-    ///
-    /// Mode-neutral: the same `SSL_CTX*` may back client connects and server
-    /// accepts. CTX-level verify mode comes from `request_cert`/`ca`/
-    /// `reject_unauthorized` here; the per-socket client override (always run
-    /// chain validation, populate verify_error) is applied in
-    /// `us_internal_ssl_attach`, so a server reusing this ctx never sends
-    /// CertificateRequest unless these options asked it to.
     pub fn create_ssl_context(self, err: &mut create_bun_socket_error_t) -> Option<*mut SSL_CTX> {
         // SAFETY: FFI call; `self` is `#[repr(C)]` and passed by value, `err` is a valid out-param.
         let ctx = unsafe { c::us_ssl_ctx_from_options(self, err) };
         if ctx.is_null() { None } else { Some(ctx) }
     }
 
-    /// SHA-256 over every field this struct carries, dereferencing string
-    /// pointers so the digest is content-addressed (not pointer-addressed).
-    /// Two option structs that build the same `SSL_CTX*` produce the same
-    /// digest. Used as the key for `SSLContextCache`.
     pub fn digest(&self) -> [u8; 32] {
         let mut h = Sha256::init();
 
@@ -199,11 +160,6 @@ impl BunSocketContextOptions {
             hp.update(&[0]);
         };
 
-        // File-backed fields: feed path + (mtime, size) so an in-place cert
-        // rotation produces a fresh digest. stat() is ~1µs and only runs when
-        // the file form is used (Bun-specific; node:tls always passes inline
-        // bytes). On stat failure we feed zeros — `create_ssl_context` will fail
-        // on the same path and the entry never reaches the cache.
         let feed_path = |hp: &mut Sha256, s: *const c_char| {
             hp.update(&[(!s.is_null()) as u8]);
             if !s.is_null() {

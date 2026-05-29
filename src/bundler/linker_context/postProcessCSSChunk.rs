@@ -33,19 +33,6 @@ pub fn post_process_css_chunk(
 
     let mut newline_before_comment = false;
 
-    // TODO: css banner
-    // if len(c.options.CSSBanner) > 0 {
-    //     prevOffset.AdvanceString(c.options.CSSBanner)
-    //     j.AddString(c.options.CSSBanner)
-    //     prevOffset.AdvanceString("\n")
-    //     j.AddString("\n")
-    // }
-
-    // TODO: (this is where we would put the imports)
-    // Generate any prefix rules now
-    // (THIS SHOULD BE SET WHEN GENERATING PREFIX RULES!)
-    // newline_before_comment = true;
-
     // TODO: meta
 
     // Concatenate the generated CSS chunks together
@@ -130,15 +117,6 @@ pub fn post_process_css_chunk(
 
     // Make sure the file ends with a newline
     j.ensure_newline_at_end();
-    // if c.options.UnsupportedCSSFeatures.Has(compat.InlineStyle) {
-    //    slashTag = ""
-    // }
-    // c.maybeAppendLegalComments(c.options.LegalComments, legalCommentList, chunk, &j, slashTag)
-
-    // if len(c.options.CSSFooter) > 0 {
-    //     j.AddString(c.options.CSSFooter)
-    //     j.AddString("\n")
-    // }
 
     // SAFETY: `worker.arena` set by `Worker::create`, outlives the worker step.
     let alloc = worker.arena();

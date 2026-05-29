@@ -255,10 +255,6 @@ impl fmt::Display for Integrity {
     }
 }
 
-// PORT NOTE: Zig `enum(u8) { ..., _ }` is non-exhaustive (any u8 is a valid bit
-// pattern, since this is read from on-disk lockfiles). A Rust `#[repr(u8)] enum`
-// would be UB for unknown discriminants, so we use a transparent newtype with
-// associated consts instead.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Tag(pub u8);
@@ -315,14 +311,6 @@ impl Tag {
     }
 }
 
-/// Incremental hasher used by the streaming tarball extractor. Bytes are
-/// fed as they arrive from the network so integrity can be verified
-/// without ever holding the full tarball in memory.
-///
-/// When `expected.tag` is a supported algorithm we hash with that
-/// algorithm so `verify()` can compare against the lockfile value. When
-/// there is no expected value yet (first install of a GitHub/remote
-/// tarball) we default to SHA-512 to match `for_bytes`.
 pub(crate) struct Streaming {
     pub expected: Integrity,
     pub hasher: Hasher,

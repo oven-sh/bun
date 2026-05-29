@@ -17,12 +17,6 @@ use bun_ast::{self as js_ast, B, E, Expr, ExprData, ExprNodeList, G, OpCode, sco
 // TODO(port): narrow error set — Zig used `anyerror!Expr` throughout
 type PResult<T> = core::result::Result<T, bun_core::Error>;
 
-// Zig: `fn ParsePrefix(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block. The 30+ per-token `t_*` helpers are private; only `parse_prefix` is
-// surfaced. Round-G un-gates the per-token bodies (same JsxT pattern as parseStmt.rs); helper
-// names pfx_-prefixed to avoid colliding with parseStmt.rs / parseSuffix.rs mixins on the same `P`.
-
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     fn pfx_t_super(p: &mut Self, level: Level) -> PResult<Expr> {
         let loc = p.lexer.loc();
@@ -127,11 +121,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = p.lexer.loc();
         let name = p.lexer.identifier;
 
-        // Fast path: only `async` / `await` / `yield` need `name_range` and the raw
-        // (possibly escaped) token text. For every other identifier — the vast
-        // majority of identifier-prefix expressions — skip the bounds-checked
-        // `raw()` slice and the `range()` construction. Both must be read before
-        // `lexer.next()` advances past the token, so compute them here when needed.
         let async_kind = AsyncPrefixExpression::find(name);
         let (name_range, raw) = if async_kind == AsyncPrefixExpression::None {
             (bun_ast::Range::NONE, name)
@@ -328,10 +317,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn pfx_t_slash(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.scan_reg_exp()?;
-        // always set regex_flags_start to null to make sure we don't accidentally use the wrong value later
-        // PORT NOTE: Zig `defer p.lexer.regex_flags_start = null` — reset after both success and
-        // the `next()?` error path. Reshaped: capture, advance, then unconditionally reset before
-        // propagating any error from `next()`.
         let value = E::Str::new(p.lexer.raw());
         let next_result = p.lexer.next();
         let flags_offset = p.lexer.regex_flags_start;
@@ -653,12 +638,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )?;
         }
 
-        // PORT NOTE: spec passes the arena-backed `[]ExprNodeIndex` slice directly into
-        // `ParseClassOptions{.ts_decorators = ts_decorators}`. `ParseClassOptions::ts_decorators`
-        // is currently typed `&'a [Expr]` (parser.rs), so until that field is widened to
-        // `ExprNodeList` we copy into the arena (Expr is `Copy`) and let `ts_decorators` drop
-        // normally — no `mem::forget` / `from_raw_parts` lifetime laundering (forbidden per
-        // PORTING.md §Forbidden patterns; would leak heap when origin is `Owned`).
         let ts_decorators_slice: &'a [Expr] = p.arena.alloc_slice_copy(ts_decorators.slice());
 
         let class = p.parse_class(
@@ -924,39 +903,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         flags: EFlags,
     ) -> PResult<Expr> {
         let loc = p.lexer.loc();
-        // This is a very complicated and highly ambiguous area of TypeScript
-        // syntax. Many similar-looking things are overloaded.
-        //
-        // TS:
-        //
-        //   A type cast:
-        //     <A>(x)
-        //     <[]>(x)
-        //     <A[]>(x)
-        //
-        //   An arrow function with type parameters:
-        //     <A>(x) => {}
-        //     <A, B>(x) => {}
-        //     <A = B>(x) => {}
-        //     <A extends B>(x) => {}
-        //
-        // TSX:
-        //
-        //   A JSX element:
-        //     <A>(x) => {}</A>
-        //     <A extends>(x) => {}</A>
-        //     <A extends={false}>(x) => {}</A>
-        //
-        //   An arrow function with type parameters:
-        //     <A, B>(x) => {}
-        //     <A extends B>(x) => {}
-        //
-        //   A syntax error:
-        //     <[]>(x)
-        //     <A[]>(x)
-        //     <A>(x) => {}
-        //     <A = B>(x) => {}
-        // PERF(port): was comptime monomorphization
         if Self::IS_TYPESCRIPT_ENABLED && p.is_jsx_enabled() {
             if p.is_ts_arrow_fn_jsx()? {
                 let _ =
@@ -978,10 +924,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next_inside_jsx_element()?;
             let element = p.parse_jsx_element(loc)?;
 
-            // The call to parseJSXElement() above doesn't consume the last
-            // TGreaterThan because the caller knows what Next() function to call.
-            // Use Next() instead of NextInsideJSXElement() here since the next
-            // token is an expression.
             p.lexer.next()?;
             return Ok(element);
         }

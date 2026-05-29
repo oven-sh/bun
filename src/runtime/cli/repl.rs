@@ -33,12 +33,6 @@ use bun_sys::{self as sys, Fd};
 // C++ Bindings
 // ============================================================================
 
-// TODO(port): move to cli_sys / jsc_sys
-// NOTE: `globalObject` is `*const` here because `JSGlobalObject` is an opaque
-// FFI handle (zero Rust-visible bytes). All mutation happens on the C++ side;
-// Rust only ever holds `&JSGlobalObject`, so deriving a `*mut` from that shared
-// reference would violate provenance. This matches the convention in
-// `src/jsc/lib.rs` / `src/jsc/ipc.rs`.
 unsafe extern "C" {
     fn Bun__REPL__evaluate(
         globalObject: *const JSGlobalObject,
@@ -56,12 +50,6 @@ unsafe extern "C" {
         prefixLen: usize,
     ) -> JSValue;
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Local FFI / pointer shims — the canonical impls live in cfg-gated
-// JSGlobalObject.rs / VM.rs (see src/jsc/lib.rs `_gated`). Until those are
-// un-gated, mirror the wrappers here so repl.rs compiles standalone.
-// ──────────────────────────────────────────────────────────────────────────
 
 #[inline]
 fn global_clear_exception(global: &JSGlobalObject) {
@@ -1363,12 +1351,6 @@ impl<'a> Repl<'a> {
         vm_mut(vm).tick();
     }
 
-    /// Evaluate a script from `bun repl -e/--eval` or `-p/--print` non-interactively.
-    /// Uses the REPL transform pipeline (TypeScript/JSX, top-level await, object literal
-    /// wrapping, declaration hoisting), drains the event loop, and optionally prints the
-    /// result to stdout. Errors are written to stderr.
-    /// Returns true if an error occurred (the caller should set exit_code=1 and
-    /// skip onBeforeExit); false on success (caller preserves process.exitCode).
     pub(super) fn eval_script(&mut self, code: &[u8], print_result: bool) -> bool {
         let Some(global) = self.global else {
             return true;
@@ -1776,13 +1758,6 @@ impl<'a> Repl<'a> {
         opts.repl_mode = true;
         opts.features.dead_code_elimination = false; // REPL needs all code
         opts.features.top_level_await = true; // Enable top-level await in REPL
-        // Keep `lower_using` at its default (true) here even though JavaScriptCore
-        // supports `using` / `await using` natively. The REPL transform in
-        // `ast/repl_transforms.zig` rewrites every top-level `s_local` into a
-        // hoisted `var` + assignment for cross-input persistence, which would
-        // silently discard disposal semantics if `using` declarations survived
-        // until that pass. Lowering wraps the declaration in `try/finally` first,
-        // which the REPL transform passes through intact.
 
         // Initialize macro context from transpiler (required for import processing)
         // PORT NOTE: Zig spec mutates `vm.transpiler` (`*Transpiler`) here; `vm`
@@ -1830,11 +1805,6 @@ impl<'a> Repl<'a> {
         let buffer_writer = bun_js_printer::BufferWriter::init();
         let mut buffer_printer = bun_js_printer::BufferPrinter::init(buffer_writer);
 
-        // Create symbol map from ast.symbols
-        // PORT NOTE: Zig used `Symbol.NestedList.init(&.{ast.symbols})` (borrows
-        // a stack 1-slot slice). `Map::init_with_one_list` takes ownership of
-        // `ast.symbols` instead — see Symbol.rs PORT NOTE on the dangling-slice
-        // hazard.
         let arena = *ast.symbols.allocator();
         let symbols_map = bun_ast::symbol::Map::init_with_one_list(
             core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(arena))
@@ -1878,10 +1848,6 @@ impl<'a> Repl<'a> {
         writer: &mut bun_core::io::Writer,
         enable_colors: bool,
     ) {
-        // PORT NOTE: Zig writes straight through `*std.Io.Writer`. The Rust
-        // `bun_core::io::Writer` vtable doesn't implement `bun_io::Write`, so
-        // buffer through a `Vec<u8>` (which does) and flush in one shot — REPL
-        // error output is tiny.
         let Some(global) = self.global else {
             return;
         };
@@ -2410,10 +2376,6 @@ impl<'a> Drop for Repl<'a> {
     }
 }
 
-/// Global pointer for signal handler to access the VM.
-// PORTING.md §Global mutable state: read from a signal handler → AtomicPtr.
-// Atomics are async-signal-safe; the previous raw-global `Option<*mut>` was
-// not. `null` encodes `None`.
 static SIGINT_VM: core::sync::atomic::AtomicPtr<jsc::VM> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 

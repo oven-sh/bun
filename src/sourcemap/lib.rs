@@ -1,10 +1,6 @@
 #![feature(allocator_api)]
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
-//! `bun_sourcemap` — source map parsing, encoding, and lookup.
-//!
-//! Sibling modules: `Chunk.rs`, `InternalSourceMap.rs`, `LineOffsetTable.rs`,
-//! `Mapping.rs`, `ParsedSourceMap.rs`, `VLQ.rs`.
 
 // ── crate aliases ─────────────────────────────────────────────────────────
 use bun_collections::VecExt;
@@ -53,23 +49,10 @@ bun_opaque::opaque_ffi! { pub struct BakeSourceProvider; }
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    // C++ accessor is read-only (`provider->source()`). Taking `*const` avoids
-    // casting away const from the `&self` borrow below; any interior mutation
-    // lives behind the FFI boundary in C++-owned storage that Rust has no
-    // provenance over (this type is an opaque ZST marker).
     fn BakeSourceProvider__getSourceSlice(this: *const BakeSourceProvider) -> bun_core::String;
 }
 
 unsafe extern "Rust" {
-    /// Link-time-resolved by `bun_runtime::jsc_hooks` (same pattern as
-    /// `__BUN_RUNTIME_HOOKS`). Spec sourcemap_jsc/source_provider.zig:20
-    /// `BakeSourceProvider.getExternalData` — looks up the bundled `.map`
-    /// JSON for `source_filename` via the live `Bake::GlobalObject`'s
-    /// `PerThread.source_maps`. Returns `None` if not running under Bake
-    /// (caller falls back to disk read), or `Some("")` if the table has no
-    /// entry. The slice borrows `PerThread.bundled_outputs` (lives for the
-    /// bake build session, which outlives any error-stack source-map
-    /// resolution). Zig had no crate split here.
     static __BUN_BAKE_EXTERNAL_SOURCEMAP: fn(source_filename: &[u8]) -> Option<*const [u8]>;
 }
 
@@ -132,10 +115,6 @@ impl SourceProvider for BakeSourceProvider {
 
 // ── leaf types that compile cleanly today ─────────────────────────────────
 
-/// Coordinates in source maps are stored using relative offsets for size
-/// reasons. When joining together chunks of a source map that were emitted
-/// in parallel for different parts of a file, we need to fix up the first
-/// segment of each chunk to be relative to the end of the previous chunk.
 #[derive(Default, Clone, Copy)]
 pub struct SourceMapState {
     /// This isn't stored in the source map. It's only used by the bundler to join
@@ -445,18 +424,10 @@ impl core::fmt::Display for DebugIDFormatter {
     }
 }
 
-// This is a pointer to a ZigSourceProvider that may or may not have a `//# sourceMappingURL` comment
-// when we want to lookup this data, we will then resolve it to a ParsedSourceMap if it does.
-//
-// This is used for files that were pre-bundled with `bun build --target=bun --sourcemap`
 bun_opaque::opaque_ffi! { pub struct SourceProviderMap; }
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    // `SourceProviderMap` is an UnsafeCell-backed opaque ZST (Rust holds zero
-    // bytes of it), so `&SourceProviderMap` carries no `readonly`/`noalias` —
-    // the foreign side owns all state behind the handle and may mutate it. The
-    // only param is that handle reference, so this is a `safe fn`.
     safe fn ZigSourceProvider__getSourceSlice(this: &SourceProviderMap) -> bun_core::String;
 }
 
@@ -499,11 +470,6 @@ pub struct DevServerSourceMapData {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    // Both C++ accessors are read-only (`provider->source()` /
-    // `provider->sourceMapJSON()`). Taking `*const` avoids casting away
-    // const from the `&self` borrow below; any interior mutation lives behind
-    // the FFI boundary in C++-owned storage that Rust has no provenance over
-    // (this type is an opaque ZST marker).
     fn DevServerSourceProvider__getSourceSlice(
         this: *const DevServerSourceProvider,
     ) -> bun_core::String;
@@ -560,10 +526,6 @@ impl SourceProvider for DevServerSourceProvider {
 
 // ── SourceProvider trait + get_source_map_impl ─────────────────────────────
 
-/// Abstraction over `SourceProviderMap` / `DevServerSourceProvider` /
-/// `BakeSourceProvider` — Zig used `comptime SourceProviderKind: type` plus
-/// `@hasDecl` checks; in Rust this is a trait with default-`None` optional
-/// methods so each provider only overrides what it actually has.
 pub trait SourceProvider {
     fn get_source_slice(&self) -> bun_core::String;
     fn to_source_content_ptr(&self) -> SourceContentPtr;
@@ -593,14 +555,6 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
     load_hint: SourceMapLoadHint,
     result: ParseUrlResultHint,
 ) -> Option<ParseUrl> {
-    // This was previously 65535 but that is a size that can risk stack overflow
-    // and due to the many layers of indirections and wrappers this function is called in, it
-    // is difficult to reason about how deeply nested of a callstack this
-    // function is called in. 1024 is a safer number.
-    //
-    // TODO: Experiment in debug builds calculating how much stack space we have left and using that to
-    //       adjust the size
-    // PERF(port): was stack-fallback (1024) + ArenaAllocator
     let arena = bun_alloc::Arena::new();
 
     let (new_load_hint, mut parsed): (SourceMapLoadHint, ParseUrl) = 'parsed: {
@@ -649,10 +603,6 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                             break 'parsed (SourceMapLoadHint::IsExternalMap, parsed);
                         }
                         Err(err) => {
-                            // Print warning even if this came from non-visible code like
-                            // calling `error.stack`. This message is only printed if
-                            // the sourcemap has been found but is invalid, such as being
-                            // invalid JSON text or corrupt mappings.
                             bun_core::Output::warn(format_args!(
                                 "Could not decode sourcemap in dev server runtime: {} - {}",
                                 ::bstr::BStr::new(source_filename),
@@ -677,10 +627,6 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                                 break 'parsed (SourceMapLoadHint::IsExternalMap, parsed);
                             }
                             Err(err) => {
-                                // Print warning even if this came from non-visible code like
-                                // calling `error.stack`. This message is only printed if
-                                // the sourcemap has been found but is invalid, such as being
-                                // invalid JSON text or corrupt mappings.
                                 bun_core::Output::warn(format_args!(
                                     "Could not decode sourcemap in '{}': {}",
                                     ::bstr::BStr::new(source_filename),
@@ -710,10 +656,6 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                 let load_path =
                     bun_core::ZStr::from_buf(&load_path_buf[..], source_filename.len() + 4);
 
-                // PORT NOTE: Zig passed the arena allocator; the Rust
-                // `bun_sys::File::read_from` returns an owned `Vec<u8>`. The
-                // arena was only used to free the bytes on scope exit, which
-                // `Vec` Drop already does.
                 let data = match bun_sys::File::read_from(bun_core::Fd::cwd(), load_path) {
                     Ok(data) => data,
                     Err(_) => break 'try_external,
@@ -722,10 +664,6 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                 match parse_json(&arena, &data, result) {
                     Ok(parsed) => break 'parsed (SourceMapLoadHint::IsExternalMap, parsed),
                     Err(err) => {
-                        // Print warning even if this came from non-visible code like
-                        // calling `error.stack`. This message is only printed if
-                        // the sourcemap has been found but is invalid, such as being
-                        // invalid JSON text or corrupt mappings.
                         bun_core::Output::warn(format_args!(
                             "Could not decode sourcemap in '{}': {}",
                             ::bstr::BStr::new(source_filename),
@@ -753,10 +691,6 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
         return None;
     };
     if let Some(ptr) = parsed.map.as_mut() {
-        // PORT NOTE: Zig mutates `ptr.underlying_provider` after `bun.new`.
-        // The Arc is freshly created in `parse_json` and we hold the only ref
-        // here, so `Arc::get_mut` succeeds. (PORTING.md §Pointers — no raw
-        // *mut cast through Arc::as_ptr.)
         if let Some(map) = std::sync::Arc::get_mut(ptr) {
             map.underlying_provider = provider.to_source_content_ptr();
             map.underlying_provider.set_load_hint(new_load_hint);
@@ -806,26 +740,11 @@ pub mod SavedSourceMap {
     }
 }
 
-// ── SerializedSourceMap ──────────────────────────────────────────────────
-//
-// Source-map serialization for `bun build --compile` standalone executables.
-// The bundler writes this blob; the runtime mmaps it and hands a
-// `SerializedSourceMap::Loaded` to `ParsedSourceMap` for on-demand source
-// retrieval. Moved down from `bun_standalone_graph` so `ParsedSourceMap` can
-// name `Loaded` without an upward dep.
-//
-// Zig nests `Header` / `Loaded` inside the struct; Rust models that namespace
-// as a module so `crate::SerializedSourceMap::Loaded` resolves as a path.
 #[allow(non_snake_case)]
 pub mod SerializedSourceMap {
     use bun_core::StringPointer;
     use core::mem::size_of;
 
-    /// Following the header bytes:
-    /// - `source_files_count` × `StringPointer` — file names
-    /// - `source_files_count` × `StringPointer` — zstd-compressed contents
-    /// - the `InternalSourceMap` blob, `map_bytes_length` bytes
-    /// - all the `StringPointer` payload bytes
     #[repr(C)]
     #[derive(Clone, Copy)]
     pub struct Header {
@@ -941,10 +860,6 @@ impl SourceMapPieces {
         let mut generated = LineColumnOffset::default();
         let mut prev_shift_column_delta: i32 = 0;
 
-        // the joiner's node allocator contains string join nodes as well as some vlq encodings
-        // it doesnt contain json payloads or source code, so 16kb is probably going to cover
-        // most applications.
-        // PERF(port): was stack-fallback (16384)
         let mut j = bun_core::string_joiner::StringJoiner::default();
 
         j.push_static(&self.prefix);
@@ -1021,13 +936,6 @@ impl SourceMapPieces {
 
 // ── parse entry points ────────────────────────────────────────────────────
 
-/// Parses an inline source map url like `data:application/json,....`
-/// Currently does not handle non-inline source maps.
-///
-/// `source` must be in UTF-8 and can be freed after this call.
-/// The mappings are owned by the global allocator.
-/// Temporary allocations are made to the `arena` allocator, which
-/// should be an arena allocator (caller is assumed to call `reset`).
 pub fn parse_url(
     arena: &bun_alloc::Arena,
     source: &[u8],
@@ -1039,10 +947,6 @@ pub fn parse_url(
 
         'try_data_url: {
             if source.starts_with(DATA_PREFIX) && source.len() > DATA_PREFIX.len() + 1 {
-                // PORT NOTE: `scoped_log!(SourceMap, ...)` dropped — `SourceMap`
-                // names the top-level struct in this module; the debug scope
-                // lives in `mapping::SourceMap` and `scoped_log!` only takes a
-                // bare ident. Debug-only log; revisit if scopes become path-able.
                 match source[DATA_PREFIX.len()] {
                     b';' => {
                         let after = &source[DATA_PREFIX.len() + 1..];
@@ -1074,12 +978,6 @@ pub fn parse_url(
     parse_json(arena, json_bytes, hint)
 }
 
-/// Parses a JSON source-map
-///
-/// `source` must be in UTF-8 and can be freed after this call.
-/// The mappings are owned by the global allocator.
-/// Temporary allocations are made to the `arena` allocator, which
-/// should be an arena allocator (caller is assumed to call `reset`).
 pub fn parse_json(
     arena: &bun_alloc::Arena,
     source: &[u8],
@@ -1269,15 +1167,6 @@ pub fn parse_json(
     })
 }
 
-// -- comment from esbuild --
-// Source map chunks are computed in parallel for speed. Each chunk is relative
-// to the zero state instead of being relative to the end state of the previous
-// chunk, since it's impossible to know the end state of the previous chunk in
-// a parallel computation.
-//
-// After all chunks are computed, they are joined together in a second pass.
-// This rewrites the first mapping in each chunk to be relative to the end
-// state of the previous chunk.
 pub fn append_source_map_chunk<'a>(
     j: &mut bun_core::string_joiner::StringJoiner<'a>,
     prev_end_state_: SourceMapState,
@@ -1340,10 +1229,6 @@ pub fn append_source_map_chunk<'a>(
     Ok(())
 }
 
-/// Always returns UTF-8.
-// TODO(port): Zig was generic over `comptime T: type` (u8/u16). Rust cannot
-// express `[]const T` literals generically without a helper trait; split into
-// two functions and dispatch at the (only) callsite.
 fn find_source_mapping_url_u8(source: &[u8]) -> Option<bun_core::zig_string::Slice> {
     const NEEDLE: &[u8] = b"\n//# sourceMappingURL=";
     let found = bun_core::strings::last_index_of(source, NEEDLE)?;

@@ -30,11 +30,6 @@ pub struct PosixStat {
 // documented "no stat yet" value (see `node:fs` StatWatcher initial emit).
 unsafe impl bun_core::ffi::Zeroable for PosixStat {}
 
-/// C's implicit integer → `uint64_t` conversion, i.e. what libuv does
-/// when copying platform `struct stat` fields into `uv_stat_t`.
-//
-// TODO(port): Zig used `@typeInfo(@TypeOf(value)).int.signedness` reflection.
-// Rust has no equivalent; expressed here as a trait impl'd per primitive int.
 #[cfg(not(windows))]
 mod to_u64_impl {
     pub(super) trait ToU64: Copy {
@@ -69,15 +64,6 @@ fn to_u64<T: to_u64_impl::ToU64>(value: T) -> u64 {
     to_u64_impl::ToU64::to_u64(value)
 }
 
-/// Platform-specific accessors over `libc::stat` mirroring Zig's
-/// `Stat.atime()` / `.mtime()` / `.ctime()` / `.birthtime()` helpers.
-/// Exported so callers (e.g. `bunx_command.rs`) can read times off the bare
-/// `bun_sys::Stat` (= `libc::stat`) without re-deriving the per-platform field
-/// names.
-// NOTE: the `libc` crate flattens Darwin/BSD `st_*timespec` into `st_*time` +
-// `st_*time_nsec` (matching Linux), so the field access is uniform across all
-// `unix` targets. The Zig std uses the nested `timespec` form; this is a
-// deliberate divergence at the libc-crate layer, not a port bug.
 #[inline]
 pub fn stat_atime(s: &Stat) -> Timespec {
     #[cfg(unix)]

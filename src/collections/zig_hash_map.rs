@@ -61,12 +61,6 @@ fn capacity_for_size(size: u32) -> u32 {
     new_cap.next_power_of_two()
 }
 
-// ─── HashContext ───────────────────────────────────────────────────────────
-// Zig threads a `Context` value with `hash(K) -> u64` / `eql(K, K) -> bool`.
-// All Bun contexts are zero-sized, so model as a stateless trait keyed on the
-// marker type. `AutoHashContext` covers `std.AutoHashMap`; `IdentityContext<K>`
-// covers the `hash(k) == k` case used for pre-hashed keys.
-
 /// Hash/eql strategy for [`HashMap`]. Implement on a zero-sized marker type.
 pub trait HashContext<K: ?Sized> {
     fn ctx_hash(key: &K) -> u64;
@@ -80,10 +74,6 @@ pub struct AutoHashContext;
 impl<K: Hash + Eq + ?Sized> HashContext<K> for AutoHashContext {
     #[inline]
     fn ctx_hash(key: &K) -> u64 {
-        // Zig autoHash for unique-repr types is `Wyhash.hash(0, asBytes(&key))`.
-        // Routing through `core::hash::Hash` + wyhash is the closest stable
-        // approximation without per-type byte-layout plumbing; exact AutoContext
-        // bucket order isn't relied on by any test today.
         bun_wyhash::auto_hash(key)
     }
     #[inline]
@@ -428,10 +418,6 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         (idx, false)
     }
 
-    /// Zig `getOrPut`: single-probe insert-or-lookup. On miss the value slot is
-    /// left "undefined" in Zig; Rust cannot expose uninit through a `&mut V`, so
-    /// `V: Default` and the slot is default-initialised — callers overwrite
-    /// `*value_ptr` when `!found_existing`.
     pub fn get_or_put(
         &mut self,
         key: K,

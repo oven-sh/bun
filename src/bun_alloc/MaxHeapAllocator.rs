@@ -6,10 +6,6 @@ use core::ptr::NonNull;
 use crate::MAX_ALIGN_T as MAX_ALIGN;
 use crate::{Alignment, Allocator};
 
-/// Zig backed `array_list` with `std.array_list.AlignedManaged(u8, .of(std.c.max_align_t))`
-/// so the returned pointer is guaranteed aligned to `max_align_t`. Rust `Vec<u8>`
-/// allocates with align 1, which would violate the `alignment <= MAX_ALIGN`
-/// contract. Store a raw `MAX_ALIGN`-aligned buffer instead.
 pub struct MaxHeapAllocator {
     ptr: Option<NonNull<u8>>,
     capacity: usize,

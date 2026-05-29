@@ -11,10 +11,6 @@ use crate::shell::yield_::Yield;
 
 pub struct Script {
     pub base: Base,
-    /// Back-reference into the bumpalo-allocated AST (`ShellArgs::__arena`).
-    /// The arena outlives every state node (it's dropped only when the
-    /// interpreter is finalized), so the BackRef invariant holds. Stored
-    /// lifetime-erased to keep `Node` lifetime-free.
     pub node: bun_ptr::BackRef<ast::Script>,
     pub io: IO,
     pub state: ScriptState,
@@ -115,10 +111,6 @@ impl Script {
         // io.deref() — IO uses Arc fields; Drop on the cloned `io` handles the
         // refcount decrement, no explicit call needed.
         if !matches!(parent_kind, None | Some(StateKind::Subshell)) {
-            // The shell env is owned by the parent when the parent is the
-            // Interpreter or a Subshell; otherwise this Script represents a
-            // command substitution which duped from the parent and must
-            // deinitialize it (Zig: `this.base.shell.deinit()`).
             if !me.base.shell.is_null() {
                 // SAFETY: `me.base.shell` is the duped env this Script owned;
                 // null-checked and exclusively held here.

@@ -9,17 +9,8 @@ type Span = SpanType;
 type SpanAttrs<'a> = SpanDetail<'a>;
 type Off = OFF;
 
-/// Maximum parenthesis nesting depth inside a bare inline-link destination.
-/// CommonMark allows implementations to impose such a limit ("at least three
-/// levels of nesting should be supported"); cmark and commonmark.js both use
-/// 32. Without a cap, an unclosed destination is rescanned for every candidate
-/// link, which is quadratic on inputs like `"[a](b"` repeated.
 const MAX_LINK_DEST_PAREN_DEPTH: u32 = 32;
 
-/// Maximum `[`/`]` nesting depth inside a wiki link. Bounds the forward scan
-/// for the closing `]]`, which is otherwise rescanned to the end of the line
-/// for every `[[` candidate (quadratic on inputs like `"[".repeat(n)` when
-/// wiki links are enabled, e.g. via `Bun.markdown.ansi`).
 const MAX_WIKI_BRACKET_DEPTH: u32 = 32;
 
 /// Result of `try_match_bracket_link` — Zig anonymous return struct.
@@ -35,10 +26,6 @@ pub struct Autolink {
     pub is_email: bool,
 }
 
-/// Characters that can affect bracket matching: the brackets themselves,
-/// backslash escapes, code spans, and (unless HTML spans are disabled) HTML
-/// tags/autolinks. Used to SIMD-skip runs of ordinary text while building the
-/// bracket-pair map.
 const BRACKET_SCAN_CHARS: &[u8] = b"[]\\`<";
 const BRACKET_SCAN_CHARS_NO_HTML: &[u8] = b"[]\\`";
 
@@ -60,11 +47,6 @@ enum BracketLookup {
     Unknown,
 }
 
-/// Bracket-pair map for one inline content slice, built in a single pass so
-/// link processing can find the `]` matching a given `[` without rescanning
-/// the rest of the slice for every opener — that rescan is quadratic on
-/// inputs like `"[".repeat(n)`. The backing vec is recycled through
-/// `Parser.bracket_pairs`, so steady-state rendering does not allocate here.
 pub struct BracketMatches {
     /// `(open, close)` position of every `[` seen outside code spans, HTML
     /// tags/autolinks and backslash escapes, ordered by `open`.
@@ -108,10 +90,6 @@ impl BracketMatches {
 }
 
 impl Parser<'_> {
-    /// Build the bracket-pair map for `content` in a single pass, using the
-    /// same tokenization as the matching scan (code spans, HTML tags,
-    /// autolinks and backslash escapes hide brackets). `storage` is the
-    /// recycled backing vec from `Parser.bracket_pairs`.
     pub fn compute_bracket_matches(
         &self,
         content: &[u8],
@@ -141,10 +119,6 @@ impl Parser<'_> {
             BRACKET_SCAN_CHARS
         };
 
-        // While an opener is still unmatched, its `close` slot holds the index
-        // of the previous unmatched opener — a stack threaded through the vec
-        // itself, so no separate stack allocation is needed. Whatever is left
-        // on that stack at the end is rewritten to UNMATCHED.
         let mut top: OFF = BracketMatches::UNMATCHED;
         let mut pos: usize = 0;
         while pos < content.len() {
@@ -205,10 +179,6 @@ impl Parser<'_> {
         }
     }
 
-    /// Find the `]` matching the `[` at `start` in `content`. `base` is the
-    /// offset of `content` within the slice `brackets` was built for (non-zero
-    /// when `content` is a link-label sub-slice). Falls back to a forward scan
-    /// when the opener is unknown to the map.
     fn match_bracket(
         &self,
         content: &[u8],
@@ -365,10 +335,6 @@ impl Parser<'_> {
             }
 
             if !dest_valid {
-                // Destination exceeded the paren-nesting cap: not an inline
-                // link (cmark rejects it too). Skip the title and ')' checks —
-                // the offending '(' must not be reparsed as a title opener —
-                // but keep the reference/shortcut fallback below reachable.
                 pos = content.len();
             }
 

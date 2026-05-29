@@ -7,11 +7,6 @@ use crate::parser::{self as js_parser, IdentifierOpts, RelocateVars, RelocateVar
 use bun_ast::ast_result::CommonJSNamedExport;
 use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, S};
 
-// ── local EString shims ────────────────────────────────────────────────────
-// E.rs currently carries two `impl EString` blocks (live + round-C draft) with
-// overlapping inherent methods, so calls like `EString::init`/`javascript_length`
-// /`eql_bytes` are E0034-ambiguous from here. These thin wrappers go through
-// public fields directly and are removed once E.rs is deduped.
 #[inline]
 fn e_string_init(data: &[u8]) -> E::EString {
     E::EString {
@@ -133,10 +128,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         'sw: loop {
             match sw_data {
                 js_ast::ExprData::EIdentifier(id) => {
-                    // Rewrite property accesses on explicit namespace imports as an identifier.
-                    // This lets us replace them easily in the printer to rebind them to
-                    // something else without paying the cost of a whole-tree traversal during
-                    // module linking just to rewrite these EDot expressions.
                     if p.options.bundle {
                         if p.import_items_for_namespace.contains_key(&id.ref_) {
                             // PORT NOTE: reshaped for borrowck — Zig held `*ImportItemForNamespaceMap`
@@ -180,14 +171,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 }
                             };
 
-                            // Undo the usage count for the namespace itself. This is used later
-                            // to detect whether the namespace symbol has ever been "captured"
-                            // or whether it has just been used to read properties off of.
-                            //
-                            // The benefit of doing this is that if both this module and the
-                            // imported module end up in the same module group and the namespace
-                            // symbol has never been captured, then we don't need to generate
-                            // any code for the namespace at all.
                             p.ignore_usage(id.ref_);
 
                             // Track how many times we've referenced this symbol
@@ -225,17 +208,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.commonjs_module_exports_assigned_deoptimized = true;
                             }
 
-                            // Detect if we are doing
-                            //
-                            //  module.exports = {
-                            //    foo: "bar"
-                            //  }
-                            //
-                            //  Note that it cannot be any of these:
-                            //
-                            //  module.exports += { };
-                            //  delete module.exports = {};
-                            //  module.exports()
                             if !(identifier_opts.is_call_target()
                                 || identifier_opts.is_delete_target())
                                 && identifier_opts.assign_target() == js_ast::AssignTarget::Replace
@@ -253,12 +225,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 let deopt =
                                     // if it's not top-level, don't do this
                                     p.module_scope != p.current_scope
-                                    // if you do
-                                    //
-                                    // exports.foo = 123;
-                                    // module.exports = {};
-                                    //
-                                    // that's a de-opt.
                                     || p.commonjs_named_exports.count() > 0
                                     // anything which is not module.exports = {} is a de-opt.
                                     || !matches!(stmt_bin.right.data, js_ast::ExprData::EObject(_))
@@ -294,21 +260,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     // if it's not a trivial object literal, de-opt
                                     if prop.kind != G::PropertyKind::Normal
                                         || prop.key.is_none()
-                                        || !matches!(prop.key.expect("infallible: prop has key").data, js_ast::ExprData::EString(_))
+                                        || !matches!(
+                                            prop.key.expect("infallible: prop has key").data,
+                                            js_ast::ExprData::EString(_)
+                                        )
                                         || prop.flags.contains(Flags::Property::IsMethod)
                                         || prop.flags.contains(Flags::Property::IsComputed)
                                         || prop.flags.contains(Flags::Property::IsSpread)
                                         || prop.flags.contains(Flags::Property::IsStatic)
-                                        // If it creates a new scope, we can't do this optimization right now
-                                        // Our scope order verification stuff will get mad
-                                        // But we should let you do module.exports = { bar: foo(), baz: 123 }
-                                        // just not module.exports = { bar: function() {}  }
-                                        // just not module.exports = { bar() {}  }
-                                        || match prop.value.expect("infallible: prop has value").data {
+                                        || match prop
+                                            .value
+                                            .expect("infallible: prop has value")
+                                            .data
+                                        {
                                             js_ast::ExprData::ECommonjsExportIdentifier(_)
                                             | js_ast::ExprData::EImportIdentifier(_)
                                             | js_ast::ExprData::EIdentifier(_) => false,
-                                            js_ast::ExprData::ECall(call) => match call.target.data {
+                                            js_ast::ExprData::ECall(call) => match call.target.data
+                                            {
                                                 js_ast::ExprData::ECommonjsExportIdentifier(_)
                                                 | js_ast::ExprData::EImportIdentifier(_)
                                                 | js_ast::ExprData::EIdentifier(_) => false,
@@ -318,19 +287,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                     )
                                                 }
                                             },
-                                            _ => !Expr::is_primitive_literal(&prop.value.expect("infallible: prop has value")),
+                                            _ => !Expr::is_primitive_literal(
+                                                &prop.value.expect("infallible: prop has value"),
+                                            ),
                                         }
                                     {
                                         p.deoptimize_common_js_named_exports();
                                         return None;
                                     }
                                 }
-                                // Zig: `for (props) |prop| { ... } else { deopt; return null }`
-                                // — the loop body has no `break`, so the `else` arm runs on
-                                // every normal completion (including empty `props`). The
-                                // entire stmts/decls/clause_items rewriting block that follows
-                                // in the Zig source is therefore unreachable there too and is
-                                // dropped from the port.
                                 {
                                     // empty object de-opts because otherwise the statement becomes
                                     // <empty space> = {};
@@ -469,14 +434,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::ExprData::EObject(obj) => {
                     if FeatureFlags::INLINE_PROPERTIES_IN_TRANSPILER {
                         if p.options.features.minify_syntax {
-                            // Rewrite a property access like this:
-                            //   { f: () => {} }.f
-                            // To:
-                            //   () => {}
-                            //
-                            // To avoid thinking too much about edgecases, only do this for:
-                            //   1) Objects with a single property
-                            //   2) Not a method, not a computed property
                             if obj.properties.len_u32() == 1
                                 && !identifier_opts.is_delete_target()
                                 && identifier_opts.assign_target() == js_ast::AssignTarget::None
@@ -729,11 +686,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 });
                             }
                         } else {
-                            // This error is a bit out of place since the HMR
-                            // API is validated in the parser instead of at
-                            // runtime. When the API is not validated in this
-                            // way, the developer may unintentionally read or
-                            // write internal fields of HMRModule.
                             p.log().add_error_fmt(
                                 Some(p.source),
                                 loc,

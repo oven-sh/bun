@@ -159,11 +159,6 @@ pub mod caching_sha2_password {
         }
     }
 
-    // Borrowed param-pack: caller-owned slices that live only across a single
-    // `write()` call. `RawSlice<u8>` (encapsulated fat raw pointer with safe
-    // `Deref` under the outlives-holder invariant) avoids the per-method
-    // `unsafe { &*self.field }` deref triple while keeping the struct
-    // lifetime-free per PORTING.md conventions.
     pub struct EncryptedPassword {
         pub password: bun_ptr::RawSlice<u8>,
         pub public_key: bun_ptr::RawSlice<u8>,

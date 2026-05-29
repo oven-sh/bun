@@ -68,10 +68,6 @@ impl Archive {
 bun_jsc::impl_js_class_via_generated!(Archive => crate::generated_classes::js_Archive);
 
 impl Archive {
-    /// `Archive.write(path, data, options?)` static class fn — codegen
-    /// (`ArchiveClass__write`) resolves it as an associated item on the struct,
-    /// so forward to the module-level [`write`] body below (Zig had it as
-    /// `pub fn write` in the file struct, which is both).
     #[inline]
     pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         self::write(global, callframe)
@@ -159,16 +155,6 @@ fn count_files_in_archive(data: &[u8]) -> u32 {
 }
 
 impl Archive {
-    /// Constructor: new Archive(data, options?)
-    /// Creates an Archive from either:
-    /// - An object { [path: string]: Blob | string | ArrayBufferView | ArrayBufferLike }
-    /// - A Blob, ArrayBufferView, or ArrayBufferLike (assumes it's already a valid archive)
-    /// Options:
-    /// - compress: "gzip" - Enable gzip compression
-    /// - level: number (1-12) - Compression level (default 6)
-    /// When no options are provided, no compression is applied
-    // PORT NOTE: `#[bun_jsc::host_fn]` has no `constructor` kind yet; the
-    // `JsClass` derive emits a `constructor` shim that calls this directly.
     pub fn constructor(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Archive>> {
         let [data_arg, options_arg] = callframe.arguments_as_array::<2>();
         if data_arg.is_empty() {
@@ -273,10 +259,6 @@ fn create_archive(data: Vec<u8>, compress: Compression) -> Box<Archive> {
     Box::new(Archive { store, compress })
 }
 
-/// `JSValue::as_::<Blob>()` shim — kept as a free fn so the call sites read
-/// the same as the Zig (`jsc.WebCore.Blob.fromJS(value)`). Returns a shared
-/// borrow (BACKREF: m_ctx payload kept live by the JSC cell rooted by `value`
-/// on the caller's stack) so callers don't open-code `unsafe { &*ptr }`.
 #[inline]
 fn blob_from_js(value: JSValue) -> Option<&'static Blob> {
     value.as_class_ref::<Blob>()
@@ -407,11 +389,6 @@ fn get_entry_data(global: &JSGlobalObject, value: JSValue) -> JsResult<ZigString
     value.to_slice(global)
 }
 
-/// Static method: Archive.write(path, data, options?)
-/// Creates and writes an archive to disk in one operation.
-/// For Archive instances, uses the archive's compression settings unless overridden by options.
-/// Options:
-///   - gzip: { level?: number } - Override compression settings
 #[bun_jsc::host_fn]
 pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let [path_arg, data_arg, options_arg] = callframe.arguments_as_array::<3>();
@@ -488,11 +465,6 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
 }
 
 impl Archive {
-    /// Instance method: archive.extract(path, options?)
-    /// Extracts the archive to the given path
-    /// Options:
-    ///   - glob: string | string[] - Only extract files matching the glob pattern(s). Supports negative patterns with "!".
-    /// Returns Promise<number> with count of extracted files
     #[bun_jsc::host_fn(method)]
     pub fn extract(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let [path_arg, options_arg] = callframe.arguments_as_array::<2>();
@@ -651,18 +623,9 @@ impl PromiseResult {
     }
 }
 
-/// Trait extracted from the Zig structural-duck-typing on `Context`.
-/// Context must provide:
-///   - `run` — runs on thread pool, stores result in `self`
-///   - `run_from_js` — returns value to resolve/reject
-///   - `Drop` — cleanup
 pub trait TaskContext: Send {
     /// Dispatch tag for this context's `AsyncTask<Self>` variant.
     const TAG: TaskTag;
-    /// Runs on thread pool. Stores its result on `self`.
-    // TODO(port): Zig's `AsyncTask.run` used `@typeInfo(@TypeOf(result)) == .error_union`
-    // to generically catch and store `.err`. Rust has no reflection; each impl handles
-    // its own error path inside `run` and writes `self.result`.
     fn run(&mut self);
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult>;
 }
@@ -683,10 +646,6 @@ impl<C: TaskContext> Taskable for AsyncTask<C> {
 
 impl<C: TaskContext> AsyncTask<C> {
     fn create(global: &JSGlobalObject, ctx: C) -> Result<*mut Self, bun_alloc::AllocError> {
-        // `bun_vm_ptr()` returns `*mut VirtualMachine` with write provenance; valid for
-        // process lifetime. Do NOT launder `bun_vm()` (a `&VirtualMachine`) through
-        // `*const _ as *mut _` — that derives a writeable pointer from a shared
-        // reference and is UB under Stacked Borrows.
         let vm: *mut VirtualMachine = global.bun_vm_ptr();
         let this = Box::new(AsyncTask {
             ctx,
@@ -712,13 +671,6 @@ impl<C: TaskContext> AsyncTask<C> {
         WorkPool::schedule(unsafe { &raw mut (*this).task });
     }
 
-    /// Read the pending promise's `JSValue` from a freshly-`create`d task.
-    ///
-    /// Centralises the `*mut Self → field` deref so the four
-    /// `start_*_task` callers stay safe. Sound because every caller passes the
-    /// pointer returned by [`create`](Self::create) (heap-allocated, sole owner
-    /// on the JS thread) and reads the promise *before* [`schedule`] hands the
-    /// allocation to the thread pool — i.e. `this` is live and unaliased.
     #[inline]
     fn promise_value(this: *mut Self) -> JSValue {
         // SAFETY: see fn doc — `this` is the live, unscheduled `heap::into_raw`
@@ -1386,10 +1338,6 @@ pub fn is_safe_path(pathname: &[u8]) -> bool {
     true
 }
 
-/// Match a path against multiple glob patterns with support for negative patterns.
-/// Positive patterns: at least one must match for the path to be included.
-/// Negative patterns (starting with "!"): if any matches, the path is excluded.
-/// Returns true if the path should be included, false if excluded.
 pub fn match_glob_patterns(patterns: &[Box<[u8]>], pathname: &[u8]) -> bool {
     let mut has_positive_patterns = false;
     let mut matches_positive = false;

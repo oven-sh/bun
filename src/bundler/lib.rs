@@ -197,11 +197,6 @@ pub mod linker_context {
     pub use static_route_visitor::StaticRouteVisitor;
 }
 
-// ---------------------------------------------------------------------------
-// Public surface for downstream crates. Re-exports the real types from the
-// modules above.
-// ---------------------------------------------------------------------------
-
 pub use Graph::Graph as GraphStruct;
 /// See `bundle_v2`.
 pub use bundle_v2::BundleV2;
@@ -236,11 +231,6 @@ pub enum AdditionalFile {
 /// `*.zig` in this crate aliases it as `pub const Index = bun.ast.Index`.
 pub(crate) use bun_ast::{Index, IndexInt};
 
-// Re-export the `options` module. `Loader`/`Target` live in
-// `bun_options_types::bundle_enums` — `options_impl` re-exports the canonical
-// defs, so there is exactly ONE nominal type for each across
-// bundler/resolver/js_parser. Bundler-only behaviour hangs off
-// `TargetExt`/`LoaderExt` extension traits in `options_impl`.
 pub mod options {
     pub use super::OutputFile;
     pub use super::options_impl::*;
@@ -256,12 +246,6 @@ pub mod options {
     pub use bun_options_types::schema::api::DotEnvBehavior as EnvBehavior;
     pub type Options<'a> = super::BundleOptions<'a>;
 
-    /// `jsc.API.BuildArtifact.OutputKind` (JSBundler.zig:1799). Re-exported by
-    /// `options.zig` callers via `OutputFile.output_kind`.
-    ///
-    /// `IntoStaticStr` provides the JS-facing tag (`"entry-point"` etc.) so
-    /// `bun_runtime::api::BuildArtifact` can spell `<&str>::from(kind)` without
-    /// a duplicate enum.
     #[repr(u8)]
     #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, strum::IntoStaticStr)]
     pub enum OutputKind {
@@ -306,35 +290,13 @@ pub mod options {
     /// `FrameworkRouterPair`). The full struct is `bun.bake.Framework` which
     /// lives in a higher-tier crate; minimal real struct lives in `bake_types`.
     pub use crate::bake_types::Framework;
-
-    // `Env`, `EnvEntry`, `RouteConfig`, `jsx`/`JSX` are intentionally NOT
-    // redefined here — the `pub use super::options_impl::*` glob above exposes
-    // the single canonical defs (options.rs:1141/2493/2501/2722). The previous
-    // inline shadows produced 4+ incompatible `jsx::Pragma`/`Runtime` types and
-    // a `&'static [&'static [u8]]` `factory`/`fragment` that could not hold the
-    // heap allocation from `member_list_to_components_if_different`
-    // (options.zig:1296) without `Box::leak` (PORTING.md §Forbidden patterns).
 }
 
-/// Re-export so `crate::RuntimeTranspilerCache` resolves for `transpiler::ParseOptions`
-/// and downstream callers (`jsc_hooks` / `RuntimeTranspilerStore`). The struct
-/// is canonical in `bun_js_parser`; the bundler-tier `disabled`/`set_disabled`
-/// live on `RuntimeTranspilerCacheExt`.
 pub use cache::RuntimeTranspilerCacheExt;
 pub use cache::Set as Cache;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Re-export the canonical `bake_types` defs from
-// `bundle_v2` so there is exactly ONE nominal `Side`/`Graph`/`Framework` etc.
-// across the crate (the previous inline copy here diverged and produced
-// "expected `bake_types::Graph`, found `bake_types::Graph`" errors).
-// ──────────────────────────────────────────────────────────────────────────
 pub use bundle_v2::bake_types;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Re-export the canonical `dispatch` module from
-// `bundle_v2` (full vtable slot set) so there is one `DevServerHandle` type.
-// ──────────────────────────────────────────────────────────────────────────
 pub use bundle_v2::dispatch;
 
 // ── link-interfaces (must be at crate root so `$crate::__alias` resolves) ──
@@ -387,10 +349,6 @@ bun_dispatch::link_interface! {
     }
 }
 
-// `OutputFile.Options` defaults (`options.zig:OutputFile.Options` field
-// default-initializers). Kept here rather than in `OutputFile.rs` so the
-// derive-free struct stays codegen-friendly while every `init(..)` call site
-// can use struct-update syntax.
 impl Default for output_file::OptionsData {
     fn default() -> Self {
         output_file::OptionsData::Buffer {

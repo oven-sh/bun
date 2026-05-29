@@ -7,33 +7,6 @@ use bun_alloc::ast_alloc::{self, AstAllocState};
 use crate::expr;
 use crate::stmt;
 
-// PERF(port): Zig used `std.heap.StackFallbackAllocator(@min(8192, std.heap.page_size_min))`
-// — a small inline stack buffer with heap fallback. `bun_alloc::Arena`
-// (`MimallocArena`) has no stack buffer; instead the owned arena is recycled
-// per thread via `ARENA_POOL` below so the per-module callers don't pay a fresh
-// `mi_heap_new` + first-segment page faults every file. (The `AstAlloc` side
-// *does* have an inline buffer now — see `bun_alloc::ast_alloc::AstAllocState`.)
-
-// ── Thread-local arena pool ──────────────────────────────────────────────
-//
-// Zig's `ASTMemoryAllocator` was a `StackFallbackAllocator(8192, fallback)`:
-// the 8 KB stack buffer absorbed most per-module AST scratch without touching
-// the heap, and the spill went to a long-lived `fallback` arena whose pages
-// stayed resident across modules. The Rust port collapsed that to one owned
-// `MimallocArena` per `ASTMemoryAllocator`, so a fresh per-module instance
-// (`RuntimeTranspilerStore::run`, `Bun.Transpiler.*`, the dev server) paid a
-// fresh `mi_heap_new` + first-segment page faults every file, and `enter()`'s
-// reset then destroyed-and-recreated that just-created heap before it was even
-// used.
-//
-// Instead, recycle one `MimallocArena` per thread: `Drop` cleans the arena
-// (`reset()` bulk-frees this module's nodes — leaving it pristine) and parks
-// it here; the next `ASTMemoryAllocator` on this thread reclaims it, reusing
-// its committed pages. The pool holds at most one arena (nested scopes — rare
-// — fall back to a fresh `Arena::new()`). `#[thread_local]` (not the
-// `thread_local!` macro) so there is no destructor: a parked arena at thread
-// exit is reclaimed by mimalloc's own thread-teardown, avoiding an unspecified
-// destructor-ordering hazard with `mi_heap_destroy`.
 #[thread_local]
 static ARENA_POOL: Cell<Option<Arena>> = Cell::new(None);
 
@@ -58,12 +31,6 @@ pub struct ASTMemoryAllocator {
     /// `self.arena` and `Drop`/`reset` never destroy or pool anything. Must
     /// outlive `self` ([`Self::borrowing`] contract).
     external_arena: *const Arena,
-    /// `true` once a scope on this instance armed `arena` for allocation (via
-    /// [`Self::enter`] / [`Self::push`]) since the last reset. Lets
-    /// [`Self::enter`] / [`Self::reset`] skip the `mi_heap_destroy` +
-    /// `mi_heap_new` churn when `arena` is already pristine — the common case
-    /// for the per-module callers, each of which takes a freshly-pooled (clean)
-    /// arena and arms it exactly once.
     arena_dirty: bool,
     /// The `AstAlloc` state for this allocator's scope. Owned here while no
     /// scope is active; in the `AST_ALLOC` thread-local while pushed
@@ -107,15 +74,6 @@ impl Drop for ASTMemoryAllocator {
             // Borrowed arena: the caller owns its lifecycle.
             return;
         }
-        // Recycle the owned arena for the next `ASTMemoryAllocator` on this
-        // thread (see `ARENA_POOL`). Clean it first so a pooled arena is always
-        // pristine — `push()` callers (the bundler workers) allocate straight
-        // into it with no intervening `reset()`. By the time this runs nothing
-        // aliases `self.arena`: `enter()`'s returned `Scope` borrows `&mut
-        // self`, so it drops first and `Scope::exit()` has already restored the
-        // `Expr/Stmt.Data.Store.memory_allocator` / `data_store_override` /
-        // `ast_alloc` thread-locals; `push()` callers pair with `pop()` before
-        // teardown.
         if self.arena_dirty {
             self.arena.reset();
         }
@@ -134,10 +92,6 @@ impl ASTMemoryAllocator {
         Self::default()
     }
 
-    /// Construct an allocator that routes every allocation into `arena`
-    /// instead of owning a heap of its own. `arena` must outlive the returned
-    /// allocator (and every `Scope` derived from it); the caller owns its
-    /// reset/destroy.
     pub fn borrowing(arena: &Arena) -> Self {
         Self {
             arena: Arena::borrowing_default(),
@@ -229,22 +183,6 @@ impl ASTMemoryAllocator {
     }
 
     pub fn enter(&mut self) -> Scope<'_> {
-        // Zig: this.stack_allocator = SFA{ .fallback_allocator = arena, .. };
-        //      this.bump_allocator = this.stack_allocator.get();
-        // The Zig spec OVERWRITES the entire SFA on every `enter()` (fresh
-        // 8 KB stack buffer + rewired fallback to the per-call arena), so any
-        // bytes bump-allocated by the previous `enter()` are released. The
-        // Rust port collapsed SFA+fallback into a single internal `Arena`
-        // owned by `self`, so the equivalent re-init is `arena.reset()` —
-        // otherwise a thread-local `ASTMemoryAllocator` reused across
-        // `RuntimeTranspilerStore::run()` calls grows unboundedly (one full
-        // AST worth of nodes per import).
-        //
-        // ...but a *pristine* arena (fresh from `new()` / the thread-local
-        // pool, or just `reset()`) has nothing to discard, so the
-        // `mi_heap_destroy` + `mi_heap_new` round-trip is skipped in that case
-        // (the common one — per-module callers create a fresh instance,
-        // `enter()` once, and drop it). A borrowed arena is never reset here.
         if self.arena_dirty {
             self.reset_ast_state();
             if self.external_arena.is_null() {
@@ -279,11 +217,6 @@ impl ASTMemoryAllocator {
         }
     }
 
-    /// Per-iteration reset for hot reuse paths (`initialize_mini_store`'s
-    /// per-workspace-child re-entry). Thin delegate to
-    /// [`bun_alloc::Arena::reset_retain_with_limit`]; the cold init paths
-    /// (`bundler::ThreadPool::Worker::init`, `BundleThread::generate_in_new_
-    /// thread`) keep calling [`Self::reset`].
     pub fn reset_retain_with_limit(&mut self, limit: usize) {
         if self.arena_dirty {
             debug_assert!(
@@ -461,11 +394,6 @@ impl<'a> Scope<'a> {
     }
 }
 
-// Zig callers write `defer ast_scope.exit()` immediately after `enter()`;
-// porting that as RAII so `let _scope = alloc.enter();` restores the previous
-// `Expr/Stmt.Data.Store.memory_allocator` on every return path. `exit()` is
-// idempotent (guarded by `entered`), so an explicit `.exit()` followed by Drop
-// is harmless.
 impl<'a> Drop for Scope<'a> {
     fn drop(&mut self) {
         self.exit();

@@ -40,16 +40,8 @@ pub struct Handlers {
 
     pub vm: &'static VirtualMachine,
     pub global_object: GlobalRef,
-    /// `Cell` so [`mark_active`](Self::mark_active) /
-    /// [`mark_inactive`](Self::mark_inactive) can mutate through the
-    /// `BackRef<Handlers>` every socket holds (see `NewSocket::get_handlers`)
-    /// without an `unsafe { &mut * }` reborrow per call site.
     pub active_connections: Cell<u32>,
     pub mode: SocketMode,
-    /// `JsCell` so [`resolve_promise`](Self::resolve_promise) /
-    /// [`reject_promise`](Self::reject_promise) can `try_swap()` through a
-    /// shared `&Handlers` (BackRef Deref). Single-JS-thread; the inner
-    /// `Strong` is never borrowed across a reentrant call.
     pub promise: JsCell<Strong>, // Strong.Optional → bun_jsc::Strong (Drop deallocates the slot)
 
     // Zig: gated on `bun.Environment.ci_assert`.
@@ -132,12 +124,6 @@ impl Handlers {
         Scope { handlers: this }
     }
 
-    /// Safe wrapper over [`enter`](Self::enter) for callers that already hold
-    /// a [`BackRef<Handlers>`](bun_ptr::BackRef) (i.e. every
-    /// `NewSocket::get_handlers()` site). The back-reference invariant
-    /// guarantees the pointee is live at call time, discharging `enter`'s
-    /// only precondition; JS-thread affinity is the same structural guarantee
-    /// every `BackRef<Handlers>` user already relies on (uws dispatch).
     #[inline]
     pub fn enter_ref(h: bun_ptr::BackRef<Self>) -> Scope {
         // SAFETY: BackRef invariant — pointee live and at a stable address
@@ -422,12 +408,6 @@ pub struct Scope {
 }
 
 impl Scope {
-    /// Returns true if `handlers` was destroyed (client mode, last ref).
-    /// Callers that also hold the pointer in a socket field must null it.
-    ///
-    /// Consumes `self`: a `Scope` is single-use (one `enter` ↔ one `exit`),
-    /// and after a `true` return `self.handlers` is dangling, so no further
-    /// method may touch it.
     pub fn exit(self) -> bool {
         // SAFETY: `handlers` is live until `mark_inactive` below (caller
         // contract of `Handlers::enter`). `event_loop()` returns a non-null

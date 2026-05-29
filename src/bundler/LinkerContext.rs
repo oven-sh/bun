@@ -19,14 +19,10 @@ use bun_threading::{WaitGroup, thread_pool as ThreadPoolLib};
 use crate::bake_types as bake;
 
 use crate::BundledAst as JSAst;
+use crate::Index;
 use bun_ast::{
     Binding, DeclaredSymbol, Dependency, ExportsKind, Expr, NamedImport, Part, Ref, Stmt, TlaCheck,
 };
-// PORT NOTE: `crate::Index` (= `bun_ast::Index`) — the
-// bundler's source-index newtype. `bun_ast::Index` is layout-identical
-// but a distinct type; LinkerGraph/JSMeta/etc. are typed against the crate
-// re-export, so use that here.
-use crate::Index;
 use bun_ast::{E, G, S};
 use bun_js_parser::lexer as lex;
 use bun_js_printer::{self as js_printer, renamer};
@@ -42,22 +38,11 @@ use crate::{
     LinkerGraph, MangledProps, PartRange, StableRef, WrapKind,
 };
 
-/// `bun.jsc.AnyEventLoop` (LinkerContext.zig:28). `bun_event_loop` is a
-/// lower-tier crate, so the bundler can name the real enum (the `Js` arm
-/// holds an erased `*mut jsc::EventLoop` driven through a vtable). Stored as
-/// a pointer because the linker borrows the loop owned by the
-/// `BundleThread` / runtime.
 pub type EventLoop = Option<core::ptr::NonNull<bun_event_loop::AnyEventLoop<'static>>>;
 
 bun_core::declare_scope!(LinkerCtx, visible);
 bun_core::declare_scope!(TreeShake, hidden);
 
-// ══════════════════════════════════════════════════════════════════════════
-// CYCLEBREAK(b0): vtable instance for `bun_crash_handler::BundleGenerateChunkVTable`
-// (cold-path §Dispatch — crash trace only). crash_handler (T1) holds erased
-// `(*const LinkerContext, *const Chunk, *const PartRange)`; bundler supplies
-// the formatter that knows their layout. Mirrors src/crash_handler/crash_handler.zig:135.
-// ══════════════════════════════════════════════════════════════════════════
 #[cfg(feature = "show_crash_trace")]
 bun_crash_handler::link_impl_BundleGenerateChunkCtx! {
     Linker for LinkerContext => |this| {
@@ -116,11 +101,6 @@ bun_core::define_scoped_log!(debug, crate::linker_context_mod::LinkerCtx);
 pub(crate) use debug;
 bun_core::define_scoped_log!(debug_tree_shake, crate::linker_context_mod::TreeShake);
 
-// Re-exports from sibling modules in `linker_context/`.
-// `LinkerGraph` SoA accessors are real now (`` on
-// `JSAst`/`JSMeta`/`File`); the submodule bodies un-gate against those. Module
-// declarations live in `lib.rs::linker_context` — each re-export below is
-// gated alongside its module declaration so partial un-gates compile.
 pub use crate::linker_context::scan_imports_and_exports::scan_imports_and_exports;
 
 pub use crate::linker_context::compute_chunks::compute_chunks;
@@ -160,18 +140,8 @@ pub use crate::ParseTask;
 pub struct LinkerContext<'a> {
     pub parse_graph: *mut Graph<'a>,
     pub graph: LinkerGraph<'a>,
-    /// Backref into `Transpiler.log`, assigned in [`Self::load`]. Stored as a
-    /// raw pointer (like `parse_graph` / `resolver`) so `Default` can be
-    /// `null_mut()` instead of a dangling `&mut` (instant UB). Use
-    /// [`Self::log`] / [`Self::log_mut`]; deref the field directly only for
-    /// split-borrow patterns that hold other `self` borrows across the access.
     pub log: *mut Log,
 
-    /// Backref into `BundleV2.transpiler.resolver` (LIFETIMES.tsv:
-    /// GRAPHBACKED). `ParentRef` (not `*mut`) so the accessor and the
-    /// split-borrow sites in `linker_context/*.rs` deref it via safe `Deref`
-    /// instead of open-coding a raw deref. `Option` because `Default` precedes
-    /// [`Self::load`]. Read-only — never `assume_mut`.
     pub resolver: Option<bun_ptr::ParentRef<Resolver<'a>>>,
     pub cycle_detector: Vec<ImportTracker>,
 
@@ -261,18 +231,6 @@ impl<'a> LinkerContext<'a> {
         bun_core::from_field_ptr!(BundleV2, linker, linker)
     }
 
-    /// Shared-read accessor for the parse-side graph.
-    ///
-    /// `parse_graph` is a backref into `BundleV2.graph`, a sibling field of
-    /// `BundleV2.linker` (= `*self`), assigned in [`Self::load`]. It is
-    /// non-null and valid for the entire link step; the pointee is disjoint
-    /// from `*self` (LIFETIMES.tsv: GRAPHBACKED).
-    ///
-    /// The returned borrow is tied to `&self`. Callers that need to hold a
-    /// `&Graph` across a `&mut self` borrow (split-borrow patterns — e.g.
-    /// `process_html_import_files`, TLA-check column caching, or
-    /// `generate_isolated_hash`) must continue to deref the raw
-    /// `self.parse_graph` field directly.
     #[inline]
     pub fn parse_graph(&self) -> &Graph<'_> {
         debug_assert!(
@@ -284,10 +242,6 @@ impl<'a> LinkerContext<'a> {
         unsafe { &*self.parse_graph }
     }
 
-    /// Exclusive accessor for the parse-side graph. See [`Self::parse_graph`]
-    /// for the lifetime invariant. Prefer the raw `self.parse_graph` field for
-    /// split-borrow patterns that interleave `&mut Graph` with other `self`
-    /// borrows.
     #[inline]
     pub fn parse_graph_mut(&mut self) -> &mut Graph<'a> {
         debug_assert!(
@@ -299,11 +253,6 @@ impl<'a> LinkerContext<'a> {
         unsafe { &mut *self.parse_graph }
     }
 
-    /// Shared-read accessor for the resolver.
-    ///
-    /// `resolver` is a backref into `BundleV2.transpiler.resolver`, assigned
-    /// in [`Self::load`] (LIFETIMES.tsv: GRAPHBACKED). Non-null and valid for
-    /// the link step; never mutated through this pointer.
     #[inline]
     pub fn resolver(&self) -> &Resolver<'a> {
         self.resolver
@@ -312,15 +261,6 @@ impl<'a> LinkerContext<'a> {
             .get()
     }
 
-    /// Mutable projection of the `r#loop` BACKREF for `AnyEventLoop` dispatch
-    /// (`enqueue_task_concurrent*`, `tick`). Centralises the raw `NonNull`
-    /// deref so the three callers (`BundleV2::any_loop_mut`, `ParseTask` /
-    /// `ServerComponentParseTask` completion) are safe.
-    ///
-    /// `&self` receiver (not `&mut self`): the loop storage is **disjoint**
-    /// from `LinkerContext` (it lives in the `BundleThread` / runtime arena —
-    /// see [`EventLoop`]), and worker-thread completions reach this through a
-    /// `BackRef<BundleV2>` (`&` only).
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn any_loop_mut(&self) -> Option<&mut bun_event_loop::AnyEventLoop<'static>> {
@@ -333,10 +273,6 @@ impl<'a> LinkerContext<'a> {
         self.r#loop.map(|p| unsafe { &mut *p.as_ptr() })
     }
 
-    /// Shared-read accessor for the bundler log.
-    ///
-    /// `log` is a backref into `Transpiler.log`, assigned in [`Self::load`]
-    /// (LIFETIMES.tsv: GRAPHBACKED). Non-null and valid for the link step.
     #[inline]
     pub fn log(&self) -> &Log {
         debug_assert!(
@@ -361,20 +297,6 @@ impl<'a> LinkerContext<'a> {
         unsafe { &mut *self.log }
     }
 
-    /// Detached mutable borrow of the bundler log for split-borrow contexts.
-    ///
-    /// `self.log` is a backref into `Transpiler.log`, a sibling allocation of
-    /// `BundleV2.linker` (= `*self`) — it is allocation-disjoint from every
-    /// `self.graph` / `self.parse_graph` / `self.mangled_props` borrow. This
-    /// accessor exists for the diagnostic paths (`match_import_with_export`,
-    /// `scan_imports_and_exports`, CSS validation) that hold SoA-column borrows
-    /// of `self.graph` while emitting an error; [`Self::log_mut`] would
-    /// needlessly conflict on `&mut self`.
-    ///
-    /// `#[allow(clippy::mut_from_ref)]` follows the same precedent as
-    /// [`GenerateChunkCtx::c`]: the pointee is a set-once GRAPHBACKED backref,
-    /// not interior storage of `*self`, so `&self` cannot alias the returned
-    /// `&mut Log`. Do not call this twice with overlapping live borrows.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn log_disjoint(&self) -> &mut Log {
@@ -389,10 +311,6 @@ impl<'a> LinkerContext<'a> {
         unsafe { &mut *self.log }
     }
 
-    /// Safe accessor for the underlying `bun_threading::ThreadPool` driving
-    /// link-phase parallel work. Chains [`Self::parse_graph`] →
-    /// [`Graph::pool`] → [`ThreadPool::worker_pool`](crate::ThreadPool::worker_pool),
-    /// keeping the `unsafe` deref centralized in those accessors.
     #[inline]
     pub fn worker_pool(&self) -> &bun_threading::ThreadPool {
         self.parse_graph().pool().worker_pool()
@@ -412,26 +330,10 @@ impl<'a> LinkerContext<'a> {
             && record.source_index.get() != source_index
     }
 
-    /// Spec: `LinkerContext.zig:checkForMemoryCorruption`.
-    ///
-    /// PORT NOTE: the Zig body calls `parse_graph.heap.helpCatchMemoryIssues()`
-    /// (a `MimallocArena` debug hook). `Graph.heap` is currently
-    /// `bun_alloc::Arena = bumpalo::Bump`, which has no such hook, so this is a
-    /// no-op until the arena type is swapped to the real `MimallocArena`. The
-    /// call sites are already gated on `FeatureFlags::HELP_CATCH_MEMORY_ISSUES`.
     #[inline]
-    pub fn check_for_memory_corruption(&self) {
-        // For this to work, you need mimalloc's debug build enabled.
-        //    make mimalloc-debug
-        // TODO(port): `unsafe { (*self.parse_graph).heap.help_catch_memory_issues() }`
-        // once `Graph.heap: MimallocArena`.
-    }
+    pub fn check_for_memory_corruption(&self) {}
 }
 
-// Local re-exports for the tree-shaking impl below. `EntryPoint::Kind`
-// and `SideEffects` live in sibling modules; code here used to reference them
-// via Zig-style nested paths. Re-export so `EntryPoint::Kind` here is the
-// *same type* `items_entry_point_kind()` returns.
 #[allow(non_snake_case)]
 pub mod EntryPoint {
     pub use crate::entry_point::Kind;
@@ -439,12 +341,6 @@ pub mod EntryPoint {
 use crate::bundled_ast::Flags as AstFlags;
 use crate::generic_path_with_pretty_initialized;
 type DeclaredSymbolList = bun_ast::DeclaredSymbolList;
-
-// TODO(port): method bodies depend on `LinkerGraph` SoA accessors
-// (`graph.files.items_*()`, `graph.ast.items_*()`, `graph.meta.items_*()`),
-// `crate::thread_pool::Worker`, `generic_path_with_pretty_initialized`, and the gated
-// `linker_context/` submodules. The struct + LinkerOptions + SourceMapData
-// above are real; this impl block un-gates with `LinkerGraph.rs`.
 
 impl<'a> LinkerContext<'a> {
     pub fn arena(&self) -> &Bump {
@@ -572,11 +468,6 @@ impl<'a> LinkerContext<'a> {
         }
 
         if self.options.output_format == Format::Cjs || self.options.output_format == Format::Iife {
-            // PORT NOTE: reshaped for borrowck — `Slice<T>` is a value-type
-            // snapshot of column pointers (does not borrow `self.graph.ast`),
-            // so `split_mut()` on the local can coexist with the
-            // `self.graph.meta` borrow below. The slab does not reallocate for
-            // the duration of this loop.
             let mut ast_slice = self.graph.ast.slice();
             let ast_cols = ast_slice.split_mut();
             let exports_kind: &mut [ExportsKind] = ast_cols.exports_kind;
@@ -593,10 +484,6 @@ impl<'a> LinkerContext<'a> {
                     exports_kind[entry_point.get() as usize] = ExportsKind::Cjs;
                 }
 
-                // Entry points with ES6 exports must generate an exports object when
-                // targeting non-ES6 formats. Note that the IIFE format only needs this
-                // when the global name is present, since that's the only way the exports
-                // can actually be observed externally.
                 if ast_flags.contains(AstFlags::USES_EXPORT_KEYWORD) {
                     ast_flags_list[entry_point.get() as usize].insert(AstFlags::USES_EXPORTS_REF);
                     meta_flags_list[entry_point.get() as usize]
@@ -902,11 +789,6 @@ impl<'a> LinkerContext<'a> {
                 Vec::with_capacity(parts_col.len());
             for (i, parts) in parts_col.iter().enumerate() {
                 let mut bits = bun_collections::AutoBitSet::init_empty(parts.len())?;
-                // The HTML loader's `ParseTask` builds its synthetic part 1 already
-                // live (so the JS-chunk visitor follows every embedded import record).
-                // `mark_file_live_for_tree_shaking` short-circuits for HTML and never
-                // walks its parts, so seed the bit here to preserve the old
-                // `Part::is_live = true` initializer.
                 if loaders.get(i).is_some_and(|l| *l == Loader::Html) && parts.len() > 1 {
                     bits.set(1);
                 }
@@ -915,10 +797,6 @@ impl<'a> LinkerContext<'a> {
             self.graph.parts_live = parts_live;
         }
 
-        // PORT NOTE: reshaped for borrowck — these slices alias into self.graph;
-        // Zig held them simultaneously. The SoA columns are physically disjoint
-        // and the underlying slabs don't reallocate during tree-shaking, so we
-        // cache raw column base pointers and reborrow at each recursive call.
         let parts: *mut [bun_ast::PartList<'a>] = self.graph.ast.items_parts_mut();
         let parts_live: *mut [bun_collections::AutoBitSet] = self.graph.parts_live.as_mut_slice();
         let import_records: *const [bun_ast::import_record::List<'a>] =
@@ -1002,10 +880,6 @@ impl<'a> LinkerContext<'a> {
                 css_reprs,
             };
 
-            // Code splitting: Determine which entry points can reach which files. This
-            // has to happen after tree shaking because there is an implicit dependency
-            // between live parts within the same file. All liveness has to be computed
-            // first before determining which entry points can reach which files.
             for i in 0..entry_points_len {
                 let entry_point = entry_points[i];
                 self.mark_file_reachable_for_code_splitting(&mut ctx, entry_point, i, 0);
@@ -1015,13 +889,6 @@ impl<'a> LinkerContext<'a> {
         Ok(())
     }
 
-    // CONCURRENCY: `each_ptr` callback — runs on worker threads, one task per
-    // `chunk_index`. Writes: `chunk.intermediate_output`, `chunk.isolated_hash`,
-    // `chunk.output_source_map` (per-chunk, disjoint by `*mut Chunk`). Reads
-    // `ctx.c`/`ctx.chunks` shared. Never forms `&mut LinkerContext` — the
-    // `post_process_*` callees take `GenerateChunkCtx` by value and deref
-    // `ctx.c` to `&LinkerContext` for read-only graph access plus per-chunk
-    // raw-ptr writes (see `postProcessJSChunk.rs`).
     pub(crate) fn generate_chunk(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
         // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
         // the duration of this body. ctx.c points into BundleV2.linker;
@@ -1045,12 +912,6 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    // CONCURRENCY: `each_ptr` callback — runs on worker threads, one task per
-    // `chunk_index`. Writes: `chunk.renamer` only (per-chunk, disjoint by
-    // `*mut Chunk`). Reads `ctx.c.graph.{ast,meta,symbols}` SoA columns and
-    // `ctx.c.options` shared. `rename_symbols_in_chunk` takes `*mut
-    // LinkerContext` raw and never materializes `&mut LinkerContext` while
-    // peer renamer tasks are live (see its CONCURRENCY note).
     pub(crate) fn generate_js_renamer(
         ctx: &GenerateChunkCtx,
         chunk: *mut Chunk,
@@ -1073,10 +934,6 @@ impl<'a> LinkerContext<'a> {
         chunk_index: usize,
     ) {
         let _ = chunk_index;
-        // PORT NOTE: reshaped for borrowck — `rename_symbols_in_chunk` needs
-        // `&mut Chunk` and a borrow of `chunk.content.javascript.files_in_chunk_order`
-        // simultaneously; cache the files slice via raw pointer (it lives in
-        // the chunk arena, address-stable for the renamer pass).
         let files: *const [u32] = match &chunk.content {
             crate::chunk::Content::Javascript(js) => &raw const *js.files_in_chunk_order,
             _ => unreachable!(),
@@ -1108,15 +965,6 @@ impl<'a> LinkerContext<'a> {
         let sources = self.parse_graph().input_files.items_source();
         let quoted_source_map_contents = self.graph.files.items_quoted_source_contents();
 
-        // Entries in `results` do not 1:1 map to source files, the mapping
-        // is actually many to one, where a source file can have multiple chunks
-        // in the sourcemap.
-        //
-        // This hashmap is going to map:
-        //    `source_index` (per compilation) in a chunk
-        //   -->
-        //    Which source index in the generated sourcemap, referred to
-        //    as the "mapping source index" within this function to be distinct.
         let mut source_id_map: ArrayHashMap<u32, i32> = ArrayHashMap::new();
         // PERF(port): was arena bulk-free — source_id_map drops at scope exit
 
@@ -1129,11 +977,6 @@ impl<'a> LinkerContext<'a> {
                 let path = &sources[index as usize].path;
                 source_id_map.put_no_clobber(index, 0)?;
 
-                // PORT NOTE: Zig mutated a local copy's `path.pretty` from the
-                // worker arena; we keep the relative path in a local owned
-                // buffer instead (drops at scope exit — same lifetime as the
-                // arena slice).
-                //
                 let rel_path_storage;
                 let pretty: &[u8] = if path.is_file() {
                     rel_path_storage =
@@ -1269,10 +1112,6 @@ impl<'a> LinkerContext<'a> {
                 .extend_from_slice(&done[mapping_start..mapping_end]);
             pieces.suffix.extend_from_slice(&done[mapping_end..]);
         } else {
-            // No shifts → `finalize()` returns `prefix` verbatim. Move the
-            // joined buffer instead of allocating a fresh `Vec` and memcpying
-            // it; for the bundled three.js x100 case the source map JSON is
-            // ~300 MB, so this alloc+copy was ~20% of the build.
             pieces.prefix = done.into_vec();
         }
 
@@ -1404,14 +1243,6 @@ impl Default for SourceMapDataTask {
 }
 
 impl SourceMapDataTask {
-    // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
-    // `source_index`. Writes: `ctx.graph.files[source_index].line_offset_table`
-    // (per-row disjoint), `ctx.pending_task_count` (atomic),
-    // `ctx.source_maps.line_offset_wait_group` (atomic). Reads
-    // `ctx.parse_graph.input_files[source_index].source` shared. Never forms
-    // `&mut LinkerContext` — `compute_line_offsets` takes a `ParentRef` (yields
-    // `&LinkerContext` only) and writes the single SoA cell via raw per-row
-    // pointer.
     pub(crate) fn run_line_offset(thread_task: *mut ThreadPoolLib::Task) {
         // SAFETY: thread_task points to SourceMapDataTask.thread_task
         let task: &mut SourceMapDataTask = unsafe {
@@ -1441,13 +1272,6 @@ impl SourceMapDataTask {
         worker.unget();
     }
 
-    // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
-    // `source_index`. Writes: `ctx.graph.files[source_index].quoted_source_contents`
-    // (per-row disjoint), `ctx.pending_task_count` (atomic),
-    // `ctx.source_maps.quoted_contents_wait_group` (atomic). Never forms
-    // `&mut LinkerContext` — `compute_quoted_source_contents` takes a
-    // `ParentRef` (yields `&LinkerContext` only) and writes the single SoA cell
-    // via raw per-row pointer.
     pub(crate) fn run_quoted_source_contents(thread_task: *mut ThreadPoolLib::Task) {
         // SAFETY: thread_task points to SourceMapDataTask.thread_task
         let task: &mut SourceMapDataTask = unsafe {
@@ -1469,18 +1293,6 @@ impl SourceMapDataTask {
         // borrow is formed for `Worker::get`, which reads `graph.pool` under a mutex.
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
 
-        // Use the default arena when using DevServer and the file
-        // was generated. This will be preserved so that remapping
-        // stack traces can show the source code, even after incremental
-        // rebuilds occur.
-        //
-        // PORT NOTE: Zig branched on `worker.ctx.transpiler.options.dev_server`
-        // to pick `dev.arena()` vs `worker.arena`, but
-        // `computeQuotedSourceContents` discards the arena parameter
-        // (`_: std.mem.Allocator`) — it always allocates via
-        // `bun.default_allocator` internally. The branch is a no-op, so we
-        // pass the worker arena unconditionally; `DevServerHandle` does not
-        // expose an arena accessor (§Dispatch).
         SourceMapData::compute_quoted_source_contents(ctx, worker.arena(), task.source_index);
         worker.unget();
     }
@@ -1489,14 +1301,6 @@ impl SourceMapDataTask {
 // TODO(port): see SourceMapDataTask above.
 
 impl SourceMapData {
-    /// Runs concurrently across the worker pool (one task per `source_index`).
-    /// Takes [`ParentRef<LinkerContext>`](bun_ptr::ParentRef) (not `&mut`)
-    /// because Zig's `*LinkerContext` freely aliases across threads —
-    /// materializing `&mut LinkerContext` here while peer tasks hold the same
-    /// pointer would be aliased-mut UB. `ParentRef::Deref` yields
-    /// `&LinkerContext` (SharedReadOnly) for all SoA-header reads; each task
-    /// writes only `graph.files[source_index].line_offset_table` (disjoint by
-    /// `source_index`) via a raw column pointer.
     pub fn compute_line_offsets(
         this: bun_ptr::ParentRef<LinkerContext<'_>>,
         alloc: &Bump,
@@ -1582,11 +1386,6 @@ impl SourceMapData {
         }
 
         let source: &Source = &parse_graph.input_files.items_source()[source_index as usize];
-        // Allocate from the worker's AST allocation state (installed by
-        // `Worker::get`); ~12.5% escape-expansion slack matches `quote_for_json`'s
-        // heuristic so the writer rarely reallocs. The slack is dropped with
-        // the arena at bundle end, and `StringJoiner` only borrows a `&[u8]`
-        // view downstream.
         let contents: &[u8] = &source.contents;
         let mut buf = bun_alloc::AstAlloc::vec_with_capacity::<u8>(
             contents.len() + (contents.len() >> 3) + 8,
@@ -1642,24 +1441,10 @@ pub struct ChunkMeta {
 
 pub(crate) type ChunkMetaMap = ArrayHashMap<Ref, ()>;
 
-/// PORT NOTE: raw-pointer fields (was `&'a mut`) because `each_ptr` requires
-/// `Ctx: Sync + Copy` and the same context is observed from every worker
-/// thread. Each task only writes to its own `*mut Chunk` slot; reads of
-/// `c`/`chunks` are disjoint or read-only per the Zig spec.
 #[derive(Clone, Copy)]
 pub struct GenerateChunkCtx<'a> {
     pub c: bun_ptr::ParentRef<LinkerContext<'a>>,
-    /// Backref to the full `chunks: &mut [Chunk]` slice owned by
-    /// `generate_chunks_in_parallel`. The slice outlives every
-    /// `GenerateChunkCtx` (joined via `wait_for_all`), so [`bun_ptr::BackRef`]'s
-    /// owner-outlives-holder invariant holds and per-task reads go through
-    /// safe `Deref`. Tasks that need write provenance (HTML loader) recover
-    /// the raw `*mut [Chunk]` via [`bun_ptr::BackRef::as_ptr`].
     pub chunks: bun_ptr::BackRef<[Chunk]>,
-    /// Backref to this task's `Chunk` (an element of `chunks`). Constructed
-    /// via [`bun_ptr::BackRef::new_mut`] so the stored `NonNull` carries write
-    /// provenance; per-task slot writes recover the raw `*mut Chunk` via
-    /// [`bun_ptr::BackRef::as_ptr`], shared reads go through safe `Deref`.
     pub chunk: bun_ptr::BackRef<Chunk>,
 }
 // SAFETY: see PORT NOTE above — mirrors Zig's freely-aliased `*LinkerContext`.
@@ -1668,12 +1453,6 @@ unsafe impl<'a> Send for GenerateChunkCtx<'a> {}
 unsafe impl<'a> Sync for GenerateChunkCtx<'a> {}
 
 impl<'a> GenerateChunkCtx<'a> {
-    /// Recover a shared borrow of the owning `BundleV2` via container_of from
-    /// the embedded `LinkerContext` pointer (`BundleV2.linker == *self.c`).
-    /// Used solely to call `Worker::get`, which only reads `bundle.graph.pool`
-    /// (shared) and serializes via mutex — so a `&BundleV2` is sufficient and
-    /// no `&mut` is ever materialized over the shared bundle while peer
-    /// per-chunk tasks run concurrently.
     #[inline]
     pub fn bundle(&self) -> &BundleV2<'a> {
         // SAFETY: `self.c` is `&raw mut bundle.linker` set in
@@ -1682,11 +1461,6 @@ impl<'a> GenerateChunkCtx<'a> {
         unsafe { &*LinkerContext::bundle_v2_ptr(self.c.as_mut_ptr()) }
     }
 
-    /// Mutable view of the owning `LinkerContext`. Centralizes the `unsafe`
-    /// deref of the `c: *mut LinkerContext` backref (set in
-    /// `generate_chunks_in_parallel`); callers previously open-coded
-    /// `unsafe { &mut *ctx.c }`. The per-chunk tasks each touch a disjoint
-    /// chunk, so the linker fields they write don't alias across tasks.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn c(&self) -> &mut LinkerContext<'a> {
@@ -1752,14 +1526,6 @@ pub(crate) unsafe fn pending_part_range_prologue<'a>(
     (part_range, c_ptr, chunk_ptr, worker)
 }
 
-/// `Environment.show_crash_trace` scoped-action guard for the
-/// `generate_compile_result_for_{js,css}_chunk` callbacks. Thin wrapper over
-/// [`bundle_generate_chunk_action`] + [`bun_crash_handler::scoped_action`].
-///
-/// Callers materialise the `&LinkerContext` / `&Chunk` from the worker-task
-/// raw pointers (see [`pending_part_range_prologue`]); the borrows are only
-/// used to derive erased `*const ()` for the crash-trace vtable and are not
-/// retained past the `scoped_action` expression.
 #[cfg(feature = "show_crash_trace")]
 #[inline]
 #[must_use]
@@ -1771,22 +1537,12 @@ pub(crate) fn crash_guard_for_part_range(
     bun_crash_handler::scoped_action(bundle_generate_chunk_action(c, chunk, part_range))
 }
 
-// TODO(port): scan/tree-shake/link method bodies. These reach into
-// `LinkerGraph` SoA fields (`graph.files`, `graph.meta`, `graph.ast`), the
-// gated `linker_context/scanImportsAndExports.rs`, `bun_resolve_builtins`,
-// and `css::css_modules`. The bodies are real ports of `LinkerContext.zig`
-// and un-gate together with `LinkerGraph.rs`.
-
 impl<'a> LinkerContext<'a> {
     pub fn generate_isolated_hash(&mut self, chunk: &Chunk) -> u64 {
         let _trace = bun::perf::trace("Bundler.generateIsolatedHash");
 
         let mut hasher = ContentHasher::default();
 
-        // Mix the file names and part ranges of all of the files in this chunk into
-        // the hash. Objects that appear identical but that live in separate files or
-        // that live in separate parts in the same file must not be merged. This only
-        // needs to be done for JavaScript files, not CSS files.
         if let crate::chunk::Content::Javascript(js) = &chunk.content {
             // SAFETY: parse_graph backref; exclusive access via &mut *.
             let sources = unsafe { (*self.parse_graph).input_files.items_source_mut() };
@@ -1809,10 +1565,6 @@ impl<'a> LinkerContext<'a> {
 
                         break 'brk source.path.pretty;
                     } else {
-                        // If this isn't in the "file" namespace, just use the full path text
-                        // verbatim. This could be a source of cross-platform differences if
-                        // plugins are storing platform-specific information in here, but then
-                        // that problem isn't caused by esbuild itself.
                         break 'brk source.path.text;
                     }
                 };
@@ -1849,11 +1601,6 @@ impl<'a> LinkerContext<'a> {
             self.options.public_path
         };
 
-        // Also hash the public path. If provided, this is used whenever files
-        // reference each other such as cross-chunk imports, asset file references,
-        // and source map comments. We always include the hash in all chunks instead
-        // of trying to figure out which chunks will include the public path for
-        // simplicity and for robustness to code changes in the future.
         if !public_path.is_empty() {
             hasher.write(public_path);
         }
@@ -1875,22 +1622,6 @@ impl<'a> LinkerContext<'a> {
             crate::chunk::IntermediateOutput::Empty => {}
         }
 
-        // Also include the source map data in the hash. The source map is named the
-        // same name as the chunk name for ease of discovery. So we want the hash to
-        // change if the source map data changes even if the chunk data doesn't change.
-        // Otherwise the output path for the source map wouldn't change and the source
-        // map wouldn't end up being updated.
-        //
-        // Note that this means the contents of all input files are included in the
-        // hash because of "sourcesContent", so changing a comment in an input file
-        // can now change the hash of the output file. This only happens when you
-        // have source maps enabled (and "sourcesContent", which is on by default).
-        //
-        // The generated positions in the mappings here are in the output content
-        // *before* the final paths have been substituted. This may seem weird.
-        // However, I think this shouldn't cause issues because a) the unique key
-        // values are all always the same length so the offsets are deterministic
-        // and b) the final paths will be folded into the final hash later.
         hasher.write(&chunk.output_source_map.prefix);
         hasher.write(&chunk.output_source_map.mappings);
         hasher.write(&chunk.output_source_map.suffix);
@@ -2213,10 +1944,6 @@ impl<'a> LinkerContext<'a> {
         // across `RequireOrImportMetaCallback::init(self)` (`&mut self`) below.
         let parse_graph = unsafe { &*self.parse_graph };
 
-        // PORT NOTE: `Options.arena` / `source_map_allocator` were removed in
-        // the Rust port (printer uses global mimalloc + the explicit `bump`
-        // argument to `print_with_writer`). The dev-server source-map-arena
-        // selection is folded into TODO(port) until arena threading lands.
         let _ = self.dev_server.is_some()
             && parse_graph.input_files.items_loader()[source_index.get() as usize]
                 .is_javascript_like();
@@ -2294,10 +2021,6 @@ impl<'a> LinkerContext<'a> {
         };
 
         writer.buffer.reset();
-        // PORT NOTE: Zig moved `*writer` into the printer by value and wrote it
-        // back via `defer writer.* = printer.ctx;`. `BufferWriter` isn't
-        // `Clone`/`Default` in Rust; move it through `mem::replace` with a
-        // freshly-initialized writer instead.
         let mut printer = js_printer::BufferPrinter::init(core::mem::replace(
             writer,
             js_printer::BufferWriter::init(),
@@ -2469,10 +2192,6 @@ impl<'a> LinkerContext<'a> {
         index: u32,
         chunk_visit_map: &mut AutoBitSet,
     ) {
-        // Only visit each chunk at most once. This is important because there may be
-        // cycles in the chunk import graph. If there's a cycle, we want to include
-        // the hash of every chunk involved in the cycle (along with all of their
-        // dependencies). This depth-first traversal will naturally do that.
         if chunk_visit_map.is_set(index as usize) {
             return;
         }
@@ -2495,14 +2214,6 @@ impl<'a> LinkerContext<'a> {
             );
         }
 
-        // Mix in hashes for content referenced via output pieces. JS chunks
-        // express cross-chunk dependencies via `cross_chunk_imports` above, but
-        // HTML (and CSS) chunks only reference other chunks through pieces, so
-        // recurse on those too.
-        // PORT NOTE: reshaped for borrowck — collect piece queries first so the
-        // `&chunks[index]` borrow is dropped before the recursive `&mut chunks`
-        // calls in the Chunk/Scb arms below. `final_rel_path` is re-indexed per
-        // Asset arm (not hoisted) because it is now `Box<[u8]>` (not `Copy`).
         let piece_queries: Vec<(crate::chunk::QueryKind, u32)> =
             if let crate::chunk::IntermediateOutput::Pieces(pieces) =
                 &chunks[index as usize].intermediate_output
@@ -2629,18 +2340,6 @@ impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// Tree-shaking primitives. These reach into `LinkerGraph` SoA columns
-// (`files_live`, `meta.items_flags()`) and the `Graph::InputFileColumns`
-// accessors.
-// ══════════════════════════════════════════════════════════════════════════
-
-// The three `mark_*` functions below are mutually recursive and hot. Passing
-// the five SoA-column slices as separate arguments costs 10 words of fat
-// pointers per call; with `&mut self` + indices that overflows the 6 SysV
-// integer-arg registers and spills to the stack on every recursive step.
-// Packing the slices into a borrowed context struct keeps each call at 3-4
-// register-sized arguments.
 pub struct TreeShakeCtx<'a, 'r> {
     pub side_effects: &'r [SideEffects],
     pub parts: &'r [bun_ast::PartList<'a>],
@@ -2777,10 +2476,6 @@ impl<'a> LinkerContext<'a> {
                         .path
                         .pretty
                 ),
-                // PORT NOTE: Zig printed `target.bakeGraph()` (a `bake.Graph` tag);
-                // `bake_graph()` lives in `bun_bake` (tier-6 — would back-edge).
-                // The debug log only needs a stable label, so print the `Target`
-                // tag directly via its `IntoStaticStr` derive.
                 <&'static str>::from(parse_graph.ast.items_target()[source_index as usize]),
                 if self.graph.files_live.is_set(source_index as usize) {
                     "already seen"
@@ -2840,11 +2535,6 @@ impl<'a> LinkerContext<'a> {
                 }
             }
 
-            // Also include any statement-level imports. Iterate by index so we
-            // don't hold a borrow of `part`/`parts` across the recursive call —
-            // the recursion never resizes this part's `import_record_indices`,
-            // so re-slicing each iteration is sound and matches Zig's plain
-            // `for (part.import_record_indices.slice())`.
             let import_indices_len = part.import_record_indices.len();
             for ii in 0..import_indices_len {
                 let import_index = ctx.parts[source_index as usize].as_slice()[part_index]
@@ -2954,10 +2644,6 @@ impl<'a> LinkerContext<'a> {
         // Include the file containing this part
         self.mark_file_live_for_tree_shaking(ctx, source_index);
 
-        // The recursion above/below only flips bits in `ctx.parts_live`; it never
-        // resizes any part's `dependencies`, so the slice's len/ptr are stable.
-        // Iterate by index and re-borrow per iteration to satisfy borrowck without
-        // the per-call `Vec` clone the original port did.
         let dependencies_len = ctx.parts[source_index as usize].as_slice()[part_index as usize]
             .dependencies
             .len();
@@ -2994,24 +2680,11 @@ impl<'a> LinkerContext<'a> {
     }
 } // end tree-shaking impl
 
-// ══════════════════════════════════════════════════════════════════════════
-// `scanImportsAndExports.rs` callees.
-//
-// `linker_context/scanImportsAndExports.rs` calls these `LinkerContext`
-// methods inherently. Real ports of the `LinkerContext.zig` /
-// `linker_context/doStep5.zig` / `linker_context/generateCodeForLazyExport.zig`
-// bodies.
-// ══════════════════════════════════════════════════════════════════════════
-
 // Local imports. `AstFlags` / `DeclaredSymbolList`
 // already imported at the top of the file.
 use bun_ast::symbol::Use as SymbolUse;
 use bun_ast::{DependencyList, ImportItemStatus, PartSymbolUseMap};
 
-// `bundle_v2.zig:ImportTracker.{Status,Iterator}` — canonical definition lives
-// in `bundle_v2.rs` (matches Zig spec location). Re-exported here so the 30+
-// unqualified uses in `advance_import_tracker` / `match_import_with_export`
-// below resolve unchanged.
 pub use crate::bundle_v2::{ImportTrackerIterator, ImportTrackerStatus};
 
 /// Field-wise eq for `ImportTracker`, matching Zig's `eql(ImportTracker)` shape.
@@ -3041,11 +2714,6 @@ impl<'a> LinkerContext<'a> {
         self.top_level_symbols_to_parts(Index::RUNTIME.get(), r#ref)
     }
 
-    /// Spec: `LinkerContext.zig:489 source_`.
-    ///
-    /// PORT NOTE: returns `'static` so callers can hold the source across a
-    /// `&mut self.log` borrow; the underlying `parse_graph.input_files` slab
-    /// is append-only and outlives the link step (LIFETIMES.tsv: GRAPHBACKED).
     #[inline]
     pub fn get_source<I: TryInto<usize>>(&self, index: I) -> &'static Source {
         // PORT NOTE: Zig spec is `index: anytype`; callers pass both `u32` and
@@ -3062,11 +2730,6 @@ impl<'a> LinkerContext<'a> {
         unsafe { &*core::ptr::from_ref(&(*self.parse_graph).input_files.items_source()[index]) }
     }
 
-    /// Spec: `LinkerContext.zig:496 scanCSSImports`.
-    ///
-    /// `log` is an explicit parameter (not `self.log`) because the dev-server
-    /// caller (`finish_from_bake_dev_server`) runs this *before* `load()` has
-    /// initialized `self.log`, passing a stack-local `Log` instead.
     pub(crate) fn scan_css_imports(
         file_source_index: u32,
         file_import_records: &[ImportRecord],
@@ -3139,28 +2802,10 @@ impl<'a> LinkerContext<'a> {
         source_index: crate::IndexInt,
     ) {
         match wrap {
-            // If this is a CommonJS file, we're going to need to generate a wrapper
-            // for the CommonJS closure. That will end up looking something like this:
-            //
-            //   var require_foo = __commonJS((exports, module) => {
-            //     ...
-            //   });
-            //
-            // However, that generation is special-cased for various reasons and is
-            // done later on. Still, we're going to need to ensure that this file
-            // both depends on the "__commonJS" symbol and declares the "require_foo"
-            // symbol. Instead of special-casing this during the reachability analysis
-            // below, we just append a dummy part to the end of the file with these
-            // dependencies and let the general-purpose reachability analysis take care
-            // of it.
             WrapKind::Cjs => {
                 let common_js_parts =
                     self.top_level_symbols_to_parts_for_runtime(self.cjs_runtime_ref);
 
-                // PORT NOTE: reshaped for borrowck — Zig held `runtime_parts`
-                // simultaneously with the mutable graph borrows below; the inner
-                // loop is empty (`if r#ref.eql(...) continue;` only) so it's a
-                // no-op kept for parity with the original.
                 for &part_id in common_js_parts {
                     let runtime_parts =
                         self.graph.ast.items_parts()[Index::RUNTIME.get() as usize].as_slice();
@@ -3238,17 +2883,6 @@ impl<'a> LinkerContext<'a> {
             }
 
             WrapKind::Esm => {
-                // If this is a lazily-initialized ESM file, we're going to need to
-                // generate a wrapper for the ESM closure. That will end up looking
-                // something like this:
-                //
-                //   var init_foo = __esm(() => {
-                //     ...
-                //   });
-                //
-                // This depends on the "__esm" symbol and declares the "init_foo" symbol
-                // for similar reasons to the CommonJS closure above.
-
                 // Count async dependencies to determine if we need __promiseAll
                 let mut async_import_count: usize = 0;
                 {
@@ -3542,27 +3176,12 @@ impl<'a> LinkerContext<'a> {
         re_exports: &mut bun_alloc::AstVec<Dependency>,
     ) -> MatchImport {
         let cycle_detector_top = self.cycle_detector.len();
-        // PORT NOTE: Zig's `defer cycle_detector.shrinkRetainingCapacity` is
-        // lowered to an explicit `truncate` after the `'loop_` below — the only
-        // exits are the three `return`s that follow it, so a single post-loop
-        // truncate covers every path. A scopeguard holding a raw `*mut` into
-        // `self.cycle_detector` would be invalidated by the `&mut self`
-        // reborrows inside the loop (Stacked Borrows), so we don't use one.
 
         let mut tracker = init_tracker;
         let mut ambiguous_results: Vec<MatchImport> = Vec::new();
         let mut result: MatchImport = MatchImport::default();
 
         'loop_: loop {
-            // Make sure we avoid infinite loops trying to resolve cycles:
-            //
-            //   // foo.js
-            //   export {a as b} from './foo.js'
-            //   export {b as c} from './foo.js'
-            //   export {c as a} from './foo.js'
-            //
-            // This uses a O(n^2) array scan instead of a O(n) map because the vast
-            // majority of cases have one or two elements
             for prev_tracker in &self.cycle_detector[cycle_detector_top..] {
                 if import_tracker_eq(&tracker, prev_tracker) {
                     result = MatchImport {
@@ -3585,10 +3204,6 @@ impl<'a> LinkerContext<'a> {
             let advanced = self.advance_import_tracker(&tracker);
             let next_tracker = advanced.value;
             let status = advanced.status;
-            // `advanced.import_data` borrows
-            // `graph.meta[..].resolved_exports[..].potentially_ambiguous_export_star_refs`;
-            // that storage is never reallocated while this loop runs (only
-            // `cycle_detector`, `log`, and `graph.symbols` are mutated below).
             let potentially_ambiguous_export_star_refs: &[crate::ImportData] =
                 advanced.import_data.get();
 
@@ -3605,10 +3220,6 @@ impl<'a> LinkerContext<'a> {
                         break;
                     }
 
-                    // If it's a CommonJS or external file, rewrite the import to a
-                    // property access. Don't do this if the namespace reference is invalid
-                    // though. This is the case for star imports, where the import is the
-                    // namespace.
                     let named_import: &NamedImport = self.graph.ast.items_named_imports()
                         [prev_source_index as usize]
                         .get(&tracker.import_ref)
@@ -3729,13 +3340,6 @@ impl<'a> LinkerContext<'a> {
 
                     // Report mismatched imports and exports
                     if symbol.import_item_status == ImportItemStatus::Generated {
-                        // This is a debug message instead of an error because although it
-                        // appears to be a named import, it's actually an automatically-
-                        // generated named import that was originally a property access on an
-                        // import star namespace object. Normally this property access would
-                        // just resolve to undefined at run-time instead of failing at binding-
-                        // time, so we emit a debug message and rewrite the value to the literal
-                        // "undefined" instead of emitting an error.
                         symbol.import_item_status = ImportItemStatus::Missing;
 
                         if self.resolver().opts.target == Target::Browser
@@ -3824,11 +3428,6 @@ impl<'a> LinkerContext<'a> {
                         }
                     }
 
-                    // Defer the actual binding of this import until after we generate
-                    // namespace export code for all files. This has to be done for all
-                    // import-to-export matches, not just the initial import to the final
-                    // export, since all imports and re-exports must be merged together
-                    // for correctness.
                     result = MatchImport {
                         kind: MatchImportKind::Normal,
                         source_index: next_tracker.source_index.get(),
@@ -4071,13 +3670,6 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// Spec: `linker_context/generateCodeForLazyExport.zig`.
-    ///
-    /// Thin inherent-method shim so callers can write
-    /// `this.generate_code_for_lazy_export(id)` (matches Zig's
-    /// `pub const generateCodeForLazyExport = @import(...)`). The full body —
-    /// including the CSS-modules `composes`/`local_scope` Visitor — lives in
-    /// `linker_context/generateCodeForLazyExport.rs`.
     #[inline]
     pub fn generate_code_for_lazy_export(
         &mut self,
@@ -4152,22 +3744,11 @@ impl<'a> LinkerContext<'a> {
         type OutputPiece = crate::chunk::OutputPiece;
 
         if !j.contains(&self.unique_key_prefix) {
-            // There are like several cases that prohibit this from being checked more trivially, example:
-            // 1. dynamic imports
-            // 2. require()
-            // 3. require.resolve()
-            // 4. externals
             return Ok(crate::chunk::IntermediateOutput::Joiner(core::mem::take(j)));
         }
 
         // PORT NOTE: Zig had `errdefer j.deinit()` around the initCapacity — Drop handles it.
         let mut pieces: Vec<OutputPiece> = Vec::with_capacity(count as usize);
-        // errdefer pieces.deinit() — Drop handles it
-        // PORT NOTE: Zig used `j.done(alloc)` (worker arena), so the joined
-        // buffer outlived this function. The Rust `StringJoiner::done()`
-        // returns a `Box<[u8]>`; we must keep it alive alongside the pieces
-        // (each `OutputPiece` stores a raw `*const u8` into it). It is moved
-        // into the returned `OutputPieces` below.
         let complete_output: Box<[u8]> = j.done()?;
         let mut output: &[u8] = &complete_output;
 

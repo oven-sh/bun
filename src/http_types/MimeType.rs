@@ -2,13 +2,6 @@ use std::borrow::Cow;
 
 use bun_core::strings;
 
-// PORT NOTE (cyclebreak): `by_loader` needs `bun_ast::Loader`, but
-// adding that dep creates a cargo cycle
-// (http_types → options_types → zlib → io → uws_sys → http_types). The Loader
-// enum is `#[repr(u8)]` with stable discriminants (pinned by
-// `bun-native-bundler-plugin-api/bundler_plugin.h`), so we mirror the handful
-// of variants `by_loader` actually inspects as local `u8` constants and accept
-// the raw discriminant. Callers pass `loader as u8`.
 mod loader_disc {
     pub(super) const JSX: u8 = 0;
     pub(super) const JS: u8 = 1;
@@ -18,19 +11,9 @@ mod loader_disc {
     pub(super) const JSON: u8 = 6;
 }
 
-// ───────────────────────────────────────────────────────────────────────────
-// `Table` (= generated `mime_type_list_enum::MimeTypeList`). The Rust side is a
-// hand-rolled stand-in (`&'static str` newtype) until
-// `src/codegen/generate-compact-string-table.ts` emits `.rs`. See PERF(port)
-// note at the top of `mime_type_list_enum.rs`.
-// ───────────────────────────────────────────────────────────────────────────
 pub use super::mime_type_list_enum::MimeTypeList as Table;
 use bun_collections::StringHashMap;
 
-// PORT NOTE: `Table` variant names in Zig are raw MIME-type strings
-// (e.g. `@"application/json"`), which are not valid Rust identifiers.
-// `mime_type_list_enum.rs` exposes `const fn from_mime_literal(&'static str)`;
-// `t!("...")` resolves to the corresponding `Table` value at compile time.
 macro_rules! t {
     ($s:literal) => {
         Table::from_mime_literal($s)
@@ -486,10 +469,6 @@ impl MimeType {
     }
 }
 
-// TODO: improve this
-// PORT NOTE (cyclebreak): takes the `#[repr(u8)]` discriminant of
-// `bun_ast::Loader` to avoid a same-tier cargo cycle (see
-// `loader_disc` at top of file). Callers: `by_loader(loader as u8, ext)`.
 pub fn by_loader(loader: u8, ext: &[u8]) -> MimeType {
     use loader_disc as L;
     match loader {

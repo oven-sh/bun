@@ -1,11 +1,5 @@
 use bun_sys::{O, posix};
 
-// PORT NOTE: the Zig `get(comptime name)` helper used `@hasDecl(bun.O, name)` +
-// `@field(bun.O, name)` to look up an open-flag by string at comptime, with a
-// `@compileError` fallback. Rust has no struct-field reflection; since every
-// call site names a constant that exists on `bun_sys::O`, we reference those
-// constants directly below and drop the helper.
-
 /// Constant for fs.access(). File can be read by the calling process.
 pub const R_OK: i32 = posix::R_OK;
 /// Constant for fs.access(). File can be written by the calling process.
@@ -48,11 +42,6 @@ pub(crate) const COPYFILE_EXCL: i32 = Copyfile::EXCLUSIVE;
 /// If the underlying platform does not support copy-on-write, then the operation will fail with an error.
 pub(crate) const COPYFILE_FICLONE_FORCE: i32 = Copyfile::FORCE;
 
-///
-/// constant for fs.open().
-/// Flag indicating reading accesses to the file system will no longer result in
-/// an update to the atime information associated with the file.
-/// This flag is available on Linux operating systems only.
 pub const O_NOATIME: i32 = O::NOATIME;
 /// Constant for fs.open(). Flag indicating that the file is opened for synchronous I/O with write operations waiting for data integrity.
 pub const O_DSYNC: i32 = O::DSYNC;

@@ -37,11 +37,6 @@ pub mod nocancel {
         #[link_name = "fcntl$NOCANCEL"]
         pub fn fcntl_nocancel(fd: c_int, cmd: c_int, ...) -> c_int;
 
-        // #[link_name = "sendmsg$NOCANCEL"]
-        // pub fn sendmsg_nocancel(sockfd: c_int, msg: *const msghdr, flags: c_int) -> isize;
-        // #[link_name = "recvmsg$NOCANCEL"]
-        // pub fn recvmsg_nocancel(sockfd: c_int, msg: *mut msghdr, flags: c_int) -> isize;
-
         #[link_name = "connect$NOCANCEL"]
         pub fn connect_nocancel(
             sockfd: c_int,

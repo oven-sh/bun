@@ -6,18 +6,6 @@ use bun_jsc::{FromAny, JSGlobalObject, JSObject, JSValue, JsError, JsResult};
 use super::assert::myers_diff as MyersDiff;
 use super::assert::myers_diff::{Diff, DiffKind, Line};
 
-/// Compare `actual` and `expected`, producing a diff that would turn `actual`
-/// into `expected`.
-///
-/// Lines in the returned diff have the same encoding as `actual` and
-/// `expected`. Lines borrow from these inputs, but the diff list itself must
-/// be deallocated.
-///
-/// Use an arena allocator, otherwise this will leak memory.
-///
-/// ## Invariants
-/// If not met, this function will panic.
-/// - `actual` and `expected` are alive and have the same encoding.
 pub(crate) fn myers_diff(
     global: &JSGlobalObject,
     actual: &BunString,
@@ -28,11 +16,6 @@ pub(crate) fn myers_diff(
     // split `actual` and `expected` into lines before diffing
     lines: bool,
 ) -> JsResult<JSValue> {
-    // Short circuit on empty strings. Note that, in release builds where
-    // assertions are disabled, if `actual` and `expected` are both dead, this
-    // branch will be hit since dead strings have a length of 0. This should be
-    // moot since BunStrings with non-zero reference counds should never be
-    // dead.
     if actual.length() == 0 && expected.length() == 0 {
         return JSValue::create_empty_array(global, 0);
     }
@@ -131,10 +114,6 @@ where
     })
 }
 
-/// Field reflection for `Diff<T>` so [`JSObject::create_null_proto`] can
-/// marshal it. Mirrors Zig's `inline for` over `@typeInfo(Diff(T))`:
-/// `kind` is a fieldless enum → `jsNumber(@intFromEnum)`; `value` routes
-/// through `JSValue::from_any` per `T`.
 impl<T: FromAny + Copy> PojoFields for Diff<T> {
     const FIELD_COUNT: usize = 2;
     fn put_fields(

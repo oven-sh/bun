@@ -48,24 +48,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
 
             if p.options.features.standard_decorators {
-                // TC39 standard decorator grammar:
-                //   @Identifier
-                //   @Identifier.member
-                //   @Identifier.member(args)
-                //   @(Expression)
-                // PERF(port): was ensureUnusedCapacity + unusedCapacitySlice — profile if it shows up on a hot path
                 decorators.push(p.parse_standard_decorator()?);
             } else {
-                // Parse a new/call expression with "exprFlagTSDecorator" so we ignore
-                // EIndex expressions, since they may be part of a computed property:
-                //
-                //   class Foo {
-                //     @foo ['computed']() {}
-                //   }
-                //
-                // This matches the behavior of the TypeScript compiler.
-                // PERF(port): was ensureUnusedCapacity + unusedCapacitySlice — profile if it shows up on a hot path
-                // PORT NOTE: Zig `parseExprWithFlags` takes an out-param slot; preserved here.
                 let mut expr = Expr::EMPTY;
                 p.parse_expr_with_flags(Level::New, EFlags::TsDecorator, &mut expr)?;
                 decorators.push(expr);
@@ -75,14 +59,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(ExprNodeList::from_bump_vec(decorators))
     }
 
-    /// Parse a standard (TC39) decorator expression following the `@` token.
-    ///
-    /// DecoratorExpression:
-    ///   @ IdentifierReference
-    ///   @ DecoratorMemberExpression
-    ///   @ DecoratorCallExpression
-    ///   @ DecoratorParenthesizedExpression
-    // TODO(port): narrow error set
     pub fn parse_standard_decorator(&mut self) -> Result<ExprNodeIndex, Error> {
         let p = self;
         let loc = p.lexer.loc();
@@ -334,10 +310,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // Import assignments may be only used in type expressions, not value
-        // expressions. If this is the case, the TypeScript compiler removes
-        // them entirely from the output. That can cause the namespace itself
-        // to be considered empty and thus be removed.
         let mut import_equal_count: usize = 0;
         for stmt in stmts.iter() {
             match &stmt.data {
@@ -350,16 +322,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // TypeScript omits namespaces without values. These namespaces
-        // are only allowed to be used in type expressions. They are
-        // allowed to be exported, but can also only be used in type
-        // expressions when imported. So we shouldn't count them as a
-        // real export either.
-        //
-        // TypeScript also strangely counts namespaces containing only
-        // "export declare" statements as non-empty even though "declare"
-        // statements are only type annotations. We cannot omit the namespace
-        // in that case. See https://github.com/evanw/esbuild/issues/1158.
         if (stmts.len() == import_equal_count && !has_non_local_export_declare_inside_namespace)
             || opts.is_typescript_declare
         {
@@ -390,18 +352,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             //
             // SAFETY: current_scope is an arena-owned Scope pointer valid for 'a.
             if p.current_scope().members.contains_key(name_text) {
-                // Add a "_" to make tests easier to read, since non-bundler tests don't
-                // run the renamer. Keep adding "_" until the argument does not collide
-                // with a symbol declared in the namespace body: paths that skip the
-                // renamer (runtime transpiler, Bun.Transpiler, `bun build --no-bundle`)
-                // print symbols by their original name, so a colliding argument would
-                // re-declare a block-scoped member:
-                //
-                //   namespace m { class m {} class _m {} }
-                //
-                // Candidates are built in the parse arena (Zig: `p.allocator`); the
-                // chosen one becomes the symbol's original name and is freed together
-                // with the rest of the AST arena.
                 let mut underscores: usize = 1;
                 let prefixed: &'a [u8] = loop {
                     let candidate = p
@@ -675,11 +625,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             //   })(foo || (foo = {}));
             // SAFETY: current_scope is an arena-owned Scope pointer valid for 'a.
             if p.current_scope().members.contains_key(name_text) {
-                // Add a "_" to make tests easier to read, since non-bundler tests don't
-                // run the renamer. For external-facing things the renamer will avoid
-                // collisions automatically so this isn't important for correctness.
-                // PERF(port): strings::cat heap-allocates; Zig allocated into p.arena.
-                // TODO(perf): route through bump arena.
                 let prefixed = strings::cat(b"_", name_text).expect("unreachable");
                 let prefixed: &'a [u8] = p.arena.alloc_slice_copy(&prefixed);
                 arg_ref = p
@@ -709,11 +654,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(p.s(S::TypeScript {}, loc));
         }
 
-        // Save these for when we do out-of-order enum visiting
-        //
-        // Make a copy of "scopesInOrder" instead of a slice or index since
-        // the original array may be flattened in the future by
-        // "popAndFlattenScope"
         let scope_order_clone = 'scope_order_clone: {
             let mut count: usize = 0;
             for i in &p.scopes_in_order[scope_index..] {

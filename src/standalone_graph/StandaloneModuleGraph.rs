@@ -32,11 +32,6 @@ bun_opaque::opaque_ffi! {
 }
 
 pub struct StandaloneModuleGraph {
-    /// Raw view over the serialized graph (`[0, offsets.byte_count)`). Stored as a
-    /// raw fat pointer — NOT `&'static [u8]` — because `byte_count` covers the
-    /// bytecode/module_info subranges that JSC mutates in place via
-    /// `File.bytecode`. Holding a `&'static [u8]` over those bytes would freeze
-    /// them under Stacked/Tree Borrows and make the later foreign write UB.
     pub bytes: *const [u8],
     pub files: StringArrayHashMap<File>,
     pub entry_point_id: u32,
@@ -44,12 +39,6 @@ pub struct StandaloneModuleGraph {
     pub flags: Flags,
 }
 
-// We never want to hit the filesystem for these files
-// We use the `/$bunfs/` prefix to indicate that it's a virtual path
-// It is `/$bunfs/` because:
-//
-// - `$` makes it unlikely to collide with a real path
-// - `/$bunfs/` is 8 characters which is fast to compare for 64-bit CPUs
 #[cfg(not(windows))]
 pub const BASE_PATH: &str = "/$bunfs/";
 // Special case for windows because of file URLs being invalid
@@ -58,10 +47,6 @@ pub const BASE_PATH: &str = "/$bunfs/";
 #[cfg(windows)]
 pub const BASE_PATH: &str = "B:\\~BUN\\";
 
-// TODO(port): Zig version takes `target: Environment.OperatingSystem` + `comptime suffix`
-// and concatenates at comptime. Rust cannot const-concat with a runtime enum branch
-// nor across a `const fn` boundary. Could expose as a `macro_rules!` over
-// `const_format::concatcp!`; for now we materialize the two call-sites directly.
 #[cfg(windows)]
 pub const BASE_PUBLIC_PATH: &str = "B:/~BUN/";
 #[cfg(not(windows))]
@@ -72,12 +57,6 @@ pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("
 #[cfg(not(windows))]
 pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("/$bunfs/", "root/");
 
-// TODO(port): Zig used a nested `Instance` struct holding a static var. Model
-// as a process-lifetime `OnceLock` (PORTING.md §Concurrency: never `static mut`).
-// `get()` returns a raw `*mut` to mirror Zig's `?*StandaloneModuleGraph`; callers
-// mutate `wtf_string` / `cached_blob` / `sourcemap` lazily. TODO(refactor):
-// push interior mutability down to those per-`File` fields (`UnsafeCell<…>`) so
-// read-only paths (`find`, `entry_point`, `stat`) can take `&self`.
 struct Instance(core::cell::UnsafeCell<StandaloneModuleGraph>);
 // SAFETY: the graph is populated once at startup before any worker threads;
 // post-init mutation is limited to per-`File` lazy fields. NOTE: `INIT_LOCK`
@@ -90,11 +69,6 @@ static INSTANCE: std::sync::OnceLock<Instance> = std::sync::OnceLock::new();
 
 impl StandaloneModuleGraph {
     pub fn get() -> Option<*mut StandaloneModuleGraph> {
-        // Mirrors Zig's `?*StandaloneModuleGraph`: a raw pointer with no
-        // uniqueness invariant. Do NOT hand out `&'static mut` here — multiple
-        // callers (resolver, sourcemap loader, worker threads) may hold the
-        // result concurrently, and overlapping `&mut` is UB regardless of
-        // whether either side writes.
         INSTANCE.get().map(|cell| cell.0.get())
     }
 
@@ -104,10 +78,6 @@ impl StandaloneModuleGraph {
     }
 }
 
-// TODO(port): Zig `targetBasePublicPath(target, comptime suffix: [:0]const u8) [:0]const u8`
-// concatenates at comptime via `++`. A runtime `suffix: &[u8]` parameter cannot be
-// const-concatenated. All Zig callers pass either `""` or `"root/"`, so the runtime
-// variant special-cases those two literals.
 pub fn target_base_public_path(
     target: bun_core::Environment::OperatingSystem,
     suffix: &'static [u8],
@@ -193,14 +163,6 @@ unsafe impl Send for StandaloneModuleGraph {}
 // SAFETY: see `Send` impl — post-init mutation is confined to per-`File` lazy caches on the JS thread.
 unsafe impl Sync for StandaloneModuleGraph {}
 
-/// Resolver-facing trait object impl. The resolver and VM hold the graph as
-/// `&'static dyn bun_resolver::StandaloneModuleGraph` so they stay below
-/// `bun_standalone_graph` in the dep graph; this is the sole implementor.
-///
-/// The trait surface is read-only (`&self`) — the resolver only needs to
-/// answer "is `name` an embedded module?" and hand back the canonical name
-/// slice; the `&mut`-returning inherent methods above stay for the runtime's
-/// blob/sourcemap caching path.
 impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&[u8]> {
         #[cfg(windows)]
@@ -283,10 +245,6 @@ mod macho {
         pub(super) fn Bun__getStandaloneModuleGraphMachoLength() -> *mut u64; // align(1) in Zig
     }
 
-    /// Returns `(base, len)` for the embedded `__BUN` section data. Kept as a
-    /// raw `*mut u8` so the FFI write-provenance is preserved end-to-end —
-    /// collapsing to `&[u8]` here would freeze it to read-only and make the
-    /// later `from_bytes` writable subslices UB under Stacked Borrows.
     pub(super) fn get_data() -> Option<(*mut u8, usize)> {
         // SAFETY: FFI call returns pointer to embedded section header or null.
         let length_ptr = unsafe { Bun__getStandaloneModuleGraphMachoLength() };
@@ -312,10 +270,6 @@ mod pe {
         Bun__getStandaloneModuleGraphPEData, Bun__getStandaloneModuleGraphPELength,
     };
 
-    /// Returns `(base, len)` for the embedded `.bun` PE section data. Kept as a
-    /// raw `*mut u8` so the FFI write-provenance is preserved end-to-end —
-    /// collapsing to `&[u8]` here would freeze it to read-only and make the
-    /// later `from_bytes` writable subslices UB under Stacked Borrows.
     pub(super) fn get_data() -> Option<(*mut u8, usize)> {
         // SAFETY: FFI calls.
         let length = unsafe { Bun__getStandaloneModuleGraphPELength() };
@@ -339,10 +293,6 @@ mod elf {
         pub(super) fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
     }
 
-    /// Returns `(base, len)` for the embedded ELF segment data. Kept as a raw
-    /// `*mut u8` so write-provenance is preserved end-to-end — collapsing to
-    /// `&[u8]` here would freeze it to read-only and make the later
-    /// `from_bytes` writable subslices UB under Stacked Borrows.
     pub(super) fn get_data() -> Option<(*mut u8, usize)> {
         // SAFETY: FFI call.
         let vaddr_ptr = unsafe { Bun__getStandaloneModuleGraphELFVaddr() };
@@ -354,11 +304,6 @@ mod elf {
         if vaddr == 0 {
             return None;
         }
-        // BUN_COMPILED.size holds the virtual address of the appended data.
-        // The kernel mapped it via PT_LOAD, so we can dereference directly.
-        // Format at target: [u64 payload_len][payload bytes]
-        // Synthesize a `*mut u8` directly so the provenance carries write
-        // permission for the in-place bytecode mutation done by JSC.
         let target = vaddr as *mut u8;
         // SAFETY: target points to 8-byte little-endian length prefix.
         let payload_len =
@@ -464,12 +409,6 @@ impl LazySourceMap {
                 let mut stored = SourceMap::ParsedSourceMap::from_internal(ism);
 
                 let source_files_count = serialized.source_files_count();
-                // TODO(port): Zig allocated a single `[]?[]u8` of len*2 and reinterpreted
-                // the first half as `[][]const u8` for file_names. Rust splits into two
-                // separate Vecs to avoid the punning.
-                // PERF(port): `external_source_names` is `Vec<Box<[u8]>>` so we
-                // copy the section bytes; Zig held a borrowed slice. Could switch
-                // the field to `Vec<&'static [u8]>` for the standalone path.
                 let mut file_names: Vec<Box<[u8]>> = Vec::with_capacity(source_files_count);
                 let decompressed_contents_slice: Vec<Option<Vec<u8>>> =
                     vec![None; source_files_count];
@@ -551,24 +490,11 @@ impl StandaloneModuleGraph {
             });
         }
 
-        // Zig's `raw_bytes: []u8` aliases freely — this function hands out read-only subslices
-        // (name/contents/sourcemap) AND writable subslices (bytecode/module_info, which JSC
-        // mutates in place) into the same allocation. In Rust we must not derive the writable
-        // ones from a `&[u8]` reborrow (writing through const-derived provenance is UB), and we
-        // must not hold a long-lived `&[u8]` that *spans* a writable subrange (a foreign write
-        // would invalidate it under Stacked/Tree Borrows). Keep `(raw_ptr, raw_len)` raw and
-        // derive every read-only `&'static [u8]` per-call over its own disjoint subrange only;
-        // the bytecode/module_info regions never have a shared reference formed over them.
         let raw_const: *const u8 = raw_ptr;
 
         // SAFETY: modules metadata blob is a read-only subrange of `[0, raw_len)` disjoint
         // from bytecode/module_info, serialized by `to_bytes`.
         let modules_list_bytes = unsafe { slice_to(raw_const, raw_len, offsets.modules_ptr) };
-        // PORT NOTE: StandaloneModuleGraph.zig:309 builds `[]align(1) const CompiledModuleGraphFile`
-        // because the modules blob sits at an arbitrary byte offset in the section. In Rust,
-        // `&[CompiledModuleGraphFile]` would require natural alignment (StringPointer's u32 fields
-        // → 4-byte). We instead iterate by index and `read_unaligned` each fixed-size record into a
-        // local (`CompiledModuleGraphFile` is `Copy`/POD), so no `&T` ever points at unaligned memory.
         let modules_list_count = modules_list_bytes.len() / size_of::<CompiledModuleGraphFile>();
         let modules_list_base = modules_list_bytes.as_ptr();
 
@@ -718,11 +644,6 @@ pub(crate) fn to_bytes(
     compile_exec_argv: &[u8],
     flags: Flags,
 ) -> Result<Vec<u8>, BunError> {
-    // TODO(port): bun_perf::PerfEvent::StandaloneModuleGraph_serialize — generated
-    // enum is still a `_Stub` placeholder; restore the trace call once the generator emits
-    // real variants.
-    // let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraph_serialize);
-
     let mut entry_point_id: Option<usize> = None;
     let mut string_builder = bun_core::StringBuilder::default();
     let mut module_count: usize = 0;
@@ -731,10 +652,6 @@ pub(crate) fn to_bytes(
         string_builder.count_z(prefix);
         if let options::OutputValue::Buffer { bytes } = &output_file.value {
             if output_file.output_kind == options::OutputKind::Sourcemap {
-                // This is an over-estimation to ensure that we allocate
-                // enough memory for the source-map contents. Calculating
-                // the exact amount is not possible without allocating as it
-                // involves a JSON parser.
                 string_builder.cap += bytes.len() * 2;
             } else if output_file.output_kind == options::OutputKind::Bytecode {
                 // Allocate up to 256 byte alignment for bytecode
@@ -788,28 +705,6 @@ pub(crate) fn to_bytes(
 
         let bytecode: StringPointer = 'brk: {
             if output_file.bytecode_index != u32::MAX {
-                // Bytecode alignment for JSC bytecode cache deserialization.
-                // Not aligning correctly causes a runtime assertion error or segfault.
-                //
-                // PLATFORM-SPECIFIC ALIGNMENT:
-                // - PE (Windows) and Mach-O (macOS): The module graph data is embedded in
-                //   a dedicated section with an 8-byte size header. At runtime, the section
-                //   is memory-mapped at a page-aligned address (hence 128-byte aligned).
-                //   The data buffer starts 8 bytes after the section start.
-                //   For bytecode at offset O to be 128-byte aligned:
-                //     (section_va + 8 + O) % 128 == 0
-                //     => O % 128 == 120
-                //
-                // - ELF (Linux): The module graph data is appended to the executable and
-                //   read into a heap-allocated buffer at runtime. The allocator provides
-                //   natural alignment, and there's no 8-byte section header offset.
-                //   However, using target_mod=120 is still safe because:
-                //   - If the buffer is 128-aligned: bytecode at offset 120 is at (128n + 120),
-                //     which when loaded at a 128-aligned address gives proper alignment.
-                //   - The extra 120 bytes of padding is acceptable overhead.
-                //
-                // This alignment strategy (target_mod=120) works for all platforms because
-                // it's the worst-case offset needed for the 8-byte header scenario.
                 let bytecode = output_files[output_file.bytecode_index as usize]
                     .value
                     .as_slice();
@@ -861,11 +756,6 @@ pub(crate) fn to_bytes(
             break 'brk StringPointer::default();
         };
 
-        // PORT NOTE: Zig used `bun.sys.File.makeOpen` (open, on-fail mkdir parent +
-        // retry). `src/sys/File.rs` is still cfg-gated upstream, so the
-        // `make_open` body is inlined here against the live `bun_sys` stub
-        // surface (`openat` / `make_path` / `File::write_all`).
-        // Zig: `if (comptime bun.Environment.is_canary or bun.Environment.isDebug)`
         if Environment::IS_CANARY || Environment::IS_DEBUG {
             if let Some(dump_code_dir) = bun_core::env_var::BUN_FEATURE_FLAG_DUMP_CODE.get() {
                 let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -928,11 +818,6 @@ pub(crate) fn to_bytes(
             )),
             loader: output_file.loader,
             contents: string_builder.append_count_z(buf_bytes),
-            // Latin1 lets the runtime wrap the mmapped section bytes in a
-            // zero-copy ExternalStringImpl. The printer escapes non-ASCII for
-            // server-side JS, but `--banner`/`--footer`/hashbang and
-            // client-side (target=browser) chunks are concatenated verbatim
-            // as UTF-8, so verify the final bytes before committing to Latin1.
             encoding: match output_file.loader {
                 Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx
                     if strings::first_non_ascii(buf_bytes).is_none() =>
@@ -1008,12 +893,7 @@ pub(crate) fn to_bytes(
     };
 
     #[cfg(debug_assertions)]
-    {
-        // An expensive sanity check:
-        // TODO(port): from_bytes wants &'static mut; debug-only sanity check elided.
-        // let mut graph = StandaloneModuleGraph::from_bytes(output_bytes, offsets)?;
-        // debug_assert_eq!(graph.files.count(), modules.len());
-    }
+    {}
 
     // TODO(port): StringBuilder owns the buffer; return it as Vec<u8>.
     Ok(output_bytes.to_vec())
@@ -1185,16 +1065,6 @@ pub(crate) fn inject(
                     Ok(res) => break 'brk2 res,
                     Err(err) => {
                         if retry < 2 {
-                            // they may not have write access to the present working directory
-                            //
-                            // but we want to default to it since it's the
-                            // least likely to need to be copied due to
-                            // renameat() across filesystems
-                            //
-                            // so in the event of a failure, we try to
-                            // we retry using the tmp dir
-                            //
-                            // but we only do that once because otherwise it's just silly
                             if !tried_changing_abs_dir {
                                 tried_changing_abs_dir = true;
                                 // `RealFS::tmpdir_path` lives in `bun_resolver::fs` (T6);
@@ -1207,10 +1077,6 @@ pub(crate) fn inject(
                                         zname.as_bytes(),
                                         &[0],
                                     ]);
-                                    // PORT NOTE: Zig leaked the concat buffer here. PORTING.md
-                                    // §Forbidden bans `mem::forget`; the buffer is parked in
-                                    // `zname_owned` (declared at fn entry) so it outlives the
-                                    // loop and drops at fn exit.
                                     let len = zname_z.len().saturating_sub(1);
                                     zname_owned = Some(zname_z);
                                     // SAFETY: trailing 0 byte appended above; `zname_owned`
@@ -1501,14 +1367,6 @@ pub(crate) fn inject(
 
                 total_byte_count = seek_position as usize + bytes.len() + 8;
 
-                // From https://man7.org/linux/man-pages/man2/lseek.2.html
-                //
-                //  lseek() allows the file offset to be set beyond the end of the
-                //  file (but this does not change the size of the file).  If data is
-                //  later written at this point, subsequent reads of the data in the
-                //  gap (a "hole") return null bytes ('\0') until data is actually
-                //  written into the gap.
-                //
                 if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, seek_position) {
                     Output::pretty_errorln(format_args!(
                         "{}\nwhile seeking to end of temporary file (pos: {})",
@@ -1550,10 +1408,6 @@ pub(crate) fn inject(
 use bun_core::Environment::OperatingSystem as CompileTargetOs;
 pub use bun_options_types::compile_target::CompileTarget;
 
-/// Port of `CompileTarget.downloadToPath` (CompileTarget.zig). Moved up from
-/// `bun_options_types` (T3) so it can name `bun_http::AsyncHTTP` directly
-/// instead of routing through `extern "Rust"` shims; the only callers are the
-/// two `download*` fns below in this crate.
 pub(crate) fn download_to_path(
     target: &CompileTarget,
     env: &mut bun_dotenv::Loader<'_>,
@@ -1579,11 +1433,6 @@ pub(crate) fn download_to_path(
         let url_str_copy: Box<[u8]> = Box::from(url_str);
         let url = bun_url::URL::parse(&url_str_copy);
         {
-            // TODO(port): errdefer progress.end() — `start` returns `&mut Node`
-            // borrowing `refresher`, so a scopeguard capturing it would alias.
-            // Could reshape with a guard that re-borrows on drop.
-            // PORT NOTE: reshaped for borrowck — `get_http_proxy_for` borrows
-            // `env` for the proxy URL lifetime; read the bool first.
             let reject_unauthorized = env.get_tls_reject_unauthorized();
             let http_proxy: Option<bun_url::URL<'_>> = env.get_http_proxy_for(&url);
             let progress = refresher.start(b"Downloading", 0);
@@ -1813,11 +1662,6 @@ pub fn to_executable(
     };
 
     let fd = inject(&bytes, &self_exe, windows_options, target);
-    // PORT NOTE: Zig's `defer if (fd != invalid) fd.close()` reads `fd` at scope exit
-    // after later reassignments. A scopeguard closure capturing `fd` by value would not
-    // observe those writes; capturing by `&mut` conflicts with later uses. Explicit
-    // `if fd != Fd::INVALID { fd.close(); }` calls are inserted at every return below
-    // (both error and success paths) to match Zig behavior.
     debug_assert!(fd.kind() == bun_sys::FdKind::System);
 
     #[cfg(unix)]
@@ -2112,12 +1956,6 @@ impl StandaloneModuleGraph {
         }
     }
 
-    /// Hint to the kernel that the embedded `__BUN`/`.bun` source pages are
-    /// unlikely to be accessed again after the entrypoint has been parsed.
-    /// The pages are clean file-backed COW, so any later read (lazy require,
-    /// stack-trace source lookup) faults back in transparently from the
-    /// executable on disk. Only applies when running as a compiled
-    /// standalone binary.
     pub fn hint_source_pages_dont_need() {
         #[cfg(windows)]
         {
@@ -2195,20 +2033,11 @@ fn from_bytes_alloc(
     Ok(StandaloneModuleGraph::set(graph))
 }
 
-/// Source map serialization in the bundler is specially designed to be
-/// loaded in memory as is. Source contents are compressed with ZSTD to
-/// reduce the file size, and mappings are stored as an InternalSourceMap
-/// blob (varint deltas + sync points) so lookups need no decode pass.
 #[derive(Clone, Copy)]
 pub struct SerializedSourceMap {
     pub bytes: &'static [u8],
 }
 
-/// Following the header bytes:
-/// - source_files_count number of StringPointer, file names
-/// - source_files_count number of StringPointer, zstd compressed contents
-/// - the InternalSourceMap blob, `map_bytes_length` bytes
-/// - all the StringPointer contents
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct SerializedSourceMapHeader {
@@ -2236,11 +2065,6 @@ impl SerializedSourceMap {
         }
         Some(&self.bytes[start..][..head.map_bytes_length as usize])
     }
-
-    // PORT NOTE: Zig types these arrays as `[]align(1) const StringPointer` because the
-    // serialized byte buffer carries no alignment guarantee. Materializing a Rust
-    // `&[StringPointer]` would require `align_of::<StringPointer>() == 4` alignment
-    // (UB otherwise), so expose count + indexed unaligned reads instead.
 
     pub(crate) fn source_files_count(self) -> usize {
         self.header().source_files_count as usize

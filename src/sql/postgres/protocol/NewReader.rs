@@ -3,11 +3,6 @@ use crate::postgres::types::int_types::{PostgresInt32, PostgresShort};
 use crate::shared::Data;
 use bun_core::String as BunString;
 
-/// Trait capturing the methods `NewReaderWrap` expected as comptime fn params.
-/// Zig passed these as `comptime fn(ctx: Context) ...` arguments and `NewReader`
-/// filled them in from `Context.markMessageStart`, `Context.peek`, etc. — i.e.
-/// structural duck-typing. In Rust the trait bound IS that check.
-// TODO(port): narrow error set
 pub trait ReaderContext {
     fn mark_message_start(&mut self);
     fn peek(&self) -> &[u8];
@@ -17,10 +12,6 @@ pub trait ReaderContext {
     fn read_z(&mut self) -> Result<Data, AnyPostgresError>;
 }
 
-/// Helper trait for `int<Int>()` / `peek_int<Int>()` — Zig used `@sizeOf(Int)`,
-/// `@bitCast`, and `@byteSwap` to read a big-endian integer of arbitrary width.
-/// Rust has no std trait for `from_be_bytes`, so we mint a tiny one.
-// TODO(port): consider moving to a shared int-read helper if other protocol files need it
 pub trait ProtocolInt: Sized + Copy + Eq {
     const SIZE: usize;
     fn from_be_slice(bytes: &[u8]) -> Self;
@@ -184,12 +175,6 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
 
     pub fn string(&mut self) -> Result<BunString, AnyPostgresError> {
         let result = self.read_z()?;
-        // PORT NOTE: Zig `borrowUTF8` borrows `result.slice()` then drops `result`
-        // via `defer result.deinit()`. `Data` here is `Temporary` (points into the
-        // connection buffer), so the bytes outlive the `Data` wrapper itself;
-        // `borrow_utf8` stores a raw pointer (no lifetime) so this matches Zig
-        // semantics 1:1. TODO(audit): no caller may hold the returned
-        // `BunString` past the next buffer fill.
         Ok(BunString::borrow_utf8(result.slice()))
     }
 }

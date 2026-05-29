@@ -332,10 +332,6 @@ fn collect_packages_for_audit(
         prod_packages = Some(set);
     }
 
-    // PORT NOTE: reshaped for borrowck — column slices borrow `pm.lockfile`
-    // immutably for the loop, so resolve `root_id` / `prod_packages` (which
-    // need `&mut pm`) above, and split-borrow `pm.options` for the scope lookup
-    // (disjoint from `pm.lockfile`; Zig had no aliasing model).
     let options = &pm.options;
     let default_url_hash = options.scope.url_hash;
     let packages = pm.lockfile.packages.slice();
@@ -863,16 +859,6 @@ fn print_enhanced_audit_report(
             if !package_info.vulnerabilities.is_empty() {
                 let main_vuln = &package_info.vulnerabilities[0];
 
-                // const is_direct_dependency: bool = brk: {
-                //     for (package_info.dependents.items) |path| {
-                //         if (path.is_direct) {
-                //             break :brk true;
-                //         }
-                //     }
-                //
-                //     break :brk false;
-                // };
-
                 if !main_vuln.vulnerable_versions.is_empty() {
                     prettyln!(
                         "<red>{}<r>  {}",
@@ -952,12 +938,6 @@ fn print_enhanced_audit_report(
                         }
                     }
                 }
-
-                // if (is_direct_dependency) {
-                //     Output.prettyln("  To fix: <green>`bun update {s}`<r>", .{package_info.name});
-                // } else {
-                //     Output.prettyln("  To fix: <green>`bun update --latest`<r><d> (may be a breaking change)<r>", .{});
-                // }
 
                 prettyln!("");
             }

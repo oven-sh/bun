@@ -16,10 +16,6 @@ pub use walk::GlobWalker;
 pub type BunGlobWalker = walk::GlobWalker<walk::SyscallAccessor, false>;
 pub type BunGlobWalkerZ = walk::GlobWalker<walk::SyscallAccessor, true>;
 
-/// Returns true if the given string contains glob syntax,
-/// excluding those escaped with backslashes
-/// TODO: this doesn't play nicely with Windows directory separator and
-/// backslashing, should we just require the user to supply posix filepaths?
 pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
     // Negation only allowed in the beginning of the pattern
     if !potential_pattern.is_empty() && potential_pattern[0] == b'!' {

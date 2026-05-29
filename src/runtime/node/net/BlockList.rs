@@ -1,11 +1,5 @@
 use core::ffi::c_void;
 
-// ─── non-JSC helpers (real) ───────────────────────────────────────────────
-// `Rule` and the IP-compare helpers depend on `sockaddr` from the sibling
-// `socket_address` module (lives in `crate::socket`, not `super::`), so they
-// stay gated below. Only the structured-clone byte-shuffling is JSC-free and
-// dependency-free.
-
 struct StructuredCloneWriter {
     ctx: *mut c_void,
     // callconv(jsc.conv) → codegen `WriteBytesFn` typedef (cfg-splits to
@@ -35,11 +29,6 @@ use bun_core::{String as BunString, ZStr};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _};
 use bun_threading::{Guarded, Mutex};
 
-/// Addresses of `BlockList` instances currently embedded in a live
-/// `SerializedScriptValue` (one entry per serialize; removed by
-/// `BlockList__onStructuredCloneDestroy`). Deserialize only honours pointers
-/// present here so wire bytes from another process (IPC `advanced` mode,
-/// `node:v8.deserialize`) cannot smuggle an arbitrary address through tag 251.
 static SERIALIZED_REFS: Guarded<Vec<usize>> = Guarded::new(Vec::new());
 
 use crate::node::util::validators;
@@ -65,27 +54,13 @@ pub struct BlockList {
     // `ref()`/`deref()` (provided by the derive) bump it; hitting zero drops
     // the `Box` via the trait's default destructor.
     ref_count: bun_ptr::ThreadSafeRefCount<BlockList>,
-    // LIFETIMES.tsv: JSC_BORROW → `&JSGlobalObject`. Stored raw because this
-    // struct is a heap-allocated `m_ctx` payload recovered from C++ via
-    // `*mut Self`; a borrowed lifetime param cannot be threaded through that.
-    // TODO(port): lifetime — field is write-only (assigned in constructor,
-    // never read; `deinit` ignores it).
     _global_this: *const JSGlobalObject,
-    // R-2: interior mutability so every host_fn takes `&self`. All access is
-    // serialized by `mutex` (held across every read and every `with_mut`), so
-    // the `JsCell` single-thread invariant is upheld even though `BlockList`
-    // can be touched from multiple JS realms via structured clone.
     da_rules: JsCell<Vec<Rule>>,
     mutex: Mutex,
 
     /// We cannot lock/unlock a mutex
     estimated_size: AtomicU32,
 
-    /// Per-instance random identity, written into the structured-clone wire
-    /// alongside the address. Deserialize re-reads it from the live instance
-    /// (after [`SERIALIZED_REFS`] confirms the address is safe to dereference)
-    /// so wire bytes captured before this instance existed cannot match even if
-    /// the allocator reused the same address.
     serialize_nonce: u64,
 }
 
@@ -134,10 +109,6 @@ impl BlockList {
         bun_ptr::finalize_js_box_noop(self);
     }
 
-    // NOTE: no `#[bun_jsc::host_fn]` — receiver-less assoc fns aren't supported
-    // by the Free-kind shim (it emits a bare `fn_name(...)` call). The
-    // `.classes.ts` codegen owns the static-method link name and calls
-    // `<Self>::is_block_list` directly.
     pub fn is_block_list(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let [value] = frame.arguments_as_array::<1>();
         Ok(JSValue::from(value.as_::<Self>().is_some()))
@@ -405,10 +376,6 @@ impl BlockList {
             ctx,
             impl_: write_bytes,
         };
-        // Error = `!` (Zig: `error{}`), so no `?` needed.
-        // Only the address is serialized; deserialize re-derives `*mut Self`
-        // via int→ptr cast and never forms `&mut Self` (only `ref_()` +
-        // `to_js_ptr`, both `&self`/raw-ptr), so `from_ref` provenance is fine.
         _ = writer.write_int_le(addr);
         _ = writer.write_int_le(this.serialize_nonce);
     }

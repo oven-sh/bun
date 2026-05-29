@@ -3,12 +3,6 @@ use super::parser::Parser;
 use super::types;
 use super::types::{Align, Container, OFF};
 
-// ──────────────────────────────────────────────────────────────────────────
-// Result types for the anonymous-struct returns in the Zig source.
-// Kept as named structs (not tuples) so field names line up with the .zig
-// for side-by-side diffing.
-// ──────────────────────────────────────────────────────────────────────────
-
 #[derive(Copy, Clone)]
 pub struct SetextResult {
     pub is_setext: bool,
@@ -744,10 +738,6 @@ impl Parser<'_> {
 
         let c = ch(self.text, off);
 
-        // Blockquote
-        // Note: off points just past '>' — the optional space and remaining
-        // indent are handled by the caller via lineIndentation + the
-        // whitespace adjustment logic, matching md4c's behavior.
         if c == b'>' {
             return ContainerMarkResult {
                 is_container: true,

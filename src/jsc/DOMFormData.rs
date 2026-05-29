@@ -29,11 +29,6 @@ unsafe extern "C" {
         arg1: &ZigString,
         arg2: &ZigString,
     );
-    // safe: `DOMFormData`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST
-    // handles; `&ZigString` is ABI-identical to non-null `*const ZigString` and
-    // C++ only reads the named struct via `toStringCopy`. `arg3` is an opaque
-    // `*Blob` C++ owns (never dereferenced as Rust data) — same round-trip
-    // contract as `Zig__GlobalObject__resetModuleRegistryMap`'s `map` param.
     safe fn WebCore__DOMFormData__appendBlob(
         arg0: &mut DOMFormData,
         arg1: &JSGlobalObject,
@@ -86,11 +81,6 @@ impl DOMFormData {
     }
 
     pub fn from_js<'a>(value: JSValue) -> Option<&'a mut DOMFormData> {
-        // Returned pointer is valid while `value` is kept alive on the stack
-        // (conservative GC scan). Null → None. `DOMFormData` is an opaque ZST
-        // handle, so `opaque_mut` is the centralised zero-byte deref proof.
-        // TODO(port): lifetime — unbounded `'a` is a placeholder; caller must keep `value`
-        // stack-rooted for the lifetime of the returned reference.
         let p = WebCore__DOMFormData__fromJS(value);
         (!p.is_null()).then(|| DOMFormData::opaque_mut(p))
     }
@@ -113,14 +103,6 @@ impl DOMFormData {
         WebCore__DOMFormData__count(self)
     }
 
-    // PORT NOTE: Zig's `comptime Context: type, ctx: *Context, comptime callback_wrapper`
-    // reshaped to a Rust closure; the generic `extern "C"` trampoline below is `Wrap.forEachWrapper`.
-    //
-    // LAYERING: `FormDataEntry::File::blob` is a `*mut webcore::Blob`, whose
-    // layout lives in `bun_runtime` (a dependent of this crate). The C++ side
-    // hands it as `*mut c_void`; this fn is generic over `B` so the caller (in
-    // `bun_runtime`) names the concrete `Blob` type and gets a typed `&B`
-    // borrow without `bun_jsc` ever seeing the layout.
     pub fn for_each<B, F>(&mut self, callback: &mut F)
     where
         F: FnMut(ZigString, FormDataEntry<'_, B>),

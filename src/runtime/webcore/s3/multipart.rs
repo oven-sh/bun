@@ -8,87 +8,6 @@
 // If all parts succeed, a complete request is sent.
 // If any part fails, a rollback request deletes the uploaded parts. Rollback and commit requests do not increase the reference count of MultiPartUpload, as they are the final step. Once commit or rollback finishes, the reference count is decremented, and MultiPartUpload is freed. These requests retry up to the maximum retry count on a best-effort basis.
 
-//                Start Upload
-//                       │
-//                       ▼
-//               Buffer Incoming Data
-//                       │
-//                       │
-//          ┌────────────┴────────────────┐
-//          │                             │
-//          ▼                             ▼
-// Buffer < PartSize             Buffer >= PartSize
-//  and is Last Chunk                     │
-//          │                             │
-//          │                             │
-//          │                             │
-//          │                             │
-//          │                             ▼
-//          │                  Start Multipart Upload
-//          │                             │
-//          │                  Initialize Parts Queue
-//          │                             │
-//          │                   Process Upload Parts
-//          │                             │
-//          │                  ┌──────────┴──────────┐
-//          │                  │                     │
-//          │                  ▼                     ▼
-//          │             Queue Has Space       Queue Full
-//          │                  │                     │
-//          │                  │                     ▼
-//          │                  │              Wait for Queue
-//          │                  │                     │
-//          │                  └──────────┬──────────┘
-//          │                             │
-//          │                             ▼
-//          │                     Start Part Upload
-//          │               (Reference MultiPartUpload)
-//          │                             │
-//          │                  ┌─────────┼─────────┐
-//          │                  │         │         │
-//          │                  ▼         ▼         ▼
-//          │               Part      Success   Failure
-//          │             Canceled       │         │
-//          │                  │         │     Retry Part
-//          │                  │         │         │
-//          │               Free       Free    Max Retries?
-//          │               Slice      Slice    │        │
-//          │                  │         │      No       Yes
-//          │               Deref    Add eTag   │        │
-//          │                MPU    to Array    │    Fail MPU
-//          │                  │         │      │        │
-//          │                  │         │      │    Deref MPU
-//          │                  └─────────┼──────┘        │
-//          │                            │               │
-//          │                            ▼               │
-//          │                   All Parts Complete?      │
-//          │                            │               │
-//          │                    ┌───────┴───────┐       │
-//          │                    │               │       │
-//          │                    ▼               ▼       │
-//          │               All Success     Some Failed  │
-//          │                    │               │       │
-//          │                    ▼               ▼       │
-//          │              Send Commit     Send Rollback │
-//          │             (No Ref Inc)    (No Ref Inc)   │
-//          │                    │               │       │
-//          │                    └───────┬───────┘       │
-//          │                            │               │
-//          │                            ▼               │
-//          │                     Retry if Failed        │
-//          │                    (Best Effort Only)      │
-//          │                            │               │
-//          │                            ▼               │
-//          │                     Deref Final MPU        │
-//          │                            │               │
-//          ▼                            │               │
-//  Single Upload Request                │               │
-//          │                            │               │
-//          └────────────────────────────┴───────────────┘
-//                         │
-//                         ▼
-//                        End
-
 use core::cell::Cell;
 use core::ffi::c_void;
 use std::io::Write as _;
@@ -405,15 +324,7 @@ impl Drop for MultiPartUpload {
         self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
-        // path, proxy, content_type, content_disposition, content_encoding — Box dropped automatically
-        // `IntrusiveRc<T>` (= `RefPtr<T>`) has no `Drop` — release the +1 the
-        // constructing `writable_stream`/`upload_stream` adopted (Zig:
-        // `this.credentials.deref()`).
         self.credentials.deref();
-        // uploadid_buffer: MutableString — Drop
-        // multipart_etags: Vec<UploadPartResult> — Drop (each etag Box<[u8]> freed)
-        // multipart_upload_list: Vec<u8> — Drop
-        // bun.destroy(this) — handled by deref_() via heap::take
     }
 }
 
@@ -598,14 +509,6 @@ impl MultiPartUpload {
             self.state = State::Finished;
             (self.callback)(S3UploadResult::Failure(err), self.callback_context)?;
 
-            // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
-            // `self.callback` (promise reject → JS) re-enters via the JS
-            // wrapper's `*mut MultiPartUpload` and may write `*self`. Nothing
-            // derived from `self` is passed to the callback, so LLVM is
-            // licensed to hoist `self.upload_id` (read by
-            // `rollback_multi_part_request` once inlined) above the call.
-            // SUSPECT (not yet ASM-cached); launder so post-callback reads go
-            // through an opaque pointer. Mirrors cork fix b818e70e1c57.
             let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
             if old_state == State::MultipartCompleted {
                 // we are a multipart upload so we need to rollback
@@ -1082,10 +985,6 @@ impl MultiPartUpload {
         self.available.mask == IntegerBitSet::<{ Self::MAX_QUEUE_SIZE }>::init_full().mask
     }
 
-    // PORT NOTE: Zig used `comptime encoding: enum {bytes, latin1, utf16}`. Rust's
-    // adt_const_params (enum-valued const generics) is unstable, so take it as a
-    // plain runtime arg — the three thin wrappers below pass a constant, so the
-    // optimizer still specializes each branch.
     fn write(
         &mut self,
         encoding: WriteEncoding,

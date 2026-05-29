@@ -9,19 +9,9 @@ use crate::{
     CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _, ZigStringJsc as _,
 };
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. `msg` and
-// `referrer` are read-only after construction; only `logged` is mutated
-// post-wrap (by `VirtualMachine::print_error_like_object` via the JSCell ptr),
-// so it gets `Cell<bool>`.
 #[crate::JsClass]
 pub struct ResolveMessage {
     pub msg: bun_ast::Msg,
-    // PORT NOTE: Zig stored `allocator: std.mem.Allocator` here; dropped — fields own their
-    // allocations and free on Drop / finalize.
-    //
-    // PORT NOTE: Zig stored `referrer: ?Fs.Path` and only ever read `.text`;
-    // store the duped text directly so we don't pull in `bun_paths::fs::Path`
-    // (which is lifetime-parameterised over its backing buffer).
     pub referrer: Option<Box<[u8]>>,
     pub logged: Cell<bool>,
 }
@@ -36,10 +26,6 @@ impl Default for ResolveMessage {
     }
 }
 
-/// `ImportKind.label()` — the canonical table lives in
-/// `bun_ast::ImportKind::label`, but
-/// `bun_ast::MetadataResolve.import_kind` is the type-only `bun_ast::ImportKind`.
-/// Replicate the table here verbatim.
 fn import_kind_label(kind: ImportKind) -> &'static [u8] {
     match kind {
         ImportKind::EntryPointRun => b"entry-point-run",
@@ -294,11 +280,6 @@ impl ResolveMessage {
         Ok(object)
     }
 
-    /// Spec `ResolveMessage.create` (ResolveMessage.zig:166) — clone `msg` +
-    /// dupe `referrer` into a fresh heap-allocated `ResolveMessage` and wrap it
-    /// in its JSC cell. `JsClass::to_js` boxes `self` and calls the C++-side
-    /// `ResolveMessage__create(global, ptr)`; the resulting `m_ctx` is freed by
-    /// the macro-emitted `ResolveMessageClass__finalize` on lazy sweep.
     pub fn create(
         global: &JSGlobalObject,
         msg: &bun_ast::Msg,

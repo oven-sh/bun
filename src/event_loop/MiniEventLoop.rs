@@ -40,22 +40,8 @@ pub type PlatformEventLoop = UwsLoop;
 #[cfg(windows)]
 pub type PlatformEventLoop = bun_sys::windows::libuv::Loop;
 
-// ─── Upward link-time externs (LAYERING) ────────────────────────────────────
-// Zig has no crate split here — `MiniEventLoop` reached `Blob.Store` /
-// `VirtualMachine.get()` directly. The bodies live in `bun_runtime` (which
-// owns `webcore::Blob` / `jsc::VirtualMachine`) as `#[no_mangle]` Rust-ABI
-// fns; the linker resolves them. No `AtomicPtr`, no init-order hazard.
 unsafe extern "Rust" {
-    /// Constructs a `webcore::blob::Store` for stdout/stderr/stdin (Zig
-    /// rare_data.zig:551 inline `Blob.Store` ctor). Return value is an erased
-    /// `*mut blob::Store` with intrusive refcount = 2; this crate only
-    /// stores/forwards it. Defined in `bun_runtime::webcore::blob`.
-    /// No caller-side preconditions (by-value args, allocates fresh).
     pub safe fn __bun_stdio_blob_store_new(fd: Fd, is_atty: bool, mode: Mode) -> *mut ();
-    /// Returns the thread's `*mut jsc::VirtualMachine` (Zig:
-    /// `jsc.VirtualMachine.get()`). Backs `JsKind::get_vm()`. Defined in
-    /// `bun_runtime::jsc_hooks`. No caller-side preconditions (reads a
-    /// thread-local; wrong-thread is a logic error, not UB).
     safe fn __bun_js_vm_get() -> *mut ();
 }
 // ────────────────────────────────────────────────────────────────────────────
@@ -89,10 +75,6 @@ pub struct MiniEventLoop<'a> {
     pub loop_: *mut UwsLoop,
     // PORT NOTE: `std.mem.Allocator param` field dropped — non-AST crate uses global mimalloc.
     pub file_polls_: Option<Box<FilePollStore>>,
-    /// Zig: `env: ?*bun.DotEnv.Loader` — mutable; callers (shell spawn,
-    /// `createNullDelimitedEnvMap`) write through it. Stored as `NonNull`
-    /// (BACKREF) so [`EventLoopHandle::env`] can hand out a `*mut` with
-    /// mutable provenance. `'a` is preserved via PhantomData below.
     pub env: Option<NonNull<DotEnvLoader<'a>>>,
     // PORT NOTE: Zig field is `[]const u8` with mixed provenance (literal "", borrowed `cwd`
     // param, or `allocator.dupe`). Never freed in `deinit`. Use Box<[u8]> and dupe on assign.
@@ -117,12 +99,6 @@ thread_local! {
     pub static GLOBAL: Cell<*mut MiniEventLoop<'static>> = const { Cell::new(core::ptr::null_mut()) };
 }
 
-/// Returns the thread-local `*mut MiniEventLoop` (Zig: `*MiniEventLoop`).
-///
-/// PORT NOTE (aliasing): Zig's `*T` aliases freely; returning `&'static mut`
-/// here would let two calls (or `init_global` + `MiniKind::get_vm`) hold
-/// overlapping `&mut` to the same allocation — UB. Return the raw pointer;
-/// callers reborrow `&mut` for the scope they need.
 pub fn init_global(
     env: Option<&'static mut DotEnvLoader<'static>>,
     cwd: Option<&[u8]>,
@@ -133,10 +109,6 @@ pub fn init_global(
         return GLOBAL.with(|g| g.get());
     }
     let loop_ = MiniEventLoop::init();
-    // PORT NOTE: §Forbidden bans `Box::leak` for `&'static`; this is a
-    // thread-lifetime singleton, so use `heap::alloc` (intrusive ownership)
-    // and store the raw pointer in the thread-local — same as Zig
-    // `bun.default_allocator.create` + `threadlocal var global: *MiniEventLoop`.
     let global_ptr: *mut MiniEventLoop<'static> = bun_core::heap::into_raw(Box::new(loop_));
     // SAFETY: `global_ptr` was just allocated via `heap::alloc`; this thread
     // holds the only reference for the duration of first-init. The `GLOBAL`
@@ -194,12 +166,6 @@ pub fn init_global(
         }
     }
 
-    // Publish the thread-local pointer only AFTER the scoped `&mut *global_ptr`
-    // above is no longer used — `MiniKind::get_vm()` reads `GLOBAL` without
-    // checking `GLOBAL_INITIALIZED`, so publishing earlier would let a callee
-    // re-derive a `&mut` aliasing `global` (UB). Nothing between the `&mut`
-    // borrow and here reads `GLOBAL` (`EventLoopHandle::init_mini`/`into_tag_ptr`
-    // only copy the pointer value).
     GLOBAL.with(|g| g.set(global_ptr));
     GLOBAL_INITIALIZED.with(|g| g.set(true));
     global_ptr
@@ -339,20 +305,6 @@ impl<'a> MiniEventLoop<'a> {
 
         let mut iter = concurrent.iterator();
         let start_count = self.tasks.readable_length();
-        // Zig resets `self.tasks.head = 0` when `start_count == 0` so
-        // `writableSlice(0)` spans the whole buffer. That reset is
-        // load-bearing: `ensure_unused_capacity` early-returns without
-        // realigning when capacity is already sufficient, and
-        // `writable_slice(0)` only yields the first contiguous segment
-        // `buf[head+count..]` — so an empty fifo with `head > 0` would yield a
-        // short slice and the loop would `break` early, silently dropping
-        // tasks already popped from `concurrent`. Use `writable_with_size`,
-        // which realigns when the contiguous slice is too short, so the
-        // returned slice is always `>= count` long.
-        //
-        // PORT NOTE: reshaped for borrowck — Zig held `writable` (&mut into self.tasks) while
-        // bumping `self.tasks.count` per-iteration (overlapping &mut). Fill the writable slice
-        // first, track items written in a local, then commit via `update()` after the borrow ends.
         let mut written: usize = 0;
         {
             let mut writable = self.tasks.writable_with_size(count).expect("unreachable");
@@ -531,12 +483,6 @@ impl<'a> MiniEventLoop<'a> {
     }
 }
 
-// ───────────── EventLoopCtx adapter (bun_io cycle-break) ─────────────────
-// `bun_io::file_poll::Store::put` and friends take an erased `EventLoopCtx`
-// instead of naming `MiniEventLoop`/`VirtualMachine` directly. This crate owns
-// `MiniEventLoop`, so the Mini-side vtable lives here. The Js-side vtable lives
-// in `bun_runtime` (it must name `jsc::VirtualMachine`).
-
 bun_io::link_impl_EventLoopCtx! {
     Mini for MiniEventLoop<'static> => |this| {
         platform_event_loop_ptr() => (*this).loop_ptr(),
@@ -581,10 +527,6 @@ impl<'a> Drop for MiniEventLoop<'a> {
 // ───────────────────────────── MiniVM ─────────────────────────────
 
 pub struct MiniVM<'a> {
-    // PORT NOTE: LIFETIMES.tsv classifies this BORROW_PARAM `&'a`, but `file_polls()`
-    // mutates the loop (lazy-inits the store). Hold `&'a mut` instead of
-    // casting `&T`→`&mut T` (UB, and forbidden by PORTING.md "no raw pointers to silence
-    // borrowck"). Zig's `*MiniEventLoop` was always mutable.
     pub mini: &'a mut MiniEventLoop<'a>,
 }
 
@@ -648,10 +590,6 @@ impl EventLoopKindT for JsKind {
 
 impl EventLoopKindT for MiniKind {
     type Loop = MiniEventLoop<'static>;
-    // PORT NOTE (aliasing): Zig `refType() = *MiniEventLoop` is a freely-aliasing
-    // pointer. Returning `&'static mut` would let two `get_vm()` calls (or
-    // `get_vm()` + `init_global()`) hold overlapping `&mut` — UB. Return the raw
-    // pointer (matches `JsKind::Ref = *mut ()`); callers reborrow scoped `&mut`.
     type Ref = *mut MiniEventLoop<'static>;
     fn get_vm() -> Self::Ref {
         // Caller must have called `init_global()` first (Zig invariant: `global`

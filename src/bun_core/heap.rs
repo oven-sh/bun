@@ -35,39 +35,11 @@ pub fn alloc<T>(value: T) -> *mut T {
     Box::into_raw(Box::new(value))
 }
 
-/// Hand off an existing `Box<T>` as its raw pointer. Type-preserving — works
-/// for `Box<[T]>`, `Box<dyn Trait>`, etc. Pair with [`take`] or [`destroy`].
-///
-/// NOT a leak — this is `Box::into_raw`. Named `into_raw` (not `leak`) so the
-/// pairing with `take`/`destroy` (= `from_raw`) reads correctly at call sites.
 #[inline(always)]
 pub fn into_raw<T: ?Sized>(boxed: Box<T>) -> *mut T {
     Box::into_raw(boxed)
 }
 
-/// Give up our owning `Box<T>` and return a `&mut T` whose lifetime the caller
-/// picks (annotate it `&'static mut T` at the call site if the owner is
-/// process-lifetime). The backing allocation's lifetime is now managed by
-/// **something other than this scope**:
-///
-///   - an intrusive refcount on the payload (the trailing `deref()` / `unref()`
-///     reclaims via `Box::from_raw` once the count hits zero),
-///   - a JSC `ExternalStringImpl` / `MarkedArrayBuffer` that owns the bytes and
-///     frees them on GC,
-///   - a `WeakPtr` table that may have outstanding aliases,
-///   - an enqueued work-pool task that reclaims in its `destroy()` / `run()`.
-///
-/// This is **`Box::leak` by another name** — the machine code is identical — but
-/// the call site reads as "ownership handed off to <named owner>", not "leaked".
-/// Use this (with a comment naming the owner) instead of a bare `Box::leak`
-/// whenever the allocation *is* reclaimed, just not here. A bare `Box::leak`
-/// should be reserved for genuine process-lifetime statics that are never freed.
-///
-/// Prefer a paired typed helper that owns *both* halves of the round-trip when
-/// one applies (`bun_threading::WorkPool::schedule_owned`,
-/// `bun_libuv_sys::UvHandle::set_owned_data`, `#[js_class]` `to_js_boxed`, …);
-/// `release` is for the residual cases (intrusive-refcount finalizers, FFI
-/// ownership protocols) where no such helper exists.
 #[inline(always)]
 pub fn release<'a, T: ?Sized + 'a>(boxed: Box<T>) -> &'a mut T {
     Box::leak(boxed)

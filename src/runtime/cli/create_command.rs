@@ -37,11 +37,6 @@ pub mod SourceFileProjectGenerator;
 // thread (sequenced — git thread writes after main is done with it).
 static BUN_PATH_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 
-// PORT NOTE: bun.OSPathLiteral — `bun_paths` does not (yet) export an
-// `os_path_literal!` macro from this crate's POV. `OSPathSlice` is `[u8]` on
-// POSIX, so byte-string literals coerce directly; the Windows `[u16]` form will
-// need the macro once it lands in `bun_paths` (see src/bun.rs).
-// Elements must be `&OSPathSlice` because `OSPathSlice` itself is unsized.
 #[cfg(not(windows))]
 const SKIP_DIRS: &[&OSPathSlice] = &[b"node_modules", b".git"];
 #[cfg(not(windows))]
@@ -303,11 +298,6 @@ impl CreateCommand {
             supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),
             ..Default::default()
         };
-        // PORT NOTE: reshaped for borrowck — `Progress::start` returns
-        // `&mut Node` borrowing `progress` exclusively for the node's lifetime.
-        // Convert to `*mut` immediately so `progress` and `node` can be used
-        // independently below (matches Zig's pointer semantics; same pattern as
-        // `CreateListExamplesCommand::exec` at the bottom of this file).
         let node: *mut ProgressNode = match example_tag {
             ExampleTag::JslikeFile => progress.start(
                 ProgressBuf::print(format_args!("Analyzing {}", bstr::BStr::new(template)))?,
@@ -785,15 +775,6 @@ impl CreateCommand {
                     break 'process_package_json;
                 }
 
-                // Zig builds a `properties_list` here via `fromOwnedSlice(.slice())`,
-                // which *aliases* the BabyList storage so subsequent
-                // `package_json_expr.asProperty(...)` reads still see the data. The
-                // commented-out injection logic below would append to it before the
-                // `moveFromList` round-trip. With those appends disabled the
-                // round-trip is a no-op, so leave `properties` in place — moving it
-                // out would make every `as_property` lookup below see an empty
-                // object and skip dependency detection / install.
-
                 if log.errors > 0 {
                     let _ = log.print(std::ptr::from_mut(Output::error_writer()));
 
@@ -813,52 +794,6 @@ impl CreateCommand {
                     }
                 }
 
-                // const Needs = struct {
-                //     bun_bun_for_nextjs: bool = false,
-                //     bun_macro_relay: bool = false,
-                //     bun_macro_relay_dependency: bool = false,
-                //     bun_framework_next: bool = false,
-                //     react_refresh: bool = false,
-                // };
-                // var needs = Needs{};
-                // var has_relay = false;
-                // var has_bun_framework_next = false;
-                // var has_react_refresh = false;
-                // var has_bun_macro_relay = false;
-                // var has_react = false;
-                // var has_react_scripts = false;
-
-                // const Prune = struct {
-                //     pub const packages = ComptimeStringMap(void, .{
-                //         .{ "@parcel/babel-preset", {} },
-                //         .{ "@parcel/core", {} },
-                //         .{ "@swc/cli", {} },
-                //         .{ "@swc/core", {} },
-                //         .{ "@webpack/cli", {} },
-                //         .{ "react-scripts", {} },
-                //         .{ "webpack-cli", {} },
-                //         .{ "webpack", {} },
-                //         // one of cosmic config's imports breaks stuff
-                //         .{ "cosmiconfig", {} },
-                //     });
-                //     pub var prune_count: u16 = 0;
-                //
-                //     pub fn prune(list: []js_ast.G.Property) []js_ast.G.Property {
-                //         var i: usize = 0;
-                //         var out_i: usize = 0;
-                //         while (i < list.len) : (i += 1) {
-                //             const key = list[i].key.?.data.e_string.data;
-                //             const do_prune = packages.has(key);
-                //             prune_count += @as(u16, @intCast(@intFromBool(do_prune)));
-                //             if (!do_prune) {
-                //                 list[out_i] = list[i];
-                //                 out_i += 1;
-                //             }
-                //         }
-                //         return list[0..out_i];
-                //     }
-                // };
-
                 let mut dev_dependencies: Option<bun_ast::Expr> = None;
                 let mut dependencies: Option<bun_ast::Expr> = None;
 
@@ -874,10 +809,6 @@ impl CreateCommand {
                             .len_u32()
                             > 0
                     {
-                        // unsupported_packages.update(property);
-                        // has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
-                        // has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
-                        // property.data.e_object.properties = js_ast.G.Property.List.fromBorrowedSliceDangerous(Prune.prune(property.data.e_object.properties.slice()));
                         if property
                             .data
                             .e_object()
@@ -888,11 +819,6 @@ impl CreateCommand {
                         {
                             has_dependencies = true;
                             dev_dependencies = Some(q.expr);
-
-                            // has_bun_framework_next = has_bun_framework_next or property.hasAnyPropertyNamed(&.{"bun-framework-next"});
-                            // has_react = has_react or property.hasAnyPropertyNamed(&.{ "react", "react-dom", "react-relay", "@emotion/react" });
-                            // has_bun_macro_relay = has_bun_macro_relay or property.hasAnyPropertyNamed(&.{"bun-macro-relay"});
-                            // has_react_refresh = has_react_refresh or property.hasAnyPropertyNamed(&.{"react-refresh"});
                         }
                     }
                 }
@@ -909,10 +835,6 @@ impl CreateCommand {
                             .len_u32()
                             > 0
                     {
-                        // unsupported_packages.update(property);
-                        // has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
-                        // has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
-                        // property.data.e_object.properties = js_ast.G.Property.List.fromBorrowedSliceDangerous(Prune.prune(property.data.e_object.properties.slice()));
                         if property
                             .data
                             .e_object()
@@ -923,164 +845,13 @@ impl CreateCommand {
                         {
                             has_dependencies = true;
                             dependencies = Some(q.expr);
-
-                            // if (property.asProperty("next")) |next_q| {
-                            //     is_nextjs = true;
-                            //     needs.bun_bun_for_nextjs = true;
-                            //     next_q.expr.data.e_string.data = @constCast(target_nextjs_version);
-                            // }
-                            // has_bun_framework_next = has_bun_framework_next or property.hasAnyPropertyNamed(&.{"bun-framework-next"});
-                            // has_react = has_react or is_nextjs or property.hasAnyPropertyNamed(&.{ "react", "react-dom", "react-relay", "@emotion/react" });
-                            // has_react_refresh = has_react_refresh or property.hasAnyPropertyNamed(&.{"react-refresh"});
-                            // has_bun_macro_relay = has_bun_macro_relay or property.hasAnyPropertyNamed(&.{"bun-macro-relay"});
                         }
                     }
                 }
 
                 let _ = (dev_dependencies, dependencies);
 
-                // needs.bun_macro_relay = !has_bun_macro_relay and has_relay;
-                // needs.react_refresh = !has_react_refresh and has_react;
-                // needs.bun_framework_next = is_nextjs and !has_bun_framework_next;
-                // needs.bun_bun_for_nextjs = is_nextjs;
-                // needs.bun_macro_relay_dependency = needs.bun_macro_relay;
-                // var bun_bun_for_react_scripts = false;
-                //
-                // var bun_macros_prop: ?js_ast.Expr = null;
-                // var bun_prop: ?js_ast.Expr = null;
-                // var bun_relay_prop: ?js_ast.Expr = null;
-                //
-                // var needs_bun_prop = needs.bun_macro_relay or has_bun_macro_relay;
-                // var needs_bun_macros_prop = needs_bun_prop;
-                //
-                // if (needs_bun_macros_prop) {
-                //     if (package_json_expr.asProperty("bun")) |bun_| {
-                //         needs_bun_prop = false;
-                //         bun_prop = bun_.expr;
-                //         if (bun_.expr.asProperty("macros")) |macros_q| {
-                //             bun_macros_prop = macros_q.expr;
-                //             needs_bun_macros_prop = false;
-                //             if (macros_q.expr.asProperty("react-relay")) |react_relay_q| {
-                //                 bun_relay_prop = react_relay_q.expr;
-                //                 needs.bun_macro_relay = react_relay_q.expr.asProperty("graphql") == null;
-                //             }
-                //             if (macros_q.expr.asProperty("babel-plugin-relay/macro")) |react_relay_q| {
-                //                 bun_relay_prop = react_relay_q.expr;
-                //                 needs.bun_macro_relay = react_relay_q.expr.asProperty("graphql") == null;
-                //             }
-                //         }
-                //     }
-                // }
-                //
-                // if (Prune.prune_count > 0) {
-                //     Output.prettyErrorln("<r><d>[package.json] Pruned {d} unnecessary packages<r>", .{Prune.prune_count});
-                // }
-                //
-                // if (create_options.verbose) {
-                //   if (needs.bun_macro_relay) {
-                //       Output.prettyErrorln("<r><d>[package.json] Detected Relay -> added \"bun-macro-relay\"<r>", .{});
-                //   }
-                //   if (needs.react_refresh) {
-                //       Output.prettyErrorln("<r><d>[package.json] Detected React -> added \"react-refresh\"<r>", .{});
-                //   }
-                //   if (needs.bun_framework_next) {
-                //       Output.prettyErrorln("<r><d>[package.json] Detected Next -> added \"bun-framework-next\"<r>", .{});
-                //   } else if (is_nextjs) {
-                //       Output.prettyErrorln("<r><d>[package.json] Detected Next.js<r>", .{});
-                //   }
-                // }
-                //
-                // var needs_to_inject_dev_dependency = needs.react_refresh or needs.bun_macro_relay;
-                // var needs_to_inject_dependency = needs.bun_framework_next;
-                //
-                // const dependencies_to_inject_count = @as(usize, @intCast(@intFromBool(needs.bun_framework_next)));
-                //
-                // const dev_dependencies_to_inject_count = @as(usize, @intCast(@intFromBool(needs.react_refresh))) +
-                //     @as(usize, @intCast(@intFromBool(needs.bun_macro_relay)));
-                //
-                // const new_properties_count = @as(usize, @intCast(@intFromBool(needs_to_inject_dev_dependency and dev_dependencies == null))) +
-                //     @as(usize, @intCast(@intFromBool(needs_to_inject_dependency and dependencies == null))) +
-                //     @as(usize, @intCast(@intFromBool(needs_bun_prop)));
-                //
-                // if (new_properties_count != 0) {
-                //     try properties_list.ensureUnusedCapacity(new_properties_count);
-                // }
-
-                // TODO(port): InjectionPrefill — large block of mutable static AST nodes used to
-                // inject "bun"/"macros"/dependency properties into package.json. The Zig code builds
-                // a tree of `E.String`/`E.Object`/`G.Property` values stored in `pub var` statics
-                // and wires their `.properties` lists together at runtime. In Rust, mutable statics
-                // of non-Sync AST types require careful redesign (likely thread_local! + Lazy or
-                // building the tree on the stack/arena per call). Since every consumer of
-                // InjectionPrefill below is commented out except `npx_react_scripts_build` and the
-                // three `.properties =` wiring lines (which themselves only feed commented-out
-                // code), we stub the module here and leave the full structure as a comment for
-                // reference.
                 mod injection_prefill {
-                    // pub var dependencies_e_string = E.String.init(dependencies_string);
-                    // pub var devDependencies_e_string = E.String.init(dev_dependencies_string);
-                    // pub var bun_e_string = E.String.init(bun_string);
-                    // pub var macros_e_string = E.String.init(macros_string);
-                    // pub var react_relay_string = E.String.init("react-relay");
-                    // pub var bun_macros_relay_path_string = E.String.init("bun-macro-relay");
-                    // pub var babel_plugin_relay_macro = E.String.init("babel-plugin-relay/macro");
-                    // pub var babel_plugin_relay_macro_js = E.String.init("babel-plugin-relay/macro.js");
-                    // pub var graphql_string = E.String.init("graphql");
-                    //
-                    // var npx_react_scripts_build_str = E.String.init("npx react-scripts build");
-                    // pub const npx_react_scripts_build = js_ast.Expr{ .data = .{ .e_string = &npx_react_scripts_build_str }, .loc = logger.Loc.Empty };
-                    //
-                    // var bun_macro_relay_properties = [_]js_ast.G.Property{
-                    //     js_ast.G.Property{
-                    //         .key   = js_ast.Expr{ .data = .{ .e_string = &graphql_string }, .loc = logger.Loc.Empty },
-                    //         .value = js_ast.Expr{ .data = .{ .e_string = &bun_macros_relay_path_string }, .loc = logger.Loc.Empty },
-                    //     },
-                    // };
-                    // var bun_macro_relay_object = js_ast.E.Object{ .properties = undefined };
-                    //
-                    // var bun_macros_relay_object_properties = [_]js_ast.G.Property{
-                    //     .{ .key = Expr{ .e_string = &react_relay_string },           .value = Expr{ .e_object = &bun_macro_relay_object } },
-                    //     .{ .key = Expr{ .e_string = &babel_plugin_relay_macro },     .value = Expr{ .e_object = &bun_macro_relay_object } },
-                    //     .{ .key = Expr{ .e_string = &babel_plugin_relay_macro_js },  .value = Expr{ .e_object = &bun_macro_relay_object } },
-                    // };
-                    // pub var bun_macros_relay_object = E.Object{ .properties = undefined };
-                    //
-                    // var bun_macros_relay_only_object_string = js_ast.E.String.init("macros");
-                    // pub var bun_macros_relay_only_object_properties = [_]js_ast.G.Property{
-                    //     .{ .key = Expr{ .e_string = &bun_macros_relay_only_object_string }, .value = Expr{ .e_object = &bun_macros_relay_object } },
-                    // };
-                    // pub var bun_macros_relay_only_object = E.Object{ .properties = undefined };
-                    //
-                    // var bun_only_macros_string = js_ast.E.String.init("bun");
-                    // pub var bun_only_macros_relay_property = js_ast.G.Property{
-                    //     .key   = Expr{ .e_string = &bun_only_macros_string },
-                    //     .value = Expr{ .e_object = &bun_macros_relay_only_object },
-                    // };
-                    //
-                    // pub var bun_framework_next_string  = js_ast.E.String.init("bun-framework-next");
-                    // pub var bun_framework_next_version = js_ast.E.String.init("latest");
-                    // pub var bun_framework_next_property = js_ast.G.Property{
-                    //     .key   = Expr{ .e_string = &bun_framework_next_string },
-                    //     .value = Expr{ .e_string = &bun_framework_next_version },
-                    // };
-                    //
-                    // pub var bun_macro_relay_dependency_string  = js_ast.E.String.init("bun-macro-relay");
-                    // pub var bun_macro_relay_dependency_version = js_ast.E.String.init("latest");
-                    // pub var bun_macro_relay_dependency = js_ast.G.Property{
-                    //     .key   = Expr{ .e_string = &bun_macro_relay_dependency_string },
-                    //     .value = Expr{ .e_string = &bun_macro_relay_dependency_version },
-                    // };
-                    //
-                    // pub var refresh_runtime_string  = js_ast.E.String.init("react-refresh");
-                    // pub var refresh_runtime_version = js_ast.E.String.init("0.10.0");
-                    // pub var react_refresh_dependency = js_ast.G.Property{
-                    //     .key   = Expr{ .e_string = &refresh_runtime_string },
-                    //     .value = Expr{ .e_string = &refresh_runtime_version },
-                    // };
-                    //
-                    // pub var dev_dependencies_key = js_ast.Expr{ .data = .{ .e_string = &devDependencies_e_string }, .loc = logger.Loc.Empty };
-                    // pub var dependencies_key     = js_ast.Expr{ .data = .{ .e_string = &dependencies_e_string },    .loc = logger.Loc.Empty };
-
                     // TODO(port): these wire up the static objects above; only feeds dead code
                     pub(crate) fn wire() {
                         // InjectionPrefill.bun_macro_relay_object.properties = ...fromBorrowedSliceDangerous(bun_macro_relay_properties[0..]);
@@ -1098,112 +869,6 @@ impl CreateCommand {
                 }
 
                 injection_prefill::wire();
-
-                // if (needs_to_inject_dev_dependency and dev_dependencies == null) {
-                //     var e_object = try ctx.allocator.create(E.Object);
-                //     e_object.* = E.Object{};
-                //     const value = js_ast.Expr{ .data = .{ .e_object = e_object }, .loc = logger.Loc.Empty };
-                //     properties_list.appendAssumeCapacity(js_ast.G.Property{
-                //         .key = InjectionPrefill.dev_dependencies_key,
-                //         .value = value,
-                //     });
-                //     dev_dependencies = value;
-                // }
-                //
-                // if (needs_to_inject_dependency and dependencies == null) {
-                //     var e_object = try ctx.allocator.create(E.Object);
-                //     e_object.* = E.Object{};
-                //     const value = js_ast.Expr{ .data = .{ .e_object = e_object }, .loc = logger.Loc.Empty };
-                //     properties_list.appendAssumeCapacity(js_ast.G.Property{
-                //         .key = InjectionPrefill.dependencies_key,
-                //         .value = value,
-                //     });
-                //     dependencies = value;
-                // }
-
-                // inject an object like this, handling each permutation of what may or may not exist:
-                // {
-                //    "bun": {
-                //       "macros": {
-                //          "react-relay": {
-                //              "graphql": "bun-macro-relay"
-                //          }
-                //        }
-                //    }
-                // }
-                // bun_section: {
-                //   // "bun.macros.react-relay.graphql"
-                //   if (needs.bun_macro_relay and !needs_bun_prop and !needs_bun_macros_prop) {
-                //       bun_relay_prop.?.data.e_object = InjectionPrefill.bun_macros_relay_object.properties.ptr[0].value.?.data.e_object;
-                //       needs_bun_macros_prop = false; needs_bun_prop = false; needs.bun_macro_relay = false;
-                //       break :bun_section;
-                //   }
-                //   // "bun.macros"
-                //   if (needs_bun_macros_prop and !needs_bun_prop) {
-                //       var obj = bun_prop.?.data.e_object;
-                //       var properties = try std.ArrayList(js_ast.G.Property).initCapacity(ctx.allocator,
-                //           obj.properties.len + InjectionPrefill.bun_macros_relay_object.properties.len);
-                //       defer obj.properties.update(properties);
-                //       try properties.insertSlice(0, obj.properties.slice());
-                //       try properties.insertSlice(0, InjectionPrefill.bun_macros_relay_object.properties.slice());
-                //       needs_bun_macros_prop = false; needs_bun_prop = false; needs.bun_macro_relay = false;
-                //       break :bun_section;
-                //   }
-                //   // "bun"
-                //   if (needs_bun_prop) {
-                //       try properties_list.append(InjectionPrefill.bun_only_macros_relay_property);
-                //       needs_bun_macros_prop = false; needs_bun_prop = false; needs.bun_macro_relay = false;
-                //       break :bun_section;
-                //   }
-                // }
-                //
-                // if (needs_to_inject_dependency) {
-                //     defer needs_to_inject_dependency = false;
-                //     var obj = dependencies.?.data.e_object;
-                //     var properties = try std.ArrayList(js_ast.G.Property).initCapacity(ctx.allocator,
-                //         obj.properties.len + dependencies_to_inject_count);
-                //     try properties.insertSlice(0, obj.properties.slice());
-                //     defer obj.properties.update(properties);
-                //     if (needs.bun_framework_next) {
-                //         properties.appendAssumeCapacity(InjectionPrefill.bun_framework_next_property);
-                //         needs.bun_framework_next = false;
-                //     }
-                // }
-                //
-                // if (needs_to_inject_dev_dependency) {
-                //     defer needs_to_inject_dev_dependency = false;
-                //     var obj = dev_dependencies.?.data.e_object;
-                //     var properties = try std.ArrayList(js_ast.G.Property).initCapacity(ctx.allocator,
-                //         obj.properties.len + dev_dependencies_to_inject_count);
-                //     try properties.insertSlice(0, obj.properties.slice());
-                //     defer obj.properties.update(properties);
-                //     if (needs.bun_macro_relay_dependency) {
-                //         properties.appendAssumeCapacity(InjectionPrefill.bun_macro_relay_dependency);
-                //         needs.bun_macro_relay_dependency = false;
-                //     }
-                //     if (needs.react_refresh) {
-                //         properties.appendAssumeCapacity(InjectionPrefill.react_refresh_dependency);
-                //         needs.react_refresh = false;
-                //     }
-                // }
-
-                // this is a little dicey
-                // The idea is:
-                // Before the closing </body> tag of Create React App's public/index.html
-                // Inject "<script type="module" src="/src/index.js" async></script>"
-                // Only do this for create-react-app
-                // Which we define as:
-                // 1. has a "public/index.html"
-                // 2. "react-scripts" in package.json dependencies or devDependencies
-                // 3. has a src/index.{jsx,tsx,ts,mts,mcjs}
-                // If at any point those expectations are not matched OR the string /src/index.js already exists in the HTML
-                // don't do it!
-                // if (has_react_scripts) {
-                //     bail: {
-                //         // ... (large CRA index.html injection block; see Zig source lines 1183-1265)
-                //         // TODO(port): commented-out CRA HTML rewrite logic — preserved verbatim in Zig source
-                //     }
-                // }
 
                 package_json_expr
                     .data
@@ -1306,13 +971,6 @@ impl CreateCommand {
                         }
 
                         let value = props.slice()[i].value.unwrap();
-                        // PORT NOTE: `as_property` returns an owned `Query`
-                        // (Copy types backed by an arena `StoreRef`). Borrowck
-                        // ties any `&[u8]` we pull out of it to the `if let`
-                        // scope even though the underlying `EString.data` is
-                        // `&'static [u8]`. Erase the local borrow lifetime via
-                        // raw-pointer round-trip so the task slices can outlive
-                        // the temporary `Query`.
                         let arena_str = |s: &[u8]| -> &'static [u8] {
                             // SAFETY: `s` always points into the JSON arena
                             // (initialized via `initialize_store()`), which
@@ -1328,21 +986,6 @@ impl CreateCommand {
                                     let items = tasks.slice();
                                     for task in items {
                                         if let Some(task_entry) = task.as_utf8_string_literal() {
-                                            // if (needs.bun_bun_for_nextjs or bun_bun_for_react_scripts) {
-                                            //     var iter = std.mem.splitScalar(u8, task_entry, ' ');
-                                            //     var last_was_bun = false;
-                                            //     while (iter.next()) |current| {
-                                            //         if (strings.eqlComptime(current, "bun")) {
-                                            //             if (last_was_bun) {
-                                            //                 needs.bun_bun_for_nextjs = false;
-                                            //                 bun_bun_for_react_scripts = false;
-                                            //                 break;
-                                            //             }
-                                            //             last_was_bun = true;
-                                            //         }
-                                            //     }
-                                            // }
-
                                             postinstall_tasks.push(arena_str(task_entry));
                                         }
                                     }
@@ -1428,10 +1071,6 @@ impl CreateCommand {
 
         let mut npm_client_: Option<NPMClient> = None;
 
-        // Remember whether the user explicitly opted out (`--no-install`)
-        // before this is widened to also cover dependency-less templates:
-        // the flag must skip template tasks, but a template with no
-        // dependencies should still run its documented postinstall hooks.
         let user_skipped_install = create_options.skip_install;
         create_options.skip_install = create_options.skip_install || !has_dependencies;
 
@@ -1543,13 +1182,6 @@ impl CreateCommand {
             Output::pretty(format_args!("\n<r><d>-----<r>\n"));
             Output::flush();
         }
-
-        // if (unsupported_packages.@"styled-jsx") {
-        //     Output.prettyErrorln("\n", .{});
-        //     unsupported_packages.print();
-        //     Output.prettyErrorln("\n", .{});
-        //     Output.flush();
-        // }
 
         if !create_options.skip_git && !create_options.skip_install {
             Output::pretty(format_args!(
@@ -2104,10 +1736,6 @@ static URL_: bun_core::RacyCell<Option<URL<'static>>> = bun_core::RacyCell::new(
 static APP_NAME_BUF: bun_core::RacyCell<[u8; 512]> = bun_core::RacyCell::new([0u8; 512]);
 static GITHUB_REPOSITORY_URL_BUF: bun_core::RacyCell<[u8; 1024]> =
     bun_core::RacyCell::new([0u8; 1024]);
-// PORT NOTE: Zig used a fn-local `var url_buf: [1024]u8` in `Example.fetch`;
-// hoisted to a static so the borrowed slice satisfies `URL<'static>` for
-// `AsyncHTTP::init_sync` (single-threaded CLI; same pattern as
-// `GITHUB_REPOSITORY_URL_BUF`).
 static NPM_REGISTRY_URL_BUF: bun_core::RacyCell<[u8; 1024]> = bun_core::RacyCell::new([0u8; 1024]);
 
 impl Example {
@@ -2776,10 +2404,6 @@ struct GitHandler;
 
 // TODO(port): mutable static atomic + thread handle — single use per process
 static SUCCESS: AtomicU32 = AtomicU32::new(0);
-// Zig used `std.Thread`; bun_threading has no top-level Thread wrapper yet,
-// so use std::thread::JoinHandle directly (CLI-only, no JSC interaction).
-// PORTING.md §Global mutable state: written in `spawn`, taken in `wait`, both
-// on the main CLI thread → RacyCell.
 static THREAD: bun_core::RacyCell<Option<std::thread::JoinHandle<()>>> =
     bun_core::RacyCell::new(None);
 
@@ -2837,34 +2461,10 @@ impl GitHandler {
     ) -> Result<bool, bun_core::Error> {
         let git_start = bun_core::time::nano_timestamp();
 
-        // Not sure why...
-        // But using libgit for this operation is slower than the CLI!
-        // Used to have a feature flag to try it but was removed:
-        // https://github.com/oven-sh/bun/commit/deafd3d0d42fb8d7ddf2b06cde2d7c7ee8bc7144
-        //
-        // ~/Build/throw
-        // ❯ hyperfine "bun create react3 app --force --no-install" --prepare="rm -rf app"
-        // Benchmark #1: bun create react3 app --force --no-install
-        //   Time (mean ± σ):     974.6 ms ±   6.8 ms    [User: 170.5 ms, System: 798.3 ms]
-        //   Range (min … max):   960.8 ms … 984.6 ms    10 runs
-        //
-        // ❯ mv /usr/local/opt/libgit2/lib/libgit2.dylib /usr/local/opt/libgit2/lib/libgit2.dylib.1
-        //
-        // ~/Build/throw
-        // ❯ hyperfine "bun create react3 app --force --no-install" --prepare="rm -rf app"
-        // Benchmark #1: bun create react3 app --force --no-install
-        //   Time (mean ± σ):     306.7 ms ±   6.1 ms    [User: 31.7 ms, System: 269.8 ms]
-        //   Range (min … max):   299.5 ms … 318.8 ms    10 runs
-
         // SAFETY: single-threaded CLI access to module-level static path buffer (note: this fn
         // may run on the git thread; BUN_PATH_BUF is also touched on main thread for `--open`.
         // The two uses are sequenced — git runs before `--open` block. Matches Zig.)
         let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
-        // Zig used `std.process.Child` (no libuv). The Rust port routes through
-        // `bun.spawnSync`, which on Windows drives `uv_spawn` and needs a uv loop. This fn
-        // runs on the dedicated git thread (see `GitHandler::spawn`), so use the
-        // *thread-local* `MiniEventLoop` singleton — `init_global` is `thread_local!`-backed,
-        // so the main thread's loop is not touched (driving it cross-thread would be libuv UB).
         #[cfg(windows)]
         let win_loop = bun_event_loop::EventLoopHandle::init_mini(
             bun_event_loop::MiniEventLoop::init_global(None, None),

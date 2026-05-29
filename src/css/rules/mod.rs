@@ -31,20 +31,6 @@ pub mod tailwind;
 pub mod unknown;
 pub mod viewport;
 
-// ─── CssRule / CssRuleList ─────────────────────────────────────────────────
-// Zig: pub fn CssRule(comptime Rule: type) type { return union(enum) { ... } }
-//
-// PORT NOTE: the original port threaded a `'bump` arena lifetime through every
-// rule (matching Zig's `ArrayListUnmanaged`-backed AST). That cascades into
-// every leaf module signature; while those leaves are gated, `CssRule<R>` is
-// kept lifetime-free here (the gated bodies re-introduce `'bump` when they
-// un-gate alongside `bumpalo::collections::Vec` storage).
-
-// ─── CssRule variant table ────────────────────────────────────────────────
-// Single source of truth for the 20 typed at-rule payloads. Adding a new
-// at-rule = one line here; the enum variant + `to_css` arm + `deep_clone`
-// arm are generated. `Unknown`/`Custom`/`Ignored` stay a fixed tail because
-// their `to_css` arms are special-cased (see PORT NOTE on `Custom`).
 macro_rules! css_rule_variants {
     ( $( $(#[$doc:meta])* $Variant:ident($Payload:ty) ),+ $(,)? ) => {
         /// A single CSS rule (at-rule or style rule).
@@ -63,36 +49,11 @@ macro_rules! css_rule_variants {
                 match self {
                     $( CssRule::$Variant(x) => x.to_css(dest), )+
                     CssRule::Unknown(x) => x.to_css(dest),
-                    // Zig: `.custom => |x| x.toCss(dest) catch return dest.addFmtError()`.
-                    //
-                    // PORT NOTE (incomplete): the spec has TWO concrete `R` types —
-                    // `DefaultAtRule` (whose `toCss` errors unconditionally) and
-                    // `TailwindAtRule` (src/css/rules/tailwind.zig:14-19, used via
-                    // `BundlerAtRule` when `ENABLE_TAILWIND_PARSING`), whose `toCss`
-                    // SUCCEEDS and writes `@tailwind <name>;`. This arm therefore
-                    // diverges from the spec for `R = TailwindAtRule`: it fails
-                    // serialization where the spec round-trips.
-                    //
-                    // The correct port threads a `ToCss`-style bound (or per-`R`
-                    // vtable) so `Custom(x)` dispatches to `x.to_css(dest)` and only
-                    // maps the error path via `add_fmt_error()`. That bound cascades
-                    // through every nested `CssRuleList<R>` printer (media, supports,
-                    // layer, document, nesting, starting_style, style, scope,
-                    // container) — deferred to the patch that un-gates
-                    // `BundlerAtRule = TailwindAtRule`.
-                    // TODO(port): dispatch to `x.to_css(dest)` once `R: ToCss` (or
-                    // equivalent) is threaded; current behavior is only spec-correct
-                    // for `R = DefaultAtRule`.
                     CssRule::Custom(_x) => Err(dest.add_fmt_error()),
                     CssRule::Ignored => Ok(()),
                 }
             }
 
-            /// Zig: `css.implementDeepClone(@This(), this, arena)` — variant-wise
-            /// dispatch to each leaf rule's `deep_clone`. Hand-written (not
-            /// `#[derive(DeepClone)]`) because the leaf payloads expose `deep_clone`
-            /// as **inherent** methods rather than `DeepClone` trait impls;
-            /// method-syntax dispatch here picks up either.
             pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
             where
                 R: css::generics::DeepClone<'bump>,
@@ -180,42 +141,9 @@ impl<R> Default for CssRuleList<R> {
     }
 }
 
-// ─── leaf-rule to_css shims ────────────────────────────────────────────────
-// All leaf modules now own a real, un-gated `to_css` body; `CssRule::to_css`
-// dispatches straight through. (Shim macro deleted — last entry was
-// `StyleRule`, dropped once DeclarationBlock::to_css + selector serialize
-// landed.)
-
-// ─── leaf-rule deep_clone ──────────────────────────────────────────────────
-// Every leaf module now owns a real inherent `deep_clone` body — the field-
-// wise / variant-wise port of `css.implementDeepClone`. `CssRule::deep_clone`
-// (below) dispatches via method-syntax so it picks up the inherent impl.
-//
-// PORT NOTE: most leaf rules can't use `#[derive(DeepClone)]` directly yet
-// because two field types still lack an arena-aware `deep_clone(&self,
-// &Arena) -> Self`: `SelectorList` (selectors/parser.rs uses no-arg
-// `deep_clone()`) and `Property` (properties_generated.rs — per-variant body
-// gated on leaf_value_traits). `MediaList` / `QueryFeature` /
-// `DeclarationBlock` now route to their real arena-aware impls. The leaf
-// bodies hand-roll the field walk and route the remaining blocked fields
-// through the `dc::*` passthroughs below. Once an upstream type grows its own
-// `deep_clone(&self, &Arena)`, swap the `dc::foo(&x, bump)` call for
-// `x.deep_clone(bump)` and delete the helper.
 pub(super) mod dc {
     use bun_alloc::Arena;
 
-    /// `DeclarationBlock::deep_clone` — real port body inlined here (the
-    /// canonical impl in declaration.rs is gated on `Property: DeepClone`).
-    /// Field-walk over both `DeclarationList`s, routing each `Property`
-    /// through `dc::property` so the only remaining bottleneck is the
-    /// per-variant `Property::deep_clone` body.
-    ///
-    /// PORT NOTE: threads the real `'bump` lifetime instead of fabricating
-    /// `'static` (PORTING.md §Forbidden: `unsafe { &*(p as *const _) }` to
-    /// extend a lifetime). Callers whose storage is still pinned to
-    /// `DeclarationBlock<'static>` must fix that storage type — the lie
-    /// belongs there, not here, and collapses when `CssRule<'bump, R>`
-    /// re-threads the arena lifetime.
     #[inline]
     pub(crate) fn decl_block<'bump>(
         this: &crate::DeclarationBlock<'bump>,
@@ -261,12 +189,6 @@ pub(super) mod dc {
         decl_block(this, unsafe { arena_static(bump) })
     }
 
-    /// Empty `DeclarationBlock<'static>` — Zig spec writes `css.DeclarationBlock{}`.
-    ///
-    /// Exists so call-sites that need an empty block (rules.zig:363
-    /// `nested_rule.declarations = .{}`) route through ONE centralized
-    /// erasure helper. Delete with `decl_block_static` once
-    /// `CssRule<'bump, R>` re-threads the arena lifetime.
     #[inline]
     pub(crate) fn decl_block_empty_static(bump: &Arena) -> crate::DeclarationBlock<'static> {
         // SAFETY: `'bump`-erasure placeholder — see `arena_static`.
@@ -336,19 +258,6 @@ pub(super) mod dc {
     }
 }
 
-// `Location` is plain `Copy` data; the derive expands to field-wise
-// `u32::deep_clone` (identity). Doubles as the in-tree smoke test that the
-// `#[derive(DeepClone)]` proc-macro round-trips through a real CSS type.
-// (The Zig `implementDeepClone` returns `this.*` for simple-copy types.)
-
-// ─── shared serialization helpers for leaf rules ──────────────────────────
-// Several leaf-rule `to_css` bodies bottom out on helpers whose canonical
-// homes are still ``-gated outside `rules/` (DeclarationBlock::
-// to_css_block, VendorPrefix::toCss, CustomIdent/DashedIdent ::toCss). The
-// bodies are tiny and have no further blockers, so they're inlined here so the
-// 12 leaf rules can serialize for real. Once the upstream gates drop, callers
-// switch back and these are deleted.
-
 /// Port of `DeclarationBlock.toCssBlock` (declaration.zig). The real impl is
 /// gated in `declaration.rs`; `Property::to_css` is un-gated so the body is
 /// trivially inlinable here.
@@ -403,10 +312,6 @@ pub(super) fn vendor_prefix_to_css(
     }
 }
 
-/// Port of `CustomIdentFns.toCss` → `Printer.writeIdent` with CSS-module
-/// custom-ident scoping. Both `CustomIdent::to_css` and `Printer::write_ident`
-/// are gated on the css_modules `Pattern::write` borrowck reshape; this is the
-/// non-css-module tail (`serialize_identifier`) that both share.
 #[inline]
 pub(super) fn custom_ident_to_css(
     ident: &css::css_values::ident::CustomIdent,
@@ -424,10 +329,6 @@ pub(super) fn custom_ident_to_css(
     dest.write_ident(v, enabled)
 }
 
-/// Port of `DashedIdentFns.toCss` → `Printer.writeDashedIdent`. The real
-/// printer method is gated on a borrowck reshape of the css-module pattern
-/// closure; the non-css-module path (the only one any current rule reaches)
-/// is `--` + `serialize_name(rest)`.
 #[inline]
 pub(super) fn dashed_ident_to_css(
     ident: &css::css_values::ident::DashedIdent,
@@ -440,12 +341,6 @@ pub(super) fn dashed_ident_to_css(
     dest.serialize_name(&v[2..])
 }
 
-/// Shim: `MediaRule::minify` is gated in `media.rs` until that file's full
-/// `to_css` body un-gates. Recurse into the nested list and report whether the
-/// rule should be dropped. NOTE: `never_matches()` is a *drop condition*, not
-/// merely an optimization — omitting it diverges output (e.g. `@media not all
-/// { a{color:red} }` must be removed). `MediaList::never_matches` is un-gated,
-/// so call it here to match the spec (`media.zig:19-23`).
 impl<R> media::MediaRule<R> {
     pub fn minify(
         &mut self,
@@ -461,11 +356,6 @@ impl<R> media::MediaRule<R> {
 }
 
 impl<R> CssRule<R> {
-    /// Whether this rule is skipped while `Printer::skip_prefixed_nested_rules`
-    /// is set (a non-final vendor prefix pass of an ancestor style rule) and
-    /// emitted only in the ancestor's final pass: a style rule with its own
-    /// vendor prefixes overrides `Printer::vendor_prefix`, so its output is
-    /// identical in every ancestor pass.
     pub(crate) fn is_deferred_to_final_prefix_pass(&self) -> bool {
         match self {
             CssRule::Style(style) => !style.vendor_prefix.is_empty(),
@@ -487,11 +377,6 @@ impl<R> CssRuleList<R> {
                 continue;
             }
 
-            // While re-serializing nested rules for a non-final vendor prefix
-            // pass of an ancestor style rule, skip style rules that carry
-            // their own vendor prefixes: they override `dest.vendor_prefix`,
-            // so this pass would emit an exact duplicate of what the final
-            // pass emits.
             if dest.skip_prefixed_nested_rules && rule.is_deferred_to_final_prefix_pass() {
                 continue;
             }
@@ -553,11 +438,6 @@ impl<R> CssRuleList<R> {
     where
         R: for<'b> css::generics::DeepClone<'b>,
     {
-        // blocked_on (style arm only): StyleRule::{minify,is_compatible,
-        // update_prefix,hash_key,is_duplicate}, selector::{is_compatible,
-        // is_equivalent,Selector::from_component}, SelectorList::deep_clone,
-        // DeclarationBlock::deep_clone — all `` in their leaves.
-
         let mut style_rules = StyleRuleKeyMap::default();
         let mut rules: Vec<CssRule<R>> = Vec::new();
 
@@ -608,12 +488,6 @@ impl<R> CssRuleList<R> {
                         }
                     }
                     CssRule::Container(cont) => {
-                        // The condition-merge/dedup port is still pending, but the
-                        // nested rules must be minified so the nesting-away
-                        // selector expansion stays bounded by
-                        // `MAX_SELECTOR_EXPANSION` — otherwise an at-rule between
-                        // two nesting levels hides the inner levels from the cap
-                        // and the printer expands them exponentially.
                         cont.rules.minify(context, parent_is_unused)?;
                     }
                     CssRule::LayerBlock(lay) => {
@@ -631,22 +505,14 @@ impl<R> CssRuleList<R> {
                         doc.rules.minify(context, parent_is_unused)?;
                     }
                     CssRule::Style(_sty) => {
-                        // The full `.style` arm (selector compat partitioning,
-                        // merge-with-previous, logical/@supports expansion,
-                        // dedup via StyleRuleKey, nested-rule split) bottoms
-                        // out on the gated StyleRule behavior surface. Until
-                        // that un-gates, fall through and keep the rule as-is.
-
-                        {
-                            minify_style_arm(
-                                rule,
-                                &mut rules,
-                                &mut style_rules,
-                                context,
-                                parent_is_unused,
-                            )?;
-                            break 'arm;
-                        }
+                        minify_style_arm(
+                            rule,
+                            &mut rules,
+                            &mut style_rules,
+                            context,
+                            parent_is_unused,
+                        )?;
+                        break 'arm;
                     }
                     CssRule::CounterStyle(_) => { /* TODO(port): Zig fallthrough */ }
                     CssRule::Scope(scpe) => {
@@ -655,19 +521,6 @@ impl<R> CssRuleList<R> {
                         scpe.rules.minify(context, parent_is_unused)?;
                     }
                     CssRule::Nesting(nst) => {
-                        // See `Container` above. `@nest` wraps a single style
-                        // rule whose own selectors also form a nesting level, so
-                        // charge them against the cap and recurse into its nested
-                        // rules with the multiplier bumped accordingly.
-                        //
-                        // Deliberately does NOT run `StyleRule::minify` on the
-                        // wrapped rule: that would feed its declarations through
-                        // the property handlers, which consume logical properties
-                        // (staging LTR/RTL fallbacks in the handler context) that
-                        // the `@nest` minify port does not yet drain — silently
-                        // dropping the declaration. Leaving the declarations
-                        // untouched preserves them verbatim, matching the
-                        // pre-port behavior.
                         nst.style.charge_selector_expansion(context)?;
                         nst.style.minify_nested_rules(context, parent_is_unused)?;
                     }
@@ -683,11 +536,6 @@ impl<R> CssRuleList<R> {
 
                 rules.push(core::mem::replace(rule, CssRule::Ignored));
                 moved_rule = true;
-
-                // Non-style rules act as a barrier for style-rule dedup —
-                // an intervening at-rule may change how declarations are
-                // interpreted, so identical selectors on either side aren't
-                // safely mergeable.
 
                 style_rules.clear();
             }
@@ -742,10 +590,6 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         && context.targets.should_compile_selectors()
         && !sty.is_compatible(context.targets)
     {
-        // The :is() selector accepts a forgiving selector list, so use that if possible.
-        // Note that :is() does not allow pseudo elements, so we need to check for that.
-        // In addition, :is() takes the highest specificity of its arguments, so if the selectors
-        // have different weights, we need to split them into separate rules as well.
         if context
             .targets
             .is_compatible(css::compat::Feature::IsSelector)
@@ -909,20 +753,6 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     Ok(())
 }
 
-// ─── StyleRuleKey ──────────────────────────────────────────────────────────
-/// A key to a `StyleRule` meant for use in a hash map for quickly detecting
-/// duplicates. It stores an index into the live `rules` Vec plus a
-/// pre-computed hash for fast lookups.
-///
-/// PORT NOTE: the Zig spec (`rules.zig:StyleRuleKey`) additionally stores
-/// `list: *const ArrayList(CssRule(R))` and dereferences it inside `eql()`.
-/// That pattern is unsound in Rust under Stacked/Tree Borrows — keys persist
-/// in the dedup map across iterations of `minify_style_arm`, and between
-/// iterations the same `Vec` is written through fresh `&mut` reborrows
-/// (`rules.push`, `rules[i] = Ignored`), invalidating any previously-derived
-/// `*const Vec` provenance. Instead we keep only `(index, hash)` here and do
-/// the equality check in `StyleRuleKeyMap::remove_duplicate`, which receives
-/// the live `&[CssRule<R>]` slice explicitly at the call site.
 #[derive(Clone, Copy)]
 pub(crate) struct StyleRuleKey {
     index: usize,
@@ -939,13 +769,6 @@ impl StyleRuleKey {
     }
 }
 
-/// Dedup table for [`StyleRuleKey`]s — the Rust-side equivalent of Zig's
-/// `StyleRuleKey(R).HashMap(usize)`.
-///
-/// Buckets keyed by the pre-computed `StyleRule::hash_key()` hold indices into
-/// the caller's `rules` Vec; equality (`StyleRule::is_duplicate`) is evaluated
-/// against an explicitly-passed `&[CssRule<R>]` so we never smuggle a stale
-/// raw pointer across `&mut rules` writes (see PORT NOTE on `StyleRuleKey`).
 #[derive(Default)]
 pub(crate) struct StyleRuleKeyMap {
     buckets: bun_collections::HashMap<u64, Vec<usize>>,
@@ -1077,30 +900,8 @@ pub struct StyleContext<'a> {
     pub parent: Option<&'a StyleContext<'a>>,
 }
 
-/// Upper bound on the number of selectors that compiling nested rules away for
-/// the configured targets may expand a stylesheet into.
-///
-/// When the targets don't support CSS nesting (or a rule's selectors need to be
-/// split for compatibility), every nesting level multiplies the parent
-/// selector list into its nested rules. That expansion is exponential in the
-/// nesting depth, so a few hundred bytes of adversarial input (e.g. 20+ levels
-/// of two-selector rules) would otherwise balloon into gigabytes of cloned
-/// rules and output. Real-world stylesheets stay far below this limit — 65,536
-/// expanded selectors already corresponds to megabytes of output — so exceeding
-/// it is reported as a `selector_expansion_limit_exceeded` minify error
-/// instead.
 pub const MAX_SELECTOR_EXPANSION: u32 = 65_536;
 
-/// Per-stylesheet minification state threaded through `CssRuleList::minify`
-/// and every leaf rule's `minify`.
-///
-/// PORT NOTE: Zig carried `arena: std.mem.Allocator` for the AST arena;
-/// here that is `&'a Arena` (bumpalo). All sub-allocations during minify go
-/// through it so the whole transformed tree is bulk-freed with the arena.
-// PORT NOTE: split lifetimes — `'bump` is the parser arena (long), `'a` is the
-// per-minify borrow scope (short). `&'a mut DeclarationHandler<'a>` would force
-// the handler borrow to outlive the arena (invariance via `bumpalo::Vec`),
-// making `Stylesheet::minify`'s stack-local handlers unusable.
 pub struct MinifyContext<'a, 'bump> {
     /// Arena that owns the AST being minified (same arena it was parsed into).
     pub arena: &'bump bun_alloc::Arena,
@@ -1108,11 +909,6 @@ pub struct MinifyContext<'a, 'bump> {
     pub handler: &'a mut css::DeclarationHandler<'bump>,
     pub important_handler: &'a mut css::DeclarationHandler<'bump>,
     pub handler_context: css::PropertyHandlerContext<'bump>,
-    /// Class/id names known to be unused (tree-shaking input).
-    // PORT NOTE: Zig `*const std.StringArrayHashMapUnmanaged(void)`.
-    // `selector::is_unused` currently borrows `&ArrayHashMap<&[u8], ()>`; the
-    // owning `MinifyOptions` stores `Box<[u8]>` keys — reconcile when
-    // `style.rs::minify` un-gates (single key type, `Borrow<[u8]>` lookup).
     pub unused_symbols: &'a bun_collections::ArrayHashMap<Box<[u8]>, ()>,
     /// Pre-scanned `@custom-media` definitions, if the feature is enabled.
     pub custom_media:

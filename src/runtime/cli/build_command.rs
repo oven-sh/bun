@@ -44,14 +44,6 @@ fn splat_byte_all(
 pub(crate) struct BuildCommand;
 
 impl BuildCommand {
-    /// `bun build` subcommand entry point.
-    ///
-    /// Marked `#[cold]` + `#[inline(never)]` so the linker keeps this large
-    /// body out of the hot run of `.text` that the cold-start arg-parse /
-    /// dispatch working set lives in. `bun .` (the default `run` command)
-    /// never reaches here, so paging this in on startup is pure waste; this
-    /// finishes what `perf(clap): mark cold-command param tables cold` started
-    /// (those moved the tables, not the bodies).
     #[cold]
     #[inline(never)]
     pub(crate) fn exec(
@@ -120,11 +112,6 @@ impl BuildCommand {
         // `exec` never returns until process exit (`exit_or_watch` diverges),
         // so use the shared CLI arena instead of allocating a fresh one.
         let arena: &'static bun_alloc::Arena = crate::cli::cli_arena();
-        // PORT NOTE: `generate_from_cli` takes `&'a mut Transpiler<'a>`, which
-        // borrows the transpiler for its full lifetime — dropck then rejects a
-        // stack local because the borrow would still be live in its destructor.
-        // Allocate in the process-lifetime arena (same rationale as `arena`;
-        // `exec` diverges so this is never dropped).
         let this_transpiler: &mut transpiler::Transpiler<'static> = arena.alloc(
             transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?,
         );
@@ -142,10 +129,6 @@ impl BuildCommand {
             this_transpiler.options.ignore_module_resolution_errors = true;
         }
 
-        // PORT NOTE: clone the first entry point so `outfile` can borrow owned
-        // storage instead of `this_transpiler.options.entry_points[0]`, which
-        // would otherwise hold an immutable borrow of `this_transpiler` across
-        // later `&mut self` calls (`configure_defines`, `generate_from_cli`).
         let first_entry_point: Box<[u8]> = this_transpiler
             .options
             .entry_points
@@ -453,10 +436,6 @@ impl BuildCommand {
                 this_transpiler.options.no_macros = true;
             }
             MacroOptions::Map(macros) => {
-                // PORT NOTE: `MacroOptions::Map` carries the
-                // `bun_options_types::context::MacroMap` redeclaration; the
-                // bundler-side `options.macro_remap` is the resolver crate's
-                // `StringArrayHashMap` shape. Re-key into that shape here.
                 use bun_resolver::package_json::{
                     MacroImportReplacementMap as ResolverInner, MacroMap as ResolverMacroMap,
                 };
@@ -477,12 +456,6 @@ impl BuildCommand {
         let mut client_transpiler: Option<transpiler::Transpiler> = None;
         if this_transpiler.options.server_components {
             let mut ct = transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?;
-            // PORT NOTE: Zig assigned `client_transpiler.options = this_transpiler.options`
-            // (struct copy). `BundleOptions<'a>` is non-`Clone` in Rust; instead
-            // `Transpiler::init` above rebuilds options from the same `ctx.args`,
-            // and the divergent fields are set explicitly below. `client_transpiler`
-            // is currently unused after this block (matching the Zig), so a
-            // perfect field-wise copy is not load-bearing.
             ct.options.target = bun_ast::Target::Browser;
             ct.options.server_components = true;
             ct.options.conditions = this_transpiler.options.conditions.clone()?;
@@ -535,10 +508,6 @@ impl BuildCommand {
         let mut minify_duration: u64 = 0;
         let mut input_code_length: u64 = 0;
 
-        // PORT NOTE: `BundleV2::generate_from_cli` takes `&'a mut Transpiler<'a>`,
-        // which (with `'a = 'static` from the leaked arena) borrows
-        // `this_transpiler` for the rest of its life. Snapshot every options
-        // field read after that point so the borrow checker is satisfied.
         let opt_output_dir: Box<[u8]> = this_transpiler.options.output_dir.clone();
         let opt_minify_identifiers = this_transpiler.options.minify_identifiers;
         let opt_minify_whitespace = this_transpiler.options.minify_whitespace;
@@ -712,22 +681,16 @@ impl BuildCommand {
             let writer = Output::writer_buffered();
             let mut output_dir: &[u8] = &opt_output_dir;
 
-            let will_be_one_file =
-                // --outdir is not supported with --compile
-                // but you can still use --outfile
-                // in which case, we should set the output dir to the dirname of the outfile
-                // https://github.com/oven-sh/bun/issues/8697
-                ctx.bundler_options.compile
-                    || (output_files.len() == 1
-                        && matches!(output_files[0].value, options::OutputFileValue::Buffer { .. }));
+            let will_be_one_file = ctx.bundler_options.compile
+                || (output_files.len() == 1
+                    && matches!(
+                        output_files[0].value,
+                        options::OutputFileValue::Buffer { .. }
+                    ));
 
             if output_dir.is_empty() && !outfile.is_empty() && will_be_one_file {
                 output_dir = bun_core::dirname(outfile).unwrap_or(b".");
                 if ctx.bundler_options.compile {
-                    // If the first output file happens to be a client-side chunk imported server-side
-                    // then don't rename it to something else, since an HTML
-                    // import manifest might depend on the file path being the
-                    // one we think it should be.
                     for f in output_files.iter_mut() {
                         if f.output_kind == options::OutputKind::EntryPoint
                             && f.side.unwrap_or(options::Side::Server) == options::Side::Server

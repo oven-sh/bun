@@ -21,11 +21,6 @@ pub struct ZigStackTrace {
     pub frames_len: u8,
     pub frames_cap: u8,
 
-    /// Non-null if `source_lines_*` points into data owned by a JSC::SourceProvider.
-    /// If so, then .deref must be called on it to release the memory.
-    ///
-    /// `Option<NonNull<_>>` niche-optimizes to a single thin pointer, matching
-    /// the Zig `?*SourceProvider` ABI exactly.
     pub referenced_source_provider: Option<NonNull<SourceProvider>>,
 }
 
@@ -61,11 +56,6 @@ impl ZigStackTrace {
             if source_line_len > 0 {
                 let n_lines = usize::try_from((source_lines_iter.i + 1).max(0)).expect("int cast");
                 let mut source_lines: Vec<api::SourceLine> = Vec::with_capacity(n_lines);
-                // PORT NOTE: Zig packed all line texts into a single contiguous
-                // `source_line_buf` and stored sub-slices in each `SourceLine`.
-                // The Rust `api::SourceLine.text` is `Box<[u8]>` (owns its bytes),
-                // so each line gets its own allocation instead.
-                // PERF(port): one alloc per line vs one shared buffer — profile if hot.
                 source_lines_iter = self.source_line_iterator();
                 while let Some(source) = source_lines_iter.next() {
                     let text = source.text.slice();

@@ -46,26 +46,10 @@ fn ptr_without_panic(buf: &[u8]) -> *const u8 {
 
 // ─── Opaque-handle deref helper ───────────────────────────────────────────
 
-/// Sealed marker for the opaque-ZST handle types in this crate. Every
-/// implementor is `#[repr(C)] struct { UnsafeCell<[u8; 0]>, PhantomData<..> }`:
-/// zero-sized, align-1, and `UnsafeCell` so `&mut T` carries no `noalias`.
-///
-/// Dereferencing a non-null `*mut T` to such a type reads zero bytes and
-/// asserts nothing about uniqueness or `dereferenceable(N)`, so the *only*
-/// validity requirement is non-null — which `<*mut T>::as_mut`/`as_ref`
-/// already check. That lets callers store the lol-html-owned pointer as
-/// `*mut T` (nullable after detach) and recover a usable `&mut T` without a
-/// per-call `unsafe { }` at every method site.
 mod sealed {
     pub trait Sealed {}
 }
 pub trait Opaque: sealed::Sealed {
-    /// Null-checked deref. See trait doc for the soundness argument.
-    // `Self` is a zero-sized `UnsafeCell<[u8; 0]>` opaque (sealed impls only);
-    // a non-null pointer to a ZST is dereferenceable for 0 bytes and `&mut`
-    // over `UnsafeCell` carries no `noalias`. There is no caller precondition —
-    // null returns `None` — so the method is safe; clippy can't see the ZST
-    // invariant established by the sealed impls.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline(always)]
     fn from_ptr<'a>(p: *mut Self) -> Option<&'a mut Self>
@@ -205,31 +189,6 @@ impl HTMLRewriterBuilder {
         unsafe { lol_html_rewriter_builder_new() }
     }
 
-    /// Adds document-level content handlers to the builder.
-    ///
-    /// If a particular handler is not required then NULL can be passed
-    /// instead. Don't use stub handlers in this case as this affects
-    /// performance - rewriter skips parsing of the content that doesn't
-    /// need to be processed.
-    ///
-    /// Each handler can optionally have associated user data which will be
-    /// passed to the handler on each invocation along with the rewritable
-    /// unit argument.
-    ///
-    /// If any of handlers return LOL_HTML_STOP directive then rewriting
-    /// stops immediately and `write()` or `end()` of the rewriter methods
-    /// return an error code.
-    ///
-    /// WARNING: Pointers passed to handlers are valid only during the
-    /// handler execution. So they should never be leaked outside of handlers.
-    // TODO(port): Zig used comptime fn-value params to monomorphize trampolines per callback.
-    // Rust cannot take const fn pointers as const generics; modeled via DirectiveCallback trait.
-    // PORT NOTE: handler-data params are `Option<NonNull<H>>`, not
-    // `Option<&mut H>` — callers routinely pass the SAME allocation for
-    // multiple slots (one `DocumentHandler` services doctype/comment/text/end),
-    // and materializing several live `&mut` to one object is UB under Stacked
-    // Borrows. The wrapper only ever erases the pointer to `*mut c_void`
-    // userdata, so a raw `NonNull` is the honest type.
     pub fn add_document_content_handlers<DT, CM, TX, DE>(
         &mut self,
         doctype_handler_data: Option<NonNull<DT>>,
@@ -262,36 +221,6 @@ impl HTMLRewriterBuilder {
         }
     }
 
-    /// Adds element content handlers to the builder for the
-    /// given CSS selector.
-    ///
-    /// Selector should be a valid UTF8-string.
-    ///
-    /// If a particular handler is not required then NULL can be passed
-    /// instead. Don't use stub handlers in this case as this affects
-    /// performance - rewriter skips parsing of the content that doesn't
-    /// need to be processed.
-    ///
-    /// Each handler can optionally have associated user data which will be
-    /// passed to the handler on each invocation along with the rewritable
-    /// unit argument.
-    ///
-    /// If any of handlers return LOL_HTML_STOP directive then rewriting
-    /// stops immediately and `write()` or `end()` of the rewriter methods
-    /// return an error code.
-    ///
-    /// Returns 0 in case of success and -1 otherwise. The actual error message
-    /// can be obtained using `lol_html_take_last_error` function.
-    ///
-    /// WARNING: Pointers passed to handlers are valid only during the
-    /// handler execution. So they should never be leaked outside of handlers.
-    // TODO(port): comptime fn-value params → trait-based trampolines (see add_document_content_handlers)
-    // PORT NOTE: Zig also checked `handler != null` (in addition to `handler_data != null`); the trait
-    // model assumes the handler is always present when data is Some, so (handler=null, data=non-null)
-    // is unrepresentable here.
-    // PORT NOTE: see `add_document_content_handlers` — `Option<NonNull<H>>` to
-    // permit the same handler allocation in multiple slots without aliased
-    // `&mut`.
     pub fn add_element_content_handlers<EL, CM, TX>(
         &mut self,
         selector: &mut HTMLSelector,
@@ -327,15 +256,6 @@ impl HTMLRewriterBuilder {
         }
     }
 
-    // TODO(port): Zig took comptime Writer/Done fn-values; modeled via OutputSink trait
-    //
-    // PORT NOTE: takes `*mut S` (not `&mut S`) so the userdata pointer stored
-    // in the C rewriter retains the caller's raw-pointer provenance (typically
-    // a `heap::alloc` root). If we took `&mut S`, the userdata would carry a
-    // tag derived from that short-lived Unique borrow, and any subsequent
-    // access through the caller's original raw pointer would invalidate it
-    // under Stacked Borrows — making the re-entrant `&mut *user_data` deref in
-    // `output_sink_function` UB.
     pub fn build<S: OutputSink>(
         &mut self,
         encoding: Encoding,
@@ -409,15 +329,6 @@ impl HTMLSelector {
         unsafe { lol_html_selector_free(selector) };
     }
 
-    /// Parses given CSS selector string.
-    ///
-    /// Returns NULL if parsing error occurs. The actual error message
-    /// can be obtained using `lol_html_take_last_error` function.
-    ///
-    /// WARNING: Selector SHOULD NOT be deallocated if there are any active rewriter
-    /// builders that accepted it as an argument to `lol_html_rewriter_builder_add_element_content_handlers()`
-    /// method. Deallocate all dependant rewriter builders first and then
-    /// use `lol_html_selector_free` function to free the selector.
     pub fn parse(selector: &[u8]) -> Result<*mut HTMLSelector, Error> {
         auto_disable();
 
@@ -450,12 +361,6 @@ impl TextChunkContent {
     }
 }
 
-// `TextChunk` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>` — `&TextChunk` /
-// `&mut TextChunk` are ABI-identical to a non-null pointer with no
-// `readonly`/`noalias` attribute. Shims whose only pointer argument is the
-// chunk itself (plus value-type returns) are declared `safe fn` so the
-// validity proof lives in the type signature instead of per-call `unsafe { }`.
-// Shims that take a separate (ptr,len) pair stay `unsafe`.
 unsafe extern "C" {
     safe fn lol_html_text_chunk_content_get(chunk: &TextChunk) -> TextChunkContent;
     safe fn lol_html_text_chunk_is_last_in_text_node(chunk: &TextChunk) -> bool;
@@ -493,12 +398,6 @@ impl TextChunk {
         auto_disable();
         lol_html_text_chunk_is_last_in_text_node(self)
     }
-    /// Inserts the content string before the text chunk either as raw text or as HTML.
-    ///
-    /// Content should be a valid UTF8-string.
-    ///
-    /// Returns 0 in case of success and -1 otherwise. The actual error message
-    /// can be obtained using `lol_html_take_last_error` function.
     pub fn before(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
@@ -510,12 +409,6 @@ impl TextChunk {
         }
         Ok(())
     }
-    /// Inserts the content string after the text chunk either as raw text or as HTML.
-    ///
-    /// Content should be a valid UTF8-string.
-    ///
-    /// Returns 0 in case of success and -1 otherwise. The actual error message
-    /// can be obtained using `lol_html_take_last_error` function.
     pub fn after(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
@@ -527,13 +420,6 @@ impl TextChunk {
         }
         Ok(())
     }
-    // Replace the text chunk with the content of the string which is interpreted
-    // either as raw text or as HTML.
-    //
-    // Content should be a valid UTF8-string.
-    //
-    // Returns 0 in case of success and -1 otherwise. The actual error message
-    // can be obtained using `lol_html_take_last_error` function.
     pub fn replace(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
@@ -772,12 +658,6 @@ impl Element {
             _ => unreachable!(),
         }
     }
-    /// Replaces the element with the provided text or HTML content.
-    ///
-    /// Content should be a valid UTF8-string.
-    ///
-    /// Returns 0 in case of success and -1 otherwise. The actual error message
-    /// can be obtained using `lol_html_take_last_error` function.
     pub fn replace(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
@@ -917,11 +797,6 @@ impl HTMLString {
             })
         };
     }
-
-    // `to_string(self) -> bun.String` and `to_js` live in the higher-tier
-    // wrapper at `bun_runtime::api::lolhtml_jsc::{html_string_to_string,
-    // html_string_to_js}` — this *_sys crate has no `bun_string` / `bun_jsc`
-    // dependency.
 }
 
 // ─── EndTag ───────────────────────────────────────────────────────────────
@@ -1225,11 +1100,6 @@ pub trait DirectiveCallback<Container> {
     fn call(&mut self, container: &mut Container) -> bool;
 }
 
-// Zig: pub fn DirectiveHandler(comptime Container, comptime UserDataType, comptime Callback) DirectiveFunctionType(Container)
-// Rust: monomorphized extern "C" trampoline per <Container, UserDataType>.
-// TODO(port): Zig took the callback as a comptime fn-value (multiple callbacks per type possible).
-// Rust trait dispatch allows one callback per (UserDataType, Container) pair. If callers need
-// multiple, add a const-generic fn-pointer wrapper or distinct ZST marker types.
 pub unsafe extern "C" fn directive_handler<Container, U: DirectiveCallback<Container>>(
     this: *mut Container,
     user_data: *mut c_void,

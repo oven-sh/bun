@@ -4,10 +4,6 @@ use core::ffi::c_void;
 
 use crate::{Alignment, AllocatorVTable, StdAllocator};
 
-/// PORT NOTE: Zig stored `{ ptr: *anyopaque, vtable: ?*const VTable }` and
-/// recovered the `Allocator` by null-checking the vtable. Rust models the same
-/// thing directly — `vtable: Option<&'static AllocatorVTable>` carries the
-/// niche, so the struct is identical in size to `StdAllocator`.
 #[derive(Clone, Copy)]
 pub struct NullableAllocator {
     ptr: *mut c_void,

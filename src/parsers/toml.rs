@@ -74,10 +74,6 @@ impl<'a> TOML<'a> {
             _ => {}
         }
 
-        // PORT NOTE: Zig copies the `Source` by value (`source_.*`). The Rust
-        // `Lexer` borrows it (`&'a Source`) so `identifier`/`string_literal_slice`
-        // can point into `source.contents` for `'a` without a self-referential
-        // struct — no copy needed.
         let mut parser = TOML::init(bump, source_, log, redact_logs)?;
 
         parser.run_parser()
@@ -300,10 +296,6 @@ impl<'a> TOML<'a> {
                     let loc = rope.head.loc;
                     debug_assert!(loc.start > 0);
                     let start: u32 = u32::try_from(loc.start).expect("int cast");
-                    // std.ascii.whitespace = { ' ', '\t', '\n', '\r', 0x0B, 0x0C }
-                    // PORT NOTE: reshaped for borrowck — `self.source()` returns
-                    // `&'a Source` (independent of `&self`), so bind it before
-                    // the `&mut self.lexer` borrow below.
                     let src: &'a bun_ast::Source = self.source();
                     let key_name = bun_core::strings::trim_right(
                         &src.contents[start as usize..rope_end],
@@ -323,14 +315,6 @@ impl<'a> TOML<'a> {
     }
 
     pub fn parse_value(&mut self) -> Result<Expr, bun_core::Error> {
-        // Zig: `bun.throwStackOverflow()` guarded only by `StackCheck`. The
-        // Rust port previously added a hard depth cap because release-mode
-        // frames are smaller than Zig's (Zig didn't emit LLVM lifetime
-        // annotations, so `parse_value`'s frame was the union of all locals
-        // including the `stackFallback(@sizeOf(Rope)*6)` buffer; Rust's is
-        // just the live set). The cap was an artificial limit on a feature —
-        // the test's `depth = 25_000` was Zig-calibrated and is now bumped to
-        // a value that exhausts the 18 MB stack regardless of frame size.
         if !self.stack_check.is_safe_to_recurse() {
             return Err(bun_core::err!("StackOverflow"));
         }

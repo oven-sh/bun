@@ -11,18 +11,6 @@ type vm_size_t = usize;
 // TODO(port): `enable_asan` mapped to a cargo feature; verify the build wires this the same way.
 pub const ENABLED: bool = cfg!(debug_assertions) && cfg!(target_os = "macos") && !cfg!(bun_asan);
 
-/// Zig: `pub fn getZone(comptime name: [:0]const u8) *Zone`
-///
-/// Each comptime instantiation in Zig gets its own `static var zone` + `std.once`.
-/// The faithful Rust translation is the crate-root `get_zone!` macro in lib.rs
-/// that expands a fresh `OnceLock` per call site (per literal name). Not
-/// duplicated here to avoid path-export collisions on macOS.
-
-/// Runtime `getZone(name)` — looks up (or creates) the per-name zone. The
-/// `get_zone!` macro is the zero-cost form. This runtime path keys a
-/// process-global map for callers that pass a non-literal name.
-// TODO(port): could be replaced with a `#[heap_label]` derive that expands
-// `get_zone!` directly.
 #[allow(clippy::assertions_on_constants)]
 pub fn get_zone(name: &[u8]) -> &'static Zone {
     debug_assert!(
@@ -31,10 +19,6 @@ pub fn get_zone(name: &[u8]) -> &'static Zone {
     );
 
     use core::cell::UnsafeCell;
-    // Map key = `name` (no NUL) so lookups match inserts. The NUL-terminated
-    // label handed to `malloc_set_zone_name` is stored as the map *value*
-    // (alongside the zone) to keep its allocation alive for 'static
-    // (PORTING.md §Forbidden: never `Box::leak`).
     struct ZoneTable(UnsafeCell<Vec<(Vec<u8>, Vec<u8>, &'static Zone)>>);
     // SAFETY: the inner `Vec` is only accessed while `LOCK` is held.
     unsafe impl Sync for ZoneTable {}
@@ -63,16 +47,6 @@ pub fn get_zone(name: &[u8]) -> &'static Zone {
 }
 
 bun_opaque::opaque_ffi! {
-    /// Zig: `pub const Zone = opaque { ... };`
-    ///
-    /// Opaque FFI handle for a macOS `malloc_zone_t`.
-    ///
-    /// The `UnsafeCell` field makes `Zone: !Freeze`, so a `&Zone` does not assert
-    /// immutability of the pointee. This is required because every malloc-zone FFI
-    /// call (`malloc_zone_memalign`, `malloc_zone_free`, …) mutates the zone's
-    /// internal state, and Zig models the handle as a freely-aliasing `*Zone`.
-    /// Without `UnsafeCell`, casting `&Zone as *const _ as *mut _` and writing
-    /// through it (via FFI) is UB under Stacked Borrows.
     pub struct Zone;
 }
 
@@ -150,15 +124,6 @@ impl Zone {
         Zone::aligned_alloc(unsafe { &*(zone.cast::<Zone>()) }, len, alignment)
     }
 
-    // Zig exposed a `pub const vtable: std.mem.Allocator.VTable` with
-    // { alloc, resize, remap = noRemap, free }. In Rust the equivalent is an
-    // `impl crate::Allocator for Zone` (see below); the raw vtable struct is a
-    // Zig-ism and is not materialized here, so the `resize`/`free` vtable thunks
-    // (and the `malloc_size` helper they used) are not ported.
-    // TODO(port): if `bun_alloc::Allocator` ever becomes a literal vtable struct
-    // (to match `std.mem.Allocator` ABI), reintroduce a `pub static VTABLE`
-    // along with the `resize`/`raw_free` thunks.
-
     /// Zig: `pub fn allocator(zone: *Zone) std.mem.Allocator`
     pub fn allocator(&'static self) -> &'static dyn crate::Allocator {
         self
@@ -202,19 +167,11 @@ impl Zone {
         unsafe { malloc_zone_free(self.as_mut_ptr(), ptr.cast()) };
     }
 
-    /// Zig: `pub fn isInstance(allocator_: std.mem.Allocator) bool`
-    ///
-    /// Zig: `return allocator_.vtable == &vtable;` — implemented as a `TypeId`
-    /// identity check via the `Allocator::type_id()` hook.
     pub fn is_instance(allocator_: &dyn crate::Allocator) -> bool {
         allocator_.is::<Self>()
     }
 }
 
-// `crate::Allocator` is a marker trait carrying `type_id()`; the Zig vtable
-// methods (`alloc`/`resize`/`free`) are inherent on `Zone` above (`raw_alloc`,
-// `resize`, `raw_free`). This impl makes `Zone` usable as `&dyn Allocator`
-// for `is_instance` identity checks.
 impl crate::Allocator for Zone {}
 
 // TODO(port): move to bun_alloc_sys (or keep here gated `#[cfg(target_os = "macos")]`
@@ -226,11 +183,6 @@ unsafe extern "C" {
     /// No preconditions; allocates a new zone (process-lifetime).
     pub(crate) safe fn malloc_create_zone(start_size: vm_size_t, flags: c_uint) -> *mut Zone;
     pub fn malloc_destroy_zone(zone: *mut Zone);
-    // `&Zone` is ABI-identical to libmalloc's `malloc_zone_t *` (thin non-null
-    // pointer to an `opaque_ffi!` `!Freeze` struct — interior mutation by C is
-    // sound). The reference type encodes the only pointer-validity precondition,
-    // so `safe fn` discharges the link-time proof for the pure-allocation entry
-    // points (alloc/calloc/valloc/memalign return null on failure).
     pub(crate) safe fn malloc_zone_malloc(zone: &Zone, size: usize) -> *mut c_void;
     pub(crate) safe fn malloc_zone_calloc(
         zone: &Zone,

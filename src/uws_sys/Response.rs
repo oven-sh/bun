@@ -18,14 +18,6 @@ use crate::thunk::OpaqueHandle;
 use crate::us_socket_t;
 use bun_core::{BoundedArray, Fd};
 
-// ─── Forward-declared opaques (cycle-break: were `bun_uws::*`, tier > 0) ───
-/// Remote socket address as returned by uWS. The IP text is copied into
-/// inline storage at construction.
-///
-/// Canonical definition moved down from `bun_uws`
-/// (Zig: `uws.SocketAddress = struct { ip: []const u8, port: i32, is_ipv6: bool }`).
-/// Higher tiers (`bun_uws`, `bun_runtime`) re-export this as
-/// `pub use bun_uws_sys::SocketAddress;`.
 pub struct SocketAddress {
     ip: BoundedArray<u8, 64>,
     pub port: i32,
@@ -69,11 +61,6 @@ bun_opaque::opaque_ffi! {
     pub struct WebSocketUpgradeContext;
 }
 
-/// Opaque handle for `uws::Response<SSL>`.
-///
-/// In Zig this is `pub fn NewResponse(ssl_flag: i32) type { return opaque { ... } }`.
-/// Rust models the comptime `ssl_flag` as a `const SSL: bool` parameter on an opaque
-/// extern type (Nomicon pattern).
 #[repr(C)]
 pub struct Response<const SSL: bool> {
     _p: core::cell::UnsafeCell<[u8; 0]>,
@@ -96,10 +83,6 @@ impl<const SSL: bool> Response<SSL> {
         std::ptr::from_mut::<Self>(self).cast::<c::uws_res>()
     }
 
-    /// `&mut uws_res` view of self for `safe fn` shims. Both types are
-    /// `#[repr(C)]` opaque ZSTs with `UnsafeCell<[u8; 0]>`, so the cast is a
-    /// no-op and the reference is ABI-identical to the non-null pointer the C
-    /// shim expects.
     #[inline]
     fn as_raw(&mut self) -> &mut c::uws_res {
         // SAFETY: `Response<SSL>` and `c::uws_res` are layout-identical opaque
@@ -350,13 +333,6 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
-    /// Register an on-writable callback.
-    ///
-    /// Zig takes `comptime handler` and bakes it into the trampoline at
-    /// monomorphization time. Rust models this by requiring `H` to be a
-    /// zero-sized type (function item or capture-less closure): the trampoline
-    /// is monomorphized over `H` and conjures the ZST inside, so the user
-    /// handler is baked in with no runtime storage.
     pub fn on_writable<U, H>(&mut self, _handler: H, user_data: *mut U)
     where
         H: Fn(*mut U, u64, &mut Response<SSL>) -> bool + Copy + 'static,
@@ -520,10 +496,6 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_end_stream(Self::ssl_flag(), self.as_raw(), close_connection)
     }
 
-    /// Run `handler` while the response is corked. Zig signature took
-    /// `comptime handler: anytype, args_tuple: ArgsTuple(@TypeOf(handler))`;
-    /// in Rust callers pass a closure capturing what would have been the args tuple.
-    // PORT NOTE: reshaped — `(handler, args_tuple)` collapsed to `FnOnce()`.
     pub fn corked<F: FnOnce()>(&mut self, f: F) {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr op explicitly.
@@ -608,13 +580,6 @@ pub enum AnyResponse {
     H3(*mut H3Response),
 }
 
-// Helper: dispatch to the underlying response, calling the same-named method on each
-// variant. The Zig `switch (this) { inline else => |resp| resp.method(args...) }`
-// monomorphizes per variant; we write the three arms out by hand.
-//
-// The per-variant `*mut → &mut` deref is internalized via `OpaqueHandle`
-// (S019): each variant payload is a ZST opaque, so the deref is sound by
-// construction and needs no `unsafe` at the dispatch site.
 macro_rules! any_dispatch {
     ($self:expr, |$r:ident| $body:expr) => {
         match $self {
@@ -634,23 +599,6 @@ macro_rules! any_dispatch {
     };
 }
 
-/// Stamp the per-variant ZST adapter triplet and register it via the matching
-/// `Response<SSL>` / `H3Response` `$method`. Mirrors Zig's hand-rolled
-/// `wrapper` structs in `Response.zig` (`onData`/`onWritable`/`onTimeout`/
-/// `onAborted`): each arm is a generic fn *item* monomorphized over `<U, H>`,
-/// so it is itself a ZST satisfying both the `Response<SSL>` bound
-/// (`Fn(*mut U, …)`) and the `H3Response` bound (`Fn(&mut U, …)`). The H3 arm
-/// bridges its `&mut U` to the body's uniform `*mut U` via `ptr::from_mut`.
-///
-/// Syntax:
-///   any_response_register_cb! {
-///       self, $method, $opt_data;
-///       <U, H: [bounds…]>
-///       |u $(, pre: PreTy)* ; r, any $(, post: PostTy)*| -> Ret { body }
-///   }
-/// - `u` is bound as `*mut U` in the body (H3's `&mut U` is rebound).
-/// - `r` is the typed `&mut {TLS,TCP,H3}Response` param; `any` is the
-///   `AnyResponse` re-wrap of `r`. Underscore-prefix either if unused.
 macro_rules! any_response_register_cb {
     (
         $self:expr, $method:ident, $opt_data:expr;
@@ -1038,10 +986,6 @@ pub mod c {
         pub struct uws_res;
     }
 
-    // `uws_res` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>`, so `&uws_res` /
-    // `&mut uws_res` are ABI-identical to a non-null pointer. Value-typed
-    // shims are `safe fn`; (ptr,len), nullable raw, *mut c_void ctx stay
-    // unsafe.
     unsafe extern "C" {
         pub(crate) safe fn uws_res_mark_wrote_content_length_header(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_write_mark(ssl: i32, res: &mut uws_res);

@@ -92,10 +92,6 @@ impl PathPair {
     }
 }
 
-// Re-export of `bun_ast::SideEffects`.
-// Spec: options.zig:884 `Loader.sideEffects()` returns `bun.resolver.SideEffects`
-// — the SAME type stored in `Result.primary_side_effects_data`. Re-export so
-// `result.primary_side_effects_data = loader.side_effects()` type-checks.
 use bun_ast::SideEffects;
 
 pub struct Result {
@@ -217,11 +213,6 @@ pub enum ResultUnion {
 }
 
 impl Result {
-    /// Read-only view of `package_json`. The field stores `Option<*const _>`
-    /// (rather than `Option<&'static _>`) so [`Default`] / zeroed-init stays
-    /// bit-valid; callers that only read go through here. Single deref site
-    /// for the ARENA-backed pointer — same invariant as
-    /// [`dir_info::DirInfo::package_json`].
     #[inline]
     pub fn package_json_ref(&self) -> Option<&'static PackageJSON> {
         Self::deref_package_json(self.package_json)
@@ -352,10 +343,6 @@ impl DebugMeta {
                 r
             };
             let data = bun_ast::range_data(source, suggestion_range, self.suggestion_message);
-            // PORT NOTE: Zig spec writes `data.location.?.suggestion = m.suggestion_text`
-            // here, but `logger.Location` (logger.zig:73) has no `suggestion` field —
-            // `logErrorMsg` is uncalled in the Zig source so the field access is never
-            // type-checked under lazy compilation. Mirror the effective behavior (no-op).
             let _ = &self.suggestion_text;
             self.notes.push(data);
         }
@@ -374,12 +361,6 @@ impl DebugMeta {
 
 pub struct DirEntryResolveQueueItem {
     pub result: allocators::Result,
-    // PORT NOTE: `RawSlice<u8>` (not `&'static [u8]`) — these point into the
-    // threadlocal `dir_info_uncached_path` buffer and are consumed before
-    // `dir_info_cached_maybe_log` returns. `RawSlice` is `repr(transparent)`
-    // over `*const [u8]` so the bit-level zero-init invariant for `Bufs` is
-    // unchanged (the array slot is `MaybeUninit`-wrapped), and read sites use
-    // safe `.slice()` instead of an open-coded raw-ptr deref.
     pub unsafe_path: bun_ptr::RawSlice<u8>,
     pub safe_path: bun_ptr::RawSlice<u8>,
     pub fd: FD,
@@ -505,12 +486,6 @@ impl Default for MatchResult {
     }
 }
 
-/// Discriminant-only return for the resolver call chain. The `MatchResult`
-/// payload (~300 bytes) is written through an `out: &mut MatchResult` parameter
-/// instead of being moved by value through every nested level. **`out` is only
-/// valid to read when the returned status is `Success`**; on `NotFound` /
-/// `Pending` / `Failure` it may hold partially-written state from an earlier
-/// attempt and must be ignored.
 pub enum MatchStatus {
     NotFound,
     Success,
@@ -560,11 +535,6 @@ impl PendingResolution {
         dependency: Dependency::Version,
         resolution_id: Install::PackageID,
     ) -> core::result::Result<PendingResolution, bun_core::Error> {
-        // PORT NOTE: Zig body called `try esm.copy(allocator)` and left `string_buf`
-        // / `tag` defaulted; that fn was never compiled (Zig lazy-analyzes unreferenced
-        // fns). `Package::copy` is the count→allocate→clone Builder dance the live
-        // call sites open-code, so thread the freshly-allocated buffer into
-        // `string_buf` here so `Drop` frees what backs the cloned `esm` strings.
         let (esm, string_buf) = esm.copy()?;
         Ok(PendingResolution {
             esm,

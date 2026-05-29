@@ -15,18 +15,6 @@ use super::package::scripts::Scripts as PackageScripts;
 use super::tree::{DepthBuf, IteratorPathStyle, MAX_DEPTH};
 use super::{FormatVersion, Lockfile, Package, package_index, tree};
 
-// TODO(refactor): `w: anytype` is a `std.json.WriteStream`-shaped writer. Introduce a
-// `JsonWriter` trait in bun_core (or bun_collections) with the methods used below:
-// begin_object/end_object/begin_array/end_array/object_field/write/write_null/print.
-// `write` is generic over JSON-encodable scalars (bool, integers, &[u8]).
-//
-// PORT NOTE: Zig used `defer w.endObject() catch {}` so that closing braces are emitted
-// on both success and error paths (with the close error swallowed). In Rust the `?`
-// early-return drops the borrow on `w`, and a scopeguard would need a second `&mut w`.
-// Since this output is debug-only and an error mid-stream already yields malformed JSON,
-// the port emits the matching `end_*` call at the natural end of each scope and swallows
-// its error with `let _ = ...;`. The error-path close is intentionally dropped.
-
 fn json_stringify_dependency<W>(
     this: &Lockfile,
     w: &mut W,
@@ -566,10 +554,6 @@ fn origin_name(o: Origin) -> &'static str {
     }
 }
 
-/// Port of the `w: anytype` `std.json.WriteStream` protocol used by
-/// `Lockfile.jsonStringify`. `write` is bounded over [`JsonScalar`] so the
-/// concrete [`WriteStream`] impl can encode bool / integer / byte-string
-/// uniformly (Zig's `WriteStream.write` switches on `@TypeOf` at comptime).
 pub trait JsonWriter {
     fn begin_object(&mut self) -> Result<(), bun_core::Error>;
     fn end_object(&mut self) -> Result<(), bun_core::Error>;
@@ -629,10 +613,6 @@ impl<const N: usize> JsonScalar for &[u8; N] {
     }
 }
 
-/// Zig: `std.json.encodeJsonString` — quote + escape the minimal RFC-8259 set
-/// (`"`, `\`, U+0000..U+001F). Input is treated as already-valid UTF-8/WTF-8;
-/// the lockfile string buffer never carries lone control bytes outside that
-/// range, so the high-bit passthrough matches Zig's behaviour.
 fn encode_json_string(s: &[u8], out: &mut Vec<u8>) {
     out.push(b'"');
     for &c in s {
@@ -661,10 +641,6 @@ pub struct WriteStreamOptions {
     /// would be `.minified`; the binding always passes `2`.
     pub indent: usize,
     pub emit_nonportable_numbers_as_strings: bool,
-    // `emit_null_optional_fields` is consumed by Zig's reflection-based
-    // `stringify`, not by `WriteStream` itself; `jsonStringify` is hand-rolled
-    // and emits `write_null()` explicitly, so the flag is a no-op here. Kept
-    // for spec parity with the call site in `install_binding.zig`.
     pub emit_null_optional_fields: bool,
 }
 

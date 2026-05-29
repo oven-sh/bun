@@ -10,29 +10,10 @@ const _: () = assert!(IMPORT_PATH.len().is_multiple_of(8));
 
 pub(crate) struct FallbackModule {
     pub path: fs::Path<'static>,
-    // PORT NOTE: Zig stored `*const PackageJSON` to a comptime literal (rvalue static
-    // promotion). PackageJSON has heap-backed fields (`Box<[u8]>`, hash maps) that cannot
-    // be const-constructed, so the LazyLock below owns the PackageJSONs and we hand out
-    // `&'static` borrows into it.
     pub package_json: &'static PackageJSON,
     pub code: fn() -> &'static str,
 }
 
-// This workaround exists to allow bun_core::runtime_embed_file to work.
-// Using `include_str!` forces you to wait for the native build to finish in
-// debug builds, even when you only changed JS builtins.
-//
-// PORT NOTE: Zig's `createSourceCodeGetter(comptime code_path: string)` returned a
-// `*const fn () string` by defining a nested struct with a `get` fn closing over the
-// comptime path. Rust fn pointers cannot close over const-generic `&str` on stable, so
-// this is expressed as a macro that expands to a local `fn get()` and yields its pointer.
-//
-// Release builds (`bun_codegen_embed`) embed the zstd-compressed `<name>.js.zst`
-// written by the codegen step (src/node-fallbacks/build-fallbacks.ts) and
-// decompress it lazily on first access; these polyfills are only ever read when
-// bundling with `--target=browser`, so everything else stops paying ~1 MB of
-// .rodata for the plain text. Debug builds keep loading the uncompressed `.js`
-// from `BUN_CODEGEN_DIR` at runtime so JS-only edits don't need a native rebuild.
 macro_rules! create_source_code_getter {
     ($code_path:literal) => {{
         // `$code_path` is relative to `BUN_CODEGEN_DIR` (codegen output, not
@@ -72,12 +53,6 @@ macro_rules! create_source_code_getter {
     }};
 }
 
-// PORT NOTE: Zig's `pub fn init(comptime name: string) FallbackModule` did comptime string
-// concatenation (`++`) and took the address of a comptime `PackageJSON` literal. PackageJSON
-// is not const-constructible in Rust (Box<[u8]>/HashMap fields), so per PORTING.md
-// §Concurrency this is a `LazyLock` runtime-init singleton. `@setEvalBranchQuota` is dropped.
-//
-// PERF(port): Zig used a comptime perfect-hash map; this builds at first access.
 macro_rules! fallback_module_init {
     ($name:literal, $code_path:literal) => {{
         const _VERSION: &[u8] = b"0.0.0-polyfill";
@@ -112,11 +87,6 @@ type FallbackEntry = (
     fn() -> &'static str,
 );
 
-// PORT NOTE: `PackageJSON` is `!Sync` (contains `StringArrayHashMap` with a
-// `Cell<bool>`), so it cannot live in `LazyLock`/`OnceLock`. Zig built this at
-// comptime (no thread-safety concern); the Rust port uses `RacyCell` + `Once`,
-// which matches the "process-lifetime singleton, init once, read-only thereafter"
-// shape. All reads go through `modules()`/`map()` which assert init ordering.
 static MODULES: bun_core::RacyCell<Option<Box<[FallbackEntry]>>> = bun_core::RacyCell::new(None);
 static MAP: bun_core::RacyCell<Option<bun_collections::StringHashMap<FallbackModule>>> =
     bun_core::RacyCell::new(None);

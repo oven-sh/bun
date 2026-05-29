@@ -9,11 +9,6 @@
 
 #![no_std]
 
-/// Named ANSI SGR escape sequences. One canonical literal per colour/attribute;
-/// every other crate aliases this module rather than re-declaring the bytes.
-///
-/// `WHITE` is SGR 37 (normal). printDiff.zig:177 uses SGR 97 — that is
-/// [`BRIGHT_WHITE`], kept distinct so diff output stays byte-identical.
 pub mod ansi {
     pub const RESET: &str = "\x1b[0m";
     pub const BOLD: &str = "\x1b[1m";
@@ -35,10 +30,6 @@ pub mod ansi {
     pub(crate) const BG_GREEN: &str = "\x1b[42m";
 }
 
-/// Byte-slice views of [`ansi`] for callers that write into `&[u8]` buffers
-/// (md ANSI renderer, stack-frame colour codes). `str::as_bytes` is a `const
-/// fn`, so each constant is the *same* static storage as its `&str` twin —
-/// no second copy of the escape bytes is emitted.
 pub mod ansi_b {
     use super::ansi;
     pub const RESET: &[u8] = ansi::RESET.as_bytes();

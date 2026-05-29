@@ -31,11 +31,6 @@ use core::ptr::NonNull;
 
 use bun_collections::ArrayHashMap;
 
-// PORT NOTE: Zig `*const fn(*anyopaque) bool`. Declared `extern "C"` so the
-// same fn-pointer type can flow across the FFI boundary (e.g.
-// `Bun__VM__postDeferredTask`) without an ABI-crossing fn-ptr cast. All in-tree
-// producers go through monomorphic `extern "C"` trampolines (see
-// `AutoFlusher::erase_flush_callback`).
 pub type DeferredRepeatingTask = unsafe extern "C" fn(*mut c_void) -> bool;
 
 #[derive(Default)]
@@ -65,13 +60,6 @@ impl DeferredTaskQueue {
     }
 
     pub fn run(&mut self) {
-        // PORT NOTE: Zig used `swapRemoveAt(i)` (O(1) by index). The current
-        // `ArrayHashMap` exposes `keys()/values()` slices and `swap_remove(&K)`
-        // (O(n) hash lookup) but not `swap_remove_at`. Keys here are `Copy`
-        // pointers, so copy the key out and remove by key — semantically
-        // identical (keys are unique), just an extra hash per removal.
-        // PERF(port): swap_remove(&K) re-hashes; restore swap_remove_at when
-        // bun_collections::ArrayHashMap grows it.
         let mut i: usize = 0;
         let mut last = self.map.len();
         while i < last {

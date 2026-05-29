@@ -470,11 +470,6 @@ fn print_modified_segment_without_diffdiff(
 }
 
 fn should_highlight_char(char: u8) -> bool {
-    // Highlight whitespace and control characters:
-    // - Control characters (< 0x20)
-    // - Space (0x20)
-    // - Tab is included in control chars (0x09)
-    // - Delete character (0x7F)
     if char <= 0x20 {
         return true;
     } // includes space and all control chars
@@ -508,15 +503,6 @@ fn print_modified_segment(
         return print_modified_segment_without_diffdiff(writer, config, segment, modified_style);
     }
 
-    // Fast-path the post-diff "diff too significant" check below: the maximum
-    // possible Equal length in the char-level diff is `min(removed, inserted)`,
-    // so the larger side's highlighted length is at least `larger - smaller`.
-    // When `smaller * 3 < larger`, that lower bound already exceeds
-    // `larger * 2/3`, which is exactly the bailout threshold below — so the
-    // expensive `Dmp::diff` (which on a multi-megabyte segment burns its full
-    // 1-second deadline inside `diff_bisect` and allocates two O(n) work
-    // vectors) would be discarded anyway. Skip straight to the no-diffdiff
-    // renderer in that case. Output is byte-identical to falling through.
     {
         let r = segment.removed.len();
         let i = segment.inserted.len();

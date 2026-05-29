@@ -1,16 +1,4 @@
 #![forbid(unsafe_code)]
-//! Managed `ArrayList` wrappers.
-//!
-//! PORT NOTE: The Zig original wraps `std.ArrayListAlignedUnmanaged` to add two things:
-//!   1. A stored allocator (managed vs unmanaged split).
-//!   2. "Deep" semantics — `deinit`/`clear`/`shrink`/`replaceRange` call `deinit` on each
-//!      removed item, with `*Shallow` variants that skip that.
-//!
-//! In Rust, (1) disappears entirely — `Vec<T>` uses the global mimalloc allocator and the
-//! `Allocator` type parameter is dropped per §Allocators in PORTING.md. (2) is the *default*
-//! behavior of `Vec<T>`: removing/dropping elements runs their `Drop`. So the "deep" methods
-//! map to ordinary `Vec` operations; the `*Shallow` variants had no in-tree callers and are
-//! not ported.
 
 use core::mem;
 
@@ -18,32 +6,12 @@ use bun_alloc::AllocError;
 
 use super::vec_ext::VecExt;
 
-/// Managed `ArrayList` using an arbitrary allocator.
-/// Prefer using a concrete type, like `ArrayListDefault`.
-///
-/// NOTE: Unlike Zig's `std.ArrayList`, dropping this type runs `Drop` on each of the items.
-// PORT NOTE: `std.mem.Allocator` type param dropped — global mimalloc (non-AST crate).
 pub type ArrayList<T> = ArrayListAlignedIn<T>;
 
-/// Managed `ArrayList` using the default allocator. No overhead compared to an unmanaged
-/// `ArrayList`.
-///
-/// NOTE: Unlike Zig's `std.ArrayList`, dropping this type runs `Drop` on each of the items.
-// PORT NOTE: `bun.DefaultAllocator` type param dropped — global mimalloc.
 pub type ArrayListDefault<T> = ArrayListAlignedIn<T>;
 
-/// Managed `ArrayList` using a specific kind of allocator.
-///
-/// NOTE: Unlike Zig's `std.ArrayList`, dropping this type runs `Drop` on each of the items.
-// PORT NOTE: `Allocator` type param dropped — global mimalloc.
 pub type ArrayListIn<T> = ArrayListAlignedIn<T>;
 
-/// Managed `ArrayListAligned` using an arbitrary allocator.
-///
-/// NOTE: Unlike Zig's `std.ArrayList`, dropping this type runs `Drop` on each of the items.
-// TODO(port): const-generic alignment param. Rust `Vec<T>` uses `align_of::<T>()` and has no
-// over-alignment knob; if any caller passes a non-null `alignment`, that call site needs a
-// `#[repr(align(N))]` newtype wrapper around `T` instead.
 pub type ArrayListAligned<T> = ArrayListAlignedIn<T>;
 
 /// Managed `ArrayListAligned` using the default allocator.
@@ -51,11 +19,6 @@ pub type ArrayListAligned<T> = ArrayListAlignedIn<T>;
 /// NOTE: Unlike Zig's `std.ArrayList`, dropping this type runs `Drop` on each of the items.
 pub type ArrayListAlignedDefault<T> = ArrayListAlignedIn<T>;
 
-/// Managed `ArrayListAligned` using a specific kind of allocator.
-///
-/// NOTE: Unlike Zig's `std.ArrayList`, dropping this type runs `Drop` on each of the items.
-// PORT NOTE: Zig's `fn(...) type` factory → generic struct (PORTING.md §Idiom map).
-// Allocator type param dropped; alignment param dropped (see ArrayListAligned TODO above).
 #[derive(Default)]
 pub struct ArrayListAlignedIn<T> {
     /// Zig: `#unmanaged: Unmanaged = .empty`
@@ -159,11 +122,6 @@ impl<T> ArrayListAlignedIn<T> {
         Ok(self.unmanaged.into_boxed_slice())
     }
 
-    /// Creates a copy of this `ArrayList` with copies of its items.
-    ///
-    /// PORT NOTE: Zig makes *bitwise* (shallow) copies regardless of whether `T` has a
-    /// `deinit`. Rust cannot bit-copy a non-`Copy` `T` safely. This is bound on `T: Clone`;
-    /// callers that relied on shallow-copy-then-`deinitShallow` need a redesign.
     pub fn clone(&self) -> Result<Self, AllocError>
     where
         T: Clone,
@@ -337,18 +295,10 @@ impl<T> ArrayListAlignedIn<T> {
         self.unmanaged.extend(core::iter::repeat_n(value, n));
     }
 
-    /// If `new_len` is less than the current length, this method will `Drop` the removed items.
-    ///
-    /// If `new_len` is greater than the current length, note that this creates copies of
-    /// `init_value`.
     pub fn resize(&mut self, init_value: T, new_len: usize) -> Result<(), AllocError>
     where
         T: Clone,
     {
-        // PORT NOTE: Zig calls `resizeWithoutDeinit` first, *then* deinits the tail via a raw
-        // pointer past `len` (`items().ptr[new_len..len]`). That ordering is to avoid a failed
-        // realloc leaving already-deinited items in the list. `Vec::resize` already drops the
-        // truncated tail in the shrink case and never fails, so the ordering concern vanishes.
         self.unmanaged.resize(new_len, init_value);
         Ok(())
     }
@@ -449,11 +399,5 @@ impl<T> ArrayListAlignedIn<T> {
 
     // Zig `getStdAllocator` — dropped (no allocator field).
 }
-
-// PORT NOTE: Zig `pub fn deinit` → `impl Drop`. The Zig body is
-//   `bun.memory.deinit(self.items()); self.deinitShallow();`
-// i.e. drop every item, then free the backing buffer. `Vec<T>`'s own `Drop` does both, so per
-// PORTING.md ("If the body only frees/deinits owned fields, delete the body entirely") no
-// explicit `impl Drop for ArrayListAlignedIn<T>` is written.
 
 // ported from: src/collections/array_list.zig

@@ -41,10 +41,6 @@ pub struct SSLContextCache {
 
 pub type Digest = [u8; 32];
 
-/// SHA-256 output is uniformly distributed, so the first 4 bytes are a perfect
-/// bucket hash — no need to re-Wyhash 32 bytes (what AutoContext would do).
-/// `eql` still compares the full digest. `store_hash = false` since recompute
-/// is a single load.
 pub struct DigestContext;
 
 impl DigestContext {
@@ -113,10 +109,6 @@ impl SSLContextCache {
             }
         }
 
-        // Miss (or tombstoned): build outside the lock. `create_ssl_context` does
-        // file I/O / cert parsing and on Windows the system-CA load — none of
-        // which has a reason to serialize, and holding a non-reentrant SRWLock
-        // across an SSL_CTX_free that *did* tombstone would self-deadlock.
         let ctx = opts.create_ssl_context(err)?;
 
         let _guard = self.mutex.lock_guard();
@@ -206,15 +198,6 @@ impl SSLContextCache {
     }
 }
 
-/// `CRYPTO_EX_free` for the cache slot. `ptr` is the `*Entry` we stashed via
-/// `SSL_CTX_set_ex_data` (null for CTXs that never went through the cache —
-/// e.g. `HTTPThread`'s, or build-fail paths). Runs synchronously inside
-/// whichever `SSL_CTX_free` took the refcount to zero, on that caller's
-/// thread; for the per-VM cache that's always the JS thread.
-// `ptr` is the ex_data slot value: null (CTX never went through the cache) or
-// a live `*Entry`; the deref is null-guarded. The C `CRYPTO_EX_free` ABI fixes
-// the parameter as `void*`, so the function cannot be marked `unsafe` or take a
-// reference — not_unsafe_ptr_arg_deref is a false positive here.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub extern "C" fn bun_ssl_ctx_cache_on_free(
@@ -241,10 +224,6 @@ pub extern "C" fn bun_ssl_ctx_cache_on_free(
 }
 
 impl Drop for SSLContextCache {
-    /// VM teardown. Clears each live entry's ex_data so the eventual
-    /// `SSL_CTX_free` (from sockets/SecureContexts that outlive RareData) doesn't
-    /// dereference the freed `Entry`/map. Map itself holds no refs, so no
-    /// `SSL_CTX_free` here.
     fn drop(&mut self) {
         let _guard = self.mutex.lock_guard();
         for &entry in self.map.values() {

@@ -99,13 +99,6 @@ impl Default for ListValue {
     }
 }
 
-/// Dispatch a single body over both `ListValue` arms — Rust's spelling of Zig's
-/// `switch (this.impl) { inline else => |*list| ... }`. `$body` is duplicated
-/// textually so each arm monomorphizes over its own `MultiArrayList<T>`; the
-/// arms therefore need NOT have a common element type, only a common `$body`
-/// result type. Match-ergonomics governs the borrow: pass `&v` / `&mut v` and
-/// `$l` binds by-ref / by-ref-mut accordingly. Mirrors `any_dispatch!` at
-/// src/uws_sys/Response.rs:581.
 macro_rules! both_lists {
     ($v:expr, |$l:ident| $body:expr) => {
         match $v {
@@ -205,10 +198,6 @@ impl List {
     }
 
     pub fn sort(&mut self) {
-        // `MultiArrayList::sort(&mut self, ctx)` swaps the `generated` column
-        // in place, so the comparator cannot hold a `&[LineColumnOffset]` over
-        // it (that aliased the swap before this rewrite). Instead capture the
-        // raw column base + len; the column is never reallocated during sort.
         both_lists!(&mut self.r#impl, |list| {
             let generated: *const LineColumnOffset =
                 list.items_raw::<"generated", LineColumnOffset>();
@@ -342,11 +331,6 @@ pub struct Lookup {
 }
 
 impl Lookup {
-    /// This creates a bun.String if the source remap *changes* the source url,
-    /// which is only possible if the executed file differs from the source file:
-    ///
-    /// - `bun build --sourcemap`, it is another file on disk
-    /// - `bun build --compile --sourcemap`, it is an embedded file.
     pub fn display_source_url_if_needed(&self, base_filename: &[u8]) -> Option<bun_core::String> {
         let source_map = self.source_map.as_deref()?;
         // See doc comment on `external_source_names`
@@ -365,10 +349,6 @@ impl Lookup {
         }
 
         if bun_paths::is_absolute(base_filename) {
-            // PORT NOTE: Zig passed runtime `.auto` Platform; bun_paths exposes
-            // const-generic `PlatformT` only. `platform::Auto` is a cfg-selected
-            // type alias (Posix on unix, Windows on windows), which is what
-            // `.auto` resolved to at comptime anyway.
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
             return Some(bun_core::String::clone_utf8(
                 bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name),
@@ -378,11 +358,6 @@ impl Lookup {
         Some(bun_core::String::borrow_utf8(name))
     }
 
-    /// Only valid if `lookup.source_map.is_external()`
-    /// This has the possibility of invoking a call to the filesystem.
-    ///
-    /// This data is freed after printed on the assumption that printing
-    /// errors to the console are rare (this isnt used for error.stack)
     pub fn get_source_code(self, base_filename: &[u8]) -> Option<ZigStringSlice> {
         let bytes: Vec<u8> = 'bytes: {
             if let Some(code) = self.prefetched_source_code {
@@ -573,10 +548,6 @@ pub fn parse(
 
         remain = &remain[generated_column_delta.start..];
 
-        // According to the specification, it's valid for a mapping to have 1,
-        // 4, or 5 variable-length fields. Having one field means there's no
-        // original location information, which is pretty useless. Just ignore
-        // those entries.
         if remain.len() == 0 {
             break;
         }

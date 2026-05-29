@@ -81,13 +81,6 @@ impl TokenFormat {
     }
 }
 
-/// Generate a new CSRF token
-///
-/// Parameters:
-/// - options: Configuration for token generation
-/// - out_buffer: caller-provided buffer for the raw token bytes
-///
-/// Returns: A slice into `out_buffer` containing the raw token
 pub fn generate<'a>(
     options: &GenerateOptions<'_>,
     out_buffer: &'a mut [u8; 512],
@@ -144,12 +137,6 @@ pub fn generate<'a>(
     Ok(&mut out_buffer[0..len])
 }
 
-/// Validate a CSRF token
-///
-/// Parameters:
-/// - options: Configuration for token validation
-///
-/// Returns: true if valid, false if invalid
 pub fn verify(options: &VerifyOptions<'_>) -> bool {
     // Detect the encoding format
     let encoding: TokenFormat = options.encoding;

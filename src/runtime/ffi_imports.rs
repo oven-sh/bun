@@ -19,8 +19,4 @@
 //! from `generated_classes.rs` — those are owned by the generator.
 #![allow(non_snake_case, improper_ctypes, clippy::missing_safety_doc)]
 
-// ─── ZigGlobalObject.cpp / BunObject.cpp ────────────────────────────────────
-// (populated incrementally — see audit comment in generated_host_exports.rs)
-// Empty until the first migration lands; an empty `unsafe extern "C" {}` block
-// and `use crate::ffi_imports::*` over zero items are both legal Rust.
 unsafe extern "C" {}

@@ -1,11 +1,6 @@
 use crate::js_lexer::T;
 use crate::p::P;
 
-// Zig: `p: anytype` for the generic parser instance. Lowered NewParser_ →
-// `P<'a, const TS, const SCAN>` and converted to `impl P` methods (an unbounded
-// `<P>` cannot access fields). The `Metadata::*` methods that need
-// `p.load_name_from_ref` take a closure to avoid the impl-on-foreign-type problem.
-
 // This function is taken from the official TypeScript compiler source code:
 // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
@@ -216,10 +211,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     return true;
                 }
 
-                // Error tolerance.  If we see the start of some binary operator, we consider
-                // that the start of an expression.  That way we'll parse out a missing identifier,
-                // give a good message about an identifier being missing, and then consume the
-                // rest of the binary expression.
                 if p.is_binary_operator() {
                     return true;
                 }
@@ -293,13 +284,6 @@ pub mod identifier {
         }
     }
 
-    // PERF(port): was `phf::Map<&[u8], Kind>`. phf hashes the full identifier
-    // (SipHash) on every TIdentifier in a TS type position — including the
-    // overwhelmingly-common miss case (a user-defined type name). With only
-    // 16 entries spanning lengths 3..=9, a length gate rejects almost every
-    // miss on a single usize compare, and hits resolve in ≤2 slice compares.
-    // Length 6 is the only cluster (6 entries) so it gets a first-byte
-    // sub-dispatch. Mirrors the `clap::find_param` pattern (12577e958d71).
     #[inline]
     pub(crate) fn kind_for_identifier(ident: &[u8]) -> Option<Kind> {
         match ident.len() {
@@ -393,10 +377,6 @@ pub enum SkipTypeOptions {
     DisallowConditionalTypes,
 }
 
-// PORT NOTE: Zig nested `Bitset` and `empty` inside `SkipTypeOptions`. Rust
-// inherent associated types (`impl Foo { type Bar = ...; }`) are unstable
-// (`inherent_associated_types`), so the alias and empty constant are hoisted
-// to module scope.
 pub(crate) type SkipTypeOptionsBitset = enumset::EnumSet<SkipTypeOptions>;
 
 // ported from: src/js_parser/ast/TypeScript.zig

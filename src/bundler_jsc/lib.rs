@@ -16,21 +16,5 @@ pub mod options_jsc;
 #[path = "PluginRunner.rs"]
 pub mod PluginRunner;
 
-// LAYERING: `output_file_jsc` (port of `src/bundler_jsc/output_file_jsc.zig`)
-// constructs `webcore::Blob`/`Store`, `api::BuildArtifact`, and
-// `node::PathOrFileDescriptor`. Those types live in `bun_runtime`, which is
-// not a dependency of this crate. The module has been moved to
-// `bun_runtime::api::output_file_jsc`; nothing depends on
-// `bun_bundler_jsc::output_file_jsc`, so no re-export is needed.
-
 #[path = "analyze_jsc.rs"]
 pub mod analyze_jsc;
-
-// ──────────────────────────────────────────────────────────────────────────
-// `JSBundleCompletionTask` was MOVED to `bun_runtime::api::js_bundle_completion_task`
-// (layering: its fields name `bun_runtime` types — `JSBundler::Config`,
-// `Plugin`, `HTMLBundle::Route` — so a lower-tier crate cannot own it without
-// a cycle). The earlier draft that imported `bun_runtime` from here has been
-// dissolved; `bun_runtime` now depends on this crate for the JSC-aware option
-// parsers in `options_jsc` only.
-// ──────────────────────────────────────────────────────────────────────────

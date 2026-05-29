@@ -32,10 +32,6 @@ fn glob_ignore_fn(val: &[u8]) -> bool {
     false
 }
 
-// PORT NOTE: Zig `glob.GlobWalker(globIgnoreFn, glob.walk.DirEntryAccessor, false)` is a
-// comptime type-generator taking (ignore_fn, Accessor type, sentinel: bool). In Rust the
-// ignore filter is a runtime parameter on `init_with_cwd`, and `DirEntryAccessor` lives in
-// `bun_resolver` (it depends on the resolver's DirEntry cache).
 type GlobWalker = glob::GlobWalker<bun_resolver::DirEntryAccessor, false>;
 // TODO(port): self-referential — Iterator borrows the GlobWalker stored alongside it in
 // `PackageFilterIterator`. Forced to `'static` here; see `init_walker` for the unsafe

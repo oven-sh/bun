@@ -33,10 +33,6 @@ impl<'a> StaticRouteVisitor<'a> {
             return false;
         }
 
-        // PORT NOTE: `self.c` is `&'a LinkerContext` (Copy), so these slice
-        // borrows are tied to `'a`, not to `&self`, and do not conflict with
-        // the `&mut self` call below. `parse_graph()` is the safe backref
-        // accessor (one centralized `unsafe`, see `LinkerContext::parse_graph`).
         let parse_graph = self.c.parse_graph();
         let all_import_records: &[import_record::List<'_>] = parse_graph.ast.items_import_records();
         let referenced_source_indices: &[u32] = parse_graph
@@ -56,12 +52,6 @@ impl<'a> StaticRouteVisitor<'a> {
         )
     }
 
-    /// 1. Get AST for `source_index`
-    /// 2. Recursively traverse its imports in import records
-    /// 3. If any of the imports match any item in
-    ///    `referenced_source_indices` which has `use_directive ==
-    ///    .client`, then we know `source_index` is NOT fully
-    ///    static.
     fn has_transitive_use_client_impl(
         &mut self,
         all_import_records: &[import_record::List<'_>],

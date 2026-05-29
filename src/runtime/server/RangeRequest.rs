@@ -135,18 +135,6 @@ pub(crate) fn raw_from_request(req: &AnyRequest) -> Raw {
 /// three `u64::MAX` (20 each) + `'-'` + `'/'` = 68. 96 leaves slack.
 pub(crate) const CONTENT_RANGE_BUF: usize = 96;
 
-/// Render a `Content-Range` header value into `buf` per RFC 9110 §14.4.
-///
-/// | `range`             | `total`   | output                |
-/// |---------------------|-----------|-----------------------|
-/// | `Satisfiable{s,e}`  | `Some(t)` | `bytes {s}-{e}/{t}`   |
-/// | `Satisfiable{s,e}`  | `None`    | `bytes {s}-{e}/*`     |
-/// | `Unsatisfiable`     | `Some(t)` | `bytes */{t}`         |
-/// | `Unsatisfiable`     | `None`    | `bytes */*`           |
-/// | `None`              | _         | empty (caller skips)  |
-///
-/// `buf_print` into a [`CONTENT_RANGE_BUF`]-sized buffer cannot overflow with
-/// `u64` operands, so this is infallible for correctly-sized `buf`.
 pub(crate) fn format_content_range(buf: &mut [u8], range: Result, total: Option<u64>) -> &[u8] {
     use bun_core::fmt::buf_print_infallible as bp;
     match range {

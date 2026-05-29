@@ -175,10 +175,6 @@ impl Dir {
                             },
                         };
                         let parent = top.iter.dir();
-                        // PORT NOTE: Zig caps the stack at 16 and falls back to
-                        // `deleteTreeMinStackSizeWithKindHint` past that depth. The
-                        // Rust `Vec` grows, so the capacity check is dropped — same
-                        // semantics, no fixed-depth limit.
                         stack.push(StackItem {
                             name: entry.name.slice_u8().to_vec(),
                             parent_dir: parent,
@@ -259,10 +255,6 @@ impl Dir {
         Ok(())
     }
 
-    /// Port of `std.fs.Dir.deleteTreeOpenInitialSubpath` — try removing
-    /// `sub_path` as a file; on `EISDIR`/`EPERM` open it as an iterable
-    /// directory and return the fd. Returns `None` when removal succeeded or
-    /// the path doesn't exist.
     fn delete_tree_open_initial_subpath(
         &self,
         sub_path: &[u8],
@@ -351,10 +343,6 @@ impl Dir {
         }
     }
 
-    /// `std.fs.Dir.symLink` — `symlinkat(target, self.fd, link)`. The
-    /// `is_directory` flag is a no-op on POSIX (kept for parity with Zig's
-    /// `SymLinkFlags`); on Windows it selects junction vs. file-symlink and
-    /// callers route through `sys_uv::symlink_uv` instead.
     pub fn sym_link(
         &self,
         target: &[u8],
@@ -401,12 +389,6 @@ impl Dir {
         unlinkat(self.fd, sub_path).map_err(Into::into)
     }
 
-    /// `std.fs.Dir.copyFile` — open `source_path` (relative to `self`), create
-    /// `dest_path` (relative to `dest_dir`) with `O_CREAT|O_TRUNC`, then stream
-    /// the contents via [`copy_file`]. Mode is taken from the source's `fstat`
-    /// unless `options.override_mode` is set (Zig stdlib semantics, minus the
-    /// `AtomicFile` rename — Bun's only call site is `gitignore` → `.gitignore`
-    /// where atomicity isn't required).
     pub fn copy_file(
         &self,
         source_path: &[u8],
@@ -453,13 +435,6 @@ impl Dir {
             .map_err(Into::into)
     }
 
-    /// `std.fs.Dir.openDir(sub_path, .{ .iterate, .no_follow, .access_sub_paths = true })`.
-    ///
-    /// On POSIX, `iterate` / `access_sub_paths` are advisory (stdlib opens with
-    /// `O_DIRECTORY | O_RDONLY | O_CLOEXEC` regardless). On Windows the flags
-    /// select the access mask: `iterate` adds `FILE_LIST_DIRECTORY`, and the
-    /// handle is opened **without** `read_only` so the caller may create/rename
-    /// children — matching `std.fs.Dir.openDir`, *not* `bun.openDir`.
     #[inline]
     pub fn open_dir(
         &self,

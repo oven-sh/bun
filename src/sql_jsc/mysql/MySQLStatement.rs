@@ -15,10 +15,6 @@ pub use bun_sql::mysql::mysql_param::Param;
 
 bun_core::declare_scope!(MySQLStatement, hidden);
 
-// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` → intrusive single-thread refcount.
-// Shared ownership is expressed as `bun_ptr::IntrusiveRc<MySQLStatement>`; the
-// `ref_count` field below is the embedded counter that `IntrusiveRc` manipulates.
-// `ref()`/`deref()` are methods on `IntrusiveRc`, not on this struct.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct MySQLStatement {
     pub cached_structure: CachedStructure,
@@ -70,10 +66,6 @@ bitflags::bitflags! {
         const HEADER_RECEIVED      = 1 << 0;
         const NEEDS_DUPLICATE_CHECK = 1 << 1;
         const NEED_TO_SEND_PARAMS  = 1 << 2;
-        /// In legacy protocol (CLIENT_DEPRECATE_EOF not negotiated), tracks whether
-        /// the intermediate EOF packet between column definitions and row data has
-        /// been consumed. This prevents the intermediate EOF from being mistakenly
-        /// treated as end-of-result-set.
         const COLUMNS_EOF_RECEIVED = 1 << 3;
         // _: u4 padding in Zig — unused high bits.
     }
@@ -95,11 +87,6 @@ pub enum Status {
 }
 
 impl MySQLStatement {
-    /// Zig `.ref_count = .initExactRefs(n)` — set the initial intrusive
-    /// refcount at construction time, before any `ref_()`/`deref()`. The
-    /// `ref_count` field is private (refcount invariant), so callers building
-    /// a statement with >1 owner (query + connection-map entry) go through
-    /// this instead of writing the field directly.
     #[inline]
     pub(crate) fn init_exact_refs(&mut self, n: u32) {
         debug_assert!(n > 0);
@@ -195,13 +182,6 @@ impl MySQLStatement {
 impl Drop for MySQLStatement {
     fn drop(&mut self) {
         bun_core::scoped_log!(MySQLStatement, "MySQLStatement deinit");
-        // Zig deinit body:
-        //   - per-column deinit + free(columns)  → Vec<ColumnDefinition41> Drop
-        //   - free(params)                       → Vec<Param> Drop
-        //   - cached_structure.deinit()          → field Drop
-        //   - error_response.deinit()            → field Drop
-        //   - signature.deinit()                 → field Drop
-        //   - bun.destroy(this)                  → handled by IntrusiveRc when refcount hits 0
     }
 }
 

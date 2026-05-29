@@ -21,18 +21,6 @@ impl Signals {
             && self.upgraded.is_none()
     }
 
-    /// Resolve `field` to a [`BackRef`] over its `AtomicBool` slot, if wired.
-    ///
-    /// Centralises the back-reference upgrade so [`get`]/[`store`] are
-    /// unsafe-free. Every non-None pointer here was created via
-    /// `NonNull::from(&store.<field>)` in `Store::to` (or an equivalent
-    /// caller-side `NonNull::from(&signal_store.<field>)`); the BACKREF
-    /// invariant — the `Store` outlives every `Signals` derived from it — is
-    /// exactly the [`bun_ptr::BackRef`] contract, so the safe `From<NonNull>`
-    /// + `Deref` path applies. `AtomicBool` is `Sync` interior-mutable, so a
-    /// shared `&` (via `BackRef::Deref`) suffices for both load and store.
-    ///
-    /// [`BackRef`]: bun_ptr::BackRef
     #[inline]
     fn slot(&self, field: Field) -> Option<bun_ptr::BackRef<AtomicBool>> {
         let ptr: NonNull<AtomicBool> = match field {

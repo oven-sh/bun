@@ -1,13 +1,6 @@
 use crate::postgres::any_postgres_error::AnyPostgresError;
 use crate::postgres::types::int_types::{PostgresInt32, PostgresInt64, int32};
 
-/// Trait expressing the structural requirements that Zig's `NewWriterWrap`
-/// took as comptime fn-pointer params (`offsetFn_`, `writeFunction_`,
-/// `pwriteFunction_`). In Zig those were passed explicitly; in Rust the
-/// trait bound IS that binding.
-// TODO(port): `NewWriterWrap`'s explicit fn-pointer params collapse into this
-// trait. If a caller needs to wrap a context with *different* fns than its
-// inherent impl (none do today), add a newtype that impls this trait.
 pub trait WriterContext: Copy {
     fn offset(self) -> usize;
     fn write(self, bytes: &[u8]) -> Result<(), AnyPostgresError>;
@@ -145,10 +138,6 @@ impl<C: WriterContext> NewWriter<C> {
     }
 }
 
-// Zig: `pub fn NewWriter(comptime Context: type) type { return NewWriterWrap(Context, Context.offset, Context.write, Context.pwrite); }`
-// In Rust this is just `NewWriter<C>` where `C: WriterContext` — the trait
-// already binds `offset`/`write`/`pwrite` to the context's inherent methods.
-// Kept as a constructor helper for callsite parity.
 #[inline]
 pub fn new_writer<C: WriterContext>(ctx: C) -> NewWriter<C> {
     NewWriter { wrapped: ctx }

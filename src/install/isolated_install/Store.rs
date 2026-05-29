@@ -27,11 +27,6 @@ pub struct Store {
     pub nodes: node::List,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// NewId<T> — Zig: `fn NewId(comptime T: type) type { return enum(u32) { root=0, invalid=max, _ } }`
-// Rust generic newtypes are nominally distinct, so `NewId<Entry> != NewId<Node>` holds by
-// construction (the Zig `comptime { bun.assert(NewId(Entry) != NewId(Node)) }` block is a no-op).
-// ──────────────────────────────────────────────────────────────────────────
 #[repr(transparent)]
 pub struct NewId<T>(u32, PhantomData<fn() -> T>);
 
@@ -155,14 +150,6 @@ impl Store {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// OrderedArraySet<T> — Zig: `fn OrderedArraySet(comptime T, comptime Ctx) type`.
-// PORT NOTE: the `Ctx` type param is dropped from the struct; ctx is passed per-call as
-// `&impl OrderedArraySetCtx<T>`. In Zig the Ctx param only contributed comptime method
-// lookup; in Rust the two instantiations (`Dependencies`, `Peers`) are already distinct
-// via `T`. Ctx structs carry borrowed slices, so binding their lifetime into the
-// container type would infect stored fields.
-// ──────────────────────────────────────────────────────────────────────────
 pub(crate) trait OrderedArraySetCtx<T: Copy> {
     fn eql(&self, l: T, r: T) -> bool;
     fn order(&self, l: T, r: T) -> Ordering;
@@ -252,18 +239,6 @@ impl<T: Copy> OrderedArraySet<T> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Entry
-// ──────────────────────────────────────────────────────────────────────────
-//
-// A unique entry in the store. As a path looks like:
-//   './node_modules/.bun/name@version/node_modules/name'
-// or if peers are involved:
-//   './node_modules/.bun/name@version_peer1@version+peer2@version/node_modules/name'
-//
-// Entries are created for workspaces (including the root), but only in memory. If
-// a module depends on a workspace, a symlink is created pointing outside the store
-// directory to the workspace.
 pub mod entry {
     use super::*;
     use crate::lockfile::package::PackageColumns as _;
@@ -280,10 +255,6 @@ pub mod entry {
         pub dependencies: Dependencies,
         // Zig default: `.empty`
         pub parents: Vec<Id>,
-        // Zig default: `.init(.link_package)`
-        // PORT NOTE: `std.atomic.Value(Installer.Task.Step)` → `AtomicU32` storing
-        // the `#[repr(u8)]` discriminant. Loads/stores go through `Step as u32` /
-        // `Step::from_u32` (see Installer.rs); no atomic-enum wrapper exists.
         pub step: core::sync::atomic::AtomicU32,
 
         // if true this entry gets symlinked to `node_modules/.bun/node_modules`
@@ -291,26 +262,8 @@ pub mod entry {
 
         pub peer_hash: PeerHash,
 
-        /// Content hash of (package + sorted resolved dependency global-store keys),
-        /// used to key the global virtual store at `<cache>/links/<storepath>-<entry_hash>/`.
-        /// Two projects that resolve the same package to the same dependency closure
-        /// share one global-store entry; if a transitive dep version differs, the
-        /// hash differs and a new global-store entry is created. Computed after the
-        /// store is built (see `computeEntryHashes`). 0 means "do not use global store"
-        /// (root, workspace, folder, symlink, patched).
-        // Zig default: `0`
         pub entry_hash: u64,
 
-        // Zig default: `null`
-        // PORT NOTE: `Cell` because `Installer::Task::run` writes this slot
-        // from a task thread through `&Store` (each Task is the sole writer for
-        // its own `entry_id`; see Installer.zig:541/1161). Without interior
-        // mutability the only access path is `&Store → &[Option<_>]` and the
-        // per-entry write would mutate through shared-reference provenance.
-        // Raw `*mut` instead of `Box` so reads don't move out of the cell.
-        // `Cell` (not `UnsafeCell`): payload is `Copy`, so `.get()/.set()` are
-        // zero-unsafe; `Cell` and `UnsafeCell` have identical `Send`/`!Sync`
-        // auto-traits, so the per-entry single-writer discipline is unchanged.
         pub scripts: core::cell::Cell<Option<*mut package::scripts::List>>,
     }
 
@@ -569,12 +522,6 @@ pub mod entry {
 pub use entry::Entry;
 pub use entry::EntryColumns;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Node
-// ──────────────────────────────────────────────────────────────────────────
-//
-// A node used to represent the full dependency tree. Uniqueness is determined
-// from `pkg_id` and `peers`
 pub mod node {
     use super::*;
     use crate::lockfile::package::PackageColumns as _;

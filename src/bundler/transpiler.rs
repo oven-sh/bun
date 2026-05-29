@@ -18,16 +18,8 @@ use crate::options;
 
 /// Port of `transpiler.zig:ResolveResults` — keyed by source path hash.
 pub(crate) type ResolveResults = HashMap<u64, ()>;
-/// Port of `transpiler.zig:ResolveQueue` — `std.fifo.LinearFifo(resolver.Result, .Dynamic)`.
-// PORT NOTE: `bun_collections::LinearFifo<T, DynamicBuffer<T>>` would be exact,
-// but `DynamicBuffer` isn't re-exported from `bun_collections` yet. `VecDeque`
-// is structurally equivalent (growable ring buffer); swap once the re-export lands.
 pub(crate) type ResolveQueue = std::collections::VecDeque<resolver::Result>;
 
-/// Spec `JSGlobalObject.BunPluginTarget` (JSGlobalObject.zig:265). Defined at
-/// this tier (lowest crate that needs to name it) and re-exported from
-/// `bun_jsc::BunPluginTarget` so there is exactly one enum (no bridge between
-/// mirror types).
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BunPluginTarget {
@@ -36,21 +28,8 @@ pub enum BunPluginTarget {
     Browser = 2,
 }
 
-// Crosses FFI by-value to `JSBundlerPlugin__create` / `Bun__runOn*Plugins`
-// (C++: `typedef uint8_t BunPluginTarget`, `headers-handwritten.h`). NB: the
-// C++ header's *named* constants (`BunPluginTargetBrowser = 1`, `Node = 2`)
-// disagree with Zig `JSGlobalObject.zig:265` (`node = 1`, `browser = 2`); Rust
-// matches the Zig spec. The width (`u8`) is what matters at the ABI.
 bun_core::assert_ffi_discr!(BunPluginTarget, u8; Bun = 0, Node = 1, Browser = 2);
 
-/// Spec PluginRunner.zig:34 `onResolve` — the JSC-aware resolve hook.
-///
-/// The body calls `JSGlobalObject.runOnResolvePlugins`, so it cannot be
-/// defined at this tier (`bun_jsc` depends on this crate). `bun_jsc` provides
-/// the concrete `PluginRunner { global_object: *mut JSGlobalObject }` and
-/// implements this trait; `Linker.plugin_runner` holds it as
-/// `*mut dyn PluginResolver` so the linker stays JSC-free while the body lives
-/// in exactly one place (no fn-ptr field, no `*mut c_void` erasure).
 pub trait PluginResolver {
     fn on_resolve(
         &self,
@@ -62,10 +41,6 @@ pub trait PluginResolver {
     ) -> Result<Option<bun_paths::fs::Path<'static>>, bun_core::Error>;
 }
 
-/// Spec PluginRunner.zig — namespace for the static byte-level helpers
-/// (`extractNamespace` / `couldBePlugin`). The stateful struct (with
-/// `global_object`) lives in `bun_jsc::PluginRunner` where `JSGlobalObject` is
-/// nameable; only the JSC-free helpers stay at this tier.
 pub struct PluginRunner;
 
 impl PluginRunner {
@@ -115,12 +90,6 @@ pub const fn default_macro_js_value() -> MacroJSCtx {
     MacroJSCtx::ZERO
 }
 
-/// This structure was the JavaScript transpiler before bundle_v2 was written. It
-/// now acts mostly as a configuration object, but it also contains stateful
-/// logic around logging errors (`log`) and module resolution (`resolve_queue`).
-///
-/// This object is not exclusive to bundle_v2/Bun.build; one of these is stored
-/// on every VM so that the options can be used for transpilation.
 pub struct Transpiler<'a> {
     pub options: options::BundleOptions<'a>,
     // PORT NOTE: raw ptr — Zig aliased the same `*Log` into `linker.log` and
@@ -158,11 +127,6 @@ pub struct Transpiler<'a> {
 impl<'a> Transpiler<'a> {
     pub const IS_CACHE_ENABLED: bool = false;
 
-    /// Port of `transpiler.zig:95 setLog`.
-    ///
-    /// PORT NOTE: takes `*mut Log` (not `&'a mut`) because Zig aliased the same
-    /// `*Log` into `linker.log` / `resolver.log`; the un-gated struct field is
-    /// already a raw pointer for that reason.
     pub fn set_log(&mut self, log: *mut bun_ast::Log) {
         self.log = log;
         self.linker.log = log;
@@ -196,12 +160,6 @@ impl<'a> Transpiler<'a> {
     /// `&'static mut`. Owned `Transpiler`s from [`Self::for_worker`] must use
     /// normal `Drop` instead.
     pub unsafe fn deinit(&mut self) {
-        // The lazily-created `Box<bun_js_parser_jsc::Macro::MacroContext>` was
-        // intentionally process-lifetime under Zig (`default_allocator`), but
-        // worker VMs run `destroy()` on thread exit and would otherwise strand
-        // one box per worker. The box only owns a `MacroMap` and an optional
-        // `bun_alloc::Arena` — no JSC handles — so freeing it from either
-        // worker section-5 teardown or main-thread `global_exit` is safe.
         if let Some(ctx) = self.macro_context.take() {
             ctx.deinit();
         }
@@ -227,12 +185,6 @@ impl<'a> Transpiler<'a> {
         unsafe { &*self.fs }
     }
 
-    /// Mutable reborrow of the `Fs::FileSystem` singleton. The returned
-    /// lifetime is **decoupled** from `&self` so callers can pass it alongside
-    /// disjoint `&mut self.resolver` borrows (see `read_file_with_allocator`
-    /// call sites). Callers must not hold the result across any other
-    /// `fs()`/`fs_mut()` reborrow or across a resolver call that itself
-    /// dereferences the shared singleton mutably.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn fs_mut<'r>(&self) -> &'r mut Fs::FileSystem {
@@ -256,12 +208,6 @@ impl<'a> Transpiler<'a> {
         unsafe { &*self.log }
     }
 
-    /// Reborrow the shared `Log`. The `&self` receiver lets call sites pass
-    /// other `self.*` fields as arguments without a borrow-checker conflict;
-    /// callers must not hold two results live at once, nor hold a result
-    /// across a `self.{resolver,linker}` call that itself writes to the
-    /// aliased `*mut Log` (see field PORT NOTE — same allocation is threaded
-    /// into `linker.log` / `resolver.log`).
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn log_mut<'r>(&self) -> &'r mut bun_ast::Log {
@@ -286,10 +232,6 @@ impl<'a> Transpiler<'a> {
         unsafe { &*self.env }
     }
 
-    /// Reborrow the `DotEnv::Loader`. Returned lifetime is decoupled from
-    /// `&self` so call sites in `configure_defines` / `run_env_loader` can
-    /// hold it across disjoint `&mut self.options` / `&mut self.resolver`
-    /// borrows (matching Zig's free `this.env.*` access).
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn env_mut(&self) -> &'a mut dot_env::Loader<'a> {
@@ -387,10 +329,6 @@ impl<'a> Transpiler<'a> {
         }
     }
 
-    /// Wire the self-referential `linker` back-pointers and `macro_context`
-    /// after this `Transpiler` has reached its final address (post-move into
-    /// `WorkerData` / arena slot). Port of the post-copy fixups in
-    /// ThreadPool.zig:309-313 / bundle_v2.zig:228-232.
     pub fn wire_after_move(&mut self) {
         // Spec: `transpiler.setLog(log)` already ran inside `for_worker` via
         // direct field init; re-thread into `options.log` / `resolver.log` /
@@ -399,12 +337,6 @@ impl<'a> Transpiler<'a> {
         self.options.log = log;
         self.resolver.log = core::ptr::NonNull::new(log).expect("wire_after_move: log is non-null");
         self.resolver.fs = self.fs;
-        // Spec ThreadPool.zig:310 `transpiler.linker.resolver = &transpiler.resolver`.
-        // Only reseat the back-pointers — do NOT `Linker::init` here: that
-        // would clobber `import_counter` / `plugin_runner` /
-        // `tagged_resolutions` / `any_needs_runtime`, which the spec
-        // preserves across the move (bundle_v2.zig:230 only assigns
-        // `linker.resolver`).
         self.linker.reseat_self_refs(
             log,
             core::ptr::addr_of_mut!(self.resolve_queue),
@@ -427,21 +359,6 @@ impl<'a> Transpiler<'a> {
     pub fn reset_store(&self) {
         bun_ast::Expr::data_store_reset();
         bun_ast::Stmt::data_store_reset();
-        // Side-arena for `AstAlloc` (e.g. `Vec<Property>` inside arena
-        // `E::Object`) — same lifetime as the block-store. Only the bundler
-        // resets it; install/`--define` (which also use the block-store) hold
-        // `StoreRef`s across reset, see `store_ast_alloc_heap` doc. Must mirror
-        // the block-store's FULL early-return gate (`DISABLE_RESET ||
-        // memory_allocator() != null`, Stmt.rs `Store::reset`): macro
-        // evaluation pins the store via `DisableStoreReset`, and
-        // `ParseTask`/`RuntimeTranspilerStore` call this from inside an
-        // `ASTMemoryAllocator::Scope` (where the block-store reset is a no-op
-        // and the active `AstAlloc` state belongs to that scope, NOT the
-        // side module). If we ran `store_ast_alloc_heap::reset()` there it
-        // would bulk-free whatever side-state buffers earlier main-thread
-        // transpiles left while `--define`/install still hold `StoreRef`s
-        // into them (and the side module's debug assert that *its* state is
-        // the installed one would fire).
         if !bun_ast::stmt::data::Store::disable_reset()
             && bun_ast::stmt::data::Store::memory_allocator().is_null()
         {
@@ -498,12 +415,6 @@ impl<'a> Transpiler<'a> {
             Err(err) => {
                 let mut cache_bust_buf = bun_paths::PathBuffer::uninit();
 
-                // Bust directory cache and try again
-                // PORT NOTE: reshaped for borrowck — Zig's labelled-block
-                // returned a slice that aliases either `entry_point` (via
-                // `dirname`) or `cache_bust_buf`. Rust can't unify the two
-                // disjoint mutable borrows of `cache_bust_buf` across `break`,
-                // so compute `busted` directly instead.
                 let busted: bool = 'name: {
                     if bun_paths::is_absolute(entry_point) {
                         let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
@@ -578,17 +489,6 @@ impl<'a> Transpiler<'a> {
         let env_loader = self.env_mut();
         let mut is_production = env_loader.is_production();
 
-        // PORT NOTE: spec (`transpiler.zig:314`) eagerly did
-        // `Expr.Data.Store.create()` / `Stmt.Data.Store.create()` plus a
-        // `defer Store.reset()` here, purely so `defines.zig`'s `parse_env_json`
-        // had a thread-local AST store to build `E::String` nodes in. That work
-        // is now done lazily inside `DefineData::parse`, only on the JSON-parse
-        // slow path — the common case (`bun run` with no user `--define`)
-        // resolves every define through the literal fast path and never
-        // allocates an AST store. A store lazily created on the slow path is
-        // reclaimed by the next `Store::begin()` (every subsequent file parse),
-        // so the dropped `defer reset` is a no-op in practice.
-
         // Spec passed `&this.options.env` as a separate arg; `load_defines` now
         // reads `&self.env` internally so the disjoint borrow is resolved
         // inside the `&mut self` scope without `unsafe`.
@@ -619,12 +519,6 @@ impl<'a> Transpiler<'a> {
         Ok(())
     }
 
-    /// Port of the spec idiom `out.resolver.opts = out.options` (transpiler.zig
-    /// passes the same `BundleOptions` value to both struct fields; bake.zig:788
-    /// re-assigns after mutating `out.options`). In the Rust port the resolver
-    /// crate carries a FORWARD_DECL subset of `BundleOptions`, so re-project
-    /// rather than `Clone`. Called after `init_transpiler_with_options` mutates
-    /// `self.options` so the resolver sees the same conditions/target/public_path.
     pub fn sync_resolver_opts(&mut self) {
         self.resolver.opts = resolver_bundle_options_subset(&self.options);
     }
@@ -634,12 +528,6 @@ impl<'a> Transpiler<'a> {
     #[inline(never)]
     pub fn dump_environment_variables(&self) {
         use bun_js_printer::{Encoding, write_json_string};
-        // PORT NOTE: spec uses `std.json.Stringify` (`.whitespace = .indent_2`)
-        // to dump `env.map.*`. The Rust `bun_dotenv::Map` doesn't impl
-        // `serde::Serialize`, so iterate and emit the object by hand. Keys and
-        // values go through `write_json_string` (the same escaper the printer
-        // uses for metafile/HTML-manifest JSON) so `"` / `\` / control bytes
-        // are escaped exactly as `std.json.Stringify` does.
         bun_core::Output::flush();
         let env = self.env_mut();
         let w = bun_core::Output::writer();
@@ -660,13 +548,6 @@ impl<'a> Transpiler<'a> {
         bun_core::Output::flush();
     }
 }
-
-// ══════════════════════════════════════════════════════════════════════════
-// `configure_linker*` / `run_env_loader` — used by
-// `RunCommand::configure_env_for_run` (runtime/cli/run_command.rs:527),
-// `bun_install::configure_env_for_run`, `JSBundleCompletionTask`,
-// `JSTranspiler`, and `bun.js.rs:: bun_main_shell_entry`.
-// ══════════════════════════════════════════════════════════════════════════
 
 use bun_resolver::tsconfig_json::TSConfigJSON;
 
@@ -690,18 +571,6 @@ fn merge_tsconfig_jsx_into(tsconfig: &TSConfigJSON, out: &mut crate::options_imp
 impl<'a> Transpiler<'a> {
     /// Port of `transpiler.zig:233 configureLinkerWithAutoJSX`.
     pub fn configure_linker_with_auto_jsx(&mut self, auto_jsx: bool) {
-        // PORT NOTE: `Linker::init` dropped its `arena` arg (linker.rs:172
-        // — global mimalloc). Zig stored borrowed `*T` into the linker; the
-        // un-gated `crate::linker::Linker` mirrors that with raw pointers so
-        // `&mut self.options` etc. coerce directly. Self-reference is
-        // load-bearing — `linker.link()` reads back through these into the
-        // owning `Transpiler` — hence raw `*mut`, not `&'a mut` (would alias
-        // `&mut self` on every call).
-        // PORT NOTE: `.cast()` on the `options`/`resolver` pointers erases the
-        // `<'a>` lifetime parameter — `Linker` stores them as
-        // `*mut BundleOptions` / `*mut Resolver` with an (implicit) distinct
-        // lifetime. Raw-pointer storage is the Zig contract; the linker never
-        // outlives its owning `Transpiler<'a>`.
         self.linker = crate::linker::Linker::init(
             self.log,
             core::ptr::addr_of_mut!(self.resolve_queue),
@@ -745,29 +614,14 @@ impl<'a> Transpiler<'a> {
             DotEnvBehavior::prefix
             | DotEnvBehavior::load_all
             | DotEnvBehavior::load_all_without_inlining => {
-                // Process always has highest priority. Load process env vars
-                // unconditionally before attempting directory traversal, so
-                // that inherited environment variables are always available
-                // even when a parent directory is not readable.
                 let was_production = self.options.production;
                 env.load_process()?;
                 let has_production_env = env.is_production();
                 if !was_production && has_production_env {
                     self.options.set_production(true);
-                    // Spec transpiler.zig:275 `this.resolver.opts.setProduction(true)`.
-                    // The resolver's FORWARD_DECL `BundleOptions` now exposes
-                    // `set_production` (flips `production` + `jsx.development`
-                    // and self-guards on `force_node_env`; resolver/lib.rs).
-                    // Call it directly so resolver-side production gating
-                    // (conditional-export `"production"` matching) stays in
-                    // sync, instead of the partial single-field write.
                     self.resolver.opts.set_production(true);
                 }
 
-                // Load the project root for .env file discovery. If the cwd
-                // (or a parent) is unreadable, readDirInfo may return null;
-                // bail out of .env file loading in that case, but process
-                // env vars were already loaded above.
                 let top_level_dir = self.fs().top_level_dir;
                 let dir_info = match self.resolver.read_dir_info(top_level_dir) {
                     Ok(Some(d)) => d,
@@ -789,10 +643,6 @@ impl<'a> Transpiler<'a> {
                 // sole `&mut` for the call.
                 let dir: &mut bun_resolver::fs::DirEntry = unsafe { &mut *dir };
 
-                // PORT NOTE: `Env.files: Box<[Box<[u8]>]>` but `Loader::load`
-                // wants `&[&[u8]]`. Re-borrow into a small Vec; the explicit
-                // `--env-file` list is bounded (CLI args), not hot-path.
-                // PERF(port): one tiny alloc — Zig passed the slice directly.
                 let env_files: Vec<&[u8]> = self.options.env.files.iter().map(|f| &**f).collect();
 
                 let suffix = if self.options.is_test() || env.is_test() {
@@ -821,15 +671,6 @@ impl<'a> Transpiler<'a> {
         Ok(())
     }
 }
-
-// ══════════════════════════════════════════════════════════════════════════
-// `ParseResult` / `AlreadyBundled` / `ParseOptions` + `Transpiler::parse*`
-// — used by `ModuleLoader::transpile_source_code` (jsc_hooks.rs) and
-// `AsyncModule` / `JSTranspiler`. The body of
-// `parse_maybe_return_file_only_allow_shared_buffer` does the source-load
-// step (virtual / client-entry / `node:` fallback) and dispatches to the
-// per-loader transpile branches.
-// ══════════════════════════════════════════════════════════════════════════
 
 use crate::bun_node_fallbacks as NodeFallbackModules;
 use crate::entry_points as EntryPoints;
@@ -872,10 +713,6 @@ impl AlreadyBundled {
     }
 }
 
-/// Port of `transpiler.zig:ParseResult`.
-// PORT NOTE: lifetime-free — `runtime_transpiler_cache` is a raw pointer (Zig
-// `?*RuntimeTranspilerCache`) so `AsyncModule.parse_result` / `JSTranspiler`
-// can store this by value without threading a borrow lifetime.
 pub struct ParseResult<'a> {
     pub source: bun_ast::Source,
     pub loader: options::Loader,
@@ -883,44 +720,19 @@ pub struct ParseResult<'a> {
     pub already_bundled: AlreadyBundled,
     pub input_fd: Option<FD>,
     pub empty: bool,
-    // PORT NOTE: Zig `_resolver.PendingResolution.List` is
-    // `MultiArrayList(PendingResolution)`. `PendingResolution` does not yet
-    // derive `MultiArrayElement` (lives in `bun_resolver`, derive macro is in
-    // `bun_collections_macros` — orphan rules forbid impl-ing it here), so the
-    // SoA `len()`/column accessors aren't reachable. Use AoS `Vec` for now;
-    // `is_pending_import` only scans `import_record_id`, so the layout
-    // difference is observable only as a SoA→AoS perf delta.
-    // TODO(b3): switch back to `MultiArrayList<PendingResolution>` once the
-    // derive lands upstream in `bun_resolver`.
     pub pending_imports: Vec<resolver::PendingResolution>,
 
     /// Zig: `?*bun.RuntimeTranspilerCache`. SAFETY: erased — bundler stores it
     /// and hands it back to the runtime side; never dereferenced here.
     pub runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
 
-    /// Owns the bytes that `source.contents` points into when they came from
-    /// `cache::Fs::read_file_with_allocator` (non-shared-buffer path) or a
-    /// decoded `data:` URL. `bun_ast::Source.contents` is `&'static [u8]`
-    /// (the AST crate's `Str` convention) so the backing must live at least as long as
-    /// the `ParseResult`; threading it here means it drops when the result is
-    /// recycled instead of leaking via `mem::forget` (PORTING.md §Forbidden).
-    /// `Contents::Empty`/`SharedBuffer` for the virtual-source / shared-buffer
-    /// paths (no-op on drop).
     pub source_contents_backing: resolver::cache::Contents,
 }
 
 impl<'a> ParseResult<'a> {
-    /// Spec transpiler.zig — `ParseResult` is value-copied (e.g.
-    /// `AsyncModule.resumeLoadingModule` reads/writes `this.parse_result` by
-    /// value). `Default` lets the Rust port `mem::take` it across that
-    /// boundary; see `AsyncModule::resume_loading_module`.
     pub fn empty(arena: &'a bun_alloc::Arena) -> Self {
         ParseResult {
             source: Default::default(),
-            // PORT NOTE: `options::Loader` has no `Default`; Zig field had no
-            // initializer either. `File` is the resolver's neutral fallback
-            // (BundleEnums.rs:353), and `Default` here exists only for
-            // `mem::take` in `AsyncModule::resume_loading_module`.
             loader: options::Loader::File,
             ast: bun_ast::Ast::empty_in(arena),
             already_bundled: Default::default(),
@@ -993,11 +805,6 @@ pub struct ParseOptions<'a, 'b> {
 
     pub dont_bundle_twice: bool,
     pub allow_commonjs: bool,
-    /// `"type"` from `package.json`. Used to make sure the parser defaults
-    /// to CommonJS or ESM based on what the package.json says, when it
-    /// doesn't otherwise know from reading the source code.
-    ///
-    /// See: https://nodejs.org/api/packages.html#type
     pub module_type: options::ModuleType,
 
     pub runtime_transpiler_cache: Option<&'b mut RuntimeTranspilerCache>,
@@ -1008,19 +815,6 @@ pub struct ParseOptions<'a, 'b> {
 
 use bun_options_types::schema::api;
 
-// ── type unification (parse_maybe Js/Ts arm) ─────────────────────────────
-// `ModuleType`, `Define`, `RuntimeTranspilerCache` are single nominal types
-// shared between `bun_js_parser` and this crate (canonical defs live in the
-// lower-tier crate; bundler re-exports). There are no by-value conversion
-// shims — `to_parser_module_type` is an identity fn and `parse_maybe`
-// threads `self.options.define` / `runtime_transpiler_cache` directly.
-//
-// D042 UNIFIED: `crate::options_impl::jsx::Pragma` IS
-// `js_ast::parser::options::JSX::Pragma` (both re-export
-// `bun_options_types::jsx::Pragma`). Only the `_None → Automatic` fold is
-// applied so parser-side `== Automatic` checks in visitExpr/parseJSXElement
-// keep their pre-unification semantics (parser only ever sees a resolved
-// runtime; options.zig:1199 default).
 #[inline]
 pub(crate) fn to_parser_jsx_pragma(
     mut p: crate::options_impl::jsx::Pragma,
@@ -1042,53 +836,12 @@ fn to_parser_module_type(
     m
 }
 
-/// Spec: `fs.zig:FileSystem.init`.
-///
-/// PORT NOTE: the inline `bun_resolver::fs` module exposes the `FileSystem`
-/// struct + `INSTANCE`/`INSTANCE_LOADED` statics (resolver/lib.rs:120,129) but
-/// not the `init` constructor (that lives in the still-gated file-backed
-/// `resolver/fs.rs`). All fields are `pub` and `EntriesMap`/`Mutex` have
-/// public constructors, so reproduce the singleton-init here. Matches Zig
-/// semantics: first call sets `top_level_dir` (defaulting to getcwd),
-/// subsequent calls return the existing instance untouched.
 fn init_file_system(
     top_level_dir: Option<&'static [u8]>,
 ) -> Result<*mut Fs::FileSystem, bun_core::Error> {
-    // Spec fs.zig:90-108 — delegate to `FileSystem.init`, which routes through
-    // `Implementation.init` (fs.zig:823-837): that path calls `adjustUlimit()`
-    // to raise RLIMIT_NOFILE and stores the returned limit in
-    // `file_limit`/`file_quota`, and touches the `DirEntry.EntryStore`
-    // singleton. The previous hand-built `Implementation { file_limit: 0, .. }`
-    // skipped both, so `RealFS::need_to_close_files` (resolver/lib.rs:1594)
-    // evaluated `!(0 > 254 && ..)` → always `true`, defeating directory-fd
-    // caching, and the process never had its fd ulimit raised — large module
-    // graphs could hit EMFILE where the spec build does not.
     Fs::FileSystem::init(top_level_dir)
 }
 
-/// Project this crate's `options::BundleOptions<'a>` into the
-/// resolver-crate FORWARD_DECL subset (`bun_resolver::options::BundleOptions`).
-/// The two are nominally distinct until MOVE_DOWN to `bun_options_types`
-/// unifies them (resolver/lib.rs `mod options` note).
-///
-/// Spec transpiler.zig:214 passes the SAME `bundle_options` value to
-/// `Resolver.init1`, so `resolver.opts` must carry user-configured
-/// `--external`, `--conditions`, `--main-fields`, and the extension order.
-/// Every field the resolver reads is now projected (clone of owned data, no
-/// `Box::leak`); the resolver-side FORWARD_DECL types were widened to owned
-/// `Box<[Box<[u8]>]>`/`StringSet`/`StringArrayHashMap` so this is a faithful
-/// value copy rather than a `Default` stub.
-///
-/// TODO(b3): drop this once `bun_options_types::BundleOptions` exists and both
-/// crates re-export it — `Resolver::init1` will then take the canonical type
-/// directly and Zig's `bundle_options` value can flow through unchanged
-/// (transpiler.zig:209 passes the same `options` to both struct fields).
-///
-/// `#[cold]`/`#[inline(never)]`: this is a ~100-line struct-construction blob
-/// run exactly once per `Transpiler::init` (i.e. once per VM bring-up). Keeping
-/// it out-of-line stops it from bloating `init`'s prologue — `init` is on the
-/// startup path of every `bun`/`bunx`/`bun --bun` process, where the perf cost
-/// is the icache/decode footprint of the prologue, not the cold body itself.
 #[cold]
 #[inline(never)]
 pub(crate) fn resolver_bundle_options_subset(
@@ -1155,12 +908,6 @@ pub(crate) fn resolver_bundle_options_subset(
         load_package_json: src.load_package_json,
         load_tsconfig_json: src.load_tsconfig_json,
         main_field_extension_order: ropts::owned_string_list(src.main_field_extension_order),
-        // Spec resolver.zig `auto_main` compares the pointer of
-        // `opts.main_fields` against the per-target default; with owned
-        // storage that pointer test can't hold, so project the predicate as a
-        // bool: it's "default" iff the user did not pass `--main-fields`
-        // (`from_api` overwrites `main_fields` only when
-        // `transform.main_fields` is non-empty — options.rs:2231).
         main_fields: src.main_fields.clone(),
         main_fields_is_default: src.transform_options.main_fields.is_empty(),
         mark_builtins_as_external: src.mark_builtins_as_external,
@@ -1171,10 +918,6 @@ pub(crate) fn resolver_bundle_options_subset(
         tsconfig_override: src.tsconfig_override.clone(),
         production: src.production,
         force_node_env: src.force_node_env,
-        // FORWARD_DECL: bundler-only fields read via `c.resolver.opts` in
-        // `linker_context/*` (Zig stores the full `BundleOptions` on the
-        // resolver). Project them so the linker sees the same values it would
-        // have read off the spec's shared struct.
         output_dir: src.output_dir.clone(),
         root_dir: src.root_dir.clone(),
         public_path: src.public_path.clone(),
@@ -1186,16 +929,6 @@ pub(crate) fn resolver_bundle_options_subset(
 }
 
 impl<'a> Transpiler<'a> {
-    /// Port of `transpiler.zig:Transpiler.init`.
-    ///
-    /// Called by [`init_runtime_state`](../runtime/jsc_hooks.rs) (spec
-    /// `VirtualMachine.zig:1241`) to write `vm.transpiler`. Builds on:
-    ///   * [`options::BundleOptions::from_api`] — `bun_bundler::options`
-    ///   * [`Resolver::init1`] — `bun_resolver`
-    ///
-    /// PORT NOTE: `log` / `env_loader_` are raw pointers (not `&'a mut`) to
-    /// match the un-gated struct field types — Zig aliased the same `*Log`
-    /// into `linker.log` / `resolver.log` (see `set_log`).
     pub fn init(
         arena: &'a Arena,
         log: *mut bun_ast::Log,
@@ -1209,15 +942,6 @@ impl<'a> Transpiler<'a> {
         Ok(unsafe { slot.assume_init() })
     }
 
-    /// In-place sibling of [`Self::init`]: builds the `Transpiler` directly into
-    /// `dst` rather than returning it by value, so callers that already own its
-    /// final storage — most importantly `VirtualMachine.transpiler`, written by
-    /// [`init_runtime_state`](../runtime/jsc_hooks.rs) once per VM — avoid the
-    /// multi-KB `stack temporary → return slot → final home` double `memcpy`.
-    ///
-    /// On `Ok(())`, every field of `dst` is initialised. On `Err`, `dst` is
-    /// untouched (all fallible work happens before the first field write), so the
-    /// caller must not `assume_init` it.
     pub fn init_in_place(
         dst: &mut core::mem::MaybeUninit<Transpiler<'a>>,
         arena: &'a Arena,
@@ -1233,34 +957,6 @@ impl<'a> Transpiler<'a> {
         // TODO(port): narrow error set
         bun_ast::expr::data::Store::create();
         bun_ast::stmt::data::Store::create();
-        // These two `create()`s are eager (not deferred to the first `parse()`)
-        // because option setup below needs the AST stores *unconditionally*:
-        // `from_api` → `defines_from_transform_options` always materialises at
-        // least `process.env.NODE_ENV` via `parse_env_json`, whose `E::String`
-        // payload lands in the thread-local Expr store (then a `StoreResetGuard`
-        // resets it — which `expect()`s the store exists). So there is no
-        // "transpile nothing" spawn that skips them. They are *cheap*, though:
-        // `Store::init()` only allocates the small `Store` header — the first
-        // `~BLOCK_SIZE` `Block` buffer is malloc'd lazily on the first
-        // `append()` (`ast/new_store.rs`), so a store that is `create()`d but
-        // never written to here (the `Stmt` store — `load_defines` only emits
-        // `E::String` expression nodes) costs nothing beyond that header.
-        // `store_ast_alloc_heap::enter()` is NOT called here: `--define`
-        // object-literal JSON is parsed below (during option setup) and the
-        // bundler holds its `StoreRef<E::Object>` across every `reset_store()`,
-        // so its embedded `Vec<Property>` must stay on the global heap.
-        // `reset_store()`'s first call lazily `enter()`s (the side arena's
-        // `reset()` branches to `enter()` on null ARENA), so per-file ASTs
-        // *do* get the side arena from the first parsed file onward.
-
-        // PORT NOTE: `FileSystem::init` wants `&'static [u8]`; Zig passed a
-        // borrowed slice (transpiler.zig:179). Intern via `DirnameStore`
-        // (the same path `FileSystem::init` already uses for the
-        // `None`/getcwd case — fs.rs:222) so the cwd lives in the
-        // process-lifetime BSS string store without `Box::leak`. PORTING.md
-        // §Forbidden bars `Box::leak` even for singletons; on subsequent
-        // per-worker `Transpiler::init` calls the previous leak was discarded
-        // (`FileSystem::init` only stores `top_level_dir` on first call).
         let cwd: Option<&'static [u8]> = match opts.absolute_working_dir.as_deref() {
             Some(s) => Some(Fs::DirnameStore::instance().append_slice(s)?),
             None => None,
@@ -1272,17 +968,6 @@ impl<'a> Transpiler<'a> {
             None => match dot_env::instance() {
                 Some(l) => l,
                 None => {
-                    // PORTING.md §Forbidden bars `Box::leak` even for
-                    // process-lifetime singletons. `bun_dotenv::INSTANCE` is an
-                    // `AtomicPtr<Loader<'static>>` and `Loader` borrows
-                    // an unbounded `&mut Map`, so a `OnceLock<Loader>` here can't
-                    // be expressed without changing `bun_dotenv`'s API.
-                    // Transfer ownership of both allocations into the global
-                    // singleton via `heap::alloc` (the AtomicPtr becomes the
-                    // owner; matches `MiniEventLoop::init_global`).
-                    // TODO(port): replace with a `OnceLock`-backed
-                    // `bun_dotenv::instance_or_init()` accessor once
-                    // `bun_dotenv` grows one (PORTING.md §Concurrency).
                     let map: *mut dot_env::Map =
                         bun_core::heap::into_raw(Box::new(dot_env::Map::init()));
                     // SAFETY: `map` is a fresh heap allocation with no other
@@ -1305,11 +990,6 @@ impl<'a> Transpiler<'a> {
             (*env_loader).quiet = !log_nn.as_ref().level.at_least(bun_ast::Level::Info);
         }
 
-        // var pool = try arena.create(ThreadPool);
-        // try pool.init(ThreadPool.InitConfig{
-        //     .arena = arena,
-        // });
-
         // `log` stays raw — `from_api` stores it in `BundleOptions.log: *mut`
         // and the same pointer is aliased into `Resolver::init1` / `Linker`
         // / the struct field below (Zig aliased `*Log` everywhere). No `&'a
@@ -1320,24 +1000,11 @@ impl<'a> Transpiler<'a> {
         // borrow for the duration of `from_api`.
         let bundle_options = options::BundleOptions::from_api(unsafe { &mut *fs }, log, opts)?;
 
-        // `Resolver.opts` is the resolver-crate subset
-        // (`bun_resolver::options::BundleOptions`), nominally distinct from this
-        // crate's `options::BundleOptions<'a>`. Project the fields the resolver
-        // reads; the rest stay at `Default` until MOVE_DOWN to
-        // `bun_options_types` unifies the two (resolver/lib.rs:2773 note).
         let resolver_opts = resolver_bundle_options_subset(&bundle_options);
 
         let outbase = bundle_options.output_dir.clone();
         let resolve_results = Box::new(ResolveResults::default());
 
-        // Construct directly into the caller-owned storage instead of building a
-        // stack temporary and returning it. All fallible work is done; every
-        // field below is written exactly once. `Linker::init` gets null
-        // back-pointers (Zig used `undefined`) — `core::mem::zeroed()` is NOT a
-        // valid analogue (`Linker.hashed_filenames: HashMap` carries a `NonNull`
-        // niche, so all-zeroes is instant UB); the value fields get their proper
-        // defaults and `configure_linker_with_auto_jsx` overwrites the
-        // self-referential pointers before any deref.
         let p = dst.as_mut_ptr();
         // SAFETY: `dst` is an exclusively-borrowed, currently-uninitialised
         // `MaybeUninit<Transpiler>`; each `write` initialises a distinct field
@@ -1407,10 +1074,6 @@ impl<'a> Transpiler<'a> {
     >(
         &mut self,
         mut this_parse: ParseOptions<'a, '_>,
-        // TODO(port): Zig `anytype` + `@hasField(.., "source")` — only ever
-        // called with `?*EntryPoints.ClientEntryPoint` in this file. If other
-        // callers pass a different type, introduce a `ClientEntryPointLike`
-        // trait with `fn source() -> Option<&Source>`.
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
     ) -> Option<ParseResult<'a>> {
         let arena = this_parse.arena;
@@ -1419,19 +1082,9 @@ impl<'a> Transpiler<'a> {
         let file_hash = this_parse.file_hash;
         let path = this_parse.path;
         let loader = this_parse.loader;
-        // Every `Log` access in this function body goes through the `log`
-        // binding below (the resolver fs/js caches reached via
-        // `self.resolver.caches.*` do not touch `resolver.log`), so this is
-        // the unique live `&mut Log` for the duration of the parse.
         let log: &mut bun_ast::Log = self.log_mut();
 
         let mut input_fd: Option<FD> = None;
-        // Owns the heap allocation backing `source.contents` for the
-        // non-shared-buffer file-read and `data:` URL paths. Threaded into the
-        // returned `ParseResult` so it drops with the result instead of being
-        // `mem::forget`-ed (PORTING.md §Forbidden patterns). For virtual /
-        // client-entry / `node:` / shared-buffer paths it stays `Empty`
-        // (`Drop` is a no-op).
         let mut source_backing: resolver::cache::Contents = resolver::cache::Contents::Empty;
 
         // PORT NOTE: Zig `&brk: { ... }` took the address of a temporary; Rust
@@ -1454,10 +1107,6 @@ impl<'a> Transpiler<'a> {
                 break 'brk bun_ast::Source::init_path_string(path.text, b"");
             }
 
-            // Spec transpiler.zig:826-835. The decoded body is owned in
-            // `source_backing` (below) so `source.contents` re-borrows it
-            // without leaking; never falls through to `read_file_with_allocator`
-            // (which would try to open `data:...` as a filesystem path).
             if strings::has_prefix_comptime(path.text, b"data:") {
                 use bun_resolver::data_url::DataURL;
                 let data_url = match DataURL::parse_without_check(path.text) {
@@ -1501,12 +1150,6 @@ impl<'a> Transpiler<'a> {
                 break 'brk bun_ast::Source::init_path_string(path.text, contents);
             }
 
-            // Zig (`transpiler.zig:838-839`): `if (use_shared_buffer)
-            // bun.default_allocator else this_parse.allocator`. Thread
-            // `this_parse.arena` (the per-call `MimallocArena` from
-            // `RuntimeTranspilerStore`) so the source bytes land in the
-            // job-scoped heap that `TranspilerJob::run` `mi_heap_destroy`s on
-            // return — not the worker thread's default mimalloc heap.
             let mut entry = match self.resolver.caches.fs.read_file_with_allocator(
                 self.fs_mut(),
                 path.text,
@@ -1533,17 +1176,6 @@ impl<'a> Transpiler<'a> {
             if let Some(file_fd_ptr) = this_parse.file_fd_ptr {
                 *file_fd_ptr = entry.fd;
             }
-            // PORT NOTE: `Source.contents: &'static [u8]` (the AST crate's `Str`
-            // convention). The bytes live either in the per-thread shared
-            // buffer (`USE_SHARED_BUFFER` → `Contents::SharedBuffer`, no-op
-            // drop) or in `this_parse.arena` (`Contents::Arena`, no-op drop —
-            // bulk-freed by `mi_heap_destroy` when the per-call arena is
-            // recycled). Thread the
-            // provenance-tagged backing alongside the `ParseResult` so it
-            // drops when the result is recycled — no `mem::forget`
-            // (PORTING.md §Forbidden patterns). Spec transpiler.zig:853 hands
-            // `entry.contents` to `Source.initRecycledFile` by slice; Zig has
-            // no implicit drop, so ownership was already with the caller.
             source_backing = core::mem::take(&mut entry.contents);
             // SAFETY: `source_backing` outlives every read through
             // `source.contents` (it is moved into the returned `ParseResult`,
@@ -1606,15 +1238,6 @@ impl<'a> Transpiler<'a> {
                 jsx.parse = loader.is_jsx();
                 let _ = &this_parse.macro_remappings;
 
-                // PORT NOTE: `ParserOptions::init` is hard-typed
-                // `-> Options<'static>` and `Options<'a>` is *invariant* in
-                // `'a` (it holds `Option<&'a mut MacroContext>`), so an
-                // `Options<'static>` cannot be passed to
-                // `cache::JavaScript::parse::<'x>` alongside a non-`'static`
-                // `bump`/`source`/`define`. Construct the struct literal
-                // directly (mirroring the body of `Options::init`,
-                // ast/Parser.rs:144-180) so `'x` is inferred from the borrows
-                // below instead of pinned to `'static`.
                 use js_ast::parser::options as p_opts;
                 let mut opts = js_ast::ParserOptions::<'_> {
                     ts: loader.is_typescript(),
@@ -1656,14 +1279,6 @@ impl<'a> Transpiler<'a> {
                     .trim_unused_imports
                     .unwrap_or_else(|| loader.is_typescript());
                 opts.features.no_macros = self.options.no_macros;
-                // `bun_ast::RuntimeTranspilerCache` is the single nominal
-                // type on both sides; thread the pointer directly.
-                // Spec transpiler.zig:899/957 copies the same
-                // `?*RuntimeTranspilerCache` raw pointer to BOTH
-                // `opts.features` and the returned `ParseResult`. Derive both
-                // from a single reborrow so they share one provenance tag —
-                // re-touching the parent `&mut` after the `*mut` cast would
-                // pop the raw pointer off the borrow stack (Stacked Borrows).
                 let rtc_ptr: Option<core::ptr::NonNull<RuntimeTranspilerCache>> = this_parse
                     .runtime_transpiler_cache
                     .as_deref_mut()
@@ -1686,13 +1301,6 @@ impl<'a> Transpiler<'a> {
                 opts.features.minify_identifiers = self.options.minify_identifiers;
                 opts.features.dead_code_elimination = self.options.dead_code_elimination;
                 opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
-                // Spec transpiler.zig:925 forwards `transpiler.options
-                // .bundler_feature_flags`. Zig aliased a `*const StringSet`;
-                // `Features.bundler_feature_flags` is currently owned
-                // (`Option<Box<StringSet>>`), so clone by value.
-                // TODO(refactor): change the parser-side field to
-                // `Option<&'a StringSet>` to avoid the clone.
-                // The clone drops with `opts` — no leak.
                 opts.features.bundler_feature_flags = self
                     .options
                     .bundler_feature_flags
@@ -1705,11 +1313,6 @@ impl<'a> Transpiler<'a> {
                 opts.features.top_level_await = true;
 
                 opts.features.is_macro_runtime = target == crate::options_impl::Target::BunMacro;
-                // Spec transpiler.zig:943: `opts.features.replace_exports =
-                // this_parse.replace_exports`.
-                // `bun_ast::runtime::ReplaceableExport` IS
-                // `js_ast::Runtime::ReplaceableExport`, so the inner
-                // `StringArrayHashMap` moves directly into the newtype.
                 opts.features.replace_exports = bun_ast::runtime::ReplaceableExportMap {
                     entries: this_parse.replace_exports,
                 };
@@ -1718,11 +1321,6 @@ impl<'a> Transpiler<'a> {
                     let ctx = js_ast::Macro::MacroContext::init(self);
                     self.macro_context = Some(ctx);
                 }
-                // Spec transpiler.zig:938-940: thread the caller-supplied JS
-                // context into the macro runtime so macros invoked during
-                // runtime transpilation see it (instead of null). Written on
-                // `self.macro_context` before reborrowing into `opts` so the
-                // `&mut` handed to the parser already carries the value.
                 if target != crate::options_impl::Target::BunMacro {
                     // SAFETY: `is_none()` check above guarantees `Some` here.
                     self.macro_context.as_mut().unwrap().javascript_object =
@@ -1748,12 +1346,6 @@ impl<'a> Transpiler<'a> {
                         .map(|m| &mut *core::ptr::from_mut(m));
                 }
 
-                // PORT NOTE: spec calls `transpiler.resolver.caches.js.parse`.
-                // The resolver-side `cache::JavaScript` is a fieldless
-                // shell with no `parse` body (resolver/lib.rs:1664);
-                // the real `parse` lives on `crate::cache::JavaScript`. Both
-                // are stateless unit structs, so calling the bundler-crate one
-                // directly is equivalent.
                 let parsed = match crate::cache::JavaScript::init()
                     .parse(arena, opts, define, log, source)
                 {
@@ -1792,11 +1384,6 @@ impl<'a> Transpiler<'a> {
                             js_ast::AlreadyBundled::BunCjs => AlreadyBundled::SourceCodeCjs,
                             js_ast::AlreadyBundled::BytecodeCjs
                             | js_ast::AlreadyBundled::Bytecode => 'brk: {
-                                // Spec transpiler.zig:971-984: when the parser
-                                // saw `// @bun @bytecode`, attempt to load the
-                                // sidecar `<path>.jsc` cached bytecode. Only
-                                // fall back to re-parsing source on read
-                                // failure / empty file.
                                 let is_cjs =
                                     matches!(already_bundled, js_ast::AlreadyBundled::BytecodeCjs);
                                 let default_value = if is_cjs {
@@ -1821,13 +1408,6 @@ impl<'a> Transpiler<'a> {
                                     // `path_buf2[total] == 0` already; safe to
                                     // borrow as a NUL-terminated ZStr.
                                     let zpath = bun_core::ZStr::from_buf(&path_buf2[..], total);
-                                    // PORT NOTE: spec calls
-                                    // `bun.sys.File.toSourceAt(...)` which is
-                                    // `read_from` + wrap-in-`bun_ast::Source`.
-                                    // We only need `.contents`, so call
-                                    // `read_from` directly (the `to_source_at`
-                                    // wrapper is gated as a T1→T2 move-in,
-                                    // sys/File.rs:446).
                                     let dir = dirname_fd.unwrap_valid().unwrap_or_else(FD::cwd);
                                     match bun_sys::File::read_from(dir, zpath) {
                                         Ok(contents) if !contents.is_empty() => {
@@ -1906,13 +1486,6 @@ impl<'a> Transpiler<'a> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Cold rare-loader parse paths, split out of
-// `Transpiler::parse_maybe_return_file_only_allow_shared_buffer` so the
-// data-format / markdown / wasm code they pull in lands in `.text.unlikely`
-// instead of being interleaved (post-LTO) with the hot JS/TS parse path.
-// ---------------------------------------------------------------------------
-
 #[cold]
 #[inline(never)]
 fn parse_data_loader<'a>(
@@ -1924,14 +1497,6 @@ fn parse_data_loader<'a>(
     log: &mut bun_ast::Log,
     keep_json_and_toml_as_one_statement: bool,
 ) -> Option<ParseResult<'a>> {
-    // PERF(port): was `inline .toml, .yaml, .json, .jsonc, .json5
-    // => |kind|` — comptime monomorphization per loader; profile if it
-    // shows up on a hot path.
-    //
-    // PORT NOTE: `bun_parsers::*` parse into the T2 value AST
-    // (`bun_ast::Expr`); lift into the full T4
-    // `bun_ast::Expr` via the deep-convert `From` bridge
-    // (Expr.rs:1265) so the StoreRef-backed accessors below work.
     let value_expr: bun_ast::Expr = match loader {
         options::Loader::Jsonc => {
             // We allow importing tsconfig.*.json or jsconfig.*.json with comments
@@ -1966,10 +1531,6 @@ fn parse_data_loader<'a>(
 
     let mut symbols: Vec<bun_ast::Symbol> = Vec::new();
 
-    // PORT NOTE: reshaped — Zig `arena.alloc(Part, 1)` returned
-    // an arena slice, but `Ast::from_parts` takes `Box<[Part]>`
-    // (Vec owns its buffer). The single-part array is built on
-    // the global heap; `stmts` stays arena-backed (`*mut [Stmt]`).
     let parts: Box<[bun_ast::Part]> = 'parts: {
         if keep_json_and_toml_as_one_statement {
             let stmt = bun_ast::Stmt::allocate(
@@ -1992,15 +1553,6 @@ fn parse_data_loader<'a>(
             let properties: &mut [bun_ast::G::Property] = obj.properties.slice_mut();
             if !properties.is_empty() {
                 let n = properties.len();
-                // PORT NOTE: Zig `expandToCapacity()` / `arena.alloc(Symbol, n)`
-                // leave slots uninitialized, which is inert in Zig.
-                // The loop below writes sparsely at index `i` and
-                // `continue`s on `"default"` / duplicate keys, so
-                // some slots are never assigned. In Rust an uninit
-                // live `Vec<T>` element is UB the moment it is
-                // observed (truncate/into_boxed_slice/index-assign),
-                // so pre-fill every slot with `Default` instead of
-                // `set_len`. PERF(port): was `expandToCapacity()`.
                 let mut decls: Vec<bun_ast::G::Decl> = vec![bun_ast::G::Decl::default(); n];
 
                 symbols.resize_with(n, Default::default);
@@ -2040,13 +1592,6 @@ fn parse_data_loader<'a>(
                             Some(prop.value.expect("infallible: prop has value"));
                         continue;
                     }
-                    // PORT NOTE: spec transpiler.zig:1030-1071
-                    // writes at `i` and shrinks to `count`, leaving
-                    // holes when `"default"` / duplicates `continue`
-                    // — a latent spec bug. Write densely at `count`
-                    // (and store `count` in the checker) so
-                    // `truncate(count)` / `[..count]` keep the
-                    // actually-populated entries.
                     *visited.value_ptr = count as u32;
 
                     symbols[count] = bun_ast::Symbol {
@@ -2315,31 +1860,9 @@ fn parse_unsupported_loader(loader: options::Loader, path: &bun_paths::fs::Path<
     ));
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// `Transpiler::print` / `print_with_source_map` — final step of
-// `ModuleLoader::transpile_source_code` (jsc_hooks.rs spec :525-539); the
-// dispatch shim that `RuntimeTranspilerStore` / `AsyncModule` link against.
-//
-// PORT NOTE: `comptime format: js_printer.Format` demoted to a runtime arg —
-// `bun_js_printer::Format` doesn't derive `ConstParamTy` (and can't be added
-// from this crate). All callers pass a literal anyway; the inner
-// `print_ast::<_, ASCII_ONLY, ENABLE_SOURCE_MAP>` keeps both real comptime
-// bools, so codegen monomorphizes the printer body identically.
-// PERF(port): outer `match format` is one extra branch — profile if hot.
-// ══════════════════════════════════════════════════════════════════════════
-
 use bun_js_printer as js_printer;
-// PORT NOTE: `module_info` threads the *printer's* `analyze_transpiled_module::ModuleInfo`
-// (the producer), not `crate::analyze_transpiled_module::ModuleInfo` (the
-// richer consumer-side mirror). The print
-// path only ever fills the printer-owned one and hands its serialized bytes to
-// T6, so unify on the printer type here. Spec: transpiler.zig:663.
 use js_printer::analyze_transpiled_module;
 
-/// Map the bundler-local `Target` (options.rs:489) to the lower-tier
-/// `bun_ast::Target` consumed by `js_printer::Options`.
-/// The two enums are variant-for-variant identical but nominally distinct;
-/// TODO(refactor): collapse them (see lib.rs `pub mod options` shadow note).
 #[inline]
 fn to_bundle_enums_target(t: crate::options_impl::Target) -> bun_ast::Target {
     use bun_ast::Target as T;
@@ -2356,18 +1879,6 @@ fn to_bundle_enums_target(t: crate::options_impl::Target) -> bun_ast::Target {
 /// resolves once `lib.rs` `pub use transpiler::*` lands.
 pub use js_printer::Format as PrintFormat;
 
-// PERF: this whole `print*` chain was generic over `W: WriterTrait`, but every
-// call site in the tree (jsc_hooks.rs, RuntimeTranspilerStore.rs, AsyncModule.rs,
-// JSTranspiler.rs, and the in-crate `transform()` path) passes the same concrete
-// `&mut BufferPrinter`. Leaving the public entry points generic forced each
-// downstream crate (bun_runtime / bun_jsc / bun_install / bun_bundler) to stamp
-// out its own copy of the 109-fn `Printer<W,A,B,C,D,E>` recursion tree —
-// `llvm-nm --print-size` showed `bun_js_printer` .text at 1,367 KB vs 594 KB on
-// the Zig build, with both the `_11bun_runtime` and `_7bun_jsc` copies of
-// `print_expr<…>` live in `perf` and thrashing icache against each other
-// (L1-icache-misses +5.1%, iTLB-misses +13.2%, IPC 1.40 vs 1.50). Pinning `W`
-// to the one concrete type and marking the public entry points
-// `#[inline(never)]` makes LTO emit exactly one copy in `bun_bundler`.
 impl<'a> Transpiler<'a> {
     fn print_with_source_map_maybe<const ENABLE_SOURCE_MAP: bool>(
         &mut self,
@@ -2380,19 +1891,6 @@ impl<'a> Transpiler<'a> {
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
     ) -> Result<usize, bun_core::Error> {
-        // TODO(port): narrow error set
-        // TODO(port): `bun.perf.trace("JSPrinter.printWithSourceMap")` /
-        // `("JSPrinter.print")` — `bun_perf::trace` now takes a `PerfEvent`
-        // enum and neither variant is in `generated_perf_trace_events.rs`
-        // yet. Re-add once `scripts/generate-perf-trace-events.sh` runs
-        // against the Rust tree.
-
-        // PORT NOTE: Zig built `Symbol.NestedList.fromBorrowedSliceDangerous(
-        // &.{ast.symbols})` — aliased the stack-one-slice into the map. Rust
-        // can't borrow `ast.symbols` while moving `ast` into `print_ast`, so
-        // take the column out (the printer never reads `tree.symbols`; it
-        // walks `symbols` exclusively — `rg tree.symbols js_printer/lib.rs` is
-        // empty). `init_with_one_list` boxes the single inner list.
         let arena = *ast.symbols.allocator();
         let symbols = bun_ast::symbol::Map::init_with_one_list(
             core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(arena))
@@ -2400,37 +1898,8 @@ impl<'a> Transpiler<'a> {
                 .collect(),
         );
 
-        // `runtime_imports` is now forwarded — after Round-G `Ast.runtime_imports`
-        // is the real `parser::Runtime::Imports`, the same type
-        // `js_printer::Options.runtime_imports` takes (via `js_ast::runtime`),
-        // so the seam is gone. Spec: zig:593/619/645.
-        // `target` is now forwarded via `to_bundle_enums_target` below — it
-        // *does* affect the EsmAscii/bun-runtime path (js_printer/lib.rs:6872
-        // gates the `var {require}=import.meta;` hoist on `target == Bun`;
-        // regression of oven-sh/bun#15738 if left at the `Browser` default).
-        // `runtime_transpiler_cache` is now forwarded — js_printer holds the
-        // `NonNull<RuntimeTranspilerCache>` directly. Spec: zig:601/627/662.
-        // `module_info` is now forwarded — this fn's parameter is the
-        // printer-crate `analyze_transpiled_module::ModuleInfo` (see the `use`
-        // above), so the seam is gone. Spec: zig:663 — EsmAscii arm only.
-
         let exports_kind = ast.exports_kind;
 
-        // PERF: each `js_printer::print_*::<W, …>` call below stamps out a full
-        // `__gated_printer::Printer<W,A,B,C,D,E>` instantiation tree (~35 kB of
-        // .text per leaf method, 109 fns total). For `bun run` only the
-        // `EsmAscii + is_bun=true` arm executes, but rustc lays the Cjs / Esm /
-        // `is_bun=false` trees out adjacent in .text, so the live variant
-        // shares 64 kB faultaround windows with ~888 kB of dead code. Hoist the
-        // three cold arms behind `#[cold] #[inline(never)]` thunks so their
-        // instantiation trees land in `.text.unlikely` instead.
-        //
-        // `print_arena` is the same per-call arena that built `ast` (the one
-        // passed in `ParseOptions.arena`). Do NOT use `self.arena` here: on the
-        // runtime per-import path that aliases the per-VM `transpiler_arena`
-        // (`Arena::borrowing_default()` → `mi_heap_main()`, never freed), so the
-        // printer's rope/template-string flattening (`Str::resolve_rope_if_needed`)
-        // would strand its bytes in `mi_heap_main` on every print.
         match format {
             js_printer::Format::Cjs => self.print_cjs_cold::<ENABLE_SOURCE_MAP>(
                 print_arena,
@@ -2453,10 +1922,6 @@ impl<'a> Transpiler<'a> {
             ),
 
             js_printer::Format::EsmAscii => {
-                // PORT NOTE: `switch (target.isBun()) { inline else => |is_bun| ... }`
-                // — runtime bool → comptime dispatch. Hoisted into the
-                // `print_ast_esm_ascii` helper so the const-generic IS_BUN can
-                // also drive `module_type`.
                 if self.options.target.is_bun() {
                     self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, true>(
                         print_arena,
@@ -2507,10 +1972,6 @@ impl<'a> Transpiler<'a> {
     ) -> Result<usize, bun_core::Error> {
         js_printer::print_common_js::<_, false, ENABLE_SOURCE_MAP>(
             writer,
-            // The printer's per-call scratch arena (rope/template-string
-            // flattening via `Str::resolve_rope_if_needed` / `Str::slice`).
-            // Same arena that `ParseOptions.arena` used to build this AST —
-            // see `print_with_source_map_maybe`.
             print_arena,
             ast,
             symbols,
@@ -2578,10 +2039,6 @@ impl<'a> Transpiler<'a> {
         )
     }
 
-    // PERF: cold thunk — see `print_with_source_map_maybe` comment. Wraps the
-    // `IS_BUN=false` instantiation so its Printer<…> tree (which `bun run`
-    // never executes) is laid out in `.text.unlikely` instead of interleaved
-    // with the hot `IS_BUN=true` tree.
     #[cold]
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
@@ -2657,10 +2114,6 @@ impl<'a> Transpiler<'a> {
             module_info,
             hmr_ref: ast.wrapper_ref,
             mangled_props: None,
-            // Spec transpiler.zig:664. The printer reads `opts.target` at
-            // js_printer/lib.rs:6872 to gate the `var {require}=import.meta;`
-            // hoist on `Target::Bun` — defaulting to `Browser` here regressed
-            // oven-sh/bun#15738.
             target: to_bundle_enums_target(self.options.target),
             ..Default::default()
         };
@@ -2675,15 +2128,6 @@ impl<'a> Transpiler<'a> {
         )
     }
 
-    // PERF: `#[inline(never)]` + concrete `&mut BufferPrinter` (not
-    // `<W: WriterTrait>`) so this is compiled exactly once in `bun_bundler`
-    // and called by symbol from bun_runtime / bun_jsc / bun_install instead of
-    // each crate re-monomorphizing the entire `Printer<W,…>` recursion tree.
-    // See the PERF block above this `impl` for the icache-thrash measurement.
-    /// `print_arena` is the same per-call arena that built `result.ast` (the
-    /// one passed in `ParseOptions.arena`) — the printer uses it for rope /
-    /// template-string flattening and the flattened bytes share the AST's
-    /// lifetime. See `print_with_source_map_maybe`.
     #[inline(never)]
     pub fn print(
         &mut self,
@@ -2704,12 +2148,6 @@ impl<'a> Transpiler<'a> {
         )
     }
 
-    // PERF: `#[inline(never)]` + concrete `&mut BufferPrinter` — see `print`
-    // above. This is the hot entry from jsc_hooks.rs / RuntimeTranspilerStore.rs
-    // / AsyncModule.rs; keeping it non-generic collapses the four cross-crate
-    // copies of `print_expr<true,false,true,false,true>` (244 KB → ~61 KB).
-    /// `print_arena` is the same per-call arena that built `result.ast` —
-    /// see [`Self::print`].
     #[inline(never)]
     pub fn print_with_source_map(
         &mut self,
@@ -2749,17 +2187,6 @@ impl<'a> Transpiler<'a> {
         )
     }
 
-    // PERF: like `print` (no `SourceMapHandler`, `ENABLE_SOURCE_MAP = false`, so
-    // the printer skips every per-token `add_source_mapping` /
-    // `update_generated_line_and_column` and never builds/flushes a VLQ chunk)
-    // but still threads `result.runtime_transpiler_cache` so the transpiled
-    // output is written to the on-disk cache. Used by the runtime module loader
-    // when no inspector is attached: `Bun__remapStackFramePositions` degrades
-    // gracefully (keeps the raw transpiled position) when a path has no entry in
-    // `SavedSourceMap`, so eagerly building a per-module source map nothing will
-    // consume is pure overhead. See jsc_hooks.rs `transpile_source_code_inner`.
-    /// `print_arena` is the same per-call arena that built `result.ast` —
-    /// see [`Self::print`].
     #[inline(never)]
     pub fn print_skip_source_map(
         &mut self,
@@ -2796,18 +2223,6 @@ impl<'a> Transpiler<'a> {
         let entry = fs.relative_to(entry);
 
         if !strings::starts_with(entry, b"./") {
-            // Entry point paths without a leading "./" are interpreted as package
-            // paths. This happens because they go through general path resolution
-            // like all other import paths so that plugins can run on them. Requiring
-            // a leading "./" for a relative path simplifies writing plugins because
-            // entry points aren't a special case.
-            //
-            // However, requiring a leading "./" also breaks backward compatibility
-            // and makes working with the CLI more difficult. So attempt to insert
-            // "./" automatically when needed. We don't want to unconditionally insert
-            // a leading "./" because the path may not be a file system path. For
-            // example, it may be a URL. So only insert a leading "./" when the path
-            // is an exact match for an existing file.
             let mut __entry = Vec::with_capacity(2 + entry.len());
             __entry.extend_from_slice(b"./");
             __entry.extend_from_slice(entry);
@@ -2816,12 +2231,6 @@ impl<'a> Transpiler<'a> {
         crate::linker::dupe(entry)
     }
 
-    /// Port of `transpiler.zig:1254 enqueueEntryPoints`.
-    ///
-    /// PORT NOTE: the Zig version writes the resolved entry results into a
-    /// caller-provided `[]Result` slice; the only caller (`transform`) discards
-    /// that slice immediately, so the Rust port returns only the count and lets
-    /// `linker.enqueue_resolve_result` push directly onto `resolve_queue`.
     fn enqueue_entry_points<const NORMALIZE_ENTRY_POINT: bool>(&mut self) -> usize {
         let mut entry_point_i: usize = 0;
 
@@ -2989,17 +2398,9 @@ impl<'a> Transpiler<'a> {
         let Some(file_path_ref) = resolve_result.path_const() else {
             return Ok(None);
         };
-        // PORT NOTE: `resolver::Result.path_pair` carries `bun_resolver::fs::Path<'_>`;
-        // downstream `linker.link`/`get_hashed_filename` and `OutputFile.src_path`
-        // expect `bun_paths::fs::Path<'_>` / `bun_paths::fs::Path<'static>`. Re-init via
-        // `text` (the only field both shapes share semantically).
         let file_path_text: &'static [u8] = crate::linker::dupe(file_path_ref.text);
         let file_path_ext: &'static [u8] = crate::linker::dupe(file_path_ref.name().ext);
 
-        // Step 1. Parse & scan
-        // Spec (transpiler.zig:397) keys the loader on the ORIGINAL resolve
-        // result's extension *before* the `client_entry_point` path override
-        // (line 400). Compute it here, then apply the override.
         let loader = self.options.loader(file_path_ext);
 
         // `client_entry_point_` is always `None` from the only in-tree caller;
@@ -3157,12 +2558,6 @@ impl<'a> Transpiler<'a> {
         Ok(Some(output_file))
     }
 
-    /// Cold path: `bun build` of a `.css` entry. Split out of
-    /// `build_with_resolve_result_eager` so the `bun_css` parser/printer code
-    /// it pulls in lands in `.text.unlikely` instead of being interleaved
-    /// (post-LTO) with the hot JS/TS transpile path. Returns `None` to mean
-    /// "the caller should `return Ok(None)`" -- the parse/minify/print error
-    /// has already been logged.
     #[cold]
     #[inline(never)]
     fn build_css_output(
@@ -3302,10 +2697,6 @@ impl<'a> Transpiler<'a> {
     }
 }
 
-/// Port of the `comptime Outstream: type` parameter to
-/// `processResolveQueue` / `buildWithResolveResultEager` — Zig switched on
-/// `bun.sys.File` vs `std.fs.Dir` at the type level; collapse to a runtime
-/// enum since the only behavioural difference is unused (`_ = outstream`).
 #[derive(Clone, Copy)]
 enum TransformOutstream {
     Stdout,

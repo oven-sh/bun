@@ -62,11 +62,6 @@ impl ReplCommand {
         jsc::initialize(true); // true for eval mode
 
         bun_ast::initialize_store();
-        // TODO(port): arena is threaded into VirtualMachine (vm.arena / vm.allocator). Non-AST
-        // crate would normally drop MimallocArena, but VM init protocol requires it. Note
-        // `bun_alloc::Arena` is bumpalo-backed and NOT semantically `bun.allocators.MimallocArena`
-        // (mi_heap wrapper) — TODO(refactor): either have bun_jsc::VirtualMachine own its arena
-        // internally (drop the param) or expose a distinct `bun_alloc::MimallocArena` type.
         let arena = Arena::new();
 
         // Validate DNS result order (InitOptions doesn't carry it yet — see TODO below).
@@ -100,10 +95,6 @@ impl ReplCommand {
         // TODO(port): vm.allocator = vm.arena.arena(); — allocator threading dropped in Rust
         // (vm.arena assignment moved below ReplRunner construction to avoid move-after-borrow)
 
-        // Configure bundler options
-        // Spec: `b.options.install = ctx.install` (raw `?*const Api.BunInstall`
-        // copy). `BundleOptions.install` is `Option<NonNull<_>>` so no
-        // lifetime-extension cast is needed.
         let install_ptr = ctx.install.as_deref().map(core::ptr::NonNull::from);
         b.options.install = install_ptr;
         b.resolver.opts.install = install_ptr;
@@ -171,10 +162,6 @@ impl ReplCommand {
         // stack frame for the holdAPILock scope and global_exit() (`!`) prevents unwind past it.
         unsafe { (*vm).arena = NonNull::new(&raw mut runner.arena) };
 
-        // PORT NOTE: jsc.OpaqueWrap(ReplRunner, ReplRunner.start) — comptime fn-ptr wrapper that
-        // produces an `extern "C" fn(*mut c_void)` thunk. `bun_jsc::opaque_wrap` requires a
-        // type implementing `FnTyped<Ctx>`; rather than depend on that upstream trait, write
-        // the trivial thunk locally.
         extern "C" fn repl_runner_thunk(ctx: *mut c_void) {
             // SAFETY: caller passes `&mut ReplRunner` cast to *mut c_void.
             let runner = unsafe { bun_ptr::callback_ctx::<ReplRunner<'_, '_>>(ctx) };
@@ -206,11 +193,6 @@ impl ReplCommand {
     }
 }
 
-/// Runs the REPL within the VM's API lock
-// PORT NOTE: split lifetimes — `'a` is the stack borrow of the runner/repl,
-// `'r` is the (effectively process-lifetime) VM/global references stored in
-// `Repl<'r>`. Tying them as `&'a mut Repl<'a>` makes the borrow invariant and
-// outlive the local, tripping the borrow checker against `Drop for Repl`.
 struct ReplRunner<'a, 'r> {
     repl: &'a mut Repl<'r>,
     vm: *mut VirtualMachine,

@@ -4,16 +4,11 @@ use core::fmt;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
+use bun_ast::Index;
 use bun_ast::{ImportKind, ImportRecord};
 use bun_ast::{Ref, Stmt};
 use bun_collections::{ArrayHashMap, AutoBitSet, VecExt};
 use bun_core::{FeatureFlags, Output};
-// PORT NOTE: `bun.ast.Index` is mirrored as both `crate::Index`
-// (`bun_ast::Index`) and `bun_ast::Index` via a
-// TYPE_ONLY split. `CssImportOrderKind::SourceIndex` carries the js_parser
-// flavor because its sole producer (`findImportedFilesInCSSOrder`) constructs
-// it from parser-side indices; all consumers only call `.get()`.
-use bun_ast::Index;
 use bun_core::{immutable as strings, string_joiner::StringJoiner};
 use bun_sourcemap as source_map;
 
@@ -45,12 +40,6 @@ pub struct Chunk {
     /// for more info on this technique.
     pub unique_key: &'static [u8],
 
-    /// Maps source index to bytes contributed to this chunk's output (for metafile).
-    /// The value is updated during parallel chunk generation to track bytesInOutput.
-    /// CONCURRENCY: the key set is frozen before codegen starts; worker threads
-    /// only `fetch_add` the per-source counters (see
-    /// `generate_compile_result_for_{js,css}_chunk`), so the value type is
-    /// `AtomicUsize` rather than `usize` to avoid materializing aliased `&mut`.
     pub files_with_parts_in_chunk: ArrayHashMap<IndexInt, core::sync::atomic::AtomicUsize>,
 
     /// We must not keep pointers to this type until all chunks have been allocated.
@@ -76,10 +65,6 @@ pub struct Chunk {
     pub intermediate_output: IntermediateOutput,
     pub isolated_hash: u64,
 
-    // TODO(port): was `= undefined` in Zig (set before use). The Zig field is
-    // the `renamer.Renamer` union; the Rust enum borrows from the symbol table
-    // (`Renamer<'r,'src>`), which can't live in a 'static-ish struct yet.
-    // `ChunkRenamer` is an owned-erased placeholder (see `crate::bun_renamer`).
     pub renamer: bun_renamer::ChunkRenamer,
 
     pub compile_results_for_chunk: CompileResultSlots,
@@ -142,15 +127,6 @@ unsafe impl Send for Chunk {}
 // the Zig single-pointer fan-out it ports.
 unsafe impl Sync for Chunk {}
 
-/// Disjoint-slot output buffer for [`Chunk::compile_results_for_chunk`].
-///
-/// Allocated single-threaded in `generate_chunks_in_parallel` *before* the
-/// `generate_compile_result_for_*_chunk` fan-out, written concurrently by
-/// worker threads at **disjoint** indices (one slot per `PendingPartRange.i`),
-/// then read single-threaded after `worker_pool.wait_for_all()`. Wrapping each
-/// slot in `UnsafeCell` makes the per-task write sound through a shared view —
-/// worker callbacks never need to materialize an aliased `&mut Chunk` or
-/// `&mut [CompileResult]` to publish their result.
 #[derive(Default)]
 #[repr(transparent)]
 pub struct CompileResultSlots(Box<[UnsafeCell<CompileResult>]>);
@@ -243,11 +219,6 @@ impl Chunk {
             // Project to the slots field with no intermediate `&`/`&mut Chunk`.
             let slots: *mut CompileResultSlots =
                 core::ptr::addr_of_mut!((*chunk).compile_results_for_chunk);
-            // `CompileResultSlots` is `repr(transparent)` over
-            // `Box<[UnsafeCell<CompileResult>]>`; reading the boxed-slice fat
-            // pointer in place (no move/drop) yields `*mut [UnsafeCell<_>]`
-            // without forming `&Box`. `Box<T>` is documented to have the same
-            // layout/ABI as `*mut T` (and `NonNull<T>`).
             let cells: *mut [UnsafeCell<CompileResult>] =
                 core::ptr::read(slots.cast::<*mut [UnsafeCell<CompileResult>]>());
             debug_assert!(
@@ -291,12 +262,6 @@ impl Chunk {
     }
 
     pub fn get_css_chunk_for_html<'a>(&self, chunks: &'a mut [Chunk]) -> Option<&'a mut Chunk> {
-        // Look up the CSS chunk via the JS chunk's css_chunks indices.
-        // This correctly handles deduplicated CSS chunks that are shared
-        // across multiple HTML entry points (see issue #23668).
-        // PORT NOTE: reshaped for borrowck — Zig calls getJSChunkForHTML(chunks) and then
-        // indexes into the same `chunks`. Here we scan immutably for the JS chunk, copy the
-        // css-chunk index into a local, drop the borrow, then re-borrow mutably.
         let entry_point_id = self.entry_point.entry_point_id();
         let css_idx: Option<usize> = 'find: {
             for other in chunks.iter() {
@@ -361,17 +326,8 @@ impl Order {
     }
 }
 
-/// TODO: rewrite this
-/// This implementation is just slow.
-/// Can we make the JSPrinter itself track this without increasing
-/// complexity a lot?
 #[derive(Default)]
 pub enum IntermediateOutput {
-    /// If the chunk has references to other chunks, then "pieces" contains
-    /// the contents of the chunk. Another joiner will have to be
-    /// constructed later when merging the pieces together.
-    ///
-    /// See OutputPiece's documentation comment for more details.
     Pieces(OutputPieces),
 
     /// If the chunk doesn't have any references to other chunks, then
@@ -383,17 +339,6 @@ pub enum IntermediateOutput {
     Empty,
 }
 
-/// Owns the joined output buffer alongside the `OutputPiece` slices that
-/// point into it.
-///
-/// PORT NOTE: In Zig, `breakOutputIntoPieces` calls `j.done(alloc)` with the
-/// per-worker arena, so the joined buffer outlives the chunk by construction
-/// and `OutputPiece.data` stays valid. The Rust `StringJoiner::done()`
-/// returns a `Box<[u8]>`; if that box is dropped at the end of
-/// `break_output_into_pieces`, every piece's `data` slice dangles (ASAN
-/// use-after-poison in `generate_isolated_hash`). Keep the box alive next to
-/// the pieces so their raw-pointer slices remain valid for the chunk's
-/// lifetime.
 pub struct OutputPieces {
     pieces: Vec<OutputPiece>,
     /// Backing storage for every `OutputPiece::data` in `pieces`.
@@ -426,24 +371,10 @@ pub struct CodeResult {
     pub shifts: Vec<source_map::SourceMapShifts>,
 }
 
-// PORT NOTE: Zig used `std.mem.Allocator`; the Rust crate exposes a global
-// mimalloc — we don't need a vtable here yet. `()` is kept as a token so the
-// caller's `Option<&DynAlloc>` plumbing matches the Zig signature; the actual
-// allocation goes through `alloc_buf` (global mimalloc) regardless. Real
-// arena threading (page_allocator vs default_allocator) lands when
-// `bun_alloc::Allocator` is a stable trait object.
 type DynAlloc = ();
 
-/// `arena.alloc(u8, n)` — until `DynAlloc` is a real trait object, route
-/// through the global arena. PERF(port): Zig picked page_allocator for
-/// `n >= 512KiB`; mimalloc handles large allocations via mmap already so this
-/// is a behavior match in practice.
 #[inline]
 fn alloc_buf(_arena: DynAlloc, n: usize) -> Result<Box<[u8]>, AllocError> {
-    // Zero-fill is required for soundness: `set_len` over uninit bytes violates
-    // `Vec`'s safety contract, and `into_boxed_slice` may shrink-realloc (memcpy
-    // of uninit). The memset cost is negligible next to the subsequent memcpy
-    // that fully overwrites the buffer.
     let mut v: Vec<u8> = Vec::new();
     v.try_reserve_exact(n).map_err(|_| AllocError)?;
     v.resize(n, 0);
@@ -585,10 +516,6 @@ impl IntermediateOutput {
         }
     }
 
-    /// Like `code()` but with standalone HTML support.
-    /// When `standalone_chunk_contents` is provided, chunk piece references are
-    /// resolved to inline code content instead of file paths. Asset references
-    /// are resolved to data: URIs from url_for_css.
     #[allow(clippy::too_many_arguments)]
     pub fn code_standalone<'d>(
         &mut self,
@@ -648,11 +575,6 @@ impl IntermediateOutput {
         force_absolute_path: bool,
         standalone_chunk_contents: Option<&[Option<Box<[u8]>>]>,
     ) -> Result<CodeResult, AllocError> {
-        // `Graph.input_files` SoA accessors live in `Graph::InputFileColumns`;
-        // `LinkerGraph.files` SoA (`items_entry_point_chunk_index`) lands with
-        // the LinkerGraph work. `bun_paths` / `bun_core::fmt::count` /
-        // `bun_alloc::alloc_slice` surfaces are tracked upstream.
-        // TODO(port): MultiArrayList SoA accessors — assuming `.items(.field)` → method returning slice
         let additional_files = graph.input_files.items_additional_files();
         let unique_key_for_additional_files =
             graph.input_files.items_unique_key_for_additional_file();
@@ -938,12 +860,6 @@ impl IntermediateOutput {
                                 _ => unreachable!(),
                             };
 
-                            // normalize windows paths to '/'
-                            // Zig does `@constCast(file_path)` and mutates the bundler-owned
-                            // storage in place. In Rust the source slices are reachable only
-                            // through `&Graph` / `&[Chunk]` here; materialising `&mut` from a
-                            // shared-provenance pointer is UB regardless of whether the write
-                            // happens. Copy into a pooled scratch buffer and normalise that.
                             let file_path: &[u8] = {
                                 let n = file_path.len();
                                 let dst = &mut file_path_buf[..n];
@@ -1063,24 +979,6 @@ impl IntermediateOutput {
     }
 }
 
-/// An issue with asset files and server component boundaries is they
-/// contain references to output paths, but those paths are not known until
-/// very late in the bundle. The solution is to have a magic word in the
-/// bundle text (BundleV2.unique_key, a random u64; impossible to guess).
-/// When a file wants a path to an emitted chunk, it emits the unique key
-/// in hex followed by the kind of path it wants:
-///
-///     `74f92237f4a85a6aA00000009` --> `./some-asset.png`
-///      ^--------------^|^------- .query.index
-///      unique_key      .query.kind
-///
-/// An output piece is the concatenation of source code text and an output
-/// path, in that order. An array of pieces makes up an entire file.
-///
-/// PORT NOTE: Zig split ptr+u32 len to shave 8 bytes. The Rust port stores a
-/// `RawSlice` (encapsulates the unsafe re-borrow) — the per-chunk piece count
-/// is bounded by the number of unique-key boundaries, so the extra word per
-/// piece is negligible against the safety win.
 pub(crate) struct OutputPiece {
     /// Borrows `OutputPieces::_buffer`; `RawSlice` invariant (backing outlives
     /// holder) is upheld by `OutputPieces` keeping the box alongside `pieces`.
@@ -1183,11 +1081,6 @@ pub(crate) const UNIQUE_KEY_PREFIX_LEN: usize = 16;
 /// Total byte length of a [`UniqueKey`] on the wire: `hex16 + KIND + idx08`.
 pub(crate) const UNIQUE_KEY_LEN: usize = UNIQUE_KEY_PREFIX_LEN + 1 + 8;
 
-/// 25-byte unique-key wire format `{hex16(prefix)}{KIND}{index:08}` shared by
-/// every emitter (ParseTask file/napi/sqlite loaders, server-component
-/// boundaries, HTML-import manifest, chunk IDs) and consumed by exactly one
-/// scanner (`LinkerContext::break_output_into_pieces`). Mirrors Zig
-/// `"{f}{LETTER}{d:0>8}"` with `bun.fmt.hexIntLower` byte-for-byte.
 #[derive(Clone, Copy)]
 pub(crate) struct UniqueKey {
     pub prefix: u64,
@@ -1291,11 +1184,6 @@ pub struct JavaScriptChunk {
     pub cross_chunk_prefix_stmts: Vec<Stmt>,
     pub cross_chunk_suffix_stmts: Vec<Stmt>,
 
-    /// Indexes to CSS chunks. Currently this will only ever be zero or one
-    /// items long, but smarter css chunking will allow multiple js entry points
-    /// share a css file, or have an entry point contain multiple css files.
-    ///
-    /// Mutated while sorting chunks in `computeChunks`
     pub css_chunks: Box<[u32]>,
 
     /// Serialized ModuleInfo for ESM bytecode (--compile --bytecode --format=esm)
@@ -1306,33 +1194,17 @@ pub struct JavaScriptChunk {
 
 pub struct CssChunk {
     pub imports_in_chunk_in_order: Vec<CssImportOrder>,
-    /// When creating a chunk, this is to be an uninitialized slice with
-    /// length of `imports_in_chunk_in_order`
-    ///
-    /// Multiple imports may refer to the same file/stylesheet, but may need to
-    /// wrap them in conditions (e.g. a layer).
-    ///
-    /// When we go through the `prepareCssAstsForChunk()` step, each import will
-    /// create a shallow copy of the file's AST (just dereferencing the pointer).
     pub asts: Box<[bun_css::BundlerStyleSheet]>,
 }
 
 impl Drop for CssChunk {
     fn drop(&mut self) {
-        // Zig `asts: []BundlerStyleSheet` is an arena slice of bitwise shallow
-        // copies (see `prepareCssAstsForChunk` `ptr::read`). Multiple slots may
-        // alias the same source AST's heap buffers when a file is imported more
-        // than once, so element-wise drop would double-free.
         let mut asts = core::mem::take(&mut self.asts).into_vec();
         // SAFETY: `set_len(0)` then `Vec::drop` frees the slab without running element destructors.
         unsafe { asts.set_len(0) };
     }
 }
 
-/// Zig: `const CssImportKind = enum { source_index, external_path, import_layers }` is the
-/// (private) tag enum for `CssImportOrder.kind: union(enum) { ... }`. In Rust the tagged
-/// union is `CssImportOrderKind`; callers that switch on `css_import.kind` reference it via
-/// the Zig-spelled name, so re-export it here.
 pub type CssImportKind = CssImportOrderKind;
 
 pub struct CssImportOrder {
@@ -1344,24 +1216,12 @@ pub struct CssImportOrder {
 
 impl Drop for CssImportOrder {
     fn drop(&mut self) {
-        // `conditions`: bitwise-shared across multiple order entries by
-        // `findImportedFilesInCSSOrder` (`bitwise_copy(wrapping_conditions)`);
-        // freeing here would double-free. The slab is allocated from the
-        // `LinkerGraph` arena and is bulk-freed with it.
         let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.conditions));
-        // `condition_import_records`: every populated value is uniquely owned
-        // (moved `all_import_records`) or an empty-Vec bitwise copy (cap == 0,
-        // drop is a no-op). Normal drop frees the owned buffers; no
-        // double-free path exists.
     }
 }
 
 #[derive(strum::IntoStaticStr)]
 pub enum CssImportOrderKind {
-    /// Represents earlier imports that have been made redundant by later ones (see `isConditionalImportRedundant`)
-    /// We don't want to redundantly print the rules of these redundant imports
-    /// BUT, the imports may include layers.
-    /// We'll just print layer name declarations so that the original ordering is preserved.
     #[strum(serialize = "layers")]
     Layers(Layers),
     #[strum(serialize = "external_path")]
@@ -1370,11 +1230,6 @@ pub enum CssImportOrderKind {
     SourceIndex(Index),
 }
 
-// TODO(port): bun.ptr.Cow(Vec<LayerName>, { copy = deepCloneInfallible, deinit = clearAndFree })
-// LayerName payload allocations live in the arena, so the Zig deinit is a shallow clearAndFree.
-// `std::borrow::Cow<'_, Vec<_>>` requires `Vec: Clone` (not implemented). Port the
-// Zig `bun.ptr.Cow` shape directly: a tag + raw pointer for the borrowed arm. Should
-// thread `'bump` (arena-borrowed) and confirm Clone semantics match deepCloneInfallible.
 pub enum Layers {
     /// Borrowed from another `CssImportOrder`'s `Layers` or the parsed stylesheet.
     Borrowed(bun_ptr::BackRef<Vec<bun_css::LayerName>>),
@@ -1390,15 +1245,6 @@ impl Layers {
         }
     }
 
-    /// Zig: `Chunk.CssImportOrder.Layers.borrow(ptr)` — Cow::Borrowed.
-    ///
-    /// Takes `NonNull` (not `&Vec`) because the sole caller in
-    /// `findImportedFilesInCSSOrder.rs` type-puns the lifetime-erased shadow
-    /// `crate::bun_css::LayerName` to the real `::bun_css::LayerName` via a
-    /// raw-pointer cast — that nominal-type erasure cannot go through `&`.
-    /// The pointee is arena-owned storage that outlives the chunk pipeline
-    /// (see TODO(port) above re: `'bump`); `BackRef` encapsulates that
-    /// invariant so `inner()`/`to_owned()` deref sites are safe.
     #[inline]
     pub(crate) fn borrow(p: core::ptr::NonNull<Vec<bun_css::LayerName>>) -> Self {
         Layers::Borrowed(bun_ptr::BackRef::from(p))
@@ -1475,11 +1321,6 @@ impl CssImportOrder {
 #[allow(dead_code)]
 pub(crate) struct CssImportOrderDebug<'a, 'ctx> {
     inner: &'a CssImportOrder,
-    // PORT NOTE: split lifetimes — `LinkerContext<'ctx>` is invariant over `'ctx`,
-    // so coupling the borrow lifetime to the struct param (`&'a LinkerContext<'a>`)
-    // forces every caller's `&CssImportOrder` and `&LinkerContext` to share one
-    // region. The Display impl only reads `ctx.parse_graph` (a raw `*mut Graph`),
-    // so the inner `'ctx` need not relate to `'a`.
     ctx: &'a LinkerContext<'ctx>,
 }
 

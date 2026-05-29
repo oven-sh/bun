@@ -82,17 +82,8 @@ impl SavedSourceMap {
     }
 }
 
-/// `InternalSourceMap` is the storage for runtime-transpiled modules.
-/// `ParsedSourceMap` is materialized lazily from a `SourceProviderMap` /
-/// `BakeSourceProvider` / `DevServerSourceProvider` for sources that ship
-/// their own external `.map`.
 pub type Value = TaggedPtrUnion<ValueTypes>;
 
-/// Local type-list marker so `TypeList`/`UnionMember` impls satisfy orphan
-/// rules — `bun_ptr::impl_tagged_ptr_union!` would impl on a tuple of foreign
-/// types (all five live in `bun_sourcemap`), which the coherence checker
-/// rejects from this crate. Tags are `1024 - i` to match Zig's
-/// `TagTypeEnumWithTypeMap` ordering in `SavedSourceMap.zig`.
 pub struct ValueTypes;
 
 impl bun_ptr::tagged_pointer::TypeList for ValueTypes {
@@ -168,10 +159,6 @@ impl SavedSourceMap {
         path: &[u8],
     ) {
         self.lock();
-        // PORT NOTE: reshaped for borrowck — explicit unlock paired manually.
-        // Zig `getEntry`/`removeByPtr` collapsed to `get`+`remove(&key)`; the std
-        // backing has no key-slot pointer to hand out, and the key is a u64 hash
-        // we already have in hand.
         let map = self.map_mut();
         let key = hash(path);
         let Some(&ptr) = map.get(&key) else {
@@ -204,10 +191,6 @@ impl SavedSourceMap {
 
     pub fn remove_zig_source_provider(&mut self, opaque_source_provider: *mut c_void, path: &[u8]) {
         self.lock();
-        // PORT NOTE: reshaped for borrowck — explicit unlock paired manually.
-        // Zig `getEntry`/`removeByPtr` collapsed to `get`+`remove(&key)`; the std
-        // backing has no key-slot pointer to hand out, and the key is a u64 hash
-        // we already have in hand.
         let map = self.map_mut();
         let key = hash(path);
         let Some(&ptr) = map.get(&key) else {
@@ -247,10 +230,6 @@ impl bun_js_printer::OnSourceMapChunk for SavedSourceMap {
     }
 }
 
-/// Port of `SavedSourceMap.SourceMapHandler` (SavedSourceMap.zig) —
-/// `js_printer.SourceMapHandler.For(SavedSourceMap, onSourceMapChunk)`. The Zig
-/// comptime type-generator is replaced by `SourceMapHandler::for_::<SavedSourceMap>`,
-/// monomorphized over the `OnSourceMapChunk` impl above.
 pub type SourceMapHandler<'a> = bun_js_printer::SourceMapHandler<'a>;
 
 impl Drop for SavedSourceMap {
@@ -291,13 +270,6 @@ impl SavedSourceMap {
         source: &bun_ast::Source,
         mut mappings: MutableString,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        // --hot can re-read a file mid-rewrite (truncate + write) and transpile
-        // a comment-only prefix into a 0-mapping map. Overwriting a real map
-        // with that would make any still-unreported error from the previous
-        // transpile remap against nothing and leak transpiled coords. A map
-        // with no mappings can never answer a lookup, so dropping it is never
-        // worse than installing it.
         if mappings.list.len() >= SourceMap::internal_source_map::HEADER_SIZE {
             let incoming = InternalSourceMap {
                 data: mappings.list.as_ptr(),
@@ -314,15 +286,6 @@ impl SavedSourceMap {
             }
         }
 
-        // PORT NOTE: Zig `default_allocator.dupe(u8, mappings.list.items)` —
-        // Zig dups because the printer's `MutableString` is backed by a
-        // recycled buffer it does not own. In Rust every caller MOVES an owned
-        // `Vec<u8>` here (printer chunk by value, cache hit via `mem::take`),
-        // so `into_boxed_slice()` transfers the existing allocation without
-        // re-alloc+memcpy (1.38 MB for `_tsc.js`'s cached map). `heap::alloc`
-        // is NOT a leak: ownership transfers to the table via `put_value`, and
-        // is reclaimed by `InternalSourceMap::free_owned` (see `put_value` /
-        // `Drop`). On the error path the Box is reconstituted and dropped.
         let blob: Box<[u8]> = core::mem::take(&mut mappings.list).into_boxed_slice();
         let blob_ptr: *mut [u8] = bun_core::heap::into_raw(blob);
         // errdefer: on error, reconstitute and drop the Box.
@@ -398,10 +361,6 @@ impl SavedSourceMap {
         let tagged = Value::from(Some(*mapping));
         let tag = tagged.tag();
         if tag == Value::case::<InternalSourceMap>() {
-            // Runtime-transpiled module. Wrap the blob in a refcounted
-            // ParsedSourceMap shell (no VLQ decode, no Mapping.List) so callers
-            // can hold a ref while the table mutates. The shell takes ownership
-            // of the blob.
             let ism = InternalSourceMap {
                 data: tagged.as_unchecked::<InternalSourceMap>() as *const u8,
             };
@@ -552,10 +511,6 @@ impl SavedSourceMap {
 
         let mapping = match parse.mapping {
             Some(m) => m,
-            // Spec SavedSourceMap.zig:343 — pass `line`/`column` straight
-            // through. `SourceMap::Ordinal` is a re-export of `bun_core::Ordinal`;
-            // round-tripping via `from_zero_based(x.zero_based())` debug-asserts
-            // on the legitimate INVALID (-1) sentinel.
             None => map.find_mapping(line, column)?,
         };
 

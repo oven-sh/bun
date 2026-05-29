@@ -27,14 +27,6 @@ impl From<TimeoutError> for bun_core::Error {
     }
 }
 
-/// Checks if `ptr` still contains the value `expect` and, if so, blocks the caller until either:
-/// - The value at `ptr` is no longer equal to `expect`.
-/// - The caller is unblocked by a matching `wake()`.
-/// - The caller is unblocked spuriously ("at random").
-/// - The caller blocks for longer than the given timeout. In which case, `error.Timeout` is returned.
-///
-/// The checking of `ptr` and `expect`, along with blocking the caller, is done atomically
-/// and totally ordered (sequentially consistent) with respect to other wait()/wake() calls on the same `ptr`.
 #[cold]
 pub fn wait(ptr: &AtomicU32, expect: u32, timeout_ns: Option<u64>) -> Result<(), TimeoutError> {
     // Avoid calling into the OS for no-op timeouts.
@@ -197,17 +189,6 @@ mod darwin_impl {
         expect: u32,
         timeout: Option<u64>,
     ) -> Result<(), TimeoutError> {
-        // Darwin XNU 7195.50.7.100.1 introduced __ulock_wait2 and migrated code paths (notably pthread_cond_t) towards it:
-        // https://github.com/apple/darwin-xnu/commit/d4061fb0260b3ed486147341b72468f836ed6c8f#diff-08f993cc40af475663274687b7c326cc6c3031e0db3ac8de7b24624610616be6
-        //
-        // This XNU version appears to correspond to 11.0.1:
-        // https://kernelshaman.blogspot.com/2021/01/building-xnu-for-macos-big-sur-1101.html
-        //
-        // ulock_wait() uses 32-bit micro-second timeouts where 0 = INFINITE or no-timeout
-        // ulock_wait2() uses 64-bit nano-second timeouts (with the same convention)
-        // TODO(port): builtin.target.os.version_range.semver.min.major >= 11 — Rust has no
-        // direct compile-time min-OS-version query. Bun's deployment target is macOS 13+, so
-        // assume true; revisit if a runtime check is needed.
         let supports_ulock_wait2: bool = true;
 
         let mut timeout_ns: u64 = 0;
@@ -216,11 +197,6 @@ mod darwin_impl {
             timeout_ns = delay;
         }
 
-        // If we're using `__ulock_wait` and `timeout` is too big to fit inside a `u32` count of
-        // micro-seconds (around 70min), we'll request a shorter timeout. This is fine (users
-        // should handle spurious wakeups), but we need to remember that we did so, so that
-        // we don't return `Timeout` incorrectly. If that happens, we set this variable to
-        // true so that we we know to ignore the ETIMEDOUT result.
         let mut timeout_overflowed = false;
 
         let addr: *const c_void = ptr.as_ptr().cast();
@@ -505,13 +481,6 @@ mod wasm_impl {
     }
 }
 
-/// Deadline is used to wait efficiently for a pointer's value to change using Futex and a fixed timeout.
-///
-/// Futex's timedWait() api uses a relative duration which suffers from over-waiting
-/// when used in a loop which is often required due to the possibility of spurious wakeups.
-///
-/// Deadline instead converts the relative timeout to an absolute one so that multiple calls
-/// to Futex timedWait() can block for and report more accurate error.Timeouts.
 pub(crate) struct Deadline {
     timeout: Option<u64>,
     started: std::time::Instant,
@@ -530,11 +499,6 @@ impl Deadline {
         }
     }
 
-    /// Wait until either:
-    /// - the `ptr`'s value changes from `expect`.
-    /// - `Futex.wake()` is called on the `ptr`.
-    /// - A spurious wake occurs.
-    /// - The deadline expires; In which case `error.Timeout` is returned.
     #[cold]
     pub(crate) fn wait(&mut self, ptr: &AtomicU32, expect: u32) -> Result<(), TimeoutError> {
         // Check if we actually have a timeout to wait until.

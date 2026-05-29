@@ -11,14 +11,6 @@ bun_opaque::opaque_ffi! {
     pub struct URL;
 }
 
-// TODO(port): move to jsc_sys
-// PORT NOTE: getters take `*const URL` — the C++ side (BunString.cpp) never mutates the
-// WTF::URL on read. `JSGlobalObject` is an opaque FFI handle whose state Rust never
-// observes directly, so it is passed `*const` per the JSGlobalObject.rs convention.
-// Getters take `&URL` (non-null `*const URL` at the C ABI; BunString.cpp never
-// mutates the WTF::URL on read). `&mut String` for the in/out params is
-// ABI-identical to non-null `*mut String`. `URL__deinit` consumes the C++
-// allocation, so it keeps a raw pointer and stays `unsafe fn`.
 unsafe extern "C" {
     safe fn URL__fromJS(value: JSValue, global: &JSGlobalObject) -> *mut URL;
     safe fn URL__fromString(input: &mut String) -> *mut URL;
@@ -118,26 +110,10 @@ impl URL {
         URL__search(self)
     }
 
-    /// Returns the host WITHOUT the port.
-    ///
-    /// Note that this does NOT match JS behavior, which returns the host with the port. See
-    /// `hostname` for the JS equivalent of `host`.
-    ///
-    /// ```text
-    /// URL("http://example.com:8080").host() => "example.com"
-    /// ```
     pub fn host(&self) -> String {
         URL__host(self)
     }
 
-    /// Returns the host WITH the port.
-    ///
-    /// Note that this does NOT match JS behavior which returns the host without the port. See
-    /// `host` for the JS equivalent of `hostname`.
-    ///
-    /// ```text
-    /// URL("http://example.com:8080").hostname() => "example.com:8080"
-    /// ```
     pub fn hostname(&self) -> String {
         URL__hostname(self)
     }

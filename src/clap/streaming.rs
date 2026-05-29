@@ -51,13 +51,6 @@ struct ArgInfo<'a> {
     kind: ArgKind,
 }
 
-/// A command line argument parser which, given an ArgIterator, will parse arguments according
-/// to the params. StreamingClap parses in an iterating manner, so you have to use a loop together with
-/// StreamingClap.next to parse all the arguments of your program.
-///
-/// `'p` is the borrow lifetime (params/iter/diagnostic); `'a` is the arg-data lifetime
-/// yielded by `ArgIterator` (e.g. `'static` for `OsIterator`). Splitting them lets
-/// callers use a locally-borrowed param table with process-lifetime argv.
 pub struct StreamingClap<'p, 'a, Id, ArgIterator> {
     pub params: &'p [clap::Param<Id>],
     pub iter: &'p mut ArgIterator,

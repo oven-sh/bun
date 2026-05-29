@@ -305,19 +305,6 @@ pub struct struct_hostent {
     pub h_addr_list: *mut *mut c_char, // NUL-terminated array
 }
 
-// ─── callback-wrapper reshaping note ──────────────────────────────────────
-// Zig: each reply type defines
-//   pub fn Callback(comptime Type) type = fn(*Type, ?Error, i32, ?*Reply) void
-//   pub fn callbackWrapper(comptime lookup_name, comptime Type, comptime fn) ares_callback
-// which monomorphizes a unique `extern "C"` thunk per (Type, fn) pair via the
-// anonymous-struct trick. Rust cannot take a fn pointer as a const generic on
-// stable, so the wrappers below are reshaped to a trait: the implementing
-// type provides the callback as a trait method, and the `extern "C"` thunk is
-// monomorphized per `T: Trait`.
-// TODO(port): a proc-macro may be cleaner if many callsites need distinct
-// callbacks on the same `Type`.
-// ──────────────────────────────────────────────────────────────────────────
-
 pub trait HostentHandler: Sized {
     fn on_hostent(&mut self, status: Option<Error>, timeouts: i32, results: *mut struct_hostent);
 }
@@ -574,11 +561,6 @@ impl Drop for hostent_with_ttls {
     }
 }
 
-// Per-record-type newtype aliases. Zig instantiated the resolve machinery over
-// the same `struct_hostent` / `hostent_with_ttls` with a comptime `type_name`
-// string; Rust callers (`dns.rs`) need distinct type names to monomorphise the
-// `CAresRecordType` cache-field constant per record. For now these are plain
-// aliases — the trait impls live downstream.
 pub type NsHostent = struct_hostent;
 pub type PtrHostent = struct_hostent;
 pub type CnameHostent = struct_hostent;
@@ -677,10 +659,6 @@ impl AddrInfo {
 
     #[inline]
     pub fn cnames(&self) -> &[AddrInfo_node] {
-        // TODO(port): Zig used `bun.span` on a [*c]AddrInfo_cname (sentinel-
-        // terminated linked list), returning `[]const AddrInfo_node` — note
-        // the type mismatch (cname vs node) in the original. This appears
-        // unused; preserving the empty-slice fast path only.
         if self.cnames_.is_null() {
             return &[];
         }
@@ -734,28 +712,13 @@ bun_opaque::opaque_ffi! {
     /// mutates the channel on every dispatch/process call).
     pub struct Channel;
 }
-// Load-bearing: `ares_cancel`/`ares_process_fd` are declared `safe fn(&mut Channel)`
-// on the basis that re-entrant callbacks re-deriving `&mut Channel` from a raw
-// pointer cannot conflict because `Channel` claims zero bytes. If this type ever
-// gains a non-ZST field, those signatures must revert to `unsafe fn(*mut Channel)`.
 const _: () = assert!(core::mem::size_of::<Channel>() == 0);
 
-/// Implemented by the type that owns a `*mut Channel` and receives socket-
-/// state callbacks. Zig: `Container.onDNSSocketState` + `this.channel = ch`.
-///
-/// R-2: methods take `&self`. The c-ares `sock_state_cb` re-enters the
-/// container while a `&self` borrow may already be live in `on_dns_poll`;
-/// the implementor routes mutation through interior mutability.
 pub trait ChannelContainer: Sized {
     fn on_dns_socket_state(&self, socket: ares_socket_t, readable: bool, writable: bool);
     fn set_channel(&self, channel: *mut Channel);
 }
 
-/// Trait for `Channel::resolve`: ties a lookup-name string to its NSType and
-/// the `extern "C"` parse-thunk used as the ares_callback.
-/// TODO(port): Zig dispatched via `@field(NSType, "ns_t_" ++ lookup_name)` and
-/// `cares_type.callbackWrapper(lookup_name, Type, callback)`. This trait is the
-/// Rust-side reshaping; the dns_jsc consumer impls it per (T, record-type).
 pub trait ResolveHandler: Sized {
     const LOOKUP_NAME: &'static [u8];
     const NS_TYPE: NSType;
@@ -770,11 +733,6 @@ pub trait ResolveHandler: Sized {
     );
 }
 
-/// Copy `src` into the caller-owned stack `buf`, NUL-terminate, and return a
-/// `*const c_char` suitable for c-ares FFI. Truncates silently at
-/// `buf.len() - 1`; callers that must reject overlong input do so before
-/// calling. The buffer lives in the caller's frame so the returned pointer is
-/// valid for the FFI call that follows.
 #[inline]
 fn copy_nul_terminated(buf: &mut [u8], src: &[u8]) -> *const c_char {
     let len = src.len().min(buf.len() - 1);
@@ -802,12 +760,6 @@ impl Channel {
         }
 
         let mut opts = Options {
-            // Android note: c-ares can't auto-discover servers (no /etc/resolv.conf,
-            // no JNI), so it falls back to 127.0.0.1 and queries time out. We do
-            // NOT set ARES_FLAG_NO_DFLT_SVR here — that makes init fail with
-            // ENOSERVER, which breaks dns.setServers() (it needs an initialized
-            // channel to call ares_set_servers_ports). Letting the 127.0.0.1
-            // default stand means setServers() works as the documented workaround.
             flags: ARES_FLAG_NOCHECKRESP,
             sock_state_cb: Some(on_sock_state::<C>),
             // R-2: `*mut` spelling is signature-only (c-ares stores a `void*`); the
@@ -926,10 +878,6 @@ impl Channel {
             copy_nul_terminated(&mut addr_buf, ip_addr)
         };
 
-        // https://c-ares.org/ares_inet_pton.html
-        // https://github.com/c-ares/c-ares/blob/7f3262312f246556d8c1bdd8ccc1844847f42787/src/lib/ares_gethostbyaddr.c#L71-L72
-        // `ares_inet_pton` allows passing raw bytes as `dst`,
-        // which can avoid the use of `struct_in_addr` to reduce extra bytes.
         let mut addr = [0u8; 16];
         if !addr_ptr.is_null() {
             // SAFETY: c-ares FFI; addr_ptr is a NUL-terminated stack buffer, addr is 16-byte stack scratch.
@@ -1065,13 +1013,6 @@ unsafe extern "C" {
     pub fn ares_destroy_options(options: *mut Options);
     pub fn ares_dup(dest: *mut Channel, src: *mut Channel) -> c_int;
     pub fn ares_destroy(channel: *mut Channel);
-    // Opaque handle by exclusive reference only — `Channel` is `!Freeze`/`!Sync`
-    // (UnsafeCell + PhantomData<*mut u8>). Note: `ares_cancel`/`ares_process_fd`
-    // synchronously invoke stored completion callbacks which may re-enter the
-    // resolver and re-derive a `&mut Channel` from a raw pointer; this is sound
-    // because `Channel` is a ZST (`UnsafeCell<[u8;0]>`), so `&mut Channel`
-    // claims zero bytes and overlapping `&mut` do not conflict under Stacked
-    // Borrows — the borrow checker does NOT gate the raw-pointer callbacks.
     pub safe fn ares_cancel(channel: &mut Channel);
     pub safe fn ares_set_local_ip4(channel: &mut Channel, local_ip: c_uint);
     pub fn ares_set_local_ip6(channel: *mut Channel, local_ip6: *const u8);
@@ -1266,14 +1207,6 @@ impl Default for struct_ares_addr6ttl {
         bun_core::ffi::zeroed()
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Generic reply-record plumbing. The six `struct_ares_{caa,srv,mx,txt,naptr,soa}_reply`
-// types share an identical c-ares callback thunk modulo (reply type, parse fn),
-// and all six `ares_parse_*_reply` externs share the signature
-// `(abuf *const u8, alen c_int, out *mut *mut R) -> c_int`. Collapsed from six
-// copy-pasted `callback_wrapper` bodies + six per-type handler traits.
-// ──────────────────────────────────────────────────────────────────────────
 
 /// A c-ares reply record whose parser has the canonical 3-arg signature.
 pub trait AresReply: Sized {
@@ -1796,10 +1729,6 @@ pub struct struct_ares_addr_port_node {
 unsafe impl bun_core::ffi::Zeroable for struct_ares_addr_port_node {}
 
 impl struct_ares_addr_port_node {
-    /// Type-erased pointer to the in_addr/in6_addr union, for `ares_inet_ntop`.
-    /// The union field stays private (active arm depends on `family`), but
-    /// callers need its address to round-trip through c-ares' presentation
-    /// converters.
     #[inline]
     pub fn addr_ptr(&self) -> *const c_void {
         ptr::addr_of!(self.addr).cast::<c_void>()
@@ -1834,12 +1763,6 @@ unsafe extern "C" {
         dst: *mut u8,
         size: ares_socklen_t,
     ) -> *const c_char;
-    /// https://c-ares.org/docs/ares_inet_pton.html
-    ///
-    /// ## Returns
-    /// - `1` if `src` was valid for the specified address family
-    /// - `0` if `src` was not parseable in the specified address family
-    /// - `-1` if some system error occurred. `errno` will have been set.
     pub fn ares_inet_pton(af: c_int, src: *const c_char, dst: *mut c_void) -> c_int;
 }
 
@@ -2167,16 +2090,6 @@ pub type ares_addr_port_node = struct_ares_addr_port_node;
 
 // Bun__canonicalizeIP_ host fn: see bun_runtime::dns_jsc::cares_jsc
 
-/// Creates a sockaddr structure from an address, port.
-///
-/// # Parameters
-/// - `addr`: A byte slice representing the IP address.
-/// - `port`: A 16-bit unsigned integer representing the port number.
-/// - `sa`: A pointer to a sockaddr structure where the result will be stored.
-///
-/// # Returns
-///
-/// This function returns 0 on success.
 pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
     const BUF_SIZE: usize = 128;
 

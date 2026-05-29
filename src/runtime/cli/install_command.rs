@@ -38,27 +38,12 @@ impl InstallCommand {
     }
 }
 
-// Kept out-of-line (not inlined into the `exec` dispatcher) so it survives as a
-// distinct symbol the release link's symbol-ordering file can cluster next to the
-// rest of the `bun install` startup path (PackageManager::init, lockfile diff,
-// resolver/transpiler setup) — otherwise these live on unrelated 4 KB pages of
-// the ~84 MB binary and get faulted in one page at a time.
 #[inline(never)]
 fn install(ctx: &mut ContextData) -> Result<(), Error> {
     // TODO(port): narrow error set
     let mut cli = CommandLineArguments::parse(Subcommand::Install)?;
 
-    // The way this works:
-    // 1. Run the bundler on source files
-    // 2. Rewrite positional arguments to act identically to the developer
-    //    typing in the dependency names
-    // 3. Run the install command
     if cli.analyze {
-        // PORT NOTE: hoisted from Zig fn-local `const Analyzer = struct {...}`.
-        // `ctx` is stored as a raw `*mut ContextData` (Zig `Command.Context` is
-        // `*ContextData` — a freely-aliasing pointer); the `on_fetch` callback
-        // re-enters the install path while `BuildCommand::exec` still holds the
-        // global `Context`, so a Rust `&mut` here would be aliased UB.
         struct Analyzer {
             ctx: *mut ContextData,
             cli: *mut CommandLineArguments,
@@ -69,12 +54,6 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
                 result: &mut DependenciesScannerResult<'_, '_>,
             ) -> Result<(), Error> {
                 let this = self;
-                // TODO: add separate argument that makes it so positionals[1..] is not done     and instead the positionals are passed
-                //
-                // Process-lifetime storage for the rewritten positionals.
-                // Zig: `bun.default_allocator.alloc(string, keys.len + 1)` with
-                // no matching free — `Global::exit(0)` follows immediately.
-                // `OnceLock` (not leaking) per PORTING.md §Forbidden.
                 static OWNED_KEYS: std::sync::OnceLock<Vec<Box<[u8]>>> = std::sync::OnceLock::new();
                 static POSITIONALS: std::sync::OnceLock<Vec<&'static [u8]>> =
                     std::sync::OnceLock::new();
@@ -114,11 +93,6 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
             }
         }
 
-        // PORT NOTE: `DependenciesScanner.entry_points` is `Box<[Box<[u8]>]>`; Zig
-        // borrowed `cli.positionals[1..]` directly. Clone the argv slices into an
-        // owned buffer (small one-shot list — no perf concern). Captured *before*
-        // raw-ptr aliasing of `cli` below so the access goes through the live
-        // `&mut cli` borrow.
         let entry_points: Box<[Box<[u8]>]> = cli.positionals[1..]
             .iter()
             .map(|s| Box::<[u8]>::from(*s))

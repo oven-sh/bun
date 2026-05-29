@@ -36,24 +36,12 @@ unsafe extern "C" {
     ) -> c_int;
     fn spng_get_png_buffer(ctx: *mut spng_ctx, len: *mut usize, err: *mut c_int) -> *mut u8;
     fn spng_set_option(ctx: *mut spng_ctx, opt: c_int, value: c_int) -> c_int;
-    /// iCCP chunk read/write — PNG carries an optional ICC profile alongside
-    /// the pixels for every colour type (including indexed). `spng_get_iccp`
-    /// returns non-zero when the source has no iCCP (or the chunk was
-    /// malformed); we treat all non-zero returns the same way — drop the
-    /// profile — because the pixels are still valid and a PNG without iCCP
-    /// is still a valid PNG. The `profile` pointer it hands back is owned by
-    /// the context and freed with `spng_ctx_free`; dupe out before then.
     fn spng_get_iccp(ctx: *mut spng_ctx, iccp: *mut Iccp) -> c_int;
     fn spng_set_iccp(ctx: *mut spng_ctx, iccp: *const Iccp) -> c_int;
 }
 
 #[repr(C)]
 struct Iccp {
-    /// PNG's Latin-1 iCCP keyword (1-79 chars + NUL). libspng requires it
-    /// non-empty on encode; the PNG spec marks it purely informational
-    /// (the profile bytes are what describe the colour space), so on
-    /// encode we always write the literal `"ICC Profile"`. The source
-    /// keyword is not threaded through `Decoded`.
     profile_name: [u8; 80],
     profile_len: usize,
     profile: *mut u8,
@@ -167,17 +155,6 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     })
 }
 
-/// Attach `icc_profile` to the encoder as an iCCP chunk. libspng requires
-/// `profile_name` non-empty (1-79 Latin-1 chars + NUL) and will deflate the
-/// profile payload into the chunk itself. The PNG spec marks the keyword as
-/// purely informational, so we write the literal `"ICC Profile"` always —
-/// the colour-meaning payload is `p`. A malformed-profile return from
-/// libspng drops the profile rather than failing the encode; a PNG without
-/// an iCCP is still valid (implicitly sRGB). Called from both truecolour
-/// `encode()` and indexed `encode_indexed()` — the PNG spec applies iCCP to
-/// every colour type (indexed-colour palettes live in the source space
-/// too, so dropping the profile there would silently reinterpret them as
-/// sRGB, same bug #30197 was filed for).
 fn embed_iccp(ctx: *mut spng_ctx, icc_profile: Option<&[u8]>) {
     let Some(p) = icc_profile else { return };
     if p.is_empty() {
@@ -263,12 +240,6 @@ pub(crate) fn encode(
     })
 }
 
-/// Quantize RGBA to ≤ `colors` and emit an indexed (colour-type 3) PNG
-/// with PLTE + tRNS. The quantizer is a small median-cut — see
-/// quantize.rs. `icc_profile` carries the source colour space; median
-/// cut operates on the raw RGB numbers without converting colour spaces,
-/// so the palette entries are still in that space and need the profile
-/// to be interpreted correctly — same contract as truecolour encode.
 pub(crate) fn encode_indexed(
     rgba: &[u8],
     w: u32,

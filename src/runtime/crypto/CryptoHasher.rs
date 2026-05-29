@@ -16,10 +16,6 @@ use crate::node::{BlobOrStringOrBuffer, Encoding, StringOrBuffer};
 // `Hashers` = src/sha_hmac/sha.zig (re-exported via bun_sha_hmac::sha::evp::*).
 use bun_sha_hmac::sha as hashers;
 
-// `std.crypto.hash.{sha3,blake2}` — pure-Zig stdlib algos with no BoringSSL
-// streaming context. Per docs/PORTING.md ("prefer a well-tested crates.io dep
-// over hand-porting bit-twiddling"), wire RustCrypto's `sha3`/`blake2` into the
-// `ZigHashAlgo` trait below.
 use zig_crypto_algos::{Blake2s256, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256};
 
 // Zig: `const Digest = EVP.Digest;` → `[u8; EVP_MAX_MD_SIZE]`
@@ -51,18 +47,6 @@ fn is_bun_file_blob(input: &BlobOrStringOrBuffer) -> bool {
     }
 }
 
-/// `union(enum)` → Rust enum with payload variants.
-/// `.classes.ts`-backed type: the C++ JSCell wrapper stays generated; this is the `m_ctx` payload.
-///
-/// `#[repr(C)]` only to satisfy the `improper_ctypes` lint on the generated
-/// `extern "C" fn(..., *mut CryptoHasher)` shims — C++ never reads this layout
-/// (it round-trips `m_ctx` as `void*`).
-///
-/// R-2 (`sharedThis`): every JS-facing host-fn takes `&CryptoHasher` (not
-/// `&mut`). The discriminant is fixed at construction; only the payload mutates,
-/// so each variant payload is wrapped in [`JsCell`] (UnsafeCell projector,
-/// single-JS-thread). The codegen shim still emits `this: &mut CryptoHasher` —
-/// `&mut T` auto-derefs to `&T` so the impls below compile against either.
 #[bun_jsc::JsClass]
 #[repr(C)]
 pub enum CryptoHasher {
@@ -212,10 +196,6 @@ impl CryptoHasher {
 
     // ── JS host fns ────────────────────────────────────────────────────────
 
-    /// `pub const digest = jsc.host_fn.wrapInstanceMethod(CryptoHasher, "digest_", false);`
-    ///
-    /// Hand-expanded `wrapInstanceMethod` decode for the parameter list
-    /// `(*CryptoHasher, *JSGlobalObject, ?Node.StringOrBuffer)`.
     pub fn digest(
         this: &Self,
         global: &JSGlobalObject,
@@ -242,10 +222,6 @@ impl CryptoHasher {
         Self::digest_(this, global, output)
     }
 
-    /// `pub const hash = jsc.host_fn.wrapStaticMethod(CryptoHasher, "hash_", false);`
-    ///
-    /// Hand-expanded `wrapStaticMethod` decode for the parameter list
-    /// `(*JSGlobalObject, ZigString, Node.BlobOrStringOrBuffer, ?Node.StringOrBuffer)`.
     pub fn hash(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<3>();
         let mut i = 0usize;
@@ -470,10 +446,6 @@ impl CryptoHasher {
         }
     }
 
-    // Bun.CryptoHasher(algorithm, hmacKey?: string | Buffer)
-    // PORT NOTE: `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
-    // which cannot resolve to an associated fn inside an `impl` block. The
-    // constructor shim is wired by `#[bun_jsc::JsClass]` codegen.
     pub fn constructor(
         global: &JSGlobalObject,
         callframe: &CallFrame,
@@ -769,10 +741,6 @@ impl CryptoHasher {
                 let Some(mut hmac) = inner.replace(None) else {
                     return Err(Self::throw_hmac_consumed(global));
                 };
-                // `this.hmac = null; defer hmac.deinit();` — `replace(None)` + Drop on `hmac`.
-                // PORT NOTE: `HMAC::r#final<'a>(&mut self, out: &'a mut [u8]) -> &'a mut [u8]`
-                // returns a subslice of `out`, not `self`, so dropping `hmac` at scope end
-                // does not invalidate the returned borrow.
                 break 'brk Ok(hmac.r#final(output_digest_slice));
             }
             CryptoHasher::Evp(inner) => {
@@ -785,12 +753,6 @@ impl CryptoHasher {
             CryptoHasher::Zig(inner) => Ok(inner.with_mut(move |z| z.final_(output_digest_slice))),
         }
     }
-
-    // `.classes.ts` finalize — runs on mutator thread during lazy sweep. Each
-    // variant's cleanup (`inner.deinit()` in the Zig original, see
-    // https://github.com/oven-sh/bun/issues/3250) is handled by `Drop` on the
-    // variant payloads, so the `JsFinalize` trait default (`drop(self)`) is
-    // exactly what's needed; no inherent override.
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -818,10 +780,6 @@ pub trait ZigHashAlgo: Default + Clone + 'static {
     fn final_(&mut self, out: &mut [u8]);
 }
 
-/// Hash-state types for the Zig-stdlib algorithms (`std.crypto.hash.{sha3,blake2}`)
-/// that BoringSSL does not expose as a streaming context. Backed by RustCrypto's
-/// `sha3`/`blake2` crates (same Keccak-p[1600,24] permutation and BLAKE2s as
-/// Zig's `std.crypto`).
 mod zig_crypto_algos {
     use super::{ZigHashAlgo, evp};
     use sha3::digest::{ExtendableOutputReset, FixedOutputReset, Output, Update};
@@ -1129,10 +1087,6 @@ pub trait StaticHasher: 'static {
     /// # Safety
     /// `engine` must be null (default engine) or a live `ENGINE*`.
     unsafe fn hash(input: &[u8], out: &mut Self::Digest, engine: *mut boring_ssl::ENGINE);
-    /// `@field(jsc.Codegen, "JS" ++ name).getConstructor` — per-monomorphization
-    /// codegen module (`bun_jsc::generated::JS${NAME}`). Replaces the Zig
-    /// `comptime "JS" ++ name` token paste; each `impl_static_hasher!` arm binds
-    /// to the typed wrapper exported by `js_class_module!` for its concrete name.
     fn get_constructor(global: &JSGlobalObject) -> JSValue;
 }
 
@@ -1187,17 +1141,6 @@ impl_static_hasher!(hashers::SHA384, "SHA384", JSSHA384, 48);
 impl_static_hasher!(hashers::SHA512, "SHA512", JSSHA512, 64);
 impl_static_hasher!(hashers::SHA512_256, "SHA512_256", JSSHA512_256, 32);
 
-// PORT NOTE: `#[bun_jsc::JsClass]` cannot expand over a generic struct (it emits
-// `*mut StaticCryptoHasher` without `<H>`). In Zig each `StaticCryptoHasher(Hasher, name)`
-// instantiation gets its own `.classes.ts` codegen; the Rust equivalent must apply
-// `JsClass` to each concrete monomorphization (MD4/MD5/SHA1/…) once the macro grows
-// generic/alias support.
-// The per-monomorphization `JsClass` impl + extern shims live in
-// `build/*/codegen/generated_classes.rs` (one block per `pub type` alias below);
-// `#[repr(C)]` here only silences the `improper_ctypes` lint on those externs.
-// R-2 (`sharedThis`): every JS-facing host-fn takes `&StaticCryptoHasher<H>`.
-// `hashing` is mutated by `update`/`final_` → `JsCell<H>`; `digested` is a
-// Copy flag → `Cell<bool>`.
 #[repr(C)]
 pub struct StaticCryptoHasher<H: StaticHasher> {
     pub hashing: JsCell<H>,
@@ -1214,10 +1157,6 @@ impl<H: StaticHasher> Default for StaticCryptoHasher<H> {
 }
 
 impl<H: StaticHasher> StaticCryptoHasher<H> {
-    /// `pub const digest = host_fn.wrapInstanceMethod(ThisHasher, "digest_", false);`
-    ///
-    /// Hand-expanded `wrapInstanceMethod` decode for the parameter list
-    /// `(*ThisHasher, *JSGlobalObject, ?Node.StringOrBuffer)`.
     pub fn digest(
         this: &Self,
         global: &JSGlobalObject,
@@ -1244,10 +1183,6 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         Self::digest_(this, global, output)
     }
 
-    /// `pub const hash = host_fn.wrapStaticMethod(ThisHasher, "hash_", false);`
-    ///
-    /// Hand-expanded `wrapStaticMethod` decode for the parameter list
-    /// `(*JSGlobalObject, Node.BlobOrStringOrBuffer, ?Node.StringOrBuffer)`.
     pub fn hash(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<2>();
         let mut i = 0usize;

@@ -30,13 +30,6 @@ pub struct PrinterOptions<'a> {
     pub project_root: Option<&'a [u8]>,
     /// Targets to output the CSS for.
     pub targets: Targets,
-    /// Whether to analyze dependencies (i.e. `@import` and `url()`).
-    /// If true, the dependencies are returned as part of the
-    /// [ToCssResult](super::stylesheet::ToCssResult).
-    ///
-    /// When enabled, `@import` and `url()` dependencies
-    /// are replaced with hashed placeholders that can be replaced with the final
-    /// urls later (after bundling).
     pub analyze_dependencies: Option<css::dependencies::DependencyOptions>,
     /// A mapping of pseudo classes to replace with class names that can be applied
     /// from JavaScript. Useful for polyfills, for example.
@@ -113,15 +106,6 @@ impl<'a> ImportInfo<'a> {
     }
 }
 
-/// A `Printer` represents a destination to output serialized CSS, as used in
-/// the [ToCss](super::traits::ToCss) trait. It can wrap any destination that
-/// implements [std::fmt::Write](std::fmt::Write), such as a [String](String).
-///
-/// A `Printer` keeps track of the current line and column position, and uses
-/// this to generate a source map if provided in the options.
-///
-/// `Printer` also includes helper functions that assist with writing output
-/// that respects options such as `minify`, and `css_modules`.
 pub struct Printer<'a> {
     // #[cfg(feature = "sourcemap")]
     pub sources: Option<&'a Vec<Box<[u8]>>>,
@@ -133,12 +117,6 @@ pub struct Printer<'a> {
     pub minify: bool,
     pub targets: Targets,
     pub vendor_prefix: css::VendorPrefix,
-    /// True while nested rules are being re-serialized for a non-final vendor
-    /// prefix pass of an ancestor style rule (when nesting is compiled away).
-    /// Nested style rules that carry their own vendor prefixes override
-    /// `vendor_prefix`, so their output is identical in every ancestor pass;
-    /// they are skipped while this is set and emitted once in the final pass,
-    /// keeping the output linear in nesting depth instead of exponential.
     pub skip_prefixed_nested_rules: bool,
     pub in_calc: bool,
     pub css_module: Option<css::CssModule<'a>>,
@@ -151,12 +129,6 @@ pub struct Printer<'a> {
     // TODO(port): lifetime — ctx is set to a stack-local during with_context() and restored
     // after; `&'a StyleContext<'a>` will not borrow-check there. May need raw `*const StyleContext`.
     pub ctx: Option<&'a css::StyleContext<'a>>,
-    /// Number of parent-selector substitutions performed for `&` while
-    /// serializing the current rule prelude with compiled nesting (targets
-    /// without CSS nesting support). Reset per prelude (in
-    /// `StyleRule::to_css_base` and `ScopeRule::to_css`) and bounded in
-    /// `serialize::serialize_nesting` so deeply nested rules with multiple
-    /// `&` references per level cannot expand exponentially.
     pub nesting_expansions: u32,
     pub scratchbuf: BumpVec<'a, u8>,
     pub error_kind: Option<css::PrinterError>,
@@ -204,10 +176,6 @@ impl<'a> Printer<'a> {
         self.lookup_symbol(ident.as_ref().unwrap())
     }
 
-    // Zig checked vtable identity against std.Io.Writer.Allocating and recovered the
-    // backing buffer length via `container_of`; in Rust the trait exposes `written_len()`
-    // directly (Vec<u8> / MutableString / counting sinks override it, others panic — same
-    // contract as Zig's `@panic("css: got bad writer type")` fallthrough).
     #[inline]
     fn get_written_amt(writer: &dyn Write) -> usize {
         writer.written_len()
@@ -330,10 +298,6 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Construct a `Printer` that writes into an in-memory `Vec<u8>` buffer
-    /// using default `PrinterOptions`. Mirrors the Zig pattern of pairing
-    /// `std.Io.Writer.Allocating` with `Printer.new(..., PrinterOptions.default(), ...)`
-    /// for sub-serialization (e.g. `PseudoClass::toCss`, `Selector` debug fmt).
     pub fn new_buffered(
         arena: &'a Bump,
         dest: &'a mut Vec<u8>,
@@ -411,10 +375,6 @@ impl<'a> Printer<'a> {
         self.ctx
     }
 
-    /// To satisfy io.Writer interface
-    ///
-    /// NOTE: Same constraints as `write_str`, the `str` param is assumed to not
-    /// contain any newline characters
     pub fn write_all(&mut self, str_: &[u8]) -> Result<(), bun_alloc::AllocError> {
         self.write_str(str_).map_err(|_| bun_alloc::AllocError)
     }
@@ -434,12 +394,6 @@ impl<'a> bun_io::Write for Printer<'a> {
 }
 
 impl<'a> Printer<'a> {
-    /// Serialize a CSS identifier through this printer.
-    ///
-    /// Thin wrapper over `css::serializer::serialize_identifier`. The
-    /// serializer returns `bun_io::Result<()>`; `write_str`/`write_char` have
-    /// already recorded `add_fmt_error()` on failure, so the error payload is
-    /// just remapped to `PrintErr::CSSPrintError`.
     #[inline]
     pub fn serialize_identifier(&mut self, v: &[u8]) -> PrintResult<()> {
         css::serializer::serialize_identifier(v, self).map_err(|_| PrintErr::CSSPrintError)
@@ -475,10 +429,6 @@ impl<'a> Printer<'a> {
         Ok(())
     }
 
-    /// Writes a raw string to the underlying destination.
-    ///
-    /// NOTE: Is is assumed that the string does not contain any newline characters.
-    /// If such a string is written, it will break source maps.
     pub fn write_str(&mut self, s: impl AsRef<[u8]>) -> PrintResult<()> {
         let s = s.as_ref();
         #[cfg(debug_assertions)]
@@ -505,10 +455,6 @@ impl<'a> Printer<'a> {
         Ok(())
     }
 
-    /// Writes a formatted string to the underlying destination.
-    ///
-    /// NOTE: Is is assumed that the formatted string does not contain any newline characters.
-    /// If such a string is written, it will break source maps.
     pub fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> PrintResult<()> {
         // assuming the writer comes from an ArrayList
         let start: usize = Self::get_written_amt(self.dest);
@@ -562,10 +508,6 @@ impl<'a> Printer<'a> {
     pub fn write_ident(&mut self, ident: &'a [u8], handle_css_module: bool) -> PrintResult<()> {
         if handle_css_module {
             if self.css_module.is_some() {
-                // PORT NOTE: borrowck reshape — Zig captured `&mut self` inside the closure
-                // while `css_module` (a field of self) was simultaneously borrowed. We instead
-                // copy the `'a`-lifetime references out of `css_module` up front so the
-                // closure can hold the sole `&mut self`.
                 let source_index = self.loc.source_index as usize;
                 let arena = self.arena;
                 let (config, hash, source): (&'a css::css_modules::Config, &'a [u8], &'a [u8]) = {
@@ -724,10 +666,6 @@ impl<'a> Printer<'a> {
         self.whitespace()
     }
 
-    /// Writes a single whitespace character, unless the `minify` option is enabled.
-    ///
-    /// Use `write_char` instead if you wish to force a space character to be written,
-    /// regardless of the `minify` option.
     pub fn whitespace(&mut self) -> PrintResult<()> {
         if self.minify {
             return Ok(());
@@ -735,14 +673,6 @@ impl<'a> Printer<'a> {
         self.write_char(b' ')
     }
 
-    /// Writes a `{ ... }` block envelope: optional leading whitespace, `{`,
-    /// indent, the caller-supplied body, dedent, trailing newline, `}`.
-    ///
-    /// This is the shared shape used by every nested-rule at-rule printer
-    /// (`@media`, `@supports`, `@container`, `@layer`, `@starting-style`,
-    /// `@-moz-document`, unknown at-rules). The body closure is responsible
-    /// for its own leading `newline()` if it wants one — per-item printers
-    /// (e.g. `@font-face`, `@keyframes`) interleave newlines differently.
     pub fn block(&mut self, f: impl FnOnce(&mut Self) -> PrintResult<()>) -> PrintResult<()> {
         self.whitespace()?;
         self.write_char(b'{')?;
@@ -753,16 +683,6 @@ impl<'a> Printer<'a> {
         self.write_char(b'}')
     }
 
-    /// Writes each item via `f`, calling `sep` *between* items (not before the
-    /// first, not after the last). All errors short-circuit via `?`.
-    ///
-    /// This is the canonical replacement for the open-coded
-    /// `let mut first = true; for x in iter { if !first { <sep>? } first = false; <body>? }`
-    /// loop that pervades `to_css` impls.
-    ///
-    /// `sep` is a closure — not a `u8` — because the dominant separator in CSS
-    /// printing is [`delim`](Self::delim) (minify-aware whitespace around a byte),
-    /// and several sites need a multi-statement or `minify`-conditional separator.
     pub fn write_separated<I, S, F>(&mut self, iter: I, mut sep: S, mut f: F) -> PrintResult<()>
     where
         I: IntoIterator,

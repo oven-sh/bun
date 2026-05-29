@@ -28,22 +28,6 @@ use crate::socket::socket_address::inet::{self, INET6_ADDRSTRLEN, sockaddr_in, s
 
 bun_output::declare_scope!(UdpSocket, visible);
 
-/// Local shim for Zig `bun.sys.Maybe(void).errnoSys(rc, tag)` — `bun_sys::Result`
-/// is a plain `core::result::Result` alias in Rust and has no associated
-/// `errno_sys` constructor.
-///
-/// POSIX `getErrno(c_int)` semantics: only `rc == -1` is failure (any other
-/// value — including positive packet counts from `us_udp_socket_send` and
-/// negative EAI codes from `connect` — is "not a libc errno", so callers
-/// handle it themselves).
-///
-/// Windows semantics (src/runtime/node.zig:227-233): for any non-NTSTATUS
-/// integer `rc`, `if (rc != 0) return null` — i.e. *every* non-zero rc
-/// (including `-1` / `SOCKET_ERROR`) falls through to the caller's own EAI /
-/// WSA handling rather than synthesising an errno. This matters for the
-/// `connect()` path (line ~575): `us_udp_socket_connect()` returns a Winsock
-/// status, not a CRT errno, so reading `_errno()` here would be the wrong
-/// source.
 #[inline]
 fn errno_sys(rc: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
     #[cfg(windows)]
@@ -87,12 +71,6 @@ extern "C" fn on_close(socket: *mut uws::udp::Socket) {
 }
 
 extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int) {
-    // Only called on Linux via IP_RECVERR — loop.c guards the recv-on-error
-    // path with #if defined(__linux__) to preserve the pre-existing
-    // close-on-error behavior on kqueue/Windows (where an error event is a
-    // fatal socket condition, not a drainable error queue). Builds a
-    // SystemError from the ICMP errno (ECONNREFUSED, EHOSTUNREACH,
-    // ENETUNREACH, EMSGSIZE, ...) and dispatches through the 'error' handler.
     let this: &UDPSocket = UDPSocket::from_uws(socket);
     let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     let global_this = this.global_this.get();
@@ -439,13 +417,6 @@ struct ConnectInfo {
     port: u16,
 }
 
-/// `jsc.Codegen.JSUDPSocket` — `.classes.ts` cached accessors.
-///
-/// `values: ["on_data", "on_drain", "on_error"]` (GC-tracked WriteBarrier slots
-/// — Zig: `js.gc.on_*.{get,set}`) plus the `cache: true` getters
-/// `address` / `remoteAddress` (cleared on connect to invalidate the JS-side
-/// memo). All resolve to the C++ `UDPSocketPrototype__${prop}{Get,Set}CachedValue`
-/// shims via [`bun_jsc::codegen_cached_accessors!`].
 pub mod js {
     bun_jsc::codegen_cached_accessors!(
         "UDPSocket";
@@ -454,11 +425,6 @@ pub mod js {
     );
 }
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim (`generated_classes.rs`) still passes `this: &mut UDPSocket` until the
-// `sharedThis: true` regen lands — `&mut T` auto-derefs to `&T` so the impls
-// below compile against either.
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct UDPSocket {
     pub config: JsCell<UDPSocketConfig>,
@@ -484,13 +450,6 @@ impl UDPSocket {
         bun_core::heap::into_raw(Box::new(init))
     }
 
-    /// Recover `&UDPSocket` from the uws user-data slot. Centralises the
-    /// `unsafe { &*(*socket).user().cast() }` back-ref deref shared by every
-    /// `extern "C"` callback below — the user pointer was set to the
-    /// heap-allocated `UDPSocket` in [`udp_socket`] via
-    /// `uws::udp::Socket::create(.., user_data = this_ptr)` and remains live
-    /// until `on_close` (uws guarantees no callback after close). All mutated
-    /// fields are `Cell`/`JsCell`, so a shared borrow is sufficient (R-2).
     #[inline]
     fn from_uws<'a>(socket: *mut uws::udp::Socket) -> &'a UDPSocket {
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
@@ -520,15 +479,6 @@ impl UDPSocket {
         // borrow — every mutated field is `Cell`/`JsCell`.
         let this = unsafe { &*this_ptr };
 
-        // errdefer { closed = true; close socket; downgrade this_value }
-        // Release the strong reference so the JS wrapper can be garbage
-        // collected, which will in turn call finalize() to free this struct.
-        // Without this, failed config parsing or bind would leave the wrapper
-        // pinned forever by the Strong handle and leak. This is idempotent, so
-        // it is safe even if onClose() already downgraded via socket.close().
-        //
-        // Capture the raw pointer (Copy) and re-derive inside the closure so
-        // borrowck does not see `this` as held across the guard's lifetime.
         let guard = scopeguard::guard(this_ptr, |ptr| {
             // SAFETY: `ptr` came from `heap::alloc` above and ownership has been
             // transferred to the JS wrapper; the guard only fires on the early-return
@@ -536,10 +486,6 @@ impl UDPSocket {
             // R-2: shared borrow — mutation through `Cell`/`JsCell`.
             let this = unsafe { &*ptr };
             this.closed.set(true);
-            // Hoist before `(*socket).close()`: that call SYNCHRONOUSLY re-enters
-            // `on_close` (udp.c `s->on_close(s)`), which re-derives `&UDPSocket`
-            // from the uws user pointer. `downgrade()` is idempotent (on_close
-            // repeats it), so ordering is unobservable.
             this.this_value.with_mut(|r| r.downgrade());
             if let Some(socket) = this.socket.take() {
                 // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
@@ -752,12 +698,6 @@ impl UDPSocket {
         }
 
         let enabled = arguments[0].to_boolean();
-        // Spec: udp_socket.zig:424 uses bare `.?`, but the same file's
-        // `setAnyTTL` (zig:593) / `setMembership` (zig:450) guard with
-        // `orelse throw` — on Windows the Rust port can observe
-        // `closed=false && socket=None` here (panic seen in
-        // test-dgram-multicast-loopback.js). Throw EBADF to match the
-        // `closed` branch above instead of panicking.
         let Some(socket) = this.socket.get() else {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(
@@ -1014,14 +954,6 @@ impl UDPSocket {
             )));
         }
 
-        // Zig spec uses `var addr: sockaddr.storage = undefined;`. `parse_addr`
-        // only writes the leading sockaddr_in/in6 prefix (≤28 bytes), so the
-        // remaining 100+ bytes stay uninitialized. Zig permits that (only
-        // written fields are read), but in Rust producing a `sockaddr_storage`
-        // value via `assume_init()` from a partially-initialized `MaybeUninit`
-        // is UB. Zero-initialize instead — matches `set_membership` and is
-        // semantically equivalent (the C side reads only `ss_family` + the
-        // address-family-specific fields `parse_addr` populated).
         let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
 
         if !this.parse_addr(
@@ -1120,19 +1052,6 @@ impl UDPSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // Iterating the input array can run arbitrary user JS: `iter.next()`'s
-        // slow path hits `JSObject.getIndex`, and `parseAddr` calls
-        // `port.coerceToInt32()` / `address.toBunString()`. That JS can drop
-        // the last reference to an earlier payload and force a GC, or detach
-        // an earlier ArrayBuffer (`.transfer(n)` frees its backing store
-        // synchronously), leaving borrowed pointers in `payloads[]` dangling
-        // before `socket.send` reads them.
-        //
-        // Root every payload JSValue in a MarkedArgumentBuffer for the
-        // duration of the call so GC cannot collect them, and split the work
-        // into two phases: phase 1 collects/validates payloads and runs all
-        // user JS; phase 2 borrows byte slices only once no more user JS
-        // sits between capture and `socket.send`.
         struct Ctx<'a> {
             this: &'a UDPSocket,
             global_this: &'a JSGlobalObject,
@@ -1185,13 +1104,6 @@ impl UDPSocket {
             ));
         }
 
-        // Cache the connection state before doing anything that can run user JS.
-        // Array index getters, `port.valueOf()`, and `address.toString()` can all
-        // call back into JS and connect/disconnect/close this socket. If we re-read
-        // `this.connect_info` on every iteration, a mid-loop flip changes how
-        // `slice_idx` is computed and which branch writes into `payloads`/`lens`/
-        // `addr_ptrs`, producing out-of-bounds writes (unconnected -> connected) or
-        // uninitialized slots (connected -> disconnected) in the arena buffers.
         let connected = this.connect_info.get().is_some();
 
         let array_len = arg.get_length(global_this)? as usize;
@@ -1214,11 +1126,6 @@ impl UDPSocket {
 
         let mut iter = arg.array_iterator(global_this)?;
 
-        // Phase 1: collect and validate payload JSValues, resolve addresses.
-        // All user-JS re-entrance happens here. Root each payload in the
-        // MarkedArgumentBuffer so GC cannot collect it, but do NOT yet borrow
-        // raw pointers into backing stores — user JS on a later iteration
-        // could otherwise free or detach that storage.
         let mut i: u32 = 0;
         let mut port: JSValue = JSValue::ZERO;
         while let Some(val) = iter.next()? {
@@ -1237,13 +1144,6 @@ impl UDPSocket {
                     if val.as_array_buffer(global_this).is_some() {
                         break 'blk val;
                     }
-                    // `isString()` is `isStringLike()` and accepts boxed
-                    // `StringObject` / `DerivedStringObject`; calling
-                    // `toJSString` on those in phase 2 would run user
-                    // `toString()`/`valueOf()` via `toPrimitive`. Resolve to
-                    // the primitive JSString here — where user-JS re-entrance
-                    // is expected — and root that, so phase 2 only ever sees
-                    // primitive JSString cells.
                     if val.is_string() {
                         break 'blk val.to_js_string(global_this)?.to_js();
                     }
@@ -1280,14 +1180,6 @@ impl UDPSocket {
             )));
         }
 
-        // Phase 2: borrow byte slices now that no more user JS will run before
-        // `socket.send`. Every `payload_vals` entry is either an
-        // ArrayBufferView or a *primitive* JSString (boxed strings were
-        // resolved in phase 1), so nothing here reaches `toPrimitive`. Rope
-        // resolution / UTF-16 conversion may allocate and GC, but every
-        // payload is rooted so borrowed WTFStringImpl / backing-store
-        // pointers stay valid. An ArrayBuffer detached during phase 1 now
-        // reports a zero-length slice rather than a dangling pointer.
         let empty: &'static [u8] = b"";
         // Zig kept `ZigString.Slice` lifetimes in the arena; here we collect
         // them into a Vec so the borrowed bytes live until `socket.send()`.
@@ -1299,10 +1191,6 @@ impl UDPSocket {
             let array_buffer = val.as_array_buffer(global_this);
             let slice: &[u8] = 'brk: {
                 if let Some(ref array_buffer) = array_buffer {
-                    // `byteSlice()` returns `&.{}` for a detached view; its
-                    // `.ptr` is Zig's zero-length sentinel which the kernel
-                    // rejects with EFAULT even though `iov_len == 0`. Hand
-                    // sendmmsg a valid static address instead.
                     if array_buffer.is_detached() {
                         break 'brk empty;
                     }
@@ -1368,13 +1256,6 @@ impl UDPSocket {
             }
         };
 
-        // Resolve the destination before touching the payload. `parseAddr`
-        // calls `port.coerceToInt32()` / `address.toBunString()` which can
-        // run user JS that detaches the payload's ArrayBuffer
-        // (`.transfer(n)`) or closes this socket. Doing this first means no
-        // JSC safepoint sits between capturing `payload.ptr` and handing it
-        // to `socket.send`, so a borrowed pointer cannot be freed out from
-        // under us. `payload_arg` itself stays rooted in the callframe.
         let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
         let addr_ptr: *const c_void = 'brk: {
             if let Some(dest) = dst {
@@ -1476,12 +1357,6 @@ impl UDPSocket {
                     let iface_id: u32 = 'blk: {
                         #[cfg(windows)]
                         {
-                            // Windows: zone identifier is a numeric scope id, not an
-                            // interface name (`fe80::1%5`). Mirrors Zig
-                            // `str.substring(percent+1).toInt32()` + `std.math.cast(u32, ..)`.
-                            // toInt32 → BunString__toInt32 → WTF::parseIntegerAllowingTrailingJunk<int32_t>:
-                            // skip leading ASCII whitespace, optional '-' (no '+'), parse leading
-                            // decimal digits, ignore trailing junk; nullopt on no-digits/overflow.
                             let zone = &address_slice[percent + 1..bytes_len];
                             let mut i = 0usize;
                             while i < zone.len()
@@ -1585,11 +1460,6 @@ impl UDPSocket {
             let Some(socket) = this.socket.take() else {
                 return Ok(JSValue::UNDEFINED);
             };
-            // `(*socket).close()` SYNCHRONOUSLY invokes `on_close` (udp.c:110
-            // `s->on_close(s)`), which re-derives `&UDPSocket` from the uws
-            // user pointer. R-2: with `&self` + `Cell`/`JsCell` the sibling
-            // shared borrow is sound; the (idempotent) downgrade is hoisted
-            // because `on_close` repeats it. Spec: udp_socket.zig:915-920.
             this.this_value.with_mut(|r| r.downgrade());
             // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
             uws::udp::Socket::opaque_mut(socket).close();
@@ -1716,14 +1586,6 @@ impl UDPSocket {
         // SAFETY: called from finalize with valid Box-allocated payload.
         let this_ref = unsafe { &*this };
         debug_assert!(this_ref.closed.get() || VirtualMachine::get().is_shutting_down());
-        // VM-shutdown path: `lastChanceToFinalize` can finalize the wrapper
-        // while the underlying poll is still open (the Strong in `this_value`
-        // kept it GC-rooted until now). Close it so the `us_udp_socket_t`
-        // lands on `closed_udp_head` for the post-destruct
-        // `drain_closed_sockets()` sweep instead of leaking. `on_close`
-        // re-derives `&UDPSocket` from the uws user pointer (= `this`, still
-        // live) and only touches `Cell`/`JsCell` fields; `this_value` is
-        // already `Finalized` so its `downgrade()` is a no-op.
         if let Some(socket) = this_ref.socket.take() {
             this_ref.closed.set(true);
             uws::udp::Socket::opaque_mut(socket).close();

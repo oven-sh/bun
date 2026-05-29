@@ -18,28 +18,13 @@ pub enum Kind {
     Slice,
 }
 
-/// A possibly optional slice or single-item pointer type descriptor.
-/// E.g., `*u8`, `[]u8`, `?*u8`, `?[]u8` in Zig.
-///
-/// TODO(port): In Zig this carries three `type` fields (`Pointer`,
-/// `NonOptionalPointer`, `Child`) populated by `@typeInfo`. Rust cannot store
-/// types as values; the generics here are a best-effort placeholder so
-/// downstream signatures that mention `PointerInfo` have something to name.
 pub struct PointerInfo<Pointer, NonOptionalPointer, Child> {
     /// A possibly optional slice or single-item pointer type.
     /// E.g., `*u8`, `[]u8`, `?*u8`, `?[]u8`.
     _pointer: PhantomData<Pointer>,
 
-    /// If `Pointer` is an optional pointer, this is the non-optional equivalent. Otherwise, this
-    /// is the same as `Pointer`.
-    ///
-    /// For example, if `Pointer` is `?[]u8`, this is `[]u8`.
     _non_optional_pointer: PhantomData<NonOptionalPointer>,
 
-    /// The type of data stored by the pointer, i.e., the type obtained by dereferencing a
-    /// single-item pointer or accessing an element of a slice.
-    ///
-    /// For example, if `Pointer` is `?[]u8`, this is `u8`.
     _child: PhantomData<Child>,
 }
 
@@ -62,16 +47,6 @@ impl<Pointer, NonOptionalPointer, Child> PointerInfo<Pointer, NonOptionalPointer
     }
 
     pub fn parse(_options: ParseOptions) -> Self {
-        // TODO(port): Zig body walks `@typeInfo(Pointer)`:
-        //   - unwrap `.optional` to get `NonOptionalPointer`
-        //   - assert `.pointer`, extract `Child`
-        //   - reject `.many` / `.c` sizes, `is_volatile`, non-default
-        //     alignment, `is_allowzero`, sentinel-terminated
-        //   - reject `.slice` if `!options.allow_slices`
-        //   - reject `is_const` if `!options.allow_const`
-        // None of these checks are expressible in Rust's type system as a
-        // value-level function; they are subsumed by choosing `Box<T>` /
-        // `Box<[T]>` / `Option<Box<T>>` directly at the call site.
         unreachable!("comptime reflection — resolved at type level in Rust")
     }
 }
@@ -91,11 +66,6 @@ impl Default for ParseOptions {
     }
 }
 
-// TODO(port): `pub fn AddConst(Pointer: type) type` mutates `@typeInfo` to set
-// `.pointer.is_const = true` (recursing through `.optional`) and rebuilds the
-// type via `@Type`. Rust has no type-level function for this; the moral
-// equivalent is an associated type on a trait. Kept as a marker so callers
-// (`Owned::asConst` etc.) have a name to reference.
 pub trait AddConst {
     type Output;
 }

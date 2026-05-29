@@ -90,10 +90,6 @@ impl FontWeight {
     // deepClone → derived Clone; TODO(port): arena-aware deep_clone if needed
 }
 
-/// An [absolute font weight](https://www.w3.org/TR/css-fonts-4/#font-weight-absolute-values),
-/// as used in the `font-weight` property.
-///
-/// See [FontWeight](FontWeight).
 #[derive(Clone, PartialEq)]
 pub enum AbsoluteFontWeight {
     /// An explicit weight.
@@ -184,10 +180,6 @@ impl FontSize {
     // deepClone → derived Clone
 }
 
-/// An [absolute font size](https://www.w3.org/TR/css-fonts-3/#absolute-size-value),
-/// as used in the `font-size` property.
-///
-/// See [FontSize](FontSize).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum AbsoluteFontSize {
     /// "xx-small"
@@ -217,10 +209,6 @@ impl AbsoluteFontSize {
     }
 }
 
-/// A [relative font size](https://www.w3.org/TR/css-fonts-3/#relative-size-value),
-/// as used in the `font-size` property.
-///
-/// See [FontSize](FontSize).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum RelativeFontSize {
     Smaller,
@@ -281,10 +269,6 @@ impl FontStretch {
     }
 }
 
-/// A [font stretch keyword](https://www.w3.org/TR/css-fonts-4/#font-stretch-prop),
-/// as used in the `font-stretch` property.
-///
-/// See [FontStretch](FontStretch).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum FontStretchKeyword {
     /// 100%
@@ -333,10 +317,6 @@ impl FontStretchKeyword {
 pub enum FontFamily {
     /// A generic family name.
     Generic(GenericFontFamily),
-    /// A custom family name.
-    // TODO(port): arena-backed slice — should be &'bump [u8] once 'bump lifetime is threaded through
-    // PORT NOTE: with *const [u8] derived PartialEq/Eq/Hash would compare by pointer; Zig's custom
-    // HashContext hashes/compares by content (Wyhash over bytes) — provide manual impls below.
     FamilyName(*const [u8]),
 }
 
@@ -480,10 +460,6 @@ impl Clone for FontFamily {
     }
 }
 
-/// A [generic font family](https://www.w3.org/TR/css-fonts-4/#generic-font-families) name,
-/// as used in the `font-family` property.
-///
-/// See [FontFamily](FontFamily).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum GenericFontFamily {
     Serif,
@@ -688,11 +664,6 @@ impl LineHeight {
     }
 }
 
-/// A value for the [font](https://www.w3.org/TR/css-fonts-4/#font-prop) shorthand property.
-// PORT NOTE: Zig's `eql`/`deepClone` were reflection-based (`css.implementEql`
-// / `css.implementDeepClone`); the field-wise `#[derive(DeepClone, CssEql)]`
-// is the Rust equivalent — every field type carries the trait via the
-// blankets/bridges in `generics.rs`.
 #[derive(DeepClone, CssEql)]
 pub struct Font {
     /// The font family.
@@ -1162,12 +1133,6 @@ fn compatible_font_family(
     }
 
     if let Some(families) = family.as_mut() {
-        // PORT NOTE: Zig (font.zig:1029-1035) iterates `families.sliceConst()`
-        // by value while inserting into `families` mid-loop, then `break`s.
-        // In Rust the immutable slice borrow would alias the &mut needed for
-        // `insert` (and `insert` may reallocate, invalidating the iterator).
-        // Reshape: capture the system-ui index first, drop the borrow, then
-        // perform the inserts using the captured index.
         if let Some(i) = families.slice_const().iter().position(is_system_ui) {
             for (j, name) in DEFAULT_SYSTEM_FONTS.iter().enumerate() {
                 // TODO(port): families.insert(arena, idx, val) — Vec::insert with arena

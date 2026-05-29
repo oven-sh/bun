@@ -82,10 +82,6 @@ impl ThreadSafeStreamBuffer {
 
     pub fn acquire(&mut self) -> &mut StreamBuffer {
         self.mutex.lock();
-        // PORT NOTE: reshaped for borrowck — Zig returns &this.buffer while the
-        // mutex stays locked until `release()`. Prefer `lock()` (RAII guard) for
-        // simple critical sections; this split form remains for callers that
-        // interleave release with disjoint `self` access.
         &mut self.buffer
     }
 
@@ -93,10 +89,6 @@ impl ThreadSafeStreamBuffer {
         self.mutex.unlock();
     }
 
-    /// RAII spelling of `acquire()`/`release()` — locks the mutex and returns a
-    /// guard that derefs to the inner `StreamBuffer` and unlocks on `Drop`.
-    /// Use this instead of a bare `acquire`/`release` pair so the lock is
-    /// released on every return path.
     #[inline]
     pub fn lock(&mut self) -> StreamBufferGuard<'_> {
         self.mutex.lock();

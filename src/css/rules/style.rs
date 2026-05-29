@@ -5,12 +5,6 @@ use crate::error::MinifyErr;
 use crate::selectors::selector;
 use crate::{PrintErr, Printer, VendorPrefix};
 
-// `fn StyleRule(comptime R: type) type { return struct {...} }` → generic struct.
-//
-// PORT NOTE: `DeclarationBlock<'bump>` borrows the parser arena (bumpalo Vecs).
-// Threading `'bump` here cascades into `CssRule<'bump, R>` / `CssRuleList<'bump, R>`
-// (rules/mod.rs PORT NOTE) which is deferred until the leaf rules un-gate
-// together; for now the lifetime is erased to `'static`.
 pub struct StyleRule<R> {
     /// The selectors for the style rule.
     pub selectors: selector::parser::SelectorList,
@@ -39,10 +33,6 @@ impl<R> StyleRule<R> {
         // std.hash.Wyhash.init(0) — same algorithm as bun.hash
         let mut hasher = bun_wyhash::Wyhash::init(0);
         self.selectors.hash(&mut hasher);
-        // PORT NOTE: `DeclarationBlock::hash_property_ids` is still
-        // ``-gated in declaration.rs; inline its body here. The
-        // Zig `PropertyId.hash` is `hasher.update(asBytes(&@intFromEnum(self)))`
-        // — i.e. just the u16 tag bytes.
         for decl in self.declarations.declarations.iter() {
             let tag = decl.property_id().tag() as u16;
             hasher.update(&tag.to_ne_bytes());
@@ -96,10 +86,6 @@ impl<R> StyleRule<R> {
                     dest.vendor_prefix = prefix;
                     let (line, col) = (dest.line, dest.col);
                     self.to_css_base(dest, remaining_prefixes.is_empty())?;
-                    // A non-final pass emits nothing when the rule has no
-                    // declarations of its own and all of its nested rules are
-                    // deferred to the final pass; don't write a separator
-                    // after such a pass.
                     if dest.line != line || dest.col != col {
                         first_rule = false;
                     }
@@ -163,12 +149,6 @@ impl<R> StyleRule<R> {
                         }
 
                         if dest.css_module.is_some() {
-                            // PORT NOTE: reshaped for borrowck — Zig
-                            // `if (dest.css_module) |*css_module|
-                            //     css_module.handleComposes(dest, ...)` overlaps
-                            // `&mut dest.css_module` with `&mut *dest`. Move the
-                            // module out for the duration of the call, then put
-                            // it back before any `dest.new_error` early return.
                             let mut cm = dest.css_module.take();
                             let err = if let Some(css_module) = &mut cm {
                                 css_module
@@ -233,13 +213,6 @@ impl<R> StyleRule<R> {
             self.rules.to_css(dest)?;
             helpers_end(dest, has_declarations)?;
         } else {
-            // This rule is serialized once per vendor prefix, and each pass
-            // re-serializes the nested rules. Nested style rules that carry
-            // their own vendor prefixes override `dest.vendor_prefix`, so they
-            // produce identical output in every pass; mark non-final passes so
-            // they are skipped and emitted only in the final pass. Otherwise
-            // they would be duplicated once per ancestor prefix, which grows
-            // exponentially with nesting depth.
             let saved_skip = dest.skip_prefixed_nested_rules;
             let skip_prefixed_nested = saved_skip || !is_final_prefix_pass;
             // Whether any nested rule is emitted in this pass; if not, don't
@@ -279,12 +252,6 @@ impl<R> StyleRule<R> {
         use css::context::DeclarationContext;
 
         let mut unused = false;
-        // TODO(port): blocked_on key-type mismatch — `selector::is_unused` takes
-        // `&ArrayHashMap<&[u8], ()>` but `MinifyContext.unused_symbols` is
-        // `&ArrayHashMap<Box<[u8]>, ()>` (rules/mod.rs PORT NOTE: "reconcile when
-        // style.rs::minify un-gates — single key type, Borrow<[u8]> lookup").
-        // The reconciliation lives in rules/mod.rs + selectors/selector.rs, not
-        // here; gate the body until those agree.
 
         if context.unused_symbols.count() > 0 {
             if selector::is_unused(
@@ -305,26 +272,7 @@ impl<R> StyleRule<R> {
 
         self.charge_selector_expansion(context)?;
 
-        // TODO: this
-        // let pure_css_modules = context.pure_css_modules;
-        // if context.pure_css_modules {
-        //   if !self.selectors.0.iter().all(is_pure_css_modules_selector) {
-        //     return Err(MinifyError {
-        //       kind: crate::error::MinifyErrorKind::ImpureCSSModuleSelector,
-        //       loc: self.loc,
-        //     });
-        //   }
-        //
-        //   // Parent rule contained id or class, so child rules don't need to.
-        //   context.pure_css_modules = false;
-        // }
-
         context.handler_context.context = DeclarationContext::StyleRule;
-        // PORT NOTE: `DeclarationBlock<'static>` (struct PORT NOTE above) forces
-        // `minify` to want `DeclarationHandler<'static>`; route through the
-        // single centralized `'bump`-erasure helper instead of open-coding the
-        // lifetime cast. Collapses when `CssRule<'bump, R>`
-        // re-threads the arena lifetime.
         self.declarations.minify(
             super::dc::decl_handler_static(&mut *context.handler),
             super::dc::decl_handler_static(&mut *context.important_handler),
@@ -342,14 +290,6 @@ impl<R> StyleRule<R> {
         Ok(false)
     }
 
-    /// Charge this rule's selectors against the selector-expansion budget.
-    ///
-    /// Compiling the enclosing nesting away for the targets repeats this rule's
-    /// selectors once per combination of the enclosing style rules' selectors.
-    /// That expansion is multiplicative across nesting levels, so bound it —
-    /// otherwise a few hundred bytes of deeply nested multi-selector rules
-    /// expand into gigabytes of cloned rules and output. See
-    /// [`css_rules::MAX_SELECTOR_EXPANSION`](super::MAX_SELECTOR_EXPANSION).
     pub(crate) fn charge_selector_expansion(
         &self,
         context: &mut MinifyContext<'_, '_>,
@@ -384,18 +324,6 @@ impl<R> StyleRule<R> {
     {
         use css::context::{DeclarationContext, PropertyHandlerContext};
 
-        // When the targets require compiling nesting away (or splitting this
-        // rule's selectors for compatibility), each of this rule's selectors
-        // multiplies the expansion of every nested rule.
-        //
-        // Mirrors the selector-compatibility branch in `minify_style_arm`
-        // (rules/mod.rs): an incompatible selector list is either collapsed
-        // into a single `:is()` selector (nothing cloned) or partitioned
-        // into one cloned rule per selector (fan-out = selector count).
-        // Only the partition case multiplies on its own — but the `:is()`
-        // wrap keeps one `&` reference per original selector, so when
-        // nesting is compiled away the printed output still fans out per
-        // selector, which is why the nesting branch bumps unconditionally.
         let saved_expansion_multiplier = context.selector_expansion_multiplier;
         let selectors_incompatible = self.selectors.v.len() > 1
             && context.targets.should_compile_selectors()
@@ -471,10 +399,6 @@ impl<R> StyleRule<R> {
     where
         R: crate::generics::DeepClone<'bump>,
     {
-        // css is an AST crate (PORTING.md §Allocators): std.mem.Allocator → &'bump Bump, threaded.
-        // PORT NOTE: `css.implementDeepClone` field-walk. `declarations` routes
-        // through `dc::decl_block` until `DeclarationBlock::deep_clone` un-gates
-        // (declaration.rs — bottoms out on `Property: DeepClone`).
         Self {
             selectors: self.selectors.deep_clone(),
             vendor_prefix: self.vendor_prefix,

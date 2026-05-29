@@ -122,12 +122,6 @@ fn class_copy(c: &G::Class) -> G::Class {
     }
 }
 
-/// Whether a context-inferred name (`export default` → "default", object
-/// property keys, assignment targets) can be attached to a lowered anonymous
-/// class expression as its syntactic binding name. Class bodies are always
-/// strict mode code and the output may be a module, so reserved words
-/// ("default", "let", "await", …), `eval`/`arguments`, and non-identifier
-/// strings would turn `_class = class <name> {}` into a syntax error.
 #[inline]
 fn can_be_class_binding_name(name: &[u8]) -> bool {
     js_lexer::is_identifier(name)
@@ -979,11 +973,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // ── Public API ───────────────────────────────────────
 
     pub fn lower_standard_decorators_stmt(&mut self, stmt: Stmt, out: &mut BumpVec<'a, Stmt>) {
-        // Every call site is the visitStmt `s_class` branch. `Stmt` and the
-        // `StoreRef<S::Class>` payload are both `Copy`, so we can hold a copy
-        // of the arena handle while still passing `stmt` by value below.
-        // `StoreRef::DerefMut` is the safe arena-backref accessor; no raw
-        // pointer round-trip needed.
         let mut s_class = match stmt.data {
             js_ast::StmtData::SClass(c) => c,
             _ => unreachable!(),
@@ -1075,12 +1064,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             inner_class_ref = p.new_sym(js_ast::symbol::Kind::Other, name);
         }
 
-        // Zig: `const class_decorators = class.ts_decorators; class.ts_decorators = .{};`
-        // — a shallow `BabyList` copy. In Rust `ExprNodeList = Vec<Expr>` owns its
-        // buffer, so this MUST be a real ownership transfer; the previous
-        // `ptr::read` left a second owner in the local that dropped at function
-        // exit, freeing the buffer that `E::Array { items }` (Phase-2/5 below)
-        // still pointed at → use-after-poison in `expr_can_be_removed_if_unused`.
         let mut class_decorators: ExprNodeList =
             bun_alloc::AstAlloc::take(&mut class.ts_decorators);
         let class_decorators_len = class_decorators.len_u32() as usize;

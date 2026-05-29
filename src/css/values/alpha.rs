@@ -2,10 +2,6 @@ use crate::values::number::CSSNumberFns;
 use crate::values::percentage::NumberOrPercentage;
 use crate::{Parser, PrintErr, Printer, Result};
 
-/// A CSS [`<alpha-value>`](https://www.w3.org/TR/css-color-4/#typedef-alpha-value),
-/// used to represent opacity.
-///
-/// Parses either a `<number>` or `<percentage>`, but is always stored and serialized as a number.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AlphaValue {
     pub v: f32,

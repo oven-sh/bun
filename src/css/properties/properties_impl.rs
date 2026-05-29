@@ -7,19 +7,6 @@ use css::css_properties::CustomPropertyName;
 use css::css_properties::{Property, PropertyId, PropertyIdTag};
 
 impl Property {
-    /// Returns the *raw* enum discriminant of this `Property` as a
-    /// [`PropertyIdTag`].
-    ///
-    /// Unlike [`Property::property_id`], this does **not** look through
-    /// `Property::Unparsed` to the wrapped `UnparsedProperty::property_id` —
-    /// an `Unparsed` declaration always returns `PropertyIdTag::Unparsed`, and
-    /// a `Custom` declaration always returns `PropertyIdTag::Custom`.
-    ///
-    /// This mirrors Zig's `@as(PropertyIdTag, property.*)` (a raw union-tag
-    /// coercion). Handlers that switch on the discriminant to project a parsed
-    /// payload — e.g. `SizeHandler` in `margin_padding.rs` — must use this so
-    /// an unparsed `margin-top: var(--x)` does not route into the parsed
-    /// `MarginTop` arm and panic in `extract_top`.
     #[inline]
     pub fn variant_tag(&self) -> PropertyIdTag {
         match self {
@@ -32,10 +19,6 @@ impl Property {
     }
 }
 
-/// Ordered single-bit prefix flags for the `inline for (VendorPrefix.FIELDS)`
-/// Zig idiom. The crate-root `VendorPrefix::FIELDS` is a `&[&str]` name list;
-/// the to_css loops here need the bitflag values directly, in Zig declaration
-/// order (webkit, moz, ms, o, none).
 pub(super) const PREFIX_FLAGS: [VendorPrefix; 5] = [
     VendorPrefix::WEBKIT,
     VendorPrefix::MOZ,

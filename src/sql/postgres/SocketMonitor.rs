@@ -1,9 +1,5 @@
 bun_core::declare_scope!(SocketMonitor, visible);
 
-/// Stamps out a debug-only socket-traffic dump module. The reader and writer
-/// variants were byte-identical modulo the env var checked and the log message;
-/// Zig kept two files because file-scope structs can't be cheaply parameterized,
-/// but `macro_rules!` collapses them in the Rust port.
 #[cfg(debug_assertions)]
 macro_rules! debug_socket_monitor {
     ($env:path, $msg:literal) => {

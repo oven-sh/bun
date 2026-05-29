@@ -34,15 +34,6 @@ impl Key {
     }
 }
 
-/// Route bundle keys clear the bottom 32 bits of this value, using only the
-/// top 32 bits to represent the map. For JS chunks, these bottom 32 bits are
-/// used as an index into `dev.route_bundles` to know what route it refers to.
-///
-/// HMR patches set the bottom bit to `1`, and use the remaining 63 bits as
-/// an ID. This is fine since the JS chunks are never served after the update
-/// is emitted.
-// TODO: Rewrite this `SourceMapStore.Key` and some other places that use bit
-// shifts and u64 to use this struct.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) struct SourceId(pub u64);
@@ -60,27 +51,13 @@ impl SourceId {
 pub(crate) const WEAK_REF_EXPIRY_SECONDS: i64 = 10;
 pub(crate) const WEAK_REF_ENTRY_MAX: usize = 16;
 
-/// IncrementalGraph stores partial source maps for each file. A
-/// `SourceMapStore.Entry` is the information + refcount holder to
-/// construct the actual JSON file associated with a bundle/hot update.
-// PORT NOTE: Zig's `dev_arena` allocator-handle field is dropped — its sole
-// reader was `Entry.arena()` which fed `paths`/`files` frees in `deinit`.
-// In Rust those are `Box`/`Vec` backed by the global mimalloc.
 #[derive(Default)]
 pub struct Entry {
     /// Sum of:
     /// - How many active sockets have code that could reference this source map?
     /// - For route bundle client scripts, +1 until invalidation.
     pub ref_count: u32,
-    /// Indexes are off by one because this excludes the HMR Runtime.
-    // PORT NOTE: Zig borrowed inner slices from `IncrementalGraph.bundled_files
-    // .keys()`; that is self-referential w.r.t. `DevServer`, so the port stores
-    // owned copies instead. See PERF(port) in `IncrementalGraph::take_source_map`.
     pub paths: Box<[Box<[u8]>]>,
-    /// Indexes are off by one because this excludes the HMR Runtime.
-    // PORT NOTE: Zig used `bun.MultiArrayList(PackedMap.Shared)` (SoA over a
-    // tagged union). `MultiArrayElement` cannot be derived for an enum and the
-    // column split buys nothing for a 2-word payload, so this is a plain `Vec`.
     pub files: Vec<packed_map::Shared>,
     /// The memory cost can be shared between many entries and IncrementalGraph
     /// so this is only used for eviction logic, to pretend this was the only
@@ -89,11 +66,6 @@ pub struct Entry {
 }
 
 impl Entry {
-    // PORT NOTE: Zig `sourceContents()` was dead code — it indexed
-    // `entry.source_contents` and `entry.file_paths`, fields removed in
-    // 67f0c3e016a (replaced by `paths` + `files`). Zig's lazy compilation
-    // never instantiated it; no callers exist. Dropped rather than stubbed.
-
     /// `SourceMapStore.Entry.renderMappings`.
     pub fn render_mappings(&self, kind: ChunkKind) -> Result<Vec<u8>, bun_core::Error> {
         let mut j = StringJoiner::default();
@@ -165,10 +137,6 @@ impl Entry {
                         }
                     }
                 } else {
-                    // posix paths always start with '/'
-                    // -> file:///path/to/file.js
-                    // windows drive letter paths have the extra slash added
-                    // -> file:///C:/path/to/file.js
                     match Self::encode_source_map_path(side, path, &mut source_map_strings) {
                         Ok(()) => {}
                         Err(EncodeSourceMapPathError::IncompleteUTF8) => {
@@ -213,12 +181,6 @@ impl Entry {
                 j.push_static(b",\"// Did not have source contents for this file.\n// This is a bug in Bun's bundler and should be reported with a reproduction.\"");
                 continue;
             }
-            // Store the location of the source file. Since it is going
-            // to be stored regardless for use by the served source map.
-            // These 8 bytes per file allow remapping sources without
-            // reading from disk, as well as ensuring that remaps to
-            // this exact sourcemap can print the previous state of
-            // the code when it was modified.
             debug_assert_eq!(quoted_slice[0], b'"');
             debug_assert_eq!(quoted_slice[quoted_slice.len() - 1], b'"');
             j.push_static(quoted_slice);
@@ -345,10 +307,6 @@ impl Entry {
                     // - Codegen of HTML files cannot throw.
                 }
                 packed_map::Shared::None => {
-                    // NOTE: It is too late to compute the line count since the bundled text may
-                    // have been freed already. For example, a HMR chunk is never persisted.
-                    // We could return an error here but what would be a better behavior for renderJSON and renderMappings?
-                    // This is a dev server, crashing is not a good DX, we could fail the request but that's not a good DX either.
                     if cfg!(debug_assertions) {
                         map_log!(
                             "Skipping source map entry with missing line count at index {}",
@@ -361,14 +319,6 @@ impl Entry {
         Ok(())
     }
 
-    /// `SourceMapStore.Entry.deinit` — Rust drop handles `files` (each
-    /// `Shared` decrements its `Rc<PackedMap>`) and `paths` (outer box only;
-    /// inner slices are borrowed from IncrementalGraph and not freed).
-    ///
-    /// PORT NOTE: not `impl Drop` — Zig only asserted `ref_count == 0` on the
-    /// explicit `unrefAtIndex` release path. Whole-store teardown and
-    /// `*out = Entry { .. }` overwrites legitimately drop entries with nonzero
-    /// counts, where a `Drop` assertion would diverge from spec and panic.
     pub fn deinit(&mut self) {
         debug_assert_eq!(self.ref_count, 0);
         self.files.clear();
@@ -392,11 +342,6 @@ impl From<bun_core::PercentEncodeError> for EncodeSourceMapPathError {
 
 #[derive(Copy, Clone)]
 pub struct WeakRef {
-    /// This encoding only supports route bundle scripts, which do not
-    /// utilize the bottom 32 bits of their keys. This is because the bottom
-    /// 32 bits are used for the index of the route bundle. While those bits
-    /// are present in the JS file's key, it is not present in the source
-    /// map key. This allows this struct to be cleanly packed to 128 bits.
     pub key_top_bits: u32,
     /// When this ref expires, it must subtract this many from `refs`
     pub count: u32,
@@ -461,11 +406,6 @@ pub struct GetResult<'a> {
 
 pub struct SourceMapStore {
     pub entries: ArrayHashMap<Key, Entry>,
-    /// When a HTML bundle is loaded, it places a "weak reference" to the
-    /// script's source map. This reference is held until either:
-    /// - The script loads and moves the ref into "strongly held" by the HmrSocket
-    /// - The expiry time passes
-    /// - Too many different weak references exist
     pub weak_refs: LinearFifo<WeakRef, StaticBuffer<WeakRef, WEAK_REF_ENTRY_MAX>>,
     /// Shared
     pub weak_ref_sweep_timer: EventLoopTimer,
@@ -483,10 +423,6 @@ impl Default for SourceMapStore {
     }
 }
 
-// Intrusive backref: recover the owning DevServer. Caller must guarantee `self`
-// is the `source_maps` field of a live, heap-allocated `DevServer` (always
-// true for production use; the `Default::default()` instance must never call
-// this).
 bun_core::impl_field_parent! { SourceMapStore => DevServer.source_maps; pub fn mut owner; }
 
 impl SourceMapStore {

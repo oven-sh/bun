@@ -129,12 +129,6 @@ pub mod unicode {
     }
 
     impl<'a> NewCodePointIterator<'a> {
-        /// Zig-style cursor advance. Returns `false` at end.
-        // PERF(port): `#[inline]` alone is hint-only; LLVM declined to inline
-        // this cross-crate into `bun_js_printer::print_identifier_ascii_only`
-        // (the multibyte slow path makes the body look heavy). Called per-byte
-        // of every printed identifier under `ASCII_ONLY=true`. Zig's `iter.next`
-        // lives in the same TU and inlines. Force it.
         #[inline(always)]
         pub fn next(&self, cursor: &mut Cursor) -> bool {
             let bytes = self.bytes;
@@ -185,12 +179,6 @@ pub mod unicode {
         false
     }
 
-    /// Zig: `unicode.zig:containsNonBmpCodePointOrIsInvalidIdentifier` — fused
-    /// "must I quote this import/export alias?" predicate for `js_printer`.
-    ///
-    /// Returns `true` if `text` is empty, OR any codepoint is non-BMP (>U+FFFF,
-    /// even if a valid identifier char), OR the codepoint sequence is not a
-    /// valid ECMAScript IdentifierName.
     pub fn contains_non_bmp_code_point_or_is_invalid_identifier(text: &[u8]) -> bool {
         let iter = CodepointIterator::init(text);
         let mut curs = Cursor::default();
@@ -208,13 +196,6 @@ pub mod unicode {
         false
     }
 
-    /// `toUTF16Literal` — port of `unicode.zig:toUTF16Literal` →
-    /// `std.unicode.utf8ToUtf16LeStringLiteral`. Zig evaluated this at
-    /// `comptime` into a `Holder.value` const yielding `[:0]const u16`; the
-    /// Rust runtime port returns an owned `Box<[u16]>` (no `Box::leak` per
-    /// PORTING.md §Forbidden). Prefer the const `crate::string::w!("…")` macro at call
-    /// sites with literal inputs — this fn exists for the residual runtime
-    /// callers that thread `&[u8]` through.
     pub fn to_utf16_literal(s: &[u8]) -> Box<[u16]> {
         if s.is_empty() {
             return Box::new([]);
@@ -233,16 +214,6 @@ pub mod unicode {
     }
 }
 
-/// Peek `n` WTF-8 codepoints from `bytes[at..]` and return the spanning slice
-/// `bytes[at..end]`. Codepoint width is `wtf8_byte_sequence_length_with_invalid`
-/// (invalid lead byte → 1). Stops early at EOF or a truncated trailing sequence,
-/// returning the slice up to the last complete codepoint boundary.
-///
-/// Shared body of `js_parser::Lexer::peek` / `toml::Lexer::peek` (Zig:
-/// `js_lexer.zig:267`, `toml/lexer.zig:128`). Unlike the upstream Zig copies —
-/// whose `*const Self` stepper never advances and re-reads the first byte `n`
-/// times — this helper actually advances; the sole live caller passes ASCII so
-/// the fix is unobservable.
 #[inline]
 pub fn peek_n_codepoints_wtf8(bytes: &[u8], at: usize, n: usize) -> &[u8] {
     let mut end = at;
@@ -259,18 +230,6 @@ pub fn peek_n_codepoints_wtf8(bytes: &[u8], at: usize, n: usize) -> &[u8] {
     &bytes[at..end]
 }
 
-/// WTF-8 codepoint stepper shared by the JS / JSON / TOML lexers.
-///
-/// Zig: `js_parser/lexer.zig` `nextCodepointSlice` / `nextCodepoint` (and the
-/// byte-identical copy in `parsers/toml/lexer.zig`). The Rust port grew a
-/// third copy when `json_lexer.rs` was carved out of `js_parser` to break the
-/// `bun_js_parser ↔ bun_interchange` crate cycle; all three call the same
-/// `wtf8_byte_sequence_length_with_invalid` / `decode_wtf8_rune_t_multibyte`
-/// pair defined alongside this module, so the stepper belongs here.
-///
-/// NOT the same algorithm as [`CodepointIterator::next_codepoint`] — that one
-/// uses `utf8ByteSequenceLength` + `next_width` lookahead, has no `end`
-/// cursor, and does not advance-by-1 on U+FFFD.
 pub mod lexer_step {
     use super::{
         CodePoint, UNICODE_REPLACEMENT, decode_wtf8_rune_t_multibyte,
@@ -292,13 +251,6 @@ pub mod lexer_step {
         }
     }
 
-    /// `nextCodepoint` — decode the codepoint at `*current`, advance
-    /// `*current`, and write the pre-advance offset to `*end`. Returns `-1` on
-    /// EOF or a truncated trailing multibyte sequence.
-    ///
-    /// Split into an `#[inline(always)]` ASCII/EOF fast path plus an outlined
-    /// multibyte tail so the hot per-byte loop folds into every `step()` site
-    /// (matches Zig's per-byte `ptr[current]` increment).
     #[inline(always)]
     pub fn next_codepoint(contents: &[u8], current: &mut usize, end: &mut usize) -> CodePoint {
         let len = contents.len();
@@ -316,15 +268,6 @@ pub mod lexer_step {
         next_codepoint_multibyte(contents, current, first)
     }
 
-    /// Non-ASCII tail of [`next_codepoint`]. Kept out-of-line so the hot
-    /// ASCII path stays small enough to inline into every `step()` site.
-    ///
-    /// `#[cold]` is required: with fat LTO + `codegen-units = 1`, LLVM's
-    /// single-caller heuristic merges an `#[inline(never)]`-only callee back
-    /// into its sole caller, which then makes `next_codepoint` too large to
-    /// inline into `next()` (perf showed it as a separate ~2.6% symbol with
-    /// the multibyte decode folded in). `cold` parks this in `.text.unlikely`
-    /// and survives LTO's IPO inliner.
     #[cold]
     #[inline(never)]
     pub fn next_codepoint_multibyte(contents: &[u8], current: &mut usize, first: u8) -> CodePoint {
@@ -332,12 +275,6 @@ pub mod lexer_step {
         let cp_len = wtf8_byte_sequence_length_with_invalid(first) as usize;
         let avail = len - *current;
 
-        // Zig spec (lexer.zig nextCodepoint): `switch (slice.len) { 0 => -1, 1 => slice[0], else => decode }`
-        // where `slice` is empty when `cp_len + current > len` and `cp_len` bytes otherwise.
-        // The ASCII fast path above handled `first < 0x80`; here `first >= 0x80` but `cp_len`
-        // may still be 1 for invalid lead bytes (0x80-0xBF, 0xF8-0xFF) — those must yield the
-        // raw byte, NOT the EOF sentinel, so the main lex loop falls through to its syntax-error
-        // arm instead of silently emitting TEndOfFile mid-stream.
         let code_point: CodePoint = if cp_len == 1 {
             first as CodePoint
         } else if avail < cp_len {
@@ -477,10 +414,6 @@ pub fn contains_char_t<T: crate::NoUninit + Eq + Into<u32>>(self_: &[T], char: u
 
 #[inline]
 pub fn contains(self_: &[u8], str: &[u8]) -> bool {
-    // Zig: containsT(u8) → indexOfT(u8) → indexOf, which routes through
-    // std.mem.indexOf and returns None for empty needle. The generic
-    // index_of_t below returns Some(0) for empty, so dispatch to the
-    // u8-specific index_of (which matches Zig/std.mem semantics).
     index_of(self_, str).is_some()
 }
 
@@ -549,11 +482,6 @@ pub fn contains_comptime(self_: &[u8], str: &'static [u8]) -> bool {
 
 pub use contains as includes;
 
-/// Lowercase `probe` (ASCII fold only) into a 256-byte stack buffer and hand
-/// the lowered slice to `f`. Returns `None` when `probe.len() > 256` — every
-/// caller's key set is shorter, so an oversize probe is a guaranteed miss.
-/// Bytes ≥ 0x80 pass through `to_ascii_lowercase` unchanged; all callers' keys
-/// are pure lowercase ASCII, so such probes miss regardless.
 #[inline]
 pub fn with_ascii_lowercase<R>(probe: &[u8], f: impl FnOnce(&[u8]) -> R) -> Option<R> {
     let (buf, len) = crate::strings::ascii_lowercase_buf::<256>(probe)?;
@@ -581,13 +509,6 @@ pub fn contains_any(in_: &[&[u8]], target: &[u8]) -> bool {
     false
 }
 
-/// https://docs.npmjs.com/cli/v8/configuring-npm/package-json
-/// - The name must be less than or equal to 214 characters. This includes the scope for scoped packages.
-/// - The names of scoped packages can begin with a dot or an underscore. This is not permitted without a scope.
-/// - New packages must not have uppercase letters in the name.
-/// - The name ends up being part of a URL, an argument on the command line, and
-///   a folder name. Therefore, the name can't contain any non-URL-safe
-///   characters.
 pub fn is_npm_package_name(target: &[u8]) -> bool {
     if target.len() > 214 {
         return false;
@@ -636,10 +557,6 @@ pub fn is_npm_package_name_ignore_length(target: &[u8]) -> bool {
     !scoped || (slash_index > 0 && slash_index + 1 < target.len())
 }
 
-// Secret-redaction scanners are canonical in crate::strings (only callers
-// live in bun_core/fmt.rs). Re-exported here to preserve the bun.strings.* path.
-// NOTE: starts_with_npm_secret now returns usize (was u8 in the Zig-literal port);
-// no external callers depended on the narrow type.
 pub use crate::strings::{
     find_url_password, is_uuid, starts_with_npm_secret, starts_with_secret, starts_with_uuid,
 };
@@ -756,10 +673,6 @@ pub fn index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
     let self_len = self_.len();
     let str_len = str.len();
 
-    // > Both old and new libc's have the bug that if needle is empty,
-    // > haystack-1 (instead of haystack) is returned. And glibc 2.0 makes it
-    // > worse, returning a pointer to the last byte of haystack. This is fixed
-    // > in glibc 2.1.
     if self_len == 0 || str_len == 0 || self_len < str_len {
         return None;
     }
@@ -839,14 +752,6 @@ pub fn cat(first: &[u8], second: &[u8]) -> Result<Box<[u8]>, AllocError> {
     Ok(out.into_boxed_slice())
 }
 
-// 31 character string or a slice
-//
-// PERF NOTE: `remainder_buf` is `MaybeUninit` because `init`/`init_lower_case`
-// only write `[0..len]` (or `[0..16]` for the slice case) and `slice()` only
-// reads `[0..remainder_len]`. Zig leaves the tail `undefined`; the original
-// Rust port zeroed `[0; 31]` on every call which showed up as ~0.45% of cycles
-// in the next-lint profile (~6M calls × ~24B avg waste). Tail bytes have no
-// validity requirement, so we leave them uninit to match Zig.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct StringOrTinyString {
@@ -908,12 +813,6 @@ impl StringOrTinyString {
 
     // PORT NOTE: Zig deinit was a no-op (commented-out free). No Drop impl.
 
-    // PORT NOTE: plain `#[inline]` (not `#[inline(always)]`). These are tiny
-    // generic delegators: a length check plus a tail call into the non-generic
-    // `init`/`init_lower_case` or the `Appender` method. `#[inline]` lets the
-    // small fast path fold into callers (and lets duplicate `A` instantiations
-    // be ICF'd at link time / clustered by the symbol-ordering file) without
-    // forcing the cold `append*` arm into every call site.
     #[inline]
     pub fn init_append_if_needed<A: Appender>(
         stringy: &[u8],
@@ -1090,23 +989,10 @@ pub fn starts_with(self_: &[u8], str: &[u8]) -> bool {
 /// Transliterated from:
 /// https://github.com/rust-lang/rust/blob/91376f416222a238227c84a848d168835ede2cc3/library/core/src/str/mod.rs#L188
 pub fn is_on_char_boundary(self_: &[u8], idx: usize) -> bool {
-    // 0 is always ok.
-    // Test for 0 explicitly so that it can optimize out the check
-    // easily and skip reading string data for that case.
-    // Note that optimizing `self.get(..idx)` relies on this.
     if idx == 0 {
         return true;
     }
 
-    // For `idx >= self.len` we have two options:
-    //
-    // - idx == self.len
-    //   Empty strings are valid, so return true
-    // - idx > self.len
-    //   In this case return false
-    //
-    // The check is placed exactly here, because it improves generated
-    // code on higher opt-levels. See PR #84751 for more details.
     if idx >= self_.len() {
         return idx == self_.len();
     }
@@ -1314,10 +1200,6 @@ fn eql_comptime_check_len_with_known_type<T: crate::NoUninit + Eq, const CHECK_L
     eql_comptime_check_len_u8(reinterpret_to_u8(a), reinterpret_to_u8(b), CHECK_LEN)
 }
 
-/// Check if two strings are equal with one of the strings being a comptime-known value
-///
-///   strings.eql_comptime(input, b"hello world");
-///   strings.eql_comptime(input, b"hai");
 pub fn eql_comptime_check_len_with_type<T: crate::NoUninit + Eq, const CHECK_LEN: bool>(
     a: &[T],
     b: &[T],
@@ -1341,12 +1223,6 @@ pub fn eql_case_insensitive_asciii_check_length(a: &[u8], b: &[u8]) -> bool {
     eql_case_insensitive_ascii(a, b, true)
 }
 
-// PORT NOTE: Zig's `comptime check_len: bool` was first ported as a const
-// generic, but the dominant call shape across the tree passes it as a runtime
-// 3rd arg (`eql_case_insensitive_ascii(a, b, true)`). Accept it at runtime —
-// the branch is trivially predicted/inlined; callers wanting the
-// length-agnostic forms still have the `_check_length` / `_ignore_length`
-// wrappers above.
 #[inline]
 pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: bool) -> bool {
     // NOTE: must call `strings_impl` directly — `crate::strings::eql_case_insensitive_ascii`
@@ -1554,10 +1430,6 @@ macro_rules! w {
     }};
 }
 
-/// Index of first non-ASCII byte. Thin `u32` view over the canonical
-/// `crate::strings_impl::first_non_ascii` (Zig spec `firstNonASCII -> ?u32`).
-/// NOTE: must call `strings_impl` directly — `crate::strings::first_non_ascii`
-/// re-exports *this* function (177f671a9046), so routing through it recurses.
 #[inline]
 pub fn first_non_ascii(slice: &[u8]) -> Option<u32> {
     crate::strings_impl::first_non_ascii(slice).map(|i| i as u32)
@@ -1571,13 +1443,6 @@ pub fn is_valid_utf8(slice: &[u8]) -> bool {
     simdutf::validate::utf8(slice)
 }
 
-/// SIMD-validated `&str` view of `bytes`; `None` if not valid UTF-8.
-///
-/// This is the codebase-wide replacement for `core::str::from_utf8` — every
-/// runtime UTF-8 validation goes through simdutf (~3-10× faster than std's
-/// scalar DFA on AVX2/NEON). NOT `const`: the one allowed exception is
-/// `crate::env::const_str_slice` (compile-time git-SHA slicing), which is
-/// the only place `core::str::from_utf8` may appear.
 #[inline]
 pub fn str_utf8(bytes: &[u8]) -> Option<&str> {
     if simdutf::validate::utf8(bytes) {
@@ -1590,14 +1455,6 @@ pub fn str_utf8(bytes: &[u8]) -> Option<&str> {
 
 pub use index_of_newline_or_non_ascii as index_of_newline_or_non_ascii_or_ansi;
 
-/// Checks if slice[offset..] has any < 0x20 or > 127 characters
-// PERF: `#[inline]` — this is the predicate of the source-map column-tracking
-// fast path (`Chunk.rs::update_generated_line_and_column`) and the per-rune
-// fast-forward inside its slow loop; it's also the LineOffsetTable scan step.
-// Without the hint LLVM emits a cross-crate `call` (the body is a couple of
-// branches plus a tail-call into the SIMD `highway` routine), so the
-// `is_none()` fast path doesn't fold into the caller. Same rationale as
-// `str_utf8` above.
 #[inline]
 pub fn index_of_newline_or_non_ascii(slice_: &[u8], offset: u32) -> Option<u32> {
     index_of_newline_or_non_ascii_check_start::<true>(slice_, offset)
@@ -1648,10 +1505,6 @@ pub fn index_of_newline_or_non_ascii_check_start<const CHECK_START: bool>(
 
 pub use highway::contains_newline_or_non_ascii_or_quote;
 
-/// Supports:
-/// - `"`
-/// - `'`
-/// - "`"
 pub fn index_of_needs_escape_for_java_script_string(slice: &[u8], quote_char: u8) -> Option<u32> {
     if slice.is_empty() {
         return None;
@@ -1776,10 +1629,6 @@ pub enum DecodeHexError {
     InvalidByteSequence,
 }
 
-/// Source character types accepted by the hex decoder: `u8` (Latin-1) and
-/// `u16` (UTF-16). The associated function routes full pairs through the
-/// matching Highway kernel while `_decode_hex_to_bytes` keeps the generic
-/// scalar path for short inputs.
 pub trait HexChar: Copy + Into<u32> {
     /// Decode up to `min(src.len() / 2, dst.len())` hex pairs with SIMD,
     /// stopping at the first pair containing a non-hex character.
@@ -1820,10 +1669,6 @@ fn _decode_hex_to_bytes<Char: HexChar, const TRUNCATE: bool>(
     destination: &mut [u8],
     source: &[Char],
 ) -> Result<usize, DecodeHexError> {
-    // Highway fast path: decode whole pairs in bulk, stopping at the first
-    // invalid pair — the same semantics as the scalar loop below. Short inputs
-    // stay scalar; the dynamically-dispatched FFI call isn't worth it for a
-    // handful of pairs.
     const HIGHWAY_MIN_PAIRS: usize = 16;
     let pairs = destination.len().min(source.len() / 2);
     if pairs >= HIGHWAY_MIN_PAIRS {
@@ -1904,10 +1749,6 @@ pub fn encode_bytes_to_hex(destination: &mut [u8], source: &[u8]) -> usize {
     crate::fmt::bytes_to_hex_lower(&source[..to_read], &mut destination[..to_write])
 }
 
-/// Leave a single leading char
-/// ```
-/// trim_subsequent_leading_chars("foo\n\n\n\n", '\n') -> "foo\n"
-/// ```
 pub fn trim_subsequent_leading_chars(slice: &[u8], char: u8) -> &[u8] {
     if slice.is_empty() {
         return slice;
@@ -1928,10 +1769,6 @@ pub fn trim_leading_char(slice: &[u8], char: u8) -> &[u8] {
     b""
 }
 
-/// Trim leading pattern of 2 bytes
-///
-/// e.g.
-/// `trim_leading_pattern2("abcdef", 'a', 'b') == "cdef"`
 pub fn trim_leading_pattern2(slice_: &[u8], byte1: u8, byte2: u8) -> &[u8] {
     let mut slice = slice_;
     while slice.len() >= 2 {
@@ -2196,20 +2033,6 @@ pub fn join(slices: &[&[u8]], delimiter: &[u8]) -> Result<Box<[u8]>, AllocError>
     Ok(out.into_boxed_slice())
 }
 
-// ── Lexicographic slice ordering ──────────────────────────────────────────
-// Canonical home for what Zig calls `std.mem.order`. The Zig tree had three
-// hand-rolled copies (bun.strings.order, md.entity.orderStrings,
-// ast.e.stringCompareForJavaScript); the Rust port keeps exactly one of each
-// shape here.
-
-/// Lexicographic byte-slice ordering (memcmp fast path).
-/// Semantically identical to `<[u8] as Ord>::cmp` / Zig `std.mem.order(u8, a, b)`.
-///
-/// Delegates to `<[u8] as Ord>::cmp` rather than an extern `libc::memcmp` call:
-/// the std specialisation lowers to the `memcmp` LLVM builtin, so LLVM can
-/// inline the short-string fast path and skip the PLT trampoline — matching
-/// what Zig gets for `bun.c.memcmp` after LTO. `#[inline(always)]` because this
-/// sits inside `sort_unstable_by` comparators on the install hot path.
 #[inline(always)]
 pub fn order(a: &[u8], b: &[u8]) -> Ordering {
     a.cmp(b)
@@ -2320,12 +2143,6 @@ impl<T, F: Fn(&T) -> &[u8]> GlobLengthSorter<T, F> {
     }
 }
 
-/// Reflection adapter for [`move_all_slices`]. Zig's `moveAllSlices` used
-/// `std.meta.fields(Type)` to enumerate every `[]const u8` field at comptime;
-/// Rust has no field reflection, so each container type hand-implements this
-/// trait (or, once landed, `#[derive(MoveSlices)]`) to yield the same set of
-/// fields as `&mut &'a [u8]` so they can be re-pointed into a new backing
-/// buffer of lifetime `'a` without any unsafe.
 pub trait MoveSlices<'a> {
     /// Invoke `f` once per byte-slice field of `self`.
     fn for_each_byte_slice_field(&mut self, f: &mut dyn FnMut(&mut &'a [u8]));
@@ -2379,10 +2196,6 @@ pub const UNICODE_REPLACEMENT: u32 = 0xFFFD;
 // UTF-8 encoding of U+FFFD
 pub const UNICODE_REPLACEMENT_STR: [u8; 3] = [0xEF, 0xBF, 0xBD];
 
-// Spec (immutable.zig:1990, 2003) calls `bun.c_ares.ares_inet_pton`, the vendored
-// c-ares implementation. Do NOT call the system `inet_pton` here: on Windows that
-// resolves into ws2_32.dll and fails with WSANOTINITIALISED whenever it runs before
-// `WSAStartup()`, which URL/host parsing can. c-ares' impl is pure C, no preconditions.
 unsafe extern "C" {
     pub fn ares_inet_pton(
         af: c_int,
@@ -2390,10 +2203,6 @@ unsafe extern "C" {
         dst: *mut core::ffi::c_void,
     ) -> c_int;
 }
-// dep-graph: bun_string < bun_sys, so cannot import the canonical
-// `bun_sys::posix::AF`. Keep a thin libc/ws2def passthrough instead. The
-// previous hand-rolled cfg ladder hardcoded `10` for the BSD fallback, which
-// is wrong (FreeBSD AF_INET6 == 28); routing through `libc` fixes that.
 const AF_INET: c_int = 2;
 #[cfg(not(windows))]
 const AF_INET6: c_int = libc::AF_INET6 as c_int;
@@ -2436,15 +2245,6 @@ pub fn left_has_any_in_right(to_check: &[&[u8]], against: &[&[u8]]) -> bool {
     false
 }
 
-/// Returns true if the input has the prefix and the next character is not an identifier character
-/// Also returns true if the input ends with the prefix (i.e. EOF)
-///
-/// Example:
-/// ```text
-/// has_prefix_with_word_boundary("console.log", "console") // true
-/// has_prefix_with_word_boundary("console.log", "log") // false
-/// has_prefix_with_word_boundary("console.log", "console.log") // true
-/// ```
 pub fn has_prefix_with_word_boundary(input: &[u8], prefix: &'static [u8]) -> bool {
     if has_prefix_comptime(input, prefix) {
         if input.len() == prefix.len() {
@@ -2770,14 +2570,6 @@ pub fn is_hex_code_point<T: TryInto<u8>>(cp: T) -> bool {
     cp.try_into().is_ok_and(|b: u8| b.is_ascii_hexdigit())
 }
 
-/// Unicode `Zs` (Space_Separator) general category — the exact 17-codepoint
-/// set, stable since Unicode 4.0. Shared core of:
-///   - ECMAScript `WhiteSpace` (js_parser::lexer)
-///   - the JSON5/JS-flavoured JSON lexer (parsers::json_lexer)
-///   - CommonMark §2.1 "Unicode whitespace" (md::helpers)
-/// Callers compose with their own ASCII / U+FEFF / line-terminator extras —
-/// those differ per spec and MUST NOT be folded in here (FEFF is Cf, not Zs,
-/// and is ECMAScript-only; 2028/2029 are Zl/Zp, json_lexer-only).
 #[inline]
 pub const fn is_unicode_space_separator(cp: u32) -> bool {
     matches!(
@@ -2830,11 +2622,6 @@ impl ANSIIterator {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    // `&mut ANSIIterator` is ABI-identical to the C++ `ANSIIterator*` (thin
-    // non-null pointer to a `#[repr(C)]` POD struct); C++ reads `input`/
-    // `input_len`/`cursor` and writes `cursor`/`slice_ptr`/`slice_len`. The
-    // `&mut` encodes the only pointer-validity precondition, so `safe fn`
-    // discharges the link-time proof and callers need no `unsafe`.
     safe fn Bun__ANSI__next(it: &mut ANSIIterator) -> bool;
 }
 
@@ -2851,11 +2638,6 @@ pub use crate::strings::{
 pub fn to_utf8_alloc_with_type(utf16: &[u16]) -> Vec<u8> {
     crate::strings::to_utf8_alloc(utf16)
 }
-
-// ───────────── minimal real impls of submodule fns ─────────────
-// These mirror the same-named fns in `unicode_draft` so dependents can link
-// against `bun_core::strings::*` directly. Each is a thin wrapper over simdutf
-// or the scalar logic from the .zig source.
 
 pub use crate::strings_impl::utf8_byte_sequence_length;
 
@@ -2929,22 +2711,11 @@ pub fn without_prefix<'a>(input: &'a [u8], prefix: &[u8]) -> &'a [u8] {
     }
 }
 
-// Zig: `pub const withoutTrailingSlash = paths_.withoutTrailingSlash;`
-// (immutable.zig:2380). The full `paths` submodule now lives in
-// `bun_paths::string_paths` (it depends upward on `bun_paths` resolve/pool
-// helpers and would cycle here). Callers reach the Windows path-shape
-// helpers (`to_nt_path` / `to_kernel32_path` / `from_w_path` / …) via
-// `bun_paths::strings::*`; this module keeps only the re-export of the
-// scalar `without_trailing_slash` already defined in `crate::strings`.
 pub use crate::strings_impl::{remove_leading_dot_slash, without_trailing_slash};
 // Zig: `pub const convertUTF16ToUTF8InBuffer = unicode.convertUTF16ToUTF8InBuffer;`
 // (immutable.zig). Re-export the bun_core implementation so callers can spell
 // `strings::convert_utf16_to_utf8_in_buffer` without reaching into `unicode`.
 pub use crate::strings::convert_utf16_to_utf8_in_buffer;
-// Zig: `pub const convertUTF8toUTF16InBufferZ = unicode.convertUTF8toUTF16InBufferZ;`
-// — re-export the NUL-terminated variant so callers can spell
-// `strings::convert_utf8_to_utf16_in_buffer_z` (used by the Windows profilers
-// to widen output paths for `File::write_file_os_path`).
 pub use unicode_draft::convert_utf8_to_utf16_in_buffer_z;
 
 /// `strings.startsWithWindowsDriveLetterT` — true for `[A-Za-z]:` prefix
@@ -2958,11 +2729,6 @@ pub fn starts_with_windows_drive_letter_t<T: Copy + Into<u32>>(s: &[T]) -> bool 
     }
 }
 
-/// `strings.convertUTF8toUTF16InBuffer` — UTF-8 → UTF-16LE into a caller-supplied
-/// buffer (capacity ≥ `input.len()` u16). SIMD fast path via simdutf; on invalid
-/// UTF-8 falls back to a scalar WTF-8 decoder that emits U+FFFD for malformed
-/// bytes and passes unpaired surrogates through (so non-empty input never yields
-/// an empty slice — fixes #8197 / the TODO at unicode.zig:1537).
 pub fn convert_utf8_to_utf16_in_buffer<'a>(buf: &'a mut [u16], input: &[u8]) -> &'a mut [u16] {
     if input.is_empty() {
         return &mut buf[..0];
@@ -3034,34 +2800,16 @@ fn decode_wtf8_one(s: &[u8]) -> (u32, usize) {
     )
 }
 
-/// `strings.toUTF8ListWithType` — append UTF-8 transcoding of `utf16` onto
-/// `list` and return the (possibly-reallocated) list. Port of
-/// `unicode.zig:toUTF8ListWithType` (always uses simdutf path; Bun is built
-/// with `FeatureFlags.use_simdutf = true`).
 pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8>, AllocError> {
     if utf16.is_empty() {
         return Ok(list);
     }
-    // Zig: `list.ensureTotalCapacityPrecise(length + 16)` then `convertUTF16ToUTF8`.
-    // `convert_utf16_to_utf8_append` writes directly into `spare_capacity_mut()` and
-    // requires the caller to pre-reserve (its doc says so explicitly); without this
-    // reserve a fresh `Vec::new()` has a dangling `0x1` spare pointer and simdutf
-    // segfaults writing to it. The +16 padding mirrors Zig's SIMD over-read slack.
     let length = simdutf::length::utf8::from::utf16::le(utf16);
     list.try_reserve(length + 16).map_err(|_| AllocError)?;
-    // PORT NOTE: Zig's path validates UTF-16 first then falls back to a manual
-    // loop on failure (`toUTF8ListWithTypeBun`). Here we route through
-    // `crate::strings::convert_utf16_to_utf8_append`, which already replaces
-    // unpaired surrogates with U+FFFD — semantically equivalent.
     crate::strings::convert_utf16_to_utf8_append(&mut list, utf16);
     Ok(list)
 }
 
-/// Errors from `to_utf16_alloc` when `fail_if_invalid = true`.
-///
-/// Re-exported from `unicode_draft` so that `to_utf16_alloc_maybe_buffered`
-/// (defined there) and `to_utf16_alloc` (defined here) share a single error
-/// type — callers like `TextDecoder` match on `strings::ToUTF16Error` for both.
 pub use unicode_draft::ToUTF16Error;
 impl From<ToUTF16Error> for crate::Error {
     fn from(e: ToUTF16Error) -> Self {
@@ -3072,12 +2820,6 @@ impl From<ToUTF16Error> for crate::Error {
     }
 }
 
-/// `strings.toUTF16Alloc` — convert UTF-8 → UTF-16LE **iff** `bytes` contains
-/// any non-ASCII byte; pure-ASCII inputs return `Ok(None)` (caller keeps the
-/// 8-bit form). When `fail_if_invalid` is set, invalid UTF-8 yields
-/// `Err(InvalidByteSequence)`; otherwise invalid sequences are replaced with
-/// U+FFFD (per `unicode.zig:toUTF16Alloc`). When `sentinel` is set the result
-/// includes a trailing 0 u16.
 pub fn to_utf16_alloc(
     bytes: &[u8],
     fail_if_invalid: bool,
@@ -3089,11 +2831,6 @@ pub fn to_utf16_alloc(
 
     let out_length = simdutf::length::utf16::from::utf8(bytes);
     let cap = out_length + if sentinel { 1 } else { 0 };
-    // Hot path: allocate uninitialised and let simdutf write directly into the
-    // spare capacity — avoids the redundant zero-fill of `vec![0u16; cap]`,
-    // which for large source files (build/create-next benches) is a measurable
-    // memset. `.max(1)` keeps the buffer pointer non-dangling so simdutf never
-    // sees `Vec::with_capacity(0)`'s `0x2` sentinel.
     let mut out: Vec<u16> = Vec::with_capacity(cap.max(1));
     // SAFETY: `out` has ≥ `out_length` u16 of capacity (just reserved). simdutf
     // never reads from the output buffer and writes at most `out_length` code
@@ -3141,10 +2878,6 @@ pub fn to_utf16_alloc(
     Ok(Some(out))
 }
 
-/// `PATTERN_KEY_COMPARE` from the Node.js ESM resolution spec — the comparator
-/// behind `NewGlobLengthSorter`. Returns an [`Ordering`] suitable for
-/// `slice.sort_by(|a, b| glob_length_compare(a, b))` to sort in **descending
-/// order of specificity** (matches Zig `lessThan` returning `true` ⇒ `Less`).
 pub fn glob_length_compare(key_a: &[u8], key_b: &[u8]) -> Ordering {
     let star_a = index_of_char(key_a, b'*');
     let star_b = index_of_char(key_b, b'*');
@@ -3173,12 +2906,6 @@ pub fn glob_length_compare(key_a: &[u8], key_b: &[u8]) -> Ordering {
 
 #[cfg(test)]
 mod tests {
-    // Regression guard for 3e7f1dabc079: `crate::strings::{first_non_ascii,
-    // eql_case_insensitive_ascii}` are explicit re-exports of the wrappers in
-    // *this* module (lib.rs `pub mod strings`), so the wrappers must call
-    // `crate::strings_impl::*` directly. Routing through `crate::strings::*`
-    // tail-recurses; rustc's `unconditional_recursion` lint does NOT fire
-    // across `pub use` re-export chains, so assert termination here instead.
     #[test]
     fn strings_reexport_wrappers_terminate() {
         assert_eq!(super::first_non_ascii(b"abc"), None);

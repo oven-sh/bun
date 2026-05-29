@@ -69,15 +69,6 @@ pub enum SocketType {
     None,
 }
 
-/// Zig: `TLSSocket.Socket.fromNamedPipe(&this.named_pipe)` where
-/// `Socket = uws.NewSocketHandler(ssl)`.
-///
-/// Takes a raw `*mut WindowsNamedPipe` (NOT `&mut`) because every caller is a
-/// `NamedPipeHandlers` callback invoked *from* `WindowsNamedPipe::on_*`, which
-/// already holds a live `&mut WindowsNamedPipe` to the same field and touches
-/// it again after the callback returns. Forming a second `&mut` here would
-/// retag the field and invalidate the caller's reference (Stacked Borrows).
-/// The handler only needs the raw address to stuff into `InternalSocket::Pipe`.
 #[inline]
 fn socket_from_named_pipe<const SSL: bool>(
     pipe: *mut WindowsNamedPipe,
@@ -97,16 +88,6 @@ fn socket_from_named_pipe<const SSL: bool>(
     }
 }
 
-/// Dispatch a `SocketType` value to a single body written generically over
-/// `NewSocket<SSL>`. Binds the inner `*mut NewSocket<{true|false}>` as `$s`
-/// and a per-arm `const $ssl: bool` so the body can call
-/// `NewSocket::on_x($s, socket_from_named_pipe::<$ssl>(..), ..)` once instead
-/// of hand-duplicating the `Tls`/`Tcp` arms. `SocketType::None` is a no-op.
-///
-/// Takes the `SocketType` by *value* (Copy) — not `*mut Self` — so callers
-/// that must snapshot before mutating (`on_close`) or branch and re-match
-/// (`on_error`) pass their saved copy; see the Stacked-Borrows note on the
-/// `on_*` block below.
 macro_rules! match_socket {
     ($scrutinee:expr, |$s:ident: NewSocket<$ssl:ident>| $body:expr) => {
         match $scrutinee {
@@ -125,21 +106,6 @@ macro_rules! match_socket {
     };
 }
 
-// ── NamedPipeHandlers callbacks ──────────────────────────────────────────────
-//
-// All eight `on_*` handlers below take `this: *mut Self` (NOT `&mut self`).
-// They are invoked from `WindowsNamedPipe::on_*` via `(self.handlers.on_x)(ctx, ..)`
-// where the caller already holds a live `&mut WindowsNamedPipe` — i.e. a
-// `&mut (*this).named_pipe` — and *uses it again after the handler returns*
-// (e.g. `self.incoming.clear()`, `self.close()`, `self.release_resources()`).
-//
-// Forming `&mut *this` (or `&mut (*this).named_pipe`) here would retag from the
-// allocation-root provenance and pop the caller's Unique tag off the borrow
-// stack → Stacked Borrows UB / LLVM `noalias` violation when control returns.
-//
-// Instead each handler projects only the disjoint fields it needs (`socket`,
-// `is_open`, `global_this`) via raw-pointer place expressions, and passes
-// `addr_of_mut!((*this).named_pipe)` as a raw pointer without retagging.
 impl WindowsNamedPipeContext {
     fn on_open(this: *mut Self) {
         // SAFETY: `this` is the live ctx ptr registered in `create()`; `is_open`
@@ -292,12 +258,6 @@ impl WindowsNamedPipeContext {
         >::new_uninit())
         .cast();
 
-        // named_pipe owns the pipe (PipeWriter owns the pipe and will close and deinit it)
-        // Non-capturing closures coerce to `fn(*mut c_void, …)`; each casts the
-        // erased ctx ptr back to `*mut Self` and forwards it RAW — the callee
-        // must not form `&mut Self` (see the doc-comment on the `on_*` block
-        // above for the Stacked-Borrows constraint vs the caller's
-        // `&mut WindowsNamedPipe`).
         let handlers = NamedPipeHandlers {
             ctx: this.cast::<c_void>(),
             // SAFETY: `p` is the `ctx` set above (`this.cast()`); the
@@ -324,10 +284,6 @@ impl WindowsNamedPipeContext {
         };
         #[cfg(not(windows))]
         {
-            // Zig: `if (Environment.isPosix) @compileError(...)` on `WindowsNamedPipe::from` —
-            // on POSIX `crate::socket::WindowsNamedPipeContext` is aliased to `()` (see mod.rs)
-            // so no caller can reach `create()`. This arm exists only so the module
-            // type-checks; matches the sibling `WindowsNamedPipe::open`/`connect` POSIX arms.
             let _ = (vm, this, handlers, socket);
             unreachable!("WindowsNamedPipeContext::create is windows-only")
         }
@@ -375,11 +331,6 @@ impl WindowsNamedPipeContext {
         }
     }
 
-    /// `owned_ctx` is one `SSL_CTX_up_ref` ADOPTED by `named_pipe.open` (kept on
-    /// success, freed by it on failure). Prefer it over `ssl_config` so a memoised
-    /// `tls.createSecureContext` reaches this path with its trust store intact —
-    /// on this branch `[buntls]` returns `{secureContext}` only, so `ssl_config`
-    /// alone would be empty.
     pub fn open(
         global_this: &JSGlobalObject,
         fd: Fd,

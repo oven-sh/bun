@@ -15,10 +15,6 @@ pub unsafe trait ExternalSharedDescriptor {
     unsafe fn ext_deref(this: *mut Self);
 }
 
-/// A shared pointer whose reference count is managed externally; e.g., by extern functions.
-///
-/// `T` must implement [`ExternalSharedDescriptor`] (the Rust equivalent of Zig's
-/// `T.external_shared_descriptor` struct with `ref(*T)` / `deref(*T)`).
 #[repr(transparent)]
 pub struct ExternalShared<T: ExternalSharedDescriptor> {
     // Zig: `#impl: *T` (private, non-null)
@@ -186,12 +182,6 @@ impl<T: ExternalSharedDescriptor> Drop for ExternalSharedOptional<T> {
         }
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// `WTF::StringImpl` descriptor — lives here (not `bun_string`) because the
-// struct is defined in `bun_alloc` and the trait here; orphan rule requires
-// one of them to be local. `bun_ptr` already depends on `bun_alloc`.
-// ──────────────────────────────────────────────────────────────────────────
 
 // SAFETY: ref/deref delegate to JSC's WTF::StringImpl atomic refcount via FFI;
 // the pointee remains valid while count > 0 (JSC contract).

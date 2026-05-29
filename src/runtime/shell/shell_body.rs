@@ -36,11 +36,6 @@ pub use interpret::{IOReader, IOWriter};
 pub use super::yield_; // ./Yield.zig
 pub use yield_::Yield;
 
-// ─── lexer / parser / AST (moved down to bun_shell_parser) ──────────────────
-// The encoding-agnostic lex/parse/AST surface lives in the lower-tier
-// `bun_shell_parser` crate so `Interpreter::parse` can compile without the
-// (still-draft) JSC bridge below. This file keeps the JSC-coupled half
-// (ShellErr, GlobalJS/Mini, shell_cmd_from_js, ShellSrcBuilder, TestingAPIs).
 pub use bun_shell_parser::parse::ast as AST;
 pub use bun_shell_parser::parse::{
     BACKSLASHABLE_CHARS, BacktrackSnapshot, CharState, EscapeUtf16Result, IfClauseTok, InputChar,
@@ -168,14 +163,6 @@ impl fmt::Display for ShellErr {
         }
     }
 }
-
-// PORT NOTE: no `impl Drop for ShellErr`. Zig's `ShellErr.deinit` is *manual*
-// and asymmetric — `throwJS` deliberately skips `.sys.deref()` because
-// `toErrorInstance` already consumed those refs. An unconditional `Drop` would
-// re-introduce the double-deref. Ownership is instead expressed by `throw_js` /
-// `throw_mini` / `deinit` taking `self` by value; the `Box<[u8]>` payloads free
-// on ordinary drop, and `.sys` is released exactly once on whichever consume
-// path runs.
 
 // ───────────────────────────── Result ─────────────────────────────
 
@@ -688,12 +675,6 @@ pub use test as Test;
 
 // ───────────────────────────── JS bridge ─────────────────────────────
 
-/// RAII owner for the `bun.String` array threaded through `shell_cmd_from_js` →
-/// `Interpreter::parse`. `bun.String` is `Copy` (no `Drop`) for FFI, so the
-/// per-element `deref()` from Zig's `defer { for (jsstrings.items) |bunstr|
-/// bunstr.deref(); jsstrings.deinit(); }` must be explicit. Wrapping the `Vec`
-/// avoids the unit-state `scopeguard` + raw-pointer-reborrow pattern that is UB
-/// under Stacked Borrows (PORTING.md §Idiom-map: `defer <side effect>`).
 pub struct JsStrings(pub Vec<BunString>);
 
 impl JsStrings {

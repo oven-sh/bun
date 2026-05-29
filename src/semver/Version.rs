@@ -10,11 +10,6 @@ use crate::query::token::Wildcard;
 
 pub type Version = VersionType<u64>;
 
-// ──────────────────────────────────────────────────────────────────────────
-// VersionInt — trait capturing the operations the Zig generic needed on
-// `comptime IntType: type`. Only u32 and u64 are instantiated.
-// ──────────────────────────────────────────────────────────────────────────
-
 pub trait VersionInt: Copy + Default + Eq + Ord + fmt::Display + 'static {
     const ZERO: Self;
     const MAX: Self;
@@ -30,10 +25,6 @@ impl VersionInt for u64 {
     type TagPadding = [u8; 0];
     #[inline]
     fn parse_ascii(s: &[u8]) -> Option<Self> {
-        // Semantics match Zig `std.fmt.parseUnsigned(u64, s, 10) catch null`:
-        // None for empty, any non-[0-9] byte, or overflow. Callers rely on
-        // the non-digit None case for pre-release identifier ordering
-        // (semver identifiers are `[0-9A-Za-z-]+`, so `_` never appears).
         bun_core::parse_unsigned::<u64>(s, 10).ok()
     }
 }
@@ -231,16 +222,6 @@ impl<T: VersionInt> VersionType<T> {
             && rhs.tag.eql(self.tag)
     }
 
-    /// Modified version of pnpm's `whichVersionIsPinned`
-    /// https://github.com/pnpm/pnpm/blob/bc0618cf192a9cafd0ab171a3673e23ed0869bbd/packages/which-version-is-pinned/src/index.ts#L9
-    ///
-    /// Differences:
-    /// - It's not used for workspaces
-    /// - `npm:` is assumed already removed from aliased versions
-    /// - Invalid input is considered major pinned (important because these strings are coming
-    ///    from package.json)
-    ///
-    /// The goal of this function is to avoid a complete parse of semver that's unused
     pub fn which_version_is_pinned(input: &[u8]) -> PinnedVersion {
         let version = strings::trim(input, &strings::WHITESPACE_CHARS);
 
@@ -309,13 +290,6 @@ impl<T: VersionInt> VersionType<T> {
             // entire semver is whitespace, `v`, and `=`. Invalid
             return PinnedVersion::Major;
         };
-
-        // `pinned` is `.major`, `.minor`, or `.patch`. Check for each version core number:
-        // - if major is missing, return `if (pinned == .patch) .major else pinned`
-        // - if minor is missing, return `if (pinned == .patch) .minor else pinned`
-        // - if patch is missing, return `pinned`
-        // - if there's whitespace or non-digit characters between core numbers, return `.major`
-        // - if the end is reached, return `pinned`
 
         // major
         if i >= version.len() || !version[i].is_ascii_digit() {
@@ -994,12 +968,6 @@ impl Tag {
         // so we hardcode u64 here.
         let lhs_str = self.pre.slice(lhs_buf);
         let rhs_str = rhs.pre.slice(rhs_buf);
-
-        // 1. split each by '.', iterating through each one looking for integers
-        // 2. compare as integers, or if not possible compare as string
-        // 3. whichever is greater is the greater one
-        //
-        // 1.0.0-canary.0.0.0.0.0.0 < 1.0.0-canary.0.0.0.0.0.1
 
         let mut lhs_itr = strings::split(lhs_str, b".");
         let mut rhs_itr = strings::split(rhs_str, b".");

@@ -61,12 +61,6 @@ impl PropertyRule {
 
 impl PropertyRule {
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk. `SyntaxString` has an
-        // inherent `deep_clone(&self, &Arena)`. While `ParsedComponent` is
-        // ``-gated to `()`, `Option<()>` is `Copy` → identity;
-        // once it un-gates, swap to `self.initial_value.as_ref().map(|v|
-        // v.deep_clone(bump))` (values/syntax.rs already provides the
-        // inherent impl).
         Self {
             name: self.name.deep_clone(bump),
             syntax: self.syntax.deep_clone(bump),

@@ -33,10 +33,6 @@ impl TestingAPIs {
         let old_folder = old_folder_bunstr.to_utf8();
         let new_folder = new_folder_bunstr.to_utf8();
 
-        // PORT NOTE: Zig `gitDiffInternal` used `std.process.Child` (no uv loop).
-        // Rust routes through `bun_spawn::sync`, which on Windows derefs
-        // `WindowsOptions.loop_` — supply the JS event loop.
-        // `global.bun_vm().event_loop()` is the live per-thread `jsc::EventLoop`.
         let mut loop_ = bun_jsc::AnyEventLoop::js(global.bun_vm().event_loop().cast());
         let diff = match git_diff_internal(old_folder.slice(), new_folder.slice(), &mut loop_) {
             Ok(d) => d,
@@ -63,10 +59,6 @@ impl TestingAPIs {
     pub fn apply(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let args = Self::parse_apply_args(global, frame)?;
 
-        // TODO(port): lifetime — `PatchFile<'a>` borrows its source bytes, so the Zig
-        // `ApplyArgs { patchfile, patchfile_txt }` pair is self-referential in Rust.
-        // PORTING.md forbids Box::leak / lifetime-extend, so we store the owned bytes
-        // in `ApplyArgs` and reparse here (already validated in `parse_apply_args`).
         let patchfile: PatchFile<'_> =
             parse_patch_file(&args.patchfile_txt).expect("validated in parse_apply_args");
 
@@ -159,11 +151,6 @@ impl TestingAPIs {
         let patchfile_bunstr = OwnedString::new(patchfile_bunstr);
         let patchfile_src = patchfile_bunstr.to_utf8();
 
-        // Validate the patch parses; on failure, clean up `dir_fd` and throw.
-        // The parsed `PatchFile<'_>` borrows `patchfile_src`, so it cannot be
-        // returned alongside its source without a self-referential struct
-        // (forbidden by PORTING.md). We discard it here; `apply()` reparses
-        // from the owned bytes below.
         if let Err(e) = parse_patch_file(patchfile_src.slice()) {
             // TODO: HAVE @zackradisic REVIEW THIS DIFF
             if Fd::cwd() != dir_fd {
@@ -198,16 +185,6 @@ impl Drop for ApplyArgs {
         }
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// C-ABI host-fn shims
-//
-// `#[bun_jsc::host_fn]` (Free kind) emits an unqualified `fn_name(g, f)` call
-// in its generated shim body, so it can't wrap an associated fn directly.
-// These module-scope thunks forward to `TestingAPIs::*` so the proc-macro can
-// generate the JSC-calling-convention `__jsc_host_*` exports the codegen side
-// links against (Zig: `jsc.host_fn.wrap(TestingAPIs.makeDiff)` etc.).
-// ──────────────────────────────────────────────────────────────────────────
 
 #[bun_jsc::host_fn]
 pub fn patch_make_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {

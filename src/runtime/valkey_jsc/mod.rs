@@ -31,10 +31,6 @@ pub mod protocol_jsc; // RESPValue → JSValue, RedisError → JS Error
 #[path = "index.rs"]
 pub mod index;
 
-// ─── back-compat aliases ─────────────────────────────────────────────────────
-// Sibling files were written against `*_body` module names (`valkey.rs`
-// imports `super::js_valkey_body`, `js_valkey.rs` imports
-// `super::valkey_command_body`); keep the aliases so they don't need to churn.
 pub use self::js_valkey as js_valkey_body;
 pub use self::valkey as valkey_body;
 
@@ -46,11 +42,6 @@ pub use protocol_jsc::{
 pub use valkey::{Options, Protocol, Status, ValkeyClient};
 pub use valkey_context::ValkeyContext;
 
-// ── ValkeyCommand ────────────────────────────────────────────────────────────
-// Zig's `ValkeyCommand.zig` is a file-as-struct: it is both the namespace
-// *and* the `Command` type. Expose a `valkey_command` module that re-exports
-// the body's items so `command::PromisePair` / `command::Entry` resolve, and
-// alias it as `ValkeyCommand` for callers that match the Zig spelling.
 pub mod valkey_command {
     pub use super::valkey_command_body::{Entry, Meta, Promise, PromisePair, entry, promise_pair};
     // `index.rs` re-exports `super::valkey_command::ValkeyCommand`.
@@ -58,15 +49,6 @@ pub mod valkey_command {
 }
 pub use valkey_command as ValkeyCommand;
 
-// ── JsClass wiring (codegen name = "RedisClient", see valkey.classes.ts) ────
-// `generate-classes.ts` emits the `RedisClient__{fromJS,fromJSDirect,create,
-// getConstructor}` externs plus safe wrappers as **free functions** in
-// `crate::generated_classes::js_RedisClient` (one `js_<Name>` submodule per
-// class). The codegen's `RedisClient` *type* re-export resolves back to
-// `JSValkeyClient` itself (via `valkey::RedisClient`), so the wrapper pointee
-// is already `*mut JSValkeyClient` — no cast required. Route through the
-// submodule instead of redeclaring the externs here; a second `extern "C"`
-// block would trip `clashing_extern_declarations`.
 use crate::generated_classes::js_RedisClient;
 
 impl JSValkeyClient {

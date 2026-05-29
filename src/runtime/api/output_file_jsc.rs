@@ -106,10 +106,6 @@ impl OutputFileJsc for OutputFile {
             _ => {}
         }
 
-        // PORT NOTE: each Zig arm reassigns `this.value = .buffer{.{}}` after
-        // consuming the payload. Taking the value out up-front avoids the
-        // borrowck conflict between `&mut self.value` (match scrutinee) and
-        // `self.{hash,loader,...}` reads inside the arms.
         let value = core::mem::replace(
             &mut self.value,
             OutputFileValue::Buffer {
@@ -154,10 +150,6 @@ impl OutputFileJsc for OutputFile {
             OutputFileValue::Saved(_) => {
                 let path_to_use: &[u8] = owned_pathname.unwrap_or(self.src_path.text);
 
-                // `Store::drop` frees a `PathLike::String` payload via
-                // `PathString::deinit_owned`, so the backing buffer must be
-                // owned by the store. `owned_pathname` is a borrow here (the
-                // caller drops its `Box<[u8]>` after this returns), so dupe it.
                 let store_path = match owned_pathname {
                     Some(p) => PathLike::String(PathString::init_owned(p.to_vec())),
                     None => dupe_path_like(self.src_path.text),

@@ -20,26 +20,9 @@ pub struct ParsedSourceMap {
 
     pub input_line_count: usize,
     pub mappings: mapping::List,
-    /// Set when this map's mappings are backed by an InternalSourceMap blob
-    /// instead of a materialized `Mapping.List`. The blob is *owned* (freed in
-    /// `Drop`) unless [`Self::is_standalone_module_graph`] — in that case the
-    /// bytes live in the embedded `bun build --compile` section and are
-    /// borrowed.
     pub internal: Option<InternalSourceMap>,
 
-    /// If this is empty, this implies that the source code is a single file
-    /// transpiled on-demand. If there are items, then it means this is a file
-    /// loaded without transpilation but with external sources. This array
-    /// maps `source_index` to the correct filename.
     pub external_source_names: Vec<Box<[u8]>>,
-    /// In order to load source contents from a source-map after the fact,
-    /// a handle to the underlying source provider is stored. Within this pointer,
-    /// a flag is stored if it is known to be an inline or external source map.
-    ///
-    /// Source contents are large, we don't preserve them in memory. This has
-    /// the downside of repeatedly re-decoding sourcemaps if multiple errors
-    /// are emitted (specifically with Bun.inspect / unhandled; the ones that
-    /// rely on source contents)
     pub underlying_provider: SourceContentPtr,
 
     pub is_standalone_module_graph: bool,
@@ -47,16 +30,6 @@ pub struct ParsedSourceMap {
 
 impl Drop for ParsedSourceMap {
     fn drop(&mut self) {
-        // Spec ParsedSourceMap.zig:105 `deinit`: when the mappings are backed
-        // by an `InternalSourceMap` blob the blob is *owned* (allocated by
-        // `SavedSourceMap::put_mappings`) unless this is the
-        // standalone-module-graph case where the bytes live in the embedded
-        // section. The doc on the `internal` field only describes that latter
-        // borrowed case; the owned case is the runtime-transpiler upgrade in
-        // `SavedSourceMap::get_with_content`, which previously stranded the
-        // blob and showed up as the `print_ast` LSan suppression.
-        //
-        // `mappings`/`external_source_names` free via their own `Drop`.
         if let Some(ism) = self.internal.take() {
             if !self.is_standalone_module_graph {
                 ism.free_owned();
@@ -269,15 +242,6 @@ impl ParsedSourceMap {
         unsafe { std::sync::Arc::decrement_strong_count(this.cast_const()) };
     }
 
-    /// Construct a `ParsedSourceMap` whose mappings are backed by an
-    /// `InternalSourceMap` blob (e.g. one embedded in a `bun build --compile`
-    /// executable's standalone module graph) instead of a materialized
-    /// `mapping::List`. Ownership of the blob transfers to the returned value
-    /// (freed in `Drop`) unless the caller subsequently sets
-    /// [`Self::is_standalone_module_graph`].
-    ///
-    /// Mirrors Zig `SourceMap.ParsedSourceMap{ .internal = ism, .input_line_count
-    /// = ism.inputLineCount() }` struct-init at the standalone-graph load site.
     pub fn from_internal(internal: InternalSourceMap) -> Self {
         Self {
             ref_count: AtomicU32::new(1),
@@ -374,15 +338,6 @@ impl ParsedSourceMap {
         VlqsFmt(self)
     }
 }
-
-// PORT NOTE: Zig `deinit` conditionally skipped freeing `internal` when
-// `is_standalone_module_graph` (the blob borrows bytes from the standalone
-// module graph section). The current `InternalSourceMap` stub has no Drop, so
-// the conditional is a no-op. When `InternalSourceMap.rs` is un-gated, retype
-// the field to `Option<core::mem::ManuallyDrop<InternalSourceMap>>` and drop
-// it explicitly only when `!is_standalone_module_graph` — do NOT use
-// `mem::forget` (PORTING.md §Forbidden).
-// `mappings` and `external_source_names` are dropped automatically.
 
 pub struct VlqsFmt<'a>(&'a ParsedSourceMap);
 

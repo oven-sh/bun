@@ -86,20 +86,6 @@ impl Condition {
         Self { impl_: Impl::new() }
     }
 
-    /// Atomically releases the Mutex, blocks the caller thread, then re-acquires the Mutex on return.
-    /// "Atomically" here refers to accesses done on the Condition after acquiring the Mutex.
-    ///
-    /// The Mutex must be locked by the caller's thread when this function is called.
-    /// A Mutex can have multiple Conditions waiting with it concurrently, but not the opposite.
-    /// It is undefined behavior for multiple threads to wait ith different mutexes using the same Condition concurrently.
-    /// Once threads have finished waiting with one Mutex, the Condition can be used to wait with another Mutex.
-    ///
-    /// A blocking call to wait() is unblocked from one of the following conditions:
-    /// - a spurious ("at random") wake up occurs
-    /// - a future call to `signal()` or `broadcast()` which has acquired the Mutex and is sequenced after this `wait()`.
-    ///
-    /// Given wait() can be interrupted spuriously, the blocking condition should be checked continuously
-    /// irrespective of any notifications from `signal()` or `broadcast()`.
     pub fn wait(&self, mutex: &Mutex) {
         match self.impl_.wait(mutex, None) {
             Ok(()) => {}
@@ -107,21 +93,6 @@ impl Condition {
         }
     }
 
-    /// Atomically releases the Mutex, blocks the caller thread, then re-acquires the Mutex on return.
-    /// "Atomically" here refers to accesses done on the Condition after acquiring the Mutex.
-    ///
-    /// The Mutex must be locked by the caller's thread when this function is called.
-    /// A Mutex can have multiple Conditions waiting with it concurrently, but not the opposite.
-    /// It is undefined behavior for multiple threads to wait ith different mutexes using the same Condition concurrently.
-    /// Once threads have finished waiting with one Mutex, the Condition can be used to wait with another Mutex.
-    ///
-    /// A blocking call to `timed_wait()` is unblocked from one of the following conditions:
-    /// - a spurious ("at random") wake occurs
-    /// - the caller was blocked for around `timeout_ns` nanoseconds, in which `TimeoutError::Timeout` is returned.
-    /// - a future call to `signal()` or `broadcast()` which has acquired the Mutex and is sequenced after this `timed_wait()`.
-    ///
-    /// Given `timed_wait()` can be interrupted spuriously, the blocking condition should be checked continuously
-    /// irrespective of any notifications from `signal()` or `broadcast()`.
     pub fn timed_wait(&self, mutex: &Mutex, timeout_ns: u64) -> Result<(), TimeoutError> {
         self.impl_.wait(mutex, Some(timeout_ns))
     }
@@ -139,19 +110,6 @@ impl Condition {
     pub fn broadcast(&self) {
         self.impl_.wake(Notify::All);
     }
-
-    // ── parking_lot::Condvar parity (guard-style API) ─────────────────────
-    //
-    // Zig's `Condition.wait` takes a bare `*Mutex` (the caller writes
-    // `mutex.lock(); defer mutex.unlock(); cond.wait(&mutex)`). Rust callers
-    // hold a `GuardedLock<'_, T>` instead, so these overloads peel the inner
-    // `&Mutex` out of the guard and forward. The mutex is unlocked for the
-    // duration of the OS wait and re-locked before return, so the guard's
-    // `Drop` (which unlocks once) remains balanced.
-    //
-    // `guard` is `&mut` so the protected `T` cannot be observed while the
-    // mutex is released inside the wait — same contract as
-    // `parking_lot::Condvar::wait(&mut MutexGuard<T>)`.
 
     /// [`wait`](Self::wait) for callers holding a [`GuardedLock`].
     pub fn wait_guarded<T>(&self, guard: &mut GuardedLock<'_, T, Mutex>) {
@@ -202,12 +160,6 @@ mod windows_impl {
 
     use bun_core::time::NS_PER_MS;
 
-    // `&UnsafeCell<CONDITION_VARIABLE>` is ABI-identical to kernel32's
-    // `PCONDITION_VARIABLE` (thin non-null pointer; `UnsafeCell` is
-    // `#[repr(transparent)]`). Waking with no waiters is a documented no-op —
-    // no state precondition — so `safe fn` discharges the link-time proof for
-    // the wake pair. `SleepConditionVariableSRW` retains its raw-pointer
-    // `kernel32::` form: it requires the SRW lock be held by the caller.
     #[link(name = "kernel32")]
     unsafe extern "system" {
         safe fn WakeConditionVariable(cv: &core::cell::UnsafeCell<windows::CONDITION_VARIABLE>);
@@ -334,16 +286,6 @@ impl FutexImpl {
     const SIGNAL_MASK: u32 = 0xffff << 16;
 
     fn wait(&self, mutex: &Mutex, timeout: Option<u64>) -> Result<(), TimeoutError> {
-        // Observe the epoch, then check the state again to see if we should wake up.
-        // The epoch must be observed before we check the state or we could potentially miss a wake() and deadlock:
-        //
-        // - T1: s = LOAD(&state)
-        // - T2: UPDATE(&s, signal)
-        // - T2: UPDATE(&epoch, 1) + FUTEX_WAKE(&epoch)
-        // - T1: e = LOAD(&epoch) (was reordered after the state load)
-        // - T1: s & signals == 0 -> FUTEX_WAIT(&epoch, e) (missed the state update + the epoch change)
-        //
-        // Acquire barrier to ensure the epoch load happens before the state load.
         let mut epoch = self.epoch.load(Ordering::Acquire);
         let mut state = self.state.fetch_add(Self::ONE_WAITER, Ordering::Relaxed);
         debug_assert!(state & Self::WAITER_MASK != Self::WAITER_MASK);
@@ -442,18 +384,6 @@ impl FutexImpl {
                 Ordering::Relaxed,
             ) {
                 Ok(_) => {
-                    // Wake up the waiting threads we reserved above by changing the epoch value.
-                    // NOTE: a waiting thread could miss a wake up if *exactly* ((1<<32)-1) wake()s happen between it observing the epoch and sleeping on it.
-                    // This is very unlikely due to how many precise amount of Futex.wake() calls that would be between the waiting thread's potential preemption.
-                    //
-                    // Release barrier ensures the signal being added to the state happens before the epoch is changed.
-                    // If not, the waiting thread could potentially deadlock from missing both the state and epoch change:
-                    //
-                    // - T2: UPDATE(&epoch, 1) (reordered before the state change)
-                    // - T1: e = LOAD(&epoch)
-                    // - T1: s = LOAD(&state)
-                    // - T2: UPDATE(&state, signal) + FUTEX_WAKE(&epoch)
-                    // - T1: s & signals == 0 -> FUTEX_WAIT(&epoch, e) (missed both epoch change and state change)
                     let _ = self.epoch.fetch_add(1, Ordering::Release);
                     Futex::wake(&self.epoch, to_wake);
                     return;

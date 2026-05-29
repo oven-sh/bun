@@ -23,20 +23,11 @@ use crate::webcore::{Blob, FetchHeaders, Response};
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = FileRoute::deinit)]
 pub struct FileRoute {
-    // PORT NOTE (§Pointers Rc/Arc default): owned via intrusive refcount; the
-    // raw `*mut FileRoute` is round-tripped through `FileResponseStream`'s
-    // `ctx: *mut c_void` userdata, so `Rc<FileRoute>` is unsuitable. See
-    // StaticRoute.rs note re: FFI userdata fallback to RefPtr.
     ref_count: Cell<u32>,
     server: Cell<Option<AnyServer>>,
     blob: Blob,
     headers: Headers,
     status_code: u16,
-    // Mutated on every request (`on()` runs `hash()`); FileRoute is reached via
-    // a shared `*const Self` from the route table, so wrap for interior
-    // mutability. `StatHash` is small POD with `Default`, so `Cell` +
-    // `take()/set()` gives safe read-modify-write on the single-threaded JS
-    // event loop.
     stat_hash: Cell<StatHash>,
     has_last_modified_header: bool,
     has_content_length_header: bool,
@@ -328,10 +319,6 @@ impl FileRoute {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
-        // PORT NOTE: clone the path so the borrow into `this.blob.store`
-        // doesn't span the scopeguard creation (the guard's closure may free
-        // `*this_ptr` on early-return drop). // PERF(port): was zero-copy
-        // slice — profile if hot.
         let path_buf: Vec<u8> = match this.blob.store.get().as_ref().unwrap().get_path() {
             Some(p) => p.to_vec(),
             None => {
@@ -369,14 +356,6 @@ impl FileRoute {
             return;
         };
 
-        // `fd_owned` tracks whether this function is still responsible for
-        // closing the file descriptor and releasing the route ref. Every
-        // non-streaming return — bodiless status codes (304/204/205/307/308),
-        // HEAD, non-streamable files, and the two JS-exception `catch return`
-        // paths below — hits this defer, so neither the fd nor the route ref
-        // (or the server's pending_requests counter) can leak regardless of
-        // which branch runs. The streaming path clears `fd_owned` right
-        // before handing ownership to `FileResponseStream`.
         let mut fd_guard = scopeguard::guard(true, move |owned| {
             if owned {
                 #[cfg(windows)]
@@ -388,19 +367,6 @@ impl FileRoute {
             }
         });
 
-        // PORT NOTE (intentional spec divergence): Zig writes
-        // `req.dateForHeader(..) catch return` — i.e. on a JS parse exception
-        // the handler bails with NO response written (the defer above closes
-        // the fd and decrements the route ref, leaving the client hung until
-        // timeout). That `catch return` is itself flagged as a TODO in the
-        // .zig. `parse_http_date` instead maps a parse failure to `None`, so a
-        // malformed If-Modified-Since header degrades to "serve the file
-        // unconditionally" — the RFC 9110 §13.1.3-correct behaviour and what
-        // the Zig TODO is asking for. Kept divergent on purpose.
-        //
-        // LAYERING: Zig's `req.dateForHeader` was a method on `uws.Request`;
-        // in Rust the parse step lives HERE (T6) because it needs `bun_jsc` —
-        // call site moved up so `bun_uws_sys` (T0) carries no upward hook.
         let input_if_modified_since_date: Option<u64> = req
             .header(b"if-modified-since")
             .and_then(crate::jsc_hooks::parse_http_date);
@@ -442,11 +408,6 @@ impl FileRoute {
             return;
         }
 
-        // Range applies to the slice the route was configured with, not the
-        // underlying file: a Bun.file(p).slice(a,b) route exposes only [a,b).
-        // RFC 9110 §14.2: Range is only defined for GET (HEAD mirrors GET's
-        // headers). Skip if the route has a non-200 status or the user already
-        // set Content-Range — they're managing partial responses themselves.
         let range: RangeRequest::Result = if (method == Method::GET || method == Method::HEAD)
             && file_type == FileType::File
             && this.status_code == 200
@@ -458,22 +419,12 @@ impl FileRoute {
         };
 
         let status_code: u16 = 'brk: {
-            // RFC 9110 §13.2.2: conditional preconditions are evaluated before
-            // Range. If-Modified-Since on an unmodified resource yields 304 even
-            // when a Range header is present (without If-Range).
-            // Unlike If-Unmodified-Since, If-Modified-Since can only be used with a
-            // GET or HEAD. When used in combination with If-None-Match, it is
-            // ignored, unless the server doesn't support If-None-Match.
             if let Some(requested_if_modified_since) = input_if_modified_since_date {
                 if method == Method::HEAD || method == Method::GET {
                     let Ok(lmd) = this.last_modified_date() else {
                         return;
                     }; // TODO: properly propagate exception upwards
                     if let Some(actual_last_modified_at) = lmd {
-                        // Compare at second precision: the Last-Modified header we
-                        // emit is second-granular (HTTP-date), so a sub-second
-                        // mtime would otherwise never satisfy `<=` against the
-                        // client's echoed value.
                         if actual_last_modified_at / 1000 <= requested_if_modified_since / 1000 {
                             break 'brk 304;
                         }

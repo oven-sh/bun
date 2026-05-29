@@ -31,11 +31,6 @@ struct ScriptConfig {
     // parsed `PackageJSON` (which owns the file bytes) drops.
     deps: Vec<Box<[u8]>>,
 
-    // $PATH must be set per script because it contains
-    // node_modules/.bin
-    // ../node_modules/.bin
-    // ../../node_modules/.bin
-    // and so forth, in addition to the user's $PATH.
     #[allow(non_snake_case)]
     PATH: Box<[u8]>,
     elide_count: Option<usize>,
@@ -96,10 +91,6 @@ impl<'a> ProcessHandle<'a> {
 
         handle.start_time = Some(Instant::now());
         let spawned: spawn::SpawnProcessResult = 'brk: {
-            // Get the envp with the PATH configured
-            // There's probably a more optimal way to do this where you have a Vec shared
-            // instead of creating a new one for each process
-            // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile if it shows up on a hot path.
             let env_ptr = state.env;
             // SAFETY: state.env is the process-lifetime DotEnv loader (Transpiler::env).
             let env = unsafe { &mut *env_ptr };
@@ -129,12 +120,6 @@ impl<'a> ProcessHandle<'a> {
         };
         #[cfg(unix)]
         let (stdout_fd, stderr_fd) = (spawned.stdout, spawned.stderr);
-        // Windows: `spawn_process_windows` has already moved the heap pipe out of
-        // `options.stdout/stderr` (via `heap::take`) into `spawned.stdout/stderr`
-        // as `WindowsStdioResult::Buffer(Box<Pipe>)`. The raw `*mut Pipe` left in
-        // `options` is dangling-by-design — re-`heap::take`ing it here would be a
-        // double `Box::from_raw` (UAF + double-free). Take the Box from the
-        // *result* instead, before `to_process` consumes `spawned`.
         #[cfg(windows)]
         let mut spawned = spawned;
         #[cfg(windows)]
@@ -279,10 +264,6 @@ struct State<'a> {
     pretty_output: bool,
     shell_bin: &'static ZStr, // TODO(port): lifetime — leaked in Zig (findShell/selfExePath)
     aborted: bool,
-    // Raw `*mut` (Zig: `*bun.DotEnv.Loader`) — process-lifetime singleton owned
-    // by Transpiler; ProcessHandle::start mutates `env.map` (PATH swap) so a
-    // shared borrow won't do, and `&'a mut` would conflict with the Transpiler's
-    // own raw-ptr field. Reborrow `&mut *env` at use sites.
     env: *mut bun_dotenv::Loader<'static>,
 }
 
@@ -721,11 +702,6 @@ pub(crate) fn run_scripts_with_filter(
     let _ = bun_resolver::fs::FileSystem::init(None)?;
     let fsinstance = bun_resolver::fs::FileSystem::get();
 
-    // these things are leaked because we are going to exit
-    // When --workspaces is set, we want to match all workspace packages
-    // Otherwise use the provided filters
-    // PORT NOTE: `FilterSet::init` takes `&[&[u8]]`; ctx.filters is
-    // `Vec<Box<[u8]>>` so build a borrowed-slice view.
     let filters_to_use: Vec<&[u8]> = if ctx.workspaces {
         // Use "*" as filter to match all packages in the workspace
         vec![b"*".as_slice()]
@@ -747,10 +723,6 @@ pub(crate) fn run_scripts_with_filter(
         &mut root_buf,
     )?;
 
-    // TODO(refactor): out-param init — Zig used `var this_transpiler: Transpiler = undefined` and
-    // `configureEnvForRun` writes through it. Per PORTING.md this should be reshaped to
-    // `RunCommand::configure_env_for_run(...) -> Result<Transpiler, _>`; until then
-    // pass `&mut MaybeUninit<Transpiler>` (zeroed() is invalid: Transpiler is not #[repr(C)] POD).
     let mut this_transpiler = core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
     let _ = RunCommand::configure_env_for_run(&mut *ctx, &mut this_transpiler, None, true, false)?;
     // SAFETY: configure_env_for_run fully initializes the out-param on Ok.
@@ -943,12 +915,6 @@ pub(crate) fn run_scripts_with_filter(
         env: env_ptr,
     };
 
-    // initialize the handles
-    // PORT NOTE: self-referential — each `state.handles[i].state` points back at
-    // `state`, and `map` stores `*mut ProcessHandle` into `state.handles`. Derive
-    // the backref with mutable provenance (`addr_of_mut!`) so writes through it
-    // in `ProcessHandle::start` / `State::process_exit` are sound under Stacked
-    // Borrows; `state` is not moved after this point.
     let mut handles_vec: Vec<ProcessHandle> = Vec::with_capacity(scripts.len());
     // SAFETY: `state` is not moved after this point; outlives every `ProcessHandle`.
     let state_ptr: bun_ptr::BackRef<State> =

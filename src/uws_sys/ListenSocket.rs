@@ -67,18 +67,6 @@ impl ListenSocket {
         }
     }
 
-    /// `ssl_ctx` is `SSL_CTX_up_ref`'d for the SNI node; the listener drops
-    /// that ref on close / `remove_server_name`. `user` is the per-domain handle
-    /// `find_server_name_userdata` recovers (uWS uses an `HttpRouter*`; Bun.listen
-    /// passes null).
-    ///
-    /// `ssl_ctx` is taken as a raw `*mut SslCtx` (not `&mut SslCtx`) because
-    /// `SSL_CTX` is a refcounted shared object — C `SSL_CTX_up_ref`s it and
-    /// stores the pointer past this call, so the caller cannot legitimately
-    /// hold exclusive `&mut` access. `user` is likewise raw `*mut` because the
-    /// C side stores it and `find_server_name_userdata` later hands it back as
-    /// a mutable pointer; accepting `&U` and const-casting would make that
-    /// round-trip UB.
     pub fn add_server_name(
         &mut self,
         hostname: &core::ffi::CStr,
@@ -97,11 +85,6 @@ impl ListenSocket {
         unsafe { us_listen_socket_remove_server_name(self, hostname.as_ptr()) }
     }
 
-    /// Returns the raw userdata pointer registered via `add_server_name` for
-    /// `hostname`, cast to `*mut T`. Returned as `NonNull<T>` (not `&mut T`)
-    /// because the pointee is caller-owned external storage — materializing a
-    /// `&mut T` here could alias the caller's own live reference to it. Mirrors
-    /// Zig's `?*T` return (Zig pointers freely alias).
     pub fn find_server_name_userdata<T>(
         &mut self,
         hostname: &core::ffi::CStr,
@@ -117,10 +100,6 @@ impl ListenSocket {
     }
 }
 
-// This file IS the *_sys crate, so externs live here.
-// `ListenSocket` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>`, so `&mut
-// ListenSocket` is ABI-identical to a non-null pointer; value-typed shims are
-// `safe fn`. Shims with nullable raw / ctx ptr stay unsafe.
 unsafe extern "C" {
     safe fn us_listen_socket_close(ls: &mut ListenSocket);
     safe fn us_listen_socket_group(ls: &mut ListenSocket) -> *mut SocketGroup;

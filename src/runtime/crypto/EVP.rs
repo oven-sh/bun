@@ -13,13 +13,6 @@ pub struct EVP {
     pub algorithm: Algorithm,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// The `Algorithm` enum + `md()` live in
-// `bun_sha_hmac::evp` so lower-tier crates (`bun_csrf`, `bun_sha_hmac::hmac`)
-// can name it without depending upward on bun_runtime. Re-export the canonical
-// enum here; the higher-tier extras (`names`, `lookup`, `tag_cstr`) that need
-// bun_str live below as an extension trait / free fns on the re-exported type.
-// ──────────────────────────────────────────────────────────────────────────
 pub use bun_sha_hmac::evp::Algorithm;
 
 /// Higher-tier helpers on the lowered `Algorithm` enum (orphan rules prevent an
@@ -106,14 +99,6 @@ pub(crate) const ALGORITHM_ONE_OF: &str = "'blake2b256', 'blake2b512', 'blake2s2
 'ripemd160', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512', 'sha512-224', 'sha512-256', \
 'sha3-224', 'sha3-256', 'sha3-384', 'sha3-512', 'shake128' or 'shake256'";
 
-/// Case-sensitive name → `Algorithm` (Rust port of the Zig `ComptimeStringMap`).
-///
-/// PERF(port): replaces a `phf::Map`. 32 keys spread across lengths 3..=11
-/// (max bucket = 7) — a length-gated `match` rejects misses on a single `usize`
-/// compare and lets LLVM lower the per-bucket arms to fixed-width loads. The two
-/// densest buckets (len 6 / len 10) get an extra first-byte gate so common
-/// inputs (`"sha256"`, `"sha512"`) hit ≤5 short compares instead of phf's
-/// SipHash + index probe. Semantics are identical to `MAP.get(k).copied()`.
 pub(crate) fn lookup(bytes: &[u8]) -> Option<Algorithm> {
     match bytes.len() {
         3 => match bytes {
@@ -177,18 +162,6 @@ pub(crate) fn lookup(bytes: &[u8]) -> Option<Algorithm> {
         },
         _ => None,
     }
-    // b"md5-sha1" => .@"MD5-SHA1",
-    // b"dsa-sha" => .@"DSA-SHA",
-    // b"dsa-sha1" => .@"DSA-SHA1",
-    // b"ecdsa-with-sha1" => .@"ecdsa-with-SHA1",
-    // b"rsa-md5" => .@"RSA-MD5",
-    // b"rsa-sha1" => .@"RSA-SHA1",
-    // b"rsa-sha1-2" => .@"RSA-SHA1-2",
-    // b"rsa-sha224" => .@"RSA-SHA224",
-    // b"rsa-sha256" => .@"RSA-SHA256",
-    // b"rsa-sha384" => .@"RSA-SHA384",
-    // b"rsa-sha512" => .@"RSA-SHA512",
-    // b"rsa-ripemd160" => .@"RSA-RIPEMD160",
 }
 
 /// ASCII-case-insensitive `lookup`. All keys are already lower-case, so
@@ -376,12 +349,6 @@ impl Drop for EVP {
 
 pub(crate) type Digest = [u8; boringssl::EVP_MAX_MD_SIZE as usize];
 
-// PORT NOTE: Zig nests `PBKDF2`/`pbkdf2` inside the `EVP` struct; the
-// `crypto::EVP` re-export (module alias) lets `crypto::EVP::pbkdf2` resolve
-// through this module. The `pbkdf2` submodule is gated (blocked on bun_jsc
-// arg-parsing surface), so re-export the standalone helper from the parent
-// stub for now.
-// TODO(port): bun_jsc — un-gate `super::pbkdf2` and swap to `pub use super::pbkdf2 as PBKDF2;`.
 pub use super::pbkdf2;
 
 // ported from: src/runtime/crypto/EVP.zig

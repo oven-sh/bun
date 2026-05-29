@@ -13,10 +13,6 @@ use super::s3_file as S3File;
 
 bun_core::declare_scope!(S3Client, visible);
 
-// Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
-// generic bool. The proc-macro only matches `true`/`false` literals, so
-// monomorphized callers (`<const C: bool>`) branch here. Both arms yield
-// `&'static str`.
 macro_rules! pfmt {
     ($fmt:expr, $colors:expr) => {
         if $colors {
@@ -27,21 +23,11 @@ macro_rules! pfmt {
     };
 }
 
-// ── Local extension shims ─────────────────────────────────────────────────
-// `bun_s3_signing::S3Credentials` exposes `guessRegion` / `guessBucket` as
-// FREE fns and the JS-options parser lives in
-// `runtime/webcore/s3/credentials_jsc.rs`. Surface them as associated fns via
-// an extension trait so call sites keep their Zig shape
-// (`S3Credentials.guessRegion(...)` / `.getCredentialsWithOptions(...)`).
 pub(crate) trait S3CredentialsExt {
     fn guess_region(endpoint: &[u8]) -> &[u8];
     fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]>;
     #[allow(clippy::too_many_arguments)]
     fn get_credentials_with_options(
-        // PORT NOTE: takes `&S3Credentials` (not by-value) — `bun_s3_signing::S3Credentials`
-        // has a private `ref_count` field and no `Clone`, so callers holding a borrow
-        // (e.g. `&IntrusiveRc<S3Credentials>` deref) cannot produce an owned copy. The
-        // real impl in `s3/credentials_jsc.rs` deep-copies internally.
         this: &S3Credentials,
         default_options: MultiPartUploadOptions,
         options: Option<JSValue>,
@@ -105,11 +91,6 @@ where
     writer.write_str("\n")?;
 
     {
-        // Zig: `formatter.indent += 1; defer formatter.indent -|= 1;`.
-        // `IndentScope` shadows the borrow and restores indent on `Drop`, so a
-        // `?` early-return below still leaves the formatter at its original
-        // depth (observable when `print_as` throws and the caller continues
-        // formatting).
         let mut formatter = bun_jsc::IndentScope::new(&mut *formatter);
 
         let endpoint: &[u8] = if !credentials.endpoint.is_empty() {
@@ -250,10 +231,6 @@ pub struct S3Client {
 
 impl Drop for S3Client {
     fn drop(&mut self) {
-        // `IntrusiveRc<T>` is `bun_ptr::RefPtr<T>`, which has no `Drop` impl
-        // of its own (only `ScopedRef<T>` does), so the +1 taken by
-        // `aws_options.credentials.dupe()` in `constructor` must be released
-        // explicitly. Mirrors Zig `S3Client.deinit`: `this.credentials.deref()`.
         self.credentials.deref();
     }
 }
@@ -596,10 +573,6 @@ impl S3Client {
             ptr.storage_class,
             ptr.request_payer,
         )?;
-        // PORT NOTE: reshaped for borrowck — Zig copied `blob` into `blob_internal`
-        // by value while `defer blob.detach()` was still armed on the original.
-        // Here we move into `PathOrBlob` directly; cleanup of the moved-out
-        // value is handled by `Drop`.
         let mut blob_internal = crate::webcore::node_types::PathOrBlob::Blob(Box::new(blob));
         crate::webcore::blob::write_file_internal(
             global,
@@ -681,12 +654,6 @@ impl S3Client {
         let store = blob.store.get().as_ref().unwrap();
         store.data.as_s3().unlink(store, global, options)
     }
-
-    // ── Static methods ────────────────────────────────────────────────────
-    // Codegen (`generated_classes.rs`) emits `S3ClientClass__static*` extern
-    // wrappers that call these as `S3Client::static_*(global, callframe)`,
-    // so they must be associated fns (no `#[bun_jsc::host_fn]` needed — the
-    // codegen layer already handles the `host_fn_result` wrapping).
 
     pub(crate) fn static_write(
         global: &JSGlobalObject,

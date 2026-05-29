@@ -153,14 +153,6 @@ pub mod js {
     ::bun_jsc::codegen_cached_accessors!("ServerWebSocket"; data);
 }
 
-/// Maps a uWS `SendStatus` to the JS-visible number contract shared by every
-/// `ServerWebSocket` send-ish method (Backpressure → -1, Success → byte_len,
-/// Dropped → 0) and emits the matching `WebSocketServer` debug log.
-///
-/// `len` is the **byte** length actually written — callers holding an
-/// `ArrayBuffer` view must pass `buffer.slice().len()`, not the typed-array
-/// element count. `suffix` is `"bytes"` or `"bytes string"` to preserve the
-/// Zig log shape (ServerWebSocket.zig ~729-1015).
 #[inline]
 fn send_status_to_js(
     status: SendStatus,
@@ -206,36 +198,11 @@ impl ServerWebSocket {
         self.flags.set(flags);
     }
 
-    /// The handler lives in `ServerConfig.websocket` for the server's lifetime;
-    /// non-null while any `ServerWebSocket` exists. All `ServerWebSocket` state
-    /// is interior-mutable (`Cell`/`JsCell`), so the borrow tied to `&self`
-    /// does not conflict with flag mutation.
     #[inline]
     fn handler(&self) -> &WebSocketServerHandler {
         self.handler.get()
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // Shared helpers for the publish*/send* family.
-    //
-    // The Zig original (ServerWebSocket.zig publish/publishText/publishBinary/
-    // publish*WithoutTypeChecks) open-codes each of these blocks 5-6× with no
-    // shared helper; the Rust port was a 1:1 transliteration. These collapse
-    // the duplication while remaining byte-identical in observable behaviour —
-    // including the `args_len > 1` guard on `compress` even when compress is
-    // args[2] (Zig parity; do not "fix").
-    //
-    // A unified `publish_prologue` covering the full callframe header was
-    // considered and rejected: publishText omits the empty-topic check and
-    // reuses "publish" in its min-args message (both Zig-spec), so a single
-    // prologue would either change user-visible errors or carry per-caller
-    // bool flags — net more code than three small orthogonal helpers.
-    // ──────────────────────────────────────────────────────────────────────
-
-    /// `(app, ssl, publish_to_self)` from the handler, or `None` when the
-    /// server has been torn down (`handler.app == None`). The "publish() closed"
-    /// log + `0` return is the caller's responsibility (it varies in nothing,
-    /// but keeping it inline preserves the per-method `scoped_log!` callsite).
     #[inline]
     fn publish_ctx(&self) -> Option<(*mut c_void, bool, bool)> {
         let handler = self.handler();
@@ -268,10 +235,6 @@ impl ServerWebSocket {
         Ok(args_len > 1 && compress_value.to_boolean())
     }
 
-    /// Route a publish through either the per-socket uWS handle (when
-    /// `!publish_to_self && !closed`) or the app-wide broadcast, then map the
-    /// bool result to the JS number contract: success → `len & 0x7FFF_FFFF`,
-    /// failure → `0`.
     #[inline]
     fn do_publish(
         &self,
@@ -295,10 +258,6 @@ impl ServerWebSocket {
         })
     }
 
-    /// Shared body for `subscribe` / `unsubscribe` / `isSubscribed`: identical
-    /// arg-count guard, closed short-circuit, string-type guard, UTF-8 slice,
-    /// non-empty guard, then dispatch to the uWS topic op. Only the JS-visible
-    /// name, the closed-socket return value, and the terminal op differ.
     #[inline]
     fn topic_dispatch(
         &self,
@@ -375,13 +334,6 @@ impl ServerWebSocket {
         self.websocket().memory_cost() + mem::size_of::<ServerWebSocket>()
     }
 
-    /// R-2 (noalias re-entrancy): `&self`, NOT `&mut self`. `ws.cork(...)`
-    /// re-enters JS which can `ws.close()` / `ws.send()` on this same socket
-    /// via the JS wrapper's `m_ptr`, flipping `flags.closed`. All state lives
-    /// behind `Cell`/`JsCell`, so the re-entrant frame's writes are visible
-    /// here without aliasing a `noalias` borrow. `handler`/`vm`/`global_object`
-    /// are detached `&'a` borrows of the server config (a separate allocation),
-    /// so they may legally span the call.
     pub fn on_open(&self, ws: AnyWebSocket) {
         bun_output::scoped_log!(WebSocketServer, "OnOpen");
         self.update_flags(|f| {
@@ -506,10 +458,6 @@ impl ServerWebSocket {
         if let Some(promise) = result.as_any_promise() {
             match promise.status() {
                 jsc::js_promise::Status::Rejected => {
-                    // Zig: `_ = promise.result(vm)` — value discarded; the side
-                    // effect (JSC__JSPromise__result) conditionally sets
-                    // `isHandledFlag` so this doesn't surface as an
-                    // unhandledRejection.
                     let _ = promise.result(global_object.vm());
                     return;
                 }
@@ -752,10 +700,6 @@ impl ServerWebSocket {
         bun_output::scoped_log!(WebSocketServer, "finalize");
         self.this_value.with_mut(|v| v.finalize());
         if let Some(signal) = self.signal.take() {
-            // `signal` was stored with a +1 ref by the upgrade caller; it
-            // stays live until this paired `unref()`, so the transient
-            // `BackRef` (pointee-outlives-holder) is sound for both calls —
-            // same pattern as `on_close()`'s `_cleanup` guard.
             let sig = bun_ptr::BackRef::from(signal);
             sig.pending_activity_unref();
             sig.unref();
@@ -1494,11 +1438,6 @@ impl ServerWebSocket {
         let mut text_buf = [0u8; 512];
 
         let address_bytes = self.websocket().get_remote_address(&mut buf);
-        // Zig: `std.net.Address.initIp{4,6}(.., 0)` → `bun.fmt.formatIp` (strips
-        // trailing `:port` and `[..]`). Mirror with `SocketAddr{V4,V6}` so
-        // `format_ip`'s strip logic sees the same `addr:port` / `[addr]:port`
-        // shape — passing a bare `IpAddr` would corrupt IPv6 (no brackets/port,
-        // so the rfind(':') strip eats the last hextet).
         let address: std::net::SocketAddr = match address_bytes.len() {
             4 => std::net::SocketAddrV4::new(
                 std::net::Ipv4Addr::from(<[u8; 4]>::try_from(&address_bytes[0..4]).unwrap()),
@@ -1523,10 +1462,6 @@ impl ServerWebSocket {
 // for `onOpen`/`onMessage`/etc. via `@hasDecl`. Rust needs an explicit trait
 // impl; delegate straight to the inherent methods above.
 impl WebSocketHandler for ServerWebSocket {
-    // R-2: trait keeps `*mut Self` (FFI userdata round-trip needs raw write
-    // provenance); the single `&*this` reborrow here is the ONE audited unsafe
-    // boundary. Inherent `on_*` take `&self`, so the re-entrant JS dispatch
-    // never stacks a `noalias` `&mut ServerWebSocket`.
     #[inline(always)]
     unsafe fn on_open(this: *mut Self, ws: AnyWebSocket) {
         // SAFETY: per trait contract — `this` is the live user-data slot.

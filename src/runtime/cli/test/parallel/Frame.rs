@@ -46,10 +46,6 @@ impl TryFrom<u8> for Kind {
     }
 }
 
-/// Upper bound on a single IPC frame payload. The protocol is internal but
-/// fd 3 is reachable from test JS via `fs.writeSync(3, ...)`; rejecting
-/// nonsensical lengths up-front prevents both a `5 + len` u32 overflow and
-/// an unbounded allocation.
 pub(crate) const MAX_PAYLOAD: u32 = 64 * 1024 * 1024;
 
 /// Minimal length-prefixed binary codec. Frames build into a reusable buffer
@@ -75,10 +71,6 @@ impl Frame {
     }
 
     pub(crate) fn str(&mut self, s: &[u8]) {
-        // Never let a single frame exceed `MAX_PAYLOAD` — the receiver treats that
-        // as a corrupt-channel signal and closes, which would surface as a spurious
-        // worker crash. Truncate the string in place instead. Leave a small
-        // headroom so a few following u32s/short paths in the same frame still fit.
         const TRUNC: &[u8] = b"\n... [output truncated: would exceed --parallel IPC frame limit]\n";
         const HEADROOM: usize = 256;
         let used: usize = (self.buf.len() - 5) + 4; // current payload + str-len prefix

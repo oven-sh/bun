@@ -21,39 +21,6 @@ use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop;
 
 use super::uuid::UUID;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Layering note (§Dispatch / cycle-break).
-//
-// `RareData` is a bag of lazy-init optional subsystems whose concrete types
-// live in higher-tier crates (`bun_runtime`, `bun_http_jsc`, `bun_sql_jsc`).
-// Per docs/PORTING.md §Dispatch the low tier stores **erased** pointers; the
-// high tier owns the typed accessors:
-//
-//   - `mysql_context` / `postgresql_context` / `ssl_ctx_cache` / `editor_context`
-//     → moved to `bun_runtime::jsc_hooks::RuntimeState` (already there).
-//   - `cron_jobs` / `node_fs_stat_watcher_scheduler` / `websocket_deflate`
-//     → erased `*mut c_void` slots; high tier lazy-inits.
-//   - `fs_watchers_for_isolation` / `stat_watchers_for_isolation` → per-entry
-//     (ptr, close-fn) so `close_all_watchers_for_isolation` works without
-//     naming the watcher types.
-//   - `stdin/stdout/stderr_store` → erased `*mut blob::Store` constructed via
-//     `__bun_stdio_blob_store_new` (link-time extern; same fn MiniEventLoop uses).
-//   - `valkey_context` was a stateless ZST with empty `deinit`; dropped.
-//   - `s3_default_client` / `default_client_ssl_ctx` / typed HotMap get/insert
-//     → bodies live in `bun_runtime` (they call high-tier ctors); RareData
-//     keeps only the storage slots.
-// ──────────────────────────────────────────────────────────────────────────
-
-// ──────────────────────────────────────────────────────────────────────────
-// HotMap
-//
-// Low-tier storage: `(tag, ptr)` per docs/PORTING.md §Dispatch (hot path). The
-// concrete payload list (HTTPServer, HTTPSServer, TCPSocket, …) and the typed
-// `get<T>` / `insert<T>` accessors live in `bun_runtime::api::server` — naming
-// those types here would invert the crate DAG. `bun_runtime` matches on `tag`
-// and casts `ptr` itself.
-// ──────────────────────────────────────────────────────────────────────────
-
 pub struct HotMap {
     _map: StringArrayHashMap<HotMapEntry>,
 }
@@ -97,11 +64,6 @@ impl HotMap {
     }
 
     pub fn remove(&mut self, key: &[u8]) {
-        // PORT NOTE: Zig captured the stored key ptr to free post-removal; here
-        // the map owns the Box<[u8]> key and `swap_remove` drops it. Preserve
-        // the aliasing assert (caller must not pass the map's own key storage).
-        // Ordering doesn't matter for HotMap consumers — Zig's `orderedRemove`
-        // was incidental, not load-bearing.
         let Some(i) = self._map.get_index(key) else {
             return;
         };
@@ -165,10 +127,6 @@ impl EntropyCache {
 // CleanupHook
 // ──────────────────────────────────────────────────────────────────────────
 
-// Safe fn-pointer type: `ctx` is an opaque round-trip pointer the registrant
-// supplied alongside `func`; the caller (`execute`) never dereferences it, only
-// forwards it. Each implementor (e.g. N-API's `run_as_cleanup_hook`) owns the
-// cast/deref locally, so invoking the pointer carries no caller-side precondition.
 pub(crate) type CleanupHookFunction = extern "C" fn(*mut c_void);
 
 #[derive(Clone, Copy)]
@@ -193,12 +151,6 @@ impl CleanupHook {
         }
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// IsolationWatcher — per-entry vtable so `close_all_watchers_for_isolation`
-// can fire `detach`/`close` without naming `bun_runtime::node::FSWatcher` /
-// `StatWatcher` (cycle break, docs/PORTING.md §Dispatch cold path).
-// ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone)]
 pub struct IsolationWatcher {
@@ -229,10 +181,6 @@ pub struct RareData {
     pub websocket_deflate: Option<ErasedBox>,
     pub boring_ssl_engine: Option<*mut boring::ENGINE>,
 
-    /// Erased `*mut webcore::blob::Store` (intrusive-refcounted on the runtime
-    /// side). Constructed via `__bun_stdio_blob_store_new`; high tier casts back.
-    /// `mode` is cached so [`Bun__Process__getStdinFdType`] doesn't have to
-    /// re-stat (Zig read `store.data.file.mode`).
     pub stderr_store: Option<NonNull<c_void>>,
     pub stderr_mode: Mode,
     pub stdin_store: Option<NonNull<c_void>>,
@@ -277,10 +225,6 @@ pub struct RareData {
     pub ws_client_group_: SocketGroup,
     pub ws_client_tls_group: SocketGroup,
 
-    /// `ssl_ctx_cache.getOrCreate(&.{})` — i.e. the default-trust-store client
-    /// CTX. Cached separately so the hot `tls:true` / `wss://` path skips even the
-    /// SHA-256 + map lookup. Ref owned here. Lazy-init body lives in
-    /// `bun_runtime` (it calls `SSLContextCache::get_or_create_opts`).
     pub default_client_ssl_ctx: Option<*mut SslCtx>,
 
     pub mime_types: Option<mime_type::Map>,
@@ -289,10 +233,6 @@ pub struct RareData {
     /// lazy-init in `bun_runtime::node::node_fs_stat_watcher`.
     pub node_fs_stat_watcher_scheduler: Option<NonNull<c_void>>,
 
-    /// Watch-mode restart needs to RST every listen socket so the new process
-    /// can rebind without `EADDRINUSE`. Written on the JS thread; drained on
-    /// the watcher thread — hence the mutex (PORTING.md §Concurrency: lock
-    /// owns the data, no sidecar `Mutex<()>`).
     pub listening_sockets_for_watch_mode: Mutex<Vec<Fd>>,
 
     pub fs_watchers_for_isolation: Vec<IsolationWatcher>,
@@ -300,11 +240,6 @@ pub struct RareData {
 
     pub temp_pipe_read_buffer: Option<Box<PipeReadBuffer>>,
 
-    // PORT NOTE: `aws_signature_cache` field dropped — storage moved DOWN to
-    // `bun_s3_signing::credentials::AWS_SIGNATURE_CACHE` (process static). The
-    // Zig code always reached it via `getMainThreadVM()`, so it was a
-    // singleton in practice; hosting it in the consumer crate removes the
-    // upward `s3_signing → jsc` hook.
     pub s3_default_client: Strong,
     pub default_csrf_secret: Box<[u8]>,
 
@@ -420,15 +355,6 @@ pub use bun_event_loop::PipeReadBuffer;
 // ProxyEnvStorage
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Serialises `Bun__setEnvValue`'s slot swap + `env.map.put` against a worker's
-/// `clone_from` + `env.map.cloneWithAllocator`. Closes two races: (1) worker
-/// reading a slot `Arc` concurrently with the parent dropping it to refcount 0;
-/// (2) the env map being iterated during clone while the parent's `put()`
-/// rehashes it. Callers hold the guard across the paired env-map op — the
-/// mutex doubles as the env-map serialisation point even though it owns only
-/// the slots.
-///
-/// PORTING.md §Concurrency: lock owns the data — no sidecar `Mutex<()>` field.
 #[derive(Default)]
 pub struct ProxyEnvStorage(Mutex<ProxyEnvSlots>);
 
@@ -502,14 +428,6 @@ macro_rules! for_each_proxy_field {
 
 impl ProxyEnvSlots {
     pub fn slot(&mut self, name: &[u8]) -> Option<Slot<'_>> {
-        // On Windows the env.map is case-insensitive (CaseInsensitiveASCII-
-        // StringArrayHashMap) — map.put("HTTP_PROXY", ...) and
-        // map.put("http_proxy", ...) write the same entry. If we tracked
-        // refs in separate case-variant slots, one slot's value would leak
-        // and syncInto would replay the stale one into the worker's map.
-        // Canonicalize both cases to the uppercase slot on Windows; the
-        // lowercase slots stay null. Posix keeps both — its map and its
-        // getHttpProxy lookup are case-sensitive.
         let eql: fn(&[u8], &[u8]) -> bool = if cfg!(windows) {
             strings::eql_case_insensitive_ascii_check_length
         } else {
@@ -540,11 +458,6 @@ impl ProxyEnvSlots {
         self.no_proxy.clone_from(&parent.no_proxy);
     }
 
-    /// Overwrite proxy-var entries in an env map with this storage's reffed
-    /// bytes. Used after map.cloneWithAllocator in the worker so the cloned
-    /// map and the reffed storage agree — defense-in-depth in case the map
-    /// clone captured a snapshot the storage doesn't hold a ref on (e.g. an
-    /// initial-environ value later overwritten by the setter).
     pub fn sync_into(&self, map: &mut bun_dotenv::Map) {
         macro_rules! sync_one {
             ($name:literal, $field:ident) => {
@@ -566,12 +479,6 @@ impl ProxyEnvSlots {
 // RefCountedEnvValue
 // ──────────────────────────────────────────────────────────────────────────
 
-/// A ref-counted heap-allocated byte slice. The env map stores borrowed
-/// `.bytes` slices; as long as any VM holds a ref, the bytes stay valid.
-///
-/// PORT NOTE: Zig used intrusive `ThreadSafeRefCount`; LIFETIMES.tsv classifies
-/// holders as `Arc<RefCountedEnvValue>`, so the refcount lives in the `Arc`
-/// header and `ref`/`deref` become `Arc::clone`/`drop`.
 pub struct RefCountedEnvValue {
     pub bytes: Box<[u8]>,
 }
@@ -705,10 +612,6 @@ impl RareData {
     }
 
     pub fn boring_engine(&mut self) -> *mut boring::ENGINE {
-        // PORT NOTE: Zig spec is `ENGINE_new().?` (panic on null). We cache the
-        // raw result; `EVP_DigestInit_ex` tolerates a NULL engine, so OOM here
-        // degrades to "no engine" rather than crashing. Debug-assert to surface
-        // the divergence without altering release behavior.
         let ptr = *self
             .boring_ssl_engine
             .get_or_insert_with(|| boring::ENGINE_new());
@@ -726,11 +629,6 @@ impl RareData {
     }
 
     pub fn tls_default_ciphers(&self) -> Option<&[u8]> {
-        // PORT NOTE: Zig returns `[:0]const u8` whose `.len` excludes the NUL
-        // sentinel. The stored buffer is NUL-terminated (set_tls_default_ciphers
-        // appends 0), so strip the trailing NUL from the returned slice's length
-        // to match `dupeZ` semantics. Callers needing a C string can still take
-        // `.as_ptr()` — the NUL byte remains in storage one-past-the-end.
         self.tls_default_ciphers
             .as_deref()
             .map(|s| &s[..s.len() - 1])
@@ -839,14 +737,6 @@ impl RareData {
         }
     }
     pub fn close_all_watchers_for_isolation(&mut self) {
-        // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
-        // `b818e70e1c57` NodeHTTPResponse::cork): `(w.close)(w.ptr)` is an
-        // opaque fn-pointer call that receives nothing derived from `self`. It
-        // re-enters JS (FSWatcher.close → "close" event), which can call
-        // `add_*_watcher_for_isolation` and push back onto these same Vecs.
-        // With `noalias self`, LLVM may cache the Vec's `len`/`ptr` across the
-        // call body and miss the push. ASM-verified PROVEN_CACHED. Launder
-        // `self` so every `pop()` goes through an opaque pointer.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         loop {
             // SAFETY: `this` is the unique live `RareData` (boxed by VM);
@@ -950,25 +840,7 @@ impl RareData {
         )
     }
 
-    // ── close_all_socket_groups ───────────────────────────────────────────
-    /// Drain every embedded socket group. Must run BEFORE JSC teardown — closeAll
-    /// fires on_close → JS callbacks → needs a live VM. RareData.deinit() runs
-    /// after `WebWorker__teardownJSCVM` (web_worker.zig), so doing the closeAll
-    /// there would dispatch into freed JSC heap.
     pub fn close_all_socket_groups(&mut self, vm: &VirtualMachine) {
-        // closeAll() dispatches on_close into JS while the VM is still alive, so a
-        // handler can call Bun.connect/postgres/etc. and re-populate a group we
-        // just drained. Loop until every group is observed empty in the same pass
-        // (bounded — each retry only happens if a JS callback opened a *new*
-        // socket, and the cap stops a deliberately-spinning on_close from wedging
-        // teardown; the post-close force-drain in close_all handles whatever's
-        // left after the cap).
-        // Walk the loop's linked-group list rather than just our 14 embedded
-        // fields: Listener/uWS-App groups own their own SocketGroup, and accepted
-        // sockets land *there*, not in RareData. Iterating only the embedded
-        // fields missed those, leaking one 88-byte us_socket_t per still-open
-        // accepted connection at process.exit() (the LSAN cluster on #29932
-        // build 49245).
         let _ = self;
         let mut rounds: u8 = 0;
         while rounds < 8 {
@@ -979,22 +851,9 @@ impl RareData {
             }
             rounds += 1;
         }
-        // us_socket_close pushes to loop->data.closed_head; loop_post() normally
-        // frees it on the next tick. We're past the last tick, so drain it now —
-        // every us_socket_t is libc-allocated and otherwise becomes an LSAN leak
-        // (the only pointer into it lives in mimalloc-backed RareData, which LSAN
-        // can't trace once we unregister the root region).
         vm.uws_loop_mut().drain_closed_sockets();
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// stderr / stdout / stdin
-//
-// Low tier owns the fstat + lazy-init flow; the actual `webcore::blob::Store`
-// allocation goes through `__bun_stdio_blob_store_new` (link-time extern
-// defined in `bun_runtime::webcore::blob`). Zig built `Blob.Store` inline.
-// ──────────────────────────────────────────────────────────────────────────
 
 unsafe extern "Rust" {
     safe fn __bun_stdio_blob_store_deinit(ptr: *mut ());
@@ -1158,11 +1017,6 @@ fn get_tls_default_ciphers_from_js(
 
 impl Drop for RareData {
     fn drop(&mut self) {
-        // temp_pipe_read_buffer / spawn_sync_event_loop_ / aws_signature_cache /
-        // s3_default_client / default_csrf_secret / cleanup_hooks / cron_jobs /
-        // path_buf / websocket_deflate / tls_default_ciphers:
-        // all dropped automatically via field Drop.
-
         if let Some(engine) = self.boring_ssl_engine.take() {
             // SAFETY: engine was created by ENGINE_new.
             unsafe { boring::ENGINE_free(engine) };
@@ -1190,11 +1044,6 @@ impl Drop for RareData {
         // closeAllSocketGroups() must have already run (before JSC teardown) so
         // these are empty; deinit() asserts that in debug.
         for_each_socket_group!(self, |g| {
-            // Groups whose lazy accessor was never called are still
-            // zero-initialised (`loop_ == null`, never `init`'d). The C
-            // `us_socket_group_deinit` happens to no-op on those, but
-            // `SocketGroup::destroy`'s safety contract requires a prior
-            // `init`, so honour it explicitly.
             if !g.loop_.is_null() {
                 // SAFETY: embedded by-value group, previously `init`'d; the
                 // loop has already unlinked it (close_all_socket_groups ran),

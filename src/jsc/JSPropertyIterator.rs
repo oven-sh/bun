@@ -4,14 +4,6 @@ use crate::host_fn::from_js_host_call_generic;
 use crate::{JSGlobalObject, JSObject, JSValue, JsResult};
 use bun_core as bstr;
 
-/// Comptime config struct in Zig (`JSPropertyIterator.zig:1-7`); ported as a runtime
-/// flag set passed to [`JSPropertyIterator::init`].
-///
-/// `Default` mirrors the Zig field defaults: `own_properties_only = true`,
-/// `observable = true`, `only_non_index_properties = false`.
-// PERF(port): was comptime monomorphization (`fn JSPropertyIterator(comptime options) type`).
-// Demoted to runtime flags because the branches gate per-property work, not a hot inner
-// loop, and the monomorphization fan-out would be 32 instantiations. Profile if hot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JSPropertyIteratorOptions {
     pub skip_empty_name: bool,
@@ -109,10 +101,6 @@ pub struct JSPropertyIterator<'a> {
 
     pub global_object: &'a JSGlobalObject,
     pub object: *mut JSObject,
-    /// Current property value being yielded (only meaningful when
-    /// `options.include_value` is set).
-    // PORT NOTE: bare JSValue field is sound because this struct is stack-only (`'a` borrow);
-    // conservative stack scan keeps it alive. Do NOT box this struct.
     pub value: JSValue,
 
     options: JSPropertyIteratorOptions,
@@ -283,10 +271,6 @@ impl JSPropertyIteratorImpl {
         property_name: &mut bstr::String,
         i: usize,
     ) -> JsResult<JSValue> {
-        // PORT NOTE: Zig wrapped this in a manual `TopExceptionScope.init/deinit` +
-        // `returnIfException`; that is exactly `from_js_host_call_generic`'s contract
-        // (the FFI may return `.zero` without throwing, so the non-generic
-        // `from_js_host_call` — which treats empty as thrown — is wrong here).
         from_js_host_call_generic(global_object, || {
             Bun__JSPropertyIterator__getNameAndValue(iter, global_object, object, property_name, i)
         })
@@ -311,11 +295,6 @@ impl JSPropertyIteratorImpl {
     }
 }
 
-// safe fn: `JSPropertyIteratorImpl`/`JSGlobalObject`/`JSObject` are `opaque_ffi!`
-// ZST handles (`&`/`&mut` are ABI-identical to non-null `*const`/`*mut`);
-// `bstr::String` is a `#[repr(C)]` out-param the C++ side fills in-place; remaining
-// args are by-value scalars. Only `deinit` (frees the allocation) keeps a raw
-// `*mut` and stays `unsafe`.
 unsafe extern "C" {
     /// may return null without an exception
     safe fn Bun__JSPropertyIterator__create(

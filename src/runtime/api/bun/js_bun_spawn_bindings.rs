@@ -73,10 +73,6 @@ fn sys_system_error_to_js(err: &bun_sys::SystemError, global: &JSGlobalObject) -
 /// to a `BackRef<Terminal>` used by `Subprocess.terminal`, so the scopeguard /
 /// field-assignment paths share one pointer type with `existing_terminal`.
 pub(crate) struct TerminalCreateResult {
-    /// BACKREF — the `IntrusiveRc<Terminal>` pointer leaked via `into_raw()`
-    /// when this struct was populated; the +1 ref is held until
-    /// `Subprocess::finalize` (or the spawn-error scopeguard's
-    /// `abandon_from_spawn`) releases it, so the pointee outlives this struct.
     pub terminal: bun_ptr::BackRef<Terminal>,
     pub js_value: JSValue,
 }
@@ -90,10 +86,6 @@ impl TerminalCreateResult {
     }
 }
 
-// ── IPC owner trait impl for Subprocess ─────────────────────────────────────
-// Mirrors the `IPCInstance` impl in `bun_jsc::VirtualMachine`; lives here
-// because `Subprocess` is a `bun_runtime` type and `bun_jsc::ipc` (tier-5)
-// sees only the `dyn SendQueueOwner` trait object.
 impl IPC::SendQueueOwner for SubprocessT<'static> {
     fn global_this(&self) -> *const JSGlobalObject {
         self.global_this.as_ptr()
@@ -114,10 +106,6 @@ impl IPC::SendQueueOwner for SubprocessT<'static> {
 
 #[inline]
 fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> *mut dyn IPC::SendQueueOwner {
-    // `SendQueue.owner` is a BACKREF — the SendQueue is stored inline in
-    // `Subprocess.ipc_data` and dropped before the Subprocess is freed.
-    // Erase the borrowed `'a` (raw-pointer lifetimes are not enforced) so the
-    // unsizing coercion to `dyn SendQueueOwner + 'static` is well-formed.
     ptr.cast::<SubprocessT<'static>>() as *mut dyn IPC::SendQueueOwner
 }
 
@@ -131,10 +119,6 @@ type SpawnOptionsStdio = spawn::PosixStdio;
 #[cfg(windows)]
 type SpawnOptionsStdio = spawn::WindowsStdio;
 
-// TODO(port): move to runtime_sys
-// Reading the symbol address has no precondition (the value itself is a
-// rodata `const char*`); kept `safe` to match the identical declaration in
-// `runtime/shell/subproc.rs` so the two extern blocks don't diverge.
 unsafe extern "C" {
     safe static BUN_DEFAULT_PATH_FOR_SPAWN: *const c_char;
 }
@@ -212,12 +196,6 @@ fn get_argv0(
     })
 }
 
-/// `argv` for `Bun.spawn` & `Bun.spawnSync`
-///
-/// `storage` receives ownership of every NUL-terminated string whose pointer is
-/// pushed into `argv` / `argv0`. The Zig original used a bump arena freed at the
-/// end of `spawnMaybeSync`; here the caller's `Vec<ZBox>` plays the same role
-/// and is dropped after `spawn_process` returns.
 fn get_argv(
     global_this: &JSGlobalObject,
     args: JSValue,
@@ -257,11 +235,6 @@ fn get_argv(
         cmds_array.next()?.unwrap(),
     )?;
 
-    // CreateProcessW runs `.bat`/`.cmd` files through `cmd.exe`, which
-    // re-tokenizes the command line with shell metacharacter rules
-    // (BatBadBut, CVE-2024-24576 / CVE-2024-27980). libuv's MSVCRT-style
-    // quoting cannot make that safe, so reject arguments that cmd.exe would
-    // reinterpret.
     let is_batch_file = cfg!(windows) && bun_which::is_batch_file(argv0_result.argv0.as_bytes());
     if is_batch_file && bun_which::batch_arg_has_cmd_metachars(argv0_result.arg0.as_bytes()) {
         return Err(global_this
@@ -360,11 +333,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    // PERF(port): was arena bulk-free — argv/env strings allocated per-iteration; profile if hot.
-    // Backing store for every NUL-terminated string whose `*const c_char` is
-    // pushed into `argv` / `argv0` / `env_array` below. Zig used a bump arena
-    // (`arena.deinit()` at fn exit); this `Vec` is the Rust equivalent and
-    // drops after `spawn_process` returns, freeing all argv/env allocations.
     let mut cstr_storage: Vec<ZBox> = Vec::new();
 
     let mut override_env = false;
@@ -424,11 +392,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 // the centralised non-null deref proof.
                 WebCore::AbortSignal::opaque_ref(signal).unref();
             }
-            // If we created a new terminal but spawn failed, close it. The
-            // writer/reader/finalize deref paths release the remaining refs.
-            // Downgrade the JSRef so the wrapper is GC-eligible, and mark
-            // finalized so onReaderDone skips the JS exit callback — the user
-            // never received this terminal (spawn threw).
             if let Some(info) = terminal_info.take() {
                 // `abandon_from_spawn` is the spawn-side error-path teardown
                 // (downgrade JSRef, mark finalized, close_internal).
@@ -736,11 +699,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 if let Some(terminal_val) = args.get_truthy(global_this, "terminal")? {
                     // Check if it's an existing Terminal object
                     if let Some(terminal) = terminal_body::js::from_js(terminal_val) {
-                        // `from_js` returns the live `m_ctx` pointer borrowed
-                        // from the JS wrapper; it stays valid for as long as
-                        // `terminal_val` is reachable (kept alive below via
-                        // `terminal_js_value`), so the `BackRef` invariant
-                        // (pointee outlives holder) holds for this scope.
                         let term = bun_ptr::BackRef::from(terminal);
                         if term.is_closed() {
                             return Err(global_this
@@ -772,10 +730,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                         match Terminal::create_from_spawn(global_this, &mut term_options) {
                             Ok(created) => {
                                 **terminal_info = Some(TerminalCreateResult {
-                                    // Transfer the +1 ref to `Subprocess.terminal` (released
-                                    // in `Subprocess::finalize`); the scopeguard's
-                                    // `abandon_from_spawn` path covers the error case.
-                                    // `IntrusiveRc::into_raw` is never null (NonNull-backed).
                                     terminal: bun_ptr::BackRef::from(
                                         core::ptr::NonNull::new(created.terminal.into_raw())
                                             .expect("IntrusiveRc non-null"),
@@ -867,10 +821,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             Ok(m) => m,
             Err(_) => return Err(global_this.throw_out_of_memory()),
         };
-        // PORT NOTE: Zig assigned `env_array.items = envp` (sentinel slice — the
-        // trailing `null` lives at `[len]`, outside `.items`). The Rust port's
-        // `as_slice()` *includes* the trailing null, so strip it; the common
-        // tail below re-appends one after the optional NODE_CHANNEL_* entries.
         let entries = envmap.as_slice();
         env_array.extend_from_slice(&entries[..entries.len().saturating_sub(1)]);
         inherited_env_storage = Some(envmap);
@@ -893,38 +843,18 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             if *should_close_memfd {
                 for fd_index in 0..stdio.len() {
                     if matches!(stdio[fd_index], Stdio::Memfd(_)) {
-                        // PORT NOTE: Zig closes the fd then writes
-                        // `stdio[i] = .ignore`. In Rust that assignment would
-                        // Drop the old `Stdio::Memfd` and re-close the same fd
-                        // (EBADF → fd.rs debug_assert). `Stdio`'s Drop already
-                        // closes a Memfd, so just replace with `.ignore` and
-                        // let Drop perform the single close.
                         drop(core::mem::replace(&mut stdio[fd_index], Stdio::Ignore));
                     }
                 }
             }
         },
     );
-    // PORT NOTE: reshaped for borrowck — re-borrow through the guard tuple so the guard
-    // stays armed (runs on every early return) until disarmed by `**should_close_memfd = false` below.
-    // TODO(port): errdefer — if borrowck rejects the double-&mut reborrow at later use sites,
-    // may need to move stdio into the guard by value and reborrow via DerefMut.
     let (should_close_memfd, stdio) = &mut *memfd_guard;
 
     // "NODE_CHANNEL_FD=" is 16 bytes long, 15 bytes for the number, and 1 byte for the null terminator should be enough/safe
     let mut ipc_env_buf: [u8; 32] = [0; 32];
     if !IS_SYNC {
         if let Some(ipc_mode) = maybe_ipc_mode {
-            // IPC is currently implemented in a very limited way.
-            //
-            // Node lets you pass as many fds as you want, they all become be sockets; then, IPC is just a special
-            // runtime-owned version of "pipe" (in which pipe is a misleading name since they're bidirectional sockets).
-            //
-            // Bun currently only supports three fds: stdin, stdout, and stderr, which are all unidirectional
-            //
-            // And then one fd is assigned specifically and only for IPC. If the user dont specify it, we add one (default: 3).
-            //
-            // When Bun.spawn() is given an `.ipc` callback, it enables IPC as follows:
             if let Err(_err) = env_array.try_reserve(3) {
                 let _ = global_this.throw_out_of_memory();
                 return Ok(JSValue::ZERO);
@@ -981,19 +911,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    // If the whole thread is supposed to do absolutely nothing while waiting,
-    // we can block the thread which reduces CPU usage.
-    //
-    // That means:
-    // - No maximum buffer
-    // - No timeout
-    // - No abort signal
-    // - No stdin, stdout, stderr pipes
-    // - No extra fds
-    // - No auto killer (for tests)
-    // - No execution time limit (for tests)
-    // - No IPC
-    // - No inspector (since they might want to press pause or step)
     let can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = (cfg!(unix) && IS_SYNC)
         && abort_signal.is_none()
         && timeout.is_none()
@@ -1011,18 +928,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             .get()
             .unwrap_or(false);
 
-    // For spawnSync, use an isolated event loop to prevent JavaScript timers from firing
-    // and to avoid interfering with the main event loop.
-    //
-    // PORT NOTE: borrowck — `rare_data()` borrows `jsc_vm` mutably and the
-    // returned `&mut SpawnSyncEventLoop` keeps that borrow alive, so we cannot
-    // also pass `jsc_vm` into `spawn_sync_event_loop`/`prepare`/`cleanup` while
-    // holding it. Route through a raw `*mut VirtualMachineRef` for the duration.
     let jsc_vm_ptr: *mut jsc::VirtualMachineRef = jsc_vm;
-    // For IS_SYNC, use the isolated loop's `event_loop` (created by
-    // `SpawnSyncEventLoop::init`) so stdio readers/writers register on it
-    // instead of the main loop — matches Zig
-    // `&jsc_vm.rareData().spawnSyncEventLoop(jsc_vm).event_loop`.
     let event_loop: *mut jsc::event_loop::EventLoop = if IS_SYNC {
         // SAFETY: see PORT NOTE above; `spawn_sync_event_loop` re-borrows the
         // same VM via the raw pointer for its `vm` arg.
@@ -1031,10 +937,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 .rare_data()
                 .spawn_sync_event_loop(&mut *jsc_vm_ptr);
             sync_loop.prepare(jsc_vm_ptr.cast());
-            // `SpawnSyncEventLoop.event_loop` is type-erased to `*mut ()`
-            // (bun_event_loop is below bun_jsc); the accessor returns the
-            // concrete `jsc::EventLoop` allocation created via the runtime
-            // vtable in `SpawnSyncEventLoop::init`.
             sync_loop
                 .event_loop_ptr()
                 .cast::<jsc::event_loop::EventLoop>()
@@ -1043,10 +945,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         jsc_vm.event_loop()
     };
 
-    // PORT NOTE: reshaped for borrowck — `defer!` is non-`move`, so the closure
-    // would capture the *place* `*jsc_vm_ptr` and conflict with later
-    // `&mut *jsc_vm_ptr` re-borrows below. Copy the raw pointer into a sibling
-    // local so the closure's captured place is disjoint.
     let jsc_vm_ptr_cleanup = jsc_vm_ptr;
     scopeguard::defer! {
         if IS_SYNC {
@@ -1109,12 +1007,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
     } {
         Err(err) if err == bun_core::err!("EMFILE") || err == bun_core::err!("ENFILE") => {
-            // Windows: close+free the heap `uv::Pipe` handles that
-            // `as_spawn_option` allocated and `spawn_process_windows` may have
-            // `uv_pipe_init`-registered on the spawn-sync loop. Skipping this
-            // leaks them and trips `assert(err == 0)` in `uv_loop_delete` at
-            // `SpawnSyncEventLoop::Drop`. POSIX: no-op. (Zig spec
-            // js_bun_spawn_bindings.zig:627 — `spawn_options.deinit()`.)
             spawn_options.deinit();
             let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                 // SAFETY: argv[0] is non-null and points at a NUL-terminated
@@ -1181,21 +1073,10 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         },
     };
 
-    // Use the isolated loop for spawnSync operations
-    //
-    // PORT NOTE: `PosixSpawnResult::to_process` consumes `self` but only reads
-    // `pid`/`pidfd`/`has_exited`. Zig kept using `spawned.stdin/stdout/stderr/
-    // extra_pipes` afterward; in Rust, take those fields out first so the
-    // partial move is explicit.
     let spawned_stdin = spawned.stdin.take();
     let spawned_stdout = spawned.stdout.take();
     let spawned_stderr = spawned.stderr.take();
     let mut spawned_extra_pipes = core::mem::take(&mut spawned.extra_pipes);
-    // `to_process` returns a freshly Box-allocated `Process` carrying an
-    // intrusive `ThreadSafeRefCount` initialized to 1. `Subprocess.process`
-    // stores it as `*mut Process` (Zig: `*Process`); the matching `deref()` in
-    // `Subprocess::finalize` (or the error path below) frees the Box when the
-    // refcount reaches zero.
     let process: *mut Process = spawned.to_process(loop_handle, IS_SYNC);
 
     #[cfg(unix)]
@@ -1205,30 +1086,12 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         Fd::INVALID
     };
 
-    // When run synchronously, subprocess isn't garbage collected.
-    //
-    // PORT NOTE: Zig built a placeholder struct, took its address for
-    // `MaxBuf::create_for_subprocess`, then overwrote `subprocess.*` with the
-    // real aggregate. In Rust that whole-struct reassignment would (a) move
-    // `process` twice and (b) run Drop on every field of the placeholder. Build
-    // the struct once with its final field values instead, then fill in the
-    // address-dependent fields (maxbufs, ipc_data on Windows) afterward.
     let subprocess_ptr = bun_core::heap::into_raw(Box::new(SubprocessT {
         global_this: bun_ptr::BackRef::new(global_this),
         // SAFETY: `to_process` returns a non-null `Box::into_raw` pointer; the
         // intrusive ref is released in `Subprocess::finalize`.
         process: unsafe { bun_ptr::BackRef::from_raw(process) },
         pid_rusage: Cell::new(None),
-        // stdin/stdout/stderr are assigned immediately after this literal.
-        // `Writable.init()` writes to `subprocess.weak_file_sink_stdin_ptr`,
-        // `subprocess.flags`, and calls `subprocess.ref()` for `.pipe` /
-        // `.readable_stream` stdin; if called from inside this aggregate
-        // initializer those writes are clobbered by `.ref_count =
-        // .initExactRefs(2)`, `.flags = .{...}`, and the default
-        // `weak_file_sink_stdin_ptr = null` below. stdout/stderr are deferred
-        // so that if `Writable.init()` fails the catch block doesn't have to
-        // tear down unstarted `PipeReader`s (whose `deinit()` asserts
-        // `isDone()`).
         stdin: JsCell::new(Writable::Ignore),
         stdout: JsCell::new(Readable::Ignore),
         stderr: JsCell::new(Readable::Ignore),
@@ -1302,13 +1165,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     ) {
         Ok(v) => subprocess.stdin.set(v),
         Err(err) => {
-            // ref_count = 2 from the aggregate above, but neither the JS
-            // wrapper nor the process exit handler are wired up yet, so
-            // release both. stdout/stderr are still `.ignore` — close the raw
-            // spawned pipe handles directly since `Readable.init()` will not
-            // run. `finalizeStreams()` here only closes `stdio_pipes` and the
-            // pidfd; stdin/stdout/stderr are `.ignore` so their `closeIO` is a
-            // no-op.
             #[cfg(unix)]
             {
                 if let Some(fd) = spawned_stdout {
@@ -1324,11 +1180,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 for r in [spawned_stdout, spawned_stderr] {
                     match r {
                         spawn::WindowsStdioResult::Buffer(pipe) => {
-                            // `uv_close` is async — libuv keeps the raw handle pointer
-                            // until the next loop tick and then calls `on_pipe_close`,
-                            // which reclaims the allocation via `heap::take`. Leak the
-                            // Box so it outlives this scope; dropping it here would be
-                            // a use-after-free + double-free when the callback fires.
                             Box::leak(pipe).close(Subprocess::on_pipe_close)
                         }
                         spawn::WindowsStdioResult::BufferFd(fd) => fd.close(),
@@ -1477,29 +1328,16 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         {
             use crate::node::MaybeExt as _;
             let idx = usize::try_from(ipc_channel).expect("int cast");
-            // Zig: `stdio_pipes.items[ipc_channel].buffer` — direct union-field
-            // access (the IPC channel is always a `buffer` pipe on Windows).
-            // Ownership of the heap `uv::Pipe` transfers to `ipc_data.socket`;
-            // neutralize the slot up front so `finalizeStreams` can't
-            // double-close it (the Box would otherwise drop on reassignment).
-            let ipc_pipe: *mut bun_libuv_sys::Pipe = subprocess.stdio_pipes.with_mut(|pipes| {
-                match core::mem::take(&mut pipes[idx]) {
-                    spawn::WindowsStdioResult::Buffer(pipe) => bun_core::heap::into_raw(pipe),
-                    other => {
-                        // Restore the slot before panicking so the
-                        // `Subprocess` finalizer still sees the original
-                        // variant. Zig's `.buffer` field access is
-                        // safety-checked in ReleaseSafe and panics on a
-                        // non-`.buffer` variant; mirror that with
-                        // `unreachable!` (NOT `debug_assert!` — that would
-                        // compile out in release and feed null to
-                        // `windows_configure_server`, which immediately
-                        // dereferences it).
-                        pipes[idx] = other;
-                        unreachable!("IPC channel stdio is not a buffer pipe");
-                    }
-                }
-            });
+            let ipc_pipe: *mut bun_libuv_sys::Pipe =
+                subprocess
+                    .stdio_pipes
+                    .with_mut(|pipes| match core::mem::take(&mut pipes[idx]) {
+                        spawn::WindowsStdioResult::Buffer(pipe) => bun_core::heap::into_raw(pipe),
+                        other => {
+                            pipes[idx] = other;
+                            unreachable!("IPC channel stdio is not a buffer pipe");
+                        }
+                    });
             // PROVENANCE: `windows_configure_server` STORES the `*mut SendQueue`
             // in `uv_handle_t.data` for the pipe's lifetime, so it takes a raw
             // pointer (not `&mut self`) — see its safety doc. NOTE: this still
@@ -1546,11 +1384,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     let out = if !IS_SYNC {
-        // `subprocess_ptr` came from `heap::alloc` above and has not yet been
-        // wrapped; ownership transfers to the C++ JS cell (released via
-        // `SubprocessClass__finalize`). Zig's `subprocess.toJS(globalThis)` did
-        // not re-allocate, so use the raw-ptr entrypoint instead of the
-        // by-value `JsClass::to_js` (which would re-box).
         SubprocessT::to_js_from_ptr(subprocess_ptr, global_this)
     } else {
         JSValue::ZERO
@@ -1878,11 +1711,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                                 .unwrap()
                                 .remove_active_timeout(unsafe { &mut *jsc_vm_ptr });
 
-                            // This might internally call `std.c.kill` on this
-                            // spawnSync process. Even if we do that, we still
-                            // need to reap the process. So we may go through
-                            // the event loop again, but it should wake up
-                            // ~instantly so we can drain the events.
                             crate::test_runner::bun_test::BunTest::bun_test_timeout_callback(
                                 &taken_active_file,
                                 &absolute_timespec,
@@ -1982,10 +1810,6 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
     global_this.throw_value(err.to_error_instance(global_this))
 }
 
-/// `storage` receives ownership of every `K=V\0` line whose pointer is pushed
-/// into `envp` (and, for `PATH=`, sliced into `*path`). The Zig original used a
-/// bump arena freed at the end of `spawnMaybeSync`; the caller's `Vec<ZBox>`
-/// plays the same role and is dropped after `spawn_process` returns.
 pub(crate) fn append_envp_from_js(
     global_this: &JSGlobalObject,
     object: &JSObject,

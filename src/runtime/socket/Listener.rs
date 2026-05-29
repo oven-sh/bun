@@ -57,17 +57,8 @@ fn vm_ssl_ctx_cache() -> *mut crate::api::SSLContextCache::SSLContextCache {
     unsafe { core::ptr::addr_of_mut!((*state).ssl_ctx_cache) }
 }
 
-// `jsc.Codegen.JSListener.toJS` — route through the codegen'd wrapper so we
-// can hand the C++ side an already-heap-allocated `*mut Listener` (the
-// embedded `group` is linked into the loop's intrusive list at its final
-// address before this call, so the `Box::new`-then-move that the `#[JsClass]`
-// `to_js(self)` impl does would invalidate that link).
 use crate::generated_classes::js_Listener;
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut Listener` — `&mut T` auto-derefs to `&T`
-// so the impls below compile against either.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct Listener {
     pub handlers: JsCell<Handlers>,
@@ -93,12 +84,6 @@ pub struct Listener {
 #[derive(Clone, Copy, Default)]
 pub enum ListenerType {
     Uws(*mut uws_sys::ListenSocket),
-    /// Raw heap pointer (not `Box`) to match .zig:31 `*WindowsNamedPipeListeningContext`.
-    /// The context's address is registered with libuv (`uv_pipe.data`) for the
-    /// lifetime of the handle, so we must never assert `noalias` over it via a
-    /// Box move or `&mut Listener` that transitively covers the context — that
-    /// would invalidate the pointer libuv holds under Stacked Borrows. Ownership
-    /// is still unique; freed via `close_pipe_and_deinit` → `on_pipe_closed` → `deinit`.
     NamedPipe(NonNull<WindowsNamedPipeListeningContext>),
     #[default]
     None,
@@ -157,11 +142,6 @@ impl Listener {
             socket_obj,
             this.handlers.get().mode == SocketMode::Server,
         )?;
-        // Preserve the live connection count across the struct assignment. `Handlers.fromJS`
-        // returns `active_connections = 0`, but existing accepted sockets each hold a +1 via
-        // `markActive`. Without this, closing any of them after reload would underflow the
-        // counter (panic in safe builds, wrap in release).
-        // PORT NOTE: Zig `this.handlers.deinit()` — Drop handles unprotect; assignment below drops old.
         this.handlers.with_mut(|h| {
             let active_connections = h.active_connections.get();
             *h = handlers;
@@ -266,13 +246,6 @@ impl Listener {
                         ));
                     }
                     Err(_) => {
-                        // On error, clean up everything `this` owns *except* `this.handlers`: the outer
-                        // `errdefer handlers.deinit()` already unprotects those JSValues, and `this.handlers`
-                        // is a by-value copy of the same struct, so calling `this.deinit()` here would
-                        // unprotect the same callbacks a second time.
-                        // PORT NOTE: in this port `handlers` was *moved* (not copied), so we
-                        // recover it from the box before freeing and let it drop here for the
-                        // same single-unprotect effect.
                         this_ref.strong_data.with_mut(|s| s.deinit());
                         // SAFETY: reclaim the Box we leaked via into_raw; drops connection,
                         // protos, and (the moved) handlers exactly once.
@@ -295,13 +268,6 @@ impl Listener {
 
         vm.event_loop_ref().ensure_waker();
 
-        // Allocate the Listener up front so the embedded `group` has its final
-        // address before we hand it to listen() (it's linked into the loop's
-        // intrusive list).
-        // PORT NOTE: by-value move of Handlers. Zig copied the struct then ran
-        // `deinitExcludingHandlers()` on the original. Here we read the handlers
-        // out by raw ptr and prevent double-drop by clearing the source via
-        // `deinit_excluding_handlers` + `mem::forget`.
         let mut socket_config = core::mem::ManuallyDrop::new(socket_config);
         // SAFETY: socket_config.handlers is valid; ManuallyDrop suppresses the second drop.
         let handlers_moved: Handlers =
@@ -335,11 +301,6 @@ impl Listener {
         this_ref
             .group
             .with_mut(|g| g.init(uws::Loop::get(), None, this.cast::<c_void>()));
-        // `Listener` is mimalloc-allocated, so LSAN can't trace `loop->data.head →
-        // this.group → head_sockets → us_socket_t` once the only pointer into the
-        // group lives inside a mimalloc page. Registering the embedded group as a
-        // root region restores reachability for the accepted sockets' allocations.
-        // Paired unregister in `deinit()` (and the errdefer below).
         bun_core::asan::register_root_region(
             this_ref.group.as_ptr().cast::<c_void>(),
             size_of::<uws::SocketGroup>(),
@@ -499,10 +460,6 @@ impl Listener {
             let secure = this_ref.secure_ctx.expect("unreachable");
             if let Some(server_name) = ssl_config.server_name_cstr() {
                 if !server_name.to_bytes().is_empty() {
-                    // Registering the default cert under its own server_name is a
-                    // hint for sni_cb, not load-bearing — sni_find() miss falls
-                    // through to the default SSL_CTX anyway.
-                    // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                     let _ = bun_opaque::opaque_deref_mut(listen_socket).add_server_name(
                         server_name,
                         secure.as_ptr().cast(),
@@ -556,10 +513,6 @@ impl Listener {
         this_socket
     }
 
-    /// Called from `dispatch.zig` `BunListener.onOpen` for every accepted socket.
-    /// Allocates the `NewSocket` wrapper, stashes it in the socket ext, then
-    /// re-stamps the kind to `.bun_socket_{tcp,tls}` so subsequent events route
-    /// straight to `BunSocket` (the listener arm only fires once per accept).
     pub fn on_create<const SSL: bool>(
         listener: &Listener,
         socket: uws::NewSocketHandler<SSL>,
@@ -635,12 +588,6 @@ impl Listener {
                 global.throw_invalid_arguments(format_args!("hostname pattern cannot be empty"))
             );
         }
-        // NUL-terminate for the C `const char*` parameter. Zig used
-        // `dupeZ` + raw `.ptr` (Listener.zig:377), which tolerates interior
-        // NULs — the C SNI tree just truncates at the first one. Build the
-        // `&CStr` via `from_ptr` to match that instead of asserting via
-        // `ZStr::as_cstr()`. `server_name_z` must outlive the
-        // remove_server_name/add_server_name calls below.
         let server_name_z = bun_core::ZBox::from_bytes(server_name_bytes);
         // SAFETY: `server_name_z` is NUL-terminated and lives to end of scope.
         let server_name = unsafe { core::ffi::CStr::from_ptr(server_name_z.as_ptr()) };
@@ -879,11 +826,6 @@ impl Listener {
             ListenerType::Uws(uws_listener) => {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 let socket = bun_opaque::opaque_deref_mut(uws_listener).socket::<false>();
-                // Zig: `uws_listener.socket(false).fd().toJSWithoutMakingLibUVOwned()`.
-                // On Windows the listening socket fd is a system-kind SOCKET
-                // handle; routing it through `.uv()` panics for anything but
-                // stdio. The sys_jsc helper branches on kind exactly like
-                // fd_jsc.zig (system→u64, uv→i32, posix→i32).
                 use bun_sys_jsc::FdJsc as _;
                 socket.fd().to_js_without_making_lib_uv_owned()
             }
@@ -937,11 +879,6 @@ impl Listener {
         }
         let vm = VirtualMachine::get().as_mut();
 
-        // is_server=false: this is the client connect path. Handlers.mode must be
-        // .client so markInactive() takes the allocator.destroy branch — the
-        // .server branch does @fieldParentPtr("handlers", this) to reach a
-        // Listener, but here handlers live in a standalone allocator.create()
-        // block (see below), so that would read past the allocation.
         let mut socket_config = SocketConfig::from_js(vm, opts, global, false)?;
         // PORT NOTE: `defer socket_config.deinitExcludingHandlers()` — Drop on SocketConfig
 
@@ -1133,10 +1070,6 @@ impl Listener {
                     tls_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
                     tls_ref.ref_();
 
-                    // Transfer the borrowed CTX into the pipe's SSLWrapper. From
-                    // here it owns the ref on every path (initWithCTX adopts on
-                    // success, initTLSWrapper frees on failure), so null our local
-                    // before the call so the errdefer above can't double-free.
                     let ctx_for_pipe =
                         core::mem::replace(&mut *ssl_ctx_guard, None).map(|p| p.as_ptr());
                     // PORT NOTE: re-borrow connection from the socket field — `connection`
@@ -1190,10 +1123,6 @@ impl Listener {
                             prev.socket.get().socket,
                             uws::InternalSocket::Detached
                         ));
-                        // Adopt `connection` (heap-owned for .unix) so the socket's
-                        // deinit frees it; matches the TLS arm above and the
-                        // non-pipe arm below. Previously `.connection = null`
-                        // dropped the duped pipe-path bytes on the floor.
                         prev.connection.set(Some(connection));
                         debug_assert!(prev.protos.get().is_none());
                         debug_assert!(prev.server_name.get().is_none());
@@ -1261,12 +1190,6 @@ impl Listener {
         // `socket.owned_ssl_ctx` to the per-VM connect group.
         if ssl_enabled && ssl_ctx_guard.is_none() {
             if let Some(ssl_cfg) = socket_config.ssl.as_ref() {
-                // Per-VM weak `SSLContextCache`: identical configs (including the
-                // common `tls:true` / `{servername}`-only / `{ALPNProtocols}`-only
-                // cases — those fields aren't in the digest because they're
-                // applied per-SSL, not per-CTX) share one `SSL_CTX*`. The
-                // `requires_custom_request_ctx` gate is gone; the cache makes the
-                // default-vs-custom distinction by content.
                 let mut create_err = uws::create_bun_socket_error_t::none;
                 // SAFETY: `vm_ssl_ctx_cache()` returns the per-thread cache field
                 // inside the boxed `RuntimeState`; address-stable until VM teardown.
@@ -1424,10 +1347,6 @@ fn connect_finish<const IS_SSL: bool>(
         let prev = unsafe { &*prev_ptr };
         // TODO(port): `JsRef::is_not_empty` — assert non-empty wrapper.
         if let Some(prev_handlers) = prev.handlers.get() {
-            // Only free the previous Handlers when no callback scope is still
-            // holding it. If a `data`/`close` handler synchronously re-entered
-            // `connect`, `Scope::exit` (via `Handlers::mark_inactive`) frees it
-            // once the in-flight callback unwinds; freeing here would be a UAF.
             if prev.flags.get().contains(SocketFlags::OWNS_HANDLERS)
                 // SAFETY: prev_handlers was heap-allocated; shared reborrow is
                 // scoped to this expression.
@@ -1438,11 +1357,6 @@ fn connect_finish<const IS_SSL: bool>(
             }
         }
         prev.handlers.set(NonNull::new(handlers_ptr));
-        // `handlers_ptr` is a fresh `heap::alloc` box from `connect_inner`;
-        // this socket now owns it. Without the flag, `deinit_and_destroy` and
-        // `mark_inactive`'s shutdown gate skip the free and the box leaks
-        // (`node:net`'s `new_detached_socket` creates `prev` with default
-        // flags and no handlers).
         prev.flags
             .set(prev.flags.get() | SocketFlags::OWNS_HANDLERS);
         debug_assert!(prev.socket.get().is_detached());
@@ -1486,19 +1400,6 @@ fn connect_finish<const IS_SSL: bool>(
     let socket_ref = unsafe { &*socket };
     socket_ref.ref_();
     NewSocket::<IS_SSL>::data_set_cached(socket_ref.get_this_value(global), global, default_data);
-    // On the reuse-prev path, `prev.this_value` was downgraded to Weak by the
-    // previous close's `mark_inactive()`. `get_this_value()` returns the
-    // existing wrapper (the Weak `try_get()` succeeds while the JS side still
-    // references it via `socket._handle`) but does NOT re-upgrade — so until
-    // `on_open()` → `mark_active()` runs, the wrapper is only kept alive by
-    // the JS-side reference cycle (`socket._handle` ↔ `wrapper.data.self`).
-    // If GC runs before the async TCP connect completes, `finalize()` sets
-    // `FINALIZING` + `close_and_detach()` → `on_open` never fires and the JS
-    // socket hangs forever with no connect/error/close. Upgrade here so the
-    // in-flight connect pins the wrapper. (Same guard as `mark_active`; no-op
-    // on the fresh-allocation path where `get_this_value` already
-    // `set_strong`'d.) Intentionally diverges from the Zig spec, which has
-    // the same race.
     if socket_ref.this_value.get().is_not_empty() {
         socket_ref.this_value.with_mut(|r| r.upgrade(global));
     }
@@ -1590,11 +1491,6 @@ fn normalize_pipe_name<'a>(pipe_name: &[u8], buffer: &'a mut [u8]) -> Option<&'a
 #[cfg(windows)]
 pub struct WindowsNamedPipeListeningContext {
     pub uv_pipe: uv::Pipe,
-    /// BACKREF: the parent `Listener` heap-allocated this context in
-    /// `listen_named_pipe` and outlives it (cleared to `None` in
-    /// `close_pipe_and_deinit` before the listener is torn down). `BackRef`
-    /// centralises the safe deref so call sites don't open-code a raw
-    /// `NonNull::as_ref`.
     pub listener: Option<bun_ptr::BackRef<Listener>>,
     pub global_this: GlobalRef,
     /// JSC_BORROW: process-lifetime singleton; `&'static` so call sites read
@@ -1653,12 +1549,6 @@ impl WindowsNamedPipeListeningContext {
         }
     }
 
-    /// `uv_connection_cb` trampoline — recovers `*Self` from `handle.data`
-    /// (set by `Pipe::listen`) and forwards to [`on_client_connect`].
-    /// Only ever invoked by libuv (coerces to the `uv_connection_cb` fn-pointer
-    /// type at the `Pipe::listen_named_pipe` call site); body wraps its derefs
-    /// explicitly — matches the `extern "C" fn` callback convention used in
-    /// `udp_socket.rs` / `bun_io::PipeReader`.
     extern "C" fn uv_on_client_connect(handle: *mut uv::uv_stream_t, status: uv::ReturnCode) {
         // SAFETY: `data` was set to `*mut Self` by `Pipe::listen` below.
         let this = unsafe { (*handle).data.cast::<WindowsNamedPipeListeningContext>() };
@@ -1705,10 +1595,6 @@ impl WindowsNamedPipeListeningContext {
         // SAFETY: just allocated, non-null, exclusive.
         let this_ref = unsafe { &mut *this };
 
-        // errdefer: once the uv pipe handle is registered with the loop it must be closed via
-        // uv_close; before that point we can free the struct directly. `deinit()` also
-        // frees the SSL context if one was created. State `.1` flips once `uv_pipe_init`
-        // succeeds; disarmed via `into_inner` on success.
         let mut cleanup = scopeguard::guard((this, false), |(this, pipe_initialized)| {
             if pipe_initialized {
                 // SAFETY: pipe is registered with the loop; close → on_pipe_closed → deinit.
@@ -1760,11 +1646,6 @@ impl WindowsNamedPipeListeningContext {
         if listen_rc.is_err() {
             return Err(bun_core::err!("FailedToBindPipe"));
         }
-        //TODO: add readableAll and writableAll support if someone needs it
-        // if(uv.uv_pipe_chmod(&this.uvPipe, uv.UV_WRITABLE | uv.UV_READABLE) != 0) {
-        // this.closePipeAndDeinit();
-        // return error.FailedChmodPipe;
-        //}
 
         let (this, _) = scopeguard::ScopeGuard::into_inner(cleanup);
         Ok(this)

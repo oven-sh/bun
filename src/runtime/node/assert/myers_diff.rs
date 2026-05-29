@@ -9,20 +9,8 @@
 use core::fmt;
 use core::marker::PhantomData;
 
-/// Comptime diff configuration. Defaults are usually sufficient.
-///
-/// PORT NOTE: In Zig this is passed as a `comptime opts: Options` struct param.
-/// Rust cannot pass a struct as a const generic on stable, so the only
-/// behaviorally-meaningful field (`check_comma_disparity`) is hoisted to a
-/// `const CHECK_COMMA_DISPARITY: bool` generic on `Differ`. The two sizing
-/// fields only fed `std.heap.stackFallback`, which is dropped (see PERF notes
-/// in `diff`).
 #[derive(Clone, Copy)]
 pub struct Options {
-    /// Guesstimate for the number of bytes `expected` and `actual` will be.
-    /// Defaults to 256.
-    ///
-    /// Used to reserve space on the stack for the edit graph.
     pub avg_input_size: usize,
     /// How much stack space to reserve for edit trace frames. Defaults to 64.
     pub initial_trace_capacity: usize,
@@ -42,16 +30,6 @@ impl Default for Options {
     }
 }
 
-// By limiting maximum string and buffer lengths, we can store u32s in the
-// edit graph instead of usize's, halving our memory footprint. The
-// downside is that `(2 * (actual.len + expected.len))` must be less than
-// 4Gb. If this becomes a problem in real user scenarios, we can adjust this.
-//
-// Note that overflows are much more likely to occur in real user scenarios
-// than in our own testing, so overflow checks _must_ be handled. Do _not_
-// use `assert` unless you also use `@setRuntimeSafety(true)`.
-//
-// TODO: make this configurable in `Options`?
 const MAXLEN: u64 = u32::MAX as u64;
 const MAX_TRACE_BYTES: usize = 64 * 1024 * 1024;
 // Type aliasing to make future refactors easier
@@ -60,11 +38,6 @@ type uint = u32;
 #[allow(non_camel_case_types)]
 type int = i64; // must be large enough to hold all valid values of `uint` w/o overflow.
 
-/// PORT NOTE: Zig's `Differ` switches on the concrete `Line` type at comptime
-/// to pick an equality function (char `==` for `u8`/`u16`, `areStrLinesEqual`
-/// for slice types) and to detect "is this a pointer/slice" inside
-/// `backtrack`. Rust expresses both via this trait — implement it for any new
-/// line type instead of extending the type-switch.
 pub trait Line: Copy {
     /// `@typeInfo(Line) == .pointer` in the Zig.
     const IS_POINTER: bool;
@@ -121,36 +94,6 @@ impl<'a> Line for &'a [u16] {
         matches!(self.last(), Some(&c) if c == u16::from(b','))
     }
 }
-// TODO(port): Zig also accepted `[:0]const u8`, `[:0]u8`, `[]u8`, `[:0]const u16`,
-// `[:0]u16`, `[]u16` — in Rust these all coerce to `&[u8]`/`&[u16]`, so the two
-// slice impls above cover them. Add `&bun_core::ZStr` / `&bun_core::WStr` impls
-// if callers pass those directly.
-
-/// diffs two sets of lines, returning the minimal number of edits needed to
-/// make them equal.
-///
-/// Lines may be string slices or chars. Derived from node's implementation of
-/// the Myers' diff algorithm.
-///
-/// ## Example
-/// ```ignore
-/// use myers_diff::Differ;
-/// type StrDiffer = Differ<&[u8], false>;
-/// let actual: &[&[u8]] = &[b"foo", b"bar", b"baz"];
-/// let expected: &[&[u8]] = &[b"foo", b"barrr", b"baz"];
-/// let diff = StrDiffer::diff(actual, expected)?;
-/// ```
-///
-/// TODO: support non-ASCII UTF-8 characters.
-///
-/// ## References
-/// - [Node- `myers_diff.js`](https://github.com/nodejs/node/blob/main/lib/internal/assert/myers_diff.js)
-/// - [An O(ND) Difference Algorithm and Its Variations](http://www.xmailserver.org/diff2.pdf)
-///
-/// PORT NOTE: Zig's `Differ(Line, opts)` is a thin wrapper that picks an `eql`
-/// based on `Line` and delegates to `DifferWithEql`. In Rust the `eql` dispatch
-/// is the `Line` trait, so the two collapse into one type. To supply a custom
-/// equality function (Zig's `DifferWithEql`), implement `Line` for your type.
 pub struct Differ<L, const CHECK_COMMA_DISPARITY: bool = false>(PhantomData<L>);
 
 /// struct.
@@ -170,20 +113,7 @@ impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY
     // type in Rust, which is unstable (rust#8995). Dropped — callers spell `L`
     // directly via the `Differ<L, ..>` generic param.
 
-    /// Compute the shortest edit path (diff) between two sets of lines.
-    ///
-    /// Returned `Diff` objects borrow from the input slices. Both `actual`
-    /// and `expected` must outlive them.
-    ///
-    /// ## References
-    /// - [Node- `myers_diff.js`](https://github.com/nodejs/node/blob/main/lib/internal/assert/myers_diff.js)
-    /// - [An O(ND) Difference Algorithm and Its Variations](http://www.xmailserver.org/diff2.pdf)
     pub(crate) fn diff(actual: &[L], expected: &[L]) -> Result<DiffList<L>, Error> {
-        // Edit graph's allocator
-        // PERF(port): was stack-fallback (graph_initial_size bytes) — profile if it shows up on a hot path
-        // Match point trace's allocator
-        // PERF(port): was stack-fallback (opts.initial_trace_capacity bytes) — profile if it shows up on a hot path
-
         // const MAX \in [0, M+N]
         // let V: int array = [-MAX..MAX]. V is a flattened representation of the edit graph.
         let (max, graph_size): (uint, uint) = 'blk: {
@@ -242,10 +172,6 @@ impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY
             // for k ← -D in steps of 2 do
             let mut diag_idx = diag_start;
             while diag_idx <= diag_end {
-                // if k = -D or K ≠ D and V[k-1] < V[k+1] then
-                //     x ← V[k+1]
-                // else
-                //     x ← V[k-1] + 1
                 debug_assert!(diag_idx + i64::from(max) >= 0); // sanity check. Fine to be stripped in release.
                 let k: uint = u(diag_idx + i64::from(max));
 
@@ -406,11 +332,6 @@ fn are_str_lines_equal<C, const CHECK_COMMA_DISPARITY: bool>(a: &[C], b: &[C]) -
 where
     C: PartialEq + Copy + From<u8>,
 {
-    // Hypothesis: unlikely to be the same, since assert.equal, etc. is rarely
-    // used to compare the same object. May be true on shallow copies.
-    // TODO: check Godbolt
-    // if (a.ptr == b.ptr) return true;
-
     // []const u8 -> u8  (Zig: @typeInfo(T).pointer.child — here `C` is that child.)
 
     if !CHECK_COMMA_DISPARITY {
@@ -556,28 +477,6 @@ mod tests {
             "😤".as_bytes()
         ));
     }
-
-    // const CharList = DiffList(u8);
-    // const CDiff = Diff(u8);
-    // const CharDiffer = Differ(u8, .{});
-    //
-    // fn testCharDiff(actual: []const u8, expected: []const u8, expected_diff: []const Diff(u8)) !void {
-    //     const allocator = t.allocator;
-    //     const actual_diff = try CharDiffer.diff(allocator, actual, expected);
-    //     defer actual_diff.deinit();
-    //     try t.expectEqualSlices(Diff(u8), expected_diff, actual_diff.items);
-    // }
-    //
-    // test CharDiffer {
-    //     const TestCase = std.meta.Tuple(&[_]type{ []const CDiff, []const u8, []const u8 });
-    //     const test_cases = &[_]TestCase{
-    //         .{ &[_]CDiff{}, "foo", "foo" },
-    //     };
-    //     for (test_cases) |test_case| {
-    //         const expected_diff, const actual, const expected = test_case;
-    //         try testCharDiff(actual, expected, expected_diff);
-    //     }
-    // }
 
     type StrDiffer<'a> = Differ<&'a [u8], true>;
 

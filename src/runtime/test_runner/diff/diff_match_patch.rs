@@ -44,10 +44,6 @@ pub struct Config {
     /// The number of bits in an int.
     pub match_max_bits: u16,
 
-    /// When deleting a large block of text (over ~64 characters), how close
-    /// do the contents have to be to match the expected contents. (0.0 =
-    /// perfection, 1.0 = very loose).  Note that Match_Threshold controls
-    /// how closely the end points of a delete need to match.
     pub patch_delete_threshold: f32,
     /// Chunk size for context length.
     pub patch_margin: u16,
@@ -125,13 +121,6 @@ impl<Unit: DiffUnit> Default for DiffMatchPatch<Unit> {
 }
 
 impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
-    /// Find the differences between two texts.
-    /// @param before Old string to be diffed.
-    /// @param after New string to be diffed.
-    /// @param checklines Speedup flag.  If false, then don't run a
-    ///     line-level diff first to identify the changed areas.
-    ///     If true, then run a faster slightly less optimal diff.
-    /// @return List of Diff objects.
     pub(crate) fn diff(
         &self,
         before: &[Unit],
@@ -216,15 +205,6 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         Ok(diffs)
     }
 
-    /// Find the differences between two texts.  Assumes that the texts do not
-    /// have any common prefix or suffix.
-    /// @param before Old string to be diffed.
-    /// @param after New string to be diffed.
-    /// @param checklines Speedup flag.  If false, then don't run a
-    ///     line-level diff first to identify the changed areas.
-    ///     If true, then run a faster slightly less optimal diff.
-    /// @param deadline Time when the diff should be complete by.
-    /// @return List of Diff objects.
     fn diff_compute(
         &self,
         before: &[Unit],
@@ -335,14 +315,6 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         self.diff_bisect(before, after, deadline)
     }
 
-    /// Do the two texts share a Substring which is at least half the length of
-    /// the longer text?
-    /// This speedup can produce non-minimal diffs.
-    /// @param before First string.
-    /// @param after Second string.
-    /// @return Five element String array, containing the prefix of text1, the
-    ///     suffix of text1, the prefix of text2, the suffix of text2 and the
-    ///     common middle.  Or null if there was no match.
     fn diff_half_match(
         &self,
         before: &[Unit],
@@ -403,14 +375,6 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         }
     }
 
-    /// Does a Substring of shorttext exist within longtext such that the
-    /// Substring is at least half the length of longtext?
-    /// @param longtext Longer string.
-    /// @param shorttext Shorter string.
-    /// @param i Start index of quarter length Substring within longtext.
-    /// @return Five element string array, containing the prefix of longtext, the
-    ///     suffix of longtext, the prefix of shorttext, the suffix of shorttext
-    ///     and the common middle.  Or null if there was no match.
     fn diff_half_match_internal(
         &self,
         long_text: &[Unit],
@@ -465,13 +429,6 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         }
     }
 
-    /// Find the 'middle snake' of a diff, split the problem in two
-    /// and return the recursively constructed diff.
-    /// See Myers 1986 paper: An O(ND) Difference Algorithm and Its Variations.
-    /// @param before Old string to be diffed.
-    /// @param after New string to be diffed.
-    /// @param deadline Time at which to bail if not yet complete.
-    /// @return List of Diff objects.
     fn diff_bisect(
         &self,
         before: &[Unit],
@@ -611,14 +568,6 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         ])
     }
 
-    /// Given the location of the 'middle snake', split the diff in two parts
-    /// and recurse.
-    /// @param text1 Old string to be diffed.
-    /// @param text2 New string to be diffed.
-    /// @param x Index of split point in text1.
-    /// @param y Index of split point in text2.
-    /// @param deadline Time at which to bail if not yet complete.
-    /// @return LinkedList of Diff objects.
     fn diff_bisect_split(
         &self,
         text1: &[Unit],
@@ -641,13 +590,6 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         Ok(diffs)
     }
 
-    /// Do a quick line-level diff on both strings, then rediff the parts for
-    /// greater accuracy.
-    /// This speedup can produce non-minimal diffs.
-    /// @param text1 Old string to be diffed.
-    /// @param text2 New string to be diffed.
-    /// @param deadline Time when the diff should be complete by.
-    /// @return List of Diff objects.
     fn diff_line_mode(
         &self,
         text1_in: &[Unit],
@@ -747,13 +689,6 @@ pub(crate) struct LinesToCharsResult<Unit: DiffUnit> {
 }
 // `deinit` → Drop handles all fields automatically.
 
-/// Split two texts into a list of strings.  Reduce the texts to a string of
-/// hashes where each Unicode character represents one line.
-/// @param text1 First string.
-/// @param text2 Second string.
-/// @return Three element Object array, containing the encoded text1, the
-///     encoded text2 and the List of unique strings.  The zeroth element
-///     of the List of unique strings is intentionally blank.
 pub(crate) fn diff_lines_to_chars<Unit: DiffUnit>(
     text1: &[Unit],
     text2: &[Unit],
@@ -779,13 +714,6 @@ pub(crate) fn diff_lines_to_chars<Unit: DiffUnit>(
     })
 }
 
-/// Split a text into a list of strings.  Reduce the texts to a string of
-/// hashes where each Unicode character represents one line.
-/// @param text String to encode.
-/// @param lineArray List of unique strings.
-/// @param lineHash Map of strings to indices.
-/// @param maxLines Maximum length of lineArray.
-/// @return Encoded string.
 fn diff_lines_to_chars_munge<Unit: DiffUnit>(
     text: &[Unit],
     line_array: &mut Vec<*const [Unit]>,
@@ -834,10 +762,6 @@ fn diff_lines_to_chars_munge<Unit: DiffUnit>(
     Ok(chars.into_boxed_slice())
 }
 
-/// Rehydrate the text in a diff from a string of line hashes to real lines
-/// of text.
-/// @param diffs List of Diff objects.
-/// @param lineArray List of unique strings.
 pub(crate) fn diff_chars_to_lines<Unit: DiffUnit>(
     char_diffs: &DiffList<usize>,
     line_array: &[*const [Unit]],
@@ -1115,12 +1039,6 @@ pub(crate) fn diff_cleanup_semantic<Unit: DiffUnit>(
     }
     diff_cleanup_semantic_lossless(diffs)?;
 
-    // Find any overlaps between deletions and insertions.
-    // e.g: <del>abcxxx</del><ins>xxxdef</ins>
-    //   -> <del>abc</del>xxx<ins>def</ins>
-    // e.g: <del>xxxabc</del><ins>defxxx</ins>
-    //   -> <ins>def</ins>xxx<del>abc</del>
-    // Only extract an overlap if it is as big as the edit ahead or behind it.
     pointer = 1;
     while usize::try_from(pointer).unwrap() < diffs.len() {
         let p = usize::try_from(pointer).unwrap();
@@ -1284,12 +1202,6 @@ pub(crate) fn diff_cleanup_semantic_lossless<Unit: DiffUnit>(
     Ok(())
 }
 
-/// Given two strings, compute a score representing whether the internal
-/// boundary falls on logical boundaries.
-/// Scores range from 6 (best) to 0 (worst).
-/// @param one First string.
-/// @param two Second string.
-/// @return The score.
 fn diff_cleanup_semantic_score<Unit: DiffUnit>(one: &[Unit], two: &[Unit]) -> usize {
     if one.is_empty() || two.is_empty() {
         // Edges are the best.
@@ -1304,11 +1216,6 @@ fn diff_cleanup_semantic_score<Unit: DiffUnit>(one: &[Unit], two: &[Unit]) -> us
     let one: &[u8] = bytemuck::cast_slice::<Unit, u8>(one);
     let two: &[u8] = bytemuck::cast_slice::<Unit, u8>(two);
 
-    // Each port of this function behaves slightly differently due to
-    // subtle differences in each language's definition of things like
-    // 'whitespace'.  Since this function's purpose is largely cosmetic,
-    // the choice has been made to use each language's native features
-    // rather than force total conformity.
     let char1 = one[one.len() - 1];
     let char2 = two[0];
     let non_alpha_numeric1 = !char1.is_ascii_alphanumeric();
@@ -1347,11 +1254,6 @@ fn diff_cleanup_semantic_score<Unit: DiffUnit>(one: &[Unit], two: &[Unit]) -> us
     }
 }
 
-/// Determine if the suffix of one string is the prefix of another.
-/// @param text1 First string.
-/// @param text2 Second string.
-/// @return The number of characters common to the end of the first
-///     string and the start of the second string.
 fn diff_common_overlap<Unit: DiffUnit>(text1_in: &[Unit], text2_in: &[Unit]) -> usize {
     let mut text1 = text1_in;
     let mut text2 = text2_in;
@@ -1505,15 +1407,6 @@ mod tests {
         ); // Unicode
     }
 
-    // TODO(port): the Zig source has ~1400 lines of additional tests for
-    // diffHalfMatch, diffLinesToChars, diffCharsToLines, diffCleanupMerge,
-    // diffCleanupSemanticLossless, rebuildtexts, diffBisect, diff,
-    // diffLineMode, diffCleanupSemantic, diffCleanupEfficiency. They were
-    // wrapped in `checkAllAllocationFailures` (Zig OOM-injection harness)
-    // which has no Rust equivalent (global allocator aborts on OOM). Port
-    // the assertions directly; the test data is preserved in the
-    // .zig source.
-
     fn rebuildtexts(diffs: &DiffList<u8>) -> [Box<[u8]>; 2] {
         let mut text: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
         for my_diff in diffs.iter() {
@@ -1591,11 +1484,6 @@ mod tests {
             diffs
         );
     }
-
-    // TODO(port): `checkAllAllocationFailures` / `CheckAllAllocationFailuresTuples`
-    // are Zig comptime-reflection helpers wrapping `std.testing.checkAllAllocationFailures`.
-    // Rust's global allocator aborts on OOM; there is no analogous fallible-alloc
-    // injection harness in this codebase. Dropped.
 }
 
 // ported from: src/test_runner/diff/diff_match_patch.zig

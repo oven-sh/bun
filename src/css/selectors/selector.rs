@@ -19,11 +19,6 @@ pub use parser::PseudoElement;
 pub use parser::Selector;
 pub use parser::SelectorList;
 
-/// Our implementation of the `SelectorImpl` interface — the trait-based
-/// `impl_::Selectors` marker lives in the hub (`super::impl_`) so the
-/// parser↔selector cycle has a single anchor. This module is the literal
-/// Zig-shaped namespace (`selector.impl.Selectors.SelectorImpl.*` type
-/// aliases) kept for diff parity with `selector.zig`.
 pub use super::impl_;
 // TODO(port): `impl` is a Rust keyword; using raw identifier `r#impl` for module name parity.
 pub mod r#impl {
@@ -546,12 +541,6 @@ fn is_selector_unused(
     for component in selector.components.iter() {
         match component {
             Component::Class(ident) | Component::Id(ident) => {
-                // PORT NOTE: `IdentOrRef::as_original_string` is
-                // ``-gated (blocked_on bun_ast::symbol::List::at
-                // + Symbol.original_name). Inline the ident arm; the ref arm
-                // (CSS-modules symbol-table lookup) is unreachable until
-                // `Parser::add_symbol_for_name` un-gates (see
-                // `SelectorParser::new_local_identifier`).
                 let actual_ident: &[u8] = match (*ident).as_ident() {
                     // SAFETY: arena-owned slice (`'static` placeholder for the arena lifetime).
                     Some(i) => unsafe { crate::arena_str(i.v) },
@@ -602,11 +591,6 @@ fn is_selector_unused(
     false
 }
 
-/// The serialization module ported from lightningcss.
-///
-/// Note that we have two serialization modules, one from lightningcss and one from servo.
-///
-/// This is because it actually uses both implementations. This is confusing.
 pub mod serialize {
     use super::*;
 
@@ -650,17 +634,6 @@ pub mod serialize {
             bun_core::scoped_log!(CSS_SELECTORS, "\n");
         }
 
-        // Compound selectors invert the order of their contents, so we need to
-        // undo that during serialization.
-        //
-        // This two-iterator strategy involves walking over the selector twice.
-        // We could do something more clever, but selector serialization probably
-        // isn't hot enough to justify it, and the stringification likely
-        // dominates anyway.
-        //
-        // NB: A parse-order iterator is a Rev<>, which doesn't expose as_slice(),
-        // which we need for |split|. So we split by combinators on a match-order
-        // sequence and then reverse.
         let mut combinators = CombinatorIter {
             sel: selector,
             i: 0,
@@ -695,16 +668,6 @@ pub mod serialize {
             let first_index: usize = if has_leading_nesting { 1 } else { 0 };
             first = false;
 
-            // 1. If there is only one simple selector in the compound selectors
-            //    which is a universal selector, append the result of
-            //    serializing the universal selector to s.
-            //
-            // Check if `!compound{}` first--this can happen if we have
-            // something like `... > ::before`, because we store `>` and `::`
-            // both as combinators internally.
-            //
-            // If we are in this case, after we have serialized the universal
-            // selector, we skip Step 2 and continue with the algorithm.
             let (can_elide_namespace, first_non_namespace) = if first_index >= compound.len() {
                 (true, first_index)
             } else {
@@ -719,13 +682,6 @@ pub mod serialize {
             let mut perform_step_2 = true;
             let next_combinator = combinators.next();
             if first_non_namespace == compound.len() - 1 {
-                // We have to be careful here, because if there is a
-                // pseudo element "combinator" there isn't really just
-                // the one simple selector. Technically this compound
-                // selector contains the pseudo element selector as well
-                // -- Combinator::PseudoElement, just like
-                // Combinator::SlotAssignment, don't exist in the
-                // spec.
                 if next_combinator == Some(parser::Combinator::PseudoElement)
                     && compound[first_non_namespace].as_combinator()
                         == Some(parser::Combinator::SlotAssignment)
@@ -760,15 +716,6 @@ pub mod serialize {
                 }
             }
 
-            // 2. Otherwise, for each simple selector in the compound selectors
-            //    that is not a universal selector of which the namespace prefix
-            //    maps to a namespace that is not the default namespace
-            //    serialize the simple selector and append the result to s.
-            //
-            // See https://github.com/w3c/csswg-drafts/issues/1606, which is
-            // proposing to change this to match up with the behavior asserted
-            // in cssom/serialize-namespaced-type-selectors.html, which the
-            // following code tries to match.
             if perform_step_2 {
                 let iter = compound;
                 let mut i: usize = 0;
@@ -805,10 +752,6 @@ pub mod serialize {
                 if i < compound.len() {
                     for simple in &iter[i..] {
                         if matches!(simple, Component::ExplicitUniversalType) {
-                            // Can't have a namespace followed by a pseudo-element
-                            // selector followed by a universal selector in the same
-                            // compound selector, so we don't have to worry about the
-                            // real namespace being in a different `compound`.
                             if can_elide_namespace {
                                 continue;
                             }
@@ -818,22 +761,11 @@ pub mod serialize {
                 }
             }
 
-            // 3. If this is not the last part of the chain of the selector
-            //    append a single SPACE (U+0020), followed by the combinator
-            //    ">", "+", "~", ">>", "||", as appropriate, followed by another
-            //    single SPACE (U+0020) if the combinator was not whitespace, to
-            //    s.
             if let Some(c) = next_combinator {
                 serialize_combinator(c, dest)?;
             } else {
                 combinators_exhausted = true;
             }
-
-            // 4. If this is the last part of the chain of the selector and
-            //    there is a pseudo-element, append "::" followed by the name of
-            //    the pseudo-element, to s.
-            //
-            // (we handle this above)
         }
         Ok(())
     }
@@ -978,13 +910,6 @@ pub mod serialize {
                 serialize_selector(selector, dest, ctx, false)?;
                 dest.write_char(b')')?;
             }
-            // Component::Nth(nth_data) => {
-            //     nth_data.write_start(dest, nth_data.is_function())?;
-            //     if nth_data.is_function() {
-            //         nth_data.write_affine(dest)?;
-            //         dest.write_char(b')')?;
-            //     }
-            // }
             _ => {
                 tocss_servo::to_css_component(component, dest)?;
             }
@@ -1231,22 +1156,6 @@ pub mod serialize {
             d.write_str(val)
         }
 
-        // switch (pseudo_element.*) {
-        //     // CSS2 pseudo elements support a single colon syntax in addition
-        //     // to the more correct double colon for other pseudo elements.
-        //     // We use that here because it's supported everywhere and is shorter.
-        //     .after => try dest.writeStr(":after"),
-        //     .before => try dest.writeStr(":before"),
-        //     .marker => try dest.writeStr(":first-letter"),
-        //     .selection => |prefix| Helpers.writePrefixed(dest, prefix, "selection"),
-        //     .cue => dest.writeStr("::cue"),
-        //     .cue_region => dest.writeStr("::cue-region"),
-        //     .cue_function => |v| {
-        //         dest.writeStr("::cue(");
-        //         try serializeSelector(v.selector, dest, context, false);
-        //         try dest.writeChar(')');
-        //     },
-        // }
         match pseudo_element {
             // CSS2 pseudo elements support a single colon syntax in addition
             // to the more correct double colon for other pseudo elements.
@@ -1339,18 +1248,6 @@ pub mod serialize {
         Ok(())
     }
 
-    /// Maximum number of parent-selector substitutions allowed while
-    /// serializing a single rule prelude with compiled nesting.
-    ///
-    /// When the targets don't support CSS nesting, every `&` is replaced with
-    /// the parent selector, which may itself contain `&` referring to the
-    /// grandparent, and so on. A selector with multiple `&` references per
-    /// nesting level therefore expands to (references per level)^depth copies
-    /// of its ancestors, so a few KB of deeply nested input can print
-    /// gigabytes of output. Real-world nesting needs at most a handful of
-    /// substitutions per rule; anything past this limit is a runaway
-    /// expansion, so bail out with an error instead of allocating without
-    /// bound.
     const MAX_NESTING_EXPANSIONS: u32 = 65_536;
 
     pub(crate) fn serialize_nesting(
@@ -1366,10 +1263,6 @@ pub mod serialize {
                     None,
                 );
             }
-            // If there's only one simple selector, just serialize it directly.
-            // Otherwise, use an :is() pseudo class.
-            // Type selectors are only allowed at the start of a compound selector,
-            // so use :is() if that is not the case.
             if ctx.selectors.v.len() == 1
                 && (first
                     || (!has_type_selector(ctx.selectors.v.at(0))
@@ -1420,17 +1313,6 @@ pub mod tocss_servo {
         selector: &parser::Selector,
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
-        // Compound selectors invert the order of their contents, so we need to
-        // undo that during serialization.
-        //
-        // This two-iterator strategy involves walking over the selector twice.
-        // We could do something more clever, but selector serialization probably
-        // isn't hot enough to justify it, and the stringification likely
-        // dominates anyway.
-        //
-        // NB: A parse-order iterator is a Rev<>, which doesn't expose as_slice(),
-        // which we need for |split|. So we split by combinators on a match-order
-        // sequence and then reverse.
         let mut combinators = CombinatorIter {
             sel: selector,
             i: 0,
@@ -1449,16 +1331,6 @@ pub mod tocss_servo {
                 continue;
             }
 
-            // 1. If there is only one simple selector in the compound selectors
-            //    which is a universal selector, append the result of
-            //    serializing the universal selector to s.
-            //
-            // Check if `!compound{}` first--this can happen if we have
-            // something like `... > ::before`, because we store `>` and `::`
-            // both as combinators internally.
-            //
-            // If we are in this case, after we have serialized the universal
-            // selector, we skip Step 2 and continue with the algorithm.
             let (can_elide_namespace, first_non_namespace): (bool, usize) = if compound.is_empty() {
                 (true, 0)
             } else {
@@ -1473,13 +1345,6 @@ pub mod tocss_servo {
             let mut perform_step_2 = true;
             let next_combinator = combinators.next();
             if first_non_namespace == compound.len() - 1 {
-                // We have to be careful here, because if there is a
-                // pseudo element "combinator" there isn't really just
-                // the one simple selector. Technically this compound
-                // selector contains the pseudo element selector as well
-                // -- Combinator::PseudoElement, just like
-                // Combinator::SlotAssignment, don't exist in the
-                // spec.
                 if next_combinator == Some(parser::Combinator::PseudoElement)
                     && compound[first_non_namespace].as_combinator()
                         == Some(parser::Combinator::SlotAssignment)
@@ -1501,22 +1366,9 @@ pub mod tocss_servo {
                 }
             }
 
-            // 2. Otherwise, for each simple selector in the compound selectors
-            //    that is not a universal selector of which the namespace prefix
-            //    maps to a namespace that is not the default namespace
-            //    serialize the simple selector and append the result to s.
-            //
-            // See https://github.com/w3c/csswg-drafts/issues/1606, which is
-            // proposing to change this to match up with the behavior asserted
-            // in cssom/serialize-namespaced-type-selectors.html, which the
-            // following code tries to match.
             if perform_step_2 {
                 for simple in compound {
                     if matches!(simple, Component::ExplicitUniversalType) {
-                        // Can't have a namespace followed by a pseudo-element
-                        // selector followed by a universal selector in the same
-                        // compound selector, so we don't have to worry about the
-                        // real namespace being in a different `compound`.
                         if can_elide_namespace {
                             continue;
                         }
@@ -1525,22 +1377,11 @@ pub mod tocss_servo {
                 }
             }
 
-            // 3. If this is not the last part of the chain of the selector
-            //    append a single SPACE (U+0020), followed by the combinator
-            //    ">", "+", "~", ">>", "||", as appropriate, followed by another
-            //    single SPACE (U+0020) if the combinator was not whitespace, to
-            //    s.
             if let Some(c) = next_combinator {
                 to_css_combinator(c, dest)?;
             } else {
                 combinators_exhausted = true;
             }
-
-            // 4. If this is the last part of the chain of the selector and
-            //    there is a pseudo-element, append "::" followed by the name of
-            //    the pseudo-element, to s.
-            //
-            // (we handle this above)
         }
         Ok(())
     }
@@ -1789,13 +1630,6 @@ pub(crate) struct CombinatorIter<'a> {
 }
 
 impl<'a> CombinatorIter<'a> {
-    /// Original source has this iterator defined like so:
-    /// ```rs
-    /// selector
-    ///   .iter_raw_match_order() // just returns an iterator
-    ///   .rev() // reverses the iterator
-    ///   .filter_map(|x| x.as_combinator()) // returns only entries which are combinators
-    /// ```
     pub(crate) fn next(&mut self) -> Option<parser::Combinator> {
         while self.i < self.sel.components.len() {
             let idx = self.sel.components.len() - 1 - self.i;
@@ -1815,37 +1649,6 @@ pub(crate) struct CompoundSelectorIter<'a> {
 }
 
 impl<'a> CompoundSelectorIter<'a> {
-    /// This iterator is basically like doing `selector.components.splitByCombinator()`.
-    ///
-    /// For example:
-    /// ```css
-    /// div > p.class
-    /// ```
-    ///
-    /// The iterator would return:
-    /// ```
-    /// First slice:
-    /// .{
-    ///   .{ .local_name = "div" }
-    /// }
-    ///
-    /// Second slice:
-    /// .{
-    ///   .{ .local_name = "p" },
-    ///   .{ .class = "class" }
-    /// }
-    /// ```
-    ///
-    /// BUT, the selectors are stored in reverse order, so this code needs to split the components backwards.
-    ///
-    /// Original source has this iterator defined like so:
-    /// ```rs
-    /// selector
-    ///  .iter_raw_match_order()
-    ///  .as_slice()
-    ///  .split(|x| x.is_combinator()) // splits the slice into subslices by elements that match over the predicate
-    ///  .rev() // reverse
-    /// ```
     #[inline]
     pub(crate) fn next(&mut self) -> Option<&'a [parser::Component]> {
         // Since we iterating backwards, we convert all indices into "backwards form" by doing `self.sel.components.len() - 1 - i`

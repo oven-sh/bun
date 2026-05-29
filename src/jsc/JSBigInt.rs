@@ -50,12 +50,6 @@ impl BigIntOrderable for i64 {
 
 impl JSBigInt {
     pub fn from_js(value: JSValue) -> Option<&'static JSBigInt> {
-        // Returned pointer (if non-null) points to a GC-owned JSBigInt cell.
-        // Lifetime is tied to GC, not Rust — caller must keep `value` alive
-        // (stack-scanned) for as long as the returned ref is used. `JSBigInt`
-        // is an opaque ZST handle so the deref is the centralised `opaque_ref`
-        // proof.
-        // TODO(port): lifetime — model as `&'a JSBigInt` tied to a stack guard?
         let p = JSC__JSBigInt__fromJS(value);
         (!p.is_null()).then(|| JSBigInt::opaque_ref(p))
     }

@@ -25,14 +25,6 @@ use bun_alloc::AllocError;
 /// "Copy on write" slice. See module docs.
 pub type CowSlice<T> = CowSliceZ<T, false>;
 
-/// "Copy on write" slice with optional sentinel termination. See module docs.
-///
-/// `Z = true` means the backing storage has a sentinel element at `[len]`
-/// (the sentinel value is assumed to be the zero value of `T`).
-// TODO(port): Zig's `comptime sentinel: ?T` allowed an arbitrary sentinel value;
-// Rust const generics cannot express `Option<T>` for generic `T`, so this port
-// uses a `bool` and assumes sentinel == 0 when `Z`. Revisit if a non-zero
-// sentinel is ever needed.
 pub struct CowSliceZ<T: 'static, const Z: bool> {
     /// Pointer to the underlying data. Do not access this directly.
     ///
@@ -90,11 +82,6 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
     // case ever appears.
     pub const EMPTY: Self = Self::init_static(&[]);
 
-    /// Debug-only accessor for the heap-allocated borrow-tracking data.
-    ///
-    /// Single `unsafe` deref site for the set-once `Option<NonNull<DebugData>>`
-    /// field; `borrow` / `into_owned` / `Drop` go through this instead of
-    /// repeating the raw deref at each call site.
     #[cfg(debug_assertions)]
     #[inline]
     fn debug_data(&self) -> Option<&DebugData> {
@@ -106,15 +93,6 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         self.debug.map(|d| unsafe { d.as_ref() })
     }
 
-    // TODO(port): Zig exposed `pub const Slice` / `SliceMut` associated type
-    // aliases that switched on `sentinel` (`[:z]const T` vs `[]const T`). Rust
-    // has no inherent associated type aliases; callers use `&[T]` / `&mut [T]`
-    // directly. For `Z = true` the NUL is at `slice()[len]` in backing storage.
-
-    /// Create a new Cow that owns its allocation.
-    ///
-    /// `data` is transferred into the returned string, and must be freed with
-    /// `Drop` when the string and its borrows are done being used.
     pub fn init_owned(data: Box<[T]>) -> Self {
         // PORT NOTE: Zig asserted ownership at runtime via a debug allocator
         // wrapper. In Rust the `Box<[T]>` type already proves unique ownership.
@@ -133,12 +111,6 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
     where
         T: Clone + Default,
     {
-        // TODO(port): `allocator.dupeZ(T, data)` for `Z = true` — must allocate
-        // len+1 with a trailing zero sentinel. `Vec::into_boxed_slice` shrinks
-        // capacity to len, so the sentinel cannot live in spare capacity; the
-        // Box must hold len+1 and `Flags::len`/`Drop`/`take_slice` must be
-        // Z-aware (free len+1, expose len). Stubbed to plain dupe for now —
-        // sentinel is NOT preserved.
         let bytes: Box<[T]> = Box::<[T]>::from(data);
         Ok(Self::init_owned(bytes))
     }
@@ -173,10 +145,6 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         self.flags.len()
     }
 
-    /// Mutably borrow this `Cow`'s slice.
-    ///
-    /// Borrowed `Cow`s will be automatically converted to owned, incurring
-    /// an allocation.
     pub fn slice_mut(&mut self) -> Result<&mut [T], AllocError>
     where
         T: Clone + Default,
@@ -199,12 +167,6 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         unsafe { core::slice::from_raw_parts_mut(self.ptr, self.flags.len()) }
     }
 
-    /// Take ownership over this string's allocation. `self` is left in a
-    /// valid, empty state.
-    ///
-    /// Caller owns the returned memory and must deinitialize it when done.
-    /// `self` may be re-used. An allocation will be incurred if and only if
-    /// `self` is not owned.
     pub fn take_slice(&mut self) -> Result<Box<[T]>, AllocError>
     where
         T: Clone + Default,
@@ -221,19 +183,11 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
                 drop(unsafe { bun_core::heap::take(d.as_ptr()) });
             }
         }
-        // Zig: `defer str.* = Self.empty` — a *bitwise* overwrite. In Rust,
-        // `*self = Self::EMPTY` would run `Drop` on the old value first and
-        // free the very `ptr[..len]` allocation we are about to hand back.
-        // `ManuallyDrop::new(mem::replace(..))` resets `self` without dropping.
         let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Self::EMPTY));
         // SAFETY: owned ⇒ `ptr[..len]` was produced by `heap::alloc`.
         Ok(unsafe { bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(ptr, len)) })
     }
 
-    /// Returns a new string that borrows this string's data.
-    ///
-    /// The borrowed string should be dropped so that debug assertions
-    /// that perform `borrows` checks are performed.
     pub fn borrow(&self) -> Self {
         #[cfg(debug_assertions)]
         if let Some(debug) = self.debug_data() {
@@ -248,14 +202,6 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         }
     }
 
-    /// Returns a new string that borrows a subslice of this string.
-    ///
-    /// This is the Cow-equivalent of `&str[start..end]`.
-    ///
-    /// When `end` is `None`, the subslice will end at the end of the string.
-    /// `end` must be less than or equal to `self.len`, and greater than or
-    /// equal to `start`. The borrowed string should be dropped so that debug
-    /// assertions get performed.
     pub fn borrow_subslice(&self, start: usize, end: Option<usize>) -> Self {
         let end_ = end.unwrap_or(self.flags.len());
         // TODO(port): Zig's sentinel-aware `str.ptr[start..end_ :s]` asserted
@@ -323,10 +269,6 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
 }
 
 impl<T: 'static, const Z: bool> Drop for CowSliceZ<T, Z> {
-    /// Free this `Cow`'s allocation if it is owned.
-    ///
-    /// In debug builds, dropping borrowed strings performs debug
-    /// checks. In release builds it is a no-op.
     fn drop(&mut self) {
         #[cfg(debug_assertions)]
         if let Some(dbg) = self.debug_data() {
@@ -370,10 +312,6 @@ impl<const Z: bool> core::fmt::Display for CowSliceZ<u8, Z> {
 
 #[cfg(debug_assertions)]
 struct DebugData {
-    /// Guards `borrows` (number of active borrows).
-    // PORT NOTE: Zig used `bun.Mutex` with `borrows` as a separate field;
-    // folded into the mutex payload here. `bun_core::Mutex` (poison-free
-    // `std::sync` wrapper) is used because `bun_ptr` sits below `bun_threading`.
     mutex: bun_core::Mutex<usize>,
 }
 

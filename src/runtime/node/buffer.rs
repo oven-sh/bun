@@ -29,10 +29,6 @@ mod _impl {
             // SAFETY: caller guarantees buf_ptr[0..fill_length] is a valid writable buffer.
             let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr, fill_length) };
 
-            // Per Node docs, `'ascii'` on encode is equivalent to `'latin1'` (verbatim
-            // byte copy, no 7-bit masking). The shared write_u8::<Ascii> helper masks
-            // because the ascii decode path reuses it; fold ascii → latin1 here so
-            // Buffer.fill(str, 'ascii') / Buffer.alloc(n, str, 'ascii') match Node.
             let encoding = if matches!(encoding, Encoding::Ascii) {
                 Encoding::Latin1
             } else {
@@ -121,10 +117,6 @@ mod _impl {
                 _ => {}
             }
 
-            // PORT NOTE: reshaped for borrowck — Zig grew two slices (`contents`, `buf`) into the
-            // same underlying buffer and mutated `contents.len` in place. Here we track offsets
-            // and use copy_within (src/dst share `buf`).
-            // PERF(port): was memcpy (non-overlapping) — profile if memmove-vs-memcpy matters here.
             let mut contents_len = written;
             let mut buf_offset = written;
 

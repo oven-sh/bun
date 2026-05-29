@@ -9,10 +9,6 @@ use bun_core::strings;
 use enum_map::Enum;
 use phf;
 
-/// The max integer value in this enum can only be appended to.
-/// It has dependencies in several places:
-/// - bun-native-bundler-plugin-api/bundler_plugin.h
-/// - src/jsc/bindings/headers-handwritten.h
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Enum, strum::IntoStaticStr)]
 // Zig field names are lower_snake — `@tagName` is exposed to JS (HTMLImportManifest
@@ -42,11 +38,6 @@ pub enum Loader {
     Md = 20,
 }
 
-// Crosses FFI as `uint8_t default_loader` / `uint8_t loader` in
-// `OnBeforeParseArguments` / `OnBeforeParseResult` (`bundler_plugin.h`); lock
-// the discriminant width and the values native plugins observe. NB: the C
-// header's `BUN_LOADER_TOML = 7` etc. predate `Jsonc`'s insertion at 7 and are
-// known-stale — Zig `options.zig` is the source of truth, which Rust matches.
 bun_core::assert_ffi_discr!(
     Loader, u8;
     Jsx = 0, Js = 1, Ts = 2, Tsx = 3, Css = 4, File = 5, Json = 6,
@@ -246,10 +237,6 @@ impl Loader {
         matches!(self, Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx)
     }
 
-    // PORT NOTE: spelling-aliases for the canonical `is_typescript` /
-    // `is_javascript_like*` (acronym-collapsing rule). Hoisted from
-    // `bun_bundler::options::LoaderExt` so cross-crate callers (bun_jsc,
-    // bun_runtime) resolve them as inherent methods without a trait import.
     #[inline]
     pub fn is_type_script(self) -> bool {
         self.is_typescript()
@@ -312,10 +299,6 @@ pub enum SideEffects {
     /// This file was loaded using a data-oriented loader (e.g. "text") that is
     /// known to not have side effects.
     NoSideEffectsPureData,
-    // /// Same as above but it came from a plugin. We don't want to warn about
-    // /// unused imports to these files since running the plugin is a side effect.
-    // /// Removing the import would not call the plugin which is observable.
-    // NoSideEffectsPureDataFromPlugin,
 }
 
 // ported from: src/options_types/BundleEnums.zig (Loader, SideEffects)

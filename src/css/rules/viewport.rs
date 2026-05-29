@@ -5,10 +5,6 @@ use crate::{DeclarationBlock, PrintErr, Printer, VendorPrefix};
 pub struct ViewportRule {
     /// The vendor prefix for this rule, e.g. `@-ms-viewport`.
     pub vendor_prefix: VendorPrefix,
-    /// The declarations within the `@viewport` rule.
-    // PORT NOTE: `DeclarationBlock<'bump>` borrows the parser arena; lifetime
-    // erased to `'static` here per the rules/mod.rs `CssRule<R>` PORT NOTE
-    // (the `'bump` arena lifetime is re-threaded crate-wide in one pass).
     pub declarations: DeclarationBlock<'static>,
     /// The location of the rule in the source file.
     pub loc: Location,

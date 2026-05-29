@@ -25,10 +25,6 @@ impl JSMap {
         crate::cpp::JSC__JSMap__set(self, global, key, value)
     }
 
-    /// Retrieve a value from this JS Map object.
-    ///
-    /// Note this shares semantics with the JS `Map.prototype.get` method, and
-    /// will return `JSValue::UNDEFINED` if a value is not found.
     #[track_caller]
     pub fn get(&mut self, global: &JSGlobalObject, key: JSValue) -> JsResult<JSValue> {
         crate::cpp::JSC__JSMap__get(self, global, key)
@@ -58,13 +54,6 @@ impl JSMap {
         crate::cpp::JSC__JSMap__size(self, global)
     }
 
-    /// Attempt to convert a `JSValue` to a `*JSMap`.
-    ///
-    /// Returns `None` if the value is not a Map.
-    ///
-    /// Returns a raw `NonNull<JSMap>` (mirrors Zig's `?*JSMap`). The pointee is a
-    /// GC-heap cell; callers must dereference unsafely at use-site and ensure the
-    /// underlying `JSValue` is kept alive across GC.
     pub fn from_js(value: JSValue) -> Option<NonNull<JSMap>> {
         // PORT NOTE: Zig used `jsTypeLoose() == .JSMap`; the Rust stub surface
         // exposes `is_cell()` + `js_type()` (which together are equivalent).

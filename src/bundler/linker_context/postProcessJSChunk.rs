@@ -27,11 +27,6 @@ use bun_sourcemap as SourceMap;
 
 use crate::IndexInt;
 
-/// Move the printed code out of a `PrintResult`. Mirrors Zig
-/// `j.push(result.code, worker.allocator)` where the joiner takes ownership of
-/// the slice — the Rust `PrintResultSuccess.code` is a `Box<[u8]>` that would
-/// otherwise drop at end of `post_process_js_chunk` and leave the deferred
-/// `IntermediateOutput::Joiner` path holding freed memory.
 fn print_result_take_code(r: &mut PrintResult) -> Box<[u8]> {
     match r {
         PrintResult::Result(ok) => core::mem::take(&mut ok.code),
@@ -115,11 +110,6 @@ pub fn post_process_js_chunk(
     let worker_arena: &Arena = worker.arena();
 
     {
-        // PORT NOTE: Zig builds one `print_options` and passes it by-value twice.
-        // Rust `Options` is not `Copy` (holds `&mut ModuleInfo`), and a closure
-        // taking `&mut ModuleInfo` can't express "output lifetime = input
-        // lifetime" — so build a base with `module_info: None` and override it
-        // via FRU at each call site.
         let make_print_options = || js_printer::Options {
             bundling: true,
             indent: Default::default(),
@@ -160,11 +150,6 @@ pub fn post_process_js_chunk(
             });
         }
 
-        // PORT NOTE: `MultiArrayList::get` returns `ManuallyDrop<BundledAst>` —
-        // the storage retains ownership of every Drop field (`named_imports`,
-        // `parts`, `top_level_symbols_to_parts`, …), so the gathered struct
-        // must NOT run Drop. `to_ast` consumes by value, so unwrap, convert,
-        // and re-wrap the result (which carries the same heap pointers).
         let ast_view = core::mem::ManuallyDrop::new(
             core::mem::ManuallyDrop::into_inner(
                 c.graph.ast.get(chunk.entry_point.source_index() as usize),
@@ -246,11 +231,6 @@ pub fn post_process_js_chunk(
             }
         }
 
-        // 1b. Check if any source in this chunk uses import.meta. The per-part
-        // parallel printer does not have module_info, so the printer cannot set
-        // this flag during per-part printing. We derive it from the AST instead.
-        // Note: the runtime source (index 0) also uses import.meta (e.g.
-        // `import.meta.require`), so we must not skip it.
         {
             let all_ast_flags = c.graph.ast.items_flags();
             for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
@@ -263,13 +243,6 @@ pub fn post_process_js_chunk(
             }
         }
 
-        // 1c. Same idea for top-level await. The new JSC module loader decides
-        // sync vs async evaluation from JSModuleRecord::hasTLA(), which we set
-        // from this bit when constructing the record from cached module_info
-        // (BunAnalyzeTranspiledModule). Without it, a bytecode-compiled module
-        // that contains TLA gets evaluated on the sync path and the suspended
-        // generator is dropped — the entry promise resolves immediately and the
-        // process exits before the awaited value lands.
         {
             let tla_keywords = c.parse_graph().ast.items_top_level_await_keyword();
             let wraps = c.graph.meta.items_flags();
@@ -288,12 +261,6 @@ pub fn post_process_js_chunk(
             }
         }
 
-        // 2. Collect truly-external imports from the original AST. Bundled imports
-        // (where source_index is valid) are removed by convertStmtsForChunk and
-        // re-created as cross-chunk imports — those are already captured by the
-        // printer when it prints cross_chunk_prefix_stmts above. Only truly-external
-        // imports (node built-ins, etc.) survive as s_import in per-file parts and
-        // need recording here.
         let all_parts = c.graph.ast.items_parts();
         let all_flags = c.graph.meta.items_flags();
         let all_import_records = c.graph.ast.items_import_records();
@@ -449,10 +416,6 @@ pub fn post_process_js_chunk(
         };
     };
 
-    // Store unserialized ModuleInfo on the chunk. Serialization is deferred to
-    // generateChunksInParallel after final chunk paths are computed, so that
-    // cross-chunk import specifiers (which use unique_key placeholders during
-    // printing) can be resolved to actual paths.
     if let Some(mi) = module_info {
         chunk.content.javascript_mut().module_info = Some(mi);
     }
@@ -602,10 +565,6 @@ pub fn post_process_js_chunk(
     }
 
     {
-        // PORT NOTE: Zig `j.push(code, worker.allocator)` transferred ownership;
-        // `cross_chunk_prefix` is a local that drops at fn exit, but the joiner
-        // may be stashed on `chunk.intermediate_output` and consumed later
-        // (`IntermediateOutput::Joiner` path). Move the Box into the joiner.
         let code = print_result_take_code(&mut cross_chunk_prefix);
         if !code.is_empty() {
             newline_before_comment = true;
@@ -753,10 +712,6 @@ pub fn post_process_js_chunk(
     }
 
     {
-        // PORT NOTE: `entry_point_tail` is a local `CompileResult` whose `code`
-        // is a `Box<[u8]>`; Zig `j.push(tail_code, worker.allocator)` handed
-        // ownership to the joiner. Move it so the deferred-joiner path doesn't
-        // read freed memory after this fn returns.
         let tail_code = entry_point_tail.into_code();
         if !tail_code.is_empty() {
             // Stick the entry point tail at the end of the file. Deliberately don't
@@ -808,11 +763,6 @@ pub fn post_process_js_chunk(
                 line_offset.advance(&quoted);
                 j.push_owned(quoted.into_boxed_slice());
             }
-            // {
-            //     let str = b"\n  react_refresh: ";
-            //     j.push_static(str);
-            //     line_offset.advance(str);
-            // }
             {
                 let str = b"\n});";
                 j.push_static(str);
@@ -914,10 +864,6 @@ fn add_binding_vars_to_module_info(
     }
 }
 
-// PORT NOTE: `js_printer::print` ties bump/Options/import_records/renamer to a
-// single `'a`, and `Renamer<'r, 'src>` is invariant in `'src` — so the caller's
-// renamer lifetime fixes `'a`. All by-ref params that flow into `print` must
-// share that lifetime.
 pub fn generate_entry_point_tail_js<'a>(
     c: &'a mut LinkerContext,
     to_common_js_ref: Ref,
@@ -1019,12 +965,6 @@ pub fn generate_entry_point_tail_js<'a>(
                         let imports_to_bind: &RefImportData =
                             &c.graph.meta.items_imports_to_bind()[source_index as usize];
 
-                        // If the output format is ES6 modules and we're an entry point, generate an
-                        // ES6 export statement containing all exports. Except don't do that if this
-                        // entry point is a CommonJS-style module, since that would generate an ES6
-                        // export statement that's not top-level. Instead, we will export the CommonJS
-                        // exports as a default export later on.
-                        // PERF(port): was arena-backed ArrayList(ClauseItem) — profile if hot.
                         let mut items: Vec<bun_ast::ClauseItem> = Vec::new();
                         let cjs_export_copies =
                             &c.graph.meta.items_cjs_export_copies()[source_index as usize];
@@ -1040,10 +980,6 @@ pub fn generate_entry_point_tail_js<'a>(
 
                             had_default_export = had_default_export || **alias == *b"default";
 
-                            // If this is an export of an import, reference the symbol that the import
-                            // was eventually resolved to. We need to do this because imports have
-                            // already been resolved by this point, so we can't generate a new import
-                            // and have that be resolved later.
                             if let Some(import_data) =
                                 imports_to_bind.get(&resolved_export_data.import_ref)
                             {
@@ -1064,41 +1000,6 @@ pub fn generate_entry_point_tail_js<'a>(
                             } {
                                 let temp_ref = cjs_export_copies[i];
 
-                                // Create both a local variable and an export clause for that variable.
-                                // The local variable is initialized with the initial value of the
-                                // export. This isn't fully correct because it's a "dead" binding and
-                                // doesn't update with the "live" value as it changes. But ES6 modules
-                                // don't have any syntax for bare named getter functions so this is the
-                                // best we can do.
-                                //
-                                // These input files:
-                                //
-                                //   // entry_point.js
-                                //   export {foo} from './cjs-format.js'
-                                //
-                                //   // cjs-format.js
-                                //   Object.defineProperty(exports, 'foo', {
-                                //     enumerable: true,
-                                //     get: () => Math.random(),
-                                //   })
-                                //
-                                // Become this output file:
-                                //
-                                //   // cjs-format.js
-                                //   var require_cjs_format = __commonJS((exports) => {
-                                //     Object.defineProperty(exports, "foo", {
-                                //       enumerable: true,
-                                //       get: () => Math.random()
-                                //     });
-                                //   });
-                                //
-                                //   // entry_point.js
-                                //   var cjs_format = __toESM(require_cjs_format());
-                                //   var export_foo = cjs_format.foo;
-                                //   export {
-                                //     export_foo as foo
-                                //   };
-                                //
                                 stmts.push(Stmt::alloc(
                                     S::Local {
                                         decls: G::DeclList::from_slice(&[G::Decl {
@@ -1130,29 +1031,6 @@ pub fn generate_entry_point_tail_js<'a>(
                                     ..Default::default()
                                 });
                             } else {
-                                // Local identifiers can be exported using an export clause. This is done
-                                // this way instead of leaving the "export" keyword on the local declaration
-                                // itself both because it lets the local identifier be minified and because
-                                // it works transparently for re-exports across files.
-                                //
-                                // These input files:
-                                //
-                                //   // entry_point.js
-                                //   export * from './esm-format.js'
-                                //
-                                //   // esm-format.js
-                                //   export let foo = 123
-                                //
-                                // Become this output file:
-                                //
-                                //   // esm-format.js
-                                //   let foo = 123;
-                                //
-                                //   // entry_point.js
-                                //   export {
-                                //     foo
-                                //   };
-                                //
                                 items.push(bun_ast::ClauseItem {
                                     name: bun_ast::LocRef {
                                         ref_: Some(resolved_export_data.import_ref),
@@ -1165,10 +1043,6 @@ pub fn generate_entry_point_tail_js<'a>(
                             }
                         }
 
-                        // PORT NOTE: arena-owned `*mut [ClauseItem]` — move the
-                        // collected Vec into the linker arena (Zig used
-                        // `c.arena().alloc`). The arena slice is also iterated
-                        // below for the synthetic-default-export path.
                         let items: &mut [bun_ast::ClauseItem] = arena.alloc_slice_fill_iter(items);
                         stmts.push(Stmt::alloc(
                             S::ExportClause {
@@ -1313,20 +1187,9 @@ pub fn generate_entry_point_tail_js<'a>(
                 }
                 _ => {}
             }
-
-            // TODO:
-            // If we are generating CommonJS for node, encode the known export names in
-            // a form that node can understand them. This relies on the specific behavior
-            // of this parser, which the node project uses to detect named exports in
-            // CommonJS files: https://github.com/guybedford/cjs-module-lexer. Think of
-            // this code as an annotation for that parser.
         }
     }
 
-    // Add generated local declarations from entry point tail to module_info.
-    // This captures vars like `var export_foo = cjs.foo` for CJS export copies.
-    // PORT NOTE: reshaped for borrowck — reborrow via as_deref_mut so module_info
-    // remains usable for print_options below.
     if let Some(mi) = module_info.as_mut() {
         let mi: &mut ModuleInfo = &mut **mi;
         for stmt in stmts.iter() {

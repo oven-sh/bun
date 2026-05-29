@@ -268,10 +268,6 @@ pub mod prompt {
 
         // 4. Set default to the result of optionally truncating default.
 
-        // 5. Show message to the user, treating U+000A LF as a line break,
-        //    and ask the user to either respond with a string value or
-        //    abort. The response must be defaulted to the value given by
-        //    default.
         if output
             .write_all(if has_message {
                 b" " as &[u8]
@@ -350,10 +346,6 @@ pub mod prompt {
             input.push(second);
         }
 
-        // All of this code basically just first tries to load the input into a
-        // buffer of size 2048. If that is too small, then increase the buffer
-        // size to 4096. If that is too small, then just dynamically allocate
-        // the rest.
         if let Err(e) = read_until_delimiter_array_list_append_assume_capacity(
             &mut *reader,
             &mut input,

@@ -86,10 +86,6 @@ pub fn generate(
 
     let uses_tailwind = has_tailwind_in_dependencies || needs_to_inject_tailwind;
 
-    // We are JSX-only for now.
-    // The versions of react & react-dom need to match up, and it's SO easy to mess that up.
-    // So we have to be a little opinionated here.
-    // Add react-dom if react is used
     let _ = result.dependencies.swap_remove(b"react");
     let _ = result.dependencies.swap_remove(b"react-dom");
     result.dependencies.insert(b"react-dom@19")?;
@@ -267,12 +263,6 @@ pub fn generate_files(
         normalized_name = &normalized_name[0..normalized_name.len() - extension.len()];
     }
 
-    // Generate files based on template type
-    // PORT NOTE: Zig used `switch (tag) { inline else => |active| @field(Self, @tagName(active)) }`
-    // to comptime-dispatch to the per-template `files` const and stack-size the
-    // `filenames`/`created_files` arrays. Rust cannot reflect on decl names, so
-    // we route through `Tag::files()` and use heap Vecs sized at runtime.
-    // PERF(port): was comptime monomorphization + stack arrays.
     {
         let files: &'static [TemplateFile] = template.tag().files();
 
@@ -676,10 +666,6 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
             }
 
             if filename[0] >= b'a' && filename[0] <= b'z' {
-                // PORT NOTE: Zig leaked `duped` on the success returns below
-                // (only freed on the fall-through). Route through the process-
-                // lifetime CLI arena to match the returned-slice lifetime; the
-                // fall-through `free` is a no-op (arena-backed).
                 let duped: &'static mut [u8] = crate::cli::cli_arena().alloc_slice_copy(filename);
                 duped[0] -= 32;
                 if js_lexer::is_identifier(duped) {
@@ -720,18 +706,10 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                         input_index += 1;
                     }
 
-                    // Try the pascal case version
-                    // - "my-app" -> "MyApp"
-                    // - "my_app" -> "MyApp"
-                    // - "My-App" -> "MyApp"
                     if exports.contains(&duped[0..output_index]) {
                         return Some(&duped[0..output_index]);
                     }
 
-                    // Okay that didn't work. Try the version that's the current
-                    // filename with the first letter capitalized
-                    // - "my-app" -> "Myapp"
-                    // - "My-App" -> "Myapp"
                     if output_index > 1 {
                         for c in &mut duped[1..output_index] {
                             match *c {

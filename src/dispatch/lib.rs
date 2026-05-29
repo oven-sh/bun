@@ -112,10 +112,6 @@ fn sym(iface: &Ident, variant: &Ident, method: &Ident) -> Ident {
     format_ident!("__bun_dispatch__{}__{}__{}", iface, variant, method)
 }
 
-// Rewrite elided lifetimes (`&T`, `&mut T`, `'_`) to a single named `'__a` so
-// the type can stand in a `pub type X<'__a> = …;` alias. The alias is consumed
-// as `X<'_>` in fn-param position, where `'_` is late-bound, so collapsing
-// multiple elisions onto one lifetime is ABI-identical (lifetimes erase).
 struct NameElided(Lifetime);
 impl Fold for NameElided {
     fn fold_type_reference(&mut self, mut r: TypeReference) -> TypeReference {
@@ -148,13 +144,6 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
     let kind = format_ident!("{}Kind", name);
     let impl_macro = format_ident!("link_impl_{}", name);
 
-    // ── per-method type aliases ──
-    // The interface's arg/return types are tokens resolved at the *declare*
-    // site. The generated impl-macro is `#[macro_export]` (so its `$crate` is
-    // the declaring crate) but its body tokens are pasted at the *impl* site —
-    // a bare `Loop` there means the impl crate's `Loop`. Anchor each type at
-    // the declare site by emitting a `pub type` alias there and having the
-    // impl-macro spell it as `$crate::<alias>`, which always resolves back.
     let sig_aliases = methods.iter().map(|m| {
         let mn = &m.name;
         let ret_alias = format_ident!("__{}__{}__ret", name, mn);
@@ -173,10 +162,6 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
         }
     });
 
-    // ── extern decls (variant × method) ──
-    // Nested in a private module so that a `link_impl_*!` in the *same* module
-    // as `link_interface!` (e.g. tests, or a variant whose type lives in the
-    // declaring crate) doesn't collide with the decl in the value namespace.
     let externs_mod = format_ident!("__{}_externs", name);
     let externs = variants.iter().flat_map(|v| {
         methods.iter().map(move |m| {
@@ -212,20 +197,6 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
         }
     });
 
-    // ── generated impl-macro ──
-    // One arm per variant; matches the methods in *interface declaration
-    // order* and emits all bodies in a single expansion (no self-recursion —
-    // recursive `$crate::…!` is rejected in the declaring crate, and textual
-    // recursion is unresolved downstream, so neither works universally). The
-    // method names are matched as literals, so a missing/reordered/unknown
-    // method is "no rules expected `<found>`" pointing at the offending line.
-    // Arg/return types come from the `$crate::__<Iface>__<m>__*` aliases above.
-    //
-    // Macro hygiene: the impl body's arg references carry the impl call-site
-    // span; capture them as metavars (`$k:ident`) and use those in the fn sig
-    // so `k` in the body resolves to the parameter. The metavar *names* come
-    // from the interface (so the impl must spell them the same — which is the
-    // point), but the bound idents carry the impl's span.
     let entry_arms = variants.iter().map(|v| {
         // Per-method pieces, all in declaration order so the single
         // `macro_rules!` arm can splice them positionally.
@@ -331,12 +302,6 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
 
         impl #name { #(#dispatchers)* }
 
-        // `#[macro_export]` hoists this to the *crate root* of whichever crate
-        // calls `link_interface!`, regardless of the call-site module — so
-        // high-tier crates address it as `<declaring_crate>::link_impl_<Iface>!`.
-        // Emitted under its public name directly (no hidden-name + `pub use`
-        // alias) so that path actually resolves; a module-local re-export
-        // wouldn't reach the crate root.
         #[macro_export]
         macro_rules! #impl_macro {
             #(#entry_arms)*

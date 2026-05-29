@@ -9,13 +9,6 @@ use bun_alloc::ArenaVecExt as _;
 pub struct FallbackHandler {
     pub color: Option<usize>,
     pub text_shadow: Option<usize>,
-    // TODO: add these back plz
-    // filter: Option<usize>,
-    // backdrop_filter: Option<usize>,
-    // fill: Option<usize>,
-    // stroke: Option<usize>,
-    // caret_color: Option<usize>,
-    // caret: Option<usize>,
 }
 
 impl FallbackHandler {
@@ -25,22 +18,8 @@ impl FallbackHandler {
         dest: &mut css::DeclarationList,
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
-        // The Zig source does `inline for (std.meta.fields(FallbackHandler))` and uses
-        // `@field` / `@unionInit` keyed on the field name. Rust has no field reflection,
-        // so we expand each (field, Property variant, has_vendor_prefix) pair via macro.
-        // TODO(port): proc-macro — if the field list grows, generate these arms from a
-        // single source of truth shared with `Property`/`PropertyIdTag`.
-
         let arena = dest.bump();
 
-        // PORT NOTE: Zig's `inline for` over `std.meta.fields(FallbackHandler)` dispatched
-        // each (field, Property variant) pair via a single generic body using `@field` /
-        // `@unionInit` + `css.generic.{deepClone,isCompatible,hasGetFallbacks}`. Rust has
-        // no field reflection and the generic-trait surface (`DeepClone`/`IsCompatible`/
-        // `get_fallbacks` on `SmallList<TextShadow,1>`) is still partially gated, so we
-        // expand each pair via a macro that takes per-type closures for those three ops.
-        // This keeps the *control flow* identical while letting each payload type use its
-        // own inherent methods until the trait lattice un-gates.
         macro_rules! handle_unprefixed {
             (
                 $self_field:ident,

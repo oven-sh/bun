@@ -19,13 +19,6 @@ use crate::webcore::{Pipe, PipeHandler, ReadableStream, Wrap};
 
 declare_scope!(ResumableSink, visible);
 
-/// Trait capturing the codegen'd JS-side accessors for a ResumableSink class
-/// (e.g. `jsc.Codegen.JSResumableFetchSink`).
-///
-/// Models the Zig `comptime js: type` param, which carries a codegen module
-/// (a bag of free fns) by value. Rust generics carry types, not modules, so
-/// each monomorphization implements this trait by delegating to the matching
-/// `bun_jsc::generated::JS*` module — see [`impl_resumable_sink_js!`] below.
 pub trait ResumableSinkJs {
     fn to_js(this: *mut (), global: &JSGlobalObject) -> JSValue;
     fn from_js(value: JSValue) -> Option<*mut ()>;
@@ -38,12 +31,6 @@ pub trait ResumableSinkJs {
     fn stream_get_cached(this_value: JSValue) -> Option<JSValue>;
 }
 
-/// Trait capturing the per-`Context` callbacks the sink invokes.
-/// In Zig these are `Context.writeRequestData` / `Context.writeEndRequest`.
-// Spec ResumableSink.zig:35 stores `context: *Context` (mutable). The only
-// in-tree impls (FetchTasklet / S3UploadStreamWrapper) mutate self in both
-// callbacks (e.g. `detachSink`, `deref`, clearing `endPromise`), so these
-// MUST be `&mut self`.
 pub trait ResumableSinkContext {
     fn write_request_data(&mut self, bytes: &[u8]) -> ResumableSinkBackpressure;
     fn write_end_request(&mut self, err: Option<JSValue>);
@@ -58,12 +45,6 @@ pub enum Status {
     Done,
 }
 
-// `#[repr(C)]` because this struct is the `m_ctx` payload of a generated
-// JSCell wrapper and crosses FFI as `*mut Self` (see generated_classes.rs
-// `${T}__create`/`${T}__fromJS`). C++ never dereferences it — it stores the
-// pointer as `void*` — so field FFI-safety is moot, but a stable layout keeps
-// `ResumableFetchSink__ZigStructSize` deterministic and silences the
-// "unspecified layout" half of `improper_ctypes` at the extern block.
 #[repr(C)]
 #[derive(bun_ptr::CellRefCounted)]
 pub struct ResumableSink<Js: ResumableSinkJs, Context: ResumableSinkContext> {
@@ -71,10 +52,6 @@ pub struct ResumableSink<Js: ResumableSinkJs, Context: ResumableSinkContext> {
     js_this: JsRef,
     /// We can have a detached self, and still have a strong reference to the stream
     stream: crate::webcore::readable_stream::Strong,
-    /// `BackRef` rather than `&'a JSGlobalObject` because this struct is the
-    /// `m_ctx` payload of a JSC heap cell — it crosses the FFI boundary
-    /// (`${T}__create`/`${T}__fromJS`) and outlives any Rust borrow scope. The
-    /// global outlives every JS object it allocates (back-reference invariant).
     global_this: bun_ptr::BackRef<JSGlobalObject>,
     context: *mut Context,
     high_water_mark: i64,
@@ -234,10 +211,6 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
                     let _ = Self::on_write(this_ref.context, bytes.slice());
                 }
                 this_ref.status = Status::Piped;
-                // PORT NOTE: jsc.WebCore.Pipe.Wrap(@This(), onStreamPipe).init(this) — the
-                // Zig comptime fn-ptr param is reshaped as a `PipeHandler` impl on `Self`
-                // (see `impl PipeHandler` below); `Wrap::<Self>::init` erases `this` into
-                // the Pipe's ctx ptr.
                 byte_stream.pipe.set(Wrap::<Self>::init(this_ref));
                 this_ref.ref_(); // one ref for the pipe
 
@@ -445,13 +418,6 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         !self.js_this.is_strong() || self.status == Status::Done
     }
 
-    /// Detach the JS wrapper: clear the cached `ondrain`/`oncancel`/`stream`
-    /// slots and downgrade `js_this` from a strong to a weak handle so the
-    /// wrapper (and the `drainReaderIntoSink` closure it caches, which captures
-    /// the reader/stream graph) becomes collectible. Unlike [`Self::cancel`]
-    /// this does NOT run any JS callbacks or invoke `on_end`, so it is safe to
-    /// call from contexts where executing JS is not allowed (e.g. teardown /
-    /// finalizers).
     pub fn detach_js(&mut self) {
         if let Some(js_this) = self.js_this.try_get() {
             let global = self.global_this;
@@ -474,15 +440,6 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     }
 
     fn on_stream_pipe(&mut self, mut stream: StreamResult) {
-        // PORT NOTE: Zig `onStreamPipe(this, stream, allocator)` frees
-        // `.owned`/`.owned_and_done` payloads with the *caller-supplied*
-        // allocator. The Rust `Pipe`/`PipeHandler` reshape drops the allocator
-        // param because every producer (`ByteStream::on_data` — the sole `Pipe`
-        // call site) allocates with `bun.default_allocator`, which is the same
-        // global mimalloc that `Vec::<u8>::clear_and_free()` frees with. The
-        // `defer { switch }` is hoisted to the tail below (after `end_pipe`)
-        // since `StreamResult` has no `Drop` and `stream` is a stack local
-        // independent of `self`.
         let chunk = stream.slice();
         scoped_log!(ResumableSink, "onWrite {}", chunk.len());
 
@@ -560,10 +517,6 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         }
     }
 
-    // Intrusive refcount helpers (`bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`).
-    // `ref_()`/`deref()` are provided by `#[derive(CellRefCounted)]`; `deref_` is
-    // kept as a thin alias so existing raw-pointer call sites (s3::client) keep
-    // compiling without churn.
     #[inline]
     pub unsafe fn deref_(this: *mut Self) {
         // SAFETY: forwarded caller contract.
@@ -646,10 +599,6 @@ macro_rules! impl_resumable_sink_js {
 }
 impl_resumable_sink_js!(JSResumableFetchSink, JSResumableS3UploadSink);
 
-// Forward to the inherent methods on each Context type. The Zig spec uses
-// duck-typed `Context.writeRequestData` / `Context.writeEndRequest`; in Rust we
-// satisfy the trait bound by delegating to those inherent impls.
-// (S3UploadStreamWrapper's impl lives next to its struct in s3/client.rs.)
 impl ResumableSinkContext for FetchTasklet {
     #[inline]
     fn write_request_data(&mut self, bytes: &[u8]) -> ResumableSinkBackpressure {

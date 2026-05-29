@@ -10,13 +10,6 @@
 
 use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Opaque-type helper — thin sugar over the canonical
-// `bun_opaque::opaque_ffi!` (see its crate doc for the `UnsafeCell<[u8;0]>` /
-// `PhantomPinned` rationale). Local alias just bakes in `pub` so the 21
-// `opaque!(/// doc \n Name)` call sites below stay one-arg.
-// ═══════════════════════════════════════════════════════════════════════════
-
 macro_rules! opaque {
     ($($(#[$m:meta])* $name:ident),+ $(,)?) => {
         ::bun_opaque::opaque_ffi!($($(#[$m])* pub $name),+);
@@ -375,10 +368,6 @@ unsafe extern "C" {
         out_len: *mut c_uint,
     ) -> *mut u8;
 
-    // ── SHA-1 ────────────────────────────────────────────────────────────
-    // `*_Init` are write-only initialisers but stay `*mut`: callers feed
-    // `MaybeUninit::as_mut_ptr()`, and forcing `&mut CTX` would require a
-    // valid (initialised) `CTX` first — defeating the point.
     pub fn SHA1_Init(sha: *mut SHA_CTX) -> c_int;
     pub fn SHA1_Update(sha: *mut SHA_CTX, data: *const c_void, len: usize) -> c_int;
     pub fn SHA1_Final(out: *mut u8, sha: *mut SHA_CTX) -> c_int;
@@ -434,14 +423,6 @@ unsafe extern "C" {
     pub fn X509V3_EXT_get(ext: *mut X509_EXTENSION) -> *const X509V3_EXT_METHOD;
     pub safe fn X509V3_EXT_get_nid(nid: c_int) -> *const X509V3_EXT_METHOD;
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Typed STACK_OF(...) inline wrappers
-//
-// BoringSSL defines these as `static inline` in C, so they have no exported
-// symbol — they bottom out on the untyped `sk_*` ABI above. Mirrors the
-// translate-c bodies in `boringssl.zig`.
-// ═══════════════════════════════════════════════════════════════════════════
 
 /// Per-stack free callback type used by `sk_GENERAL_NAME_pop_free`
 /// (matches Zig's `stack_GENERAL_NAME_free_func`).
@@ -524,11 +505,6 @@ pub unsafe fn sk_GENERAL_NAME_pop_free(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// SSL / TLS — error codes, verify modes, shutdown flags, renegotiate modes
-// (`vendor/boringssl/include/openssl/ssl.h`)
-// ═══════════════════════════════════════════════════════════════════════════
-
 pub const SSL_ERROR_SSL: c_int = 1;
 pub const SSL_ERROR_WANT_READ: c_int = 2;
 pub const SSL_ERROR_WANT_WRITE: c_int = 3;
@@ -560,11 +536,6 @@ pub const SSL_OP_LEGACY_SERVER_CONNECT: u32 = 0;
 
 /// `#define RSA_PKCS1_OAEP_PADDING 4` (`openssl/rsa.h`).
 pub const RSA_PKCS1_OAEP_PADDING: c_int = 4;
-
-// ═══════════════════════════════════════════════════════════════════════════
-// BIO — opaque-ish handle + method vtable
-// (`vendor/boringssl/include/openssl/bio.h`)
-// ═══════════════════════════════════════════════════════════════════════════
 
 /// `CRYPTO_refcount_t` (`openssl/thread.h`) — atomic-ish u32 in BoringSSL.
 pub(crate) type CRYPTO_refcount_t = u32;

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/31503
@@ -18,112 +18,78 @@ import { join } from "node:path";
 //      (`count / 4` = 2048 for this store), which shrank the ceiling ~32x, from
 //      ~8.4M names down to ~270k — low enough for a real monorepo build to hit.
 //
-// Driving the resolver past ~270k interned long filenames reproduces the panic.
-// No `Module._resolveFilename` hook or webpack is needed — plain `Bun.resolveSync`
-// of a relative specifier reads (and interns) the whole containing directory.
+// Reproducing it means interning more than `8192 + 4095 * 64 = 270272` names.
+// Rather than create that many files, exploit two resolver facts to reach the
+// count from one small directory:
+//
+//   - The directory cache keys on the *literal* path spelling, not the realpath,
+//     so resolving through N distinct symlinks to the same directory triggers N
+//     separate `readdir`s — and the interner is append-only, so each re-reads and
+//     re-appends every entry name.
+//   - A mixed-case name longer than 31 bytes is interned twice (once as-is, once
+//     lowercased), so each file contributes two names per read.
+//
+// FILES files * 2 names * SPELLINGS reads = interned names. 300 * 2 * 500 = 300000,
+// comfortably past the 270272 ceiling, from only ~300 files + ~500 symlinks.
+const FILES = 300;
+const SPELLINGS = 500;
+// Mixed-case and > 31 bytes: the case forces the second (lowercased) intern, the
+// length forces it into the store instead of the inline small-string path.
+const LONG_PREFIX = "ZzThisIsAFilenameWellOverThirtyOneBytesLong_";
 
-// The old ceiling was `8192 + 4095 * 64 = 270272` interned names; go comfortably
-// past it so the pre-fix binary panics deterministically, while staying far below
-// the fixed `8192 + 4095 * 2048` ceiling so the fixed binary resolves cleanly.
-const TOTAL_FILES = 280_000;
-const WORKERS = 4;
-const PER_WORKER = Math.ceil(TOTAL_FILES / WORKERS);
-// Names must exceed the 31-byte inline threshold so each one is actually
-// appended to the store rather than stored inline.
-const LONG_PREFIX = "zz_this_is_a_filename_well_over_thirty_one_bytes_long_";
-
-// Each worker fills one directory with many uniquely-named long files plus a
-// `target.js` for the resolver to aim at.
-const CREATOR = /* js */ `
+const DRIVER = /* js */ `
 const fs = require("fs");
 const path = require("path");
 const base = process.argv[2];
-const worker = Number(process.argv[3]);
-const count = Number(process.argv[4]);
+const files = Number(process.argv[3]);
+const spellings = Number(process.argv[4]);
 const prefix = ${JSON.stringify(LONG_PREFIX)};
-const dir = path.join(base, "d" + worker);
-fs.mkdirSync(dir, { recursive: true });
-for (let i = 0; i < count; i++) {
-  fs.closeSync(fs.openSync(path.join(dir, prefix + worker + "_" + i + ".js"), "w"));
+const real = path.join(base, "real");
+fs.mkdirSync(real, { recursive: true });
+for (let i = 0; i < files; i++) {
+  fs.closeSync(fs.openSync(path.join(real, prefix + i + ".js"), "w"));
 }
-fs.closeSync(fs.openSync(path.join(dir, "target.js"), "w"));
-`;
-
-// Resolving a relative specifier in each directory forces the resolver to read
-// the whole directory, interning every long filename into the process-global
-// store. Before the fix the store overflows partway through and the process
-// aborts; after, it resolves everything and prints "resolved-ok".
-const RESOLVER = /* js */ `
-const path = require("path");
-const base = process.argv[2];
-const workers = Number(process.argv[3]);
-for (let w = 0; w < workers; w++) {
-  Bun.resolveSync("./target.js", path.join(base, "d" + w));
+fs.closeSync(fs.openSync(path.join(real, "target.js"), "w"));
+// Each symlink is a distinct cache key -> a fresh readdir -> re-interns every name.
+for (let s = 0; s < spellings; s++) {
+  const link = path.join(base, "s" + s);
+  fs.symlinkSync(real, link, "dir");
+  Bun.resolveSync("./target.js", link);
 }
 console.log("resolved-ok");
 `;
 
-// Interning ~280k names is inherently heavy: it needs that many files on disk at
-// once (CI puts the temp dir on a tmpfs, so it is also memory). Skip musl/Alpine,
-// whose CI containers are too small to hold the working set — the overflowing
-// code path is in the platform- and libc-independent allocator, so the glibc
-// Linux and macOS lanes provide equivalent coverage.
-test.skipIf(isWindows || isMusl)(
-  "resolver filename store survives interning >270k long filenames (#31503)",
+// Uses directory symlinks (privileged on Windows) and is otherwise
+// platform-independent; the overflowing code path is in the libc/arch-independent
+// allocator, so Linux + macOS coverage is sufficient.
+test.skipIf(isWindows)(
+  "resolver filename store survives interning >270k long names (#31503)",
   async () => {
-    using dir = tempDir("issue-31503", {
-      "create.js": CREATOR,
-      "resolve.js": RESOLVER,
-    });
+    using dir = tempDir("issue-31503", { "driver.js": DRIVER });
+    const driverJs = join(String(dir), "driver.js");
     const base = join(String(dir), "tree");
-    const createJs = join(String(dir), "create.js");
-    const resolveJs = join(String(dir), "resolve.js");
 
-    // Fill the tree in parallel so wall-clock creation time stays reasonable
-    // even under the debug build.
-    const creators = Array.from({ length: WORKERS }, (_, w) =>
-      Bun.spawn({
-        cmd: [bunExe(), createJs, base, String(w), String(PER_WORKER)],
-        env: bunEnv,
-        stderr: "pipe",
-        stdout: "pipe",
-      }),
-    );
-    // Collect each creator's output and assert on the combined object so a
-    // failed worker surfaces its stderr in the diff. The exit code is the
-    // signal; stderr is reported, not asserted empty, because ASAN builds can
-    // print harmless warnings (e.g. "ASAN interferes with JSC signal handlers")
-    // that would otherwise flake the assertion.
-    const creatorResults = await Promise.all(
-      creators.map(async proc => {
-        // Drain stdout too so the child can't block on a full pipe.
-        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        return { stderr, exitCode };
-      }),
-    );
-    for (const result of creatorResults) {
-      expect(result).toMatchObject({ exitCode: 0 });
-    }
-
-    // Before the fix this process aborts with `index out of bounds: the len is
-    // 4095 but the index is 4095` partway through interning; after, it resolves
-    // everything and exits cleanly.
+    // Before the fix this aborts with `index out of bounds: the len is 4095 but
+    // the index is 4095` partway through interning; after, it resolves every
+    // spelling and exits cleanly.
     await using proc = Bun.spawn({
-      cmd: [bunExe(), resolveJs, base, String(WORKERS)],
+      cmd: [bunExe(), driverJs, base, String(FILES), String(SPELLINGS)],
       env: bunEnv,
       stderr: "pipe",
       stdout: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // stdout is "resolved-ok" on success and carries the panic stack on the
-    // pre-fix crash, so it distinguishes the two even when the process aborts.
-    // Assert stdout before the exit code for a legible failure; stderr is kept
-    // in the object for diagnostics but not asserted empty (ASAN noise).
+    // stdout is "resolved-ok" on success and carries the panic stack on the pre-fix
+    // crash, so it distinguishes the two even when the process aborts. Assert stdout
+    // before the exit code for a legible failure; stderr is kept for diagnostics but
+    // not asserted empty (ASAN builds print harmless signal-handler warnings).
     expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({
       stdout: "resolved-ok",
       exitCode: 0,
     });
+    // The fixed binary finishes in a few seconds; the ceiling is only the headroom
+    // the pre-fix crash and the crash handler's backtrace need under debug+ASAN.
   },
-  240_000,
+  30_000,
 );

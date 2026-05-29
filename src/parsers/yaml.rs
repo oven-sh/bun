@@ -4066,6 +4066,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                         }
 
+                        // [147] flow-map value is ns-flow-node, not a pair.
+                        if self.context.get() == Context::FlowIn && !opts.flow_pair_allowed {
+                            return Ok(copy);
+                        }
+
                         let map = self.parse_block_mapping(
                             copy,
                             alias_start,
@@ -4115,6 +4120,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             if current_mapping_indent == sequence_indent {
                                 break 'node seq;
                             }
+                        }
+
+                        // [147] flow-map value is ns-flow-node, not a pair.
+                        if self.context.get() == Context::FlowIn && !opts.flow_pair_allowed {
+                            break 'node seq;
                         }
 
                         let implicit_key_anchors =
@@ -4202,6 +4212,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             if current_mapping_indent == mapping_indent {
                                 break 'node map;
                             }
+                        }
+
+                        // [147] flow-map value is ns-flow-node, not a pair.
+                        if self.context.get() == Context::FlowIn && !opts.flow_pair_allowed {
+                            break 'node map;
                         }
 
                         let implicit_key_anchors = node_props.implicit_key_anchors(mapping_line)?;

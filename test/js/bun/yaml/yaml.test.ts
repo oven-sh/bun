@@ -1357,6 +1357,18 @@ folded: >
           expect(() => YAML.parse("a: &x\n  &y\n  c: 1\n")).toThrow("Multiple anchors");
           // Both props more-indented; inner same-line as key — valid.
           expect(YAML.parse("a:\n  &x\n  &y c: 1\n")).toEqual({ a: { c: 1 } });
+          // 3rd anchor on a 3rd line — set_anchor's overflow guard catches it.
+          expect(() => YAML.parse("&a\n&b\n&c d: 1\n")).toThrow("Multiple anchors");
+        });
+
+        test.todo("two tags before e-node `:` — [200]/[193] line split (tag analogue)", () => {
+          // The MappingValue arm clears has_anchor/has_mapping_anchor but not
+          // has_mapping_tag, so the post-loop guard over-rejects the valid
+          // 2-tag case. set_tag also lacks the has_mapping_tag.is_some()
+          // overflow guard that set_anchor has, so a 3rd tag on a 3rd line
+          // silently overwrites instead of erroring.
+          expect(YAML.parse("!!map\n!!str : x\n")).toEqual({ "": "x" });
+          expect(() => YAML.parse("!!a\n!!b\n!!c d: 1\n")).toThrow("Multiple tags");
         });
       });
 
@@ -1513,6 +1525,10 @@ folded: >
           // before the value at any indentation is valid.
           expect(YAML.parse('["a":\nb]\n')).toEqual([{ a: "b" }]);
           expect(YAML.parse("[a: \nb]\n")).toEqual([{ a: "b" }]);
+          // Mirrored to Alias/SequenceStart/MappingStart arms.
+          expect(() => YAML.parse("{a: &x\n [b]: c}\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("{a: &x\n {b}: c}\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("{x: &y 1, a: &z\n *y : c}\n")).toThrow("Unexpected token");
         });
 
         test("multiline JSON-style key check ordering", () => {

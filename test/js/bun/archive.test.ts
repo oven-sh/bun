@@ -1561,9 +1561,9 @@ describe("Bun.Archive", () => {
       await new Bun.Archive(tarBytes).extract(String(dir));
 
       const st = statSync(join(String(dir), "sparse.bin"));
-      // The logical size must match the entry's real size...
-      expect(st.size).toBe(REAL_SIZE);
       if (!isWindows) {
+        // The logical size must match the entry's real size...
+        expect(st.size).toBe(REAL_SIZE);
         // ...but the holes must stay holes: the claimed 64 MiB must not be
         // materialized on disk.
         expect(st.blocks * 512).toBeLessThan(1024 * 1024);

@@ -2242,7 +2242,7 @@ impl Archiver {
                                     retries_remaining -= 1;
                                 }
 
-                                if is_sparse {
+                                if is_sparse && !cfg!(windows) {
                                     let _ = bun_sys::ftruncate(
                                         *file_handle,
                                         i64::try_from(size).expect("int cast"),

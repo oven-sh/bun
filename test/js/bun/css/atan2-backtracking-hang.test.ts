@@ -28,7 +28,7 @@ function nestedAtan2Chain(depth: number): string {
   let body = "";
   for (let i = 0; i < depth; i++) body += "-(atan2(9\n";
   body += "-(atan2(";
-  return `hsl(sin(2\n${body}` + ")".repeat(depth + 3);
+  return `hsl(sin(2\n${body}` + Buffer.alloc(depth + 3, ")").toString();
 }
 
 // [input, expected Bun.color(input, "css") result].
@@ -41,7 +41,7 @@ const cases: [css: string, expected: string | null][] = [
   [nestedAtan2Chain(64), null],
   // Deeply nested `atan2()` in the hue position — both the valid (each level
   // resolves to an angle) and invalid (type mismatch) shapes were exponential.
-  ["hsl(" + "atan2(".repeat(64) + "9, 1" + ")".repeat(64) + " 50% 50%)", null],
+  ["hsl(" + Buffer.alloc(6 * 64, "atan2(").toString() + "9, 1" + Buffer.alloc(64, ")").toString() + " 50% 50%)", null],
   // Behavior preservation: valid `atan2()` with each supported argument type.
   ["hsl(atan2(9, 1) 50% 50%)", "#8dbf40"],
   ["hsl(atan2(atan2(9,1), atan2(2,3)) 50% 50%)", "#aebf40"],
@@ -91,4 +91,7 @@ test("deeply nested atan2() color values parse in linear time instead of hanging
   expect(stderr).toBe("");
   expect(JSON.parse(stdout)).toEqual(cases.map(([, expected]) => expected));
   expect(exitCode).toBe(0);
-});
+  // Outer timeout larger than the subprocess kill switch above, so a regression
+  // trips the kill switch (and the assertions) rather than the test runner's
+  // default timeout firing first.
+}, 30_000);

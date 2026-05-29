@@ -2591,6 +2591,13 @@ export const scanner = {
       npm_config_registry: mockRegistryUrl,
     });
 
+    // bunx's `is_trusted_cache_root` refuses a cache dir with group/other-write
+    // bits set (and this check runs BEFORE any age-gate logic). `mkdirSync`
+    // under umask 002 produces 0o775, so every warm-cache test below must
+    // `chmodSync(cacheRoot, 0o755)` after creating the tree — otherwise the
+    // tests fail (or pass vacuously) on umask-002 systems. CI runs umask 022
+    // so this only bites local contributors; mirrors `bunx.test.ts`'s setup.
+
     test("--minimum-release-age=<seconds> is forwarded to bun add", async () => {
       using dir = tempDir("bunx-min-age-eq", {});
       using cacheDir = tempDir("bunx-min-age-cache-eq", {});
@@ -2699,6 +2706,7 @@ export const scanner = {
       const binDir = join(cacheRoot, "node_modules", ".bin");
       mkdirSync(pkgDir, { recursive: true });
       mkdirSync(binDir, { recursive: true });
+      chmodSync(cacheRoot, 0o755);
       writeFileSync(join(cacheRoot, "package.json"), JSON.stringify({}));
       writeFileSync(
         join(pkgDir, "package.json"),
@@ -2752,8 +2760,10 @@ export const scanner = {
       using tmp = tempDir("bunx-min-age-tmp-warm", {});
 
       const uid = process.getuid?.() ?? 0;
-      const binDir = join(String(tmp), `bunx-${uid}-regular-package@latest`, "node_modules", ".bin");
+      const cacheRoot = join(String(tmp), `bunx-${uid}-regular-package@latest`);
+      const binDir = join(cacheRoot, "node_modules", ".bin");
       mkdirSync(binDir, { recursive: true });
+      chmodSync(cacheRoot, 0o755);
       const binPath = join(binDir, "regular-package");
       // If bunx wrongly short-circuits to the cache, this fake binary runs
       // and prints a sentinel the test asserts *never* appears.
@@ -2786,8 +2796,10 @@ export const scanner = {
       using tmp = tempDir("bunx-min-age-tmp-noinstall", {});
 
       const uid = process.getuid?.() ?? 0;
-      const binDir = join(String(tmp), `bunx-${uid}-regular-package@latest`, "node_modules", ".bin");
+      const cacheRoot = join(String(tmp), `bunx-${uid}-regular-package@latest`);
+      const binDir = join(cacheRoot, "node_modules", ".bin");
       mkdirSync(binDir, { recursive: true });
+      chmodSync(cacheRoot, 0o755);
       const binPath = join(binDir, "regular-package");
       writeFileSync(binPath, "#!/bin/sh\necho CACHE_BYPASS_BUG_REPRO\nexit 0\n");
       chmodSync(binPath, 0o755);
@@ -2835,6 +2847,7 @@ export const scanner = {
       const binDir = join(cacheRoot, "node_modules", ".bin");
       mkdirSync(pkgDir, { recursive: true });
       mkdirSync(binDir, { recursive: true });
+      chmodSync(cacheRoot, 0o755);
 
       // Root package.json — bunx uses its mtime for the 24h staleness check.
       writeFileSync(join(cacheRoot, "package.json"), JSON.stringify({}));
@@ -2872,8 +2885,10 @@ export const scanner = {
       using tmp = tempDir("bunx-min-age-tmp-zero", {});
 
       const uid = process.getuid?.() ?? 0;
-      const binDir = join(String(tmp), `bunx-${uid}-regular-package@latest`, "node_modules", ".bin");
+      const cacheRoot = join(String(tmp), `bunx-${uid}-regular-package@latest`);
+      const binDir = join(cacheRoot, "node_modules", ".bin");
       mkdirSync(binDir, { recursive: true });
+      chmodSync(cacheRoot, 0o755);
       const binPath = join(binDir, "regular-package");
       writeFileSync(binPath, "#!/bin/sh\necho ZERO_DISABLE_OK\nexit 0\n");
       chmodSync(binPath, 0o755);
@@ -2944,6 +2959,7 @@ export const scanner = {
         const cacheRoot = join(String(tmp), `bunx-${uid}-${pkgName}@^1`);
         const cacheBinDir = join(cacheRoot, "node_modules", ".bin");
         mkdirSync(cacheBinDir, { recursive: true });
+        chmodSync(cacheRoot, 0o755);
         // Root package.json for the 24h staleness check.
         writeFileSync(join(cacheRoot, "package.json"), JSON.stringify({}));
         // Cached binary at the REAL bin name (not the initial-guess `cli`-style
@@ -2989,6 +3005,7 @@ export const scanner = {
       const binDir = join(cacheRoot, "node_modules", ".bin");
       mkdirSync(pkgDir, { recursive: true });
       mkdirSync(binDir, { recursive: true });
+      chmodSync(cacheRoot, 0o755);
 
       // Root package.json drives the 24h mtime staleness check.
       writeFileSync(join(cacheRoot, "package.json"), JSON.stringify({}));
@@ -3041,6 +3058,7 @@ export const scanner = {
       const cacheRoot = join(String(tmp), `bunx-${uid}-${pkgName}@^2`);
       const binDir = join(cacheRoot, "node_modules", ".bin");
       mkdirSync(binDir, { recursive: true });
+      chmodSync(cacheRoot, 0o755);
       writeFileSync(join(cacheRoot, "package.json"), JSON.stringify({}));
       const lockPath = join(cacheRoot, "bun.lock");
       writeFileSync(lockPath, "SENTINEL_LOCKFILE_CONTENT_SHOULD_BE_WIPED");

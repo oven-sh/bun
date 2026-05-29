@@ -95,7 +95,12 @@ impl us_socket_t {
     pub fn write_check_error(&self, data: &[u8]) -> (i32, bool) {
         let mut fatal: i32 = 0;
         let written = unsafe {
-            c::us_socket_write_check_error(self, data.as_ptr().cast(), data.len() as i32, &mut fatal)
+            c::us_socket_write_check_error(
+                self,
+                data.as_ptr().cast(),
+                data.len() as i32,
+                &mut fatal,
+            )
         };
         (written, fatal != 0)
     }

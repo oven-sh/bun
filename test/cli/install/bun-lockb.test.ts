@@ -257,3 +257,111 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
   expect(code).toBe(0);
   expect(await exists(join(packageDir, "node_modules", "optional-peer-deps"))).toBe(true);
 });
+
+it("rejects a binary lockfile whose git resolved tag contains path separators", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+
+  // A git dependency pointing at an unreachable loopback endpoint (port 1) so
+  // this test stays offline. The commit below never has to exist: migrating
+  // package-lock.json transcribes the resolved commit into the lockfile
+  // without contacting the git host, and `--lockfile-only` saves it as
+  // bun.lockb (saveTextLockfile = false) without installing anything.
+  const gitUrl = "git+ssh://git@127.0.0.1:1/example/repo.git";
+  const sha = "aabbccddeeff00112233445566778899aabbccdd";
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "lockb-git-tag",
+      version: "1.0.0",
+      dependencies: { dep: gitUrl },
+    }),
+  );
+  await write(
+    join(packageDir, "package-lock.json"),
+    JSON.stringify({
+      name: "lockb-git-tag",
+      version: "1.0.0",
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        "": { name: "lockb-git-tag", version: "1.0.0", dependencies: { dep: gitUrl } },
+        "node_modules/dep": { version: "1.0.0", resolved: `${gitUrl}#${sha}` },
+      },
+    }),
+  );
+
+  // Generate bun.lockb from the npm lockfile without performing an install.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--lockfile-only", "--no-progress"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    const err = stderrForInstall(rawErr);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).toBeDefined();
+    expect(code).toBe(0);
+  }
+
+  const lockbPath = join(packageDir, "bun.lockb");
+  expect(await exists(lockbPath)).toBe(true);
+  expect(await exists(join(packageDir, "bun.lock"))).toBe(false);
+
+  // The legitimate case: a binary lockfile whose git resolution carries a
+  // well-formed 40-hex commit loads cleanly.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--lockfile-only", "--no-progress"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    const err = stderrForInstall(rawErr);
+    expect(err).not.toContain("Invalid git dependency tag");
+    expect(err).not.toContain("error:");
+    expect(out).toBeDefined();
+    expect(code).toBe(0);
+  }
+
+  // Rewrite every stored copy of the resolved commit in place (same length) so
+  // it contains ".." and a path separator. The resolved value becomes a cache
+  // folder name and a `git checkout` argument downstream, so it must only ever
+  // be a single safe path component.
+  const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
+  let occurrences = 0;
+  for (let off = lockb.indexOf(sha); off !== -1; off = lockb.indexOf(sha, off + 1)) {
+    lockb.write("../", off, "latin1");
+    occurrences++;
+  }
+  expect(occurrences).toBeGreaterThan(0);
+  await write(lockbPath, lockb);
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--no-progress"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  const err = stderrForInstall(rawErr);
+
+  // The tampered resolved value must fail binary lockfile loading (the same
+  // fail-closed rule the text lockfile parser applies) instead of flowing into
+  // cache folder names and git commands. The install then falls back to a
+  // fresh resolve rather than consuming the tampered resolution.
+  expect(err).toContain("Invalid git dependency tag");
+  expect(err).toContain("in bun.lockb");
+  expect(err).toContain("Ignoring lockfile");
+  expect(out).toBeDefined();
+  // Nothing was installed from the tampered resolution (the git host is
+  // unreachable, so the fallback resolve cannot fetch it either).
+  expect(await exists(join(packageDir, "node_modules", "dep"))).toBe(false);
+});

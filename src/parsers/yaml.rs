@@ -3031,7 +3031,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
         }
 
-        self.block_indents.push(mapping_indent)?;
+        // The block_indents stack drives scan()'s flow-context indent guard
+        // (continuation lines in a flow collection must be at indent > the
+        // enclosing block's). When reached via the implicit-pair path from a
+        // flow collection (`["a": b]`), the key's column is not a block
+        // boundary — pushing it would reject `["a":\nb]` per [149]/[80].
+        let pushed_block_indent =
+            !matches!(self.context.get(), Context::FlowIn | Context::FlowKey);
+        if pushed_block_indent {
+            self.block_indents.push(mapping_indent)?;
+        }
 
         // PORT NOTE: Zig `defer self.block_indents.pop()` — capture the fallible
         // body's result and pop on EVERY exit (including `?` paths).
@@ -3246,7 +3255,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             inner
         })();
 
-        self.block_indents.pop();
+        if pushed_block_indent {
+            self.block_indents.pop();
+        }
         result
     }
 }
@@ -3646,6 +3657,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let mut value_tag: Option<Token<Enc>> = None;
         let mut value_anchor: Option<Token<Enc>> = None;
 
+        // The [196] indent dispatch below is block-semantics; in flow context
+        // ([149]/[80] s-separate(n,FLOW-IN) = s-separate-lines, any indent on
+        // a continuation line) it does not apply. Reached via the
+        // implicit-pair fallthrough when `parse_block_mapping` is entered
+        // from a flow-seq item (`["a":\nb]`).
+        let in_flow = matches!(self.context.get(), Context::FlowIn | Context::FlowKey);
+
         loop {
             // [196] s-l+block-node(n) reaches content via [197] flow-in-block
             // (s-separate-lines(n+1)) or [200] block-collection. Either way a
@@ -3653,7 +3671,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             // properties collected so far attach to e-scalar per [161].
             // [201] seq-space: a nested block sequence may sit at indent n in
             // BLOCK-OUT, but needs n+1 in BLOCK-IN.
-            if self.token.line != indicator_line {
+            if !in_flow && self.token.line != indicator_line {
                 let belongs_to_parent = if matches!(self.token.data, TokenData::SequenceEntry)
                     && kind != BlockIndentedKind::SeqEntry
                 {

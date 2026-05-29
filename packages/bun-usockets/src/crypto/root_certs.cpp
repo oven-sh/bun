@@ -213,10 +213,19 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     return NULL;
   }
 
+#ifdef _WIN32
+  const char *default_cert_file = getenv(X509_get_default_cert_file_env());
+  const char *default_cert_dir = getenv(X509_get_default_cert_dir_env());
+  if (default_cert_file || default_cert_dir) {
+    X509_STORE_load_locations(store, default_cert_file, default_cert_dir);
+    ERR_clear_error();
+  }
+#else
   if (!X509_STORE_set_default_paths(store)) {
     X509_STORE_free(store);
     return NULL;
   }
+#endif
 
   us_default_ca_certificates *default_ca_certificates = us_get_default_ca_certificates();
   X509** root_cert_instances = default_ca_certificates->root_cert_instances;

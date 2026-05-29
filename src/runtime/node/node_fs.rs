@@ -3995,10 +3995,18 @@ pub mod args {
             };
 
             // length |= 0;
-            let length_float: f64 = if let Some(arg) = arguments.next_eat() {
+            let length_value = arguments.next_eat();
+            let length_float: f64 = if let Some(arg) = length_value {
                 arg.to_number(ctx)?
             } else {
                 0.0
+            };
+            let buffer = if length_value.is_some_and(|arg| !arg.is_number()) {
+                Buffer::from_js(ctx, buffer_value).ok_or_else(|| {
+                    ctx.throw_invalid_argument_type_value(b"buffer", b"TypedArray", buffer_value)
+                })?
+            } else {
+                buffer
             };
 
             //   if (length === 0) {

@@ -1291,12 +1291,7 @@ pub mod command {
                             && matches!(
                                 argv.get(1).map(bun_core::ZStr::as_bytes),
                                 Some(
-                                    b"-e"
-                                        | b"-p"
-                                        | b"--eval"
-                                        | b"--print"
-                                        | b"--json"
-                                        | b"--yaml"
+                                    b"-e" | b"-p" | b"--eval" | b"--print" | b"--json" | b"--yaml"
                                 )
                             )
                     }

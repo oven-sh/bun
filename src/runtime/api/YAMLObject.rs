@@ -57,7 +57,11 @@ pub(crate) fn stringify_with_indent(
     stringify_with_space(global, value, space)
 }
 
-fn stringify_with_space(global: &JSGlobalObject, value: JSValue, space: Space) -> JsResult<JSValue> {
+fn stringify_with_space(
+    global: &JSGlobalObject,
+    value: JSValue,
+    space: Space,
+) -> JsResult<JSValue> {
     let mut stringifier = Stringifier::init(space)?;
 
     if let Err(err) = stringifier.find_anchors_and_aliases(global, value, ValueOrigin::Root) {

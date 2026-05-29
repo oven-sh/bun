@@ -88,8 +88,3 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # primary distributing accepted connections; the upstream test's expectations
 # only hold on the distributing model. Passes on macOS, Windows and FreeBSD.
 [ LINUX ] test/js/node/test/sequential/test-net-listen-shared-ports.js [ FAIL ] # SO_REUSEPORT shared-listener semantics on Linux
-# Temporary, remove with the pfx trust-set fix: after the main merge, a
-# pfx-only client treats the PKCS#12-embedded CA as an explicit `ca` and
-# replaces the default trust set, so the NODE_EXTRA_CA_CERTS variant of this
-# test fails; the fix routes pfx CAs through the extend path like addCACert.
-test/js/node/test/parallel/test-tls-env-extra-ca-with-options.js [ FAIL ]

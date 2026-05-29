@@ -497,15 +497,6 @@ function SocketEmitEndNT(self, _err?) {
 }
 
 const ServerHandlers: SocketHandler<NetSocket> = {
-  drain(socket) {
-    // Same completion path as client sockets: an accepted socket's write that
-    // could not finish inline (a response written from inside the
-    // 'connection' dispatch gets queued on Linux) stores its callback in
-    // kwriteCallback; without this handler that callback never ran, 'finish'
-    // never fired and the socket held the event loop forever
-    // (test-http-no-content-length on every Linux target).
-    SocketHandlers.drain(socket);
-  },
   data(socket, buffer) {
     const { data: self } = socket;
     if (!self) return;

@@ -671,6 +671,7 @@ function processPfxOptions(options) {
   const keys = out.key == null ? [] : Array.isArray(out.key) ? [...out.key] : [out.key];
   const certs = out.cert == null ? [] : Array.isArray(out.cert) ? [...out.cert] : [out.cert];
   const cas = out.ca == null ? [] : Array.isArray(out.ca) ? [...out.ca] : [out.ca];
+  const pfxCAs = [];
   const entries = Array.isArray(out.pfx) ? out.pfx : [out.pfx];
   for (const entry of entries) {
     let buf = entry;
@@ -688,11 +689,16 @@ function processPfxOptions(options) {
     const parsed = NativeSecureContext.parsePkcs12(buf, passphrase);
     keys.push(parsed.key);
     certs.push(parsed.cert);
-    if (parsed.ca) cas.push(parsed.ca);
+    // A CA bundled inside the PKCS#12 EXTENDS the trust set (Node loads it
+    // via addCACert on top of the default roots); folding it into the `ca`
+    // option would instead REPLACE the trust store and break verification
+    // against the default/NODE_EXTRA_CA_CERTS roots for pfx-only clients.
+    if (parsed.ca) pfxCAs.push(parsed.ca);
   }
   out.key = keys.length === 1 ? keys[0] : keys;
   out.cert = certs.length === 1 ? certs[0] : certs;
   if (cas.length) out.ca = cas.length === 1 ? cas[0] : cas;
+  if (pfxCAs.length) out._pfxExtraCACerts = pfxCAs;
   out.pfx = undefined;
   return out;
 }
@@ -704,6 +710,10 @@ function newNativeSecureContext(options, cached = true) {
     return (cached ? NativeSecureContext.intern : NativeSecureContext.createPrivate)({});
   }
   options = processPfxOptions(options);
+  // PKCS#12-embedded CAs extend the trust set after the context is built; a
+  // mutated context must not be the shared cached one.
+  const pfxExtraCAs = options._pfxExtraCACerts;
+  if (pfxExtraCAs) cached = false;
   // ALPN protocols given as an array of strings are converted to the
   // length-prefixed wire format before crossing into native, the way Node's
   // convertALPNProtocols normalizes them on the socket options.
@@ -739,7 +749,11 @@ function newNativeSecureContext(options, cached = true) {
       options = { ...options, minVersion, maxVersion };
     }
   }
-  return (cached ? NativeSecureContext.intern : NativeSecureContext.createPrivate)(options);
+  const ctx = (cached ? NativeSecureContext.intern : NativeSecureContext.createPrivate)(options);
+  if (pfxExtraCAs) {
+    for (const pem of pfxExtraCAs) ctx.addCACert(pem);
+  }
+  return ctx;
 }
 
 var InternalSecureContext = class SecureContext {

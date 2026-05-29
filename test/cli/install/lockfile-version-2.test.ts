@@ -167,15 +167,18 @@ it("unsafe git .bun-tag is rejected only at version 2", async () => {
     expect(exitCode).not.toBe(0);
   }
 
-  // version 1 predates the check, so parsing no longer rejects it (the install
-  // then fails cloning the unreachable repo, but not with the parse-time error).
+  // version 1 predates the check, so parsing no longer rejects it. Use
+  // `--lockfile-only`: the lockfile is still parsed (so the v1 git-tag check is
+  // exercised and correctly does not fire), but the command returns before the
+  // install phase, so it never reaches the `git clone` of the unreachable repo
+  // — which can hang instead of failing fast (notably on macOS).
   {
     using dir = tempDir("lockfile-v1-gittag", {
       "package.json": JSON.stringify({ name: "root", dependencies: { dep: gitUrl } }),
       "bun.lock": lockfile(1),
     });
     await using proc = spawn({
-      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cmd: [bunExe(), "install", "--frozen-lockfile", "--lockfile-only"],
       cwd: String(dir),
       env,
       stdout: "pipe",

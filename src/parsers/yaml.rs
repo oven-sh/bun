@@ -834,9 +834,7 @@ bun_core::oom_from_alloc!(ParseError);
 #[inline]
 fn check_printable_ascii(c: u32, nb_json: bool) -> Result<(), ParseError> {
     match c {
-        0x00..=0x08 | 0x0B | 0x0C | 0x0E..=0x1F => {
-            Err(ParseError::NonPrintableCharacter)
-        }
+        0x00..=0x08 | 0x0B | 0x0C | 0x0E..=0x1F => Err(ParseError::NonPrintableCharacter),
         0x7F if !nb_json => Err(ParseError::NonPrintableCharacter),
         _ => Ok(()),
     }

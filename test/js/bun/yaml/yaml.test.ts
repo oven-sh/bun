@@ -1501,6 +1501,14 @@ folded: >
           expect(() => YAML.parse("{? a: b: c}\n")).toThrow("Unexpected token");
         });
 
+        test.todo("flow-map value with multiline c-ns-properties before nested pair", () => {
+          // The cmi mechanism for [147] uses the first token's indent; when an
+          // anchor/tag is on a different line than the scalar, indents diverge
+          // and the cmi check is bypassed. Pre-existing.
+          expect(() => YAML.parse("{a: &x\n b: c}\n")).toThrow();
+          expect(() => YAML.parse("{a: !!str\n b: c}\n")).toThrow();
+        });
+
         test("flow-seq pair value on next line at column ≤ key indent", () => {
           // [149]/[80] s-separate(n,FLOW-IN) = s-separate-lines, so a newline
           // before the value at any indentation is valid.

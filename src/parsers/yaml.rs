@@ -5581,7 +5581,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 0x5C /* '\\' */ => {
                     self.inc(1);
                     match Enc::wide(self.next()) {
-                        0x0D | 0x0A => {
+                        b @ (0x0D | 0x0A) => {
+                            // [112] s-double-escaped: `\` + b-non-content joins
+                            // as nothing. CRLF is a single b-break — step past
+                            // the CR so fold_lines doesn't count the trailing
+                            // LF as an extra empty line.
+                            if b == 0x0D && Enc::wide(self.peek(1)) == 0x0A {
+                                self.inc(1);
+                            }
                             self.newline();
                             self.inc(1);
                             let lines = self.fold_lines();
@@ -5664,6 +5671,36 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             let num =
                 bun_core::fmt::hex_digit_value_u32(digit).ok_or(ParseError::UnexpectedCharacter)?;
             value = value * 16 + num as u32;
+        }
+
+        // [57] ns-esc-16-bit: a `\u` high surrogate immediately followed by a
+        // `\u` low surrogate combines to one supplementary code point. Peek
+        // non-destructively; only commit when the pair is well-formed.
+        if matches!(escape, Escape::LowerU)
+            && (0xD800..=0xDBFF).contains(&value)
+            && Enc::wide(self.peek(1)) == 0x5C /* '\\' */
+            && Enc::wide(self.peek(2)) == 0x75 /* 'u' */
+        {
+            let mut lo: u32 = 0;
+            let mut have_lo = true;
+            for i in 0..4 {
+                match bun_core::fmt::hex_digit_value_u32(Enc::wide(self.peek(3 + i))) {
+                    Some(d) => lo = lo * 16 + d as u32,
+                    None => {
+                        have_lo = false;
+                        break;
+                    }
+                }
+            }
+            if have_lo {
+                if let Some(cp) =
+                    bun_core::strings::decode_surrogate_pair(value as u16, lo as u16)
+                {
+                    // Skip `\uXXXX`; the caller's trailing inc(1) lands past it.
+                    self.inc(6);
+                    value = cp;
+                }
+            }
         }
 
         if value > 0x10_FFFF {

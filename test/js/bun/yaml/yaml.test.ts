@@ -1727,7 +1727,7 @@ folded: >
           // (pos != line_start_pos). Pre-existing differently-wrong (was a
           // spurious BOM-only first doc); proper fix is BOM strip in
           // l-document-prefix, not special-casing here.
-          expect(YAML.parse("﻿---\na: 1\n")).toEqual({ a: 1 });
+          expect(YAML.parse("\uFEFF---\na: 1\n")).toEqual({ a: 1 });
         });
       });
 

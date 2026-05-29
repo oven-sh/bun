@@ -565,32 +565,24 @@ describe("Should be compatible with node.js", () => {
   // These spawn a full `node --test` / `bun test` run of the sibling file, which
   // can take several seconds. Give them a generous timeout so they don't race the
   // default 5s deadline on a loaded CI machine.
-  test(
-    "tests should run on node.js",
-    async () => {
-      const process = Bun.spawn({
-        cmd: [nodeExe(), "--test", join(import.meta.dir, "node-http-connect.node.mts")],
-        stdout: "inherit",
-        stderr: "inherit",
-        stdin: "ignore",
-        env: bunEnv,
-      });
-      expect(await process.exited).toBe(0);
-    },
-    30_000,
-  );
-  test(
-    "tests should run on bun",
-    async () => {
-      const process = Bun.spawn({
-        cmd: [bunExe(), "test", join(import.meta.dir, "node-http-connect.node.mts")],
-        stdout: "inherit",
-        stderr: "inherit",
-        stdin: "ignore",
-        env: bunEnv,
-      });
-      expect(await process.exited).toBe(0);
-    },
-    30_000,
-  );
+  test("tests should run on node.js", async () => {
+    const process = Bun.spawn({
+      cmd: [nodeExe(), "--test", join(import.meta.dir, "node-http-connect.node.mts")],
+      stdout: "inherit",
+      stderr: "inherit",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+    expect(await process.exited).toBe(0);
+  }, 30_000);
+  test("tests should run on bun", async () => {
+    const process = Bun.spawn({
+      cmd: [bunExe(), "test", join(import.meta.dir, "node-http-connect.node.mts")],
+      stdout: "inherit",
+      stderr: "inherit",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+    expect(await process.exited).toBe(0);
+  }, 30_000);
 });

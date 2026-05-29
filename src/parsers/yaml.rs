@@ -2683,9 +2683,46 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             return Err(Self::unexpected_token());
         }
 
+        // Consume c-ns-properties here (still in flow-in) so the post-property
+        // re-scan tokenizes `:b` as ns-plain-first per [126], same as the
+        // first scan above. The FlowKey wrap is only for the content parse so
+        // a JSON-style key early-returns at the trailing `:`.
+        let mut scanned_tag: Option<Token<Enc>> = None;
+        let mut scanned_anchor: Option<Token<Enc>> = None;
+        loop {
+            match self.token.data {
+                TokenData::Anchor(_) if scanned_anchor.is_none() => {
+                    scanned_anchor = Some(self.token.clone());
+                }
+                TokenData::Tag(_) if scanned_tag.is_none() => {
+                    scanned_tag = Some(self.token.clone());
+                }
+                _ => break,
+            }
+            let tag = match &scanned_tag {
+                Some(Token {
+                    data: TokenData::Tag(t),
+                    ..
+                }) => *t,
+                _ => NodeTag::None,
+            };
+            self.scan(ScanOptions { tag, ..Default::default() })?;
+            if matches!(
+                self.token.data,
+                TokenData::MappingValue
+                    | TokenData::CollectEntry
+                    | TokenData::MappingEnd
+                    | TokenData::SequenceEnd
+            ) {
+                return self.props_to_e_node(&scanned_tag, &scanned_anchor, start.loc());
+            }
+        }
+
         self.context.set(Context::FlowKey)?;
         let k = self.parse_node(ParseNodeOptions {
             explicit_mapping_key: true,
+            scanned_tag,
+            scanned_anchor,
             ..Default::default()
         });
         self.context.unset(Context::FlowKey);

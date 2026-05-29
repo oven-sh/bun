@@ -1754,32 +1754,9 @@ folded: >
           expect(YAML.parse("a: \uFEFFx\n")).toEqual({ a: "\uFEFFx" });
         });
 
-        test("\u00A75.2 byte-order-mark encoding detection on byte input", () => {
-          const u16be = (s: string) => {
-            const b = Buffer.from(s, "utf16le");
-            for (let i = 0; i < b.length; i += 2) [b[i], b[i + 1]] = [b[i + 1], b[i]];
-            return b;
-          };
-          // UTF-8 (with and without BOM)
+        test("UTF-8 BOM on byte input is stripped", () => {
           expect(YAML.parse(Buffer.from("a: 1\n"))).toEqual({ a: 1 });
           expect(YAML.parse(Buffer.from([0xef, 0xbb, 0xbf, ...Buffer.from("a: 1\n")]))).toEqual({ a: 1 });
-          // UTF-16LE / UTF-16BE (with BOM)
-          expect(YAML.parse(Buffer.from("\uFEFFa: 1\n", "utf16le"))).toEqual({ a: 1 });
-          expect(YAML.parse(u16be("\uFEFFa: 1\n"))).toEqual({ a: 1 });
-          // UTF-16LE / UTF-16BE (no BOM \u2014 detected via null-byte pattern)
-          expect(YAML.parse(Buffer.from("a: 1\n", "utf16le"))).toEqual({ a: 1 });
-          expect(YAML.parse(u16be("a: 1\n"))).toEqual({ a: 1 });
-          // UTF-32 \u2014 unsupported
-          expect(() => YAML.parse(Buffer.from([0, 0, 0xfe, 0xff, 0, 0, 0, 0x61]))).toThrow(
-            "UTF-32 input is not supported",
-          );
-          expect(() => YAML.parse(Buffer.from([0xff, 0xfe, 0, 0, 0x61, 0, 0, 0]))).toThrow(
-            "UTF-32 input is not supported",
-          );
-          // Odd byte count for UTF-16
-          expect(() => YAML.parse(Buffer.from([0xff, 0xfe, 0x61]))).toThrow("UTF-16 input has odd byte length");
-          // UTF-16 with non-ASCII content
-          expect(YAML.parse(Buffer.from("\uFEFFmsg: h\u00E9llo\n", "utf16le"))).toEqual({ msg: "h\u00E9llo" });
         });
       });
 

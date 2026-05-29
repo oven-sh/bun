@@ -572,7 +572,7 @@ describe("HTTP client CONNECT", () => {
       socket.on("error", () => {});
       socket.on("data", () =>
         socket.write(
-          "HTTP/1.1 200 OK\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 10\r\nContent-Length: 20\r\nX-Multi: p\r\nX-Multi: q\r\n\r\n",
+          "HTTP/1.1 200 OK\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 10\r\nContent-Length: 20\r\nX-Multi: p\r\nX-Multi: q\r\nConstructor: own\r\n\r\n",
         ),
       );
     });
@@ -595,6 +595,9 @@ describe("HTTP client CONNECT", () => {
       expect(headers["set-cookie"]).toEqual(["a=1", "b=2"]);
       expect(headers["content-length"]).toBe("10");
       expect(headers["x-multi"]).toBe("p, q");
+      // A header whose name collides with Object.prototype must fold against an
+      // absent own property, not the inherited one.
+      expect(headers["constructor"]).toBe("own");
     } finally {
       await new Promise<void>(r => proxyServer.close(() => r()));
     }

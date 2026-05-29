@@ -814,7 +814,9 @@ function ClientRequest(input, options, cb) {
       res[statusMessageSymbol] = statusMatch[4] || STATUS_CODES[statusMatch[3]] || "";
 
       const rawHeaders: string[] = [];
-      const parsedHeaders: Record<string, string | string[]> = {};
+      // Null prototype so a proxy header literally named "constructor"/"__proto__"
+      // folds against an absent own property instead of an inherited one.
+      const parsedHeaders: Record<string, string | string[]> = { __proto__: null } as any;
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const colon = line.indexOf(":");

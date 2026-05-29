@@ -104,4 +104,10 @@ pub use css::prefix_test as css_jsc_css_internals_prefix_test;
 pub use css::prefix_test_with_options as css_jsc_css_internals_prefix_test_with_options;
 pub use css::test_with_options as css_jsc_css_internals_test_with_options;
 
+// ── src/collections/linear_fifo.zig TestingAPIs (test-only) ─────────────────
+// `LinearFifo` has no JSC consumer of its own; this `bun:internal-for-testing`
+// probe lives in `bun_runtime` (which depends on both `bun_collections` and
+// `bun_jsc`) rather than inventing a JSC edge into the collections crate.
+pub use crate::linear_fifo_testing::ordered_remove_probe as collections_linear_fifo_testing_ap_is_ordered_remove_probe;
+
 // ported from: generated_js2native.rs

@@ -2,77 +2,33 @@
  * Regression coverage for the `LinearFifo::ordered_remove_item` wrapped-buffer
  * bounds bug (issue #31563).
  *
- * `LinearFifo` (src/collections/linear_fifo.rs) is an internal Rust collection
- * in the `bun_collections` crate. Its only in-tree caller is the bake dev
- * server's source-map weak-ref store, which drives it with CSPRNG keys and an
- * asynchronous expiry timer — there is no JS-visible, deterministic way to
- * force its `ordered_remove_item` onto a *wrapped* buffer layout from here, and
- * the type is not exposed through `bun:internal-for-testing`. The authoritative
- * coverage therefore lives in the crate's own `#[cfg(test)] mod tests`
- * (src/collections/linear_fifo.rs), which builds the exact wrapped states from
- * the issue deterministically via `write_item`/`read_item`.
+ * `LinearFifo` (src/collections/linear_fifo.rs) is an internal Rust ring buffer
+ * with no JS-visible surface of its own. Its only in-tree caller (the bake dev
+ * server's source-map weak-ref store) drives it with CSPRNG keys and an async
+ * expiry timer, so the *wrapped* branch of `ordered_remove_item` can't be
+ * reached deterministically from a normal test. The `linearFifoOrderedRemoveProbe`
+ * helper (src/runtime/linear_fifo_testing.rs, exposed via
+ * `bun:internal-for-testing`) reconstructs the exact wrapped states from the
+ * issue and returns the resulting FIFO contents.
  *
- * This test is the discoverable `test/` entry point for that fix: it runs those
- * Rust unit tests with the workspace `cargo` and asserts they pass. With the
- * buggy bounds (`count - head` / `head - count`) the wrapped-branch tests panic
- * with a `usize` subtraction overflow / out-of-range slice index; with the fix
- * (`head + count - buf_len`) they pass.
+ * With the buggy bounds (`count - head` / `head - count`) the wrapped branch
+ * panics with a `usize` subtraction overflow / out-of-range slice index; with
+ * the fix (`head + count - buf_len`) these assertions hold. The crate's own
+ * `#[cfg(test)] mod tests` exercise the same states under Miri as well.
  */
-import { describe, expect, test } from "bun:test";
-import { isWindows } from "harness";
-import { join } from "node:path";
+import { linearFifoOrderedRemoveProbe } from "bun:internal-for-testing";
+import { expect, test } from "bun:test";
 
-const repoRoot = join(import.meta.dir, "..", "..");
+test("ordered_remove_item preserves FIFO order in the wrapped tail sub-branch (head < count)", () => {
+  // write 12, read 8, write 10 -> head=8, count=14, buf_len=16 (wraps).
+  // readable = [8,9,10,11, 100,101,102,103, 104,105,106,107,108,109]
+  // remove offset 6 -> index=(8+6)&15=14 >= head -> tail sub-branch, drops 102.
+  expect(linearFifoOrderedRemoveProbe(0)).toEqual([8, 9, 10, 11, 100, 101, 103, 104, 105, 106, 107, 108, 109]);
+});
 
-// The wrapped-branch regression tests added alongside the fix. Each must be
-// reported by `cargo test` as `<name> ... ok`.
-const REQUIRED_TESTS = [
-  "ordered_remove_item_wrapped_tail_branch_head_lt_count",
-  "ordered_remove_item_wrapped_prefix_branch_head_gt_count",
-  "ordered_remove_item_wrapped_all_offsets_match_reference",
-] as const;
-
-// Cargo is on PATH on the Linux/macOS CI test lanes (same baked image as the
-// build lanes). Skip when it isn't: Windows test agents don't reliably expose
-// it, and a stripped local env may lack it — the Miri CI lane already runs
-// these same tests on `src/collections/**`. `Bun.spawn` resolves `argv[0]`
-// synchronously and throws if it's missing, so this must be gated up front
-// (matches test/js/third_party/grpc-js/test-tonic.test.ts).
-describe.skipIf(isWindows || !Bun.which("cargo"))("LinearFifo::ordered_remove_item (Rust crate tests)", () => {
-  // A cold test lane may have to compile the crate's test binary first, so give
-  // cargo generous headroom rather than the 5s default.
-  test("wrapped-buffer removal regression tests pass", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        "cargo",
-        "test",
-        "-p",
-        "bun_collections",
-        // Run exactly the three wrapped-branch regression tests by prefix.
-        "linear_fifo::tests::ordered_remove_item_wrapped",
-      ],
-      cwd: repoRoot,
-      env: process.env as Record<string, string>,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const output = stdout + stderr;
-
-    // Every wrapped-branch regression test must have run AND passed. If the
-    // fix (and its co-located tests) are absent, cargo runs 0 matching tests
-    // and these assertions fail — which is the intended fail-before behavior.
-    for (const name of REQUIRED_TESTS) {
-      expect(output).toContain(`test linear_fifo::tests::${name} ... ok`);
-    }
-
-    // The summary must report success with at least the three required tests.
-    const summary = output.match(/test result: ok\. (\d+) passed; (\d+) failed/);
-    expect(summary, `cargo did not report a passing summary:\n${output}`).not.toBeNull();
-    expect(Number(summary![1])).toBeGreaterThanOrEqual(REQUIRED_TESTS.length);
-    expect(Number(summary![2])).toBe(0);
-
-    expect(exitCode).toBe(0);
-  }, 120_000);
+test("ordered_remove_item preserves FIFO order in the wrapped prefix sub-branch (head > count)", () => {
+  // write 12, read 12, write 8 -> head=12, count=8, buf_len=16 (wraps).
+  // readable = [200,201,202,203, 204,205,206,207]
+  // remove offset 5 -> index=(12+5)&15=1 < head -> wrapped-prefix sub-branch, drops 205.
+  expect(linearFifoOrderedRemoveProbe(1)).toEqual([200, 201, 202, 203, 204, 206, 207]);
 });

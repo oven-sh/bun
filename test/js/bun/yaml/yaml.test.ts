@@ -1829,8 +1829,13 @@ folded: >
           expect(Bun.YAML.parse(input)).toBe(expected);
         });
         test.each([
-          [".inf", Infinity], ["+.inf", Infinity], [".Inf", Infinity], [".INF", Infinity],
-          ["-.inf", -Infinity], ["-.Inf", -Infinity], ["-.INF", -Infinity],
+          [".inf", Infinity],
+          ["+.inf", Infinity],
+          [".Inf", Infinity],
+          [".INF", Infinity],
+          ["-.inf", -Infinity],
+          ["-.Inf", -Infinity],
+          ["-.INF", -Infinity],
         ] as const)("%s resolves as %p", (input, expected) => {
           expect(Bun.YAML.parse(input)).toBe(expected);
         });

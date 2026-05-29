@@ -760,33 +760,6 @@ pub mod semver_string {
         }
     }
 
-    // ── Sorter(comptime direction) ────────────────────────────────────────
-    // PORT NOTE: was `const DIRECTION: SortDirection` const-generic param; requires nightly
-    // `adt_const_params`. Rewritten as a runtime field for stable — branch is trivially
-    // predictable, monomorphization not load-bearing.
-    #[derive(PartialEq, Eq, Clone, Copy)]
-    pub enum SortDirection {
-        Asc,
-        Desc,
-    }
-
-    pub struct Sorter<'a> {
-        pub direction: SortDirection,
-        pub lhs_buf: &'a [u8],
-        pub rhs_buf: &'a [u8],
-    }
-
-    impl<'a> Sorter<'a> {
-        pub fn less_than(&self, lhs: String, rhs: String) -> bool {
-            lhs.order(rhs, self.lhs_buf, self.rhs_buf)
-                == if self.direction == SortDirection::Asc {
-                    Ordering::Less
-                } else {
-                    Ordering::Greater
-                }
-        }
-    }
-
     // ── HashContext / ArrayHashContext ────────────────────────────────────
     pub struct HashContext<'a> {
         pub arg_buf: &'a [u8],

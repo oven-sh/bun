@@ -50,15 +50,6 @@ impl fmt::Display for ComparatorDisplay {
 
 impl Range {
     /// *
-    /// >= 0.0.0
-    /// >= 0
-    /// >= 0.0
-    /// >= x
-    /// >= 0
-    pub fn any_range_satisfies(&self) -> bool {
-        self.left.op == Op::Gte && self.left.version.eql(Version::default())
-    }
-
     pub fn init_wildcard(version: Version, wildcard: Wildcard) -> Range {
         match wildcard {
             Wildcard::None => Range {

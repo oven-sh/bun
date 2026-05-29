@@ -461,13 +461,18 @@ describe("HTTP client CONNECT", () => {
         statusCode: number;
         headers: Record<string, string>;
         echoed: string;
+        socketIsTunnel: boolean;
+        reqResIsRes: boolean;
       }>();
 
       const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "example.com:443" });
       req.on("connect", (res, socket, head) => {
+        // Node wires res.socket to the tunnel socket and req.res to the response.
+        const socketIsTunnel = res.socket === socket;
+        const reqResIsRes = req.res === res;
         socket.on("error", () => {});
         socket.on("data", d => {
-          resolve({ statusCode: res.statusCode, headers: res.headers, echoed: d.toString() });
+          resolve({ statusCode: res.statusCode, headers: res.headers, echoed: d.toString(), socketIsTunnel, reqResIsRes });
           socket.destroy();
         });
         socket.write("ping");
@@ -481,6 +486,8 @@ describe("HTTP client CONNECT", () => {
       expect(result.statusCode).toBe(200);
       expect(result.headers["proxy-agent"]).toBe("bun-test");
       expect(result.echoed).toBe("ping");
+      expect(result.socketIsTunnel).toBe(true);
+      expect(result.reqResIsRes).toBe(true);
     } finally {
       proxySocket?.destroy();
       await new Promise<void>(r => proxyServer.close(() => r()));

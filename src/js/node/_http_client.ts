@@ -699,14 +699,17 @@ function ClientRequest(input, options, cb) {
 
     // Write the CONNECT request line + headers. The request target is the
     // `host:port` authority from options.path, not a URL path, so it must be
-    // written verbatim (no leading slash).
+    // written verbatim (no leading slash). Use the raw (original-case) header
+    // names so the wire bytes match what the caller set, like Node.
     const headerLines = [`CONNECT ${this[kPath]} HTTP/1.1`];
-    const headers = this.getHeaders();
-    for (const name in headers) {
-      const value = headers[name];
+    const rawNames = this.getRawHeaderNames();
+    for (let i = 0; i < rawNames.length; i++) {
+      const name = rawNames[i];
+      const value = this.getHeader(name);
+      if (value === undefined) continue;
       if ($isJSArray(value)) {
-        for (let i = 0; i < value.length; i++) {
-          headerLines.push(`${name}: ${value[i]}`);
+        for (let j = 0; j < value.length; j++) {
+          headerLines.push(`${name}: ${value[j]}`);
         }
       } else {
         headerLines.push(`${name}: ${value}`);
@@ -812,6 +815,13 @@ function ClientRequest(input, options, cb) {
       res[noBodySymbol] = true;
       res.complete = true;
       res.push(null);
+
+      // Point res.socket at the real tunnel socket and back-reference the
+      // response from the request, matching Node (res.socket === socket,
+      // req.res === res). Node leaves res.req undefined for CONNECT, so we do
+      // too.
+      res.socket = socket;
+      this.res = res;
 
       // The request is finished from the writable side's perspective.
       if (!this.finished) {

@@ -58,10 +58,23 @@ const { globalAgent } = require("node:_http_agent");
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
 
+const { getLazy } = require("internal/shared");
+const net = getLazy(() => require("node:net"));
+const tls = getLazy(() => require("node:tls"));
+const {
+  getMaxHTTPHeaderSize,
+  STATUS_CODES,
+  statusCodeSymbol,
+  statusMessageSymbol,
+  noBodySymbol,
+} = require("internal/http");
+
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
 const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
 const INVALID_HOST_CHAR_REGEX = /[/\\?#@\t\n\r]/;
+const CONNECT_STATUS_LINE_REGEX = /^HTTP\/(\d)\.(\d) (\d{3})(?: (.*))?$/;
+const kEmptyBuffer = Buffer.alloc(0);
 
 const { URL } = globalThis;
 
@@ -281,6 +294,16 @@ function ClientRequest(input, options, cb) {
   const startFetch = (customBody?) => {
     if (fetching) {
       return false;
+    }
+
+    // CONNECT tunnels (HTTP proxies) have no representation in fetch(): the
+    // request target is a `host:port` authority, not a URL, and the response
+    // is a raw socket rather than a message body. Dispatch it over a raw TCP
+    // socket instead and emit the 'connect' event, matching Node.
+    if (this[kMethod] === "CONNECT") {
+      fetching = true;
+      startConnect();
+      return true;
     }
 
     fetching = true;
@@ -601,6 +624,205 @@ function ClientRequest(input, options, cb) {
       process.nextTick((self, err) => self.emit("error", err), this, err);
       return false;
     }
+  };
+
+  // Dispatch a CONNECT request over a raw TCP (or TLS) socket and emit the
+  // 'connect' event once the proxy's response status line + headers arrive.
+  // This mirrors Node's http.ClientRequest CONNECT handling so HTTP proxy
+  // clients (e.g. @grpc/grpc-js proxy support) work.
+  const startConnect = () => {
+    if (!this[kAbortController]) {
+      this[kAbortController] = new AbortController();
+      this[kAbortController].signal.addEventListener("abort", onAbort, { once: true });
+    }
+
+    this[kUpgradeOrConnect] = true;
+
+    let keepalive = true;
+    const agentKeepalive = this[kAgent]?.keepAlive;
+    if (agentKeepalive !== undefined) {
+      keepalive = agentKeepalive;
+    }
+
+    const connectOptions: any = {
+      signal: this[kAbortController].signal,
+    };
+    const socketPath = this[kSocketPath];
+    if (socketPath) {
+      connectOptions.path = socketPath;
+    } else {
+      connectOptions.host = this[kHost];
+      connectOptions.port = this[kPort];
+    }
+
+    const isTLS = this[kProtocol] === "https:";
+    if (isTLS && this[kTls]) {
+      ObjectAssign(connectOptions, this[kTls]);
+      connectOptions.servername = this[kTls].servername;
+    }
+
+    let socket;
+    try {
+      socket = isTLS ? tls().connect(connectOptions) : net().connect(connectOptions);
+    } catch (err) {
+      process.nextTick((self, err) => self.emit("error", err), this, err);
+      return;
+    }
+
+    this.socket = socket;
+
+    // Default Host/Connection headers, matching Node. A CONNECT request with no
+    // Host header is rejected by many proxies (and by Bun's own server parser),
+    // so add one pointing at the proxy authority unless the caller set it.
+    if (!this.hasHeader("host") && !socketPath) {
+      let hostHeader = this[kHost];
+      if (isIPv6(hostHeader)) {
+        hostHeader = `[${hostHeader}]`;
+      }
+      if (!this[kUseDefaultPort]) {
+        hostHeader += ":" + this[kPort];
+      }
+      this.setHeader("Host", hostHeader);
+    }
+    if (!this.hasHeader("connection")) {
+      this.setHeader("Connection", keepalive ? "keep-alive" : "close");
+    }
+
+    // Write the CONNECT request line + headers. The request target is the
+    // `host:port` authority from options.path, not a URL path, so it must be
+    // written verbatim (no leading slash).
+    const headerLines = [`CONNECT ${this[kPath]} HTTP/1.1`];
+    const headers = this.getHeaders();
+    for (const name in headers) {
+      const value = headers[name];
+      if ($isJSArray(value)) {
+        for (let i = 0; i < value.length; i++) {
+          headerLines.push(`${name}: ${value[i]}`);
+        }
+      } else {
+        headerLines.push(`${name}: ${value}`);
+      }
+    }
+    const requestHead = headerLines.join("\r\n") + "\r\n\r\n";
+
+    let connected = false;
+    let buffer: Buffer | null = null;
+    const maxHeaderSize = this[kMaxHeaderSize] || getMaxHTTPHeaderSize();
+
+    const onError = err => {
+      if (connected) return;
+      socket.removeListener("data", onData);
+      socket.removeListener("error", onError);
+      socket.removeListener("close", onClose);
+      this[kClearTimeout]?.();
+      if (isAbortError(err)) return;
+      if (err?.code === "ECONNREFUSED" || err?.code === "ConnectionRefused") {
+        err = new Error("ECONNREFUSED");
+        err.code = "ECONNREFUSED";
+      }
+      fetching = false;
+      try {
+        this.emit("error", err);
+      } catch {}
+    };
+
+    const onClose = () => {
+      if (connected) return;
+      onError(new ConnResetException("socket hang up"));
+    };
+
+    const onData = chunk => {
+      buffer = buffer ? Buffer.concat([buffer, chunk]) : chunk;
+
+      const headerEnd = buffer.indexOf("\r\n\r\n");
+      if (headerEnd === -1) {
+        if (buffer.length > maxHeaderSize) {
+          socket.destroy();
+          onError($HPE_HEADER_OVERFLOW("Header overflow"));
+        }
+        return;
+      }
+
+      connected = true;
+      socket.removeListener("data", onData);
+      socket.removeListener("error", onError);
+      socket.removeListener("close", onClose);
+      this[kClearTimeout]?.();
+      fetching = false;
+
+      const headerText = buffer.toString("latin1", 0, headerEnd);
+      const head = headerEnd + 4 < buffer.length ? buffer.subarray(headerEnd + 4) : kEmptyBuffer;
+      buffer = null;
+
+      const lines = headerText.split("\r\n");
+      const statusLine = lines.shift() || "";
+      // "HTTP/1.1 200 Connection established"
+      const statusMatch = RegExpPrototypeExec.$call(CONNECT_STATUS_LINE_REGEX, statusLine);
+
+      const res = new IncomingMessage(null, kEmptyObject);
+      if (statusMatch) {
+        res.httpVersion = `${statusMatch[1]}.${statusMatch[2]}`;
+        res[statusCodeSymbol] = Number(statusMatch[3]);
+        res[statusMessageSymbol] = statusMatch[4] || STATUS_CODES[statusMatch[3]] || "";
+      }
+
+      const rawHeaders: string[] = [];
+      const parsedHeaders: Record<string, string> = {};
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const colon = line.indexOf(":");
+        if (colon === -1) continue;
+        const key = line.slice(0, colon);
+        let val = line.slice(colon + 1);
+        if (val.charCodeAt(0) === 32 /* " " */) val = val.slice(1);
+        $putByValDirect(rawHeaders, rawHeaders.length, key);
+        $putByValDirect(rawHeaders, rawHeaders.length, val);
+        const lowerKey = key.toLowerCase();
+        const existing = parsedHeaders[lowerKey];
+        parsedHeaders[lowerKey] = existing === undefined ? val : `${existing}, ${val}`;
+      }
+      res.headers = parsedHeaders;
+      res.rawHeaders = rawHeaders;
+      // The CONNECT response has no body; mark it complete so reads emit EOF
+      // instead of touching the (absent) fetch Response backing store.
+      res[noBodySymbol] = true;
+      res.complete = true;
+      res.push(null);
+
+      // The request is finished from the writable side's perspective.
+      if (!this.finished) {
+        this.finished = true;
+      }
+      process.nextTick(emitFinishAndDeferredCloseNT);
+
+      // Once the tunnel socket goes away, the request is done too: emit 'close'
+      // on the ClientRequest the way Node does when the CONNECT socket closes.
+      socket.once("close", () => {
+        maybeEmitClose();
+      });
+
+      if (this.listenerCount("connect") > 0) {
+        this.emit("connect", res, socket, head);
+      } else {
+        // Node destroys the socket when nobody is listening for 'connect'.
+        socket.destroy();
+      }
+    };
+
+    socket.on("data", onData);
+    socket.on("error", onError);
+    socket.on("close", onClose);
+
+    const writeHead = () => {
+      socket.write(requestHead);
+    };
+    if (socket.connecting) {
+      socket.once(isTLS ? "secureConnect" : "connect", writeHead);
+    } else {
+      writeHead();
+    }
+
+    return true;
   };
 
   let onEnd = () => {};

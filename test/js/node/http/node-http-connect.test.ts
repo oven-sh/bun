@@ -440,6 +440,127 @@ describe("HTTP server socket access via normal requests", () => {
   });
 });
 
+describe("HTTP client CONNECT", () => {
+  test("http.request CONNECT tunnels through a proxy and emits 'connect'", async () => {
+    // A minimal CONNECT proxy that echoes tunneled bytes back.
+    const proxyServer = http.createServer();
+    let target = "";
+    let proxySocket: net.Socket | undefined;
+    proxyServer.on("connect", (req, clientSocket) => {
+      proxySocket = clientSocket;
+      target = req.url ?? "";
+      clientSocket.on("error", () => {});
+      clientSocket.write("HTTP/1.1 200 Connection established\r\nProxy-Agent: bun-test\r\n\r\n");
+      clientSocket.on("data", d => clientSocket.write(d));
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const { port } = proxyServer.address() as AddressInfo;
+
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<{
+        statusCode: number;
+        headers: Record<string, string>;
+        echoed: string;
+      }>();
+
+      const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "example.com:443" });
+      req.on("connect", (res, socket, head) => {
+        socket.on("error", () => {});
+        socket.on("data", d => {
+          resolve({ statusCode: res.statusCode, headers: res.headers, echoed: d.toString() });
+          socket.destroy();
+        });
+        socket.write("ping");
+      });
+      req.on("error", reject);
+      req.end();
+
+      const result = await promise;
+      // The tunnel target must be sent verbatim (no leading slash).
+      expect(target).toBe("example.com:443");
+      expect(result.statusCode).toBe(200);
+      expect(result.headers["proxy-agent"]).toBe("bun-test");
+      expect(result.echoed).toBe("ping");
+    } finally {
+      proxySocket?.destroy();
+      await new Promise<void>(r => proxyServer.close(() => r()));
+    }
+  });
+
+  test("http.request CONNECT emits 'connect' even on a non-200 status", async () => {
+    const proxyServer = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.on("data", () => socket.write("HTTP/1.1 403 Forbidden\r\nX-Reason: denied\r\n\r\n"));
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const { port } = proxyServer.address() as AddressInfo;
+
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<{
+        statusCode: number;
+        statusMessage: string;
+        headers: Record<string, string>;
+      }>();
+
+      const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "example.com:443" });
+      req.on("connect", (res, socket) => {
+        resolve({ statusCode: res.statusCode, statusMessage: res.statusMessage, headers: res.headers });
+        socket.destroy();
+      });
+      req.on("error", reject);
+      req.end();
+
+      const result = await promise;
+      expect(result.statusCode).toBe(403);
+      expect(result.statusMessage).toBe("Forbidden");
+      expect(result.headers["x-reason"]).toBe("denied");
+    } finally {
+      await new Promise<void>(r => proxyServer.close(() => r()));
+    }
+  });
+
+  test("http.request CONNECT delivers bytes received after the headers as 'head'", async () => {
+    const proxyServer = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.on("data", () => socket.write("HTTP/1.1 200 OK\r\n\r\nEARLY-DATA"));
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const { port } = proxyServer.address() as AddressInfo;
+
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "h:1" });
+      req.on("connect", (res, socket, head) => {
+        expect(head).toBeInstanceOf(Buffer);
+        resolve(head.toString());
+        socket.destroy();
+      });
+      req.on("error", reject);
+      req.end();
+
+      expect(await promise).toBe("EARLY-DATA");
+    } finally {
+      await new Promise<void>(r => proxyServer.close(() => r()));
+    }
+  });
+
+  test("http.request CONNECT emits 'error' when the proxy is unreachable", async () => {
+    // Bind then immediately close to obtain a port nothing listens on.
+    const tmp = net.createServer();
+    await once(tmp.listen(0, "127.0.0.1"), "listening");
+    const { port } = tmp.address() as AddressInfo;
+    await new Promise<void>(r => tmp.close(() => r()));
+
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "example.com:443" });
+    req.on("connect", () => reject(new Error("unexpected connect")));
+    req.on("error", err => resolve((err as NodeJS.ErrnoException).code ?? err.message));
+    req.end();
+
+    expect(await promise).toBe("ECONNREFUSED");
+  });
+});
+
 describe("Should be compatible with node.js", () => {
   test("tests should run on node.js", async () => {
     const process = Bun.spawn({

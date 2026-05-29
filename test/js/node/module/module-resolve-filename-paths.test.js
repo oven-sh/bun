@@ -199,3 +199,21 @@ test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths is no
     Module._resolveFilename("path", __filename, false, { paths: { 0: "/some/path" } });
   }).toThrow();
 });
+
+test("require.resolve throws ERR_INVALID_ARG_TYPE when options.paths contains a non-string", () => {
+  expect(() => {
+    require.resolve("total", { paths: [512] });
+  }).toThrow();
+
+  expect(() => {
+    Module._resolveFilename("total", __filename, false, { paths: [512, "/abs"] });
+  }).toThrow();
+});
+
+test("require.resolve does not crash when options.paths contains a non-absolute path", () => {
+  // Non-absolute paths are not valid module search directories, so the module
+  // simply cannot be found. Previously this crashed the process.
+  expect(() => {
+    require.resolve("total", { paths: ["relative_dir", "./foo"] });
+  }).toThrow();
+});

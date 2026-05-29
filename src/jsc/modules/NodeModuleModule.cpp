@@ -375,9 +375,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
             WTF::Vector<BunString> paths;
 
             // Iterate through the array using forEachInIterable
+            size_t pathIndex = 0;
             forEachInIterable(globalObject, pathsValue, [&](JSC::VM&, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue item) {
                 if (scope.exception())
                     return;
+
+                if (!item.isString()) {
+                    Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, makeString("paths["_s, pathIndex, "]"_s), "string"_s, item);
+                    return;
+                }
+                pathIndex++;
 
                 WTF::String pathStr = item.toWTFString(lexicalGlobalObject);
                 if (scope.exception())

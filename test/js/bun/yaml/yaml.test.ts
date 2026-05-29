@@ -1025,17 +1025,17 @@ folded: >
           // [185] same-line compact constructs after `?`/`:` need s-indent
           // (spaces only); a tab is plain s-separate and does not qualify.
           // All four reference parsers reject these (eemeli/js-yaml/PyYAML/ruamel).
-          expect(() => YAML.parse("?\t- a\n: v\n")).toThrow("Unexpected token");
-          expect(() => YAML.parse("? key\n:\t- x\n")).toThrow("Unexpected token");
-          expect(() => YAML.parse("? a\n: 1\n? b\n:\t- x\n")).toThrow("Unexpected token");
-          expect(() => YAML.parse("?\t-\n")).toThrow("Unexpected token");
-          expect(() => YAML.parse("?\t? a\n: v\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("?\t- a\n: v\n")).toThrow("Tab characters cannot be used as indentation");
+          expect(() => YAML.parse("? key\n:\t- x\n")).toThrow("Tab characters cannot be used as indentation");
+          expect(() => YAML.parse("? a\n: 1\n? b\n:\t- x\n")).toThrow("Tab characters cannot be used as indentation");
+          expect(() => YAML.parse("?\t-\n")).toThrow("Tab characters cannot be used as indentation");
+          expect(() => YAML.parse("?\t? a\n: v\n")).toThrow("Tab characters cannot be used as indentation");
         });
       });
 
       describe("explicit value on same line", () => {
         test("Y79Y/009 pattern (tab + trailing :) errors", () => {
-          expect(() => YAML.parse("? key:\n:\tkey:\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("? key:\n:\tkey:\n")).toThrow("Tab characters cannot be used as indentation");
         });
 
         test("compact-mapping value via space is valid", () => {
@@ -1201,12 +1201,33 @@ folded: >
           expect(YAML.parse("- ? &d\n- ? &e\n  : &a\n")).toEqual([{ null: null }, { null: null }]);
         });
 
-        test.todo("anchor as implicit-key e-node, alias in later entry", () => {
-          // [154]/[159] `&a` is the key's ns-flow-yaml-node = props + e-scalar.
-          // Currently the anchor is applied to the mapping (not the key) at
-          // parse_node's exit, AFTER subsequent entries are parsed, so `*a`
-          // is unresolved at parse time. Pre-existing.
+        test("anchor on e-node implicit key — [200]/[193] line split", () => {
+          // Same line as `:` → key's anchor.
           expect(YAML.parse("&a : x\nb: *a\n")).toEqual({ null: "x", b: null });
+          // Prior line → [200] collection's anchor.
+          expect(YAML.parse("- &a\n  : x\n- *a\n")).toEqual([{ null: "x" }, { null: "x" }]);
+          // Two anchors on separate lines before `:` — the inner can't be the
+          // key's (different line), and [161] disallows two collection-props.
+          expect(() => YAML.parse("&outer\n&inner\n: x\n")).toThrow("Multiple anchors");
+          // Overflow (3 anchors / 2 tags) reaches the post-loop guards.
+          expect(() => YAML.parse("&a\n&b\n&c : x\n")).toThrow("Multiple anchors");
+          expect(() => YAML.parse("!!str\n!!map\n: x\n")).toThrow("Multiple tags");
+        });
+
+        test.todo("two anchors before e-node `:` (outer=mapping, inner=key) — pre-existing over-reject", () => {
+          // Valid per [200]/[193]: outer anchors the collection, inner the
+          // e-node key. The Scalar-key analogue (`&outer\n&inner b: x`) is
+          // accepted because that arm `return Ok(mapping)`, bypassing the
+          // post-loop has_mapping_anchor guard; the e-node arm reaches it.
+          // Pre-existing on main.
+          expect(YAML.parse("&outer\n&inner : x\n")).toEqual({ null: "x" });
+        });
+
+        test("tag on e-node implicit key — [200]/[193] line split", () => {
+          // Same line → key's tag (`!!str` e-node = "").
+          expect(YAML.parse("!!str : x\n")).toEqual({ "": "x" });
+          // Prior line → collection's tag; key stays null.
+          expect(YAML.parse("!!str\n: x\n")).toEqual({ null: "x" });
         });
 
         test("at top level, content at indent 0 is still content (n = -1)", () => {
@@ -1230,16 +1251,16 @@ folded: >
           expect(() => YAML.parse("- &a\nk: v\n")).toThrow("Unexpected token");
           expect(() => YAML.parse("- &a\nb\n")).toThrow("Unexpected token");
           expect(() => YAML.parse("-\na\n")).toThrow("Unexpected token");
-          expect(() => YAML.parse("-\ta: b\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("-\ta: b\n")).toThrow("Tab characters cannot be used as indentation");
         });
 
         test("rejects same-line `?` at indent ≤ n after indicator", () => {
           // [185] compact construct on the indicator line needs s-indent
           // (spaces, indent ≥ n+1). Tab leaves indent at the line's natural
           // value; implicit-`:` scan has no additional_parent_indent.
-          expect(() => YAML.parse("?\t? x\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("?\t? x\n")).toThrow("Tab characters cannot be used as indentation");
           expect(() => YAML.parse("a:\t? x\n")).toThrow("Unexpected token");
-          expect(() => YAML.parse("-\t? x\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("-\t? x\n")).toThrow("Tab characters cannot be used as indentation");
           // [194] implicit value reaches s-l+block-node, not block-indented;
           // no same-line compact `?` allowed.
           expect(() => YAML.parse("a: ? x\n")).toThrow("Unexpected token");
@@ -1339,6 +1360,125 @@ folded: >
         });
       });
 
+      // [62]/[63] s-indent(n) is spaces only. A tab in indent position is
+      // s-separate-in-line — valid before [197] flow-in-block content, never
+      // before a [184]/[192]/[195] structural sibling (`-`/`?`/`:`/key).
+      describe("tab in s-indent position", () => {
+        const TAB_ERR = "Tab characters cannot be used as indentation";
+
+        test("rejects tab before sibling block-seq `-` ([184])", () => {
+          expect(() => YAML.parse("- a\n\t- b\n")).toThrow(TAB_ERR);
+          expect(() => YAML.parse("k:\n  - a\n  \t- b\n")).toThrow(TAB_ERR);
+        });
+
+        test("rejects tab before sibling block-map entry ([192]/[195])", () => {
+          expect(() => YAML.parse("a: 1\n\tb: 2\n")).toThrow(TAB_ERR);
+          expect(() => YAML.parse("foo:\n  a: 1\n  \tb: 2\n")).toThrow(TAB_ERR);
+          expect(() => YAML.parse("? a\n\t? b\n")).toThrow(TAB_ERR);
+          // Tag-neutral rewind in the helper preserves the taint.
+          expect(() => YAML.parse("a: !!str\n\tb: 2\n")).toThrow(TAB_ERR);
+        });
+
+        test("rejects tab before explicit `:` continuation ([191])", () => {
+          expect(() => YAML.parse("? a\n\t: b\n")).toThrow(TAB_ERR);
+          expect(() => YAML.parse("k:\n  ? a\n  \t: b\n")).toThrow(TAB_ERR);
+        });
+
+        test("rejects tab before first `?`/`:` of a new mapping", () => {
+          expect(() => YAML.parse("a:\n  \t? x\n")).toThrow(TAB_ERR);
+          expect(() => YAML.parse("a:\n  \t: x\n")).toThrow(TAB_ERR);
+        });
+
+        test("rejects tab before first `-` of a new sequence", () => {
+          expect(() => YAML.parse("a:\n  \t- x\n")).toThrow(TAB_ERR);
+        });
+
+        test("rejects tab in compact-construct position ([185] same line)", () => {
+          // Y79Y/005, /006, /007, /008 family.
+          expect(() => YAML.parse("- \t-\n")).toThrow(TAB_ERR);
+          expect(() => YAML.parse("?\t-\n")).toThrow(TAB_ERR);
+          expect(() => YAML.parse("? -\n:\t-\n")).toThrow(TAB_ERR);
+          expect(() => YAML.parse("?\tkey:\n")).toThrow(TAB_ERR);
+        });
+
+        test("rejects tab before sibling that immediately follows block-scalar body", () => {
+          // The block-scalar body scanner is the third leading-whitespace
+          // consumer (after scan() and fold_lines()) and must taint
+          // tab_after_indent on the line that terminates the body.
+          expect(() => YAML.parse("- |\n  x\n\t- y\n")).toThrow(TAB_ERR);
+          expect(() => YAML.parse("a: |\n  x\n\tb: y\n")).toThrow(TAB_ERR);
+          expect(() => YAML.parse("? |\n  x\n\t: y\n")).toThrow(TAB_ERR);
+          expect(() => YAML.parse("a: >\n  x\n\tb: y\n")).toThrow(TAB_ERR);
+          // Same when the FIRST line after the header terminates (phase-1).
+          expect(() => YAML.parse("a:\n  - |\n  \t- x\n")).toThrow(TAB_ERR);
+          expect(() => YAML.parse("a:\n  key: |\n  \tsibling: x\n")).toThrow(TAB_ERR);
+          expect(() => YAML.parse("a:\n  key: >\n  \tsibling: x\n")).toThrow(TAB_ERR);
+          // Tab in more-indented body content is valid (part of the scalar).
+          expect(YAML.parse("- |\n  x\n  \ty\n")).toEqual(["x\n\ty\n"]);
+          expect(YAML.parse("- |\n  \t- x\n")).toEqual(["\t- x\n"]);
+        });
+
+        test("rejects tab before alias/flow as implicit-key sibling", () => {
+          expect(() => YAML.parse("&x a: 1\n\t*x : 2\n")).toThrow(TAB_ERR);
+          expect(() => YAML.parse("a: 1\n\t[b]: 2\n")).toThrow(TAB_ERR);
+          expect(() => YAML.parse("a: 1\n\t{b}: 2\n")).toThrow(TAB_ERR);
+        });
+
+        test("accepts tab before [197] flow-in-block content", () => {
+          // s-separate(n+1,c) admits s-separate-in-line (which permits tab)
+          // after s-indent(n+1).
+          expect(YAML.parse("a:\n  \tb\n")).toEqual({ a: "b" });
+          expect(YAML.parse("a:\n  \t[1]\n")).toEqual({ a: [1] });
+          expect(YAML.parse("a:\n  \t&x b\n")).toEqual({ a: "b" });
+          expect(YAML.parse('a:\n  \t"b"\n')).toEqual({ a: "b" });
+        });
+
+        test("accepts tab as same-line s-separate after indicator", () => {
+          // [80] s-separate-in-line between indicator and content.
+          expect(YAML.parse("-\tx\n")).toEqual(["x"]);
+          expect(YAML.parse("?\tx\n")).toEqual({ x: null });
+          expect(YAML.parse(":\tx\n")).toEqual({ null: "x" });
+          expect(YAML.parse("a:\tx\n")).toEqual({ a: "x" });
+        });
+
+        test("accepts tab in flow context (not s-indent)", () => {
+          expect(YAML.parse("[\n\ta\n]\n")).toEqual(["a"]);
+          expect(YAML.parse("{\n\ta: 1\n}\n")).toEqual({ a: 1 });
+        });
+
+        test("accepts tab in plain-scalar fold (continuation, not key)", () => {
+          // The tab is consumed by fold_lines lookahead; the next line is
+          // content of the same plain scalar, not a sibling.
+          expect(YAML.parse("a: 1\n  \tb\n")).toEqual({ a: "1 b" });
+        });
+
+        // The tag-neutral rewind in parse_block_indented re-scans an
+        // abandoned scalar from token.start (past the tab), so the original
+        // taint must be preserved across the rewind. Exhaustive over each
+        // indicator × each property prefix × each tab position.
+        describe("property prefix does not lose tab taint on abandoned sibling", () => {
+          const indicators = [
+            ["map-value", (n: string, p: string, t: string) => `${n}a: ${p}\n${t}b: 2\n`],
+            ["seq-entry", (n: string, p: string, t: string) => `${n}- a\n${n}- ${p}\n${t}- b\n`],
+            ["explicit-key", (n: string, p: string, t: string) => `${n}? a\n${n}? ${p}\n${t}? b\n`],
+          ] as const;
+          const props = ["!!str", "&x", "!!str &x", "&x !!str"] as const;
+          const tabs = [
+            ["col0", "\t", ""],
+            ["after-spaces", "  \t", "  "],
+          ] as const;
+          for (const [iname, build] of indicators) {
+            for (const prop of props) {
+              for (const [tname, tab, indent] of tabs) {
+                test(`${iname} × ${prop} × ${tname}`, () => {
+                  expect(() => YAML.parse(build(indent, prop, tab))).toThrow(TAB_ERR);
+                });
+              }
+            }
+          }
+        });
+      });
+
       // Pre-existing flow-context over-accepts surfaced by adversarial review.
       // Each `test.todo` asserts the spec result (per ≥3/4 reference parsers);
       // the comment documents what Bun currently produces.
@@ -1385,13 +1525,34 @@ folded: >
           expect(YAML.parse("{{k:1}\n:2}\n")).toEqual({ "[object Object]": 2 });
         });
 
-        test.todo("tab before block construct after `?`/`:` (Y79Y/008 family)", () => {
+        test("tab before block construct after `?`/`:` (Y79Y/008 family)", () => {
           // [185] s-l+block-indented requires s-indent (spaces only) before a
-          // same-line compact construct. Currently `?\ta: b` accepts as
-          // {"a":"b"} (compact mapping reached via tab); refs error.
-          expect(() => YAML.parse("?\ta: b\n")).toThrow();
-          expect(() => YAML.parse("? a\n:\t? b\n")).toThrow();
-          expect(() => YAML.parse("?\t: x\n")).toThrow();
+          // same-line compact construct.
+          expect(() => YAML.parse("?\ta: b\n")).toThrow("Tab characters cannot be used as indentation");
+          expect(() => YAML.parse("? a\n:\t? b\n")).toThrow("Tab characters cannot be used as indentation");
+          expect(() => YAML.parse("?\t: x\n")).toThrow("Tab characters cannot be used as indentation");
+        });
+
+        test.todo("block-scalar phase-2 mid-line `---`/`...` is content, not a doc marker", () => {
+          // The phase-2 body loop's `0x2D`/`0x2E` arms check for `---`/`...`
+          // and `line_indent == NONE`, but at content_indent==0 a more-indented
+          // `  z---` line still has line_indent set to 0 by the nested loop.
+          // ee/js both treat it as content. Pre-existing.
+          expect(YAML.parse("|\nx\n  z---\n")).toEqual("x\n  z---\n");
+          expect(YAML.parse("|\nx\n  z...\n")).toEqual("x\n  z...\n");
+        });
+
+        test.todo("block collection on the `---` line", () => {
+          // [200] s-l+block-collection requires s-l-comments (a line break)
+          // before l+block-sequence/mapping; same-line content after `---` is
+          // s-separate-in-line + ns-flow-node only. Not tab-specific (`--- - x`
+          // is equally invalid). ee rejects both; js-yaml only rejects the
+          // tab variant. Pre-existing.
+          expect(() => YAML.parse("---\t- x\n")).toThrow();
+          expect(() => YAML.parse("--- - x\n")).toThrow();
+          // Same-line flow node IS valid.
+          expect(YAML.parse("--- foo\n")).toEqual("foo");
+          expect(YAML.parse("---\tfoo\n")).toEqual("foo");
         });
 
         test.todo("`---` inside a plain scalar (issue #25660)", () => {
@@ -1543,8 +1704,8 @@ folded: >
       test("Y79Y/009 pattern in loop entries", () => {
         // The first-entry guard must also apply in the loop: a second entry
         // on the same line as the explicit `:` is rejected in all positions.
-        expect(() => YAML.parse("? key:\n:\tkey:\n")).toThrow("Unexpected token");
-        expect(() => YAML.parse("x: 1\n? key:\n:\tkey:\n")).toThrow("Unexpected token");
+        expect(() => YAML.parse("? key:\n:\tkey:\n")).toThrow("Tab characters cannot be used as indentation");
+        expect(() => YAML.parse("x: 1\n? key:\n:\tkey:\n")).toThrow("Tab characters cannot be used as indentation");
       });
 
       test("flow collection inside ? - …", () => {

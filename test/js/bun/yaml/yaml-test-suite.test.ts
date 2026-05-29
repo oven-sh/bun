@@ -329,7 +329,8 @@ Reuse anchor: *anchor
   expect(parsed).toEqual(expected);
 
   // Verify shared references
-  expect((parsed as any)["occurrence"]).toBe((parsed as any)["anchor"]);
+  expect((parsed as any)["First occurrence"]).toBe((parsed as any)["Second occurrence"]);
+  expect((parsed as any)["Override anchor"]).toBe((parsed as any)["Reuse anchor"]);
 });
 
 test("yaml-test-suite/3HFZ", () => {
@@ -2519,8 +2520,8 @@ test("yaml-test-suite/C4HZ", () => {
   expect(parsed).toEqual(expected);
 
   // Verify shared references
-  expect((parsed as any)["center"]).toBe((parsed as any)["start"]);
-  expect((parsed as any)["center"]).toBe((parsed as any)["start"]);
+  expect((parsed as any)[1].start).toBe((parsed as any)[0].center);
+  expect((parsed as any)[2].start).toBe((parsed as any)[0].center);
 });
 
 test("yaml-test-suite/CC74", () => {
@@ -2989,7 +2990,7 @@ bar: 2
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/DK95/06", () => {
+test("yaml-test-suite/DK95/06", () => {
   // Tabs that look like indentation
   // Error test - expecting parse to fail
   const input: string = `foo:
@@ -3271,7 +3272,7 @@ test("yaml-test-suite/FH7J", () => {
 
   const parsed = YAML.parse(input);
 
-  const expected: any = ["", { null: "a", b: "" }, { null: null }];
+  const expected: any = ["", { null: "a", b: "" }, { "": null }];
 
   expect(parsed).toEqual(expected);
 });
@@ -6185,7 +6186,7 @@ test("yaml-test-suite/Y79Y/004", () => {
   }).toThrow();
 });
 
-test.todo("yaml-test-suite/Y79Y/005", () => {
+test("yaml-test-suite/Y79Y/005", () => {
   // Tabs in various contexts
   // Error test - expecting parse to fail
   const input: string = `- 	-
@@ -6219,7 +6220,7 @@ test("yaml-test-suite/Y79Y/007", () => {
   }).toThrow();
 });
 
-test.todo("yaml-test-suite/Y79Y/008", () => {
+test("yaml-test-suite/Y79Y/008", () => {
   // Tabs in various contexts
   // Error test - expecting parse to fail
   const input: string = `?	key:

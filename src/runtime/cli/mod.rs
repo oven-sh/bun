@@ -1284,13 +1284,20 @@ pub mod command {
                 let empty_eval = match argv.len() {
                     2 => matches!(
                         argv.get(1).map(bun_core::ZStr::as_bytes),
-                        Some(b"-e=" | b"-p=" | b"--eval=" | b"--print=")
+                        Some(b"-e=" | b"-p=" | b"--eval=" | b"--print=" | b"--json=" | b"--yaml=")
                     ),
                     3 => {
                         argv.get(2).is_some_and(|a| a.as_bytes().is_empty())
                             && matches!(
                                 argv.get(1).map(bun_core::ZStr::as_bytes),
-                                Some(b"-e" | b"-p" | b"--eval" | b"--print")
+                                Some(
+                                    b"-e"
+                                        | b"-p"
+                                        | b"--eval"
+                                        | b"--print"
+                                        | b"--json"
+                                        | b"--yaml"
+                                )
                             )
                     }
                     _ => false,

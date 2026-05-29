@@ -21,7 +21,9 @@ use bun_core::{self, FeatureFlags, Global, Output, env_var};
 use bun_jsc::RegularExpression;
 use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
-use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
+use bun_options_types::context::{
+    Debugger, DebuggerEnable, EvalPrintFormat, HotReload, MacroOptions, Shard,
+};
 use bun_options_types::schema::api;
 use bun_paths::resolve_path;
 use bun_paths::{PathBuffer, platform};
@@ -37,6 +39,20 @@ use crate::cli::{DefineColonList, LoaderColonList};
 #[inline]
 fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
     input.iter().map(|s| Box::<[u8]>::from(*s)).collect()
+}
+
+fn parse_indent_flag(value: Option<&[u8]>, flag_name: &[u8]) -> u32 {
+    let Some(value) = value else { return 2 };
+    match strings::parse_int::<u32>(value, 10) {
+        Ok(v) => v.min(10),
+        Err(_) => {
+            Output::err_generic(
+                "Invalid value for {}: \"{}\". Must be an integer between 0 and 10\n",
+                (BStr::new(flag_name), BStr::new(value)),
+            );
+            Global::exit(1);
+        }
+    }
 }
 
 pub(crate) fn loader_resolver(input: &[u8]) -> Result<api::Loader, bun_core::Error> {
@@ -253,6 +269,18 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("-e, --eval <STR>                  Evaluate argument as a script"),
     parse_param!(
         "-p, --print <STR>                 Evaluate argument as a script and print the result"
+    ),
+    parse_param!(
+        "--json <STR>                      Evaluate argument as a script and print the result as JSON"
+    ),
+    parse_param!(
+        "--yaml <STR>                      Evaluate argument as a script and print the result as YAML"
+    ),
+    parse_param!(
+        "--json-indent <NUM>               Number of spaces for --json indentation. Default 2"
+    ),
+    parse_param!(
+        "--yaml-indent <NUM>               Number of spaces for --yaml indentation. Default 2"
     ),
     parse_param!(
         "--prefer-offline                  Skip staleness checks for packages in the Bun runtime and resolve from disk"
@@ -1096,6 +1124,18 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         if let Some(script) = args.option(b"--print") {
             ctx.runtime_options.eval.script = script.into();
             ctx.runtime_options.eval.eval_and_print = true;
+        } else if let Some(script) = args.option(b"--json") {
+            ctx.runtime_options.eval.script = script.into();
+            ctx.runtime_options.eval.eval_and_print = true;
+            ctx.runtime_options.eval.print_format = EvalPrintFormat::Json;
+            ctx.runtime_options.eval.print_indent =
+                parse_indent_flag(args.option(b"--json-indent"), b"--json-indent");
+        } else if let Some(script) = args.option(b"--yaml") {
+            ctx.runtime_options.eval.script = script.into();
+            ctx.runtime_options.eval.eval_and_print = true;
+            ctx.runtime_options.eval.print_format = EvalPrintFormat::Yaml;
+            ctx.runtime_options.eval.print_indent =
+                parse_indent_flag(args.option(b"--yaml-indent"), b"--yaml-indent");
         } else if let Some(script) = args.option(b"--eval") {
             ctx.runtime_options.eval.script = script.into();
         }

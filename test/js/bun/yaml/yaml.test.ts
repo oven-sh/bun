@@ -1533,7 +1533,7 @@ folded: >
           expect(() => YAML.parse("?\t: x\n")).toThrow("Tab characters cannot be used as indentation");
         });
 
-        test.todo("block-scalar phase-2 mid-line `---`/`...` is content, not a doc marker", () => {
+        test("block-scalar phase-2 mid-line `---`/`...` is content, not a doc marker", () => {
           // The phase-2 body loop's `0x2D`/`0x2E` arms check for `---`/`...`
           // and `line_indent == NONE`, but at content_indent==0 a more-indented
           // `  z---` line still has line_indent set to 0 by the nested loop.
@@ -1542,7 +1542,7 @@ folded: >
           expect(YAML.parse("|\nx\n  z...\n")).toEqual("x\n  z...\n");
         });
 
-        test.todo("block collection on the `---` line", () => {
+        test("block collection on the `---` line", () => {
           // [200] s-l+block-collection requires s-l-comments (a line break)
           // before l+block-sequence/mapping; same-line content after `---` is
           // s-separate-in-line + ns-flow-node only. Not tab-specific (`--- - x`
@@ -1555,7 +1555,7 @@ folded: >
           expect(YAML.parse("---\tfoo\n")).toEqual("foo");
         });
 
-        test.todo("`---` inside a plain scalar (issue #25660)", () => {
+        test("`---` inside a plain scalar (issue #25660)", () => {
           // [128] ns-plain-char admits `-`; a `---` not at column 0 (or not
           // followed by /[ \t\r\n]|$/) is content, not c-directives-end.
           // Currently splits into [{"name":"some-text"},{"description":"x"}].

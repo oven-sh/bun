@@ -56,7 +56,8 @@ impl IteratorResult {
 }
 pub type Result = sys::Result<Option<IteratorResult>>;
 
-/// Fake PathString to have less `if (Environment.isWindows) ...`
+/// The `u16` twin of `IteratorResult.name` (`RawSlice<u16>` + `slice_assume_z()`),
+/// kept separate so callers avoid an `if (Environment.isWindows) ...` split.
 // TODO(port): lifetime — borrows iterator's internal `name_data` buffer; invalidated on next()
 pub struct IteratorResultWName {
     // `RawSlice` invariant: the iterator's `name_data` outlives this result

@@ -211,20 +211,24 @@ test("require.resolve coerces non-string options.paths entries without crashing"
     require.resolve("this-pkg-does-not-exist-zzz", { paths: ["/abs", 512] });
   }).toThrow();
 
-  // The coerced directory name is honored: 512 -> "512", anchored at cwd.
-  const { path: dir, cleanup } = createTempDir("require-resolve-coerced-paths", {
-    "512/node_modules/coerced-pkg/package.json": JSON.stringify({ name: "coerced-pkg", main: "index.js" }),
-    "512/node_modules/coerced-pkg/index.js": "module.exports = 'coerced-pkg';",
-  });
-  const prevCwd = process.cwd();
-  try {
-    process.chdir(dir);
-    expect(require.resolve("coerced-pkg", { paths: [512] })).toBe(
-      resolve(dir, "512/node_modules/coerced-pkg/index.js"),
-    );
-  } finally {
-    process.chdir(prevCwd);
-    cleanup();
+  // Bun coerces options.paths entries via WebIDL DOMString (Node instead throws
+  // ERR_INVALID_ARG_TYPE for a non-string), so only assert the coerced directory
+  // name is honored (512 -> "512", anchored at cwd) under Bun.
+  if (isBun) {
+    const { path: dir, cleanup } = createTempDir("require-resolve-coerced-paths", {
+      "512/node_modules/coerced-pkg/package.json": JSON.stringify({ name: "coerced-pkg", main: "index.js" }),
+      "512/node_modules/coerced-pkg/index.js": "module.exports = 'coerced-pkg';",
+    });
+    const prevCwd = process.cwd();
+    try {
+      process.chdir(dir);
+      expect(require.resolve("coerced-pkg", { paths: [512] })).toBe(
+        resolve(dir, "512/node_modules/coerced-pkg/index.js"),
+      );
+    } finally {
+      process.chdir(prevCwd);
+      cleanup();
+    }
   }
 });
 

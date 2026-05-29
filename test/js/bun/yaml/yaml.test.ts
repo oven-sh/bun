@@ -1216,10 +1216,7 @@ folded: >
 
         test("two anchors before e-node `:` (outer=mapping, inner=key)", () => {
           // Valid per [200]/[193]: outer anchors the collection, inner the
-          // e-node key. The Scalar-key analogue (`&outer\n&inner b: x`) is
-          // accepted because that arm `return Ok(mapping)`, bypassing the
-          // post-loop has_mapping_anchor guard; the e-node arm reaches it.
-          // Pre-existing on main.
+          // e-node key.
           expect(YAML.parse("&outer\n&inner : x\n")).toEqual({ null: "x" });
         });
 
@@ -1782,7 +1779,7 @@ folded: >
           ["-.e5", "-.e5"],
           ["e5", "e5"],
         ] as const)("%s resolves as string", (input, expected) => {
-          expect(Bun.YAML.parse(input)).toBe(expected);
+          expect(YAML.parse(input)).toBe(expected);
         });
         test.each([
           ["1", 1],
@@ -1803,10 +1800,18 @@ folded: >
           ["-.5e2", -50],
           ["0x1f", 31],
           ["0o17", 15],
-          ["-0x1f", -31],
         ] as const)("%s resolves as number %p", (input, expected) => {
-          expect(Bun.YAML.parse(input)).toBe(expected);
+          expect(YAML.parse(input)).toBe(expected);
         });
+        test.todo.each(["-0x1f", "+0x1f", "-0o17", "+0o17"])(
+          "signed hex/octal %s resolves as string (§10.2.1.2)",
+          input => {
+            // Core schema int regex is `0x [0-9a-fA-F]+` — no sign. js-yaml,
+            // PyYAML, ruamel agree. Pre-existing on the int path (not gated
+            // by is_core_schema_number, which only validates the float path).
+            expect(YAML.parse(input)).toBe(input);
+          },
+        );
         test.each([
           [".inf", Infinity],
           ["+.inf", Infinity],
@@ -1816,12 +1821,12 @@ folded: >
           ["-.Inf", -Infinity],
           ["-.INF", -Infinity],
         ] as const)("%s resolves as %p", (input, expected) => {
-          expect(Bun.YAML.parse(input)).toBe(expected);
+          expect(YAML.parse(input)).toBe(expected);
         });
         test(".nan resolves as NaN", () => {
-          expect(Bun.YAML.parse(".nan")).toBeNaN();
-          expect(Bun.YAML.parse(".NaN")).toBeNaN();
-          expect(Bun.YAML.parse(".NAN")).toBeNaN();
+          expect(YAML.parse(".nan")).toBeNaN();
+          expect(YAML.parse(".NaN")).toBeNaN();
+          expect(YAML.parse(".NAN")).toBeNaN();
         });
       });
 

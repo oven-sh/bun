@@ -884,18 +884,21 @@ function ClientRequest(input, options, cb) {
       }
       process.nextTick(emitFinishAndDeferredCloseNT);
 
-      // Once the tunnel socket goes away, the request is done too: emit 'close'
-      // on the ClientRequest the way Node does when the CONNECT socket closes.
-      socket.once("close", () => {
-        maybeEmitClose();
-      });
-
       if (this.listenerCount("connect") > 0) {
         this.emit("connect", res, socket, head);
       } else {
         // Node destroys the socket when nobody is listening for 'connect'.
         socket.destroy();
       }
+
+      // Attach this after the emit so the user's 'connect' handler sees the
+      // tunnel socket with no internal listeners, like Node. Socket 'close' is
+      // async, so a listener added here still fires even if the handler called
+      // socket.destroy() synchronously. Once the tunnel socket goes away, the
+      // request is done too: emit 'close' the way Node does on CONNECT close.
+      socket.once("close", () => {
+        maybeEmitClose();
+      });
     };
 
     // Swallow a late error that fires during pre-tunnel teardown (e.g. the

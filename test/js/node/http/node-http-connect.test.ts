@@ -464,6 +464,7 @@ describe("HTTP client CONNECT", () => {
         socketIsTunnel: boolean;
         reqResIsRes: boolean;
         upgrade: unknown;
+        closeListeners: number;
       }>();
 
       const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "example.com:443" });
@@ -473,6 +474,9 @@ describe("HTTP client CONNECT", () => {
         const socketIsTunnel = res.socket === socket;
         const reqResIsRes = req.res === res;
         const upgrade = (res as any).upgrade;
+        // Node hands the tunnel socket to 'connect' with no internal listeners;
+        // capture the 'close' listener count before we attach our own.
+        const closeListeners = socket.listenerCount("close");
         socket.on("error", () => {});
         socket.on("data", d => {
           resolve({
@@ -482,6 +486,7 @@ describe("HTTP client CONNECT", () => {
             socketIsTunnel,
             reqResIsRes,
             upgrade,
+            closeListeners,
           });
           socket.destroy();
         });
@@ -499,6 +504,8 @@ describe("HTTP client CONNECT", () => {
       expect(result.socketIsTunnel).toBe(true);
       expect(result.reqResIsRes).toBe(true);
       expect(result.upgrade).toBe(true);
+      // The socket is handed over with no internal listeners, like Node.
+      expect(result.closeListeners).toBe(0);
     } finally {
       proxySocket?.destroy();
       await new Promise<void>(r => proxyServer.close(() => r()));
@@ -638,7 +645,9 @@ describe("HTTP client CONNECT", () => {
       socket.on("error", () => {});
       socket.on("data", () => {
         socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
-        // Send the tunneled bytes in a separate write after the headers.
+        // Send the tunneled bytes in a separate write, a short moment after the
+        // headers, so they land in a TCP read distinct from the header block
+        // (not coalesced into it, which would deliver them as 'head' instead).
         setTimeout(() => socket.write("LATE-DATA"), 20);
       });
     });
@@ -651,9 +660,13 @@ describe("HTTP client CONNECT", () => {
       req.on("connect", async (res, socket) => {
         const flowing = (socket as any).readableFlowing;
         socket.on("error", () => {});
-        // Yield to the event loop before attaching the data listener; the bytes
-        // must be buffered (not dropped) until now.
-        await new Promise<void>(r => setTimeout(r, 60));
+        // Let the event loop turn so the post-header bytes physically arrive at
+        // the socket before the listener is attached; they must be buffered (not
+        // dropped) until now. There is no passive "data buffered" signal to wait
+        // on here — while flowing === null the bytes sit at the socket handle
+        // (readableLength stays 0) on both Node and Bun until a consumer resumes
+        // the stream, so a short yield is the condition that exercises this.
+        await Bun.sleep(50);
         let data = "";
         socket.on("data", d => {
           data += d.toString();

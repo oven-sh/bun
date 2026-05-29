@@ -2,7 +2,7 @@
 
 exports[`basic: bun.lock 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {

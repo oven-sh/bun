@@ -41,7 +41,7 @@ describe("configVersion", () => {
     ).replaceAll(/localhost:\d+/g, "localhost:1234");
     expect(lockfile).toMatchInlineSnapshot(`
       "{
-        "lockfileVersion": 1,
+        "lockfileVersion": 2,
         "configVersion": 1,
         "workspaces": {
           "": {
@@ -89,7 +89,7 @@ describe("configVersion", () => {
     ).replaceAll(/localhost:\d+/g, "localhost:1234");
     expect(lockfile).toMatchInlineSnapshot(`
       "{
-        "lockfileVersion": 1,
+        "lockfileVersion": 2,
         "configVersion": 1,
         "workspaces": {
           "": {
@@ -160,7 +160,7 @@ describe("configVersion", () => {
     ).replaceAll(/localhost:\d+/g, "localhost:1234");
     expect(lockfile).toMatchInlineSnapshot(`
       "{
-        "lockfileVersion": 1,
+        "lockfileVersion": 2,
         "configVersion": 0,
         "workspaces": {
           "": {

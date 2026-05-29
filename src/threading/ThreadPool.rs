@@ -1029,9 +1029,8 @@ impl ThreadPool {
 
         // If there are threads, start off the chain sending it the shutdown signal.
         // The thread receives the shutdown signal and sends it to the next thread, and the next..
-        // Use swap (not load) so join() is idempotent: a second call (e.g., from
-        // wait_and_deinit() followed by Drop) sees null and returns instead of
-        // touching freed worker stack memory.
+        // Use swap (not load) so join() is idempotent: a second call sees null and
+        // returns instead of touching freed worker stack memory.
         let Some(thread) = NonNull::new(self.threads.swap(ptr::null_mut(), Ordering::Acquire))
         else {
             return;

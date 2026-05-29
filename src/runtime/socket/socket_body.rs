@@ -2176,6 +2176,19 @@ impl<const SSL: bool> NewSocket<SSL> {
             return -1;
         }
 
+        // The raw [raw, tls] upgrade twin shares the TLS half's us_socket_t
+        // (`s->ssl` is set) but must write raw bytes: write_check_error would
+        // route it through the SSL-encrypting us_socket_write, and its fatal
+        // signal is never set for TLS sockets anyway.
+        if self.flags.get().contains(Flags::BYPASS_TLS) {
+            let res = self.do_socket_write(buffer);
+            let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
+            self.bytes_written
+                .set(self.bytes_written.get() + uwrote as u64);
+            log!("write({}) = {}", buffer.len(), res);
+            return res;
+        }
+
         let (res, fatal) = socket.write_check_error(buffer);
         if fatal {
             // The kernel rejected the write outright (EPIPE/ECONNRESET after

@@ -844,3 +844,40 @@ it("leaves socket.authorized false unless a client certificate was requested and
     }
   }
 });
+
+it("createServer({pfx, requestCert}) verifies client certificates against the pfx-embedded CA", async () => {
+  // agent1.pfx bundles agent1's key/cert plus ca1; a server built from it must
+  // be able to verify a client certificate signed by that embedded CA.
+  const fixtures = join(import.meta.dir, "../test/fixtures/keys");
+  const { promise, resolve, reject } = Promise.withResolvers<boolean>();
+  const server: Server = createServer(
+    {
+      pfx: readFileSync(join(fixtures, "agent1.pfx")),
+      passphrase: "sample",
+      requestCert: true,
+      rejectUnauthorized: false,
+    },
+    socket => {
+      resolve(socket.authorized);
+      socket.end();
+    },
+  );
+  server.on("error", reject);
+  server.listen(0);
+  await once(server, "listening");
+  const address = server.address() as AddressInfo;
+  const client = connect({
+    port: address.port,
+    host: "127.0.0.1",
+    key: readFileSync(join(fixtures, "agent1-key.pem"), "utf8"),
+    cert: readFileSync(join(fixtures, "agent1-cert.pem"), "utf8"),
+    rejectUnauthorized: false,
+  });
+  client.on("error", reject);
+  try {
+    expect(await promise).toBe(true);
+  } finally {
+    client.end();
+    server.close();
+  }
+});

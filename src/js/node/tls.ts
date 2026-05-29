@@ -1313,6 +1313,15 @@ function Server(options, secureConnectionListener): void {
       }
 
       let ca = options.ca;
+      // PKCS#12-embedded CAs are stashed separately so createSecureContext can
+      // extend (not replace) the default trust set via addCACert. The server
+      // path hands raw {key, cert, ca} to the native listener and has no
+      // addCACert hook, so fold them into `ca` here - an mTLS server should
+      // verify client certificates against the bundle's own CA chain.
+      const pfxExtraCAs = options._pfxExtraCACerts;
+      if (pfxExtraCAs?.length) {
+        ca = ca == null ? pfxExtraCAs : Array.isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
+      }
       if (ca) {
         throwOnInvalidTLSArray("options.ca", ca);
         this.ca = ca;

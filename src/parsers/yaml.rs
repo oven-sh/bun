@@ -5679,7 +5679,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         if matches!(escape, Escape::LowerU)
             && (0xD800..=0xDBFF).contains(&value)
             && Enc::wide(self.peek(1)) == 0x5C /* '\\' */
-            && Enc::wide(self.peek(2)) == 0x75 /* 'u' */
+            && Enc::wide(self.peek(2)) == 0x75
+        /* 'u' */
         {
             let mut lo: u32 = 0;
             let mut have_lo = true;
@@ -5693,8 +5694,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
             }
             if have_lo {
-                if let Some(cp) =
-                    bun_core::strings::decode_surrogate_pair(value as u16, lo as u16)
+                if let Some(cp) = bun_core::strings::decode_surrogate_pair(value as u16, lo as u16)
                 {
                     // Skip `\uXXXX`; the caller's trailing inc(1) lands past it.
                     self.inc(6);

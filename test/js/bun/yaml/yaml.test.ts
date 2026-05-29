@@ -13,8 +13,8 @@ describe("Bun.YAML", () => {
       });
 
       test("parses from Buffer with UTF-8", () => {
-        const buffer = Buffer.from("emoji: �\u009F��\ntext: hello");
-        expect(YAML.parse(buffer)).toEqual({ emoji: "�\u009F��", text: "hello" });
+        const buffer = Buffer.from("emoji: �\u009F��\ntext: hello");
+        expect(YAML.parse(buffer)).toEqual({ emoji: "�\u009F��", text: "hello" });
       });
 
       test("parses from ArrayBuffer", () => {
@@ -1202,9 +1202,9 @@ folded: >
         });
 
         test("anchor on e-node implicit key — [200]/[193] line split", () => {
-          // Same line as `:` �\u0086� key's anchor.
+          // Same line as `:` �\u0086� key's anchor.
           expect(YAML.parse("&a : x\nb: *a\n")).toEqual({ null: "x", b: null });
-          // Prior line �\u0086� [200] collection's anchor.
+          // Prior line �\u0086� [200] collection's anchor.
           expect(YAML.parse("- &a\n  : x\n- *a\n")).toEqual([{ null: "x" }, { null: "x" }]);
           // Two anchors on separate lines before `:` — the inner can't be the
           // key's (different line), and [161] disallows two collection-props.
@@ -1221,9 +1221,9 @@ folded: >
         });
 
         test("tag on e-node implicit key — [200]/[193] line split", () => {
-          // Same line �\u0086� key's tag (`!!str` e-node = "").
+          // Same line �\u0086� key's tag (`!!str` e-node = "").
           expect(YAML.parse("!!str : x\n")).toEqual({ "": "x" });
-          // Prior line �\u0086� collection's tag; key stays null.
+          // Prior line �\u0086� collection's tag; key stays null.
           expect(YAML.parse("!!str\n: x\n")).toEqual({ null: "x" });
         });
 
@@ -1676,7 +1676,7 @@ folded: >
           ["seq-2", "- - text---\n", [["text---"]]],
           ["seq-3", "- - - text...\n", [[["text..."]]]],
           ["seq-map-seq", "- a:\n    - b---\n    - c\n", [{ a: ["b---", "c"] }]],
-          // Mixed block�\u0086�flow
+          // Mixed block�\u0086�flow
           ["block-flow-seq", "a:\n  - [text---, x]\n", { a: [["text---", "x"]] }],
           ["block-flow-map", "a:\n  - {k: text...}\n", { a: [{ k: "text..." }] }],
           ["flow-in-flow", "[[text---], {k: text...}]\n", [["text---"], { k: "text..." }]],
@@ -1715,7 +1715,11 @@ folded: >
           // Compact `- -` prefix collision
           ["compact-dash-val", "- - ---\n", [["---"]]],
           // #23489: ellipsis inside quoted strings (the original case `nl` was added for)
-          ["i23489", `balance: "�\u009F�� �\u0084ا تمت�\u0084ك محفظة... !"\n`, { balance: "�\u009F�� �\u0084ا تمت�\u0084ك محفظة... !" }],
+          [
+            "i23489",
+            `balance: "�\u009F�� �\u0084ا تمت�\u0084ك محفظة... !"\n`,
+            { balance: "�\u009F�� �\u0084ا تمت�\u0084ك محفظة... !" },
+          ],
           ["dq-dot-mid", 'a: "x ... y"\n', { a: "x ... y" }],
           ["dq-dot-start", 'a: "... rest"\n', { a: "... rest" }],
           ["dq-dot-end", 'a: "rest ..."\n', { a: "rest ..." }],
@@ -1849,7 +1853,7 @@ folded: >
           expect(() => YAML.parse("a\x80b")).toThrow();
         });
 
-        test.todo("CRLF in quoted scalars folds as one line break (�\u0086� space)", () => {
+        test.todo("CRLF in quoted scalars folds as one line break (�\u0086� space)", () => {
           // [73] b-l-folded: a single break folds to a space. Currently `\r\n`
           // in quoted scalars produces `\n` instead.
           expect(YAML.parse('"a\r\nb"')).toBe("a b");
@@ -1878,7 +1882,7 @@ folded: >
         test.todo("`\\uXXXX` surrogate pairs combine ([57] ns-esc-16-bit)", () => {
           // js-yaml/eemeli combine surrogate halves to the supplementary code
           // point. Currently rejected.
-          expect(YAML.parse('"\\uD834\\uDD1E"')).toBe("�\u0084�");
+          expect(YAML.parse('"\\uD834\\uDD1E"')).toBe("�\u0084�");
         });
 
         test.todo("s-separate required after tag ([97] c-ns-tag-property)", () => {
@@ -1923,7 +1927,6 @@ folded: >
         });
       });
 
-
       // ══════════════════════════════════════════════════════════════════
       // YAML 1.2.2 spec-gap catalog
       // 768 inputs across 10 spec sections, bulk-probed against eemeli/yaml,
@@ -1946,9 +1949,8 @@ folded: >
             ["single-quoted", (c: string) => `'a${c}b'`, true],
             ["double-quoted", (c: string) => `"a${c}b"`, true],
           ] as const)("in %s scalar (nb_json=%p)", (_ctx, build, nbJson) => {
-            test.each(["\x01", "\x08", "\x0B", "\x0C", "\x0E", "\x1F"])(
-              "C0 %j errors",
-              c => expect(() => YAML.parse(build(c))).toThrow(NP_ERR),
+            test.each(["\x01", "\x08", "\x0B", "\x0C", "\x0E", "\x1F"])("C0 %j errors", c =>
+              expect(() => YAML.parse(build(c))).toThrow(NP_ERR),
             );
             test("tab (x09) is the one C0 in both sets", () => {
               expect(YAML.parse(build("\t"))).toBeDefined();
@@ -1962,18 +1964,18 @@ folded: >
                 expect(() => YAML.parse(build("\x7F"))).toThrow(NP_ERR);
               });
             }
-            test.each(["é", "中", "�\u009F��"])("non-ASCII %s accepted", c => {
+            test.each(["é", "中", "�\u009F��"])("non-ASCII %s accepted", c => {
               expect(() => YAML.parse(build(c))).not.toThrow();
             });
           });
 
           // C1/NEL/FFFE are multi-byte UTF-8; validating them requires
           // codepoint decode at the catch-all arm. ASCII-range only for now.
-          test.todo.each(["�\u009F", "�\u0084", "�\u0086"])(
-            "[1] C1 control (non-NEL) in plain: NOT c-printable �\u0086� error: %j",
+          test.todo.each(["�\u009F", "�\u0084", "�\u0086"])(
+            "[1] C1 control (non-NEL) in plain: NOT c-printable �\u0086� error: %j",
             input => expect(() => YAML.parse(`a${input}b`)).toThrow(),
           );
-          test.todo("[1] U+FFFE in plain: NOT c-printable �\u0086� error", () => {
+          test.todo("[1] U+FFFE in plain: NOT c-printable �\u0086� error", () => {
             expect(() => YAML.parse(`a\uFFFEb`)).toThrow();
           });
 
@@ -2021,7 +2023,7 @@ folded: >
             expect(() => YAML.parse(`%YAML 1.2\n---\na\n...\n%YAML 1.2\n---\nb`)).toThrow();
           });
 
-          test.todo("[88] %TAG with no args �\u0086� falls to reserved", () => {
+          test.todo("[88] %TAG with no args �\u0086� falls to reserved", () => {
             expect(() => YAML.parse(`%TAG\n---\nx`)).toThrow();
           });
 
@@ -2111,7 +2113,7 @@ folded: >
             expect(() => YAML.parse(input)).toThrow();
           });
 
-          test.todo("[100] non-specific `!` alone, e-scalar — bun returns \"\" (spec-correct)", () => {
+          test.todo('[100] non-specific `!` alone, e-scalar — bun returns "" (spec-correct)', () => {
             expect(YAML.parse(`!`)).toEqual(null);
           });
         });
@@ -2121,7 +2123,7 @@ folded: >
             expect(YAML.parse(`"\\U0000D800"`)).toEqual("\uD800");
           });
 
-          test.todo("[112] escaped CRLF as b-non-content �\u0086� 'ab' (REAL BUG: bun gives 'a\\nb')", () => {
+          test.todo("[112] escaped CRLF as b-non-content �\u0086� 'ab' (REAL BUG: bun gives 'a\\nb')", () => {
             expect(YAML.parse(`"a\\\r\nb"`)).toEqual("ab");
           });
 
@@ -2231,7 +2233,7 @@ folded: >
             expect(() => YAML.parse(input)).toThrow();
           });
 
-          test.todo("[211] directive after bare doc WITHOUT suffix �\u0086� error", () => {
+          test.todo("[211] directive after bare doc WITHOUT suffix �\u0086� error", () => {
             expect(() => YAML.parse(`a\n%YAML 1.2\n---\nb`)).toThrow();
           });
 
@@ -2283,13 +2285,14 @@ folded: >
           });
 
           test.todo.each([`!!str [a, b]\n`, `!!int {a: 1}\n`, `!!null [1]\n`])(
-            "[10.1.1] scalar tag on collection — kind mismatch �\u0086� error: %j",
+            "[10.1.1] scalar tag on collection — kind mismatch �\u0086� error: %j",
             input => {
               expect(() => YAML.parse(input)).toThrow();
             },
           );
         });
-      });      describe("flow comma/separator placement", () => {
+      });
+      describe("flow comma/separator placement", () => {
         test("JSON-adjacent does not apply in flow-map value position", () => {
           // [147] flow-map value is ns-flow-node, not ns-flow-pair; [140]
           // requires `,`/`}` after the entry.
@@ -3296,7 +3299,7 @@ config:
           "a\nb",
           " ",
           "key:with#chars",
-          "�\u009F��emoji",
+          "�\u009F��emoji",
         ];
 
         for (const key of specialKeys) {

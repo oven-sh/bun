@@ -505,7 +505,7 @@ addon.string_utf8_length("\\u00ff".repeat(2 ** 30 + 1));
       const lines = out
         .replaceAll(/^\[\w+\].+$/gm, "")
         .trim()
-        .split("\n")
+        .split(/\r?\n/)
         .filter(Boolean);
       // The small string reports its exact UTF-8 size; the oversized string saturates at
       // INT32_MAX (2147483647) instead of wrapping to a negative or small value.

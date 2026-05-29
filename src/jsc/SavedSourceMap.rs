@@ -7,7 +7,6 @@ use std::sync::Arc;
 use bun_collections::{HashMap, TaggedPtrUnion};
 use bun_core::MutableString;
 use bun_core::Ordinal;
-use bun_sourcemap::internal_source_map::FindCache;
 use bun_sourcemap::{
     self as SourceMap, BakeSourceProvider, DevServerSourceProvider, InternalSourceMap,
     ParsedSourceMap, SourceProviderMap,
@@ -19,13 +18,6 @@ pub struct SavedSourceMap {
     /// This is a pointer to the map located on the VirtualMachine struct
     pub map: *mut HashTable,
     pub mutex: Mutex,
-
-    /// Warm cache for `remapStackFramePositions`: the last decoded sync window and
-    /// the last (path_hash -> ISM) resolution. Guarded by `mutex`. Invalidated on
-    /// any `putValue` since that may free the cached blob.
-    pub find_cache: FindCache,
-    pub last_path_hash: u64,
-    pub last_ism: Option<InternalSourceMap>,
 }
 
 impl Default for SavedSourceMap {
@@ -33,9 +25,6 @@ impl Default for SavedSourceMap {
         Self {
             map: ptr::null_mut(),
             mutex: Mutex::default(),
-            find_cache: FindCache::default(),
-            last_path_hash: 0,
-            last_ism: None,
         }
     }
 }
@@ -46,9 +35,6 @@ impl SavedSourceMap {
         this.write(Self {
             map,
             mutex: Mutex::default(),
-            find_cache: FindCache::default(),
-            last_path_hash: 0,
-            last_ism: None,
         });
 
         // SAFETY: `map` is a valid pointer to the sibling HashTable on VirtualMachine.
@@ -345,9 +331,6 @@ impl SavedSourceMap {
         // TODO(port): narrow error set
         self.lock();
         // PORT NOTE: reshaped for borrowck — explicit unlock paired manually.
-
-        self.find_cache.invalidate_all();
-        self.last_ism = None;
 
         // `bun_collections::HashMap` derefs to `std::collections::HashMap`, so
         // the std `entry()` API is used directly (Zig `getOrPut`).

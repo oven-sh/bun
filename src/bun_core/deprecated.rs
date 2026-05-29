@@ -74,18 +74,6 @@ pub fn buffered_reader<R: DeprecatedRead>(reader: R) -> BufferedReader<4096, R> 
     }
 }
 
-pub fn buffered_reader_size<const SIZE: usize, R: DeprecatedRead>(
-    reader: R,
-) -> BufferedReader<SIZE, R> {
-    BufferedReader {
-        unbuffered_reader: reader,
-        // PERF(port): Zig left `buf` undefined; zero-init here is an extra memset.
-        buf: [0u8; SIZE],
-        start: 0,
-        end: 0,
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // SinglyLinkedList
 // ──────────────────────────────────────────────────────────────────────────
@@ -330,24 +318,6 @@ impl<T> DoublyLinkedList<T> {
 // Canonical impl lives in the leaf `bun_hash` crate; re-export so the
 // historical `crate::deprecated::RapidHash` path keeps resolving.
 pub use bun_hash::RapidHash;
-
-// ──────────────────────────────────────────────────────────────────────────
-// misc
-// ──────────────────────────────────────────────────────────────────────────
-
-// TODO(port): comptime reflection — Zig picks "{f}" if `ty` has a `format` method,
-// otherwise `fallback`. Rust has no `@hasDecl`; the equivalent is "does `T: Display`?".
-// Format specifiers also differ (Rust uses "{}" for both). Callers should be migrated
-// to use `Display` directly; until then this returns the fallback unconditionally.
-pub const fn auto_format_label_fallback<T>(fallback: &'static str) -> &'static str {
-    // TODO(port): `std.meta.hasFn(ty, "format")` reflection — see note above.
-    let _ = core::marker::PhantomData::<T>;
-    fallback
-}
-
-pub const fn auto_format_label<T>() -> &'static str {
-    auto_format_label_fallback::<T>("{s}")
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // tests

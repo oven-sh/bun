@@ -479,6 +479,36 @@ int us_socket_write(struct us_socket_t *s, const char *data, int length) {
     return written < 0 ? 0 : written;
 }
 
+int us_socket_write_check_error(struct us_socket_t *s, const char *data, int length, int *fatal_write_error) {
+    if (fatal_write_error) *fatal_write_error = 0;
+    if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
+        return 0;
+    }
+    if (s->ssl) {
+        /* TLS writes have their own error propagation; keep the existing path. */
+        return us_socket_write(s, data, length);
+    }
+
+    int written = bsd_send(us_poll_fd(&s->p), data, length);
+    if (written < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+            s->flags.last_write_failed = 1;
+            us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+            return 0;
+        }
+        /* Fatal send error (EPIPE/ECONNRESET after the peer vanished): report
+         * it to callers that opt in instead of masking it as would-block, and
+         * do not keep polling writable - retrying can never succeed. */
+        if (fatal_write_error) *fatal_write_error = 1;
+        return 0;
+    }
+    if (written != length) {
+        s->flags.last_write_failed = 1;
+        us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    }
+    return written;
+}
+
 int us_socket_raw_write(struct us_socket_t *s, const char *data, int length) {
     /* Bypass-TLS path: openssl.c uses this to flush close_notify *after*
      * SSL_shutdown() has marked the SSL layer shut down, so checking

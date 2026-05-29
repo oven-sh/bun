@@ -90,6 +90,16 @@ impl us_socket_t {
         c::us_socket_is_closed(self) > 0
     }
 
+    /// Write that also reports a fatal (non-would-block) send error so the
+    /// node:net path can fail the pending write instead of waiting forever.
+    pub fn write_check_error(&self, data: &[u8]) -> (i32, bool) {
+        let mut fatal: i32 = 0;
+        let written = unsafe {
+            c::us_socket_write_check_error(self, data.as_ptr().cast(), data.len() as i32, &mut fatal)
+        };
+        (written, fatal != 0)
+    }
+
     pub fn is_shutdown(&self) -> bool {
         c::us_socket_is_shut_down(self) > 0
     }
@@ -481,6 +491,12 @@ mod c {
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_shutdown(s: &mut us_socket_t);
         pub(super) safe fn us_socket_is_closed(s: &us_socket_t) -> i32;
+        pub(super) fn us_socket_write_check_error(
+            s: &us_socket_t,
+            data: *const core::ffi::c_char,
+            length: i32,
+            fatal_write_error: *mut i32,
+        ) -> i32;
         pub(super) safe fn us_socket_shutdown_read(s: &mut us_socket_t);
         pub(super) safe fn us_socket_is_shut_down(s: &us_socket_t) -> i32;
         pub(super) safe fn us_socket_sendfile_needs_more(socket: &mut us_socket_t);

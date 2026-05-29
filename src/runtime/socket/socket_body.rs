@@ -2185,7 +2185,18 @@ impl<const SSL: bool> NewSocket<SSL> {
             return -1;
         }
 
-        let res = self.do_socket_write(buffer);
+        let (res, fatal) = socket.write_check_error(buffer);
+        if fatal {
+            // The kernel rejected the write outright (EPIPE/ECONNRESET after
+            // the peer vanished). Nothing buffered here can ever be delivered:
+            // drop it and close through the normal native close path so the JS
+            // side observes 'close' and completes any pending write callback,
+            // instead of waiting forever on a drain that cannot come.
+            self.buffered_data_for_node_net
+                .with_mut(|b| b.clear_and_free());
+            self.socket.get().close(uws::CloseCode::Failure);
+            return -1;
+        }
         let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
         self.bytes_written
             .set(self.bytes_written.get() + uwrote as u64);

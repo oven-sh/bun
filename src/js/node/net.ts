@@ -494,6 +494,13 @@ function SocketEmitEndNT(self, _err?) {
     // no further events.
     self.destroy();
   }
+  // A write that was waiting on the native drain can never complete once the
+  // socket is gone - fail it so 'finish'/destroy are not stuck behind it.
+  const pendingWrite = self[kwriteCallback];
+  if (pendingWrite && (self.destroyed || _err)) {
+    self[kwriteCallback] = null;
+    pendingWrite(_err ?? $ERR_SOCKET_CLOSED());
+  }
 }
 
 const ServerHandlers: SocketHandler<NetSocket> = {

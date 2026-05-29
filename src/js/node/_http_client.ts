@@ -61,6 +61,7 @@ const { OutgoingMessage } = require("node:_http_outgoing");
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
 const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
+const INVALID_HOST_CHAR_REGEX = /[/\\?#@\t\n\r]/;
 
 const { URL } = globalThis;
 
@@ -527,6 +528,14 @@ function ClientRequest(input, options, cb) {
 
     if (isIP(host) || !options.lookup) {
       // Don't need to bother with lookup if it's already an IP address or no lookup function is provided.
+      if (RegExpPrototypeExec.$call(INVALID_HOST_CHAR_REGEX, host) !== null) {
+        const error = new Error(`getaddrinfo ENOTFOUND ${host}`);
+        error.name = "DNSException";
+        error.code = "ENOTFOUND";
+        error.syscall = "getaddrinfo";
+        process.nextTick((self, err) => self.emit("error", err), this, error);
+        return false;
+      }
       const [url, proxy] = getURL(host);
       go(url, proxy, false);
       return true;

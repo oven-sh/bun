@@ -639,7 +639,7 @@ impl StandaloneModuleGraph {
                     module_format: module.module_format,
                     side: module.side,
                     cached_blob: None,
-                    encoding: Encoding::Binary,
+                    encoding: module.encoding,
                     wtf_string: BunString::empty(),
                 },
             );

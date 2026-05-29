@@ -2499,9 +2499,9 @@ mod _async_tasks {
             // `perform_work`'s callee reads it (it mutates other fields), so
             // detach the field borrow to satisfy borrowck (mirrors the
             // `perform_work` body's own `args_ptr` erase, and line ~6623).
-            // SAFETY: `root_path` is a NUL-terminated `Box<[u8]>` set in
-            // `create()` and not reallocated for the task's lifetime.
             let root_path_z = {
+                // SAFETY: `root_path` is a NUL-terminated `Box<[u8]>` set in
+                // `create()` and not reallocated for the task's lifetime.
                 let bytes: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&this.root_path[..]) };
                 ZStr::from_buf(bytes, bytes.len() - 1)
             };
@@ -6594,12 +6594,12 @@ impl NodeFS {
         // PORT NOTE: `root_path` is never mutated for the lifetime of the task, but
         // borrowck can't see that across `async_task.enqueue(&mut self, …)`. Detach
         // the slice via raw-pointer round-trip — same bytes Zig's `[]const u8` saw.
-        // SAFETY: `async_task.root_path`'s backing storage is fixed at `create()` and
-        // outlives every `enqueue` call below.
         let root_basename: &[u8] = {
             // `root_path` is NUL-terminated (`[path.., 0]`); the basename
             // excludes the trailing NUL.
             let path = &async_task.root_path;
+            // SAFETY: `async_task.root_path`'s backing storage is fixed at
+            // `create()` and outlives every `enqueue` call below.
             unsafe { bun_ptr::detach_lifetime(&path[..path.len() - 1]) }
         };
         #[cfg(not(windows))]

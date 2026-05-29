@@ -2099,7 +2099,7 @@ impl<'a> Resolver<'a> {
                     } else {
                         match self
                             .fs_ref()
-                            .abs_buf_checked(&[custom_utf8.slice()], &mut custom_abs_buf[..])
+                            .abs_buf_checked_native(&[custom_utf8.slice()], &mut custom_abs_buf[..])
                         {
                             Some(abs) => abs,
                             None => continue,

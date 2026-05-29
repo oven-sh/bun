@@ -337,13 +337,15 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
             RETURN_IF_EXCEPTION(scope, {});
 
             ASSERT(specifierValue.isString());
-            ASSERT(moduleNativeValue.isObject());
 
             WTF::String specifier = specifierValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            JSObject* moduleNative = moduleNativeValue.getObject();
-            RETURN_IF_EXCEPTION(scope, {});
-            AbstractModuleRecord* resolvedRecord = uncheckedDowncast<NodeVMModule>(moduleNative)->moduleRecord(globalObject);
+            NodeVMModule* moduleNative = dynamicDowncast<NodeVMModule>(moduleNativeValue);
+            if (!moduleNative) {
+                Bun::ERR::INVALID_THIS(scope, globalObject, "Module"_s);
+                return {};
+            }
+            AbstractModuleRecord* resolvedRecord = moduleNative->moduleRecord(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
             // innerModuleLinking asserts every visited cyclic record is past

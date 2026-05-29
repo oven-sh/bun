@@ -57,8 +57,8 @@ fn js_loop_ctx() -> bun_io::EventLoopCtx {
 // Re-exports
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use super::handlers::Handlers;
-pub use super::listener::Listener;
+pub(super) use super::handlers::Handlers;
+pub(super) use super::listener::Listener;
 
 mod tls_socket_functions;
 use crate::api::bun::h2_frame_parser::H2FrameParser;
@@ -295,7 +295,7 @@ pub struct NewSocket<const SSL: bool> {
 }
 
 /// Associated `Socket` handler type (Zig: `pub const Socket = uws.NewSocketHandler(ssl)`).
-pub type SocketHandler<const SSL: bool> = uws::NewSocketHandler<SSL>;
+pub(super) type SocketHandler<const SSL: bool> = uws::NewSocketHandler<SSL>;
 
 // Intrusive refcount mixin (Zig: `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`).
 impl<const SSL: bool> bun_ptr::RefCounted for NewSocket<SSL> {
@@ -1476,9 +1476,36 @@ impl<const SSL: bool> NewSocket<SSL> {
             success
         );
 
-        let authorized = success == 1;
+        let mut authorized = success == 1;
+        let mut hostname_mismatch = false;
 
-        this.update_flags(|f| f.set(Flags::AUTHORIZED, authorized));
+        if SSL && authorized && !handlers.mode.is_server() {
+            if let Some(ssl_ptr) = this.socket.get().ssl() {
+                let hostname: &[u8] = if let Some(server_name) = this.server_name.get() {
+                    &server_name[..]
+                } else if let Some(super::listener::UnixOrHost::Host { host, .. }) =
+                    this.connection.get()
+                {
+                    &host[..]
+                } else {
+                    b""
+                };
+                if !hostname.is_empty()
+                    && !bun_boringssl::check_server_identity(
+                        boringssl_sys::SSL::opaque_mut(ssl_ptr),
+                        hostname,
+                    )
+                {
+                    authorized = false;
+                    hostname_mismatch = true;
+                }
+            }
+        }
+
+        this.update_flags(|f| {
+            f.set(Flags::AUTHORIZED, authorized);
+            f.set(Flags::HOSTNAME_MISMATCH, hostname_mismatch);
+        });
 
         let mut callback = handlers.on_handshake;
         let mut is_open = false;
@@ -1542,10 +1569,19 @@ impl<const SSL: bool> NewSocket<SSL> {
                 }
             };
 
+            // The JS handshake handler's second argument is "did the TLS
+            // handshake complete", NOT "is the peer authorized": verification
+            // and hostname results are reported separately (the
+            // authorization_error argument plus the AUTHORIZED /
+            // HOSTNAME_MISMATCH flags behind the authorized getter), and the
+            // JS layer decides what to do with them via rejectUnauthorized /
+            // checkServerIdentity. Passing `authorized` here made every
+            // verification failure look like a failed handshake and clients
+            // with rejectUnauthorized:false were torn down fatally.
             result = match callback.call(
                 &global,
                 this_value,
-                &[this_value, JSValue::from(authorized), authorization_error],
+                &[this_value, JSValue::from(success == 1), authorization_error],
             ) {
                 Ok(v) => v,
                 Err(err) => global.take_exception(err),
@@ -1964,6 +2000,19 @@ impl<const SSL: bool> NewSocket<SSL> {
         // is very usefull to have this feature depending on the user workflow
         let ssl_error = this.socket.get().get_verify_error();
         if ssl_error.error_no == 0 {
+            if this.flags.get().contains(Flags::HOSTNAME_MISMATCH) {
+                let mismatch = SystemError {
+                    errno: 0,
+                    code: BunString::clone_utf8(b"HOSTNAME_MISMATCH"),
+                    message: BunString::clone_utf8(b"Hostname mismatch"),
+                    path: BunString::EMPTY,
+                    syscall: BunString::EMPTY,
+                    hostname: BunString::EMPTY,
+                    fd: c_int::MIN,
+                    dest: BunString::EMPTY,
+                };
+                return Ok(mismatch.to_error_instance(global));
+            }
             return Ok(JSValue::NULL);
         }
 
@@ -2279,6 +2328,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return WriteResult::Success { wrote: 0, total: 0 };
         }
 
+        #[allow(unused_labels)]
         let wrote: i32 = 'brk: {
             #[cfg(unix)]
             if !SSL {
@@ -2903,11 +2953,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             .expect("No handlers set on Socket")
             .as_ptr();
         // SAFETY: `p` is the freely-aliased raw pointer; no `&Handlers` borrow
-        // is live across the read/writes below (single-threaded event loop,
-        // and `from_js` cannot reenter this socket's handlers).
+        // is live across the read/writes below (single-threaded event loop).
         let prev_mode = unsafe { (*p).mode };
         let handlers =
             Handlers::from_js(global, socket_obj, prev_mode == super::SocketMode::Server)?;
+        if this.handlers.get().map(|n| n.as_ptr()) != Some(p) {
+            return Ok(JSValue::UNDEFINED);
+        }
         // Preserve runtime state across the struct assignment. `Handlers.fromJS` returns a
         // fresh struct with `active_connections = 0` and `mode` limited to `.server`/`.client`,
         // but this socket (and any in-flight callback scope) still holds references that were
@@ -2915,7 +2967,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `.duplex_server`. Losing the counter causes the next `markInactive` to either free
         // the heap-allocated client `Handlers` while the socket still points at it, or
         // underflow on the server path.
-        // SAFETY: raw-pointer-only access; see `get_handlers` contract.
+        // SAFETY: `this.handlers` still points at `p` (checked above), so the
+        // allocation is live; raw-pointer-only access; see `get_handlers` contract.
         unsafe {
             let active_connections = (*p).active_connections.get();
             core::ptr::drop_in_place(p); // Zig: this_handlers.deinit()
@@ -3734,7 +3787,7 @@ bitflags::bitflags! {
         /// pre-handshake bytes / read the underlying TCP stream.
         const BYPASS_TLS           = 1 << 9;
         const OWNS_HANDLERS        = 1 << 10;
-        // bits 11..15 unused (Zig: `_: u6 = 0`)
+        const HOSTNAME_MISMATCH    = 1 << 11;
     }
 }
 
@@ -3773,7 +3826,7 @@ impl SocketMode {
 // DuplexUpgradeContext
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct DuplexUpgradeContext {
+pub(super) struct DuplexUpgradeContext {
     pub upgrade: UpgradedDuplex,
     // We only us a tls and not a raw socket when upgrading a Duplex, Duplex dont support socketpairs
     pub tls: Option<IntrusiveRc<TLSSocket>>,
@@ -3798,7 +3851,7 @@ pub struct DuplexUpgradeContext {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum EventState {
+pub(super) enum EventState {
     StartTLS,
     Close,
 }

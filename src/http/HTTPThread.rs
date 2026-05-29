@@ -125,10 +125,12 @@ pub struct HttpThread {
     pub queued_shutdowns: Vec<ShutdownMessage>,
     pub queued_writes: Vec<WriteMessage>,
     pub queued_response_body_drains: Vec<DrainMessage>,
+    pub queued_cert_check_resumes: Vec<CertCheckResumeMessage>,
 
     pub queued_shutdowns_lock: Mutex,
     pub queued_writes_lock: Mutex,
     pub queued_response_body_drains_lock: Mutex,
+    pub queued_cert_check_resumes_lock: Mutex,
 
     pub queued_threadlocal_proxy_derefs: Vec<*mut ProxyTunnel>,
 
@@ -179,9 +181,11 @@ impl HttpThread {
             queued_shutdowns: Vec::new(),
             queued_writes: Vec::new(),
             queued_response_body_drains: Vec::new(),
+            queued_cert_check_resumes: Vec::new(),
             queued_shutdowns_lock: Mutex::new(),
             queued_writes_lock: Mutex::new(),
             queued_response_body_drains_lock: Mutex::new(),
+            queued_cert_check_resumes_lock: Mutex::new(),
             queued_threadlocal_proxy_derefs: Vec::new(),
             has_awoken: AtomicBool::new(false),
             timer: Instant::now(),
@@ -240,14 +244,14 @@ impl Drop for RequestBodyBuffer {
 }
 
 impl RequestBodyBuffer {
-    pub fn allocated_slice(&mut self) -> &mut [u8] {
+    pub(crate) fn allocated_slice(&mut self) -> &mut [u8] {
         match self {
             Self::Heap(heap) => &mut heap.as_mut().unwrap().buffer,
             Self::Stack(stack) => &mut stack[..],
         }
     }
 
-    pub fn to_array_list(&mut self) -> Vec<u8> {
+    pub(crate) fn to_array_list(&mut self) -> Vec<u8> {
         // TODO(port): Zig built an ArrayList over self.arena()/self.allocated_slice() with len=0.
         // Rust Vec cannot adopt a foreign allocator+buffer; expose a cursor type instead.
         // PERF(port): was FixedBufferAllocator/StackFallback (allocator() accessor
@@ -278,6 +282,12 @@ pub struct ShutdownMessage {
     pub async_http_id: u32,
 }
 
+/// The JS thread's `checkServerIdentity` callback approved the peer
+/// certificate; un-park the connection so the request is written.
+pub struct CertCheckResumeMessage {
+    pub async_http_id: u32,
+}
+
 pub struct LibdeflateState {
     pub decompressor: *mut bun_libdeflate_sys::libdeflate::Decompressor,
     pub shared_buffer: [u8; 512 * 1024],
@@ -297,7 +307,9 @@ impl LibdeflateState {
     /// raw `&mut *deflater.decompressor` upgrade repeated at every
     /// `decompress` call site.
     #[inline]
-    pub fn decompressor_mut<'a>(&self) -> &'a mut bun_libdeflate_sys::libdeflate::Decompressor {
+    pub(crate) fn decompressor_mut<'a>(
+        &self,
+    ) -> &'a mut bun_libdeflate_sys::libdeflate::Decompressor {
         // SAFETY: see INVARIANT above.
         unsafe { &mut *self.decompressor }
     }
@@ -306,7 +318,7 @@ impl LibdeflateState {
 pub const REQUEST_BODY_SEND_STACK_BUFFER_SIZE: usize = 32 * 1024;
 
 // TODO(port): UnboundedQueue is intrusive over `AsyncHttp.next`; encode the field offset.
-pub type Queue = UnboundedQueue<AsyncHttp<'static>>;
+pub(crate) type Queue = UnboundedQueue<AsyncHttp<'static>>;
 
 // Clone: bitwise OK for the `*const c_void` CA-string pointers — they borrow
 // caller-owned config (Zig `[]stringZ`), not heap we free. The `Vec` itself
@@ -774,6 +786,51 @@ impl HttpThread {
         }
     }
 
+    fn drain_queued_cert_check_resumes(&mut self) {
+        loop {
+            let queued_cert_check_resumes = {
+                let _guard = self.queued_cert_check_resumes_lock.lock_guard();
+                core::mem::take(&mut self.queued_cert_check_resumes)
+            };
+            for resume in &queued_cert_check_resumes {
+                // Both arms are required: an HTTPS target behind a plaintext
+                // proxy parks behind a SocketTcp tracker entry.
+                if let Some(socket_ptr) = abort_tracker().get(&resume.async_http_id) {
+                    match *socket_ptr {
+                        uws::AnySocket::SocketTls(socket) => {
+                            if socket.is_closed() || socket.is_shutdown() {
+                                continue;
+                            }
+                            let tagged = HTTPContext::<true>::get_tagged_from_socket(socket);
+                            if let Some(client) = tagged.client_mut() {
+                                // May synchronously reach close_and_fail →
+                                // dispatch_result_and_reset; do not touch
+                                // `client` after this call.
+                                client.resume_after_cert_check::<true>(socket);
+                            }
+                        }
+                        uws::AnySocket::SocketTcp(socket) => {
+                            if socket.is_closed() || socket.is_shutdown() {
+                                continue;
+                            }
+                            let tagged = HTTPContext::<false>::get_tagged_from_socket(socket);
+                            if let Some(client) = tagged.client_mut() {
+                                // See Tls arm.
+                                client.resume_after_cert_check::<false>(socket);
+                            }
+                        }
+                    }
+                }
+            }
+            let len = queued_cert_check_resumes.len();
+            drop(queued_cert_check_resumes);
+            if len == 0 {
+                break;
+            }
+            bun_core::scoped_log!(HTTPThread, "drained {} queued cert check resumes", len);
+        }
+    }
+
     fn drain_queued_http_response_body_drains(&mut self) {
         loop {
             // socket.close() can potentially be slow
@@ -821,6 +878,10 @@ impl HttpThread {
         self.drain_queued_http_response_body_drains();
         self.drain_queued_writes();
         self.drain_queued_shutdowns();
+        // After shutdowns: an abort or cert-rejection scheduled in the same JS
+        // turn removes the abort-tracker entry first, so the resume becomes a
+        // no-op and the request is never transmitted after a same-tick abort.
+        self.drain_queued_cert_check_resumes();
         h3::PendingConnect::drain_resolved();
 
         for http in self.queued_threadlocal_proxy_derefs.drain(..) {
@@ -930,6 +991,17 @@ impl HttpThread {
         {
             let _guard = self.queued_shutdowns_lock.lock_guard();
             self.queued_shutdowns.push(ShutdownMessage {
+                async_http_id: http.async_http_id,
+            });
+        }
+        self.wakeup();
+    }
+
+    pub fn schedule_cert_check_resume(&mut self, http: &AsyncHttp) {
+        bun_core::scoped_log!(HTTPThread, "scheduleCertCheckResume {}", http.async_http_id);
+        {
+            let _guard = self.queued_cert_check_resumes_lock.lock_guard();
+            self.queued_cert_check_resumes.push(CertCheckResumeMessage {
                 async_http_id: http.async_http_id,
             });
         }

@@ -8,7 +8,7 @@ use crate::webcore::blob::BlobExt;
 use bun_ast::Target;
 use bun_bundler::BundleV2;
 use bun_bundler::options;
-use bun_collections::{StringArrayHashMap, StringMap, StringSet};
+use bun_collections::{StringMap, StringSet};
 use bun_core::MutableString;
 use bun_core::Output;
 use bun_core::{String as BunString, ZigString};
@@ -52,7 +52,7 @@ pub mod js_bundler {
     /// Expected format: `Record<string, string | Blob | File | TypedArray | ArrayBuffer>`.
     /// Uses async (`from_js_async`) parsing so the resulting bytes are owned —
     /// the bundler runs on a separate thread and must not borrow JS heap memory.
-    pub fn file_map_from_js(
+    pub(crate) fn file_map_from_js(
         global_this: &JSGlobalObject,
         files_value: JSValue,
     ) -> JsResult<FileMap> {
@@ -268,7 +268,7 @@ pub mod js_bundler {
     }
 
     impl CompileOptions {
-        pub fn from_js(
+        pub(crate) fn from_js(
             global_this: &JSGlobalObject,
             config: JSValue,
             compile_target: Option<CompileTarget>,
@@ -434,8 +434,6 @@ pub mod js_bundler {
             Ok(Some(this))
         }
     }
-
-    pub type ConfigList = StringArrayHashMap<Config>;
 
     impl Config {
         pub fn from_js(
@@ -1354,7 +1352,10 @@ pub mod js_bundler {
 
     /// `Bun.build(config)`
     #[bun_jsc::host_fn]
-    pub fn build_fn(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn build_fn(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<1>();
         build(global_this, arguments.slice())
     }
@@ -1407,7 +1408,7 @@ pub mod js_bundler {
     /// `resolve` must be the live `*mut Resolve` previously handed to C++ via
     /// `Resolve::dispatch`; sole owner on the JS thread for the call duration.
     #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn JSBundlerPlugin__onResolveAsync(
+    pub(crate) unsafe extern "C" fn JSBundlerPlugin__onResolveAsync(
         resolve: *mut Resolve,
         _unused: *mut c_void,
         path_value: JSValue,
@@ -1449,7 +1450,7 @@ pub mod js_bundler {
     /// JSC-aware plumbing for `Load` (upstream owns `init`/`dispatch`/
     /// `run_on_js_thread`/`bake_graph`). Only `on_defer` lives here because it
     /// returns a `JSValue` and throws on the `JSGlobalObject`.
-    pub trait LoadJsExt {
+    pub(crate) trait LoadJsExt {
         fn on_defer(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue>;
     }
 
@@ -1526,7 +1527,7 @@ pub mod js_bundler {
     /// `Load::dispatch`, and `global` must be the plugin's owning
     /// `JSGlobalObject`; both valid and exclusively accessed on the JS thread.
     #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn JSBundlerPlugin__onDefer(
+    pub(crate) unsafe extern "C" fn JSBundlerPlugin__onDefer(
         load: *mut Load,
         global: *mut JSGlobalObject,
     ) -> JSValue {
@@ -1536,7 +1537,7 @@ pub mod js_bundler {
 
     // TODO(port): move to runtime_sys
     #[unsafe(no_mangle)]
-    pub extern "C" fn JSBundlerPlugin__onLoadAsync(
+    pub(crate) extern "C" fn JSBundlerPlugin__onLoadAsync(
         this: &mut Load,
         _unused: *mut c_void,
         source_code_value: JSValue,
@@ -1808,7 +1809,7 @@ pub mod js_bundler {
     /// `which == 1`) previously handed to C++ via `dispatch`; sole owner on
     /// the JS thread.
     #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn JSBundlerPlugin__addError(
+    pub(crate) unsafe extern "C" fn JSBundlerPlugin__addError(
         ctx: *mut c_void,
         plugin: *mut Plugin,
         exception: JSValue,
@@ -1865,7 +1866,7 @@ pub use bun_bundler::options::OutputKind;
 /// `JSValue::as(Blob)` BuildArtifact fallback (JSValue.zig:467) — declared
 /// `extern "Rust"` in `bun_jsc::webcore_types`; link-time resolved.
 #[unsafe(no_mangle)]
-pub fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
+pub(crate) fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
     <BuildArtifact as bun_jsc::JsClass>::from_js(value).map(|b| {
         // SAFETY: `from_js` returns the non-null `*mut BuildArtifact` kept alive by
         // the JS wrapper; `addr_of_mut!` only computes the field address (no deref).

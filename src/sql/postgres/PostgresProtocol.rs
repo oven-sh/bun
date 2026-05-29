@@ -17,20 +17,13 @@ const fn tag_len(tag: u8, n: int4) -> [u8; 5] {
 
 pub const CLOSE_COMPLETE: [u8; 5] = tag_len(b'3', 4);
 pub const EMPTY_QUERY_RESPONSE: [u8; 5] = tag_len(b'I', 4);
-pub const TERMINATE: [u8; 5] = tag_len(b'X', 4);
 
 pub const BIND_COMPLETE: [u8; 5] = tag_len(b'2', 4);
 
 pub const PARSE_COMPLETE: [u8; 5] = tag_len(b'1', 4);
 
-pub const COPY_DONE: [u8; 5] = tag_len(b'c', 4);
 pub const SYNC: [u8; 5] = tag_len(b'S', 4);
 pub const FLUSH: [u8; 5] = tag_len(b'H', 4);
-pub const SSL_REQUEST: [u8; 8] = {
-    let a = to_bytes(8);
-    let b = to_bytes(80877103);
-    [a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3]]
-};
 pub const NO_DATA: [u8; 5] = tag_len(b'n', 4);
 
 pub fn write_query<Context: WriterContext>(

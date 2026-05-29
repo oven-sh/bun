@@ -16,27 +16,55 @@ use core::marker::{PhantomData, PhantomPinned};
 use crate::thunk;
 use crate::thunk::OpaqueHandle;
 use crate::us_socket_t;
-use bun_core::Fd;
+use bun_core::{BoundedArray, Fd};
 
 // ─── Forward-declared opaques (cycle-break: were `bun_uws::*`, tier > 0) ───
-/// Remote socket address as returned by uWS. `ip` borrows uWS-owned memory
-/// valid for the lifetime of the response/connection that produced it.
+/// Remote socket address as returned by uWS. The IP text is copied into
+/// inline storage at construction.
 ///
 /// Canonical definition moved down from `bun_uws`
 /// (Zig: `uws.SocketAddress = struct { ip: []const u8, port: i32, is_ipv6: bool }`).
 /// Higher tiers (`bun_uws`, `bun_runtime`) re-export this as
 /// `pub use bun_uws_sys::SocketAddress;`.
-pub struct SocketAddress<'a> {
-    pub ip: &'a [u8],
+pub struct SocketAddress {
+    ip: BoundedArray<u8, 64>,
     pub port: i32,
     pub is_ipv6: bool,
+}
+
+impl SocketAddress {
+    pub(crate) fn new(ip: &[u8], port: i32, is_ipv6: bool) -> SocketAddress {
+        let ip = &ip[..ip.len().min(64)];
+        SocketAddress {
+            ip: BoundedArray::from_slice(ip).expect("clamped to capacity"),
+            port,
+            is_ipv6,
+        }
+    }
+
+    pub fn ip(&self) -> &[u8] {
+        self.ip.as_slice()
+    }
+
+    pub fn is_loopback(&self) -> bool {
+        let ip = self.ip();
+        // IPv4 loopback addresses
+        if ip.starts_with(b"127.") {
+            return true;
+        }
+        // IPv6 loopback addresses
+        if ip.starts_with(b"::ffff:127.") || ip == b"::1" || ip == b"0:0:0:0:0:0:0:1" {
+            return true;
+        }
+        false
+    }
 }
 
 bun_opaque::opaque_ffi! {
     /// Opaque uWS WebSocket socket handle (forward-decl; concrete type lives in `bun_uws`).
     pub struct Socket;
     /// Opaque per-socket userdata blob (forward-decl; concrete type lives in `bun_uws`).
-    pub struct SocketData;
+    pub(crate) struct SocketData;
     /// Opaque uWS WebSocket upgrade context (forward-decl; concrete type lives in `bun_uws`).
     pub struct WebSocketUpgradeContext;
 }
@@ -300,7 +328,7 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
-    pub fn get_remote_socket_info(&mut self) -> Option<SocketAddress<'_>> {
+    pub fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
         let mut ip_ptr: *const u8 = core::ptr::null();
         let mut port: i32 = 0;
         let mut is_ipv6: bool = false;
@@ -310,14 +338,13 @@ impl<const SSL: bool> Response<SSL> {
         let ip_len =
             c::uws_res_get_remote_address_info(self.as_raw(), &mut ip_ptr, &mut port, &mut is_ipv6);
         if ip_len > 0 {
-            // SocketAddress is defined locally (moved down from bun_uws); `ip`
-            // borrows uWS-owned memory valid while the response lives.
-            Some(SocketAddress {
-                // SAFETY: uws populated ip_ptr/ip_len with bytes valid while the response lives.
-                ip: unsafe { bun_core::ffi::slice(ip_ptr, ip_len) },
+            Some(SocketAddress::new(
+                // SAFETY: uws populated ip_ptr/ip_len with bytes valid until the next
+                // address lookup on this thread; copied before returning.
+                unsafe { bun_core::ffi::slice(ip_ptr, ip_len) },
                 port,
                 is_ipv6,
-            })
+            ))
         } else {
             None
         }
@@ -698,7 +725,7 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.get_socket_data())
     }
 
-    pub fn get_remote_socket_info(self) -> Option<SocketAddress<'static>> {
+    pub fn get_remote_socket_info(self) -> Option<SocketAddress> {
         any_dispatch!(self, |r| r.get_remote_socket_info())
     }
 
@@ -946,7 +973,7 @@ impl From<*mut H3Response> for AnyResponse {
     }
 }
 
-pub type H3Response = crate::h3::Response;
+pub(crate) type H3Response = crate::h3::Response;
 
 bitflags::bitflags! {
     /// Non-exhaustive bitset (`enum(u8) { ..., _ }` in Zig) — values may carry
@@ -1016,35 +1043,44 @@ pub mod c {
     // shims are `safe fn`; (ptr,len), nullable raw, *mut c_void ctx stay
     // unsafe.
     unsafe extern "C" {
-        pub safe fn uws_res_mark_wrote_content_length_header(ssl: i32, res: &mut uws_res);
-        pub safe fn uws_res_write_mark(ssl: i32, res: &mut uws_res);
-        pub safe fn us_socket_mark_needs_more_not_ssl(socket: &mut uws_res);
-        pub safe fn uws_res_state(ssl: c_int, res: &uws_res) -> State;
-        pub safe fn uws_res_is_connect_request(ssl: i32, res: &mut uws_res) -> bool;
+        pub(crate) safe fn uws_res_mark_wrote_content_length_header(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_write_mark(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn us_socket_mark_needs_more_not_ssl(socket: &mut uws_res);
+        pub(crate) safe fn uws_res_state(ssl: c_int, res: &uws_res) -> State;
+        pub(crate) safe fn uws_res_is_connect_request(ssl: i32, res: &mut uws_res) -> bool;
         // Out-params are `&mut` (non-null, valid for write); the C shim only
         // stores into them and returns a length — no read-through precondition.
-        pub safe fn uws_res_get_remote_address_info(
+        pub(crate) safe fn uws_res_get_remote_address_info(
             res: &mut uws_res,
             dest: &mut *const u8,
             port: &mut i32,
             is_ipv6: &mut bool,
         ) -> usize;
-        pub safe fn uws_res_uncork(ssl: i32, res: &mut uws_res);
-        pub fn uws_res_end(
+        pub(crate) safe fn uws_res_uncork(ssl: i32, res: &mut uws_res);
+        pub(crate) fn uws_res_end(
             ssl: i32,
             res: *mut uws_res,
             data: *const u8,
             length: usize,
             close_connection: bool,
         );
-        pub safe fn uws_res_flush_headers(ssl: i32, res: &mut uws_res, flush_immediately: bool);
-        pub safe fn uws_res_is_corked(ssl: i32, res: &mut uws_res) -> bool;
-        pub safe fn uws_res_get_socket_data(ssl: i32, res: &mut uws_res) -> *mut SocketData;
-        pub safe fn uws_res_pause(ssl: i32, res: &mut uws_res);
-        pub safe fn uws_res_resume(ssl: i32, res: &mut uws_res);
-        pub safe fn uws_res_write_continue(ssl: i32, res: &mut uws_res);
-        pub fn uws_res_write_status(ssl: i32, res: *mut uws_res, status: *const u8, length: usize);
-        pub fn uws_res_write_header(
+        pub(crate) safe fn uws_res_flush_headers(
+            ssl: i32,
+            res: &mut uws_res,
+            flush_immediately: bool,
+        );
+        pub(crate) safe fn uws_res_is_corked(ssl: i32, res: &mut uws_res) -> bool;
+        pub(crate) safe fn uws_res_get_socket_data(ssl: i32, res: &mut uws_res) -> *mut SocketData;
+        pub(crate) safe fn uws_res_pause(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_resume(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_write_continue(ssl: i32, res: &mut uws_res);
+        pub(crate) fn uws_res_write_status(
+            ssl: i32,
+            res: *mut uws_res,
+            status: *const u8,
+            length: usize,
+        );
+        pub(crate) fn uws_res_write_header(
             ssl: i32,
             res: *mut uws_res,
             key: *const u8,
@@ -1052,55 +1088,59 @@ pub mod c {
             value: *const u8,
             value_length: usize,
         );
-        pub fn uws_res_write_header_int(
+        pub(crate) fn uws_res_write_header_int(
             ssl: i32,
             res: *mut uws_res,
             key: *const u8,
             key_length: usize,
             value: u64,
         );
-        pub safe fn uws_res_end_without_body(ssl: i32, res: &mut uws_res, close_connection: bool);
-        pub safe fn uws_res_end_sendfile(
+        pub(crate) safe fn uws_res_end_without_body(
+            ssl: i32,
+            res: &mut uws_res,
+            close_connection: bool,
+        );
+        pub(crate) safe fn uws_res_end_sendfile(
             ssl: i32,
             res: &mut uws_res,
             write_offset: u64,
             close_connection: bool,
         );
-        pub safe fn uws_res_timeout(ssl: i32, res: &mut uws_res, timeout: u8);
-        pub safe fn uws_res_reset_timeout(ssl: i32, res: &mut uws_res);
-        pub safe fn uws_res_get_buffered_amount(ssl: i32, res: &mut uws_res) -> u64;
-        pub fn uws_res_write(
+        pub(crate) safe fn uws_res_timeout(ssl: i32, res: &mut uws_res, timeout: u8);
+        pub(crate) safe fn uws_res_reset_timeout(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_get_buffered_amount(ssl: i32, res: &mut uws_res) -> u64;
+        pub(crate) fn uws_res_write(
             ssl: i32,
             res: *mut uws_res,
             data: *const u8,
             length: *mut usize,
         ) -> bool;
-        pub safe fn uws_res_get_write_offset(ssl: i32, res: &mut uws_res) -> u64;
-        pub safe fn uws_res_override_write_offset(ssl: i32, res: &mut uws_res, offset: u64);
-        pub safe fn uws_res_has_responded(ssl: i32, res: &mut uws_res) -> bool;
+        pub(crate) safe fn uws_res_get_write_offset(ssl: i32, res: &mut uws_res) -> u64;
+        pub(crate) safe fn uws_res_override_write_offset(ssl: i32, res: &mut uws_res, offset: u64);
+        pub(crate) safe fn uws_res_has_responded(ssl: i32, res: &mut uws_res) -> bool;
         // safe: `&mut uws_res` is ABI-identical to a non-null `*mut uws_res`;
         // `handler`/`user_data` are stored opaquely (never dereferenced by the
         // C++ shim itself) — no preconditions on this call.
-        pub safe fn uws_res_on_writable(
+        pub(crate) safe fn uws_res_on_writable(
             ssl: i32,
             res: &mut uws_res,
             handler: Option<unsafe extern "C" fn(*mut uws_res, u64, *mut c_void) -> bool>,
             user_data: *mut c_void,
         );
-        pub safe fn uws_res_clear_on_writable(ssl: i32, res: &mut uws_res);
-        pub safe fn uws_res_on_aborted(
+        pub(crate) safe fn uws_res_clear_on_writable(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_on_aborted(
             ssl: i32,
             res: &mut uws_res,
             handler: Option<unsafe extern "C" fn(*mut uws_res, *mut c_void)>,
             optional_data: *mut c_void,
         );
-        pub safe fn uws_res_on_timeout(
+        pub(crate) safe fn uws_res_on_timeout(
             ssl: i32,
             res: &mut uws_res,
             handler: Option<unsafe extern "C" fn(*mut uws_res, *mut c_void)>,
             optional_data: *mut c_void,
         );
-        pub fn uws_res_try_end(
+        pub(crate) fn uws_res_try_end(
             ssl: i32,
             res: *mut uws_res,
             data: *const u8,
@@ -1108,15 +1148,15 @@ pub mod c {
             total: usize,
             close: bool,
         ) -> bool;
-        pub safe fn uws_res_end_stream(ssl: i32, res: &mut uws_res, close_connection: bool);
-        pub safe fn uws_res_prepare_for_sendfile(ssl: i32, res: &mut uws_res);
-        pub safe fn uws_res_get_native_handle(ssl: i32, res: &mut uws_res) -> *mut Socket;
-        pub safe fn uws_res_get_remote_address_as_text(
+        pub(crate) safe fn uws_res_end_stream(ssl: i32, res: &mut uws_res, close_connection: bool);
+        pub(crate) safe fn uws_res_prepare_for_sendfile(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_get_native_handle(ssl: i32, res: &mut uws_res) -> *mut Socket;
+        pub(crate) safe fn uws_res_get_remote_address_as_text(
             ssl: i32,
             res: &mut uws_res,
             dest: &mut *const u8,
         ) -> usize;
-        pub safe fn uws_res_on_data(
+        pub(crate) safe fn uws_res_on_data(
             ssl: i32,
             res: &mut uws_res,
             handler: Option<
@@ -1124,7 +1164,7 @@ pub mod c {
             >,
             optional_data: *mut c_void,
         );
-        pub fn uws_res_upgrade(
+        pub(crate) fn uws_res_upgrade(
             ssl: i32,
             res: *mut uws_res,
             data: *mut c_void,
@@ -1139,7 +1179,7 @@ pub mod c {
         // safe: cork is synchronous — `ctx` is passed straight back to
         // `corker` without being dereferenced by the C++ shim itself, so the
         // call has no preconditions beyond the live opaque handle.
-        pub safe fn uws_res_cork(
+        pub(crate) safe fn uws_res_cork(
             ssl: i32,
             res: &mut uws_res,
             ctx: *mut c_void,

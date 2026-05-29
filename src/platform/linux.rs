@@ -34,7 +34,8 @@ fn encode_raw_errno(rc: c_long) -> isize {
 /// transfers up to len bytes of data from the file descriptor fd_in
 /// to the file descriptor fd_out, where one of the file descriptors
 /// must refer to a pipe.
-pub fn splice(
+#[allow(dead_code)]
+pub(crate) fn splice(
     fd_in: c_int,
     off_in: Option<&mut i64>,
     fd_out: c_int,
@@ -61,26 +62,29 @@ pub fn splice(
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum RWFFlagSupport {
+#[allow(dead_code)]
+pub(crate) enum RWFFlagSupport {
     Unknown = 0,
     Unsupported = 2,
     Supported = 1,
 }
 
+#[allow(dead_code)]
 static RWF_BOOL: AtomicU8 = AtomicU8::new(RWFFlagSupport::Unknown as u8);
 
+#[allow(dead_code)]
 impl RWFFlagSupport {
-    pub fn is_linux_kernel_version_with_buggy_rwf_nonblock() -> bool {
+    pub(crate) fn is_linux_kernel_version_with_buggy_rwf_nonblock() -> bool {
         let v = bun_core::linux_kernel_version();
         v.major == 5 && matches!(v.minor, 9 | 10)
     }
 
-    pub fn disable() {
+    pub(crate) fn disable() {
         RWF_BOOL.store(RWFFlagSupport::Unsupported as u8, Ordering::Relaxed);
     }
 
     /// Workaround for https://github.com/google/gvisor/issues/2601
-    pub fn is_maybe_supported() -> bool {
+    pub(crate) fn is_maybe_supported() -> bool {
         if !cfg!(any(target_os = "linux", target_os = "android")) {
             return false;
         }
@@ -111,7 +115,8 @@ impl RWFFlagSupport {
 /// https://man7.org/linux/man-pages/man2/ioctl_ficlone.2.html
 ///
 /// Support for FICLONE is dependent on the filesystem driver.
-pub fn ioctl_ficlone(dest_fd: Fd, srcfd: Fd) -> usize {
+#[allow(dead_code)]
+pub(crate) fn ioctl_ficlone(dest_fd: Fd, srcfd: Fd) -> usize {
     // SAFETY: direct Linux ioctl syscall; FICLONE takes the source fd as its argument.
     let rc = unsafe {
         libc::syscall(
@@ -127,7 +132,7 @@ pub fn ioctl_ficlone(dest_fd: Fd, srcfd: Fd) -> usize {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn sys_epoll_pwait2(
+pub(crate) extern "C" fn sys_epoll_pwait2(
     epfd: i32,
     events: *mut libc::epoll_event,
     maxevents: i32,

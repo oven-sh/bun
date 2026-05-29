@@ -7,7 +7,7 @@ use bun_js_parser::lexer;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc, wtf};
 use bun_parsers::json5;
 
-pub fn create(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     jsc::create_host_function_object(
         global,
         &[
@@ -18,7 +18,7 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [value, replacer, space_value] = frame.arguments_as_array::<3>();
 
     value.ensure_still_alive();
@@ -113,7 +113,7 @@ enum Space {
 }
 
 impl Space {
-    pub fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
+    pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
         let space = space_value.unwrap_boxed_primitive(global)?;
         if space.is_number() {
             // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
@@ -140,7 +140,7 @@ impl Space {
 // PORT NOTE: `Space::deinit` deleted — `BunString` field derefs via `Drop`.
 
 impl Stringifier {
-    pub fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
+    pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
         Ok(Stringifier {
             stack_check: StackCheck::init(),
             builder: wtf::StringBuilder::init(),
@@ -153,7 +153,7 @@ impl Stringifier {
     // PORT NOTE: `deinit` deleted — all fields (`builder`, `space`, `visiting`)
     // free via `Drop`.
 
-    pub fn stringify_value(
+    pub(crate) fn stringify_value(
         &mut self,
         global: &JSGlobalObject,
         value: JSValue,
@@ -440,6 +440,17 @@ fn estring_to_js(str: &E::EString, global: &JSGlobalObject) -> JsResult<JSValue>
 }
 
 fn expr_to_js(expr: Expr, global: &JSGlobalObject) -> JsResult<JSValue> {
+    expr_to_js_with_check(expr, global, StackCheck::init())
+}
+
+fn expr_to_js_with_check(
+    expr: Expr,
+    global: &JSGlobalObject,
+    stack_check: StackCheck,
+) -> JsResult<JSValue> {
+    if !stack_check.is_safe_to_recurse() {
+        return Err(global.throw_stack_overflow());
+    }
     match expr.data {
         ExprData::ENull(_) => Ok(JSValue::NULL),
         ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
@@ -447,15 +458,19 @@ fn expr_to_js(expr: Expr, global: &JSGlobalObject) -> JsResult<JSValue> {
         ExprData::EString(str) => estring_to_js(str.get(), global),
         ExprData::EArray(arr) => {
             JSValue::create_array_from_iter(global, arr.slice().iter(), |item| {
-                expr_to_js(*item, global)
+                expr_to_js_with_check(*item, global, stack_check)
             })
         }
         ExprData::EObject(obj) => {
             let js_obj = JSValue::create_empty_object(global, obj.properties.len_u32() as usize);
             for prop in obj.properties.slice() {
                 let key_expr = prop.key.expect("infallible: prop has key");
-                let value = expr_to_js(prop.value.expect("infallible: prop has value"), global)?;
-                let key_js = expr_to_js(key_expr, global)?;
+                let value = expr_to_js_with_check(
+                    prop.value.expect("infallible: prop has value"),
+                    global,
+                    stack_check,
+                )?;
+                let key_js = expr_to_js_with_check(key_expr, global, stack_check)?;
                 let key_str = bun_core::OwnedString::new(key_js.to_bun_string(global)?);
                 js_obj.put_may_be_index(global, &key_str, value)?;
             }

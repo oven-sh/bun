@@ -5,7 +5,6 @@
 // below; higher-level extraction logic (`Archiver`, `BufferReadStream`) sits
 // on top and uses `bun_sys` for I/O.
 // ──────────────────────────────────────────────────────────────────────────
-#![warn(unreachable_pub)]
 use core::ffi::{c_int, c_void};
 use core::ptr;
 
@@ -1324,6 +1323,19 @@ fn is_symlink_target_safe(
         return false;
     }
 
+    let mut seen_named_component = false;
+    for component in link_target_bytes.split(|c| *c == b'/') {
+        match component {
+            b"" | b"." => {}
+            b".." => {
+                if seen_named_component {
+                    return false;
+                }
+            }
+            _ => seen_named_component = true,
+        }
+    }
+
     // Get the directory containing the symlink
     let symlink_dir = bun_paths::dirname_simple(symlink_path);
 
@@ -1364,7 +1376,7 @@ fn is_symlink_target_safe(
 /// during later `mkdirat`/`openat`/`symlinkat` calls — such entries must be
 /// rejected rather than resolved.
 #[cfg(unix)]
-fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>]) -> bool {
+pub fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>]) -> bool {
     if created_symlinks.is_empty() {
         return false;
     }
@@ -1799,6 +1811,16 @@ impl Archiver {
                     // at its original `.len()`; therefore `remaining[remaining.len()] == 0`.
                     let pathname: &[OSPathChar] = remaining;
 
+                    if pathname.len() >= normalized_buf.len() {
+                        if options.log {
+                            Output::warn(format_args!(
+                                "Skipping entry with a path longer than the maximum path length: {}\n",
+                                bun_core::fmt::fmt_os_path(pathname, Default::default()),
+                            ));
+                        }
+                        continue;
+                    }
+
                     let normalized = bun_paths::resolve_path::normalize_buf_t::<
                         OSPathChar,
                         bun_paths::platform::Auto,
@@ -1993,10 +2015,27 @@ impl Archiver {
                             #[cfg(not(windows))]
                             let mode: bun_sys::Mode = bun_sys::Mode::try_from(
                                 // SAFETY: entry valid
-                                lib::Entry::opaque_ref(entry).perm() | 0o666,
+                                (lib::Entry::opaque_ref(entry).perm() & 0o777) | 0o666,
                             )
                             .unwrap();
 
+                            // `path_traverses_created_symlink` is a lexical check: on
+                            // filesystems that alias differently-encoded names (Unicode
+                            // NFC/NFD normalization on APFS/HFS+), a path component can
+                            // reach a created symlink without byte-matching its recorded
+                            // path. Once this extraction has created any symlink, ask the
+                            // kernel to refuse to follow symlinks while opening file
+                            // entries. `NOFOLLOW_ANY` is 0 on non-Darwin targets.
+                            #[cfg(unix)]
+                            let flags = {
+                                let mut flags =
+                                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+                                if !created_symlinks.is_empty() {
+                                    flags |= bun_sys::O::NOFOLLOW_ANY;
+                                }
+                                flags
+                            };
+                            #[cfg(not(unix))]
                             let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
 
                             #[cfg(windows)]

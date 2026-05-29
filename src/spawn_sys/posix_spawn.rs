@@ -28,13 +28,13 @@ mod darwin_spawn_np {
     use core::ffi::{c_char, c_int};
     /// `POSIX_SPAWN_SETSID` — set session ID (calls `setsid()` in child).
     /// `<spawn.h>`: `0x0400`.
-    pub const POSIX_SPAWN_SETSID: c_int = 0x0400;
+    pub(super) const POSIX_SPAWN_SETSID: c_int = 0x0400;
     unsafe extern "C" {
-        pub fn posix_spawn_file_actions_addinherit_np(
+        pub(super) fn posix_spawn_file_actions_addinherit_np(
             actions: *mut libc::posix_spawn_file_actions_t,
             fd: c_int,
         ) -> c_int;
-        pub fn posix_spawn_file_actions_addchdir_np(
+        pub(super) fn posix_spawn_file_actions_addchdir_np(
             actions: *mut libc::posix_spawn_file_actions_t,
             path: *const c_char,
         ) -> c_int;
@@ -64,14 +64,14 @@ mod posix_compat {
     // (`posix_spawn_bun.cpp`). On POSIX `FdNative == c_int`; on Windows
     // `FdNative` is HANDLE, but this code path is unreachable there — keep
     // the C-ABI type so the struct compiles unchanged.
-    pub type fd_t = core::ffi::c_int;
+    pub(super) type fd_t = core::ffi::c_int;
     /// `std.posix.pid_t`.
     #[cfg(unix)]
-    pub type pid_t = libc::pid_t;
+    pub(super) type pid_t = libc::pid_t;
     #[cfg(not(unix))]
-    pub type pid_t = i32;
+    pub(super) type pid_t = i32;
     #[cfg(target_os = "macos")]
-    pub use bun_sys::posix::mode_t;
+    pub(super) use bun_sys::posix::mode_t;
 
     /// `std.posix.E` — errno enum with **unprefixed** variant names. The real
     /// `bun_errno::posix::E` aliases `SystemErrno` (E-prefixed); local newtype
@@ -79,19 +79,19 @@ mod posix_compat {
     #[cfg(unix)]
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     #[repr(transparent)]
-    pub struct Errno(pub c_int);
+    pub(super) struct Errno(pub c_int);
     #[cfg(unix)]
     impl Errno {
-        pub const SUCCESS: Errno = Errno(0);
+        pub(super) const SUCCESS: Errno = Errno(0);
         #[cfg(target_os = "macos")]
-        pub const NOMEM: Errno = Errno(libc::ENOMEM);
+        pub(super) const NOMEM: Errno = Errno(libc::ENOMEM);
         #[cfg(target_os = "macos")]
-        pub const INVAL: Errno = Errno(libc::EINVAL);
+        pub(super) const INVAL: Errno = Errno(libc::EINVAL);
         #[cfg(target_os = "macos")]
-        pub const BADF: Errno = Errno(libc::EBADF);
+        pub(super) const BADF: Errno = Errno(libc::EBADF);
         #[cfg(target_os = "macos")]
-        pub const NAMETOOLONG: Errno = Errno(libc::ENAMETOOLONG);
-        pub const INTR: Errno = Errno(libc::EINTR);
+        pub(super) const NAMETOOLONG: Errno = Errno(libc::ENAMETOOLONG);
+        pub(super) const INTR: Errno = Errno(libc::EINTR);
     }
     /// `std.posix.errno(rc)` — Zig: with libc, `rc == -1 ⇒ read __errno`,
     /// else `.SUCCESS`. The `posix_spawn*` family instead returns the errno
@@ -101,7 +101,7 @@ mod posix_compat {
     // `errno_from_ret(rc)` (rc == -1 ⇒ read libc errno) and route call sites.
     #[cfg(unix)]
     #[inline]
-    pub fn errno(rc: c_int) -> Errno {
+    pub(super) fn errno(rc: c_int) -> Errno {
         if rc == -1 {
             return Errno(bun_sys::posix::errno());
         }
@@ -109,13 +109,13 @@ mod posix_compat {
     }
 
     /// `std.posix.toPosixPath` — copy into a NUL-terminated buffer.
-    pub fn to_posix_path(path: &[u8]) -> Result<CString, Error> {
+    pub(super) fn to_posix_path(path: &[u8]) -> Result<CString, Error> {
         CString::new(path).map_err(|_| err!("Unexpected"))
     }
 
     /// `std.posix.unexpectedErrno` — Zig logs + returns `error.Unexpected`.
     #[cfg(target_os = "macos")]
-    pub fn unexpected_errno(_e: Errno) -> Error {
+    pub(super) fn unexpected_errno(_e: Errno) -> Error {
         err!("Unexpected")
     }
 }
@@ -219,7 +219,8 @@ pub mod bun_spawn {
     }
 
     #[derive(Clone, Copy)]
-    pub struct Attr {
+    #[allow(dead_code)]
+    pub(crate) struct Attr {
         pub detached: bool,
         pub new_process_group: bool,
         pub pty_slave_fd: i32,
@@ -245,15 +246,13 @@ pub mod bun_spawn {
     }
 
     impl Attr {
-        pub fn init() -> Result<Attr, Error> {
+        #[allow(dead_code)]
+        pub(crate) fn init() -> Result<Attr, Error> {
             Ok(Attr::default())
         }
 
-        pub fn get(self) -> Result<u16, Error> {
-            Ok(self.flags)
-        }
-
-        pub fn set(&mut self, flags: u16) -> Result<(), Error> {
+        #[allow(dead_code)]
+        pub(crate) fn set(&mut self, flags: u16) -> Result<(), Error> {
             self.flags = flags;
             // FreeBSD's <spawn.h> has no POSIX_SPAWN_SETSID; bun-spawn.cpp
             // calls setsid() in the child for `detached`, which process.zig
@@ -275,7 +274,8 @@ pub mod bun_spawn {
             Ok(())
         }
 
-        pub fn reset_signals(&mut self) -> Result<(), Error> {
+        #[allow(dead_code)]
+        pub(crate) fn reset_signals(&mut self) -> Result<(), Error> {
             self.reset_signals = true;
             Ok(())
         }
@@ -341,21 +341,12 @@ pub mod posix_spawn {
             spawn_errno(errno(unsafe {
                 system::posix_spawnattr_init(attr.as_mut_ptr())
             }))?;
-            // SAFETY: spawn_errno returned Ok ⇒ SUCCESS ⇒ initialized
             Ok(PosixSpawnAttr {
+                // SAFETY: spawn_errno returned Ok ⇒ SUCCESS ⇒ initialized
                 attr: unsafe { attr.assume_init() },
                 detached: false,
                 pty_slave_fd: -1,
             })
-        }
-
-        pub fn get(&self) -> Result<u16, Error> {
-            let mut flags: c_short = 0;
-            // SAFETY: self.attr is a live posix_spawnattr_t
-            spawn_errno(errno(unsafe {
-                system::posix_spawnattr_getflags(&self.attr, &mut flags)
-            }))?;
-            Ok(flags as u16) // Zig: `@as(u16, @bitCast(flags))`
         }
 
         pub fn set(&mut self, flags: u16) -> Result<(), Error> {
@@ -364,13 +355,13 @@ pub mod posix_spawn {
             let flags_s: c_short = flags as c_short;
             // SAFETY: self.attr is a live posix_spawnattr_t
             spawn_errno(errno(unsafe {
-                system::posix_spawnattr_setflags(&mut self.attr, flags_s)
+                system::posix_spawnattr_setflags(&raw mut self.attr, flags_s)
             }))
         }
 
         pub fn reset_signals(&mut self) -> Result<(), Error> {
             // SAFETY: self.attr is a live posix_spawnattr_t
-            if unsafe { posix_spawnattr_reset_signals(&mut self.attr) } != 0 {
+            if unsafe { posix_spawnattr_reset_signals(&raw mut self.attr) } != 0 {
                 return Err(err!("SystemResources"));
             }
             Ok(())
@@ -381,7 +372,7 @@ pub mod posix_spawn {
     impl Drop for PosixSpawnAttr {
         fn drop(&mut self) {
             // SAFETY: self.attr was initialized by posix_spawnattr_init
-            unsafe { system::posix_spawnattr_destroy(&mut self.attr) };
+            unsafe { system::posix_spawnattr_destroy(&raw mut self.attr) };
         }
     }
 
@@ -392,31 +383,26 @@ pub mod posix_spawn {
     }
 
     #[cfg(target_os = "macos")]
-    pub struct PosixSpawnActions {
+    pub(crate) struct PosixSpawnActions {
         pub actions: system::posix_spawn_file_actions_t,
     }
 
     #[cfg(target_os = "macos")]
     impl PosixSpawnActions {
-        pub fn init() -> Result<PosixSpawnActions, Error> {
+        pub(crate) fn init() -> Result<PosixSpawnActions, Error> {
             let mut actions =
                 core::mem::MaybeUninit::<system::posix_spawn_file_actions_t>::uninit();
             // SAFETY: posix_spawn_file_actions_init writes into actions on SUCCESS
             spawn_errno(errno(unsafe {
                 system::posix_spawn_file_actions_init(actions.as_mut_ptr())
             }))?;
-            // SAFETY: spawn_errno returned Ok ⇒ SUCCESS ⇒ initialized
             Ok(PosixSpawnActions {
+                // SAFETY: spawn_errno returned Ok ⇒ SUCCESS ⇒ initialized
                 actions: unsafe { actions.assume_init() },
             })
         }
 
-        pub fn open(&mut self, fd: Fd, path: &[u8], flags: u32, mode: mode_t) -> Result<(), Error> {
-            let posix_path = to_posix_path(path)?;
-            self.open_z(fd, &posix_path, flags, mode)
-        }
-
-        pub fn open_z(
+        pub(crate) fn open_z(
             &mut self,
             fd: Fd,
             path: &CStr,
@@ -428,7 +414,7 @@ pub mod posix_spawn {
             // SAFETY: self.actions is live; path is NUL-terminated
             spawn_errno(errno(unsafe {
                 system::posix_spawn_file_actions_addopen(
-                    &mut self.actions,
+                    &raw mut self.actions,
                     fd.native(),
                     path.as_ptr(),
                     flags_c,
@@ -437,14 +423,14 @@ pub mod posix_spawn {
             }))
         }
 
-        pub fn close(&mut self, fd: Fd) -> Result<(), Error> {
+        pub(crate) fn close(&mut self, fd: Fd) -> Result<(), Error> {
             // SAFETY: self.actions is live
             spawn_errno(errno(unsafe {
-                system::posix_spawn_file_actions_addclose(&mut self.actions, fd.native())
+                system::posix_spawn_file_actions_addclose(&raw mut self.actions, fd.native())
             }))
         }
 
-        pub fn dup2(&mut self, fd: Fd, newfd: Fd) -> Result<(), Error> {
+        pub(crate) fn dup2(&mut self, fd: Fd, newfd: Fd) -> Result<(), Error> {
             if fd == newfd {
                 return self.inherit(fd);
             }
@@ -452,24 +438,24 @@ pub mod posix_spawn {
             // SAFETY: self.actions is live
             spawn_errno(errno(unsafe {
                 system::posix_spawn_file_actions_adddup2(
-                    &mut self.actions,
+                    &raw mut self.actions,
                     fd.native(),
                     newfd.native(),
                 )
             }))
         }
 
-        pub fn inherit(&mut self, fd: Fd) -> Result<(), Error> {
+        pub(crate) fn inherit(&mut self, fd: Fd) -> Result<(), Error> {
             // SAFETY: self.actions is live
             spawn_errno(errno(unsafe {
                 super::darwin_spawn_np::posix_spawn_file_actions_addinherit_np(
-                    &mut self.actions,
+                    &raw mut self.actions,
                     fd.native(),
                 )
             }))
         }
 
-        pub fn chdir(&mut self, path: &[u8]) -> Result<(), Error> {
+        pub(crate) fn chdir(&mut self, path: &[u8]) -> Result<(), Error> {
             let posix_path = to_posix_path(path)?;
             self.chdir_z(&posix_path)
         }
@@ -479,7 +465,7 @@ pub mod posix_spawn {
             // SAFETY: self.actions is live; path is NUL-terminated
             spawn_errno(errno(unsafe {
                 super::darwin_spawn_np::posix_spawn_file_actions_addchdir_np(
-                    &mut self.actions,
+                    &raw mut self.actions,
                     path.as_ptr(),
                 )
             }))
@@ -490,16 +476,16 @@ pub mod posix_spawn {
     impl Drop for PosixSpawnActions {
         fn drop(&mut self) {
             // SAFETY: self.actions was initialized by posix_spawn_file_actions_init
-            unsafe { system::posix_spawn_file_actions_destroy(&mut self.actions) };
+            unsafe { system::posix_spawn_file_actions_destroy(&raw mut self.actions) };
         }
     }
 
     // Use BunSpawn types on POSIX (both Linux and macOS) for PTY support via posix_spawn_bun.
     // Windows uses different spawn mechanisms.
     #[cfg(unix)]
-    pub type Actions = bun_spawn::Actions;
+    pub(crate) type Actions = bun_spawn::Actions;
     #[cfg(unix)]
-    pub type Attr = bun_spawn::Attr;
+    pub(crate) type Attr = bun_spawn::Attr;
     // TODO(port): not(unix) Actions/Attr aliased PosixSpawn* in the Zig
     // draft, but Windows goes through `process.rs::spawn_process_windows`
     // (libuv), never these. Leave undeclared on Windows for now.
@@ -567,7 +553,7 @@ pub mod posix_spawn {
     }
 
     #[cfg(unix)]
-    pub fn spawn_z(
+    pub(crate) fn spawn_z(
         path: &CStr,
         actions: Option<&Actions>,
         attr: Option<&Attr>,
@@ -740,12 +726,12 @@ pub mod posix_spawn {
             // never written, so the const→mut element cast is sound.
             let rc = unsafe {
                 system::posix_spawn(
-                    &mut pid,
+                    &raw mut pid,
                     path.as_ptr(),
-                    &posix_actions.actions,
-                    &posix_attr.attr,
-                    argv as *const *mut c_char,
-                    envp as *const *mut c_char,
+                    &raw const posix_actions.actions,
+                    &raw const posix_attr.attr,
+                    argv.cast::<*mut c_char>(),
+                    envp.cast::<*mut c_char>(),
                 )
             };
             if cfg!(debug_assertions) {
@@ -815,38 +801,6 @@ pub mod posix_spawn {
                 path: path.to_bytes().into(),
                 ..Default::default()
             })
-        }
-    }
-
-    /// Use this version of the `waitpid` wrapper if you spawned your child process using `posix_spawn`
-    /// or `posix_spawnp` syscalls.
-    /// See also `std.posix.waitpid` for an alternative if your child process was spawned via `fork` and
-    /// `execve` method.
-    #[cfg(unix)]
-    pub fn waitpid(pid: pid_t, flags: u32) -> sys::Result<WaitPidResult> {
-        type PidStatus = c_int;
-        let mut status: PidStatus = 0;
-        loop {
-            // SAFETY: status is a valid out-pointer
-            let rc = unsafe {
-                system::waitpid(
-                    pid,
-                    &raw mut status,
-                    c_int::try_from(flags).expect("int cast"),
-                )
-            };
-            match errno(rc) {
-                Errno::SUCCESS => {
-                    return sys::Result::Ok(WaitPidResult {
-                        pid: pid_t::try_from(rc).expect("int cast"),
-                        status: status as u32,
-                    });
-                }
-                Errno::INTR => continue,
-                e => {
-                    return sys::Result::Err(sys::Error::from_code_int(e.0, SYSCALL_WAITPID));
-                }
-            }
         }
     }
 

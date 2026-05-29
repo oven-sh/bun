@@ -187,7 +187,7 @@ us_dispatch_shims! {
 /// `loop.c` must pass a live, non-null `s` whose ext slot holds a valid
 /// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn us_dispatch_ssl_raw_tap(
+pub(crate) unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     s: *mut us_socket_t,
     data: *mut u8,
     len: c_int,

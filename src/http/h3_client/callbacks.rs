@@ -17,6 +17,7 @@ use super::client_context::ClientContext;
 use super::client_session::{ClientSession, session_mut, stream_mut, stream_ref};
 use super::encode;
 use super::stream::Stream;
+use crate::h2_client::dispatch::{is_malformed_response_field, is_malformed_response_value};
 use crate::h3_client as H3;
 use bun_picohttp as picohttp;
 
@@ -73,7 +74,7 @@ fn stream_of<'a>(s: &mut quic::Stream) -> Option<&'a mut Stream> {
     (*s.ext::<Stream>()).map(|p| stream_mut(p.as_ptr()))
 }
 
-pub fn register(qctx: &mut quic::Context) {
+pub(crate) fn register(qctx: &mut quic::Context) {
     qctx.on_hsk_done(on_hsk_done);
     qctx.on_goaway(on_goaway);
     qctx.on_close(on_conn_close);
@@ -224,6 +225,12 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
             }
             i += 1;
             continue;
+        }
+        if stream.status_code == 0
+            && (is_malformed_response_field(name) || is_malformed_response_value(value))
+        {
+            session.fail(stream, err!(HTTP3ProtocolError));
+            return;
         }
         // PERF(port): was appendAssumeCapacity — Vec::push amortizes.
         stream

@@ -130,7 +130,7 @@ impl StoredTrace {
     }
 }
 
-/// Zig: `WriteStackTraceLimits`. Aliased as `DumpOptions` for safety/sys callers.
+/// Zig: `WriteStackTraceLimits`.
 #[derive(Copy, Clone, Debug)]
 pub struct DumpStackTraceOptions {
     pub frame_count: usize,
@@ -150,7 +150,6 @@ impl Default for DumpStackTraceOptions {
         }
     }
 }
-pub type DumpOptions = DumpStackTraceOptions;
 /// Zig-spec name (`crash_handler.WriteStackTraceLimits`); also re-exported from `bun_crash_handler`.
 pub type WriteStackTraceLimits = DumpStackTraceOptions;
 
@@ -328,11 +327,6 @@ pub mod features {
     pub fn yaml_parse_inc() {
         YAML_PARSE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     }
-    /// install crate calls `bun_core::analytics::Features::lifecycle_scripts_inc(1)`.
-    #[inline]
-    pub fn lifecycle_scripts_inc(n: usize) {
-        LIFECYCLE_SCRIPTS.fetch_add(n, core::sync::atomic::Ordering::Relaxed);
-    }
     /// install/yarn crate calls `bun_core::analytics::Features::yarn_migration_inc(1)`.
     #[inline]
     pub fn yarn_migration_inc(n: usize) {
@@ -400,9 +394,10 @@ pub static JSC_SCOPE: crate::output::ScopedLogger =
 // Zig: src/cli/cli.zig::debug_flags — debug-build-only breakpoint matchers.
 pub mod debug_flags {
     #[cfg(debug_assertions)]
-    pub static RESOLVE_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> = crate::Once::new();
+    pub(crate) static RESOLVE_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> =
+        crate::Once::new();
     #[cfg(debug_assertions)]
-    pub static PRINT_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> = crate::Once::new();
+    pub(crate) static PRINT_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> = crate::Once::new();
 
     #[inline]
     pub fn has_resolve_breakpoint(str_: &[u8]) -> bool {
@@ -534,13 +529,6 @@ pub const arch_name: &str = if cfg!(target_arch = "x86_64") {
     "unknown"
 };
 
-#[inline]
-pub fn get_start_time() -> i128 {
-    crate::start_time()
-    // TODO(port): Zig reads `bun.start_time` (a global i128). Expose as
-    // `bun_core::start_time()` or a `static AtomicI128`-equivalent.
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Thread naming
 // ──────────────────────────────────────────────────────────────────────────
@@ -591,7 +579,7 @@ pub type ExitFn = extern "C" fn();
 static ON_EXIT_CALLBACKS: crate::Mutex<Vec<ExitFn>> = crate::Mutex::new(Vec::new());
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__atexit(function: ExitFn) {
+pub(crate) extern "C" fn Bun__atexit(function: ExitFn) {
     let mut cbs = ON_EXIT_CALLBACKS.lock();
     if !cbs.iter().any(|f| *f as usize == function as usize) {
         cbs.push(function);
@@ -616,7 +604,7 @@ pub fn add_pre_exit_callback(function: ExitFn) {
     }
 }
 
-pub fn run_exit_callbacks() {
+pub(crate) fn run_exit_callbacks() {
     // Drain under lock, run outside it (callbacks may call `Bun__atexit`).
     let cbs: Vec<ExitFn> = core::mem::take(&mut *ON_EXIT_CALLBACKS.lock());
     for callback in &cbs {
@@ -627,11 +615,11 @@ pub fn run_exit_callbacks() {
 static IS_EXITING: AtomicBool = AtomicBool::new(false);
 
 #[unsafe(no_mangle)]
-pub extern "C" fn bun_is_exiting() -> c_int {
+pub(crate) extern "C" fn bun_is_exiting() -> c_int {
     is_exiting() as c_int
 }
 
-pub fn is_exiting() -> bool {
+pub(crate) fn is_exiting() -> bool {
     IS_EXITING.load(Ordering::Relaxed)
 }
 
@@ -802,7 +790,7 @@ pub struct SyncCStr(pub *const c_char);
 // SAFETY: points into a `'static` string literal; the pointer is never mutated.
 unsafe impl Sync for SyncCStr {}
 #[unsafe(no_mangle)]
-pub static Bun__userAgent: SyncCStr =
+pub(crate) static Bun__userAgent: SyncCStr =
     SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
 
 /// Prevent the linker from dead-code-eliminating `#[no_mangle]` symbols that are
@@ -818,7 +806,7 @@ macro_rules! keep_symbols {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__onExit() {
+pub(crate) extern "C" fn Bun__onExit() {
     // `bun.jsc.Node.FSEvents.closeAndWait()` (spec `Global.zig:220`) — runs
     // BEFORE the generic exit-callback list, matching Zig ordering. fs_events
     // pushes into `PRE_EXIT_CALLBACKS` on first loop create.

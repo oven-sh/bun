@@ -13,7 +13,7 @@ use crate::socket::{Listener, NativeCallbacks, NewSocket, SocketFlags, TCPSocket
 
 // Zig: `pub var autoSelectFamilyDefault: bool = true;`
 // PORT NOTE: reshaped for borrowck — Rust forbids safe `static mut`; use AtomicBool.
-pub static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true);
+pub(crate) static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true);
 
 // This is only used to provide the getDefaultAutoSelectFamilyAttemptTimeout and
 // setDefaultAutoSelectFamilyAttemptTimeout functions, not currently read by any other code. It's
@@ -26,10 +26,10 @@ thread_local! {
     // Node's default is 250ms with a documented floor of 10ms, but the CLI
     // default in node_options.h is 500ms; the vendored test/common multiplies
     // the default by 5 (upstream) assuming 500.
-    pub static AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_DEFAULT: Cell<u32> = const { Cell::new(500) };
+    pub(crate) static AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_DEFAULT: Cell<u32> = const { Cell::new(500) };
 }
 
-pub fn get_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn get_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
     #[bun_jsc::host_fn(export = "Bun__NodeNet__getDefaultAutoSelectFamily")]
     fn getter(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         Ok(JSValue::from(
@@ -46,7 +46,7 @@ pub fn get_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
     )
 }
 
-pub fn set_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn set_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
     #[bun_jsc::host_fn(export = "Bun__NodeNet__setDefaultAutoSelectFamily")]
     fn setter(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = frame.arguments_old::<1>();
@@ -70,7 +70,7 @@ pub fn set_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
     )
 }
 
-pub fn get_default_auto_select_family_attempt_timeout(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn get_default_auto_select_family_attempt_timeout(global: &JSGlobalObject) -> JSValue {
     #[bun_jsc::host_fn(export = "Bun__NodeNet__getDefaultAutoSelectFamilyAttemptTimeout")]
     fn getter(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         Ok(JSValue::js_number(f64::from(
@@ -86,7 +86,7 @@ pub fn get_default_auto_select_family_attempt_timeout(global: &JSGlobalObject) -
     )
 }
 
-pub fn set_default_auto_select_family_attempt_timeout(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn set_default_auto_select_family_attempt_timeout(global: &JSGlobalObject) -> JSValue {
     #[bun_jsc::host_fn(export = "Bun__NodeNet__setDefaultAutoSelectFamilyAttemptTimeout")]
     fn setter(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = frame.arguments_old::<1>();
@@ -133,7 +133,7 @@ pub fn BlockList(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments_as_array::<1>();
     let is_ssl = args[0].to_boolean();
 
@@ -171,7 +171,7 @@ pub fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 }
 
 #[bun_jsc::host_fn]
-pub fn do_connect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn do_connect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [prev, opts] = frame.arguments_as_array::<2>();
     let maybe_tcp = prev.as_::<TCPSocket>();
     let maybe_tls = prev.as_::<TLSSocket>();

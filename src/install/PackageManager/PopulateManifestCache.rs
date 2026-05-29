@@ -20,7 +20,7 @@ use crate::package_manager_task as Task;
 use crate::resolution::Tag as ResolutionTag;
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum StartManifestTaskError {
+pub(crate) enum StartManifestTaskError {
     #[error("OutOfMemory")]
     OutOfMemory,
     #[error("InvalidURL")]
@@ -290,7 +290,7 @@ pub fn populate_manifest_cache(
             err: Option<bun_core::Error>,
         }
         impl RunClosure {
-            pub fn is_done(closure: &mut Self) -> bool {
+            pub(crate) fn is_done(closure: &mut Self) -> bool {
                 // SAFETY: `closure.manager` is the raw provenance root set
                 // below; `sleep_until`/`tick_raw` hold no `&mut` across this
                 // callback, so this is the unique live borrow.

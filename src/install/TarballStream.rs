@@ -144,9 +144,17 @@ pub struct TarballStream {
     want_first_dirname: bool,
     npm_mode: bool,
 
+    /// Symlinks created so far during this extraction. Later entries whose
+    /// path traverses one of these are skipped: the per-target check in
+    /// `make_symlink` is purely lexical, so once a link is on disk the kernel
+    /// would follow it and a chained link could escape the extraction root.
+    #[cfg(unix)]
+    created_symlinks: Vec<Vec<u8>>,
+
     bytes_received: usize,
     entry_count: u32,
     fail: Option<bun_core::Error>,
+    invalid_name: bool,
 
     /// Thread-pool task that runs `drain`. Re-enqueued whenever new data
     /// arrives and no drain is currently in flight.
@@ -167,14 +175,14 @@ impl TarballStream {
     /// this the whole body is buffered as before; the resumable libarchive
     /// state machine is only worth its per-chunk overhead for tarballs that
     /// would otherwise consume a noticeable amount of memory.
-    pub fn min_size() -> usize {
+    pub(crate) fn min_size() -> usize {
         // env_var.get() returns Option<u64> in the Rust port even when a default
         // is configured (Zig collapses it at comptime); the var has a 2 MiB
         // default so unwrap is infallible here.
         usize::try_from(env_var::BUN_INSTALL_STREAMING_MIN_SIZE.get().unwrap()).expect("int cast")
     }
 
-    pub fn init(
+    pub(crate) fn init(
         extract_task: *mut Task,
         network_task: *mut NetworkTask,
         manager: *mut PackageManager,
@@ -237,9 +245,12 @@ impl TarballStream {
             resolved_github_dirname: b"",
             want_first_dirname,
             npm_mode,
+            #[cfg(unix)]
+            created_symlinks: Vec::new(),
             bytes_received: 0,
             entry_count: 0,
             fail: None,
+            invalid_name: false,
             drain_task: thread_pool::Task {
                 node: thread_pool::Node::default(),
                 callback: drain_callback,
@@ -260,7 +271,7 @@ impl TarballStream {
     /// HTTP thread concurrently with `drain()` on a worker, so this never
     /// materialises `&mut TarballStream` — all access is via raw-ptr field
     /// projection (Zig spec: freely-aliasing `*TarballStream`).
-    pub unsafe fn on_chunk(
+    pub(crate) unsafe fn on_chunk(
         this: *mut Self,
         chunk: &[u8],
         is_last: bool,
@@ -654,12 +665,20 @@ impl TarballStream {
         // Tag::Extract` for streaming tarballs).
         let tarball = &self.extract_task.request_extract().tarball;
         let (_, basename) = tarball.name_and_basename();
+        let truncated_basename = &basename[0..basename.len().min(32)];
+        let tmpname_suffix: &[u8] =
+            if crate::dependency::is_safe_install_folder_name(truncated_basename) {
+                truncated_basename
+            } else if tarball.resolution.tag.is_git()
+                || tarball.resolution.tag == ResolutionTag::LocalTarball
+            {
+                b"package"
+            } else {
+                self.invalid_name = true;
+                return Err(bun_core::err!("InstallFailed"));
+            };
         let mut buf = PathBuffer::uninit();
-        let tmpname = FileSystem::tmpname(
-            &basename[0..basename.len().min(32)],
-            &mut buf[..],
-            bun_core::fast_random(),
-        )?;
+        let tmpname = FileSystem::tmpname(tmpname_suffix, &mut buf[..], bun_core::fast_random())?;
         // allocator.dupeZ → owned NUL-terminated copy.
         self.tmpname = ZBox::from_bytes(tmpname.as_bytes());
 
@@ -800,6 +819,17 @@ impl TarballStream {
         let path_slice: &[OSPathChar] = &path[..];
         let dest = self.dest.unwrap();
 
+        // Reject any entry whose path traverses a symlink created earlier in
+        // this extraction; the kernel would follow it and the entry could land
+        // outside the extraction root. Same defense as the buffered extractor
+        // in `Archiver::extract_to_dir`.
+        #[cfg(unix)]
+        if bun_libarchive::path_traverses_created_symlink(path_slice, &self.created_symlinks) {
+            self.phase = Phase::WantData;
+            self.out_fd = None;
+            return Ok(());
+        }
+
         match kind {
             FileKind::Directory => {
                 make_directory(entry, dest, path, path_slice);
@@ -808,16 +838,24 @@ impl TarballStream {
             }
             FileKind::SymLink => {
                 #[cfg(unix)]
-                make_symlink(entry, dest, path, path_slice);
+                if make_symlink(entry, dest, path, path_slice) {
+                    self.created_symlinks.push(path_slice.to_vec());
+                }
                 self.phase = Phase::WantData;
                 self.out_fd = None;
             }
             FileKind::File => {
                 #[cfg(windows)]
                 let mode: Mode = 0;
+                // Mask to permission bits so setuid/setgid/sticky bits from the
+                // archive never reach `openat`'s mode argument.
                 #[cfg(not(windows))]
-                let mode: Mode = Mode::try_from(entry.perm() | 0o666).expect("int cast");
-                let fd = open_output_file(dest, path, path_slice, mode)?;
+                let mode: Mode = Mode::try_from((entry.perm() & 0o777) | 0o666).expect("int cast");
+                #[cfg(unix)]
+                let nofollow = !self.created_symlinks.is_empty();
+                #[cfg(not(unix))]
+                let nofollow = false;
+                let fd = open_output_file(dest, path, path_slice, mode, nofollow)?;
                 self.entry_count += 1;
 
                 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1024,15 +1062,26 @@ impl TarballStream {
             };
 
             if let Some(err) = self.fail {
-                (*task).log.add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "{} extracting tarball for \"{}\"",
-                        err.name(),
-                        bstr::BStr::new(tarball.name.slice()),
-                    ),
-                );
+                if self.invalid_name {
+                    (*task).log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Refusing to install package with invalid name \"{}\"",
+                            bun_fmt::s(tarball.name_and_basename().0),
+                        ),
+                    );
+                } else {
+                    (*task).log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "{} extracting tarball for \"{}\"",
+                            err.name(),
+                            bstr::BStr::new(tarball.name.slice()),
+                        ),
+                    );
+                }
                 (*task).err = Some(err);
                 (*task).status = TaskStatus::Fail;
                 return;
@@ -1059,11 +1108,16 @@ impl TarballStream {
                     if self.resolved_github_dirname.is_empty() {
                         break 'insert_tag;
                     }
-                    if bun_sys::File::write_file(
+                    if bun_sys::File::openat(
                         self.dest.unwrap(),
                         bun_core::zstr!(".bun-tag"),
-                        self.resolved_github_dirname,
+                        O::WRONLY
+                            | O::CREAT
+                            | O::TRUNC
+                            | if cfg!(windows) { 0 } else { O::NOFOLLOW },
+                        0o664,
                     )
+                    .and_then(|f| f.write_all(self.resolved_github_dirname))
                     .is_err()
                     {
                         let _ = bun_sys::unlinkat(self.dest.unwrap(), bun_core::zstr!(".bun-tag"));
@@ -1125,7 +1179,7 @@ impl TarballStream {
 
     /// Prepare this stream for another HTTP attempt after a failed request
     /// that never scheduled a drain.
-    pub fn reset_for_retry(&mut self) {
+    pub(crate) fn reset_for_retry(&mut self) {
         self.mutex.lock();
         self.pending.clear();
         self.closed = false;
@@ -1264,8 +1318,20 @@ fn open_output_file(
     path: OSPathZ,
     path_slice: &[OSPathChar],
     mode: Mode,
+    nofollow: bool,
 ) -> Result<Fd, bun_core::Error> {
-    let flags = O::WRONLY | O::CREAT | O::TRUNC;
+    // `path_traverses_created_symlink` is a lexical check: on filesystems that
+    // alias differently-encoded names (Unicode NFC/NFD normalization on
+    // APFS/HFS+), a path component can reach a created symlink without
+    // byte-matching its recorded path. Once this extraction has created any
+    // symlink, ask the kernel to refuse to follow symlinks while opening file
+    // entries. `NOFOLLOW_ANY` is 0 on non-Darwin targets. Same defense as the
+    // buffered extractor in `Archiver::extract_to_dir`.
+    let flags = if nofollow {
+        O::WRONLY | O::CREAT | O::TRUNC | O::NOFOLLOW_ANY
+    } else {
+        O::WRONLY | O::CREAT | O::TRUNC
+    };
     #[cfg(windows)]
     {
         let _ = mode;
@@ -1339,36 +1405,80 @@ fn make_directory(entry: &mut lib::Entry, dest_fd: Fd, path: OSPathZ, path_slice
     }
 }
 
+/// Returns `true` only when a symlink was actually created on disk, so the
+/// caller can record it in `created_symlinks`.
 #[cfg(unix)]
-fn make_symlink(entry: &mut lib::Entry, dest_fd: Fd, path: OSPathZ, path_slice: &[OSPathChar]) {
+fn make_symlink(
+    entry: &mut lib::Entry,
+    dest_fd: Fd,
+    path: OSPathZ,
+    path_slice: &[OSPathChar],
+) -> bool {
     let target = entry.symlink();
     // Same safety rule as `isSymlinkTargetSafe` in the buffered path:
     // reject absolute targets and anything that escapes via `..`.
     if target.is_empty() || target[0] == b'/' {
-        return;
+        return false;
     }
     {
+        // Normalize `symlink_dir/target` as a *relative* path with leading
+        // `..` preserved, and reject targets that climb above the extraction
+        // root. A fake absolute root cannot be used here: POSIX normalization
+        // clamps excess `..` at `/`, so a target like `../../packages/x`
+        // would normalize back under the fake root while the kernel still
+        // resolves the raw `..` components and escapes the extraction
+        // directory.
         let symlink_dir = bun_paths::dirname(path_slice).unwrap_or(b"");
+        let target_bytes = target.as_bytes();
+        let mut seen_named_component = false;
+        for component in target_bytes.split(|c| *c == b'/') {
+            match component {
+                b"" | b"." => {}
+                b".." => {
+                    if seen_named_component {
+                        return false;
+                    }
+                }
+                _ => seen_named_component = true,
+            }
+        }
         let mut join_buf = PathBuffer::uninit();
-        let resolved = resolve_path::join_abs_string_buf::<platform::Posix>(
-            b"/packages/",
-            &mut join_buf[..],
-            &[symlink_dir, target.as_bytes()],
+        if symlink_dir.len() + 1 + target_bytes.len() >= join_buf.len() {
+            return false;
+        }
+        let mut written = 0usize;
+        if !symlink_dir.is_empty() {
+            join_buf[..symlink_dir.len()].copy_from_slice(symlink_dir);
+            written = symlink_dir.len();
+            join_buf[written] = b'/';
+            written += 1;
+        }
+        join_buf[written..written + target_bytes.len()].copy_from_slice(target_bytes);
+        written += target_bytes.len();
+
+        let mut norm_buf = PathBuffer::uninit();
+        let resolved = resolve_path::normalize_string_generic_t::<u8, true, false>(
+            &join_buf[..written],
+            &mut norm_buf[..],
+            b'/',
+            |c| c == b'/',
         );
-        if !resolved.starts_with(b"/packages/") {
-            return;
+        if bun_core::strings::eql(resolved, b"..")
+            || bun_core::strings::has_prefix_comptime(resolved, b"../")
+        {
+            return false;
         }
     }
     match bun_sys::symlinkat(target, dest_fd, path) {
-        Ok(()) => {}
+        Ok(()) => true,
         Err(e) if matches!(e.get_errno(), bun_sys::E::EPERM | bun_sys::E::ENOENT) => {
             let Some(dir) = bun_paths::dirname(path_slice) else {
-                return;
+                return false;
             };
             let _ = dest_fd.make_path(dir);
-            let _ = bun_sys::symlinkat(target, dest_fd, path);
+            bun_sys::symlinkat(target, dest_fd, path).is_ok()
         }
-        Err(_) => {}
+        Err(_) => false,
     }
 }
 

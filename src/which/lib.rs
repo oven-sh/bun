@@ -1,4 +1,4 @@
-#![warn(unused_must_use, unreachable_pub)]
+#![warn(unused_must_use)]
 use bstr::BStr;
 #[cfg(windows)]
 use bun_core::{WStr, w};
@@ -139,6 +139,43 @@ pub fn ends_with_extension(str: &[u8]) -> bool {
     false
 }
 
+/// Returns true when `path` names a Windows batch script (`.cmd` / `.bat`).
+///
+/// `CreateProcessW` runs these through `cmd.exe`, which re-tokenizes the
+/// command line with shell metacharacter rules ("BatBadBut",
+/// CVE-2024-24576 / CVE-2024-27980). Spawn paths must not pass untrusted
+/// arguments to one without checking [`batch_arg_has_cmd_metachars`].
+pub fn is_batch_file(path: &[u8]) -> bool {
+    // Windows strips trailing ASCII spaces and periods from the final path
+    // component, so `foo.cmd.` / `foo.cmd ` still run `foo.cmd` through
+    // cmd.exe (CVE-2024-43402). Trim them before checking the extension.
+    let mut end = path.len();
+    while end > 0 && matches!(path[end - 1], b' ' | b'.') {
+        end -= 1;
+    }
+    if end < 4 || path[end - 4] != b'.' {
+        return false;
+    }
+    let file_ext = &path[end - 3..end];
+    strings::eql_case_insensitive_asciii_check_length(file_ext, b"cmd")
+        || strings::eql_case_insensitive_asciii_check_length(file_ext, b"bat")
+}
+
+/// Returns true when `arg` contains a byte `cmd.exe` would reinterpret while
+/// re-tokenizing the command line of a `.bat`/`.cmd` invocation: `"` breaks
+/// out of libuv's MSVCRT-style quoting, `%` expands environment variables
+/// even inside quotes, and the rest are command separators / redirection /
+/// escape characters in unquoted positions. None of these can be escaped for
+/// `cmd.exe`, so callers must reject the spawn instead.
+pub fn batch_arg_has_cmd_metachars(arg: &[u8]) -> bool {
+    arg.iter().any(|&c| {
+        matches!(
+            c,
+            b'"' | b'%' | b'&' | b'|' | b'<' | b'>' | b'^' | b'\r' | b'\n'
+        )
+    })
+}
+
 /// Check if the WPathBuffer holds a existing file path, checking also for windows extensions variants like .exe, .cmd and .bat (internally used by which_win)
 fn search_bin(
     buf: &mut WPathBuffer,
@@ -210,6 +247,16 @@ fn search_bin_in_path<'a>(
         let _ = path_buf;
         path
     };
+    let tail_units = if check_windows_extensions { 5 } else { 1 };
+    if segment.len() + 1 + bin.len() + tail_units > buf.len()
+        && bun_core::strings::element_length_utf8_into_utf16(segment)
+            + 1
+            + bun_core::strings::element_length_utf8_into_utf16(bin)
+            + tail_units
+            > buf.len()
+    {
+        return None;
+    }
     let segment_utf16 = bun_core::strings::convert_utf8_to_utf16_in_buffer(
         &mut buf[..],
         bun_core::strings::without_trailing_slash(segment),

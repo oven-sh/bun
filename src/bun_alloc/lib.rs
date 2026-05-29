@@ -8,7 +8,7 @@
 // `#[thread_local]` (vs the `thread_local!` macro) compiles to a bare
 // `__thread` slot — single `mov reg, fs:[OFFSET]` access, no `LocalKey`
 // `__getit()` wrapper, no lazy-init flag check, no dtor-registration probe.
-// Used for the per-allocation hot-path TLS in `ast_alloc::AST_ARENA`; matches
+// Used for the per-allocation hot-path TLS in `ast_alloc::AST_ALLOC`; matches
 // Zig's `threadlocal var` semantics exactly.
 #![feature(thread_local)]
 
@@ -99,7 +99,7 @@ impl AllocatorVTable {
 
     /// Build a "free-only" vtable: `alloc`/`resize`/`remap` all no-op/fail and
     /// only `free` is meaningful. Each call site still gets its own `static`
-    /// (vtable address is an identity tag for `is_instance`/`allocator_has_pointer`).
+    /// (vtable address is an identity tag for `is_instance`).
     pub const fn free_only(
         free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
     ) -> Self {
@@ -278,7 +278,7 @@ pub use baby_vec::BabyVec;
 /// through `<&MimallocArena as Allocator>` (= `mi_heap_realloc_aligned` /
 /// `mi_free`); reclaimed on arena `reset`/`Drop`.
 pub type ArenaVec<'a, T> = BabyVec<'a, T>;
-pub use mimalloc_arena::{ArenaString, ArenaVecExt, live_arena_heaps};
+pub use mimalloc_arena::{ArenaString, ArenaVecExt};
 
 /// `bumpalo::collections::Vec::from_iter_in` parity for [`ArenaVec`].
 #[inline]

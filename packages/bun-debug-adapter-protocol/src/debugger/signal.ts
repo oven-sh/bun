@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { Server, Socket } from "node:net";
 import { createServer } from "node:net";
@@ -77,7 +78,7 @@ export class UnixSignal extends EventEmitter<UnixSignalEventMap> {
 }
 
 export function randomUnixPath(): string {
-  return join(tmpdir(), `${Math.random().toString(36).slice(2)}.sock`);
+  return join(tmpdir(), `${randomBytes(16).toString("hex")}.sock`);
 }
 
 function parseUnixPath(path: string | URL): string {

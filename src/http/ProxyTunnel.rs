@@ -292,6 +292,16 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
         return;
     };
     let _guard = ProxyTunnel::ref_scope(proxy_nn);
+    // While parked waiting for the JS `checkServerIdentity` verdict no request
+    // has been written through the tunnel, so any decrypted application data
+    // arriving here is unexpected.
+    if this.state.flags.is_waiting_for_cert_check {
+        scoped_log!(http_proxy_tunnel, "ProxyTunnel onData while parked");
+        this.state.pending_response = None;
+        // SAFETY: `this` dead (NLL); reenter via raw ptr.
+        ProxyTunnel::close_from_callback(proxy_nn, err!(UnexpectedData));
+        return;
+    }
     match this.state.response_stage {
         HTTPStage::Body => {
             scoped_log!(http_proxy_tunnel, "ProxyTunnel onData body");

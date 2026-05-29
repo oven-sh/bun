@@ -90,11 +90,6 @@ impl Status {
         matches!(self, Status::Connected | Status::Connecting)
     }
 }
-// Free-fn spelling kept for parity with Zig's `valkey.isActive(&status)`.
-#[inline]
-pub fn is_active(this: Status) -> bool {
-    this.is_active()
-}
 
 pub use super::valkey_command_body as Command_;
 // PORT NOTE: Zig `pub const Command = @import("./ValkeyCommand.zig");` re-exports the module
@@ -144,18 +139,10 @@ pub enum TLS {
 }
 
 impl TLS {
-    pub fn clone(&self) -> TLS {
-        match self {
-            TLS::Custom(ssl_config) => TLS::Custom(ssl_config.clone()),
-            TLS::None => TLS::None,
-            TLS::Enabled => TLS::Enabled,
-        }
-    }
-
     // PORT NOTE: Zig `deinit` only called `ssl_config.deinit()`. SSLConfig should impl Drop,
     // making this enum's Drop automatic. (No explicit Drop impl needed if SSLConfig: Drop.)
 
-    pub fn reject_unauthorized(&self, vm: &VirtualMachine) -> bool {
+    pub(crate) fn reject_unauthorized(&self, vm: &VirtualMachine) -> bool {
         match self {
             TLS::Custom(ssl_config) => ssl_config.reject_unauthorized != 0,
             TLS::Enabled => vm.get_tls_reject_unauthorized(),
@@ -209,7 +196,7 @@ pub enum Address {
 }
 
 impl Address {
-    pub fn hostname(&self) -> &[u8] {
+    pub(crate) fn hostname(&self) -> &[u8] {
         match self {
             Address::Unix(unix_addr) => unix_addr,
             Address::Host { host, .. } => host,
@@ -223,7 +210,7 @@ impl Address {
     /// `JSValkeyClient` parent in practice — that's what `SocketHandler<SSL>`
     /// pulls back out on event dispatch). Generic so the caller controls the
     /// stored type; this fn only forwards it opaquely to `connect_*_group`.
-    pub fn connect<Owner>(
+    pub(crate) fn connect<Owner>(
         &self,
         owner: *mut Owner,
         group: &mut SocketGroup,
@@ -280,6 +267,8 @@ pub struct ValkeyClient {
     // Buffer management
     pub write_buffer: OffsetByteList,
     pub read_buffer: OffsetByteList,
+    /// Resumable end-of-reply scanner over `read_buffer.remaining()`.
+    pub reply_scanner: protocol::ReplyScanner,
 
     /// In-flight commands, after the data has been written to the network socket
     // TODO(port): `Queue` is `std.fifo.LinearFifo(PromisePair, .Dynamic)` in Zig — assume
@@ -325,7 +314,7 @@ enum SubscribeHandled {
     Fallthrough,
 }
 
-pub struct DeferredFailure {
+pub(crate) struct DeferredFailure {
     message: Box<[u8]>,
     err: RedisError,
     global_this: GlobalRef,
@@ -334,7 +323,7 @@ pub struct DeferredFailure {
 }
 
 impl DeferredFailure {
-    pub fn run(self) -> JsTerminated<()> {
+    pub(crate) fn run(self) -> JsTerminated<()> {
         // PORT NOTE: Zig `defer { free(message); destroy(this) }` — both handled by Box<Self> drop.
         debug!("running deferred failure");
         let mut this = self;
@@ -347,7 +336,7 @@ impl DeferredFailure {
         )
     }
 
-    pub fn enqueue(self: Box<Self>) {
+    pub(crate) fn enqueue(self: Box<Self>) {
         debug!("enqueueing deferred failure");
         // PORT NOTE: Zig `jsc.ManagedTask.New(DeferredFailure, run).init(this)` collapses to
         // `ManagedTask::new(ptr, cb)` per src/event_loop/ManagedTask.rs. The Box is leaked into
@@ -777,25 +766,40 @@ impl ValkeyClient {
                     break; // Buffer processed completely
                 }
 
+                // Incrementally check whether a complete reply is buffered
+                // before running the allocating tree parser. The scanner
+                // resumes from its saved position, so the elements of a
+                // partially-received aggregate are not re-parsed on every
+                // socket callback (which is quadratic in the element count).
+                match self.reply_scanner.scan(remaining_buffer) {
+                    Ok(protocol::ScanResult::Complete) => {}
+                    Ok(protocol::ScanResult::NeedMoreData) => {
+                        // Need more data in the buffer, wait for next onData call
+                        if cfg!(debug_assertions) {
+                            debug!(
+                                "read_buffer: needs more data ({} bytes available)",
+                                remaining_buffer.len()
+                            );
+                        }
+                        return Ok(());
+                    }
+                    Err(err) => {
+                        self.fail(b"Failed to read data (buffer path)", err)?;
+                        return Ok(());
+                    }
+                }
+
                 let mut reader = protocol::ValkeyReader::init(remaining_buffer);
                 let before_read_pos = reader_pos(&reader);
 
                 let value = match reader.read_value() {
                     Ok(v) => v,
                     Err(err) => {
-                        if err == RedisError::InvalidResponse {
-                            // Need more data in the buffer, wait for next onData call
-                            if cfg!(debug_assertions) {
-                                debug!(
-                                    "read_buffer: needs more data ({} bytes available)",
-                                    remaining_buffer.len()
-                                );
-                            }
-                            return Ok(());
-                        } else {
-                            self.fail(b"Failed to read data (buffer path)", err)?;
-                            return Ok(());
-                        }
+                        // The scanner verified a complete reply is buffered, so
+                        // a parse failure here (including `InvalidResponse`) is
+                        // a protocol error, not a short read.
+                        self.fail(b"Failed to read data (buffer path)", err)?;
+                        return Ok(());
                     }
                 };
                 // PORT NOTE: `defer value.deinit(allocator)` — RESPValue should impl Drop.
@@ -810,6 +814,7 @@ impl ValkeyClient {
                 }
 
                 self.read_buffer.consume(bytes_consumed as u32);
+                self.reply_scanner.reset();
 
                 let mut value_to_handle = value; // Use temp var for defer
                 // TODO(port): narrow error set — Zig caller passes err to fail() which takes RedisError;
@@ -843,6 +848,7 @@ impl ValkeyClient {
                                 current_data_slice.len() - before_read_pos
                             );
                         }
+                        self.reply_scanner.reset();
                         self.read_buffer
                             .write(&current_data_slice[before_read_pos..])
                             .expect("failed to write remaining stack data to buffer");
@@ -1265,6 +1271,7 @@ impl ValkeyClient {
         self.socket = socket;
         self.write_buffer.clear_and_free();
         self.read_buffer.clear_and_free();
+        self.reply_scanner.reset();
         // A fresh socket has opened, so reset per-connection state. Without
         // this, `send()` would permanently reject with "Connection has failed"
         // after a previous connection exhausted retries (#29925), and the

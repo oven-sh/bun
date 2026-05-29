@@ -21,7 +21,7 @@ use bun_paths::{self as paths, PathBuffer};
 // `jsc.API.JSBundler.Plugin` — opaque FFI handle for the C++ JSBundlerPlugin.
 // Re-exported from `crate::api::js_bundler` so `SplitBundlerOptions.plugin`
 // shares the same type the bundler pipeline uses.
-pub use crate::api::js_bundler::Plugin;
+pub(crate) use crate::api::js_bundler::Plugin;
 use crate::api::js_bundler::js_bundler::PluginJscExt as _;
 
 // PORT NOTE: parent `mod.rs` already declares `dev_server` / `framework_router`
@@ -130,7 +130,7 @@ pub(crate) fn arena_dupe_z(arena: &Arena, bytes: &[u8]) -> &'static ZStr {
 }
 
 /// export default { app: ... };
-pub const API_NAME: &str = "app";
+pub(crate) const API_NAME: &str = "app";
 
 // TODO(port): lifetime — many `&'static [u8]` fields below are actually backed
 // by `UserOptions.arena` (bumpalo::Bump) or `UserOptions.allocations`
@@ -311,7 +311,7 @@ impl SplitBundlerOptions {
     // `BuildConfigSubset`) is not `const fn`, so this is now a fn-backed
     // default. Callers updated to `SplitBundlerOptions::default()`.
 
-    pub fn parse_plugin_array(
+    pub(crate) fn parse_plugin_array(
         &mut self,
         plugin_array: JSValue,
         global: &JSGlobalObject,
@@ -1197,11 +1197,10 @@ impl Framework {
     ) -> Result<(), bun_core::Error> {
         // PORT NOTE: Zig built `ASTMemoryAllocator.Scope` by hand and called
         // `enter`/`exit`; the Rust port collapses that to `ASTMemoryAllocator::enter`
-        // returning the RAII `Scope`. `defer ast_scope.exit()` is the explicit
-        // exit at end-of-fn (the Scope has no Drop yet).
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new_without_stack(arena);
-        let ast_scope = ast_memory_allocator.enter();
-        let _guard = scopeguard::guard(ast_scope, |s| s.exit());
+        // returning the RAII `Scope`, whose `Drop` runs `exit()` at end-of-fn
+        // (Zig's `defer ast_scope.exit()`).
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
+        let _ast_scope = ast_memory_allocator.enter();
 
         // PORT NOTE: Zig passed `out: *Transpiler` pointing at `= undefined`
         // memory and assigned `out.* = try Transpiler.init(...)`. In Rust the
@@ -1444,7 +1443,7 @@ fn get_optional_string(
 // PORT NOTE: `HmrRuntime` is defined canonically in the parent `bake/mod.rs`
 // (struct with `code: &'static ZStr` + `line_count`); re-export so callers
 // using `bake_body::HmrRuntime` see the same nominal type.
-pub use super::HmrRuntime;
+pub(crate) use super::HmrRuntime;
 
 fn hmr_runtime_init(code: &'static ZStr) -> HmrRuntime {
     HmrRuntime {
@@ -1497,10 +1496,10 @@ pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
 // `bun_bundler::bake_types`). Re-export here so `bake_body::Mode` ≡
 // `crate::bake::Mode` and downstream callers (production.rs, build_command.rs,
 // IncrementalGraph.rs) see one nominal type.
-pub use super::Mode;
-pub use bun_bundler::bake_types::{Graph, Side};
+pub(crate) use super::Mode;
+pub(crate) use bun_bundler::bake_types::{Graph, Side};
 
-pub fn add_import_meta_defines(
+pub(crate) fn add_import_meta_defines(
     define: &mut bun_bundler::options::Define,
     mode: Mode,
     side: Side,

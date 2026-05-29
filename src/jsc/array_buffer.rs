@@ -129,11 +129,26 @@ unsafe extern "C" {
     // `RefCounted<ArrayBuffer>` count mutation is interior to the opaque cell.
     safe fn JSC__ArrayBuffer__ref(self_: &JSCArrayBuffer);
     safe fn JSC__ArrayBuffer__deref(self_: &JSCArrayBuffer);
+    // safe: by-value `JSValue`; no-op for non-buffer values.
+    safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
+}
+
+impl JSValue {
+    /// Releases a pin taken on this value's backing `JSC::ArrayBuffer` by
+    /// [`JSValue::as_pinned_arraybuffer`] or a pinning collector.
+    pub fn unpin_array_buffer(self) {
+        JSC__JSValue__unpinArrayBuffer(self);
+    }
 }
 
 impl ArrayBuffer {
     pub fn is_detached(&self) -> bool {
         self.ptr.is_null()
+    }
+
+    /// Releases the pin taken by [`JSValue::as_pinned_arraybuffer`].
+    pub fn unpin(&self) {
+        self.value.unpin_array_buffer();
     }
 
     // require('buffer').kMaxLength.
@@ -701,7 +716,7 @@ pub enum BinaryType {
     // DataView,
 }
 
-pub static BINARY_TYPE_MAP: phf::Map<&'static [u8], BinaryType> = phf::phf_map! {
+pub(crate) static BINARY_TYPE_MAP: phf::Map<&'static [u8], BinaryType> = phf::phf_map! {
     b"ArrayBuffer" => BinaryType::ArrayBuffer,
     b"Buffer" => BinaryType::Buffer,
     // b"DataView" => BinaryType::DataView,
@@ -888,12 +903,13 @@ pub struct MarkedArrayBuffer {
     // In Rust the global allocator is implicit; we keep a bool flag so `destroy` knows
     // whether to mi_free the backing storage.
     pub owns_buffer: bool,
+    pub pinned: bool,
 }
 
 // TODO(port): Zig `ArrayBuffer.Stream = std.io.FixedBufferStream([]u8)`.
 // `std::io::Cursor<&mut [u8]>` is the closest in-memory equivalent.
 // Hoisted to module scope (inherent associated type aliases are unstable).
-pub type ArrayBufferStream<'a> = std::io::Cursor<&'a mut [u8]>;
+pub(crate) type ArrayBufferStream<'a> = std::io::Cursor<&'a mut [u8]>;
 
 impl MarkedArrayBuffer {
     #[inline]
@@ -905,6 +921,7 @@ impl MarkedArrayBuffer {
     pub fn from_typed_array(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
             owns_buffer: false,
+            pinned: false,
             buffer: ArrayBuffer::from_typed_array(ctx, value),
         }
     }
@@ -912,6 +929,7 @@ impl MarkedArrayBuffer {
     pub fn from_array_buffer(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
             owns_buffer: false,
+            pinned: false,
             buffer: ArrayBuffer::from_array_buffer(ctx, value),
         }
     }
@@ -933,6 +951,16 @@ impl MarkedArrayBuffer {
         Some(MarkedArrayBuffer {
             buffer: array_buffer,
             owns_buffer: false,
+            pinned: false,
+        })
+    }
+
+    pub fn from_js_pinned(global: &JSGlobalObject, value: JSValue) -> Option<MarkedArrayBuffer> {
+        let buffer = value.as_pinned_arraybuffer(global)?;
+        Some(MarkedArrayBuffer {
+            buffer,
+            owns_buffer: false,
+            pinned: true,
         })
     }
 
@@ -940,11 +968,13 @@ impl MarkedArrayBuffer {
         MarkedArrayBuffer {
             buffer: ArrayBuffer::from_bytes(bytes, typed_array_type),
             owns_buffer: true,
+            pinned: false,
         }
     }
 
     pub const EMPTY: MarkedArrayBuffer = MarkedArrayBuffer {
         owns_buffer: false,
+        pinned: false,
         buffer: ArrayBuffer::EMPTY,
     };
 
@@ -1062,8 +1092,6 @@ bun_opaque::opaque_ffi! {
     pub struct JSCArrayBuffer;
 }
 
-// Zig: `pub const Ref = bun.ptr.ExternalShared(Self)` with
-// `external_shared_descriptor = struct { ref, deref }` (array_buffer.zig:673).
 pub type JSCArrayBufferRef = bun_ptr::ExternalShared<JSCArrayBuffer>;
 
 // SAFETY: `JSC__ArrayBuffer__ref`/`deref` operate on JSC's internal

@@ -40,7 +40,7 @@ pub struct Scanner<'a> {
 
 // std.fifo.LinearFifo(ScanEntry, .Dynamic) — ring buffer with readItem/writeItem.
 // VecDeque is the direct equivalent (pop_front / push_back).
-pub type Fifo = VecDeque<ScanEntry>;
+pub(crate) type Fifo = VecDeque<ScanEntry>;
 
 pub struct ScanEntry {
     pub relative_dir: Fd,
@@ -439,6 +439,6 @@ impl<'a> Scanner<'a> {
     }
 }
 
-pub const TEST_NAME_SUFFIXES: [&[u8]; 4] = [b".test", b"_test", b".spec", b"_spec"];
+pub(crate) const TEST_NAME_SUFFIXES: [&[u8]; 4] = [b".test", b"_test", b".spec", b"_spec"];
 
 // ported from: src/cli/test/Scanner.zig

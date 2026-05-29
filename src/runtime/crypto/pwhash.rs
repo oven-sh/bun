@@ -38,7 +38,6 @@ pub enum Encoding {
     Crypt,
 }
 
-/// `std.crypto.pwhash.Error` collapses into `bun_core::Error` (NonZeroU16 tag);
 /// callers compare against `bun_core::err!("PasswordVerificationFailed")` etc.
 pub type PwhashError = Error;
 
@@ -52,6 +51,10 @@ pub mod argon2 {
     /// Zig `default_salt_len` / `default_hash_len` (vendor/zig/lib/std/crypto/argon2.zig).
     const DEFAULT_SALT_LEN: usize = 32;
     const DEFAULT_HASH_LEN: u32 = 32;
+
+    const MAX_VERIFY_TIME_COST: u32 = 1 << 16;
+    const MAX_VERIFY_MEMORY_COST: u32 = 1 << 22;
+    const MAX_VERIFY_PARALLELISM: u32 = 64;
 
     /// `std.crypto.pwhash.argon2.Mode`
     #[derive(Copy, Clone, Eq, PartialEq)]
@@ -96,7 +99,7 @@ pub mod argon2 {
 
     /// `std.crypto.pwhash.argon2.HashOptions` (allocator field dropped).
     #[derive(Copy, Clone)]
-    pub struct HashOptions {
+    pub(crate) struct HashOptions {
         pub params: Params,
         pub mode: Mode,
         pub encoding: Encoding,
@@ -104,7 +107,7 @@ pub mod argon2 {
 
     /// `std.crypto.pwhash.argon2.VerifyOptions` (allocator field dropped).
     #[derive(Copy, Clone, Default)]
-    pub struct VerifyOptions;
+    pub(crate) struct VerifyOptions;
 
     fn map_err(e: &vendor::Error) -> Error {
         use vendor::Error as E;
@@ -135,7 +138,7 @@ pub mod argon2 {
 
     /// `std.crypto.pwhash.argon2.strHash` — writes the PHC-encoded hash into
     /// `out` and returns the populated subslice.
-    pub fn str_hash<'a>(
+    pub(crate) fn str_hash<'a>(
         password: &[u8],
         options: HashOptions,
         out: &'a mut [u8],
@@ -177,7 +180,7 @@ pub mod argon2 {
     }
 
     /// `std.crypto.pwhash.argon2.strVerify`.
-    pub fn str_verify(
+    pub(crate) fn str_verify(
         encoded_hash: &[u8],
         password: &[u8],
         _options: VerifyOptions,
@@ -223,6 +226,36 @@ pub mod argon2 {
             }
         };
 
+        if let Some(after_dollar) = normalised.strip_prefix('$') {
+            if let Some(sep) = after_dollar.find('$') {
+                let mut rest = &after_dollar[sep + 1..];
+                if let Some(after_version) = rest.strip_prefix("v=") {
+                    rest = match after_version.find('$') {
+                        Some(end) => &after_version[end + 1..],
+                        None => "",
+                    };
+                }
+                let params = &rest[..rest.find('$').unwrap_or(rest.len())];
+                for pair in params.split(',') {
+                    let Some((key, value)) = pair.split_once('=') else {
+                        continue;
+                    };
+                    let Ok(value) = value.parse::<u32>() else {
+                        continue;
+                    };
+                    let limit = match key {
+                        "m" => MAX_VERIFY_MEMORY_COST,
+                        "t" => MAX_VERIFY_TIME_COST,
+                        "p" => MAX_VERIFY_PARALLELISM,
+                        _ => continue,
+                    };
+                    if value > limit {
+                        return Err(bun_core::err!("WeakParameters"));
+                    }
+                }
+            }
+        }
+
         match vendor::verify_encoded(&normalised, password) {
             Ok(true) => Ok(()),
             // `rust-argon2` constant-time compares and returns `Ok(false)` on
@@ -239,7 +272,7 @@ pub mod bcrypt {
     use ::bcrypt as vendor;
 
     /// `std.crypto.pwhash.bcrypt.hash_length`
-    pub const HASH_LENGTH: usize = 60;
+    pub(crate) const HASH_LENGTH: usize = 60;
     /// Zig `salt_length` / `dk_length` (vendor/zig/lib/std/crypto/bcrypt.zig).
     const SALT_LENGTH: usize = 16;
     const DK_LENGTH: usize = 23;
@@ -254,14 +287,14 @@ pub mod bcrypt {
 
     /// `std.crypto.pwhash.bcrypt.HashOptions` (allocator field dropped).
     #[derive(Copy, Clone)]
-    pub struct HashOptions {
+    pub(crate) struct HashOptions {
         pub params: Params,
         pub encoding: Encoding,
     }
 
     /// `std.crypto.pwhash.bcrypt.VerifyOptions` (allocator field dropped).
     #[derive(Copy, Clone)]
-    pub struct VerifyOptions {
+    pub(crate) struct VerifyOptions {
         pub silently_truncate_password: bool,
     }
 
@@ -278,7 +311,7 @@ pub mod bcrypt {
 
     /// `std.crypto.pwhash.bcrypt.strHash` — writes the crypt-encoded hash into
     /// `out` and returns the populated subslice.
-    pub fn str_hash<'a>(
+    pub(crate) fn str_hash<'a>(
         password: &[u8],
         options: HashOptions,
         out: &'a mut [u8],
@@ -325,7 +358,7 @@ pub mod bcrypt {
     }
 
     /// `std.crypto.pwhash.bcrypt.strVerify`.
-    pub fn str_verify(
+    pub(crate) fn str_verify(
         encoded_hash: &[u8],
         password: &[u8],
         options: VerifyOptions,
@@ -435,7 +468,8 @@ pub mod bcrypt {
         let computed = vendor::bcrypt(u32::from(rounds_log), salt, &buf[..used]);
 
         // Zig: `if (!mem.eql(u8, &hash, expected_hash)) return PasswordVerificationFailed`.
-        if computed[..DK_LENGTH] == expected {
+        // Compare in constant time like the `$2b$` path (BoringSSL `CRYPTO_memcmp`).
+        if bun_boringssl_sys::constant_time_eq(&computed[..DK_LENGTH], &expected) {
             Ok(())
         } else {
             Err(bun_core::err!("PasswordVerificationFailed"))

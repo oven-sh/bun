@@ -22,6 +22,7 @@
 #include <string.h>
 #include <limits.h>
 #include <stdatomic.h>
+#include <time.h>
 
 /* These are in sni_tree.cpp */
 void *sni_new();
@@ -128,6 +129,10 @@ long us_ssl_ctx_live_count(void) {
 static int us_ctx_ex_idx = -1;
 static int us_sni_ex_idx = -1;
 static int us_ctx_cache_ex_idx = -1;
+/* Marks an SSL_CTX whose verification store holds user-provided CAs (the
+ * ca/caFile options or a later addCACert): the per-socket client attach must
+ * not replace such a store with the process-shared default roots. */
+static int us_ctx_user_ca_ex_idx = -1;
 static int us_ssl_reneg_state_idx = -1;
 static int us_ssl_listener_ex_idx = -1;
 /* Set (to a non-NULL marker) only on SSLs attached to a real us_socket_t via
@@ -306,6 +311,7 @@ static void us_ex_idx_init(void) {
   us_ctx_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, us_ctx_ex_free);
   us_sni_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ctx_cache_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, bun_ssl_ctx_cache_on_free);
+  us_ctx_user_ca_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_reneg_state_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_reneg_state_free);
   us_ssl_listener_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_is_socket_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
@@ -737,8 +743,10 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   ssl_ctx_drop_passphrase(ssl_context);
 
   if (options.ca_file_name) {
-    SSL_CTX_set_cert_store(ssl_context, us_get_default_ca_store());
-
+    /* An explicit CA replaces the default trust store (Node.js semantics):
+     * chains must validate exclusively against the supplied CAs. The SSL_CTX
+     * already owns a fresh, empty X509_STORE from SSL_CTX_new(), so
+     * SSL_CTX_load_verify_locations below populates only the user's CAs. */
     STACK_OF(X509_NAME) *ca_list = SSL_load_client_CA_file(options.ca_file_name);
     if (ca_list == NULL) {
       *err = CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
@@ -746,6 +754,8 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
       return NULL;
     }
     SSL_CTX_set_client_CA_list(ssl_context, ca_list);
+    us_ex_idx_ensure();
+    SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_ex_idx, (void *)1);
     if (SSL_CTX_load_verify_locations(ssl_context, options.ca_file_name, NULL) != 1) {
       *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
       ssl_ctx_build_fail(ssl_context);
@@ -757,12 +767,13 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
         us_verify_callback);
 
   } else if (options.ca && options.ca_count > 0) {
-    X509_STORE *cert_store = NULL;
+    us_ex_idx_ensure();
+    SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_ex_idx, (void *)1);
+    /* As above: user CAs only, into the SSL_CTX's own initially-empty store —
+     * otherwise a server doing mTLS with `ca: [internalCA]` would also accept
+     * any client certificate that chains to a public root. */
+    X509_STORE *cert_store = SSL_CTX_get_cert_store(ssl_context);
     for (unsigned int i = 0; i < options.ca_count; i++) {
-      if (cert_store == NULL) {
-        cert_store = us_get_default_ca_store();
-        SSL_CTX_set_cert_store(ssl_context, cert_store);
-      }
       if (!add_ca_cert_to_ctx_store(ssl_context, options.ca[i], cert_store)) {
         *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA;
         ssl_ctx_build_fail(ssl_context);
@@ -859,7 +870,18 @@ int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
   X509_STORE *shared = us_get_shared_default_ca_store();
   int store_is_shared = store && store == shared;
   X509_STORE_free(shared);
-  if (store_is_shared) {
+  /* A default context built without ca/requestCert keeps the empty store from
+   * SSL_CTX_new() (verification for it normally comes from the per-socket
+   * shared-root override). addCACert must EXTEND the default trust set the
+   * way Node does, so when the store is the shared one - or still empty -
+   * replace it with a fresh full default store (bundled roots, NODE_EXTRA_CA
+   * certificates, system CAs when enabled) before appending the user's CA. */
+  int store_is_empty = 0;
+  if (store && !store_is_shared) {
+    const STACK_OF(X509_OBJECT) *objs = X509_STORE_get0_objects(store);
+    store_is_empty = objs == NULL || sk_X509_OBJECT_num(objs) == 0;
+  }
+  if (store_is_shared || store_is_empty) {
     X509_STORE *own = us_get_default_ca_store();
     if (!own) {
       return 0;
@@ -870,6 +892,8 @@ int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
   if (!store) {
     return 0;
   }
+  us_ex_idx_ensure();
+  SSL_CTX_set_ex_data(ctx, us_ctx_user_ca_ex_idx, (void *)1);
   return add_ca_cert_to_ctx_store(ctx, content, store);
 }
 
@@ -1054,8 +1078,15 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
      * never aborts here — JS reads verify_error and decides. */
     if (SSL_CTX_get_verify_mode(ctx) == SSL_VERIFY_NONE) {
       SSL_set_verify(ssl, SSL_VERIFY_PEER, us_verify_callback);
-      X509_STORE *roots = us_get_shared_default_ca_store();
-      if (roots) SSL_set0_verify_cert_store(ssl, roots);
+      us_ex_idx_ensure();
+      if (!SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx)) {
+        /* Default context: give this socket the process-shared root bundle.
+         * A context whose store holds user-provided CAs (ca/caFile options or
+         * addCACert) keeps using its own store - overriding it here would
+         * hide those CAs from chain verification. */
+        X509_STORE *roots = us_get_shared_default_ca_store();
+        if (roots) SSL_set0_verify_cert_store(ssl, roots);
+      }
     }
   } else {
     SSL_set_accept_state(ssl);
@@ -1228,7 +1259,36 @@ static inline int ssl_gone(struct us_socket_t *s) {
 }
 
 static int ssl_renegotiate(struct us_socket_t *s) {
+  /* Server-forced renegotiation (HelloRequest -> SSL_ERROR_WANT_RENEGOTIATE).
+   * Enforce the per-context policy (default 3 per 600s, Node's
+   * CLIENT_RENEG_LIMIT/CLIENT_RENEG_WINDOW) before re-entering a full
+   * handshake — otherwise a malicious server can pin a core with
+   * back-to-back renegotiations. limit == 0 disables renegotiation; window
+   * == 0 means the per-connection counter never resets. Returning 0 makes
+   * the caller treat this as SSL_ERROR_SSL and close the connection. */
+  uint32_t limit, window;
+  us_reneg_policy(s_ssl(s), &limit, &window);
+  struct us_ssl_reneg_state_t *st = us_reneg_state(s_ssl(s));
   s->ssl_handshake_state = HANDSHAKE_RENEGOTIATION_PENDING;
+  if (!st) {
+    ssl_trigger_handshake(s, 0);
+    return 0;
+  }
+  /* Wall-clock time can step backwards (NTP, manual adjustment); the
+   * unsigned subtraction below would underflow and reset the window every
+   * time. Only treat the window as elapsed when time has moved forward. */
+  uint64_t now_ms = (uint64_t)time(NULL) * 1000;
+  if (st->count == 0 ||
+      (window && now_ms >= st->window_start_ms &&
+       now_ms - st->window_start_ms >= (uint64_t)window * 1000)) {
+    st->window_start_ms = now_ms;
+    st->count = 0;
+  }
+  if (st->count >= limit) {
+    ssl_trigger_handshake(s, 0);
+    return 0;
+  }
+  st->count++;
   if (!SSL_renegotiate(s_ssl(s))) {
     ssl_trigger_handshake(s, 0);
     return 0;
@@ -1405,6 +1465,7 @@ struct us_socket_t *us_internal_ssl_on_open(struct us_socket_t *s, int is_client
   struct us_socket_t *result = us_dispatch_open(s, is_client, ip, ip_length);
   if (!result || ssl_gone(result)) return result;
   /* Kick the handshake immediately — some peers stall waiting for ClientHello. */
+  ssl_set_loop_data(result);
   ssl_update_handshake(result);
   return result;
 }
@@ -1605,8 +1666,15 @@ restart:
     read += just_read;
 
     if (read == LIBUS_RECV_BUFFER_LENGTH) {
+      char *saved_input = loop_ssl_data->ssl_read_input;
+      unsigned int saved_length = loop_ssl_data->ssl_read_input_length;
+      unsigned int saved_offset = loop_ssl_data->ssl_read_input_offset;
       s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
       if (!s || ssl_gone(s)) return NULL;
+      loop_ssl_data->ssl_read_input = saved_input;
+      loop_ssl_data->ssl_read_input_length = saved_length;
+      loop_ssl_data->ssl_read_input_offset = saved_offset;
+      loop_ssl_data->ssl_socket = s;
       read = 0;
       goto restart;
     }

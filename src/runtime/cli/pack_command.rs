@@ -437,7 +437,7 @@ struct PackListEntry {
 }
 type PackList = Vec<PackListEntry>;
 
-pub struct PackQueueItem {
+pub(crate) struct PackQueueItem {
     path: ZBox, // owned `[:0]const u8`; allocated via `entry_subpath`
     optional: bool,
 }
@@ -473,18 +473,18 @@ impl PartialEq for PackQueueItem {
 }
 
 #[derive(Default)]
-pub struct PackQueue {
+pub(crate) struct PackQueue {
     heap: std::collections::BinaryHeap<PackQueueItem>,
 }
 impl PackQueue {
-    pub fn add(&mut self, item: PackQueueItem) -> Result<(), AllocError> {
+    pub(crate) fn add(&mut self, item: PackQueueItem) -> Result<(), AllocError> {
         self.heap.push(item);
         Ok(())
     }
-    pub fn count(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         self.heap.len()
     }
-    pub fn remove_or_null(&mut self) -> Option<PackQueueItem> {
+    pub(crate) fn remove_or_null(&mut self) -> Option<PackQueueItem> {
         self.heap.pop()
     }
 }
@@ -1932,9 +1932,9 @@ fn opt_pack_gzip_level(m: &PackageManager) -> Option<&[u8]> {
 // (`Publish.Context(true)` vs `void`). Rust const generics cannot vary return
 // type directly; using an associated-type-like Option for now. Could split
 // into `pack()` and `pack_for_publish()` or use a trait.
-pub type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a, true>>;
+pub(crate) type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a, true>>;
 
-pub fn pack<const FOR_PUBLISH: bool>(
+pub(crate) fn pack<const FOR_PUBLISH: bool>(
     ctx: &mut Context<'_>,
     abs_package_json_path: &ZStr,
 ) -> Result<PackReturn<'static, FOR_PUBLISH>, PackError<FOR_PUBLISH>> {
@@ -2025,7 +2025,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             }
         }
     }
-    if package_name.is_empty() {
+    if package_name.is_empty() || has_unsafe_tarball_filename_part(package_name) {
         return Err(PackError::InvalidPackageName);
     }
 
@@ -2036,7 +2036,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
     let mut package_version = package_version_expr
         .as_string_cloned(bump)?
         .ok_or(PackError::InvalidPackageVersion)?;
-    if package_version.is_empty() {
+    if package_version.is_empty() || has_unsafe_tarball_filename_part(package_version) {
         return Err(PackError::InvalidPackageVersion);
     }
 
@@ -2258,7 +2258,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         package_name = package_name_expr
             .as_string_cloned(bump)?
             .ok_or(PackError::InvalidPackageName)?;
-        if package_name.is_empty() {
+        if package_name.is_empty() || has_unsafe_tarball_filename_part(package_name) {
             return Err(PackError::InvalidPackageName);
         }
 
@@ -2269,7 +2269,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         package_version = package_version_expr
             .as_string_cloned(bump)?
             .ok_or(PackError::InvalidPackageVersion)?;
-        if package_version.is_empty() {
+        if package_version.is_empty() || has_unsafe_tarball_filename_part(package_version) {
             return Err(PackError::InvalidPackageVersion);
         }
     }
@@ -3047,6 +3047,18 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
 // tarball name / destination
 // ───────────────────────────────────────────────────────────────────────────
 
+/// The output tarball filename is derived from the package.json `name` and
+/// `version` fields. Reject values that could steer the formed filename
+/// outside the destination directory (`.`/`..` path components, backslashes,
+/// drive/ADS colons, NUL); other unusual-but-harmless names (e.g. empty scope
+/// segments) keep packing as before.
+fn has_unsafe_tarball_filename_part(value: &[u8]) -> bool {
+    value
+        .split(|&c| c == b'/')
+        .any(|component| component == b"." || component == b"..")
+        || value.iter().any(|&c| matches!(c, b'\\' | b':' | 0))
+}
+
 fn tarball_destination<'a>(
     pack_destination: &[u8],
     pack_filename: &[u8],
@@ -3126,7 +3138,7 @@ fn tarball_destination<'a>(
     }
 }
 
-pub fn fmt_tarball_filename<'a>(
+pub(crate) fn fmt_tarball_filename<'a>(
     package_name: &'a [u8],
     package_version: &'a [u8],
     style: TarballNameStyle,
@@ -3139,12 +3151,12 @@ pub fn fmt_tarball_filename<'a>(
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum TarballNameStyle {
+pub(crate) enum TarballNameStyle {
     Normalize,
     Raw,
 }
 
-pub struct TarballNameFormatter<'a> {
+pub(crate) struct TarballNameFormatter<'a> {
     package_name: &'a [u8],
     package_version: &'a [u8],
     style: TarballNameStyle,
@@ -3218,7 +3230,7 @@ fn archive_package_json(
     entry.set_size(i64::try_from(edited_package_json.len()).expect("int cast"));
     // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
     entry.set_filetype(0o100000);
-    entry.set_perm(bun_sys::Mode::try_from(stat.st_mode).expect("int cast"));
+    entry.set_perm(stat.st_mode as bun_sys::Mode);
     // '1985-10-26T08:15:00.000Z'
     // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
     entry.set_mtime(499162500, 0);
@@ -3278,7 +3290,7 @@ fn add_archive_entry(
     // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
     entry.set_filetype(0o100000);
 
-    let mut perm: bun_sys::Mode = bun_sys::Mode::try_from(stat.st_mode).expect("int cast");
+    let mut perm: bun_sys::Mode = stat.st_mode as bun_sys::Mode;
     // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L20
     if is_package_bin(bins, filename.as_bytes()) {
         perm |= 0o111;
@@ -3711,7 +3723,7 @@ impl Pattern {
 // IgnorePatterns
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct IgnorePatterns {
+pub(crate) struct IgnorePatterns {
     pub list: Box<[Pattern]>,
     pub kind: IgnorePatternsKind,
     pub depth: usize,
@@ -3723,7 +3735,7 @@ pub struct IgnorePatterns {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-pub enum IgnorePatternsKind {
+pub(crate) enum IgnorePatternsKind {
     #[strum(serialize = "default")]
     Default,
     #[strum(serialize = ".npmignore")]
@@ -3734,8 +3746,6 @@ pub enum IgnorePatternsKind {
     #[strum(serialize = "package.json")]
     PackageJson,
 }
-
-pub type IgnorePatternsList = Vec<IgnorePatterns>;
 
 #[derive(Clone, Copy, strum::IntoStaticStr)]
 enum IgnoreFileFailReason {
@@ -3779,7 +3789,7 @@ impl IgnorePatterns {
     }
 
     /// ignore files are always ignored, don't need to worry about opening or reading twice
-    pub fn read_from_disk(
+    pub(crate) fn read_from_disk(
         dir: &Dir,
         dir_depth: usize,
     ) -> Result<Option<IgnorePatterns>, AllocError> {
@@ -4063,7 +4073,10 @@ pub mod bindings {
     };
 
     #[bun_jsc::host_fn]
-    pub fn js_read_tarball(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn js_read_tarball(
+        global: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arguments = call_frame.arguments_old::<1>();
         let args = arguments.slice();
         if args.len() < 1 || !args[0].is_string() {

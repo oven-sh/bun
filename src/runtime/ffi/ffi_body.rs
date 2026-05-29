@@ -141,13 +141,13 @@ mod exposed_to_ffi {
     use super::{JSGlobalObject, JSValue};
     unsafe extern "C" {
         #[link_name = "JSC__JSValue__toInt64"]
-        pub fn JSVALUE_TO_INT64(value: JSValue) -> i64;
+        pub(super) fn JSVALUE_TO_INT64(value: JSValue) -> i64;
         #[link_name = "JSC__JSValue__toUInt64NoTruncate"]
-        pub fn JSVALUE_TO_UINT64(value: JSValue) -> u64;
+        pub(super) fn JSVALUE_TO_UINT64(value: JSValue) -> u64;
         #[link_name = "JSC__JSValue__fromInt64NoTruncate"]
-        pub fn INT64_TO_JSVALUE(global: *mut JSGlobalObject, i: i64) -> JSValue;
+        pub(super) fn INT64_TO_JSVALUE(global: *mut JSGlobalObject, i: i64) -> JSValue;
         #[link_name = "JSC__JSValue__fromUInt64NoTruncate"]
-        pub fn UINT64_TO_JSVALUE(global: *mut JSGlobalObject, i: u64) -> JSValue;
+        pub(super) fn UINT64_TO_JSVALUE(global: *mut JSGlobalObject, i: u64) -> JSValue;
     }
 }
 
@@ -186,7 +186,7 @@ impl Offsets {
         // SAFETY: extern "C" fn populating a static
         unsafe { bun_ffi_ensure_offsets_are_loaded() };
     }
-    pub fn get() -> &'static Offsets {
+    pub(crate) fn get() -> &'static Offsets {
         static ONCE: Once = Once::new();
         ONCE.call_once(Self::load_once);
         // SAFETY: BUN_FFI_OFFSETS is initialized by load_once and never mutated after
@@ -276,14 +276,14 @@ enum Source {
 }
 
 impl Source {
-    pub fn first(&self) -> &ZStr {
+    pub(crate) fn first(&self) -> &ZStr {
         match self {
             Source::File(f) => f,
             Source::Files(files) => &files[0],
         }
     }
 
-    pub fn add(
+    pub(crate) fn add(
         &self,
         state: &mut TCC::State,
         current_file_for_errors: &mut ZBox,
@@ -319,27 +319,27 @@ mod stdarg {
 
     // TODO(port): move to <area>_sys
     unsafe extern "C" {
-        pub fn ffi_vfprintf(_: *mut c_void, _: *const c_char, ...) -> c_int;
-        pub fn ffi_vprintf(_: *const c_char, ...) -> c_int;
-        pub fn ffi_fprintf(_: *mut c_void, _: *const c_char, ...) -> c_int;
-        pub fn ffi_printf(_: *const c_char, ...) -> c_int;
-        pub fn ffi_fscanf(_: *mut c_void, _: *const c_char, ...) -> c_int;
-        pub fn ffi_scanf(_: *const c_char, ...) -> c_int;
-        pub fn ffi_sscanf(_: *const c_char, _: *const c_char, ...) -> c_int;
-        pub fn ffi_vsscanf(_: *const c_char, _: *const c_char, ...) -> c_int;
-        pub fn ffi_fopen(_: *const c_char, _: *const c_char) -> *mut c_void;
-        pub fn ffi_fclose(_: *mut c_void) -> c_int;
-        pub fn ffi_fgetc(_: *mut c_void) -> c_int;
-        pub fn ffi_fputc(c: c_int, _: *mut c_void) -> c_int;
-        pub fn ffi_feof(_: *mut c_void) -> c_int;
-        pub fn ffi_fileno(_: *mut c_void) -> c_int;
-        pub fn ffi_ungetc(c: c_int, _: *mut c_void) -> c_int;
-        pub fn ffi_ftell(_: *mut c_void) -> c_long;
-        pub fn ffi_fseek(_: *mut c_void, _: c_long, _: c_int) -> c_int;
-        pub fn ffi_fflush(_: *mut c_void) -> c_int;
+        pub(super) fn ffi_vfprintf(_: *mut c_void, _: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_vprintf(_: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_fprintf(_: *mut c_void, _: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_printf(_: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_fscanf(_: *mut c_void, _: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_scanf(_: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_sscanf(_: *const c_char, _: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_vsscanf(_: *const c_char, _: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_fopen(_: *const c_char, _: *const c_char) -> *mut c_void;
+        pub(super) fn ffi_fclose(_: *mut c_void) -> c_int;
+        pub(super) fn ffi_fgetc(_: *mut c_void) -> c_int;
+        pub(super) fn ffi_fputc(c: c_int, _: *mut c_void) -> c_int;
+        pub(super) fn ffi_feof(_: *mut c_void) -> c_int;
+        pub(super) fn ffi_fileno(_: *mut c_void) -> c_int;
+        pub(super) fn ffi_ungetc(c: c_int, _: *mut c_void) -> c_int;
+        pub(super) fn ffi_ftell(_: *mut c_void) -> c_long;
+        pub(super) fn ffi_fseek(_: *mut c_void, _: c_long, _: c_int) -> c_int;
+        pub(super) fn ffi_fflush(_: *mut c_void) -> c_int;
 
-        pub fn calloc(nmemb: usize, size: usize) -> *mut c_void;
-        pub fn perror(_: *const c_char);
+        pub(super) fn calloc(nmemb: usize, size: usize) -> *mut c_void;
+        pub(super) fn perror(_: *const c_char);
     }
 
     #[cfg(target_os = "macos")]
@@ -360,34 +360,32 @@ mod stdarg {
             static FFI_STDERRP: AtomicPtr<c_void>;
         }
 
-        pub fn inject(state: &mut TCC::State) {
-            // SAFETY: taking addresses of process-global FILE* pointers; the
-            // statics live for the process and we never form a Rust reference
-            // to them (only a raw `*const c_void` for tcc_add_symbol).
-            unsafe {
-                state
-                    .add_symbols(&[
-                        ("__stdinp", core::ptr::addr_of!(FFI_STDINP).cast::<c_void>()),
-                        (
-                            "__stdoutp",
-                            core::ptr::addr_of!(FFI_STDOUTP).cast::<c_void>(),
-                        ),
-                        (
-                            "__stderrp",
-                            core::ptr::addr_of!(FFI_STDERRP).cast::<c_void>(),
-                        ),
-                    ])
-                    .expect("Failed to add macos symbols");
-            }
+        pub(super) fn inject(state: &mut TCC::State) {
+            // Taking addresses of process-global FILE* pointers; the statics
+            // live for the process and we never form a Rust reference to them
+            // (only a raw `*const c_void` for tcc_add_symbol).
+            state
+                .add_symbols(&[
+                    ("__stdinp", core::ptr::addr_of!(FFI_STDINP).cast::<c_void>()),
+                    (
+                        "__stdoutp",
+                        core::ptr::addr_of!(FFI_STDOUTP).cast::<c_void>(),
+                    ),
+                    (
+                        "__stderrp",
+                        core::ptr::addr_of!(FFI_STDERRP).cast::<c_void>(),
+                    ),
+                ])
+                .expect("Failed to add macos symbols");
         }
     }
     #[cfg(not(target_os = "macos"))]
     mod mac {
         use super::*;
-        pub fn inject(_: &mut TCC::State) {}
+        pub(super) fn inject(_: &mut TCC::State) {}
     }
 
-    pub fn inject(state: &mut TCC::State) {
+    pub(super) fn inject(state: &mut TCC::State) {
         // TODO(port): TCC::State::add_symbols API — Zig used addSymbolsComptime over a struct literal
         state
             .add_symbols(&[
@@ -462,7 +460,7 @@ impl CompileC {
     /// must be null or point to a live `CompileC`. `message` is a NUL-terminated
     /// C string when non-null. Signature matches `ConfigErr::handler` exactly so
     /// it can be passed without an ABI-coercing cast.
-    pub unsafe extern "C" fn handle_compilation_error(
+    pub(crate) unsafe extern "C" fn handle_compilation_error(
         this_: *mut CompileC,
         message: *const c_char,
     ) {
@@ -511,7 +509,7 @@ impl CompileC {
         Ok(())
     }
 
-    pub const DEFAULT_TCC_OPTIONS: &'static str = "-std=c11 -Wl,--export-all-symbols -g -O2";
+    pub(crate) const DEFAULT_TCC_OPTIONS: &'static str = "-std=c11 -Wl,--export-all-symbols -g -O2";
 
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
     fn get_system_root_dir_once() {
@@ -526,6 +524,7 @@ impl CompileC {
             // (Zig: `catch return` / `if (process.result.isOK())`).
             // `Command::new("xcrun")` does PATH lookup like `bun.which`, and
             // /usr/bin is always in PATH on macOS, matching the Zig fallback.
+            #[allow(clippy::disallowed_types, clippy::disallowed_methods)]
             let out = match std::process::Command::new("xcrun")
                 .arg("-sdk")
                 .arg("macosx")
@@ -618,7 +617,7 @@ impl CompileC {
             .filter(|d| !d.is_empty())
     }
 
-    pub fn compile(
+    pub(crate) fn compile(
         &mut self,
         global_this: &JSGlobalObject,
     ) -> Result<NonNull<TCC::State>, bun_core::Error> {
@@ -921,7 +920,7 @@ impl Drop for StringArray {
 }
 
 impl StringArray {
-    pub fn from_js_array(
+    pub(crate) fn from_js_array(
         global_this: &JSGlobalObject,
         value: JSValue,
         property: &'static str,
@@ -948,7 +947,7 @@ impl StringArray {
         Ok(StringArray { items })
     }
 
-    pub fn from_js_string(
+    pub(crate) fn from_js_string(
         global_this: &JSGlobalObject,
         value: JSValue,
         property: &'static str,
@@ -971,7 +970,7 @@ impl StringArray {
         Ok(StringArray { items })
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         global_this: &JSGlobalObject,
         value: JSValue,
         property: &'static str,
@@ -1729,7 +1728,7 @@ impl FFI {
     }
 }
 
-pub fn generate_symbol_for_function(
+pub(super) fn generate_symbol_for_function(
     global: &JSGlobalObject,
     value: JSValue,
     function: &mut Function,
@@ -1870,7 +1869,7 @@ pub fn generate_symbol_for_function(
     Ok(None)
 }
 
-pub fn generate_symbols(
+pub(super) fn generate_symbols(
     global: &JSGlobalObject,
     symbols: &mut StringArrayHashMap<Function>,
     object: &JSObject,
@@ -1963,7 +1962,7 @@ impl Drop for Function {
 }
 
 impl Function {
-    pub fn needs_handle_scope(&self) -> bool {
+    pub(crate) fn needs_handle_scope(&self) -> bool {
         for arg in self.arg_types.iter() {
             if *arg == ABIType::NapiEnv || *arg == ABIType::NapiValue {
                 return true;
@@ -1982,7 +1981,7 @@ impl Function {
         }
     }
 
-    pub fn ffi_header() -> &'static [u8] {
+    pub(crate) fn ffi_header() -> &'static [u8] {
         // Port of `Function.ffiHeader` (ffi.zig:1517).
         bun_core::runtime_embed_file!(Src, "runtime/ffi/FFI.h").as_bytes()
     }
@@ -1992,7 +1991,7 @@ impl Function {
     /// must point to a live `Function`. `message` is a NUL-terminated C string.
     /// Signature matches `ConfigErr::handler` exactly so it can be passed
     /// without an ABI-coercing cast.
-    pub unsafe extern "C" fn handle_tcc_error(ctx: *mut Function, message: *const c_char) {
+    pub(crate) unsafe extern "C" fn handle_tcc_error(ctx: *mut Function, message: *const c_char) {
         debug_assert!(!ctx.is_null());
         // SAFETY: TinyCC threads our own `&mut Function` back as `ctx`.
         let this = unsafe { &mut *ctx };
@@ -2017,7 +2016,10 @@ impl Function {
         };
     }
 
-    pub fn compile(&mut self, napi_env: Option<&napi::NapiEnv>) -> Result<(), bun_core::Error> {
+    pub(crate) fn compile(
+        &mut self,
+        napi_env: Option<&napi::NapiEnv>,
+    ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         let mut source_code: Vec<u8> = Vec::new();
         self.print_source_code(&mut source_code)?;
@@ -2111,7 +2113,7 @@ impl Function {
         Ok(())
     }
 
-    pub fn compile_callback(
+    pub(crate) fn compile_callback(
         &mut self,
         js_context: &JSGlobalObject,
         js_function: JSValue,
@@ -2256,7 +2258,7 @@ impl Function {
         Ok(())
     }
 
-    pub fn print_source_code(
+    pub(crate) fn print_source_code(
         &self,
         writer: &mut impl std::io::Write,
     ) -> Result<(), bun_core::Error> {
@@ -2412,7 +2414,7 @@ impl Function {
         Ok(())
     }
 
-    pub fn print_callback_source_code(
+    pub(crate) fn print_callback_source_code(
         &self,
         global_object: Option<&JSGlobalObject>,
         context_ptr: Option<*mut c_void>,
@@ -2566,7 +2568,11 @@ unsafe extern "C" {
 pub enum Step {
     Pending,
     Compiled(Compiled),
-    Failed { msg: Box<[u8]>, allocated: bool },
+    #[allow(dead_code)]
+    Failed {
+        msg: Box<[u8]>,
+        allocated: bool,
+    },
 }
 
 pub struct Compiled {
@@ -2575,6 +2581,7 @@ pub struct Compiled {
     pub js_function: JSValue,
     // Zig: `?*anyopaque` — opaque storage, never dereferenced. NonNull avoids
     // a &T → *mut T cast at the assignment site in compile_callback().
+    #[allow(dead_code)]
     pub js_context: Option<NonNull<JSGlobalObject>>,
     pub ffi_callback_function_wrapper: Option<NonNull<c_void>>,
 }
@@ -2657,7 +2664,7 @@ impl CompilerRT {
         let _ = COMPILER_RT_DIR.set(ZBox::from_bytes(&*path));
     }
 
-    pub fn dir() -> Option<&'static ZStr> {
+    pub(crate) fn dir() -> Option<&'static ZStr> {
         CREATE_COMPILER_RT_DIR_ONCE.call_once(Self::create_compiler_rt_dir);
         COMPILER_RT_DIR
             .get()
@@ -2680,7 +2687,7 @@ impl CompilerRT {
         }
     }
 
-    pub fn define(state: &mut TCC::State) {
+    pub(crate) fn define(state: &mut TCC::State) {
         #[cfg(target_arch = "x86_64")]
         {
             state.define_symbol(zstr!("NEEDS_COMPILER_RT_FUNCTIONS"), zstr!("1"));
@@ -2726,7 +2733,7 @@ impl CompilerRT {
         ]);
     }
 
-    pub fn inject(state: &mut TCC::State) {
+    pub(crate) fn inject(state: &mut TCC::State) {
         state
             .add_symbol(zstr!("memset"), Self::memset as *const c_void)
             .expect("unreachable");

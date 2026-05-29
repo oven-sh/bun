@@ -2,7 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_have_been_called(
+pub(crate) fn to_have_been_called(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,

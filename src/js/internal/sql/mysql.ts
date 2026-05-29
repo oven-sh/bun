@@ -542,7 +542,15 @@ class MySQLAdapter
     };
   }
 
-  validateTransactionOptions(_options: string): { valid: boolean; error?: string } {
+  validateTransactionOptions(options: string): { valid: boolean; error?: string } {
+    // The string is interpolated into `START TRANSACTION ${options}`, so refuse anything
+    // that could terminate the statement or start a new one.
+    if (!/^[A-Za-z ,]*$/.test(options)) {
+      return {
+        valid: false,
+        error: "Transaction options can only contain letters, spaces, and commas.",
+      };
+    }
     return { valid: true };
   }
 

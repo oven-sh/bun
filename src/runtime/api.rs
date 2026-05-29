@@ -251,7 +251,7 @@ pub(crate) fn with_text_format_source<R>(
 
     // PERF(port): was ArenaAllocator bulk-free feeding the parser + AST stores.
     let arena = bun_alloc::Arena::new();
-    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new(&arena);
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
     let _ast_scope = ast_memory_allocator.enter();
 
     let input_value = frame.argument(0);

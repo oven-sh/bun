@@ -17,7 +17,7 @@ use bun_semver as semver;
 use crate::command;
 use crate::package_manager_command::PackageManagerCommand;
 
-pub struct WhyCommand;
+pub(crate) struct WhyCommand;
 
 const PREFIX_LAST: &[u8] = b"  \xE2\x94\x94\xE2\x94\x80 "; // "  └─ "
 const PREFIX_MIDDLE: &[u8] = b"  \xE2\x94\x9C\xE2\x94\x80 "; // "  ├─ "
@@ -269,7 +269,7 @@ impl<'a> GlobPattern<'a> {
 }
 
 impl WhyCommand {
-    pub fn print_usage() {
+    pub(crate) fn print_usage() {
         Output::prettyln(format_args!(
             concat!("<r><b>bun why<r> <d>v", "{}", "<r>"),
             Global::package_json_version_with_sha
@@ -294,7 +294,7 @@ impl WhyCommand {
         Output::flush();
     }
 
-    pub fn exec(ctx: command::Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: command::Context) -> Result<(), bun_core::Error> {
         let cli = CommandLineArguments::parse(Subcommand::Why)?;
         // PORT NOTE: capture the few `cli` fields we read after `init` consumes it.
         let positionals = cli.positionals;
@@ -318,7 +318,7 @@ impl WhyCommand {
         Self::exec_with_manager(ctx, pm, positionals[0], top_only)
     }
 
-    pub fn exec_from_pm(
+    pub(crate) fn exec_from_pm(
         ctx: command::Context,
         pm: &mut PackageManager,
         positionals: &[&[u8]],
@@ -331,7 +331,7 @@ impl WhyCommand {
         Self::exec_with_manager(ctx, pm, positionals[1], pm.options.top_only)
     }
 
-    pub fn exec_with_manager(
+    pub(crate) fn exec_with_manager(
         ctx: command::Context,
         pm: &mut PackageManager,
         package_pattern: &[u8],
@@ -576,7 +576,7 @@ fn print_package_with_type(prefix: &[u8], package: &DependentInfo) {
     }
 }
 
-struct TreeContext<'a> {
+pub struct TreeContext<'a> {
     all_dependents: &'a HashMap<PackageID, Vec<DependentInfo>>,
     path_tracker: HashMap<PackageID, usize>,
 }

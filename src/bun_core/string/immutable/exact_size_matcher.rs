@@ -90,27 +90,6 @@ where
         }
     }
 
-    /// Zig: `pub fn matchLower(str: anytype) T`
-    #[inline]
-    pub fn match_lower(str: &[u8]) -> <Self as ExactSizeInt<MAX_BYTES>>::T {
-        match str.len() {
-            n if n >= 1 && n < MAX_BYTES => {
-                let mut tmp = [0u8; MAX_BYTES];
-                // @memset(tmp[str.len..], 0) — already zeroed
-                crate::strings::copy_lowercase(str, &mut tmp[..str.len()]);
-                Self::read_le(&tmp)
-            }
-            n if n == MAX_BYTES => {
-                // PORT NOTE: Zig does NOT lowercase in the `== max_bytes` arm (matches
-                // upstream behavior exactly — likely a latent Zig bug, preserved here).
-                let arr: &[u8; MAX_BYTES] = str.try_into().expect("len == MAX_BYTES");
-                Self::read_le(arr)
-            }
-            0 => Self::ZERO,
-            _ => Self::MAX,
-        }
-    }
-
     /// Zig: `pub fn case(comptime str: []const u8) T`
     ///
     /// Runtime variant. For const-position (Zig's comptime use in `switch`
@@ -171,7 +150,7 @@ macro_rules! exact_case {
 }
 
 #[doc(hidden)]
-pub const fn __pad<const N: usize>(s: &[u8]) -> [u8; N] {
+pub(crate) const fn __pad<const N: usize>(s: &[u8]) -> [u8; N] {
     assert!(s.len() <= N, "str too long for exact_case!");
     let mut out = [0u8; N];
     let mut i = 0;

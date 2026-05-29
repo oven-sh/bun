@@ -1840,8 +1840,8 @@ impl<const SSL: bool> WebSocket<SSL> {
                 ws: NonNull::new(outgoing).map(|p| unsafe { CppWebSocketRef::new(p) }),
             }));
             // Backref so `handle_data` can drain the buffered slice ahead of
-            // fresh socket data, and so `deinit()` can reclaim the box if
-            // process.exit() races ahead of the microtask drain.
+            // fresh socket data, and so `deinit()` can detach from the box if
+            // teardown races ahead of the microtask drain.
             ws_ref.initial_data_handler = NonNull::new(initial_data);
 
             // Use a higher-priority callback for the initial onData handler
@@ -2053,18 +2053,19 @@ impl<const SSL: bool> WebSocket<SSL> {
         this_ref.clear_data();
         // deflate already dropped in clear_data; this is defensive parity with Zig
         this_ref.deflate = None;
-        // The queued microtask normally owns the handler box and clears this
-        // field via `handle_without_deinit` before freeing it. Reaching
-        // `deinit()` with the field still set means the microtask never
-        // drained (process.exit() under the API lock during onopen) and JSC
-        // is being torn down — reclaim the box so LSan doesn't flag it. In
-        // normal operation the adopted-socket I/O ref keeps `ref_count > 0`
-        // until after microtasks drain, so this branch is not hit.
         if let Some(handler) = this_ref.initial_data_handler.take() {
-            // SAFETY: allocated via `heap::into_raw` in init()/init_with_tunnel();
-            // sole remaining owner — JSC's microtask queue only holds the
-            // pointer encoded as a JSValue double and will not run again.
-            drop(unsafe { bun_core::heap::take(handler.as_ptr()) });
+            // SAFETY: the handler box was allocated via `heap::into_raw` in
+            // init()/init_with_tunnel() and is normally freed by the queued
+            // microtask in `InitialDataHandler::handle`; this field still
+            // being set means that microtask has not run yet, so the box is
+            // live and the raw field write does not alias any borrow.
+            unsafe { core::ptr::addr_of_mut!((*handler.as_ptr()).adopted).write(None) };
+            if this_ref.global_this.bun_vm().is_shutting_down() {
+                // SAFETY: same allocation as above; the VM is shutting down, so
+                // the queued microtask can no longer run and this is the sole
+                // remaining owner of the box.
+                drop(unsafe { bun_core::heap::take(handler.as_ptr()) });
+            }
         }
         bun_core::scoped_log!(alloc, "destroy({}) = {:p}", Self::ALLOC_TYPE_NAME, this);
         // SAFETY: this was allocated via heap::alloc in init/init_with_tunnel
@@ -2225,7 +2226,7 @@ pub struct InitialDataHandler<const SSL: bool> {
 impl<const SSL: bool> InitialDataHandler<SSL> {
     // pub const Handle = jsc.AnyTask.New(@This(), handle);
 
-    pub fn handle_without_deinit(&mut self) {
+    pub(crate) fn handle_without_deinit(&mut self) {
         let Some(this_socket_ptr) = self.adopted.take() else {
             return;
         };
@@ -2258,7 +2259,7 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
     }
 
     /// `extern "C"` thunk shape for `JSGlobalObject::queue_microtask_callback`.
-    pub unsafe extern "C" fn handle(this: *mut c_void) {
+    pub(crate) unsafe extern "C" fn handle(this: *mut c_void) {
         let this = this.cast::<Self>();
         // SAFETY: called from microtask queue with the pointer we passed in
         // (heap::alloc in init()/init_with_tunnel()).
@@ -2321,10 +2322,10 @@ pub enum ErrorCode {
 // Mask
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct Mask;
+pub(crate) struct Mask;
 
 impl Mask {
-    pub fn fill(
+    pub(crate) fn fill(
         global_this: &JSGlobalObject,
         mask_buf: &mut [u8; 4],
         output: &mut [u8],
@@ -2341,7 +2342,11 @@ impl Mask {
     /// In-place variant for when output and input alias the same buffer.
     /// PORT NOTE: Zig's `fill` allowed output==input; Rust borrowck forbids
     /// `&mut [u8]` + `&[u8]` aliasing. Callers that masked in-place use this.
-    pub fn fill_in_place(global_this: &JSGlobalObject, mask_buf: &mut [u8; 4], buf: &mut [u8]) {
+    pub(crate) fn fill_in_place(
+        global_this: &JSGlobalObject,
+        mask_buf: &mut [u8; 4],
+        buf: &mut [u8],
+    ) {
         let entropy = global_this.bun_vm().as_mut().rare_data().entropy_slice(4);
         mask_buf.copy_from_slice(&entropy[..4]);
         let mask = *mask_buf;
@@ -2379,19 +2384,6 @@ pub enum ReceiveState {
     Pong,
     Close,
     Fail,
-}
-
-impl ReceiveState {
-    pub fn need_control_frame(self) -> bool {
-        self != ReceiveState::NeedBody
-    }
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum DataType {
-    None,
-    Text,
-    Binary,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2491,7 +2483,7 @@ enum Copy<'a> {
 }
 
 impl<'a> Copy<'a> {
-    pub fn len(&self, byte_len: &mut usize) -> usize {
+    pub(crate) fn len(&self, byte_len: &mut usize) -> usize {
         match self {
             Copy::Utf16(utf16) => {
                 *byte_len = strings::element_length_utf16_into_utf8(utf16);
@@ -2512,7 +2504,7 @@ impl<'a> Copy<'a> {
         }
     }
 
-    pub fn copy(
+    pub(crate) fn copy(
         &self,
         global_this: &JSGlobalObject,
         buf: &mut [u8],
@@ -2616,7 +2608,7 @@ impl<'a> Copy<'a> {
         }
     }
 
-    pub fn copy_compressed(
+    pub(crate) fn copy_compressed(
         global_this: &JSGlobalObject,
         buf: &mut [u8],
         compressed_data: &[u8],

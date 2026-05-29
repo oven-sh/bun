@@ -260,8 +260,6 @@ pub enum AlreadyBundled {
     BytecodeCjs,
 }
 
-pub type BindingList = Vec<Binding>;
-
 /// `impl EqlParser for P` — moved out of `bun_ast::expr` (next to `P`).
 impl<'a, const IS_TS: bool, const SCAN: bool> bun_ast::expr::EqlParser
     for crate::p::P<'a, IS_TS, SCAN>
@@ -977,10 +975,7 @@ pub mod renamer {
     use bun_ast::symbol::{INVALID_NESTED_SCOPE_SLOT, SlotNamespace, Symbol};
     use bun_collections::VecExt;
 
-    // Round-C alias kept for P.rs/Parser.rs callers.
-    pub type SymbolMap = bun_ast::symbol::Map;
-
-    pub fn assign_nested_scope_slots(
+    pub(crate) fn assign_nested_scope_slots(
         _arena: &bun_alloc::Arena,
         module_scope: &Scope,
         symbols: &mut [Symbol],
@@ -1024,7 +1019,7 @@ pub mod renamer {
         slot_counts
     }
 
-    pub fn assign_nested_scope_slots_helper(
+    pub(crate) fn assign_nested_scope_slots_helper(
         sorted_members: &mut Vec<u32>,
         scope: &Scope,
         symbols: &mut [Symbol],
@@ -1092,8 +1087,6 @@ pub mod renamer {
         pub ref_: Ref,
         pub count: u32,
     }
-
-    pub type StableSymbolCountArray = Vec<StableSymbolCount>;
 
     impl StableSymbolCount {
         pub fn less_than(i: &StableSymbolCount, j: &StableSymbolCount) -> bool {

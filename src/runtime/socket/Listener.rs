@@ -127,16 +127,6 @@ pub enum UnixOrHost {
 }
 
 impl UnixOrHost {
-    pub fn clone_owned(&self) -> UnixOrHost {
-        match self {
-            UnixOrHost::Unix(u) => UnixOrHost::Unix(Box::<[u8]>::from(&**u)),
-            UnixOrHost::Host { host, port } => UnixOrHost::Host {
-                host: Box::<[u8]>::from(&**host),
-                port: *port,
-            },
-            UnixOrHost::Fd(f) => UnixOrHost::Fd(*f),
-        }
-    }
     // PORT NOTE: deinit() deleted — Box<[u8]> fields auto-drop.
 }
 
@@ -412,14 +402,8 @@ impl Listener {
         let mut errno: c_int = 0;
         let listen_socket: *mut uws_sys::ListenSocket = match &mut connection {
             UnixOrHost::Host { host, port } => {
-                // NUL-terminate for the C `const char*` parameter. Zig used
-                // `dupeZ` + raw `.ptr`, which tolerates interior NULs (the C
-                // side just truncates at the first one). Build the `&CStr` via
-                // `from_ptr` so we match that instead of asserting via
-                // `ZStr::as_cstr()`.
                 let hostz = bun_core::ZBox::from_bytes(&host[..]);
-                // SAFETY: `hostz` is NUL-terminated and outlives `host_cstr`.
-                let host_cstr = unsafe { core::ffi::CStr::from_ptr(hostz.as_ptr()) };
+                let host_cstr = hostz.as_zstr().as_cstr();
                 let ls = this_ref.group.with_mut(|g| {
                     g.listen(
                         kind,
@@ -1130,9 +1114,12 @@ impl Listener {
                         // SAFETY: caller passes a live TLSSocket
                         let prev = unsafe { &*prev_ptr };
                         if let Some(prev_handlers) = prev.handlers.get() {
-                            // SAFETY: prev_handlers was heap-allocated; shared
-                            // reborrow is scoped to this expression.
-                            if unsafe { (*prev_handlers.as_ptr()).active_connections.get() } == 0 {
+                            if prev.flags.get().contains(SocketFlags::OWNS_HANDLERS)
+                                // SAFETY: prev_handlers was heap-allocated; shared
+                                // reborrow is scoped to this expression.
+                                && unsafe { (*prev_handlers.as_ptr()).active_connections.get() }
+                                    == 0
+                            {
                                 // SAFETY: prev_handlers was heap-allocated and unreferenced.
                                 unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
                             }
@@ -1229,9 +1216,12 @@ impl Listener {
                         let prev = unsafe { &*prev_ptr };
                         debug_assert!(!prev.this_value.get().is_empty());
                         if let Some(prev_handlers) = prev.handlers.get() {
-                            // SAFETY: prev_handlers was heap-allocated; shared
-                            // reborrow is scoped to this expression.
-                            if unsafe { (*prev_handlers.as_ptr()).active_connections.get() } == 0 {
+                            if prev.flags.get().contains(SocketFlags::OWNS_HANDLERS)
+                                // SAFETY: prev_handlers was heap-allocated; shared
+                                // reborrow is scoped to this expression.
+                                && unsafe { (*prev_handlers.as_ptr()).active_connections.get() }
+                                    == 0
+                            {
                                 // SAFETY: prev_handlers was heap-allocated and unreferenced.
                                 unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
                             }
@@ -1488,9 +1478,11 @@ fn connect_finish<const IS_SSL: bool>(
             // holding it. If a `data`/`close` handler synchronously re-entered
             // `connect`, `Scope::exit` (via `Handlers::mark_inactive`) frees it
             // once the in-flight callback unwinds; freeing here would be a UAF.
-            // SAFETY: prev_handlers was heap-allocated; shared reborrow is
-            // scoped to this expression.
-            if unsafe { (*prev_handlers.as_ptr()).active_connections.get() } == 0 {
+            if prev.flags.get().contains(SocketFlags::OWNS_HANDLERS)
+                // SAFETY: prev_handlers was heap-allocated; shared reborrow is
+                // scoped to this expression.
+                && unsafe { (*prev_handlers.as_ptr()).active_connections.get() } == 0
+            {
                 // SAFETY: prev_handlers was heap-allocated and unreferenced.
                 unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
             }
@@ -1620,7 +1612,7 @@ fn connect_finish<const IS_SSL: bool>(
 }
 
 #[bun_jsc::host_fn]
-pub fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     jsc::mark_binding!();
 
     let arguments = frame.arguments_old::<3>();
@@ -1687,14 +1679,6 @@ pub struct WindowsNamedPipeListeningContext {
 #[cfg(not(windows))]
 pub struct WindowsNamedPipeListeningContext {
     _priv: (),
-}
-
-#[cfg(not(windows))]
-impl WindowsNamedPipeListeningContext {
-    /// Unreachable on POSIX — `ListenerType::NamedPipe` is never constructed
-    /// here. Kept so the `match` arms in `stop`/`finalize` type-check on both
-    /// platforms without per-arm `#[cfg]`.
-    pub unsafe fn close_pipe_and_deinit(_this: *mut Self) {}
 }
 
 #[cfg(windows)]
@@ -1766,7 +1750,7 @@ impl WindowsNamedPipeListeningContext {
     /// # Safety
     /// `this` must be the unique owner (the `ListenerType::NamedPipe` slot was
     /// already cleared by the caller).
-    pub unsafe fn close_pipe_and_deinit(this: *mut Self) {
+    pub(crate) unsafe fn close_pipe_and_deinit(this: *mut Self) {
         // SAFETY: caller contract — `this` is a live heap allocation.
         unsafe {
             (*this).listener = None;
@@ -1775,7 +1759,7 @@ impl WindowsNamedPipeListeningContext {
         }
     }
 
-    pub fn listen(
+    pub(crate) fn listen(
         global_this: &JSGlobalObject,
         path: &[u8],
         backlog: i32,

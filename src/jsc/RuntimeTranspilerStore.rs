@@ -63,11 +63,11 @@ bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 // the caller's `&mut TranspilerJob` (which is stored inside
 // `vm.transpiler_store`). Only the `source_mappings` leaf field is touched,
 // under its own internal lock.
-pub fn dump_source(vm: NonNull<VirtualMachine>, specifier: &[u8], printer: &BufferPrinter) {
+pub(crate) fn dump_source(vm: NonNull<VirtualMachine>, specifier: &[u8], printer: &BufferPrinter) {
     dump_source_string(vm, specifier, printer.ctx.get_written());
 }
 
-pub fn dump_source_string(vm: NonNull<VirtualMachine>, specifier: &[u8], written: &[u8]) {
+pub(crate) fn dump_source_string(vm: NonNull<VirtualMachine>, specifier: &[u8], written: &[u8]) {
     if let Err(e) = dump_source_string_failiable(vm, specifier, written) {
         bun_core::output::debug_warn(format_args!("Failed to dump source string: {}", e.name()));
     }
@@ -79,7 +79,7 @@ pub fn dump_source_string(vm: NonNull<VirtualMachine>, specifier: &[u8], written
 // safe code (replaces the prior split `Mutex` + `RacyCell` pair).
 static BUN_DEBUG_HOLDER: Guarded<Option<Dir>> = Guarded::new(None);
 
-pub fn dump_source_string_failiable(
+pub(crate) fn dump_source_string_failiable(
     vm: NonNull<VirtualMachine>,
     specifier: &[u8],
     written: &[u8],
@@ -190,7 +190,7 @@ pub fn dump_source_string_failiable(
     Ok(())
 }
 
-pub fn set_break_point_on_first_line() -> bool {
+pub(crate) fn set_break_point_on_first_line() -> bool {
     static SET_BREAK_POINT: AtomicBool = AtomicBool::new(true);
     SET_BREAK_POINT.swap(false, Ordering::SeqCst)
 }
@@ -391,7 +391,7 @@ impl RuntimeTranspilerStore {
 // the 64-slot hive is unconditional here.
 const TRANSPILER_JOB_HIVE_CAP: usize = 64;
 
-pub type TranspilerJobStore = HiveArrayFallback<TranspilerJob, TRANSPILER_JOB_HIVE_CAP>;
+pub(crate) type TranspilerJobStore = HiveArrayFallback<TranspilerJob, TRANSPILER_JOB_HIVE_CAP>;
 
 pub struct TranspilerJob {
     // PORT NOTE: stored as the lower-tier `bun_paths::fs::Path<'static>` (the type
@@ -517,7 +517,7 @@ impl TranspilerJob {
         // replacement a second time).
     }
 
-    pub fn dispatch_to_main_thread(&mut self) {
+    pub(crate) fn dispatch_to_main_thread(&mut self) {
         let vm = self.vm;
         // SAFETY: vm outlives the job (BACKREF — VM owns the store).
         let transpiler_store: *mut RuntimeTranspilerStore =
@@ -531,7 +531,7 @@ impl TranspilerJob {
             .enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
     }
 
-    pub fn run_from_js_thread(&mut self) -> JsResult<()> {
+    pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {
         let vm = self.vm;
         let promise = self.promise.swap();
         // Copy the BackRef out (it is `Copy`) so the borrow of `*self` ends
@@ -587,7 +587,7 @@ impl TranspilerJob {
         )
     }
 
-    pub fn schedule(&mut self) {
+    pub(crate) fn schedule(&mut self) {
         // PORT NOTE: Zig `poll_ref.ref(this.vm)` — the Rust KeepAlive takes an
         // `EventLoopCtx` vtable; resolve it via the `get_vm_ctx` hook (registered by
         // `bun_runtime::init`).
@@ -595,7 +595,7 @@ impl TranspilerJob {
         WorkPool::schedule(&raw mut self.work_task);
     }
 
-    pub unsafe fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
+    pub(crate) unsafe fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
         // slot — safe-fn coerces) for the `work_task` field initialised in
         // `transpile`; the WorkPool calls back with exactly that field, so
@@ -604,7 +604,7 @@ impl TranspilerJob {
         this.run();
     }
 
-    pub fn run(&mut self) {
+    pub(crate) fn run(&mut self) {
         // Zig: `var arena = bun.ArenaAllocator.init(bun.default_allocator);
         //       defer arena.deinit();`
         //
@@ -657,17 +657,10 @@ impl TranspilerJob {
         }
 
         // Zig: `var ast_scope = ast_memory_store.?.enter(allocator); defer ast_scope.exit();`
-        // PORT NOTE: Zig's per-thread `ast_memory_store` was a `StackFallback
-        // Allocator` that *borrowed* the per-call `arena` above as its
-        // fallback, so its allocations were bulk-freed by `arena.deinit()`. The
-        // Rust `ASTMemoryAllocator` owns its own `MimallocArena` instead (see
-        // ast_memory_allocator.rs), so it must be stack-local too — its `Drop`
-        // (via the owned `Arena` field) `mi_heap_destroy`s the AST-node heap
-        // when `run()` returns. `Scope` restores the previous
-        // `Expr/Stmt.Data.Store.memory_allocator` on Drop and runs *before*
-        // `ast_memory_store` drops (reverse declaration order), so the
-        // thread-local AST heap pointer never dangles.
-        let mut ast_memory_store = ASTMemoryAllocator::new(&arena);
+        // `borrowing()` matches the Zig shape: the AST node store and the
+        // `AstVec` spill share `arena`'s heap and are bulk-freed when `arena`
+        // drops at the end of `run()`.
+        let mut ast_memory_store = ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_store.enter();
 
         let path = self.path;

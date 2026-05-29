@@ -17,10 +17,10 @@ use bun_install::package_manager_real::{
 
 use crate::command;
 
-pub struct LinkCommand;
+pub(crate) struct LinkCommand;
 
 impl LinkCommand {
-    pub fn exec(ctx: command::Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: command::Context) -> Result<(), bun_core::Error> {
         link(ctx)
     }
 }

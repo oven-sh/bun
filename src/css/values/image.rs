@@ -301,7 +301,7 @@ pub struct ImageSet {
 }
 
 impl ImageSet {
-    pub fn parse(input: &mut css::Parser) -> Result<ImageSet> {
+    pub(crate) fn parse(input: &mut css::Parser) -> Result<ImageSet> {
         let location = input.current_source_location();
         // SAFETY: borrow detached (`'static` placeholder, see
         // `css_parser::src_str`) so `input` is reusable below.
@@ -322,7 +322,7 @@ impl ImageSet {
         })
     }
 
-    pub fn to_css(&self, dest: &mut css::Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut css::Printer) -> core::result::Result<(), PrintErr> {
         self.vendor_prefix.to_css(dest)?;
         dest.write_str("image-set(")?;
         let prefixed = self.vendor_prefix != VendorPrefix::NONE;
@@ -330,7 +330,7 @@ impl ImageSet {
         dest.write_char(b')')
     }
 
-    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         css::Feature::ImageSet.is_compatible(browsers)
             && 'blk: {
                 for opt in self.options.iter() {
@@ -343,7 +343,7 @@ impl ImageSet {
     }
 
     /// Returns the `image-set()` value with the given vendor prefix.
-    pub fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> ImageSet {
+    pub(crate) fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> ImageSet {
         ImageSet {
             // TODO(port): was `css.deepClone(ImageSetOption, arena, &this.options)` (comptime helper)
             options: self.options.iter().map(|o| o.deep_clone(arena)).collect(),
@@ -351,7 +351,7 @@ impl ImageSet {
         }
     }
 
-    pub fn eql(&self, other: &ImageSet) -> bool {
+    pub(crate) fn eql(&self, other: &ImageSet) -> bool {
         // TODO(port): was `css.implementEql(@This(), this, other)` — derive PartialEq instead.
         self.vendor_prefix == other.vendor_prefix
             && self.options.len() == other.options.len()
@@ -362,7 +362,7 @@ impl ImageSet {
                 .all(|(a, b)| a.eql(b))
     }
 
-    pub fn deep_clone(&self, arena: &Arena) -> Self {
+    pub(crate) fn deep_clone(&self, arena: &Arena) -> Self {
         // TODO(port): was `css.implementDeepClone(@This(), this, arena)` — derive Clone instead.
         ImageSet {
             options: self.options.iter().map(|o| o.deep_clone(arena)).collect(),
@@ -370,12 +370,15 @@ impl ImageSet {
         }
     }
 
-    pub fn get_vendor_prefix(&self) -> VendorPrefix {
+    pub(crate) fn get_vendor_prefix(&self) -> VendorPrefix {
         self.vendor_prefix
     }
 
     /// Returns the vendor prefixes needed for the given browser targets.
-    pub fn get_necessary_prefixes(&self, targets: &css::targets::Targets) -> css::VendorPrefix {
+    pub(crate) fn get_necessary_prefixes(
+        &self,
+        targets: &css::targets::Targets,
+    ) -> css::VendorPrefix {
         targets.prefixes(self.vendor_prefix, css::prefixes::Feature::ImageSet)
     }
 }
@@ -392,7 +395,7 @@ pub struct ImageSetOption {
 }
 
 impl ImageSetOption {
-    pub fn parse(input: &mut css::Parser) -> Result<ImageSetOption> {
+    pub(crate) fn parse(input: &mut css::Parser) -> Result<ImageSetOption> {
         let start_position = input.input.tokenizer.get_position();
         let loc = input.current_source_location();
         // PORT NOTE: `expect_url_or_string` returns a borrow of the parser, so
@@ -433,7 +436,7 @@ impl ImageSetOption {
         })
     }
 
-    pub fn to_css(
+    pub(crate) fn to_css(
         &self,
         dest: &mut css::Printer,
         is_prefixed: bool,
@@ -503,7 +506,7 @@ impl ImageSetOption {
         Ok(())
     }
 
-    pub fn deep_clone(&self, arena: &Arena) -> Self {
+    pub(crate) fn deep_clone(&self, arena: &Arena) -> Self {
         // TODO(port): was `css.implementDeepClone(@This(), this, arena)` — derive Clone instead.
         ImageSetOption {
             image: self.image.deep_clone(arena),
@@ -512,7 +515,7 @@ impl ImageSetOption {
         }
     }
 
-    pub fn eql(&self, rhs: &ImageSetOption) -> bool {
+    pub(crate) fn eql(&self, rhs: &ImageSetOption) -> bool {
         // TODO(port): was `css.implementEql(@This(), lhs, rhs)` — derive PartialEq instead.
         self.image.eql(&rhs.image)
             && self.resolution == rhs.resolution

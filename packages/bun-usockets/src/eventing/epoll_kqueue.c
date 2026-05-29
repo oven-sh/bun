@@ -73,7 +73,7 @@ void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
     us_free(p);
 }
 
-void *us_poll_ext(struct us_poll_t *p) {
+__attribute__((always_inline)) void *us_poll_ext(struct us_poll_t *p) {
     return p + 1;
 }
 
@@ -83,11 +83,11 @@ void us_poll_init(struct us_poll_t *p, LIBUS_SOCKET_DESCRIPTOR fd, int poll_type
     p->state.poll_type = poll_type;
 }
 
-int us_poll_events(struct us_poll_t *p) {
+__attribute__((always_inline)) int us_poll_events(struct us_poll_t *p) {
     return ((p->state.poll_type & POLL_TYPE_POLLING_IN) ? LIBUS_SOCKET_READABLE : 0) | ((p->state.poll_type & POLL_TYPE_POLLING_OUT) ? LIBUS_SOCKET_WRITABLE : 0);
 }
 
-LIBUS_SOCKET_DESCRIPTOR us_poll_fd(struct us_poll_t *p) {
+__attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR us_poll_fd(struct us_poll_t *p) {
     return p->state.fd;
 }
 

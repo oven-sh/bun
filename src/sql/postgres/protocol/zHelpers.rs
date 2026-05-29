@@ -1,4 +1,4 @@
-pub fn z_count(slice: &[u8]) -> usize {
+pub(crate) fn z_count(slice: &[u8]) -> usize {
     if !slice.is_empty() {
         slice.len() + 1
     } else {
@@ -6,7 +6,7 @@ pub fn z_count(slice: &[u8]) -> usize {
     }
 }
 
-pub fn z_field_count(prefix: &[u8], slice: &[u8]) -> usize {
+pub(crate) fn z_field_count(prefix: &[u8], slice: &[u8]) -> usize {
     if !slice.is_empty() {
         return z_count(prefix) + z_count(slice);
     }

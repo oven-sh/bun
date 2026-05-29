@@ -18,7 +18,7 @@ use bun_url::URL; // bumpalo::Bump re-export
 
 use bun_core::fmt::buf_print_infallible as buf_print;
 
-pub fn view(
+pub(crate) fn view(
     manager: &mut PackageManager,
     spec_: &[u8],
     property_path: Option<&[u8]>,

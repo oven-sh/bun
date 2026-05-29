@@ -24,7 +24,7 @@ const DEPENDENCY_GROUPS: [DependencyGroup; 4] = [
 ];
 
 #[derive(Default, Clone, Copy)]
-pub struct EditOptions {
+pub(crate) struct EditOptions {
     pub exact_versions: bool,
     pub add_trusted_dependencies: bool,
     pub before_install: bool,
@@ -53,7 +53,7 @@ fn copy_property(p: &G::Property) -> G::Property {
     }
 }
 
-pub fn edit_patched_dependencies(
+pub(crate) fn edit_patched_dependencies(
     manager: &mut PackageManager,
     package_json: &mut Expr,
     patch_key: &[u8],
@@ -242,7 +242,7 @@ pub fn edit_trusted_dependencies(
 /// When `bun update` is called without package names, all dependencies are updated.
 /// This function will identify the current workspace and update all changed package
 /// versions.
-pub fn edit_update_no_args(
+pub(crate) fn edit_update_no_args(
     manager: &mut PackageManager,
     current_package_json: &mut Expr,
     options: EditOptions,
@@ -533,7 +533,7 @@ pub fn edit_update_no_args(
 
 /// edits dependencies and trusted dependencies
 /// if options.add_trusted_dependencies is true, gets list from PackageManager.trusted_deps_to_add_to_package_json
-pub fn edit(
+pub(crate) fn edit(
     manager: &mut PackageManager,
     // Zig `*[]UpdateRequest` — pointer-to-slice whose `.len` is shrunk in place.
     updates: &mut &mut [UpdateRequest],

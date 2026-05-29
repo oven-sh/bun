@@ -104,3 +104,85 @@ describe("tls.connect hostname verification without explicit servername", () => 
     });
   });
 });
+
+describe("Bun.connect TLS hostname verification", () => {
+  // The server presents the agent1 cert (CN=agent1, no SAN) signed by ca1.
+  // A client that trusts ca1 and connects to "localhost" passes chain
+  // validation, but the certificate is not valid for "localhost", so the
+  // socket must not be reported as authorized.
+  test("reports authorized=false when a CA-trusted cert does not match the connected hostname", async () => {
+    const listener = Bun.listen({
+      hostname: "localhost",
+      port: 0,
+      tls: { key: serverKey, cert: serverCert },
+      socket: {
+        open() {},
+        data() {},
+        drain() {},
+        close() {},
+        error() {},
+      },
+    });
+    try {
+      // Mismatch: connect host "localhost" vs cert CN "agent1".
+      const mismatch = Promise.withResolvers<{ flag: boolean; arg: boolean; error: NodeJS.ErrnoException | null }>();
+      const badSocket = await Bun.connect({
+        hostname: "localhost",
+        port: listener.port,
+        tls: { ca },
+        socket: {
+          open() {},
+          handshake(s, success) {
+            mismatch.resolve({ flag: s.authorized, arg: success, error: s.getAuthorizationError() });
+            s.end();
+          },
+          data() {},
+          drain() {},
+          close() {},
+          error(_s, err) {
+            mismatch.reject(err);
+          },
+          connectError(_s, err) {
+            mismatch.reject(err);
+          },
+        },
+      });
+      const result = await mismatch.promise;
+      badSocket.end();
+      assert.strictEqual(result.arg, false, "handshake callback must not report success for a hostname mismatch");
+      assert.strictEqual(result.flag, false, "socket.authorized must be false for a hostname mismatch");
+      assert.ok(result.error, "getAuthorizationError() must report why the socket is not authorized");
+      assert.strictEqual(result.error.code, "HOSTNAME_MISMATCH");
+
+      // Legitimate case: same cert, but the client asks for server name
+      // "agent1", which matches the certificate. Must remain authorized.
+      const match = Promise.withResolvers<boolean>();
+      const goodSocket = await Bun.connect({
+        hostname: "localhost",
+        port: listener.port,
+        tls: { ca, serverName: "agent1" },
+        socket: {
+          open() {},
+          handshake(s) {
+            match.resolve(s.authorized);
+            s.end();
+          },
+          data() {},
+          drain() {},
+          close() {},
+          error(_s, err) {
+            match.reject(err);
+          },
+          connectError(_s, err) {
+            match.reject(err);
+          },
+        },
+      });
+      const okAuthorized = await match.promise;
+      goodSocket.end();
+      assert.strictEqual(okAuthorized, true, "a certificate matching the requested server name must stay authorized");
+    } finally {
+      listener.stop(true);
+    }
+  });
+});

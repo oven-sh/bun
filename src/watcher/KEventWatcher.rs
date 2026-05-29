@@ -5,23 +5,15 @@ use bun_sys::Fd;
 
 use crate::watcher_impl::{Op, WatchEvent, Watcher};
 
-pub type EventListIndex = u32;
-pub type Platform = KEventWatcher;
+pub(crate) type EventListIndex = u32;
+pub(crate) type Platform = KEventWatcher;
 
+#[derive(Default)]
 pub struct KEventWatcher {
     // Everything being watched
     pub eventlist_index: EventListIndex,
 
     pub fd: Option<Fd>,
-}
-
-impl Default for KEventWatcher {
-    fn default() -> Self {
-        Self {
-            eventlist_index: 0,
-            fd: None,
-        }
-    }
 }
 
 const CHANGELIST_COUNT: usize = 128;
@@ -44,7 +36,7 @@ impl KEventWatcher {
     }
 }
 
-pub fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
+pub(crate) fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
     let mut op = Op::empty();
     if (kevent.fflags & libc::NOTE_DELETE) > 0 {
         op |= Op::DELETE;
@@ -66,7 +58,7 @@ pub fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
     }
 }
 
-pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
+pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     use bun_sys::c;
     let fd: Fd = this
         .platform
@@ -106,7 +98,7 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 0,
                 changelist.as_mut_ptr().add(off),
                 remain,
-                &ts,
+                &raw const ts,
             )
         };
 
@@ -143,10 +135,10 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         // PORT NOTE: reshaped for borrowck — copy the (small, ≤128) deduped slice
         // into a local so `this` is no longer mutably borrowed via `watch_events`
         // when calling `write_trace_events(&self, …)`.
-        let deduped: Vec<WatchEvent> = this.watch_events[0..out_len].to_vec();
+        let mut deduped: Vec<WatchEvent> = this.watch_events[0..out_len].to_vec();
         let changed = &this.changed_filepaths[0..out_len];
         this.write_trace_events(&deduped, changed);
-        (this.on_file_update)(this.ctx, &mut deduped.clone(), changed, &this.watchlist);
+        (this.on_file_update)(this.ctx, &mut deduped, changed, &this.watchlist);
     }
 
     // Zig: `defer Output.flush()`. No early returns above, so flush once at the

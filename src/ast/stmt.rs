@@ -45,30 +45,7 @@ impl Stmt {
     }
 }
 
-// See `binding.rs::Serializable` — JSON-payload carrier passed to the
-// shape-agnostic `JsonWriter::write<V>`; fields are the serialization
-// contract, not dead, but no reflective writer exists yet to read them.
-#[expect(dead_code)]
-struct Serializable {
-    r#type: Tag,
-    object: &'static [u8],
-    value: Data,
-    loc: crate::Loc,
-}
-
 impl Stmt {
-    pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
-    where
-        W: crate::JsonWriter,
-    {
-        writer.write(&Serializable {
-            r#type: self.data.tag(),
-            object: b"stmt",
-            value: self.data,
-            loc: self.loc,
-        })
-    }
-
     pub fn is_type_script(&self) -> bool {
         matches!(self.data, Data::STypeScript(_))
     }
@@ -329,14 +306,6 @@ pub enum Tag {
 }
 
 impl Tag {
-    pub fn json_stringify<W>(self, writer: &mut W) -> Result<(), bun_core::Error>
-    where
-        // TODO(port): narrow error set
-        W: crate::JsonWriter,
-    {
-        writer.write(<&'static str>::from(self))
-    }
-
     pub fn is_export_like(self) -> bool {
         matches!(
             self,

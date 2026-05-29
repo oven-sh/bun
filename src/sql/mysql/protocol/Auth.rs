@@ -18,7 +18,7 @@ pub mod mysql_native_password {
     use super::*;
 
     // TODO(port): narrow error set
-    pub fn scramble(password: &[u8], nonce: &[u8]) -> Result<[u8; 20], bun_core::Error> {
+    pub(crate) fn scramble(password: &[u8], nonce: &[u8]) -> Result<[u8; 20], bun_core::Error> {
         // SHA1( password ) XOR SHA1( nonce + SHA1( SHA1( password ) ) ) )
         let mut stage1 = [0u8; 20];
         let mut stage2 = [0u8; 20];
@@ -68,7 +68,7 @@ pub mod caching_sha2_password {
     use super::*;
 
     // TODO(port): narrow error set
-    pub fn scramble(password: &[u8], nonce: &[u8]) -> Result<[u8; 32], bun_core::Error> {
+    pub(crate) fn scramble(password: &[u8], nonce: &[u8]) -> Result<[u8; 32], bun_core::Error> {
         // XOR(SHA256(password), SHA256(SHA256(SHA256(password)), nonce))
         let mut digest1 = [0u8; 32];
         let mut digest2 = [0u8; 32];

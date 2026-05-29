@@ -727,6 +727,7 @@ impl JSValkeyClient {
                 idle_timeout_interval_ms: options.idle_timeout_ms,
                 write_buffer: Default::default(),
                 read_buffer: Default::default(),
+                reply_scanner: Default::default(),
                 retry_attempts: 0,
                 auto_flusher: Default::default(),
             }),
@@ -851,6 +852,7 @@ impl JSValkeyClient {
                 idle_timeout_interval_ms: client.idle_timeout_interval_ms,
                 write_buffer: Default::default(),
                 read_buffer: Default::default(),
+                reply_scanner: Default::default(),
                 retry_attempts: 0,
                 auto_flusher: Default::default(),
             }),
@@ -2116,7 +2118,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 struct Options;
 
 impl Options {
-    pub fn from_js(
+    pub(crate) fn from_js(
         global_object: &JSGlobalObject,
         options_obj: JSValue,
     ) -> JsResult<valkey::Options> {

@@ -21,27 +21,27 @@ use bun_alloc::Arena as Bump;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A value for the [border-top](https://www.w3.org/TR/css-backgrounds-3/#propdef-border-top) shorthand property.
-pub type BorderTop = GenericBorder<LineStyle, 0>;
+pub(crate) type BorderTop = GenericBorder<LineStyle, 0>;
 /// A value for the [border-right](https://www.w3.org/TR/css-backgrounds-3/#propdef-border-right) shorthand property.
-pub type BorderRight = GenericBorder<LineStyle, 1>;
+pub(crate) type BorderRight = GenericBorder<LineStyle, 1>;
 /// A value for the [border-bottom](https://www.w3.org/TR/css-backgrounds-3/#propdef-border-bottom) shorthand property.
-pub type BorderBottom = GenericBorder<LineStyle, 2>;
+pub(crate) type BorderBottom = GenericBorder<LineStyle, 2>;
 /// A value for the [border-left](https://www.w3.org/TR/css-backgrounds-3/#propdef-border-left) shorthand property.
-pub type BorderLeft = GenericBorder<LineStyle, 3>;
+pub(crate) type BorderLeft = GenericBorder<LineStyle, 3>;
 /// A value for the [border-block-start](https://drafts.csswg.org/css-logical/#propdef-border-block-start) shorthand property.
-pub type BorderBlockStart = GenericBorder<LineStyle, 4>;
+pub(crate) type BorderBlockStart = GenericBorder<LineStyle, 4>;
 /// A value for the [border-block-end](https://drafts.csswg.org/css-logical/#propdef-border-block-end) shorthand property.
-pub type BorderBlockEnd = GenericBorder<LineStyle, 5>;
+pub(crate) type BorderBlockEnd = GenericBorder<LineStyle, 5>;
 /// A value for the [border-inline-start](https://drafts.csswg.org/css-logical/#propdef-border-inline-start) shorthand property.
-pub type BorderInlineStart = GenericBorder<LineStyle, 6>;
+pub(crate) type BorderInlineStart = GenericBorder<LineStyle, 6>;
 /// A value for the [border-inline-end](https://drafts.csswg.org/css-logical/#propdef-border-inline-end) shorthand property.
-pub type BorderInlineEnd = GenericBorder<LineStyle, 7>;
+pub(crate) type BorderInlineEnd = GenericBorder<LineStyle, 7>;
 /// A value for the [border-block](https://drafts.csswg.org/css-logical/#propdef-border-block) shorthand property.
-pub type BorderBlock = GenericBorder<LineStyle, 8>;
+pub(crate) type BorderBlock = GenericBorder<LineStyle, 8>;
 /// A value for the [border-inline](https://drafts.csswg.org/css-logical/#propdef-border-inline) shorthand property.
-pub type BorderInline = GenericBorder<LineStyle, 9>;
+pub(crate) type BorderInline = GenericBorder<LineStyle, 9>;
 /// A value for the [border](https://www.w3.org/TR/css-backgrounds-3/#propdef-border) shorthand property.
-pub type Border = GenericBorder<LineStyle, 10>;
+pub(crate) type Border = GenericBorder<LineStyle, 10>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // GenericBorder
@@ -161,7 +161,7 @@ where
         out
     }
 
-    pub fn deep_clone(&self, arena: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, arena: &Bump) -> Self {
         css::implement_deep_clone(self, arena)
     }
 
@@ -171,25 +171,12 @@ where
     /// multiple `Border*` aliases. Needed when one logical value must be
     /// emitted as two distinct physical `Property` variants (e.g.
     /// inline-start → BorderLeft + BorderRight).
-    pub fn clone_as<const Q: u8>(&self, arena: &Bump) -> GenericBorder<S, Q> {
+    pub(crate) fn clone_as<const Q: u8>(&self, arena: &Bump) -> GenericBorder<S, Q> {
         let cloned = self.deep_clone(arena);
         GenericBorder {
             width: cloned.width,
             style: cloned.style,
             color: cloned.color,
-        }
-    }
-
-    pub fn eql(&self, other: &Self) -> bool {
-        css::implement_eql(self, other)
-    }
-
-    #[inline]
-    pub fn default() -> Self {
-        Self {
-            width: BorderSideWidth::Medium,
-            style: S::default(),
-            color: CssColor::CurrentColor,
         }
     }
 }
@@ -444,14 +431,14 @@ struct BorderShorthand {
 }
 
 impl BorderShorthand {
-    pub fn eql(&self, rhs: &Self) -> bool {
+    pub(crate) fn eql(&self, rhs: &Self) -> bool {
         css::generic::eql(&self.width, &rhs.width)
             && css::generic::eql(&self.style, &rhs.style)
             && css::generic::eql(&self.color, &rhs.color)
     }
 
     // `border: anytype` — any GenericBorder<S, P>
-    pub fn set_border<S, const P: u8>(&mut self, arena: &Bump, border: &GenericBorder<S, P>)
+    pub(crate) fn set_border<S, const P: u8>(&mut self, arena: &Bump, border: &GenericBorder<S, P>)
     where
         S: for<'a> css::DeepClone<'a> + Into<LineStyle>,
     {
@@ -567,7 +554,7 @@ bitflags::bitflags! {
 
 // blocked_on: PropertyIdTag variant name verification (PascalCase mapping)
 impl BorderProperty {
-    pub fn try_from_property_id(property_id: PropertyIdTag) -> Option<Self> {
+    pub(crate) fn try_from_property_id(property_id: PropertyIdTag) -> Option<Self> {
         // TODO(port): Zig used `inline for` over PropertyIdTag fields + @hasDecl.
         // Expanded to an explicit match over every PropertyIdTag whose name
         // starts with "border" and has a matching const above.
@@ -1242,7 +1229,7 @@ mod border_handler_body {
 }
 
     impl BorderHandler {
-        pub fn handle_property(
+        pub(crate) fn handle_property(
             &mut self,
             property: &Property,
             dest: &mut DeclarationList,
@@ -1493,7 +1480,7 @@ mod border_handler_body {
             true
         }
 
-        pub fn finalize(
+        pub(crate) fn finalize(
             &mut self,
             dest: &mut DeclarationList,
             context: &mut PropertyHandlerContext,

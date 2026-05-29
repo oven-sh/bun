@@ -93,7 +93,7 @@ impl SecurityScanResults {
     }
 }
 
-pub fn do_partial_install_of_security_scanner(
+pub(crate) fn do_partial_install_of_security_scanner(
     manager: &mut PackageManager,
     ctx: CommandContext,
     log_level: crate::package_manager::Options::LogLevel,
@@ -169,7 +169,7 @@ struct ScannerFinder<'a> {
 }
 
 impl<'a> ScannerFinder<'a> {
-    pub fn find_in_root_dependencies(&self) -> Option<PackageID> {
+    pub(crate) fn find_in_root_dependencies(&self) -> Option<PackageID> {
         let pkgs = self.manager.lockfile.packages.slice();
         let pkg_dependencies = pkgs.items_dependencies();
         let pkg_resolutions = pkgs.items_resolution();
@@ -200,7 +200,7 @@ impl<'a> ScannerFinder<'a> {
         None
     }
 
-    pub fn validate_not_in_workspaces(&self) -> Result<(), Error> {
+    pub(crate) fn validate_not_in_workspaces(&self) -> Result<(), Error> {
         let pkgs = self.manager.lockfile.packages.slice();
         let pkg_deps = pkgs.items_dependencies();
         let pkg_res = pkgs.items_resolution();
@@ -226,7 +226,7 @@ impl<'a> ScannerFinder<'a> {
     }
 }
 
-pub fn perform_security_scan_after_resolution(
+pub(crate) fn perform_security_scan_after_resolution(
     manager: &mut PackageManager,
     command_ctx: CommandContext,
     original_cwd: &[u8],
@@ -424,7 +424,7 @@ pub fn print_security_advisories(manager: &PackageManager, results: &SecuritySca
     }
 }
 
-pub fn prompt_for_warnings() -> bool {
+pub(crate) fn prompt_for_warnings() -> bool {
     let can_prompt = Output::is_stdin_tty();
 
     if !can_prompt {
@@ -507,7 +507,7 @@ struct QueueItem {
 }
 
 impl<'a> PackageCollector<'a> {
-    pub fn init(manager: &'a PackageManager) -> Self {
+    pub(crate) fn init(manager: &'a PackageManager) -> Self {
         Self {
             manager,
             dedupe: ArrayHashMap::new(),
@@ -518,7 +518,7 @@ impl<'a> PackageCollector<'a> {
 
     // Zig `deinit` only freed owned fields; Rust drops them automatically.
 
-    pub fn collect_all_packages(&mut self) -> Result<(), Error> {
+    pub(crate) fn collect_all_packages(&mut self) -> Result<(), Error> {
         let pkgs = self.manager.lockfile.packages.slice();
         let pkg_dependencies = pkgs.items_dependencies();
         let pkg_resolutions = pkgs.items_resolution();
@@ -532,11 +532,6 @@ impl<'a> PackageCollector<'a> {
             let dep_pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
 
             if dep_pkg_id == invalid_package_id {
-                continue;
-            }
-
-            let dep_res = &pkg_resolutions[dep_pkg_id as usize];
-            if dep_res.tag != bun_install::resolution::Tag::Npm {
                 continue;
             }
 
@@ -572,11 +567,6 @@ impl<'a> PackageCollector<'a> {
                     continue;
                 }
 
-                let dep_res = &pkg_resolutions[dep_pkg_id as usize];
-                if dep_res.tag != bun_install::resolution::Tag::Npm {
-                    continue;
-                }
-
                 if self.dedupe.get_or_put(dep_pkg_id)?.found_existing {
                     continue;
                 }
@@ -597,7 +587,7 @@ impl<'a> PackageCollector<'a> {
         Ok(())
     }
 
-    pub fn collect_update_packages(&mut self) -> Result<(), Error> {
+    pub(crate) fn collect_update_packages(&mut self) -> Result<(), Error> {
         let pkgs = self.manager.lockfile.packages.slice();
         let pkg_resolutions = pkgs.items_resolution();
         let pkg_dependencies = pkgs.items_dependencies();
@@ -607,10 +597,6 @@ impl<'a> PackageCollector<'a> {
                 let update_pkg_id: PackageID =
                     PackageID::try_from(_update_pkg_id).expect("int cast");
                 if update_pkg_id != req.package_id {
-                    continue;
-                }
-                if pkg_resolutions[update_pkg_id as usize].tag != bun_install::resolution::Tag::Npm
-                {
                     continue;
                 }
 
@@ -671,7 +657,7 @@ impl<'a> PackageCollector<'a> {
         Ok(())
     }
 
-    pub fn process_queue(&mut self) -> Result<(), Error> {
+    pub(crate) fn process_queue(&mut self) -> Result<(), Error> {
         let pkgs = self.manager.lockfile.packages.slice();
         let pkg_resolutions = pkgs.items_resolution();
         let pkg_dependencies = pkgs.items_dependencies();
@@ -682,16 +668,18 @@ impl<'a> PackageCollector<'a> {
             let pkg_id = item.pkg_id;
             let _ = item.dep_id; // Could be useful in the future for dependency-specific processing
 
-            let pkg_path_copy: Box<[PackageID]> = item.pkg_path.clone().into_boxed_slice();
-            let dep_path_copy: Box<[DependencyID]> = item.dep_path.clone().into_boxed_slice();
+            if pkg_resolutions[pkg_id as usize].tag == bun_install::resolution::Tag::Npm {
+                let pkg_path_copy: Box<[PackageID]> = item.pkg_path.clone().into_boxed_slice();
+                let dep_path_copy: Box<[DependencyID]> = item.dep_path.clone().into_boxed_slice();
 
-            self.package_paths.put(
-                pkg_id,
-                PackagePath {
-                    pkg_path: pkg_path_copy,
-                    dep_path: dep_path_copy,
-                },
-            )?;
+                self.package_paths.put(
+                    pkg_id,
+                    PackagePath {
+                        pkg_path: pkg_path_copy,
+                        dep_path: dep_path_copy,
+                    },
+                )?;
+            }
 
             let pkg_deps = pkg_dependencies[pkg_id as usize];
             for _next_dep_id in pkg_deps.begin()..pkg_deps.end() {
@@ -700,11 +688,6 @@ impl<'a> PackageCollector<'a> {
                 let next_pkg_id = self.manager.lockfile.buffers.resolutions[next_dep_id as usize];
 
                 if next_pkg_id == invalid_package_id {
-                    continue;
-                }
-
-                let next_pkg_res = &pkg_resolutions[next_pkg_id as usize];
-                if next_pkg_res.tag != bun_install::resolution::Tag::Npm {
                     continue;
                 }
 
@@ -739,7 +722,7 @@ struct JSONBuilder<'a> {
 }
 
 impl<'a> JSONBuilder<'a> {
-    pub fn build_package_json(&self) -> Result<Box<[u8]>, Error> {
+    pub(crate) fn build_package_json(&self) -> Result<Box<[u8]>, Error> {
         let mut json_buf: Vec<u8> = Vec::new();
 
         let pkgs = self.manager.lockfile.packages.slice();
@@ -773,9 +756,9 @@ impl<'a> JSONBuilder<'a> {
                 json_buf.extend_from_slice(b",\n");
             }
 
-            // SAFETY: `PackageCollector::collect_packages_from_root` only inserts
-            // packages whose resolution tag is `Tag::Npm` into `package_paths`,
-            // so the `npm` union variant is the active field here.
+            // SAFETY: `PackageCollector::process_queue` only inserts packages
+            // whose resolution tag is `Tag::Npm` into `package_paths`, so the
+            // `npm` union variant is the active field here.
             let npm = pkg_res.npm();
             if dep_id == invalid_dependency_id {
                 write!(
@@ -889,14 +872,10 @@ fn attempt_security_scan_with_retry(
 
     // PORT NOTE: destructure `collector` here to release its `&PackageManager`
     // borrow before constructing `SecurityScanSubprocess` (which needs `&mut`).
-    // Only `package_paths` and the dedupe count are read past this point.
-    let PackageCollector {
-        dedupe,
-        package_paths,
-        ..
-    } = collector;
+    // Only `package_paths` is read past this point.
+    let PackageCollector { package_paths, .. } = collector;
     let mut package_paths = package_paths;
-    let packages_scanned = dedupe.count();
+    let packages_scanned = package_paths.count();
 
     let mut code: Vec<u8> = Vec::new();
 
@@ -998,7 +977,7 @@ pub struct SecurityScanSubprocess<'a> {
 // The comptime type generator is the generic `subprocess::StaticPipeWriter<P>`;
 // monomorphize on `'static` because the writer stores `*mut P` (raw backref —
 // lifetime is erased anyway) and the type alias must name a concrete `P`.
-pub type StaticPipeWriter = subprocess::StaticPipeWriter<SecurityScanSubprocess<'static>>;
+pub(crate) type StaticPipeWriter = subprocess::StaticPipeWriter<SecurityScanSubprocess<'static>>;
 
 // Wire the writer's `on_close` callback back to this type. Raw `*mut Self`
 // because the call is re-entrant: it may fire synchronously inside

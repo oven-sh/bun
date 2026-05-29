@@ -789,7 +789,7 @@ mod private {
     // the JSFunction's private slot (never dereferenced as Rust data) — same
     // contract as `Bun__FFIFunction_setDataPtr` below.
     unsafe extern "C" {
-        pub safe fn Bun__CreateFFIFunctionWithDataValue(
+        pub(super) safe fn Bun__CreateFFIFunctionWithDataValue(
             global: &JSGlobalObject,
             symbol_name: Option<&ZigString>,
             arg_count: u32,
@@ -799,7 +799,7 @@ mod private {
             data: *mut c_void,
         ) -> JSValue;
 
-        pub safe fn Bun__CreateFFIFunctionValue(
+        pub(super) safe fn Bun__CreateFFIFunctionValue(
             global_object: &JSGlobalObject,
             symbol_name: Option<&ZigString>,
             arg_count: u32,
@@ -811,8 +811,8 @@ mod private {
         // safe: `JSValue` is a by-value tagged i64; `data` is an opaque
         // round-trip pointer the C++ side stores in the JSFunction's private
         // slot without dereferencing it as Rust data.
-        pub safe fn Bun__FFIFunction_getDataPtr(value: JSValue) -> *mut c_void;
-        pub safe fn Bun__FFIFunction_setDataPtr(value: JSValue, data: *mut c_void);
+        pub(super) safe fn Bun__FFIFunction_getDataPtr(value: JSValue) -> *mut c_void;
+        pub(super) safe fn Bun__FFIFunction_setDataPtr(value: JSValue, data: *mut c_void);
     }
 }
 

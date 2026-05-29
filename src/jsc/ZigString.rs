@@ -35,7 +35,6 @@ pub use crate::ZigStringJsc;
 // code (no C++ body for `JSStringCreateStatic` in Bun's link image — Zig's
 // `toJSStringRef` is unreachable behind `@hasDecl(bun, "bindgen")`).
 bun_opaque::opaque_ffi! { pub struct OpaqueJSString; }
-pub type JSStringRef = *mut OpaqueJSString;
 
 unsafe extern "C" {
     fn ZigString__toExternalU16(
@@ -50,7 +49,7 @@ unsafe extern "C" {
 /// the raw literal pointer and NO encoding tag. Callers who need UTF-8
 /// semantics must use `init_utf8` / `from_utf8` explicitly.
 #[inline]
-pub fn static_(s: &'static [u8]) -> ZigString {
+pub(crate) fn static_(s: &'static [u8]) -> ZigString {
     ZigString::init(s)
 }
 
@@ -85,7 +84,11 @@ pub unsafe fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObje
 /// # Safety
 /// `raw` must point to `len` bytes allocated by the default allocator.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mut c_void) {
+pub(crate) unsafe extern "C" fn ZigString__free(
+    raw: *const u8,
+    len: usize,
+    allocator_: *mut c_void,
+) {
     let Some(allocator_) = core::ptr::NonNull::new(allocator_) else {
         return;
     };
@@ -107,7 +110,7 @@ pub unsafe extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_:
 /// # Safety
 /// `ptr` must point to `len` bytes allocated by the default allocator.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
+pub(crate) unsafe extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
     // SAFETY: ptr/len describe a valid slice.
     let s = unsafe { bun_core::ffi::slice(ptr, len) };
     let untagged = ZigString::init(s)

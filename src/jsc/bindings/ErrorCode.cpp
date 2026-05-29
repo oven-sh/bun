@@ -311,8 +311,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
     }
     case JSC::JSType::SymbolType: {
         auto symbol = uncheckedDowncast<Symbol>(cell);
-        auto result = symbol->description();
-        if (!result.isEmpty()) {
+        if (!symbol->uid().isNullSymbol() && !symbol->uid().isEmpty()) {
             builder.append(symbol->tryGetDescriptiveString().value_or(String()));
         } else {
             builder.append(globalObject->vm().smallStrings.symbolString());

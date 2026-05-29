@@ -572,7 +572,14 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
 
     {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        globalObject->moduleLoader()->clearAll();
+        {
+            auto* moduleLoader = globalObject->moduleLoader();
+            // JSModuleLoader::visitChildrenImpl iterates these maps on the GC
+            // thread under cellLock(); take the same lock so clearing them
+            // can't race a concurrent marker.
+            WTF::Locker locker { moduleLoader->cellLock() };
+            moduleLoader->clearAll();
+        }
         globalObject->requireMap()->clear(globalObject);
         scope.exception(); // TODO: handle or assert none?
         vm.deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);

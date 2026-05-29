@@ -904,6 +904,9 @@ function TLSSocket(socket?, options?) {
   this.secureConnecting = true;
   this._secureEstablished = false;
   this._securePending = true;
+  if (options.checkServerIdentity !== undefined) {
+    validateFunction(options.checkServerIdentity, "options.checkServerIdentity");
+  }
   this[kcheckServerIdentity] = options.checkServerIdentity || checkServerIdentity;
   this[ksession] = options.session || null;
 

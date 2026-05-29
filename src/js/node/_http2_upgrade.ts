@@ -226,11 +226,9 @@ function socketHandshake(
         tlsSocket.destroy(verifyError);
         return;
       }
-    } else {
+    } else if (tlsSocket._requestCert) {
       tlsSocket.authorized = true;
     }
-  } else {
-    tlsSocket.authorized = true;
   }
 
   // Invoke the H2 connectionListener which creates a ServerHttp2Session.

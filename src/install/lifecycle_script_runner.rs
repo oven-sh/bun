@@ -344,9 +344,9 @@ impl<'a> io_heap::HeapContext<LifecycleScriptSubprocess<'a>> for StartedAtCtx {
     }
 }
 
-pub const MIN_MILLISECONDS_TO_LOG: u64 = 500;
+pub(crate) const MIN_MILLISECONDS_TO_LOG: u64 = 500;
 
-pub static ALIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static ALIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 impl<'a> LifecycleScriptSubprocess<'a> {
     /// Zig: `LifecycleScriptSubprocess.alive_count` static decl. Returns the
@@ -364,7 +364,7 @@ use bun_sys::windows::libuv as uv;
 pub type OutputReader = BufferedReader;
 
 // TODO(port): `std.time.Timer` — replace with bun_core monotonic timer wrapper.
-pub type Timer = bun_core::time::Timer;
+pub(crate) type Timer = bun_core::time::Timer;
 
 impl<'a> LifecycleScriptSubprocess<'a> {
     /// `bun.TrivialNew(@This())` — heap-allocate and return a raw pointer; this type is

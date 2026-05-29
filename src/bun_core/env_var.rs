@@ -673,7 +673,7 @@ macro_rules! platform_specific_new {
             // set. We expose the default + a const HAS_DEFAULT and always return Option<ValueType>;
             // a thin `pub fn get() -> ValueType` wrapper that `.unwrap()`s is added when a default
             // exists. TODO(port): restore the non-nullable `get()` return type for defaulted vars.
-            pub const DEFAULT: Option<K::ValueType> =
+            pub(crate) const DEFAULT: Option<K::ValueType> =
                 $crate::env_var::__default_opt!($kind, { $($opts)* });
 
             /// Attempt to retrieve the value of the environment variable for the current platform, if
@@ -711,13 +711,13 @@ macro_rules! platform_specific_new {
             }
 
             /// Equal to `.platform_key()` except fails to compile if current platform is supported.
-            pub fn key() -> &'static ZStr {
+            pub(crate) fn key() -> &'static ZStr {
                 assert_platform_supported();
                 platform_key().unwrap()
             }
 
             /// Retrieve the key of the environment variable for the current platform, if any.
-            pub fn platform_key() -> Option<&'static ZStr> {
+            pub(crate) fn platform_key() -> Option<&'static ZStr> {
                 #[cfg(unix)]
                 { return $crate::env_var::__key_opt!($posix); }
                 #[cfg(windows)]

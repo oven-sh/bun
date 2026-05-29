@@ -369,7 +369,7 @@ where
     // generic `impl`; storage is supplied via the `S: PoolStorage<T>` type
     // parameter (see `object_pool!` for the usual declaration).
     #[inline]
-    pub fn data<R>(f: impl FnOnce(&RefCell<DataStruct<T>>) -> R) -> R {
+    pub(crate) fn data<R>(f: impl FnOnce(&RefCell<DataStruct<T>>) -> R) -> R {
         S::with(f)
     }
 
@@ -380,13 +380,6 @@ where
         Self::data(|cell| {
             let d = cell.borrow();
             d.loaded && d.count >= MAX_COUNT
-        })
-    }
-
-    pub fn has() -> bool {
-        Self::data(|cell| {
-            let d = cell.borrow();
-            d.loaded && !d.list.first.is_null()
         })
     }
 

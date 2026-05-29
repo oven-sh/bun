@@ -363,9 +363,14 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
                     ASSERT(cell.index < count);
 
                     if (names.has_value()) {
-                        auto name = names.value()[structureOffsetIndex++];
-                        object->putDirect(vm, Identifier::fromString(vm, name.name.toWTFString()), value);
-                    } else {
+                        while (structureOffsetIndex < namesCount && !names.value()[structureOffsetIndex].isNamedColumn()) {
+                            structureOffsetIndex++;
+                        }
+                        if (structureOffsetIndex < namesCount) {
+                            auto name = names.value()[structureOffsetIndex++];
+                            object->putDirect(vm, Identifier::fromString(vm, name.name.toWTFString()), value);
+                        }
+                    } else if (structure && structure->isValidOffset(structureOffsetIndex)) {
                         object->putDirectOffset(vm, structureOffsetIndex++, value);
                     }
                 } else if (cell.isDuplicateColumn()) {

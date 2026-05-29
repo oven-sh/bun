@@ -19,7 +19,6 @@ use super::readable::Readable;
 use super::{StdioKind, StdioResult, Subprocess};
 
 pub type IOReader = BufferedReader;
-pub type Poll = IOReader;
 
 #[derive(Default)]
 pub enum State {
@@ -57,7 +56,7 @@ pub struct PipeReader {
 // sites (`self.r#ref()` / `PipeReader::deref(ptr)`) keep working.
 impl PipeReader {
     #[inline]
-    pub fn r#ref(&self) {
+    pub(crate) fn r#ref(&self) {
         // SAFETY: `self` is live; RefCount::ref_ only touches the interior-mutable
         // `ref_count` cell via raw-ptr field projection.
         unsafe { RefCount::<PipeReader>::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
@@ -75,18 +74,18 @@ impl PipeReader {
     /// via `heap::alloc`) with `ref_count > 0`. No `&`/`&mut` borrows of `*this`
     /// may outlive this call on the zero path.
     #[inline]
-    pub unsafe fn deref(this: *mut Self) {
+    pub(crate) unsafe fn deref(this: *mut Self) {
         // SAFETY: caller contract.
         unsafe { RefCount::<PipeReader>::deref(this) };
     }
 }
 
 impl PipeReader {
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         self.reader.memory_cost()
     }
 
-    pub fn has_pending_activity(&self) -> bool {
+    pub(crate) fn has_pending_activity(&self) -> bool {
         if matches!(self.state, State::Pending) {
             return true;
         }
@@ -97,14 +96,14 @@ impl PipeReader {
     ///
     /// # Safety
     /// `this` must point to a live `PipeReader`; may be freed on return (see `deref`).
-    pub unsafe fn detach(this: *mut Self) {
+    pub(crate) unsafe fn detach(this: *mut Self) {
         // SAFETY: `this` is live; raw-ptr field write avoids holding a `&mut` across deref.
         unsafe { (*this).process = None };
         // SAFETY: caller contract — `this` is live with refcount > 0; no borrow of `*this` outlives this call.
         unsafe { PipeReader::deref(this) };
     }
 
-    pub fn create(
+    pub(crate) fn create(
         event_loop: NonNull<EventLoop>,
         process: NonNull<Subprocess<'static>>,
         result: StdioResult,
@@ -139,13 +138,13 @@ impl PipeReader {
         }
     }
 
-    pub fn read_all(&mut self) {
+    pub(crate) fn read_all(&mut self) {
         if matches!(self.state, State::Pending) {
             self.reader.read();
         }
     }
 
-    pub fn start(
+    pub(crate) fn start(
         &mut self,
         process: NonNull<Subprocess<'static>>,
         event_loop: NonNull<EventLoop>,
@@ -205,11 +204,11 @@ impl PipeReader {
     }
 
     // pub const toJS = toReadableStream;
-    pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         self.to_readable_stream(global_object)
     }
 
-    pub fn on_reader_done(&mut self) {
+    pub(crate) fn on_reader_done(&mut self) {
         let owned = self.to_owned_slice();
         self.state = State::Done(owned);
         if let Some(process) = self.process.take() {
@@ -222,7 +221,7 @@ impl PipeReader {
         unsafe { PipeReader::deref(self) };
     }
 
-    pub fn kind(&self, process: &Subprocess<'_>) -> StdioKind {
+    pub(crate) fn kind(&self, process: &Subprocess<'_>) -> StdioKind {
         if let Readable::Pipe(pipe) = process.stdout.get() {
             if core::ptr::eq(pipe.data.as_ptr(), self) {
                 return StdioKind::Stdout;
@@ -238,7 +237,7 @@ impl PipeReader {
         unreachable!("We should be either stdout or stderr");
     }
 
-    pub fn to_owned_slice(&mut self) -> Vec<u8> {
+    pub(crate) fn to_owned_slice(&mut self) -> Vec<u8> {
         if let State::Done(bytes) = core::mem::replace(&mut self.state, State::Pending) {
             // PORT NOTE: reshaped for borrowck — Zig reads `state.done` in place; here we
             // take it out and restore Pending (caller immediately overwrites state anyway).
@@ -257,17 +256,20 @@ impl PipeReader {
         out
     }
 
-    pub fn update_ref(&mut self, add: bool) {
+    pub(crate) fn update_ref(&mut self, add: bool) {
         self.reader.update_ref(add);
     }
 
-    pub fn watch(&mut self) {
+    pub(crate) fn watch(&mut self) {
         if !self.reader.is_done() {
             self.reader.watch();
         }
     }
 
-    pub fn to_readable_stream(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_readable_stream(
+        &mut self,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
         // `defer this.detach()` — detach() = clear `process` backref + deref. The deref
         // may drop the last ref, so it must run after the result is computed; the backref
         // clear must also wait (from_pipe hands `&mut self.reader` to JS, which may
@@ -309,7 +311,7 @@ impl PipeReader {
         }
     }
 
-    pub fn to_buffer(&mut self, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_buffer(&mut self, global_this: &JSGlobalObject) -> JSValue {
         match &mut self.state {
             State::Done(bytes) => {
                 let bytes = core::mem::take(bytes);
@@ -326,7 +328,7 @@ impl PipeReader {
         }
     }
 
-    pub fn on_reader_error(&mut self, err: bun_sys::Error) {
+    pub(crate) fn on_reader_error(&mut self, err: bun_sys::Error) {
         // Zig: if state == .done, free state.done — handled by Drop of the replaced Vec.
         self.state = State::Err(err);
         if let Some(process) = self.process.take() {
@@ -338,7 +340,7 @@ impl PipeReader {
         unsafe { PipeReader::deref(self) };
     }
 
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         match self.state {
             State::Pending => {
                 self.reader.close();
@@ -348,12 +350,8 @@ impl PipeReader {
         }
     }
 
-    pub fn event_loop(&self) -> &EventLoop {
-        self.event_loop.get()
-    }
-
     // TODO(port): `loop` is a Rust keyword; renamed to `loop_`. Callers (BufferedReader vtable) must match.
-    pub fn loop_(&self) -> *mut AsyncLoop {
+    pub(crate) fn loop_(&self) -> *mut AsyncLoop {
         // `event_loop.virtual_machine` is set by the time a PipeReader is
         // created. The VM is the per-thread singleton owning `event_loop`, so
         // the `BackRef` invariant (pointee outlives holder) trivially holds.

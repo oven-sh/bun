@@ -42,7 +42,7 @@ pub mod perf {
     pub use bun_perf::{Ctx, PerfEvent};
 
     #[inline]
-    pub fn trace(_name: &'static str) -> Ctx {
+    pub(crate) fn trace(_name: &'static str) -> Ctx {
         bun_perf::trace(PerfEvent::_Stub)
     }
 }
@@ -151,7 +151,7 @@ pub struct CrossChunkImport {
 }
 /// `Chunk.zig:ImportsFromOtherChunks`.
 pub mod cross_chunk_import {
-    pub type ItemList = super::CrossChunkImportItemList;
+    pub(crate) type ItemList = super::CrossChunkImportItemList;
 }
 
 #[repr(u8)]
@@ -423,7 +423,7 @@ pub struct ContentHasher {
 // structs only occupy the type namespace, so the two coexist.
 bun_core::declare_scope!(ContentHasher, hidden);
 impl ContentHasher {
-    pub fn write(&mut self, bytes: &[u8]) {
+    pub(crate) fn write(&mut self, bytes: &[u8]) {
         bun_core::scoped_log!(
             ContentHasher,
             "HASH_UPDATE {}:\n{}\n----------\n",
@@ -433,17 +433,17 @@ impl ContentHasher {
         self.hasher.update(&(bytes.len() as u64).to_ne_bytes());
         self.hasher.update(bytes);
     }
-    pub fn run(bytes: &[u8]) -> u64 {
+    pub(crate) fn run(bytes: &[u8]) -> u64 {
         let mut h = ContentHasher::default();
         h.write(bytes);
         h.digest()
     }
     /// `bundle_v2.zig:ContentHasher.writeInts` — `std.mem.sliceAsBytes(i)`.
-    pub fn write_ints(&mut self, i: &[u32]) {
+    pub(crate) fn write_ints(&mut self, i: &[u32]) {
         bun_core::scoped_log!(ContentHasher, "HASH_UPDATE: {:?}\n", i);
         self.hasher.update(bytemuck::cast_slice::<u32, u8>(i));
     }
-    pub fn digest(&self) -> u64 {
+    pub(crate) fn digest(&self) -> u64 {
         self.hasher.digest()
     }
 }
@@ -486,14 +486,14 @@ pub mod bun_renamer {
     }
 
     impl ChunkRenamer {
-        pub fn name_for_symbol(&mut self, ref_: bun_ast::Ref) -> &[u8] {
+        pub(crate) fn name_for_symbol(&mut self, ref_: bun_ast::Ref) -> &[u8] {
             match self {
                 ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
                 ChunkRenamer::Number(r) => r.name_for_symbol(ref_),
                 ChunkRenamer::Minify(r) => r.name_for_symbol(ref_),
             }
         }
-        pub fn as_renamer(&mut self) -> bun_js_printer::renamer::Renamer<'_, '_> {
+        pub(crate) fn as_renamer(&mut self) -> bun_js_printer::renamer::Renamer<'_, '_> {
             match self {
                 ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
                 ChunkRenamer::Number(r) => bun_js_printer::renamer::Renamer::NumberRenamer(r),
@@ -523,7 +523,7 @@ pub mod html_import_manifest {
     /// literal body (`writePreQuotedString`). Chunk.rs uses this with
     /// `bun_core::fmt::count` for the counting pass.
     #[inline]
-    pub fn format_escaped_json<'a>(
+    pub(crate) fn format_escaped_json<'a>(
         index: u32,
         graph: &'a Graph,
         chunks: &'a [Chunk],
@@ -594,7 +594,7 @@ pub use bun_js_printer::MangledProps;
 /// `bun.logger` — alias used by the original drafts as `crate::bun_ast::Source`.
 
 /// `js_ast.BundledAst` (the bundler-facing AST view).
-pub type JSAst<'a> = crate::BundledAst<'a>;
+pub(crate) type JSAst<'a> = crate::BundledAst<'a>;
 pub(crate) use bun_ast::{Part, Ref};
 
 /// `bundle_v2.zig:EntryPoint` — both a struct and (via the sibling module
@@ -695,7 +695,7 @@ pub mod js_meta {
         }
     }
     /// Alias used by `LinkerGraph::generate_symbol_import_and_use`.
-    pub type ImportToBind = ImportData;
+    pub(crate) type ImportToBind = ImportData;
 
     pub struct ExportData {
         pub potentially_ambiguous_export_star_refs: AstVec<ImportData>,
@@ -710,7 +710,7 @@ pub mod js_meta {
         }
     }
     /// Alias used by `LinkerGraph::load`.
-    pub type ResolvedExport = ExportData;
+    pub(crate) type ResolvedExport = ExportData;
 
     pub type RefImportData = ArrayHashMap<Ref, ImportData, AutoContext, AstAlloc>;
     pub type ResolvedExports = StringArrayHashMap<ExportData, StringContext, AstAlloc>;

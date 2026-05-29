@@ -9,7 +9,6 @@ use crate::String as SemverString;
 use crate::query::token::Wildcard;
 
 pub type Version = VersionType<u64>;
-pub type OldV2Version = VersionType<u32>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // VersionInt — trait capturing the operations the Zig generic needed on

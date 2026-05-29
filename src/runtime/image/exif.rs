@@ -42,7 +42,7 @@ pub struct Transform {
 
 impl Orientation {
     /// The (mirror?, cw-degrees) pair that turns the stored pixels upright.
-    pub fn transform(self) -> Transform {
+    pub(crate) fn transform(self) -> Transform {
         match self {
             Orientation::Normal => Transform {
                 flop: false,

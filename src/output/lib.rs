@@ -22,7 +22,6 @@
 // gates arg evaluation behind `cfg!(feature = "debug_logs")` so release
 // builds pay zero cost (see PORTING.md — args MUST sit inside the dead
 // branch).
-#![warn(unreachable_pub)]
 pub use bun_core::declare_scope;
 pub use bun_core::define_scoped_log;
 pub use bun_core::scoped_log;

@@ -36,35 +36,36 @@ impl Default for Strong {
 }
 
 impl Strong {
-    pub fn has(&mut self) -> bool {
+    pub(crate) fn has(&mut self) -> bool {
         self.held.has()
     }
 
     /// Debug-only raw handle pointer for corruption probes (#53265).
     #[doc(hidden)]
     #[inline]
-    pub fn held_handle_ptr(&self) -> *const () {
+    #[allow(dead_code)]
+    pub(crate) fn held_handle_ptr(&self) -> *const () {
         self.held.handle_ptr()
     }
 
-    pub fn is_disturbed(&self, global: &JSGlobalObject) -> bool {
+    pub(crate) fn is_disturbed(&self, global: &JSGlobalObject) -> bool {
         if let Some(stream) = self.get(global) {
             return stream.is_disturbed(global);
         }
         false
     }
 
-    pub fn init(this: ReadableStream, global: &JSGlobalObject) -> Strong {
+    pub(crate) fn init(this: ReadableStream, global: &JSGlobalObject) -> Strong {
         Strong {
             held: bun_jsc::strong::Optional::create(this.value, global),
         }
     }
 
-    pub fn deinit(&mut self) {
+    pub(crate) fn deinit(&mut self) {
         self.held.deinit();
     }
 
-    pub fn get(&self, global: &JSGlobalObject) -> Option<ReadableStream> {
+    pub(crate) fn get(&self, global: &JSGlobalObject) -> Option<ReadableStream> {
         if let Some(value) = self.held.get() {
             // TODO: properly propagate exception upwards
             return ReadableStream::from_js(value, global).ok().flatten();
@@ -76,7 +77,7 @@ impl Strong {
     // Commented-out Zig:
     //   if (this.held.get()) |val| { ReadableStream__detach(val, this.held.globalThis.?); }
 
-    pub fn tee(&mut self, global: &JSGlobalObject) -> JsResult<Option<ReadableStream>> {
+    pub(crate) fn tee(&mut self, global: &JSGlobalObject) -> JsResult<Option<ReadableStream>> {
         if let Some(stream) = self.get(global) {
             let Some((first, second)) = stream.tee(global)? else {
                 return Ok(None);
@@ -478,7 +479,7 @@ impl ReadableStream {
     }
 }
 
-pub fn is_disturbed_value(value: JSValue, global_object: &JSGlobalObject) -> bool {
+pub(crate) fn is_disturbed_value(value: JSValue, global_object: &JSGlobalObject) -> bool {
     // SAFETY: FFI call; value may be any JSValue (C++ side checks).
     ReadableStream__isDisturbed(value, global_object)
 }
@@ -719,7 +720,7 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
 // extern symbols as associated consts (bound via `source_context_codegen!`).
 // The `.classes.ts` → `.rs` generator (when re-run with Rust output) is expected
 // to emit those `const JS_*` bindings directly.
-pub trait NewSourceCodegen {
+pub(crate) trait NewSourceCodegen {
     fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue;
     fn pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
     fn on_drain_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);

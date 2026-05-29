@@ -21,11 +21,11 @@ pub use bun_css::BundlerStyleSheet;
 /// the type system. `StoreRef`'s `Deref`/`DerefMut` encapsulate the single
 /// documented `unsafe` deref justified by that invariant; callers use `&*r`
 /// (or `Option::as_deref`) instead of open-coded `unsafe { &*ptr }`.
-pub type CssAstRef = bun_ast::StoreRef<BundlerStyleSheet>;
+pub(crate) type CssAstRef = bun_ast::StoreRef<BundlerStyleSheet>;
 
 /// Element type of the `css` SoA column (`items_css()`). Exposed so bundler
 /// call sites can name the column without re-spelling the pointer shape.
-pub type CssCol = Option<CssAstRef>;
+pub(crate) type CssCol = Option<CssAstRef>;
 
 use bun_ast::import_record;
 use bun_core::strings;
@@ -34,10 +34,9 @@ use bun_ast::ast_result::Ast;
 use bun_ast::{CharFreq, ExportsKind, Ref, Scope, SlotCounts, StoreStr, TlaCheck};
 use bun_ast::{part, symbol};
 
-pub type CommonJSNamedExports = bun_ast::ast_result::CommonJSNamedExports;
-pub type ConstValuesMap = bun_ast::ast_result::ConstValuesMap;
-pub type NamedExports = bun_ast::ast_result::NamedExports;
-pub type NamedImports = bun_ast::ast_result::NamedImports;
+pub(crate) type CommonJSNamedExports = bun_ast::ast_result::CommonJSNamedExports;
+pub(crate) type NamedExports = bun_ast::ast_result::NamedExports;
+pub(crate) type NamedImports = bun_ast::ast_result::NamedImports;
 pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 
 // PORT NOTE: Zig stores `MultiArrayList(BundledAst)` on `Graph.ast` /

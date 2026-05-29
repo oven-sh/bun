@@ -3,11 +3,6 @@ use bun_core::strings;
 
 use crate::DELIMITER;
 
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
-pub struct EnvPathOptions {
-    //
-}
-
 fn trim_path_delimiters(input: &[u8]) -> &[u8] {
     let mut trimmed = input;
     while !trimmed.is_empty() && trimmed[0] == DELIMITER {

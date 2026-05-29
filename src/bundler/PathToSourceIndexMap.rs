@@ -30,7 +30,7 @@ pub type Map = StringHashMap<IndexInt>;
 
 /// Mirrors Zig's `Map.GetOrPutResult` — std `HashMap::entry` doesn't expose
 /// `found_existing` + value-ptr together, so we hand-roll a thin shim.
-pub type GetOrPutResult<'a> = bun_collections::string_hash_map::GetOrPutResult<'a, IndexInt>;
+pub(crate) type GetOrPutResult<'a> = bun_collections::string_hash_map::GetOrPutResult<'a, IndexInt>;
 
 impl PathToSourceIndexMap {
     pub fn get_path(&self, path: &impl PathLike) -> Option<IndexInt> {

@@ -647,6 +647,15 @@ it("read", () => {
   delete globalThis.buffer;
 });
 
+it("ptr() rejects byteOffset outside the view", () => {
+  const buf = new Uint8Array(32);
+  expect(() => ptr(buf, -1)).toThrow("byteOffset out of bounds");
+  expect(() => ptr(buf, -32)).toThrow("byteOffset out of bounds");
+  expect(() => ptr(buf, 33)).toThrow("byteOffset out of bounds");
+  expect(ptr(buf, 0)).toBe(ptr(buf));
+  expect(typeof ptr(buf, 16)).toBe("number");
+});
+
 if (ok) {
   describe("run ffi", () => {
     ffiRunner(false);

@@ -1715,11 +1715,9 @@ describe.skipIf(!minioCredentials)("Archive with S3", () => {
 });
 
 describe("s3 multipart upload id validation", () => {
-  it(
-    "rejects a CreateMultipartUpload response whose upload id contains non-ASCII bytes",
-    async () => {
-      // The whole scenario runs in a subprocess so a misbehaving runtime cannot take down the test runner.
-      const fixture = `
+  it("rejects a CreateMultipartUpload response whose upload id contains non-ASCII bytes", async () => {
+    // The whole scenario runs in a subprocess so a misbehaving runtime cannot take down the test runner.
+    const fixture = `
         const goodUploadId = "valid-upload-id-1234567890";
         function initiateXml(uploadIdBytes) {
           return Buffer.concat([
@@ -1786,22 +1784,20 @@ describe("s3 multipart upload id validation", () => {
         server.stop(true);
       `;
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", fixture],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      // A server-supplied upload id containing non-ASCII bytes must surface as a normal S3 error
-      // on the writer promise instead of terminating the process.
-      expect(stdout).toContain("malformed-id: rejected UnknownError - Failed to initiate multipart upload");
-      // A well-formed upload id still completes the multipart upload in the same process.
-      expect(stdout).toContain("valid-id: resolved");
-      expect(exitCode).toBe(0);
-    },
-    60_000,
-  );
+    // A server-supplied upload id containing non-ASCII bytes must surface as a normal S3 error
+    // on the writer promise instead of terminating the process.
+    expect(stdout).toContain("malformed-id: rejected UnknownError - Failed to initiate multipart upload");
+    // A well-formed upload id still completes the multipart upload in the same process.
+    expect(stdout).toContain("valid-id: resolved");
+    expect(exitCode).toBe(0);
+  }, 60_000);
 });

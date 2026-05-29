@@ -458,8 +458,7 @@ fn spawn(
                 bun_core::fast_random(),
             )?;
             let mut dir_buf = path_buffer_pool::get();
-            let dir_parts: [&[u8]; 2] =
-                [bun_resolver::fs::RealFS::tmpdir_path(), name.as_bytes()];
+            let dir_parts: [&[u8]; 2] = [bun_resolver::fs::RealFS::tmpdir_path(), name.as_bytes()];
             let dir =
                 resolve_path::join_string_buf_z::<platform::Auto>(&mut dir_buf[..], &dir_parts);
             bun_sys::mkdir(dir, 0o700)?;

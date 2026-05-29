@@ -132,9 +132,10 @@ it("off-registry npm tarball integrity is enforced only at version 2", async () 
 // lockfile carrying an unsafe git tag still never executes anything unsafe.
 // (The `github` tarball path has no such re-validation — see the next test.)
 it("unsafe git .bun-tag is rejected only at version 2", async () => {
-  // Point at an unreachable local endpoint (port 1) so that when v1 parsing
-  // succeeds and install proceeds to `git clone`, the clone fails fast instead
-  // of reaching out to a real host — keeping this test offline.
+  // Point at an unreachable local endpoint (port 1) so the URL never reaches a
+  // real host — keeping this test offline. Neither block actually clones it: v2
+  // fails at parse time, and the v1 block uses `--lockfile-only` to return before
+  // the install phase (the clone can hang on macOS rather than fail fast).
   const gitUrl = "git+ssh://git@127.0.0.1:1/example/repo.git#main";
   const lockfile = (lockfileVersion: number) =>
     JSON.stringify({

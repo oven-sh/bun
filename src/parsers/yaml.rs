@@ -65,7 +65,7 @@ impl YAML {
             DetectedEncoding::Utf8 => Self::parse_with::<Utf8>(source, bytes, log, bump),
             enc @ (DetectedEncoding::Utf16Le | DetectedEncoding::Utf16Be) => {
                 let be = matches!(enc, DetectedEncoding::Utf16Be);
-                if bytes.len() % 2 != 0 {
+                if !bytes.len().is_multiple_of(2) {
                     log.add_error(
                         Some(source),
                         bun_ast::Loc::EMPTY,
@@ -75,6 +75,11 @@ impl YAML {
                 }
                 // The Expr tree may hold slices into the input; allocate the
                 // transcoded buffer in the same arena so it shares its lifetime.
+                // TODO: Parser<Utf16> tracks `pos` as a u16 index, but
+                // `Pos::loc()` is interpreted as a byte offset into
+                // `source.contents` — error positions for UTF-16 byte input are
+                // off. Fixing requires mapping u16 index → byte offset before
+                // constructing `Loc`.
                 let units: &mut [u16] = bump.alloc_slice_fill_default(bytes.len() / 2);
                 for (i, c) in bytes.chunks_exact(2).enumerate() {
                     units[i] = if be {

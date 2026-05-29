@@ -1828,8 +1828,11 @@ folded: >
         ] as const)("%s resolves as number %p", (input, expected) => {
           expect(Bun.YAML.parse(input)).toBe(expected);
         });
-        test.each([".inf", "-.inf", "+.inf", ".Inf", ".INF"])("%s resolves as Infinity", input => {
-          expect(Math.abs(Bun.YAML.parse(input))).toBe(Infinity);
+        test.each([
+          [".inf", Infinity], ["+.inf", Infinity], [".Inf", Infinity], [".INF", Infinity],
+          ["-.inf", -Infinity], ["-.Inf", -Infinity], ["-.INF", -Infinity],
+        ] as const)("%s resolves as %p", (input, expected) => {
+          expect(Bun.YAML.parse(input)).toBe(expected);
         });
         test(".nan resolves as NaN", () => {
           expect(Bun.YAML.parse(".nan")).toBeNaN();

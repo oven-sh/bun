@@ -4080,10 +4080,8 @@ impl VirtualMachine {
         // result paths without threading a lifetime parameter through the VM.
         let specifier: &'static [u8] = unsafe { bun_ptr::detach_lifetime(specifier) };
 
-        // `Runtime.Runtime.Imports.{alt_name, Name}` are both `"bun:wrap"`
-        // (see js_parser/runtime.rs).
-        if bun_paths::basename(specifier) == b"bun:wrap" {
-            ret.path = b"bun:wrap";
+        if bun_paths::basename(specifier) == bun_ast::runtime::Imports::NAME {
+            ret.path = bun_ast::runtime::Imports::NAME;
             return Ok(());
         }
         if specifier == MAIN_FILE_NAME && self.entry_point.generated {
@@ -5273,7 +5271,8 @@ impl VirtualMachine {
                 || name.eql_comptime("processTicksAndRejections")
         }
         fn is_hidden_frame(f: &crate::ZigStackFrame) -> bool {
-            f.source_url.eql_comptime("bun:wrap") || f.function_name.eql_comptime("::bunternal::")
+            f.source_url.eql_comptime(bun_ast::runtime::Imports::NAME)
+                || f.function_name.eql_comptime("::bunternal::")
         }
         fn is_unknown_source(url: &bun_core::String) -> bool {
             url.is_empty() || url.eql_comptime("[unknown]") || url.has_prefix_comptime(b"[source:")

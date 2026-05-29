@@ -4738,12 +4738,8 @@ unsafe fn _resolve<'a>(
     use bun_jsc::virtual_machine::MAIN_FILE_NAME;
     use bun_resolve_builtins::{Alias, Cfg as AliasCfg};
 
-    // Spec :1732 — `Runtime.Runtime.Imports.alt_name` == `Runtime.Runtime.Imports.Name`
-    // == `"bun:wrap"` (see js_parser/runtime.rs:644-645). Zig compared the
-    // *basename* against `alt_name`; both consts are the bare specifier so a
-    // direct equality on `basename(specifier)` is correct.
-    if bun_paths::basename(specifier) == b"bun:wrap" {
-        *ret_path = b"bun:wrap";
+    if bun_paths::basename(specifier) == bun_ast::runtime::Imports::NAME {
+        *ret_path = bun_ast::runtime::Imports::NAME;
         return Ok(());
     }
 

@@ -140,7 +140,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                 args: ExprNodeList::from_slice(&[Expr::init(
                                     E::String {
                                         data: if record.tag == ImportRecordTag::Runtime {
-                                            b"bun:wrap".into()
+                                            bun_ast::runtime::Imports::NAME.into()
                                         } else {
                                             record.path.pretty.into()
                                         },

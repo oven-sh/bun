@@ -65,7 +65,7 @@ pub struct Linker {
     pub plugin_runner: Option<*mut dyn PluginResolver>,
 }
 
-pub(crate) const RUNTIME_SOURCE_PATH: &[u8] = b"bun:wrap";
+pub(crate) const RUNTIME_SOURCE_PATH: &[u8] = bun_ast::runtime::Imports::NAME;
 
 #[derive(Default)]
 pub struct TaggedResolution {
@@ -450,7 +450,7 @@ impl Linker {
                         if import_record.path.namespace == b"runtime" {
                             if import_path_format == ImportPathFormat::AbsoluteUrl {
                                 import_record.path = PFs::Path::init_with_namespace(
-                                    dupe(&origin.join_alloc(b"", b"", b"bun:wrap", b"", b"")?),
+                                    dupe(&origin.join_alloc(b"", b"", RUNTIME_SOURCE_PATH, b"", b"")?),
                                     b"bun",
                                 );
                             } else {

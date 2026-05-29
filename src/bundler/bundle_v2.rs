@@ -3219,7 +3219,7 @@ pub mod bv2_impl {
             // try this.graph.entry_points.append(arena, Index.runtime);
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
             self.path_to_source_index_map(self.transpiler.options.target)
-                .put(&b"bun:wrap"[..], Index::RUNTIME.get())
+                .put(bun_ast::runtime::Imports::NAME, Index::RUNTIME.get())
                 .expect("oom");
             // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
             // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
@@ -5943,7 +5943,7 @@ pub mod bv2_impl {
                     }
                 }
 
-                if import_record.path.text == b"bun:wrap" {
+                if import_record.path.text == bun_ast::runtime::Imports::NAME {
                     import_record.path.namespace = b"bun";
                     import_record.tag = bun_ast::ImportRecordTag::Runtime;
                     import_record.path.text = b"wrap";

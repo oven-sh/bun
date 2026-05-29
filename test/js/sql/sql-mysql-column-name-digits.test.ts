@@ -57,7 +57,7 @@ const SERVER_CAPS =
   CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA |
   CLIENT_DEPRECATE_EOF;
 
-// MYSQL_TYPE_* values. From src/sql/mysql/mysql_types.rs.
+// MYSQL_TYPE_* values. From src/sql/mysql/MySQLTypes.rs.
 const MYSQL_TYPE_LONG = 0x03;
 const MYSQL_TYPE_VAR_STRING = 0xfd;
 

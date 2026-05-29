@@ -927,8 +927,9 @@ impl BunxCommand {
                     uid = uid,
                 )
                 .map_err(|_| bun_core::err!("OutOfMemory"))?;
-                if Fd::cwd().make_path(&root).is_ok()
-                    && bun_sys::mkdir_recursive_at_mode(Fd::cwd(), &bunx_root, 0o700).is_ok()
+                if bun_sys::exists(&bunx_root)
+                    || (Fd::cwd().make_path(&root).is_ok()
+                        && bun_sys::mkdir_recursive_at_mode(Fd::cwd(), &bunx_root, 0o700).is_ok())
                 {
                     Some(root)
                 } else {

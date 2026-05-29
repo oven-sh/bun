@@ -390,7 +390,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 let cache_dir = fetch_cache_directory_path(&mut process_env, None);
 
                 let mut deleted: usize = 0;
-                let mut bunx_root: Option<Vec<u8>> = None;
                 if !cache_dir.is_node_modules {
                     let mut root = cache_dir.path.clone();
                     while root.last() == Some(&Path::SEP) {
@@ -403,7 +402,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                         while let Ok(Some(_)) = bunx_iter.next() {
                             deleted += 1;
                         }
-                        bunx_root = Some(root);
                     }
                 }
 
@@ -426,13 +424,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     }
                 };
                 rm_dir.close();
-
-                if let Some(bunx_root) = &bunx_root {
-                    if let Err(err) = bun_sys::delete_tree_absolute(bunx_root) {
-                        Output::err(err, "Could not delete {s}", (bstr::BStr::new(bunx_root),));
-                        had_err = true;
-                    }
-                }
 
                 if let Err(err) = bun_sys::delete_tree_absolute(rm_path) {
                     Output::err(err, "Could not delete {s}", (bstr::BStr::new(rm_path),));

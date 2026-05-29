@@ -936,6 +936,7 @@ describe("node:http", () => {
         req.on("error", resolve);
         const err: any = await promise;
         expect(err.code).toBe("ENOTFOUND");
+        expect(err.hostname).toBe(confusedHost);
         expect(requestCount).toBe(0);
 
         // A plain host + port still works.

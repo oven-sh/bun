@@ -533,6 +533,7 @@ function ClientRequest(input, options, cb) {
         error.name = "DNSException";
         error.code = "ENOTFOUND";
         error.syscall = "getaddrinfo";
+        error.hostname = host;
         process.nextTick((self, err) => self.emit("error", err), this, error);
         return false;
       }

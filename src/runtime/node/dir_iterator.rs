@@ -2,14 +2,14 @@
 // The differences are:
 // - it returns errors in the expected format
 // - doesn't mark BADF as unreachable
-// - It uses PathString instead of []const u8
+// - It borrows the entry name (`RawSlice<u8>`) into the iterator buffer
 // - Windows can be configured to return []const u16
 
 #![warn(unused_must_use)]
 
 use core::mem::offset_of;
 
-use bun_core::{PathString, RawSlice, WStr};
+use bun_core::{RawSlice, WStr};
 use bun_sys::{self as sys, Fd, Tag};
 
 // `Entry.Kind` in Zig is `jsc.Node.Dirent.Kind` == `std.fs.Dir.Entry.Kind`.
@@ -34,8 +34,25 @@ impl From<IteratorError> for bun_core::Error {
 }
 
 pub struct IteratorResult {
-    pub name: PathString,
+    /// `RawSlice` invariant: borrows the iterator's `getdents` buffer
+    /// (streaming-iterator contract — invalidated on next `next()` call).
+    /// The kernel writes `d_name` NUL-terminated, so the backing has a NUL at
+    /// `[name.len()]` (see `name_assume_z`).
+    pub name: RawSlice<u8>,
     pub kind: EntryKind,
+}
+
+impl IteratorResult {
+    /// The entry name as a NUL-terminated `&ZStr` — the POSIX `d_name` is always
+    /// NUL-terminated in the `getdents` buffer (Zig parity: `PathString`'s
+    /// `slice_assume_z`).
+    #[inline]
+    pub fn name_assume_z(&self) -> &bun_core::ZStr {
+        let s = self.name.slice();
+        // SAFETY: `d_name` is NUL-terminated by the kernel; `name` points at it
+        // with len excluding the NUL, so `[len] == 0`.
+        unsafe { bun_core::ZStr::from_raw(s.as_ptr(), s.len()) }
+    }
 }
 pub type Result = sys::Result<Option<IteratorResult>>;
 
@@ -222,7 +239,7 @@ mod platform {
                     _ => EntryKind::Unknown,
                 };
                 return Ok(Some(IteratorResult {
-                    name: PathString::init(name),
+                    name: RawSlice::new(name),
                     kind: entry_kind,
                 }));
             }
@@ -322,7 +339,7 @@ mod platform {
                     _ => EntryKind::Unknown,
                 };
                 return Ok(Some(IteratorResult {
-                    name: PathString::init(name),
+                    name: RawSlice::new(name),
                     kind: entry_kind,
                 }));
             }
@@ -429,7 +446,7 @@ mod platform {
                     _ => EntryKind::Unknown,
                 };
                 return Ok(Some(IteratorResult {
-                    name: PathString::init(name),
+                    name: RawSlice::new(name),
                     kind: entry_kind,
                 }));
             }
@@ -494,7 +511,7 @@ mod platform {
             // Trust that Windows gives us valid UTF-16LE
             let name_utf8 = strings::paths::from_w_path(&mut name_data[..], dir_info_name);
             IteratorResult {
-                name: PathString::init(name_utf8.as_bytes()),
+                name: RawSlice::new(name_utf8.as_bytes()),
                 kind,
             }
         }
@@ -847,7 +864,7 @@ mod platform {
                     _ => EntryKind::Unknown,
                 };
                 return Ok(Some(IteratorResult {
-                    name: PathString::init(name),
+                    name: RawSlice::new(name),
                     kind: entry_kind,
                 }));
             }

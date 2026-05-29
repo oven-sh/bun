@@ -44,24 +44,6 @@ pub use package_json::PackageJSON;
 /// Re-export real `TSConfigJSON`.
 pub use tsconfig_json::TSConfigJSON;
 
-/// Expose the process-lifetime backing of a `PathString` as `&'static [u8]`.
-///
-/// Every `PathString::init` in this crate is fed a slice returned from
-/// `FilenameStore::append_*` / `DirnameStore::append_*`, both of which are
-/// `'static` BSS singletons that never free (LIFETIMES.tsv:
-/// `resolver/fs.zig:Entry.abs_path → STATIC`). Centralizing the lifetime
-/// extension here removes the per-call-site erasure.
-///
-/// TODO(port): once `bun_core::PathString::slice` is changed to return
-/// `&'static [u8]` directly, this helper becomes a no-op forwarder.
-#[inline(always)]
-pub(crate) fn path_string_static(ps: &bun_core::PathString) -> &'static [u8] {
-    // SAFETY: see fn doc — `PathString` always points into a process-lifetime
-    // BSS append-only store (`FilenameStore`/`DirnameStore`); the bytes outlive
-    // the program. `Interned` is the canonical proof type for this widen.
-    unsafe { bun_ptr::Interned::assume(ps.slice()) }.as_bytes()
-}
-
 // Re-export the resolver implementation. `Resolver`, `Result`, `MatchResult`,
 // `PathPair`, `DebugLogs`, `SideEffects`, etc. are defined in the `resolver` /
 // `result` / `standalone_module_graph` sibling modules.
@@ -675,8 +657,8 @@ pub mod fs {
     };
 
     use bun_core::Generation;
-    use bun_core::PathString;
     use bun_paths::strings;
+    use bun_ptr::Interned;
     use bun_sys::Fd;
     use bun_threading::Mutex;
 
@@ -1336,7 +1318,7 @@ pub mod fs {
 
             let mut cache = EntryCache {
                 kind: EntryKind::File,
-                symlink: PathString::EMPTY,
+                symlink: Interned::EMPTY,
                 fd: Fd::INVALID,
             };
 
@@ -1431,7 +1413,8 @@ pub mod fs {
 
                 let mut buf2 = bun_paths::path_buffer_pool::get();
                 if let Ok(real) = bun_sys::get_fd_path(Fd::from_system(handle), &mut buf2) {
-                    cache.symlink = PathString::init(FilenameStore::instance().append_slice(real)?);
+                    cache.symlink =
+                        Interned::from_static(FilenameStore::instance().append_slice(real)?);
                 }
                 return Ok(cache);
             }
@@ -1493,7 +1476,7 @@ pub mod fs {
                 };
                 if !symlink.is_empty() {
                     cache.symlink =
-                        PathString::init(FilenameStore::instance().append_slice(symlink)?);
+                        Interned::from_static(FilenameStore::instance().append_slice(symlink)?);
                 }
 
                 Ok(cache)

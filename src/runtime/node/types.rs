@@ -913,7 +913,7 @@ pub fn js_assert_encoding_valid(
 // ──────────────────────────────────────────────────────────────────────────
 
 pub enum PathOrBuffer {
-    Path(bun_core::PathString),
+    Path(bun_core::RawSlice<u8>),
     Buffer(Buffer),
 }
 

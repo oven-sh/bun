@@ -2008,8 +2008,8 @@ impl FilePollRef {
 
 /// Moved from `bun_runtime::webcore::PathOrFileDescriptor`.
 /// Owned here so `open_for_writing` has no upward dep; runtime re-exports it.
-pub enum PathOrFileDescriptor {
-    Path(bun_core::PathString),
+pub enum PathOrFileDescriptor<'a> {
+    Path(&'a [u8]),
     Fd(Fd),
 }
 

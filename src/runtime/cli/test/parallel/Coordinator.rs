@@ -10,9 +10,10 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::io::Write as _;
 
+use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_core::{PathString, strings};
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_ptr::Interned;
 use bun_sys::FdExt as _;
 
 use super::frame::{self, Frame};
@@ -30,7 +31,7 @@ pub struct Coordinator<'a> {
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     pub event_loop_handle: bun_jsc::EventLoopHandle,
     pub reporter: &'a mut CommandLineReporter,
-    pub files: Vec<PathString>,
+    pub files: Vec<Interned>,
     pub cwd: &'a [u8],
     // [:null]?[*:0]const u8 — null-sentinel-terminated slice of C strings;
     // backing storage has a null at [len] for execve-style consumers.
@@ -233,7 +234,7 @@ impl<'a> Coordinator<'a> {
             return w.shutdown();
         }
         if let Some(idx) = w.range.pop_front() {
-            return w.dispatch(idx, self.files[idx as usize].slice());
+            return w.dispatch(idx, self.files[idx as usize].as_bytes());
         }
         // Steal the back half of the largest remaining range as a contiguous
         // block. The thief walks it forward via popFront, so both workers keep
@@ -252,7 +253,7 @@ impl<'a> Coordinator<'a> {
             if let Some(stolen) = v.range.steal_back_half() {
                 w.range = stolen;
                 if let Some(idx) = w.range.pop_front() {
-                    return w.dispatch(idx, self.files[idx as usize].slice());
+                    return w.dispatch(idx, self.files[idx as usize].as_bytes());
                 }
             }
         }
@@ -292,7 +293,7 @@ impl<'a> Coordinator<'a> {
     pub(crate) fn rel_path(&self, file_idx: u32) -> &[u8] {
         bun_paths::resolve_path::relative(
             bun_paths::fs::FileSystem::instance().top_level_dir(),
-            self.files[file_idx as usize].slice(),
+            self.files[file_idx as usize].as_bytes(),
         )
     }
 
@@ -635,7 +636,7 @@ impl<'a> Coordinator<'a> {
                     // since `self.workers` is mutably borrowed.
                     bstr::BStr::new(bun_paths::resolve_path::relative(
                         bun_paths::fs::FileSystem::instance().top_level_dir(),
-                        self.files[idx as usize].slice(),
+                        self.files[idx as usize].as_bytes(),
                     )),
                     bstr::BStr::new(reason),
                 ));

@@ -9222,11 +9222,11 @@ pub enum WriteFileEncoding {
     Buffer,
 }
 /// Target — path (relative to `dirfd`) or an already-open fd.
-pub enum PathOrFileDescriptor {
-    Path(bun_core::PathString),
+pub enum PathOrFileDescriptor<'a> {
+    Path(&'a [u8]),
     Fd(Fd),
 }
-impl Default for PathOrFileDescriptor {
+impl Default for PathOrFileDescriptor<'_> {
     fn default() -> Self {
         PathOrFileDescriptor::Fd(Fd::INVALID)
     }
@@ -9236,7 +9236,7 @@ pub struct WriteFileArgs<'a> {
     pub data: WriteFileData<'a>,
     pub encoding: WriteFileEncoding,
     pub dirfd: Fd,
-    pub file: PathOrFileDescriptor,
+    pub file: PathOrFileDescriptor<'a>,
     pub mode: Mode,
 }
 impl<'a> Default for WriteFileArgs<'a> {
@@ -9259,8 +9259,7 @@ pub fn write_file_with_path_buffer(
     let WriteFileData::Buffer { buffer } = args.data;
     let fd = match args.file {
         PathOrFileDescriptor::Fd(fd) => fd,
-        PathOrFileDescriptor::Path(ref p) => {
-            let bytes = p.slice();
+        PathOrFileDescriptor::Path(bytes) => {
             if bytes.len() >= path_buf.0.len() {
                 return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(bytes));
             }

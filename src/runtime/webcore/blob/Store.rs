@@ -264,8 +264,8 @@ impl StoreExt for Store {
                 writer.write_int_le::<u32>(slice.len() as u32)?;
                 writer.write_all(slice)?;
 
-                writer.write_int_le::<u32>(bytes.stored_name.slice().len() as u32)?;
-                writer.write_all(bytes.stored_name.slice())?;
+                writer.write_int_le::<u32>(bytes.stored_name.len() as u32)?;
+                writer.write_all(&bytes.stored_name)?;
             }
         }
         Ok(())

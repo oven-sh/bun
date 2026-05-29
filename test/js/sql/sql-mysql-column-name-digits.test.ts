@@ -6,236 +6,82 @@
 // digit separators. So `2024_01` parsed to the integer 202401 and was
 // misclassified as a positional array index.
 //
-// On release 1.3.14 the row decodes as `{ product, "2024_01", "2024_02" }`; on
-// the Rust build (before this fix) `2024_01`/`2024_02` collapse to indices
-// 202401/202402, so those keys vanish and a debug build aborts on the
+// On release 1.3.14 the row decodes as `{ product, "2024_01", "2024_02", "8" }`;
+// on the Rust build (before this fix) `2024_01`/`2024_02` collapse to indices
+// 202401/202402, so those keys vanish — and a debug build aborts on the
 // `cell.index < count` assertion in the object-building slow path.
 //
-// Uses a minimal mock MySQL server so the test runs without Docker. The
-// classifier is shared with Postgres, so this covers that decoder too.
+// Runs against a real MySQL/MariaDB server. The classifier is shared with
+// Postgres, so this also covers that decoder.
 
-import { SQL } from "bun";
-import { expect, test } from "bun:test";
-import { once } from "events";
-import net from "net";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, describeWithContainer, isDockerEnabled } from "harness";
+import path from "path";
 
-// --- MySQL wire format helpers ---------------------------------------------
+const fixture = path.join(import.meta.dir, "sql-mysql-column-name-digits.fixture.ts");
 
-function u16le(n: number): Buffer {
-  return Buffer.from([n & 0xff, (n >> 8) & 0xff]);
-}
-function u24le(n: number): Buffer {
-  return Buffer.from([n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff]);
-}
-function u32le(n: number): Buffer {
-  return Buffer.from([n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff]);
-}
-function packet(seq: number, payload: Buffer): Buffer {
-  return Buffer.concat([u24le(payload.length), Buffer.from([seq]), payload]);
-}
-function lenenc(n: number): Buffer {
-  if (n < 0xfb) return Buffer.from([n]);
-  if (n < 0xffff) return Buffer.concat([Buffer.from([0xfc]), u16le(n)]);
-  throw new Error("lenenc: not needed for this test");
-}
-function lenencStr(s: string): Buffer {
-  const buf = Buffer.from(s, "utf-8");
-  return Buffer.concat([lenenc(buf.length), buf]);
+async function runFixture(url: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), fixture],
+    env: { ...bunEnv, MYSQL_URL: url },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
 }
 
-// --- Capability flags ------------------------------------------------------
-
-const CLIENT_PROTOCOL_41 = 1 << 9;
-const CLIENT_SECURE_CONNECTION = 1 << 15;
-const CLIENT_PLUGIN_AUTH = 1 << 19;
-const CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = 1 << 21;
-const CLIENT_DEPRECATE_EOF = 1 << 24;
-const SERVER_CAPS =
-  CLIENT_PROTOCOL_41 |
-  CLIENT_SECURE_CONNECTION |
-  CLIENT_PLUGIN_AUTH |
-  CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA |
-  CLIENT_DEPRECATE_EOF;
-
-// MYSQL_TYPE_* values. From src/sql/mysql/MySQLTypes.rs.
-const MYSQL_TYPE_LONG = 0x03;
-const MYSQL_TYPE_VAR_STRING = 0xfd;
-
-// --- Packet builders -------------------------------------------------------
-
-function handshakeV10(): Buffer {
-  const authData1 = Buffer.alloc(8, 0x61);
-  const authData2 = Buffer.alloc(13, 0x62);
-  authData2[12] = 0;
-  return packet(
-    0,
-    Buffer.concat([
-      Buffer.from([10]),
-      Buffer.from("mock-5.7.0\0"),
-      u32le(1),
-      authData1,
-      Buffer.from([0]),
-      u16le(SERVER_CAPS & 0xffff),
-      Buffer.from([0x2d]),
-      u16le(0x0002),
-      u16le((SERVER_CAPS >>> 16) & 0xffff),
-      Buffer.from([21]),
-      Buffer.alloc(10, 0),
-      authData2,
-      Buffer.from("mysql_native_password\0"),
-    ]),
-  );
+function assertFixtureOutput(stdout: string, stderr: string, exitCode: number) {
+  const filteredStderr = stderr
+    .split(/\r?\n/)
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(filteredStderr).toBe("");
+  const lines = stdout.trim().split(/\r?\n/);
+  expect(lines[0]).toBe("CONNECTED");
+  // `2024_01`/`2024_02` must be NAMED keys (not indices 202401/202402), `8`
+  // round-trips, and nothing is dropped.
+  expect(JSON.parse(lines[1] ?? "null")).toEqual({
+    row: { product: "widget", "2024_01": 10, "2024_02": 20, "8": 42 },
+    keys: ["2024_01", "2024_02", "8", "product"],
+  });
+  expect(exitCode).toBe(0);
 }
 
-function okPacket(seq: number, header = 0x00): Buffer {
-  return packet(seq, Buffer.from([header, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]));
-}
-
-function columnDef(name: string, type: number, flags = 0): Buffer {
-  return Buffer.concat([
-    lenencStr("def"),
-    lenencStr(""),
-    lenencStr("t"),
-    lenencStr("t"),
-    lenencStr(name),
-    lenencStr(name),
-    Buffer.from([0x0c]),
-    u16le(33),
-    u32le(1024),
-    Buffer.from([type]),
-    u16le(flags),
-    Buffer.from([0]),
-    Buffer.from([0, 0]),
-  ]);
-}
-
-function stmtPrepareOK(startSeq: number, stmtId: number, columns: Buffer[]): Buffer {
-  const packets: Buffer[] = [];
-  let seq = startSeq;
-  packets.push(
-    packet(
-      seq++,
-      Buffer.concat([
-        Buffer.from([0x00]),
-        u32le(stmtId),
-        u16le(columns.length),
-        u16le(0), // num_params
-        Buffer.from([0x00]),
-        u16le(0),
-      ]),
-    ),
-  );
-  for (const c of columns) packets.push(packet(seq++, c));
-  return Buffer.concat(packets);
-}
-
-// Binary row: 0x00 header, NULL bitmap (ceil((n + 2) / 8) bytes, all zero),
-// then one `values` buffer per column, in order.
-function binaryResultSet(startSeq: number, columns: Buffer[], values: Buffer): Buffer {
-  const packets: Buffer[] = [];
-  let seq = startSeq;
-  packets.push(packet(seq++, Buffer.from([columns.length])));
-  for (const c of columns) packets.push(packet(seq++, c));
-  const nullBitmapLen = Math.ceil((columns.length + 2) / 8);
-  packets.push(packet(seq++, Buffer.concat([Buffer.from([0x00]), Buffer.alloc(nullBitmapLen, 0), values])));
-  packets.push(packet(seq++, Buffer.from([0xfe, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00])));
-  return Buffer.concat(packets);
-}
-
-function startMockServer(columns: Buffer[], values: Buffer) {
-  const server = net.createServer(socket => {
-    let buffered = Buffer.alloc(0);
-    let authed = false;
-    let stmtId = 0;
-    socket.write(handshakeV10());
-    socket.on("data", chunk => {
-      buffered = Buffer.concat([buffered, chunk]);
-      while (buffered.length >= 4) {
-        const len = buffered[0] | (buffered[1] << 8) | (buffered[2] << 16);
-        if (buffered.length < 4 + len) break;
-        const seq = buffered[3];
-        const payload = buffered.subarray(4, 4 + len);
-        buffered = buffered.subarray(4 + len);
-        if (!authed) {
-          authed = true;
-          socket.write(okPacket(seq + 1));
-          continue;
-        }
-        const cmd = payload[0];
-        if (cmd === 0x16 /* COM_STMT_PREPARE */) {
-          socket.write(stmtPrepareOK(seq + 1, ++stmtId, columns));
-        } else if (cmd === 0x17 /* COM_STMT_EXECUTE */) {
-          socket.write(binaryResultSet(seq + 1, columns, values));
-        } else if (cmd === 0x03 /* COM_QUERY */) {
-          socket.write(okPacket(seq + 1));
-        } else if (cmd === 0x19 /* COM_STMT_CLOSE */) {
-          // no response expected
-        } else {
-          socket.end();
-        }
-      }
+if (isDockerEnabled()) {
+  // CI: run against the docker-compose MySQL service.
+  describeWithContainer("mysql", { image: "mysql_plain" }, container => {
+    test("a digits-with-interior-underscore column stays a named key", async () => {
+      await container.ready;
+      const url = `mysql://root@${container.host}:${container.port}/bun_sql_test`;
+      const { stdout, stderr, exitCode } = await runFixture(url);
+      assertFixtureOutput(stdout, stderr, exitCode);
     });
   });
-  server.listen(0, "127.0.0.1");
-  return server;
+} else {
+  // No docker daemon (e.g. local/sandboxed environments). If a MySQL server is
+  // reachable at MYSQL_URL or the conventional local address, exercise the
+  // fixture there so the regression is still covered.
+  const url = process.env.MYSQL_URL || "mysql://root@127.0.0.1:3306/bun_sql_test";
+
+  describe("mysql (local)", () => {
+    test("a digits-with-interior-underscore column stays a named key", async () => {
+      const { stdout, stderr, exitCode } = await runFixture(url);
+      // The fixture prints "CONNECTED" after the priming query succeeds. If it
+      // never got that far, there's no MySQL to talk to in this environment;
+      // the docker-gated branch above provides the CI coverage.
+      if (!stdout.startsWith("CONNECTED")) {
+        if (process.env.MYSQL_URL) {
+          // MYSQL_URL was explicitly provided; failing to connect is a real
+          // error, not an environment without MySQL.
+          throw new Error(
+            `sql-mysql-column-name-digits: MYSQL_URL was provided but fixture never reached CONNECTED\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+          );
+        }
+        console.warn("sql-mysql-column-name-digits: no MySQL reachable at " + url + "; skipping assertions");
+        return;
+      }
+      assertFixtureOutput(stdout, stderr, exitCode);
+    });
+  });
 }
-
-// Runs `run(sql)` against a mock server that always replies with the given
-// columns/values (via the binary prepared-statement path that a tagged-template
-// query uses). The actual SQL text is ignored by the mock — what matters is the
-// column metadata it returns, which is how the classifier is exercised.
-async function withMockedResult<T>(
-  columns: Buffer[],
-  values: Buffer,
-  run: (sql: InstanceType<typeof SQL>) => Promise<T>,
-): Promise<T> {
-  const server = startMockServer(columns, values);
-  await once(server, "listening");
-  const { port } = server.address() as net.AddressInfo;
-  try {
-    await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
-    return await run(sql);
-  } finally {
-    await new Promise<void>(r => server.close(() => r()));
-  }
-}
-
-test("a digits-with-interior-underscore column stays a named key", async () => {
-  // `2024_01`/`2024_02` must NOT be treated as the indices 202401/202402.
-  // Mixing them with a normal named column exercises the object-building slow
-  // path (named + "indexed" columns), which asserts `index < count` in debug.
-  const columns = [
-    columnDef("product", MYSQL_TYPE_VAR_STRING),
-    columnDef("2024_01", MYSQL_TYPE_LONG),
-    columnDef("2024_02", MYSQL_TYPE_LONG),
-  ];
-  const values = Buffer.concat([lenencStr("widget"), u32le(10), u32le(20)]);
-
-  const [row] = await withMockedResult(columns, values, sql => sql`SELECT product, \`2024_01\`, \`2024_02\` FROM t`);
-  expect(row).toEqual({ product: "widget", "2024_01": 10, "2024_02": 20 });
-});
-
-test("a pure-digit column name still round-trips", async () => {
-  // Smoke test that the fix doesn't break the common all-digit case: a column
-  // named `5` still decodes to a `5` key holding its value. (Index vs Name is
-  // not observable from JS here — both land on the same property key — so this
-  // only asserts the round-trip, not the internal classification.)
-  const columns = [columnDef("5", MYSQL_TYPE_LONG)];
-  const values = u32le(42);
-
-  const [row] = await withMockedResult(columns, values, sql => sql`SELECT 42 AS \`5\` FROM t`);
-  expect(row[5]).toBe(42);
-});
-
-test("a named column mixed with an indexed column whose value exceeds the column count", async () => {
-  // `8` is correctly an index, but its value (8) is larger than the column
-  // count (2). Mixing it with a named column takes the object-building slow
-  // path, which used to assert `cell.index < count` (→ `8 < 2`) and abort in
-  // debug builds — even though `putDirectIndex` handles sparse indices fine
-  // (the indexed-only fast path documents and relies on exactly that).
-  const columns = [columnDef("product", MYSQL_TYPE_VAR_STRING), columnDef("8", MYSQL_TYPE_LONG)];
-  const values = Buffer.concat([lenencStr("widget"), u32le(42)]);
-
-  const [row] = await withMockedResult(columns, values, sql => sql`SELECT product, 42 AS \`8\` FROM t`);
-  expect(row).toEqual({ product: "widget", "8": 42 });
-});

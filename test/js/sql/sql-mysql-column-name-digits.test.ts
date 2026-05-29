@@ -16,8 +16,8 @@
 
 import { SQL } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, describeWithContainer, isDockerEnabled, isLinux } from "harness";
 import { existsSync } from "fs";
+import { bunEnv, bunExe, describeWithContainer, isDockerEnabled, isLinux } from "harness";
 import path from "path";
 
 const fixture = path.join(import.meta.dir, "sql-mysql-column-name-digits.fixture.ts");

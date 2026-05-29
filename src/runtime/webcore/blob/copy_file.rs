@@ -844,7 +844,11 @@ impl<'a> CopyFile<'a> {
             // read/write loop fallback reads from it too. Seek to the slice
             // start so the destination begins at the right byte rather than the
             // start of the backing file.
-            if self.offset > 0 {
+            //
+            // Only regular files are seekable: a pipe/FIFO/socket/char-device
+            // source returns ESPIPE from lseek (a stream has no "offset"), so
+            // skip the seek there and copy from the current position.
+            if self.offset > 0 && bun_sys::S::ISREG(stat.st_mode as _) {
                 if let bun_sys::Result::Err(err) =
                     bun_sys::lseek(self.source_fd, self.offset as i64, libc::SEEK_SET)
                 {
@@ -1057,6 +1061,12 @@ pub struct CopyFileWindows<'a> {
     /// For mkdirp
     pub err: Option<bun_sys::Error>,
 
+    /// Whether the source is a regular (seekable) file. A pipe/FIFO/socket/
+    /// char-device source can't honor an offset, so positioned reads and the
+    /// finite-size clamp are skipped for it. Defaults to `true` until the source
+    /// is stat'd (a path-backed blob we open is a regular file).
+    pub source_is_seekable: bool,
+
     /// When we are unable to get the original file path, we do a read-write loop that uses libuv.
     pub read_write_loop: ReadWriteLoop,
 }
@@ -1129,7 +1139,13 @@ impl<'a> CopyFileWindows<'a> {
         let source_fd = self.read_write_loop.source_fd;
         // Positioned read: start at the slice offset (read_pos seeded with it)
         // so the destination begins at the right byte instead of file start.
-        let read_pos = i64::try_from(self.read_write_loop.read_pos).expect("int cast");
+        // Only regular files are seekable — a pipe/FIFO/socket/char device has
+        // no random access, so read from the current position (-1) there.
+        let read_pos = if self.source_is_seekable {
+            i64::try_from(self.read_write_loop.read_pos).expect("int cast")
+        } else {
+            -1
+        };
         let loop_ = self.event_loop.uv_loop();
 
         // This io_request is used for both reading and writing.
@@ -1383,6 +1399,7 @@ impl<'a> CopyFileWindows<'a> {
             size: size_,
             written_bytes: 0,
             err: None,
+            source_is_seekable: true,
             read_write_loop: ReadWriteLoop {
                 read_pos: offset_,
                 ..ReadWriteLoop::default()
@@ -1486,17 +1503,18 @@ impl<'a> CopyFileWindows<'a> {
         }
     }
 
-    /// Clamp a finite slice window (`size != MAX_SIZE`) to the bytes actually
-    /// available in the source, mirroring the POSIX path's `fstat`-based
+    /// Stat the source to (1) record whether it's a regular, seekable file and
+    /// (2) clamp a finite slice window (`size != MAX_SIZE`) to the bytes
+    /// actually available, mirroring the POSIX path's `fstat`-based
     /// `max_length = min(st_size, end).max(offset) - offset`. A file blob is
     /// lazy (`size == MAX_SIZE` until stat), so `slice(start, end)` can request
-    /// an `end` past EOF; without this the read/write loop would write the real
-    /// bytes but `on_complete` would then extend the destination up to the
+    /// an `end` past EOF; without the clamp the read/write loop would write the
+    /// real bytes but `on_complete` would then extend the destination up to the
     /// unclamped length with NUL padding (and resolve with it).
-    fn clamp_size_to_source(&mut self) {
-        if self.size == MAX_SIZE {
-            return;
-        }
+    ///
+    /// A non-regular source (pipe/FIFO/socket/char device) has no size and no
+    /// seekable offset, so neither the clamp nor positioned reads apply to it.
+    fn prepare_source_window(&mut self) {
         let source = &self.source_file_store.data.as_file();
         let stat_result = if let PathOrFileDescriptor::Fd(fd) = &source.pathlike {
             bun_sys::fstat(*fd)
@@ -1505,16 +1523,26 @@ impl<'a> CopyFileWindows<'a> {
             bun_sys::stat(source.pathlike.path().slice_z(&mut path_buf))
         };
         if let bun_sys::Result::Ok(stat) = stat_result {
-            // Windows `uv_stat_t::st_size` is u64, matching `SizeType`.
-            let available: SizeType = stat.st_size.saturating_sub(self.offset);
-            self.size = self.size.min(available);
+            self.source_is_seekable = bun_sys::S::ISREG(stat.st_mode as _);
+            if self.source_is_seekable {
+                if self.size != MAX_SIZE {
+                    // Windows `uv_stat_t::st_size` is u64, matching `SizeType`.
+                    let available: SizeType = stat.st_size.saturating_sub(self.offset);
+                    self.size = self.size.min(available);
+                }
+            } else {
+                // A stream has no seekable offset or knowable length; copy it
+                // whole (read to EOF, never truncate) rather than honoring a
+                // slice window that can't be applied.
+                self.size = MAX_SIZE;
+            }
         }
     }
 
     fn copyfile(&mut self) {
-        // A finite slice can request an end past the source EOF; clamp it to the
-        // real available bytes before anything decides how much to copy/truncate.
-        self.clamp_size_to_source();
+        // Record source seekability and clamp a finite slice to the real
+        // available bytes before anything decides how much to copy/truncate.
+        self.prepare_source_window();
 
         // uv_fs_copyfile always copies the whole source file; it can't honor a
         // slice offset. A sliced source blob must go through the positioned

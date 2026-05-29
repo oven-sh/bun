@@ -1,6 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
 import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { mkfifo } from "mkfifo";
 import path, { join } from "path";
 
 let i = 0;
@@ -308,6 +309,40 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(out).toEqual(buf.slice(start, end));
       expect(out.length).toBe(end - start);
       expect(exitCode).toBe(0);
+    });
+
+    // A pipe/FIFO/socket/char device is not seekable — lseek returns ESPIPE —
+    // so a sliced source fd must NOT attempt the seek. Before the fix this hit
+    // ESPIPE from lseek; now the seek is skipped for non-regular files and the
+    // copy is handled by the normal file-type dispatch (file<>file with a
+    // non-regular source is a separate, pre-existing "not supported" case, but
+    // it must fail cleanly, never with a seek error). mkfifo is POSIX-only.
+    it.skipIf(isWindows)("sliced source from a non-seekable fd (FIFO) never fails with a seek error", async () => {
+      using dir = tempDir("bun-write-file-slice-fifo", {});
+      const fifo = join(String(dir), "src.fifo");
+      const dst = join(String(dir), "dst.txt");
+      mkfifo(fifo);
+      // Open read+write so opening the FIFO doesn't block on a peer, and the fd
+      // is a genuine non-seekable (ISFIFO) source.
+      const fd = fs.openSync(fifo, fs.constants.O_RDWR);
+      try {
+        fs.writeSync(fd, alphabet);
+        let err;
+        try {
+          await Bun.write(dst, Bun.file(fd).slice(5, 10));
+        } catch (e) {
+          err = e;
+        }
+        // The one thing that must not happen: a seek failure. (ESPIPE is what
+        // lseek(2) returns on a pipe.) Either the copy succeeds or it reports
+        // the pre-existing non-regular-file rejection — never a bad seek.
+        if (err) {
+          expect(err.syscall).not.toBe("lseek");
+          expect(err.code).not.toBe("ESPIPE");
+        }
+      } finally {
+        fs.closeSync(fd);
+      }
     });
   });
 

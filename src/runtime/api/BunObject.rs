@@ -2048,7 +2048,6 @@ pub(crate) fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> 
     Ok(array)
 }
 
-
 pub(crate) fn get_semver(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     bun_semver_jsc::SemverObject::create(global_this)
 }

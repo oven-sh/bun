@@ -774,6 +774,25 @@ pub(crate) fn to_bytes(
 
         let dest_path = bun_core::strings::remove_leading_dot_slash(&output_file.dest_path);
 
+        // Normalize `\` → `/` in the embedded path on Windows. The path
+        // template printer emits native separators into `dest_path`
+        // (`PathTemplate::write_replacing_slashes_on_windows`), so a nested
+        // asset's `dest_path` is e.g. `assets\nested\data.txt`, while the
+        // runtime lookup (`find_assume_standalone_path`) normalizes the
+        // requested path to `/` before indexing `self.files`. Storing the key
+        // with backslashes would make that lookup miss (ENOENT). The Zig
+        // original achieved the same `/`-normalized key as a side effect of
+        // mutating the shared `dest_path` buffer in place while emitting the
+        // import binding (`Chunk.zig` `platformToPosixInPlace`); the Rust port
+        // normalizes a scratch copy there instead (`Chunk.rs`), leaving
+        // `dest_path` untouched, so do the normalization here at the point the
+        // stored key is built.
+        #[cfg(windows)]
+        let mut dest_path_buf = PathBuffer::uninit();
+        #[cfg(windows)]
+        let dest_path: &[u8] =
+            path::resolve_path::platform_to_posix_buf::<u8>(dest_path, &mut dest_path_buf);
+
         let bytecode: StringPointer = 'brk: {
             if output_file.bytecode_index != u32::MAX {
                 // Bytecode alignment for JSC bytecode cache deserialization.

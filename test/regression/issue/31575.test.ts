@@ -82,16 +82,17 @@ test("bun build --compile keeps the asset [dir] in Bun.embeddedFiles[].name (iss
     console.error("run stderr:", runStderr);
   }
   // Before the fix, reading the nested import path threw ENOENT on Windows
-  // because the embedded blob was registered under the flattened name.
-  // (stderr is only asserted for the error signal — debug builds emit an
-  // unrelated `hintSourcePagesDontNeed` madvise note here.)
+  // because the embedded key was stored with backslashes while the lookup
+  // normalizes to `/`. (stderr is only asserted for the error signal — debug
+  // builds emit an unrelated `hintSourcePagesDontNeed` madvise note here.)
   expect(runStderr).not.toContain("ENOENT");
-  expect(runExit).toBe(0);
 
   const result = JSON.parse(runStdout.trim());
 
   // The embedded-asset name must keep the `assets/nested/` directory from the
-  // `[dir]/[name].[ext]` template. Before the fix this was `["data.txt"]`.
+  // `[dir]/[name].[ext]` template. Before the fix this was `["data.txt"]`. The
+  // separator is `/` on every platform: the stored key is posix-normalized so
+  // the runtime lookup (which also normalizes to `/`) can find it.
   expect(result.name).toEqual(["assets/nested/data.txt"]);
 
   // ...and it must agree with the `with { type: "file" }` import binding, which
@@ -102,4 +103,7 @@ test("bun build --compile keeps the asset [dir] in Bun.embeddedFiles[].name (iss
   // The content read through the import path must succeed (this is what threw
   // ENOENT on Windows before the fix).
   expect(result.content).toBe("hello");
-}, 60_000);
+
+  // CLAUDE.md: assert the exit code last so stdout/stderr diffs surface first.
+  expect(runExit).toBe(0);
+});

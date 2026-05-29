@@ -1378,4 +1378,3 @@ fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::zig_string::S
         bun_core::strings::to_utf8_alloc(url),
     ))
 }
-

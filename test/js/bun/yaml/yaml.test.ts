@@ -1647,6 +1647,53 @@ folded: >
           ["dot-eof-bs", "|\nx\n...", "x\n"],
           ["dot-eof-only", "...", null],
           ["dash-eof-only", "---", null],
+          // ── Nesting depth / structural variation ──────────────────────────
+          // Deep block-map nesting (--- at columns 8, 12)
+          ["deep-3-dash", "a:\n  b:\n    c: text---\n    d: y\n", { a: { b: { c: "text---", d: "y" } } }],
+          ["deep-3-dot", "a:\n  b:\n    c: text...\n    d: y\n", { a: { b: { c: "text...", d: "y" } } }],
+          ["deep-4", "a:\n  b:\n    c:\n      d: t---\n", { a: { b: { c: { d: "t---" } } } }],
+          // Block-seq nesting
+          ["seq-2", "- - text---\n", [["text---"]]],
+          ["seq-3", "- - - text...\n", [[["text..."]]]],
+          ["seq-map-seq", "- a:\n    - b---\n    - c\n", [{ a: ["b---", "c"] }]],
+          // Mixed block↔flow
+          ["block-flow-seq", "a:\n  - [text---, x]\n", { a: [["text---", "x"]] }],
+          ["block-flow-map", "a:\n  - {k: text...}\n", { a: [{ k: "text..." }] }],
+          ["flow-in-flow", "[[text---], {k: text...}]\n", [["text---"], { k: "text..." }]],
+          ["flow-nested-3", "[[[a---]]]\n", [[["a---"]]]],
+          // Block scalar inside nesting
+          ["nested-bs", "a:\n  b: |\n    text---\n  c: x\n", { a: { b: "text---\n", c: "x" } }],
+          ["nested-bs-fold", "a:\n  b: >\n    text...\n  c: x\n", { a: { b: "text...\n", c: "x" } }],
+          ["seq-bs", "- |\n  text---\n- y\n", ["text---\n", "y"]],
+          // Quoted inside nesting
+          ["nested-sq", "a:\n  b: 'text---'\n  c: x\n", { a: { b: "text---", c: "x" } }],
+          ["nested-dq", 'a:\n  b: "text..."\n  c: x\n', { a: { b: "text...", c: "x" } }],
+          // Key position (--- as part of a key)
+          ["key-dash", "text---: v\n", { "text---": "v" }],
+          ["key-dot", "text...: v\n", { "text...": "v" }],
+          ["nested-key", "a:\n  text---: v\n", { a: { "text---": "v" } }],
+          ["explicit-key", "? text---\n: v\n", { "text---": "v" }],
+          // After anchor/tag
+          ["anchor-val", "a: &x text---\nb: *x\n", { a: "text---", b: "text---" }],
+          ["tag-val", "a: !!str text---\n", { a: "text---" }],
+          ["anchor-tag-val", "a: &x !!str text...\n", { a: "text..." }],
+          // After flow indicator (, [ {)
+          ["flow-after-comma", "[a, text---, b]\n", ["a", "text---", "b"]],
+          ["flow-after-colon", "{a: text---, b: text...}\n", { a: "text---", b: "text..." }],
+          ["flow-map-key", "{text---: v}\n", { "text---": "v" }],
+          // Multi-doc with --- as content in a doc
+          ["multidoc-content", "---\na: text---\n---\nb: text...\n", [{ a: "text---" }, { b: "text..." }]],
+          // Multi-line plain with --- on continuation (column > 0)
+          ["fold-dash", "a: text\n  ---more\n", { a: "text ---more" }],
+          ["fold-dot", "a: text\n  ...more\n", { a: "text ...more" }],
+          ["fold-dash-end", "a: text\n  more---\n", { a: "text more---" }],
+          // Multi-line plain with --- on continuation at column 0 (IS marker)
+          ["fold-col0", "a: text\n---\nb\n", [{ a: "text" }, "b"]],
+          // Seq item that's just --- (column > 0)
+          ["seq-only-dash", "- ---\n- x\n", ["---", "x"]],
+          ["seq-only-dot", "- ...\n- x\n", ["...", "x"]],
+          // Compact `- -` prefix collision
+          ["compact-dash-val", "- - ---\n", [["---"]]],
         ] as const)("%s", (_id, input, expected) => {
           if (typeof expected === "object" && expected && "throws" in expected) {
             expect(() => YAML.parse(input)).toThrow(expected.throws as string);

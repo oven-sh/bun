@@ -904,7 +904,7 @@ impl MatchedRoute {
         }
         impl<'a> ObjectInitializer for QueryObjectCreator<'a> {
             fn create(&mut self, obj: &mut JSObject, global: &JSGlobalObject) -> JsResult<()> {
-                // Stack scratch — 256 × 16-byte fat ptr × 2 ≈ 8 KiB, well within Bun's
+                // Stack scratch — 256 × (16-byte fat ptr + 24-byte BunString) ≈ 10 KiB, well within Bun's
                 // JS-thread stack budget. The Zig original parked these in
                 // `threadlocal var` purely as a zero-init convenience; porting that as a
                 // `RefCell<[&'static [u8]; 256]>` TLS slot is unsound: `iter.next()`

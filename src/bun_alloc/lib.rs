@@ -1036,7 +1036,7 @@ pub enum Tag {
 
 // `StringView` pointer-tag scheme (ZigString.zig:629) — single source of truth.
 // Flag bits live in the POINTER's high byte; untagging truncates to 53 bits.
-const SV_STATIC_BIT: usize = 1usize << 60;
+// (Bit 60 was the now-removed static bit, superseded by `Tag::StaticStringView`.)
 const SV_UTF8_BIT: usize = 1usize << 61;
 const SV_GLOBAL_BIT: usize = 1usize << 62;
 const SV_16BIT_BIT: usize = 1usize << 63;
@@ -1109,10 +1109,6 @@ impl StringView {
         (self._unsafe_ptr_do_not_use as usize) & SV_GLOBAL_BIT != 0
     }
     #[inline]
-    fn is_static(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & SV_STATIC_BIT != 0
-    }
-    #[inline]
     fn mark_utf16(&mut self) {
         self._unsafe_ptr_do_not_use =
             ((self._unsafe_ptr_do_not_use as usize) | SV_16BIT_BIT) as *const u8;
@@ -1126,11 +1122,6 @@ impl StringView {
     fn mark_global(&mut self) {
         self._unsafe_ptr_do_not_use =
             ((self._unsafe_ptr_do_not_use as usize) | SV_GLOBAL_BIT) as *const u8;
-    }
-    #[inline]
-    fn mark_static(&mut self) {
-        self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | SV_STATIC_BIT) as *const u8;
     }
 
     /// Zig `untagged`: `@ptrFromInt(@as(u53, @truncate(@intFromPtr(ptr))))`.
@@ -1611,10 +1602,6 @@ impl String {
         matches!(self.tag, Tag::StringView | Tag::StaticStringView)
             && self.view().is_globally_allocated()
     }
-    #[inline]
-    pub fn view_is_static(&self) -> bool {
-        matches!(self.tag, Tag::StringView | Tag::StaticStringView) && self.view().is_static()
-    }
     /// 8-bit byte view (latin1 or utf8). Caller must ensure `is_8bit()`.
     #[inline]
     pub fn latin1_or_utf8_slice(&self) -> &[u8] {
@@ -1675,12 +1662,6 @@ impl String {
         debug_assert!(matches!(self.tag, Tag::StringView | Tag::StaticStringView));
         // SAFETY: tag asserted; mutates flag bits in the active union field.
         unsafe { self.value.view.mark_global() }
-    }
-    #[inline]
-    pub fn mark_static(&mut self) {
-        debug_assert!(matches!(self.tag, Tag::StringView | Tag::StaticStringView));
-        // SAFETY: tag asserted; mutates flag bits in the active union field.
-        unsafe { self.value.view.mark_static() }
     }
     /// Replace the underlying view's slice in place (keeps tag bits clear).
     #[inline]

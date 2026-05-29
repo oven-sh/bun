@@ -5288,7 +5288,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let scalar_indent = self.line_indent;
         let mut text: Vec<Enc::Unit> = Vec::new();
 
-
         // PORT NOTE: labeled-switch loop
         loop {
             let c = Enc::wide(self.next());

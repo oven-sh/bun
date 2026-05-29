@@ -1,8 +1,8 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, parse } from "node:path";
-import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
 
 describe("--use-system-ca", () => {
   test("flag loads system certificates", async () => {

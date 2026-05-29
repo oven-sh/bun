@@ -1838,6 +1838,101 @@ folded: >
         });
       });
 
+      // Bugs surfaced by the multi-modal bughunt (12 finder lenses × 3 rounds).
+      // Each todo asserts the spec-correct result.
+      describe("bughunt findings", () => {
+        test.todo("NUL byte (U+0000) is not c-printable — should error, not truncate", () => {
+          // [1] c-printable excludes NUL. Currently NUL is the EOF sentinel, so
+          // input is silently truncated. Data loss / security-adjacent.
+          expect(() => YAML.parse("a: 1\x00b: 2")).toThrow();
+          expect(() => YAML.parse("key: foo\x00bar")).toThrow();
+        });
+
+        test.todo("C0/C1/DEL control characters are not c-printable — should error", () => {
+          // [1] c-printable: x09, x0A, x0D, x20-x7E, x85, xA0-D7FF, E000-FFFD,
+          // 10000-10FFFF. Currently x01-x08/x0B/x0C/x0E-x1F/x7F/x80-x84/x86-x9F
+          // are accepted as scalar content.
+          expect(() => YAML.parse("a\x01b")).toThrow();
+          expect(() => YAML.parse("a\x7Fb")).toThrow();
+          expect(() => YAML.parse("a\x80b")).toThrow();
+        });
+
+        test.todo("CRLF in quoted scalars folds as one line break (→ space)", () => {
+          // [73] b-l-folded: a single break folds to a space. Currently `\r\n`
+          // in quoted scalars produces `\n` instead.
+          expect(YAML.parse('"a\r\nb"')).toBe("a b");
+          expect(YAML.parse("'a\r\nb'")).toBe("a b");
+        });
+
+        test.todo("verbatim/named-handle tags resolve as Core-schema types", () => {
+          // [10.2] tag:yaml.org,2002:int via `!<...>` or `%TAG !y! ...` should
+          // resolve identically to `!!int`. Currently only the `!!` shorthand
+          // resolves.
+          expect(YAML.parse("!<tag:yaml.org,2002:int> 42")).toBe(42);
+          expect(YAML.parse("%TAG !y! tag:yaml.org,2002:\n---\n!y!int 42")).toBe(42);
+        });
+
+        test.todo("explicit tag on quoted scalar coerces ([10.1.1.8] resolve via tag)", () => {
+          expect(YAML.parse("!!bool 'true'")).toBe(true);
+          expect(YAML.parse('!!int "42"')).toBe(42);
+        });
+
+        test.todo("`!!int`/`!!float` validate their content", () => {
+          // [10.2.1.2]/[10.2.1.4] — the tag's regex must match.
+          expect(() => YAML.parse("!!int 1.5")).toThrow();
+          expect(() => YAML.parse("!!float 0x1f")).toThrow();
+        });
+
+        test.todo("`\\uXXXX` surrogate pairs combine ([57] ns-esc-16-bit)", () => {
+          // js-yaml/eemeli combine surrogate halves to the supplementary code
+          // point. Currently rejected.
+          expect(YAML.parse('"\\uD834\\uDD1E"')).toBe("𝄞");
+        });
+
+        test.todo("s-separate required after tag ([97] c-ns-tag-property)", () => {
+          // No whitespace between tag and content.
+          expect(() => YAML.parse("!<a>b")).toThrow();
+          expect(() => YAML.parse("!tag,x a")).toThrow();
+        });
+
+        test.todo("`%YAML`/`%TAG` directive validation", () => {
+          // [86]/[88] require arguments; [87] requires major version 1;
+          // [89] forbids duplicate handle in same document.
+          expect(() => YAML.parse("%YAML\n---\nfoo")).toThrow();
+          expect(() => YAML.parse("%YAML 2.0\n---\nfoo")).toThrow();
+          expect(() => YAML.parse("%TAG !e! tag:a:\n%TAG !e! tag:b:\n---\nfoo")).toThrow();
+        });
+
+        test.todo("§7.4.2 1024-char implicit-key limit enforced", () => {
+          const long = Buffer.alloc(1025, "a").toString();
+          expect(() => YAML.parse(`${long}: v`)).toThrow();
+          expect(() => YAML.parse(`[${long}: v]`)).toThrow();
+        });
+
+        test.todo("error message includes line:col position", () => {
+          // ParseResultError carries Pos; the JS binding discards it.
+          try { YAML.parse("a: 1\nb:\n\tc: 2"); } catch (e: any) {
+            expect(e.message).toMatch(/line\s*\d|:\d+:\d+/);
+          }
+        });
+
+        test.todo("`<<:` merge preserves source property order", () => {
+          const r: any = YAML.parse("x: &x\n  a: 1\n  b: 2\n  c: 3\ny:\n  <<: *x");
+          expect(Object.keys(r.y)).toEqual(["a", "b", "c"]);
+        });
+
+        test.todo("alias with property on prior line is rejected ([104] c-ns-alias-node)", () => {
+          // An alias node has no properties; a tag/anchor on a prior line
+          // belongs to a different node.
+          expect(() => YAML.parse("- &a 1\n- !!str\n  *a")).toThrow();
+        });
+
+        test.todo("block-scalar header rejects whitespace before chomp/indent indicator", () => {
+          // [162] c-b-block-header: no s-separate between `|`/`>` and indicators.
+          expect(() => YAML.parse("| 1\n  text")).toThrow();
+        });
+      });
+
       describe("flow comma/separator placement", () => {
         test("JSON-adjacent does not apply in flow-map value position", () => {
           // [147] flow-map value is ns-flow-node, not ns-flow-pair; [140]

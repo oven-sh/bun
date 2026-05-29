@@ -653,6 +653,15 @@ function ClientRequest(input, options, cb) {
     } else {
       connectOptions.host = this[kHost];
       connectOptions.port = this[kPort];
+      // Forward the socket-level options Node honors when connecting to the
+      // proxy authority, so a custom DNS resolver (split-horizon DNS, service
+      // discovery) and address selection work the same as the normal path.
+      // net.connect() implements the resolution itself, so no manual loop.
+      if (options.lookup !== undefined) connectOptions.lookup = options.lookup;
+      if (options.family !== undefined) connectOptions.family = options.family;
+      if (options.hints !== undefined) connectOptions.hints = options.hints;
+      if (options.localAddress !== undefined) connectOptions.localAddress = options.localAddress;
+      if (options.localPort !== undefined) connectOptions.localPort = options.localPort;
     }
 
     const isTLS = this[kProtocol] === "https:";
@@ -715,6 +724,7 @@ function ClientRequest(input, options, cb) {
       socket.removeListener("error", onError);
       socket.removeListener("close", onClose);
       this[kClearTimeout]?.();
+      // Abort is handled by onAbort → socketCloseListener, which emits 'close'.
       if (isAbortError(err)) return;
       if (err?.code === "ECONNREFUSED" || err?.code === "ConnectionRefused") {
         err = new Error("ECONNREFUSED");
@@ -724,6 +734,8 @@ function ClientRequest(input, options, cb) {
       try {
         this.emit("error", err);
       } catch {}
+      // The request is done: emit 'close' like Node does after a failed request.
+      maybeEmitClose();
     };
 
     const onClose = () => {
@@ -743,6 +755,21 @@ function ClientRequest(input, options, cb) {
         return;
       }
 
+      const headerText = buffer.toString("latin1", 0, headerEnd);
+
+      const lines = headerText.split("\r\n");
+      const statusLine = lines.shift() || "";
+      // "HTTP/1.1 200 Connection established"
+      const statusMatch = RegExpPrototypeExec.$call(CONNECT_STATUS_LINE_REGEX, statusLine);
+      if (!statusMatch) {
+        // A proxy that answers with an unparseable status line isn't a tunnel;
+        // fail the request instead of emitting 'connect' with no statusCode.
+        // onError runs before `connected` flips, so it still fires.
+        socket.destroy();
+        onError($HPE_INVALID_HEADER_TOKEN("Parse Error: Invalid header token encountered"));
+        return;
+      }
+
       connected = true;
       socket.removeListener("data", onData);
       socket.removeListener("error", onError);
@@ -750,21 +777,13 @@ function ClientRequest(input, options, cb) {
       this[kClearTimeout]?.();
       fetching = false;
 
-      const headerText = buffer.toString("latin1", 0, headerEnd);
       const head = headerEnd + 4 < buffer.length ? buffer.subarray(headerEnd + 4) : kEmptyBuffer;
       buffer = null;
 
-      const lines = headerText.split("\r\n");
-      const statusLine = lines.shift() || "";
-      // "HTTP/1.1 200 Connection established"
-      const statusMatch = RegExpPrototypeExec.$call(CONNECT_STATUS_LINE_REGEX, statusLine);
-
       const res = new IncomingMessage(null, kEmptyObject);
-      if (statusMatch) {
-        res.httpVersion = `${statusMatch[1]}.${statusMatch[2]}`;
-        res[statusCodeSymbol] = Number(statusMatch[3]);
-        res[statusMessageSymbol] = statusMatch[4] || STATUS_CODES[statusMatch[3]] || "";
-      }
+      res.httpVersion = `${statusMatch[1]}.${statusMatch[2]}`;
+      res[statusCodeSymbol] = Number(statusMatch[3]);
+      res[statusMessageSymbol] = statusMatch[4] || STATUS_CODES[statusMatch[3]] || "";
 
       const rawHeaders: string[] = [];
       const parsedHeaders: Record<string, string> = {};

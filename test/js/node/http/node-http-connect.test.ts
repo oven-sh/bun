@@ -544,20 +544,100 @@ describe("HTTP client CONNECT", () => {
     }
   });
 
-  test("http.request CONNECT emits 'error' when the proxy is unreachable", async () => {
+  test("http.request CONNECT emits 'error' then 'close' when the proxy is unreachable", async () => {
     // Bind then immediately close to obtain a port nothing listens on.
     const tmp = net.createServer();
     await once(tmp.listen(0, "127.0.0.1"), "listening");
     const { port } = tmp.address() as AddressInfo;
     await new Promise<void>(r => tmp.close(() => r()));
 
-    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const { promise, resolve, reject } = Promise.withResolvers<{ code: string; events: string[] }>();
+    const events: string[] = [];
     const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "example.com:443" });
     req.on("connect", () => reject(new Error("unexpected connect")));
-    req.on("error", err => resolve((err as NodeJS.ErrnoException).code ?? err.message));
+    let code = "";
+    req.on("error", err => {
+      events.push("error");
+      code = (err as NodeJS.ErrnoException).code ?? err.message;
+    });
+    // Node emits 'close' on the request after a failed connection.
+    req.on("close", () => {
+      events.push("close");
+      resolve({ code, events });
+    });
     req.end();
 
-    expect(await promise).toBe("ECONNREFUSED");
+    const result = await promise;
+    expect(result.code).toBe("ECONNREFUSED");
+    expect(result.events).toEqual(["error", "close"]);
+  });
+
+  test("http.request CONNECT rejects a malformed proxy status line with 'error'", async () => {
+    const proxyServer = net.createServer(socket => {
+      socket.on("error", () => {});
+      // Not a valid HTTP status line, but terminated like a header block.
+      socket.on("data", () => socket.write("garbage not http\r\nX: y\r\n\r\n"));
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const { port } = proxyServer.address() as AddressInfo;
+
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "example.com:443" });
+      req.on("connect", () => reject(new Error("unexpected connect on malformed response")));
+      req.on("error", err => resolve((err as NodeJS.ErrnoException).code ?? err.message));
+      req.end();
+
+      // Node surfaces an llhttp parse error (HPE_*). We only require that it's an
+      // error rather than a bogus tunnel, so assert the code class loosely.
+      const code = await promise;
+      expect(code).toContain("HPE_");
+    } finally {
+      await new Promise<void>(r => proxyServer.close(() => r()));
+    }
+  });
+
+  test("http.request CONNECT resolves the proxy host with a custom lookup", async () => {
+    const proxyServer = http.createServer();
+    let proxySocket: net.Socket | undefined;
+    proxyServer.on("connect", (req, clientSocket) => {
+      proxySocket = clientSocket;
+      clientSocket.on("error", () => {});
+      clientSocket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const { port } = proxyServer.address() as AddressInfo;
+
+    try {
+      let lookupCalledWith = "";
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      const req = http.request({
+        method: "CONNECT",
+        // A name that only the custom lookup can resolve.
+        host: "proxy.invalid.test",
+        port,
+        path: "example.com:443",
+        lookup: (hostname: string, _opts: any, cb: any) => {
+          lookupCalledWith = hostname;
+          // net.connect() defaults autoSelectFamily on, so the all-addresses
+          // array form is what both Node and Bun expect here.
+          cb(null, [{ address: "127.0.0.1", family: 4 }]);
+        },
+      });
+      req.on("connect", (res, socket) => {
+        socket.destroy();
+        resolve(res.statusCode);
+      });
+      req.on("error", reject);
+      req.end();
+
+      const statusCode = await promise;
+      expect(lookupCalledWith).toBe("proxy.invalid.test");
+      expect(statusCode).toBe(200);
+    } finally {
+      proxySocket?.destroy();
+      await new Promise<void>(r => proxyServer.close(() => r()));
+    }
   });
 });
 

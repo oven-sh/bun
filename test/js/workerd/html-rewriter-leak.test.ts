@@ -79,3 +79,82 @@ test.skipIf(isDebug)(
   },
   15_000,
 );
+
+// Each Element.onEndTag(fn) call heap-allocates an EndTagHandler and gcProtects
+// the JS callback. Those registrations must be released once the rewrite that
+// created them finishes — both for elements whose end tag is reached (handler
+// invoked) and for elements whose end tag never appears (handler never invoked).
+// Previously neither was ever freed, so memory grew per matching element.
+//
+// Skipped in debug for the same reason as the test above: the workload is sized
+// for release allocator behavior and debug allocation tracking drowns the signal.
+test.skipIf(isDebug)(
+  "HTMLRewriter does not leak onEndTag handler registrations",
+  async () => {
+    const code = /* js */ `
+      const closed = "<div></div>".repeat(1000);
+      const unclosed = "<div>".repeat(1000);
+
+      async function once(html) {
+        await new HTMLRewriter()
+          .on("div", {
+            element(el) {
+              el.onEndTag(() => {});
+            },
+          })
+          .transform(new Response(html))
+          .text();
+      }
+
+      async function pass() {
+        for (let i = 0; i < 25; i++) await once(closed);
+        for (let i = 0; i < 25; i++) await once(unclosed);
+        Bun.gc(true);
+        return process.memoryUsage.rss();
+      }
+
+      await pass(); await pass();
+      const before = await pass();
+      await pass(); await pass();
+      const after = await pass();
+
+      process.stdout.write(
+        JSON.stringify({ before, after, deltaMB: (after - before) / 1024 / 1024 }) + "\\n",
+      );
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", code],
+      env: {
+        ...bunEnv,
+        // Don't inherit the runner's GC_LEVEL=1 — it changes the per-pass live set.
+        BUN_GARBAGE_COLLECTOR_LEVEL: "0",
+        // ASAN's freed-block quarantine is exactly the thing that pins RSS at
+        // peak; disable it so freed handler allocations get reused across passes.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+          .filter(Boolean)
+          .join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const filteredStderr = stderr
+      .split("\n")
+      .filter(line => !line.startsWith("WARNING: ASAN interferes"))
+      .join("\n")
+      .trim();
+    expect(filteredStderr).toBe("");
+
+    const { deltaMB } = JSON.parse(stdout.trim());
+
+    // Unfixed: ~26 MB over 3 measured passes (~150k registrations at ~180 bytes
+    // each). Fixed: low single-digit MB plateau. Threshold sits at ~half the
+    // unfixed signal.
+    expect(deltaMB).toBeLessThan(13);
+    expect(exitCode).toBe(0);
+  },
+  15_000,
+);

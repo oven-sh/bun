@@ -531,6 +531,78 @@ describe("HTMLRewriter", () => {
       circle: false,
     });
   });
+
+  it("onEndTag: before/after/remove operate on the end tag", async () => {
+    const before = await new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          el.onEndTag(end => {
+            end.before("X");
+          });
+        },
+      })
+      .transform(new Response("<div>a</div><div>b"))
+      .text();
+    expect(before).toBe("<div>aX</div><div>b");
+
+    const after = await new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          el.onEndTag(end => {
+            end.after("Y", { html: true });
+          });
+        },
+      })
+      .transform(new Response("<div>a</div>z"))
+      .text();
+    expect(after).toBe("<div>a</div>Yz");
+
+    const removed = await new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          el.onEndTag(end => {
+            end.remove();
+          });
+        },
+      })
+      .transform(new Response("<div>a</div>"))
+      .text();
+    expect(removed).toBe("<div>a");
+  });
+
+  it("onEndTag: callback fires only for elements whose end tag appears", async () => {
+    let calls = 0;
+    const output = await new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          el.onEndTag(() => {
+            calls++;
+          });
+        },
+      })
+      .transform(new Response("<div>a</div><div>b<span>c</span>"))
+      .text();
+    expect(output).toBe("<div>a</div><div>b<span>c</span>");
+    expect(calls).toBe(1);
+  });
+
+  it("onEndTag: throws on void elements", async () => {
+    let error;
+    const output = await new HTMLRewriter()
+      .on("br", {
+        element(el) {
+          try {
+            el.onEndTag(() => {});
+          } catch (e) {
+            error = e;
+          }
+        },
+      })
+      .transform(new Response("<br>"))
+      .text();
+    expect(output).toBe("<br>");
+    expect(error?.message).toBe("No end tag.");
+  });
 });
 
 // By not segfaulting, this test passes

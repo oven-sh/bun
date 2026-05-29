@@ -261,9 +261,7 @@ function makeNodeEntryList(entries) {
       return sorted.filter(entry => entry.entryType === type);
     },
     getEntriesByName(name, type) {
-      return sorted.filter(
-        entry => entry.name === name && (type === undefined || entry.entryType === type),
-      );
+      return sorted.filter(entry => entry.name === name && (type === undefined || entry.entryType === type));
     },
   };
 }

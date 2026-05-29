@@ -537,9 +537,7 @@ it("setSession() should not leak the SSL_SESSION returned by d2i_SSL_SESSION", a
       // so the measurement reflects live memory.
       // Preserve the harness ASAN options (bunEnv sets allow_user_segv_handler /
       // disable_coredump) instead of rebuilding from process.env only.
-      ASAN_OPTIONS: ["quarantine_size_mb=8", bunEnv.ASAN_OPTIONS ?? process.env.ASAN_OPTIONS]
-        .filter(Boolean)
-        .join(":"),
+      ASAN_OPTIONS: ["quarantine_size_mb=8", bunEnv.ASAN_OPTIONS ?? process.env.ASAN_OPTIONS].filter(Boolean).join(":"),
     },
     stdout: "pipe",
     stderr: "pipe",

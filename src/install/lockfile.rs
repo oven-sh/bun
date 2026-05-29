@@ -653,6 +653,29 @@ impl Lockfile {
             }
         };
 
+        for res in self.packages.items_resolution() {
+            if res.tag != ResolutionTag::Git && res.tag != ResolutionTag::Github {
+                continue;
+            }
+            let resolved = self.str(&res.repository().resolved);
+            if !resolved.is_empty() && !crate::repository::is_safe_resolved_tag(resolved) {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "Invalid git dependency tag \"{}\" in bun.lockb",
+                        bstr::BStr::new(resolved)
+                    ),
+                );
+                return LoadResult::Err(LoadResultErr {
+                    step: LoadStep::ParseFile,
+                    value: err!("InvalidLockfile"),
+                    lockfile_path: zstr!("bun.lockb"),
+                    format: LockfileFormat::Binary,
+                });
+            }
+        }
+
         if cfg!(debug_assertions) {
             self.verify_data().expect("lockfile data is corrupt");
         }

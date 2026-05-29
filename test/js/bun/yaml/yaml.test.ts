@@ -1725,7 +1725,7 @@ folded: >
         });
       });
 
-      describe("? in flow context (continued)", () => {
+      describe("flow over-accepts (locked-in behavior)", () => {
         test("JSON-adjacent does not apply in flow-map value position", () => {
           // [147] flow-map value is ns-flow-node, not ns-flow-pair. These are
           // pre-existing over-accepts on main (refs error); preserved as-is.

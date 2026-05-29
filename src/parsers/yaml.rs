@@ -605,11 +605,7 @@ impl Encoding for Utf16 {
     }
     #[inline]
     fn bom_len(input: &[u16]) -> usize {
-        if input.first() == Some(&0xFEFF) {
-            1
-        } else {
-            0
-        }
+        if input.first() == Some(&0xFEFF) { 1 } else { 0 }
     }
     #[inline]
     fn as_u16_slice(s: &[u16]) -> &[u16] {
@@ -3492,9 +3488,7 @@ impl<Enc: Encoding> NodeProperties<Enc> {
 
     pub fn set_anchor(&mut self, anchor_token: Token<Enc>) -> Result<(), ParseError> {
         if let Some(previous_anchor) = &self.has_anchor {
-            if previous_anchor.line == anchor_token.line
-                || self.has_mapping_anchor.is_some()
-            {
+            if previous_anchor.line == anchor_token.line || self.has_mapping_anchor.is_some() {
                 return Err(ParseError::MultipleAnchors);
             }
             self.has_mapping_anchor = Some(previous_anchor.clone());
@@ -4357,14 +4351,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         // above already handles the same-line case; this
                         // covers the multiline-property case where they
                         // diverge.
-                        if self.context.get() == Context::FlowIn
-                            && !opts.flow_pair_allowed
-                        {
-                            break 'node scalar.data.to_expr(
-                                scalar_start,
-                                self.input,
-                                self.bump,
-                            );
+                        if self.context.get() == Context::FlowIn && !opts.flow_pair_allowed {
+                            break 'node scalar.data.to_expr(scalar_start, self.input, self.bump);
                         }
 
                         let implicit_key = scalar.data.to_expr(scalar_start, self.input, self.bump);

@@ -2395,16 +2395,20 @@ pub mod JSZlib {
             // A member's output lands in `cap - len` spare; `len` only advances
             // on Success, so the growth must double `capacity` — `reserve(cap)`
             // is relative to `len` and no-ops once `len < cap` (an infinite loop).
-            let grow_to_double_capacity = |out: &mut Vec<u8>| {
+            // Returns false once doubling would exceed the 1 GiB decompression-bomb
+            // cap. The cap is checked *after* growing, not on a fresh `capacity`,
+            // so a large input-justified initial reservation (the caller sizes
+            // `out` from the gzip ISIZE / `compressed.len()`) still decodes —
+            // matching the pre-loop `decompress_to_vec_grow`, which consulted the
+            // cap only after an `InsufficientSpace` doubling.
+            let grow_to_double_capacity = |out: &mut Vec<u8>| -> bool {
                 let target = out.capacity().max(4096).saturating_mul(2);
                 out.reserve(target.saturating_sub(out.len()));
+                out.capacity() <= 1024 * 1024 * 1024
             };
             let result = loop {
-                if out.capacity() > 1024 * 1024 * 1024 {
+                if out.spare_capacity_mut().is_empty() && !grow_to_double_capacity(out) {
                     return bun_libdeflate::Status::InsufficientSpace;
-                }
-                if out.spare_capacity_mut().is_empty() {
-                    grow_to_double_capacity(out);
                 }
                 let result = decompressor.decompress_to_vec(
                     &input[offset..],
@@ -2412,7 +2416,9 @@ pub mod JSZlib {
                     bun_libdeflate::Encoding::Gzip,
                 );
                 if result.status == bun_libdeflate::Status::InsufficientSpace {
-                    grow_to_double_capacity(out);
+                    if !grow_to_double_capacity(out) {
+                        return bun_libdeflate::Status::InsufficientSpace;
+                    }
                     continue;
                 }
                 break result;

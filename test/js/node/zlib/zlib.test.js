@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, nodeExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import * as fs from "node:fs";
 import { resolve } from "node:path";
@@ -190,6 +190,28 @@ describe("zlib", () => {
     expect(() => gunzipSync(new Uint8Array())).toThrow();
     expect(() => zlib.gunzipSync(Buffer.alloc(0))).toThrow();
   });
+
+  // Regression: a gzip stream whose compressed size exceeds 1 GiB sizes the
+  // output Vec from the input (`Vec::with_capacity(compressed.len())`, since the
+  // ISIZE hint is >= 256 MB), so the buffer enters the libdeflate loop already
+  // larger than the 1 GiB decompression-bomb cap. The cap must be checked only
+  // *after* the loop grows the buffer, not on a fresh input-justified capacity —
+  // otherwise this throws OutOfMemory before libdeflate ever runs, even though
+  // the whole output fits in the space the caller already reserved. Stored-block
+  // gzip (level 0) keeps compressed ~= input so the >1 GiB threshold is hit
+  // without a real compression pass; the payload is all zeros (fast to alloc).
+  // Allocates ~3 GiB peak, so skip on CI where runners are memory-constrained.
+  it.skipIf(isCI)(
+    "Bun.gunzipSync({ library: 'libdeflate' }) decodes an input larger than the 1 GiB bomb cap",
+    () => {
+      const n = 1024 * 1024 * 1024 + 32 * 1024 * 1024; // 1.03 GiB: compressed is > 1 GiB
+      const compressed = zlib.gzipSync(Buffer.alloc(n), { level: 0 });
+      expect(compressed.length).toBeGreaterThan(1024 * 1024 * 1024);
+      const got = gunzipSync(compressed, { library: "libdeflate" });
+      expect(got.length).toBe(n);
+    },
+    120_000,
+  );
 });
 
 function* window(buffer, size, advance = size) {

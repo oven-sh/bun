@@ -2706,7 +2706,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }) => *t,
                 _ => NodeTag::None,
             };
-            self.scan(ScanOptions { tag, ..Default::default() })?;
+            self.scan(ScanOptions {
+                tag,
+                ..Default::default()
+            })?;
             if matches!(
                 self.token.data,
                 TokenData::MappingValue
@@ -3073,8 +3076,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // enclosing block's). When reached via the implicit-pair path from a
         // flow collection (`["a": b]`), the key's column is not a block
         // boundary — pushing it would reject `["a":\nb]` per [149]/[80].
-        let pushed_block_indent =
-            !matches!(self.context.get(), Context::FlowIn | Context::FlowKey);
+        let pushed_block_indent = !matches!(self.context.get(), Context::FlowIn | Context::FlowKey);
         if pushed_block_indent {
             self.block_indents.push(mapping_indent)?;
         }

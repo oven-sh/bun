@@ -2232,7 +2232,7 @@ mod _async_tasks {
         /// All the subtasks will use this fd to open files
         pub root_fd: FD,
 
-        /// This isued when joining the file paths for error messages.
+        /// This is used when joining the file paths for error messages.
         /// Heap-owned, NUL-terminated (`[path.., 0]`); freed on drop.
         pub root_path: Box<[u8]>,
 

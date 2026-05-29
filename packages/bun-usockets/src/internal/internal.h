@@ -391,9 +391,13 @@ struct us_listen_socket_t {
   /* SNI hostname → {SSL_CTX*, user*} tree. Owned. */
   void *sni;
   /* Dynamic SNI resolver: returns the SSL_CTX to serve for `hostname` on the
-   * in-flight handshake only (the caller does not cache it), or NULL to fall
-   * through to the default context. */
-  struct ssl_ctx_st *(*on_server_name)(struct us_listen_socket_t *, const char *hostname);
+   * in-flight handshake only (the caller does not cache it), or NULL. A NULL
+   * return with `*abort_handshake` left 0 means "no override, fall through to
+   * the default context"; a NULL return with `*abort_handshake` set to 1 means
+   * the JS SNICallback threw or produced an invalid result and the handshake
+   * must be aborted with a fatal alert (fail closed, matching Node). */
+  struct ssl_ctx_st *(*on_server_name)(struct us_listen_socket_t *, const char *hostname,
+                                        int *abort_handshake);
   unsigned int socket_ext_size;
   /* kind to stamp on accepted sockets. */
   unsigned char accept_kind;

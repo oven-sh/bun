@@ -363,7 +363,8 @@ int us_ssl_parse_pkcs12(const char *data, size_t len, const char *pass,
     char **out_key, size_t *out_key_len, char **out_cert, size_t *out_cert_len,
     char **out_ca, size_t *out_ca_len, const char **err_reason);
 void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
-    struct ssl_ctx_st *(*cb)(struct us_listen_socket_t *, const char *hostname)) nonnull_fn_decl;
+    struct ssl_ctx_st *(*cb)(struct us_listen_socket_t *, const char *hostname,
+                             int *abort_handshake)) nonnull_fn_decl;
 void *us_socket_server_name_userdata(us_socket_r s);
 
 /* ── Connect ──────────────────────────────────────────────────────────────

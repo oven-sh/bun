@@ -289,7 +289,12 @@ public:
     TemplatedApp(TemplatedApp &&other) = delete;
 
 private:
-    static struct ssl_ctx_st *onMissingServerName(struct us_listen_socket_t *ls, const char *hostname) {
+    static struct ssl_ctx_st *onMissingServerName(struct us_listen_socket_t *ls, const char *hostname,
+                                                  int *abort_handshake) {
+        /* Bun.serve's HTTP SNI resolver never fails the handshake: a missing
+         * name falls through to the default context, so leave *abort_handshake
+         * at its zero-initialized "no abort" state. */
+        (void)abort_handshake;
         auto *httpContext = (HttpContext<SSL> *) us_socket_group_ext(us_listen_socket_group(ls));
         httpContext->getSocketContextData()->missingServerNameHandler(hostname);
         /* The handler is expected to have registered the name via

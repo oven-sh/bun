@@ -1872,8 +1872,16 @@ impl WindowsNamedPipeListeningContext {
 pub(crate) extern "C" fn us_dispatch_server_name(
     ls: *mut uws_sys::ListenSocket,
     hostname: *const core::ffi::c_char,
+    abort_handshake: *mut core::ffi::c_int,
 ) -> *mut c_void {
     jsc::mark_binding!();
+    // `sni_cb` zero-initializes the out-param; defensively re-clear it so every
+    // early return below leaves it at "no override, use the default context".
+    if !abort_handshake.is_null() {
+        // SAFETY: `abort_handshake` points at `sni_cb`'s stack `int` for the
+        // duration of this synchronous call.
+        unsafe { *abort_handshake = 0 };
+    }
     if ls.is_null() || hostname.is_null() {
         return core::ptr::null_mut();
     }
@@ -1919,11 +1927,22 @@ pub(crate) extern "C" fn us_dispatch_server_name(
         Err(err) => global.take_exception(err),
     };
     if let Some(err_value) = result.to_error() {
+        // The JS SNICallback threw (or reported an error through its
+        // `cb(err)`). Report it to the socket's error handler and tell `sni_cb`
+        // to abort the handshake with a fatal alert instead of serving the
+        // default certificate - Node drops the connection and emits
+        // `tlsClientError` rather than falling open.
         let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
+        if !abort_handshake.is_null() {
+            // SAFETY: see the clear at the top of this fn.
+            unsafe { *abort_handshake = 1 };
+        }
         return core::ptr::null_mut();
     }
     // The JS handler returns the native SecureContext selected by a
-    // synchronous SNICallback, or undefined to fall through to the default.
+    // synchronous SNICallback, or undefined to fall through to the default
+    // context (no SNICallback, an async callback, or a callback that resolved
+    // without a context - all benign, so `abort_handshake` stays 0).
     if let Some(sc) = SecureContext::from_js(result) {
         // SAFETY: from_js returned non-null; the SecureContext is live for the
         // call and SSL_set_SSL_CTX takes its own reference to the SSL_CTX.

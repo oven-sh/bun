@@ -563,14 +563,23 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     const cb = server?._SNICallback;
     if (typeof cb !== "function" || !servername) return undefined;
     let selected;
+    let reported;
     cb.$call(server, servername, (err, context) => {
       // Node assigns `sni_context = context.context || context` and its
       // native side ignores anything that is not a real SecureContext, so a
       // bare `{}` (or undefined) falls through to the default context.
-      if (!err && context && typeof context === "object" && context.context) {
+      if (err) {
+        // An error reported through the callback aborts the handshake the same
+        // way a thrown one does: rethrow it below so the native resolver sees
+        // an exception and returns the fatal-alert signal instead of falling
+        // through to the default certificate (matching Node, which drops the
+        // connection with tlsClientError rather than failing open).
+        reported = err;
+      } else if (context && typeof context === "object" && context.context) {
         selected = context.context;
       }
     });
+    if (reported !== undefined) throw reported;
     return selected;
   },
   close(socket, err) {

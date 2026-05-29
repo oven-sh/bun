@@ -773,6 +773,141 @@ it("destroying the socket from inside SNICallback or ALPNCallback does not crash
   expect(true).toBe(true);
 });
 
+describe("SNICallback error aborts the handshake (fail closed)", () => {
+  // Node's SelectSNIContextCallback returns SSL_TLSEXT_ERR_ALERT_FATAL when the
+  // JS SNICallback throws (or reports an error through its cb), dropping the
+  // connection with a fatal alert instead of serving the default certificate.
+  // Before the fix Bun's sni_cb always returned SSL_TLSEXT_ERR_OK, so a
+  // throwing SNICallback fell through to the default cert and the handshake
+  // completed — a fail-open divergence from Node.
+
+  it("a throwing SNICallback drops the connection instead of using the default cert", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<Error>();
+    let secureConnectionFired = false;
+    const server = tls.createServer({
+      key: cert1.key,
+      cert: cert1.cert,
+      SNICallback: () => {
+        throw new Error("Intentional SNI callback error");
+      },
+    });
+    server.on("tlsClientError", err => resolve(err));
+    server.on("secureConnection", () => {
+      secureConnectionFired = true;
+      reject(new Error("secureConnection must not fire when the SNICallback throws"));
+    });
+    await new Promise<void>(res => server.listen(0, res));
+    const { port } = server.address() as AddressInfo;
+
+    let clientConnected = false;
+    const clientDone = new Promise<void>(res => {
+      const client = tls.connect(
+        { port, host: "127.0.0.1", servername: "evil.attacker.com", rejectUnauthorized: false },
+        () => {
+          clientConnected = true;
+          client.end();
+          res();
+        },
+      );
+      client.on("error", () => res());
+      client.on("close", () => res());
+    });
+
+    try {
+      // The server aborts the handshake, so it surfaces a tlsClientError and
+      // the client never reaches a secure connection.
+      const err = await promise;
+      expect(err).toBeInstanceOf(Error);
+      await clientDone;
+      expect(clientConnected).toBe(false);
+      expect(secureConnectionFired).toBe(false);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("an SNICallback that reports cb(err) drops the connection", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<Error>();
+    let secureConnectionFired = false;
+    const server = tls.createServer({
+      key: cert1.key,
+      cert: cert1.cert,
+      SNICallback: (_servername, cb) => {
+        cb(new Error("rejected servername"), null as unknown as undefined);
+      },
+    });
+    server.on("tlsClientError", err => resolve(err));
+    server.on("secureConnection", () => {
+      secureConnectionFired = true;
+      reject(new Error("secureConnection must not fire when the SNICallback reports an error"));
+    });
+    await new Promise<void>(res => server.listen(0, res));
+    const { port } = server.address() as AddressInfo;
+
+    let clientConnected = false;
+    const clientDone = new Promise<void>(res => {
+      const client = tls.connect(
+        { port, host: "127.0.0.1", servername: "evil.attacker.com", rejectUnauthorized: false },
+        () => {
+          clientConnected = true;
+          client.end();
+          res();
+        },
+      );
+      client.on("error", () => res());
+      client.on("close", () => res());
+    });
+
+    try {
+      const err = await promise;
+      expect(err).toBeInstanceOf(Error);
+      await clientDone;
+      expect(clientConnected).toBe(false);
+      expect(secureConnectionFired).toBe(false);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("an SNICallback that selects no override still completes with the default cert", async () => {
+    // The benign "no SNI override" path (cb(null, null)) must keep falling
+    // through to the default certificate — only an error aborts.
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const server = tls.createServer(
+      {
+        key: cert1.key,
+        cert: cert1.cert,
+        SNICallback: (_servername, cb) => {
+          cb(null, null as unknown as undefined);
+        },
+      },
+      () => {},
+    );
+    server.on("secureConnection", () => resolve());
+    server.on("tlsClientError", err => reject(err));
+    await new Promise<void>(res => server.listen(0, res));
+    const { port } = server.address() as AddressInfo;
+
+    let clientConnected = false;
+    const client = tls.connect(
+      { port, host: "127.0.0.1", servername: "anything.test", rejectUnauthorized: false },
+      () => {
+        clientConnected = true;
+        client.end();
+      },
+    );
+    client.on("error", err => reject(err));
+
+    try {
+      await promise;
+      expect(clientConnected).toBe(true);
+    } finally {
+      client.end();
+      server.close();
+    }
+  });
+});
+
 it("leaves socket.authorized false unless a client certificate was requested and verified", async () => {
   // A server that never requested a client certificate must not report the
   // connection as authorized (matches Node.js fail-closed semantics).

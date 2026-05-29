@@ -1842,7 +1842,7 @@ static struct sni_node_t *resolve_listener_ctx(struct us_listen_socket_t *ls, co
 }
 
 static int sni_cb(SSL *ssl, int *al, void *arg) {
-  (void)al; (void)arg;
+  (void)arg;
   if (!ssl || us_ssl_listener_ex_idx < 0) return SSL_TLSEXT_ERR_NOACK;
   /* The listener is per-SSL (set at accept), not the CTX-level arg — the
    * SSL_CTX is shared and may outlive any one listener. */
@@ -1863,8 +1863,9 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
        * tree. The callback runs JS and may close this listener; nothing
        * below touches ls after it returns. */
       void *saved_loop_state[5];
+      int abort_handshake = 0;
       us_internal_ssl_loop_state_save(ssl, saved_loop_state);
-      SSL_CTX *dyn = ls->on_server_name(ls, hostname);
+      SSL_CTX *dyn = ls->on_server_name(ls, hostname, &abort_handshake);
       us_internal_ssl_loop_state_restore(saved_loop_state);
       if (dyn) {
         SSL_set_SSL_CTX(ssl, dyn);
@@ -1872,6 +1873,18 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
          * takes its own; release the temporary or every dynamic resolution
          * leaks one reference to the selected context. */
         SSL_CTX_free(dyn);
+      } else if (abort_handshake) {
+        /* The JS SNICallback threw or returned something that is not a
+         * SecureContext. Node drops the connection with a fatal alert rather
+         * than serving the default certificate, so fail closed here too.
+         * BoringSSL records the alert and surfaces it from SSL_do_handshake as
+         * SSL_ERROR_SSL; ssl_update_handshake then dispatches the failure the
+         * same way the ALPN callback's fatal return does (→ tlsClientError).
+         * The alert is not flushed here — we are still parsing the ClientHello,
+         * so returning the fatal code lets the state machine abort at the
+         * correct point. */
+        *al = SSL_AD_INTERNAL_ERROR;
+        return SSL_TLSEXT_ERR_ALERT_FATAL;
       }
     }
   }
@@ -1938,7 +1951,8 @@ struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket
 }
 
 void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
-                                     struct ssl_ctx_st *(*cb)(struct us_listen_socket_t *, const char *)) {
+                                     struct ssl_ctx_st *(*cb)(struct us_listen_socket_t *, const char *,
+                                                              int *abort_handshake)) {
   ls->on_server_name = cb;
 }
 

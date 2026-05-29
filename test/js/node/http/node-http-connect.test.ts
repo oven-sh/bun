@@ -472,7 +472,13 @@ describe("HTTP client CONNECT", () => {
         const reqResIsRes = req.res === res;
         socket.on("error", () => {});
         socket.on("data", d => {
-          resolve({ statusCode: res.statusCode, headers: res.headers, echoed: d.toString(), socketIsTunnel, reqResIsRes });
+          resolve({
+            statusCode: res.statusCode,
+            headers: res.headers,
+            echoed: d.toString(),
+            socketIsTunnel,
+            reqResIsRes,
+          });
           socket.destroy();
         });
         socket.write("ping");

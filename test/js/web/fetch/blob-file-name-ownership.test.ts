@@ -32,7 +32,11 @@ test("structuredClone of a named File round-trips its name without leaking or do
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
+  // ASAN debug builds emit a startup "WARNING: ASAN interferes ..." line; drop
+  // it before asserting the subprocess produced no other stderr (e.g. an ASAN
+  // double-free report).
+  const stderrLines = stderr.split("\n").filter(line => !line.startsWith("WARNING: ASAN interferes"));
+  expect(stderrLines.join("\n")).toBe("");
   expect(JSON.parse(stdout)).toEqual({
     name: "owned-name-" + Buffer.alloc(512, "x").toString() + ".bin",
     text: "final",

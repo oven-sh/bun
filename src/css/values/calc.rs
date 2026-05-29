@@ -873,18 +873,20 @@ impl<V: CalcValue> Calc<V> {
         // a nested type-independent function failed (no dimension re-parse can
         // help) — versus failing at a plain dimension leaf (which the dimension
         // parses below can handle). Compared against the count captured above.
-        let hit_unrecoverable = |input: &css::Parser| input.math_fn_parse_failures() != failures_before;
+        let hit_unrecoverable =
+            |input: &css::Parser| input.math_fn_parse_failures() != failures_before;
 
-        let reconcile = |input: &mut css::Parser, a: &Calc<Angle>, b: &Calc<Angle>| -> CssResult<Angle> {
-            if let (Calc::Value(av), Calc::Value(bv)) = (a, b) {
-                if let Some(v) = av.try_op_to(&**bv, (), |_, x, y| Angle::Rad(x.atan2(y))) {
-                    return Ok(v);
+        let reconcile =
+            |input: &mut css::Parser, a: &Calc<Angle>, b: &Calc<Angle>| -> CssResult<Angle> {
+                if let (Calc::Value(av), Calc::Value(bv)) = (a, b) {
+                    if let Some(v) = av.try_op_to(&**bv, (), |_, x, y| Angle::Rad(x.atan2(y))) {
+                        return Ok(v);
+                    }
+                } else if let (Calc::Number(an), Calc::Number(bn)) = (a, b) {
+                    return Ok(Angle::Rad(an.atan2(*bn)));
                 }
-            } else if let (Calc::Number(an), Calc::Number(bn)) = (a, b) {
-                return Ok(Angle::Rad(an.atan2(*bn)));
-            }
-            Err(input.new_custom_error(css::ParserError::invalid_value))
-        };
+                Err(input.new_custom_error(css::ParserError::invalid_value))
+            };
 
         match Calc::<Angle>::parse_sum(input, ctx, angle_ident) {
             Ok(a) => {

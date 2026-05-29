@@ -464,7 +464,7 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
 
         let bytei64 = off.to_int64();
         if bytei64 < 0 {
-            addr = addr.saturating_sub(usize::try_from(-bytei64).expect("int cast"));
+            addr = addr.saturating_sub(usize::try_from(bytei64.unsigned_abs()).expect("int cast"));
         } else {
             addr = addr.saturating_add(usize::try_from(bytei64).expect("int cast"));
         }

@@ -15,7 +15,6 @@ use bun_sys::Fd;
 use crate as resolver;
 use crate::fs;
 use bun_alloc::Arena as Bump;
-use bun_wyhash::Wyhash;
 
 // ── bun_install types (MOVE_DOWN: bun_install_types) ──────────────────────
 // Note: bun_resolver cannot depend on bun_install (would loop). The
@@ -1727,21 +1726,6 @@ impl PackageJSON {
     }
 }
 
-// TODO(port): `self.hash` field referenced in Zig but not declared on
-// PackageJSON; gate until the field lands.
-
-impl PackageJSON {
-    pub fn hash_module(&self, module: &[u8]) -> u32 {
-        let mut hasher = Wyhash::init(0);
-        // PORT NOTE: Zig referenced `this.hash`, which is not a declared field on
-        // `PackageJSON` in either tree (dead body). Hash the package name as the
-        // stable per-package seed instead so `hash_module` is deterministic.
-        hasher.update(&self.name);
-        hasher.update(module);
-
-        hasher.final_() as u32
-    }
-} // end  impl PackageJSON
 
 pub struct ExportsMap {
     pub root: Entry,
@@ -2315,15 +2299,6 @@ fn replace(input: &[u8], needle: &[u8], replacement: &[u8], output: &mut [u8]) -
         }
     }
     count
-}
-
-#[derive(Clone, Default)]
-pub struct ReverseResolution {
-    // PORT NOTE: Zig returned slices into threadlocal PathBuffers / the package.json source
-    // buffer. Copy out into an owned buffer (see `Resolution.path` note above).
-    // TODO(perf): thread a real `'a` lifetime once `EntryData::String` is `&'a [u8]`.
-    pub subpath: Box<[u8]>,
-    pub token: bun_ast::Range,
 }
 
 const INVALID_PERCENT_CHARS: [&[u8]; 4] = [b"%2f", b"%2F", b"%5c", b"%5C"];

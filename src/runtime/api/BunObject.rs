@@ -2379,6 +2379,12 @@ pub mod JSZlib {
         out: &mut Vec<u8>,
     ) -> bun_libdeflate::Status {
         out.clear();
+        // Empty input has no gzip header; the loop below would exit at once
+        // and report Success with nothing decoded. Error like the default
+        // zlib path and node:zlib (both reject an empty gzip stream).
+        if input.is_empty() {
+            return bun_libdeflate::Status::BadData;
+        }
         let mut offset = 0usize;
         while offset < input.len() {
             // A leading zero (offset == 0) is a bad header, not padding — let it

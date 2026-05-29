@@ -170,6 +170,26 @@ describe("zlib", () => {
     expect(got.length).toBe(big.length + 1);
     expect(got.equals(Buffer.concat([big, Buffer.from("x")]))).toBe(true);
   }, 10_000);
+
+  // A single highly-compressible member whose plaintext outgrows the initial
+  // reserve also exercised the grow loop — it hung before the capacity-doubling
+  // fix. Its compressed size is tiny, so the ISIZE reserve starts small.
+  it("Bun.gunzipSync({ library: 'libdeflate' }) does not hang on a single large compressible member", () => {
+    const big = Buffer.alloc(10000, "A");
+    const got = Buffer.from(gunzipSync(zlib.gzipSync(big), { library: "libdeflate" }));
+    expect(got.length).toBe(big.length);
+    expect(got.equals(big)).toBe(true);
+  }, 10_000);
+
+  // Empty input is not a valid gzip stream; the libdeflate opt-in must error
+  // like the default zlib path and node:zlib (both reject it), not silently
+  // return an empty buffer.
+  it("Bun.gunzipSync({ library: 'libdeflate' }) errors on empty input", () => {
+    expect(() => gunzipSync(new Uint8Array(), { library: "libdeflate" })).toThrow();
+    // Matches the default path and node:zlib, which also throw.
+    expect(() => gunzipSync(new Uint8Array())).toThrow();
+    expect(() => zlib.gunzipSync(Buffer.alloc(0))).toThrow();
+  });
 });
 
 function* window(buffer, size, advance = size) {

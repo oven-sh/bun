@@ -388,7 +388,11 @@ const SocketHandlers: SocketHandler = {
 
     self._securePending = false;
     self.secureConnecting = false;
-    self._secureEstablished = !!(success || verifyError);
+    // ECONNRESET and protocol-level failures returned above, so reaching here
+    // means the TLS session itself was established - even when `success`
+    // (authorized) is false purely because of the native hostname verdict,
+    // which arrives with no error object.
+    self._secureEstablished = true;
 
     self.emit("secure", self);
     self.alpnProtocol = socket.alpnProtocol;
@@ -982,7 +986,11 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
 
     self._securePending = false;
     self.secureConnecting = false;
-    self._secureEstablished = !!(success || verifyError);
+    // ECONNRESET and protocol-level failures returned above, so reaching here
+    // means the TLS session itself was established - even when `success`
+    // (authorized) is false purely because of the native hostname verdict,
+    // which arrives with no error object.
+    self._secureEstablished = true;
 
     self.emit("secure", self);
     self.alpnProtocol = socket.alpnProtocol;

@@ -1694,6 +1694,12 @@ folded: >
           ["seq-only-dot", "- ...\n- x\n", ["...", "x"]],
           // Compact `- -` prefix collision
           ["compact-dash-val", "- - ---\n", [["---"]]],
+          // #23489: ellipsis inside quoted strings (the original case `nl` was added for)
+          ["i23489", `balance: "👛 لا تمتلك محفظة... !"\n`, { balance: "👛 لا تمتلك محفظة... !" }],
+          ["dq-dot-mid", 'a: "x ... y"\n', { a: "x ... y" }],
+          ["dq-dot-start", 'a: "... rest"\n', { a: "... rest" }],
+          ["dq-dot-end", 'a: "rest ..."\n', { a: "rest ..." }],
+          ["dq-dash-mid", 'a: "x --- y"\n', { a: "x --- y" }],
         ] as const)("%s", (_id, input, expected) => {
           if (typeof expected === "object" && expected && "throws" in expected) {
             expect(() => YAML.parse(input)).toThrow(expected.throws as string);

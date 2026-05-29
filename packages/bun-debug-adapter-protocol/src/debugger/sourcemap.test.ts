@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { connect } from "node:net";
 import { networkInterfaces } from "node:os";
-import { getAvailablePort, WebSocketDebugAdapter } from "./adapter.js";
+import { WebSocketDebugAdapter } from "./adapter.js";
 import { TCPSocketSignal } from "./signal.js";
 import { SourceMap } from "./sourcemap.js";
 
@@ -69,9 +69,9 @@ test("only forwards inspector events from known protocol domains to the adapter"
 
 test("TCPSocketSignal accepts connections only on the loopback interface", async () => {
   // Same construction the VS Code extension uses (diagnostics.ts createSignal).
-  const port = await getAvailablePort();
-  const signal = new TCPSocketSignal(port);
+  const signal = new TCPSocketSignal(0);
   await signal.ready;
+  const port = signal.port;
 
   try {
     // The legitimate local client connects over loopback and its payload is delivered.

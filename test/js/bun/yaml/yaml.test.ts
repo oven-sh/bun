@@ -1837,7 +1837,7 @@ folded: >
       // Bugs surfaced by the multi-modal bughunt (12 finder lenses × 3 rounds).
       // Each todo asserts the spec-correct result.
       describe("bughunt findings", () => {
-        test.todo("NUL byte (U+0000) is not c-printable — should error, not truncate", () => {
+        test("NUL byte (U+0000) is not c-printable — should error, not truncate", () => {
           // [1] c-printable excludes NUL. Currently NUL is the EOF sentinel, so
           // input is silently truncated. Data loss / security-adjacent.
           expect(() => YAML.parse("a: 1\x00b: 2")).toThrow();

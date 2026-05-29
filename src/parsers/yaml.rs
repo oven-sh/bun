@@ -828,9 +828,9 @@ bun_core::oom_from_alloc!(ParseError);
 /// not validated here — that requires UTF-8 decode.
 ///
 /// 0x00 is included for completeness, though the scanners' explicit `0 =>`
-/// EOF arms intercept it before any catch-all. The NUL-is-silent-EOF
-/// truncation bug is fixed by distinguishing `pos == input.len()` from a
-/// real NUL byte at those arms, not here.
+/// arms intercept it before any catch-all — those arms check `is_eof()` to
+/// distinguish a real NUL byte (`NonPrintableCharacter`) from the past-end
+/// sentinel returned by `next()`/`peek()`.
 #[inline]
 fn check_printable_ascii(c: u32, nb_json: bool) -> Result<(), ParseError> {
     match c {
@@ -2477,6 +2477,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     pub const MAX_ALIAS_EXPANSION: usize = 16 * 1024 * 1024;
 
     pub fn init(bump: &'i bun_alloc::Arena, input: &'i [Enc::Unit]) -> Self {
+        // Trailing NUL units are alignment padding (TypedArray inputs), not
+        // stream content. Stripping them here lets the `0 =>` scanner arms
+        // distinguish a real embedded NUL ([1] c-printable error) from EOF.
+        let mut end = input.len();
+        while end > 0 && input[end - 1] == Enc::NUL {
+            end -= 1;
+        }
+        let input = &input[..end];
         // [206] l-document-prefix ::= c-byte-order-mark? l-comment*
         let start = Pos::from(Enc::bom_len(input));
         Self {
@@ -4633,6 +4641,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         loop {
             match __c {
                 0 => {
+                    if !parser!().is_eof() {
+                        return Err(ParseError::NonPrintableCharacter);
+                    }
                     return Ok(ctx.done());
                 }
 
@@ -4979,6 +4990,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         loop {
             match __c {
                 0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::NonPrintableCharacter);
+                    }
                     return Ok((
                         indent_indicator.unwrap_or(IndentIndicator::DEFAULT),
                         chomp.unwrap_or(Chomp::DEFAULT),
@@ -5195,6 +5209,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             let __c = Enc::wide(self.next());
             match __c {
                 0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::NonPrintableCharacter);
+                    }
                     // Official yaml-test-suite JEF9/02: trailing indentation
                     // at EOF without a final break counts as one trailing
                     // empty line for chomping (matches eemeli/yaml + js-yaml).
@@ -5285,7 +5302,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let mut __c = first;
         loop {
             match __c {
-                0 => return Ok(ctx.done()?),
+                0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::NonPrintableCharacter);
+                    }
+                    return Ok(ctx.done()?);
+                }
                 0x0D => {
                     if Enc::wide(self.peek(1)) == 0x0A {
                         self.inc(1);
@@ -5434,7 +5456,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         loop {
             let c = Enc::wide(self.next());
             match c {
-                0 => return Err(ParseError::UnexpectedCharacter),
+                0 => {
+                    return Err(if self.is_eof() {
+                        ParseError::UnexpectedCharacter
+                    } else {
+                        ParseError::NonPrintableCharacter
+                    });
+                }
                 0x2E /* '.' */ => {
                     if self.is_at_line_start()
                         && self.remain_starts_with(Enc::literal(b"..."))
@@ -5518,7 +5546,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         loop {
             let c = Enc::wide(self.next());
             match c {
-                0 => return Err(ParseError::UnexpectedCharacter),
+                0 => {
+                    return Err(if self.is_eof() {
+                        ParseError::UnexpectedCharacter
+                    } else {
+                        ParseError::NonPrintableCharacter
+                    });
+                }
                 0x2E /* '.' */ => {
                     if self.is_at_line_start()
                         && self.remain_starts_with(Enc::literal(b"..."))
@@ -5874,6 +5908,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             let c = Enc::wide(self.next());
             match c {
                 0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::NonPrintableCharacter);
+                    }
                     let start = self.pos;
                     break 'next Token::eof(self.token_init(start));
                 }

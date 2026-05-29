@@ -234,11 +234,9 @@ it("re-saving a v1 off-registry lockfile keeps it at version 1", async () => {
     },
   });
 
-  // No `configVersion` key → the install triggers a lockfile re-save (the
-  // configVersion auto-upgrade), which is exactly the save path that would
-  // wrongly stamp v2 without the version-selection guard.
   const v1Lockfile = JSON.stringify({
     lockfileVersion: 1,
+    configVersion: 1,
     workspaces: { "": { name: "root", dependencies: { "no-deps": "1.0.0" } } },
     packages: {
       "no-deps": ["no-deps@1.0.0", `http://127.0.0.1:${offRegistry.port}/no-deps/-/no-deps-1.0.0.tgz`, {}, ""],
@@ -250,7 +248,9 @@ it("re-saving a v1 off-registry lockfile keeps it at version 1", async () => {
     "bun.lock": v1Lockfile,
   });
 
-  // `--lockfile-only` re-serializes the lockfile without performing the install.
+  // `--lockfile-only` re-serializes the lockfile without performing the install
+  // (so the unreachable off-registry tarball is never fetched). This is the
+  // write path that would wrongly stamp v2 without the version-selection guard.
   await using proc = spawn({
     cmd: [bunExe(), "install", "--lockfile-only"],
     cwd: String(dir),

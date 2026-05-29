@@ -344,9 +344,15 @@ it("re-saving keeps v1 for a tarball under a writer-only scoped registry", async
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [, readerErr] = await Promise.all([readerProc.stdout.text(), readerProc.stderr.text(), readerProc.exited]);
+  const [, readerErr, readerExit] = await Promise.all([
+    readerProc.stdout.text(),
+    readerProc.stderr.text(),
+    readerProc.exited,
+  ]);
 
   expect(readerErr).not.toContain(
     "Missing integrity hash for npm package resolved to a tarball URL outside the configured registry",
   );
+  // v1 round-trips with no fetch, so the reader exits cleanly.
+  expect(readerExit).toBe(0);
 });

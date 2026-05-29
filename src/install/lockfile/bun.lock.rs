@@ -229,16 +229,17 @@ impl Stringifier {
                         }
                         // No supported integrity: only v2-clean if the tarball
                         // URL is under the *default* registry, the one case the
-                        // writer normalizes to `""` (see the URL serialization
-                        // above). An empty URL never sets the parser's
-                        // `npm_url_needs_integrity`, so that round-trips for any
-                        // reader. A URL under a configured-but-not-default scope
-                        // is written verbatim and the parser's integrity check
-                        // is evaluated against the *reader's* scope config, so
-                        // it is not config-independent: a writer with a private
-                        // `@scope` registry could stamp v2 on a lockfile a
-                        // teammate without that scope then fails to parse. Stay
-                        // at v1 for those so the file keeps loading everywhere.
+                        // writer normalizes to `""` (see the npm URL
+                        // serialization in `save_from_binary_inner`). An empty
+                        // URL never sets the parser's `npm_url_needs_integrity`,
+                        // so that round-trips for any reader. A URL under a
+                        // configured-but-not-default scope is written verbatim,
+                        // and the parser's integrity check is evaluated against
+                        // the *reader's* scope config, so it is not
+                        // config-independent: a writer with a private `@scope`
+                        // registry could stamp v2 on a lockfile a teammate
+                        // without that scope then fails to parse. Stay at v1 for
+                        // those so the file keeps loading everywhere.
                         let url = res.npm().url.slice(buf);
                         if !url_is_under_registry(url, Npm::Registry::DEFAULT_URL.as_bytes()) {
                             return Version::V1;

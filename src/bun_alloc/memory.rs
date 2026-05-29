@@ -1,7 +1,5 @@
 //! Basic utilities for working with memory and objects.
 
-/// Default-initializes a value of type `T`.
-///
 // ──────────────────────────────────────────────────────────────────────────────
 // PORT NOTE: `exemptedFromDeinit`, `deinitIsVoid`, and `deinit` are intentionally
 // NOT ported as functions.

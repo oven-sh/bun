@@ -186,6 +186,8 @@ it("unsafe git .bun-tag is rejected only at version 2", async () => {
     });
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(err).not.toContain("Invalid git dependency tag");
+    // v1 parses cleanly and `--lockfile-only` skips the install, so it exits 0.
+    expect(exitCode).toBe(0);
   }
 });
 

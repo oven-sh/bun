@@ -3956,10 +3956,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         if self.context.get() == Context::FlowKey {
                             return Ok(copy);
                         }
-                        // [150] c-s-implicit-json-key uses s-separate-in-line
-                        // (same line only); [148] in flow context uses
-                        // s-separate (spans lines), handled by the FlowKey
-                        // return above.
+                        // [154] ns-s-implicit-yaml-key uses s-separate-in-line
+                        // (same line only); [145] in flow-map uses s-separate
+                        // (spans lines, per yaml-test-suite 4MUZ etc.),
+                        // handled by the FlowKey return above.
                         if alias_line != self.token.line && !opts.explicit_mapping_key {
                             return Err(ParseError::MultilineImplicitKey);
                         }

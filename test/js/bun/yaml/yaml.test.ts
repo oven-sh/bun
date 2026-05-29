@@ -1479,21 +1479,18 @@ folded: >
         });
       });
 
-      // Pre-existing flow-context over-accepts surfaced by adversarial review.
-      // Each `test.todo` asserts the spec result (per ≥3/4 reference parsers);
-      // the comment documents what Bun currently produces.
-      describe("known flow over-accepts (pre-existing)", () => {
+      describe("flow-context spec conformance", () => {
         test("flow-map requires `,` between entries", () => {
           // [140] ns-s-flow-map-entries — entry must be followed by `,` or `}`.
           expect(() => YAML.parse('{a: "b":1}\n')).toThrow("Unexpected token");
           expect(() => YAML.parse("{a: 1 b: 2}\n")).toThrow("Unexpected token");
         });
 
-        test(":-prefixed plain scalar after `? &x` / `? !!str` (anchor/tag re-scan in FlowKey)", () => {
-          // The first scan after `?` is in flow-in (so `:b` is ns-plain-first),
-          // but when an anchor/tag intervenes the property arm re-scans inside
-          // the key parse_node's FlowKey wrap, mis-tokenizing `:b` as a
-          // separator. Anchor/tag-on-empty cluster.
+        test(":-prefixed plain scalar after `? &x` / `? !!str`", () => {
+          // The first scan after `?` is in flow-in so `:b` tokenizes as
+          // ns-plain-first per [126]; parse_flow_explicit_key consumes
+          // c-ns-properties in flow-in too, so the post-property re-scan does
+          // the same.
           expect(YAML.parse("[? &x :b]\n")).toEqual([{ ":b": null }]);
           expect(YAML.parse("{? !!str :b}\n")).toEqual({ ":b": null });
         });
@@ -1732,7 +1729,7 @@ folded: >
         });
       });
 
-      describe("flow over-accepts (locked-in behavior)", () => {
+      describe("flow comma/separator placement", () => {
         test("JSON-adjacent does not apply in flow-map value position", () => {
           // [147] flow-map value is ns-flow-node, not ns-flow-pair; [140]
           // requires `,`/`}` after the entry.

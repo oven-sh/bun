@@ -2665,13 +2665,31 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `bytes_written`/`flags`/`buffered_data_for_node_net` across the
         // re-entrant `do_socket_write`) is no longer needed.
         if self.buffered_data_for_node_net.get().len() > 0 {
-            // `do_socket_write` does not touch `buffered_data_for_node_net`, so a
+            // Neither write call touches `buffered_data_for_node_net`, so a
             // `JsCell::get()` projection is valid for the duration of the call.
-            let written: usize = usize::try_from(
+            //
+            // The drain-driven retry must detect a fatal send error the same way
+            // the initial write does: once the peer is gone the kernel rejects
+            // every retry (EPIPE/ECONNRESET), and treating that as would-block
+            // kept this buffer parked forever (the FIN-terminated-response hang).
+            // BYPASS_TLS twins keep the raw write path; TLS errors propagate
+            // through the SSL layer.
+            let res: i32 = if self.flags.get().contains(Flags::BYPASS_TLS) {
                 self.do_socket_write(self.buffered_data_for_node_net.get().slice())
-                    .max(0),
-            )
-            .unwrap();
+            } else {
+                let (res, fatal) = self
+                    .socket
+                    .get()
+                    .write_check_error(self.buffered_data_for_node_net.get().slice());
+                if fatal {
+                    self.buffered_data_for_node_net
+                        .with_mut(|b| b.clear_and_free());
+                    self.socket.get().close(uws::CloseCode::Failure);
+                    return;
+                }
+                res
+            };
+            let written: usize = usize::try_from(res.max(0)).unwrap();
             self.bytes_written
                 .set(self.bytes_written.get() + written as u64);
             if written > 0 {

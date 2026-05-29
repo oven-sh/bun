@@ -742,11 +742,16 @@ function ClientRequest(input, options, cb) {
     let buffer: Buffer | null = null;
     const maxHeaderSize = this[kMaxHeaderSize] || getMaxHTTPHeaderSize();
 
+    const swallowTeardownError = () => {};
+
     const onError = err => {
       if (connected) return;
       socket.removeListener("data", onData);
       socket.removeListener("error", onError);
       socket.removeListener("close", onClose);
+      // Keep swallowTeardownError attached here: on a pre-tunnel failure/abort
+      // the AbortController can still emit an AbortError on the socket after
+      // this runs, and it must not surface as an unhandled 'error'.
       this[kClearTimeout]?.();
       // Abort/destroy is handled by onAbort → socketCloseListener, which emits
       // 'close' and also synthesizes a socket 'close' that lands here; don't
@@ -806,6 +811,8 @@ function ClientRequest(input, options, cb) {
       socket.removeListener("data", onData);
       socket.removeListener("error", onError);
       socket.removeListener("close", onClose);
+      // Hand the tunnel socket to the user with no internal listeners, like Node.
+      socket.removeListener("error", swallowTeardownError);
       this[kClearTimeout]?.();
       fetching = false;
 
@@ -886,12 +893,12 @@ function ClientRequest(input, options, cb) {
       }
     };
 
-    // Always keep an error listener on the raw socket so a late error during
-    // teardown (e.g. the AbortController's AbortError when the request is
-    // aborted/destroyed before the tunnel is established) is swallowed instead
-    // of surfacing as an unhandled 'error'. onError/onClose below handle the
-    // pre-tunnel connection errors we care about; this is the backstop.
-    socket.on("error", () => {});
+    // Swallow a late error that fires during pre-tunnel teardown (e.g. the
+    // AbortController's AbortError when the request is aborted/destroyed before
+    // the tunnel is established) so it doesn't surface as an unhandled 'error'.
+    // Removed once the tunnel is handed to the user so the socket is delivered
+    // with no internal listeners, like Node.
+    socket.on("error", swallowTeardownError);
     socket.on("data", onData);
     socket.on("error", onError);
     socket.on("close", onClose);

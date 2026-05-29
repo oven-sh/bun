@@ -1723,9 +1723,9 @@ folded: >
 
         test.todo("BOM-prefixed `---` recognized as doc marker", () => {
           // [202] l-document-prefix admits c-byte-order-mark before
-          // c-directives-end. is_at_line_start() returns false after BOM
-          // (prev byte is BOM, not LF/CR). Pre-existing differently-wrong
-          // (was a spurious BOM-only first doc); proper fix is BOM strip in
+          // c-directives-end. is_at_line_start() is false after the BOM
+          // (pos != line_start_pos). Pre-existing differently-wrong (was a
+          // spurious BOM-only first doc); proper fix is BOM strip in
           // l-document-prefix, not special-casing here.
           expect(YAML.parse("﻿---\na: 1\n")).toEqual({ a: 1 });
         });

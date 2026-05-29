@@ -792,8 +792,13 @@ function ClientRequest(input, options, cb) {
         const colon = line.indexOf(":");
         if (colon === -1) continue;
         const key = line.slice(0, colon);
-        let val = line.slice(colon + 1);
-        if (val.charCodeAt(0) === 32 /* " " */) val = val.slice(1);
+        // Strip OWS = *(SP / HTAB) on both sides of the value, matching llhttp
+        // (RFC 7230 §3.2.4), so padded proxy headers parse like they do in Node.
+        let start = colon + 1;
+        let end = line.length;
+        while (start < end && (line.charCodeAt(start) === 32 || line.charCodeAt(start) === 9)) start++;
+        while (end > start && (line.charCodeAt(end - 1) === 32 || line.charCodeAt(end - 1) === 9)) end--;
+        const val = line.slice(start, end);
         $putByValDirect(rawHeaders, rawHeaders.length, key);
         $putByValDirect(rawHeaders, rawHeaders.length, val);
         const lowerKey = key.toLowerCase();

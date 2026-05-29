@@ -519,6 +519,36 @@ describe("HTTP client CONNECT", () => {
     }
   });
 
+  test("http.request CONNECT trims optional whitespace around proxy header values", async () => {
+    const proxyServer = net.createServer(socket => {
+      socket.on("error", () => {});
+      // Leading tab, two leading spaces, and a trailing space — llhttp trims all.
+      socket.on("data", () =>
+        socket.write("HTTP/1.1 200 OK\r\nX-Tab:\tt-val\r\nX-Two:  two-val\r\nX-Trail: trail-val \r\n\r\n"),
+      );
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const { port } = proxyServer.address() as AddressInfo;
+
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<Record<string, string>>();
+      const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "h:1" });
+      req.on("connect", (res, socket) => {
+        resolve(res.headers);
+        socket.destroy();
+      });
+      req.on("error", reject);
+      req.end();
+
+      const headers = await promise;
+      expect(headers["x-tab"]).toBe("t-val");
+      expect(headers["x-two"]).toBe("two-val");
+      expect(headers["x-trail"]).toBe("trail-val");
+    } finally {
+      await new Promise<void>(r => proxyServer.close(() => r()));
+    }
+  });
+
   test("http.request CONNECT delivers bytes received after the headers as 'head'", async () => {
     const proxyServer = net.createServer(socket => {
       socket.on("error", () => {});

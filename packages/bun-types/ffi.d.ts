@@ -424,6 +424,7 @@ declare module "bun:ffi" {
     ["cstring"]: FFIType.cstring;
     ["function"]: FFIType.pointer; // for now
     ["usize"]: FFIType.uint64_t; // for now
+    ["size_t"]: FFIType.uint64_t; // for now
     ["callback"]: FFIType.pointer; // for now
     ["napi_env"]: FFIType.napi_env;
     ["napi_value"]: FFIType.napi_value;

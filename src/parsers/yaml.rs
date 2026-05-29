@@ -826,10 +826,17 @@ bun_core::oom_from_alloc!(ParseError);
 /// in either set; nb-json (quoted) admits DEL (`[#x20-#x10FFFF]`),
 /// c-printable does not. Multi-byte codepoints (C1/NEL/surrogates/FFFE) are
 /// not validated here — that requires UTF-8 decode.
+///
+/// 0x00 is included for completeness, though the scanners' explicit `0 =>`
+/// EOF arms intercept it before any catch-all. The NUL-is-silent-EOF
+/// truncation bug is fixed by distinguishing `pos == input.len()` from a
+/// real NUL byte at those arms, not here.
 #[inline]
 fn check_printable_ascii(c: u32, nb_json: bool) -> Result<(), ParseError> {
     match c {
-        0x01..=0x08 | 0x0B | 0x0C | 0x0E..=0x1F => Err(ParseError::NonPrintableCharacter),
+        0x00..=0x08 | 0x0B | 0x0C | 0x0E..=0x1F => {
+            Err(ParseError::NonPrintableCharacter)
+        }
         0x7F if !nb_json => Err(ParseError::NonPrintableCharacter),
         _ => Ok(()),
     }

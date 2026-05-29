@@ -291,13 +291,6 @@ impl Category {
         Category::Other
     }
 
-    pub fn is_code(self) -> bool {
-        matches!(
-            self,
-            Category::Wasm | Category::Json | Category::Css | Category::Html | Category::Javascript
-        )
-    }
-
     pub fn is_text_like(self) -> bool {
         matches!(
             self,

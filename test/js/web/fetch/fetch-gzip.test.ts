@@ -343,6 +343,15 @@ describe("fetch() with a concatenated multi-member gzip body", () => {
     expect(got.equals(largeExpected)).toBe(true);
   });
 
+  // A `Content-Encoding: gzip` body that is not valid gzip (here: leading 0x00)
+  // must error, not silently return an empty 200. The multi-member loop only
+  // treats a zero byte as trailing padding *after* a member decoded, so a
+  // leading zero still reaches the erroring decode path.
+  it("errors on an invalid gzip body instead of returning empty", async () => {
+    using server = serve(Buffer.alloc(24)); // all zero bytes, not gzip
+    expect(fetch(server.url).then(r => r.text())).rejects.toThrow();
+  });
+
   it("decodes all members (chunked transfer, zlib slow path)", async () => {
     using server = Bun.serve({
       port: 0,

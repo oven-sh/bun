@@ -152,9 +152,12 @@ fn decompress_gzip_members(
     let start_len = out.len();
     let mut offset = 0usize;
     while offset < input.len() {
-        // Trailing zero bytes are padding, not a member (same stop condition as
-        // the zlib path's `*next_in != 0`); accept what we have.
-        if input[offset] == 0 {
+        // After a decoded member, trailing zero bytes are padding, not a
+        // member (same stop condition as the zlib path's `*next_in != 0`);
+        // accept what we have. A *leading* zero byte (offset == 0) is a bad
+        // gzip header, not padding — fall through so libdeflate reports
+        // BadData and the caller runs the erroring zlib path.
+        if offset > 0 && input[offset] == 0 {
             break;
         }
 
@@ -172,10 +175,8 @@ fn decompress_gzip_members(
                 bun_libdeflate::Encoding::Gzip,
             );
             if result.status == bun_libdeflate::Status::InsufficientSpace {
-                // Decompression-bomb guard: mirror the zlib slow path's 1 GiB cap
-                // (Decompressor::MAX_DECOMPRESSED_BODY_SIZE).
-                const MAX_DECOMPRESSED_BODY_SIZE: usize = 1024 * 1024 * 1024;
-                if out.capacity() > MAX_DECOMPRESSED_BODY_SIZE {
+                // Decompression-bomb guard: share the zlib slow path's cap.
+                if out.capacity() > crate::decompressor::MAX_DECOMPRESSED_BODY_SIZE {
                     out.truncate(start_len);
                     return Err(());
                 }
@@ -393,14 +394,18 @@ impl<'a> InternalState<'a> {
                     // gzip can be a concatenated multi-member stream (RFC 1952
                     // §2.2); decode every member on the fast path, straight into
                     // the output Vec (the 512 KiB shared_buffer can't hold the
-                    // combined output). `body_out_str.list` is pre-grown by the
-                    // slow-path setup; reserve once more from the gzip trailer.
+                    // combined output). Reserve a hint from the last member's
+                    // ISIZE trailer, but cap it at 32 MiB: the trailer is
+                    // attacker-controlled, so never pre-allocate more than that
+                    // from it — `decompress_gzip_members` grows as needed (under
+                    // the 1 GiB bomb cap) from there.
                     let estimated_size = if buffer.len() > 16 {
-                        u32::from_ne_bytes(
+                        (u32::from_ne_bytes(
                             buffer[buffer.len() - 4..][..4]
                                 .try_into()
                                 .expect("infallible: size matches"),
-                        ) as usize
+                        ) as usize)
+                            .min(32 * 1024 * 1024)
                     } else {
                         buffer.len()
                     };

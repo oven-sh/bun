@@ -57,7 +57,7 @@ unsafe fn seat<'a>(input: &'a [u8], out: &'a mut Vec<u8>) -> (&'static [u8], &'s
 /// Decompression-bomb guard for response bodies inflated on the HTTP thread:
 /// a hostile server must not be able to expand a tiny compressed payload into
 /// an unbounded allocation.
-const MAX_DECOMPRESSED_BODY_SIZE: usize = 1024 * 1024 * 1024;
+pub(crate) const MAX_DECOMPRESSED_BODY_SIZE: usize = 1024 * 1024 * 1024;
 
 impl Decompressor {
     // PORT NOTE: Zig `deinit` called `that.deinit()` on the active reader and

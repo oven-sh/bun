@@ -2585,7 +2585,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     // TODO: move most of this into `scan()`
     fn parse_directive(&mut self) -> Result<Directive, ParseError> {
-        if self.token.indent != Indent::NONE {
+        // [82] l-directive must start at column 0; s-indent is spaces only,
+        // so a leading tab is not valid separation either.
+        if self.token.indent != Indent::NONE || self.tab_after_indent {
             return Err(ParseError::InvalidDirective);
         }
 
@@ -2594,7 +2596,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             self.inc(4);
 
             self.try_skip_s_white()?;
+            let major = self.string_range();
             self.try_skip_ns_dec_digits()?;
+            // [86]/[87] A version-1.2 processor must reject documents with a
+            // different major version.
+            if major.end(self.pos).slice(self.input) != Enc::literal(b"1").as_ref() {
+                return Err(ParseError::InvalidDirective);
+            }
             self.try_skip_char(Enc::ch(b'.'))?;
             self.try_skip_ns_dec_digits()?;
 
@@ -2642,8 +2650,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             self.try_skip_s_white()?;
 
             // TODO(port): StringHashMap key type; for Utf16 needs different keying.
-            self.tag_handles
-                .put(Enc::key_bytes(handle.slice(self.input)), ())?;
+            // [89] It is an error to specify more than one TAG directive for
+            // the same handle in the same document.
+            let key = Enc::key_bytes(handle.slice(self.input));
+            if self.tag_handles.contains_key(key) {
+                return Err(ParseError::InvalidDirective);
+            }
+            self.tag_handles.put(key, ())?;
 
             let prefix = self.parse_directive_tag_prefix()?;
             self.try_skip_to_new_line()?;
@@ -2657,6 +2670,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let range = self.string_range();
         self.try_skip_ns_chars()?;
         let reserved = range.end(self.pos);
+
+        // [82] `YAML` and `TAG` are not reserved names — reaching here with
+        // either means the well-formed branch above did not match (e.g.
+        // `%TAG\n` with no arguments).
+        let name = reserved.slice(self.input);
+        if name == Enc::literal(b"YAML").as_ref() || name == Enc::literal(b"TAG").as_ref() {
+            return Err(ParseError::InvalidDirective);
+        }
 
         self.skip_s_white();
 
@@ -2698,14 +2719,38 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         self.tag_handles.clear();
 
         let mut has_yaml_directive = false;
+        let mut has_primary_tag = false;
+        let mut has_secondary_tag = false;
 
         while matches!(self.token.data, TokenData::Directive) {
             let directive = self.parse_directive()?;
-            if matches!(directive, Directive::Yaml) {
-                if has_yaml_directive {
-                    return Err(ParseError::MultipleYamlDirectives);
+            match &directive {
+                Directive::Yaml => {
+                    if has_yaml_directive {
+                        return Err(ParseError::MultipleYamlDirectives);
+                    }
+                    has_yaml_directive = true;
                 }
-                has_yaml_directive = true;
+                // [89] It is an error to specify more than one TAG directive
+                // for the same handle in the same document. Named handles are
+                // checked against `tag_handles` in `parse_directive`; primary
+                // and secondary aren't keyed there, so track them here.
+                Directive::Tag(tag) => match tag.handle {
+                    DirectiveTagHandle::Primary => {
+                        if has_primary_tag {
+                            return Err(ParseError::InvalidDirective);
+                        }
+                        has_primary_tag = true;
+                    }
+                    DirectiveTagHandle::Secondary => {
+                        if has_secondary_tag {
+                            return Err(ParseError::InvalidDirective);
+                        }
+                        has_secondary_tag = true;
+                    }
+                    DirectiveTagHandle::Named(_) => {}
+                },
+                Directive::Reserved(_) => {}
             }
             directives.push(directive);
             self.scan(ScanOptions::default())?;

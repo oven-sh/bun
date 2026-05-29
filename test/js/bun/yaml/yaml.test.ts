@@ -1891,7 +1891,7 @@ folded: >
           expect(() => YAML.parse("!tag,x a")).toThrow();
         });
 
-        test.todo("`%YAML`/`%TAG` directive validation", () => {
+        test("`%YAML`/`%TAG` directive validation", () => {
           // [86]/[88] require arguments; [87] requires major version 1;
           // [89] forbids duplicate handle in same document.
           expect(() => YAML.parse("%YAML\n---\nfoo")).toThrow();
@@ -2007,15 +2007,15 @@ folded: >
         });
 
         describe("§6.8 Directives (ch6-directives)", () => {
-          test.todo("[82] tab-indented directive — must be at column 0", () => {
+          test("[82] tab-indented directive — must be at column 0", () => {
             expect(() => YAML.parse(`\t%YAML 1.2\n---\nx`)).toThrow();
           });
 
-          test.todo("[87] multi-digit major >1 — must reject", () => {
+          test("[87] multi-digit major >1 — must reject", () => {
             expect(() => YAML.parse(`%YAML 11.2\n---\nx`)).toThrow();
           });
 
-          test.todo("[87] major version 0 — behavior unspecified", () => {
+          test("[87] major version 0 — behavior unspecified", () => {
             expect(() => YAML.parse(`%YAML 0.9\n---\nx`)).toThrow();
           });
 
@@ -2023,7 +2023,7 @@ folded: >
             expect(() => YAML.parse(`%YAML 1.2\n---\na\n...\n%YAML 1.2\n---\nb`)).toThrow();
           });
 
-          test.todo("[88] %TAG with no args �\u0086� falls to reserved", () => {
+          test("[88] %TAG with no args �\u0086� falls to reserved", () => {
             expect(() => YAML.parse(`%TAG\n---\nx`)).toThrow();
           });
 
@@ -2035,12 +2035,16 @@ folded: >
             expect(YAML.parse(`%TAG !a_b! tag:e:\n---\nx`)).toEqual("x");
           });
 
-          test.todo("[88] duplicate PRIMARY handle in one doc", () => {
+          test("[88] duplicate PRIMARY handle in one doc", () => {
             expect(() => YAML.parse(`%TAG ! !a\n%TAG ! !b\n---\nx`)).toThrow();
           });
 
-          test.todo("[88] duplicate SECONDARY handle in one doc", () => {
+          test("[88] duplicate SECONDARY handle in one doc", () => {
             expect(() => YAML.parse(`%TAG !! tag:a:\n%TAG !! tag:b:\n---\nx`)).toThrow();
+          });
+
+          test("[88] duplicate NAMED handle in one doc", () => {
+            expect(() => YAML.parse(`%TAG !e! tag:a:\n%TAG !e! tag:b:\n---\nx`)).toThrow();
           });
 
           test.todo("[88] global prefix starts with `,` — bun spec-correct; refs lenient", () => {
@@ -2055,7 +2059,10 @@ folded: >
             expect(() => YAML.parse(`%TAG !e! tag:a:\n---\na\n...\n%TAG !e! tag:b:\n---\nb`)).toThrow();
           });
 
-          test.todo("[82] directive after bare content (no `...` separator)", () => {
+          // yaml-test-suite XLQ9 establishes that `%` at column 0 in a plain
+          // continuation line is content, not a directive token, so refs that
+          // throw here disagree with the official suite.
+          test.todo("[82] directive after bare content (no `...` separator) — conflicts with XLQ9", () => {
             expect(() => YAML.parse(`x\n%YAML 1.2\n---\ny`)).toThrow();
           });
         });

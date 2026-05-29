@@ -215,14 +215,27 @@ test("a digits-with-interior-underscore column stays a named key", async () => {
   expect(row).toEqual({ product: "widget", "2024_01": 10, "2024_02": 20 });
 });
 
-test("a pure-digit column name is still treated as a positional index", async () => {
-  // Guard against over-correcting: an all-digit name like `5` has always mapped
-  // to the array index 5 (JSC indexed property), and must keep doing so.
+test("a pure-digit column name still round-trips", async () => {
+  // Smoke test that the fix doesn't break the common all-digit case: a column
+  // named `5` still decodes to a `5` key holding its value. (Index vs Name is
+  // not observable from JS here — both land on the same property key — so this
+  // only asserts the round-trip, not the internal classification.)
   const columns = [columnDef("5", MYSQL_TYPE_LONG)];
   const values = u32le(42);
 
   const [row] = await withMockedResult(columns, values, sql => sql`SELECT 42 AS \`5\` FROM t`);
-  // Index 5 → an object with the numeric key "5" and nothing at 0..4.
   expect(row[5]).toBe(42);
-  expect(row["5"]).toBe(42);
+});
+
+test("a named column mixed with an indexed column whose value exceeds the column count", async () => {
+  // `8` is correctly an index, but its value (8) is larger than the column
+  // count (2). Mixing it with a named column takes the object-building slow
+  // path, which used to assert `cell.index < count` (→ `8 < 2`) and abort in
+  // debug builds — even though `putDirectIndex` handles sparse indices fine
+  // (the indexed-only fast path documents and relies on exactly that).
+  const columns = [columnDef("product", MYSQL_TYPE_VAR_STRING), columnDef("8", MYSQL_TYPE_LONG)];
+  const values = Buffer.concat([lenencStr("widget"), u32le(42)]);
+
+  const [row] = await withMockedResult(columns, values, sql => sql`SELECT product, 42 AS \`8\` FROM t`);
+  expect(row).toEqual({ product: "widget", "8": 42 });
 });

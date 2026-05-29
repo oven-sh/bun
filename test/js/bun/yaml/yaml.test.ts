@@ -1911,7 +1911,9 @@ folded: >
 
         test.todo("error message includes line:col position", () => {
           // ParseResultError carries Pos; the JS binding discards it.
-          try { YAML.parse("a: 1\nb:\n\tc: 2"); } catch (e: any) {
+          try {
+            YAML.parse("a: 1\nb:\n\tc: 2");
+          } catch (e: any) {
             expect(e.message).toMatch(/line\s*\d|:\d+:\d+/);
           }
         });

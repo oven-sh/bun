@@ -43,10 +43,10 @@ fn detect_encoding(bytes: &[u8]) -> DetectedEncoding {
         (0xFF, 0xFE, 0x00, 0x00) => Utf32Le,
         (0x00, 0x00, 0x00, _) => Utf32Be,
         (_, 0x00, 0x00, 0x00) => Utf32Le,
-        (0xFE, 0xFF, ..) => Utf16Be,
-        (0xFF, 0xFE, ..) => Utf16Le,
-        (0x00, _, ..) => Utf16Be,
-        (_, 0x00, ..) => Utf16Le,
+        (0xFE, 0xFF, _, _) => Utf16Be,
+        (0xFF, 0xFE, _, _) => Utf16Le,
+        (0x00, ..) => Utf16Be,
+        (_, 0x00, _, _) => Utf16Le,
         _ => Utf8,
     }
 }

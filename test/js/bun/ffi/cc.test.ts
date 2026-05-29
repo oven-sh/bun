@@ -96,6 +96,44 @@ describe.skipIf(isASAN || isFFIUnavailable)("given an add(a, b) function", () =>
   });
 }); // </given add(a, b) function>
 
+// Regression test: the compiler accepts `"size_t"` as a type, but it was
+// missing from the JS `FFIType` map, so once `FFIBuilder` became reachable for
+// `cc` a `"size_t"` arg/return threw `Unsupported type size_t`.
+describe.skipIf(isASAN || isFFIUnavailable)("given an inc(size_t) function", () => {
+  let dir: string;
+  let res: Library<{ inc: { args: ["size_t"]; returns: "size_t" } }>;
+
+  beforeAll(() => {
+    dir = tempDirWithFiles("bun-ffi-cc-size_t", {
+      "inc.c": /* c */ `
+        #include <stddef.h>
+        size_t inc(size_t n) {
+          return n + 1;
+        }
+      `,
+    });
+    res = cc({
+      source: path.join(dir, "inc.c"),
+      symbols: {
+        inc: {
+          args: ["size_t"],
+          returns: "size_t",
+        },
+      },
+    });
+  });
+
+  afterAll(async () => {
+    res.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("accepts `size_t` as an argument and return type", () => {
+    // `size_t` maps to `uint64_t`, so it round-trips as a bigint.
+    expect(res.symbols.inc(41n)).toBe(42n);
+  });
+}); // </given an inc(size_t) function>
+
 // Regression test: `cc` read symbol definitions from `options[key]` instead of
 // `options.symbols[key]`, so the `cstring` return wrapper was never applied and
 // the function returned a raw pointer number instead of a `CString`.

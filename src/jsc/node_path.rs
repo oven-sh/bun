@@ -149,8 +149,14 @@ impl Drop for PathLike {
     fn drop(&mut self) {
         match self {
             // `CowSlice` frees its backing in its own `Drop` iff it owns it;
-            // a borrowed path is a no-op. `MarkedArrayBuffer` is JS-GC-owned.
-            Self::String(_) | Self::Buffer(_) => {}
+            // a borrowed path is a no-op.
+            Self::String(_) => {}
+            Self::Buffer(b) => {
+                if b.pinned {
+                    b.pinned = false;
+                    b.buffer.unpin();
+                }
+            }
             Self::SliceWithUnderlyingString(s) | Self::ThreadsafeString(s) => {
                 core::mem::take(s).deinit();
             }

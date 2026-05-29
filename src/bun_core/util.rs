@@ -4,7 +4,7 @@
 // `@hasField`, `@hasDecl`, `std.meta.fields`, `bun.trait.*`) used to generically
 // construct maps/arrays from heterogeneous inputs. Rust has no runtime/comptime
 // type reflection; the idiomatic equivalents are the `From` / `FromIterator` /
-// `Extend` traits, plus associated types for `Key`/`Value`/`Of`. The functions
+// `Extend` traits, plus associated types for `Key`/`Value`. The functions
 // below preserve the Zig names and intent but delegate to traits that the
 // concrete collection types (HashMap, Vec, MultiArrayList, Vec) must impl.
 // TODO(refactor): audit call sites of `bun.from(...)` / `bun.fromEntries(...)` and
@@ -14,7 +14,7 @@ use core::hash::Hash;
 
 // TODO(port): impls for bun_collections::{VecExt, HashMap, MultiArrayList} move to
 // bun_collections (move-in pass) — orphan rule lets the higher-tier crate impl
-// MapLike/ArrayLike for its own types.
+// MapLike for its own types.
 
 // ─── Key / Value ──────────────────────────────────────────────────────────────
 // Zig: `pub fn Key(comptime Map: type) type { return FieldType(Map.KV, "key").?; }`
@@ -98,85 +98,10 @@ where
 // ─── FieldType ────────────────────────────────────────────────────────────────
 // Zig: `pub fn FieldType(comptime Map: type, comptime name: []const u8) ?type`
 // TODO(port): no Rust equivalent for `std.meta.fieldIndex` / `.field_type`.
-// Callers should use associated types (`MapLike::Key`, `ArrayLike::Elem`)
-// directly. Left as a doc-only marker so cross-file grep finds it.
+// Callers should use associated types (`MapLike::Key`) directly. Left as a
+// doc-only marker so cross-file grep finds it.
 #[doc(hidden)]
 pub enum FieldType {} // unconstructible; reflection placeholder
-
-// ─── Of ───────────────────────────────────────────────────────────────────────
-// Zig: element type of an array-like, probed via isSlice / @hasDecl("Elem") /
-// @hasField("items") / @hasField("ptr").
-//
-// Rust: associated type on a trait the array-like containers implement.
-pub trait ArrayLike {
-    type Elem;
-
-    fn ensure_unused_capacity(&mut self, additional: usize);
-    fn append_assume_capacity(&mut self, elem: Self::Elem);
-    /// Set `len` to `n` (caller has already reserved) and return the now-live
-    /// slice for bulk memcpy. Mirrors the Zig `map.items.len = n; slice = map.items`.
-    fn set_len_and_slice(&mut self, n: usize) -> &mut [Self::Elem];
-}
-
-pub type Of<A> = <A as ArrayLike>::Elem;
-
-// ─── from ─────────────────────────────────────────────────────────────────────
-// Zig: generic dispatcher that inspects `@TypeOf(default)` and routes to
-// fromSlice / fromMapLike / fromEntries. The dispatch is pure comptime
-// reflection on the *shape* of the input type.
-//
-// TODO(port): Rust cannot introspect "is this a slice / does it have .items /
-// does it have .put". This fn could be deleted, with each call site calling
-// `from_slice` / `from_entries` / `from_map_like` directly (the caller
-// always statically knows which one it wants). Kept as a thin slice-only
-// forwarder so existing `bun.from(Array, alloc, &[...])` call sites compile.
-#[inline]
-pub fn from<A>(default: &[A::Elem]) -> A
-where
-    A: ArrayLike + Default,
-    A::Elem: Copy,
-{
-    from_slice(default)
-}
-
-// ─── fromSlice ────────────────────────────────────────────────────────────────
-// Zig branches on the *target* type:
-//   - MultiArrayList (`@hasField "bytes"`): reserve + appendAssumeCapacity loop
-//   - ArrayList (`@hasField "items"`): reserve, set items.len, memcpy
-//   - Vec-ish (`@hasField "len"`): reserve, set len, memcpy
-//   - raw slice: allocator.alloc + memcpy, return slice
-//   - has `.ptr`: alloc + build `{ptr,len,cap}`
-pub fn from_slice<A>(default: &[A::Elem]) -> A
-where
-    A: ArrayLike + Default,
-    A::Elem: Copy,
-{
-    // Zig: `if (isSlice) {} else if (@hasField "allocator") init(a) else Array{}`
-    let mut map = A::default();
-
-    // TODO(port): the Zig MultiArrayList arm (`@hasField(Array, "bytes")`)
-    // appended element-by-element because SoA storage cannot be memcpy'd as one
-    // block. The trait impl for `MultiArrayList<T>` must override
-    // `set_len_and_slice` to panic and instead route through
-    // `append_assume_capacity`. For now we take the memcpy path and rely on the
-    // impl to do the right thing.
-
-    map.ensure_unused_capacity(default.len());
-
-    let slice = map.set_len_and_slice(default.len());
-
-    // Zig: `@memcpy(out[0..in.len], in)` over `sliceAsBytes`
-    slice.copy_from_slice(default);
-
-    map
-}
-
-/// The "target is a plain `[]T`" arm of Zig `fromSlice`: `allocator.alloc` +
-/// memcpy + return the slice. In Rust this is just `Box<[T]>::from`.
-pub fn from_slice_boxed<T: Copy>(default: &[T]) -> Box<[T]> {
-    // Zig: `slice = try allocator.alloc(Of(Array), default.len); @memcpy(...)`
-    Box::<[T]>::from(default)
-}
 
 // ─── std.mem.bytesAsSlice / sliceAsBytes ─────────────────────────────────────
 /// Zig `std.mem.bytesAsSlice(T, bytes)` for `&mut [u8]` → `&mut [T]`.
@@ -267,33 +192,6 @@ impl<T: Copy> Unaligned<T> {
 
 // ─── needsAllocator ───────────────────────────────────────────────────────────
 // Zig: `fn needsAllocator(comptime Fn: anytype) bool { ArgsTuple(Fn).len > 2 }`
-// ─── trait impls for concrete collections ─────────────────────────────────────
-// PORT NOTE: these did not exist in the Zig — they are the Rust replacement for
-// the `@hasField` / `@hasDecl` probes. Impls for HashMap/Vec/MultiArrayList
-// live in `bun_collections` (move-in pass) to respect crate tiering.
-
-impl<T> ArrayLike for Vec<T> {
-    type Elem = T;
-
-    fn ensure_unused_capacity(&mut self, additional: usize) {
-        self.reserve(additional);
-    }
-    fn append_assume_capacity(&mut self, elem: T) {
-        // PERF(port): was appendAssumeCapacity
-        self.push(elem);
-    }
-    fn set_len_and_slice(&mut self, n: usize) -> &mut [T] {
-        debug_assert!(self.capacity() >= n);
-        // SAFETY: capacity reserved above; caller immediately memcpy-fills [0..n].
-        // Matches Zig `map.items.len = default.len; slice = map.items;` which
-        // also exposes uninitialized memory until the subsequent @memcpy.
-        unsafe { self.set_len(n) };
-        self.as_mut_slice()
-    }
-}
-
-// TODO(port): ArrayLike impls for Vec<T> and MultiArrayList<T> arrive via
-// move-in pass in bun_collections.
 
 // ════════════════════════════════════════════════════════════════════════════
 // Low-tier primitives hoisted into bun_core.

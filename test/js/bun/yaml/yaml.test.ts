@@ -1214,6 +1214,15 @@ folded: >
           expect(() => YAML.parse("!!str\n!!map\n: x\n")).toThrow("Multiple tags");
         });
 
+        test.todo("two anchors before e-node `:` (outer=mapping, inner=key) — pre-existing over-reject", () => {
+          // Valid per [200]/[193]: outer anchors the collection, inner the
+          // e-node key. The Scalar-key analogue (`&outer\n&inner b: x`) is
+          // accepted because that arm `return Ok(mapping)`, bypassing the
+          // post-loop has_mapping_anchor guard; the e-node arm reaches it.
+          // Pre-existing on main.
+          expect(YAML.parse("&outer\n&inner : x\n")).toEqual({ null: "x" });
+        });
+
         test("tag on e-node implicit key — [200]/[193] line split", () => {
           // Same line → key's tag (`!!str` e-node = "").
           expect(YAML.parse("!!str : x\n")).toEqual({ "": "x" });

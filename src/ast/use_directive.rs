@@ -11,38 +11,12 @@ pub enum UseDirective {
     Server = 2,
 }
 
-#[repr(u8)] // Zig: enum(u2)
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Boundering {
-    Client = UseDirective::Client as u8,
-    Server = UseDirective::Server as u8,
-}
-
 #[derive(Copy, Clone, Default, Debug)]
 pub struct Flags {
     pub has_any_client: bool,
 }
 
 impl UseDirective {
-    pub fn is_boundary(self, other: UseDirective) -> bool {
-        if self == other || other == UseDirective::None {
-            return false;
-        }
-
-        true
-    }
-
-    pub fn boundering(self, other: UseDirective) -> Option<Boundering> {
-        if self == other {
-            return None;
-        }
-        match other {
-            UseDirective::None => None,
-            UseDirective::Client => Some(Boundering::Client),
-            UseDirective::Server => Some(Boundering::Server),
-        }
-    }
-
     pub fn parse(contents: &[u8]) -> Option<UseDirective> {
         let truncated = strings::trim_left(contents, b" \t\n\r;");
 

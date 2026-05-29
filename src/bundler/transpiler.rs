@@ -831,8 +831,8 @@ impl<'a> Transpiler<'a> {
 // per-loader transpile branches.
 // ══════════════════════════════════════════════════════════════════════════
 
+use crate::bun_node_fallbacks as NodeFallbackModules;
 use crate::entry_points as EntryPoints;
-use crate::ungate_support::bun_node_fallbacks as NodeFallbackModules;
 use bun_ast::RuntimeTranspilerCache;
 use bun_core::strings;
 use bun_resolver::package_json::MacroMap as MacroRemap;
@@ -3171,7 +3171,7 @@ impl<'a> Transpiler<'a> {
         dirname_fd: FD,
         file_path_pretty: &[u8],
     ) -> Option<crate::output_file::Value> {
-        use crate::ungate_support::bun_css;
+        use crate::bun_css;
 
         let entry = match self.resolver.caches.fs.read_file_with_allocator(
             self.fs_mut(),

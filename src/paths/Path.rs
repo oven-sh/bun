@@ -652,12 +652,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
 
     // `deinit` → impl Drop (below). Body returns the buffer to the pool.
 
-    /// for call-site parity with the Zig (`const moved = this.move();`).
-    #[inline]
-    pub fn move_(self) -> Self {
-        self
-    }
-
     pub fn init_top_level_dir() -> Self {
         debug_assert!(crate::fs::FileSystem::instance_loaded());
         let top_level_dir = crate::fs::FileSystem::instance().top_level_dir();

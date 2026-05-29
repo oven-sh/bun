@@ -249,6 +249,21 @@ impl<'a> Row<'a> {
                     ..SQLDataCell::default()
                 };
             }
+            // NEWDECIMAL is always sent as an ASCII decimal string regardless of the
+            // column's BINARY flag / charset. Computed decimals (SUM/AVG/arithmetic/CAST)
+            // carry the BINARY flag and charset 63, so the catch-all arm's binary-charset
+            // heuristic would wrongly return them as a Buffer.
+            MYSQL_TYPE_NEWDECIMAL => {
+                let slice = value.slice();
+                *cell = SQLDataCell {
+                    tag: Tag::String,
+                    value: Value {
+                        string: clone_wtf_string_or_null(slice),
+                    },
+                    free_value: 1,
+                    ..SQLDataCell::default()
+                };
+            }
             MYSQL_TYPE_BIT => {
                 // BIT(1) is a special case, it's a boolean
                 if column.column_length == 1 {

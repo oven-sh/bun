@@ -2,6 +2,44 @@ import { describe } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
+  // Exercises the bundler's chunking/linking internals end-to-end: code
+  // splitting produces cross-chunk imports (sorted deterministically), CSS is
+  // compiled into its own chunk, symbols are renamed across chunks, and every
+  // output is content-hashed. Keeps that machinery covered after the types that
+  // back it were relocated across the bundler crate.
+  itBundled("regression/SplittingWithSharedChunkAndCSS", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./styles.css";
+        const { shared } = await import("./shared.js");
+        const { a } = await import("./a.js");
+        const { b } = await import("./b.js");
+        console.log(shared(), a(), b());
+      `,
+      "/shared.js": /* js */ `
+        export function shared() { return "shared"; }
+      `,
+      "/a.js": /* js */ `
+        import { shared } from "./shared.js";
+        export function a() { return shared() + "-a"; }
+      `,
+      "/b.js": /* js */ `
+        import { shared } from "./shared.js";
+        export function b() { return shared() + "-b"; }
+      `,
+      "/styles.css": `.x { color: red; }`,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    format: "esm",
+    run: {
+      file: "/out/entry.js",
+      stdout: "shared shared-a shared-b",
+    },
+  });
+
   // https://x.com/jeroendotdot/status/1740651288239460384?s=46&t=0Uhw6mmGT650_9M2pXUsCw
   itBundled("regression/PublicPathCLIFlagNotWorking", {
     files: {

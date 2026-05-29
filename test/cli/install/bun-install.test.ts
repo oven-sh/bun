@@ -9013,7 +9013,7 @@ describe.concurrent("bun-install", () => {
       expect(await exists(join(ctx.package_dir, "bun.lockb"))).toBeFalse();
       expect(await file(join(ctx.package_dir, "bun.lock")).text()).toMatchInlineSnapshot(`
       "{
-        "lockfileVersion": 1,
+        "lockfileVersion": 2,
         "configVersion": 1,
         "workspaces": {
           "": {
@@ -9433,6 +9433,83 @@ it("does not extract a local file: tarball outside the temp dir for a dependency
   const outOk = await stdoutOk.text();
   const exitCodeOk = await exitedOk;
   expect(await exists(join(root, "project-ok", "node_modules", "baz-local", "package.json"))).toBe(true);
+  expect(errOk).not.toContain("error:");
+  expect(outOk).toContain("1 package installed");
+  expect(exitCodeOk).toBe(0);
+});
+
+it("does not create a cache index entry outside the cache directory for a dependency alias of '..'", async () => {
+  // For git/github/tarball dependencies the dependency alias (the key in
+  // `dependencies`) is used as the folder name for the per-package cache
+  // index (`<cache>/<alias>/<resolved-folder>` symlinks). The alias must be a
+  // single safe path segment; an alias of exactly ".." must not cause index
+  // entries to be created in the parent of the cache directory.
+  using dir = tempDir("cache-index-alias-dotdot", {
+    "cache-holder/cache/.keep": "",
+    "project/package.json": JSON.stringify({
+      name: "cache-index-alias-app",
+      version: "1.0.0",
+      dependencies: {
+        "..": "file:./baz-a-0.0.3.tgz",
+      },
+    }),
+    "project-ok/package.json": JSON.stringify({
+      name: "cache-index-alias-ok-app",
+      version: "1.0.0",
+      dependencies: {
+        "baz-ok": "file:./baz-b-0.0.3.tgz",
+      },
+    }),
+  });
+  const root = String(dir);
+  const cacheHolder = join(root, "cache-holder");
+  const cacheDir = join(cacheHolder, "cache");
+  const testEnv = { ...env, BUN_INSTALL_CACHE_DIR: cacheDir };
+  await cp(join(import.meta.dir, "baz-0.0.3.tgz"), join(root, "project", "baz-a-0.0.3.tgz"));
+  await cp(join(import.meta.dir, "baz-0.0.3.tgz"), join(root, "project-ok", "baz-b-0.0.3.tgz"));
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(root, "project"),
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: testEnv,
+  });
+  const err = await stderr.text();
+  await stdout.text();
+  const exitCode = await exited;
+
+  // The parent of the cache directory must contain only the cache directory
+  // itself — no per-alias index entries (e.g. "@T@<hash>..." symlinks) may be
+  // planted next to it.
+  expect(await readdirSorted(cacheHolder)).toEqual(["cache"]);
+  // The unsafe alias is rejected as an install folder name.
+  expect(err).toContain('Invalid dependency name ".."');
+  expect(exitCode).not.toBe(0);
+
+  // A normal single-segment alias still gets its cache index entry, inside the
+  // cache directory, and installs fine.
+  const {
+    stdout: stdoutOk,
+    stderr: stderrOk,
+    exited: exitedOk,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(root, "project-ok"),
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: testEnv,
+  });
+  const errOk = await stderrOk.text();
+  const outOk = await stdoutOk.text();
+  const exitCodeOk = await exitedOk;
+
+  expect(await exists(join(cacheDir, "baz-ok"))).toBe(true);
+  expect(await exists(join(root, "project-ok", "node_modules", "baz-ok", "package.json"))).toBe(true);
+  // The cache parent still only contains the cache directory after a normal install.
+  expect(await readdirSorted(cacheHolder)).toEqual(["cache"]);
   expect(errOk).not.toContain("error:");
   expect(outOk).toContain("1 package installed");
   expect(exitCodeOk).toBe(0);

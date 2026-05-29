@@ -10,7 +10,7 @@ use bun_ast::{Part, SlotCounts};
 use crate::bun_renamer as renamer;
 use crate::bun_renamer::{ChunkRenamer, MinifyRenamer, NumberRenamer, StableSymbolCount};
 use crate::chunk::Content;
-use crate::ungate_support::js_meta;
+use crate::js_meta;
 use crate::{Chunk, LinkerContext, StableRef, WrapKind};
 
 /// TODO: investigate if we need to parallelize this function

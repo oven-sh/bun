@@ -526,6 +526,11 @@ int us_socket_write(us_socket_r s, const char *nonnull_arg data, int length) non
 int us_socket_write2(us_socket_r s, const char *header, int header_length, const char *payload, int payload_length) nonnull_fn_decl;
 /* Bypass TLS — write raw bytes to the fd even if `s->ssl` is set. */
 int us_socket_raw_write(us_socket_r s, const char *data, int length);
+/* Like us_socket_write, but additionally reports a fatal (non-would-block)
+ * send error through *fatal_write_error so opted-in callers can fail the
+ * write instead of retrying forever. TLS sockets fall back to
+ * us_socket_write (their errors propagate through the SSL layer). */
+int us_socket_write_check_error(us_socket_r s, const char *data, int length, int *fatal_write_error);
 
 void us_socket_timeout(us_socket_r s, unsigned int seconds) nonnull_fn_decl;
 void us_socket_long_timeout(us_socket_r s, unsigned int minutes) nonnull_fn_decl;

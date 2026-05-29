@@ -1525,7 +1525,9 @@ folded: >
           // before the value at any indentation is valid.
           expect(YAML.parse('["a":\nb]\n')).toEqual([{ a: "b" }]);
           expect(YAML.parse("[a: \nb]\n")).toEqual([{ a: "b" }]);
-          // Mirrored to Alias/SequenceStart/MappingStart arms.
+        });
+
+        test("flow-map [147] value guard mirrored to Alias/SequenceStart/MappingStart arms", () => {
           expect(() => YAML.parse("{a: &x\n [b]: c}\n")).toThrow("Unexpected token");
           expect(() => YAML.parse("{a: &x\n {b}: c}\n")).toThrow("Unexpected token");
           expect(() => YAML.parse("{x: &y 1, a: &z\n *y : c}\n")).toThrow("Unexpected token");
@@ -1919,11 +1921,7 @@ folded: >
 
         test.todo("error message includes line:col position", () => {
           // ParseResultError carries Pos; the JS binding discards it.
-          try {
-            YAML.parse("a: 1\nb:\n\tc: 2");
-          } catch (e: any) {
-            expect(e.message).toMatch(/line\s*\d|:\d+:\d+/);
-          }
+          expect(() => YAML.parse("a: 1\nb:\n\tc: 2")).toThrow(/line\s*\d|:\d+:\d+/);
         });
 
         test.todo("`<<:` merge preserves source property order", () => {

@@ -176,10 +176,10 @@ class PerformanceObserverForNodeTypes extends NodePerformanceObserver {
           }
           return;
         }
-        if (options.entryTypes !== undefined) {
-          return super.observe({ ...options, entryTypes: webTypes });
-        }
-        return super.observe({ ...options, type: webTypes[0] });
+        // A non-empty webTypes set alongside a node type is only possible in
+        // entryTypes mode (observe({type}) requests exactly one type), so the
+        // forwarded subscription is always an entryTypes one.
+        return super.observe({ ...options, entryTypes: webTypes });
       }
     }
     return super.observe(options);

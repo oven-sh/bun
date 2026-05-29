@@ -250,15 +250,20 @@ class NodeEntryObserver {
 }
 
 function makeNodeEntryList(entries) {
+  // Node's PerformanceObserverEntryList hands entries out in chronological
+  // (startTime) order and getEntriesByName takes an optional type filter.
+  const sorted = entries.slice().sort((a, b) => a.startTime - b.startTime);
   return {
     getEntries() {
-      return entries.slice();
+      return sorted.slice();
     },
     getEntriesByType(type) {
-      return entries.filter(entry => entry.entryType === type);
+      return sorted.filter(entry => entry.entryType === type);
     },
-    getEntriesByName(name) {
-      return entries.filter(entry => entry.name === name);
+    getEntriesByName(name, type) {
+      return sorted.filter(
+        entry => entry.name === name && (type === undefined || entry.entryType === type),
+      );
     },
   };
 }

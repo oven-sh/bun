@@ -291,9 +291,19 @@ impl us_socket_t {
         if data.is_empty() {
             return;
         }
-        // SAFETY: `self` is a live TLS `us_socket_t`; `data` is valid for its length.
-        unsafe {
-            c::us_socket_tls_feed(self, data.as_ptr().cast(), data.len() as i32);
+        // The C side takes an `int` length: feed in i32-sized chunks instead of
+        // truncating the cast (a clamp would silently drop the tail and there is
+        // no return value to report a partial feed). Each chunk can re-enter the
+        // data dispatch, which may close the socket — stop feeding once it does.
+        for chunk in data.chunks(MAX_I32) {
+            if self.is_closed() {
+                return;
+            }
+            // SAFETY: `self` is a live TLS `us_socket_t`; `chunk` is valid for its
+            // length, which fits in an i32 by construction.
+            unsafe {
+                c::us_socket_tls_feed(self, chunk.as_ptr().cast(), chunk.len() as i32);
+            }
         }
     }
 

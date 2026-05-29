@@ -9,7 +9,7 @@ import tls from "node:tls";
 // @ts-expect-error - debug-only export
 import { sslCtxLiveCount } from "bun:internal-for-testing";
 import { tempDir, tls as tlsCerts } from "harness";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 async function withServer(fn: (port: number) => Promise<void>) {
@@ -75,9 +75,10 @@ test("Bun.connect with servername-only tls reuses one SSL_CTX", async () => {
   }
 });
 
-// `tls.createSecureContext()` is now WeakGCMap-memoised by digest in native
-// code (replacing the SHA-256/WeakRef Map that lived in tls.ts), so the same
-// options return the same native handle.
+// The user-facing `tls.createSecureContext()` is uncached: every call owns its
+// SSL_CTX exclusively (so addCACert on one context can never leak into
+// another); only internal consumers (tls.connect / Bun.connect / fetch) share
+// contexts through the per-digest native cache.
 test("createSecureContext owns its native handle exclusively (identical configs get distinct SSL_CTXs)", () => {
   const opts = { ca: tlsCerts.cert, rejectUnauthorized: false };
   const a = tls.createSecureContext(opts);
@@ -220,9 +221,7 @@ test("addCACert on one user-facing context does not affect another with identica
 });
 
 test("setDefaultCACertificates() override applies to plain tls.connect (no explicit ca)", async () => {
-  const fs = require("fs");
-  const path = require("path");
-  const keys = (f: string) => fs.readFileSync(path.join(import.meta.dir, "../test/fixtures/keys", f));
+  const keys = (f: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", f));
   const prev = tls.getCACertificates("default");
   try {
     tls.setDefaultCACertificates([keys("ca1-cert.pem").toString()]);

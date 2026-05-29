@@ -207,10 +207,14 @@ pub(crate) unsafe extern "C" fn us_dispatch_ssl_raw_tap(
         // `twin` is `IntrusiveRc<Self>` (intrusive ref-counted heap pointer);
         // grab the raw `*mut` without consuming the ref so the +1 stays put.
         let raw: *mut TLSSocket = raw.as_ptr();
+        // A negative length from the C side means there is nothing to deliver;
+        // never panic across the `extern "C"` boundary.
+        let Ok(len) = usize::try_from(len) else {
+            return s;
+        };
         // SAFETY: `data` points to `len` readable bytes from the TLS BIO; loop.c
         // guarantees the buffer outlives this call.
-        let slice =
-            unsafe { core::slice::from_raw_parts(data, usize::try_from(len).expect("len >= 0")) };
+        let slice = unsafe { core::slice::from_raw_parts(data, len) };
         // Zig: `raw.onData(TLSSocket.Socket.from(s), data[..])` where
         // `Socket = uws.NewSocketHandler(ssl)`. SAFETY: `twin` holds a live +1
         // ref to the `[raw, _]` half; dispatch is single-threaded so no aliasing
@@ -240,10 +244,14 @@ pub unsafe extern "C" fn us_dispatch_session(s: *mut us_socket_t, data: *const u
     if tls_ptr.is_null() {
         return;
     }
+    // A negative length from the C side means there is nothing to deliver;
+    // never panic across the `extern "C"` boundary.
+    let Ok(len) = usize::try_from(len) else {
+        return;
+    };
     // SAFETY: `data` points to `len` readable bytes owned by the caller for the
     // duration of this call.
-    let slice =
-        unsafe { core::slice::from_raw_parts(data, usize::try_from(len).expect("len >= 0")) };
+    let slice = unsafe { core::slice::from_raw_parts(data, len) };
     // SAFETY: ext slot for BunSocketTls holds a live *mut TLSSocket; dispatch is
     // single-threaded. `on_session` takes `*mut Self` (noalias re-entrancy).
     let _ = unsafe { TLSSocket::on_session(tls_ptr, slice) };
@@ -266,10 +274,14 @@ pub unsafe extern "C" fn us_dispatch_keylog(s: *mut us_socket_t, data: *const u8
     if tls_ptr.is_null() {
         return;
     }
+    // A negative length from the C side means there is nothing to deliver;
+    // never panic across the `extern "C"` boundary.
+    let Ok(len) = usize::try_from(len) else {
+        return;
+    };
     // SAFETY: `data` points to `len` readable bytes owned by the caller for the
     // duration of this call.
-    let slice =
-        unsafe { core::slice::from_raw_parts(data, usize::try_from(len).expect("len >= 0")) };
+    let slice = unsafe { core::slice::from_raw_parts(data, len) };
     // SAFETY: ext slot for BunSocketTls holds a live *mut TLSSocket; dispatch is
     // single-threaded. `on_keylog` takes `*mut Self` (noalias re-entrancy).
     let _ = unsafe { TLSSocket::on_keylog(tls_ptr, slice) };

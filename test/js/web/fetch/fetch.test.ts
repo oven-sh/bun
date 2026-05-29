@@ -2447,7 +2447,10 @@ describe("fetch should allow duplex", () => {
 it("should allow to follow redirect if connection is closed, abort should work even if the socket was closed before the redirect", async () => {
   for (const type of ["normal", "delay"]) {
     await using server = net.createServer(socket => {
-      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
+      // Raw test server: tolerate client aborts, surface anything unexpected.
+      socket.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code !== "ECONNRESET" && err.code !== "EPIPE" && err.code !== "ECONNABORTED") throw err;
+      });
       let body = "";
       socket.on("data", data => {
         body += data.toString("utf8");

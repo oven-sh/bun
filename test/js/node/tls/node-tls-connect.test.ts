@@ -535,7 +535,11 @@ it("setSession() should not leak the SSL_SESSION returned by d2i_SSL_SESSION", a
       // on any ASAN-instrumented build (including a local `bun bd` debug
       // build, which is ASAN but not named `bun-asan`). Cap the quarantine
       // so the measurement reflects live memory.
-      ASAN_OPTIONS: ["quarantine_size_mb=8", process.env.ASAN_OPTIONS].filter(Boolean).join(":"),
+      // Preserve the harness ASAN options (bunEnv sets allow_user_segv_handler /
+      // disable_coredump) instead of rebuilding from process.env only.
+      ASAN_OPTIONS: ["quarantine_size_mb=8", bunEnv.ASAN_OPTIONS ?? process.env.ASAN_OPTIONS]
+        .filter(Boolean)
+        .join(":"),
     },
     stdout: "pipe",
     stderr: "pipe",

@@ -902,11 +902,12 @@ pub(crate) fn set_key_cert(
         if !leaf.is_null() && !pkey.is_null() {
             let ok_cert = ffi::SSL_use_certificate(ssl_ptr.cast(), leaf);
             let ok_key = ffi::SSL_use_PrivateKey(ssl_ptr.cast(), pkey);
+            let mut ok_chain = 1;
             let mut chain: *mut core::ffi::c_void = core::ptr::null_mut();
             if ffi::SSL_CTX_get0_chain_certs(ctx.cast(), &raw mut chain) == 1 && !chain.is_null() {
-                let _ = ffi::SSL_set1_chain(ssl_ptr.cast(), chain);
+                ok_chain = ffi::SSL_set1_chain(ssl_ptr.cast(), chain);
             }
-            if ok_cert != 1 || ok_key != 1 {
+            if ok_cert != 1 || ok_key != 1 || ok_chain != 1 {
                 boringssl::SSL_CTX_free(ctx.cast());
                 return Err(global.throw(format_args!("setKeyCert failed to apply the context")));
             }

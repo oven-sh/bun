@@ -610,7 +610,12 @@ describe("tls ciphers should work", () => {
   });
 });
 
-it("server-side getPeerCertificate() should not leak", async () => {
+// A local `bun bd` debug build is ASAN-instrumented but not named `bun-asan`;
+// ASAN's default 256MB quarantine retains every freed allocation, so RSS grows
+// by the total allocation churn regardless of leaks and the threshold below
+// cannot distinguish a leak from the quarantine. Skip there instead of
+// converting an over-threshold measurement into a pass.
+it.skipIf(isDebug && !isASAN)("server-side getPeerCertificate() should not leak", async () => {
   // Guards against the SSL_get_peer_certificate X509 ref leak and the
   // computeRaw BIO leak on the server getPeerCertificate() path.
   const { promise: serverSocketPromise, resolve: onServerSocket } = Promise.withResolvers<TLSSocket>();
@@ -669,20 +674,9 @@ it("server-side getPeerCertificate() should not leak", async () => {
     // 50k abbreviated calls here (~20MB for 25k in debug). Leave slack for
     // allocator/ASAN noise but stay well below that. Both calls in the loop
     // build the full leaf-certificate object (getPeerCertificate(false) used
-    // to return {}), so the debug budget covers 2x the constructions. A
-    // local `bun bd` debug build is ASAN-instrumented but not named
-    // `bun-asan`; ASAN's default 256MB quarantine retains every freed
-    // allocation, so RSS grows by the total allocation churn regardless of
-    // leaks (~190MB here, 0.5MB with quarantine_size_mb=1) - skip the
-    // assertion there rather than encode a threshold that can't distinguish
-    // a leak from the quarantine.
+    // to return {}), so the debug budget covers 2x the constructions. Local
+    // debug (non-`bun-asan`) builds skip this test entirely - see skipIf above.
     const threshold = 1024 * 1024 * (isDebug ? 20 : isASAN ? 16 : 12);
-    if (isDebug && !isASAN && growth > threshold) {
-      console.warn(
-        `getPeerCertificate rss growth ${(growth / 1048576) | 0}MB exceeds ${(threshold / 1048576) | 0}MB - assuming ASAN quarantine retention on a local debug build`,
-      );
-      return;
-    }
     expect(growth).toBeLessThan(threshold);
   } finally {
     client.end();

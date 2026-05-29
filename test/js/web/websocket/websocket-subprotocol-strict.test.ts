@@ -17,7 +17,10 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
     });
 
     server.on("connection", socket => {
-      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
+      // Raw test server: tolerate client aborts, surface anything unexpected.
+      socket.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code !== "ECONNRESET" && err.code !== "EPIPE" && err.code !== "ECONNABORTED") throw err;
+      });
       let requestData = "";
 
       socket.on("data", data => {

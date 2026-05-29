@@ -172,6 +172,14 @@ fn decompress_gzip_members(
             out.reserve(target.saturating_sub(out.len()));
         };
         let result = loop {
+            // Decompression-bomb guard: share the zlib slow path's cap. At the
+            // top so it covers *both* grow paths (a stream whose members keep
+            // filling the spare exactly returns Success with `len == cap` and
+            // never hits InsufficientSpace).
+            if out.capacity() > crate::decompressor::MAX_DECOMPRESSED_BODY_SIZE {
+                out.truncate(start_len);
+                return Err(());
+            }
             if out.spare_capacity_mut().is_empty() {
                 grow_to_double_capacity(out);
             }
@@ -181,11 +189,6 @@ fn decompress_gzip_members(
                 bun_libdeflate::Encoding::Gzip,
             );
             if result.status == bun_libdeflate::Status::InsufficientSpace {
-                // Decompression-bomb guard: share the zlib slow path's cap.
-                if out.capacity() > crate::decompressor::MAX_DECOMPRESSED_BODY_SIZE {
-                    out.truncate(start_len);
-                    return Err(());
-                }
                 grow_to_double_capacity(out);
                 continue;
             }
@@ -375,8 +378,9 @@ impl<'a> InternalState<'a> {
                         body_out_str.list.clear();
                         body_out_str.list.reserve_exact(estimated_size as usize);
                         // Decode every gzip member on the fast path (RFC 1952
-                        // §2.2). The reserve above covers the first/largest
-                        // member; the loop grows for any trailing members.
+                        // §2.2). `estimated_size` is the last member's ISIZE
+                        // trailer — a hint, not the total; `decompress_gzip_members`
+                        // grows the buffer as each member needs.
                         if decompress_gzip_members(
                             deflater.decompressor_mut(),
                             buffer,

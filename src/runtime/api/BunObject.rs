@@ -2386,24 +2386,27 @@ pub mod JSZlib {
             if offset > 0 && input[offset] == 0 {
                 break;
             }
+            // A member's output lands in `cap - len` spare; `len` only advances
+            // on Success, so the growth must double `capacity` — `reserve(cap)`
+            // is relative to `len` and no-ops once `len < cap` (an infinite loop).
+            let grow_to_double_capacity = |out: &mut Vec<u8>| {
+                let target = out.capacity().max(4096).saturating_mul(2);
+                out.reserve(target.saturating_sub(out.len()));
+            };
             let result = loop {
+                if out.capacity() > 1024 * 1024 * 1024 {
+                    return bun_libdeflate::Status::InsufficientSpace;
+                }
                 if out.spare_capacity_mut().is_empty() {
-                    if out.capacity() > 1024 * 1024 * 1024 {
-                        return bun_libdeflate::Status::InsufficientSpace;
-                    }
-                    let grow = out.capacity().max(4096);
-                    out.reserve(grow);
+                    grow_to_double_capacity(out);
                 }
                 let result = decompressor.decompress_to_vec(
                     &input[offset..],
                     out,
                     bun_libdeflate::Encoding::Gzip,
                 );
-                if result.status == bun_libdeflate::Status::InsufficientSpace
-                    && out.capacity() <= 1024 * 1024 * 1024
-                {
-                    let grow = out.capacity().max(4096);
-                    out.reserve(grow);
+                if result.status == bun_libdeflate::Status::InsufficientSpace {
+                    grow_to_double_capacity(out);
                     continue;
                 }
                 break result;

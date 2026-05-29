@@ -352,6 +352,23 @@ describe("fetch() with a concatenated multi-member gzip body", () => {
     expect(fetch(server.url).then(r => r.text())).rejects.toThrow();
   });
 
+  // Regression: the libdeflate grow loop must double capacity, not
+  // `reserve(capacity)` (a no-op while len == 0). When the first member's
+  // plaintext exceeds the last member's ISIZE (the reserve hint) it would spin
+  // forever. First member > 512 KiB exercises the big-body reserve path.
+  it("does not hang when member 1 is larger than the reserve hint (member N)", async () => {
+    const first = Buffer.alloc(1024 * 1024, "A"); // 1 MiB
+    const last = Buffer.alloc(600 * 1024, "B"); // 600 KiB < first, > shared_buffer
+    const body = Buffer.concat([gzipSync(first), gzipSync(last)]);
+    const expected = Buffer.concat([first, last]);
+    using server = serve(body);
+    const res = await fetch(server.url);
+    expect(res.status).toBe(200);
+    const got = Buffer.from(await res.arrayBuffer());
+    expect(got.length).toBe(expected.length);
+    expect(got.equals(expected)).toBe(true);
+  }, 10_000);
+
   it("decodes all members (chunked transfer, zlib slow path)", async () => {
     using server = Bun.serve({
       port: 0,

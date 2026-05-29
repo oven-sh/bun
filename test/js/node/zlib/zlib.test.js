@@ -158,6 +158,18 @@ describe("zlib", () => {
     const padded = Buffer.concat([zlib.gzipSync("ab"), zlib.gzipSync("cd"), Buffer.alloc(8)]);
     expect(Buffer.from(gunzipSync(padded, { library: "libdeflate" })).toString()).toBe("abcd");
   });
+
+  // Regression: when the first member's plaintext is larger than the last
+  // member's ISIZE (the reserve hint), the libdeflate grow loop must keep
+  // doubling capacity. A buggy `reserve(capacity)` (relative to len==0) no-ops
+  // and spins forever. gzip(8KB) ++ gzip("x") is the minimal trigger.
+  it("Bun.gunzipSync({ library: 'libdeflate' }) does not hang when member 1 > member N", () => {
+    const big = Buffer.alloc(8192, "A");
+    const multi = Buffer.concat([zlib.gzipSync(big), zlib.gzipSync("x")]);
+    const got = Buffer.from(gunzipSync(multi, { library: "libdeflate" }));
+    expect(got.length).toBe(big.length + 1);
+    expect(got.equals(Buffer.concat([big, Buffer.from("x")]))).toBe(true);
+  }, 10_000);
 });
 
 function* window(buffer, size, advance = size) {

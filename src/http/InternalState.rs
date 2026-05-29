@@ -162,12 +162,18 @@ fn decompress_gzip_members(
         }
 
         // `decompress_to_vec` appends into spare capacity and does not grow, so
-        // ensure room and double on InsufficientSpace. The first member's room
-        // is pre-reserved by the caller; later members grow from here.
+        // ensure room and double the *capacity* on InsufficientSpace. A member's
+        // output lands in `cap - len` spare; `len` stays put across retries (it
+        // only advances on Success), so the growth must double `capacity`, not
+        // `reserve(capacity)` (which is relative to `len` and no-ops once
+        // `len < cap` — an infinite loop).
+        let grow_to_double_capacity = |out: &mut Vec<u8>| {
+            let target = out.capacity().max(4096).saturating_mul(2);
+            out.reserve(target.saturating_sub(out.len()));
+        };
         let result = loop {
             if out.spare_capacity_mut().is_empty() {
-                let grow = out.capacity().max(4096);
-                out.reserve(grow);
+                grow_to_double_capacity(out);
             }
             let result = decompressor.decompress_to_vec(
                 &input[offset..],
@@ -180,8 +186,7 @@ fn decompress_gzip_members(
                     out.truncate(start_len);
                     return Err(());
                 }
-                let grow = out.capacity().max(4096);
-                out.reserve(grow);
+                grow_to_double_capacity(out);
                 continue;
             }
             break result;

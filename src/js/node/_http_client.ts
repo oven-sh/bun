@@ -697,7 +697,11 @@ function ClientRequest(input, options, cb) {
     try {
       socket = isTLS ? tls().connect(connectOptions) : net().connect(connectOptions);
     } catch (err) {
+      fetching = false;
       process.nextTick((self, err) => self.emit("error", err), this, err);
+      // Keep this terminal path consistent with onError below: emit 'close'
+      // after 'error' so a req.on('close') cleanup listener still runs.
+      maybeEmitClose();
       return;
     }
 

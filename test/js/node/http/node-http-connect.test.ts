@@ -628,6 +628,54 @@ describe("HTTP client CONNECT", () => {
     }
   });
 
+  test("http.request CONNECT buffers post-tunnel data until a listener is attached", async () => {
+    // Node resets the tunnel socket to the neutral (non-flowing) state before
+    // emitting 'connect', so bytes arriving after the headers are buffered and a
+    // 'data' listener attached later (e.g. after an await) still receives them.
+    const proxySockets: net.Socket[] = [];
+    const proxyServer = net.createServer(socket => {
+      proxySockets.push(socket);
+      socket.on("error", () => {});
+      socket.on("data", () => {
+        socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+        // Send the tunneled bytes in a separate write after the headers.
+        setTimeout(() => socket.write("LATE-DATA"), 20);
+      });
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const { port } = proxyServer.address() as AddressInfo;
+
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<{ flowing: unknown; data: string }>();
+      const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "h:1" });
+      req.on("connect", async (res, socket) => {
+        const flowing = (socket as any).readableFlowing;
+        socket.on("error", () => {});
+        // Yield to the event loop before attaching the data listener; the bytes
+        // must be buffered (not dropped) until now.
+        await new Promise<void>(r => setTimeout(r, 60));
+        let data = "";
+        socket.on("data", d => {
+          data += d.toString();
+          if (data.includes("LATE-DATA")) {
+            resolve({ flowing, data });
+            socket.destroy();
+          }
+        });
+      });
+      req.on("error", reject);
+      req.end();
+
+      const result = await promise;
+      // Matches Node: socket handed over in the neutral state, data buffered.
+      expect(result.flowing).toBe(null);
+      expect(result.data).toBe("LATE-DATA");
+    } finally {
+      for (const s of proxySockets) s.destroy();
+      await new Promise<void>(r => proxyServer.close(() => r()));
+    }
+  });
+
   test("http.request CONNECT emits 'error' then 'close' when the proxy is unreachable", async () => {
     // Bind then immediately close to obtain a port nothing listens on.
     const tmp = net.createServer();

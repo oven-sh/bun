@@ -813,6 +813,11 @@ function ClientRequest(input, options, cb) {
       socket.removeListener("close", onClose);
       // Hand the tunnel socket to the user with no internal listeners, like Node.
       socket.removeListener("error", swallowTeardownError);
+      // Our internal 'data' listener put the socket into flowing mode; reset it
+      // to the neutral (neither flowing nor paused) state like Node does before
+      // emitting 'connect', so bytes after the headers stay buffered until the
+      // user attaches a 'data' listener / pipes / resumes (no data loss).
+      socket.readableFlowing = null;
       this[kClearTimeout]?.();
       fetching = false;
 

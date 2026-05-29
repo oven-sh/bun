@@ -14,8 +14,10 @@
 // Runs against a real MySQL/MariaDB server. The classifier is shared with
 // Postgres, so this also covers that decoder.
 
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, describeWithContainer, isDockerEnabled } from "harness";
+import { SQL } from "bun";
+import { beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, describeWithContainer, isDockerEnabled, isLinux } from "harness";
+import { existsSync } from "fs";
 import path from "path";
 
 const fixture = path.join(import.meta.dir, "sql-mysql-column-name-digits.fixture.ts");
@@ -59,27 +61,76 @@ if (isDockerEnabled()) {
     });
   });
 } else {
-  // No docker daemon (e.g. local/sandboxed environments). If a MySQL server is
-  // reachable at MYSQL_URL or the conventional local address, exercise the
-  // fixture there so the regression is still covered.
-  const url = process.env.MYSQL_URL || "mysql://root@127.0.0.1:3306/bun_sql_test";
+  // No docker daemon (e.g. the sandboxed dev/CI-gate container, which ships a
+  // native MariaDB). Connect to that real server: start it if needed, provision
+  // a passwordless TCP user over the root unix socket, and run the fixture
+  // against it. `MYSQL_URL` short-circuits all of this when set.
+  const MYSQL_SOCKET = "/run/mysqld/mysqld.sock";
+
+  async function waitForSocket(timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (existsSync(MYSQL_SOCKET)) return true;
+      await Bun.sleep(250);
+    }
+    return existsSync(MYSQL_SOCKET);
+  }
+
+  // Start the native MariaDB if its socket isn't already there. Best-effort:
+  // on environments without the binaries / permissions this just fails and the
+  // test skips.
+  async function ensureServerStarted(): Promise<boolean> {
+    if (existsSync(MYSQL_SOCKET)) return true;
+    if (Bun.which("mysqld_safe") == null) return false;
+    Bun.spawn({
+      cmd: ["mysqld_safe", "--user=mysql", "--datadir=/var/lib/mysql"],
+      stdout: "ignore",
+      stderr: "ignore",
+      stdin: "ignore",
+    }).unref();
+    return waitForSocket(30_000);
+  }
+
+  // Create a passwordless `bun_sql_test` user reachable over TCP. root uses
+  // unix_socket auth (no TCP), so provision through the socket first.
+  async function provisionTcpUser(): Promise<void> {
+    await using root = new SQL({ adapter: "mysql", username: "root", database: "mysql", path: MYSQL_SOCKET, max: 1 });
+    await root`CREATE DATABASE IF NOT EXISTS bun_sql_test`;
+    await root.unsafe("CREATE USER IF NOT EXISTS 'bun_sql_test'@'%' IDENTIFIED BY ''");
+    await root.unsafe("CREATE USER IF NOT EXISTS 'bun_sql_test'@'localhost' IDENTIFIED BY ''");
+    await root.unsafe("GRANT ALL PRIVILEGES ON *.* TO 'bun_sql_test'@'%'");
+    await root.unsafe("GRANT ALL PRIVILEGES ON *.* TO 'bun_sql_test'@'localhost'");
+    await root.unsafe("FLUSH PRIVILEGES");
+  }
+
+  let url: string | null = process.env.MYSQL_URL ?? null;
+
+  beforeAll(async () => {
+    if (url) return;
+    if (!isLinux) return;
+    try {
+      if (!(await ensureServerStarted())) return;
+      await provisionTcpUser();
+      url = "mysql://bun_sql_test@127.0.0.1:3306/bun_sql_test";
+    } catch {
+      // Leave url null → the test skips; the docker branch covers CI.
+      url = null;
+    }
+  });
 
   describe("mysql (local)", () => {
     test("a digits-with-interior-underscore column stays a named key", async () => {
-      const { stdout, stderr, exitCode } = await runFixture(url);
-      // The fixture prints "CONNECTED" after the priming query succeeds. If it
-      // never got that far, there's no MySQL to talk to in this environment;
-      // the docker-gated branch above provides the CI coverage.
-      if (!stdout.startsWith("CONNECTED")) {
-        if (process.env.MYSQL_URL) {
-          // MYSQL_URL was explicitly provided; failing to connect is a real
-          // error, not an environment without MySQL.
-          throw new Error(
-            `sql-mysql-column-name-digits: MYSQL_URL was provided but fixture never reached CONNECTED\nstdout:\n${stdout}\nstderr:\n${stderr}`,
-          );
-        }
-        console.warn("sql-mysql-column-name-digits: no MySQL reachable at " + url + "; skipping assertions");
+      if (!url) {
+        console.warn("sql-mysql-column-name-digits: no MySQL reachable in this environment; skipping assertions");
         return;
+      }
+      const { stdout, stderr, exitCode } = await runFixture(url);
+      // The fixture prints "CONNECTED" after the priming query succeeds. If a
+      // URL was resolved but the fixture never connected, that's a real error.
+      if (!stdout.startsWith("CONNECTED")) {
+        throw new Error(
+          `sql-mysql-column-name-digits: could not connect to ${url}\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+        );
       }
       assertFixtureOutput(stdout, stderr, exitCode);
     });

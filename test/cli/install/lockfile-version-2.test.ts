@@ -132,10 +132,11 @@ it("off-registry npm tarball integrity is enforced only at version 2", async () 
 // lockfile carrying an unsafe git tag still never executes anything unsafe.
 // (The `github` tarball path has no such re-validation — see the next test.)
 it("unsafe git .bun-tag is rejected only at version 2", async () => {
-  // Point at an unreachable local endpoint (port 1) so the URL never reaches a
-  // real host — keeping this test offline. Neither block actually clones it: v2
-  // fails at parse time, and the v1 block uses `--lockfile-only` to return before
-  // the install phase (the clone can hang on macOS rather than fail fast).
+  // When v1 parsing succeeds, install proceeds to `git clone` (an https
+  // attempt, then ssh). `GIT_ALLOW_PROTOCOL=file` makes git reject both
+  // transports immediately, so the clone fails fast with no network at all —
+  // connecting to an "unreachable" loopback port can hang on some CI hosts.
+  const gitEnv = { ...env, GIT_ALLOW_PROTOCOL: "file" };
   const gitUrl = "git+ssh://git@127.0.0.1:1/example/repo.git#main";
   const lockfile = (lockfileVersion: number) =>
     JSON.stringify({
@@ -159,7 +160,7 @@ it("unsafe git .bun-tag is rejected only at version 2", async () => {
     await using proc = spawn({
       cmd: [bunExe(), "install", "--frozen-lockfile"],
       cwd: String(dir),
-      env,
+      env: gitEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -168,11 +169,8 @@ it("unsafe git .bun-tag is rejected only at version 2", async () => {
     expect(exitCode).not.toBe(0);
   }
 
-  // version 1 predates the check, so parsing no longer rejects it. Use
-  // `--lockfile-only`: the lockfile is still parsed (so the v1 git-tag check is
-  // exercised and correctly does not fire), but the command returns before the
-  // install phase, so it never reaches the `git clone` of the unreachable repo
-  // — which can hang instead of failing fast (notably on macOS).
+  // version 1 predates the check, so parsing no longer rejects it (the install
+  // then fails cloning the repo, but not with the parse-time error).
   {
     using dir = tempDir("lockfile-v1-gittag", {
       "package.json": JSON.stringify({ name: "root", dependencies: { dep: gitUrl } }),
@@ -181,7 +179,7 @@ it("unsafe git .bun-tag is rejected only at version 2", async () => {
     await using proc = spawn({
       cmd: [bunExe(), "install", "--frozen-lockfile", "--lockfile-only"],
       cwd: String(dir),
-      env,
+      env: gitEnv,
       stdout: "pipe",
       stderr: "pipe",
     });

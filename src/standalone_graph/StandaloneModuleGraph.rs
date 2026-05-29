@@ -639,7 +639,7 @@ impl StandaloneModuleGraph {
                     module_format: module.module_format,
                     side: module.side,
                     cached_blob: None,
-                    encoding: Encoding::Binary,
+                    encoding: module.encoding,
                     wtf_string: BunString::empty(),
                 },
             );
@@ -928,8 +928,17 @@ pub(crate) fn to_bytes(
             )),
             loader: output_file.loader,
             contents: string_builder.append_count_z(buf_bytes),
+            // Latin1 lets the runtime wrap the mmapped section bytes in a
+            // zero-copy ExternalStringImpl. The printer escapes non-ASCII for
+            // server-side JS, but `--banner`/`--footer`/hashbang and
+            // client-side (target=browser) chunks are concatenated verbatim
+            // as UTF-8, so verify the final bytes before committing to Latin1.
             encoding: match output_file.loader {
-                Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx => Encoding::Latin1,
+                Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx
+                    if strings::first_non_ascii(buf_bytes).is_none() =>
+                {
+                    Encoding::Latin1
+                }
                 _ => Encoding::Binary,
             },
             module_format: if output_file.loader.is_javascript_like() {

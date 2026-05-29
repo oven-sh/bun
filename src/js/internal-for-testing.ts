@@ -248,11 +248,6 @@ export const decodeURIComponentSIMD = $newCppFunction(
 
 export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeinitCountForTesting");
 export const getCounters = $newRustFunction("Counters.rs", "createCountersObject", 0);
-export const linearFifoOrderedRemoveProbe = $newRustFunction(
-  "collections/linear_fifo.rs",
-  "TestingAPIs.orderedRemoveProbe",
-  1,
-) as (scenario: number) => number[];
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
 
 interface setSocketOptionsFn {

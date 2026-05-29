@@ -3971,9 +3971,6 @@ pub mod args {
             let buffer_value = arguments.next_eat().ok_or_else(||
                 // theoretically impossible, argument has been passed already
                 ctx.throw_invalid_arguments(format_args!("buffer is required")))?;
-            let buffer = Buffer::from_js(ctx, buffer_value).ok_or_else(|| {
-                ctx.throw_invalid_argument_type_value(b"buffer", b"TypedArray", buffer_value)
-            })?;
 
             let offset_value = arguments.next_eat().unwrap_or(JSValue::NULL);
             // if (offset == null) {
@@ -3995,19 +3992,14 @@ pub mod args {
             };
 
             // length |= 0;
-            let length_value = arguments.next_eat();
-            let length_float: f64 = if let Some(arg) = length_value {
+            let length_float: f64 = if let Some(arg) = arguments.next_eat() {
                 arg.to_number(ctx)?
             } else {
                 0.0
             };
-            let buffer = if length_value.is_some_and(|arg| !arg.is_number()) {
-                Buffer::from_js(ctx, buffer_value).ok_or_else(|| {
-                    ctx.throw_invalid_argument_type_value(b"buffer", b"TypedArray", buffer_value)
-                })?
-            } else {
-                buffer
-            };
+            let buffer = Buffer::from_js(ctx, buffer_value).ok_or_else(|| {
+                ctx.throw_invalid_argument_type_value(b"buffer", b"TypedArray", buffer_value)
+            })?;
 
             //   if (length === 0) {
             //     return process.nextTick(function tick() {

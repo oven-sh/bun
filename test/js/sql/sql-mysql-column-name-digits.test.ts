@@ -137,12 +137,7 @@ function binaryResultSet(startSeq: number, columns: Buffer[], values: Buffer): B
   packets.push(packet(seq++, Buffer.from([columns.length])));
   for (const c of columns) packets.push(packet(seq++, c));
   const nullBitmapLen = Math.ceil((columns.length + 2) / 8);
-  packets.push(
-    packet(
-      seq++,
-      Buffer.concat([Buffer.from([0x00]), Buffer.alloc(nullBitmapLen, 0), values]),
-    ),
-  );
+  packets.push(packet(seq++, Buffer.concat([Buffer.from([0x00]), Buffer.alloc(nullBitmapLen, 0), values])));
   packets.push(packet(seq++, Buffer.from([0xfe, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00])));
   return Buffer.concat(packets);
 }
@@ -216,11 +211,7 @@ test("a digits-with-interior-underscore column stays a named key", async () => {
   ];
   const values = Buffer.concat([lenencStr("widget"), u32le(10), u32le(20)]);
 
-  const [row] = await withMockedResult(
-    columns,
-    values,
-    sql => sql`SELECT product, \`2024_01\`, \`2024_02\` FROM t`,
-  );
+  const [row] = await withMockedResult(columns, values, sql => sql`SELECT product, \`2024_01\`, \`2024_02\` FROM t`);
   expect(row).toEqual({ product: "widget", "2024_01": 10, "2024_02": 20 });
 });
 

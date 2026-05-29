@@ -2859,15 +2859,28 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         ..Default::default()
                     })?;
                 } else {
-                    let value = self.parse_node(ParseNodeOptions::default())?;
+                    // [147] the value is ns-flow-node; threading the value's
+                    // own indent as current_mapping_indent makes the Scalar
+                    // arm's cmi==scalar_indent check return the bare scalar
+                    // instead of consuming a trailing `: …` as a nested
+                    // mapping (`{a: b: c}`).
+                    let value = self.parse_node(ParseNodeOptions {
+                        current_mapping_indent: Some(self.token.indent),
+                        ..Default::default()
+                    })?;
                     props.append_maybe_merge(key, value, &mut self.merge_props_budget)?;
                 }
 
-                if matches!(self.token.data, TokenData::CollectEntry) {
-                    self.context.set(Context::FlowKey)?;
-                    let r = self.scan(ScanOptions::default());
-                    self.context.unset(Context::FlowKey);
-                    r?;
+                // [140] ns-s-flow-map-entries: after an entry, only `,` or `}`.
+                match self.token.data {
+                    TokenData::CollectEntry => {
+                        self.context.set(Context::FlowKey)?;
+                        let r = self.scan(ScanOptions::default());
+                        self.context.unset(Context::FlowKey);
+                        r?;
+                    }
+                    TokenData::MappingEnd => {}
+                    _ => return Err(Self::unexpected_token()),
                 }
             }
 

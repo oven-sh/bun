@@ -1733,10 +1733,10 @@ folded: >
 
       describe("flow over-accepts (locked-in behavior)", () => {
         test("JSON-adjacent does not apply in flow-map value position", () => {
-          // [147] flow-map value is ns-flow-node, not ns-flow-pair. These are
-          // pre-existing over-accepts on main (refs error); preserved as-is.
-          expect(YAML.parse('{a: "b":c}\n')).toEqual({ a: "b", ":c": null });
-          expect(YAML.parse("{x: [a]:b}\n")).toEqual({ x: ["a"], ":b": null });
+          // [147] flow-map value is ns-flow-node, not ns-flow-pair; [140]
+          // requires `,`/`}` after the entry.
+          expect(() => YAML.parse('{a: "b":c}\n')).toThrow("Unexpected token");
+          expect(() => YAML.parse("{x: [a]:b}\n")).toThrow("Unexpected token");
         });
 
         test("leading/double comma in flow sequence still errors", () => {

@@ -201,13 +201,22 @@ test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths is no
 });
 
 test("require.resolve throws ERR_INVALID_ARG_TYPE when options.paths contains a non-string", () => {
-  expect(() => {
-    require.resolve("this-pkg-does-not-exist-zzz", { paths: [512] });
-  }).toThrow();
+  const codeOf = fn => {
+    let err;
+    try {
+      fn();
+    } catch (e) {
+      err = e;
+    }
+    return err && err.code;
+  };
 
-  expect(() => {
-    Module._resolveFilename("this-pkg-does-not-exist-zzz", __filename, false, { paths: [512, "/abs"] });
-  }).toThrow();
+  // A number is coerced/absolutized to a bogus dir rather than validated unless
+  // the boundary rejects non-string entries; assert the code to pin that check.
+  expect(codeOf(() => require.resolve("this-pkg-does-not-exist-zzz", { paths: [512] }))).toBe("ERR_INVALID_ARG_TYPE");
+  expect(codeOf(() => require.resolve("this-pkg-does-not-exist-zzz", { paths: ["/abs", 512] }))).toBe(
+    "ERR_INVALID_ARG_TYPE",
+  );
 });
 
 test("require.resolve does not crash when options.paths contains a non-absolute path", () => {

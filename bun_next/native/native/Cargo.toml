@@ -1,0 +1,35 @@
+[package]
+name = "native"
+version = "0.1.0"
+authors = []
+edition = "2021"
+
+[lib]
+name = "native"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustler = "0.37.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+semver = "1.0"
+flate2 = "1.0"
+tar = "0.4"
+oxc_allocator = "0.42.0"
+oxc_parser = "0.42.0"
+oxc_span = "0.42.0"
+oxc_codegen = "0.42.0"
+oxc_transformer = "0.42.0"
+oxc_semantic = "0.42.0"
+oxc_resolver = "11.19.1"
+oxc_traverse = "0.42.0"
+oxc_ast = "0.42.0"
+oxc_syntax = "0.42.0"
+oxc_minifier = "0.42.0"
+nodejs-built-in-modules = "1.0.0"
+boa_engine = "0.20.0"
+regex = "1.10"
+libloading = "0.8"
+sys-info = "0.9"
+ring = "0.17"
+hex = "0.4"

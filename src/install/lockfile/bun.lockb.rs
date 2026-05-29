@@ -786,6 +786,21 @@ pub(crate) fn load(
             let resolution = lockfile.packages.items_resolution()[id];
             lockfile.get_or_put_id(id as PackageID, name_hash)?;
 
+            if matches!(resolution.tag, ResolutionTag::Git | ResolutionTag::Github) {
+                let resolved = lockfile.str(&resolution.repository().resolved);
+                if !resolved.is_empty() && !crate::repository::is_safe_resolved_tag(resolved) {
+                    log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Invalid git dependency tag \"{}\" in bun.lockb",
+                            bstr::BStr::new(resolved)
+                        ),
+                    );
+                    return Err(bun_core::err!("InvalidLockfile"));
+                }
+            }
+
             // compatibility with < Bun v1.0.4
             #[allow(clippy::single_match)]
             match resolution.tag {

@@ -171,12 +171,13 @@ impl String {
     pub fn borrow_global(s: &[u8]) -> Self {
         Self(bun_alloc::String::borrowed_global(s))
     }
-    /// Borrow `s` and auto-detect encoding (UTF-8 mark if non-ASCII).
+    /// Port of `ZigString.fromBytes` — borrow `s`; mark UTF-8 iff non-ASCII.
     #[inline]
     pub fn borrow_bytes(s: &[u8]) -> Self {
-        let mut out = Self::ascii(s);
-        out.set_output_encoding();
-        out
+        if !strings::is_all_ascii(s) {
+            return Self::borrow_utf8(s);
+        }
+        Self::ascii(s)
     }
 
     /// `bun.String.static` — `'static` slice; converted to JS via
@@ -654,14 +655,18 @@ impl String {
         if len == 0 {
             return ZigStringSlice::EMPTY;
         }
+        // Zig precedence: utf8 bit wins over 16-bit when both are set
+        // (`setOutputEncoding` produces that state as a transcode signal).
+        if self.is_utf8() {
+            let bytes = self.0.latin1_or_utf8_slice();
+            return ZigStringSlice::Static(bytes.as_ptr(), len);
+        }
         if self.is_utf16() {
             return ZigStringSlice::Owned(strings::to_utf8_alloc(self.utf16()));
         }
         let bytes = self.latin1();
-        if !self.is_utf8() {
-            if let Some(v) = strings::to_utf8_from_latin1(bytes) {
-                return ZigStringSlice::Owned(v);
-            }
+        if let Some(v) = strings::to_utf8_from_latin1(bytes) {
+            return ZigStringSlice::Owned(v);
         }
         ZigStringSlice::Static(bytes.as_ptr(), len)
     }
@@ -718,8 +723,14 @@ impl String {
             }
         }
     }
+    /// Allocate fresh UTF-8. The buffer is NUL-terminated one byte past
+    /// `len()` (terminator not in `len()`) so C-string consumers can read
+    /// `as_ptr()` directly (matches `ZigString.toOwnedSlice` / `dupeZ`).
     pub fn to_owned_slice(&self) -> Vec<u8> {
-        self.to_utf8().into_vec()
+        let mut v = self.to_utf8().into_vec();
+        v.reserve_exact(1);
+        v.spare_capacity_mut()[0].write(0);
+        v
     }
 
     pub fn eql_utf8(&self, other: &[u8]) -> bool {
@@ -1300,15 +1311,16 @@ impl core::fmt::Display for OwnedString {
 
 impl core::fmt::Display for String {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if self.is_utf8() {
+            // SAFETY: utf8 tag bit guarantees the borrowed bytes are valid UTF-8.
+            return f.write_str(unsafe {
+                core::str::from_utf8_unchecked(self.0.latin1_or_utf8_slice())
+            });
+        }
         if self.is_utf16() {
             return crate::fmt::format_utf16_type(self.utf16(), f);
         }
-        let bytes = self.latin1();
-        if self.is_utf8() {
-            // SAFETY: utf8 tag bit guarantees the borrowed bytes are valid UTF-8.
-            return f.write_str(unsafe { core::str::from_utf8_unchecked(bytes) });
-        }
-        crate::fmt::format_latin1(bytes, f)
+        crate::fmt::format_latin1(self.latin1(), f)
     }
 }
 

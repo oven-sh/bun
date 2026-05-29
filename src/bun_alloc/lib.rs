@@ -1096,9 +1096,12 @@ impl StringView {
         self.len
     }
 
+    /// Both 16-bit and utf8 bits set ⇒ utf8 wins (data is UTF-8 bytes;
+    /// `setOutputEncoding` uses the 16-bit bit only as a transcode hint to C++).
     #[inline]
     fn is_16bit(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & SV_16BIT_BIT != 0
+        let p = self._unsafe_ptr_do_not_use as usize;
+        (p & SV_16BIT_BIT != 0) && (p & SV_UTF8_BIT == 0)
     }
     #[inline]
     fn is_utf8(&self) -> bool {

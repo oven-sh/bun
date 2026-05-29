@@ -1294,6 +1294,7 @@ unsafe extern "C" {
         code: u8,
     ) -> JSValue;
     safe fn ZigString__toAtomicValue(this: &bun_core::String, global: &JSGlobalObject) -> JSValue;
+    safe fn ZigString__toJSONObject(this: &bun_core::String, global: &JSGlobalObject) -> JSValue;
     safe fn ZigString__external(
         this: &bun_core::String,
         global: &JSGlobalObject,
@@ -1796,8 +1797,7 @@ impl StringJsc for bun_core::String {
     }
     #[inline]
     fn to_json_object(&self, global: &JSGlobalObject) -> JSValue {
-        let mut s = *self;
-        bun_string_jsc::to_js_by_parse_json(&mut s, global).unwrap_or(JSValue::ZERO)
+        ZigString__toJSONObject(self, global)
     }
     #[inline]
     unsafe fn external(

@@ -193,6 +193,9 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
       it("truncates the string correctly", async () => {
         await checkSameOutput("test_v8_string_write_utf8");
       });
+      it("encodes an astral character that doesn't fit the same way V8 does", async () => {
+        await checkSameOutput("test_v8_string_write_utf8_surrogate");
+      });
     });
   });
 

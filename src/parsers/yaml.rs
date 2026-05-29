@@ -1776,7 +1776,10 @@ fn is_core_schema_number<Enc: Encoding>(s: &[Enc::Unit], first_char: FirstChar) 
 
     // Mantissa: \. [0-9]+  |  [0-9]+ ( \. [0-9]* )?
     let saw_leading_dot = first_char == FirstChar::Dot
-        || (i < len && at(i) == 0x2E && { i += 1; true });
+        || (i < len && at(i) == 0x2E && {
+            i += 1;
+            true
+        });
     if saw_leading_dot {
         if i >= len || !is_digit(at(i)) {
             return false;

@@ -538,7 +538,7 @@ fn get_ptr_slice(
         if byte_off.is_number() {
             let off = byte_off.to_int64();
             if off < 0 {
-                addr = addr.saturating_sub(usize::try_from(-off).expect("int cast"));
+                addr = addr.saturating_sub(usize::try_from(off.unsigned_abs()).expect("int cast"));
             } else {
                 addr = addr.saturating_add(usize::try_from(off).expect("int cast"));
             }

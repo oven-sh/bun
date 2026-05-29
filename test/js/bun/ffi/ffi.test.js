@@ -654,6 +654,8 @@ it("ptr() rejects byteOffset outside the view", () => {
   expect(() => ptr(buf, -Infinity)).toThrow("byteOffset out of bounds");
   expect(() => ptr(buf, -1e300)).toThrow("byteOffset out of bounds");
   expect(() => ptr(buf, 33)).toThrow("byteOffset out of bounds");
+  expect(() => toBuffer(ptr(buf), -Infinity, 4)).toThrow("ptr cannot be zero");
+  expect(() => toBuffer(ptr(buf), -1e300, 4)).toThrow("ptr cannot be zero");
   expect(ptr(buf, 0)).toBe(ptr(buf));
   expect(typeof ptr(buf, 16)).toBe("number");
 });

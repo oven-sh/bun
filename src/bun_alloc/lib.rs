@@ -326,8 +326,6 @@ macro_rules! arena_format {
         __s
     }};
 }
-/// `typed_arena::Arena<T>` — typed slab with stable addresses (AST node Store).
-pub type TypedArena<T> = typed_arena::Arena<T>;
 
 /// `bun.use_mimalloc` — false under ASAN, where the global allocator is `std::alloc::System`.
 pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
@@ -526,7 +524,7 @@ pub use buffer_fallback_allocator::BufferFallbackAllocator;
 pub use max_heap_allocator::MaxHeapAllocator;
 pub use maybe_owned::MaybeOwned;
 pub use nullable_allocator::NullableAllocator;
-pub use stack_fallback::{ArenaPtr, BumpWithFallback, MimallocHeapRef, StackFallback};
+pub use stack_fallback::{ArenaPtr, StackFallback};
 
 #[path = "MimallocArena.rs"]
 pub mod mimalloc_arena;

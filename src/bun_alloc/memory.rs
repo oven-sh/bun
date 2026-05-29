@@ -2,16 +2,6 @@
 
 /// Default-initializes a value of type `T`.
 ///
-/// Zig tried, in order: `T.initDefault()`, then `T.init()`, then `.{}`. All three
-/// collapse into Rust's `Default` trait — types that had `initDefault`/`init` in Zig
-/// should `impl Default` in their Rust port.
-// PORT NOTE: `std.meta.hasFn` (≈ `@hasDecl`) fallback chain → single `Default` bound
-// per §Comptime reflection ("optional behavior → trait with default method").
-#[inline]
-pub fn init_default<T: Default>() -> T {
-    T::default()
-}
-
 // ──────────────────────────────────────────────────────────────────────────────
 // PORT NOTE: `exemptedFromDeinit`, `deinitIsVoid`, and `deinit` are intentionally
 // NOT ported as functions.

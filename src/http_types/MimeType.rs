@@ -130,7 +130,6 @@ pub fn create_hash_table() -> Result<Map, bun_alloc::AllocError> {
     Ok(map)
 }
 
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
 #[strum(serialize_all = "lowercase")]
 pub enum Category {

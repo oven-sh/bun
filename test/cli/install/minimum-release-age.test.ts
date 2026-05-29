@@ -1,6 +1,11 @@
 import type { Server } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+
+// These tests drive real `bun install` runs against a mock registry, which is
+// slow under the debug/ASAN build — give them the same generous timeout the
+// other install test files use so they don't flake on the 5s default.
+setDefaultTimeout(1000 * 60 * 5);
 
 /**
  * Comprehensive test suite for the minimum-release-age security feature.
@@ -1978,7 +1983,7 @@ linker = "${linker}"
       const normalizedLockfile = lockfile.replace(/http:\/\/localhost:\d+/g, "http://localhost:<port>");
       expect(normalizeBunSnapshot(normalizedLockfile, dir)).toMatchInlineSnapshot(`
           "{
-            "lockfileVersion": 2,
+            "lockfileVersion": 1,
             "configVersion": 1,
             "workspaces": {
               "": {

@@ -350,7 +350,10 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
                 if (cell.isIndexedColumn()) {
                     JSValue value = toJS(vm, globalObject, cell);
                     RETURN_IF_EXCEPTION(scope, {});
-                    ASSERT(cell.index < count);
+                    // cell.index is the column name parsed as an integer, not a
+                    // positional ordinal, so it can be >= count (e.g.
+                    // `select 1 as "8"` -> index 8). putDirectIndex handles
+                    // sparse indices, same as the indexed-only fast path above.
                     ASSERT(!cell.isNamedColumn());
                     ASSERT(!cell.isDuplicateColumn());
                     object->putDirectIndex(globalObject, cell.index, value);

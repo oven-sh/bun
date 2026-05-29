@@ -1220,6 +1220,12 @@ impl PathLikeExt for PathLike {
                 Valid::path_buffer(&buffer, ctx)?;
                 Valid::path_null_bytes(buffer.slice(), ctx)?;
 
+                let buffer = if arguments.will_be_async {
+                    Buffer::from_js_pinned(ctx, arg).unwrap_or(buffer)
+                } else {
+                    buffer
+                };
+
                 arguments.protect_eat();
                 Ok(Some(Self::Buffer(buffer)))
             }
@@ -1228,6 +1234,12 @@ impl PathLikeExt for PathLike {
                 let buffer = Buffer::from_array_buffer(ctx, arg);
                 Valid::path_buffer(&buffer, ctx)?;
                 Valid::path_null_bytes(buffer.slice(), ctx)?;
+
+                let buffer = if arguments.will_be_async {
+                    Buffer::from_js_pinned(ctx, arg).unwrap_or(buffer)
+                } else {
+                    buffer
+                };
 
                 arguments.protect_eat();
                 Ok(Some(Self::Buffer(buffer)))

@@ -1214,12 +1214,9 @@ folded: >
           expect(() => YAML.parse("!!str\n!!map\n: x\n")).toThrow("Multiple tags");
         });
 
-        test.todo("two anchors before e-node `:` (outer=mapping, inner=key) — pre-existing over-reject", () => {
+        test("two anchors before e-node `:` (outer=mapping, inner=key)", () => {
           // Valid per [200]/[193]: outer anchors the collection, inner the
-          // e-node key. The Scalar-key analogue (`&outer\n&inner b: x`) is
-          // accepted because that arm `return Ok(mapping)`, bypassing the
-          // post-loop has_mapping_anchor guard; the e-node arm reaches it.
-          // Pre-existing on main.
+          // e-node key.
           expect(YAML.parse("&outer\n&inner : x\n")).toEqual({ null: "x" });
         });
 
@@ -1357,6 +1354,18 @@ folded: >
           expect(() => YAML.parse("a: &x\n  &y\n  c: 1\n")).toThrow("Multiple anchors");
           // Both props more-indented; inner same-line as key — valid.
           expect(YAML.parse("a:\n  &x\n  &y c: 1\n")).toEqual({ a: { c: 1 } });
+          // 3rd anchor on a 3rd line — set_anchor's overflow guard catches it.
+          expect(() => YAML.parse("&a\n&b\n&c d: 1\n")).toThrow("Multiple anchors");
+        });
+
+        test.todo("two tags before e-node `:` — [200]/[193] line split (tag analogue)", () => {
+          // The MappingValue arm clears has_anchor/has_mapping_anchor but not
+          // has_mapping_tag, so the post-loop guard over-rejects the valid
+          // 2-tag case. set_tag also lacks the has_mapping_tag.is_some()
+          // overflow guard that set_anchor has, so a 3rd tag on a 3rd line
+          // silently overwrites instead of erroring.
+          expect(YAML.parse("!!map\n!!str : x\n")).toEqual({ "": "x" });
+          expect(() => YAML.parse("!!a\n!!b\n!!c d: 1\n")).toThrow("Multiple tags");
         });
       });
 
@@ -1501,12 +1510,11 @@ folded: >
           expect(() => YAML.parse("{? a: b: c}\n")).toThrow("Unexpected token");
         });
 
-        test.todo("flow-map value with multiline c-ns-properties before nested pair", () => {
-          // The cmi mechanism for [147] uses the first token's indent; when an
-          // anchor/tag is on a different line than the scalar, indents diverge
-          // and the cmi check is bypassed. Pre-existing.
-          expect(() => YAML.parse("{a: &x\n b: c}\n")).toThrow();
-          expect(() => YAML.parse("{a: !!str\n b: c}\n")).toThrow();
+        test("flow-map value with multiline c-ns-properties before nested pair", () => {
+          // [147] flow-map value is ns-flow-node; the Scalar arm returns the
+          // bare scalar in FlowIn when !flow_pair_allowed, regardless of cmi.
+          expect(() => YAML.parse("{a: &x\n b: c}\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("{a: !!str\n b: c}\n")).toThrow("Unexpected token");
         });
 
         test("flow-seq pair value on next line at column ≤ key indent", () => {
@@ -1514,6 +1522,12 @@ folded: >
           // before the value at any indentation is valid.
           expect(YAML.parse('["a":\nb]\n')).toEqual([{ a: "b" }]);
           expect(YAML.parse("[a: \nb]\n")).toEqual([{ a: "b" }]);
+        });
+
+        test("flow-map [147] value guard mirrored to Alias/SequenceStart/MappingStart arms", () => {
+          expect(() => YAML.parse("{a: &x\n [b]: c}\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("{a: &x\n {b}: c}\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("{x: &y 1, a: &z\n *y : c}\n")).toThrow("Unexpected token");
         });
 
         test("multiline JSON-style key check ordering", () => {
@@ -1727,13 +1741,185 @@ folded: >
           expect(() => YAML.parse("a\n...\n... b\n")).toThrow("Unexpected token");
         });
 
-        test.todo("BOM-prefixed `---` recognized as doc marker", () => {
-          // [202] l-document-prefix admits c-byte-order-mark before
-          // c-directives-end. is_at_line_start() is false after the BOM
-          // (pos != line_start_pos). Pre-existing differently-wrong (was a
-          // spurious BOM-only first doc); proper fix is BOM strip in
-          // l-document-prefix, not special-casing here.
+        test("BOM-prefixed `---` recognized as doc marker", () => {
+          // [206] l-document-prefix ::= c-byte-order-mark? l-comment*
           expect(YAML.parse("\uFEFF---\na: 1\n")).toEqual({ a: 1 });
+          expect(YAML.parse("\uFEFFa: 1\n")).toEqual({ a: 1 });
+          expect(YAML.parse("\uFEFF# comment\na: 1\n")).toEqual({ a: 1 });
+          expect(YAML.parse("\uFEFF")).toEqual(null);
+          // BOM mid-stream is not stripped (only [206] document-prefix).
+          expect(YAML.parse("a: \uFEFFx\n")).toEqual({ a: "\uFEFFx" });
+        });
+
+        test("UTF-8 BOM on byte input is stripped", () => {
+          expect(YAML.parse(Buffer.from("a: 1\n"))).toEqual({ a: 1 });
+          expect(YAML.parse(Buffer.from([0xef, 0xbb, 0xbf, ...Buffer.from("a: 1\n")]))).toEqual({ a: 1 });
+        });
+      });
+
+      describe("[10.2.1.4] Core schema number resolution", () => {
+        // The lexer loop accepted `+`/`-`/`e`/`.` at any position and
+        // wtf::parse_double prefix-parses, so `1+1` resolved as 1. Validation
+        // now requires the consumed slice to match the Core schema regex.
+        test.each([
+          ["1+1", "1+1"],
+          ["1-1", "1-1"],
+          ["++1", "++1"],
+          ["--1", "--1"],
+          ["+-1", "+-1"],
+          ["1e", "1e"],
+          ["1e+", "1e+"],
+          ["1e-", "1e-"],
+          ["1E", "1E"],
+          ["1e1.5", "1e1.5"],
+          ["1e.5", "1e.5"],
+          ["1.2.3", "1.2.3"],
+          [".", "."],
+          [".e5", ".e5"],
+          ["-.e5", "-.e5"],
+          ["e5", "e5"],
+        ] as const)("%s resolves as string", (input, expected) => {
+          expect(YAML.parse(input)).toBe(expected);
+        });
+        test.each([
+          ["1", 1],
+          ["-1", -1],
+          ["+1", 1],
+          ["0", 0],
+          ["-0", -0],
+          ["1.5", 1.5],
+          [".5", 0.5],
+          ["-.5", -0.5],
+          ["+.5", 0.5],
+          ["1.", 1],
+          ["1e5", 1e5],
+          ["1e+5", 1e5],
+          ["1e-5", 1e-5],
+          ["1.5e10", 1.5e10],
+          [".5e2", 50],
+          ["-.5e2", -50],
+          ["0x1f", 31],
+          ["0o17", 15],
+        ] as const)("%s resolves as number %p", (input, expected) => {
+          expect(YAML.parse(input)).toBe(expected);
+        });
+        test.todo.each(["-0x1f", "+0x1f", "-0o17", "+0o17"])(
+          "signed hex/octal %s resolves as string (§10.2.1.2)",
+          input => {
+            // Core schema int regex is `0x [0-9a-fA-F]+` — no sign. js-yaml,
+            // PyYAML, ruamel agree. Pre-existing on the int path (not gated
+            // by is_core_schema_number, which only validates the float path).
+            expect(YAML.parse(input)).toBe(input);
+          },
+        );
+        test.each([
+          [".inf", Infinity],
+          ["+.inf", Infinity],
+          [".Inf", Infinity],
+          [".INF", Infinity],
+          ["-.inf", -Infinity],
+          ["-.Inf", -Infinity],
+          ["-.INF", -Infinity],
+        ] as const)("%s resolves as %p", (input, expected) => {
+          expect(YAML.parse(input)).toBe(expected);
+        });
+        test(".nan resolves as NaN", () => {
+          expect(YAML.parse(".nan")).toBeNaN();
+          expect(YAML.parse(".NaN")).toBeNaN();
+          expect(YAML.parse(".NAN")).toBeNaN();
+        });
+      });
+
+      // Bugs surfaced by the multi-modal bughunt (12 finder lenses × 3 rounds).
+      // Each todo asserts the spec-correct result.
+      describe("bughunt findings", () => {
+        test.todo("NUL byte (U+0000) is not c-printable — should error, not truncate", () => {
+          // [1] c-printable excludes NUL. Currently NUL is the EOF sentinel, so
+          // input is silently truncated. Data loss / security-adjacent.
+          expect(() => YAML.parse("a: 1\x00b: 2")).toThrow();
+          expect(() => YAML.parse("key: foo\x00bar")).toThrow();
+        });
+
+        test.todo("C0/C1/DEL control characters are not c-printable — should error", () => {
+          // [1] c-printable: x09, x0A, x0D, x20-x7E, x85, xA0-D7FF, E000-FFFD,
+          // 10000-10FFFF. Currently x01-x08/x0B/x0C/x0E-x1F/x7F/x80-x84/x86-x9F
+          // are accepted as scalar content.
+          expect(() => YAML.parse("a\x01b")).toThrow();
+          expect(() => YAML.parse("a\x7Fb")).toThrow();
+          expect(() => YAML.parse("a\x80b")).toThrow();
+        });
+
+        test.todo("CRLF in quoted scalars folds as one line break (→ space)", () => {
+          // [73] b-l-folded: a single break folds to a space. Currently `\r\n`
+          // in quoted scalars produces `\n` instead.
+          expect(YAML.parse('"a\r\nb"')).toBe("a b");
+          expect(YAML.parse("'a\r\nb'")).toBe("a b");
+        });
+
+        test.todo("verbatim/named-handle tags resolve as Core-schema types", () => {
+          // [10.2] tag:yaml.org,2002:int via `!<...>` or `%TAG !y! ...` should
+          // resolve identically to `!!int`. Currently only the `!!` shorthand
+          // resolves.
+          expect(YAML.parse("!<tag:yaml.org,2002:int> 42")).toBe(42);
+          expect(YAML.parse("%TAG !y! tag:yaml.org,2002:\n---\n!y!int 42")).toBe(42);
+        });
+
+        test.todo("explicit tag on quoted scalar coerces ([10.1.1.8] resolve via tag)", () => {
+          expect(YAML.parse("!!bool 'true'")).toBe(true);
+          expect(YAML.parse('!!int "42"')).toBe(42);
+        });
+
+        test.todo("`!!int`/`!!float` validate their content", () => {
+          // [10.2.1.2]/[10.2.1.4] — the tag's regex must match.
+          expect(() => YAML.parse("!!int 1.5")).toThrow();
+          expect(() => YAML.parse("!!float 0x1f")).toThrow();
+        });
+
+        test.todo("`\\uXXXX` surrogate pairs combine ([57] ns-esc-16-bit)", () => {
+          // js-yaml/eemeli combine surrogate halves to the supplementary code
+          // point. Currently rejected.
+          expect(YAML.parse('"\\uD834\\uDD1E"')).toBe("𝄞");
+        });
+
+        test.todo("s-separate required after tag ([97] c-ns-tag-property)", () => {
+          // No whitespace between tag and content.
+          expect(() => YAML.parse("!<a>b")).toThrow();
+          expect(() => YAML.parse("!tag,x a")).toThrow();
+        });
+
+        test.todo("`%YAML`/`%TAG` directive validation", () => {
+          // [86]/[88] require arguments; [87] requires major version 1;
+          // [89] forbids duplicate handle in same document.
+          expect(() => YAML.parse("%YAML\n---\nfoo")).toThrow();
+          expect(() => YAML.parse("%YAML 2.0\n---\nfoo")).toThrow();
+          expect(() => YAML.parse("%TAG !e! tag:a:\n%TAG !e! tag:b:\n---\nfoo")).toThrow();
+        });
+
+        test.todo("§7.4.2 1024-char implicit-key limit enforced", () => {
+          const long = Buffer.alloc(1025, "a").toString();
+          expect(() => YAML.parse(`${long}: v`)).toThrow();
+          expect(() => YAML.parse(`[${long}: v]`)).toThrow();
+        });
+
+        test.todo("error message includes line:col position", () => {
+          // ParseResultError carries Pos; the JS binding discards it.
+          expect(() => YAML.parse("a: 1\nb:\n\tc: 2")).toThrow(/line\s*\d|:\d+:\d+/);
+        });
+
+        test.todo("`<<:` merge preserves source property order", () => {
+          const r: any = YAML.parse("x: &x\n  a: 1\n  b: 2\n  c: 3\ny:\n  <<: *x");
+          expect(Object.keys(r.y)).toEqual(["a", "b", "c"]);
+        });
+
+        test.todo("alias with property on prior line is rejected ([104] c-ns-alias-node)", () => {
+          // An alias node has no properties; a tag/anchor on a prior line
+          // belongs to a different node.
+          expect(() => YAML.parse("- &a 1\n- !!str\n  *a")).toThrow();
+        });
+
+        test.todo("block-scalar header rejects whitespace before chomp/indent indicator", () => {
+          // [162] c-b-block-header: no s-separate between `|`/`>` and indicators.
+          expect(() => YAML.parse("| 1\n  text")).toThrow();
         });
       });
 

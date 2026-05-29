@@ -463,6 +463,9 @@ pub trait Encoding: Copy + 'static {
     /// buffer (see `EncLit` doc for the const-generics rationale).
     fn literal(s: &'static [u8]) -> EncLit<Self::Unit>;
 
+    /// Number of leading units to skip if `input` starts with [3] c-byte-order-mark.
+    fn bom_len(input: &[Self::Unit]) -> usize;
+
     /// Reinterpret a `&[Unit]` slice as `&[u8]` for `StringHashMap` keying
     /// (`anchors` / `tag_handles`). Zig's `bun.StringHashMap` is keyed by
     /// `[]const u8`; calls like `tag_handles.put(handle.slice(self.input), {})`
@@ -523,6 +526,10 @@ impl Encoding for Latin1 {
         // Only reachable from `EncodingKind::Utf16`-gated arms.
         unreachable!("unit_from_u16 on Latin1")
     }
+    #[inline]
+    fn bom_len(_input: &[u8]) -> usize {
+        0
+    }
 }
 
 impl Encoding for Utf8 {
@@ -550,6 +557,14 @@ impl Encoding for Utf8 {
     fn unit_from_u16(_u: u16) -> u8 {
         // Only reachable from `EncodingKind::Utf16`-gated arms.
         unreachable!("unit_from_u16 on Utf8")
+    }
+    #[inline]
+    fn bom_len(input: &[u8]) -> usize {
+        if input.len() >= 3 && input[0] == 0xEF && input[1] == 0xBB && input[2] == 0xBF {
+            3
+        } else {
+            0
+        }
     }
 }
 
@@ -587,6 +602,10 @@ impl Encoding for Utf16 {
     #[inline]
     fn unit_from_u16(u: u16) -> u16 {
         u
+    }
+    #[inline]
+    fn bom_len(input: &[u16]) -> usize {
+        if input.first() == Some(&0xFEFF) { 1 } else { 0 }
     }
     #[inline]
     fn as_u16_slice(s: &[u16]) -> &[u16] {
@@ -1476,7 +1495,12 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         let mut minus = false;
         let mut hex = false;
 
-        if first_char != FirstChar::Negative && first_char != FirstChar::Positive {
+        // For Negative/Positive the sign was consumed by the caller; the first
+        // body char (digit or `.`) is at `pos`. For Other/Dot the caller left
+        // `pos` at the first body char too. Either way, advance past it so the
+        // loop starts at the second body char with the `decimal`/digit flags
+        // already reflecting the first.
+        if !matches!(first_char, FirstChar::Negative | FirstChar::Positive) || decimal {
             parser!().inc(1);
         }
 
@@ -1630,15 +1654,23 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
             return Ok(());
         }
 
+        let lexed = parser!().slice(start, end);
         let mut scalar: NodeScalar<Enc> = 'scalar: {
             if x || o || hex {
-                let unsigned = match parse_unsigned_radix0::<Enc>(parser!().slice(start, end)) {
+                let unsigned = match parse_unsigned_radix0::<Enc>(lexed) {
                     Ok(v) => v,
                     Err(_) => return Ok(()),
                 };
                 break 'scalar NodeScalar::Number(unsigned as f64);
             }
-            let float = match parse_double_generic::<Enc>(parser!().slice(start, end)) {
+            // [10.2.1.4] Core schema float/int regex. The lexer loop above is
+            // permissive (accepts `+`/`-`/`e`/`.` at any position) and
+            // `wtf::parse_double` prefix-parses, so `1+1` would resolve as 1.
+            // Validate the consumed slice matches the schema before parsing.
+            if !is_core_schema_number::<Enc>(lexed, first_char) {
+                return Ok(());
+            }
+            let float = match parse_double_generic::<Enc>(lexed) {
                 Ok(v) => v,
                 Err(_) => return Ok(()),
             };
@@ -1662,6 +1694,59 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         }
         Ok(())
     }
+}
+
+/// [10.2.1.4] Core schema int/float pattern. The slice may already have had a
+/// leading `.` or `+`/`-` consumed by the caller before `start` was captured;
+/// `first_char` carries that.
+///   `[-+]? ( \. [0-9]+ | [0-9]+ ( \. [0-9]* )? ) ( [eE] [-+]? [0-9]+ )?`
+fn is_core_schema_number<Enc: Encoding>(s: &[Enc::Unit], first_char: FirstChar) -> bool {
+    let mut i = 0usize;
+    let len = s.len();
+    let at = |j: usize| Enc::wide(s[j]);
+    let is_digit = |c: u32| (0x30..=0x39).contains(&c);
+
+    // Mantissa: \. [0-9]+  |  [0-9]+ ( \. [0-9]* )?
+    let saw_leading_dot = first_char == FirstChar::Dot
+        || (i < len && at(i) == 0x2E && {
+            i += 1;
+            true
+        });
+    if saw_leading_dot {
+        if i >= len || !is_digit(at(i)) {
+            return false;
+        }
+        while i < len && is_digit(at(i)) {
+            i += 1;
+        }
+    } else {
+        if i >= len || !is_digit(at(i)) {
+            return false;
+        }
+        while i < len && is_digit(at(i)) {
+            i += 1;
+        }
+        if i < len && at(i) == 0x2E {
+            i += 1;
+            while i < len && is_digit(at(i)) {
+                i += 1;
+            }
+        }
+    }
+    // Optional exponent: [eE] [-+]? [0-9]+
+    if i < len && matches!(at(i), 0x65 | 0x45) {
+        i += 1;
+        if i < len && matches!(at(i), 0x2B | 0x2D) {
+            i += 1;
+        }
+        if i >= len || !is_digit(at(i)) {
+            return false;
+        }
+        while i < len && is_digit(at(i)) {
+            i += 1;
+        }
+    }
+    i == len
 }
 
 /// Port of `bun.jsc.wtf.parseDouble(slice)` over an encoding-generic slice.
@@ -2359,11 +2444,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     pub const MAX_ALIAS_EXPANSION: usize = 16 * 1024 * 1024;
 
     pub fn init(bump: &'i bun_alloc::Arena, input: &'i [Enc::Unit]) -> Self {
+        // [206] l-document-prefix ::= c-byte-order-mark? l-comment*
+        let start = Pos::from(Enc::bom_len(input));
         Self {
             input,
             bump,
-            pos: Pos::from(0),
-            line_start_pos: Pos::from(0),
+            pos: start,
+            line_start_pos: start,
             line_indent: Indent::NONE,
             tab_after_indent: false,
             line: Line::from(1),
@@ -3467,7 +3554,7 @@ impl<Enc: Encoding> NodeProperties<Enc> {
 
     pub fn set_anchor(&mut self, anchor_token: Token<Enc>) -> Result<(), ParseError> {
         if let Some(previous_anchor) = &self.has_anchor {
-            if previous_anchor.line == anchor_token.line {
+            if previous_anchor.line == anchor_token.line || self.has_mapping_anchor.is_some() {
                 return Err(ParseError::MultipleAnchors);
             }
             self.has_mapping_anchor = Some(previous_anchor.clone());
@@ -3977,6 +4064,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                         }
 
+                        // [147] flow-map value is ns-flow-node, not a pair.
+                        if self.context.get() == Context::FlowIn && !opts.flow_pair_allowed {
+                            return Ok(copy);
+                        }
+
                         let map = self.parse_block_mapping(
                             copy,
                             alias_start,
@@ -4026,6 +4118,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             if current_mapping_indent == sequence_indent {
                                 break 'node seq;
                             }
+                        }
+
+                        // [147] flow-map value is ns-flow-node, not a pair.
+                        if self.context.get() == Context::FlowIn && !opts.flow_pair_allowed {
+                            break 'node seq;
                         }
 
                         let implicit_key_anchors =
@@ -4113,6 +4210,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             if current_mapping_indent == mapping_indent {
                                 break 'node map;
                             }
+                        }
+
+                        // [147] flow-map value is ns-flow-node, not a pair.
+                        if self.context.get() == Context::FlowIn && !opts.flow_pair_allowed {
+                            break 'node map;
                         }
 
                         let implicit_key_anchors = node_props.implicit_key_anchors(mapping_line)?;
@@ -4234,14 +4336,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         self.anchors
                             .put(Enc::key_bytes(mapping_anchor.slice(self.input)), mapping)?;
                     }
-                    // Clear has_anchor so the post-loop fallback doesn't
-                    // re-register the inner anchor on the mapping. The
-                    // remaining fields reach the post-loop guards: this
-                    // matches main's behavior (rejects `!!a\n!!b\n: x` and
-                    // `&a\n&b\n&c : x`), but also over-rejects the valid
-                    // `&outer\n&inner : x` — pre-existing; the Scalar arm
-                    // avoids it via `return Ok`.
+                    // Anchors are fully consumed by implicit_key_anchors;
+                    // clear both so the post-loop fallback doesn't re-register
+                    // (or over-reject `&outer\n&inner : x` via the
+                    // has_mapping_anchor guard). Tag fields stay so the
+                    // has_mapping_tag guard still catches `!!a\n!!b\n: x`.
                     node_props.has_anchor = None;
+                    node_props.has_mapping_anchor = None;
                     break 'node mapping;
                 }
 
@@ -4323,6 +4424,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                     return Err(ParseError::MultilineImplicitKey);
                                 }
                             }
+                        }
+
+                        // [147] flow-map value is ns-flow-node, not a pair.
+                        // Return the bare scalar; the leftover `:` reaches the
+                        // caller's [140] check. The cmi==scalar_indent path
+                        // above already handles the same-line case; this
+                        // covers the multiline-property case where they
+                        // diverge.
+                        if self.context.get() == Context::FlowIn && !opts.flow_pair_allowed {
+                            break 'node scalar.data.to_expr(scalar_start, self.input, self.bump);
                         }
 
                         let implicit_key = scalar.data.to_expr(scalar_start, self.input, self.bump);
@@ -4575,9 +4686,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
 
                 0x23 /* '#' */ => {
-                    let prev = parser!().input[parser!().pos.sub(1).cast()];
-                    if parser!().pos == Pos::ZERO
-                        || matches!(Enc::wide(prev), 0x20 | 0x09 | 0x0D | 0x0A)
+                    if parser!().is_at_line_start()
+                        || matches!(
+                            Enc::wide(parser!().input[parser!().pos.sub(1).cast()]),
+                            0x20 | 0x09 | 0x0D | 0x0A
+                        )
                     {
                         return Ok(ctx.done());
                     }
@@ -5857,13 +5970,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
                 0x23 /* '#' */ => {
                     let start = self.pos;
-                    let prev = if start == Pos::ZERO { 0 } else { Enc::wide(self.input[start.cast() - 1]) };
-                    match prev {
-                        0 | 0x20 | 0x09 | 0x0A | 0x0D => {}
-                        _ => {
-                            // TODO: prove this is unreachable
-                            return Err(ParseError::UnexpectedCharacter);
-                        }
+                    if !self.is_at_line_start()
+                        && !matches!(
+                            Enc::wide(self.input[start.cast() - 1]),
+                            0x20 | 0x09 | 0x0A | 0x0D
+                        )
+                    {
+                        // TODO: prove this is unreachable
+                        return Err(ParseError::UnexpectedCharacter);
                     }
                     self.inc(1);
                     while !self.is_b_char_or_eof() {

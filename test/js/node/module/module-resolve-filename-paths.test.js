@@ -202,18 +202,37 @@ test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths is no
 
 test("require.resolve throws ERR_INVALID_ARG_TYPE when options.paths contains a non-string", () => {
   expect(() => {
-    require.resolve("total", { paths: [512] });
+    require.resolve("this-pkg-does-not-exist-zzz", { paths: [512] });
   }).toThrow();
 
   expect(() => {
-    Module._resolveFilename("total", __filename, false, { paths: [512, "/abs"] });
+    Module._resolveFilename("this-pkg-does-not-exist-zzz", __filename, false, { paths: [512, "/abs"] });
   }).toThrow();
 });
 
 test("require.resolve does not crash when options.paths contains a non-absolute path", () => {
-  // Non-absolute paths are not valid module search directories, so the module
-  // simply cannot be found. Previously this crashed the process.
+  // A non-absolute entry that does not exist relative to cwd simply cannot be
+  // found. Previously this crashed the process.
   expect(() => {
-    require.resolve("total", { paths: ["relative_dir", "./foo"] });
+    require.resolve("this-pkg-does-not-exist-zzz", { paths: ["this_dir_does_not_exist", "./nope"] });
   }).toThrow();
+});
+
+test("require.resolve resolves relative options.paths entries against cwd (Node compat)", () => {
+  const { path: dir, cleanup } = createTempDir("require-resolve-relative-paths", {
+    "rel_dir/node_modules/rel-pkg/package.json": JSON.stringify({ name: "rel-pkg", main: "index.js" }),
+    "rel_dir/node_modules/rel-pkg/index.js": "module.exports = 'rel-pkg';",
+  });
+
+  const prevCwd = process.cwd();
+  try {
+    // Node's Module._nodeModulePaths does path.resolve(from), so a relative
+    // paths entry is anchored at process.cwd().
+    process.chdir(dir);
+    const resolved = require.resolve("rel-pkg", { paths: ["rel_dir"] });
+    expect(resolved).toBe(resolve(dir, "rel_dir/node_modules/rel-pkg/index.js"));
+  } finally {
+    process.chdir(prevCwd);
+    cleanup();
+  }
 });

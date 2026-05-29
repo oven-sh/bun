@@ -503,12 +503,6 @@ impl SavedSourceMap {
             .map
     }
 
-    /// Mutex must already be held. Returns the raw table value for `hash` if any.
-    pub fn get_value_locked(&mut self, h: u64) -> Option<Value> {
-        let raw = *self.map_mut().get(&h)?;
-        Some(Value::from(Some(raw)))
-    }
-
     pub fn resolve_mapping(
         &mut self,
         path: &[u8],

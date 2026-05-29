@@ -32,10 +32,9 @@
 //!
 //! `find(line, col)` binary-searches `SyncEntry[]` on (gen_line, gen_col),
 //! parses the matched window's header to seed full state, then advances a
-//! `WindowReader` until it passes the target. `findWithCache` keeps each
-//! window's decoded prefix in a small `FindCache` set so successive lookups in
-//! a window already touched by this stack (the common case) skip the decode
-//! and bsearch the cached `State`s directly.
+//! `WindowReader` until it passes the target. `Cursor` is the stateful lookup
+//! path: it remembers the last decoded window so adjacent lookups in the same
+//! window skip the seek+seed.
 //!
 //! ## vs. VLQ + Mapping.List
 //!
@@ -442,8 +441,8 @@ impl WindowReader {
         self.bytes = std::ptr::from_ref::<[u8]>(bytes);
         self.base = b;
         // Clamp `count` so a corrupted header byte cannot drive `next()` past
-        // `FindCacheSlot.decoded[SYNC_INTERVAL]`. Well-formed blobs never
-        // exceed K; this is defense-in-depth for the standalone-graph path.
+        // SYNC_INTERVAL entries. Well-formed blobs never exceed K; this is
+        // defense-in-depth for the standalone-graph path.
         // SAFETY: window header is 32 bytes within the stream; COUNT_OFF/FLAGS_OFF
         // are fixed offsets within that 32-byte header at `b`.
         self.count = unsafe { *b.add(win_hdr::COUNT_OFF) }.min(SYNC_INTERVAL as u8);

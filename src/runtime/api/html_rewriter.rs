@@ -218,7 +218,9 @@ pub struct LOLHTMLContext {
 impl LOLHTMLContext {
     fn drain_end_tag_handlers(&self) {
         for handler in &self.element_handlers {
-            handler.end_tag_handlers.with_mut(|handlers| handlers.clear());
+            handler
+                .end_tag_handlers
+                .with_mut(|handlers| handlers.clear());
         }
     }
 }

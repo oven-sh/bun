@@ -913,6 +913,47 @@ describe("node:http", () => {
   });
 
   describe("get", () => {
+    it("treats host option containing URL delimiter characters as an unresolvable hostname", async () => {
+      let requestCount = 0;
+      const server = createServer((req, res) => {
+        requestCount++;
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end("ok");
+      });
+      try {
+        const url = await listen(server);
+
+        // The literal host option string is the DNS/connect target (Node.js semantics).
+        // Characters like "/" and "?" must not allow the value to be re-interpreted as a
+        // URL whose host points at a different server; the only acceptable outcome is a
+        // lookup failure with no request ever being sent.
+        const confusedHost = `127.0.0.1:${url.port}/?.invalid.example`;
+        const { promise, resolve, reject } = Promise.withResolvers();
+        const req = get({ host: confusedHost, path: "/info", auth: "svc:secret" }, res => {
+          res.resume();
+          reject(new Error(`request unexpectedly completed with status ${res.statusCode}`));
+        });
+        req.on("error", resolve);
+        const err: any = await promise;
+        expect(err.code).toBe("ENOTFOUND");
+        expect(err.hostname).toBe(confusedHost);
+        expect(requestCount).toBe(0);
+
+        // A plain host + port still works.
+        const { promise: okPromise, resolve: resolveOk, reject: rejectOk } = Promise.withResolvers();
+        get({ host: "127.0.0.1", port: url.port, path: "/info" }, res => {
+          let data = "";
+          res.setEncoding("utf8");
+          res.on("data", chunk => (data += chunk));
+          res.on("end", () => resolveOk({ statusCode: res.statusCode, data }));
+        }).on("error", rejectOk);
+        expect(await okPromise).toEqual({ statusCode: 200, data: "ok" });
+        expect(requestCount).toBe(1);
+      } finally {
+        server.close();
+      }
+    });
+
     it("should make a standard GET request, like request", async done => {
       const server = createServer((req, res) => {
         res.writeHead(200, { "Content-Type": "text/plain" });

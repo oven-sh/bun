@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { isASAN, isDebug, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, nodeExe, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import * as fs from "node:fs";
 import { resolve } from "node:path";
@@ -780,5 +780,70 @@ describe("dictionary buffer lifetime", () => {
     await promise;
 
     expect(Buffer.concat(chunks).toString()).toBe(input.toString());
+  });
+});
+// @Jarred-Sumner asked for a test that runs in both Node.js and Bun and
+// verifies gzip decoding behaves identically. This spawns the same fixture
+// under each runtime and diffs the output: concatenated multi-member streams
+// (RFC 1952 §2.2), trailing zero padding, trailing gzip-header-shaped garbage,
+// and a single member — decoded through `zlib.gunzipSync` (both runtimes) and,
+// where available, `Bun.gunzipSync`.
+describe.skipIf(!nodeExe())("matches Node.js gzip decoding", () => {
+  // Runs under plain node *and* under bun, so it may only use node:zlib +
+  // globals. Prints one JSON line per scenario: the decoded output (or the
+  // thrown error's shape) so the two runtimes can be compared byte-for-byte.
+  const fixture = `
+    const zlib = require("zlib");
+    const mk = (...parts) => Buffer.concat(parts.map(p => zlib.gzipSync(Buffer.from(p))));
+    const cases = {
+      single: mk("hello world"),
+      multi: mk("Hello, ", "multi-member ", "gzip world!\\n"),
+      zeroPadded: Buffer.concat([mk("abc", "def"), Buffer.alloc(10)]),
+      headerGarbage: Buffer.concat([mk("abc", "def"), Buffer.from([0x1f, 0x8b, 0xff, 0xff]), Buffer.alloc(10)]),
+      large: mk("A".repeat(5000), "B".repeat(5000), "C".repeat(5000)),
+    };
+    const probe = (fn, buf) => {
+      try {
+        const out = Buffer.from(fn(buf));
+        return { ok: true, len: out.length, text: out.toString("base64") };
+      } catch (e) {
+        return { ok: false, code: e.code, message: String(e.message) };
+      }
+    };
+    const results = {};
+    for (const [name, buf] of Object.entries(cases)) {
+      results[name] = { zlib: probe(zlib.gunzipSync, buf) };
+      if (typeof Bun !== "undefined") results[name].bun = probe(Bun.gunzipSync, buf);
+    }
+    process.stdout.write(JSON.stringify(results));
+  `;
+
+  async function run(exe) {
+    await using proc = Bun.spawn({
+      cmd: [exe, "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  it("Bun.gunzipSync and node:zlib decode every scenario the same as Node", async () => {
+    const [bun, node] = await Promise.all([run(bunExe()), run(nodeExe())]);
+
+    // node:zlib must match Node exactly for every scenario.
+    for (const name of Object.keys(node)) {
+      expect(bun[name].zlib, `node:zlib mismatch for "${name}"`).toEqual(node[name].zlib);
+    }
+
+    // Bun.gunzipSync must produce the same decoded bytes as Node's
+    // zlib.gunzipSync for the successful cases (it is single-shot, so trailing
+    // gzip-header garbage is the one case that may differ — skip its error shape).
+    for (const name of ["single", "multi", "zeroPadded", "large"]) {
+      expect(bun[name].bun, `Bun.gunzipSync mismatch for "${name}"`).toEqual(node[name].zlib);
+    }
   });
 });

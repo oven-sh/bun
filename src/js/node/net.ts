@@ -365,9 +365,22 @@ const SocketHandlers: SocketHandler = {
       // will be handled in onConnectEnd
       return;
     }
-    if (!success && verifyError?.code && verifyError.code !== "ECONNRESET") {
-      // A fatal SSL protocol error (the peer is not speaking TLS): surface
-      // the OpenSSL reason instead of letting the close path report a
+    // The second argument is "authorized" (handshake + verification +
+    // hostname), matching the public Bun.connect handshake callback. node:tls
+    // decides what to do with verification results in JS via the
+    // rejectUnauthorized / checkServerIdentity handling below, so a
+    // verification-class result (an X509 code such as
+    // UNABLE_TO_VERIFY_LEAF_SIGNATURE, or the native hostname verdict) still
+    // means the TLS session itself was established. Only a fatal TLS protocol
+    // failure tears the socket down here: those arrive as EPROTO carrying the
+    // OpenSSL "error:...:SSL routines:..." reason (or an already decomposed
+    // ERR_SSL_* / ERR_OSSL_* code).
+    const isProtocolFailure =
+      !success &&
+      verifyError?.code != null &&
+      (verifyError.code === "EPROTO" || /^ERR_(SSL|OSSL)_/.test(verifyError.code));
+    if (isProtocolFailure) {
+      // Surface the OpenSSL reason instead of letting the close path report a
       // generic disconnect.
       self.destroy(tlsHandshakeError(verifyError));
       return;
@@ -375,7 +388,7 @@ const SocketHandlers: SocketHandler = {
 
     self._securePending = false;
     self.secureConnecting = false;
-    self._secureEstablished = !!success;
+    self._secureEstablished = !!(success || verifyError);
 
     self.emit("secure", self);
     self.alpnProtocol = socket.alpnProtocol;
@@ -604,6 +617,10 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       clearTimeout(self[khandshakeTimer]);
       self[khandshakeTimer] = undefined;
     }
+    // On the server side the second argument is the raw handshake result
+    // (client-certificate verification is reported separately through
+    // `verifyError` and handled below), so !success always means the TLS
+    // session was never established.
     if (!success) {
       // The handshake never completed: there is no TLS session, so there is
       // no secureConnection. Report the failure through tlsClientError the
@@ -942,14 +959,30 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       // will be handled in onConnectEnd
       return;
     }
-    if (!success && verifyError?.code && verifyError.code !== "ECONNRESET") {
+    // The second argument is "authorized" (handshake + verification +
+    // hostname), matching the public Bun.connect handshake callback. node:tls
+    // decides what to do with verification results in JS via the
+    // rejectUnauthorized / checkServerIdentity handling below, so a
+    // verification-class result (an X509 code such as
+    // UNABLE_TO_VERIFY_LEAF_SIGNATURE, or the native hostname verdict) still
+    // means the TLS session itself was established. Only a fatal TLS protocol
+    // failure tears the socket down here: those arrive as EPROTO carrying the
+    // OpenSSL "error:...:SSL routines:..." reason (or an already decomposed
+    // ERR_SSL_* / ERR_OSSL_* code).
+    const isProtocolFailure =
+      !success &&
+      verifyError?.code != null &&
+      (verifyError.code === "EPROTO" || /^ERR_(SSL|OSSL)_/.test(verifyError.code));
+    if (isProtocolFailure) {
+      // Surface the OpenSSL reason instead of letting the close path report a
+      // generic disconnect.
       self.destroy(tlsHandshakeError(verifyError));
       return;
     }
 
     self._securePending = false;
     self.secureConnecting = false;
-    self._secureEstablished = !!success;
+    self._secureEstablished = !!(success || verifyError);
 
     self.emit("secure", self);
     self.alpnProtocol = socket.alpnProtocol;

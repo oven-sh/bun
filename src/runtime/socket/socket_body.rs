@@ -1569,19 +1569,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                 }
             };
 
-            // The JS handshake handler's second argument is "did the TLS
-            // handshake complete", NOT "is the peer authorized": verification
-            // and hostname results are reported separately (the
-            // authorization_error argument plus the AUTHORIZED /
-            // HOSTNAME_MISMATCH flags behind the authorized getter), and the
-            // JS layer decides what to do with them via rejectUnauthorized /
-            // checkServerIdentity. Passing `authorized` here made every
-            // verification failure look like a failed handshake and clients
-            // with rejectUnauthorized:false were torn down fatally.
             result = match callback.call(
                 &global,
                 this_value,
-                &[this_value, JSValue::from(success == 1), authorization_error],
+                &[this_value, JSValue::from(authorized), authorization_error],
             ) {
                 Ok(v) => v,
                 Err(err) => global.take_exception(err),

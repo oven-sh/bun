@@ -2612,7 +2612,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.scan(ScanOptions::default())?;
                 }
 
-                if self.token.line == document_end_line {
+                if self.token.line == document_end_line
+                    && !matches!(self.token.data, TokenData::Eof)
+                {
                     return Err(Self::unexpected_token());
                 }
             }

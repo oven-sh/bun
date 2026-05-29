@@ -1646,6 +1646,13 @@ folded: >
           ["doc-sl-scalar", "--- foo\n", "foo"],
           ["doc-nl-seq", "---\n- x\n", ["x"]],
           ["doc-nl-map", "---\na: b\n", { a: "b" }],
+          // ... immediately at EOF (no trailing newline)
+          ["dot-eof-plain", "abc\n...", "abc"],
+          ["dot-eof-seq", "- a\n...", ["a"]],
+          ["dot-eof-map", "a: 1\n...", { a: 1 }],
+          ["dot-eof-bs", "|\nx\n...", "x\n"],
+          ["dot-eof-only", "...", null],
+          ["dash-eof-only", "---", null],
         ] as const)("%s", (_id, input, expected) => {
           if (typeof expected === "object" && expected && "throws" in expected) {
             expect(() => YAML.parse(input)).toThrow(expected.throws as string);

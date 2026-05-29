@@ -54,10 +54,6 @@ const POINTER_BITS: u32 = if USE_SMALL_PATH_STRING_ {
 pub struct PathString(PathStringBackingInt);
 
 impl PathString {
-    // pub const PathInt / PointerIntType — Zig exposed these as type aliases; in
-    // Rust the packed accessors below replace them.
-    pub const USE_SMALL_PATH_STRING: bool = USE_SMALL_PATH_STRING_;
-
     const PTR_MASK: PathStringBackingInt = (1 as PathStringBackingInt)
         .wrapping_shl(POINTER_BITS)
         .wrapping_sub(1);

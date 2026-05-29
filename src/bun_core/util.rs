@@ -1,108 +1,3 @@
-// Things that maybe should go in Zig standard library at some point
-//
-// PORT NOTE: This file is almost entirely comptime type reflection (`@typeInfo`,
-// `@hasField`, `@hasDecl`, `std.meta.fields`, `bun.trait.*`) used to generically
-// construct maps/arrays from heterogeneous inputs. Rust has no runtime/comptime
-// type reflection; the idiomatic equivalents are the `From` / `FromIterator` /
-// `Extend` traits, plus associated types for `Key`/`Value`. The functions
-// below preserve the Zig names and intent but delegate to traits that the
-// concrete collection types (HashMap, Vec, MultiArrayList, Vec) must impl.
-// TODO(refactor): audit call sites of `bun.from(...)` / `bun.fromEntries(...)` and
-// likely replace them with direct `.collect()` / `Vec::from` at the caller.
-
-use core::hash::Hash;
-
-// TODO(port): impls for bun_collections::{VecExt, HashMap, MultiArrayList} move to
-// bun_collections (move-in pass) — orphan rule lets the higher-tier crate impl
-// MapLike for its own types.
-
-// ─── Key / Value ──────────────────────────────────────────────────────────────
-// Zig: `pub fn Key(comptime Map: type) type { return FieldType(Map.KV, "key").?; }`
-// Zig: `pub fn Value(comptime Map: type) type { return FieldType(Map.KV, "value").?; }`
-//
-// Rust has no `fn -> type`; these become associated types on a trait that all
-// map-like collections implement.
-pub trait MapLike {
-    type Key;
-    type Value;
-
-    fn ensure_unused_capacity(&mut self, additional: usize);
-    fn put_assume_capacity(&mut self, key: Self::Key, value: Self::Value);
-    fn put_assume_capacity_no_clobber(&mut self, key: Self::Key, value: Self::Value);
-}
-
-// Convenience aliases mirroring the Zig `Key(Map)` / `Value(Map)` call sites.
-pub type Key<M> = <M as MapLike>::Key;
-pub type Value<M> = <M as MapLike>::Value;
-
-// ─── fromEntries ──────────────────────────────────────────────────────────────
-// Zig dispatches on `@typeInfo(EntryType)`:
-//   - indexable tuple/array of `[k, v]` pairs  → reserve + putAssumeCapacity
-//   - container with `.count()` + `.iterator()` → reserve + iterate
-//   - struct with fields                        → reserve(fields.len) + inline for
-//   - *const struct with fields                 → same, deref'd
-//   - else: @compileError
-//
-// In Rust the first two arms collapse to `IntoIterator<Item = (K, V)>` with an
-// `ExactSizeIterator` bound for the reserve; the "struct fields as entries"
-// arms have no equivalent (would need a derive) and are TODO'd.
-pub fn from_entries<M, I>(entries: I) -> M
-where
-    M: MapLike + Default,
-    I: IntoIterator<Item = (M::Key, M::Value)>,
-    I::IntoIter: ExactSizeIterator,
-{
-    // Zig: `if (@hasField(Map, "allocator")) Map.init(allocator) else Map{}`
-    // Allocator param dropped (non-AST crate); both arms become `Default`.
-    let mut map = M::default();
-
-    let iter = entries.into_iter();
-
-    // Zig: `try map.ensureUnusedCapacity([allocator,] entries.len)` — the
-    // `needsAllocator` check vanishes because the allocator param is gone.
-    map.ensure_unused_capacity(iter.len());
-
-    for (k, v) in iter {
-        // PERF(port): was putAssumeCapacity — profile if hot.
-        map.put_assume_capacity(k, v);
-    }
-
-    // TODO(port): the Zig `bun.trait.isContainer(EntryType) && fields.len > 0`
-    // and `isConstPtr(EntryType) && fields(Child).len > 0` arms iterated *struct
-    // fields* as entries (anonymous-struct-literal init). No Rust equivalent
-    // without a proc-macro; callers should pass an array/iterator of tuples.
-
-    map
-}
-
-// ─── fromMapLike ──────────────────────────────────────────────────────────────
-// Zig: takes `[]const struct { K, V }` and `putAssumeCapacityNoClobber`s each.
-pub fn from_map_like<M>(entries: &[(M::Key, M::Value)]) -> M
-where
-    M: MapLike + Default,
-    M::Key: Clone,
-    M::Value: Clone,
-{
-    // Zig: `if (@hasField(Map, "allocator")) Map.init(allocator) else Map{}`
-    let mut map = M::default();
-
-    map.ensure_unused_capacity(entries.len());
-
-    for entry in entries {
-        map.put_assume_capacity_no_clobber(entry.0.clone(), entry.1.clone());
-    }
-
-    map
-}
-
-// ─── FieldType ────────────────────────────────────────────────────────────────
-// Zig: `pub fn FieldType(comptime Map: type, comptime name: []const u8) ?type`
-// TODO(port): no Rust equivalent for `std.meta.fieldIndex` / `.field_type`.
-// Callers should use associated types (`MapLike::Key`) directly. Left as a
-// doc-only marker so cross-file grep finds it.
-#[doc(hidden)]
-pub enum FieldType {} // unconstructible; reflection placeholder
-
 // ─── std.mem.bytesAsSlice / sliceAsBytes ─────────────────────────────────────
 /// Zig `std.mem.bytesAsSlice(T, bytes)` for `&mut [u8]` → `&mut [T]`.
 ///
@@ -189,9 +84,6 @@ impl<T: Copy> Unaligned<T> {
         unsafe { core::slice::from_raw_parts_mut(slice.as_mut_ptr().cast::<T>(), slice.len()) }
     }
 }
-
-// ─── needsAllocator ───────────────────────────────────────────────────────────
-// Zig: `fn needsAllocator(comptime Fn: anytype) bool { ArgsTuple(Fn).len > 2 }`
 
 // ════════════════════════════════════════════════════════════════════════════
 // Low-tier primitives hoisted into bun_core.
@@ -3227,8 +3119,6 @@ pub enum EmbedKind {
     Src,
     SrcEager,
 }
-/// The original drafts spelled this both ways; alias keeps both compiling.
-pub type EmbedDir = EmbedKind;
 
 pub fn runtime_embed_file(_root: EmbedKind, sub_path: &'static str) -> &'static str {
     panic!(

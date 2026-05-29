@@ -33,9 +33,14 @@ const REQUIRED_TESTS = [
 ] as const;
 
 // Cargo is on PATH on the Linux/macOS CI test lanes (same baked image as the
-// build lanes). Windows test agents don't reliably expose it, so skip there —
-// the Miri CI lane already runs these same tests on `src/collections/**`.
-describe.skipIf(isWindows)("LinearFifo::ordered_remove_item (Rust crate tests)", () => {
+// build lanes). Skip when it isn't: Windows test agents don't reliably expose
+// it, and a stripped local env may lack it — the Miri CI lane already runs
+// these same tests on `src/collections/**`. `Bun.spawn` resolves `argv[0]`
+// synchronously and throws if it's missing, so this must be gated up front
+// (matches test/js/third_party/grpc-js/test-tonic.test.ts).
+describe.skipIf(isWindows || !Bun.which("cargo"))("LinearFifo::ordered_remove_item (Rust crate tests)", () => {
+  // A cold test lane may have to compile the crate's test binary first, so give
+  // cargo generous headroom rather than the 5s default.
   test("wrapped-buffer removal regression tests pass", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -43,7 +48,6 @@ describe.skipIf(isWindows)("LinearFifo::ordered_remove_item (Rust crate tests)",
         "test",
         "-p",
         "bun_collections",
-        "--",
         // Run exactly the three wrapped-branch regression tests by prefix.
         "linear_fifo::tests::ordered_remove_item_wrapped",
       ],
@@ -56,15 +60,9 @@ describe.skipIf(isWindows)("LinearFifo::ordered_remove_item (Rust crate tests)",
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const output = stdout + stderr;
 
-    // `cargo` missing (e.g. a stripped local env): don't fail the suite, the
-    // Miri CI lane covers it. This never triggers on the real CI test lanes.
-    if (exitCode === null || (exitCode !== 0 && /No such file or directory|program not found|ENOENT/i.test(output))) {
-      return;
-    }
-
-    // Every wrapped-branch regression test must have run AND passed. If the fix
-    // (and its co-located tests) are absent, cargo runs 0 matching tests and
-    // these assertions fail — which is the intended fail-before behavior.
+    // Every wrapped-branch regression test must have run AND passed. If the
+    // fix (and its co-located tests) are absent, cargo runs 0 matching tests
+    // and these assertions fail — which is the intended fail-before behavior.
     for (const name of REQUIRED_TESTS) {
       expect(output).toContain(`test linear_fifo::tests::${name} ... ok`);
     }
@@ -76,5 +74,5 @@ describe.skipIf(isWindows)("LinearFifo::ordered_remove_item (Rust crate tests)",
     expect(Number(summary![2])).toBe(0);
 
     expect(exitCode).toBe(0);
-  });
+  }, 120_000);
 });

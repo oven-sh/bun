@@ -217,8 +217,9 @@ impl Stringifier {
                     }
                 }
                 ResolutionTag::Git | ResolutionTag::Github => {
-                    if !crate::repository::is_safe_resolved_tag(res.repository().resolved.slice(buf))
-                    {
+                    if !crate::repository::is_safe_resolved_tag(
+                        res.repository().resolved.slice(buf),
+                    ) {
                         return Version::V1;
                     }
                 }

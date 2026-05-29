@@ -181,6 +181,53 @@ impl Stringifier {
         Self::save_from_binary_inner(lockfile, load_result, options, writer)
     }
 
+    /// Pick the `lockfileVersion` to stamp. `Version::CURRENT` (v2) adds
+    /// parse-time checks that reject entries older versions tolerated: an
+    /// off-registry npm tarball without a supported integrity hash, and an
+    /// unsafe git `.bun-tag`. The writer emits those fields verbatim (no
+    /// backfill), so stamping v2 on a lockfile that still carries such an entry
+    /// would make the *next* parse reject it. Only stamp v2 when every package
+    /// already satisfies the v2 invariants; otherwise stay at v1 so the file
+    /// round-trips (load → save → load) cleanly.
+    fn version_to_write(
+        pkg_resolutions: &[Resolution],
+        pkg_metas: &[Meta],
+        pkg_names: &[String],
+        buf: &[u8],
+        options: &PackageManagerOptions,
+    ) -> Version {
+        for (i, res) in pkg_resolutions.iter().enumerate() {
+            match res.tag {
+                ResolutionTag::Npm => {
+                    if pkg_metas[i].integrity.tag.is_supported() {
+                        continue;
+                    }
+                    // No supported integrity: only v2-clean if the tarball URL
+                    // is under the configured/default registry (mirrors the
+                    // parser's `npm_url_needs_integrity` computation).
+                    let url = res.npm().url.slice(buf);
+                    let configured_registry = options
+                        .scope_for_package_name(pkg_names[i].slice(buf))
+                        .url
+                        .href();
+                    let under_registry = url_is_under_registry(url, configured_registry)
+                        || url_is_under_registry(url, Npm::Registry::DEFAULT_URL.as_bytes());
+                    if !under_registry {
+                        return Version::V1;
+                    }
+                }
+                ResolutionTag::Git | ResolutionTag::Github => {
+                    if !crate::repository::is_safe_resolved_tag(res.repository().resolved.slice(buf))
+                    {
+                        return Version::V1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Version::CURRENT
+    }
+
     pub(crate) fn save_from_binary_inner(
         lockfile: &mut BinaryLockfile,
         load_result: &LoadResult,
@@ -260,7 +307,9 @@ impl Stringifier {
         writer.write_all(b"{\n")?;
         Self::inc_indent(writer, indent)?;
         {
-            writeln!(writer, "\"lockfileVersion\": {},", Version::CURRENT as u32)?;
+            let lockfile_version =
+                Self::version_to_write(pkg_resolutions, pkg_metas, pkg_names, buf, options);
+            writeln!(writer, "\"lockfileVersion\": {},", lockfile_version as u32)?;
             Self::write_indent(writer, *indent)?;
 
             let config_version: ConfigVersion =
@@ -2610,14 +2659,17 @@ pub fn parse_into_binary_lockfile(
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
-                    // Only reject an unsafe `.bun-tag` at parse time for v2+.
-                    // Older lockfiles predate this check; `Repository::checkout`
+                    // Reject an unsafe `.bun-tag`. For `git`, `Repository::checkout`
                     // re-validates with the same guard before building any cache
-                    // path or invoking `git`, so skipping it here keeps older
-                    // lockfiles loading without reopening the checkout hole.
-                    if lockfile_version.at_least(Version::V2)
-                        && !crate::repository::is_safe_resolved_tag(bun_tag_str)
-                    {
+                    // path or invoking `git`, so this parse-time check is gated to
+                    // v2+ — older git lockfiles keep loading without reopening the
+                    // checkout hole. For `github` there is no such re-validation
+                    // (the tarball-download path feeds the tag straight into the
+                    // cache folder name), so the check must stay unconditional to
+                    // keep the path-traversal guard intact at every version.
+                    let enforce_safe_tag =
+                        tag == ResolutionTag::Github || lockfile_version.at_least(Version::V2);
+                    if enforce_safe_tag && !crate::repository::is_safe_resolved_tag(bun_tag_str) {
                         log.add_error(Some(source), bun_tag.loc, b"Invalid git dependency tag");
                         return Err(ParseError::InvalidPackageInfo);
                     }

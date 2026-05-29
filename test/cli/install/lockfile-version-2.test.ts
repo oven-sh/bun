@@ -66,8 +66,9 @@ it("an existing v1 lockfile still loads (backward compatible)", async () => {
 // introduced after the Rust rewrite: rejecting it breaks lockfiles written
 // before the check existed, so it is only enforced at version 2.
 it("off-registry npm tarball integrity is enforced only at version 2", async () => {
-  // A host that is never the configured registry. Parsing happens before any
-  // fetch, so this is not actually contacted by the assertions below.
+  // A loopback host that is never the configured registry. For v2 parsing fails
+  // before any fetch, so it is not contacted; for v1 parsing succeeds and the
+  // install proceeds to request the tarball, hitting this 404 handler.
   await using offRegistry = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
@@ -107,7 +108,7 @@ it("off-registry npm tarball integrity is enforced only at version 2", async () 
   }
 
   // version 1 predates the check, so parsing accepts it (the install then fails
-  // to download the unreachable tarball, but not with the integrity error).
+  // to download the tarball from the 404 handler, but not with the integrity error).
   {
     using dir = tempDir("lockfile-v1-integrity", {
       "package.json": JSON.stringify({ name: "root", dependencies: { "no-deps": "1.0.0" } }),
@@ -125,10 +126,10 @@ it("off-registry npm tarball integrity is enforced only at version 2", async () 
   }
 });
 
-// A git/github `.bun-tag` that is not a safe path/checkout component is also a
-// post-rewrite breaking change, gated the same way. `Repository::checkout`
-// re-validates the tag before running git, so a v1 lockfile carrying an unsafe
-// tag still never executes anything unsafe.
+// An unsafe `git` `.bun-tag` is a post-rewrite breaking change that is gated to
+// v2. `Repository::checkout` re-validates the tag before running git, so a v1
+// lockfile carrying an unsafe git tag still never executes anything unsafe.
+// (The `github` tarball path has no such re-validation — see the next test.)
 it("unsafe git .bun-tag is rejected only at version 2", async () => {
   // Point at an unreachable local endpoint (port 1) so that when v1 parsing
   // succeeds and install proceeds to `git clone`, the clone fails fast instead
@@ -182,4 +183,87 @@ it("unsafe git .bun-tag is rejected only at version 2", async () => {
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(err).not.toContain("Invalid git dependency tag");
   }
+});
+
+// A `github` dependency resolves via the tarball-download path, not
+// `Repository::checkout`, so its `.bun-tag` is fed into the cache folder name
+// with no use-site re-validation. The parse-time safety check therefore stays
+// unconditional for github — an unsafe tag is rejected at every version.
+it("unsafe github .bun-tag is rejected at every version", async () => {
+  const ghUrl = "github:example/repo#main";
+  const lockfile = (lockfileVersion: number) =>
+    JSON.stringify({
+      lockfileVersion,
+      configVersion: 1,
+      workspaces: {
+        "": { name: "root", dependencies: { dep: ghUrl } },
+      },
+      packages: {
+        // `.bun-tag` (last element) contains a path separator.
+        dep: [`dep@${ghUrl}`, {}, "../escape"],
+      },
+    });
+
+  for (const version of [1, 2]) {
+    using dir = tempDir(`lockfile-v${version}-githubtag`, {
+      "package.json": JSON.stringify({ name: "root", dependencies: { dep: ghUrl } }),
+      "bun.lock": lockfile(version),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toContain("Invalid git dependency tag");
+    expect(exitCode).not.toBe(0);
+  }
+});
+
+// The writer must not silently upgrade a lockfile to v2 if doing so would make
+// it fail the v2 parse checks on the next install. A v1 lockfile with an
+// off-registry tarball and no integrity hash must round-trip as v1.
+it("re-saving a v1 off-registry lockfile keeps it at version 1", async () => {
+  await using offRegistry = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch() {
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  // No `configVersion` key → the install triggers a lockfile re-save (the
+  // configVersion auto-upgrade), which is exactly the save path that would
+  // wrongly stamp v2 without the version-selection guard.
+  const v1Lockfile = JSON.stringify({
+    lockfileVersion: 1,
+    workspaces: { "": { name: "root", dependencies: { "no-deps": "1.0.0" } } },
+    packages: {
+      "no-deps": ["no-deps@1.0.0", `http://127.0.0.1:${offRegistry.port}/no-deps/-/no-deps-1.0.0.tgz`, {}, ""],
+    },
+  });
+
+  using dir = tempDir("lockfile-v1-roundtrip", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { "no-deps": "1.0.0" } }),
+    "bun.lock": v1Lockfile,
+  });
+
+  // `--lockfile-only` re-serializes the lockfile without performing the install.
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--lockfile-only"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const after = await file(join(String(dir), "bun.lock")).text();
+  expect(err).toContain("Saved lockfile");
+  // Still v1 — the off-registry no-integrity entry can't be made v2-valid, so
+  // stamping v2 would make the next parse reject it.
+  expect(after).toContain(`"lockfileVersion": 1,`);
+  expect(exitCode).toBe(0);
 });

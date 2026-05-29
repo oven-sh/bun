@@ -3120,7 +3120,7 @@ exports[`bun pm migrate for existing yarn.lock yarn-lock-mkdirp-no-resolved: yar
 
 exports[`bun pm migrate for existing yarn.lock yarn-stuff: yarn-stuff 1`] = `
 "{
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {

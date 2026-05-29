@@ -344,6 +344,8 @@ function upgradeRawSocketToH2(
         cert: server.cert,
         ca: server.ca,
         passphrase: server.passphrase,
+        requestCert: server._requestCert,
+        rejectUnauthorized: server._rejectUnauthorized,
         ALPNProtocols: server.ALPNProtocols
           ? server.ALPNProtocols.buffer.slice(
               server.ALPNProtocols.byteOffset,

@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { jscDescribe } from "bun:jsc";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isBroken, isMusl, isWindows, nodeExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isBroken, isMusl, isWindows, nodeExe, tempDir, tmpdirSync } from "harness";
 import assert from "node:assert";
 import fs from "node:fs/promises";
 import { basename, join } from "path";
@@ -396,3 +396,122 @@ async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, j
   expect(exitCode, crashMsg).toBe(0);
   return out.trim();
 }
+
+describe.todoIf(isBroken && isMusl)("String::Utf8Length bounds", () => {
+  it(
+    "saturates at INT32_MAX for strings whose UTF-8 size exceeds it",
+    async () => {
+      // Build a tiny standalone V8-API addon that just reports String::Utf8Length of its
+      // argument, then feed it a Latin-1 string whose UTF-8 expansion is larger than INT32_MAX.
+      // The reported length must stay positive and saturate at INT32_MAX instead of wrapping.
+      using dir = tempDir("v8-utf8-length", {
+        "package.json": JSON.stringify({
+          name: "v8-utf8-length-test",
+          version: "1.0.0",
+          devDependencies: { "node-gyp": "~11.2.0" },
+        }),
+        "binding.gyp": JSON.stringify({
+          targets: [
+            {
+              target_name: "utf8len",
+              sources: ["addon.cpp"],
+              cflags: ["-Wno-deprecated-declarations"],
+              cflags_cc: ["-Wno-deprecated-declarations"],
+              xcode_settings: {
+                OTHER_CFLAGS: ["-Wno-deprecated-declarations"],
+                OTHER_CPLUSPLUSFLAGS: ["-Wno-deprecated-declarations"],
+              },
+            },
+          ],
+        }),
+        "addon.cpp": `#include <node.h>
+#include <cstdio>
+
+using namespace v8;
+
+namespace utf8len_test {
+
+void string_utf8_length(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<String> s = info[0].As<String>();
+  printf("Utf8Length = %d\\n", s->Utf8Length(isolate));
+  fflush(stdout);
+}
+
+void initialize(Local<Object> exports, Local<Value> module,
+                Local<Context> context) {
+  NODE_SET_METHOD(exports, "string_utf8_length", string_utf8_length);
+}
+
+NODE_MODULE_CONTEXT_AWARE(NODE_GYP_MODULE_NAME, initialize)
+
+} // namespace utf8len_test
+`,
+        "run.js": `const addon = require("./build/Release/utf8len");
+// sanity check: 3 two-byte characters encode to 6 UTF-8 bytes
+addon.string_utf8_length("\\u00e9".repeat(3));
+// 2**30 + 1 Latin-1 characters that each take 2 UTF-8 bytes encode to 2**31 + 2 UTF-8 bytes,
+// which is larger than INT32_MAX
+addon.string_utf8_length("\\u00ff".repeat(2 ** 30 + 1));
+`,
+      });
+      const cwd = String(dir);
+
+      {
+        const install = spawn({
+          cmd: [bunExe(), "install", "--ignore-scripts"],
+          cwd,
+          env: bunEnv,
+          stdin: "inherit",
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+        expect(await install.exited).toBe(0);
+      }
+
+      {
+        const build = spawn({
+          cmd: [bunExe(), "--bun", "run", "node-gyp", "rebuild", "--release", "-j", "max"],
+          cwd,
+          env: bunEnv,
+          stdin: "inherit",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [exitCode, out, err] = await Promise.all([
+          build.exited,
+          new Response(build.stdout).text(),
+          new Response(build.stderr).text(),
+        ]);
+        if (exitCode !== 0) {
+          throw new Error(`node-gyp rebuild failed with code ${exitCode}:\n${err}\n${out}`);
+        }
+      }
+
+      const proc = spawn({
+        cmd: [bunExe(), join(cwd, "run.js")],
+        cwd,
+        env: bunEnv,
+        stdin: "inherit",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      // strip debug-build scoped log lines, same as checkSameOutput does
+      const lines = out
+        .replaceAll(/^\[\w+\].+$/gm, "")
+        .trim()
+        .split("\n")
+        .filter(Boolean);
+      // The small string reports its exact UTF-8 size; the oversized string saturates at
+      // INT32_MAX (2147483647) instead of wrapping to a negative or small value.
+      expect(lines, `stderr:\n${err}`).toEqual(["Utf8Length = 6", "Utf8Length = 2147483647"]);
+      expect(exitCode).toBe(0);
+    },
+    10 * 60 * 1000,
+  );
+});

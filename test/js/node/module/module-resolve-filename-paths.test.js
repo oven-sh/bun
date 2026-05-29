@@ -232,6 +232,12 @@ test("require.resolve does not crash when options.paths contains a non-absolute 
   expect(() => {
     require.resolve("this-pkg-does-not-exist-zzz", { paths: ["C:/Users/nope", "C:\\Users\\nope"] });
   }).toThrow();
+
+  // Relative specifiers take the relative-resolution path, which is a separate
+  // consumer of options.paths; the same non-absolute entries must not crash it.
+  expect(() => {
+    require.resolve("./does-not-exist", { paths: ["this_dir_does_not_exist", "C:/Users/nope", "C:\\Users\\nope"] });
+  }).toThrow();
 });
 
 test("require.resolve resolves relative options.paths entries against cwd (Node compat)", () => {

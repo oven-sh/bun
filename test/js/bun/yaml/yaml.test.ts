@@ -1479,50 +1479,56 @@ folded: >
         });
       });
 
-      // Pre-existing flow-context over-accepts surfaced by adversarial review.
-      // Each `test.todo` asserts the spec result (per ≥3/4 reference parsers);
-      // the comment documents what Bun currently produces.
-      describe("known flow over-accepts (pre-existing)", () => {
-        test.todo("flow-map requires `,` between entries", () => {
+      describe("flow-context spec conformance", () => {
+        test("flow-map requires `,` between entries", () => {
           // [140] ns-s-flow-map-entries — entry must be followed by `,` or `}`.
-          // Currently: {"a":"b",":1":null}
-          expect(() => YAML.parse('{a: "b":1}\n')).toThrow();
-          // Currently: {"a":{"1 b":2}}
-          expect(() => YAML.parse("{a: 1 b: 2}\n")).toThrow();
+          expect(() => YAML.parse('{a: "b":1}\n')).toThrow("Unexpected token");
+          expect(() => YAML.parse("{a: 1 b: 2}\n")).toThrow("Unexpected token");
         });
 
-        test.todo(":-prefixed plain scalar after `? &x` / `? !!str` (anchor/tag re-scan in FlowKey)", () => {
-          // The first scan after `?` is in flow-in (so `:b` is ns-plain-first),
-          // but when an anchor/tag intervenes the property arm re-scans inside
-          // the key parse_node's FlowKey wrap, mis-tokenizing `:b` as a
-          // separator. Anchor/tag-on-empty cluster.
+        test(":-prefixed plain scalar after `? &x` / `? !!str`", () => {
+          // The first scan after `?` is in flow-in so `:b` tokenizes as
+          // ns-plain-first per [126]; parse_flow_explicit_key consumes
+          // c-ns-properties in flow-in too, so the post-property re-scan does
+          // the same.
           expect(YAML.parse("[? &x :b]\n")).toEqual([{ ":b": null }]);
           expect(YAML.parse("{? !!str :b}\n")).toEqual({ ":b": null });
         });
 
-        test.todo("flow-map value is ns-flow-node, not a pair", () => {
+        test("flow-map value is ns-flow-node, not a pair", () => {
           // [147] c-ns-flow-map-separate-value — value is ns-flow-node only.
-          // Currently: {"a":{"b":"c"}}
-          expect(() => YAML.parse("{a: b: c}\n")).toThrow();
-          expect(() => YAML.parse("{? a: b: c}\n")).toThrow();
+          expect(() => YAML.parse("{a: b: c}\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("{? a: b: c}\n")).toThrow("Unexpected token");
         });
 
-        test.todo("flow-seq pair value on next line at column ≤ key indent", () => {
+        test.todo("flow-map value with multiline c-ns-properties before nested pair", () => {
+          // The cmi mechanism for [147] uses the first token's indent; when an
+          // anchor/tag is on a different line than the scalar, indents diverge
+          // and the cmi check is bypassed. Pre-existing.
+          expect(() => YAML.parse("{a: &x\n b: c}\n")).toThrow();
+          expect(() => YAML.parse("{a: !!str\n b: c}\n")).toThrow();
+        });
+
+        test("flow-seq pair value on next line at column ≤ key indent", () => {
           // [149]/[80] s-separate(n,FLOW-IN) = s-separate-lines, so a newline
-          // before the value at any indentation is valid. Currently rejects:
-          // parse_block_mapping's block-semantics e-node check (line!=, indent<=)
-          // fires when reached via the implicit-pair path in flow context.
+          // before the value at any indentation is valid.
           expect(YAML.parse('["a":\nb]\n')).toEqual([{ a: "b" }]);
           expect(YAML.parse("[a: \nb]\n")).toEqual([{ a: "b" }]);
         });
 
-        test.todo("multiline JSON-style key check ordering", () => {
-          // [148] c-ns-flow-map-json-key-entry uses s-separate which spans
-          // lines; either accept all JSON-style multiline keys (eemeli) or
-          // reject all (js-yaml/PyYAML/ruamel). Currently inconsistent: quoted
-          // accepts ({"a":1}), flow-seq/map rejects.
+        test("multiline JSON-style key check ordering", () => {
+          // §7.4.2 prose says implicit keys are "restricted to a single
+          // line", but the official yaml-test-suite (4MUZ/*, 5MUD, 9SA2,
+          // K3WX, NJ66, UT92, VJP3/01) expects these to PARSE — the grammar
+          // ([148] s-separate spans lines) wins. js-yaml/PyYAML/ruamel reject
+          // (libyaml lookahead limit, not spec); eemeli/yaml accepts.
           expect(YAML.parse("{[1]\n:2}\n")).toEqual({ 1: 2 });
           expect(YAML.parse("{{k:1}\n:2}\n")).toEqual({ "[object Object]": 2 });
+          expect(YAML.parse('{"a"\n:1}\n')).toEqual({ a: 1 });
+          // Block context ([150] s-separate-in-line) and flow-seq pairs
+          // ([151]/[150]) are still single-line.
+          expect(() => YAML.parse("[1]\n:2\n")).toThrow();
+          expect(() => YAML.parse("[[1]\n:2]\n")).toThrow("Multiline implicit key");
         });
 
         test("tab before block construct after `?`/`:` (Y79Y/008 family)", () => {
@@ -1731,12 +1737,12 @@ folded: >
         });
       });
 
-      describe("flow over-accepts (locked-in behavior)", () => {
+      describe("flow comma/separator placement", () => {
         test("JSON-adjacent does not apply in flow-map value position", () => {
-          // [147] flow-map value is ns-flow-node, not ns-flow-pair. These are
-          // pre-existing over-accepts on main (refs error); preserved as-is.
-          expect(YAML.parse('{a: "b":c}\n')).toEqual({ a: "b", ":c": null });
-          expect(YAML.parse("{x: [a]:b}\n")).toEqual({ x: ["a"], ":b": null });
+          // [147] flow-map value is ns-flow-node, not ns-flow-pair; [140]
+          // requires `,`/`}` after the entry.
+          expect(() => YAML.parse('{a: "b":c}\n')).toThrow("Unexpected token");
+          expect(() => YAML.parse("{x: [a]:b}\n")).toThrow("Unexpected token");
         });
 
         test("leading/double comma in flow sequence still errors", () => {

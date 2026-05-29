@@ -2683,9 +2683,49 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             return Err(Self::unexpected_token());
         }
 
+        // Consume c-ns-properties here (still in flow-in) so the post-property
+        // re-scan tokenizes `:b` as ns-plain-first per [126], same as the
+        // first scan above. The FlowKey wrap is only for the content parse so
+        // a JSON-style key early-returns at the trailing `:`.
+        let mut scanned_tag: Option<Token<Enc>> = None;
+        let mut scanned_anchor: Option<Token<Enc>> = None;
+        loop {
+            match self.token.data {
+                TokenData::Anchor(_) if scanned_anchor.is_none() => {
+                    scanned_anchor = Some(self.token.clone());
+                }
+                TokenData::Tag(_) if scanned_tag.is_none() => {
+                    scanned_tag = Some(self.token.clone());
+                }
+                _ => break,
+            }
+            let tag = match &scanned_tag {
+                Some(Token {
+                    data: TokenData::Tag(t),
+                    ..
+                }) => *t,
+                _ => NodeTag::None,
+            };
+            self.scan(ScanOptions {
+                tag,
+                ..Default::default()
+            })?;
+            if matches!(
+                self.token.data,
+                TokenData::MappingValue
+                    | TokenData::CollectEntry
+                    | TokenData::MappingEnd
+                    | TokenData::SequenceEnd
+            ) {
+                return self.props_to_e_node(&scanned_tag, &scanned_anchor, start.loc());
+            }
+        }
+
         self.context.set(Context::FlowKey)?;
         let k = self.parse_node(ParseNodeOptions {
             explicit_mapping_key: true,
+            scanned_tag,
+            scanned_anchor,
             ..Default::default()
         });
         self.context.unset(Context::FlowKey);
@@ -2859,15 +2899,28 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         ..Default::default()
                     })?;
                 } else {
-                    let value = self.parse_node(ParseNodeOptions::default())?;
+                    // [147] the value is ns-flow-node; threading the value's
+                    // own indent as current_mapping_indent makes the Scalar
+                    // arm's cmi==scalar_indent check return the bare scalar
+                    // instead of consuming a trailing `: …` as a nested
+                    // mapping (`{a: b: c}`).
+                    let value = self.parse_node(ParseNodeOptions {
+                        current_mapping_indent: Some(self.token.indent),
+                        ..Default::default()
+                    })?;
                     props.append_maybe_merge(key, value, &mut self.merge_props_budget)?;
                 }
 
-                if matches!(self.token.data, TokenData::CollectEntry) {
-                    self.context.set(Context::FlowKey)?;
-                    let r = self.scan(ScanOptions::default());
-                    self.context.unset(Context::FlowKey);
-                    r?;
+                // [140] ns-s-flow-map-entries: after an entry, only `,` or `}`.
+                match self.token.data {
+                    TokenData::CollectEntry => {
+                        self.context.set(Context::FlowKey)?;
+                        let r = self.scan(ScanOptions::default());
+                        self.context.unset(Context::FlowKey);
+                        r?;
+                    }
+                    TokenData::MappingEnd => {}
+                    _ => return Err(Self::unexpected_token()),
                 }
             }
 
@@ -3018,7 +3071,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
         }
 
-        self.block_indents.push(mapping_indent)?;
+        // The block_indents stack drives scan()'s flow-context indent guard
+        // (continuation lines in a flow collection must be at indent > the
+        // enclosing block's). When reached via the implicit-pair path from a
+        // flow collection (`["a": b]`), the key's column is not a block
+        // boundary — pushing it would reject `["a":\nb]` per [149]/[80].
+        let pushed_block_indent = !matches!(self.context.get(), Context::FlowIn | Context::FlowKey);
+        if pushed_block_indent {
+            self.block_indents.push(mapping_indent)?;
+        }
 
         // PORT NOTE: Zig `defer self.block_indents.pop()` — capture the fallible
         // body's result and pop on EVERY exit (including `?` paths).
@@ -3233,7 +3294,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             inner
         })();
 
-        self.block_indents.pop();
+        if pushed_block_indent {
+            self.block_indents.pop();
+        }
         result
     }
 }
@@ -3633,6 +3696,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let mut value_tag: Option<Token<Enc>> = None;
         let mut value_anchor: Option<Token<Enc>> = None;
 
+        // The [196] indent dispatch below is block-semantics; in flow context
+        // ([149]/[80] s-separate(n,FLOW-IN) = s-separate-lines, any indent on
+        // a continuation line) it does not apply. Reached via the
+        // implicit-pair fallthrough when `parse_block_mapping` is entered
+        // from a flow-seq item (`["a":\nb]`).
+        let in_flow = matches!(self.context.get(), Context::FlowIn | Context::FlowKey);
+
         loop {
             // [196] s-l+block-node(n) reaches content via [197] flow-in-block
             // (s-separate-lines(n+1)) or [200] block-collection. Either way a
@@ -3640,7 +3710,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             // properties collected so far attach to e-scalar per [161].
             // [201] seq-space: a nested block sequence may sit at indent n in
             // BLOCK-OUT, but needs n+1 in BLOCK-IN.
-            if self.token.line != indicator_line {
+            if !in_flow && self.token.line != indicator_line {
                 let belongs_to_parent = if matches!(self.token.data, TokenData::SequenceEntry)
                     && kind != BlockIndentedKind::SeqEntry
                 {
@@ -3883,12 +3953,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         {
                             break 'node copy;
                         }
-                        if alias_line != self.token.line && !opts.explicit_mapping_key {
-                            return Err(ParseError::MultilineImplicitKey);
-                        }
-
                         if self.context.get() == Context::FlowKey {
                             return Ok(copy);
+                        }
+                        // [154] ns-s-implicit-yaml-key uses s-separate-in-line
+                        // (same line only); [145] in flow-map uses s-separate
+                        // (spans lines, per yaml-test-suite 4MUZ etc.),
+                        // handled by the FlowKey return above.
+                        if alias_line != self.token.line && !opts.explicit_mapping_key {
+                            return Err(ParseError::MultilineImplicitKey);
                         }
 
                         // [192] implicit key sits at s-indent(n) (spaces only).
@@ -3935,12 +4008,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         {
                             break 'node seq;
                         }
-                        if sequence_line != self.token.line && !opts.explicit_mapping_key {
-                            return Err(ParseError::MultilineImplicitKey);
-                        }
-
                         if self.context.get() == Context::FlowKey {
                             break 'node seq;
+                        }
+                        if sequence_line != self.token.line && !opts.explicit_mapping_key {
+                            return Err(ParseError::MultilineImplicitKey);
                         }
 
                         // [192] implicit key sits at s-indent(n) (spaces only).
@@ -4023,12 +4095,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         {
                             break 'node map;
                         }
-                        if mapping_line != self.token.line && !opts.explicit_mapping_key {
-                            return Err(ParseError::MultilineImplicitKey);
-                        }
-
                         if self.context.get() == Context::FlowKey {
                             break 'node map;
+                        }
+                        if mapping_line != self.token.line && !opts.explicit_mapping_key {
+                            return Err(ParseError::MultilineImplicitKey);
                         }
 
                         // [192] implicit key sits at s-indent(n) (spaces only).

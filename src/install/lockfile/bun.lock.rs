@@ -114,7 +114,9 @@ pub enum Version {
     /// lockfile keeps loading:
     /// - an npm package resolved to a tarball URL outside the configured
     ///   registry must carry a supported integrity hash
-    /// - a git/github `.bun-tag` must be a safe path/checkout component
+    /// - a git `.bun-tag` must be a safe path/checkout component (the same
+    ///   check on a `github` tag is enforced at every version, since its
+    ///   download path has no checkout-time re-validation)
     V2 = 2,
 }
 
@@ -216,7 +218,11 @@ impl Stringifier {
                         return Version::V1;
                     }
                 }
-                ResolutionTag::Git | ResolutionTag::Github => {
+                ResolutionTag::Git => {
+                    // An unsafe git `.bun-tag` is only rejected at v2, so staying
+                    // at v1 keeps it loading. (A `github` tag is rejected at every
+                    // version, so no lockfile version can round-trip an unsafe one
+                    // — nothing to gate here.)
                     if !crate::repository::is_safe_resolved_tag(
                         res.repository().resolved.slice(buf),
                     ) {

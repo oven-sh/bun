@@ -715,6 +715,42 @@ describe("HTTP client CONNECT", () => {
     }
   });
 
+  test("http.request CONNECT destroyed before the proxy responds emits 'close' without crashing", async () => {
+    // A proxy that accepts the TCP connection but never sends a response.
+    const proxySockets: net.Socket[] = [];
+    const proxyServer = net.createServer(socket => {
+      socket.on("error", () => {});
+      proxySockets.push(socket);
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const { port } = proxyServer.address() as AddressInfo;
+
+    try {
+      const { promise, resolve } = Promise.withResolvers<string[]>();
+      const events: string[] = [];
+      const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "h:1" });
+      req.on("connect", () => events.push("connect"));
+      // A spurious 'error' after 'close' (or an unhandled AbortError) would be a bug.
+      req.on("error", e => events.push("error:" + ((e as NodeJS.ErrnoException).code ?? e.message)));
+      req.on("close", () => {
+        events.push("close");
+        resolve(events);
+      });
+      req.end();
+      // Destroy before the proxy has written anything.
+      await once(req, "socket");
+      req.destroy();
+
+      const result = await promise;
+      // The request must close; it must not emit a spurious post-close error.
+      expect(result).toContain("close");
+      expect(result[result.length - 1]).toBe("close");
+    } finally {
+      for (const s of proxySockets) s.destroy();
+      await new Promise<void>(r => proxyServer.close(() => r()));
+    }
+  });
+
   test("http.request CONNECT resolves the proxy host with a custom lookup", async () => {
     const proxyServer = http.createServer();
     let proxySocket: net.Socket | undefined;

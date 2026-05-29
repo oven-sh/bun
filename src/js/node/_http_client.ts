@@ -61,13 +61,7 @@ const { OutgoingMessage } = require("node:_http_outgoing");
 const { getLazy } = require("internal/shared");
 const net = getLazy(() => require("node:net"));
 const tls = getLazy(() => require("node:tls"));
-const {
-  getMaxHTTPHeaderSize,
-  STATUS_CODES,
-  statusCodeSymbol,
-  statusMessageSymbol,
-  noBodySymbol,
-} = require("internal/http");
+const { getMaxHTTPHeaderSize, statusCodeSymbol, statusMessageSymbol, noBodySymbol } = require("internal/http");
 
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
@@ -754,8 +748,10 @@ function ClientRequest(input, options, cb) {
       socket.removeListener("error", onError);
       socket.removeListener("close", onClose);
       this[kClearTimeout]?.();
-      // Abort is handled by onAbort → socketCloseListener, which emits 'close'.
-      if (isAbortError(err)) return;
+      // Abort/destroy is handled by onAbort → socketCloseListener, which emits
+      // 'close' and also synthesizes a socket 'close' that lands here; don't
+      // surface a spurious 'error' for a user-initiated teardown (Node doesn't).
+      if (isAbortError(err) || this.destroyed || this[abortedSymbol]) return;
       // net/tls already produce a Node-shaped error (code/syscall/address/port),
       // so propagate it verbatim like Node rather than flattening it.
       fetching = false;
@@ -819,7 +815,8 @@ function ClientRequest(input, options, cb) {
       const res = new IncomingMessage(null, kEmptyObject);
       res.httpVersion = `${statusMatch[1]}.${statusMatch[2]}`;
       res[statusCodeSymbol] = Number(statusMatch[3]);
-      res[statusMessageSymbol] = statusMatch[4] || STATUS_CODES[statusMatch[3]] || "";
+      // Deliver the reason phrase verbatim, "" when omitted, matching llhttp/Node.
+      res[statusMessageSymbol] = statusMatch[4] ?? "";
 
       const rawHeaders: string[] = [];
       // Null prototype so a proxy header literally named "constructor"/"__proto__"
@@ -889,6 +886,12 @@ function ClientRequest(input, options, cb) {
       }
     };
 
+    // Always keep an error listener on the raw socket so a late error during
+    // teardown (e.g. the AbortController's AbortError when the request is
+    // aborted/destroyed before the tunnel is established) is swallowed instead
+    // of surfacing as an unhandled 'error'. onError/onClose below handle the
+    // pre-tunnel connection errors we care about; this is the backstop.
+    socket.on("error", () => {});
     socket.on("data", onData);
     socket.on("error", onError);
     socket.on("close", onClose);

@@ -261,12 +261,12 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
 it("rejects a binary lockfile whose git resolved tag contains path separators", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
 
-  // A git dependency pointing at an unreachable loopback endpoint (port 1) so
+  // A git dependency pointing at an unreachable loopback endpoint (port 0) so
   // this test stays offline. The commit below never has to exist: migrating
   // package-lock.json transcribes the resolved commit into the lockfile
   // without contacting the git host, and `--lockfile-only` saves it as
   // bun.lockb (saveTextLockfile = false) without installing anything.
-  const gitUrl = "git+ssh://git@127.0.0.1:1/example/repo.git";
+  const gitUrl = "git+ssh://git@127.0.0.1:0/example/repo.git";
   const sha = "aabbccddeeff00112233445566778899aabbccdd";
 
   await write(
@@ -364,4 +364,5 @@ it("rejects a binary lockfile whose git resolved tag contains path separators", 
   // Nothing was installed from the tampered resolution (the git host is
   // unreachable, so the fallback resolve cannot fetch it either).
   expect(await exists(join(packageDir, "node_modules", "dep"))).toBe(false);
+  expect(code).not.toBe(0);
 });

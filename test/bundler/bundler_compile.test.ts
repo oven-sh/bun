@@ -26,7 +26,10 @@ describe("bundler", () => {
   // standalone module graph treating those bytes as Latin-1, which would
   // print "rÃ©sumÃ©" / "ã\x81\x93ã\x82\x93..." (one Latin-1 char per UTF-8
   // byte) instead of the original codepoints.
-  for (const [where, flag] of [["Footer", "--footer"], ["Banner", "--banner"]] as const) {
+  for (const [where, flag] of [
+    ["Footer", "--footer"],
+    ["Banner", "--banner"],
+  ] as const) {
     test(`compile/${where}NonAsciiUTF8`, async () => {
       using dir = tempDir(`compile-${where.toLowerCase()}-nonascii`, {
         "entry.ts": `export const x = 1;`,
@@ -34,7 +37,16 @@ describe("bundler", () => {
       const outfile = join(String(dir), isWindows ? "out.exe" : "out");
       {
         await using proc = Bun.spawn({
-          cmd: [bunExe(), "build", "--compile", flag, `console.log("résumé", "こんにちは");`, "./entry.ts", "--outfile", outfile],
+          cmd: [
+            bunExe(),
+            "build",
+            "--compile",
+            flag,
+            `console.log("résumé", "こんにちは");`,
+            "./entry.ts",
+            "--outfile",
+            outfile,
+          ],
           env: bunEnv,
           cwd: String(dir),
           stdout: "pipe",

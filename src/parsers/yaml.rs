@@ -2312,6 +2312,9 @@ pub struct Parser<'i, Enc: Encoding> {
     pub input: &'i [Enc::Unit],
 
     pub pos: Pos,
+    /// Position of the first byte of the current line (one past the most
+    /// recently consumed `\n`/`\r`). Set in `newline()`.
+    pub line_start_pos: Pos,
     pub line_indent: Indent,
     /// A tab was seen between the line's s-indent (or post-indicator
     /// additional_parent_indent position) and the current token's content.
@@ -2360,6 +2363,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             input,
             bump,
             pos: Pos::from(0),
+            line_start_pos: Pos::from(0),
             line_indent: Indent::NONE,
             tab_after_indent: false,
             line: Line::from(1),
@@ -2427,6 +2431,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     fn newline(&mut self) {
         self.line_indent = Indent::NONE;
         self.tab_after_indent = false;
+        // Every caller is `newline(); inc(1);` with `pos` at the b-break byte.
+        self.line_start_pos = self.pos.add(1);
         self.line.inc(1);
     }
 
@@ -6107,11 +6113,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// immediately after a b-break. Used by [203]/[204] doc-marker
     /// recognition (which is line-starting, not just `line_indent == 0`).
     fn is_at_line_start(&self) -> bool {
-        if self.pos == Pos::ZERO {
-            return true;
-        }
-        let prev = Enc::wide(self.input[self.pos.sub(1).cast()]);
-        prev == 0x0A || prev == 0x0D
+        self.pos == self.line_start_pos
     }
 
     fn is_s_white_or_b_char_at(&self, n: usize) -> bool {

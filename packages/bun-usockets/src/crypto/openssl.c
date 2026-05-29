@@ -1874,9 +1874,12 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
          * leaks one reference to the selected context. */
         SSL_CTX_free(dyn);
       } else if (abort_handshake) {
-        /* The JS SNICallback threw or returned something that is not a
-         * SecureContext. Node drops the connection with a fatal alert rather
-         * than serving the default certificate, so fail closed here too.
+        /* The JS SNICallback reported an error (it threw, or invoked its
+         * cb(err)). Node drops the connection with a fatal alert rather than
+         * serving the default certificate, so fail closed here too. (A
+         * callback that returns without an error and without a SecureContext
+         * is benign — the resolver leaves abort_handshake 0 and we fall
+         * through to the default context above.)
          * BoringSSL records the alert and surfaces it from SSL_do_handshake as
          * SSL_ERROR_SSL; ssl_update_handshake then dispatches the failure the
          * same way the ALPN callback's fatal return does (→ tlsClientError).

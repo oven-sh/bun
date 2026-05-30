@@ -884,12 +884,6 @@ impl TypedArrayType {
             TypedArrayType::TypeDataView => C::kJSTypedArrayTypeNone,
         }
     }
-
-    // LAYERING: Zig's `toNapi` (array_buffer.zig:524) maps to
-    // `napi_typedarray_type`, which is defined in `bun_runtime` (a higher-tier
-    // crate that depends on `bun_jsc`). The conversion lives next to its target
-    // type as `napi_typedarray_type::from_typed_array_type` in
-    // `bun_runtime::napi` to avoid the dep cycle.
 }
 
 // ──────────────────────────────────────────────────────────────────────────

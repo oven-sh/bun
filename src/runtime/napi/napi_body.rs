@@ -81,11 +81,6 @@ unsafe extern "C" {
         ctx: *mut JSGlobalObject,
         object: jsc::c_api::JSObjectRef,
     ) -> jsc::c_api::JSValueRef;
-    fn JSObjectGetTypedArrayBuffer(
-        ctx: *mut JSGlobalObject,
-        object: jsc::c_api::JSObjectRef,
-        exception: jsc::c_api::ExceptionRef,
-    ) -> jsc::c_api::JSObjectRef;
     fn JSObjectMakeDate(
         ctx: *mut JSGlobalObject,
         argument_count: usize,
@@ -346,42 +341,11 @@ pub(super) type napi_property_attributes = c_uint;
 // constructs or matches variants.
 pub(super) type napi_valuetype = u32;
 
-#[repr(u32)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(super) enum napi_typedarray_type {
-    int8_array = 0,
-    uint8_array = 1,
-    uint8_clamped_array = 2,
-    int16_array = 3,
-    uint16_array = 4,
-    int32_array = 5,
-    uint32_array = 6,
-    float32_array = 7,
-    float64_array = 8,
-    bigint64_array = 9,
-    biguint64_array = 10,
-}
-
-impl napi_typedarray_type {
-    pub(super) fn from_js_type(this: jsc::JSType) -> Option<napi_typedarray_type> {
-        // PORT NOTE: jsc::JSType is a newtype struct with associated consts (not an enum),
-        // so glob-import is unavailable; match on the qualified const paths instead.
-        Some(match this {
-            jsc::JSType::Int8Array => napi_typedarray_type::int8_array,
-            jsc::JSType::Uint8Array => napi_typedarray_type::uint8_array,
-            jsc::JSType::Uint8ClampedArray => napi_typedarray_type::uint8_clamped_array,
-            jsc::JSType::Int16Array => napi_typedarray_type::int16_array,
-            jsc::JSType::Uint16Array => napi_typedarray_type::uint16_array,
-            jsc::JSType::Int32Array => napi_typedarray_type::int32_array,
-            jsc::JSType::Uint32Array => napi_typedarray_type::uint32_array,
-            jsc::JSType::Float32Array => napi_typedarray_type::float32_array,
-            jsc::JSType::Float64Array => napi_typedarray_type::float64_array,
-            jsc::JSType::BigInt64Array => napi_typedarray_type::bigint64_array,
-            jsc::JSType::BigUint64Array => napi_typedarray_type::biguint64_array,
-            _ => return None,
-        })
-    }
-}
+// Only passed through FFI — by value into `napi_create_typedarray` and as a
+// `*mut napi_typedarray_type` out-param written by C++ `napi_get_typedarray_info`.
+// Rust never constructs or matches variants, so (like `napi_valuetype`) it is a
+// plain `u32` rather than an enum. The real enum lives in `node_api.h`.
+pub(super) type napi_typedarray_type = u32;
 
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1422,65 +1386,17 @@ unsafe extern "C" {
         value: napi_value,
         result: *mut bool,
     ) -> napi_status;
-}
-
-#[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_get_typedarray_info(
-    env_: napi_env,
-    typedarray_: napi_value,
-    maybe_type: *mut napi_typedarray_type,
-    maybe_length: *mut usize,
-    maybe_data: *mut *mut u8,
-    maybe_arraybuffer: *mut napi_value,
-    maybe_byte_offset: *mut usize, // note: this is always 0
-) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_get_typedarray_info");
-    let env = get_env!(env_);
-    env.check_gc();
-    let typedarray = typedarray_.get();
-    if typedarray.is_empty_or_undefined_or_null() {
-        return env.invalid_arg();
-    }
-    let _keep = jsc::EnsureStillAlive(typedarray);
-
-    let Some(array_buffer) = typedarray.as_array_buffer(env.to_js()) else {
-        return env.invalid_arg();
-    };
-    // SAFETY: `maybe_type` is null or a valid exclusive out-param per N-API contract.
-    if let Some(ty) = unsafe { maybe_type.as_mut() } {
-        // Zig: `array_buffer.typed_array_type.toTypedArrayType().toNapi()`. The Rust
-        // `ArrayBuffer.typed_array_type` field is already a `JSType`, so map it
-        // straight to `napi_typedarray_type`.
-        let Some(napi_ty) = napi_typedarray_type::from_js_type(array_buffer.typed_array_type)
-        else {
-            return env.invalid_arg();
-        };
-        *ty = napi_ty;
-    }
-
-    // TODO: handle detached
-    write_out(maybe_data, array_buffer.ptr);
-    write_out(maybe_length, array_buffer.len);
-
-    // SAFETY: `maybe_arraybuffer` is null or a valid exclusive out-param per N-API contract.
-    if let Some(arraybuffer) = unsafe { maybe_arraybuffer.as_mut() } {
-        arraybuffer.set(
-            env,
-            // SAFETY: `typedarray` is a live typed-array object (kept by `_keep`); FFI reads its backing buffer.
-            JSValue::c(unsafe {
-                JSObjectGetTypedArrayBuffer(
-                    env.to_js().as_ptr(),
-                    typedarray.as_object_ref(),
-                    ptr::null_mut(),
-                )
-            }),
-        );
-    }
-
-    // `jsc::ArrayBuffer` used to have an `offset` field, but it was always 0 because `ptr`
-    // already had the offset applied. See <https://github.com/oven-sh/bun/issues/561>.
-    write_out(maybe_byte_offset, 0);
-    env.ok()
+    // Implemented in C++ (`src/jsc/bindings/napi.cpp`) so it can read the view's
+    // real `byteOffset` directly via `JSArrayBufferView::byteOffset()`.
+    pub(super) fn napi_get_typedarray_info(
+        env: napi_env,
+        typedarray: napi_value,
+        type_: *mut napi_typedarray_type,
+        length: *mut usize,
+        data: *mut *mut u8,
+        arraybuffer: *mut napi_value,
+        byte_offset: *mut usize,
+    ) -> napi_status;
 }
 
 unsafe extern "C" {
@@ -1490,6 +1406,16 @@ unsafe extern "C" {
         arraybuffer: napi_value,
         byte_offset: usize,
         result: *mut napi_value,
+    ) -> napi_status;
+    // Implemented in C++ (`src/jsc/bindings/napi.cpp`), alongside
+    // `napi_get_typedarray_info`.
+    pub(super) fn napi_get_dataview_info(
+        env: napi_env,
+        dataview: napi_value,
+        bytelength: *mut usize,
+        data: *mut *mut u8,
+        arraybuffer: *mut napi_value,
+        byte_offset: *mut usize,
     ) -> napi_status;
 }
 
@@ -1505,45 +1431,6 @@ pub(super) extern "C" fn napi_is_dataview(
     let value = value_.get();
     *result =
         !value.is_empty_or_undefined_or_null() && value.js_type_loose() == jsc::JSType::DataView;
-    env.ok()
-}
-
-#[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_get_dataview_info(
-    env_: napi_env,
-    dataview_: napi_value,
-    maybe_bytelength: *mut usize,
-    maybe_data: *mut *mut u8,
-    maybe_arraybuffer: *mut napi_value,
-    maybe_byte_offset: *mut usize, // note: this is always 0
-) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_get_dataview_info");
-    let env = get_env!(env_);
-    env.check_gc();
-    let dataview = dataview_.get();
-    let Some(array_buffer) = dataview.as_array_buffer(env.to_js()) else {
-        return NapiEnv::set_last_error(Some(env), NapiStatus::object_expected);
-    };
-    write_out(maybe_bytelength, array_buffer.byte_len);
-    write_out(maybe_data, array_buffer.ptr);
-    // SAFETY: `maybe_arraybuffer` is null or a valid exclusive out-param per N-API contract.
-    if let Some(arraybuffer) = unsafe { maybe_arraybuffer.as_mut() } {
-        arraybuffer.set(
-            env,
-            // SAFETY: `dataview` is a live DataView object (held in handle scope); FFI reads its backing buffer.
-            JSValue::c(unsafe {
-                JSObjectGetTypedArrayBuffer(
-                    env.to_js().as_ptr(),
-                    dataview.as_object_ref(),
-                    ptr::null_mut(),
-                )
-            }),
-        );
-    }
-    // `jsc::ArrayBuffer` used to have an `offset` field, but it was always 0 because `ptr`
-    // already had the offset applied. See <https://github.com/oven-sh/bun/issues/561>.
-    write_out(maybe_byte_offset, 0);
-
     env.ok()
 }
 

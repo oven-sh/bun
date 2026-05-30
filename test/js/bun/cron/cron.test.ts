@@ -193,7 +193,10 @@ describe("Bun.cron API", () => {
 
   test("empty path string throws", () => {
     expect(() => Bun.cron("", "@daily", "t")).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE", message: expect.stringContaining("path must not be empty") }),
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_VALUE",
+        message: expect.stringContaining("path must not be empty"),
+      }),
     );
   });
 });

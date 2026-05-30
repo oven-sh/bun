@@ -475,8 +475,10 @@ test.concurrent(
 // a no-op. Because we wrap the listener in a suppression closure, a naive
 // implementation would create two distinct wrappers and fire the handler
 // twice; removeEventListener must also detach it completely.
-test.concurrent("ws addEventListener('error', h) dedupes the same handler and removeEventListener detaches it", async () => {
-  const { stdout, exitCode } = await run(/* js */ `
+test.concurrent(
+  "ws addEventListener('error', h) dedupes the same handler and removeEventListener detaches it",
+  async () => {
+    const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { once } = require("events");
     const { WebSocket } = require("ws");
@@ -499,7 +501,8 @@ test.concurrent("ws addEventListener('error', h) dedupes the same handler and re
     console.log(JSON.stringify({ count }));
     process.exit(0);
   `);
-  // The handler fires exactly once despite the duplicate registration.
-  expect(stdout).toMatchInlineSnapshot(`"{"count":1}"`);
-  expect(exitCode).toBe(0);
-});
+    // The handler fires exactly once despite the duplicate registration.
+    expect(stdout).toMatchInlineSnapshot(`"{"count":1}"`);
+    expect(exitCode).toBe(0);
+  },
+);

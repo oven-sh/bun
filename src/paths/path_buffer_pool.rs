@@ -100,7 +100,7 @@ impl<T> Pool<T> {
                 // Another thread is popping; don't block — caller allocates.
                 return ptr::null_mut();
             }
-            let head = (stack & PTR_MASK) as *mut Node<T>;
+            let head = ptr::with_exposed_provenance_mut::<Node<T>>(stack & PTR_MASK);
             if head.is_null() {
                 return ptr::null_mut();
             }
@@ -126,7 +126,7 @@ impl<T> Pool<T> {
         // We hold IS_POPPING: `head` is ours exclusively (no other popper) and
         // `put` never frees a linked node, so reading `head.next` is sound.
         loop {
-            let head = (stack & PTR_MASK) as *mut Node<T>;
+            let head = ptr::with_exposed_provenance_mut::<Node<T>>(stack & PTR_MASK);
             // SAFETY: we hold IS_POPPING, so `head` cannot be concurrently
             // popped or freed; it is a live node we just observed in `stack`.
             let next = unsafe { (*head).next };
@@ -135,7 +135,7 @@ impl<T> Pool<T> {
             // the bit we own); retry against the updated value.
             match self.stack.compare_exchange_weak(
                 stack,
-                (next as usize) & PTR_MASK,
+                next.expose_provenance() & PTR_MASK,
                 Ordering::AcqRel,
                 Ordering::Acquire,
             ) {
@@ -151,10 +151,19 @@ impl<T> Pool<T> {
     }
 
     /// Push `node` onto the stack, or free it if the pool is at capacity.
+    #[inline]
     fn push(&self, node: *mut Node<T>) {
+        self.push_with_cap(node, Self::cap());
+    }
+
+    /// `push`, with the capacity passed in. Split out so tests can exercise the
+    /// over-capacity freeing path with a small, fixed cap without reaching
+    /// `Self::cap()` → `get_thread_count()` (which calls a C function Miri
+    /// cannot execute).
+    fn push_with_cap(&self, node: *mut Node<T>, cap: usize) {
         // Reserve a slot first so the list length stays bounded. If we are at
         // (or over) capacity, free the node rather than linking it.
-        if self.len.fetch_add(1, Ordering::Relaxed) >= Self::cap() {
+        if self.len.fetch_add(1, Ordering::Relaxed) >= cap {
             self.len.fetch_sub(1, Ordering::Relaxed);
             // SAFETY: `node` is caller-owned (just handed back, never linked).
             unsafe { drop(Box::from_raw(node)) };
@@ -165,9 +174,9 @@ impl<T> Pool<T> {
         loop {
             // SAFETY: `node` is caller-owned and not yet published; writing its
             // `next` before the CAS that publishes it is unobserved by others.
-            unsafe { (*node).next = (stack & PTR_MASK) as *mut Node<T> };
+            unsafe { (*node).next = ptr::with_exposed_provenance_mut::<Node<T>>(stack & PTR_MASK) };
             // Publish `node` as the new head, preserving the popper's bit.
-            let new_stack = (node as usize) | (stack & IS_POPPING);
+            let new_stack = node.expose_provenance() | (stack & IS_POPPING);
             match self.stack.compare_exchange_weak(
                 stack,
                 new_stack,
@@ -325,3 +334,139 @@ pub type os_path_buffer_pool = w_path_buffer_pool;
 #[cfg(not(windows))]
 #[allow(non_camel_case_types)]
 pub type os_path_buffer_pool = path_buffer_pool;
+
+#[cfg(test)]
+mod tests {
+    //! Exercises the lock-free [`Pool`] on *local* instances (isolated from the
+    //! process-global `U8_POOL`/`U16_POOL` and from each other). These run under
+    //! `cargo miri test -p bun_paths` (the repo's only Rust-test runner, wired
+    //! into CI via `bun run rust:miri`), so they avoid calling `Self::cap()` →
+    //! `get_thread_count()` — that reaches a C function Miri cannot execute —
+    //! by going through `push_with_cap` with a fixed cap. Every node allocated
+    //! is freed before the test returns so Miri reports no leak.
+
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+
+    impl<T> Pool<T> {
+        fn cached_len(&self) -> usize {
+            self.len.load(Ordering::Relaxed)
+        }
+        /// Pop, or allocate a fresh node on miss — the fallback
+        /// `PathBufferPoolT::get` uses. Returns an owned node pointer.
+        fn get_or_alloc(&self) -> *mut Node<T>
+        where
+            T: PoolStorage,
+        {
+            let node = self.pop();
+            if node.is_null() { T::new_node() } else { node }
+        }
+        /// Free every cached node (test cleanup).
+        fn drain(&self) {
+            loop {
+                let node = self.pop();
+                if node.is_null() {
+                    break;
+                }
+                // SAFETY: `pop` returns an unlinked, owned node.
+                unsafe { drop(Box::from_raw(node)) };
+            }
+        }
+    }
+
+    /// A node popped right after being pushed is the same allocation, and its
+    /// buffer contents survive the round-trip — the pool reuses buffers rather
+    /// than reallocating.
+    #[test]
+    fn reuses_pushed_buffer() {
+        let pool = Pool::<PathBuffer>::new();
+        let node = PathBuffer::new_node();
+        // SAFETY: freshly allocated, exclusively owned node.
+        unsafe { (*node).buf.0[0] = 42 };
+        let addr = node.addr();
+        pool.push_with_cap(node, 4);
+
+        let node2 = pool.pop();
+        assert_eq!(node2.addr(), addr, "pushed buffer should be reused");
+        // SAFETY: exclusively owned; the byte written before the push is intact.
+        unsafe { assert_eq!((*node2).buf.0[0], 42) };
+        // SAFETY: `node2` is unlinked and owned.
+        unsafe { drop(Box::from_raw(node2)) };
+        assert_eq!(pool.cached_len(), 0);
+    }
+
+    /// Pushes beyond `cap` free the node instead of growing the list, and the
+    /// list holds exactly `cap` distinct nodes afterward.
+    #[test]
+    fn over_capacity_frees() {
+        const CAP: usize = 3;
+        let pool = Pool::<PathBuffer>::new();
+        // Acquire 4x cap distinct nodes, then return them all.
+        let nodes: Vec<*mut Node<PathBuffer>> = (0..CAP * 4).map(|_| PathBuffer::new_node()).collect();
+        for n in nodes {
+            pool.push_with_cap(n, CAP);
+        }
+        assert_eq!(pool.cached_len(), CAP, "list must be capped at {CAP}");
+
+        // Exactly CAP nodes can be popped, all distinct, then the list is empty.
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..CAP {
+            let n = pool.pop();
+            assert!(!n.is_null());
+            assert!(seen.insert(n.addr()), "pop returned a duplicate node");
+            // SAFETY: `pop` hands back an unlinked, owned node.
+            unsafe { drop(Box::from_raw(n)) };
+        }
+        assert!(pool.pop().is_null(), "list should be empty after CAP pops");
+        assert_eq!(pool.cached_len(), 0);
+    }
+
+    /// Two threads hammer the stack concurrently. Under Miri (tree-borrows) this
+    /// surfaces any data race or provenance/aliasing violation in `pop`/`push`.
+    /// Each thread stamps a thread-unique byte into a node it exclusively holds
+    /// and reads it back, catching a node handed to both threads at once.
+    /// Iteration counts are deliberately small — Miri is ~2 orders of magnitude
+    /// slower than native.
+    #[test]
+    fn concurrent_pop_push_no_race() {
+        const THREADS: u8 = 2;
+        const ITERS: usize = 30;
+        const CAP: usize = 4;
+        let pool = Arc::new(Pool::<PathBuffer>::new());
+        let start = Arc::new(AtomicBool::new(false));
+
+        let handles: Vec<_> = (0..THREADS)
+            .map(|t| {
+                let pool = Arc::clone(&pool);
+                let start = Arc::clone(&start);
+                std::thread::spawn(move || {
+                    while !start.load(Ordering::Acquire) {
+                        std::hint::spin_loop();
+                    }
+                    let tag = t.wrapping_add(1);
+                    for _ in 0..ITERS {
+                        let a = pool.get_or_alloc();
+                        let b = pool.get_or_alloc();
+                        // SAFETY: `a`/`b` are distinct, exclusively-owned nodes.
+                        unsafe {
+                            (*a).buf.0[0] = tag;
+                            (*b).buf.0[0] = tag;
+                            assert_eq!((*a).buf.0[0], tag);
+                            assert_eq!((*b).buf.0[0], tag);
+                        }
+                        pool.push_with_cap(b, CAP);
+                        pool.push_with_cap(a, CAP);
+                    }
+                })
+            })
+            .collect();
+
+        start.store(true, Ordering::Release);
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert!(pool.cached_len() <= CAP);
+        pool.drain();
+    }
+}

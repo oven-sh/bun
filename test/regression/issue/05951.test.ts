@@ -387,8 +387,10 @@ test.concurrent("ws 'unexpected-response' fires for addListener / prependListene
 // response was handled). The suppression has to apply uniformly across every
 // registration API — on('error'), addEventListener('error', …) and the
 // onerror setter — not just on()/once().
-test.concurrent("ws suppresses the native error after 'unexpected-response' across on/addEventListener/onerror", async () => {
-  const { stdout, exitCode } = await run(/* js */ `
+test.concurrent(
+  "ws suppresses the native error after 'unexpected-response' across on/addEventListener/onerror",
+  async () => {
+    const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { once } = require("events");
     const { WebSocket } = require("ws");
@@ -419,9 +421,10 @@ test.concurrent("ws suppresses the native error after 'unexpected-response' acro
     console.log(JSON.stringify({ on, ael, prop }));
     process.exit(0);
   `);
-  // All three APIs: 'unexpected-response' seen (503), native 'error' suppressed.
-  expect(stdout).toMatchInlineSnapshot(
-    `"{"on":{"status":503,"errored":false},"ael":{"status":503,"errored":false},"prop":{"status":503,"errored":false}}"`,
-  );
-  expect(exitCode).toBe(0);
-});
+    // All three APIs: 'unexpected-response' seen (503), native 'error' suppressed.
+    expect(stdout).toMatchInlineSnapshot(
+      `"{"on":{"status":503,"errored":false},"ael":{"status":503,"errored":false},"prop":{"status":503,"errored":false}}"`,
+    );
+    expect(exitCode).toBe(0);
+  },
+);

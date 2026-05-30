@@ -409,7 +409,7 @@ pub fn installWithManager(
                             var map = try bun.default_allocator.alloc(?PackageID, dependencies_len);
                             @memset(map, null);
                             const packages_len = manager.lockfile.packages.len;
-                            for (0..packages_len) |pkg_id| {
+                            for (1..packages_len) |pkg_id| {
                                 const dep_slice = manager.lockfile.packages.items(.dependencies)[pkg_id];
                                 const dep_off = dep_slice.off;
                                 const dep_len = dep_slice.len;

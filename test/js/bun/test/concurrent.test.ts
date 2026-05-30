@@ -159,8 +159,8 @@ test.concurrent("max-concurrency default", async () => {
   // subprocess-spawning describe.concurrent suites would otherwise OOM the CI
   // box). Derive the cap from the observed ceiling and assert it's exactly one
   // of the two design defaults rather than gating on `isASAN` — that keeps the
-  // test robust to how ASAN is detected and to any future cap value — then
-  // verify the climb-and-hold pattern against it.
+  // test independent of how ASAN is detected — then verify the climb-and-hold
+  // pattern against it.
   const cap = Math.max(...executionPattern);
   expect([5, 20]).toContain(cap);
   // Should be 1,2,3,...,cap-1,cap,cap,cap,...

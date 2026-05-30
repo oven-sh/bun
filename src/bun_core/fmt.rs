@@ -1157,6 +1157,57 @@ pub fn parse_seconds_or_duration_ms(input: &[u8]) -> Option<f64> {
     (ms.is_finite() && ms >= 0.0).then_some(ms)
 }
 
+/// JS `Math.round`: ties round toward +∞ (`-2.5` → `-2`), unlike `f64::round`.
+fn js_math_round(x: f64) -> f64 {
+    let ceil = x.ceil();
+    if (ceil - x) > 0.5 { ceil - 1.0 } else { ceil }
+}
+
+/// JS `Number.prototype.toString` spelling (`1.5` → `"1.5"`, `1e30` → `"1e+30"`).
+fn write_js_number(out: &mut String, number: f64) {
+    let mut buf = [0u8; 124];
+    let bytes = FormatDouble::dtoa(&mut buf, number);
+    // SAFETY: dtoa emits only ASCII.
+    out.push_str(unsafe { core::str::from_utf8_unchecked(bytes) });
+}
+
+/// Formats like the npm `ms` package: `60000` → `"1m"` (`"1 minute"` if `long`); days at most.
+pub fn format_ms(ms: f64, long: bool, out: &mut String) {
+    const MS_PER_S: f64 = crate::time::MS_PER_S as f64;
+    const MS_PER_MIN: f64 = 60.0 * MS_PER_S;
+    const MS_PER_HOUR: f64 = 60.0 * MS_PER_MIN;
+    const MS_PER_DAY: f64 = crate::time::MS_PER_DAY as f64;
+    const UNITS: [(f64, &str, &str); 4] = [
+        (MS_PER_DAY, "d", "day"),
+        (MS_PER_HOUR, "h", "hour"),
+        (MS_PER_MIN, "m", "minute"),
+        (MS_PER_S, "s", "second"),
+    ];
+
+    out.clear();
+    let abs_ms = ms.abs();
+    for (unit_ms, short, long_unit) in UNITS {
+        if abs_ms >= unit_ms {
+            write_js_number(out, js_math_round(ms / unit_ms));
+            if long {
+                out.push(' ');
+                out.push_str(long_unit);
+                // The `ms` package pluralizes from 1.5x the unit, not from 2.
+                if abs_ms >= unit_ms * 1.5 {
+                    out.push('s');
+                }
+            } else {
+                out.push_str(short);
+            }
+            return;
+        }
+    }
+
+    // Sub-second output is the raw number, as in the `ms` package: `1.5` → `"1.5ms"`.
+    write_js_number(out, ms);
+    out.push_str(if long { " ms" } else { "ms" });
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Latin-1 formatting
 // ───────────────────────────────────────────────────────────────────────────

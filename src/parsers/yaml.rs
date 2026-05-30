@@ -4410,11 +4410,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         {
                             break 'node seq;
                         }
-                        if self.context.get() == Context::FlowKey {
-                            break 'node seq;
-                        }
+                        // §7.4.2 Implicit keys are restricted to a single
+                        // line. Runs before the FlowKey return so a multiline
+                        // `[a,\nb]` used as a flow-map key is rejected.
                         if sequence_line != self.token.line && !opts.explicit_mapping_key {
                             return Err(ParseError::MultilineImplicitKey);
+                        }
+                        if self.context.get() == Context::FlowKey {
+                            break 'node seq;
                         }
 
                         // [192] implicit key sits at s-indent(n) (spaces only).
@@ -4502,11 +4505,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         {
                             break 'node map;
                         }
-                        if self.context.get() == Context::FlowKey {
-                            break 'node map;
-                        }
                         if mapping_line != self.token.line && !opts.explicit_mapping_key {
                             return Err(ParseError::MultilineImplicitKey);
+                        }
+                        if self.context.get() == Context::FlowKey {
+                            break 'node map;
                         }
 
                         // [192] implicit key sits at s-indent(n) (spaces only).

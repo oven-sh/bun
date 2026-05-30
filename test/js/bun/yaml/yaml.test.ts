@@ -1535,12 +1535,20 @@ folded: >
         test("multiline JSON-style key check ordering", () => {
           // §7.4.2 prose says implicit keys are "restricted to a single
           // line", but the official yaml-test-suite (4MUZ/*, 5MUD, 9SA2,
-          // K3WX, NJ66, UT92, VJP3/01) expects these to PARSE — the grammar
-          // ([148] s-separate spans lines) wins. js-yaml/PyYAML/ruamel reject
-          // (libyaml lookahead limit, not spec); eemeli/yaml accepts.
-          expect(YAML.parse("{[1]\n:2}\n")).toEqual({ 1: 2 });
-          expect(YAML.parse("{{k:1}\n:2}\n")).toEqual({ "[object Object]": 2 });
+          // K3WX, NJ66, UT92, VJP3/01) expects a *scalar* key with `:` on
+          // the next line to PARSE — the grammar ([148] s-separate spans
+          // lines) wins. js-yaml/PyYAML/ruamel reject (libyaml lookahead
+          // limit, not spec); eemeli/yaml accepts.
           expect(YAML.parse('{"a"\n:1}\n')).toEqual({ a: 1 });
+          // Flow-collection keys spanning lines are NOT covered by those
+          // suite cases; 3/4 refs reject and §7.4.2 applies.
+          expect(() => YAML.parse("{[a,\nb]: 1}\n")).toThrow("Multiline implicit key");
+          expect(() => YAML.parse("{[a\nb]: 1}\n")).toThrow("Multiline implicit key");
+          expect(() => YAML.parse("{[1]\n:2}\n")).toThrow("Multiline implicit key");
+          expect(() => YAML.parse("{{k:1}\n:2}\n")).toThrow("Multiline implicit key");
+          expect(() => YAML.parse("{{a:\n1}: 2}\n")).toThrow("Multiline implicit key");
+          // Explicit `?` key may span lines.
+          expect(YAML.parse("{? [a,\nb]\n: 1}\n")).toEqual({ "a,b": 1 });
           // Block context ([150] s-separate-in-line) and flow-seq pairs
           // ([151]/[150]) are still single-line.
           expect(() => YAML.parse("[1]\n:2\n")).toThrow();

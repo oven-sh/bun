@@ -198,4 +198,107 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     Ok(obj)
 }
 
+/// Node's `util.guessHandleType(fd)` — returns a uint32 index into
+/// `["TCP","TTY","UDP","FILE","PIPE","UNKNOWN"]`, matching the libuv
+/// `uv_guess_handle` mapping that Node's `createHandle`/`getStdin` rely on.
+#[bun_jsc::host_fn]
+pub(crate) fn guess_handle_type(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let fd_value = frame.argument(0);
+    if !fd_value.is_number() {
+        return Err(global.throw_invalid_argument_type_value(b"fd", b"number", fd_value));
+    }
+    let fd_int = fd_value.to_int32();
+    // UNKNOWN for negative fds.
+    if fd_int < 0 {
+        return Ok(JSValue::js_number_from_int32(HANDLE_UNKNOWN as i32));
+    }
+    Ok(JSValue::js_number_from_int32(guess_handle_type_from_fd(fd_int) as i32))
+}
+
+const HANDLE_TCP: u32 = 0;
+const HANDLE_TTY: u32 = 1;
+const HANDLE_UDP: u32 = 2;
+const HANDLE_FILE: u32 = 3;
+const HANDLE_PIPE: u32 = 4;
+const HANDLE_UNKNOWN: u32 = 5;
+
+#[cfg(windows)]
+fn guess_handle_type_from_fd(fd_int: i32) -> u32 {
+    use bun_sys::windows::libuv as uv;
+    match uv::uv_guess_handle(fd_int) {
+        uv::HandleType::Tcp => HANDLE_TCP,
+        uv::HandleType::Tty => HANDLE_TTY,
+        uv::HandleType::Udp => HANDLE_UDP,
+        uv::HandleType::File => HANDLE_FILE,
+        uv::HandleType::NamedPipe => HANDLE_PIPE,
+        _ => HANDLE_UNKNOWN,
+    }
+}
+
+#[cfg(not(windows))]
+fn guess_handle_type_from_fd(fd_int: i32) -> u32 {
+    let fd = bun_sys::Fd::from_uv(fd_int);
+
+    // SAFETY: `isatty` is a simple fd query with no preconditions.
+    if unsafe { libc::isatty(fd_int) } != 0 {
+        return HANDLE_TTY;
+    }
+
+    let stat = match bun_sys::fstat(fd) {
+        Ok(s) => s,
+        Err(_) => return HANDLE_UNKNOWN,
+    };
+    let mode = stat.st_mode as _;
+    if bun_sys::S::ISREG(mode) || bun_sys::S::ISCHR(mode) {
+        return HANDLE_FILE;
+    }
+    if bun_sys::S::ISFIFO(mode) {
+        return HANDLE_PIPE;
+    }
+    if !bun_sys::S::ISSOCK(mode) {
+        return HANDLE_UNKNOWN;
+    }
+
+    // Socket: distinguish TCP / UDP / unix (pipe) by family + socket type.
+    let mut ss: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+    let mut ss_len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+    // SAFETY: `ss`/`ss_len` are live stack locals sized for `sockaddr_storage`.
+    if unsafe { libc::getsockname(fd_int, (&mut ss as *mut libc::sockaddr_storage).cast(), &mut ss_len) } != 0 {
+        return HANDLE_UNKNOWN;
+    }
+
+    let mut so_type: libc::c_int = 0;
+    let mut so_type_len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+    // SAFETY: `so_type`/`so_type_len` are live stack locals sized for `c_int`.
+    if unsafe {
+        libc::getsockopt(
+            fd_int,
+            libc::SOL_SOCKET,
+            libc::SO_TYPE,
+            (&mut so_type as *mut libc::c_int).cast(),
+            &mut so_type_len,
+        )
+    } != 0
+    {
+        return HANDLE_UNKNOWN;
+    }
+
+    let family = ss.ss_family as libc::c_int;
+    if so_type == libc::SOCK_DGRAM {
+        if family == libc::AF_INET || family == libc::AF_INET6 {
+            return HANDLE_UDP;
+        }
+        return HANDLE_UNKNOWN;
+    }
+    if so_type == libc::SOCK_STREAM {
+        if family == libc::AF_INET || family == libc::AF_INET6 {
+            return HANDLE_TCP;
+        }
+        if family == libc::AF_UNIX {
+            return HANDLE_PIPE;
+        }
+    }
+    HANDLE_UNKNOWN
+}
+
 // ported from: src/runtime/node/node_util_binding.zig

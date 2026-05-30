@@ -156,6 +156,9 @@ pub mod net {
     pub use super::block_list_impl as block_list;
 }
 
+#[path = "node/pipe.rs"]
+pub mod pipe;
+
 #[path = "node/zlib/NativeBrotli.rs"]
 pub mod native_brotli_impl;
 #[path = "node/zlib/NativeZlib.rs"]

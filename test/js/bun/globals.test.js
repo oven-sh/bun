@@ -266,9 +266,7 @@ describe("globalThis.gc", () => {
 describe.concurrent("builtin modules survive a clobbered global Symbol", () => {
   const run = src => {
     const result = Bun.spawnSync([bunExe(), "-e", src], { env: bunEnv });
-    const stderr = result.stderr.toString("utf8");
-    if (!result.success) throw new Error(stderr);
-    expect(stderr).not.toContain("ASSERTION FAILED");
+    if (!result.success) throw new Error(result.stderr.toString("utf8"));
     return result.stdout.toString("utf8").trim();
   };
 

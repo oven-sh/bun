@@ -476,8 +476,10 @@ test.concurrent(
 // "Unexpected server response" error) and — via the native bridge closure — on
 // this.#ws (would get the native 'Expected 101' error too). It must fire
 // exactly once, like real ws, not twice.
-test.concurrent("ws on('error') fires once (not twice) for a non-101 with no 'unexpected-response' listener", async () => {
-  const { stdout, exitCode } = await run(/* js */ `
+test.concurrent(
+  "ws on('error') fires once (not twice) for a non-101 with no 'unexpected-response' listener",
+  async () => {
+    const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { once } = require("events");
     const { WebSocket } = require("ws");
@@ -498,13 +500,12 @@ test.concurrent("ws on('error') fires once (not twice) for a non-101 with no 'un
     console.log(JSON.stringify({ count: messages.length, first: messages[0] }));
     process.exit(0);
   `);
-  // Exactly one 'error' — the synthetic non-101 message — and the native
-  // 'Expected 101' follow-up is suppressed for EventEmitter listeners.
-  expect(stdout).toMatchInlineSnapshot(
-    `"{"count":1,"first":"Unexpected server response: 503"}"`,
-  );
-  expect(exitCode).toBe(0);
-});
+    // Exactly one 'error' — the synthetic non-101 message — and the native
+    // 'Expected 101' follow-up is suppressed for EventEmitter listeners.
+    expect(stdout).toMatchInlineSnapshot(`"{"count":1,"first":"Unexpected server response: 503"}"`);
+    expect(exitCode).toBe(0);
+  },
+);
 
 // DOM dedup: registering the identical listener twice via addEventListener is
 // a no-op. Because we wrap the listener in a suppression closure, a naive

@@ -421,17 +421,20 @@ class BunWebSocket extends EventEmitter {
       return;
     }
     if (this.listenerCount("unexpected-response") > 0) {
-      // Only now may we suppress the native 'Expected 101' error that follows
-      // — the consumer handled the response via 'unexpected-response'. On the
-      // else-branch we leave the flag false so the native error still reaches
-      // `error` listeners (including `addEventListener('error')`/`onerror`).
+      // The consumer handled the response via 'unexpected-response', so
+      // suppress the native 'Expected 101' error that follows.
       this.#unexpectedResponseEmitted = true;
       // `unexpected-response` emits `(request, response)` per ws docs.
       this.emit("unexpected-response", this.#getSyntheticRequest(), res);
     } else if (this.listenerCount("error") > 0) {
-      // Guard the emit: EventEmitter throws on `emit('error')` with no
-      // listeners, and handlers on `this.#ws` (addEventListener/onerror) get
-      // the native error directly rather than this synthesized one.
+      // An EventEmitter 'error' listener (on/once/addListener/...) gets a
+      // synthetic error here; suppress the native follow-up so it isn't
+      // delivered twice via the bridge closure. `addEventListener('error')` /
+      // `onerror` handlers live on `this.#ws` and don't count toward
+      // `listenerCount('error')`, so when only those are registered this
+      // branch is skipped, the flag stays false, and they receive the native
+      // error directly (exactly once).
+      this.#unexpectedResponseEmitted = true;
       this.emit("error", new Error("Unexpected server response: " + statusCode));
     }
   }

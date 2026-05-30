@@ -1813,9 +1813,9 @@ describe("calendar interval generation (launchd)", () => {
     // Both day-of-month and day-of-week restricted → two passes:
     // (10 × 10 × 2) + (10 × 10 × 2) = 400 entries. Each pass is under 256 but
     // the sum is not — the cap must sum the passes, not check each one.
-    expect(() =>
-      cronToCalendarIntervalForTesting("0,1,2,3,4,5,6,7,8,9 0,1,2,3,4,5,6,7,8,9 1,15 * 1,3"),
-    ).toThrow(/too many launchd calendar intervals/i);
+    expect(() => cronToCalendarIntervalForTesting("0,1,2,3,4,5,6,7,8,9 0,1,2,3,4,5,6,7,8,9 1,15 * 1,3")).toThrow(
+      /too many launchd calendar intervals/i,
+    );
   });
 
   test("accepts expressions just under the cap", () => {

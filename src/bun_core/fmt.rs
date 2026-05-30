@@ -1189,6 +1189,82 @@ pub fn parse_ms(input: &[u8]) -> Option<f64> {
     Some(value * multiplier)
 }
 
+/// `Math.round` with JavaScript's tie-breaking (round half toward +∞), so
+/// `format_ms` matches the npm `ms` package exactly. Rust's `f64::round`
+/// rounds half away from zero (`-2.5 → -3`), whereas JS rounds `-2.5 → -2`.
+///
+/// Returns an `f64` (like JS `Math.round`) so huge magnitudes don't saturate
+/// an integer cast — the result is stringified with JS number semantics.
+fn js_math_round(x: f64) -> f64 {
+    let ceil = x.ceil();
+    if (ceil - x) > 0.5 { ceil - 1.0 } else { ceil }
+}
+
+/// Append `number` to `out` using JavaScript `Number.prototype.toString`
+/// semantics (WTF's dtoa, the same routine JSC uses), so e.g. `1.5` → `"1.5"`
+/// and `1e30` → `"1e+30"` — matching what the npm `ms` package produces from
+/// string concatenation.
+fn write_js_number(out: &mut String, number: f64) {
+    let mut buf = [0u8; 124];
+    let bytes = FormatDouble::dtoa(&mut buf, number);
+    // SAFETY: WTF's dtoa only ever emits ASCII (`0-9`, `.`, `e`, `+`, `-`,
+    // `Infinity`, `NaN`), which is always valid UTF-8.
+    out.push_str(unsafe { core::str::from_utf8_unchecked(bytes) });
+}
+
+/// Format a number of milliseconds as a human-readable duration string,
+/// matching the npm `ms` package. `long` selects the verbose form
+/// (`"1 minute"` / `"2 minutes"`) over the compact form (`"1m"`).
+///
+/// Note: like the `ms` package, formatting only uses days/hours/minutes/
+/// seconds/milliseconds — it never emits weeks or years (those are only
+/// accepted when *parsing*). The result is written into `out` (cleared
+/// first) to avoid an allocation in the common case.
+pub fn format_ms(ms: f64, long: bool, out: &mut String) {
+    const MS_PER_S: f64 = crate::time::MS_PER_S as f64;
+    const MS_PER_MIN: f64 = 60.0 * MS_PER_S;
+    const MS_PER_HOUR: f64 = 60.0 * MS_PER_MIN;
+    const MS_PER_DAY: f64 = crate::time::MS_PER_DAY as f64;
+
+    out.clear();
+
+    let abs_ms = ms.abs();
+
+    // (threshold, short suffix, long singular unit) in descending order.
+    // Matches the `ms` package: the largest unit emitted is days.
+    const UNITS: [(f64, &str, &str); 4] = [
+        (MS_PER_DAY, "d", "day"),
+        (MS_PER_HOUR, "h", "hour"),
+        (MS_PER_MIN, "m", "minute"),
+        (MS_PER_S, "s", "second"),
+    ];
+
+    for (unit_ms, short, long_unit) in UNITS {
+        if abs_ms >= unit_ms {
+            // The rounded count is kept as an `f64` and stringified with JS
+            // number semantics (`dtoa`), matching `Math.round(ms/unit) + unit`.
+            write_js_number(out, js_math_round(ms / unit_ms));
+            if long {
+                // The npm `ms` package pluralizes once the magnitude reaches
+                // 1.5× the unit.
+                out.push(' ');
+                out.push_str(long_unit);
+                if abs_ms >= unit_ms * 1.5 {
+                    out.push('s');
+                }
+            } else {
+                out.push_str(short);
+            }
+            return;
+        }
+    }
+
+    // Sub-second: the npm `ms` package concatenates the raw number
+    // (`ms + 'ms'`), so `1.5` → "1.5ms" — not truncated.
+    write_js_number(out, ms);
+    out.push_str(if long { " ms" } else { "ms" });
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Latin-1 formatting
 // ───────────────────────────────────────────────────────────────────────────

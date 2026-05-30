@@ -4792,6 +4792,53 @@ declare module "bun" {
    */
   function nanoseconds(): number;
 
+  interface MsOptions {
+    /**
+     * Use the long, human-friendly format when converting a number to a string
+     * (e.g. `"1 minute"` instead of `"1m"`).
+     *
+     * @default false
+     */
+    long?: boolean;
+  }
+
+  /**
+   * Convert a time duration between a string and a number of milliseconds,
+   * matching the [`ms`](https://www.npmjs.com/package/ms) package.
+   *
+   * Returns `undefined` when the string can't be parsed (matching `ms`), so
+   * `Bun.ms(input) ?? fallback` works.
+   *
+   * @category Utilities
+   * @example
+   * ```ts
+   * Bun.ms("2 days");   // 172800000
+   * Bun.ms("1h");       // 3600000
+   * Bun.ms("-1.5h");    // -5400000
+   * Bun.ms("nonsense"); // undefined
+   * ```
+   * @param value A duration string such as `"2 days"`, `"1h"`, or `"30m"`.
+   * @returns The number of milliseconds, or `undefined` if the string is not a
+   * valid duration.
+   */
+  function ms(value: string): number | undefined;
+  /**
+   * Convert a number of milliseconds to a human-readable duration string,
+   * matching the [`ms`](https://www.npmjs.com/package/ms) package.
+   *
+   * @category Utilities
+   * @example
+   * ```ts
+   * Bun.ms(60000);                  // "1m"
+   * Bun.ms(60000, { long: true });  // "1 minute"
+   * Bun.ms(172800000);              // "2d"
+   * ```
+   * @param value A number of milliseconds.
+   * @param options Formatting options. Set `long: true` for the verbose form.
+   * @returns A compact (e.g. `"1m"`) or long (e.g. `"1 minute"`) duration string.
+   */
+  function ms(value: number, options?: MsOptions): string;
+
   /**
    * Show precise statistics about memory usage of your application
    *

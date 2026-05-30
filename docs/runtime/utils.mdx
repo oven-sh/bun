@@ -748,6 +748,37 @@ Bun.nanoseconds();
 
 ---
 
+## `Bun.ms()`
+
+Convert between a duration string and a number of milliseconds, modeled on the [`ms`](https://www.npmjs.com/package/ms) package.
+
+Pass a string to parse it into milliseconds:
+
+```ts
+Bun.ms("2 days"); // => 172800000
+Bun.ms("1h"); // => 3600000
+Bun.ms("-1.5h"); // => -5400000
+Bun.ms("nonsense"); // => undefined
+```
+
+An unparseable (but non-empty) string returns `undefined`, so you can fall back on a default. Note that an empty string throws, so default the string itself rather than passing `""`:
+
+```ts
+const timeout = Bun.ms(process.env.TIMEOUT || "30s") ?? 30_000;
+```
+
+Pass a number to format it into a human-readable string. Use `{ long: true }` for the verbose form:
+
+```ts
+Bun.ms(60000); // => "1m"
+Bun.ms(60000, { long: true }); // => "1 minute"
+Bun.ms(172800000); // => "2d"
+```
+
+Supported units (case-insensitive): years (`y`), weeks (`w`), days (`d`), hours (`h`/`hr`), minutes (`m`/`min`), seconds (`s`/`sec`), and milliseconds (`ms`). Formatting emits days at most — never weeks or years.
+
+---
+
 ## `Bun.readableStreamTo*()`
 
 Bun implements a set of convenience functions for asynchronously consuming the body of a `ReadableStream` and converting it to various binary formats.

@@ -3837,6 +3837,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.token.indent.is_less_than_or_equal(n)
                 };
                 if belongs_to_parent {
+                    // [63]/[78] e-node here means the indicator's value is
+                    // empty and what follows is s-l-comments. A tab-only final
+                    // line satisfies l-comment only with a trailing b-comment;
+                    // at EOF the tab is stranded as neither s-indent nor
+                    // separation-before-content. (Tab-only *blank* lines —
+                    // tab then newline — reset tab_after_indent in newline()
+                    // and are accepted as l-comment.)
+                    if self.tab_after_indent && matches!(self.token.data, TokenData::Eof) {
+                        return Err(ParseError::TabIndentation);
+                    }
                     // The post-property re-scan baked `value_tag` into a plain
                     // scalar's resolution (`ScanOptions.tag`); if that scalar
                     // is now abandoned to the parent, rewind to its start and
@@ -4016,21 +4026,34 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
 
                 TokenData::Anchor(_anchor) => {
+                    let prop_line = self.token.line;
                     node_props.set_anchor(self.token.clone())?;
                     self.scan(ScanOptions {
                         tag: node_props.tag(),
                         ..Default::default()
                     })?;
+                    // [80] s-separate(n,FLOW-KEY) = s-separate-in-line — an
+                    // implicit flow-map key's c-ns-properties must stay on the
+                    // key's line. parse_flow_explicit_key pre-scans properties
+                    // before pushing FlowKey, so explicit `?` keys never reach
+                    // this arm with FlowKey set.
+                    if self.context.get() == Context::FlowKey && self.token.line != prop_line {
+                        return Err(ParseError::MultilineImplicitKey);
+                    }
                     continue;
                 }
 
                 TokenData::Tag(tag) => {
                     let tag = *tag;
+                    let prop_line = self.token.line;
                     node_props.set_tag(self.token.clone())?;
                     self.scan(ScanOptions {
                         tag,
                         ..Default::default()
                     })?;
+                    if self.context.get() == Context::FlowKey && self.token.line != prop_line {
+                        return Err(ParseError::MultilineImplicitKey);
+                    }
                     continue;
                 }
 

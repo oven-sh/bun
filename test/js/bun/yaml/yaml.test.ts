@@ -1997,12 +1997,24 @@ folded: >
             expect(YAML.parse(`'a'#c`)).toEqual("a");
           });
 
-          test.todo("[80] FLOW-KEY: newline between tag and key (s-separate-in-line only)", () => {
+          test("[80] FLOW-KEY: newline between tag and key (s-separate-in-line only)", () => {
             expect(() => YAML.parse(`{!!str\na: 1}`)).toThrow();
+            expect(() => YAML.parse(`{&a\nx: 1}`)).toThrow();
+            expect(() => YAML.parse(`{!!str &x\na: 1}`)).toThrow();
+            expect(() => YAML.parse(`{!!str\n&x a: 1}`)).toThrow();
+            // explicit `?` key uses s-separate(n,c) — newline allowed
+            expect(YAML.parse(`{? !!str\na: 1}`)).toEqual({ a: 1 });
+            // FLOW-IN value position uses s-separate-lines — newline allowed
+            expect(YAML.parse(`[!!str\na]`)).toEqual(["a"]);
+            expect(YAML.parse(`{a: !!str\nb}`)).toEqual({ a: "b" });
           });
 
-          test.todo("[63]/[78] value is tab-only line then EOF", () => {
+          test("[63]/[78] value is tab-only line then EOF", () => {
             expect(() => YAML.parse(`a:\n\t`)).toThrow();
+            expect(() => YAML.parse(`-\n\t`)).toThrow();
+            // tab then newline is l-comment (b-comment present) — accepted,
+            // see "tab-only blank line in block context" describe below.
+            expect(YAML.parse(`a:\n\t\n`)).toEqual({ a: null });
           });
         });
 

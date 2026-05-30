@@ -2777,10 +2777,7 @@ pub fn js_cron_to_calendar_interval_for_testing(
     }
     let schedule = arg.to_slice(global)?;
     match cron_to_calendar_interval(schedule.slice()) {
-        Ok(xml) => {
-            let s = bun_core::String::clone_utf8(&xml);
-            bun_jsc::bun_string_jsc::to_js(&s, global)
-        }
+        Ok(xml) => bun_jsc::bun_string_jsc::create_utf8_for_js(global, &xml),
         Err(CalendarError::TooManyTriggers) => Err(global.throw(format_args!(
             "This cron expression expands to too many launchd calendar intervals (max 256). Use wildcards (*) for fields that don't need restricting, or simplify the expression."
         ))),

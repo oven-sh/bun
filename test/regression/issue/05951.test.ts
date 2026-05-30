@@ -234,6 +234,46 @@ test("ws 'unexpected-response' coalesces duplicate headers like Node IncomingMes
   expect(exitCode).toBe(0);
 });
 
+// RFC 7230 §3.3.3 rule #1: 1xx/204/304 responses carry no body regardless of
+// headers. A bodiless non-101 status on a keep-alive connection (server never
+// closes the socket) must dispatch 'unexpected-response' immediately off the
+// header read — otherwise the client sits reading-until-EOF until the socket
+// timeout and the event never fires. The server here deliberately keeps the
+// connection open: with the fix this resolves at once; without it the
+// subprocess hangs and the test times out.
+test("ws 'unexpected-response' fires immediately for bodiless 204 on keep-alive", async () => {
+  const { stdout, exitCode } = await run(/* js */ `
+    const { createServer } = require("net");
+    const { WebSocket } = require("ws");
+
+    // 204 No Content: no Content-Length, no Transfer-Encoding, and the socket
+    // is intentionally left open (no s.end()) so the only way the event fires
+    // is the immediate-dispatch path, not a read-until-close.
+    const server = createServer(s =>
+      s.once("data", () => s.write("HTTP/1.1 204 No Content\\r\\nX-Gone: 1\\r\\n\\r\\n")),
+    ).listen(0, "127.0.0.1");
+    await new Promise(r => server.once("listening", r));
+
+    const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
+    ws.on("error", () => {});
+    const res = await new Promise(resolve =>
+      ws.once("unexpected-response", (req, res) => resolve(res)),
+    );
+    console.log(JSON.stringify({
+      statusCode: res.statusCode,
+      statusMessage: res.statusMessage,
+      xGone: res.headers["x-gone"],
+    }));
+    ws.terminate();
+    server.close();
+    process.exit(0);
+  `);
+  expect(stdout).toMatchInlineSnapshot(
+    `"{"statusCode":204,"statusMessage":"No Content","xGone":"1"}"`,
+  );
+  expect(exitCode).toBe(0);
+});
+
 // `on()` / `once()` are not the only EventEmitter registration APIs — ws
 // consumers also reach for `addListener` / `prependListener` /
 // `prependOnceListener` and (from DOM-style code) `addEventListener`. Each

@@ -1161,15 +1161,20 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
 
         if status_code != 101 {
-            // A `Transfer-Encoding` (e.g. chunked) body has no Content-Length
-            // and its framing bytes are not the payload. We don't decode
-            // chunked on this fallback path, and waiting-for-EOF on a
-            // keep-alive connection would just stall until the socket
-            // timeout. Dispatch immediately with whatever bytes are on hand
-            // so the `unexpected-response` listener still gets the correct
-            // status / headers (matching the pre-existing non-101 behavior,
-            // which surfaced no body at all).
-            if Self::has_transfer_encoding(&response) {
+            // RFC 7230 §3.3.3 rule #1 — 1xx / 204 / 304 responses have no
+            // message body regardless of the header fields, so reading until
+            // the peer closes (rule #7, the `None` arm below) would stall a
+            // keep-alive connection until the 120s socket timeout — and
+            // `terminate(Timeout)` doesn't flush a deferred handshake, so
+            // `unexpected-response` would never fire. Rule #3
+            // (`Transfer-Encoding`) likewise preempts rule #7: we don't decode
+            // chunked on this fallback path. In both cases dispatch
+            // immediately with whatever bytes are on hand so the
+            // `unexpected-response` listener still gets the correct status /
+            // headers (matching the pre-existing non-101 behavior, which
+            // surfaced no body at all).
+            let is_bodiless = status_code == 204 || status_code == 304 || (100..200).contains(&status_code);
+            if is_bodiless || Self::has_transfer_encoding(&response) {
                 // SAFETY: forwards `this`; no `&mut Self` is live.
                 unsafe {
                     Self::dispatch_handshake_and_process(
@@ -1215,7 +1220,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     return;
                 }
                 None => {
-                    // No Content-Length — RFC 7230 §3.3.3: read until the
+                    // No Content-Length, and the bodiless / chunked cases were
+                    // handled above — RFC 7230 §3.3.3 rule #7: read until the
                     // peer closes. Defer to handle_end / handle_close.
                     // SAFETY: short-lived `&mut`; ends before return. `full`
                     // is a fresh `to_vec()` (never aliases `me.body`).

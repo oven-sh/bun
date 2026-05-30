@@ -428,3 +428,78 @@ test.concurrent(
     expect(exitCode).toBe(0);
   },
 );
+
+// The suppression must NOT apply when the consumer never subscribed to
+// 'unexpected-response'. A client that listens for 'upgrade' (arming the
+// handshake bridge) but registers its error handling via addEventListener
+// ('error') / onerror must still receive the native non-101 error — otherwise
+// the error is swallowed entirely.
+test.concurrent(
+  "ws still delivers the native error to addEventListener/onerror when there is no 'unexpected-response' listener",
+  async () => {
+    const { stdout, exitCode } = await run(/* js */ `
+    const { createServer } = require("net");
+    const { once } = require("events");
+    const { WebSocket } = require("ws");
+
+    async function runOne(registerError) {
+      const server = createServer(s =>
+        s.once("data", () => s.end("HTTP/1.1 503 Service Unavailable\\r\\n\\r\\n")),
+      ).listen(0, "127.0.0.1");
+      await once(server, "listening");
+
+      const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
+      // Arm the handshake bridge via 'upgrade' but do NOT listen for
+      // 'unexpected-response', so the native error path is exercised.
+      ws.on("upgrade", () => {});
+      const { promise, resolve } = Promise.withResolvers();
+      registerError(ws, err => resolve(/Expected 101/.test(err?.message ?? String(err))));
+      const gotExpected101 = await promise;
+      server.close();
+      try { ws.terminate(); } catch {}
+      return gotExpected101;
+    }
+
+    const ael = await runOne((ws, done) => ws.addEventListener("error", done));
+    const prop = await runOne((ws, done) => { ws.onerror = done; });
+    console.log(JSON.stringify({ ael, prop }));
+    process.exit(0);
+  `);
+    // Both DOM-style APIs receive the native 'Expected 101' error.
+    expect(stdout).toMatchInlineSnapshot(`"{"ael":true,"prop":true}"`);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// DOM dedup: registering the identical listener twice via addEventListener is
+// a no-op. Because we wrap the listener in a suppression closure, a naive
+// implementation would create two distinct wrappers and fire the handler
+// twice; removeEventListener must also detach it completely.
+test.concurrent("ws addEventListener('error', h) dedupes the same handler and removeEventListener detaches it", async () => {
+  const { stdout, exitCode } = await run(/* js */ `
+    const { createServer } = require("net");
+    const { once } = require("events");
+    const { WebSocket } = require("ws");
+
+    const server = createServer(s =>
+      s.once("data", () => s.end("HTTP/1.1 503 Service Unavailable\\r\\n\\r\\n")),
+    ).listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
+    let count = 0;
+    const h = () => { count++; };
+    ws.addEventListener("error", h);
+    ws.addEventListener("error", h); // duplicate — must be a no-op
+    await once(ws, "close").catch(() => {});
+    server.close();
+    try { ws.terminate(); } catch {}
+    // removeEventListener must fully detach (no leaked wrapper left behind).
+    ws.removeEventListener("error", h);
+    console.log(JSON.stringify({ count }));
+    process.exit(0);
+  `);
+  // The handler fires exactly once despite the duplicate registration.
+  expect(stdout).toMatchInlineSnapshot(`"{"count":1}"`);
+  expect(exitCode).toBe(0);
+});

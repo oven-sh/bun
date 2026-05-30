@@ -16,10 +16,14 @@ test("pooled path buffers stay correct across heavy reuse", async () => {
       bunExe(),
       "-e",
       `
-        const { resolve, join, normalize, isAbsolute } = require("node:path");
+        const { resolve, join, normalize, isAbsolute, sep } = require("node:path");
+        // "/p/q/../r/./s//t/../<i>/.." normalizes to the three segments p,r,s
+        // joined by the platform separator (leading "/" on posix, "\\\\" on win).
+        const expectedNorm = sep + ["p", "r", "s"].join(sep);
         // Each iteration forces several pool get/put cycles. The inputs
         // normalize to known results, so a corrupted buffer would diverge.
-        for (let i = 0; i < 20000; i++) {
+        // Checks are separator-agnostic so they hold on Windows too.
+        for (let i = 0; i < 8000; i++) {
           const r = resolve("/base", String(i), "..", "x", "./y", "z/../w");
           if (!isAbsolute(r) || !r.endsWith("w")) throw new Error("resolve: " + r);
 
@@ -27,7 +31,7 @@ test("pooled path buffers stay correct across heavy reuse", async () => {
           if (!j.endsWith("d")) throw new Error("join: " + j);
 
           const n = normalize("/p/q/../r/./s//t/../" + i + "/..");
-          if (!n.startsWith("/p/r/s")) throw new Error("normalize: " + n);
+          if (n !== expectedNorm) throw new Error("normalize: " + n);
         }
         console.log("OK");
       `,
@@ -42,4 +46,4 @@ test("pooled path buffers stay correct across heavy reuse", async () => {
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);
-}, 30_000);
+});

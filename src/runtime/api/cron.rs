@@ -713,33 +713,28 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
     // `node:fs` PathLike so both forms behave identically.
     let path_str = {
         use jsc::dom_url::FromUrlStringError;
-        let resolved: Result<bun_core::String, FromUrlStringError> =
-            if let Some(domurl) = jsc::DOMURL::cast(args[0]) {
-                domurl.file_system_path().map_err(|e| match e {
-                    jsc::dom_url::ToFileSystemPathError::NotFileUrl => {
-                        FromUrlStringError::NotFileUrl
-                    }
-                    jsc::dom_url::ToFileSystemPathError::InvalidPath => {
-                        FromUrlStringError::InvalidPath
-                    }
-                    jsc::dom_url::ToFileSystemPathError::InvalidHost => {
-                        FromUrlStringError::InvalidHost
-                    }
-                })
-            } else if !args[0].is_string() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Bun.cron() expects a string or file URL path as the first argument"
-                )));
+        let resolved: Result<bun_core::String, FromUrlStringError> = if let Some(domurl) =
+            jsc::DOMURL::cast(args[0])
+        {
+            domurl.file_system_path().map_err(|e| match e {
+                jsc::dom_url::ToFileSystemPathError::NotFileUrl => FromUrlStringError::NotFileUrl,
+                jsc::dom_url::ToFileSystemPathError::InvalidPath => FromUrlStringError::InvalidPath,
+                jsc::dom_url::ToFileSystemPathError::InvalidHost => FromUrlStringError::InvalidHost,
+            })
+        } else if !args[0].is_string() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Bun.cron() expects a string or file URL path as the first argument"
+            )));
+        } else {
+            let raw = args[0].to_bun_string(global)?;
+            if raw.has_prefix_comptime(b"file://") {
+                let result = jsc::DOMURL::file_system_path_from_url_string(raw);
+                raw.deref();
+                result
             } else {
-                let raw = args[0].to_bun_string(global)?;
-                if raw.has_prefix_comptime(b"file://") {
-                    let result = jsc::DOMURL::file_system_path_from_url_string(raw);
-                    raw.deref();
-                    result
-                } else {
-                    Ok(raw)
-                }
-            };
+                Ok(raw)
+            }
+        };
         let str = match resolved {
             Ok(s) => s,
             Err(FromUrlStringError::NotFileUrl) => {

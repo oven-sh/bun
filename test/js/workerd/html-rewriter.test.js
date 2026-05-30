@@ -340,6 +340,41 @@ describe("HTMLRewriter", () => {
     remove: "<p></p>",
   };
 
+  const commentMutationsMacro = async func => {
+    // before/after
+    let res = func(new HTMLRewriter(), comment => {
+      comment.before("<span>before</span>");
+      comment.before("<span>before html</span>", { html: true });
+      comment.after("<span>after</span>");
+      comment.after("<span>after html</span>", { html: true });
+    }).transform(new Response(commentsMutationsInput));
+    expect(await res.text()).toBe(commentsMutationsExpected.beforeAfter);
+
+    // replace
+    res = func(new HTMLRewriter(), comment => {
+      comment.replace("<span>replace</span>");
+    }).transform(new Response(commentsMutationsInput));
+    expect(await res.text()).toBe(commentsMutationsExpected.replace);
+    res = func(new HTMLRewriter(), comment => {
+      comment.replace("<span>replace</span>", { html: true });
+    }).transform(new Response(commentsMutationsInput));
+    expect(await res.text()).toBe(commentsMutationsExpected.replaceHtml);
+
+    // remove
+    res = func(new HTMLRewriter(), comment => {
+      expect(comment.removed).toBe(false);
+      comment.remove();
+      expect(comment.removed).toBe(true);
+    }).transform(new Response(commentsMutationsInput));
+    expect(await res.text()).toBe(commentsMutationsExpected.remove);
+  };
+
+  it("HTMLRewriter: handles comment mutations", () =>
+    commentMutationsMacro((rw, comments) => {
+      rw.on("p", { comments });
+      return rw;
+    }));
+
   const commentPropertiesMacro = async func => {
     const res = func(new HTMLRewriter(), comment => {
       expect(comment.removed).toBe(false);

@@ -3055,6 +3055,10 @@ impl PostgresSQLConnection {
                 let _resp = protocol::NoticeResponse::decode_internal(reader.reborrow())?;
                 // _resp dropped at scope end
             }
+            MessageType::NotificationResponse => {
+                debug!("UNSUPPORTED NotificationResponse");
+                let _resp = protocol::NotificationResponse::decode_internal(reader.reborrow())?;
+            }
             MessageType::EmptyQueryResponse => {
                 reader.eat_message(&protocol::EMPTY_QUERY_RESPONSE)?;
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;

@@ -284,6 +284,11 @@ fn guess_handle_type_from_fd(fd_int: i32) -> u32 {
     }
 
     let family = ss.ss_family as libc::c_int;
+    // libuv checks AF_UNIX before SO_TYPE and returns UV_NAMED_PIPE for any
+    // AF_UNIX socket (STREAM/DGRAM/SEQPACKET).
+    if family == libc::AF_UNIX {
+        return GHT_PIPE;
+    }
     if so_type == libc::SOCK_DGRAM {
         if family == libc::AF_INET || family == libc::AF_INET6 {
             return GHT_UDP;
@@ -293,9 +298,6 @@ fn guess_handle_type_from_fd(fd_int: i32) -> u32 {
     if so_type == libc::SOCK_STREAM {
         if family == libc::AF_INET || family == libc::AF_INET6 {
             return GHT_TCP;
-        }
-        if family == libc::AF_UNIX {
-            return GHT_PIPE;
         }
     }
     GHT_UNKNOWN

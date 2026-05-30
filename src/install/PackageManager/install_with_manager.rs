@@ -24,7 +24,6 @@ use crate::PackageManager;
 use crate::config_version::ConfigVersion;
 use crate::hoisted_install::install_hoisted_packages;
 use crate::isolated_install::install_isolated_packages;
-use crate::lockfile_real::bun_lock as TextLockfile;
 use crate::lockfile_real::package::Diff;
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::lockfile_real::{Printer, printer as LockfilePrinter};
@@ -851,13 +850,12 @@ pub fn install_with_manager(
                 )?
             };
 
-    // It's unnecessary work to re-save the lockfile if there are no changes
+    // It's unnecessary work to re-save the lockfile if there are no changes.
+    // A loaded text lockfile is never re-saved just to bump its version: an
+    // existing `bun.lock` keeps the version it was written with.
     let should_save_lockfile = (matches!(load_result, lockfile::LoadResult::Ok { .. })
-        && ((load_result.ok().format == lockfile::Format::Binary && save_format == lockfile::Format::Text)
-            // make sure old versions are updated
-            || load_result.ok().format == lockfile::Format::Text
-                && save_format == lockfile::Format::Text
-                && manager.lockfile.text_lockfile_version != TextLockfile::Version::CURRENT))
+        && load_result.ok().format == lockfile::Format::Binary
+        && save_format == lockfile::Format::Text)
         // check `save_lockfile` after checking if loaded from binary and save format is text
         // because `save_lockfile` is set to false for `--frozen-lockfile`
         || (manager.options.do_.save_lockfile()
@@ -1521,7 +1519,22 @@ fn create_new_lockfile_and_enqueue(
     log_level: Options::LogLevel,
 ) -> Result<lockfile::Package, bun_core::Error> {
     let mut root = lockfile::Package::default();
+
+    // `init_empty()` resets `text_lockfile_version` to the current version. When
+    // we're recreating the lockfile from an existing text `bun.lock` (e.g. it
+    // had no dependencies yet, so the differ short-circuits here), preserve the
+    // on-disk version so re-saving it still doesn't bump the format — matching
+    // the "an existing lockfile keeps its version" behavior everywhere else.
+    let preserved_text_version = match load_result {
+        lockfile::LoadResult::Ok(ok) if ok.format == lockfile::Format::Text => {
+            Some(ok.lockfile.text_lockfile_version)
+        }
+        _ => None,
+    };
     manager.lockfile.init_empty();
+    if let Some(version) = preserved_text_version {
+        manager.lockfile.text_lockfile_version = version;
+    }
 
     if manager.options.enable.frozen_lockfile()
         && !matches!(load_result, lockfile::LoadResult::NotFound)

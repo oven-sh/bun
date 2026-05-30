@@ -13,8 +13,8 @@ pub fn byName(this: *PackageManifestMap, pm: *PackageManager, scope: *const Npm.
     return this.byNameHash(pm, scope, String.Builder.stringHash(name), cache_behavior, needs_extended_manifest);
 }
 
-pub fn insert(this: *PackageManifestMap, name_hash: PackageNameHash, manifest: *const Npm.PackageManifest) !void {
-    try this.hash_map.put(bun.default_allocator, name_hash, .{ .manifest = manifest.* });
+pub fn insert(this: *PackageManifestMap, allocator: std.mem.Allocator, name_hash: PackageNameHash, manifest: *const Npm.PackageManifest) !void {
+    try this.hash_map.put(allocator, name_hash, .{ .manifest = manifest.* });
 }
 
 pub fn byNameHash(this: *PackageManifestMap, pm: *PackageManager, scope: *const Npm.Registry.Scope, name_hash: PackageNameHash, cache_behavior: CacheBehavior, needs_extended_manifest: bool) ?*Npm.PackageManifest {
@@ -51,7 +51,7 @@ pub fn byNameHashAllowExpired(
         };
     }
 
-    const entry = bun.handleOom(this.hash_map.getOrPut(bun.default_allocator, name_hash));
+    const entry = bun.handleOom(this.hash_map.getOrPut(pm.allocator, name_hash));
     if (entry.found_existing) {
         if (entry.value_ptr.* == .manifest) {
             if (needs_extended_manifest and !entry.value_ptr.manifest.pkg.has_extended_manifest) {
@@ -72,10 +72,12 @@ pub fn byNameHashAllowExpired(
     }
 
     if (pm.options.enable.manifest_cache) {
+        // Treat cache-dir failure as a cache miss (forces network fetch). Failure
+        // already recorded in pm.errors for the top-level loop to surface.
         if (Npm.PackageManifest.Serializer.loadByFileID(
             pm.allocator,
             scope,
-            pm.getCacheDirectory(),
+            pm.getCacheDirectory() catch return null,
             name_hash,
         ) catch null) |manifest| {
             if (needs_extended_manifest and !manifest.pkg.has_extended_manifest) {

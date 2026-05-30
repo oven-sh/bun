@@ -201,7 +201,7 @@ pub fn forManifest(
         // registry.npmjs.org supports both "@storybook%2Faddons" and "@storybook/addons"
         // Other registries like AWS codeartifact only support the former.
         // "npm" CLI requests the manifest with the encoded name.
-        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        var arena = std.heap.ArenaAllocator.init(this.allocator);
         defer arena.deinit();
         var stack_fallback_allocator = std.heap.stackFallback(512, arena.allocator());
         var encoded_name = name;
@@ -359,6 +359,7 @@ pub fn schedule(this: *NetworkTask, batch: *ThreadPool.Batch) void {
 
 pub const ForTarballError = OOM || error{
     InvalidURL,
+    InstallFailed,
 };
 
 pub fn forTarball(

@@ -269,9 +269,9 @@ pub fn print(
     const resolutions_buffer: []const PackageID = this.lockfile.buffers.resolutions.items;
     const dependencies_buffer: []const Dependency = this.lockfile.buffers.dependencies.items;
     if (dependencies_buffer.len == 0) return;
-    const id_map = try default_allocator.alloc(DependencyID, this.updates.len);
+    const id_map = try allocator.alloc(DependencyID, this.updates.len);
     @memset(id_map, invalid_package_id);
-    defer if (id_map.len > 0) default_allocator.free(id_map);
+    defer if (id_map.len > 0) allocator.free(id_map);
 
     const end = @as(PackageID, @truncate(resolved.len));
 
@@ -440,7 +440,7 @@ pub fn print(
                     if (manager.track_installed_bin == .pending) {
                         if (iterator.next() catch null) |bin_name| {
                             manager.track_installed_bin = .{
-                                .basename = bun.handleOom(bun.default_allocator.dupe(u8, bin_name)),
+                                .basename = bun.handleOom(manager.allocator.dupe(u8, bin_name)),
                             };
 
                             try writer.print(fmt, .{bin_name});
@@ -469,7 +469,6 @@ const Environment = bun.Environment;
 const Output = bun.Output;
 const Semver = bun.Semver;
 const assert = bun.assert;
-const default_allocator = bun.default_allocator;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 
 const install = bun.install;

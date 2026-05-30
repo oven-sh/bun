@@ -83,7 +83,7 @@ pub fn getWithPath(
     };
 
     entry.value_ptr.* = .{
-        .root = bun.handleOom(json.root.deepClone(bun.default_allocator)),
+        .root = bun.handleOom(json.root.deepClone(allocator)),
         .source = source.*,
         .indentation = json.indentation,
     };
@@ -152,7 +152,6 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const JSON = bun.json;
 const JSPrinter = bun.js_printer;
-const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const File = bun.sys.File;
 const initializeStore = bun.install.initializeStore;

@@ -71,6 +71,9 @@ pub fn initializeMiniStore() void {
         pub threadlocal var instance: ?*@This() = null;
     };
     if (MiniStore.instance == null) {
+        // One-shot threadlocal holder allocated once per worker thread and never freed. Worker
+        // pool threads outlive any manager-scoped allocator, so process-global default_allocator
+        // is the only allocator with a matching lifetime.
         var mini_store = bun.handleOom(bun.default_allocator.create(MiniStore));
         mini_store.* = .{
             .heap = bun.MimallocArena.init(),
@@ -216,6 +219,8 @@ pub const ExtractData = struct {
 
 pub const DependencyInstallContext = struct {
     tree_id: Lockfile.Tree.Id = 0,
+    // Field defaults must be comptime-known, so a runtime allocator can't be referenced here.
+    // Managed.init() does not allocate; every real construction site overrides .path explicitly.
     path: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
     dependency_id: DependencyID,
 };
@@ -243,6 +248,13 @@ pub const PackageManifestError = error{
     PackageManifestHTTP5xx,
 };
 
+pub const InstallResult = @import("./InstallResult.zig").InstallResult;
+pub const InstallError = @import("./InstallError.zig").InstallError;
+comptime {
+    // Force full type-check of InstallError until it has real callers.
+    _ = &InstallError.exitCode;
+    _ = &InstallError.printForCli;
+}
 pub const ExtractTarball = @import("./extract_tarball.zig");
 pub const NetworkTask = @import("./NetworkTask.zig");
 pub const TarballStream = @import("./TarballStream.zig");
@@ -289,7 +301,6 @@ const std = @import("std");
 
 const bun = @import("bun");
 const JSAst = bun.ast;
-const default_allocator = bun.default_allocator;
 
 const Semver = bun.Semver;
 const String = Semver.String;

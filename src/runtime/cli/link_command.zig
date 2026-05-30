@@ -1,18 +1,25 @@
 pub const LinkCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
-        try link(ctx);
+        (try link(ctx)).handleCli();
     }
 };
 
-fn link(ctx: Command.Context) !void {
-    const cli = try CommandLineArguments.parse(ctx.allocator, .link);
-    var manager, const original_cwd = PackageManager.init(ctx, cli, .link) catch |err| brk: {
+fn link(ctx: Command.Context) !InstallResult {
+    const cli = switch (try CommandLineArguments.parse(ctx.allocator, .link)) {
+        .args => |a| a,
+        .err => |f| return .{ .err = f },
+    };
+    const init_result = PackageManager.init(ctx, cli, .link) catch |err| brk: {
         if (err == error.MissingPackageJSON) {
             try attemptToCreatePackageJSON();
             break :brk try PackageManager.init(ctx, cli, .link);
         }
 
         return err;
+    };
+    var manager, const original_cwd = switch (init_result) {
+        .ok => |r| r,
+        .err => |f| return .{ .err = f },
     };
     defer ctx.allocator.free(original_cwd);
 
@@ -31,8 +38,11 @@ fn link(ctx: Command.Context) !void {
         // Step 1. parse the nearest package.json file
         {
             const package_json_source = &(bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator, .{}).unwrap() catch |err| {
-                Output.errGeneric("failed to read \"{s}\" for linking: {s}", .{ manager.original_package_json_path, @errorName(err) });
-                Global.crash();
+                return InstallResult.fromError(.{ .link_read_package_json = .{
+                    .path = bun.handleOom(manager.allocator.dupe(u8, manager.original_package_json_path)),
+                    .err = err,
+                    .action = .linking,
+                } });
             });
             lockfile.initEmpty(ctx.allocator);
 
@@ -40,18 +50,16 @@ fn link(ctx: Command.Context) !void {
             try package.parse(&lockfile, manager, ctx.allocator, manager.log, package_json_source, void, &resolver, Features.folder);
             name = lockfile.str(&package.name);
             if (name.len == 0) {
-                if (manager.options.log_level != .silent) {
-                    Output.prettyErrorln("<r><red>error:<r> package.json missing \"name\" <d>in \"{s}\"<r>", .{package_json_source.path.text});
-                }
-                Global.crash();
+                return InstallResult.fromError(.{ .package_json_missing_name = .{
+                    .path = bun.handleOom(manager.allocator.dupe(u8, package_json_source.path.text)),
+                    .silent = manager.options.log_level == .silent,
+                } });
             } else if (!strings.isNPMPackageName(name)) {
-                if (manager.options.log_level != .silent) {
-                    Output.prettyErrorln("<r><red>error:<r> invalid package.json name \"{s}\" <d>in \"{s}\"<r>", .{
-                        name,
-                        package_json_source.path.text,
-                    });
-                }
-                Global.crash();
+                return InstallResult.fromError(.{ .package_json_invalid_name = .{
+                    .name = bun.handleOom(manager.allocator.dupe(u8, name)),
+                    .path = bun.handleOom(manager.allocator.dupe(u8, package_json_source.path.text)),
+                    .silent = manager.options.log_level == .silent,
+                } });
             }
         }
 
@@ -67,9 +75,10 @@ fn link(ctx: Command.Context) !void {
             try manager.setupGlobalDir(ctx);
 
             break :brk manager.global_dir.?.makeOpenPath("node_modules", .{}) catch |err| {
-                if (manager.options.log_level != .silent)
-                    Output.prettyErrorln("<r><red>error:<r> failed to create node_modules in global dir due to error {s}", .{@errorName(err)});
-                Global.crash();
+                return InstallResult.fromError(.{ .global_node_modules_create = .{
+                    .err = err,
+                    .silent = manager.options.log_level == .silent,
+                } });
             };
         };
 
@@ -83,9 +92,10 @@ fn link(ctx: Command.Context) !void {
                 if (strings.indexOfChar(name, '/')) |i| {
                     node_modules.makeDir(name[0..i]) catch |err| brk: {
                         if (err == error.PathAlreadyExists) break :brk;
-                        if (manager.options.log_level != .silent)
-                            Output.prettyErrorln("<r><red>error:<r> failed to create scope in global dir due to error {s}", .{@errorName(err)});
-                        Global.crash();
+                        return InstallResult.fromError(.{ .global_scope_create = .{
+                            .err = err,
+                            .silent = manager.options.log_level == .silent,
+                        } });
                     };
                 }
             }
@@ -100,7 +110,7 @@ fn link(ctx: Command.Context) !void {
                 );
                 link_path_buf[top_level.len] = 0;
                 const link_path = link_path_buf[0..top_level.len :0];
-                const global_path = manager.globalLinkDirPath();
+                const global_path = manager.globalLinkDirPath() catch return manager.takeResult();
                 const dest_path = Path.joinAbsStringZ(global_path, &.{name}, .windows);
                 switch (bun.sys.sys_uv.symlinkUV(
                     link_path,
@@ -108,17 +118,17 @@ fn link(ctx: Command.Context) !void {
                     bun.windows.libuv.UV_FS_SYMLINK_JUNCTION,
                 )) {
                     .err => |err| {
-                        Output.prettyErrorln("<r><red>error:<r> failed to create junction to node_modules in global dir due to error {f}", .{err});
-                        Global.crash();
+                        return InstallResult.fromError(.{ .global_junction_create = .{ .err = err } });
                     },
                     .result => {},
                 }
             } else {
                 // create the symlink
                 node_modules.symLink(Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(), name, .{ .is_directory = true }) catch |err| {
-                    if (manager.options.log_level != .silent)
-                        Output.prettyErrorln("<r><red>error:<r> failed to create symlink to node_modules in global dir due to error {s}", .{@errorName(err)});
-                    Global.crash();
+                    return InstallResult.fromError(.{ .global_symlink_create = .{
+                        .err = err,
+                        .silent = manager.options.log_level == .silent,
+                    } });
                 };
             }
         }
@@ -130,15 +140,16 @@ fn link(ctx: Command.Context) !void {
             var link_rel_buf: bun.PathBuffer = undefined;
 
             var node_modules_path = bun.AbsPath(.{}).initFdPath(.fromStdDir(node_modules)) catch |err| {
-                if (manager.options.log_level != .silent) {
-                    Output.err(err, "failed to link binary", .{});
-                }
-                Global.crash();
+                return InstallResult.fromError(.{ .link_binary_fdpath = .{
+                    .err = err,
+                    .silent = manager.options.log_level == .silent,
+                } });
             };
             defer node_modules_path.deinit();
 
             var bin_linker = Bin.Linker{
                 .bin = package.bin,
+                .allocator = manager.allocator,
                 .node_modules_path = &node_modules_path,
                 .global_bin_path = manager.options.bin_path,
                 .target_node_modules_path = &node_modules_path,
@@ -156,9 +167,10 @@ fn link(ctx: Command.Context) !void {
             bin_linker.link(true);
 
             if (bin_linker.err) |err| {
-                if (manager.options.log_level != .silent)
-                    Output.prettyErrorln("<r><red>error:<r> failed to link bin due to error {s}", .{@errorName(err)});
-                Global.crash();
+                return InstallResult.fromError(.{ .link_bin = .{
+                    .err = err,
+                    .silent = manager.options.log_level == .silent,
+                } });
             }
         }
 
@@ -182,10 +194,10 @@ fn link(ctx: Command.Context) !void {
             );
 
         Output.flush();
-        Global.exit(0);
+        return .ok;
     } else {
         // bun link lodash
-        try manager.updatePackageJSONAndInstallWithManager(ctx, original_cwd);
+        return try manager.updatePackageJSONAndInstallWithManager(ctx, original_cwd);
     }
 }
 
@@ -207,6 +219,7 @@ const FileSystem = Fs.FileSystem;
 
 const Bin = bun.install.Bin;
 const Features = bun.install.Features;
+const InstallResult = bun.install.InstallResult;
 
 const Lockfile = bun.install.Lockfile;
 const Package = Lockfile.Package;

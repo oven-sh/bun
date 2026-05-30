@@ -10,9 +10,9 @@ pub const OutdatedCommand = struct {
         Output.prettyln("<r><b>bun outdated <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
 
-        const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .outdated);
+        const cli = (try PackageManager.CommandLineArguments.parse(ctx.allocator, .outdated)).unwrapCli();
 
-        const manager, const original_cwd = PackageManager.init(ctx, cli, .outdated) catch |err| {
+        const init_result = PackageManager.init(ctx, cli, .outdated) catch |err| {
             if (!cli.silent) {
                 if (err == error.MissingPackageJSON) {
                     Output.errGeneric("missing package.json, nothing outdated", .{});
@@ -22,6 +22,7 @@ pub const OutdatedCommand = struct {
 
             Global.crash();
         };
+        const manager, const original_cwd = init_result.unwrapCli();
         defer ctx.allocator.free(original_cwd);
 
         try outdated(ctx, original_cwd, manager);

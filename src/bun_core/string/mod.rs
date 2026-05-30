@@ -1455,7 +1455,7 @@ impl String {
         };
     }
 
-    /// Raw 8-bit byte view without the `u32::MAX` clamp `latin1()` applies.
+    /// Raw byte view (16-bit content as 2×len bytes).
     #[inline]
     pub fn full(&self) -> &[u8] {
         self.0.raw_byte_slice()

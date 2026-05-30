@@ -3495,6 +3495,7 @@ JSC::EncodedJSValue ZigString__toAtomicValue(const BunString* arg0, JSC::JSGloba
         return JSC::JSValue::encode(JSC::jsEmptyString(arg1->vm()));
     }
 
+    ASSERT(arg0->tag == BunStringTag::StringView || arg0->tag == BunStringTag::StaticStringView);
     BunStringView view = arg0->impl.view;
     if (isTaggedUTF16Ptr(view.ptr)) {
         if (auto impl = WTF::AtomStringImpl::lookUp(std::span { reinterpret_cast<const char16_t*>(untag(view.ptr)), view.len })) {
@@ -3511,6 +3512,7 @@ JSC::EncodedJSValue ZigString__toAtomicValue(const BunString* arg0, JSC::JSGloba
 
 JSC::EncodedJSValue ZigString__to16BitValue(const BunString* arg0, JSC::JSGlobalObject* arg1)
 {
+    ASSERT(arg0->tag == BunStringTag::StringView || arg0->tag == BunStringTag::StaticStringView);
     auto str = WTF::String::fromUTF8(std::span { arg0->impl.view.ptr, arg0->impl.view.len });
     return JSC::JSValue::encode(JSC::jsString(arg1->vm(), str));
 }
@@ -3529,6 +3531,7 @@ JSC::EncodedJSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, J
 // This must be a globally allocated string
 [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue ZigString__toExternalValue(const BunString* arg0, JSC::JSGlobalObject* arg1)
 {
+    ASSERT(arg0->tag == BunStringTag::StringView || arg0->tag == BunStringTag::StaticStringView);
     BunStringView str = arg0->impl.view;
     if (str.len == 0) {
         return JSC::JSValue::encode(JSC::jsEmptyString(arg1->vm()));
@@ -3576,6 +3579,7 @@ void JSC__JSValue__toZigString(JSC::EncodedJSValue JSValue0, BunString* arg1, JS
 
 JSC::EncodedJSValue ZigString__external(const BunString* arg0, JSC::JSGlobalObject* arg1, void* arg2, void (*ArgFn3)(void* arg0, void* arg1, size_t arg2))
 {
+    ASSERT(arg0->tag == BunStringTag::StringView || arg0->tag == BunStringTag::StaticStringView);
     BunStringView str = arg0->impl.view;
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, arg2, ArgFn3))));
@@ -3586,7 +3590,7 @@ JSC::EncodedJSValue ZigString__external(const BunString* arg0, JSC::JSGlobalObje
 
 JSC::EncodedJSValue ZigString__toExternalValueWithCallback(const BunString* arg0, JSC::JSGlobalObject* arg1, void (*ArgFn2)(void* arg2, void* arg0, size_t arg1))
 {
-
+    ASSERT(arg0->tag == BunStringTag::StringView || arg0->tag == BunStringTag::StaticStringView);
     BunStringView str = arg0->impl.view;
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         return JSC::JSValue::encode(JSC::jsOwnedString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, nullptr, ArgFn2))));

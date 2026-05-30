@@ -17,7 +17,7 @@ async function run(script: string) {
   return { stdout: normalizeBunSnapshot(stdout), exitCode };
 }
 
-test("ws emits 'unexpected-response' with status, headers and body on non-101", async () => {
+test.concurrent("ws emits 'unexpected-response' with status, headers and body on non-101", async () => {
   const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { once } = require("events");
@@ -63,7 +63,7 @@ test("ws emits 'unexpected-response' with status, headers and body on non-101", 
 // "Unexpected server response: 503". Bun's shim only registers the native
 // handshake listener when the user subscribes to 'upgrade'/'unexpected-response',
 // so the unmodified native error surfaces instead.
-test("ws emits native 'error' on non-101 when no 'unexpected-response' listener", async () => {
+test.concurrent("ws emits native 'error' on non-101 when no 'unexpected-response' listener", async () => {
   const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { once } = require("events");
@@ -84,7 +84,7 @@ test("ws emits native 'error' on non-101 when no 'unexpected-response' listener"
   expect(exitCode).toBe(0);
 });
 
-test("ws emits 'upgrade' with headers before 'open' on 101", async () => {
+test.concurrent("ws emits 'upgrade' with headers before 'open' on 101", async () => {
   const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { createHash } = require("crypto");
@@ -128,7 +128,7 @@ test("ws emits 'upgrade' with headers before 'open' on 101", async () => {
 // The non-101 body can span multiple TCP reads. Previously the shim dispatched
 // on the first read, truncating large error bodies. The native client now
 // buffers until Content-Length is satisfied (or EOF) before dispatching.
-test("ws 'unexpected-response' waits for full Content-Length body across multiple writes", async () => {
+test.concurrent("ws 'unexpected-response' waits for full Content-Length body across multiple writes", async () => {
   const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { once } = require("events");
@@ -184,7 +184,7 @@ test("ws 'unexpected-response' waits for full Content-Length body across multipl
 // hands the consumer that Node object): singleton headers keep the first value
 // and discard duplicates, duplicate `cookie` joins with "; ", everything else
 // joins with ", ", and set-cookie is always an array. rawHeaders stays verbatim.
-test("ws 'unexpected-response' coalesces duplicate headers like Node IncomingMessage", async () => {
+test.concurrent("ws 'unexpected-response' coalesces duplicate headers like Node IncomingMessage", async () => {
   const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { once } = require("events");
@@ -241,7 +241,7 @@ test("ws 'unexpected-response' coalesces duplicate headers like Node IncomingMes
 // timeout and the event never fires. The server here deliberately keeps the
 // connection open: with the fix this resolves at once; without it the
 // subprocess hangs and the test times out.
-test("ws 'unexpected-response' fires immediately for bodiless 204 on keep-alive", async () => {
+test.concurrent("ws 'unexpected-response' fires immediately for bodiless 204 on keep-alive", async () => {
   const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { WebSocket } = require("ws");
@@ -284,7 +284,7 @@ test("ws 'unexpected-response' fires immediately for bodiless 204 on keep-alive"
 // socket's terminate() sends a real RST while the client still has the body
 // un-satisfied (WaitingForLength). Node's net server destroy()/resetAndDestroy()
 // over loopback surfaces as FIN → on_end (a different, already-safe path).
-test.skipIf(!isDebug && !isASAN)(
+test.concurrent.skipIf(!isDebug && !isASAN)(
   "ws survives terminate() inside 'unexpected-response' when the socket RSTs mid-body",
   async () => {
     const { stdout, exitCode } = await run(/* js */ `
@@ -338,7 +338,7 @@ test.skipIf(!isDebug && !isASAN)(
 // 'unexpected-response' handler is installed on the EventEmitter list but
 // the native event that would `emit('upgrade', ...)` is never wired up and
 // the callback silently never fires.
-test("ws 'unexpected-response' fires for addListener / prependListener / addEventListener", async () => {
+test.concurrent("ws 'unexpected-response' fires for addListener / prependListener / addEventListener", async () => {
   const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { once } = require("events");
@@ -379,5 +379,49 @@ test("ws 'unexpected-response' fires for addListener / prependListener / addEven
     process.exit(0);
   `);
   expect(stdout).toMatchInlineSnapshot(`"{"a":503,"b":503,"c":503,"d":503}"`);
+  expect(exitCode).toBe(0);
+});
+
+// Once 'unexpected-response' has fired, the native 'Expected 101' error must
+// NOT reach user 'error' handlers (real ws never emits 'error' when the
+// response was handled). The suppression has to apply uniformly across every
+// registration API — on('error'), addEventListener('error', …) and the
+// onerror setter — not just on()/once().
+test.concurrent("ws suppresses the native error after 'unexpected-response' across on/addEventListener/onerror", async () => {
+  const { stdout, exitCode } = await run(/* js */ `
+    const { createServer } = require("net");
+    const { once } = require("events");
+    const { WebSocket } = require("ws");
+
+    // Register the 'error' handler via one of the three APIs, subscribe to
+    // 'unexpected-response', and report whether a spurious 'error' still fired.
+    async function runOne(registerError) {
+      const server = createServer(s =>
+        s.once("data", () => s.end("HTTP/1.1 503 Service Unavailable\\r\\n\\r\\n")),
+      ).listen(0, "127.0.0.1");
+      await once(server, "listening");
+
+      const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
+      let errored = false;
+      registerError(ws, () => { errored = true; });
+      const { promise, resolve } = Promise.withResolvers();
+      ws.on("unexpected-response", (req, res) => resolve(res.statusCode));
+      const status = await promise;
+      // Give the native error a turn of the loop to (not) arrive.
+      await once(ws, "close").catch(() => {});
+      server.close();
+      return { status, errored };
+    }
+
+    const on = await runOne((ws, mark) => ws.on("error", mark));
+    const ael = await runOne((ws, mark) => ws.addEventListener("error", mark));
+    const prop = await runOne((ws, mark) => { ws.onerror = mark; });
+    console.log(JSON.stringify({ on, ael, prop }));
+    process.exit(0);
+  `);
+  // All three APIs: 'unexpected-response' seen (503), native 'error' suppressed.
+  expect(stdout).toMatchInlineSnapshot(
+    `"{"on":{"status":503,"errored":false},"ael":{"status":503,"errored":false},"prop":{"status":503,"errored":false}}"`,
+  );
   expect(exitCode).toBe(0);
 });

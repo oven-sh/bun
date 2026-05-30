@@ -191,6 +191,13 @@ class BunWebSocket extends EventEmitter {
   #fragments = false;
   #binaryType = "nodebuffer";
   #unexpectedResponseEmitted = false;
+  // Wrappers for `addEventListener('error', h)` so the native 'Expected 101'
+  // error is suppressed after 'unexpected-response' (matching `on('error')`
+  // and real npm `ws`). Keyed by the user's listener so `removeEventListener`
+  // can still find and detach the wrapper.
+  #errorListenerWrappers;
+  // The user's `onerror` function (the native slot holds a suppression wrapper).
+  #onerror;
   // Bitset to track whether event handlers are set.
   #eventId = 0;
 
@@ -652,6 +659,19 @@ class BunWebSocket extends EventEmitter {
       }
       return;
     }
+    if (type === "error" && typeof listener === "function") {
+      // Suppress the native 'Expected 101' error after 'unexpected-response'
+      // fired, consistent with `on('error')` (line ~483) and real ws. Wrap in
+      // a gated closure and remember it so `removeEventListener` can detach it.
+      const self = this;
+      const wrapper = function (event) {
+        if (self.#unexpectedResponseEmitted) return;
+        return listener.$call(this, event);
+      };
+      (this.#errorListenerWrappers ??= new WeakMap()).set(listener, wrapper);
+      this.#ws.addEventListener(type, wrapper, options);
+      return;
+    }
     this.#ws.addEventListener(type, listener, options);
   }
 
@@ -662,6 +682,16 @@ class BunWebSocket extends EventEmitter {
     if (type === "upgrade" || type === "unexpected-response") {
       super.off(type, listener);
       return;
+    }
+    if (type === "error") {
+      // `addEventListener('error', …)` registered a suppression wrapper, not
+      // the user's listener — detach the wrapper we stored for it.
+      const wrapper = this.#errorListenerWrappers?.get(listener);
+      if (wrapper !== undefined) {
+        this.#errorListenerWrappers.delete(listener);
+        this.#ws.removeEventListener(type, wrapper);
+        return;
+      }
     }
     this.#ws.removeEventListener(type, listener);
   }
@@ -675,11 +705,24 @@ class BunWebSocket extends EventEmitter {
   }
 
   get onerror() {
-    return this.#ws.onerror;
+    // Return the user's function, not the suppression wrapper we installed.
+    return this.#onerror ?? this.#ws.onerror;
   }
 
   set onerror(value) {
-    this.#ws.onerror = value;
+    this.#onerror = typeof value === "function" ? value : undefined;
+    if (this.#onerror === undefined) {
+      this.#ws.onerror = value;
+      return;
+    }
+    // Suppress the native 'Expected 101' error after 'unexpected-response',
+    // consistent with `on('error')` / `addEventListener('error')` and real ws.
+    const self = this;
+    const fn = this.#onerror;
+    this.#ws.onerror = function (event) {
+      if (self.#unexpectedResponseEmitted) return;
+      return fn.$call(this, event);
+    };
   }
 
   get onclose() {

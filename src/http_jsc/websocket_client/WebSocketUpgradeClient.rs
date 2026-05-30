@@ -1235,8 +1235,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
             match Self::find_content_length(&response) {
                 Some(cl) => {
                     // Reject an absurd Content-Length up front so the
-                    // saturating add below can't wrap and trap us in an
-                    // unbounded accumulate loop.
+                    // `head_len + cl` below can't overflow `usize` (and so we
+                    // never trap in an unbounded accumulate loop). `cl` is now
+                    // bounded to 64 MB and `head_len` to the HTTP header limit.
                     if cl > MAX_NON_101_BODY {
                         // SAFETY: no `&mut Self` is live.
                         unsafe { Self::terminate(this, ErrorCode::Expected101StatusCode) };

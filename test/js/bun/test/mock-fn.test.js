@@ -1011,6 +1011,21 @@ describe("spyOn", () => {
       expect(arr[14]()).toBe(456);
       expect(fn).not.toHaveBeenCalled();
     });
+
+    test("spyOn on a missing indexed property does not crash on read/write", () => {
+      const obj = {};
+      const fn = spyOn(obj, 1002);
+
+      // Reading the spied index must not crash (it is installed as an accessor).
+      expect(obj[1002]).toBeUndefined();
+      expect(fn).toHaveBeenCalledTimes(1);
+
+      // Writing the spied index must not crash either.
+      obj[1002] = 42;
+      Reflect.set(obj, 1002, 43);
+
+      fn.mockRestore();
+    });
   }
 
   // spyOn does not work with getters/setters yet.

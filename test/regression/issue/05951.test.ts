@@ -128,10 +128,8 @@ test("ws emits 'upgrade' with headers before 'open' on 101", async () => {
 // The non-101 body can span multiple TCP reads. Previously the shim dispatched
 // on the first read, truncating large error bodies. The native client now
 // buffers until Content-Length is satisfied (or EOF) before dispatching.
-test(
-  "ws 'unexpected-response' waits for full Content-Length body across multiple writes",
-  async () => {
-    const { stdout, exitCode } = await run(/* js */ `
+test("ws 'unexpected-response' waits for full Content-Length body across multiple writes", async () => {
+  const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { once } = require("events");
     const { WebSocket } = require("ws");
@@ -175,12 +173,11 @@ test(
     await once(ws, "close");
     server.close();
   `);
-    expect(stdout).toMatchInlineSnapshot(
-      `"{"statusCode":503,"contentLength":"7800","bodyLength":7800,"firstChar":"a","lastChar":"c"}"`,
-    );
-    expect(exitCode).toBe(0);
-  },
-);
+  expect(stdout).toMatchInlineSnapshot(
+    `"{"statusCode":503,"contentLength":"7800","bodyLength":7800,"firstChar":"a","lastChar":"c"}"`,
+  );
+  expect(exitCode).toBe(0);
+});
 
 // `on()` / `once()` are not the only EventEmitter registration APIs — ws
 // consumers also reach for `addListener` / `prependListener` /
@@ -189,10 +186,8 @@ test(
 // 'unexpected-response' handler is installed on the EventEmitter list but
 // the native event that would `emit('upgrade', ...)` is never wired up and
 // the callback silently never fires.
-test(
-  "ws 'unexpected-response' fires for addListener / prependListener / addEventListener",
-  async () => {
-    const { stdout, exitCode } = await run(/* js */ `
+test("ws 'unexpected-response' fires for addListener / prependListener / addEventListener", async () => {
+  const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { once } = require("events");
     const { WebSocket } = require("ws");
@@ -231,7 +226,6 @@ test(
     console.log(JSON.stringify({ a, b, c, d }));
     process.exit(0);
   `);
-    expect(stdout).toMatchInlineSnapshot(`"{"a":503,"b":503,"c":503,"d":503}"`);
-    expect(exitCode).toBe(0);
-  },
-);
+  expect(stdout).toMatchInlineSnapshot(`"{"a":503,"b":503,"c":503,"d":503}"`);
+  expect(exitCode).toBe(0);
+});

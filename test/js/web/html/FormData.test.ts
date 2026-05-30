@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import { join } from "path";
 
 describe("FormData", () => {
@@ -689,7 +689,10 @@ describe("FormData", () => {
         Bun.gc();
       }
     }
-  });
+    // The 100k-iteration loop runs ~15x slower under the debug+ASAN build,
+    // where instrumented allocation dominates; give it a realistic budget
+    // instead of the 5s default so it doesn't time out on that lane.
+  }, isDebug ? 120_000 : 30_000);
 });
 
 // https://github.com/oven-sh/bun/issues/14988

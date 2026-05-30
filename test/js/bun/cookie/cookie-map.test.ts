@@ -256,6 +256,25 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     });
   });
 
+  test("CookieMap.toJSON() keeps first value for duplicate numeric cookie names", () => {
+    // Two entries with the same numeric key live in the original-cookie list,
+    // so toJSON()'s second loop sees an index that is already on the output
+    // object and must skip the duplicate (getDirectIndex + continue).
+    const map = new Bun.CookieMap("0=first; 0=second; 1=unchanged");
+    expect(map.toJSON()).toEqual({
+      "0": "first",
+      "1": "unchanged",
+    });
+  });
+
+  test("CookieMap.toJSON() keeps first value for duplicate named cookie names", () => {
+    const map = new Bun.CookieMap("foo=first; foo=second; bar=baz");
+    expect(map.toJSON()).toEqual({
+      foo: "first",
+      bar: "baz",
+    });
+  });
+
   test("CookieMap.toJSON() handles cookie names matching Object.prototype properties", () => {
     const map = new Bun.CookieMap("toString=hello; constructor=world; valueOf=test");
     expect(map.toJSON()).toEqual({

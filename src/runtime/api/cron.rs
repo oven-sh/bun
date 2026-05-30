@@ -764,7 +764,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
 
     // Capture caller's working directory so the cron job runs with the same
     // cwd as registration time (matching Lambda bootstrap's --cwd pattern).
-    let mut cwd_buf = PathBuffer::ZEROED;
+    let mut cwd_buf = bun_core::PathBuffer::ZEROED;
     let cwd_owned = match bun_core::getcwd(&mut cwd_buf) {
         Ok(c) => ZString::from_bytes(c.as_bytes()),
         Err(_) => {

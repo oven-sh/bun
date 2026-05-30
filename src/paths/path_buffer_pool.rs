@@ -403,7 +403,8 @@ mod tests {
         const CAP: usize = 3;
         let pool = Pool::<PathBuffer>::new();
         // Acquire 4x cap distinct nodes, then return them all.
-        let nodes: Vec<*mut Node<PathBuffer>> = (0..CAP * 4).map(|_| PathBuffer::new_node()).collect();
+        let nodes: Vec<*mut Node<PathBuffer>> =
+            (0..CAP * 4).map(|_| PathBuffer::new_node()).collect();
         for n in nodes {
             pool.push_with_cap(n, CAP);
         }

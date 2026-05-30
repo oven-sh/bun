@@ -3,7 +3,7 @@
 // Exercises the public `ws` package surface (what miniflare/wrangler actually
 // listen for), not the native 'handshake' event covered in 24229.test.ts.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot } from "harness";
 
 async function run(script: string) {
   await using proc = Bun.spawn({
@@ -271,6 +271,66 @@ test("ws 'unexpected-response' fires immediately for bodiless 204 on keep-alive"
   expect(stdout).toMatchInlineSnapshot(`"{"statusCode":204,"statusMessage":"No Content","xGone":"1"}"`);
   expect(exitCode).toBe(0);
 });
+
+// The RST teardown path (handle_close) flushes a mid-accumulation non-101
+// body into the 'unexpected-response' listener. If that listener synchronously
+// calls ws.terminate()/ws.close(), the reentrant cancel() releases the socket
+// ref while handle_close is still holding it — then handle_close's tcp.detach()
+// runs on freed memory (heap-use-after-free in NewSocketHandler::detach) and
+// its deref() underflows the refcount. Only an ASAN/debug build surfaces the
+// corruption as a crash; release builds survive by luck, so gate on it.
+//
+// The RST must arrive as on_close WITHOUT a preceding on_end (FIN): a Bun.listen
+// socket's terminate() sends a real RST while the client still has the body
+// un-satisfied (WaitingForLength). Node's net server destroy()/resetAndDestroy()
+// over loopback surfaces as FIN → on_end (a different, already-safe path).
+test.skipIf(!isDebug && !isASAN)(
+  "ws survives terminate() inside 'unexpected-response' when the socket RSTs mid-body",
+  async () => {
+    const { stdout, stderr, exitCode } = await run(/* js */ `
+      const { once } = require("events");
+      const { WebSocket } = require("ws");
+
+      // Declare a 100 kB body but send only a sliver, then RST a tick later so
+      // the client has parsed the headers and entered WaitingForLength. The
+      // RST then routes through handle_close, which flushes the deferred body
+      // into 'unexpected-response'.
+      const server = Bun.listen({
+        hostname: "127.0.0.1", port: 0,
+        socket: {
+          data(socket) {
+            socket.write(
+              "HTTP/1.1 503 Service Unavailable\\r\\n" +
+              "Content-Length: 100000\\r\\n\\r\\n" +
+              "partial body, server resets before sending the rest"
+            );
+            // Bun's socket.terminate() sends a real RST (not FIN). The small
+            // delay lets the partial body land first so the client is mid-body.
+            setTimeout(() => { try { socket.terminate(); } catch {} }, 10);
+          },
+          error() {}, open() {},
+        },
+      });
+
+      const ws = new WebSocket("ws://127.0.0.1:" + server.port);
+      ws.on("error", () => {});
+      ws.once("unexpected-response", (req, res) => {
+        console.log("status=" + res.statusCode);
+        // Reentrant teardown from inside the handshake dispatch — this is the
+        // path that used to UAF on the native client (handle_close then ran
+        // tcp.detach() on freed memory).
+        ws.terminate();
+      });
+      // Await 'close' rather than exiting immediately: the detach/deref that
+      // used to fault runs as handle_close unwinds, after terminate() returns.
+      await once(ws, "close");
+      server.stop(true);
+    `);
+    if (exitCode !== 0) console.error(stderr);
+    expect(stdout).toContain("status=503");
+    expect(exitCode).toBe(0);
+  },
+);
 
 // `on()` / `once()` are not the only EventEmitter registration APIs — ws
 // consumers also reach for `addListener` / `prependListener` /

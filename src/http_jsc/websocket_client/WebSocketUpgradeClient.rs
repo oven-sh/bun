@@ -740,13 +740,52 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // flush runs `process_response` which terminates the non-101 and
         // clears `outgoing_websocket`, so `dispatch_abrupt_close` below is a
         // no-op. We still `deref` once to balance the socket ref.
-        // SAFETY: forwards `this` with root provenance; no `&mut Self` is live.
-        if unsafe { Self::flush_deferred_on_close(this) } {
-            // SAFETY: short-lived `&mut` for the field detach.
+        //
+        // The flush dispatches `unexpected-response` into JS, and that handler
+        // may synchronously `ws.close()`/`ws.terminate()` → reentrant
+        // `cancel()`. Left to its own devices, `cancel()` would see `tcp` still
+        // attached + the socket's ext slot still pointing at us and so
+        // (a) release the socket ref a second time and (b) `tcp.close()` again,
+        // re-entering `handle_close` — a use-after-free on the `tcp.detach()`
+        // below plus a refcount underflow. Guard against all of it: take the
+        // ext slot and detach `tcp` up front so the reentrant `cancel()` finds
+        // `ext == None` / a detached `tcp` and no-ops both, and hold a ref
+        // across the flush so the C++-ref release inside `cancel()` can't drop
+        // us to 0 before our own trailing `deref`.
+        // SAFETY: short-lived read; ends before the branch below.
+        let has_deferred = !matches!(unsafe { (*this).deferred_handshake }, DeferredHandshake::None);
+        if has_deferred {
+            // SAFETY: `this` carries root (userdata) provenance.
+            let _guard = unsafe { ThisPtr::new(this) }.ref_guard();
+            // Take the socket-userdata ref's slot (matching `cancel`'s own
+            // take) and detach our `tcp` handle, before any dispatch, so a
+            // reentrant `cancel()` finds `ext == None` / a detached `tcp` and
+            // neither double-releases the socket ref nor re-enters `handle_close`.
+            // SAFETY: short-lived reads/writes on the JS thread; the ext slot
+            // is the `Option<NonNull<Self>>` written in `connect_group`.
+            let tcp = unsafe { (*this).tcp };
+            tcp.ext::<Option<core::ptr::NonNull<Self>>>()
+                .map(|ext| unsafe { (*ext).take() });
+            // SAFETY: short-lived `&mut` for the field detach/clear_data.
             unsafe { (*this).tcp.detach() };
-            // SAFETY: may free `this`; no `&mut Self` is live.
+            // SAFETY: forwards `this`; `_guard` + the still-held socket ref
+            // keep it alive across the dispatch even if JS frees the C++ ref.
+            unsafe { Self::flush_deferred_on_close(this) };
+            // Release the C++ `outgoing_websocket` ref if it's still held.
+            // A reentrant `cancel()` (from `ws.close()`/`terminate()` in the
+            // listener) or the flush's own `process_response` may already have
+            // taken it; `take()` makes this release exactly-once regardless of
+            // which path ran.
+            // SAFETY: short-lived `&mut` for the field take.
+            if unsafe { (*this).outgoing_websocket.take().is_some() } {
+                // SAFETY: no `&mut Self` is live; `_guard` still holds a ref.
+                unsafe { Self::deref(this) };
+            }
+            // Balance the socket ref whose ext slot we took above.
+            // SAFETY: no `&mut Self` is live; `_guard` still holds a ref.
             unsafe { Self::deref(this) };
             return;
+            // `_guard` drops here — the final release, may free `this`.
         }
 
         // SAFETY: short-lived `&mut` borrows; each ends before the next call.

@@ -1223,8 +1223,10 @@ folded: >
         test("tag on e-node implicit key — [200]/[193] line split", () => {
           // Same line �\u0086� key's tag (`!!str` e-node = "").
           expect(YAML.parse("!!str : x\n")).toEqual({ "": "x" });
-          // Prior line �\u0086� collection's tag; key stays null.
-          expect(YAML.parse("!!str\n: x\n")).toEqual({ null: "x" });
+          // `!!str` on a mapping is a §3.3.2 kind mismatch; use a non-scalar
+          // tag to show the collection-tag attachment.
+          expect(YAML.parse("!!map\n: x\n")).toEqual({ null: "x" });
+          expect(() => YAML.parse("!!str\n: x\n")).toThrow();
         });
 
         test("at top level, content at indent 0 is still content (n = -1)", () => {
@@ -1313,7 +1315,7 @@ folded: >
           // re-scanned tag-neutral.
           expect(YAML.parse("a: !!str\n0xFF: c\n")).toEqual({ a: "", 255: "c" });
           expect(YAML.parse("a: !!str\n~: c\n")).toEqual({ a: "", null: "c" });
-          expect(YAML.parse("a: !!int\ntrue: c\n")).toEqual({ a: null, true: "c" });
+          expect(YAML.parse("a: !\ntrue: c\n")).toEqual({ a: "", true: "c" });
           // Content (indent > n) keeps the tag.
           expect(YAML.parse("a: !!str\n  0xFF\n")).toEqual({ a: "0xFF" });
           expect(YAML.parse("a:\n  !!str\n  0xFF\n")).toEqual({ a: "0xFF" });
@@ -1868,12 +1870,12 @@ folded: >
           expect(YAML.parse("%TAG !y! tag:yaml.org,2002:\n---\n!y!int 42")).toBe(42);
         });
 
-        test.todo("explicit tag on quoted scalar coerces ([10.1.1.8] resolve via tag)", () => {
+        test("explicit tag on quoted scalar coerces ([10.1.1.8] resolve via tag)", () => {
           expect(YAML.parse("!!bool 'true'")).toBe(true);
           expect(YAML.parse('!!int "42"')).toBe(42);
         });
 
-        test.todo("`!!int`/`!!float` validate their content", () => {
+        test("`!!int`/`!!float` validate their content", () => {
           // [10.2.1.2]/[10.2.1.4] — the tag's regex must match.
           expect(() => YAML.parse("!!int 1.5")).toThrow();
           expect(() => YAML.parse("!!float 0x1f")).toThrow();
@@ -2120,10 +2122,9 @@ folded: >
             expect(YAML.parse(`[!!str, a]`)).toEqual(["", "a"]);
           });
 
-          test("[99] secondary shorthand on empty explicit key+value in flow — bun spec-correct", () => {
-            // !!int on e-scalar resolves to null per resolve_null (no canonical
-            // int form for the empty scalar).
-            expect(YAML.parse(`{? !!str : !!int}`)).toEqual({ "": null });
+          test("[99] secondary shorthand on empty explicit key+value in flow", () => {
+            // `!!int` on empty content is [10.2.1] TagContentMismatch.
+            expect(() => YAML.parse(`{? !!str : !!int}`)).toThrow();
           });
 
           test.todo("[99],[40] `:` inside secondary suffix — refs reject unresolved (false positive)", () => {
@@ -2221,7 +2222,7 @@ folded: >
             expect(YAML.parse(`- "a"#c\n`)).toEqual(["a"]);
           });
 
-          test.todo("[200] tag/content kind mismatch — !!str on a block-seq", () => {
+          test("[200] tag/content kind mismatch — !!str on a block-seq", () => {
             expect(() => YAML.parse(`- !!str\n  - a\n`)).toThrow();
           });
         });
@@ -2306,14 +2307,14 @@ folded: >
             expect(YAML.parse(input)).toEqual(expected);
           });
 
-          test.todo.each([`!!int\n`, `!!float\n`, `!!bool\n`])(
+          test.each([`!!int\n`, `!!float\n`, `!!bool\n`])(
             "[10.2.1] explicit scalar tag with empty content — must error: %j",
             input => {
               expect(() => YAML.parse(input)).toThrow();
             },
           );
 
-          test.todo("[10.2.1.3] !!int on exponent form — int regex has no [eE]", () => {
+          test("[10.2.1.3] !!int on exponent form — int regex has no [eE]", () => {
             expect(() => YAML.parse(`!!int 1e5\n`)).toThrow();
           });
 
@@ -2321,11 +2322,11 @@ folded: >
             expect(YAML.parse(`!!int 0b101\n`)).toEqual(5);
           });
 
-          test.todo("[10.1.1.3] !!null on quoted scalar — refs honor tag; bun ignores", () => {
+          test("[10.1.1.3] !!null on quoted scalar — refs honor tag; bun ignores", () => {
             expect(YAML.parse(`!!null "null"\n`)).toEqual(null);
           });
 
-          test.todo.each([`!!str [a, b]\n`, `!!int {a: 1}\n`, `!!null [1]\n`])(
+          test.each([`!!str [a, b]\n`, `!!int {a: 1}\n`, `!!null [1]\n`])(
             "[10.1.1] scalar tag on collection — kind mismatch �\u0086� error: %j",
             input => {
               expect(() => YAML.parse(input)).toThrow();
@@ -2634,16 +2635,19 @@ binary: 0b1010
 explicit_string: !!str 123
 explicit_int: !!int "456"
 explicit_float: !!float "3.14"
-explicit_bool: !!bool "yes"
-explicit_null: !!null "anything"
+explicit_bool: !!bool "true"
+explicit_null: !!null ""
 `;
       expect(YAML.parse(yaml)).toEqual({
         explicit_string: "123",
-        explicit_int: "456",
-        explicit_float: "3.14",
-        explicit_bool: "yes",
-        explicit_null: "anything",
+        explicit_int: 456,
+        explicit_float: 3.14,
+        explicit_bool: true,
+        explicit_null: null,
       });
+      // [10.2] content must match the tag's Core-schema regex
+      expect(() => YAML.parse(`!!bool "yes"`)).toThrow();
+      expect(() => YAML.parse(`!!null "anything"`)).toThrow();
     });
 
     test("handles strings that look like numbers", () => {

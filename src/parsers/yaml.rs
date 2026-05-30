@@ -818,6 +818,8 @@ pub enum ParseError {
     StackOverflow,
     #[error("ExcessiveAliasing")]
     ExcessiveAliasing,
+    #[error("TagContentMismatch")]
+    TagContentMismatch,
 }
 
 bun_core::oom_from_alloc!(ParseError);
@@ -1343,10 +1345,9 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                 }
             }
             NodeTag::Int => {
-                if matches!(scalar, NodeScalar::Number(_)) {
-                    self.resolved_scalar_len = self.str_builder.len();
-                    self.scalar = Some(scalar);
-                }
+                // `resolve()` is only reached with `Number` for `.nan`/`.inf`
+                // — float-only forms. Fall through to string; parse_node's
+                // construct_scalar will reject under [10.2.1.3].
             }
             NodeTag::Float => {
                 if matches!(scalar, NodeScalar::Number(_)) {
@@ -1700,17 +1701,25 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
 
         self.resolved = true;
 
-        match self.tag {
-            NodeTag::None | NodeTag::Float | NodeTag::Int => {
-                self.resolved_scalar_len = self.str_builder.len();
-                if first_char == FirstChar::Negative {
-                    if let NodeScalar::Number(n) = &mut scalar {
-                        *n = -*n;
-                    }
+        // [10.2.1.3]/[10.2.1.4] An explicit `!!int` rejects `.`/`e`/hex-digit
+        // float forms; `!!float` rejects `0x`/`0o` radix forms. On mismatch
+        // fall through to string so parse_node's construct_scalar errors.
+        let is_radix = x || o || hex;
+        let has_dot_or_exp = decimal || e || first_char == FirstChar::Dot;
+        let store = match self.tag {
+            NodeTag::None => true,
+            NodeTag::Int => !has_dot_or_exp,
+            NodeTag::Float => !is_radix,
+            _ => false,
+        };
+        if store {
+            self.resolved_scalar_len = self.str_builder.len();
+            if first_char == FirstChar::Negative {
+                if let NodeScalar::Number(n) = &mut scalar {
+                    *n = -*n;
                 }
-                self.scalar = Some(scalar);
             }
-            _ => {}
+            self.scalar = Some(scalar);
         }
         Ok(())
     }
@@ -1833,20 +1842,116 @@ pub enum NodeTag {
 }
 
 impl NodeTag {
-    pub fn resolve_null(self, loc: bun_ast::Loc) -> Expr {
+    pub fn resolve_null(self, loc: bun_ast::Loc) -> Result<Expr, ParseError> {
         match self {
-            NodeTag::None
-            | NodeTag::Bool
-            | NodeTag::Int
-            | NodeTag::Float
-            | NodeTag::Null
-            | NodeTag::Verbatim(_)
-            | NodeTag::Unknown(_) => Expr::init(E::Null {}, loc),
+            NodeTag::None | NodeTag::Null | NodeTag::Verbatim(_) | NodeTag::Unknown(_) => {
+                Ok(Expr::init(E::Null {}, loc))
+            }
+
+            // [10.2] empty content matches none of the bool/int/float regexes.
+            NodeTag::Bool | NodeTag::Int | NodeTag::Float => Err(ParseError::TagContentMismatch),
 
             // non-specific tags become seq, map, or str
-            NodeTag::NonSpecific | NodeTag::Str => Expr::init(E::String::default(), loc),
+            NodeTag::NonSpecific | NodeTag::Str => Ok(Expr::init(E::String::default(), loc)),
         }
     }
+
+    /// `true` for the Core-schema scalar tags. A scalar tag on a collection
+    /// node is a kind mismatch ([10.1.1], §3.3.2).
+    pub fn is_core_scalar(self) -> bool {
+        matches!(
+            self,
+            NodeTag::Bool | NodeTag::Int | NodeTag::Float | NodeTag::Null | NodeTag::Str
+        )
+    }
+
+    /// [10.2] Construct a Core-schema scalar from explicit-tag + string
+    /// content. Called from `parse_node` when an explicit `!!bool` / `!!int`
+    /// / `!!float` / `!!null` resolved to a string (quoted scalar, or plain
+    /// scalar whose untagged resolution did not match the tag's kind). The
+    /// content must match the tag's regex; otherwise per §3.3.2 it is an
+    /// error for the tag to specify an invalid value.
+    pub fn construct_scalar(self, s: &E::String, loc: bun_ast::Loc) -> Result<Expr, ParseError> {
+        // All Core-schema scalar regexes are ASCII-only; narrow utf16 once.
+        let mut narrowed_buf;
+        let bytes: &[u8] = if s.is_utf16 {
+            let s16 = s.slice16();
+            narrowed_buf = vec![0u8; s16.len()];
+            if bun_core::strings::narrow_ascii_u16(s16, &mut narrowed_buf).is_none() {
+                return Err(ParseError::TagContentMismatch);
+            }
+            &narrowed_buf
+        } else {
+            s.slice8()
+        };
+        match self {
+            NodeTag::Null => match bytes {
+                b"" | b"~" | b"null" | b"Null" | b"NULL" => Ok(Expr::init(E::Null {}, loc)),
+                _ => Err(ParseError::TagContentMismatch),
+            },
+            NodeTag::Bool => match bytes {
+                b"true" | b"True" | b"TRUE" => Ok(Expr::init(E::Boolean { value: true }, loc)),
+                b"false" | b"False" | b"FALSE" => Ok(Expr::init(E::Boolean { value: false }, loc)),
+                _ => Err(ParseError::TagContentMismatch),
+            },
+            NodeTag::Int => core_schema_int(bytes)
+                .map(|v| Expr::init(E::Number { value: v }, loc))
+                .ok_or(ParseError::TagContentMismatch),
+            NodeTag::Float => core_schema_float(bytes)
+                .map(|v| Expr::init(E::Number { value: v }, loc))
+                .ok_or(ParseError::TagContentMismatch),
+            // Str / NonSpecific / Verbatim / Unknown / None: leave as the
+            // string the caller already has.
+            _ => unreachable!("construct_scalar only called for Bool/Int/Float/Null"),
+        }
+    }
+}
+
+/// [10.2.1.3] `[-+]? [0-9]+ | 0o [0-7]+ | 0x [0-9a-fA-F]+`
+fn core_schema_int(s: &[u8]) -> Option<f64> {
+    if let Some(hex) = s.strip_prefix(b"0x") {
+        if hex.is_empty() || !hex.iter().all(u8::is_ascii_hexdigit) {
+            return None;
+        }
+        return bun_core::fmt::parse_unsigned::<u64>(s, 0).ok().map(|v| v as f64);
+    }
+    if let Some(oct) = s.strip_prefix(b"0o") {
+        if oct.is_empty() || !oct.iter().all(|b| (b'0'..=b'7').contains(b)) {
+            return None;
+        }
+        return bun_core::fmt::parse_unsigned::<u64>(s, 0).ok().map(|v| v as f64);
+    }
+    let (sign, digits) = match s.first() {
+        Some(b'+') => (1.0, &s[1..]),
+        Some(b'-') => (-1.0, &s[1..]),
+        _ => (1.0, s),
+    };
+    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    bun_core::wtf::parse_double(digits).ok().map(|v| sign * v)
+}
+
+/// [10.2.1.4] `[-+]? ( \. [0-9]+ | [0-9]+ ( \. [0-9]* )? ) ( [eE] [-+]? [0-9]+ )?`
+///            `| [-+]? \.(inf|Inf|INF) | \.(nan|NaN|NAN)`
+fn core_schema_float(s: &[u8]) -> Option<f64> {
+    match s {
+        b".nan" | b".NaN" | b".NAN" => return Some(f64::NAN),
+        _ => {}
+    }
+    let (sign, rest) = match s.first() {
+        Some(b'+') => (1.0, &s[1..]),
+        Some(b'-') => (-1.0, &s[1..]),
+        _ => (1.0, s),
+    };
+    match rest {
+        b".inf" | b".Inf" | b".INF" => return Some(sign * f64::INFINITY),
+        _ => {}
+    }
+    if !is_core_schema_number::<Utf8>(rest, FirstChar::Other) {
+        return None;
+    }
+    bun_core::wtf::parse_double(rest).ok().map(|v| sign * v)
 }
 
 pub enum NodeScalar<Enc: Encoding> {
@@ -2273,6 +2378,7 @@ pub enum ParseResultError {
     MultipleYamlDirectives { pos: Pos },
     InvalidIndentation { pos: Pos },
     ExcessiveAliasing { pos: Pos },
+    TagContentMismatch { pos: Pos },
 }
 
 impl ParseResultError {
@@ -2340,6 +2446,13 @@ impl ParseResultError {
             ParseResultError::ExcessiveAliasing { pos } => {
                 log.add_error(Some(source), pos.loc(), b"Excessive aliasing");
             }
+            ParseResultError::TagContentMismatch { pos } => {
+                log.add_error(
+                    Some(source),
+                    pos.loc(),
+                    b"Tagged scalar content does not match the tag's schema",
+                );
+            }
         }
         Ok(())
     }
@@ -2406,6 +2519,9 @@ impl<Enc: Encoding> ParseResult<Enc> {
             ParseError::ExcessiveAliasing => ParseResultError::ExcessiveAliasing {
                 pos: parser.token.start,
             },
+            ParseError::TagContentMismatch => ParseResultError::TagContentMismatch {
+                pos: parser.token.start,
+            },
         };
         ParseResult::Err(e)
     }
@@ -2456,6 +2572,10 @@ pub struct Parser<'i, Enc: Encoding> {
     // TODO(port): Zig key type was []const enc.unit(); StringHashMap keys are &[u8].
     // For Utf16 this needs a different map type.
     pub tag_handles: StringHashMap<()>,
+    /// `%TAG !! ...` redefined the secondary handle for this document, so the
+    /// `!!int` etc. shorthands no longer denote the Core-schema tags
+    /// (`shorthand_to_tag` falls through to `Unknown`).
+    pub secondary_handle_redefined: bool,
 
     pub whitespace_buf: Vec<Whitespace<Enc>>,
 
@@ -2503,6 +2623,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             explicit_document_start_line: None,
             anchors: StringHashMap::default(),
             tag_handles: StringHashMap::default(),
+            secondary_handle_redefined: false,
             whitespace_buf: Vec::new(),
             stack_check: StackCheck::init(),
             merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
@@ -2656,6 +2777,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 self.try_skip_s_white()?;
                 let prefix = self.parse_directive_tag_prefix()?;
                 self.try_skip_to_new_line()?;
+                self.secondary_handle_redefined = true;
                 return Ok(Directive::Tag(DirectiveTag {
                     handle: DirectiveTagHandle::Secondary,
                     prefix,
@@ -2737,6 +2859,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // Zig: `clearRetainingCapacity()` — `HashMap::clear()` already retains capacity.
         self.anchors.clear();
         self.tag_handles.clear();
+        self.secondary_handle_redefined = false;
 
         let mut has_yaml_directive = false;
         let mut has_primary_tag = false;
@@ -4029,7 +4152,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }) => *t,
             _ => NodeTag::None,
         };
-        let e_node = resolved_tag.resolve_null(loc);
+        let e_node = resolved_tag.resolve_null(loc)?;
         if let Some(Token {
             data: TokenData::Anchor(name),
             ..
@@ -4442,7 +4565,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     } else {
                         NodeTag::None
                     };
-                    let first_key = key_tag.resolve_null(self.token.start.loc());
+                    let first_key = key_tag.resolve_null(self.token.start.loc())?;
 
                     let implicit_key_anchors = node_props.implicit_key_anchors(colon_line)?;
                     if let Some(key_anchor) = implicit_key_anchors.key_anchor {
@@ -4605,8 +4728,26 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             return Err(ParseError::MultipleTags);
         }
 
+        // [10.1/10.2] Apply the explicit tag to the produced node. The plain
+        // scalar resolver already honoured `node_props.tag()` for the matching
+        // form; here we (a) construct from the string fallback when an
+        // explicit `!!bool`/`!!int`/`!!float`/`!!null` was on a quoted scalar
+        // or on a plain scalar whose form did not match, and (b) reject a
+        // scalar tag on a collection (§3.3.2 kind mismatch).
+        let tag = node_props.tag();
         let resolved = match &node.data {
-            ast::ExprData::ENull(_) => node_props.tag().resolve_null(node.loc),
+            ast::ExprData::ENull(_) => tag.resolve_null(node.loc)?,
+            ast::ExprData::EArray(_) | ast::ExprData::EObject(_) if tag.is_core_scalar() => {
+                return Err(ParseError::TagContentMismatch);
+            }
+            ast::ExprData::EString(s)
+                if matches!(
+                    tag,
+                    NodeTag::Bool | NodeTag::Int | NodeTag::Float | NodeTag::Null
+                ) =>
+            {
+                tag.construct_scalar(s, node.loc)?
+            }
             _ => node,
         };
 
@@ -5993,6 +6134,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     }
 
     fn shorthand_to_tag(&self, shorthand: StringRange) -> NodeTag {
+        // [10.2] The Core-schema tags are `tag:yaml.org,2002:*`, which is the
+        // *default* secondary prefix. `%TAG !! ...` overrides it; `!!int` then
+        // denotes an application tag, not the Core int (Spec Example 6.19).
+        if self.secondary_handle_redefined {
+            return NodeTag::Unknown(shorthand);
+        }
         let s = shorthand.slice(self.input);
         // TODO(port): comparing &[Enc::Unit] to ASCII literals; assumes u8-compatible.
         if eq_ascii::<Enc>(s, b"bool") {

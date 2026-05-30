@@ -137,9 +137,9 @@ test("ws 'unexpected-response' waits for full Content-Length body across multipl
     // 8 kB JSON-ish payload, sent in three separate writes with a tick between
     // each so the client sees multiple TCP reads (at least in the common case).
     const CHUNK_SIZE = 2600;
-    const chunk1 = "a".repeat(CHUNK_SIZE);
-    const chunk2 = "b".repeat(CHUNK_SIZE);
-    const chunk3 = "c".repeat(CHUNK_SIZE);
+    const chunk1 = Buffer.alloc(CHUNK_SIZE, "a").toString();
+    const chunk2 = Buffer.alloc(CHUNK_SIZE, "b").toString();
+    const chunk3 = Buffer.alloc(CHUNK_SIZE, "c").toString();
     const bodyLen = CHUNK_SIZE * 3;
 
     const server = createServer(s => {

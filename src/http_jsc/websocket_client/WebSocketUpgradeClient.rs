@@ -1057,6 +1057,24 @@ impl<const SSL: bool> HTTPClient<SSL> {
         None
     }
 
+    /// Whether the response carries a `Transfer-Encoding` header (chunked or
+    /// otherwise). Such bodies have no `Content-Length` and their wire bytes
+    /// are framing, not payload — the caller dispatches immediately instead
+    /// of accumulating raw framing until EOF.
+    fn has_transfer_encoding(response: &picohttp::Response) -> bool {
+        for header in response.headers.list {
+            if header.name().len() == b"Transfer-Encoding".len()
+                && strings::eql_case_insensitive_ascii_ignore_length(
+                    header.name(),
+                    b"Transfer-Encoding",
+                )
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Append `data` to the deferred non-101 body buffer.
     ///
     /// Returns `true` when `data` was consumed as part of a deferred
@@ -1143,6 +1161,27 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
 
         if status_code != 101 {
+            // A `Transfer-Encoding` (e.g. chunked) body has no Content-Length
+            // and its framing bytes are not the payload. We don't decode
+            // chunked on this fallback path, and waiting-for-EOF on a
+            // keep-alive connection would just stall until the socket
+            // timeout. Dispatch immediately with whatever bytes are on hand
+            // so the `unexpected-response` listener still gets the correct
+            // status / headers (matching the pre-existing non-101 behavior,
+            // which surfaced no body at all).
+            if Self::has_transfer_encoding(&response) {
+                // SAFETY: forwards `this`; no `&mut Self` is live.
+                unsafe {
+                    Self::dispatch_handshake_and_process(
+                        this,
+                        response,
+                        full,
+                        head_len,
+                        status_code,
+                    );
+                }
+                return;
+            }
             // Defer the dispatch if the full body isn't present yet.
             match Self::find_content_length(&response) {
                 Some(cl) => {

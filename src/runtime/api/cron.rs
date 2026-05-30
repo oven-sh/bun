@@ -2754,15 +2754,29 @@ pub fn cron_to_task_xml(
   <Triggers>\n",
     );
 
-    // Use semantic checks (bitfield values) not syntax flags for wildcard detection.
-    // e.g. "*/1" sets all bits just like "*" but has _is_wildcard=false.
-    let days_is_wild = cron.days == cron_parser::ALL_DAYS;
-    let weekdays_is_wild = cron.weekdays == cron_parser::ALL_WEEKDAYS;
+    // Two distinct notions of "wild" are needed here:
+    //   - Syntactic (`_is_wildcard`): was the literal `*` written? This drives the
+    //     POSIX DOM/DOW OR-vs-AND rule, so the emitted triggers match next().
+    //   - Semantic (bitfield == all): does the field cover every value? `*/1` and
+    //     `0-6` set every bit without being `*`, and a full range still fires daily.
+    let days_is_wild = cron.days_is_wildcard;
+    let weekdays_is_wild = cron.weekdays_is_wildcard;
     let months_is_wild = cron.months == cron_parser::ALL_MONTHS;
+
+    // Does the job fire every calendar day? Mirror next()'s OR/AND rule exactly:
+    // when both DOM and DOW are syntactically restricted, EITHER covering its full
+    // range means every day fires; otherwise (AND semantics) BOTH must be full.
+    let days_all = cron.days == cron_parser::ALL_DAYS;
+    let weekdays_all = cron.weekdays == cron_parser::ALL_WEEKDAYS;
+    let fires_every_day = if !days_is_wild && !weekdays_is_wild {
+        days_all || weekdays_all
+    } else {
+        days_all && weekdays_all
+    };
 
     // Try to use a single trigger with Repetition for simple repeating patterns.
     // This avoids the 48-trigger limit for high-frequency expressions.
-    // Only valid when: (a) all days/weekdays/months are wild, AND
+    // Only valid when: (a) the job fires every day of every month, AND
     // (b) the pattern is expressible as a single PT interval that doesn't drift.
     let minute_interval = compute_step_interval::<u64>(cron.minutes, 0, 59);
     let hour_interval = compute_step_interval::<u32>(cron.hours, 0, 23);
@@ -2773,8 +2787,7 @@ pub fn cron_to_task_xml(
     //   e.g. "* * * * *" → PT1M, "*/5 * * * *" → PT5M, "*/15 * * * *" → PT15M
     // Case 2: Single minute, evenly-spaced hours that divide 24
     //   e.g. "0 * * * *" → PT1H, "0 */2 * * *" → PT2H, "30 */6 * * *" → PT6H
-    let can_use_repetition = days_is_wild
-        && weekdays_is_wild
+    let can_use_repetition = fires_every_day
         && months_is_wild
         && 'blk: {
             if hours_count == 24

@@ -92,6 +92,99 @@ function saveCrontabState(): Disposable {
 }
 
 // ==========================================================================
+// Normalized schedule (POSIX) — runs everywhere crontab can be stubbed
+//
+// Bun.cron() on POSIX locates `crontab` via PATH. By prepending a tiny shim
+// that records what Bun writes, we can assert the exact normalized schedule
+// (formatNumeric output) on any Linux/macOS host, without a real cron daemon.
+// This is the line that used to diverge from Bun.cron.parse(): a DOM/DOW pair
+// like "0 0 15 * 0-6" must keep the explicit weekday list (POSIX OR) instead
+// of collapsing 0-6 → *.
+// ==========================================================================
+
+async function registerWithCrontabStub(schedule: string, title: string): Promise<string> {
+  using dir = tempDir("bun-cron-stub", {
+    "bin/crontab": [
+      "#!/bin/sh",
+      'store="$STUB_CRONTAB_FILE"',
+      'if [ "$1" = "-l" ]; then',
+      '  [ -f "$store" ] && cat "$store"; exit 0',
+      'elif [ "$1" = "-r" ]; then',
+      '  rm -f "$store"; exit 0',
+      "else",
+      '  cat "$1" > "$store"; exit 0',
+      "fi",
+      "",
+    ].join("\n"),
+    "job.ts": `export default { scheduled() {} };`,
+  });
+  const store = `${dir}/crontab.out`;
+  const binDir = `${dir}/bin`;
+  // chmod +x the shim
+  await using chmod = Bun.spawn({ cmd: ["chmod", "+x", `${binDir}/crontab`], env: bunEnv });
+  await chmod.exited;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `await Bun.cron(${JSON.stringify(`${dir}/job.ts`)}, ${JSON.stringify(schedule)}, ${JSON.stringify(title)});`,
+    ],
+    env: { ...bunEnv, PATH: `${binDir}:${bunEnv.PATH ?? process.env.PATH}`, STUB_CRONTAB_FILE: store },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  // Return the crontab command line (the one carrying `run --cron-title=`), not the
+  // `# bun-cron:` comment line — the timing fields live on the command line.
+  const stored = readFileSync(store, "utf8");
+  const line = stored.split("\n").find(l => l.includes(`run --cron-title=${title}`));
+  expect(line).toBeDefined();
+  return line!;
+}
+
+describe.skipIf(isWindows)("normalized schedule (crontab stub)", () => {
+  test("DOM/DOW both restricted keeps explicit weekday list (POSIX OR)", async () => {
+    // Baseline: parse() fires daily (the 15th OR any weekday), not only the 15th.
+    const from = Date.UTC(2025, 0, 1, 12, 0, 0); // Wed Jan 1
+    expect(Bun.cron.parse("0 0 15 * 0-6", from)!.getUTCDate()).toBe(2);
+
+    const line = await registerWithCrontabStub("0 0 15 * 0-6", "stub-dom-dow-or");
+    expect(line).toStartWith("0 0 15 * 0,1,2,3,4,5,6 ");
+    expect(line).toContain("--cron-period='0 0 15 * 0,1,2,3,4,5,6'");
+  });
+
+  test("only one of DOM/DOW restricted collapses full range to * (no OR rule)", async () => {
+    // DOM=* so the OR rule is inactive; a full weekday range is identical to *.
+    const dow = await registerWithCrontabStub("0 0 * * 0-6", "stub-dow-collapse");
+    expect(dow).toStartWith("0 0 * * * ");
+
+    // DOW=* so the OR rule is inactive; a full day-of-month range collapses too.
+    const dom = await registerWithCrontabStub("0 0 1-31 * *", "stub-dom-collapse");
+    expect(dom).toStartWith("0 0 * * * ");
+  });
+
+  test("both DOM/DOW full explicit ranges stay explicit (OR → daily)", async () => {
+    // Both restricted and each covers its full range: parse() fires daily, and
+    // the stored schedule must keep both explicit so the OS scheduler agrees.
+    const from = Date.UTC(2025, 0, 1, 12, 0, 0);
+    expect(Bun.cron.parse("0 0 1-31 * 0-6", from)!.getUTCDate()).toBe(2);
+
+    const line = await registerWithCrontabStub("0 0 1-31 * 0-6", "stub-both-full");
+    expect(line).toContain(
+      "--cron-period='0 0 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31 * 0,1,2,3,4,5,6'",
+    );
+  });
+
+  test("minutes/hours/months still collapse full ranges to * (no OR rule applies)", async () => {
+    const line = await registerWithCrontabStub("0-59 0-23 * 1-12 *", "stub-collapse-rest");
+    expect(line).toStartWith("* * * * * ");
+  });
+});
+
+// ==========================================================================
 // API shape
 // ==========================================================================
 
@@ -482,6 +575,31 @@ describe.skipIf(!hasAnyCronBackend)("Windows trigger-limit expressions", () => {
         }
       });
     }
+  }
+
+  // Category 2c: Syntactically-explicit full ranges (0-6, 1-31, */1) still cover
+  // every day, so Windows must recognise them as "fires daily" and use Repetition
+  // — not treat them as a restriction and expand per (hour, minute) pair. These
+  // would exceed 48 triggers if the explicit-vs-repetition check were confused.
+  const fullRangeDailyExprs = [
+    { expr: "*/15 * * * 0-6", title: "step15-dow-full" }, // weekday full range, DOM=*
+    { expr: "*/15 * 1-31 * *", title: "step15-dom-full" }, // day-of-month full range, DOW=*
+    { expr: "*/15 * */1 * 0-6", title: "step15-both-full" }, // both explicit & full → OR → daily
+  ];
+  for (const { expr, title } of fullRangeDailyExprs) {
+    test(`${expr} uses Repetition on ${isWindows ? "Windows" : isMacOS ? "macOS" : "Linux"} (fires daily)`, async () => {
+      using dir = tempDir("bun-cron-test", {
+        "job.ts": `export default { scheduled() {} };`,
+      });
+      const t = `test-fullrange-${title}`;
+      try {
+        // Must NOT throw /too many triggers/ — the full range fires every day.
+        const result = await Bun.cron(`${dir}/job.ts`, expr, t);
+        expect(result).toBeUndefined();
+      } finally {
+        await Bun.cron.remove(t);
+      }
+    });
   }
 
   // Category 3: POSIX OR-split (both day-of-month and day-of-week non-wild)
@@ -1018,6 +1136,55 @@ describe.skipIf(!hasLaunchctl)("cron registration (macOS)", () => {
       expect(plist).toContain("<array>");
     } finally {
       removeLaunchdJob("test-mac-or");
+    }
+  });
+
+  test("DOM/DOW full explicit range preserves OR semantics matching Bun.cron.parse()", async () => {
+    // "0 0 15 * 0-6": 0-6 covers every weekday, but because DOM is also restricted
+    // the POSIX OR rule means the job fires daily (the 15th OR any weekday).
+    // Bun.cron.parse() agrees, so --cron-period must keep 0-6 explicit (not `*`).
+    const from = Date.UTC(2025, 0, 1, 12, 0, 0); // Wed Jan 1
+    expect(Bun.cron.parse("0 0 15 * 0-6", from)!.getUTCDate()).toBe(2); // OR → daily, not the 15th
+
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      await Bun.cron(`${dir}/job.ts`, "0 0 15 * 0-6", "test-mac-dom-dow-or");
+      const plist = await Bun.file(plistPath("test-mac-dom-dow-or")).text();
+      const period = /--cron-period=([^<]+)</.exec(plist)![1];
+      expect(period).toBe("0 0 15 * 0,1,2,3,4,5,6");
+      // OR-split: launchd ANDs keys within a dict, so Day and Weekday must live in
+      // separate dicts. Verify both keys appear and no single dict contains both.
+      expect(plist).toContain("<key>Day</key>");
+      expect(plist).toContain("<key>Weekday</key>");
+      const dicts = [...plist.matchAll(/<dict>[\s\S]*?<\/dict>/g)].map(m => m[0]);
+      const calDicts = dicts.filter(d => d.includes("<key>Minute</key>"));
+      expect(calDicts.length).toBeGreaterThan(1);
+      for (const d of calDicts) {
+        expect(d.includes("<key>Day</key>") && d.includes("<key>Weekday</key>")).toBe(false);
+      }
+    } finally {
+      removeLaunchdJob("test-mac-dom-dow-or");
+    }
+  });
+
+  test("only one of DOM/DOW restricted collapses full range to * (no plist bloat)", async () => {
+    // "0 0 * * 0-6": DOM=* so the OR rule is inactive; 0-6 collapsing to * is
+    // semantically identical and avoids an unnecessary 7-dict Cartesian product.
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      await Bun.cron(`${dir}/job.ts`, "0 0 * * 0-6", "test-mac-dow-collapse");
+      const plist = await Bun.file(plistPath("test-mac-dow-collapse")).text();
+      const period = /--cron-period=([^<]+)</.exec(plist)![1];
+      expect(period).toBe("0 0 * * *");
+      expect(plist).not.toContain("<key>Weekday</key>");
+      const dicts = [...plist.matchAll(/<dict>[\s\S]*?<\/dict>/g)].map(m => m[0]);
+      expect(dicts.filter(d => d.includes("<key>Minute</key>")).length).toBe(1);
+    } finally {
+      removeLaunchdJob("test-mac-dow-collapse");
     }
   });
 

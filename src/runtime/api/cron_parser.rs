@@ -98,18 +98,24 @@ impl CronExpression {
     /// suitable for crontab. Returns the written slice of `buf`.
     pub(crate) fn format_numeric<'a>(&self, buf: &'a mut [u8; 512]) -> &'a [u8] {
         use std::io::Write;
+        // POSIX cron's DOM/DOW OR-vs-AND rule keys off the literal `*` token. When
+        // BOTH fields are syntactically non-`*`, a full-range value (e.g. `0-6`,
+        // `1-31`, `*/1`) must NOT collapse to `*` here or the OS scheduler diverges
+        // from next(). When only one is restricted the OR rule is inactive and
+        // collapsing is safe (and avoids launchd plist bloat).
+        let both_restricted = !self.days_is_wildcard && !self.weekdays_is_wildcard;
         let written = {
             let mut w: &mut [u8] = &mut buf[..];
             let start = w.len();
-            format_bitfield(&mut w, self.minutes, 0, 59);
+            format_bitfield(&mut w, self.minutes, 0, 59, false);
             w.write_all(b" ").expect("unreachable");
-            format_bitfield(&mut w, self.hours, 0, 23);
+            format_bitfield(&mut w, self.hours, 0, 23, false);
             w.write_all(b" ").expect("unreachable");
-            format_bitfield(&mut w, self.days, 1, 31);
+            format_bitfield(&mut w, self.days, 1, 31, both_restricted);
             w.write_all(b" ").expect("unreachable");
-            format_bitfield(&mut w, self.months, 1, 12);
+            format_bitfield(&mut w, self.months, 1, 12, false);
             w.write_all(b" ").expect("unreachable");
-            format_bitfield(&mut w, self.weekdays, 0, 6);
+            format_bitfield(&mut w, self.weekdays, 0, 6, both_restricted);
             start - w.len()
         };
         &buf[..written]
@@ -394,8 +400,16 @@ fn bit_set<T: BitInt>(set: T, pos: u32) -> bool {
 }
 
 /// Write a bitfield as a cron field string: "*" if all bits set, or comma-separated values.
-fn format_bitfield<T: BitInt>(w: &mut impl std::io::Write, bits: T, min: u8, max: u8) {
-    if bits.count_ones() == u32::from(max) - u32::from(min) + 1 {
+/// `force_explicit` keeps the comma list even when every bit is set, so a
+/// syntactically-restricted full range (e.g. `0-6`) doesn't collapse to `*`.
+fn format_bitfield<T: BitInt>(
+    w: &mut impl std::io::Write,
+    bits: T,
+    min: u8,
+    max: u8,
+    force_explicit: bool,
+) {
+    if !force_explicit && bits.count_ones() == u32::from(max) - u32::from(min) + 1 {
         w.write_all(b"*").expect("unreachable");
         return;
     }

@@ -25,7 +25,6 @@ jobs:
       - name: Generate root certs and metadata
         id: generate-certs
         run: |
-          set -o pipefail
           cd packages/bun-usockets/
           CERT_METADATA=$(mktemp)
           bun generate-root-certs.mjs -v -f "$CERT_METADATA"
@@ -42,10 +41,11 @@ jobs:
             
             # Store the list of changed files
             CHANGED_FILES=$(git status --porcelain)
+            CHANGED_FILES_DELIMITER=$(uuidgen)
             {
-              echo "changed_files<<EOF"
+              echo "changed_files<<$CHANGED_FILES_DELIMITER"
               echo "$CHANGED_FILES"
-              echo "EOF"
+              echo "$CHANGED_FILES_DELIMITER"
             } >> "$GITHUB_ENV"
           else
             echo "No changes detected"

@@ -488,13 +488,55 @@ pub const URLFormatter = struct {
         abstract,
     };
 
+    // Percent-encode bytes that are unsafe in a URL path component.
+    // Matches WTF's filePathEscapeTable so that unix socket paths with
+    // spaces, brackets, etc. round-trip through the URL parser.
+    fn needsEscape(c: u8, authority: bool) bool {
+        return switch (c) {
+            0x00...0x1F, ' ', '"', '#', '%', '<', '>', '?', '[', '\\', ']', '^', '`', '|', '~' => true,
+            // In the authority position (abstract sockets), @/:/ are
+            // structural delimiters that must also be percent-encoded.
+            '/', '@', ':' => authority,
+            else => c >= 0x7F,
+        };
+    }
+
+    fn writeEscaped(writer: *std.Io.Writer, path: []const u8, authority: bool) !void {
+        var remaining = path;
+        while (remaining.len > 0) {
+            var safe_len: usize = 0;
+            while (safe_len < remaining.len and !needsEscape(remaining[safe_len], authority)) {
+                safe_len += 1;
+            }
+            try writer.writeAll(remaining[0..safe_len]);
+            remaining = remaining[safe_len..];
+            if (remaining.len == 0) break;
+            const c = remaining[0];
+            try writer.print("%{X:0>2}", .{c});
+            remaining = remaining[1..];
+        }
+    }
+
     pub fn format(this: URLFormatter, writer: *std.Io.Writer) !void {
-        try writer.print("{s}://", .{switch (this.proto) {
-            .http => "http",
-            .https => "https",
-            .unix => "unix",
-            .abstract => "abstract",
-        }});
+        switch (this.proto) {
+            .unix, .abstract => {
+                const is_abstract = this.proto == .abstract;
+                try writer.writeAll(if (is_abstract) "abstract://" else "unix://");
+                if (this.hostname) |path| {
+                    // Abstract socket names sit in the URL authority, so
+                    // @, :, / must be escaped. Unix paths sit in the URL
+                    // path where / is a legitimate separator.
+                    try writeEscaped(writer, path, is_abstract);
+                }
+                if (is_abstract) {
+                    try writer.writeAll("/");
+                }
+                return;
+            },
+            .http, .https => {},
+        }
+
+        try writer.print("{s}://", .{if (this.proto == .https) "https" else "http"});
 
         if (this.hostname) |hostname| {
             const needs_brackets = hostname[0] != '[' and strings.isIPV6Address(hostname);
@@ -505,10 +547,6 @@ pub const URLFormatter = struct {
             }
         } else {
             try writer.writeAll("localhost");
-        }
-
-        if (this.proto == .unix) {
-            return;
         }
 
         const is_port_optional = this.port == null or (this.proto == .https and this.port == 443) or

@@ -1205,7 +1205,7 @@ mod _async_tasks {
     impl FsReturn for BunString {
         #[inline]
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-            Ok(bun_jsc::StringJsc::to_js_value(self, global))
+            bun_jsc::StringJsc::transfer_to_js(self, global)
         }
     }
     impl FsReturn for StringOrBuffer {

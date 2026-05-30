@@ -1071,16 +1071,6 @@ impl StringView {
         }
     }
 
-    /// Construct from an already-tagged pointer + length. `ptr` is stored
-    /// verbatim — tag bits are not touched.
-    #[inline]
-    const fn from_tagged_ptr(ptr: *const u8, len: usize) -> StringView {
-        StringView {
-            _unsafe_ptr_do_not_use: ptr,
-            len,
-        }
-    }
-
     #[inline]
     fn init_utf16(items: &[u16]) -> StringView {
         let mut out = StringView {
@@ -1524,19 +1514,6 @@ impl String {
     pub fn borrowed_utf16(slice: &[u16]) -> String {
         Self::wrap(Tag::StringView, StringView::init_utf16(slice))
     }
-    /// Borrow a heap-owned slice the C++ side will free via `BunStringView__freeGlobal`.
-    #[inline]
-    pub fn borrowed_global(slice: &[u8]) -> String {
-        let mut v = StringView::init(slice);
-        v.mark_global();
-        Self::wrap(Tag::StringView, v)
-    }
-    /// Construct from an already pointer-tagged `(ptr, len)` pair (round-trips
-    /// [`tagged_view_ptr`]).
-    #[inline]
-    pub const fn borrowed_tagged(ptr: *const u8, len: usize) -> String {
-        Self::wrap(Tag::StringView, StringView::from_tagged_ptr(ptr, len))
-    }
     /// Wrap a non-null `WTF::StringImpl*`. Does not bump the refcount.
     #[inline]
     pub fn from_wtf(impl_: WTFStringImpl) -> String {
@@ -1584,12 +1561,6 @@ impl String {
             Tag::WTFStringImpl => self.wtf_impl().to_string_view(),
             _ => StringView::EMPTY,
         }
-    }
-    /// Raw tagged pointer of the underlying view (encoding flags intact).
-    #[inline]
-    pub fn tagged_view_ptr(&self) -> (*const u8, usize) {
-        let v = self.view();
-        (v._unsafe_ptr_do_not_use, v.len)
     }
     #[inline]
     pub fn untag_view_ptr(ptr: *const u8) -> *const u8 {
@@ -1666,18 +1637,6 @@ impl String {
         // SAFETY: tag asserted; mutates flag bits in the active union field.
         unsafe { self.value.view.mark_global() }
     }
-    /// Replace the underlying view's slice in place (keeps tag bits clear).
-    #[inline]
-    pub fn set_view_slice(&mut self, slice: &[u8]) {
-        debug_assert!(matches!(self.tag, Tag::StringView | Tag::StaticStringView));
-        self.value.view = StringView::init(slice);
-    }
-    #[inline]
-    pub fn set_view_len(&mut self, len: usize) {
-        debug_assert!(matches!(self.tag, Tag::StringView | Tag::StaticStringView));
-        self.value.view.len = len;
-    }
-
     #[inline]
     pub fn length(&self) -> usize {
         if self.tag == Tag::WTFStringImpl {

@@ -1560,9 +1560,15 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn copyfile(&mut self) {
-        // Record source seekability and clamp a finite slice to the real
-        // available bytes before anything decides how much to copy/truncate.
-        self.prepare_source_window();
+        // Only the uv_fs_copyfile head-slice path (offset == 0, finite size)
+        // needs the source stat up front, to clamp the size before it decides
+        // whether to truncate. Skip the blocking stat for a whole-file copy
+        // (offset == 0, size == MAX_SIZE — nothing consumes it) and for any
+        // offset > 0 copy (the read/write loop re-derives the window from the
+        // opened fd below, so statting here would just be a redundant syscall).
+        if self.offset == 0 && self.size != MAX_SIZE {
+            self.prepare_source_window();
+        }
 
         // uv_fs_copyfile always copies the whole source file; it can't honor a
         // slice offset. A sliced source blob must go through the positioned

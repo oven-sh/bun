@@ -1173,7 +1173,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // `unexpected-response` listener still gets the correct status /
             // headers (matching the pre-existing non-101 behavior, which
             // surfaced no body at all).
-            let is_bodiless = status_code == 204 || status_code == 304 || (100..200).contains(&status_code);
+            let is_bodiless =
+                status_code == 204 || status_code == 304 || (100..200).contains(&status_code);
             if is_bodiless || Self::has_transfer_encoding(&response) {
                 // SAFETY: forwards `this`; no `&mut Self` is live.
                 unsafe {

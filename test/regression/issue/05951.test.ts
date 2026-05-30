@@ -268,9 +268,7 @@ test("ws 'unexpected-response' fires immediately for bodiless 204 on keep-alive"
     server.close();
     process.exit(0);
   `);
-  expect(stdout).toMatchInlineSnapshot(
-    `"{"statusCode":204,"statusMessage":"No Content","xGone":"1"}"`,
-  );
+  expect(stdout).toMatchInlineSnapshot(`"{"statusCode":204,"statusMessage":"No Content","xGone":"1"}"`);
   expect(exitCode).toBe(0);
 });
 

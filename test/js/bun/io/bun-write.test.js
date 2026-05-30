@@ -1,6 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
-import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isPosix, isWindows, tempDir, withoutAggressiveGC } from "harness";
 import { mkfifo } from "mkfifo";
 import path, { join } from "path";
 
@@ -311,19 +311,22 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(exitCode).toBe(0);
     });
 
-    // A pipe/FIFO/socket/char device is not seekable — lseek returns ESPIPE —
-    // so a sliced source fd must NOT attempt the seek. Before the fix this hit
-    // ESPIPE from lseek; now the seek is skipped for non-regular files and the
-    // copy is handled by the normal file-type dispatch (file<>file with a
-    // non-regular source is a separate, pre-existing "not supported" case, but
-    // it must fail cleanly, never with a seek error). mkfifo is POSIX-only.
-    it.skipIf(isWindows)("sliced source from a non-seekable fd (FIFO) never fails with a seek error", async () => {
+    // Jarred's review: a pipe/FIFO/socket/char device isn't seekable — lseek
+    // returns ESPIPE — so the slice offset must NOT be applied to one. The fix
+    // only seeks/offsets regular (S_ISREG) sources; every other type is copied
+    // without seeking. Before the fix, a sliced non-seekable source hit ESPIPE
+    // from lseek and aborted the copy. mkfifo is POSIX-only.
+    //
+    // (file→file with a non-regular source is a separate, pre-existing "not
+    // supported" path, so the copy may still be rejected there — but it must
+    // never be a *seek* failure, which is the regression this guards against.)
+    it.skipIf(!isPosix)("sliced source from a non-seekable fd (FIFO) is copied without seeking", async () => {
       using dir = tempDir("bun-write-file-slice-fifo", {});
       const fifo = join(String(dir), "src.fifo");
       const dst = join(String(dir), "dst.txt");
       mkfifo(fifo);
-      // Open read+write so opening the FIFO doesn't block on a peer, and the fd
-      // is a genuine non-seekable (ISFIFO) source.
+      // O_RDWR so opening the FIFO doesn't block on a peer; the fd is a genuine
+      // non-seekable ISFIFO source.
       const fd = fs.openSync(fifo, fs.constants.O_RDWR);
       try {
         fs.writeSync(fd, alphabet);
@@ -333,9 +336,9 @@ const IS_UV_FS_COPYFILE_DISABLED =
         } catch (e) {
           err = e;
         }
-        // The one thing that must not happen: a seek failure. (ESPIPE is what
-        // lseek(2) returns on a pipe.) Either the copy succeeds or it reports
-        // the pre-existing non-regular-file rejection — never a bad seek.
+        // The lseek on a non-seekable fd would fail with ESPIPE; the gate must
+        // prevent that. A pre-existing "non-regular source" rejection is fine;
+        // a *seek* failure is not.
         if (err) {
           expect(err.syscall).not.toBe("lseek");
           expect(err.code).not.toBe("ESPIPE");

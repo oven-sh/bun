@@ -287,7 +287,7 @@ test("ws 'unexpected-response' fires immediately for bodiless 204 on keep-alive"
 test.skipIf(!isDebug && !isASAN)(
   "ws survives terminate() inside 'unexpected-response' when the socket RSTs mid-body",
   async () => {
-    const { stdout, stderr, exitCode } = await run(/* js */ `
+    const { stdout, exitCode } = await run(/* js */ `
       const { once } = require("events");
       const { WebSocket } = require("ws");
 
@@ -326,7 +326,6 @@ test.skipIf(!isDebug && !isASAN)(
       await once(ws, "close");
       server.stop(true);
     `);
-    if (exitCode !== 0) console.error(stderr);
     expect(stdout).toContain("status=503");
     expect(exitCode).toBe(0);
   },

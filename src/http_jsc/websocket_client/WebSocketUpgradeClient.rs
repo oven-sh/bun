@@ -764,11 +764,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // take) and detach our `tcp` handle, before any dispatch, so a
             // reentrant `cancel()` finds `ext == None` / a detached `tcp` and
             // neither double-releases the socket ref nor re-enters `handle_close`.
-            // SAFETY: short-lived reads/writes on the JS thread; the ext slot
-            // is the `Option<NonNull<Self>>` written in `connect_group`.
+            // SAFETY: short-lived read of the `tcp` handle; `this` is live.
             let tcp = unsafe { (*this).tcp };
-            tcp.ext::<Option<core::ptr::NonNull<Self>>>()
-                .map(|ext| unsafe { (*ext).take() });
+            if let Some(ext) = tcp.ext::<Option<core::ptr::NonNull<Self>>>() {
+                // SAFETY: the ext slot is the `Option<NonNull<Self>>` written in
+                // `connect_group`; single-threaded (JS thread), no other `&mut`
+                // to it is live.
+                unsafe { (*ext).take() };
+            }
             // SAFETY: short-lived `&mut` for the field detach/clear_data.
             unsafe { (*this).tcp.detach() };
             // SAFETY: forwards `this`; `_guard` + the still-held socket ref

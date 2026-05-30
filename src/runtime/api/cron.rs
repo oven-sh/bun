@@ -143,6 +143,8 @@ pub struct CronRegisterJob {
     /// normalized numeric form for crontab/launchd
     schedule: ZString,
     title: ZString,
+    /// caller's working directory at registration time
+    cwd: ZString,
     #[cfg(windows)]
     parsed_cron: CronExpression,
 
@@ -426,10 +428,11 @@ impl CronRegisterJob {
         let mut new_entry = Vec::new();
         if write!(
             &mut new_entry,
-            "# bun-cron: {title}\n{sched} '{exe}' run --cron-title={title} --cron-period='{sched}' '{path}'\n",
+            "# bun-cron: {title}\n{sched} '{exe}' run --cwd='{cwd}' --cron-title={title} --cron-period='{sched}' '{path}'\n",
             title = bstr::BStr::new(s.title.as_bytes()),
             sched = bstr::BStr::new(s.schedule.as_bytes()),
             exe = bstr::BStr::new(s.bun_exe.as_bytes()),
+            cwd = bstr::BStr::new(s.cwd.as_bytes()),
             path = bstr::BStr::new(s.abs_path.as_bytes()),
         )
         .is_err()
@@ -554,6 +557,7 @@ impl CronRegisterJob {
         let xml_bun = try_escape!(s.bun_exe.as_bytes());
         let xml_path = try_escape!(s.abs_path.as_bytes());
         let xml_sched = try_escape!(s.schedule.as_bytes());
+        let xml_cwd = try_escape!(s.cwd.as_bytes());
 
         let mut plist = Vec::new();
         if write!(
@@ -572,6 +576,8 @@ impl CronRegisterJob {
         <string>--cron-period={3}</string>\n\
         <string>{2}</string>\n\
     </array>\n\
+    <key>WorkingDirectory</key>\n\
+    <string>{5}</string>\n\
     <key>StartCalendarInterval</key>\n\
 {4}\n\
     <key>StandardOutPath</key>\n\
@@ -585,6 +591,7 @@ impl CronRegisterJob {
             bstr::BStr::new(&xml_path),
             bstr::BStr::new(&xml_sched),
             bstr::BStr::new(&calendar_xml),
+            bstr::BStr::new(&xml_cwd),
         )
         .is_err()
         {
@@ -748,38 +755,58 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         }
     };
 
-    // Validate path has no single quotes (shell escaping in crontab) or
-    // percent signs (cron interprets % as newline before the shell sees it)
-    for &c in abs_path.as_bytes() {
-        if c == b'\'' {
-            return Err(
-                global.throw_invalid_arguments(format_args!("Path must not contain single quotes"))
-            );
-        }
-        if c == b'%' {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Path must not contain percent signs (cron interprets % as newline)"
-            )));
-        }
-        if c == b'\n' || c == b'\r' {
-            return Err(
-                global.throw_invalid_arguments(format_args!("Path must not contain line breaks"))
-            );
-        }
-    }
-
     let bun_exe = match bun_core::self_exe_path() {
         Ok(p) => p,
         Err(_) => {
             return Err(global.throw(format_args!("Failed to get bun executable path")));
         }
     };
-    if bun_core::index_of_any(bun_exe.as_bytes(), b"'%").is_some() {
-        return Err(global.throw_invalid_arguments(format_args!(
-                "Bun executable path '{}' contains characters (' or %) that cannot be safely embedded in a crontab entry",
-                bstr::BStr::new(bun_exe.as_bytes())
-            )));
+
+    // Capture caller's working directory so the cron job runs with the same
+    // cwd as registration time (matching Lambda bootstrap's --cwd pattern).
+    let mut cwd_buf = PathBuffer::ZEROED;
+    let cwd_owned = match bun_core::getcwd(&mut cwd_buf) {
+        Ok(c) => ZString::from_bytes(c.as_bytes()),
+        Err(_) => {
+            return Err(global.throw(format_args!("Failed to get current working directory")));
+        }
+    };
+
+    // On Linux these values are embedded inside single-quoted shell tokens on a
+    // crontab line, so reject characters that would break out of that context:
+    // single-quote (ends the token), percent (cron turns % into a newline before
+    // the shell sees it), and newline/CR (splits the entry). macOS and Windows go
+    // through XML-escaped native fields and need no such restriction.
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
+    {
+        let checks: [(&str, &[u8]); 3] = [
+            ("Script path", abs_path.as_bytes()),
+            ("Bun executable path", bun_exe.as_bytes()),
+            ("Working directory", cwd_owned.as_bytes()),
+        ];
+        for (label, value) in checks {
+            if let Some(i) = bun_core::index_of_any(value, b"'%\n\r") {
+                return Err(match value[i] {
+                    // Double-quote the path so an embedded single-quote (the very
+                    // character we're reporting) can't visually close the delimiter.
+                    b'\'' => global.throw_invalid_arguments(format_args!(
+                        "{label} \"{}\" must not contain single quotes",
+                        bstr::BStr::new(value)
+                    )),
+                    b'%' => global.throw_invalid_arguments(format_args!(
+                        "{label} \"{}\" must not contain percent signs (cron interprets % as newline)",
+                        bstr::BStr::new(value)
+                    )),
+                    // Don't embed the raw value here: a literal LF/CR in the error
+                    // text would itself split/garble the message.
+                    _ => global.throw_invalid_arguments(format_args!(
+                        "{label} must not contain newlines or carriage returns"
+                    )),
+                });
+            }
+        }
     }
+
     let job = bun_core::heap::into_raw(Box::new(CronRegisterJob {
         promise: jsc::JSPromiseStrong::init(global),
         global: GlobalRef::from(global),
@@ -788,6 +815,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         abs_path,
         schedule: ZString::from_bytes(normalized_schedule),
         title: ZString::from_bytes(title_slice.slice()),
+        cwd: cwd_owned,
         #[cfg(windows)]
         parsed_cron: parsed,
         state: RegisterState::ReadingCrontab,
@@ -858,6 +886,7 @@ impl CronRegisterJob {
             s.title.as_bytes(),
             s.schedule.as_bytes(),
             s.abs_path.as_bytes(),
+            s.cwd.as_bytes(),
         ) {
             Ok(x) => x,
             Err(e) => {
@@ -2745,6 +2774,7 @@ pub fn cron_to_task_xml(
     title: &[u8],
     schedule: &[u8],
     abs_path: &[u8],
+    cwd: &[u8],
 ) -> Result<Vec<u8>, TaskXmlError> {
     let mut xml: Vec<u8> = Vec::new();
 
@@ -2915,6 +2945,7 @@ pub fn cron_to_task_xml(
     let xml_title = xml_escape(title).map_err(|_| TaskXmlError::OutOfMemory)?;
     let xml_sched = xml_escape(schedule).map_err(|_| TaskXmlError::OutOfMemory)?;
     let xml_path = xml_escape(abs_path).map_err(|_| TaskXmlError::OutOfMemory)?;
+    let xml_cwd = xml_escape(cwd).map_err(|_| TaskXmlError::OutOfMemory)?;
 
     let _ = write!(
         &mut xml,
@@ -2936,6 +2967,7 @@ pub fn cron_to_task_xml(
     <Exec>\n\
       <Command>{}</Command>\n\
       <Arguments>run --cron-title={} --cron-period=\"{}\" \"{}\"</Arguments>\n\
+      <WorkingDirectory>{}</WorkingDirectory>\n\
     </Exec>\n\
   </Actions>\n\
 </Task>\n",
@@ -2943,6 +2975,7 @@ pub fn cron_to_task_xml(
         bstr::BStr::new(&xml_title),
         bstr::BStr::new(&xml_sched),
         bstr::BStr::new(&xml_path),
+        bstr::BStr::new(&xml_cwd),
     );
 
     Ok(xml)

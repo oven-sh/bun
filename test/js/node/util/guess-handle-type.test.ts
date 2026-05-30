@@ -1,5 +1,5 @@
-// Tests for `internalBinding('util').guessHandleType(fd)` — the Zig impl
-// in src/bun.js/node/node_util_binding.zig. Exposed for testing via
+// Tests for `internalBinding('util').guessHandleType(fd)` — implemented in
+// src/runtime/node/node_util_binding.rs. Exposed for testing via
 // `bun:internal-for-testing`.
 import { createSocketPair, guessHandleType, guessHandleTypeNative, memfd_create } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";

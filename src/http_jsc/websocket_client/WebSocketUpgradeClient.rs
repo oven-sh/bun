@@ -1354,6 +1354,22 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // SAFETY: `this` carries root provenance; balanced on drop.
         let _guard = unsafe { ThisPtr::new(this) }.ref_guard();
 
+        // On 101, nest the `did_receive_handshake_response` ('handshake'/
+        // 'upgrade') and `did_connect` ('open') dispatches below under one
+        // event-loop scope. Each of those calls its own enter()/exit(); exit()
+        // drains microtasks when the count drops 1→0. Without this outer scope
+        // the count would hit 0 between the two events, so a microtask queued
+        // in an 'upgrade' handler would run before 'open' and observe
+        // readyState CONNECTING. Holding the count ≥1 across both makes them
+        // fire back-to-back like npm `ws`, draining microtasks once after
+        // 'open'. Scope it to 101 only: on a non-101 response `process_response`
+        // below calls `terminate` instead of `did_connect`, and the
+        // 'unexpected-response' body stream relies on the microtask checkpoint
+        // at `did_receive_handshake_response`'s exit() running *before* that
+        // teardown — swallowing it hangs the stream.
+        let _loop_scope = (status_code == 101)
+            .then(|| bun_jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope());
+
         // On 101, the bytes after the header block are the first WebSocket
         // frame — not HTTP body. Surface an empty body to the handshake
         // event; `process_response` still hands `full[head_len..]` to the

@@ -125,6 +125,62 @@ test.concurrent("ws emits 'upgrade' with headers before 'open' on 101", async ()
   expect(exitCode).toBe(0);
 });
 
+// Real npm `ws` fires 'upgrade' and 'open' back-to-back in the same frame, so a
+// microtask queued inside an 'upgrade' handler runs after the socket is OPEN.
+// The native client dispatches 'upgrade' (handshake) then 'open' (connect); each
+// dispatch drains microtasks on exit, so without a shared event-loop scope the
+// queue drained *between* the two and the microtask observed readyState
+// CONNECTING (0). A single scope around both dispatches keeps the drain after
+// 'open', so the microtask sees OPEN (1).
+test.concurrent("ws microtask queued in 'upgrade' handler observes readyState OPEN", async () => {
+  const { stdout, exitCode } = await run(/* js */ `
+    const { createServer } = require("net");
+    const { createHash } = require("crypto");
+    const { once } = require("events");
+    const { WebSocket } = require("ws");
+
+    const server = createServer(conn => {
+      let buf = "";
+      const onData = chunk => {
+        buf += chunk.toString();
+        if (buf.indexOf("\\r\\n\\r\\n") === -1) return;
+        conn.off("data", onData);
+        const key = /Sec-WebSocket-Key: (.+)\\r\\n/i.exec(buf)[1];
+        const accept = createHash("sha1")
+          .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+          .digest("base64");
+        conn.write(
+          "HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: " +
+            accept + "\\r\\n\\r\\n",
+        );
+      };
+      conn.on("data", onData);
+    }).listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
+    const { promise, resolve } = Promise.withResolvers();
+    ws.on("upgrade", () => {
+      // Synchronously the socket is still CONNECTING; the microtask must not
+      // run until after 'open' has set it to OPEN.
+      const atUpgrade = ws.readyState;
+      queueMicrotask(() => resolve({ atUpgrade, inMicrotask: ws.readyState }));
+    });
+    const states = await promise;
+    console.log(JSON.stringify({
+      atUpgrade: states.atUpgrade,
+      inMicrotask: states.inMicrotask,
+      CONNECTING: WebSocket.CONNECTING,
+      OPEN: WebSocket.OPEN,
+    }));
+    ws.terminate();
+    server.close();
+  `);
+  // atUpgrade stays CONNECTING (0); the microtask drains after 'open' so it sees OPEN (1).
+  expect(stdout).toMatchInlineSnapshot(`"{"atUpgrade":0,"inMicrotask":1,"CONNECTING":0,"OPEN":1}"`);
+  expect(exitCode).toBe(0);
+});
+
 // The non-101 body can span multiple TCP reads. Previously the shim dispatched
 // on the first read, truncating large error bodies. The native client now
 // buffers until Content-Length is satisfied (or EOF) before dispatching.

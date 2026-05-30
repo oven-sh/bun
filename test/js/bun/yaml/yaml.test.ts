@@ -2266,20 +2266,25 @@ folded: >
             expect(() => YAML.parse(`a\n%YAML 1.2\n---\nb`)).toThrow();
           });
 
-          // bun emits a spurious leading null doc for these
-          test.todo.each([`...\nfoo`, `...\n---\nfoo`, `﻿...\nfoo`, `# c\n...\n# c\nfoo`])(
-            "[211] leading `...` before any doc — bun emits spurious null doc: %j",
+          // [211] the first `l-any-document?` is optional, so a stream that
+          // opens with `...` (l-document-suffix) has no preceding null doc.
+          test.each([`...\nfoo`, `...\n---\nfoo`, `﻿...\nfoo`, `# c\n...\n# c\nfoo`])(
+            "[211] leading `...` before any doc — no spurious null doc: %j",
             input => {
-              expect(() => YAML.parse(input)).toThrow();
+              expect(YAML.parse(input)).toBe("foo");
             },
           );
 
-          test.todo("[211]/[202] BOM as inter-doc prefix — bun keeps BOM in content", () => {
-            expect(() => YAML.parse(`a\n...\n﻿b`)).toThrow();
+          test("[211]/[202] BOM as inter-doc prefix — stripped from content", () => {
+            expect(YAML.parse(`a\n...\n﻿b`)).toEqual(["a", "b"]);
           });
 
-          test.todo("[211]/[202] BOM + newline as inter-doc prefix — bun emits BOM as a doc", () => {
-            expect(() => YAML.parse(`a\n...\n﻿\n---\nb`)).toThrow();
+          test("[211]/[202] BOM + newline as inter-doc prefix — not a doc", () => {
+            expect(YAML.parse(`a\n...\n﻿\n---\nb`)).toEqual(["a", "b"]);
+          });
+
+          test("[211]/[202] BOM directly before `---` between docs", () => {
+            expect(YAML.parse(`a\n...\n﻿---\nb`)).toEqual(["a", "b"]);
           });
         });
 

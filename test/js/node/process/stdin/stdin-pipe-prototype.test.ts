@@ -221,3 +221,37 @@ test("process.stdin.destroy() while reading lets the process exit", async () => 
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
+
+// After EOF the reader is torn down (reader_terminated). Pushing EOF runs the
+// readable machine, which can fire read(0) -> _read -> readStart again; without
+// a DONE guard that re-arm registers a fresh poll on the drained fd that
+// outlives the Pipe, so GC finalize frees the struct out from under the live
+// poll -> heap-use-after-free (ASAN) / hang. This exercises that path: data
+// then EOF on a stdin that was pause()/resume()'d.
+test("process.stdin after pause/resume survives EOF without use-after-free", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        process.stdin.on("data", chunk => process.stdout.write(chunk));
+        process.stdin.pause();
+        process.stdin.resume();
+      `,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  proc.stdin.write("hello\n");
+  proc.stdin.end();
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // stderr must be empty — an ASAN UAF report would land here.
+  expect(stderr).toBe("");
+  expect(stdout).toBe("hello\n");
+  expect(exitCode).toBe(0);
+});

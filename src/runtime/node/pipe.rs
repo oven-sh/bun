@@ -68,6 +68,10 @@ bitflags::bitflags! {
         const READER_STARTED = 1 << 2;
         /// user called handle.unref(); readStart must not re-ref
         const UNREFFED = 1 << 3;
+        /// reader reached its terminal callback (EOF/error). readStart must not
+        /// re-arm: start() would register a fresh poll on the drained fd, and a
+        /// later GC finalize frees the Pipe out from under that live poll (UAF).
+        const DONE = 1 << 4;
     }
 }
 
@@ -251,7 +255,11 @@ impl Pipe {
 
     pub(crate) fn read_start(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
         bun_output::scoped_log!(PipeHandle, "readStart");
-        if self.flags.get().contains(Flags::CLOSED) {
+        // Once closed or EOF'd the reader is torn down; re-arming would register
+        // a new poll on a drained/closed fd that outlives the struct. The
+        // readable machine can still call read(0) -> _read -> readStart after
+        // push(null) (EOF), so this guard is load-bearing, not defensive.
+        if self.flags.get().intersects(Flags::CLOSED | Flags::DONE) {
             return Ok(JSValue::js_number_from_int32(0));
         }
         if self.fd.get() == Fd::INVALID {
@@ -490,7 +498,11 @@ impl Pipe {
 
     pub(crate) fn on_reader_done(&self) {
         bun_output::scoped_log!(PipeHandle, "onReaderDone");
+        // Mark DONE before call_on_read: pushing EOF (null) runs JS that can
+        // re-enter read_start synchronously, and re-arming a finished reader
+        // registers a stray poll that outlives the struct (UAF at GC).
         self.update_flags(|f| f.remove(Flags::READING));
+        self.update_flags(|f| f.insert(Flags::DONE));
         // close_handle=false means BufferedReader leaves the poll registered and
         // ref'd; drop both so the process can exit after EOF.
         self.reader.with_mut(|r| {
@@ -505,6 +517,7 @@ impl Pipe {
     pub(crate) fn on_reader_error(&self, err: &sys::Error) {
         bun_output::scoped_log!(PipeHandle, "onReaderError: {:?}", err);
         self.update_flags(|f| f.remove(Flags::READING));
+        self.update_flags(|f| f.insert(Flags::DONE));
         self.reader.with_mut(|r| {
             r.pause();
             r.update_ref(false);

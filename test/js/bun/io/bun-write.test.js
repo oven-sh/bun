@@ -1,6 +1,16 @@
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
-import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isPosix, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  exampleHtml,
+  exampleSite,
+  gcTick,
+  isPosix,
+  isWindows,
+  tempDir,
+  withoutAggressiveGC,
+} from "harness";
 import { mkfifo } from "mkfifo";
 import path, { join } from "path";
 

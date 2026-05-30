@@ -336,6 +336,7 @@ pub fn generate_files(
         argv.push(b"bun");
         argv.push(b"--only-missing");
         argv.push(b"install");
+        argv.push(b"--");
         argv.extend(dependencies.iter().map(|d| &d[..]));
         run_install(&mut argv)?;
     }
@@ -361,6 +362,7 @@ pub fn generate_files(
                     shadcn_argv.push(b"--src-dir");
                 }
                 shadcn_argv.push(b"-y");
+                shadcn_argv.push(b"--");
                 shadcn_argv.extend(components.keys().iter().map(|k| &k[..]));
 
                 // print "bun" but use bun.selfExePath()

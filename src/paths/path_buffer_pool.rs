@@ -214,7 +214,7 @@ static U16_POOL: Pool<WPathBuffer> = Pool::new();
 /// Sealed via the private [`Sealed`] supertrait: only `PathBuffer` and
 /// `WPathBuffer` implement it. It is a bound on the public [`PoolGuard`], but
 /// external crates cannot implement it or observe `pool()`.
-pub trait PoolStorage: Sealed + Sized + Default + 'static {
+pub trait PoolStorage: Sealed + Sized + 'static {
     #[doc(hidden)]
     fn pool() -> &'static Pool<Self>;
     /// Allocate a fresh node directly on the heap (no stack temporary). The

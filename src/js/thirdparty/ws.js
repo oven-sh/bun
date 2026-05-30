@@ -89,6 +89,31 @@ const eventIds = {
 // must be identity-stable so `super.off` can remove it later if needed.
 function noopBridgeListener() {}
 
+// Headers for which Node's http.IncomingMessage keeps only the first value and
+// discards later duplicates, matching lib/_http_incoming.js matchKnownFields.
+// Real `ws` hands consumers that Node object, so the synthetic IncomingMessage
+// passed to 'unexpected-response' must coalesce the same way.
+const kSingletonHeaders = new Set([
+  "age",
+  "authorization",
+  "content-length",
+  "content-type",
+  "etag",
+  "expires",
+  "from",
+  "host",
+  "if-modified-since",
+  "if-unmodified-since",
+  "last-modified",
+  "location",
+  "max-forwards",
+  "proxy-authorization",
+  "referer",
+  "retry-after",
+  "server",
+  "user-agent",
+]);
+
 let lazyReadable;
 function makeHandshakeResponse(statusCode, statusMessage, rawHeaders, body) {
   lazyReadable ??= require("node:stream").Readable;
@@ -102,8 +127,14 @@ function makeHandshakeResponse(statusCode, statusMessage, rawHeaders, body) {
     if (lower === "set-cookie") {
       if (prev === undefined) headers[lower] = [value];
       else prev.push(value);
+    } else if (prev === undefined) {
+      headers[lower] = value;
+    } else if (kSingletonHeaders.has(lower)) {
+      // Keep the first occurrence; discard the duplicate.
+    } else if (lower === "cookie") {
+      headers[lower] = prev + "; " + value;
     } else {
-      headers[lower] = prev === undefined ? value : prev + ", " + value;
+      headers[lower] = prev + ", " + value;
     }
   }
   res.statusCode = statusCode;

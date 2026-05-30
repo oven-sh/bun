@@ -179,6 +179,61 @@ test("ws 'unexpected-response' waits for full Content-Length body across multipl
   expect(exitCode).toBe(0);
 });
 
+// The synthetic IncomingMessage passed to 'unexpected-response' must coalesce
+// duplicate headers the way Node's http.IncomingMessage.headers does (real ws
+// hands the consumer that Node object): singleton headers keep the first value
+// and discard duplicates, duplicate `cookie` joins with "; ", everything else
+// joins with ", ", and set-cookie is always an array. rawHeaders stays verbatim.
+test("ws 'unexpected-response' coalesces duplicate headers like Node IncomingMessage", async () => {
+  const { stdout, exitCode } = await run(/* js */ `
+    const { createServer } = require("net");
+    const { once } = require("events");
+    const { WebSocket } = require("ws");
+
+    const server = createServer(s =>
+      s.once("data", () =>
+        s.end(
+          "HTTP/1.1 401 Unauthorized\\r\\n" +
+          // singleton header repeated -> first value kept
+          "Content-Length: 0\\r\\n" +
+          "Content-Length: 999\\r\\n" +
+          // duplicate cookie -> joined with "; "
+          "Cookie: a=1\\r\\n" +
+          "Cookie: b=2\\r\\n" +
+          // duplicate non-singleton -> joined with ", "
+          "X-Multi: one\\r\\n" +
+          "X-Multi: two\\r\\n" +
+          // set-cookie -> array
+          "Set-Cookie: s1=1\\r\\n" +
+          "Set-Cookie: s2=2\\r\\n" +
+          "\\r\\n",
+        ),
+      ),
+    ).listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
+    ws.on("error", () => {});
+    const [, res] = await new Promise(resolve =>
+      ws.once("unexpected-response", (req, res) => resolve([req, res])),
+    );
+    console.log(JSON.stringify({
+      contentLength: res.headers["content-length"],
+      cookie: res.headers["cookie"],
+      xMulti: res.headers["x-multi"],
+      setCookie: res.headers["set-cookie"],
+      rawContentLengths: res.rawHeaders.filter((_, i) => i % 2 === 0)
+        .reduce((n, k) => n + (k.toLowerCase() === "content-length" ? 1 : 0), 0),
+    }));
+    ws.terminate();
+    server.close();
+  `);
+  expect(stdout).toMatchInlineSnapshot(
+    `"{"contentLength":"0","cookie":"a=1; b=2","xMulti":"one, two","setCookie":["s1=1","s2=2"],"rawContentLengths":2}"`,
+  );
+  expect(exitCode).toBe(0);
+});
+
 // `on()` / `once()` are not the only EventEmitter registration APIs — ws
 // consumers also reach for `addListener` / `prependListener` /
 // `prependOnceListener` and (from DOM-style code) `addEventListener`. Each

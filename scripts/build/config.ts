@@ -170,8 +170,9 @@ export interface Config {
   /** Generated code output, e.g. buildDir/codegen/. */
   codegenDir: string;
   /**
-   * ccache/zig-cache + prebuilt extraction (webkit, nodejs-headers).
-   * Local: shared across checkouts. CI: per-build (ephemeral, under buildDir).
+   * ccache + prebuilt extraction (webkit, nodejs-headers, cross-compile
+   * sysroots). Local: shared across checkouts. CI: per-build (ephemeral,
+   * under buildDir).
    */
   cacheDir: string;
   /**

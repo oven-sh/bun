@@ -262,7 +262,10 @@ export async function extractTarGz(tarball: string, dest: string, stripComponent
  * delete a possibly-shared artifact.
  */
 export function tarballListsCleanly(tarball: string): boolean {
-  const r = spawnSync("tar", ["-tzf", tarball], { stdio: "ignore" });
+  // tarExe, not bare "tar": on Windows GNU tar (Git-for-Windows) parses the
+  // `C:\...` path as an rsh host:path spec and exits non-zero — which would
+  // look like corruption and delete a valid tarball. tarExe picks bsdtar.
+  const r = spawnSync(tarExe, ["-tzf", tarball], { stdio: "ignore" });
   return r.error !== undefined || r.signal !== null || r.status === 0;
 }
 

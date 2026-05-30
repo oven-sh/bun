@@ -236,8 +236,12 @@ export function getStdinStream(
   stream.fd = fd;
 
   // tty.ReadStream is supposed to extend from net.Socket.
-  // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
-  if (isTTY) {
+  // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods.
+  // fdType !== file covers the TCP/UDP/unknown-socket fallthrough above (a socket
+  // fd createHandle rejected): those land on this fs.ReadStream, which has no
+  // native ref/unref, so process.stdin.ref()/unref() would otherwise throw.
+  // (pipe/AF_UNIX-socket stdin already returned early as a net.Socket.)
+  if (isTTY || fdType !== BunProcessStdinFdType.file) {
     stream.ref = function () {
       forceUnref = false;
       own();

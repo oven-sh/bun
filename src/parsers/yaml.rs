@@ -2760,7 +2760,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             let nz = major_digits
                 .iter()
                 .position(|&d| Enc::wide(d) != 0x30)
-                .unwrap_or(major_digits.len().saturating_sub(1));
+                .unwrap_or_else(|| major_digits.len().saturating_sub(1));
             if major_digits[nz..] != *Enc::literal(b"1").as_ref() {
                 return Err(ParseError::InvalidDirective);
             }
@@ -6574,13 +6574,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.inc(1);
                     continue;
                 }
-                // [3] c-byte-order-mark — [202]/[211] admit BOM in
-                // l-document-prefix before each document, not just at
-                // [202] l-document-prefix admits c-byte-order-mark before
-                // l-comment*. Only strip BOM here when the parser is between
-                // documents — `at_doc_prefix` is the explicit gate. A BOM at
-                // line-start *inside* a node (`[a,\n﻿b]`, `a: b\n﻿c: d`) is
-                // content, not a prefix.
+                // [202]/[211] l-document-prefix admits c-byte-order-mark
+                // before each document. Strip BOM only when between documents
+                // (`at_doc_prefix` is set after `...`). A BOM at line-start
+                // inside a node (`[a,\n﻿b]`, `a: b\n﻿c: d`) is content.
                 0xEF | 0xFEFF
                     if self.at_doc_prefix
                         && self.is_at_line_start()

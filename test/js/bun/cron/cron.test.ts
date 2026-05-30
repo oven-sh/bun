@@ -96,9 +96,11 @@ function saveCrontabState(): Disposable {
 //
 // Bun.cron() on Linux locates `crontab` via PATH. By prepending a tiny shim
 // that records what Bun writes, we can assert the exact normalized schedule
-// (formatNumeric output) without a real cron daemon. This is the line that
-// used to diverge from Bun.cron.parse(): a DOM/DOW pair like "0 0 15 * 0-6"
-// must keep the explicit weekday list (POSIX OR) instead of collapsing 0-6 → *.
+// (formatNumeric output) without a real cron daemon. This is the schedule that
+// used to diverge from Bun.cron.parse(): the DOM/DOW OR rule must be preserved,
+// so "0 0 15 * 5" (15th OR Friday, a genuine two-set match) keeps both fields
+// explicit, while "0 0 15 * 0-6" (OR with a full weekday range → every day)
+// collapses to "0 0 * * *".
 //
 // Linux-only: Bun.cron() picks its backend at compile time — launchd on macOS
 // (start_mac), schtasks on Windows — so the crontab shim is only reached on

@@ -99,40 +99,39 @@ impl CronExpression {
     pub(crate) fn format_numeric<'a>(&self, buf: &'a mut [u8; 512]) -> &'a [u8] {
         use std::io::Write;
         // POSIX cron's DOM/DOW OR-vs-AND rule keys off the literal `*` token, and
-        // the normalized schedule must preserve whatever next() computes:
+        // the normalized schedule must fire exactly when next() does:
         //
         //  - Only one of DOM/DOW restricted: AND semantics, the `*` field matches
-        //    all, so a full range on the other field is equivalent to `*`. Collapse.
+        //    all, so a full range on the other field already collapses to `*` via
+        //    format_bitfield.
         //  - Both restricted but at least one covers its full range: OR semantics
-        //    make it fire *every day*, i.e. identical to `* … *`. Collapse both so
-        //    the crontab/launchd backends don't emit a giant OR-split product.
-        //  - Both restricted and neither is full (a genuine "15th OR Friday"): keep
-        //    both explicit so the backends apply the OR split.
+        //    make it fire *every day*, i.e. identical to `* … *`. Force both to `*`
+        //    so the crontab/launchd backends don't emit a giant OR-split product.
+        //  - Both restricted and neither is full (a genuine "15th OR Friday"):
+        //    neither field is all-bits-set, so format_bitfield keeps both explicit
+        //    and the backends apply the OR split.
         let both_restricted = !self.days_is_wildcard && !self.weekdays_is_wildcard;
         let fires_every_day =
             both_restricted && (self.days == ALL_DAYS || self.weekdays == ALL_WEEKDAYS);
-        let keep_days_explicit = both_restricted && !fires_every_day;
         let written = {
             let mut w: &mut [u8] = &mut buf[..];
             let start = w.len();
-            format_bitfield(&mut w, self.minutes, 0, 59, false);
+            format_bitfield(&mut w, self.minutes, 0, 59);
             w.write_all(b" ").expect("unreachable");
-            format_bitfield(&mut w, self.hours, 0, 23, false);
+            format_bitfield(&mut w, self.hours, 0, 23);
             w.write_all(b" ").expect("unreachable");
-            // When the job fires every day, emit `*` directly: a full DOM range
-            // OR'd against a full (or any) DOW range covers every calendar day.
             if fires_every_day {
                 w.write_all(b"*").expect("unreachable");
             } else {
-                format_bitfield(&mut w, self.days, 1, 31, keep_days_explicit);
+                format_bitfield(&mut w, self.days, 1, 31);
             }
             w.write_all(b" ").expect("unreachable");
-            format_bitfield(&mut w, self.months, 1, 12, false);
+            format_bitfield(&mut w, self.months, 1, 12);
             w.write_all(b" ").expect("unreachable");
             if fires_every_day {
                 w.write_all(b"*").expect("unreachable");
             } else {
-                format_bitfield(&mut w, self.weekdays, 0, 6, keep_days_explicit);
+                format_bitfield(&mut w, self.weekdays, 0, 6);
             }
             start - w.len()
         };
@@ -418,16 +417,8 @@ fn bit_set<T: BitInt>(set: T, pos: u32) -> bool {
 }
 
 /// Write a bitfield as a cron field string: "*" if all bits set, or comma-separated values.
-/// `force_explicit` keeps the comma list even when every bit is set, so a
-/// syntactically-restricted full range (e.g. `0-6`) doesn't collapse to `*`.
-fn format_bitfield<T: BitInt>(
-    w: &mut impl std::io::Write,
-    bits: T,
-    min: u8,
-    max: u8,
-    force_explicit: bool,
-) {
-    if !force_explicit && bits.count_ones() == u32::from(max) - u32::from(min) + 1 {
+fn format_bitfield<T: BitInt>(w: &mut impl std::io::Write, bits: T, min: u8, max: u8) {
+    if bits.count_ones() == u32::from(max) - u32::from(min) + 1 {
         w.write_all(b"*").expect("unreachable");
         return;
     }

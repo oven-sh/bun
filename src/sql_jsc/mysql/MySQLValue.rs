@@ -563,6 +563,82 @@ impl DateTime {
         }
     }
 
+    /// Parse a MySQL text-protocol DATE/DATETIME/TIMESTAMP string
+    /// (`YYYY-MM-DD`, `YYYY-MM-DD HH:MM:SS`, or with `.ffffff` fractional
+    /// seconds) into components so the text path can treat them as UTC, the
+    /// same way the binary path does. Returns `None` for MySQL zero-date
+    /// sentinels (`0000-00-00`), impossible calendar values (`2024-02-31`), and
+    /// malformed input, so the caller surfaces `Invalid Date` — matching what
+    /// the previous `Date.parse` path produced for those.
+    pub fn from_text(text: &[u8]) -> Option<DateTime> {
+        fn parse_u(bytes: &[u8]) -> Option<u32> {
+            if bytes.is_empty() {
+                return None;
+            }
+            let mut n: u32 = 0;
+            for &c in bytes {
+                if !c.is_ascii_digit() {
+                    return None;
+                }
+                n = n.checked_mul(10)?.checked_add(u32::from(c - b'0'))?;
+            }
+            Some(n)
+        }
+
+        if text.len() < 10 || text[4] != b'-' || text[7] != b'-' {
+            return None;
+        }
+        let year = u16::try_from(parse_u(&text[0..4])?).ok()?;
+        let month = u8::try_from(parse_u(&text[5..7])?).ok()?;
+        let day = u8::try_from(parse_u(&text[8..10])?).ok()?;
+        if month < 1 || month > 12 || day < 1 || day > days_in_month(year, month) {
+            return None;
+        }
+
+        let mut result = DateTime {
+            year,
+            month,
+            day,
+            ..Default::default()
+        };
+        if text.len() == 10 {
+            return Some(result);
+        }
+
+        // Either "YYYY-MM-DD HH:MM:SS" or the ISO "YYYY-MM-DDTHH:MM:SS".
+        if text.len() < 19
+            || (text[10] != b' ' && text[10] != b'T')
+            || text[13] != b':'
+            || text[16] != b':'
+        {
+            return None;
+        }
+        result.hour = u8::try_from(parse_u(&text[11..13])?).ok()?;
+        result.minute = u8::try_from(parse_u(&text[14..16])?).ok()?;
+        result.second = u8::try_from(parse_u(&text[17..19])?).ok()?;
+        if result.hour > 23 || result.minute > 59 || result.second > 59 {
+            return None;
+        }
+
+        if text.len() == 19 {
+            return Some(result);
+        }
+        if text[19] != b'.' {
+            return None;
+        }
+        // Fractional seconds: up to 6 digits, right-padded to microseconds.
+        let frac = &text[20..];
+        if frac.is_empty() || frac.len() > 6 {
+            return None;
+        }
+        let mut micro = parse_u(frac)?;
+        for _ in 0..(6 - frac.len()) {
+            micro *= 10;
+        }
+        result.microsecond = micro;
+        Some(result)
+    }
+
     pub fn to_binary(&self, field_type: FieldType, buffer: &mut [u8]) -> u8 {
         match field_type {
             FieldType::MYSQL_TYPE_YEAR => {
@@ -597,7 +673,25 @@ impl DateTime {
     }
 
     pub fn to_js_timestamp(&self, global_object: &JSGlobalObject) -> JsResult<f64> {
-        global_object.gregorian_date_time_to_ms(
+        // MySQL in permissive sql_mode can store zero / partial-zero dates like
+        // "0000-00-00" or "2024-00-15" and send them over the binary protocol.
+        // WTF::GregorianDateTime would silently wrap month=0 to December of the
+        // prior year, so validate here and surface NaN instead — matching the
+        // Invalid Date the text path produces via from_text().
+        if self.month < 1
+            || self.month > 12
+            || self.day < 1
+            || self.day > days_in_month(self.year, self.month)
+            || self.hour > 23
+            || self.minute > 59
+            || self.second > 59
+        {
+            return Ok(f64::NAN);
+        }
+        // from_unix_timestamp() breaks a Date's UTC epoch into Y/M/D h:m:s with
+        // pure-UTC arithmetic, so decode must also treat the stored wall-clock
+        // as UTC — otherwise a Date round-trips shifted by the local UTC offset.
+        global_object.gregorian_date_time_to_ms_utc(
             i32::from(self.year),
             i32::from(self.month),
             i32::from(self.day),

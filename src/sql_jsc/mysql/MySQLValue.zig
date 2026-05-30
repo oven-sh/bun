@@ -371,7 +371,10 @@ pub const Value = union(enum) {
         }
 
         pub fn toJSTimestamp(this: *const DateTime, globalObject: *JSC.JSGlobalObject) bun.JSError!f64 {
-            return globalObject.gregorianDateTimeToMS(
+            // fromUnixTimestamp() breaks a Date's UTC epoch into Y/M/D h:m:s with
+            // pure-UTC arithmetic, so decode must also treat the stored wall-clock
+            // as UTC — otherwise a Date round-trips shifted by the local UTC offset.
+            return globalObject.gregorianDateTimeToMSUTC(
                 this.year,
                 this.month,
                 this.day,

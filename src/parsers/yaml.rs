@@ -1913,13 +1913,17 @@ fn core_schema_int(s: &[u8]) -> Option<f64> {
         if hex.is_empty() || !hex.iter().all(u8::is_ascii_hexdigit) {
             return None;
         }
-        return bun_core::fmt::parse_unsigned::<u64>(s, 0).ok().map(|v| v as f64);
+        return bun_core::fmt::parse_unsigned::<u64>(s, 0)
+            .ok()
+            .map(|v| v as f64);
     }
     if let Some(oct) = s.strip_prefix(b"0o") {
         if oct.is_empty() || !oct.iter().all(|b| (b'0'..=b'7').contains(b)) {
             return None;
         }
-        return bun_core::fmt::parse_unsigned::<u64>(s, 0).ok().map(|v| v as f64);
+        return bun_core::fmt::parse_unsigned::<u64>(s, 0)
+            .ok()
+            .map(|v| v as f64);
     }
     let (sign, digits) = match s.first() {
         Some(b'+') => (1.0, &s[1..]),

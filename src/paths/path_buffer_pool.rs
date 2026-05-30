@@ -47,6 +47,14 @@ use crate::{PathBuffer, WPathBuffer};
 ///
 /// Only reachable through the sealed [`PoolStorage`]; fields are private and it
 /// is not meant to be named directly.
+///
+/// `#[repr(C)]` pins the field order the SAFETY comments rely on: `next` first
+/// (so the node "leads with a pointer" — its ≥8 alignment frees the low bit for
+/// `IS_POPPING`) and `buf` at a ≥8-aligned offset (pooled `PathBuffer`s are
+/// reinterpreted as `[u16]` on Windows, which needs ≥2 alignment — see
+/// `bun_core::PathBuffer`). Layout is identical to what `repr(Rust)` picks
+/// today, so this is zero-cost; it just makes the documented layout guaranteed.
+#[repr(C)]
 pub struct Node<T> {
     next: *mut Node<T>,
     buf: T,

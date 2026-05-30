@@ -56,12 +56,9 @@ impl BuildMessage {
         )
         .expect("infallible: in-memory write");
 
-        let mut str = BunString::ascii(&text);
-        str.set_output_encoding();
-        if str.is_utf8() {
-            let out = str.to_js_value(global);
+        if !bun_core::strings::is_all_ascii(&text) {
             // default_allocator.free(text) → `text` drops on return.
-            return out;
+            return BunString::borrow_utf8(&text).to_js_value(global);
         }
 
         // All-ASCII path: hand the buffer to JSC as an external Latin-1 string.
@@ -71,8 +68,7 @@ impl BuildMessage {
         let ptr = bun_core::heap::into_raw(text.into_boxed_slice()).cast::<u8>();
         // SAFETY: ptr/len describe a contiguous mimalloc-owned buffer just
         // released by `heap::alloc`; it stays live until JSC frees it.
-        let mut str = BunString::ascii(unsafe { bun_core::ffi::slice(ptr, len) });
-        str.set_output_encoding();
+        let str = BunString::ascii(unsafe { bun_core::ffi::slice(ptr, len) });
         str.to_external_value(global)
     }
 

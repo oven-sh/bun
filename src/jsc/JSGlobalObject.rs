@@ -1474,10 +1474,8 @@ impl JSGlobalObject {
         let mut buf: Vec<u8> = Vec::new();
         use core::fmt::Write;
         write!(WriteVec(&mut buf), "{}", args).expect("unreachable");
-        let mut zig_str = BunString::ascii(&buf);
-        zig_str.detect_encoding();
         // it alwayas clones
-        zig_str.to_error_instance(self)
+        BunString::borrow_bytes(&buf).to_error_instance(self)
     }
 
     pub fn to_type_error(&self, code: JscError, args: Arguments<'_>) -> JSValue {

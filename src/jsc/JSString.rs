@@ -92,7 +92,10 @@ impl JSString {
     pub fn to_slice_z(&self, global: &JSGlobalObject) -> ZigStringSlice {
         let mut str = BunString::ascii(b"");
         self.to_zig_string(global, &mut str);
-        str.to_slice_z()
+        if str.length() == 0 {
+            return ZigStringSlice::Static(c"".as_ptr().cast::<u8>(), 0);
+        }
+        ZigStringSlice::Owned(str.to_owned_slice())
     }
 
     pub fn eql(&self, global: &JSGlobalObject, other: &JSString) -> bool {

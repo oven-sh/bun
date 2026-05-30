@@ -1626,10 +1626,7 @@ impl JSTranspiler {
 
         // TODO: benchmark if pooling this way is faster or moving is faster
         buffer_writer = printer.ctx;
-        let mut out = BunString::ascii(buffer_writer.written());
-        out.set_output_encoding();
-
-        let result = out.to_js_value(global);
+        let result = BunString::borrow_bytes(buffer_writer.written()).to_js_value(global);
         self.buffer_writer.set(Some(buffer_writer));
         Ok(result)
     }

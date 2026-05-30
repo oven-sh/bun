@@ -166,11 +166,6 @@ impl String {
     pub const fn ascii(s: &[u8]) -> Self {
         Self(bun_alloc::String::borrowed(s))
     }
-    /// Borrow `s` and mark globally-allocated (C++ frees via `BunStringView__freeGlobal`).
-    #[inline]
-    pub fn borrow_global(s: &[u8]) -> Self {
-        Self(bun_alloc::String::borrowed_global(s))
-    }
     /// Port of `ZigString.fromBytes` — borrow `s`; mark UTF-8 iff non-ASCII.
     #[inline]
     pub fn borrow_bytes(s: &[u8]) -> Self {
@@ -1365,39 +1360,7 @@ impl String {
         out
     }
 
-    /// Port of `ZigString.dupeForJS` — duplicate `utf8` into a globally-allocated
-    /// buffer suitable for handing to JSC. Widens to UTF-16 if `utf8` contains
-    /// any non-ASCII byte. Marks the result global so JSC frees it via mimalloc.
-    pub fn dupe_for_js(utf8: &[u8]) -> Result<String, strings::ToUTF16Error> {
-        if let Some(utf16) = strings::to_utf16_alloc(utf8, false, false)? {
-            let leaked: &'static mut [u16] = crate::heap::release(utf16.into_boxed_slice());
-            Ok(Self::borrow_utf16_global(leaked))
-        } else {
-            let duped: &'static mut [u8] = crate::heap::release(Box::<[u8]>::from(utf8));
-            Ok(Self::borrow_global(duped))
-        }
-    }
-
-    /// Encoding-dispatched borrow as either Latin-1 bytes or UTF-16 code units.
-    #[inline]
-    pub fn as_(&self) -> ByteString<'_> {
-        if self.is_utf16() {
-            ByteString::Utf16(self.utf16())
-        } else {
-            ByteString::Latin1(self.latin1())
-        }
-    }
-
-    /// True iff every code unit is < 0x80.
-    pub fn is_all_ascii(&self) -> bool {
-        if self.is_utf16() {
-            return strings::first_non_ascii16(self.utf16()).is_none();
-        }
-        strings::is_all_ascii(self.latin1())
-    }
-
-    /// Port of `ZigString.indexOfAny` — first index whose code unit matches any
-    /// byte in `chars`.
+    /// First index whose code unit matches any byte in `chars` (encoding-aware).
     pub fn index_of_any(&self, chars: &'static [u8]) -> Option<usize> {
         if self.is_utf16() {
             self.utf16()
@@ -1408,160 +1371,12 @@ impl String {
         }
     }
 
-    pub fn has_prefix_char(&self, char: u8) -> bool {
-        if self.length() == 0 {
-            return false;
-        }
-        self.char_at(0) == char as u16
-    }
-
-    /// Cheap upper bound on UTF-8 byte length (does not scan).
-    pub fn max_utf8_byte_length(&self) -> usize {
-        let len = self.length();
-        if self.is_utf8() {
-            len
-        } else if self.is_utf16() {
-            len * 3
-        } else {
-            len * 2
-        }
-    }
-
-    /// Port of `ZigString.detectEncoding` — if the (untagged) bytes contain any
-    /// non-ASCII, mark the view UTF-16. StringView arm only.
-    #[inline]
-    pub fn detect_encoding(&mut self) {
-        if !strings::is_all_ascii(self.latin1()) {
-            self.0.mark_utf16();
-        }
-    }
-    /// Port of `ZigString.setOutputEncoding` — for `toJS` callers. StringView
-    /// arm only.
-    #[inline]
-    pub fn set_output_encoding(&mut self) {
-        if self.is_8bit() {
-            self.detect_encoding();
-        }
-        if self.is_utf16() {
-            self.0.mark_utf8();
-        }
-    }
-
-    /// Free a globally-allocated view's buffer via the default allocator.
-    #[inline]
-    pub fn deinit_global(&self) {
-        // SAFETY: caller guarantees the view was allocated by the default
-        // (global) allocator.
-        unsafe {
-            bun_alloc::default_alloc::free(
-                self.latin1()
-                    .as_ptr()
-                    .cast_mut()
-                    .cast::<core::ffi::c_void>(),
-            )
-        };
-    }
-
-    /// Raw byte view (16-bit content as 2×len bytes).
-    #[inline]
-    pub fn full(&self) -> &[u8] {
-        self.0.raw_byte_slice()
-    }
-    /// `full()` with leading/trailing space/CR/LF stripped.
-    #[inline]
-    pub fn trimmed_slice(&self) -> &[u8] {
-        strings::trim(self.full(), b" \r\n")
-    }
-
-    /// Like [`to_utf8`] but skips the Latin-1→UTF-8 rescan for 8-bit input
-    /// (caller asserts already valid UTF-8/ASCII). 16-bit still allocates.
-    pub fn to_slice_fast(&self) -> ZigStringSlice {
-        if self.length() == 0 {
-            return ZigStringSlice::EMPTY;
-        }
-        if self.is_utf16() {
-            return ZigStringSlice::Owned(self.to_owned_slice());
-        }
-        let s = self.latin1();
-        ZigStringSlice::Static(s.as_ptr(), s.len())
-    }
-
-    /// Borrow a sub-range of `buf` described by a `StringPointer`.
-    #[inline]
-    pub fn from_string_pointer(ptr: StringPointer, buf: &[u8]) -> String {
-        Self::ascii(&buf[ptr.offset as usize..][..ptr.length as usize])
-    }
-
-    /// Allocate a lowercased UTF-8 copy.
-    pub fn to_slice_lowercase(&self) -> ZigStringSlice {
-        if self.length() == 0 {
-            return ZigStringSlice::EMPTY;
-        }
-        let upper = self.to_owned_slice();
-        let mut buffer = vec![0u8; upper.len()];
-        let out_len = strings::copy_lowercase(&upper, &mut buffer).len();
-        buffer.truncate(out_len);
-        ZigStringSlice::Owned(buffer)
-    }
-
-    /// Slow-path case-insensitive equality (allocates lowercased copies).
-    pub fn eql_case_insensitive(&self, other: &String) -> bool {
-        let a = self.to_slice_lowercase();
-        let b = other.to_slice_lowercase();
-        strings::eql_long(a.slice(), b.slice(), true)
-    }
-
     /// Always heap-owned UTF-8 slice (never borrows source bytes).
     pub fn to_slice_clone(&self) -> ZigStringSlice {
         if self.length() == 0 {
             return ZigStringSlice::EMPTY;
         }
         ZigStringSlice::Owned(self.to_owned_slice())
-    }
-
-    /// Heap-owned UTF-8 with a NUL sentinel one past `len()`.
-    pub fn to_slice_z(&self) -> ZigStringSlice {
-        if self.length() == 0 {
-            return ZigStringSlice::Static(c"".as_ptr().cast::<u8>(), 0);
-        }
-        let mut v = self.to_owned_slice();
-        v.reserve_exact(1);
-        v.spare_capacity_mut()[0].write(0);
-        ZigStringSlice::Owned(v)
-    }
-
-    /// `Display`-format into `buf`, NUL-terminate, return borrowed `[:0]u8`.
-    pub fn slice_z_buf<'a>(
-        &self,
-        buf: &'a mut crate::PathBuffer,
-    ) -> Result<&'a ZStr, crate::Error> {
-        use std::io::Write as _;
-        let buf_slice: &mut [u8] = &mut buf[..];
-        let start_len = buf_slice.len();
-        let mut cursor: &mut [u8] = buf_slice;
-        write!(cursor, "{}", self).map_err(|_| crate::err!("NoSpaceLeft"))?;
-        let written = start_len - cursor.len();
-        if written >= buf.len() {
-            return Err(crate::err!("NoSpaceLeft"));
-        }
-        buf[written] = 0;
-        Ok(ZStr::from_buf(&buf[..], written))
-    }
-
-    /// Stable in-place sort by 8-bit byte view.
-    pub fn sort_asc(slice_: &mut [String]) {
-        slice_.sort_by(|a, b| a.latin1().cmp(b.latin1()));
-    }
-    pub fn sort_desc(slice_: &mut [String]) {
-        slice_.sort_by(|a, b| b.latin1().cmp(a.latin1()));
-    }
-    #[inline]
-    pub fn cmp_asc(a: &String, b: &String) -> bool {
-        strings::cmp_strings_asc((), a.latin1(), b.latin1())
-    }
-    #[inline]
-    pub fn cmp_desc(a: &String, b: &String) -> bool {
-        strings::cmp_strings_desc((), a.latin1(), b.latin1())
     }
 }
 

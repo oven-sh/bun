@@ -228,10 +228,8 @@ impl ResolveMessage {
         {
             return global.throw_out_of_memory_value();
         }
-        let mut str = BunString::ascii(&text);
-        str.set_output_encoding();
-        if str.is_utf8() {
-            let out = str.to_js_value(global);
+        if !bun_core::strings::is_all_ascii(&text) {
+            let out = BunString::borrow_utf8(&text).to_js_value(global);
             drop(text);
             return out;
         }
@@ -239,8 +237,7 @@ impl ResolveMessage {
         // TODO(port): `toExternalValue` transfers ownership of `text` to JSC; ensure
         // `to_external_value` consumes the Vec without double-free.
         let leaked = text.into_boxed_slice();
-        let mut str = BunString::ascii(bun_core::heap::release(leaked));
-        str.set_output_encoding();
+        let str = BunString::ascii(bun_core::heap::release(leaked));
         str.to_external_value(global)
     }
 

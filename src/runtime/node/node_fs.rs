@@ -6114,10 +6114,9 @@ impl NodeFS {
             // SAFETY: on success libuv populates `req.path` with a NUL-terminated
             // UTF-8 string owned by the request; `UvFsReq::drop` runs
             // `uv_fs_req_cleanup` in place after we've copied the bytes out.
-            return Ok(
-                BunString::dupe_for_js(unsafe { bun_core::ffi::cstr(req.path) }.to_bytes())
-                    .expect("oom"),
-            );
+            return Ok(BunString::clone_utf8(
+                unsafe { bun_core::ffi::cstr(req.path) }.to_bytes(),
+            ));
         }
 
         #[cfg(not(windows))]
@@ -6129,7 +6128,7 @@ impl NodeFS {
                 // SAFETY: `rc` is non-null and points back into `prefix_buf`, which is
                 // NUL-terminated and outlives this borrow.
                 let bytes = unsafe { bun_core::ffi::cstr(rc) }.to_bytes();
-                return Ok(BunString::dupe_for_js(bytes).expect("oom"));
+                return Ok(BunString::clone_utf8(bytes));
             }
 
             // c.getErrno(rc) returns SUCCESS if rc is -1 so we call std.c._errno() directly

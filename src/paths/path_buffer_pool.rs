@@ -293,5 +293,3 @@ pub type os_path_buffer_pool = w_path_buffer_pool;
 #[cfg(not(windows))]
 #[allow(non_camel_case_types)]
 pub type os_path_buffer_pool = path_buffer_pool;
-
-

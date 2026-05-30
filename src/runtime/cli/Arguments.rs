@@ -78,6 +78,31 @@ pub(crate) fn resolve_jsx_runtime(s: &[u8]) -> Result<api::JsxRuntime, bun_core:
     }
 }
 
+/// Populate `ctx.bundler_options.elide_lines` from the `--elide-lines` CLI
+/// flag, falling back to `BUN_CONFIG_ELIDE_LINES` when the flag is absent
+/// or expanded to an empty string (e.g. `--elide-lines "$MAYBE_UNSET"`).
+fn parse_elide_lines_option(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
+    let cli_value = args.option(b"--elide-lines").filter(|v| !v.is_empty());
+
+    if let Some(elide_lines) = cli_value {
+        ctx.bundler_options.elide_lines = match strings::parse_int::<usize>(elide_lines, 10) {
+            Ok(v) => Some(v),
+            Err(_) => {
+                Output::pretty_errorln(format_args!(
+                    "<r><red>error<r>: Invalid elide-lines: \"{}\"",
+                    BStr::new(elide_lines)
+                ));
+                Global::exit(1);
+            }
+        };
+    } else if let Some(value) = env_var::BUN_CONFIG_ELIDE_LINES.get() {
+        // `BUN_CONFIG_ELIDE_LINES` is parsed as `u64`; `elide_lines` is a
+        // `usize`. Clamp rather than truncate, so 32-bit targets don't lose
+        // the high bits for values above `usize::MAX`.
+        ctx.bundler_options.elide_lines = Some(usize::try_from(value).unwrap_or(usize::MAX));
+    }
+}
+
 pub(crate) type ParamType = clap::Param<clap::Help>;
 
 // ─── param tables ────────────────────────────────────────────────────────────
@@ -810,22 +835,6 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         ctx.parallel = args.flag(b"--parallel");
         ctx.sequential = args.flag(b"--sequential");
         ctx.no_exit_on_error = args.flag(b"--no-exit-on-error");
-
-        if let Some(elide_lines) = args.option(b"--elide-lines") {
-            if !elide_lines.is_empty() {
-                ctx.bundler_options.elide_lines = match strings::parse_int::<usize>(elide_lines, 10)
-                {
-                    Ok(v) => Some(v),
-                    Err(_) => {
-                        Output::pretty_errorln(format_args!(
-                            "<r><red>error<r>: Invalid elide-lines: \"{}\"",
-                            BStr::new(elide_lines)
-                        ));
-                        Global::exit(1);
-                    }
-                };
-            }
-        }
     }
 
     if cmd == CommandTag::TestCommand {
@@ -1377,21 +1386,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             ctx.debug.silent = true;
         }
 
-        if let Some(elide_lines) = args.option(b"--elide-lines") {
-            if !elide_lines.is_empty() {
-                ctx.bundler_options.elide_lines = match strings::parse_int::<usize>(elide_lines, 10)
-                {
-                    Ok(v) => Some(v),
-                    Err(_) => {
-                        Output::pretty_errorln(format_args!(
-                            "<r><red>error<r>: Invalid elide-lines: \"{}\"",
-                            BStr::new(elide_lines)
-                        ));
-                        Global::exit(1);
-                    }
-                };
-            }
-        }
+        // Runs after `load_config_with_cmd_args` so the `--elide-lines` flag
+        // and `BUN_CONFIG_ELIDE_LINES` env var take precedence over any value
+        // set by `run.elide-lines` in bunfig.toml.
+        parse_elide_lines_option(&args, &mut *ctx);
 
         if let Some(define) = &opts.define {
             if !define.keys.is_empty() {

@@ -17,7 +17,7 @@ async function run(script: string) {
   return { stdout: normalizeBunSnapshot(stdout), exitCode };
 }
 
-test("ws emits 'unexpected-response' with status, headers and body on non-101", { timeout: 30000 }, async () => {
+test("ws emits 'unexpected-response' with status, headers and body on non-101", async () => {
   const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { once } = require("events");
@@ -63,7 +63,7 @@ test("ws emits 'unexpected-response' with status, headers and body on non-101", 
 // "Unexpected server response: 503". Bun's shim only registers the native
 // handshake listener when the user subscribes to 'upgrade'/'unexpected-response',
 // so the unmodified native error surfaces instead.
-test("ws emits native 'error' on non-101 when no 'unexpected-response' listener", { timeout: 30000 }, async () => {
+test("ws emits native 'error' on non-101 when no 'unexpected-response' listener", async () => {
   const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { once } = require("events");
@@ -84,7 +84,7 @@ test("ws emits native 'error' on non-101 when no 'unexpected-response' listener"
   expect(exitCode).toBe(0);
 });
 
-test("ws emits 'upgrade' with headers before 'open' on 101", { timeout: 30000 }, async () => {
+test("ws emits 'upgrade' with headers before 'open' on 101", async () => {
   const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { createHash } = require("crypto");
@@ -130,7 +130,6 @@ test("ws emits 'upgrade' with headers before 'open' on 101", { timeout: 30000 },
 // buffers until Content-Length is satisfied (or EOF) before dispatching.
 test(
   "ws 'unexpected-response' waits for full Content-Length body across multiple writes",
-  { timeout: 30000 },
   async () => {
     const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
@@ -192,7 +191,6 @@ test(
 // the callback silently never fires.
 test(
   "ws 'unexpected-response' fires for addListener / prependListener / addEventListener",
-  { timeout: 30000 },
   async () => {
     const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");

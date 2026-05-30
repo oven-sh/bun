@@ -608,10 +608,14 @@ class BunWebSocket extends EventEmitter {
     // `(response)` / `(request, response)` args.
     if (type === "upgrade" || type === "unexpected-response") {
       this.#ensureHandshakeListener();
+      // `addEventListener` returns undefined per the DOM spec / real ws —
+      // use statement form so we don't leak EventEmitter's `this` return.
       if (options && options.once) {
-        return super.once(type, listener);
+        super.once(type, listener);
+      } else {
+        super.on(type, listener);
       }
-      return super.on(type, listener);
+      return;
     }
     this.#ws.addEventListener(type, listener, options);
   }

@@ -1,6 +1,7 @@
 use core::ptr;
 
 use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSValue};
+use crate::mysql::my_sql_value::DateTime;
 use bun_core::String as BunString;
 use bun_core::parse_int;
 
@@ -232,16 +233,15 @@ impl<'a> Row<'a> {
                 };
             }
             MYSQL_TYPE_DATE | MYSQL_TYPE_DATETIME | MYSQL_TYPE_TIMESTAMP => {
-                let mut str = BunString::init(value.slice());
-                // `str` derefs on Drop.
-                let date = 'brk: {
-                    match crate::jsc::bun_string_jsc::parse_date(&mut str, self.global_object) {
-                        Ok(d) => break 'brk d,
-                        Err(err) => {
-                            let _ = self.global_object.take_exception(err);
-                            break 'brk f64::NAN;
-                        }
-                    }
+                // MySQL's DATE/DATETIME/TIMESTAMP text has no timezone, so parse
+                // the components directly and convert them as UTC — matching the
+                // binary path. Routing through JS Date.parse here would instead
+                // read "2024-06-15 12:00:00" as local time and make the text and
+                // binary protocols disagree on non-UTC hosts. Zero/invalid dates
+                // fall through to NaN (Invalid Date).
+                let date = match DateTime::from_text(value.slice()) {
+                    Some(dt) => dt.to_js_timestamp(self.global_object).unwrap_or(f64::NAN),
+                    None => f64::NAN,
                 };
                 *cell = SQLDataCell {
                     tag: Tag::Date,

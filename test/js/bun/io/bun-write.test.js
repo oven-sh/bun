@@ -6,7 +6,7 @@ import {
   exampleHtml,
   exampleSite,
   gcTick,
-  isPosix,
+  isLinux,
   isWindows,
   tempDir,
   withoutAggressiveGC,
@@ -321,16 +321,20 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(exitCode).toBe(0);
     });
 
-    // Jarred's review: a pipe/FIFO/socket/char device isn't seekable — lseek
-    // returns ESPIPE — so the slice offset must NOT be applied to one. The fix
-    // only seeks/offsets regular (S_ISREG) sources; every other type is copied
-    // without seeking. Before the fix, a sliced non-seekable source hit ESPIPE
-    // from lseek and aborted the copy. mkfifo is POSIX-only.
+    // A pipe/FIFO/socket/char device isn't seekable — lseek returns ESPIPE — so
+    // the slice offset must NOT be applied to one. The copy only seeks/offsets
+    // regular (S_ISREG) sources; every other type is copied without seeking.
+    // Before the fix, a sliced non-seekable source hit ESPIPE from lseek and
+    // aborted the copy.
     //
     // (file→file with a non-regular source is a separate, pre-existing "not
     // supported" path, so the copy may still be rejected there — but it must
     // never be a *seek* failure, which is the regression this guards against.)
-    it.skipIf(!isPosix)("sliced source from a non-seekable fd (FIFO) is copied without seeking", async () => {
+    //
+    // Linux-only: macOS/FreeBSD copy non-regular sources via an
+    // fcopyfile/read-to-EOF loop that would block on this held-open FIFO, and
+    // mkfifo is POSIX-only anyway.
+    it.skipIf(!isLinux)("sliced source from a non-seekable fd (FIFO) is copied without seeking", async () => {
       using dir = tempDir("bun-write-file-slice-fifo", {});
       const fifo = join(String(dir), "src.fifo");
       const dst = join(String(dir), "dst.txt");

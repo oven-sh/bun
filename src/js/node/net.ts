@@ -1236,7 +1236,7 @@ Socket.prototype.pause = function pause() {
       // stream-wrap handle: only drive readStop directly in onread mode —
       // otherwise Duplex.pause stops _read which stops readStart (Node's
       // lib/net.js kBuffer gating).
-      if (this[kBuffer] && !this.connecting && handle.reading !== false) {
+      if (this[kBuffer] && !this.connecting && handle.reading) {
         handle.reading = false;
         if (!this.destroyed) {
           const err = handle.readStop();

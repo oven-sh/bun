@@ -205,3 +205,40 @@ test("net.Socket({handle}) refreshes the idle timer on incoming data", async () 
   onread.call(handle, -4095, undefined); // UV_EOF
   await new Promise(resolve => socket.on("end", resolve));
 });
+
+// pause() gates readStop on a truthy handle.reading, matching Node's lib/net.js
+// and staying symmetric with resume()/read() (which gate on !handle.reading).
+// A handle that has never started reading (no `reading` property) must not be
+// readStop()'d by an early pause().
+test("net.Socket({handle}) pause() does not readStop a never-started handle", async () => {
+  let onread;
+  let readStopCalls = 0;
+  // Note: no `reading` property — so handle.reading is undefined.
+  const handle = {
+    readStart: () => 0,
+    readStop() {
+      readStopCalls++;
+      return 0;
+    },
+    close() {},
+    set onread(fn) {
+      onread = fn;
+    },
+    get onread() {
+      return onread;
+    },
+  };
+
+  const socket = new Socket({
+    handle,
+    manualStart: true,
+    writable: false,
+    onread: { buffer: Buffer.alloc(16), callback() {} },
+  });
+  expect(handle.reading).toBeUndefined();
+
+  socket.pause();
+  expect(readStopCalls).toBe(0); // reading was never started
+
+  socket.destroy();
+});

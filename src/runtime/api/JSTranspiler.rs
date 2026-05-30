@@ -216,7 +216,7 @@ impl Config {
                     }
 
                     // PERF(port): was appendAssumeCapacity — profile if hot.
-                    names.push(prop.to_owned_slice().into());
+                    names.push(prop.to_owned_box());
                     let mut val = BunString::ascii(b"");
                     property_value.to_zig_string(&mut val, global)?;
                     if val.length() == 0 {
@@ -329,7 +329,7 @@ impl Config {
                 if out.is_empty() {
                     break 'tsconfig;
                 }
-                self.tsconfig_buf = out.to_owned_slice().into();
+                self.tsconfig_buf = out.to_owned_box();
 
                 // TODO: JSC -> Ast conversion
                 // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
@@ -375,7 +375,7 @@ impl Config {
                 if out.is_empty() {
                     break 'macros;
                 }
-                self.macros_buf = out.to_owned_slice().into();
+                self.macros_buf = out.to_owned_box();
                 let source =
                     bun_ast::Source::init_path_string(b"macros.json", &self.macros_buf[..]);
                 // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.

@@ -1479,10 +1479,6 @@ impl String {
     pub const fn tag(&self) -> Tag {
         self.tag
     }
-    #[inline]
-    pub fn set_tag(&mut self, tag: Tag) {
-        self.tag = tag;
-    }
 
     // -- StringView-tag constructors -----------------------------------------
     #[inline]

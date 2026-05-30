@@ -21,6 +21,8 @@
 //! `None`/`.Normal` rather than an error. EXIF is advisory; we never fail
 //! decode over it.
 
+use super::codecs;
+
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Orientation {
@@ -134,6 +136,50 @@ pub fn read_jpeg(bytes: &[u8]) -> Orientation {
     Orientation::Normal
 }
 
+/// EXIF orientation for whatever container `bytes` is. The Zig-style walker in
+/// `read_jpeg` covers JPEG (APP1/Exif) and runs everywhere, including Linux
+/// where no system image backend exists. HEIC, TIFF, and AVIF store
+/// orientation inside containers with nothing in common with JPEG markers —
+/// HEIF's `irot`/`imir` transform properties live behind an ISOBMFF box walk,
+/// and HEIC's Exif item is reached via `iloc`/`iinf` — so we delegate to the
+/// system backend (ImageIO/WIC), which has already parsed all of them.
+/// Backends without a reader (or the `bun` backend) return `Normal`, matching
+/// JPEG's "no Exif segment" fallthrough.
+///
+/// PNG eXIf / WebP EXIF chunks exist but are rare (no major consumer writes
+/// them by default), so those stay at identity, mirroring `read_jpeg`'s
+/// JPEG-only scope. (#30235)
+pub fn read(bytes: &[u8], format: codecs::Format) -> Orientation {
+    match format {
+        codecs::Format::Jpeg => read_jpeg(bytes),
+        codecs::Format::Heic | codecs::Format::Avif | codecs::Format::Tiff => {
+            match codecs::orientation_via_system(bytes) {
+                Some(v) => from_u8(v),
+                None => Orientation::Normal,
+            }
+        }
+        codecs::Format::Png | codecs::Format::Webp | codecs::Format::Bmp | codecs::Format::Gif => {
+            Orientation::Normal
+        }
+    }
+}
+
+/// Map a raw EXIF value (1..8) to `Orientation`; anything else → `Normal`.
+#[inline]
+fn from_u8(v: u8) -> Orientation {
+    match v {
+        1 => Orientation::Normal,
+        2 => Orientation::Flop,
+        3 => Orientation::Rotate180,
+        4 => Orientation::Flip,
+        5 => Orientation::FlopRotate90,
+        6 => Orientation::Rotate90,
+        7 => Orientation::FlopRotate270,
+        8 => Orientation::Rotate270,
+        _ => Orientation::Normal,
+    }
+}
+
 fn parse_tiff(tiff: &[u8]) -> Option<Orientation> {
     if tiff.len() < 8 {
         return None;
@@ -204,6 +250,40 @@ fn rd32(b: &[u8], off: usize, big: bool) -> Option<u32> {
     } else {
         u32::from_le_bytes(bytes)
     })
+}
+
+/// Test-only bridge exposing [`read`] to `bun:internal-for-testing` so the
+/// format-dispatch + JPEG APP1/Exif walk can be unit-tested directly on every
+/// platform — the `Bun.Image` integration path can only reach this for
+/// HEIC/TIFF/AVIF on macOS/Windows (those formats don't decode on Linux), and
+/// only through a full decode. Registered via
+/// `$newZigFunction("runtime/image/exif.zig", "testing.readOrientation", 2)`;
+/// the `.zig` path is only the codegen key — the impl is this Rust function.
+pub mod testing {
+    use super::{codecs, read};
+    use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+
+    /// `readOrientation(bytes: Uint8Array, format: number) -> number`.
+    /// `format` is the `codecs::Format` discriminant (0=Jpeg … 7=Gif); the
+    /// return is the EXIF orientation value (1..8).
+    pub fn read_orientation(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let Some(ab) = frame.argument(0).as_array_buffer(global) else {
+            return Err(global.throw(format_args!("readOrientation: expected a Uint8Array")));
+        };
+        let format = match frame.argument(1).to_int32() {
+            0 => codecs::Format::Jpeg,
+            1 => codecs::Format::Png,
+            2 => codecs::Format::Webp,
+            3 => codecs::Format::Heic,
+            4 => codecs::Format::Avif,
+            5 => codecs::Format::Bmp,
+            6 => codecs::Format::Tiff,
+            7 => codecs::Format::Gif,
+            n => return Err(global.throw(format_args!("readOrientation: bad format {n}"))),
+        };
+        let orientation = read(ab.byte_slice(), format) as u8;
+        Ok(JSValue::js_number_from_int32(i32::from(orientation)))
+    }
 }
 
 // ported from: src/runtime/image/exif.zig

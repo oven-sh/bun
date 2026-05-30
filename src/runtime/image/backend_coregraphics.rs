@@ -86,6 +86,13 @@ unsafe extern "C" {
         out: *mut u8, // nullable
         out_len: *mut usize,
     ) -> i32;
+
+    // Read the first-image EXIF/TIFF orientation tag (1..8). ImageIO parses the
+    // JPEG APP1/Exif IFD, the TIFF IFD0, and HEIC `irot`/`imir` transform
+    // properties — all mapped to the same 1..8 enum — so one ImageIO call
+    // covers every system-backend format. Returns 1 (identity) on any failure.
+    #[allow(dead_code)] // referenced only on macOS (see `orientation` below)
+    fn bun_coregraphics_orientation(bytes: *const u8, len: usize) -> i32;
 }
 
 const CG_OK: i32 = 0;
@@ -148,6 +155,19 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
         height: h,
         icc_profile: None,
     })
+}
+
+/// EXIF orientation (1..8) of the first image in `bytes`; 1 (identity) on any
+/// failure, to match Sharp's "advisory, never error the decode" treatment.
+/// See `exif::read` for why HEIC/TIFF/AVIF route through the system backend
+/// instead of the JPEG-marker walker in `exif.rs`. (#30235)
+// `codecs::orientation_via_system` only references this under
+// `#[cfg(any(target_os = "macos", windows))]`, so it's dead on a Linux build.
+#[allow(dead_code)]
+pub(crate) fn orientation(bytes: &[u8]) -> u8 {
+    // SAFETY: bytes is a valid slice; the shim only reads from it.
+    let raw = unsafe { bun_coregraphics_orientation(bytes.as_ptr(), bytes.len()) };
+    if (1..=8).contains(&raw) { raw as u8 } else { 1 }
 }
 
 #[allow(dead_code)]

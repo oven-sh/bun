@@ -170,6 +170,51 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
     })
 }
 
+/// EXIF orientation (1..8) of the first frame; 1 (identity) on any failure, to
+/// match Sharp's "advisory, never error the decode" treatment. Called via
+/// `exif::read` for HEIC/TIFF/AVIF: TIFF carries it in IFD0 tag 274; HEIF
+/// carries it as `irot`/`imir` boxes which WIC surfaces under `/heifProps`
+/// (NOT via the embedded Exif item — that can mismatch the irot value). See
+/// the shim for the query-path fallback. (#30235)
+pub(crate) fn orientation(bytes: &[u8]) -> u8 {
+    let Ok(f) = factory() else { return 1 };
+    if bytes.len() as u64 > u32::MAX as u64 {
+        return 1;
+    }
+
+    let Some(stream) = f.create_stream() else {
+        return 1;
+    };
+    scopeguard::defer! { release(stream.as_ptr()); }
+    if stream.initialize_from_memory(
+        bytes.as_ptr(),
+        u32::try_from(bytes.len()).expect("int cast"),
+    ) < 0
+    {
+        return 1;
+    }
+
+    // WICDecodeMetadataCacheOnDemand = 0 — match decode()'s value so the two
+    // CreateDecoderFromStream calls behave identically on the same bytes; the
+    // query reader populates lazily either way.
+    let Some(dec) = f.create_decoder_from_stream(stream.cast::<IUnknown>().as_ptr(), 0) else {
+        return 1;
+    };
+    scopeguard::defer! { release(dec.as_ptr()); }
+
+    let Some(frame) = dec.get_frame(0) else {
+        return 1;
+    };
+    scopeguard::defer! { release(frame.as_ptr()); }
+
+    // GetFrame returns IWICBitmapFrameDecode*; we type it as the
+    // IWICBitmapSource prefix elsewhere, but the shim casts it back to reach
+    // GetMetadataQueryReader (the slot after the IWICBitmapSource block).
+    // SAFETY: `frame` is a live COM pointer for the duration of this call.
+    let raw = unsafe { bun_wic_read_orientation(frame.as_ptr().cast::<c_void>()) };
+    if (1..=8).contains(&raw) { raw as u8 } else { 1 }
+}
+
 pub(crate) fn encode(
     rgba: &[u8],
     width: u32,
@@ -377,6 +422,12 @@ struct IUnknown {
 unsafe extern "C" {
     fn bun_wic_propbag_write_f32(props: *mut c_void, name: *const u16, value: f32) -> i32;
     fn bun_wic_propbag_write_u8(props: *mut c_void, name: *const u16, value: u8) -> i32;
+    // Orientation (1..8, EXIF numbering) for the first frame; 1 (identity) on
+    // any failure. The PROPVARIANT marshalling lives in the C++ shim for the
+    // same reason the IPropertyBag2 writes do — see image_wic_shim.cpp. The
+    // `frame` really is an `IWICBitmapFrameDecode*` (what `GetFrame` hands
+    // back); the shim casts it back to reach `GetMetadataQueryReader`.
+    fn bun_wic_read_orientation(frame: *mut c_void) -> i32;
 }
 
 /// WICHeifCompressionOption — the encoder defaults to `DontCare` (= picks

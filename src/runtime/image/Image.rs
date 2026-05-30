@@ -912,8 +912,8 @@ impl Image {
                 Ok(p) => {
                     let mut w = p.width;
                     let mut h = p.height;
-                    if self.auto_orient && p.format == codecs::Format::Jpeg {
-                        let t = exif::read_jpeg(buf).transform();
+                    if self.auto_orient {
+                        let t = exif::read(buf, p.format).transform();
                         if t.rotate == 90 || t.rotate == 270 {
                             mem::swap(&mut w, &mut h);
                         }
@@ -1555,6 +1555,23 @@ impl<'a> PipelineTask<'a> {
             self.input.slice()
         };
 
+        // Sniff format and read EXIF orientation once up front. JPEG is a
+        // cheap byte walk; HEIC/TIFF/AVIF go through the system backend
+        // (ImageIO / WIC), which builds a fresh image-source per call — so
+        // resolving it once and reusing it across the metadata fast path, the
+        // decode-hint, and the apply-orientation gate below keeps the resize
+        // path (the #30235 repro) at one backend round-trip instead of three.
+        let src_format = codecs::Format::sniff(input).unwrap_or(codecs::Format::Png);
+        let orient = if self.auto_orient {
+            exif::read(input, src_format)
+        } else {
+            exif::Orientation::Normal
+        };
+        let orient_swaps_axes = {
+            let r = orient.transform().rotate;
+            r == 90 || r == 270
+        };
+
         // Header-only fast path for `.metadata()` — Sharp parses just the
         // IHDR/SOF/VP8 header; we used to decode the full RGBA buffer first
         // (~70× slower on a 1920×1080 PNG). EXIF orientation only swaps the
@@ -1564,11 +1581,8 @@ impl<'a> PipelineTask<'a> {
                 Ok(p) => {
                     let mut w = p.width;
                     let mut h = p.height;
-                    if self.auto_orient && p.format == codecs::Format::Jpeg {
-                        let t = exif::read_jpeg(input).transform();
-                        if t.rotate == 90 || t.rotate == 270 {
-                            mem::swap(&mut w, &mut h);
-                        }
+                    if orient_swaps_axes {
+                        mem::swap(&mut w, &mut h);
                     }
                     self.result = TaskResult::Meta {
                         w,
@@ -1598,11 +1612,7 @@ impl<'a> PipelineTask<'a> {
             // r.h==0 means "preserve aspect" — constrain on width only.
             let mut th = if r.h != 0 { r.h } else { r.w };
             let swap_explicit = self.pipeline.rotate == 90 || self.pipeline.rotate == 270;
-            let swap_exif = self.auto_orient && {
-                let t = exif::read_jpeg(input).transform();
-                t.rotate == 90 || t.rotate == 270
-            };
-            if swap_explicit != swap_exif {
+            if swap_explicit != orient_swaps_axes {
                 mem::swap(&mut tw, &mut th);
             }
             codecs::DecodeHint {
@@ -1622,28 +1632,37 @@ impl<'a> PipelineTask<'a> {
         };
         // `defer decoded.deinit()` — `codecs::Decoded` Drop frees rgba/icc.
 
-        let src_format = codecs::Format::sniff(input).unwrap_or(codecs::Format::Png);
-
-        // EXIF auto-orient: applied BEFORE any user op so resize targets and
-        // metadata report the visually-upright dimensions, the way Sharp does.
-        if self.auto_orient && src_format == codecs::Format::Jpeg {
-            let orient = exif::read_jpeg(input);
-            if orient != exif::Orientation::Normal {
-                if let Err(e) = apply_orientation(&mut decoded, orient) {
-                    self.result = TaskResult::Err(e);
-                    return;
-                }
-            }
-        }
-
+        // `.metadata()` on HEIC/AVIF/TIFF reaches here because `probe()` has no
+        // header parser for them and fell through to a full decode. We only
+        // need w/h/format — swap dimensions numerically from the orientation
+        // tag (same as the probe-success branch above) instead of physically
+        // rotating the just-decoded RGBA buffer Drop is about to free. That
+        // keeps `.metadata()` off a ~w*h*4 scratch allocation and a vImage
+        // rotate pass per call on iPhone-HEIC inputs.
         if matches!(self.kind, Kind::Metadata) {
-            // Reached only for HEIC/AVIF (probe fell through).
+            let mut w = decoded.width;
+            let mut h = decoded.height;
+            if orient_swaps_axes {
+                mem::swap(&mut w, &mut h);
+            }
             self.result = TaskResult::Meta {
-                w: decoded.width,
-                h: decoded.height,
+                w,
+                h,
                 format: src_format,
             };
             return;
+        }
+
+        // EXIF auto-orient: applied BEFORE any user op so resize targets and
+        // metadata report the visually-upright dimensions, the way Sharp does.
+        // Covers JPEG via the APP1/Exif walker and HEIC/TIFF/AVIF via the
+        // system backend (ImageIO on macOS, WIC on Windows), whose decoders
+        // hand back pixels in their *stored* orientation. (#30235)
+        if orient != exif::Orientation::Normal {
+            if let Err(e) = apply_orientation(&mut decoded, orient) {
+                self.result = TaskResult::Err(e);
+                return;
+            }
         }
 
         if matches!(self.kind, Kind::Placeholder) {

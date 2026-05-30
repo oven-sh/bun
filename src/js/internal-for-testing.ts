@@ -241,6 +241,14 @@ export const linearFifoOrderedRemoveProbe = $newZigFunction(
   1,
 ) as (scenario: number) => number[];
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
+// exif::read(bytes, format) — format is the codecs::Format discriminant
+// (0=jpeg, 1=png, 2=webp, 3=heic, 4=avif, 5=bmp, 6=tiff, 7=gif); returns the
+// EXIF orientation value (1..8). Lets the format-dispatch + JPEG APP1 walk be
+// unit-tested on every platform (HEIC/TIFF/AVIF only decode on macOS/Windows).
+export const imageReadOrientation = $newZigFunction("runtime/image/exif.zig", "testing.readOrientation", 2) as (
+  bytes: Uint8Array,
+  format: number,
+) => number;
 
 interface setSocketOptionsFn {
   (socket: Bun.Socket, sendBuffer: 1, size: number): void;

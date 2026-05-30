@@ -2326,6 +2326,35 @@ folded: >
             expect(YAML.parse("%TAG !! tag:example:\n---\n!!int 42\n")).toBe("42");
           });
 
+          test("`!!int` on signed hex with `e`/`E` digits", () => {
+            // The lexer's `e` flag is set by the hex digit too — gated on
+            // `!is_radix` so `has_dot_or_exp` doesn't fire spuriously.
+            expect(YAML.parse("!!int -0xE")).toBe(-14);
+            expect(YAML.parse("!!int -0xDEAD")).toBe(-57005);
+            expect(YAML.parse("!!int +0xCAFE")).toBe(51966);
+            expect(YAML.parse("[!!int -0x1e2]")).toEqual([-482]);
+          });
+
+          test("BOM at line-start inside content is content, not l-document-prefix", () => {
+            expect(YAML.parse("[a,\n﻿b]")).toEqual(["a", "﻿b"]);
+            expect(YAML.parse("a: b\n﻿c: d")).toEqual({ a: "b", "﻿c": "d" });
+            expect(() => YAML.parse("- a\n﻿- b")).toThrow();
+            // But between docs it is the prefix.
+            expect(YAML.parse("a\n...\n﻿---\nb")).toEqual(["a", "b"]);
+            expect(YAML.parse("a\n...\n﻿b")).toEqual(["a", "b"]);
+          });
+
+          test("`%YAML` major version compared numerically (leading zeros)", () => {
+            expect(YAML.parse("%YAML 01.2\n---\nfoo")).toBe("foo");
+            expect(YAML.parse("%YAML 001.2\n---\nfoo")).toBe("foo");
+            expect(() => YAML.parse("%YAML 10.2\n---\nfoo")).toThrow();
+            expect(() => YAML.parse("%YAML 0.9\n---\nfoo")).toThrow();
+          });
+
+          test("`secondary_handle_redefined` resets before next doc's first scan", () => {
+            expect(YAML.parse("%TAG !! tag:x:\n---\na\n...\n!!int 5")).toEqual(["a", 5]);
+          });
+
           test.todo("hex/octal `!!int` ≥ 2⁶⁴ — diagnostic / consistency", () => {
             // Decimal `!!int` accepts arbitrary magnitude via parse_double; hex
             // and octal use parse_unsigned::<u64> and overflow → TagContentMismatch

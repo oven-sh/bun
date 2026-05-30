@@ -1705,7 +1705,9 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         // float forms; `!!float` rejects `0x`/`0o` radix forms. On mismatch
         // fall through to string so parse_node's construct_scalar errors.
         let is_radix = x || o || hex;
-        let has_dot_or_exp = decimal || e || first_char == FirstChar::Dot;
+        // `e` is set by the hex digit `E`/`e` too — only treat it as an
+        // exponent marker outside `0x`.
+        let has_dot_or_exp = decimal || (e && !is_radix) || first_char == FirstChar::Dot;
         let store = match self.tag {
             NodeTag::None => true,
             NodeTag::Int => !has_dot_or_exp,
@@ -2580,6 +2582,10 @@ pub struct Parser<'i, Enc: Encoding> {
     /// `!!int` etc. shorthands no longer denote the Core-schema tags
     /// (`shorthand_to_tag` falls through to `Unknown`).
     pub secondary_handle_redefined: bool,
+    /// True while scanning at [202] `l-document-prefix` position
+    /// (stream-start, or after `...`): scan() may strip a line-start BOM.
+    /// Cleared once a document's first content token is produced.
+    pub at_doc_prefix: bool,
 
     pub whitespace_buf: Vec<Whitespace<Enc>>,
 
@@ -2628,6 +2634,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             anchors: StringHashMap::default(),
             tag_handles: StringHashMap::default(),
             secondary_handle_redefined: false,
+            at_doc_prefix: true,
             whitespace_buf: Vec::new(),
             stack_check: StackCheck::init(),
             merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
@@ -2744,8 +2751,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             let major = self.string_range();
             self.try_skip_ns_dec_digits()?;
             // [86]/[87] A version-1.2 processor must reject documents with a
-            // different major version.
-            if major.end(self.pos).slice(self.input) != Enc::literal(b"1").as_ref() {
+            // different major version. [86] is `ns-dec-digit+` so leading
+            // zeros (`01`) are syntactically valid; compare numerically.
+            let major_digits = major.end(self.pos).slice(self.input);
+            let nz = major_digits
+                .iter()
+                .position(|&d| Enc::wide(d) != 0x30)
+                .unwrap_or(major_digits.len().saturating_sub(1));
+            if major_digits[nz..] != *Enc::literal(b"1").as_ref() {
                 return Err(ParseError::InvalidDirective);
             }
             self.try_skip_char(Enc::ch(b'.'))?;
@@ -2926,6 +2939,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             return Err(Self::unexpected_token());
         }
 
+        // Past l-document-prefix and `---` — a line-start BOM from here is
+        // content, not a prefix.
+        self.at_doc_prefix = false;
+
         let root = self.parse_node(ParseNodeOptions::default())?;
 
         // If document_start it needs to create a new document.
@@ -2936,6 +2953,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             TokenData::DocumentStart => {}
             TokenData::DocumentEnd => {
                 let mut document_end_line = self.token.line;
+                // The next document's [202] l-document-prefix begins after
+                // this `...`; reset per-document scan state so the next
+                // scan() (which produces that document's first token) sees
+                // BOM as a prefix and `!!` as Core, not this document's
+                // redefinition.
+                self.at_doc_prefix = true;
+                self.secondary_handle_redefined = false;
                 self.scan(ScanOptions::default())?;
 
                 // consume all bare documents
@@ -6530,13 +6554,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
                 // [3] c-byte-order-mark — [202]/[211] admit BOM in
                 // l-document-prefix before each document, not just at
-                // stream-start (which `init()` handles). At line start, skip
-                // it like whitespace and advance `line_start_pos` so a
-                // following `---`/`...` is still recognized at column 0. A
-                // BOM not at line-start (or a non-BOM 0xEF lead byte) falls
-                // through to scan_plain_scalar via the `_` arm.
+                // [202] l-document-prefix admits c-byte-order-mark before
+                // l-comment*. Only strip BOM here when the parser is between
+                // documents — `at_doc_prefix` is the explicit gate. A BOM at
+                // line-start *inside* a node (`[a,\n﻿b]`, `a: b\n﻿c: d`) is
+                // content, not a prefix.
                 0xEF | 0xFEFF
-                    if self.is_at_line_start() && Enc::bom_len(self.remain()) > 0 =>
+                    if self.at_doc_prefix
+                        && self.is_at_line_start()
+                        && Enc::bom_len(self.remain()) > 0 =>
                 {
                     self.inc(Enc::bom_len(self.remain()));
                     self.line_start_pos = self.pos;

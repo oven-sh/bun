@@ -775,7 +775,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
             return Err(global
                 .err(
                     jsc::ErrorCode::INVALID_ARG_VALUE,
-                    format_args!("Bun.cron() path URL must not be empty"),
+                    format_args!("Bun.cron() path must not be empty"),
                 )
                 .throw());
         }

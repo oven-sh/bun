@@ -190,6 +190,12 @@ describe("Bun.cron API", () => {
     // Unclosed IPv6 bracket -> WTF::URL parser rejects entirely
     expect(() => Bun.cron("file://[", "@daily", "t")).toThrow(expect.objectContaining({ code: "ERR_INVALID_URL" }));
   });
+
+  test("empty path string throws", () => {
+    expect(() => Bun.cron("", "@daily", "t")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE", message: expect.stringContaining("path must not be empty") }),
+    );
+  });
 });
 
 // ==========================================================================

@@ -2326,6 +2326,15 @@ folded: >
             expect(YAML.parse("%TAG !! tag:example:\n---\n!!int 42\n")).toBe("42");
           });
 
+          test.todo("hex/octal `!!int` ≥ 2⁶⁴ — diagnostic / consistency", () => {
+            // Decimal `!!int` accepts arbitrary magnitude via parse_double; hex
+            // and octal use parse_unsigned::<u64> and overflow → TagContentMismatch
+            // (misleading: content *does* match `0x [0-9a-fA-F]+`). Either parse
+            // via float (eemeli/yaml does, loses precision) or use a distinct
+            // overflow diagnostic.
+            expect(YAML.parse(`!!int 0x10000000000000000\n`)).toBe(18446744073709552000);
+          });
+
           test.todo("[10.2.1.3] !!int on binary — bun returns string (should error or coerce)", () => {
             expect(YAML.parse(`!!int 0b101\n`)).toEqual(5);
           });

@@ -287,8 +287,8 @@ describe.concurrent("builtin modules survive a clobbered global Symbol", () => {
   });
 
   it("node:readline loads after Symbol is set to undefined", async () => {
-    expect(await run(`globalThis.Symbol = undefined; console.log(typeof require("node:readline").createInterface);`)).toBe(
-      "function",
-    );
+    expect(
+      await run(`globalThis.Symbol = undefined; console.log(typeof require("node:readline").createInterface);`),
+    ).toBe("function");
   });
 });

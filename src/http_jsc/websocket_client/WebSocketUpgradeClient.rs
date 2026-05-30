@@ -753,7 +753,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // across the flush so the C++-ref release inside `cancel()` can't drop
         // us to 0 before our own trailing `deref`.
         // SAFETY: short-lived read; ends before the branch below.
-        let has_deferred = !matches!(unsafe { (*this).deferred_handshake }, DeferredHandshake::None);
+        let has_deferred = !matches!(
+            unsafe { (*this).deferred_handshake },
+            DeferredHandshake::None
+        );
         if has_deferred {
             // SAFETY: `this` carries root (userdata) provenance.
             let _guard = unsafe { ThisPtr::new(this) }.ref_guard();

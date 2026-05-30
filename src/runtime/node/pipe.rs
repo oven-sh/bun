@@ -407,12 +407,22 @@ impl Pipe {
         // the reader is dropped in deinit_and_destroy, so this is correct there
         // too (and avoids a double-close vs reader.close()'s async done()).
         self.safe_downgrade();
+        // Always drop the poll + loop keepalive (idempotent no-op if no poll):
+        // the reader may have an armed poll even when READER_STARTED has been
+        // cleared or was never set on this exact path, and leaving it
+        // registered-and-ref'd keeps the process alive after the socket is
+        // destroyed. reader.close() is a no-op on POSIX (open() cleared
+        // CLOSE_HANDLE, so close_handle() never fires done()/on_reader_done());
+        // tear down directly the same way on_reader_done() does.
+        self.reader.with_mut(|r| {
+            r.update_ref(false);
+            r.pause();
+        });
+        // Release the reader's +1 ref only if it actually took one (start()
+        // succeeded). Must be last: reader_terminated() -> deref_() may free
+        // `self`. Windows pause()/update_ref() are synchronous no-callback ops
+        // and the uv source is reclaimed in deinit_and_destroy.
         if self.flags.get().contains(Flags::READER_STARTED) {
-            self.reader.with_mut(|r| {
-                r.pause();
-                r.update_ref(false);
-            });
-            // Must be last: reader_terminated() -> deref_() may free `self`.
             self.reader_terminated();
         }
     }
@@ -504,10 +514,11 @@ impl Pipe {
         self.update_flags(|f| f.remove(Flags::READING));
         self.update_flags(|f| f.insert(Flags::DONE));
         // close_handle=false means BufferedReader leaves the poll registered and
-        // ref'd; drop both so the process can exit after EOF.
+        // ref'd; drop both (order matches read_stop()) so the process can exit
+        // after EOF.
         self.reader.with_mut(|r| {
-            r.pause();
             r.update_ref(false);
+            r.pause();
         });
         self.call_on_read(JSValue::js_number_from_int32(UV_EOF), JSValue::UNDEFINED);
         self.safe_downgrade();
@@ -519,8 +530,8 @@ impl Pipe {
         self.update_flags(|f| f.remove(Flags::READING));
         self.update_flags(|f| f.insert(Flags::DONE));
         self.reader.with_mut(|r| {
-            r.pause();
             r.update_ref(false);
+            r.pause();
         });
         self.call_on_read(
             JSValue::js_number_from_int32(to_uv_errno(err)),

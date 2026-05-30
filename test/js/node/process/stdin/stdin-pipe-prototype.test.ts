@@ -255,3 +255,35 @@ test("process.stdin after pause/resume survives EOF without use-after-free", asy
   expect(stdout).toBe("hello\n");
   expect(exitCode).toBe(0);
 });
+
+// Readable.toWeb(process.stdin) + pipeline drains stdin through a web-stream
+// bridge that closes (not destroys) the source Socket at EOF, so neither
+// on_reader_done nor destroy() ran to release the Pipe reader's loop keepalive
+// — the process read everything but hung forever (regressed issue #09041).
+// close_internal() must drop the keepalive unconditionally. A plain `.pipe`
+// without toWeb exercises the same "socket ended, must still exit" path.
+test("process.stdin piped through Readable.toWeb + pipeline exits at EOF", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { PassThrough, Readable, pipeline } = require("node:stream");
+        pipeline(Readable.toWeb(process.stdin), new PassThrough(), process.stdout, () => {});
+      `,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  proc.stdin.write("hello\n");
+  proc.stdin.end();
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("hello\n");
+  expect(exitCode).toBe(0);
+});

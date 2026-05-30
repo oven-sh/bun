@@ -1,121 +1,277 @@
 //! This pool exists because on Windows, each path buffer costs 64 KB.
 //! This makes the stack memory usage very unpredictable, which means we can't
 //! really know how much stack space we have left. This pool is a workaround to
-//! make the stack memory usage more predictable. We keep up to 4 path buffers
-//! alive per thread at a time.
+//! make the stack memory usage more predictable.
 //!
-//! Implemented over `thread_local!` + `RefCell<Vec<Box<T>>>` (per-thread, so no
-//! lock needed): at most 4 buffers cached per thread; excess `put`s drop. An
-//! RAII guard replaces manual `get`/`put` pairing.
+//! The pool is a process-global, lock-free Treiber stack of heap buffers. It
+//! is bounded to `get_thread_count() * 2` cached buffers per process; a `put`
+//! that would exceed the bound frees the buffer instead of pushing it. This
+//! replaces the previous `thread_local!` + `RefCell<Vec<Box<T>>>` design (cap
+//! 4 *per thread*), which grew memory with the thread count and re-allocated
+//! every time work migrated between threads.
+//!
+//! ## Why it is race-free
+//!
+//! Both the root pointer and a single "popping" flag bit live in one
+//! `AtomicUsize` (the node's ≥8-byte alignment leaves the low bits free), so
+//! the stack word is mutated atomically:
+//!
+//! - `put` (push) is a standard lock-free CAS loop that only ever swings the
+//!   root at its own, caller-owned node. It never frees a node that is in the
+//!   list (the over-capacity path frees the node it is *holding*, which was
+//!   never linked), and it never dereferences another thread's node.
+//! - `get` (pop) first CAS-acquires the `IS_POPPING` bit. That bit makes the
+//!   pop single-consumer: while it is held, no other `get` touches the list,
+//!   and `put` never frees, so dereferencing `head.next` can never be a
+//!   use-after-free. A `get` that finds the bit already held (or the list
+//!   empty) does not block — it allocates a fresh buffer. Releasing the bit
+//!   and unlinking the head happen in the same CAS, which retries if a
+//!   concurrent `put` pushed in the meantime.
+//!
+//! This mirrors how `bun_threading::ThreadPool`'s lock-free queue stays
+//! ABA-safe via single-consumer exclusion rather than tagged/versioned
+//! pointers (the workspace has no double-width CAS or hazard-pointer
+//! machinery). The RAII `PoolGuard` returned by `get()` returns its buffer to
+//! the pool on `Drop`.
 
-use core::cell::RefCell;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
+use core::ptr;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::{PathBuffer, WPathBuffer};
 
-const POOL_CAP: usize = 4;
-
-/// Per-thread pool of reusable path buffers.
-pub struct PathBufferPoolT<T: 'static + Default>(PhantomData<T>);
-
-// One thread-local Vec per buffer type: per-thread storage means mimalloc
-// frees the buffers on thread deinit and no lock is needed.
-thread_local! {
-    #[allow(clippy::vec_box)]
-    static U8_POOL: RefCell<Vec<Box<PathBuffer>>> = const { RefCell::new(Vec::new()) };
-    #[allow(clippy::vec_box)]
-    static U16_POOL: RefCell<Vec<Box<WPathBuffer>>> = const { RefCell::new(Vec::new()) };
+/// A pooled buffer plus its intrusive stack link. Heap-allocated; the `next`
+/// link is only mutated by the thread that owns the node (a pusher before it
+/// publishes the node, or the single popper holding `IS_POPPING`).
+struct Node<T> {
+    next: *mut Node<T>,
+    buf: T,
 }
 
-pub trait PoolStorage: Sized + Default + 'static {
-    fn with_pool<R>(f: impl FnOnce(&RefCell<Vec<Box<Self>>>) -> R) -> R;
-    /// Allocate a fresh boxed buffer. Implemented per concrete type so the
-    /// `assume_init` SAFETY obligation is discharged monomorphically (the
-    /// generic site cannot soundly assert "every bit-pattern is valid" for an
-    /// arbitrary `T`).
-    fn new_boxed() -> Box<Self>;
+/// `IS_POPPING` guards the pop path so only one `get` dereferences list nodes
+/// at a time; `PTR_MASK` recovers the head pointer. The node's alignment (≥ 8,
+/// it leads with a pointer) guarantees the low bit is always free.
+const IS_POPPING: usize = 0b1;
+const PTR_MASK: usize = !IS_POPPING;
+
+/// Process-global lock-free stack of reusable buffers, bounded by `cap`.
+///
+/// Only reachable through the sealed [`PoolStorage::pool`]; not meant to be
+/// named directly.
+pub struct Pool<T> {
+    /// Packed `head_ptr | IS_POPPING`.
+    stack: AtomicUsize,
+    /// Approximate count of buffers currently cached. Bounds the list length;
+    /// may transiently overshoot `cap` by the number of concurrent `put`s (each
+    /// of which then frees its node), but can never grow without bound.
+    len: AtomicUsize,
+    _marker: PhantomData<fn() -> T>,
+}
+
+impl<T> Pool<T> {
+    const fn new() -> Self {
+        Self {
+            stack: AtomicUsize::new(0),
+            len: AtomicUsize::new(0),
+            _marker: PhantomData,
+        }
+    }
+
+    /// `cpu_count * 2`, matching the existing per-process multiplier used by
+    /// the install network pool. `get_thread_count()` is the repo-standard
+    /// core count (clamped `[2, 1024]`); there is no NUMA-node count in the
+    /// tree, so "numa threads" maps to the logical core count.
+    #[inline]
+    fn cap() -> usize {
+        usize::from(bun_core::get_thread_count()) * 2
+    }
+
+    /// Pop a node off the stack, or return null if empty or if another `get`
+    /// currently holds `IS_POPPING`. A null return means the caller allocates a
+    /// fresh buffer — the pool never blocks a `get`.
+    fn pop(&self) -> *mut Node<T> {
+        let mut stack = self.stack.load(Ordering::Acquire);
+        loop {
+            if stack & IS_POPPING != 0 {
+                // Another thread is popping; don't block — caller allocates.
+                return ptr::null_mut();
+            }
+            let head = (stack & PTR_MASK) as *mut Node<T>;
+            if head.is_null() {
+                return ptr::null_mut();
+            }
+            // Claim the pop by setting IS_POPPING while keeping the head, so no
+            // other popper can observe a non-null head concurrently.
+            match self.stack.compare_exchange_weak(
+                stack,
+                stack | IS_POPPING,
+                Ordering::Acquire,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(cur) => stack = cur,
+            }
+        }
+
+        // We hold IS_POPPING: `head` is ours exclusively (no other popper) and
+        // `put` never frees a linked node, so reading `head.next` is sound.
+        loop {
+            let head = (stack & PTR_MASK) as *mut Node<T>;
+            // SAFETY: we hold IS_POPPING, so `head` cannot be concurrently
+            // popped or freed; it is a live node we just observed in `stack`.
+            let next = unsafe { (*head).next };
+            // Release IS_POPPING and unlink `head` in one step. A concurrent
+            // `put` may have pushed a new head (changing the pointer but not
+            // the bit we own); retry against the updated value.
+            match self.stack.compare_exchange_weak(
+                stack,
+                (next as usize) & PTR_MASK,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    self.len.fetch_sub(1, Ordering::Relaxed);
+                    // SAFETY: `head` is unlinked and exclusively ours now.
+                    unsafe { (*head).next = ptr::null_mut() };
+                    return head;
+                }
+                Err(cur) => stack = cur,
+            }
+        }
+    }
+
+    /// Push `node` onto the stack, or free it if the pool is at capacity.
+    fn push(&self, node: *mut Node<T>) {
+        // Reserve a slot first so the list length stays bounded. If we are at
+        // (or over) capacity, free the node rather than linking it.
+        if self.len.fetch_add(1, Ordering::Relaxed) >= Self::cap() {
+            self.len.fetch_sub(1, Ordering::Relaxed);
+            // SAFETY: `node` is caller-owned (just handed back, never linked).
+            unsafe { drop(Box::from_raw(node)) };
+            return;
+        }
+
+        let mut stack = self.stack.load(Ordering::Relaxed);
+        loop {
+            // SAFETY: `node` is caller-owned and not yet published; writing its
+            // `next` before the CAS that publishes it is unobserved by others.
+            unsafe { (*node).next = (stack & PTR_MASK) as *mut Node<T> };
+            // Publish `node` as the new head, preserving the popper's bit.
+            let new_stack = (node as usize) | (stack & IS_POPPING);
+            match self.stack.compare_exchange_weak(
+                stack,
+                new_stack,
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return,
+                Err(cur) => stack = cur,
+            }
+        }
+    }
+}
+
+// `Pool<T>` holds only `AtomicUsize`s and a `PhantomData<fn() -> T>`, so it is
+// `Send + Sync` automatically. The node pointers it tracks are encoded as
+// integers in `stack`; the lock-free access discipline that makes
+// dereferencing them sound lives in `pop`/`push` (see their SAFETY comments):
+// every `Node` access happens either before the node is published
+// (pusher-owned) or while the accessor holds `IS_POPPING` (popper-owned), so a
+// `*mut Node` is never aliased across threads.
+
+static U8_POOL: Pool<PathBuffer> = Pool::new();
+static U16_POOL: Pool<WPathBuffer> = Pool::new();
+
+/// Types that have a process-global [`Pool`] (`PathBuffer` / `WPathBuffer`).
+///
+/// Sealed via the private [`Sealed`] supertrait: only `PathBuffer` and
+/// `WPathBuffer` implement it. It is a bound on the public [`PoolGuard`], but
+/// external crates cannot implement it or observe `pool()`.
+pub trait PoolStorage: Sealed + Sized + Default + 'static {
+    #[doc(hidden)]
+    fn pool() -> &'static Pool<Self>;
 }
 impl PoolStorage for PathBuffer {
-    fn with_pool<R>(f: impl FnOnce(&RefCell<Vec<Box<Self>>>) -> R) -> R {
-        U8_POOL.with(f)
-    }
     #[inline]
-    fn new_boxed() -> Box<Self> {
-        // SAFETY: `PathBuffer` is `#[repr(transparent)]` over `[u8; N]`;
-        // `new_zeroed` writes every byte to `0`, which is a valid `u8`, so the
-        // value is fully initialized before `assume_init`. We use `new_zeroed`
-        // rather than `new_uninit` because materializing a `Box<T>` whose bytes
-        // were never written is UB even for integer arrays. This path runs only
-        // on pool cache miss (≤ once per slot per thread); `alloc_zeroed` for a
-        // 64 KB heap block is typically satisfied by fresh OS-zeroed pages, so
-        // there is no hot-path memset cost.
-        unsafe { Box::<Self>::new_zeroed().assume_init() }
+    fn pool() -> &'static Pool<Self> {
+        &U8_POOL
     }
 }
 impl PoolStorage for WPathBuffer {
-    fn with_pool<R>(f: impl FnOnce(&RefCell<Vec<Box<Self>>>) -> R) -> R {
-        U16_POOL.with(f)
-    }
     #[inline]
-    fn new_boxed() -> Box<Self> {
-        // SAFETY: `WPathBuffer` is `#[repr(transparent)]` over `[u16; N]`;
-        // `new_zeroed` writes every byte to `0`, which is a valid `u16`, so the
-        // value is fully initialized before `assume_init`. See `PathBuffer`
-        // impl above for rationale re: `new_uninit` UB and perf.
-        unsafe { Box::<Self>::new_zeroed().assume_init() }
+    fn pool() -> &'static Pool<Self> {
+        &U16_POOL
     }
 }
+
+mod private {
+    pub trait Sealed {}
+    impl Sealed for super::PathBuffer {}
+    impl Sealed for super::WPathBuffer {}
+}
+use private::Sealed;
+
+/// Process-global pool of reusable path buffers.
+pub struct PathBufferPoolT<T: PoolStorage>(PhantomData<T>);
 
 impl<T: PoolStorage> PathBufferPoolT<T> {
     /// Returns an RAII guard that derefs to `&mut T` and returns the buffer to
     /// the pool on `Drop`. Replaces manual `get`/`put` pairing.
     pub fn get() -> PoolGuard<T> {
-        // Zero-allocate on the (rare) cache-miss path — see
-        // `PoolStorage::new_boxed` for the soundness/perf justification.
-        let buf = T::with_pool(|p| p.borrow_mut().pop()).unwrap_or_else(T::new_boxed);
-        PoolGuard { buf: Some(buf) }
-    }
-
-    /// Manual return path. Prefer dropping
-    /// the `PoolGuard` instead.
-    pub(crate) fn put(buf: Box<T>) {
-        T::with_pool(|p| {
-            let mut p = p.borrow_mut();
-            if p.len() < POOL_CAP {
-                p.push(buf);
-            }
-            // else: drop — mimalloc frees it.
-        });
+        let node = T::pool().pop();
+        let node = if node.is_null() {
+            // Cache miss (empty or contended): allocate a fresh node. The
+            // buffer is write-only scratch — callers write every byte they read
+            // — so it is left uninitialized (matches `PathBuffer::uninit`).
+            Box::into_raw(Box::new(Node {
+                next: ptr::null_mut(),
+                buf: T::default(),
+            }))
+        } else {
+            node
+        };
+        PoolGuard {
+            node,
+            _marker: PhantomData,
+        }
     }
 }
 
-/// RAII guard returned by `PathBufferPoolT::get()`.
+/// RAII guard returned by `PathBufferPoolT::get()`. Returns its buffer to the
+/// pool (or frees it, if the pool is at capacity) on `Drop`.
 pub struct PoolGuard<T: PoolStorage> {
-    buf: Option<Box<T>>,
+    /// Always non-null for the guard's lifetime.
+    node: *mut Node<T>,
+    _marker: PhantomData<Box<Node<T>>>,
 }
+
+// SAFETY: the guard owns its node exclusively for its lifetime (it is unlinked
+// from the shared stack in `pop`/freshly allocated in `get`), so it may move
+// between threads like any `Box`.
+unsafe impl<T: PoolStorage> Send for PoolGuard<T> {}
 
 impl<T: PoolStorage> Deref for PoolGuard<T> {
     type Target = T;
     #[inline]
     fn deref(&self) -> &T {
-        // SAFETY-ish: `buf` is always `Some` until `Drop`.
-        self.buf.as_deref().unwrap()
+        // SAFETY: `node` is non-null and exclusively owned until `Drop`.
+        unsafe { &(*self.node).buf }
     }
 }
 
 impl<T: PoolStorage> DerefMut for PoolGuard<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
-        self.buf.as_deref_mut().unwrap()
+        // SAFETY: `node` is non-null and exclusively owned until `Drop`.
+        unsafe { &mut (*self.node).buf }
     }
 }
 
 impl<T: PoolStorage> Drop for PoolGuard<T> {
     fn drop(&mut self) {
-        if let Some(buf) = self.buf.take() {
-            PathBufferPoolT::<T>::put(buf);
-        }
+        // Return the node to the pool (push), which frees it if at capacity.
+        T::pool().push(self.node);
     }
 }
 
@@ -125,26 +281,10 @@ pub type path_buffer_pool = PathBufferPoolT<PathBuffer>;
 pub type w_path_buffer_pool = PathBufferPoolT<WPathBuffer>;
 
 /// `bun.path_buffer_pool.get()` — convenience wrapper returning the RAII guard.
-/// `Path<U>` callers store this in a `ManuallyDrop` and explicitly `put` on
-/// reset, so also expose `into_box`/free `put`.
 pub type Guard = PoolGuard<PathBuffer>;
 #[inline]
 pub fn get() -> PoolGuard<PathBuffer> {
     PathBufferPoolT::<PathBuffer>::get()
-}
-#[inline]
-pub fn put(buf: Box<PathBuffer>) {
-    PathBufferPoolT::<PathBuffer>::put(buf)
-}
-
-impl<T: PoolStorage> PoolGuard<T> {
-    /// Extract the `Box` without returning it to the pool (for `ManuallyDrop`
-    /// owners that will `put` explicitly later). `Drop` is a no-op once `buf`
-    /// is `None`, so no leak.
-    #[inline]
-    pub fn into_box(mut self) -> Box<T> {
-        self.buf.take().unwrap()
-    }
 }
 
 #[cfg(windows)]
@@ -153,3 +293,5 @@ pub type os_path_buffer_pool = w_path_buffer_pool;
 #[cfg(not(windows))]
 #[allow(non_camel_case_types)]
 pub type os_path_buffer_pool = path_buffer_pool;
+
+

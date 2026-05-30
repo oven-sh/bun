@@ -669,30 +669,34 @@ describe("FormData", () => {
   // The minimum repro for this was to not call the .name and .type getter on the Blob
   // But the crux of the issue is that we called dupe() on the Blob, without also incrementing the reference count of the name string.
   // https://github.com/oven-sh/bun/issues/14918
-  it("should increment reference count of the name string on Blob", async () => {
-    const buffer = new File([Buffer.from(Buffer.alloc(48 * 1024, "abcdefh").toString("base64"), "base64")], "ok.jpg");
-    function test() {
-      let file = new File([buffer], "ok.jpg");
-      file.name;
-      file.type;
+  it(
+    "should increment reference count of the name string on Blob",
+    async () => {
+      const buffer = new File([Buffer.from(Buffer.alloc(48 * 1024, "abcdefh").toString("base64"), "base64")], "ok.jpg");
+      function test() {
+        let file = new File([buffer], "ok.jpg");
+        file.name;
+        file.type;
 
-      let formData = new FormData();
-      formData.append("foo", file);
-      formData.get("foo");
-      formData.get("foo")!.name;
-      formData.get("foo")!.type;
-      return formData;
-    }
-    for (let i = 0; i < 100000; i++) {
-      test();
-      if (i % 5000 === 0) {
-        Bun.gc();
+        let formData = new FormData();
+        formData.append("foo", file);
+        formData.get("foo");
+        formData.get("foo")!.name;
+        formData.get("foo")!.type;
+        return formData;
       }
-    }
-    // The 100k-iteration loop runs ~15x slower under the debug+ASAN build,
-    // where instrumented allocation dominates; give it a realistic budget
-    // instead of the 5s default so it doesn't time out on that lane.
-  }, isDebug ? 120_000 : 30_000);
+      for (let i = 0; i < 100000; i++) {
+        test();
+        if (i % 5000 === 0) {
+          Bun.gc();
+        }
+      }
+      // The 100k-iteration loop runs ~15x slower under the debug+ASAN build,
+      // where instrumented allocation dominates; give it a realistic budget
+      // instead of the 5s default so it doesn't time out on that lane.
+    },
+    isDebug ? 120_000 : 30_000,
+  );
 });
 
 // https://github.com/oven-sh/bun/issues/14988

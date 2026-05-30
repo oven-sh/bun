@@ -44,7 +44,10 @@ use crate::{PathBuffer, WPathBuffer};
 /// A pooled buffer plus its intrusive stack link. Heap-allocated; the `next`
 /// link is only mutated by the thread that owns the node (a pusher before it
 /// publishes the node, or the single popper holding `IS_POPPING`).
-struct Node<T> {
+///
+/// Only reachable through the sealed [`PoolStorage`]; fields are private and it
+/// is not meant to be named directly.
+pub struct Node<T> {
     next: *mut Node<T>,
     buf: T,
 }
@@ -109,7 +112,13 @@ impl<T> Pool<T> {
                 Ordering::Acquire,
                 Ordering::Acquire,
             ) {
-                Ok(_) => break,
+                Ok(_) => {
+                    // The atomic now holds `stack | IS_POPPING`; track that in
+                    // the local so the unlink CAS below matches on its first
+                    // try instead of eating a guaranteed failed CAS.
+                    stack |= IS_POPPING;
+                    break;
+                }
                 Err(cur) => stack = cur,
             }
         }
@@ -191,17 +200,45 @@ static U16_POOL: Pool<WPathBuffer> = Pool::new();
 pub trait PoolStorage: Sealed + Sized + Default + 'static {
     #[doc(hidden)]
     fn pool() -> &'static Pool<Self>;
+    /// Allocate a fresh node directly on the heap (no stack temporary). The
+    /// buffer is write-only scratch — callers write every byte they later read
+    /// — so the bytes are left zeroed rather than memset'd in a hot loop.
+    ///
+    /// Implemented per concrete type so the `assume_init` SAFETY obligation is
+    /// discharged monomorphically: the generic site cannot assert "all-zero is
+    /// a valid bit-pattern" for an arbitrary `T`, but it is for `[u8; N]` /
+    /// `[u16; N]` (and a null `next` pointer). Allocating via `new_zeroed`
+    /// keeps the ~64 KB (Windows: ~96 KB) buffer off the stack — the whole
+    /// reason this pool exists (see the module docs).
+    #[doc(hidden)]
+    fn new_node() -> *mut Node<Self>;
 }
 impl PoolStorage for PathBuffer {
     #[inline]
     fn pool() -> &'static Pool<Self> {
         &U8_POOL
     }
+    #[inline]
+    fn new_node() -> *mut Node<Self> {
+        // SAFETY: `Node<PathBuffer>` is `{ *mut Node, [u8; N] }`; all-zero is a
+        // valid value (null `next`, zeroed `u8` buffer), so the box is fully
+        // initialized before `assume_init`. `alloc_zeroed` for a large block is
+        // typically served by fresh OS-zeroed pages, so there is no real
+        // memset cost on this (cache-miss-only) path.
+        Box::into_raw(unsafe { Box::<Node<Self>>::new_zeroed().assume_init() })
+    }
 }
 impl PoolStorage for WPathBuffer {
     #[inline]
     fn pool() -> &'static Pool<Self> {
         &U16_POOL
+    }
+    #[inline]
+    fn new_node() -> *mut Node<Self> {
+        // SAFETY: `Node<WPathBuffer>` is `{ *mut Node, [u16; N] }`; all-zero is
+        // a valid value (null `next`, zeroed `u16` buffer). See the `PathBuffer`
+        // impl for the `new_zeroed`/perf rationale.
+        Box::into_raw(unsafe { Box::<Node<Self>>::new_zeroed().assume_init() })
     }
 }
 
@@ -219,18 +256,13 @@ impl<T: PoolStorage> PathBufferPoolT<T> {
     /// Returns an RAII guard that derefs to `&mut T` and returns the buffer to
     /// the pool on `Drop`. Replaces manual `get`/`put` pairing.
     pub fn get() -> PoolGuard<T> {
-        let node = T::pool().pop();
-        let node = if node.is_null() {
-            // Cache miss (empty or contended): allocate a fresh node. The
-            // buffer is write-only scratch — callers write every byte they read
-            // — so it is left uninitialized (matches `PathBuffer::uninit`).
-            Box::into_raw(Box::new(Node {
-                next: ptr::null_mut(),
-                buf: T::default(),
-            }))
-        } else {
-            node
-        };
+        let mut node = T::pool().pop();
+        if node.is_null() {
+            // Cache miss (empty or contended): allocate a fresh node directly
+            // on the heap (`new_node` avoids materializing the ~64 KB buffer on
+            // the stack).
+            node = T::new_node();
+        }
         PoolGuard {
             node,
             _marker: PhantomData,

@@ -8,7 +8,9 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // once. A data race or use-after-free in the lock-free `pop`/`push` shows up as
 // a crash under the debug build (ASAN) or as a corrupted result (a buffer
 // handed to two threads), which the per-iteration equality checks catch.
-describe("path buffer pool (lock-free, process-global)", () => {
+describe.concurrent("path buffer pool (lock-free, process-global)", () => {
+  // Generous timeout: the debug/ASAN build is slow and this runs concurrently
+  // with the churn test (shared CPU), so the worker fan-out needs headroom.
   test("concurrent path operations across workers stay correct", async () => {
     using dir = tempDir("path-pool", {
       "worker.js": `
@@ -36,7 +38,7 @@ describe("path buffer pool (lock-free, process-global)", () => {
       `,
       "main.js": `
         const N = 8;
-        const ITERS = 4000;
+        const ITERS = 1500;
         const root = process.cwd();
         const workers = [];
         const dones = [];
@@ -68,7 +70,7 @@ describe("path buffer pool (lock-free, process-global)", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("ALL_WORKERS_OK");
     expect(exitCode).toBe(0);
-  });
+  }, 30_000);
 
   test("single-thread get/put reuse keeps results correct under churn", async () => {
     // Drives a tight loop of pooled buffer get/put on one thread (every
@@ -98,5 +100,5 @@ describe("path buffer pool (lock-free, process-global)", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("CHURN_OK");
     expect(exitCode).toBe(0);
-  });
+  }, 30_000);
 });

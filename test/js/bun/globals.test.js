@@ -264,19 +264,20 @@ describe("globalThis.gc", () => {
 // before the lazy load used to throw "Symbol is not a function" from native
 // code and trip an unexpected-exception assertion.
 describe.concurrent("builtin modules survive a clobbered global Symbol", () => {
-  const run = src => {
-    const result = Bun.spawnSync([bunExe(), "-e", src], { env: bunEnv });
-    if (!result.success) throw new Error(result.stderr.toString("utf8"));
-    return result.stdout.toString("utf8").trim();
+  const run = async src => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(stderr);
+    return stdout.trim();
   };
 
-  it("Bun.SQL loads after Symbol is set to undefined", () => {
-    expect(run(`globalThis.Symbol = undefined; console.log(typeof Bun.SQL);`)).toBe("function");
+  it("Bun.SQL loads after Symbol is set to undefined", async () => {
+    expect(await run(`globalThis.Symbol = undefined; console.log(typeof Bun.SQL);`)).toBe("function");
   });
 
-  it("node:events works after Symbol is set to undefined", () => {
+  it("node:events works after Symbol is set to undefined", async () => {
     expect(
-      run(
+      await run(
         `globalThis.Symbol = undefined;` +
           `const ee = new (require("node:events"))();` +
           `ee.on("x", () => console.log("ok"));` +
@@ -285,8 +286,8 @@ describe.concurrent("builtin modules survive a clobbered global Symbol", () => {
     ).toBe("ok");
   });
 
-  it("node:readline loads after Symbol is set to undefined", () => {
-    expect(run(`globalThis.Symbol = undefined; console.log(typeof require("node:readline").createInterface);`)).toBe(
+  it("node:readline loads after Symbol is set to undefined", async () => {
+    expect(await run(`globalThis.Symbol = undefined; console.log(typeof require("node:readline").createInterface);`)).toBe(
       "function",
     );
   });

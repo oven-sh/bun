@@ -76,7 +76,6 @@ export const globalsToPrefix = [
   "Uint8Array",
   "String",
   "Symbol",
-  "Buffer",
   "RegExp",
   "WritableStream",
   "WritableStreamDefaultController",

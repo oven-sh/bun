@@ -1,6 +1,6 @@
 import { spawn } from "child_process";
 import path from "path";
-import { bunExe } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 type Test = {
   file: string;
@@ -220,5 +220,37 @@ describe("stdin", () => {
       ,
       }
     `);
+  });
+
+  // Bun-only (no `node` dependency) regression for the process-exit keepalive.
+  // process.stdin is a net.Socket over a native Pipe whose readStart() re-refs
+  // the event loop. After `.on("data")` schedules the readable machine's
+  // resume_(), a synchronous `.pause()` must still let the process exit: the
+  // post-pause read(0) -> _read -> readStart() re-arm would otherwise pin the
+  // loop open forever on a held-open stdin pipe. The 'pause' handler readStop()s
+  // on the next tick to release it.
+  it("pause right after a data listener lets the process exit (no node dep)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          process.stdin.on("data", () => {});
+          process.stdin.pause();
+        `,
+      ],
+      // Leave stdin a pipe held open by this parent (never written/ended): the
+      // child must exit on its own, not because stdin closed.
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });

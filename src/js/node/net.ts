@@ -1253,8 +1253,11 @@ Object.defineProperty(Socket.prototype, "pending", {
 Socket.prototype.pause = function pause() {
   if (!this.connecting && this._handle && !this.destroyed) {
     if ($isCallable(this._handle.readStop)) {
-      // stream-wrap handle (Pipe/TTY): stop reads via readStop.
-      if (this._handle.reading !== false) {
+      // stream-wrap handle (Pipe/TTY): stop reads via readStop. But a 'readable'
+      // listener keeps the stream in non-flowing mode where read() still needs
+      // the underlying reader armed to buffer data — Node leaves it reading in
+      // that case. Only readStop when there's no 'readable' listener.
+      if (this._handle.reading !== false && this.listenerCount("readable") === 0) {
         this._handle.reading = false;
         const err = this._handle.readStop();
         if (err) this.destroy(new ErrnoException(err, "read"));
@@ -1284,7 +1287,11 @@ Socket.prototype.resume = function resume() {
 Socket.prototype.read = function read(size) {
   if (!this.connecting && this._handle) {
     if ($isCallable(this._handle.readStart)) {
-      if (!this._handle.reading) tryReadStart(this);
+      // stream-wrap handle (Pipe/TTY). Match Node: only re-arm reads from read()
+      // for the onread option (kBuffer), which delivers data to a callback
+      // instead of the readable buffer so _read never fires to pull more. The
+      // normal data path is driven by _read via Duplex.read() below.
+      if (this[kBuffer] && !this._handle.reading) tryReadStart(this);
     } else {
       this._handle.resume?.();
     }

@@ -154,10 +154,32 @@ export function getStdinStream(
         stdin._handle.readStop();
       }
 
-      // NOTE: no `on("pause")` → nextTick(readStop) handler here. Socket.pause()
-      // already calls readStop() synchronously; a deferred readStop races a
-      // following resume() (`stdin.pause(); stdin.resume();`) and stops the
-      // reader *after* it was re-armed, silently dropping data.
+      // Node's createStdin() attaches this 'pause' listener. In bun a Pipe
+      // handle's readStart() re-refs the event loop, so the readable machine's
+      // resume_() — scheduled by the first 'data'/'resume' and still firing a
+      // post-pause read(0) → _read → readStart() on the next tick — re-arms the
+      // reader after pause() and would keep the process alive forever. This
+      // readStop() releases the loop so `stdin.on("data", …); stdin.pause()`
+      // can exit.
+      //
+      // It must run on nextTick, not synchronously: bun emits 'pause'
+      // synchronously from Readable.pause(), which is *before* the pending
+      // resume_() runs, so a synchronous readStop() here would be immediately
+      // undone by resume_()'s readStart(). Deferring puts this stop after
+      // resume_(). The `reading && !readableFlowing` guard (matching Node)
+      // re-checks state on the tick, so a synchronous `stdin.pause();
+      // stdin.resume()` — flowing again by then — skips the stop and drops no
+      // buffered data.
+      stdin.on("pause", function onpause() {
+        process.nextTick(() => {
+          if (!stdin._handle || !$isCallable(stdin._handle.readStop)) return;
+          if (stdin._handle.reading && !stdin.readableFlowing && stdin.listenerCount("readable") === 0) {
+            stdin._readableState.reading = false;
+            stdin._handle.reading = false;
+            stdin._handle.readStop();
+          }
+        });
+      });
 
       return stdin;
     }

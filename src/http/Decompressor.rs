@@ -60,7 +60,9 @@ unsafe fn seat<'a>(input: &'a [u8], out: &'a mut Vec<u8>) -> (&'static [u8], &'s
 const MAX_DECOMPRESSED_BODY_SIZE: usize = 1024 * 1024 * 1024;
 
 fn has_zlib_header(buffer: &[u8]) -> bool {
-    let &[cmf, flg, ..] = buffer else { return false };
+    let &[cmf, flg, ..] = buffer else {
+        return false;
+    };
     (cmf & 0x0f) == 8 && (cmf >> 4) <= 7 && u16::from_be_bytes([cmf, flg]).is_multiple_of(31)
 }
 

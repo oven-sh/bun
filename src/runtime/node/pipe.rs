@@ -394,34 +394,26 @@ impl Pipe {
         }
         self.update_flags(|f| f.insert(Flags::CLOSED));
         self.update_flags(|f| f.remove(Flags::READING));
-
-        // We never own the fd (open() cleared CLOSE_HANDLE), so reader.close()
-        // is a no-op on POSIX: close_handle() fires done()/on_reader_done() only
-        // when it actually closes the fd. Tear the reader down directly the same
-        // way on_reader_done() does — drop the poll + loop keepalive and release
-        // the reader's +1 ref — or socket.destroy()/process.stdin.destroy()
-        // while a writer holds the pipe open leaks the Pipe and hangs the
-        // process (the poll stays registered and ref'd, EOF never arrives, so
-        // on_reader_done() never runs to clean up). Windows pause()/update_ref()
-        // are synchronous no-callback ops and the uv source is reclaimed when
-        // the reader is dropped in deinit_and_destroy, so this is correct there
-        // too (and avoids a double-close vs reader.close()'s async done()).
         self.safe_downgrade();
-        // Always drop the poll + loop keepalive (idempotent no-op if no poll):
-        // the reader may have an armed poll even when READER_STARTED has been
-        // cleared or was never set on this exact path, and leaving it
-        // registered-and-ref'd keeps the process alive after the socket is
-        // destroyed. reader.close() is a no-op on POSIX (open() cleared
-        // CLOSE_HANDLE, so close_handle() never fires done()/on_reader_done());
-        // tear down directly the same way on_reader_done() does.
+
+        // Tear the reader down directly the way on_reader_done() does, rather
+        // than via reader.close(): we never own the fd (open() cleared
+        // CLOSE_HANDLE), so on POSIX close_handle() fires done()/on_reader_done()
+        // only when it actually closes the fd — i.e. never here. Without this,
+        // socket.destroy()/process.stdin.destroy() (or a web-stream bridge that
+        // ends the Socket without destroying it) leaves the poll registered and
+        // ref'd, so the process hangs. Do it unconditionally (both calls are
+        // idempotent no-ops without a poll): the reader can have an armed poll
+        // even when READER_STARTED was already cleared or never set on this
+        // path. Windows pause()/update_ref() are synchronous no-callback ops and
+        // the uv source is reclaimed when the reader drops in deinit_and_destroy,
+        // so this is correct there too and avoids double-closing.
         self.reader.with_mut(|r| {
             r.update_ref(false);
             r.pause();
         });
         // Release the reader's +1 ref only if it actually took one (start()
-        // succeeded). Must be last: reader_terminated() -> deref_() may free
-        // `self`. Windows pause()/update_ref() are synchronous no-callback ops
-        // and the uv source is reclaimed in deinit_and_destroy.
+        // succeeded). Must be last: reader_terminated() -> deref_() may free `self`.
         if self.flags.get().contains(Flags::READER_STARTED) {
             self.reader_terminated();
         }

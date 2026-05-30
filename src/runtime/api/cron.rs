@@ -496,6 +496,13 @@ impl CronRegisterJob {
 
         let calendar_xml = match cron_to_calendar_interval(s.schedule.as_bytes()) {
             Ok(x) => x,
+            Err(CalendarError::TooManyTriggers) => {
+                s.set_err(format_args!(
+                    "This cron expression expands to too many launchd calendar intervals (max 256). Use wildcards (*) for fields that don't need restricting, or simplify the expression."
+                ));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
+                return unsafe { Self::finish(this) };
+            }
             Err(_) => {
                 s.set_err(format_args!("Invalid cron expression"));
                 // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
@@ -2550,6 +2557,8 @@ pub enum CalendarError {
     InvalidCron,
     #[error("OutOfMemory")]
     OutOfMemory,
+    #[error("TooManyTriggers")]
+    TooManyTriggers,
 }
 // TODO(port): narrow error set
 
@@ -2631,6 +2640,19 @@ pub fn cron_to_calendar_interval(schedule: &[u8]) -> Result<Vec<u8>, CalendarErr
         }
         result.extend_from_slice(b"    </dict>");
     } else {
+        // Bound total StartCalendarInterval dicts before emitting. The OR split emits two
+        // passes (day-of-month and day-of-week) whose sum is what launchd actually parses,
+        // so cap the sum — not each pass — at 256.
+        let total: u64 = if needs_or_split {
+            count_calendar_dicts(&fv_slices, EmitMode::ExcludeWeekday)
+                + count_calendar_dicts(&fv_slices, EmitMode::ExcludeDay)
+        } else {
+            count_calendar_dicts(&fv_slices, EmitMode::IncludeAll)
+        };
+        if total > 256 {
+            return Err(CalendarError::TooManyTriggers);
+        }
+
         result.extend_from_slice(b"    <array>\n");
 
         if needs_or_split {
@@ -2666,6 +2688,29 @@ enum EmitMode {
     ExcludeDay,
 }
 
+/// Apply an `EmitMode` mask: the excluded field is treated as a wildcard (None).
+fn effective_field_values<'a>(
+    field_values: &[Option<&'a [i32]>; 5],
+    mode: EmitMode,
+) -> [Option<&'a [i32]>; 5] {
+    let mut effective: [Option<&'a [i32]>; 5] = *field_values;
+    match mode {
+        EmitMode::ExcludeWeekday => effective[4] = None,
+        EmitMode::ExcludeDay => effective[2] = None,
+        EmitMode::IncludeAll => {}
+    }
+    effective
+}
+
+/// Count how many <dict> entries emit_calendar_dicts() would produce for a given mode.
+fn count_calendar_dicts(field_values: &[Option<&[i32]>; 5], mode: EmitMode) -> u64 {
+    let effective = effective_field_values(field_values, mode);
+    effective
+        .iter()
+        .map(|fv| fv.map_or(1, |v| v.len() as u64))
+        .product()
+}
+
 /// Emit Cartesian-product <dict> entries for the given field values.
 /// In exclude_weekday mode, day-of-week (index 4) is treated as wildcard.
 /// In exclude_day mode, day-of-month (index 2) is treated as wildcard.
@@ -2676,13 +2721,7 @@ fn emit_calendar_dicts(
 ) -> Result<(), CalendarError> {
     const PLIST_KEYS: [&[u8]; 5] = [b"Minute", b"Hour", b"Day", b"Month", b"Weekday"];
 
-    // Build effective field values based on mode
-    let mut effective: [Option<&[i32]>; 5] = *field_values;
-    match mode {
-        EmitMode::ExcludeWeekday => effective[4] = None,
-        EmitMode::ExcludeDay => effective[2] = None,
-        EmitMode::IncludeAll => {}
-    }
+    let effective = effective_field_values(field_values, mode);
 
     static ZERO: [i32; 1] = [0];
     let iter_mins: &[i32] = effective[0].unwrap_or(&ZERO);

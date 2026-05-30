@@ -1,5 +1,6 @@
 import { pathToFileURL } from "bun";
-import { bunEnv, bunExe, bunRun, bunRunAsScript, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, bunRunAsScript, isMacOS, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { EventEmitter } from "node:events";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
 
@@ -264,6 +265,31 @@ describe("fs.watch", () => {
       expect(err.code).toBe("ENOENT");
       expect(err.syscall).toBe("watch");
       done();
+    }
+  });
+
+  test("returns an FSWatcher that inherits from EventEmitter", () => {
+    const watcher = fs.watch(path.join(testDir, "watch.txt"));
+    try {
+      expect(watcher).toBeInstanceOf(EventEmitter);
+      expect(watcher.constructor.name).toBe("FSWatcher");
+      expect(typeof watcher.ref).toBe("function");
+      expect(typeof watcher.unref).toBe("function");
+      expect(typeof watcher.start).toBe("function");
+    } finally {
+      watcher.close();
+    }
+  });
+
+  test("errors from watching a missing path keep path and filename properties", () => {
+    const missing = path.join(testDir, "missing-subdir", "404.txt");
+    try {
+      fs.watch(missing);
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err.code).toBe("ENOENT");
+      expect(err.path).toBe(missing);
+      expect(err.filename).toBe(missing);
     }
   });
 
@@ -726,6 +752,60 @@ describe("immediately closing", () => {
   });
 });
 
+// FSWatcher.close() set `closed = true` before calling refTask(), so refTask() returned
+// false without incrementing pending_activity_count and the paired unrefTask() ran anyway.
+// For { persistent: false } watchers (count starts at 1), close() did a net -2, wrapping the
+// u32 to MAX. hasPendingActivity() then returned true forever, pinning the native FSWatcher
+// (and via its cached listener closure, the JS FSWatcher) as a GC root — a permanent leak
+// per watcher. Persistent watchers only landed at 0 by accident (start=2, -2).
+describe("closed FSWatcher is collectable", () => {
+  for (const persistent of [false, true]) {
+    test(`persistent: ${persistent}`, async () => {
+      using dir = tempDir("fswatch-gc", { "f.txt": "x" });
+      const watchDir = String(dir);
+
+      const fixture = /* js */ `
+        const fs = require("fs");
+
+        let collected = 0;
+        const registry = new FinalizationRegistry(() => { collected++; });
+
+        const ITERS = 64;
+        (function create() {
+          for (let i = 0; i < ITERS; i++) {
+            const w = fs.watch(${JSON.stringify(watchDir)}, { persistent: ${persistent} }, () => {});
+            registry.register(w);
+            w.close();
+          }
+        })();
+
+        (async () => {
+          for (let i = 0; i < 30 && collected < ITERS; i++) {
+            Bun.gc(true);
+            await Bun.sleep(10);
+          }
+          console.log(JSON.stringify({ collected, iters: ITERS }));
+        })();
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      const { collected, iters } = JSON.parse(stdout.trim());
+      // Before the fix, `collected` is 0 for persistent:false — every watcher leaks.
+      // After the fix, all of them are collectable; allow a little slack for GC timing.
+      expect(collected).toBeGreaterThanOrEqual(Math.floor(iters / 2));
+      expect(exitCode).toBe(0);
+    });
+  }
+});
+
 // On Windows, if fs.watch() fails after getOrPut() inserts into the internal path->watcher
 // map (e.g. uv_fs_event_start fails on a dangling junction, an ACL-protected dir, or a
 // directory deleted mid-watch), an errdefer that was silently broken by a !*T -> Maybe(*T)
@@ -785,4 +865,210 @@ test.skipIf(!isWindows)("retrying a failed fs.watch does not crash (windows)", a
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0); // unpatched: exitCode is 3 (Windows segfault)
+});
+
+// The FSEvents path in PathWatcher.init() dupeZ's the resolved directory path
+// into `resolved_path`, but then immediately overwrote `this.*` with a struct
+// literal that did not include `.resolved_path`, resetting it to its default
+// `null`. PathWatcher.deinit()'s `if (this.resolved_path) |p| free(p)` was
+// therefore a no-op, and FSEventsWatcher.deinit() does not own the buffer
+// either. Every fs.watch(<directory>) on macOS leaked ~path-length bytes.
+test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvents path", async () => {
+  // Use long nested directory names so the resolved absolute path (and thus
+  // the per-watch leak) is large enough to show up in RSS within a reasonable
+  // number of iterations.
+  const seg = Buffer.alloc(200, "p").toString();
+  using dir = tempDir("fs-watch-fsevents-leak", {
+    [`${seg}/${seg}/${seg}/.keep`]: "x",
+  });
+  const watchDir = path.join(String(dir), seg, seg, seg);
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "--smol",
+      "-e",
+      /* ts */ `
+        const fs = require("fs");
+        const dir = process.argv[1];
+
+        // Warm up: let the FSEvents loop thread, mimalloc pools, and the
+        // PathWatcherManager fd cache reach steady state.
+        for (let i = 0; i < 1000; i++) fs.watch(dir, () => {}).close();
+        Bun.gc(true);
+        const before = process.memoryUsage.rss();
+
+        // With a ~700-byte resolved path, 5000 leaked dupeZ buffers is
+        // ~3.5 MB of growth on unpatched builds. Keep the iteration count
+        // low enough that rapid FSEventStream recreate doesn't exhaust the
+        // kernel queue (FSEventStreamCreate -> NULL).
+        for (let i = 0; i < 5000; i++) fs.watch(dir, () => {}).close();
+        Bun.gc(true);
+        const after = process.memoryUsage.rss();
+
+        const growthMB = (after - before) / 1024 / 1024;
+        console.log("RSS growth: " + growthMB.toFixed(2) + " MB");
+        if (growthMB > 3) {
+          throw new Error("fs.watch(dir) leaked " + growthMB.toFixed(2) + " MB");
+        }
+      `,
+      watchDir,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // stderr first so a leak regression surfaces the thrown growth message.
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  expect(stdout).toContain("RSS growth:");
+});
+
+// On Windows, fs.watch() registered every watcher into a single process-global
+// PathWatcherManager bound to the first caller's VM/uv_loop. A Worker thread
+// calling fs.watch() reused that manager: it mutated the watcher map and drove
+// the main thread's uv_loop from a foreign thread (debug builds tripped a
+// debug_assert and aborted; release builds raced). The manager is now
+// re-allocated per VM, so a Worker's watcher never aliases the main thread's.
+//
+// Must run in a subprocess: on an unpatched debug build the Worker's
+// fs.watch() call aborts the whole runtime.
+test.skipIf(!isWindows)(
+  "fs.watch works from both the main thread and a Worker (windows)",
+  async () => {
+    using dir = tempDir("fswatch-worker", {
+      "main-watched/.keep": "",
+      "worker-watched/.keep": "",
+      "worker.js": /* js */ `
+        import fs from "node:fs";
+        import path from "node:path";
+        import { parentPort } from "node:worker_threads";
+
+        const dir = path.join(import.meta.dir, "worker-watched");
+        // Before the fix this call registered into the main thread's manager.
+        const watcher = fs.watch(dir, () => {
+          clearInterval(interval);
+          watcher.close();
+          parentPort.postMessage("worker-saw-change");
+        });
+        const interval = setInterval(() => {
+          fs.writeFileSync(path.join(dir, "touch.txt"), String(Date.now()));
+        }, 20);
+      `,
+      "main.js": /* js */ `
+        import fs from "node:fs";
+        import path from "node:path";
+        import { Worker } from "node:worker_threads";
+
+        const mainDir = path.join(import.meta.dir, "main-watched");
+
+        function watchForOneChange(dir) {
+          return new Promise((resolve, reject) => {
+            const watcher = fs.watch(dir, () => {
+              clearInterval(interval);
+              watcher.close();
+              resolve();
+            });
+            watcher.on("error", err => {
+              clearInterval(interval);
+              reject(err);
+            });
+            const interval = setInterval(() => {
+              fs.writeFileSync(path.join(dir, "touch.txt"), String(Date.now()));
+            }, 20);
+          });
+        }
+
+        // 1. The main thread registers the first watcher, creating the watcher
+        //    manager bound to the main VM.
+        await watchForOneChange(mainDir);
+
+        // 2. A Worker registers its own watcher and must observe a change.
+        const worker = new Worker(path.join(import.meta.dir, "worker.js"));
+        const msg = await new Promise((resolve, reject) => {
+          worker.on("message", resolve);
+          worker.on("error", reject);
+        });
+        if (msg !== "worker-saw-change") throw new Error("unexpected worker message: " + msg);
+        await worker.terminate();
+
+        // 3. The main thread's watching must keep working after the Worker
+        //    registered (and tore down) its own watcher.
+        await watchForOneChange(mainDir);
+
+        console.log("OK");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0); // unpatched debug builds abort in the Worker's fs.watch()
+  },
+  30000,
+);
+
+// FSWatcher::init joins the user-supplied watch path with the process cwd into a
+// fixed pooled path buffer. The raw-path length validator only bounds the path
+// itself, so a relative path just under the platform path limit used to overflow
+// the buffer during the join and abort the whole process (panic=abort) instead of
+// surfacing an error to JavaScript. Must run in a subprocess: on an unfixed build
+// the abort would take down the test runner itself.
+test("fs.watch reports an error for relative paths that no longer fit in the path buffer once joined with the cwd", async () => {
+  using dir = tempDir("fswatch-long-relative", {
+    "watch-me.txt": "hello",
+  });
+  const base = String(dir);
+
+  const fixture = /* js */ `
+    const fs = require("node:fs");
+
+    // Longest relative path that still passes the per-platform raw-path length
+    // validation (MAX_PATH_BYTES); once joined with the cwd the normalized result
+    // no longer fits in the destination path buffer.
+    const maxPathBytes = { linux: 4096, darwin: 1024, win32: 32767 * 3 + 1 }[process.platform] ?? 1024;
+    const segment = "a/";
+    const longRelativePath = segment.repeat(Math.floor((maxPathBytes - 2) / segment.length));
+
+    try {
+      const watcher = fs.watch(longRelativePath, () => {});
+      watcher.close();
+      throw new Error("expected watching the overlong relative path to fail");
+    } catch (err) {
+      if (err.code !== "ENAMETOOLONG") throw err;
+      if (err.syscall !== "watch") throw new Error("unexpected syscall: " + err.syscall);
+    }
+
+    // A normal relative path must still work after the rejected one.
+    const ok = fs.watch("watch-me.txt", () => {});
+    ok.close();
+
+    console.log("OK");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    cwd: base,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK");
+  // Unfixed builds overflow the pooled path buffer during the cwd join and abort
+  // the subprocess instead of throwing a catchable error.
+  expect(exitCode).toBe(0);
 });

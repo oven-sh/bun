@@ -795,7 +795,7 @@ pub const SecurityScanSubprocess = struct {
         this.ipc_reader.flags.nonblocking = true;
         this.ipc_reader.flags.socket = false;
 
-        try this.finishSpawn(&spawned, ipc_output_fds[0], spawned.extra_pipes.items[1]);
+        try this.finishSpawn(&spawned, ipc_output_fds[0], spawned.extra_pipes.items[1].fd());
     }
 
     /// Windows fd 4: .buffer stdio for extra_fds sets UV_OVERLAPPED_PIPE on the

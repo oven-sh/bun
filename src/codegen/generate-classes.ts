@@ -1,6 +1,7 @@
 // @ts-nocheck
+import { existsSync, readFileSync } from "fs";
 import path from "path";
-import jsclasses from "./../bun.js/bindings/js_classes";
+import jsclasses from "./../jsc/bindings/js_classes";
 import { InvalidThisBehavior, type ClassDefinition, type Field } from "./class-definitions";
 import { camelCase, pascalCase, writeIfNotChanged } from "./helpers";
 
@@ -817,12 +818,12 @@ function renderCallbacksCppImpl(typeName, callbacks: Record<string, string>) {
     rows.push(
       `
   extern JSC_CALLCONV JSC::EncodedJSValue ${symbolName(typeName, "_callback_get_" + name)}(JSC::EncodedJSValue encodedThisValue) {
-    auto* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    auto* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
     return JSValue::encode(thisObject->m_callback_${name}.get());
   }
 
   extern JSC_CALLCONV void ${symbolName(typeName, "_callback_set_" + name)}(JSC::EncodedJSValue encodedThisValue, JSC::EncodedJSValue encodedCallback) {
-    auto* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    auto* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
     JSValue callback = JSValue::decode(encodedCallback);
 #if ASSERT_ENABLED
     if (!callback.isEmpty()) {
@@ -846,7 +847,7 @@ function renderCallbacksCppImpl(typeName, callbacks: Record<string, string>) {
   )
     .map((_, i) => `JSC::EncodedJSValue encodedCallback${i}`)
     .join(", ")}) {
-    auto* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    auto* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
     ${Object.keys(callbacks)
       .map(
         (name, i) => `
@@ -1028,13 +1029,13 @@ function writeBarrier(symbolName, typeName, name, cacheName) {
 extern JSC_CALLCONV void ${symbolName(typeName, name)}SetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(thisValue));
+    auto* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(thisValue));
     thisObject->${cacheName}.set(vm, thisObject, JSValue::decode(value));
 }
 
 extern JSC_CALLCONV JSC::EncodedJSValue ${symbolName(typeName, name)}GetCachedValue(JSC::EncodedJSValue thisValue)
 {
-  auto* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(thisValue));
+  auto* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(thisValue));
   return JSValue::encode(thisObject->${cacheName}.get());
 }
 
@@ -1061,7 +1062,7 @@ JSC_DEFINE_CUSTOM_GETTER(js${typeName}Constructor, (JSGlobalObject * lexicalGlob
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto* prototype = jsDynamicCast<${prototypeName(typeName)}*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<${prototypeName(typeName)}>(JSValue::decode(thisValue));
 
     if (!prototype) [[unlikely]] {
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for ${typeName}"_s);
@@ -1088,17 +1089,17 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
     ${
       obj.forBind
         ? `
-      JSC::JSBoundFunction* thisBoundFunction = jsDynamicCast<JSC::JSBoundFunction*>(JSValue::decode(encodedThisValue));
+      JSC::JSBoundFunction* thisBoundFunction = dynamicDowncast<JSC::JSBoundFunction>(JSValue::decode(encodedThisValue));
       if (!thisBoundFunction) [[unlikely]] {
         return throwVMTypeError(lexicalGlobalObject, throwScope, "The ${typeName}.${name} getter can only be used on instances of ${typeName}"_s);
       }
       JSC::JSValue thisBoundFunctionThisValue = thisBoundFunction->boundThis();
-      ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(thisBoundFunctionThisValue);
+      ${className(typeName)}* thisObject = dynamicDowncast<${className(typeName)}>(thisBoundFunctionThisValue);
       if (!thisObject) [[unlikely]] {
         return throwVMTypeError(lexicalGlobalObject, throwScope, "The ${typeName}.${name} getter can only be used on instances of ${typeName}"_s);
       }
     `
-        : `${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));`
+        : `${className(typeName)}* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));`
     }
       JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
 
@@ -1127,7 +1128,7 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    ${className(typeName)}* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     thisObject->${cacheName}.set(vm, thisObject, JSValue::decode(encodedValue));
     RELEASE_AND_RETURN(throwScope, true);
@@ -1141,7 +1142,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
 {
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    ${className(typeName)}* thisObject = dynamicDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
@@ -1178,7 +1179,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
     auto& vm = JSC::getVM(lexicalGlobalObject);
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    ${className(typeName)}* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     JSC::EncodedJSValue result = ${symbolName(typeName, proto[name].getter)}(thisObject->wrapped(),${
       !!proto[name].this ? " encodedThisValue, " : ""
@@ -1200,7 +1201,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
     auto& vm = JSC::getVM(lexicalGlobalObject);
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    ${className(typeName)}* thisObject = dynamicDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
@@ -1228,7 +1229,7 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    ${className(typeName)}* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     bool result = ${symbolName(typeName, proto[name].setter || proto[name].accessor.setter)}(thisObject->wrapped(),${
       !!proto[name].this ? " encodedThisValue, " : ""
@@ -1269,15 +1270,15 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
   ${
     obj.forBind
       ? `
-        JSC::JSBoundFunction* thisBoundFunction = jsDynamicCast<JSC::JSBoundFunction*>(callFrame->thisValue());
+        JSC::JSBoundFunction* thisBoundFunction = dynamicDowncast<JSC::JSBoundFunction>(callFrame->thisValue());
         if (!thisBoundFunction) [[unlikely]] {
           scope.throwException(lexicalGlobalObject, Bun::createInvalidThisError(lexicalGlobalObject, callFrame->thisValue(), "${typeName}"_s));
           return {};
         }
         JSC::JSValue thisBoundFunctionThisValue = thisBoundFunction->boundThis();
-        ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(thisBoundFunctionThisValue);
+        ${className(typeName)}* thisObject = dynamicDowncast<${className(typeName)}>(thisBoundFunctionThisValue);
     `
-      : `${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(callFrame->thisValue());`
+      : `${className(typeName)}* thisObject = dynamicDowncast<${className(typeName)}>(callFrame->thisValue());`
   }
 
   if (!thisObject) [[unlikely]] {
@@ -1382,13 +1383,20 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     externs += `extern JSC_CALLCONV size_t ${symbolName(typeName, "estimatedSize")}(void* ptr);` + "\n";
   }
 
+  for (const a of [...Object.values(klass), ...Object.values(proto)]) {
+    if (a.internal === true) {
+      throw new Error(
+        `${typeName}: 'internal: true' on a property is not implemented (no users today; the visitChildren plumbing for it was never wired up consistently). Use 'cache: true' or add it to 'values' instead.`,
+      );
+    }
+  }
   const DECLARE_VISIT_CHILDREN =
     values.length ||
     obj.estimatedSize ||
+    obj.valuesArray ||
     Object.keys(callbacks).length ||
-    obj.hasPendingActivity ||
-    [...Object.values(klass), ...Object.values(proto)].find(a => !!a.cache)
-      ? "DECLARE_VISIT_CHILDREN;\ntemplate<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);\nDECLARE_VISIT_OUTPUT_CONSTRAINTS;\n"
+    [...Object.values(klass), ...Object.values(proto)].find(a => a.cache === true)
+      ? "DECLARE_VISIT_CHILDREN;\n"
       : "";
   const sizeEstimator = "static size_t estimatedSize(JSCell* cell, VM& vm);";
 
@@ -1404,17 +1412,20 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 
     class Owner final : public JSC::WeakHandleOwner {
       public:
-          bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason) final
+          bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor&, ASCIILiteral* reason) final
           {
-              auto* controller = JSC::jsCast<${name}*>(handle.slot()->asCell());
-              if (${name}::hasPendingActivity(controller->wrapped())) {
+              auto* controller = uncheckedDowncast<${name}>(handle.slot()->asCell());
+              // m_ctx is null between wrapper creation and constructor return
+              // when constructNeedsThis is set; GC during that window must not
+              // call into the Zig hasPendingActivity with nullptr.
+              if (controller->wrapped() && ${name}::hasPendingActivity(controller->wrapped())) {
                   if (reason) [[unlikely]] {
                     *reason = "has pending activity"_s;
                   }
                   return true;
               }
 
-              return visitor.containsOpaqueRoot(context);
+              return false;
           }
           void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
       };
@@ -1593,7 +1604,7 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
   const name = className(typeName);
 
   let DEFINE_VISIT_CHILDREN_LIST = [...Object.entries(fields), ...Object.entries(proto)]
-    .filter(([name, { cache = false, internal = false }]) => (cache || internal) === true)
+    .filter(([name, { cache = false }]) => cache === true)
     .map(([name]) => `visitor.append(thisObject->m_${name});`)
     .join("\n");
 
@@ -1608,12 +1619,38 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
     })
     .join("\n");
   var DEFINE_VISIT_CHILDREN = "";
-  if (DEFINE_VISIT_CHILDREN_LIST.length || estimatedSize || values.length || hasPendingActivity) {
+  // Generated classes intentionally do NOT override visitOutputConstraints (and therefore
+  // do not get enrolled in BunGCOutputConstraint / m_outputConstraintSpaces).
+  //
+  // visitOutputConstraints exists so JSC's incremental GC can re-scan an already-black cell
+  // after the mutator runs, to pick up new outgoing edges that were added without firing a
+  // write barrier. WebCore needs this because edges like EventTarget's listener list or
+  // AbortSignal's algorithm vector live inside the wrapped RefCounted C++ object, not in
+  // WriteBarrier<> fields on the JSCell, so addEventListener() etc. can add an edge from a
+  // black wrapper to a white callback with no barrier firing.
+  //
+  // Generated classes don't have that problem. Every GC-visible edge below is either:
+  //   - a WriteBarrier<Unknown> field on the JSCell, mutated only via .set(vm, thisObject, v)
+  //     (see *SetCachedValue / cached getter paths), which calls vm.writeBarrier(thisObject, v)
+  //     and re-greys thisObject if it was already marked (Heap::addToRememberedSet pushes it
+  //     back onto m_mutatorMarkStack so visitChildren runs again), or
+  //   - jsvalueArray, a FixedVector<WriteBarrier<>> populated before allocateCell() and never
+  //     resized.
+  //
+  // In all cases the write barrier (or immutability) guarantees correctness, so re-walking
+  // every live instance of every generated type after each mutator yield is pure overhead.
+  // Only visitChildren is needed.
+  //
+  // hasPendingActivity does not need visitChildren at all: liveness is decided by the
+  // WeakHandleOwner calling hasPendingActivity(wrapped()) directly during weak processing.
+  // The previous addOpaqueRoot(wrapped()) had no consumer (the Weak's context was nullptr,
+  // so containsOpaqueRoot(context) always checked for nullptr, never m_ctx).
+  if (DEFINE_VISIT_CHILDREN_LIST.length || estimatedSize || values.length || obj.valuesArray) {
     DEFINE_VISIT_CHILDREN = `
 template<typename Visitor>
 void ${name}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    ${name}* thisObject = jsCast<${name}*>(cell);
+    ${name}* thisObject = uncheckedDowncast<${name}>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     ${
@@ -1624,35 +1661,12 @@ visitor.reportExtraMemoryVisited(size);
 }`
         : ""
     }
-    thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
-}
-
-DEFINE_VISIT_CHILDREN(${name});
-
-
-
-template<typename Visitor>
-void ${name}::visitAdditionalChildrenInGCThread(Visitor& visitor)
-{
-  ${name}* thisObject = this;
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     ${values}
     ${DEFINE_VISIT_CHILDREN_LIST}
     ${obj.valuesArray ? "for (auto& value : thisObject->jsvalueArray) { visitor.append(value); }" : ""}
-    ${hasPendingActivity ? "visitor.addOpaqueRoot(this->wrapped());" : ""}
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(${name});
-
-template<typename Visitor>
-void ${name}::visitOutputConstraintsImpl(JSCell *cell, Visitor& visitor)
-{
-    ${name}* thisObject = jsCast<${name}*>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
-}
-
-DEFINE_VISIT_OUTPUT_CONSTRAINTS(${name});
+DEFINE_VISIT_CHILDREN(${name});
 
 ${renderCallbacksCppImpl(typeName, callbacks)}
 
@@ -1697,7 +1711,7 @@ ${renderCallbacksCppImpl(typeName, callbacks)}
         ([name, getterName]) => `
 static JSC::JSValue construct${symbolName(obj.name, name)}PropertyCallback(JSC::VM &vm, JSC::JSObject* initialThisObject) {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Bun::JS${obj.name}* thisObject = jsCast<Bun::JS${obj.name}*>(initialThisObject);
+    Bun::JS${obj.name}* thisObject = uncheckedDowncast<Bun::JS${obj.name}>(initialThisObject);
     JSC::EncodedJSValue result = ${protoSymbolName(obj.name, getterName)}(thisObject->wrapped(), thisObject->globalObject());
     RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::decode(result);
@@ -1753,7 +1767,7 @@ size_t ${name}::memoryCost(void* ptr) {
   output += `
 
 size_t ${name}::estimatedSize(JSC::JSCell* cell, JSC::VM& vm) {
-  auto* thisObject = jsCast<${name}*>(cell);
+  auto* thisObject = uncheckedDowncast<${name}>(cell);
   auto* wrapped = thisObject->wrapped();
   return Base::estimatedSize(cell, vm) + ${name}::memoryCost(wrapped);
 }
@@ -1813,7 +1827,7 @@ extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${typeName}__fromJS(JSC::Enco
       return nullptr;
 
   JSC::JSCell* cell = decodedValue.asCell();
-  ${className(typeName)}* object = JSC::jsDynamicCast<${className(typeName)}*>(cell);
+  ${className(typeName)}* object = dynamicDowncast<${className(typeName)}>(cell);
 
   if (!object)
       return nullptr;
@@ -1826,12 +1840,12 @@ extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${typeName}__fromJSDirect(JSC
   ASSERT(decodedValue.isCell());
 
   JSC::JSCell* cell = decodedValue.asCell();
-  ${className(typeName)}* object = JSC::jsDynamicCast<${className(typeName)}*>(cell);
+  ${className(typeName)}* object = dynamicDowncast<${className(typeName)}>(cell);
 
   if (!object)
       return nullptr;
 
-  Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(object->globalObject());
+  Zig::GlobalObject* globalObject = dynamicDowncast<Zig::GlobalObject>(object->globalObject());
 
   if (globalObject == nullptr || cell->structureID() != globalObject->${className(typeName)}Structure()->id()) [[unlikely]] {
     return nullptr;
@@ -1841,7 +1855,7 @@ extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${typeName}__fromJSDirect(JSC
 }
 
 extern JSC_CALLCONV bool JSC_HOST_CALL_ATTRIBUTES ${typeName}__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr) {
-  ${className(typeName)}* object = JSC::jsDynamicCast<${className(typeName)}*>(JSValue::decode(value));
+  ${className(typeName)}* object = dynamicDowncast<${className(typeName)}>(JSValue::decode(value));
   if (!object)
       return false;
 
@@ -1853,7 +1867,7 @@ extern "C" const size_t ${typeName}__ptrOffset = ${className(typeName)}::offsetO
 
 void ${name}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<${name}*>(cell);
+    auto* thisObject = uncheckedDowncast<${name}>(cell);
     if (void* wrapped = thisObject->wrapped()) {
         analyzer.setWrappedObjectForCell(cell, wrapped);
     }
@@ -1880,7 +1894,7 @@ ${
 {
   return WebCore::${constructorName(typeName)}::create(vm, globalObject, WebCore::${constructorName(
     typeName,
-  )}::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::${prototypeName(typeName)}*>(prototype));
+  )}::createStructure(vm, globalObject, globalObject->functionPrototype()), uncheckedDowncast<WebCore::${prototypeName(typeName)}>(prototype));
 }`
     : ""
 }
@@ -2541,6 +2555,637 @@ ${renderMethods()}
 `;
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Rust emitter — sibling of generateZig().
+//
+// Emits, per class with \`lang === "rust"\`, a block of \`#[unsafe(no_mangle)]
+// pub extern "C" fn\` thunks whose unmangled names and signatures are
+// byte-identical to the externs the C++ side declares (renderDecls /
+// renderStaticDecls / generateConstructorImpl). The C++ output is invariant;
+// only the implementer of the symbols changes.
+//
+// Exception protocol: every JSValue-returning thunk routes through
+// \`bun_jsc::host_fn::host_fn_result(global, || …)\` which maps
+// \`JsResult<JSValue>\` → \`.zero\` on Err and asserts the
+// \`(ret == 0) == hasException()\` biconditional in debug builds.
+// ──────────────────────────────────────────────────────────────────────────
+
+function RustDOMJITArgType(type) {
+  return {
+    ["bool"]: "bool",
+    ["int"]: "i32",
+    ["JSUint8Array"]: "*mut bun_jsc::JSUint8Array",
+    ["JSString"]: "*mut bun_jsc::JSString",
+    ["JSValue"]: "JSValue",
+  }[type];
+}
+
+/** camelCase / PascalCase → snake_case, then escape Rust reserved words. */
+function rustSnakeIdent(name: string): string {
+  // getURLSchemeV2 → get_url_scheme_v2; HTTPServer → http_server; crc32 → crc32
+  const snake = name
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+    .replace(/[.\-]/g, "_")
+    .toLowerCase();
+  return rustIdent(snake);
+}
+
+// ── Rust module-path resolver ────────────────────────────────────────────────
+// Walks the `pub mod` tree rooted at `src/runtime/lib.rs` (the `bun_runtime`
+// crate), honouring `#[path = "…"]` attributes, to build a map of public type
+// name → shortest `crate::…` path at which that name is visible. Indexes both
+// `pub struct`/`pub type` definitions *and* `pub use …::Name` re-exports so a
+// type defined in a private `_body` module but re-exported one level up is
+// addressed by its public path (e.g. `crate::ffi::FFI`, not
+// `crate::ffi::ffi_body::FFI`). A missing struct (or method) on the resolved
+// path is a compile error in `cargo check` — that's the point: surface
+// unported surface area at build time, not as a runtime `unimplemented!()`.
+//
+// Classes whose JS name doesn't match any Rust type name (e.g. `Immediate` →
+// `ImmediateObject`, the `*InternalReadableStreamSource` family → three
+// distinct `Source` structs) MUST set `rustPath` explicitly in their
+// `.classes.ts` definition; this resolver is name-based and can't infer those.
+const rustModuleResolver = (() => {
+  const runtimeRoot = path.resolve(import.meta.dir, "../runtime");
+  const fileToMod = new Map<string, string>(); // abs .rs path → crate::a::b
+  const structToPath = new Map<string, string>(); // StructName → crate::a::b::StructName (shortest)
+  // `(?:#[path = "…"]\s*)? (?:#[...]\s*)* pub mod NAME ;` — pub-only: a private
+  // `mod foo_body;` makes `crate::…::foo_body::T` unnameable from generated
+  // code, so don't descend into it.
+  const modRe = /(?:#\[path\s*=\s*"([^"]+)"\]\s*)?(?:#\[[^\]]*\]\s*)*pub(?:\([^)]*\))?\s+mod\s+(\w+)\s*;/g;
+  // Index both `pub struct Name` and `pub type Name = …` — several JS classes
+  // (HTTPServer/HTTPSServer/MD4/MD5/…) are generic instantiations exposed as
+  // type aliases; the thunks call `Name::method` either way.
+  const structRe = /\bpub\s+(?:struct|type)\s+([A-Z]\w*)\b/g;
+  // `pub use a::b::{Name, Name as Alias};` — only the *exported* identifier is
+  // indexed, at the current module path.
+  const pubUseRe = /\bpub\s+use\s+((?:\w+::)*)\{?([^;{}]+?)\}?\s*;/g;
+
+  const segs = (p: string) => p.split("::").length;
+  function register(name: string, fullPath: string) {
+    const cur = structToPath.get(name);
+    if (!cur || segs(fullPath) < segs(cur)) structToPath.set(name, fullPath);
+  }
+
+  // Inline-module depth at byte index `i`. Only `mod foo { … }` bodies change
+  // the addressable path of nested items; macro invocations like
+  // `cfg_if! { pub mod foo; }` emit at the *parent* scope and must stay
+  // transparent. So count only `{` braces immediately preceded by
+  // `mod <ident>`, and their matching `}`. Items at modDepth 0 are addressable
+  // at this file's `modPath`; deeper ones are not.
+  function modDepthTable(src: string): Int32Array {
+    const depth = new Int32Array(src.length + 1);
+    const stack: boolean[] = []; // true = this `{` opened an inline `mod`
+    let d = 0;
+    for (let j = 0; j < src.length; j++) {
+      depth[j] = d;
+      const c = src.charCodeAt(j);
+      if (c === 123 /* { */) {
+        const isMod = /\bmod\s+\w+\s*$/.test(src.slice(Math.max(0, j - 64), j));
+        stack.push(isMod);
+        if (isMod) d++;
+      } else if (c === 125 /* } */) {
+        if (stack.pop()) d--;
+      }
+    }
+    depth[src.length] = d;
+    return depth;
+  }
+
+  function walk(file: string, modPath: string) {
+    const abs = path.resolve(file);
+    if (fileToMod.has(abs)) return;
+    let src: string;
+    try {
+      src = readFileSync(abs, "utf8");
+    } catch {
+      return;
+    }
+    // Blank out `//` line comments so commented-out items and brace characters
+    // in doc text don't pollute regex matches / depth tracking. Preserve
+    // length so `m.index` ↔ depth lookup stays aligned.
+    src = src.replace(/\/\/[^\n]*/g, m => " ".repeat(m.length));
+    fileToMod.set(abs, modPath);
+    const modDepth = modDepthTable(src);
+
+    for (const m of src.matchAll(structRe)) {
+      if (modDepth[m.index!] !== 0) continue;
+      register(m[1], `${modPath}::${m[1]}`);
+    }
+
+    for (const m of src.matchAll(pubUseRe)) {
+      if (modDepth[m.index!] !== 0) continue;
+      for (let item of m[2].split(",")) {
+        item = item.trim();
+        if (!item || item === "*" || item === "self") continue;
+        // `Name as Alias` → exported = Alias, source = Name
+        // `Name`          → exported = source = Name
+        const asMatch = item.match(/^(\S+)\s+as\s+(\w+)$/);
+        const source = asMatch ? asMatch[1] : item;
+        const exported = asMatch ? asMatch[2] : item;
+        // Skip module re-exports: `pub use foo::glob as Glob` re-exports a
+        // *module* (lowercase source leaf), not a type — `crate::api::Glob`
+        // wouldn't name a struct.
+        const sourceLeaf = source.split("::").pop()!;
+        if (!/^[A-Z]/.test(sourceLeaf)) continue;
+        if (!/^[A-Z]\w*$/.test(exported)) continue;
+        register(exported, `${modPath}::${exported}`);
+      }
+    }
+
+    const dir = path.dirname(abs);
+    for (const m of src.matchAll(modRe)) {
+      if (modDepth[m.index!] !== 0) continue;
+      const [, pathAttr, modName] = m;
+      let child: string | null = null;
+      if (pathAttr) {
+        child = path.resolve(dir, pathAttr);
+      } else {
+        const f1 = path.resolve(dir, `${modName}.rs`);
+        const f2 = path.resolve(dir, modName, "mod.rs");
+        child = existsSync(f1) ? f1 : existsSync(f2) ? f2 : null;
+      }
+      if (child) walk(child, `${modPath}::${modName}`);
+    }
+  }
+
+  walk(path.join(runtimeRoot, "lib.rs"), "crate");
+
+  return {
+    /** Resolve a class name to its `crate::…::Name` path, or a derived guess. */
+    resolveStruct(name: string, classesFile?: string): string {
+      if (structToPath.has(name)) return structToPath.get(name)!;
+      // Fallback: derive from the .classes.ts location → sibling .rs module.
+      // src/runtime/webcore/response.classes.ts → crate::webcore::response::Name
+      if (classesFile) {
+        const rel = path.relative(runtimeRoot, classesFile).replace(/\.classes\.ts$/, "");
+        if (!rel.startsWith("..")) {
+          const mod = rel
+            .split(path.sep)
+            .map(seg => rustSnakeIdent(seg))
+            .join("::");
+          return `crate::${mod}::${name}`;
+        }
+      }
+      // Out-of-crate (e.g. src/jsc/*.classes.ts → bun_jsc) — `api.rs` already
+      // `pub use bun_jsc::{BuildMessage, ResolveMessage};` so route there.
+      return `crate::api::${name}`;
+    },
+    /** Resolve an absolute `.rs` (or `.zig`) file path to its `crate::…` module path. */
+    resolveFile(absRs: string): string | null {
+      return fileToMod.get(path.resolve(absRs)) ?? null;
+    },
+    has(name: string): boolean {
+      return structToPath.has(name);
+    },
+  };
+})();
+
+function rustIdent(name: string): string {
+  // Rust reserved words that appear as JS property/method names in .classes.ts.
+  const reserved = new Set([
+    "as",
+    "break",
+    "const",
+    "continue",
+    "crate",
+    "else",
+    "enum",
+    "extern",
+    "false",
+    "fn",
+    "for",
+    "if",
+    "impl",
+    "in",
+    "let",
+    "loop",
+    "match",
+    "mod",
+    "move",
+    "mut",
+    "pub",
+    "ref",
+    "return",
+    "self",
+    "Self",
+    "static",
+    "struct",
+    "super",
+    "trait",
+    "true",
+    "type",
+    "unsafe",
+    "use",
+    "where",
+    "while",
+    "async",
+    "await",
+    "dyn",
+    "abstract",
+    "become",
+    "box",
+    "do",
+    "final",
+    "macro",
+    "override",
+    "priv",
+    "typeof",
+    "unsized",
+    "virtual",
+    "yield",
+    "try",
+    "gen",
+  ]);
+  return reserved.has(name) ? `r#${name}` : name;
+}
+
+function generateRust(
+  typeName,
+  {
+    klass = {},
+    proto = {},
+    own = {},
+    construct,
+    constructNeedsThis = false,
+    finalize,
+    noConstructor = false,
+    overridesToJS = false,
+    estimatedSize,
+    call = false,
+    memoryCost,
+    values = [],
+    hasPendingActivity = false,
+    structuredClone = false,
+    getInternalProperties = false,
+    rustPath,
+    sharedThis = true,
+  } = {} as ClassDefinition,
+) {
+  proto = {
+    ...Object.fromEntries(Object.entries(own || {}).map(([name, getterName]) => [name, { getter: getterName }])),
+    ...proto,
+  };
+
+  const gc_fields = Object.entries({
+    ...proto,
+    ...Object.fromEntries((values || []).map(a => [a, { internal: true }])),
+  }).filter(([name, { cache, internal }]) => (cache && typeof cache !== "string") || internal);
+
+  // ── exported #[no_mangle] thunks ─────────────────────────────────────────
+  // Direct dispatch: each thunk calls an *inherent* method on the user's real
+  // Rust struct (re-exported as `${typeName}` below). No trait, no opaque
+  // placeholder, no `unimplemented!()` — a missing method is a compile error,
+  // mirroring the Zig path's `@import("…").${T}.${fn}` behaviour.
+  const thunks: string[] = [];
+  const symbols: string[] = [];
+  function thunk(sym: string, sig: string, body: string) {
+    symbols.push(sym);
+    // Safe-body thunks: every pointer param is typed as `&`/`&mut` directly
+    // (ABI-identical to `*const`/`*mut` for non-null inputs, which the C++
+    // caller guarantees) and routed through a safe `host_fn::*` helper. The
+    // body itself contains no unsafe operations; the `unsafe fn` qualifier is
+    // mandated by `jsc_host_abi!` and is harmless (only C++ calls these).
+    //
+    // Calling convention: every C++-side decl for these symbols uses
+    // `extern JSC_CALLCONV` which expands to `extern "C" SYSV_ABI` on Windows
+    // (see `#define JSC_CALLCONV` below in the .cpp emitter), so every thunk
+    // — including finalize/hasPendingActivity/memoryCost/estimatedSize — must
+    // be `extern "sysv64"` on win-x64. `jsc_host_abi!` does the cfg-split.
+    thunks.push(
+      `bun_jsc::jsc_host_abi! {\n` +
+        `    #[unsafe(no_mangle)]\n` +
+        `    pub unsafe fn ${sym}${sig} {\n` +
+        `    ${body}\n` +
+        `    }\n` +
+        `}`,
+    );
+  }
+  const T = typeName;
+  // R-2 Phase 3: default flipped to `sharedThis: true`. Every JS-exposed
+  // host-fn now receives `&${T}` (no `noalias` on the LLVM arg, so re-entrant
+  // JS that re-derives `&Self` from the wrapper's `m_ctx` cannot miscompile).
+  // `sharedThis: false` remains an explicit opt-out for types that have not
+  // yet migrated their fields to `Cell`/`JsCell`. `_shared` helpers live in
+  // `src/jsc/host_fn.rs` alongside the legacy `&mut` originals.
+  const recv = sharedThis ? `&${T}` : `&mut ${T}`;
+  const helper = (base: string) => (sharedThis ? `host_fn::${base}_shared` : `host_fn::${base}`);
+
+  // memoryCost / estimatedSize / ZigStructSize
+  if (memoryCost) {
+    thunk(symbolName(typeName, "memoryCost"), `(this: &${T}) -> usize`, `    ${T}::memory_cost(this)`);
+  }
+  if (estimatedSize) {
+    thunk(symbolName(typeName, "estimatedSize"), `(this: &${T}) -> usize`, `    ${T}::estimated_size(this)`);
+  }
+  if (!memoryCost && !estimatedSize) {
+    symbols.push(symbolName(typeName, "ZigStructSize"));
+    thunks.push(
+      `#[unsafe(no_mangle)]\npub static ${symbolName(typeName, "ZigStructSize")}: usize = core::mem::size_of::<${T}>();`,
+    );
+  }
+
+  if (hasPendingActivity) {
+    thunk(symbolName(typeName, "hasPendingActivity"), `(this: &${T}) -> bool`, `    ${T}::has_pending_activity(this)`);
+  }
+
+  if (finalize) {
+    // `host_fn_finalize` does the single `Box::from_raw(this)` and hands the
+    // user impl an owned `Box<Self>` — genuinely safe (ownership transferred).
+    thunk(
+      classSymbolName(typeName, "finalize"),
+      `(this: *mut ${T}) -> ()`,
+      `    // SAFETY: this is the unique GC-owned m_ctx pointer from Box::into_raw in the construct path.\n` +
+        `    unsafe { host_fn::host_fn_finalize(this, |b| ${T}::finalize(b)) }`,
+    );
+  }
+
+  if (construct && !noConstructor) {
+    if (constructNeedsThis) {
+      thunk(
+        classSymbolName(typeName, "construct"),
+        `(global: &JSGlobalObject, callframe: &CallFrame, this_value: JSValue) -> *mut c_void`,
+        `    host_fn::host_fn_construct_this(global, callframe, this_value, ${T}::constructor).cast()`,
+      );
+    } else {
+      thunk(
+        classSymbolName(typeName, "construct"),
+        `(global: &JSGlobalObject, callframe: &CallFrame) -> *mut c_void`,
+        `    host_fn::host_fn_construct(global, callframe, ${T}::constructor).cast()`,
+      );
+    }
+  }
+
+  if (call) {
+    thunk(
+      classSymbolName(typeName, "call"),
+      `(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue`,
+      `    host_fn::host_fn_static(global, callframe, ${T}::call)`,
+    );
+  }
+
+  if (getInternalProperties) {
+    thunk(
+      symbolName(typeName, "getInternalProperties"),
+      `(this: ${recv}, global: &JSGlobalObject, this_value: JSValue) -> JSValue`,
+      `    ${helper("host_fn_internal_props")}(this, global, this_value, |t, g, v| ${T}::get_internal_properties(t, g, v))`,
+    );
+  }
+
+  // ── proto getters / setters / fns ────────────────────────────────────────
+  // Closure form (`|t, g, c| T::method(t, g, c)`) rather than bare `T::method`
+  // so `&mut T → &T` autoref/coercion applies — many user impls take `&self`.
+  {
+    const seen = new Map<string, string>();
+    const exportNames = name => zigExportName(seen, n => protoSymbolName(typeName, n), proto[name]);
+    for (const name in proto) {
+      const { getter, setter, accessor, fn, this: thisValue = false, passThis, DOMJIT } = proto[name];
+      const names = exportNames(name);
+      const g = accessor ? accessor.getter : getter;
+      const s = accessor ? accessor.setter : setter;
+
+      if (names.getter) {
+        const id = rustSnakeIdent(g);
+        thunk(
+          names.getter,
+          `(this: ${recv}, ${thisValue ? "this_value: JSValue, " : ""}global: &JSGlobalObject) -> JSValue`,
+          thisValue
+            ? `    ${helper("host_fn_getter_this")}(this, this_value, global, |t, v, g| ${T}::${id}(t, v, g))`
+            : `    ${helper("host_fn_getter")}(this, global, |t, g| ${T}::${id}(t, g))`,
+        );
+      }
+
+      if (names.setter) {
+        const id = rustSnakeIdent(s);
+        thunk(
+          names.setter,
+          `(this: ${recv}, ${thisValue ? "this_value: JSValue, " : ""}global: &JSGlobalObject, value: JSValue) -> bool`,
+          thisValue
+            ? `    ${helper("host_fn_setter_this")}(this, this_value, global, value, |t, tv, g, v| ${T}::${id}(t, tv, g, v))`
+            : `    ${helper("host_fn_setter")}(this, global, value, |t, g, v| ${T}::${id}(t, g, v))`,
+        );
+      }
+
+      if (names.fn) {
+        const id = rustSnakeIdent(fn);
+        if (names.DOMJIT) {
+          const { args } = DOMJIT;
+          const argDecl = args.map((t, i) => `arg${i}: ${RustDOMJITArgType(t)}`).join(", ");
+          const argFwd = args.map((_, i) => `arg${i}`).join(", ");
+          const fastId = rustSnakeIdent(DOMJITName(fn));
+          thunk(
+            names.DOMJIT,
+            `(this: ${recv}, global: &JSGlobalObject${args.length ? ", " + argDecl : ""}) -> JSValue`,
+            `    ${T}::${fastId}(this, global${args.length ? ", " + argFwd : ""})`,
+          );
+        }
+        thunk(
+          names.fn,
+          `(this: ${recv}, global: &JSGlobalObject, callframe: &CallFrame${passThis ? ", js_this_value: JSValue" : ""}) -> JSValue`,
+          passThis
+            ? `    ${helper("host_fn_this_value")}(this, global, callframe, js_this_value, |t, g, c, v| ${T}::${id}(t, g, c, v))`
+            : `    ${helper("host_fn_this")}(this, global, callframe, |t, g, c| ${T}::${id}(t, g, c))`,
+        );
+      }
+    }
+  }
+
+  // ── klass (static) getters / setters / fns ───────────────────────────────
+  {
+    const seen = new Map<string, string>();
+    const exportNames = name => zigExportName(seen, n => classSymbolName(typeName, n), klass[name]);
+    for (const name in klass) {
+      const { getter, setter, accessor, fn, DOMJIT } = klass[name];
+      const names = exportNames(name);
+      const g = accessor ? accessor.getter : getter;
+      const s = accessor ? accessor.setter : setter;
+
+      if (names.getter) {
+        const id = rustSnakeIdent(g);
+        thunk(
+          names.getter,
+          `(global: &JSGlobalObject, this_value: JSValue, prop: PropertyName) -> JSValue`,
+          `    host_fn::host_fn_static_getter(global, this_value, prop, |g, t, p| ${T}::${id}(g, t, p))`,
+        );
+      }
+
+      if (names.setter) {
+        const id = rustSnakeIdent(s);
+        thunk(
+          names.setter,
+          `(global: &JSGlobalObject, this_value: JSValue, value: JSValue, prop: PropertyName) -> bool`,
+          `    host_fn::host_fn_static_setter(global, this_value, value, prop, |g, t, v, p| ${T}::${id}(g, t, v, p))`,
+        );
+      }
+
+      if (names.fn) {
+        const id = rustSnakeIdent(fn);
+        if (names.DOMJIT) {
+          const { args } = DOMJIT;
+          const argDecl = args.map((t, i) => `arg${i}: ${RustDOMJITArgType(t)}`).join(", ");
+          const argFwd = args.map((_, i) => `arg${i}`).join(", ");
+          const fastId = rustSnakeIdent(DOMJITName(fn));
+          thunk(
+            names.DOMJIT,
+            `(global: &JSGlobalObject, this_value: JSValue${args.length ? ", " + argDecl : ""}) -> JSValue`,
+            `    ${T}::${fastId}(global, this_value${args.length ? ", " + argFwd : ""})`,
+          );
+        }
+        thunk(
+          names.fn,
+          `(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue`,
+          `    host_fn::host_fn_static(global, callframe, |g, c| ${T}::${id}(g, c))`,
+        );
+      }
+    }
+  }
+
+  // ── structuredClone ──────────────────────────────────────────────────────
+  if (structuredClone) {
+    thunk(
+      symbolName(typeName, "onStructuredCloneSerialize"),
+      `(this: ${recv}, global: &JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn) -> ()`,
+      `    ${T}::on_structured_clone_serialize(this, global, ctx, write_bytes)`,
+    );
+    if (typeof structuredClone === "object" && structuredClone.transferable) {
+      thunk(
+        symbolName(typeName, "onStructuredCloneTransfer"),
+        `(this: ${recv}, global: &JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn) -> ()`,
+        `    ${T}::on_structured_clone_transfer(this, global, ctx, write_bytes)`,
+      );
+    }
+    thunk(
+      symbolName(typeName, "onStructuredCloneDeserialize"),
+      `(global: &JSGlobalObject, ptr: *mut *mut u8, end: *const u8) -> JSValue`,
+      `    host_fn::host_fn_result(global, || ${T}::on_structured_clone_deserialize(global, ptr, end))`,
+    );
+  }
+
+  // ── C++→Rust extern imports + safe wrappers ──────────────────────────────
+  // Emitted as free functions in a per-class `js_${T}` sub-module (mirrors
+  // Zig's `pub const js = jsc.Codegen.JS${T};`) so they don't collide with
+  // inherent `from_js`/`to_js` already defined on the real struct.
+  const cachedExterns = gc_fields
+    .map(
+      ([name]) =>
+        `        safe fn ${protoSymbolName(typeName, name)}SetCachedValue(this_value: JSValue, global: *mut JSGlobalObject, value: JSValue);\n` +
+        `        safe fn ${protoSymbolName(typeName, name)}GetCachedValue(this_value: JSValue) -> JSValue;`,
+    )
+    .join("\n");
+
+  const gcAccessors = gc_fields
+    .map(
+      ([name]) => `    /// \`${typeName}.${name}\` cached-value setter (GC-visited via WriteBarrier).
+    #[inline] pub fn ${rustSnakeIdent(name)}_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+        ${protoSymbolName(typeName, name)}SetCachedValue(this_value, global.as_mut_ptr(), value)
+    }
+    /// \`${typeName}.${name}\` cached-value getter; \`None\` when never set.
+    #[inline] pub fn ${rustSnakeIdent(name)}_get_cached(this_value: JSValue) -> Option<JSValue> {
+        let v = ${protoSymbolName(typeName, name)}GetCachedValue(this_value);
+        if v.is_empty() { None } else { Some(v) }
+    }`,
+    )
+    .join("\n");
+
+  // `safe fn` (Rust 2024) inside `jsc_abi_extern! {}`: the C++ side
+  // (ZigGeneratedClasses.cpp) tolerates every well-typed input — \`fromJS\`
+  // returns null on type mismatch, \`create\` allocates from a live global,
+  // \`SetCachedValue\` is a WriteBarrier store. Declaring them \`safe\` moves
+  // the audit obligation to this generator (one place) instead of an
+  // \`unsafe {}\` per call site (~800 in the emitted file).
+  //
+  // Calling convention: every C++ definition uses `extern JSC_CALLCONV` =
+  // `extern "C" SYSV_ABI` on Windows, so import them via `jsc_abi_extern!`
+  // (sysv64 on win-x64, "C" elsewhere).
+  const jsModule = `pub mod js_${typeName} {
+    use super::*;
+    bun_jsc::jsc_abi_extern! {
+        safe fn ${symbolName(typeName, "fromJS")}(value: JSValue) -> *mut ${typeName};
+        safe fn ${symbolName(typeName, "fromJSDirect")}(value: JSValue) -> *mut ${typeName};
+        safe fn ${symbolName(typeName, "getConstructor")}(global: *mut JSGlobalObject) -> JSValue;
+        safe fn ${symbolName(typeName, "create")}(global: *mut JSGlobalObject, ptr: *mut ${typeName}) -> JSValue;
+        safe fn ${symbolName(typeName, "dangerouslySetPtr")}(value: JSValue, ptr: *mut ${typeName}) -> bool;
+${cachedExterns}
+    }
+    #[inline] pub fn from_js(value: JSValue) -> Option<core::ptr::NonNull<${typeName}>> {
+        core::ptr::NonNull::new(${symbolName(typeName, "fromJS")}(value))
+    }
+    #[inline] pub fn from_js_direct(value: JSValue) -> Option<core::ptr::NonNull<${typeName}>> {
+        core::ptr::NonNull::new(${symbolName(typeName, "fromJSDirect")}(value))
+    }
+    ${
+      !noConstructor
+        ? `#[inline] pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
+        ${symbolName(typeName, "getConstructor")}(global.as_mut_ptr())
+    }`
+        : ""
+    }
+    ${
+      !overridesToJS
+        ? `/// Transfer ownership of \`this\` to a freshly-allocated JS wrapper.
+    #[inline] pub fn to_js(this: *mut ${typeName}, global: &JSGlobalObject) -> JSValue {
+        ${symbolName(typeName, "create")}(global.as_mut_ptr(), this)
+    }`
+        : ""
+    }
+    #[inline] pub fn detach_ptr(value: JSValue) {
+        let ok = ${symbolName(typeName, "dangerouslySetPtr")}(value, core::ptr::null_mut());
+        debug_assert!(ok);
+    }
+${gcAccessors}
+}`;
+
+  return {
+    symbols,
+    rustPath,
+    src: `
+// ════════════════════════════════════════════════════════════════════════════
+// ${typeName}
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Native backing type for \`JS${typeName}.m_ctx\`. Re-export of the real
+/// hand-ported struct so the thunks below call its inherent methods directly
+/// (mirrors Zig's \`@import("…").${typeName}.<fn>\`). A missing method is a
+/// compile error — fix it in \`${rustPath}\`, not here.
+pub use ${rustPath} as ${typeName};
+
+${thunks.join("\n\n")}
+
+${jsModule}
+`,
+  };
+}
+
+const RUST_GENERATED_CLASSES_HEADER = `// Auto-generated by src/codegen/generate-classes.ts — DO NOT EDIT.
+//
+// Per-class \`#[unsafe(no_mangle)] extern "C"\` thunks satisfying the externs
+// declared by ZigGeneratedClasses.cpp. Each thunk calls an inherent method on
+// the user's real Rust struct (re-exported here as \`\${T}\`). No trait, no
+// opaque placeholder, no runtime panic fallback — a missing struct or method
+// is a hard compile error in \`cargo check -p bun_runtime\`.
+//
+// Calling convention: \`jsc.conv\` is plain \`extern "C"\` on every target except
+// Windows-x64 (\`extern "sysv64"\`). Every exported thunk and import in this
+// file maps to a C++ decl using \`extern JSC_CALLCONV\` (= \`"C" SYSV_ABI\` on
+// Windows), so the file uses \`bun_jsc::jsc_host_abi!\` / \`jsc_abi_extern!\`
+// for the cfg-split.
+
+use core::ffi::c_void;
+use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, JsFinalize as _};
+
+/// \`SYSV_ABI void (*)(CloneSerializer*, const uint8_t*, uint32_t)\`
+#[cfg(all(windows, target_arch = "x86_64"))]
+pub type WriteBytesFn = unsafe extern "sysv64" fn(*mut c_void, *const u8, u32);
+#[cfg(not(all(windows, target_arch = "x86_64")))]
+pub type WriteBytesFn = unsafe extern "C" fn(*mut c_void, *const u8, u32);
+
+/// \`JSC::PropertyName\` — opaque pointer-sized handle (UniquedStringImpl*).
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub struct PropertyName(pub *const c_void);
+`;
+
 function generateLazyClassStructureHeader(typeName, { klass = {}, proto = {}, zigOnly = false }) {
   if (zigOnly) return "";
 
@@ -2625,6 +3270,7 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 
 #include "JSDOMConvertBufferSource.h"
 #include "ZigGeneratedClasses.h"
+#include "WebCoreJSBuiltins.h"
 #include "ErrorCode+List.h"
 #include "ErrorCode.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
@@ -2674,7 +3320,7 @@ JSC_DEFINE_HOST_FUNCTION(Zig::jsFunctionInherits, (JSC::JSGlobalObject * globalO
     switch (id) {
 ${jsclasses
   .map(v => v[0])
-  .map((v, i) => `    case ${i}: return JSValue::encode(jsBoolean(jsDynamicCast<WebCore::JS${v}*>(cell) != nullptr));`)
+  .map((v, i) => `    case ${i}: return JSValue::encode(jsBoolean(dynamicDowncast<WebCore::JS${v}>(cell) != nullptr));`)
   .join("\n")}
     }
     return JSValue::encode(jsBoolean(false));
@@ -2692,7 +3338,7 @@ ${classes
     if (c.structuredClone == null) return "";
     if (typeof c.structuredClone === "boolean") return "";
     if (c.structuredClone.transferable) return "";
-    return `  if (JSC::jsDynamicCast<WebCore::JS${c.name}*>(cell)) return false;\n`;
+    return `  if (dynamicDowncast<WebCore::JS${c.name}>(cell)) return false;\n`;
   })
   .join("")}
   return true;
@@ -2728,8 +3374,8 @@ const ZIG_GENERATED_CLASSES_HEADER = `
 ///    bun run build
 ///
 /// This file is generated by:
-///  1. \`bun src/bun.js/scripts/generate-classes.ts\`
-///  2. Scan for **/*.classes.ts files in src/bun.js/src
+///  1. \`bun src/codegen/generate-classes.ts\`
+///  2. Scan for **/*.classes.ts files in src/
 ///  3. Generate a JS wrapper for each class in:
 ///        - Zig: generated_classes.zig
 ///        - C++: ZigGeneratedClasses.h, ZigGeneratedClasses.cpp
@@ -2788,6 +3434,7 @@ const classes: ClassDefinition[] = [];
       console.log(`  - ${name}` + props);
     }
 
+    for (const def of result.default) def._classesFilePath = filepath;
     classes.push(...result.default);
   }
 
@@ -2853,7 +3500,7 @@ function writeCppSerializers() {
 
   function fromJSForEachClass(klass) {
     return `
-    if (auto* result = jsDynamicCast<${className(klass.name)}*>(value)) {
+    if (auto* result = dynamicDowncast<${className(klass.name)}>(value)) {
       return StructuredCloneableSerialize { .cppWriteBytes = SerializedScriptValue::writeBytesForBun, .zigFunction = ${symbolName(
         klass.name,
         "onStructuredCloneSerialize",
@@ -2887,6 +3534,31 @@ function writeCppSerializers() {
   `;
 
   return output;
+}
+
+// ── Rust output: per-class thunks for `lang === "rust"` (default). ─────────
+// Zig output is still emitted for every class so the C++ side's `extern`
+// declarations stay satisfied during incremental migration; the Zig thunks for
+// rust-lang classes simply go unreferenced once the Rust crate links.
+{
+  const rustClasses = classes.filter(a => (a.lang ?? "rust") === "rust");
+  let totalSyms = 0;
+  let resolved = 0;
+  const blocks = rustClasses.map(a => {
+    a.rustPath ??= rustModuleResolver.resolveStruct(a.name, a._classesFilePath);
+    if (rustModuleResolver.has(a.name)) resolved++;
+    const { symbols, src } = generateRust(a.name, a);
+    totalSyms += symbols.length;
+    return src;
+  });
+  await writeIfNotChanged(`${outBase}/generated_classes.rs`, [
+    RUST_GENERATED_CLASSES_HEADER,
+    ...blocks,
+    `\n// classes: ${rustClasses.length} (${resolved} structs found, ${rustClasses.length - resolved} unresolved), exported symbols: ${totalSyms}\n`,
+  ]);
+  console.log(
+    `generated_classes.rs: ${rustClasses.length} classes (${resolved} resolved), ${totalSyms} exported symbols`,
+  );
 }
 
 await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.zig`, [
@@ -3008,6 +3680,12 @@ fn log_zig_class_method(typename: []const u8, method_name: []const u8, callframe
 fn log_zig_class_getter(typename: []const u8, property_name: []const u8) callconv(bun.callconv_inline) void {
   if (comptime Environment.enable_logs) {
     zig("<r><d>static<r> <blue>get<r> {s}<d>.<r>{s}", .{typename, property_name});
+  }
+}
+
+fn log_zig_class_setter(typename: []const u8, property_name: []const u8, value: jsc.JSValue) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("<r><d>static<r> <blue>set<r> {s}<d>.<r>{s} = {?s}", .{typename, property_name, bun.tagName(jsc.JSValue, value)});
   }
 }
 

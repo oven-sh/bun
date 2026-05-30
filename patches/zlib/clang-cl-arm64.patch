@@ -1,0 +1,55 @@
+clang-cl on Windows ARM64 defines _MSC_VER but is not real MSVC: it ships
+clang's own <arm_neon.h>/<arm_acle.h>. MSVC's <arm64_neon.h> defines
+vld1q_u16_x4/vld1q_u8_x4/vst1q_u16_x4 as macros, which macro-expand the
+polyfill function definitions at neon_intrins.h:40-63 into garbage. MSVC's
+<intrin.h> lacks the ARM ACLE CRC intrinsics (__crc32b etc.) that clang's
+<arm_acle.h> provides.
+
+Gate the MSVC-specific includes on !defined(__clang__) so clang-cl takes the
+standard ACLE/NEON path. Also fix the matching cmake feature-detection probes
+so HAVE_ARMV8_INTRIN and NEON_HAS_LD4 succeed under clang-cl, which sets
+ARM_CRC32_INTRIN/ARM_NEON_HASLD4 and skips the polyfills entirely.
+
+Upstream: not yet reported (zlib-ng CI does not cover clang-cl ARM64).
+--- a/arch/arm/neon_intrins.h
++++ b/arch/arm/neon_intrins.h
+@@ -1,7 +1,7 @@
+ #ifndef ARM_NEON_INTRINS_H
+ #define ARM_NEON_INTRINS_H
+
+-#if defined(_MSC_VER) && (defined(_M_ARM64) || defined(_M_ARM64EC))
++#if defined(_MSC_VER) && !defined(__clang__) && (defined(_M_ARM64) || defined(_M_ARM64EC))
+ /* arm64_neon.h is MSVC specific */
+ #  include <arm64_neon.h>
+ #else
+--- a/arch/arm/acle_intrins.h
++++ b/arch/arm/acle_intrins.h
+@@ -2,7 +2,7 @@
+ #define ARM_ACLE_INTRINS_H
+
+ #include <stdint.h>
+-#ifdef _MSC_VER
++#if defined(_MSC_VER) && !defined(__clang__)
+ #  include <intrin.h>
+ #elif defined(HAVE_ARM_ACLE_H)
+ #  include <arm_acle.h>
+--- a/cmake/detect-intrinsics.cmake
++++ b/cmake/detect-intrinsics.cmake
+@@ -42,7 +42,7 @@ macro(check_armv8_compiler_flag)
+     )
+     # Check whether compiler supports ARMv8 intrinsics
+     check_c_source_compiles(
+-        "#if defined(_MSC_VER)
++        "#if defined(_MSC_VER) && !defined(__clang__)
+         #include <intrin.h>
+         #else
+         #include <arm_acle.h>
+@@ -285,7 +285,7 @@ macro(check_neon_ld4_intrinsics)
+     # Check whether compiler supports loading 4 neon vecs into a register range
+     set(CMAKE_REQUIRED_FLAGS "${NEONFLAG} ${NATIVEFLAG} ${ZNOLTOFLAG}")
+     check_c_source_compiles(
+-        "#if defined(_MSC_VER) && (defined(_M_ARM64) || defined(_M_ARM64EC))
++        "#if defined(_MSC_VER) && !defined(__clang__) && (defined(_M_ARM64) || defined(_M_ARM64EC))
+         #  include <arm64_neon.h>
+         #else
+         #  include <arm_neon.h>

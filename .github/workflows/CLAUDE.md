@@ -6,7 +6,7 @@ This document provides guidance for maintaining the GitHub Actions workflows in 
 
 ### Overview
 
-The `format.yml` workflow runs code formatters (Prettier, clang-format, and Zig fmt) on pull requests and pushes to main. It's optimized for speed by running all formatters in parallel.
+The `format.yml` workflow runs code formatters (Prettier, clang-format, and `cargo fmt`) on pull requests and pushes to main. It's optimized for speed by running all formatters in parallel.
 
 ### Key Components
 
@@ -22,9 +22,9 @@ The `format.yml` workflow runs code formatters (Prettier, clang-format, and Zig 
 **Important exclusions**:
 
 - `src/napi/` - Node API headers (third-party)
-- `src/bun.js/bindings/libuv/` - libuv headers (third-party)
-- `src/bun.js/bindings/sqlite/` - SQLite headers (third-party)
-- `src/bun.js/api/ffi-*.h` - FFI headers (generated/third-party)
+- `src/jsc/bindings/libuv/` - libuv headers (third-party)
+- `src/jsc/bindings/sqlite/` - SQLite headers (third-party)
+- `src/runtime/ffi/ffi-*.h` - FFI headers (generated/third-party)
 - `src/deps/` - Dependencies (third-party)
 - Files in `vendor/`, `third_party/`, `generated/` directories
 
@@ -32,7 +32,7 @@ The `format.yml` workflow runs code formatters (Prettier, clang-format, and Zig 
 
 The workflow runs all three formatters simultaneously:
 
-- Each formatter outputs with a prefix (`[prettier]`, `[clang-format]`, `[zig]`)
+- Each formatter outputs with a prefix (`[prettier]`, `[clang-format]`, `[rustfmt]`)
 - Output is streamed in real-time without blocking
 - Uses GitHub Actions groups (`::group::`) for collapsible sections
 
@@ -44,20 +44,19 @@ The workflow runs all three formatters simultaneously:
 - Uses `--no-install-recommends --no-install-suggests` to skip unnecessary packages
 - Quiet installation with `-qq` and `-o=Dpkg::Use-Pty=0`
 
-##### Zig
+##### Rustfmt
 
-- Downloads from `oven-sh/zig` releases (musl build for static linking)
-- URL: `https://github.com/oven-sh/zig/releases/download/autobuild-{COMMIT}/bootstrap-x86_64-linux-musl.zip`
-- Extracts to temp directory to avoid polluting the repository
-- Directory structure: `bootstrap-x86_64-linux-musl/zig`
+- The pinned nightly is set via `RUSTUP_TOOLCHAIN` in the step `env:` (kept in sync with `channel` in `rust-toolchain.toml`); `cargo fmt --all` runs against the workspace at the repo root.
+- `RUSTUP_TOOLCHAIN` makes rustup ignore `rust-toolchain.toml` entirely, so the workflow installs only the host toolchain + `rustfmt` (`rustup toolchain install --profile minimal --component rustfmt`) rather than the file's full cross-target list.
 
 ### Updating the Workflow
 
-#### To update Zig version:
+#### To update the Rust toolchain:
 
-1. Find the new commit hash from https://github.com/oven-sh/zig/releases
-2. Replace the hash in the wget URL (line 65 of format.yml)
-3. Test that the URL is valid and the binary works
+1. Bump `channel` in `rust-toolchain.toml` (and `Dockerfile`/`bootstrap.sh` to match).
+2. Bump `RUSTUP_TOOLCHAIN` in the `Format Code` step's `env:` block in `format.yml` to the same value.
+3. Bump `RUSTUP_TOOLCHAIN` in the workflow-level `env:` block in `clippy.yml` and `miri.yml` to the same value.
+4. `cargo fmt` formatting can change between nightlies; run `cargo fmt --all` locally on the new toolchain and include the resulting diff in the same PR.
 
 #### To update clang-format version:
 
@@ -73,9 +72,8 @@ The workflow runs all three formatters simultaneously:
 
 1. **Parallel execution**: All formatters run simultaneously
 2. **Minimal installations**: Only required packages, no extras
-3. **Temp directories**: Tools downloaded to temp dirs, cleaned up after use
-4. **Streaming output**: Real-time feedback without buffering
-5. **Early start**: Formatting begins immediately after each tool is ready
+3. **Streaming output**: Real-time feedback without buffering
+4. **Early start**: Formatting begins immediately after each tool is ready
 
 ### Troubleshooting
 
@@ -114,5 +112,4 @@ export LLVM_VERSION_MAJOR=19
 
 - The script defaults to **format** mode (modifies files)
 - Always test locally before pushing workflow changes
-- The musl Zig build works on glibc systems due to static linking
 - Keep the exclusion list updated as new third-party code is added

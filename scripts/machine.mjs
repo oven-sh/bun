@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { spawn as nodeSpawn } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, extname, join, relative, resolve } from "node:path";
@@ -14,6 +15,7 @@ import {
   curlSafe,
   escapePowershell,
   getBootstrapVersion,
+  getBranch,
   getBuildNumber,
   getGithubApiUrl,
   getGithubUrl,
@@ -818,7 +820,10 @@ export function getDiskSize(options) {
     return 60;
   }
 
-  return 40;
+  // 40 was enough before the prefetch cache. x64 has ~2× the WebKit variants
+  // (baseline) so its prefetch layer is large enough that `docker buildx
+  // --load`'s export+import doubling needs real headroom.
+  return 100;
 }
 
 /**
@@ -1200,6 +1205,34 @@ async function buildWindowsImageWithPacker({ os, arch, release, command, ci, age
     throw new Error(`Failed to create gallery image definition: ${defResponse.status} ${await defResponse.text()}`);
   }
 
+  // Packer's azure-arm shared_image_gallery_destination always writes
+  // image_version 1.0.0 and 409s if it already exists, so a re-run of
+  // [publish images] would fail on every Windows variant that already
+  // succeeded. Match the AWS path's deregister-then-recreate.
+  const versionPath = `${galleryPath}/versions/1.0.0`;
+  const existing = await fetch(`https://management.azure.com${versionPath}?api-version=2024-03-03`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (existing.ok) {
+    console.log(`[packer] Deleting existing gallery image version 1.0.0 of ${imageDefName} before re-publish`);
+    const del = await fetch(`https://management.azure.com${versionPath}?api-version=2024-03-03`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (del.status === 202) {
+      const op = del.headers.get("Azure-AsyncOperation") ?? del.headers.get("Location");
+      for (let i = 0; op && i < 120; i++) {
+        await new Promise(r => setTimeout(r, 10_000));
+        const poll = await fetch(op, { headers: { Authorization: `Bearer ${token}` } });
+        const body = await poll.json().catch(() => ({}));
+        if (body.status === "Succeeded") break;
+        if (body.status === "Failed") throw new Error(`Delete of ${versionPath} failed: ${JSON.stringify(body)}`);
+      }
+    } else if (!del.ok && del.status !== 404) {
+      throw new Error(`Failed to delete existing gallery image version: ${del.status} ${await del.text()}`);
+    }
+  }
+
   // Install Packer if not available
   const packerBin = await ensurePacker();
 
@@ -1223,7 +1256,9 @@ async function buildWindowsImageWithPacker({ os, arch, release, command, ci, age
     "-var",
     `tenant_id=${tenantId}`,
     "-var",
-    `resource_group=${resourceGroup}-EASTUS2`,
+    // Dedicated build RG in southcentralus so Packer's 4-core bake VMs don't
+    // contend with robobun CI runners for the eastus2 Ddsv6/Dpdsv6 quota.
+    `resource_group=${resourceGroup}-PACKER`,
     "-var",
     `gallery_resource_group=${resourceGroup}`,
     "-var",
@@ -1236,20 +1271,43 @@ async function buildWindowsImageWithPacker({ os, arch, release, command, ci, age
     `bootstrap_script=${bootstrapPath}`,
     "-var",
     `agent_script=${agentPath}`,
+    "-var",
+    `repo_ref=${/^[\w./-]+$/.test(getBranch() ?? "") ? getBranch() : "main"}`,
     templateDir,
   ];
 
-  await spawnSafe(packerArgs, {
+  // Packer's azure-arm builder cleans up its temp pkr* resources on SIGINT/SIGTERM, but only
+  // if the signal actually reaches the packer process and it is given time to finish the Azure
+  // deletes. spawnSafe() does not forward signals, so a Buildkite cancel would orphan the whole
+  // VM/NIC/IP/disk/vnet/NSG/keyvault stack in the build RG. Spawn directly and forward.
+  const child = nodeSpawn(packerArgs[0], packerArgs.slice(1), {
     stdio: "inherit",
     env: {
       ...process.env,
-      // Packer also reads these env vars
       ARM_CLIENT_ID: clientId,
       ARM_CLIENT_SECRET: clientSecret,
       ARM_SUBSCRIPTION_ID: subscriptionId,
       ARM_TENANT_ID: tenantId,
     },
   });
+  let cancelled = false;
+  const forward = signal => {
+    cancelled = true;
+    console.log(`[packer] received ${signal}, forwarding to packer for Azure cleanup...`);
+    child.kill(signal);
+  };
+  process.on("SIGINT", forward);
+  process.on("SIGTERM", forward);
+  const [code, signal] = await new Promise(done => child.on("close", (c, s) => done([c, s])));
+  process.off("SIGINT", forward);
+  process.off("SIGTERM", forward);
+  if (cancelled) {
+    console.log("[packer] cleanup after cancel finished");
+    process.exit(1);
+  }
+  if (code !== 0) {
+    throw new Error(`packer build exited with ${signal ? `signal ${signal}` : `code ${code}`}`);
+  }
 
   console.log(`[packer] Image built successfully: ${imageDefName}`);
 }
@@ -1521,12 +1579,31 @@ async function main() {
     });
 
     if (bootstrapPath) {
+      // Tell bootstrap which ref of the repo to shallow-clone for
+      // prefetch_build_deps — the dep version pins live in scripts/build/deps/
+      // and aren't uploaded with bootstrap. Pinning to the triggering branch
+      // means a PR that bumps a dep also bakes the new tarball into the image
+      // it builds.
+      //
+      // The value reaches a remote shell, so reject anything outside the
+      // git-ref character set rather than try to quote it. A non-matching
+      // branch (or no branch detected) just falls back to main; the prefetch
+      // cache becomes a partial hit, which is fine.
+      const branch = getBranch();
+      const repoRef = branch && /^[\w./-]+$/.test(branch) ? branch : "main";
       if (os === "windows") {
         const remotePath = "C:\\Windows\\Temp\\bootstrap.ps1";
         const args = ci ? ["-CI"] : [];
         await startGroup("Running bootstrap...", async () => {
           await machine.upload(bootstrapPath, remotePath);
-          await machine.spawnSafe(["powershell", remotePath, ...args], { stdio: "inherit" });
+          // Set $env: in the SAME process that runs the script — a separate
+          // Machine-scope registry write wouldn't reach this session's env.
+          // repoRef is already validated against /^[\w./-]+$/ above, so the
+          // single-quoted literal can't break out.
+          await machine.spawnSafe(
+            ["powershell", "-Command", `$env:BUN_BOOTSTRAP_REPO_REF='${repoRef}'; & '${remotePath}' ${args.join(" ")}`],
+            { stdio: "inherit" },
+          );
         });
       } else {
         if (!features?.includes("docker")) {
@@ -1537,7 +1614,9 @@ async function main() {
           }
           await startGroup("Running bootstrap...", async () => {
             await machine.upload(bootstrapPath, remotePath);
-            await machine.spawnSafe(["sh", remotePath, ...args], { stdio: "inherit" });
+            await machine.spawnSafe(["env", `BUN_BOOTSTRAP_REPO_REF=${repoRef}`, "sh", remotePath, ...args], {
+              stdio: "inherit",
+            });
           });
         } else if (dockerfilePath) {
           const remotePath = "/tmp/bootstrap.sh";
@@ -1551,7 +1630,10 @@ async function main() {
             console.log("Uploaded agent.mjs");
             agentPath = "";
             bootstrapPath = "";
-            await machine.spawnSafe(["sudo", "bash", remotePath], { stdio: "inherit", cwd: "/tmp" });
+            await machine.spawnSafe(["sudo", "env", `BUN_BOOTSTRAP_REPO_REF=${repoRef}`, "bash", remotePath], {
+              stdio: "inherit",
+              cwd: "/tmp",
+            });
           });
         }
       }

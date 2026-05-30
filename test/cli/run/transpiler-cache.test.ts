@@ -77,8 +77,11 @@ describe("transpiler cache", () => {
     expect(b.stdout == "");
     expect(newCacheCount()).toBe(0);
   });
-  test("ignores files under 50kb", async () => {
-    writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024 - 1, "1", "a"));
+  test("ignores files under the minimum cache size", async () => {
+    // MINIMUM_CACHE_SIZE is 4 KiB (src/jsc/RuntimeTranspilerCache.rs); files
+    // below it skip the cache entirely so a stat+open+read can't be slower than
+    // just re-transpiling.
+    writeFileSync(join(temp_dir, "a.js"), dummyFile(4 * 1024 - 1, "1", "a"));
     const a = bunRun(join(temp_dir, "a.js"), env);
     expect(a.stdout == "a");
     expect(!existsSync(cache_dir)).toBeTrue();
@@ -139,6 +142,40 @@ describe("transpiler cache", () => {
       expect(await proc.stdout.text()).toBe("b\n");
     }
   }, 99999999);
+  test("disables the cache instead of falling back to the shared temp directory", () => {
+    writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "no-tmpdir-cache"));
+
+    // Stand-in for the shared, world-writable system temp dir. Pre-create
+    // bun/@t@ inside it the way another local user could on a multi-user host.
+    const shared_tmp = join(temp_dir, "shared-tmp");
+    const shared_cache = join(shared_tmp, "bun", "@t@");
+    mkdirSync(shared_cache, { recursive: true });
+
+    // No per-user cache location is available (no BUN_RUNTIME_TRANSPILER_CACHE_PATH,
+    // no XDG_CACHE_HOME, no HOME) — the only remaining candidate is the shared
+    // temp dir, so the cache must be disabled instead of using it.
+    const a = bunRun(join(temp_dir, "a.js"), {
+      ...env,
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined,
+      XDG_CACHE_HOME: undefined,
+      HOME: undefined,
+      USERPROFILE: undefined,
+      BUN_TMPDIR: undefined,
+      TMPDIR: shared_tmp,
+      TMP: shared_tmp,
+      TEMP: shared_tmp,
+    });
+    expect(a.stdout).toBe("no-tmpdir-cache");
+
+    // No cache entry may be written into (or read back from) a directory that
+    // another local user could own and pre-populate.
+    expect(readdirSync(shared_cache)).toEqual([]);
+
+    // A per-user cache location still works.
+    const b = bunRun(join(temp_dir, "a.js"), env);
+    expect(b.stdout).toBe("no-tmpdir-cache");
+    expect(newCacheCount()).toBe(1);
+  });
   test("works if the cache is not user-readable", () => {
     mkdirSync(cache_dir, { recursive: true });
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "b"));

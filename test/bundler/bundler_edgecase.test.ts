@@ -649,6 +649,53 @@ describe("bundler", () => {
       `,
     },
   });
+  // https://github.com/oven-sh/bun/issues/30271
+  //
+  // When dead-code elimination prunes an if/else body, the scaffolding
+  // itself only collapses with --minify-syntax. Even so, the empty `else {}`
+  // remnant produced by the prune is ugly — trim it so the output at least
+  // says `if (true) { kept }` instead of `if (true) { kept } else {}`.
+  itBundled("edgecase/DCEEmptyElseTrimmed#30271", {
+    files: {
+      "/entry.js": /* js */ `
+        if ("foo" === "foo") {
+          console.log("success");
+        } else {
+          console.log("fail");
+        }
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // The dead branch body is gone...
+      expect(out).not.toContain("fail");
+      // ...and so is the empty `else {}` remnant.
+      expect(out).not.toContain("else");
+    },
+    run: {
+      stdout: "success",
+    },
+  });
+  // Trimming the empty `else {}` from an inner labeled `if` used to drop the
+  // dangling-else guard: `if (a) L: if (b) c(); else {} else d();` would print
+  // as `if (a) L: if (b) c(); else d();`, re-binding `else d()` to the inner
+  // `if (b)`. `wrapToAvoidAmbiguousElse` needs to traverse `.s_label`.
+  itBundled("edgecase/DCEEmptyElseTrimmedLabeledDanglingElse#30271", {
+    files: {
+      "/entry.js": /* js */ `
+        var a = false, b = false;
+        if (a)
+          L: if (b) console.log("inner-then");
+          else {}
+        else console.log("outer-else");
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: "outer-else",
+    },
+  });
   itBundled("edgecase/AbsolutePathShouldNotResolveAsRelative", {
     files: {
       "/entry.js": /* js */ `
@@ -1362,6 +1409,74 @@ describe("bundler", () => {
       stdout: `
         Hello World
       `,
+    },
+  });
+  // #29590: a catch-all `paths` entry (common for ambient .d.ts stubs)
+  // whose target doesn't exist must not defeat `packages=external`.
+  itBundled("edgecase/PackageExternalStarPathsDoesNotBundleNodeModules#29590", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { a } from "foo";
+        console.log(a);
+      `,
+      "/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "baseUrl": ".",
+            "paths": { "*": ["./types/*"] }
+          }
+        }
+      `,
+    },
+    packages: "external",
+    target: "bun",
+    runtimeFiles: {
+      "/node_modules/foo/index.js": `export const a = "Hello World";`,
+      "/node_modules/foo/package.json": /* json */ `
+        {
+          "name": "foo",
+          "version": "2.0.0",
+          "main": "index.js"
+        }
+      `,
+    },
+    onAfterBundle(api) {
+      // If this regresses, `foo` gets inlined via __commonJS(...) instead.
+      api.expectFile("/out.js").toContain(`from "foo"`);
+    },
+    run: {
+      stdout: `
+        Hello World
+      `,
+    },
+  });
+  // #29590: an explicit --external wildcard must win over a tsconfig `paths`
+  // alias, even when the alias resolves to a real local file.
+  itBundled("edgecase/ExternalWildcardBeatsTSConfigPaths#29590", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { add } from "@/src/adder";
+        console.log(add(1, 2));
+      `,
+      "/src/adder.ts": /* ts */ `
+        export const add = (a: number, b: number) => a + b;
+      `,
+      "/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "baseUrl": ".",
+            "paths": { "@/*": ["./*"] }
+          }
+        }
+      `,
+    },
+    packages: "external",
+    external: ["@/src/*"],
+    target: "bun",
+    onAfterBundle(api) {
+      // If this regresses, `add` gets inlined from src/adder.ts.
+      api.expectFile("/out.js").toContain(`from "@/src/adder"`);
+      api.expectFile("/out.js").not.toContain(`= (a, b) => a + b`);
     },
   });
   itBundled("edgecase/EntrypointWithoutPrefixSlashOrDotIsNotConsideredExternal#12734", {
@@ -2088,16 +2203,6 @@ describe("bundler", () => {
     },
     run: true,
   });
-
-  // TODO(@paperclover): test every case of this. I had already tested it manually, but it may break later
-  const requireTranspilationListESM = [
-    // input, output:bun, output:node
-    ["require", "import.meta.require", "__require"],
-    ["typeof require", "import.meta.require", "typeof __require"],
-    ["typeof require", "import.meta.require", "typeof __require"],
-  ];
-
-  // // itBundled('edgecase/RequireTranspilation')
 
   itBundled("edgecase/TSConfigPathsConfigDir", {
     files: {

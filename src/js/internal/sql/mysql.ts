@@ -5,7 +5,7 @@ const { SQLHelper, SSLMode, SQLResultArray, buildDefinedColumnsAndQuery } = requ
 const {
   Query,
   SQLQueryFlags,
-  symbols: { _strings, _values, _flags, _results, _handle },
+  symbols: { _strings, _values, _results, _handle },
 } = require("internal/sql/query");
 const { MySQLError } = require("internal/sql/errors");
 
@@ -23,47 +23,31 @@ function wrapError(error: Error | MySQLErrorOptions) {
 }
 initMySQL(
   function onResolveMySQLQuery(query, result, commandTag, count, queries, is_last, last_insert_rowid, affected_rows) {
-    /// simple queries
-    if (query[_flags] & SQLQueryFlags.simple) {
-      $assert(result instanceof SQLResultArray, "Invalid result array");
-      // prepare for next query
-      query[_handle].setPendingValue(new SQLResultArray());
-
-      result.count = count || 0;
-      result.lastInsertRowid = last_insert_rowid;
-      result.affectedRows = affected_rows || 0;
-      const last_result = query[_results];
-
-      if (!last_result) {
-        query[_results] = result;
-      } else {
-        if (last_result instanceof SQLResultArray) {
-          // multiple results
-          query[_results] = [last_result, result];
-        } else {
-          // 3 or more results
-          last_result.push(result);
-        }
-      }
-      if (is_last) {
-        if (queries) {
-          const queriesIndex = queries.indexOf(query);
-          if (queriesIndex !== -1) {
-            queries.splice(queriesIndex, 1);
-          }
-        }
-        try {
-          query.resolve(query[_results]);
-        } catch {}
-      }
-      return;
-    }
-    /// prepared statements
     $assert(result instanceof SQLResultArray, "Invalid result array");
 
     result.count = count || 0;
     result.lastInsertRowid = last_insert_rowid;
     result.affectedRows = affected_rows || 0;
+
+    // CALL <proc>() and multi-statement strings can yield several result sets.
+    // Accumulate until the server clears SERVER_MORE_RESULTS_EXISTS (is_last).
+    const lastResult = query[_results];
+    if (!lastResult) {
+      query[_results] = result;
+    } else if (lastResult instanceof SQLResultArray) {
+      query[_results] = [lastResult, result];
+    } else {
+      lastResult.push(result);
+    }
+
+    if (!is_last) {
+      // The Zig side swaps the pending value out for js_undefined before
+      // invoking this callback; re-prime so the follow-up result set lands in
+      // a fresh array.
+      query[_handle].setPendingValue(new SQLResultArray());
+      return;
+    }
+
     if (queries) {
       const queriesIndex = queries.indexOf(query);
       if (queriesIndex !== -1) {
@@ -71,7 +55,7 @@ initMySQL(
       }
     }
     try {
-      query.resolve(result);
+      query.resolve(query[_results]);
     } catch {}
   },
 
@@ -118,6 +102,7 @@ export interface MySQLDotZig {
     connectionTimeout: number,
     maxLifetime: number,
     useUnnamedPreparedStatements: boolean,
+    allowPublicKeyRetrieval: boolean,
   ) => $ZigGeneratedClasses.MySQLConnection;
   createQuery: (
     sql: string,
@@ -267,6 +252,7 @@ class PooledMySQLConnection {
       maxLifetime = 0,
       prepare = true,
       path,
+      allowPublicKeyRetrieval = false,
     } = options;
 
     let password: Bun.MaybePromise<string> | string | undefined | (() => Bun.MaybePromise<string>) = options.password;
@@ -300,6 +286,7 @@ class PooledMySQLConnection {
         connectionTimeout,
         maxLifetime,
         !prepare,
+        !!allowPublicKeyRetrieval,
       );
     } catch (e) {
       process.nextTick(closeNT, onClose, e);
@@ -555,7 +542,15 @@ class MySQLAdapter
     };
   }
 
-  validateTransactionOptions(_options: string): { valid: boolean; error?: string } {
+  validateTransactionOptions(options: string): { valid: boolean; error?: string } {
+    // The string is interpolated into `START TRANSACTION ${options}`, so refuse anything
+    // that could terminate the statement or start a new one.
+    if (!/^[A-Za-z ,]*$/.test(options)) {
+      return {
+        valid: false,
+        error: "Transaction options can only contain letters, spaces, and commas.",
+      };
+    }
     return { valid: true };
   }
 

@@ -62,25 +62,25 @@ Object.defineProperty(ReadStream, "prototype", {
           const err = ttySetMode(flag);
           if (err) {
             this.emit("error", new Error("setRawMode failed with errno: " + err));
+            return this;
           }
-          return this;
-        }
+        } else {
+          const handle = this.$bunNativePtr;
+          if (!handle) {
+            this.emit("error", new Error("setRawMode failed because it was called on something that is not a TTY"));
+            return this;
+          }
 
-        const handle = this.$bunNativePtr;
-        if (!handle) {
-          this.emit("error", new Error("setRawMode failed because it was called on something that is not a TTY"));
-          return this;
-        }
+          // If you call setRawMode before you call on('data'), the stream will
+          // not be constructed, leading to EBADF
+          // This corresponds to the `ensureConstructed` function in `native-readable.ts`
+          this.$start();
 
-        // If you call setRawMode before you call on('data'), the stream will
-        // not be constructed, leading to EBADF
-        // This corresponds to the `ensureConstructed` function in `native-readable.ts`
-        this.$start();
-
-        const err = handle.setRawMode(flag);
-        if (err) {
-          this.emit("error", err);
-          return this;
+          const err = handle.setRawMode(flag);
+          if (err) {
+            this.emit("error", err);
+            return this;
+          }
         }
       } else {
         const err = ttySetMode(this.fd, flag);

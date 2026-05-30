@@ -104,13 +104,13 @@ function findChrome(): string | undefined {
 }
 
 const chromePath = findChrome();
-// TODO: macOS 13 aarch64 CI — findChrome() resolves the Playwright
-// chrome-headless-shell, but `new Bun.WebView({backend: chrome})` throws
-// ERR_DLOPEN_FAILED at spawn time. Recent Chromium builds link against
-// frameworks only present on macOS 14+, so the binary exists but can't
-// load. Gate on CI + macOS < 14 rather than probing the spawn since that
-// adds ~100ms of startup cost to every platform for one broken runner.
-const chromeBroken = isCI && isMacOS && !isMacOSVersionAtLeast(14);
+// TODO: macOS 13/14 aarch64 CI — findChrome() resolves the Playwright
+// chrome-headless-shell, but it either throws ERR_DLOPEN_FAILED at spawn or
+// launches and immediately closes the pipe on first navigate. Recent Chromium
+// builds link against frameworks only present on macOS 15+, so the binary
+// exists but can't run. Gate on CI + macOS < 15 rather than probing — a real
+// probe needs an async navigate, which adds startup cost on every platform.
+const chromeBroken = isCI && isMacOS && !isMacOSVersionAtLeast(15);
 const it = chromePath && !chromeBroken ? test : test.todo;
 
 // url:false forces spawn-mode — skips DevToolsActivePort auto-detect

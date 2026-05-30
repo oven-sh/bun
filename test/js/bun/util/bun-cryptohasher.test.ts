@@ -15,6 +15,16 @@ test("CryptoHasher update should throw when no parameter/null/undefined is passe
   // @ts-expect-error
   expect(() => new Bun.CryptoHasher("sha1").update(null)).toThrow();
 });
+test("CryptoHasher throws on non-latin1 algorithm names instead of crashing", () => {
+  // @ts-expect-error
+  expect(() => Bun.CryptoHasher.hash("🚀", "hello")).toThrow(/Unsupported algorithm/);
+  // @ts-expect-error
+  expect(() => Bun.CryptoHasher.hash("sha3-256\u{1F680}", "hello", "hex")).toThrow(/Unsupported algorithm/);
+  // @ts-expect-error
+  expect(() => new Bun.CryptoHasher("🚀")).toThrow(/Unsupported algorithm/);
+  // @ts-expect-error
+  expect(() => new Bun.CryptoHasher("ünïcode")).toThrow(/Unsupported algorithm/);
+});
 
 describe("HMAC", () => {
   const hashes = {

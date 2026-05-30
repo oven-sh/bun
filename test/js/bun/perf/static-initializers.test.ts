@@ -61,11 +61,12 @@ describe("static initializers", () => {
 
     // mimalloc v3 on darwin (MI_OSX_ZONE=OFF in scripts/build/deps/mimalloc.ts —
     // zone override breaks NAPI addons) contributes two: __GLOBAL__sub_I_static.c
-    // and mi_process_attach. On x86_64 there is also ___cpu_indicator_init from
-    // CPU feature detection.
+    // and mi_process_attach. On x86_64 there may also be ___cpu_indicator_init
+    // from CPU feature detection, depending on the toolchain. Removals are wins;
+    // only additions are regressions.
     expect(
       bunInitializers.length,
       `Do not add static initializers to Bun. Static initializers are called when Bun starts up, regardless of whether you use the variables or not. This makes Bun slower.`,
-    ).toBe(process.arch === "arm64" ? 2 : 3);
+    ).toBeLessThanOrEqual(process.arch === "arm64" ? 2 : 3);
   });
 });

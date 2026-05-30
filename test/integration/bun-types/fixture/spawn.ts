@@ -71,7 +71,7 @@ function depromise<T>(_promise: Promise<T>): T {
   tsd.expectType(proc.stdio[0]).is<null>();
   tsd.expectType(proc.stdio[1]).is<null>();
   tsd.expectType(proc.stdio[2]).is<null>();
-  tsd.expectType(proc.stdio[3]).is<number | undefined>();
+  tsd.expectType(proc.stdio[3]).is<number | null | undefined>();
 
   tsd.expectType(proc.stdin).is<FileSink>();
   tsd.expectType(proc.stdout).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
@@ -221,11 +221,8 @@ tsd.expectAssignable<SyncSubprocess<Bun.SpawnOptions.Readable, Bun.SpawnOptions.
 
 {
   // invalid: lazy is not supported in spawnSync (object overload)
-  // @ts-expect-error lazy applies only to async spawn
-  Bun.spawnSync({
-    cmd: ["echo", "hello"],
-    stdout: "pipe",
-    stderr: "pipe",
-    lazy: true,
+  // prettier-ignore
+  // @ts-expect-error lazy applies to async spawn
+  Bun.spawnSync({ cmd: ["echo", "hello"], stdout: "pipe", stderr: "pipe", lazy: true,
   });
 }

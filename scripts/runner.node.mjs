@@ -40,6 +40,7 @@ import {
   getArch,
   getBranch,
   getBuildLabel,
+  getBuildMetadata,
   getBuildUrl,
   getCommit,
   getDistro,
@@ -78,7 +79,9 @@ const integrationTimeout = 5 * 60_000;
 
 function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-dns")) return 60_000;
+  if (testPath.includes("test-cluster-")) return 60_000; // cluster IPC + socket-handle passing is process-heavy under runner concurrency
   if (testPath.includes("-docker-")) return 60_000;
+  if (testPath.includes("test-stdin-pipe-large")) return 60_000; // pipes 1MB stdin->stdout through an extra child process; slow under runner concurrency
   if (!isCI) return 60_000; // everything slower in debug mode
   if (options["step"]?.includes("-asan-")) return 60_000;
   return 20_000;
@@ -166,6 +169,11 @@ const { values: options, positionals: filters } = parseArgs({
       type: "boolean",
       default: false,
     },
+    /** Write per-file results as JSON to this path (for test-fix workflows). */
+    ["results-json"]: {
+      type: "string",
+      default: undefined,
+    },
   },
 });
 
@@ -190,29 +198,53 @@ let allFiles = [];
 let newFiles = [];
 let prFileCount = 0;
 if (isBuildkite) {
-  try {
-    console.log("on buildkite: collecting new files from PR");
-    const per_page = 50;
-    const { BUILDKITE_PULL_REQUEST } = process.env;
-    for (let i = 1; i <= 10; i++) {
-      const res = await fetch(
-        `https://api.github.com/repos/oven-sh/bun/pulls/${BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
-        { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
-      );
-      const doc = await res.json();
-      console.log(`-> page ${i}, found ${doc.length} items`);
-      if (doc.length === 0) break;
-      for (const { filename, status } of doc) {
-        prFileCount += 1;
-        allFiles.push(filename);
-        if (status !== "added") continue;
-        newFiles.push(filename);
-      }
-      if (doc.length < per_page) break;
+  // The pipeline-upload step (.buildkite/ci.mjs) already fetched the PR file
+  // list once and stored it as build meta-data. Read it from there so each of
+  // the ~150 test shards doesn't repeat the GitHub API call and burn through
+  // the token's hourly rate limit.
+  const cachedAll = await getBuildMetadata("pr-all-files");
+  const cachedNew = await getBuildMetadata("pr-new-files");
+  if (cachedAll) {
+    try {
+      allFiles = JSON.parse(cachedAll);
+      newFiles = cachedNew ? JSON.parse(cachedNew) : [];
+      prFileCount = allFiles.length;
+      console.log(`- PR file list from build meta-data: ${prFileCount} files, ${newFiles.length} new files`);
+    } catch (e) {
+      console.error("Failed to parse pr-*-files meta-data:", e);
+      allFiles = [];
+      newFiles = [];
     }
-    console.log(`- PR ${BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
-  } catch (e) {
-    console.error(e);
+  }
+  if (allFiles.length === 0) {
+    try {
+      console.log("on buildkite: collecting new files from PR");
+      const per_page = 50;
+      const { BUILDKITE_PULL_REQUEST } = process.env;
+      for (let i = 1; i <= 10; i++) {
+        const res = await fetch(
+          `https://api.github.com/repos/oven-sh/bun/pulls/${BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
+          { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
+        );
+        const doc = await res.json();
+        if (!res.ok || !Array.isArray(doc)) {
+          console.error(`-> page ${i}: GitHub API ${res.status} ${res.statusText}:`, JSON.stringify(doc));
+          throw new Error(`GitHub API returned ${res.status}; cannot determine changed files`);
+        }
+        console.log(`-> page ${i}, found ${doc.length} items`);
+        if (doc.length === 0) break;
+        for (const { filename, status } of doc) {
+          prFileCount += 1;
+          allFiles.push(filename);
+          if (status !== "added") continue;
+          newFiles.push(filename);
+        }
+        if (doc.length < per_page) break;
+      }
+      console.log(`- PR ${BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
+    } catch (e) {
+      console.error(e);
+    }
   }
 }
 
@@ -328,7 +360,10 @@ const skipsForLeaksan = (() => {
  * @returns {boolean}
  */
 const shouldValidateExceptions = test => {
-  return !(skipsForExceptionValidation.includes(test) || skipsForExceptionValidation.includes("test/" + test));
+  // Skip-list entries use `/`; on Windows callers pass `\`-separated paths
+  // (path.relative) which never match. Normalize before lookup.
+  const t = test.replaceAll(sep, "/");
+  return !(skipsForExceptionValidation.includes(t) || skipsForExceptionValidation.includes("test/" + t));
 };
 
 /**
@@ -405,6 +440,19 @@ async function runTests() {
 
   const tests = getRelevantTests(testsPath, modifiers, expectations);
   !isQuiet && console.log("Running tests:", tests.length);
+
+  // Kick off only the docker services this shard's tests need (mysql/postgres/
+  // redis/minio/…) so they've initialized by the time any test's ensure() runs.
+  // warmup-ci.ts maps test paths → services and does one `compose up -d` (no
+  // --wait); ensure()'s own `up --wait` is the synchronization point and
+  // returns fast when the container is already healthy. Linux-only — macOS /
+  // Windows CI don't run docker tests. Runs in the background while
+  // getVendorTests below installs vendor deps.
+  if (isCI && isLinux && spawnSync("docker", ["compose", "version"], { stdio: "ignore" }).status === 0) {
+    spawn(execPath, [join(cwd, "test", "docker", "warmup-ci.ts"), ...tests], {
+      stdio: ["ignore", "inherit", "inherit"],
+    }).on("error", err => console.warn("docker warmup spawn failed:", err.message));
+  }
 
   /** @type {VendorTest[] | undefined} */
   let vendorTests;
@@ -601,7 +649,7 @@ async function runTests() {
               env.BUN_DESTRUCT_VM_ON_EXIT = "1";
               env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
               // prettier-ignore
-              env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+              env.LSAN_OPTIONS = `malloc_context_size=30:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
             }
             return runTest(title, async () => {
               const { ok, error, stdout, crashes } = await spawnBun(execPath, {
@@ -871,6 +919,23 @@ async function runTests() {
         console.log(`${getAnsi("yellow")}- ${testPath}${getAnsi("reset")}`);
       }
     }
+  }
+
+  // Dump per-file results as JSON for post-processing (test-fix workflows
+  // shard from this). Opt-in via --results-json so CI output is unchanged.
+  if (cliOptions["results-json"]) {
+    const all = [...okResults, ...flakyResults, ...failedResults].map(r => ({
+      testPath: r.testPath,
+      ok: r.ok,
+      status: r.status,
+      error: r.error,
+      exitCode: r.exitCode,
+      signalCode: r.signalCode,
+      duration: r.duration,
+      stdoutPreview: r.stdoutPreview?.slice?.(-4000),
+    }));
+    writeFileSync(cliOptions["results-json"], JSON.stringify(all, null, 2));
+    !isQuiet && console.log(`Wrote ${all.length} results to ${cliOptions["results-json"]}`);
   }
 
   // Exclude flaky tests from the final results
@@ -1326,7 +1391,11 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  */
 async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   const timeout = getTestTimeout(testPath);
-  const perTestTimeout = Math.ceil(timeout / 2);
+  // ASAN builds run 5-10x slower (instrumentation + the agent only exposes
+  // 2 of its 8 vCPUs); without a wider per-test timeout, install/git tests
+  // that spawn many subprocesses time out on otherwise-healthy runs.
+  const isAsan = basename(execPath).includes("asan");
+  const perTestTimeout = Math.ceil(timeout / 2) * (isAsan ? 3 : 1);
   const absPath = join(opts["cwd"], testPath);
   const isReallyTest = isTestStrict(testPath) || absPath.includes("vendor");
   const args = opts["args"] ?? [];
@@ -1365,7 +1434,14 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
     env.BUN_DESTRUCT_VM_ON_EXIT = "1";
     env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
     // prettier-ignore
-    env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+    env.LSAN_OPTIONS = `malloc_context_size=30:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+  }
+  if (basename(execPath).includes("asan")) {
+    // ASAN test processes are slow and memory-heavy; if the bun test runner is
+    // SIGKILLed (timeout, OOM) its spawned subprocesses keep running and pile
+    // up, eventually OOM-killing the agent. --no-orphans makes every spawned
+    // bun exit when its parent dies AND SIGKILL its own descendants on exit.
+    env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
   }
 
   const { ok, error, stdout, crashes } = await spawnBun(execPath, {
@@ -1404,7 +1480,11 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
  * @returns {number}
  */
 function getTestTimeout(testPath) {
-  if (/integration|3rd_party|docker|bun-install-registry|v8|bundler_compile/i.test(testPath)) {
+  if (
+    /integration|3rd_party|docker|bun-install-registry|bun-security-scanner-matrix|v8|bundler_compile|tonic/i.test(
+      testPath,
+    )
+  ) {
     return integrationTimeout;
   }
   return testTimeout;
@@ -2336,6 +2416,7 @@ function isAlwaysFailure(error) {
     error.includes("illegal instruction") ||
     error.includes("unchecked exception") ||
     error.includes("sigtrap") ||
+    error.includes("sigabrt") ||
     error.includes("sigkill") ||
     error.includes("error: addresssanitizer") ||
     error.includes("internal assertion failure") ||
@@ -2666,7 +2747,11 @@ export async function main() {
 
   let doRunTests = true;
   if (isCI) {
-    if (allFiles.every(filename => filename.startsWith("docs/"))) {
+    // allFiles can be empty if the GitHub API call failed (bad token, rate
+    // limit, non-PR build). [].every() is vacuously true, which would skip the
+    // entire suite and exit 0 — so require at least one file before treating
+    // the change set as docs-only.
+    if (allFiles.length > 0 && allFiles.every(filename => filename.startsWith("docs/"))) {
       doRunTests = false;
     }
   }

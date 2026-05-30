@@ -440,6 +440,14 @@ pub fn generateCodeForFileInChunkJS(
                     for (stmts.all_stmts.items) |stmt| {
                         const transformed = switch (stmt.data) {
                             .s_local => |local| stmt: {
+                                // "using" / "await using" declarations have disposal
+                                // side-effects tied to the scope they appear in, so
+                                // they must stay inside the closure rather than being
+                                // hoisted to `var` + assignment.
+                                if (local.kind.isUsing()) {
+                                    break :stmt stmt;
+                                }
+
                                 // Convert the declarations to assignments
                                 var value = Expr.empty;
                                 for (local.decls.slice()) |*decl| {

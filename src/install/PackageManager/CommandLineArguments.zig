@@ -44,7 +44,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("--cwd <STR>                           Set a specific cwd") catch unreachable,
     clap.parseParam("--backend <STR>                       Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
     clap.parseParam("--registry <STR>                      Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables") catch unreachable,
-    clap.parseParam("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default 5)") catch unreachable,
+    clap.parseParam("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default: 2x CPU cores)") catch unreachable,
     clap.parseParam("--network-concurrency <NUM>           Maximum number of concurrent network requests (default 48)") catch unreachable,
     clap.parseParam("--save-text-lockfile                  Save a text-based lockfile") catch unreachable,
     clap.parseParam("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
@@ -1144,7 +1144,7 @@ const string = []const u8;
 const Npm = @import("../npm.zig");
 const Options = @import("./PackageManagerOptions.zig");
 const std = @import("std");
-const PackageManagerCommand = @import("../../cli/package_manager_command.zig").PackageManagerCommand;
+const PackageManagerCommand = @import("../../runtime/cli/package_manager_command.zig").PackageManagerCommand;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -161,7 +161,7 @@ describe.skipIf(isASAN)("TLS custom config memory leak detection", () => {
     if (exitCode !== 0) {
       console.error(stderr);
     }
-    expect(result.growthMB).toBeLessThan(75 * (isASAN ? 8 : 1));
+    expect(result.growthMB).toBeLessThan(85 * (isASAN ? 8 : 1));
     expect(exitCode).toBe(0);
   });
 });

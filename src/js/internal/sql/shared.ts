@@ -630,7 +630,11 @@ function parseOptions(
         // check adapter then implement for other databases
         // encode string with \0 as finalizer
         // must be key\0value\0
-        query += `${key}\0${queryObject[key]}\0`;
+        const value = `${queryObject[key]}`;
+        if (key.includes("\0") || value.includes("\0")) {
+          throw $ERR_INVALID_ARG_VALUE(`options.${key}`, queryObject[key], "must not contain null bytes");
+        }
+        query += `${key}\0${value}\0`;
       }
     }
     query = query.trim();
@@ -754,7 +758,11 @@ function parseOptions(
   if (connection && $isObject(connection)) {
     for (const key in connection) {
       if (connection[key] !== undefined) {
-        query += `${key}\0${connection[key]}\0`;
+        const value = `${connection[key]}`;
+        if (key.includes("\0") || value.includes("\0")) {
+          throw $ERR_INVALID_ARG_VALUE(`options.connection.${key}`, connection[key], "must not contain null bytes");
+        }
+        query += `${key}\0${value}\0`;
       }
     }
   }
@@ -838,6 +846,12 @@ function parseOptions(
     }
   }
 
+  if ($isObject(tls) && sslMode < SSLMode.verify_ca) {
+    if (tls.rejectUnauthorized === true || (tls.rejectUnauthorized !== false && tls.ca)) {
+      sslMode = SSLMode.verify_full;
+    }
+  }
+
   if (sslMode !== SSLMode.disable && !tls?.serverName) {
     if (hostname) {
       tls = { ...tls, serverName: hostname };
@@ -846,8 +860,12 @@ function parseOptions(
     }
   }
 
+  // Explicit tls/ssl options request an encrypted connection: if the server
+  // declines TLS, the connection is aborted instead of continuing in plaintext.
+  // Certificate verification is only enabled when explicitly requested
+  // (ca, rejectUnauthorized, or a verify-* sslmode).
   if (tls && sslMode === SSLMode.disable) {
-    sslMode = SSLMode.prefer;
+    sslMode = SSLMode.require;
   }
 
   port = Number(port);
@@ -865,6 +883,7 @@ function parseOptions(
     database,
     tls,
     prepare,
+    allowPublicKeyRetrieval: options.allowPublicKeyRetrieval === true,
     bigint,
     sslMode,
     query,

@@ -380,3 +380,23 @@ describe("Bun.markdown.render", () => {
     expect(result).toBe("&");
   });
 });
+
+describe("Bun.markdown buffer input", () => {
+  test("the input buffer stays attached while a callback runs and is released after", () => {
+    const input = new TextEncoder().encode("# Hello\n\nworld\n");
+    let detachedDuringRender: boolean | null = null;
+    const result = Markdown.render(input, {
+      heading: (children: string) => {
+        input.buffer.transfer();
+        detachedDuringRender = (input.buffer as ArrayBuffer).detached;
+        return `<h1>${children}</h1>`;
+      },
+      paragraph: (children: string) => `<p>${children}</p>`,
+    });
+    expect(detachedDuringRender).toBe(false);
+    expect(result).toBe("<h1>Hello</h1><p>world</p>");
+
+    input.buffer.transfer();
+    expect((input.buffer as ArrayBuffer).detached).toBe(true);
+  });
+});

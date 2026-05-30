@@ -1,5 +1,5 @@
 const { Duplex } = require("node:stream");
-const upgradeDuplexToTLS = $newZigFunction("socket.zig", "jsUpgradeDuplexToTLS", 2);
+const upgradeDuplexToTLS = $newZigFunction("runtime/socket/socket.zig", "jsUpgradeDuplexToTLS", 2);
 
 interface NativeHandle {
   resume(): void;
@@ -226,11 +226,9 @@ function socketHandshake(
         tlsSocket.destroy(verifyError);
         return;
       }
-    } else {
+    } else if (tlsSocket._requestCert) {
       tlsSocket.authorized = true;
     }
-  } else {
-    tlsSocket.authorized = true;
   }
 
   // Invoke the H2 connectionListener which creates a ServerHttp2Session.
@@ -346,6 +344,8 @@ function upgradeRawSocketToH2(
         cert: server.cert,
         ca: server.ca,
         passphrase: server.passphrase,
+        requestCert: server._requestCert,
+        rejectUnauthorized: server._rejectUnauthorized,
         ALPNProtocols: server.ALPNProtocols
           ? server.ALPNProtocols.buffer.slice(
               server.ALPNProtocols.byteOffset,

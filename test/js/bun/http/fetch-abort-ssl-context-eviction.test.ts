@@ -19,16 +19,21 @@ import { bunEnv, bunExe } from "harness";
 // fixture spams same-size-class allocations to make that likely (~30% per
 // run before the fix), so loop a few times.
 test("aborting fetches whose custom SSL context was evicted does not crash", async () => {
-  for (let run = 0; run < 5; run++) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
+  const results = await Promise.all(
+    Array.from({ length: 5 }, async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }),
+  );
 
+  for (const { stdout, stderr, exitCode } of results) {
     expect(stderr).not.toContain("panic");
     expect(stderr).not.toContain("Segmentation fault");
     expect(stderr).not.toContain("poisoned");

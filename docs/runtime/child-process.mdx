@@ -414,7 +414,16 @@ When passing an existing `Terminal` object:
 
 This is useful for running multiple commands in sequence through the same terminal session.
 
-<Note>Terminal support is only available on POSIX systems (Linux, macOS). It is not available on Windows.</Note>
+### Platform differences
+
+`Bun.Terminal` uses `openpty()` on Linux and macOS, and ConPTY (`CreatePseudoConsole`) on Windows. The core behaviour — child sees a TTY, `write()` reaches the child's stdin, child output reaches the `data` callback, `resize()` updates the child's view — is the same on every platform. A few details differ:
+
+- **No termios on Windows.** `inputFlags`, `outputFlags`, `localFlags`, and `controlFlags` always read as `0` and setting them is a no-op. `setRawMode()` records the flag but has no effect on the child; the child controls its own console mode.
+- **No echo without a child process on Windows.** On POSIX, the kernel line discipline echoes `write()` input back to the `data` callback even with no process attached. ConPTY has no line discipline; input is buffered for the next reader. If you need echo, spawn a process that echoes.
+- **ConPTY re-encodes output.** ConPTY renders the child's output to a virtual screen and emits whatever VT sequences describe the result, so the `data` callback receives semantically equivalent — but not byte-identical — escape sequences. Colours and text are preserved; cursor-positioning and reset sequences may be reordered or coalesced. ConPTY also emits a short VT init sequence (`\x1b[?9001h\x1b[?1004h…`) before any child output.
+- **Input `\r` is not translated to `\n` on Windows.** POSIX `ICRNL` maps carriage return to newline on input; ConPTY passes `\r` through unchanged.
+- **`process.on('SIGWINCH')` in the child does not fire under ConPTY** unless the child is reading stdin in raw mode. `process.stdout.columns`/`rows` do update after `resize()`. This is a libuv limitation that affects any libuv-based child (Node.js included).
+- On Windows before 11 24H2 (build 26100), `terminal.close()` may not terminate a still-running child promptly because [`ClosePseudoConsole`](https://learn.microsoft.com/en-us/windows/console/closepseudoconsole) blocks until conhost has flushed its output through the pipe on those versions. Kill the attached process first if you need to tear down with a running child.
 
 ---
 
@@ -510,7 +519,7 @@ namespace SpawnOptions {
     timeout?: number;
     killSignal?: string | number;
     maxBuffer?: number;
-    terminal?: TerminalOptions; // PTY support (POSIX only)
+    terminal?: TerminalOptions; // PTY (POSIX) / ConPTY (Windows) support
   }
 
   type Readable =

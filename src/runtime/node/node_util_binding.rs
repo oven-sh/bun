@@ -212,7 +212,9 @@ pub(crate) fn guess_handle_type(global: &JSGlobalObject, frame: &CallFrame) -> J
     if fd_int < 0 {
         return Ok(JSValue::js_number_from_int32(HANDLE_UNKNOWN as i32));
     }
-    Ok(JSValue::js_number_from_int32(guess_handle_type_from_fd(fd_int) as i32))
+    Ok(JSValue::js_number_from_int32(
+        guess_handle_type_from_fd(fd_int) as i32,
+    ))
 }
 
 const HANDLE_TCP: u32 = 0;
@@ -263,7 +265,14 @@ fn guess_handle_type_from_fd(fd_int: i32) -> u32 {
     let mut ss: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
     let mut ss_len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
     // SAFETY: `ss`/`ss_len` are live stack locals sized for `sockaddr_storage`.
-    if unsafe { libc::getsockname(fd_int, (&mut ss as *mut libc::sockaddr_storage).cast(), &mut ss_len) } != 0 {
+    if unsafe {
+        libc::getsockname(
+            fd_int,
+            (&mut ss as *mut libc::sockaddr_storage).cast(),
+            &mut ss_len,
+        )
+    } != 0
+    {
         return HANDLE_UNKNOWN;
     }
 

@@ -219,7 +219,9 @@ impl Pipe {
             // Set O_NONBLOCK like uv_pipe_open. Failure → return -errno.
             let cur: sys::FcntlInt = match sys::fcntl(fd, libc::F_GETFL, 0) {
                 sys::Result::Ok(f) => f,
-                sys::Result::Err(err) => return Ok(JSValue::js_number_from_int32(to_uv_errno(&err))),
+                sys::Result::Err(err) => {
+                    return Ok(JSValue::js_number_from_int32(to_uv_errno(&err)));
+                }
             };
             if let sys::Result::Err(err) =
                 sys::fcntl(fd, libc::F_SETFL, cur | sys::O::NONBLOCK as sys::FcntlInt)
@@ -227,7 +229,8 @@ impl Pipe {
                 return Ok(JSValue::js_number_from_int32(to_uv_errno(&err)));
             }
             self.reader.with_mut(|r| {
-                r.flags.insert(PosixFlags::NONBLOCKING | PosixFlags::POLLABLE);
+                r.flags
+                    .insert(PosixFlags::NONBLOCKING | PosixFlags::POLLABLE);
                 // We never own the fd (caller-provided via open()).
                 r.flags.remove(PosixFlags::CLOSE_HANDLE);
             });
@@ -235,8 +238,10 @@ impl Pipe {
         #[cfg(windows)]
         {
             // Source open is deferred to the first readStart().
-            self.reader
-                .with_mut(|r| r.flags.remove(bun_io::pipe_reader::WindowsFlags::CLOSE_HANDLE));
+            self.reader.with_mut(|r| {
+                r.flags
+                    .remove(bun_io::pipe_reader::WindowsFlags::CLOSE_HANDLE)
+            });
         }
 
         self.fd.set(fd);
@@ -378,7 +383,11 @@ impl Pipe {
         Ok(JSValue::js_number_from_int32(-UV_E::NOTSUP))
     }
 
-    pub(crate) fn get_on_read(&self, this_value: JSValue, _g: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_on_read(
+        &self,
+        this_value: JSValue,
+        _g: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
         Ok(js::gc::get_onread(this_value).unwrap_or(JSValue::UNDEFINED))
     }
 
@@ -433,7 +442,8 @@ impl Pipe {
             Err(_) => return reading,
         };
 
-        self.bytes_read.set(self.bytes_read.get() + chunk.len() as u64);
+        self.bytes_read
+            .set(self.bytes_read.get() + chunk.len() as u64);
 
         global_this.bun_vm().event_loop_mut().run_callback(
             callback,

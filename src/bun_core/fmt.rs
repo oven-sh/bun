@@ -1174,8 +1174,21 @@ pub enum URLProto {
 /// spaces, brackets, etc. round-trip through the URL parser.
 fn url_needs_escape(c: u8, authority: bool) -> bool {
     match c {
-        0x00..=0x1F | b' ' | b'"' | b'#' | b'%' | b'<' | b'>' | b'?' | b'[' | b'\\' | b']'
-        | b'^' | b'`' | b'|' | b'~' => true,
+        0x00..=0x1F
+        | b' '
+        | b'"'
+        | b'#'
+        | b'%'
+        | b'<'
+        | b'>'
+        | b'?'
+        | b'['
+        | b'\\'
+        | b']'
+        | b'^'
+        | b'`'
+        | b'|'
+        | b'~' => true,
         // In the authority position (abstract sockets), @/:/ are
         // structural delimiters that must also be percent-encoded.
         b'/' | b'@' | b':' => authority,
@@ -1206,7 +1219,11 @@ impl Display for URLFormatter<'_> {
         match self.proto {
             URLProto::Unix | URLProto::Abstract => {
                 let is_abstract = self.proto == URLProto::Abstract;
-                f.write_str(if is_abstract { "abstract://" } else { "unix://" })?;
+                f.write_str(if is_abstract {
+                    "abstract://"
+                } else {
+                    "unix://"
+                })?;
                 if let Some(path) = self.hostname {
                     // Abstract socket names sit in the URL authority, so
                     // @, :, / must be escaped. Unix paths sit in the URL
@@ -1224,7 +1241,11 @@ impl Display for URLFormatter<'_> {
         write!(
             f,
             "{}://",
-            if self.proto == URLProto::Https { "https" } else { "http" }
+            if self.proto == URLProto::Https {
+                "https"
+            } else {
+                "http"
+            }
         )?;
 
         if let Some(hostname) = self.hostname {

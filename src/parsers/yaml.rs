@@ -2789,7 +2789,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         let s = r.slice(self.input);
                         let default = b"tag:yaml.org,2002:";
                         s.len() != default.len()
-                            || s.iter().zip(default).any(|(&a, &b)| Enc::wide(a) != b as u32)
+                            || s.iter()
+                                .zip(default)
+                                .any(|(&a, &b)| Enc::wide(a) != b as u32)
                     }
                     DirectiveTagPrefix::Local(_) => true,
                 };

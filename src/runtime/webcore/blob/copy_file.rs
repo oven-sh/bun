@@ -1560,20 +1560,25 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn copyfile(&mut self) {
-        // Only the uv_fs_copyfile head-slice path (offset == 0, finite size)
-        // needs the source stat up front, to clamp the size before it decides
-        // whether to truncate. Skip the blocking stat for a whole-file copy
-        // (offset == 0, size == MAX_SIZE — nothing consumes it) and for any
+        // Only the uv_fs_copyfile head-slice path (offset == 0, finite non-zero
+        // size) needs the source stat up front, to clamp the size before it
+        // decides whether to truncate. Skip the blocking stat for a whole-file
+        // copy (offset == 0, size == MAX_SIZE — nothing consumes it), an empty
+        // slice (size == 0 — routed to the read/write loop below), and any
         // offset > 0 copy (the read/write loop re-derives the window from the
-        // opened fd below, so statting here would just be a redundant syscall).
-        if self.offset == 0 && self.size != MAX_SIZE {
+        // opened fd, so statting here would just be a redundant syscall).
+        if self.offset == 0 && self.size != MAX_SIZE && self.size != 0 {
             self.prepare_source_window();
         }
 
         // uv_fs_copyfile always copies the whole source file; it can't honor a
-        // slice offset. A sliced source blob must go through the positioned
-        // read/write loop, which reads from `read_pos` (seeded with `offset`).
-        if self.offset > 0 {
+        // slice offset, and it can't produce a shorter output than the source.
+        // Route a sliced source (`offset > 0`) or an empty window (`size == 0`,
+        // including a zero-length slice) through the positioned read/write loop
+        // instead: it reads from `read_pos` (seeded with `offset`) and clamps to
+        // `size`, so an empty slice truncates the destination and writes nothing
+        // rather than copying the whole file.
+        if self.offset > 0 || self.size == 0 {
             self.prepare_read_write_loop();
             return;
         }

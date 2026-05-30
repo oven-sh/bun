@@ -243,6 +243,18 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(ret).toBe(26);
     });
 
+    it("empty slice(0, 0) writes an empty file, not the whole source", async () => {
+      using dir = tempDir("bun-write-file-slice-empty", {
+        "src.txt": alphabet,
+        "dst.txt": "stale pre-existing contents",
+      });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      const ret = await Bun.write(dst, Bun.file(src).slice(0, 0));
+      expect(await Bun.file(dst).text()).toBe("");
+      expect(ret).toBe(0);
+    });
+
     it("unsliced source still copies the whole file", async () => {
       using dir = tempDir("bun-write-file-slice-whole", { "src.txt": alphabet });
       const src = join(String(dir), "src.txt");

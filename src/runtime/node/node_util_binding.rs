@@ -262,19 +262,15 @@ fn guess_handle_type_from_fd(fd_int: i32) -> u32 {
     }
 
     // Socket: distinguish TCP / UDP / unix (pipe) by family + socket type.
-    let mut ss: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+    let mut ss = std::mem::MaybeUninit::<libc::sockaddr_storage>::uninit();
     let mut ss_len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
-    // SAFETY: `ss`/`ss_len` are live stack locals sized for `sockaddr_storage`.
-    if unsafe {
-        libc::getsockname(
-            fd_int,
-            (&mut ss as *mut libc::sockaddr_storage).cast(),
-            &mut ss_len,
-        )
-    } != 0
-    {
+    // SAFETY: `ss` is a live stack local sized for `sockaddr_storage` and
+    // `ss_len` bounds the write; getsockname fills up to `ss_len` bytes.
+    if unsafe { libc::getsockname(fd_int, ss.as_mut_ptr().cast(), &raw mut ss_len) } != 0 {
         return HANDLE_UNKNOWN;
     }
+    // SAFETY: getsockname succeeded, so at least `ss_family` was initialized.
+    let family = unsafe { ss.assume_init_ref() }.ss_family as libc::c_int;
 
     let mut so_type: libc::c_int = 0;
     let mut so_type_len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
@@ -284,15 +280,14 @@ fn guess_handle_type_from_fd(fd_int: i32) -> u32 {
             fd_int,
             libc::SOL_SOCKET,
             libc::SO_TYPE,
-            (&mut so_type as *mut libc::c_int).cast(),
-            &mut so_type_len,
+            (&raw mut so_type).cast(),
+            &raw mut so_type_len,
         )
     } != 0
     {
         return HANDLE_UNKNOWN;
     }
 
-    let family = ss.ss_family as libc::c_int;
     if so_type == libc::SOCK_DGRAM {
         if family == libc::AF_INET || family == libc::AF_INET6 {
             return HANDLE_UDP;

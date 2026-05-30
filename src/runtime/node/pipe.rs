@@ -288,6 +288,9 @@ impl Pipe {
                     // data promptly. read() can re-enter via on_read_chunk /
                     // on_reader_done, so it must run outside a with_mut borrow
                     // (accessor idiom — see the restart branch below).
+                    // SAFETY: single JS thread; no other &mut IOReader is held
+                    // live across this call (the `&mut` is released at the end
+                    // of this statement, so a re-entrant callback reborrows).
                     unsafe { &mut *self.reader.as_ptr() }.read();
                 }
                 sys::Result::Err(err) => {

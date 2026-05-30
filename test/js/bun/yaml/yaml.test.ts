@@ -2017,6 +2017,13 @@ folded: >
             expect(YAML.parse(`{!!str\n: x}`)).toEqual({ "": "x" });
             expect(YAML.parse(`{&a\n: x, y: *a}`)).toEqual({ null: "x", y: null });
             expect(YAML.parse(`{!!str\n,a}`)).toEqual({ "": null, a: null });
+            // Two properties spanning lines, then terminator (e-node key).
+            expect(YAML.parse(`{&a\n!!str }`)).toEqual({ "": null });
+            expect(YAML.parse(`{!!str\n&a }`)).toEqual({ "": null });
+            expect(YAML.parse(`{&a\n!!str ,x: 1}`)).toEqual({ "": null, x: 1 });
+            // …but two properties spanning lines then CONTENT errors.
+            expect(() => YAML.parse(`{&a\n!!str b: 1}`)).toThrow();
+            expect(() => YAML.parse(`{!!str\n&x a: 1}`)).toThrow();
             // explicit `?` key uses s-separate(n,c) — newline allowed
             expect(YAML.parse(`{? !!str\na: 1}`)).toEqual({ a: 1 });
             // FLOW-IN value position uses s-separate-lines — newline allowed
@@ -2355,12 +2362,15 @@ folded: >
             // Between a directive and `---` is not prefix ([202] precedes
             // directives).
             expect(() => YAML.parse("%YAML 1.2\n﻿---\nfoo")).toThrow();
-            // But after `...` (l-document-suffix) and at stream-start it IS
-            // the prefix.
+            // After `...` (l-document-suffix) it IS the prefix.
             expect(YAML.parse("a\n...\n﻿---\nb")).toEqual(["a", "b"]);
             expect(YAML.parse("a\n...\n﻿b")).toEqual(["a", "b"]);
-            expect(YAML.parse("# c\n﻿a")).toBe("a");
             expect(YAML.parse("...\n﻿foo")).toBe("foo");
+            // Stream-start: only the byte-0 BOM is stripped (init); a BOM
+            // after leading blanks/comments is content (matches js-yaml,
+            // PyYAML, ruamel; eemeli strips per [211] l-document-prefix*).
+            expect(YAML.parse("\n﻿a")).toBe("﻿a");
+            expect(YAML.parse("# c\n﻿a")).toBe("﻿a");
           });
 
           test("`%YAML` major version compared numerically (leading zeros)", () => {

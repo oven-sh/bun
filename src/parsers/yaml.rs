@@ -2582,9 +2582,11 @@ pub struct Parser<'i, Enc: Encoding> {
     /// `!!int` etc. shorthands no longer denote the Core-schema tags
     /// (`shorthand_to_tag` falls through to `Unknown`).
     pub secondary_handle_redefined: bool,
-    /// True while scanning at [202] `l-document-prefix` position
-    /// (stream-start, or after `...`): scan() may strip a line-start BOM.
-    /// Cleared once a document's first content token is produced.
+    /// True only between `l-document-suffix` (`...`) and the next document's
+    /// first token: scan() may strip a line-start BOM there per [211].
+    /// Stream-start BOM is handled by `init()`'s byte-0 strip; a BOM after
+    /// leading blanks/comments at stream-start stays as content (matching
+    /// js-yaml/PyYAML/ruamel). Cleared at the top of `parse_document`.
     pub at_doc_prefix: bool,
 
     pub whitespace_buf: Vec<Whitespace<Enc>>,
@@ -2634,7 +2636,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             anchors: StringHashMap::default(),
             tag_handles: StringHashMap::default(),
             secondary_handle_redefined: false,
-            at_doc_prefix: true,
+            at_doc_prefix: false,
             whitespace_buf: Vec::new(),
             stack_check: StackCheck::init(),
             merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
@@ -2667,6 +2669,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // a spurious null root for them.
         while matches!(self.token.data, TokenData::DocumentEnd) {
             let document_end_line = self.token.line;
+            self.at_doc_prefix = true;
             self.scan(ScanOptions::default())?;
             if self.token.line == document_end_line && !matches!(self.token.data, TokenData::Eof) {
                 return Err(Self::unexpected_token());
@@ -4240,6 +4243,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         // c-ns-properties
         let mut node_props: NodeProperties<Enc> = NodeProperties::default();
+        // [80] s-separate(n,FLOW-KEY) = s-separate-in-line: in FlowKey
+        // context, the first property's line bounds where content may appear.
+        let mut flow_key_prop_line: Option<Line> = None;
 
         if let Some(tag) = opts.scanned_tag {
             node_props.set_tag(tag)?;
@@ -4258,7 +4264,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
 
                 TokenData::Anchor(_anchor) => {
-                    let prop_line = self.token.line;
+                    let prop_line = *flow_key_prop_line.get_or_insert(self.token.line);
                     node_props.set_anchor(self.token.clone())?;
                     self.scan(ScanOptions {
                         tag: node_props.tag(),
@@ -4272,12 +4278,18 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     // means the key is the e-scalar — no separation to check.
                     if self.context.get() == Context::FlowKey
                         && self.token.line != prop_line
-                        && !matches!(
+                        && matches!(
                             self.token.data,
-                            TokenData::MappingEnd
-                                | TokenData::SequenceEnd
-                                | TokenData::CollectEntry
-                                | TokenData::MappingValue
+                            // Only fire on tokens that ARE the key's content.
+                            // Terminators (`}`/`]`/`,`/`:`) mean an e-node
+                            // key; a second `Tag`/`Anchor` defers the check
+                            // to the next iteration so `{&a\n!!str }` (e-node)
+                            // is accepted while `{&a\n!!str b: 1}` errors via
+                            // the first-prop line comparison.
+                            TokenData::Scalar(_)
+                                | TokenData::Alias(_)
+                                | TokenData::SequenceStart
+                                | TokenData::MappingStart
                         )
                     {
                         return Err(ParseError::MultilineImplicitKey);
@@ -4287,7 +4299,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                 TokenData::Tag(tag) => {
                     let tag = *tag;
-                    let prop_line = self.token.line;
+                    let prop_line = *flow_key_prop_line.get_or_insert(self.token.line);
                     node_props.set_tag(self.token.clone())?;
                     self.scan(ScanOptions {
                         tag,
@@ -4295,12 +4307,18 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     })?;
                     if self.context.get() == Context::FlowKey
                         && self.token.line != prop_line
-                        && !matches!(
+                        && matches!(
                             self.token.data,
-                            TokenData::MappingEnd
-                                | TokenData::SequenceEnd
-                                | TokenData::CollectEntry
-                                | TokenData::MappingValue
+                            // Only fire on tokens that ARE the key's content.
+                            // Terminators (`}`/`]`/`,`/`:`) mean an e-node
+                            // key; a second `Tag`/`Anchor` defers the check
+                            // to the next iteration so `{&a\n!!str }` (e-node)
+                            // is accepted while `{&a\n!!str b: 1}` errors via
+                            // the `first_prop_line` comparison.
+                            TokenData::Scalar(_)
+                                | TokenData::Alias(_)
+                                | TokenData::SequenceStart
+                                | TokenData::MappingStart
                         )
                     {
                         return Err(ParseError::MultilineImplicitKey);

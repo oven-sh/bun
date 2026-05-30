@@ -1953,7 +1953,7 @@ folded: >
             ["block-folded", (c: string) => `>\n a${c}b\n`, false],
             ["single-quoted", (c: string) => `'a${c}b'`, true],
             ["double-quoted", (c: string) => `"a${c}b"`, true],
-          ] as const)("in %s scalar (nb_json=%p)", (_ctx, build, nbJson) => {
+          ] as const)("in %s scalar", (_ctx, build, nbJson) => {
             test.each(["\x01", "\x08", "\x0B", "\x0C", "\x0E", "\x1F"])("C0 %j errors", c =>
               expect(() => YAML.parse(build(c))).toThrow(NP_ERR),
             );
@@ -2316,6 +2316,12 @@ folded: >
 
           test("[10.2.1.3] !!int on exponent form — int regex has no [eE]", () => {
             expect(() => YAML.parse(`!!int 1e5\n`)).toThrow();
+          });
+
+          test("`%TAG !! tag:yaml.org,2002:` is a no-op — `!!int` still resolves to Core", () => {
+            expect(YAML.parse("%TAG !! tag:yaml.org,2002:\n---\n!!int 42\n")).toBe(42);
+            // But a real redefinition disables Core resolution.
+            expect(YAML.parse("%TAG !! tag:example:\n---\n!!int 42\n")).toBe("42");
           });
 
           test.todo("[10.2.1.3] !!int on binary — bun returns string (should error or coerce)", () => {

@@ -2781,7 +2781,18 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 self.try_skip_s_white()?;
                 let prefix = self.parse_directive_tag_prefix()?;
                 self.try_skip_to_new_line()?;
-                self.secondary_handle_redefined = true;
+                // `%TAG !! tag:yaml.org,2002:` is a no-op redeclaration; only
+                // mark redefined when the prefix actually changes so `!!int`
+                // etc. keep mapping to Core.
+                self.secondary_handle_redefined = match &prefix {
+                    DirectiveTagPrefix::Global(r) => {
+                        let s = r.slice(self.input);
+                        let default = b"tag:yaml.org,2002:";
+                        s.len() != default.len()
+                            || s.iter().zip(default).any(|(&a, &b)| Enc::wide(a) != b as u32)
+                    }
+                    DirectiveTagPrefix::Local(_) => true,
+                };
                 return Ok(Directive::Tag(DirectiveTag {
                     handle: DirectiveTagHandle::Secondary,
                     prefix,

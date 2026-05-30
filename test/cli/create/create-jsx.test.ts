@@ -351,7 +351,7 @@ export default function Component() {
   const installLine = stdout.split("\n").find(line => line.includes("--only-missing install"));
   expect(installLine).toBeDefined();
   expect(installLine).toContain(" install -- ");
-}, 60_000);
+});
 
 function normalizeHTMLFn(development: boolean = true) {
   return (html: string) =>

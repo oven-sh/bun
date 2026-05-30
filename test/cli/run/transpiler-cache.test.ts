@@ -350,8 +350,8 @@ test("cached module still works", () => {
   // serialized module record.
   const first = run();
   expect(first.stderr.toString() + first.stdout.toString()).toContain("1 pass");
-  expect(first.exitCode).toBe(0);
   expect(existsSync(cache_dir)).toBeTrue();
+  expect(first.exitCode).toBe(0);
 
   // Second run restores from the intact cache entry: the legitimate record is
   // accepted and the module still works.
@@ -372,4 +372,4 @@ test("cached module still works", () => {
   expect(third.stderr.toString() + third.stdout.toString()).toContain("parseFromSourceCode failed");
   expect(third.signalCode).toBeUndefined();
   expect(third.exitCode).toBe(1);
-}, 90000);
+});

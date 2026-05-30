@@ -191,7 +191,7 @@ describe("glob.match", async () => {
 
   test("oversized cwd throws instead of crashing", async () => {
     const glob = new Glob("*.ts");
-    const tooLong = "x".repeat(10_000);
+    const tooLong = Buffer.alloc(100_000, "x").toString();
     // relative cwd
     expect(returnError(() => [...glob.scanSync({ cwd: tooLong })])).toBeDefined();
     expect(returnError(() => glob.scan({ cwd: tooLong }))).toBeDefined();

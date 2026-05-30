@@ -1628,6 +1628,69 @@ describe("HTTP Server Security Tests - Advanced", () => {
       await promise;
       expect(mockHandler).not.toHaveBeenCalled();
     });
+
+    test("duplicate request headers follow Node.js precedence rules", async () => {
+      // Expected values verified against Node.js v24: singleton headers keep
+      // the first value, joinable headers are comma-joined, Cookie joins with
+      // "; ", and Set-Cookie becomes an array.
+      const { promise, resolve, reject } = Promise.withResolvers();
+      server.on("request", (req, res) => {
+        try {
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end("ok");
+          resolve({
+            host: req.headers.host,
+            contentType: req.headers["content-type"],
+            authorization: req.headers.authorization,
+            accept: req.headers.accept,
+            xCustom: req.headers["x-custom"],
+            cookie: req.headers.cookie,
+            setCookie: req.headers["set-cookie"],
+            rawHostCount: req.rawHeaders.filter(h => h.toLowerCase() === "host").length,
+          });
+        } catch (err) {
+          reject(err);
+        }
+      });
+
+      const msg = [
+        "GET / HTTP/1.1",
+        "Host: first.example.com",
+        "Host: second.example.com",
+        "Content-Type: text/plain",
+        "Content-Type: text/html",
+        "Authorization: token1",
+        "Authorization: token2",
+        "Accept: application/json",
+        "Accept: text/html",
+        "X-Custom: one",
+        "X-Custom: two",
+        "Cookie: a=1",
+        "Cookie: b=2",
+        "Set-Cookie: x=1",
+        "Set-Cookie: y=2",
+        "Connection: close",
+        "",
+        "",
+      ].join("\r\n");
+
+      const response = await sendRequest(msg);
+      expect(response).toInclude("200");
+      const headers: any = await promise;
+      // Singleton headers keep the first value.
+      expect(headers.host).toBe("first.example.com");
+      expect(headers.contentType).toBe("text/plain");
+      expect(headers.authorization).toBe("token1");
+      // Other headers are joined with ", ".
+      expect(headers.accept).toBe("application/json, text/html");
+      expect(headers.xCustom).toBe("one, two");
+      // Cookie is joined with "; ".
+      expect(headers.cookie).toBe("a=1; b=2");
+      // Set-Cookie is collected into an array.
+      expect(headers.setCookie).toEqual(["x=1", "y=2"]);
+      // rawHeaders still reports every received header.
+      expect(headers.rawHostCount).toBe(2);
+    });
   });
 
   describe("HTTP Protocol Violations", () => {

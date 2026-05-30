@@ -110,6 +110,112 @@ static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject
     return JSValue::encode(tuple);
 }
 
+static bool isSingleValueHeader(WebCore::HTTPHeaderName name)
+{
+    switch (name) {
+    case WebCore::HTTPHeaderName::Age:
+    case WebCore::HTTPHeaderName::Authorization:
+    case WebCore::HTTPHeaderName::ContentLength:
+    case WebCore::HTTPHeaderName::ContentType:
+    case WebCore::HTTPHeaderName::ETag:
+    case WebCore::HTTPHeaderName::Expires:
+    case WebCore::HTTPHeaderName::Host:
+    case WebCore::HTTPHeaderName::IfModifiedSince:
+    case WebCore::HTTPHeaderName::IfUnmodifiedSince:
+    case WebCore::HTTPHeaderName::LastModified:
+    case WebCore::HTTPHeaderName::Location:
+    case WebCore::HTTPHeaderName::ProxyAuthorization:
+    case WebCore::HTTPHeaderName::Referer:
+    case WebCore::HTTPHeaderName::UserAgent:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool isSingleValueHeader(const WTF::String& lowercasedName)
+{
+    return lowercasedName == "from"_s || lowercasedName == "max-forwards"_s || lowercasedName == "retry-after"_s || lowercasedName == "server"_s;
+}
+
+static JSC::JSObject* buildHeadersObjectHandlingDuplicates(uWS::HttpRequest* request, JSObject* prototype, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSObject* headersObject = JSC::constructEmptyObject(globalObject, prototype, JSFinalObject::defaultInlineCapacity);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSC::JSArray* setCookiesHeaderArray = nullptr;
+    HTTPHeaderIdentifiers& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
+
+    for (auto it = request->begin(); it != request->end(); ++it) {
+        auto pair = *it;
+        StringView nameView = StringView(std::span { reinterpret_cast<const Latin1Character*>(pair.first.data()), pair.first.length() });
+        std::span<Latin1Character> data;
+        auto value = String::tryCreateUninitialized(pair.second.length(), data);
+        if (value.isNull()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
+        if (pair.second.length() > 0)
+            memcpy(data.data(), pair.second.data(), pair.second.length());
+
+        JSString* jsValue = jsString(vm, value);
+
+        HTTPHeaderName name;
+        Identifier nameIdentifier;
+        bool isSetCookie = false;
+        bool isSingleValue = false;
+        bool isCookie = false;
+
+        if (WebCore::findHTTPHeaderName(nameView, name)) {
+            nameIdentifier = identifiers.identifierFor(vm, name);
+            isSetCookie = name == WebCore::HTTPHeaderName::SetCookie;
+            isSingleValue = isSingleValueHeader(name);
+            isCookie = name == WebCore::HTTPHeaderName::Cookie;
+        } else {
+            WTF::String lowercasedNameString = nameView.toString().convertToASCIILowercase();
+            nameIdentifier = Identifier::fromString(vm, lowercasedNameString);
+            isSingleValue = isSingleValueHeader(lowercasedNameString);
+        }
+
+        if (isSetCookie) {
+            if (!setCookiesHeaderArray) {
+                setCookiesHeaderArray = constructEmptyArray(globalObject, nullptr);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+                headersObject->putDirect(vm, nameIdentifier, setCookiesHeaderArray, 0);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+            }
+            setCookiesHeaderArray->push(globalObject, jsValue);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            continue;
+        }
+
+        JSValue existing;
+        if (std::optional<uint32_t> index = parseIndex(nameIdentifier)) {
+            existing = headersObject->getDirectIndex(globalObject, index.value());
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        } else {
+            existing = headersObject->getDirect(vm, nameIdentifier);
+        }
+
+        if (!existing) {
+            headersObject->putDirectMayBeIndex(globalObject, nameIdentifier, jsValue);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            continue;
+        }
+
+        if (isSingleValue)
+            continue;
+
+        JSString* joined = jsString(globalObject, asString(existing), jsString(vm, String(isCookie ? "; "_s : ", "_s)), jsValue);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        headersObject->putDirectMayBeIndex(globalObject, nameIdentifier, joined);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+
+    return headersObject;
+}
+
 static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSValue methodString, MarkedArgumentBuffer& args, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -142,8 +248,7 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
     JSC::JSString* setCookiesHeaderString = nullptr;
     MarkedArgumentBuffer arrayValues;
     HTTPHeaderIdentifiers& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
-
-    args.append(headersObject);
+    bool sawDuplicateHeader = false;
 
     for (auto it = request->begin(); it != request->end(); ++it) {
         auto pair = *it;
@@ -189,13 +294,26 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
             RETURN_IF_EXCEPTION(scope, void());
 
         } else {
-            headersObject->putDirectMayBeIndex(globalObject, nameIdentifier, jsValue);
+            if (parseIndex(nameIdentifier)) [[unlikely]] {
+                sawDuplicateHeader = true;
+                headersObject->putDirectMayBeIndex(globalObject, nameIdentifier, jsValue);
+            } else {
+                PutPropertySlot slot(headersObject);
+                headersObject->putDirect(vm, nameIdentifier, jsValue, 0, slot);
+                sawDuplicateHeader |= slot.type() == PutPropertySlot::ExistingProperty;
+            }
             RETURN_IF_EXCEPTION(scope, void());
             arrayValues.append(nameString);
             arrayValues.append(jsValue);
             RETURN_IF_EXCEPTION(scope, void());
         }
     }
+
+    if (sawDuplicateHeader) [[unlikely]] {
+        headersObject = buildHeadersObjectHandlingDuplicates(request, globalObject->objectPrototype(), globalObject, vm);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    args.append(headersObject);
 
     JSC::JSArray* array;
     {
@@ -329,6 +447,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSArray* setCookiesHeaderArray = nullptr;
     JSC::JSString* setCookiesHeaderString = nullptr;
+    bool sawDuplicateHeader = false;
 
     unsigned i = 0;
 
@@ -374,11 +493,25 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
             RETURN_IF_EXCEPTION(scope, {});
 
         } else {
-            headersObject->putDirect(vm, Identifier::fromString(vm, lowercasedNameString), jsValue, 0);
+            Identifier nameIdentifier = Identifier::fromString(vm, lowercasedNameString);
+            if (parseIndex(nameIdentifier)) [[unlikely]] {
+                sawDuplicateHeader = true;
+                headersObject->putDirectMayBeIndex(globalObject, nameIdentifier, jsValue);
+            } else {
+                PutPropertySlot slot(headersObject);
+                headersObject->putDirect(vm, nameIdentifier, jsValue, 0, slot);
+                sawDuplicateHeader |= slot.type() == PutPropertySlot::ExistingProperty;
+            }
+            RETURN_IF_EXCEPTION(scope, {});
             array->putDirectIndex(globalObject, i++, jsString(vm, nameString));
             array->putDirectIndex(globalObject, i++, jsValue);
             RETURN_IF_EXCEPTION(scope, {});
         }
+    }
+
+    if (sawDuplicateHeader) [[unlikely]] {
+        headersObject = buildHeadersObjectHandlingDuplicates(request, prototype, globalObject, vm);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     tuple->putInternalField(vm, 0, headersObject);

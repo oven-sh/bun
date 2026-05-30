@@ -122,28 +122,46 @@ export function getStdinStream(
     // PIPE or socket. Node lib/internal/bootstrap/switches/is_main_thread.js
     // getStdin() uses net.Socket({fd}) which constructs a native Pipe handle
     // via createHandle.
+    //
+    // fdType is classified purely from fstat() mode bits, which set S_IFSOCK
+    // for *every* socket fd (TCP, UDP, AF_UNIX). createHandle's guessHandleType
+    // only wraps PIPE-shaped fds (FIFOs + AF_UNIX stream sockets) and throws
+    // ERR_INVALID_FD_TYPE for TCP/UDP (no native TCP handle yet), so a TCP/UDP
+    // socket on stdin (inetd, systemd StandardInput=socket, stdio:[tcpSocket])
+    // would otherwise make the first process.stdin access throw. Fall back to
+    // the native stream path for anything createHandle rejects.
     const net = require("node:net");
-    const stdin = new net.Socket({
-      fd,
-      readable: true,
-      writable: false,
-      manualStart: true,
-    });
-    stdin._writableState.ended = true;
-    stdin.fd = fd;
-
-    if (stdin._handle && stdin._handle.readStop) {
-      stdin._handle.reading = false;
-      stdin._readableState.reading = false;
-      stdin._handle.readStop();
+    let stdin;
+    try {
+      stdin = new net.Socket({
+        fd,
+        readable: true,
+        writable: false,
+        manualStart: true,
+      });
+    } catch (e) {
+      if ((e as any)?.code !== "ERR_INVALID_FD_TYPE") throw e;
+      stdin = undefined;
     }
 
-    // NOTE: no `on("pause")` → nextTick(readStop) handler here. Socket.pause()
-    // already calls readStop() synchronously; a deferred readStop races a
-    // following resume() (`stdin.pause(); stdin.resume();`) and stops the reader
-    // *after* it was re-armed, silently dropping data.
+    if (stdin) {
+      stdin._writableState.ended = true;
+      stdin.fd = fd;
 
-    return stdin;
+      if (stdin._handle && stdin._handle.readStop) {
+        stdin._handle.reading = false;
+        stdin._readableState.reading = false;
+        stdin._handle.readStop();
+      }
+
+      // NOTE: no `on("pause")` → nextTick(readStop) handler here. Socket.pause()
+      // already calls readStop() synchronously; a deferred readStop races a
+      // following resume() (`stdin.pause(); stdin.resume();`) and stops the
+      // reader *after* it was re-armed, silently dropping data.
+
+      return stdin;
+    }
+    // else: TCP/UDP/unknown socket fd — fall through to Bun.stdin.stream().
   }
 
   const native = Bun.stdin.stream();

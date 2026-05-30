@@ -758,19 +758,14 @@ function Socket(options?) {
     this.writable = options.writable !== false;
   }
 
-  if (this._handle && $isCallable(this._handle.readStart) && options.readable !== false) {
-    if (options.pauseOnCreate) {
-      this._handle.reading = false;
-      this._handle.readStop();
-      this._readableState.flowing = false;
-    } else if (!options.manualStart) {
-      this.read(0);
-    }
-  }
-
   if (socket instanceof Socket) {
     this[ksocket] = socket;
   }
+  // Must run before the auto-start below: read(0) can synchronously re-enter
+  // onStreamRead for a stream-wrap handle (Pipe/TTY) that drains already-
+  // buffered data, and that callback checks kBuffer/kBufferCb/kBufferGen — set
+  // them first so the first chunk reaches onread.callback, not push() (Node
+  // orders the onread setup before the read(0) auto-start for the same reason).
   if (onread) {
     if (typeof onread !== "object") {
       throw new TypeError("onread must be an object");
@@ -795,6 +790,16 @@ function Socket(options?) {
         }
       },
     };
+  }
+
+  if (this._handle && $isCallable(this._handle.readStart) && options.readable !== false) {
+    if (options.pauseOnCreate) {
+      this._handle.reading = false;
+      this._handle.readStop();
+      this._readableState.flowing = false;
+    } else if (!options.manualStart) {
+      this.read(0);
+    }
   }
   if (signal) {
     if (signal.aborted) {
@@ -2677,6 +2682,10 @@ function initSocketHandle(self) {
 function onStreamRead(nread, arrayBuffer) {
   const self = this[owner_symbol];
   if (nread > 0) {
+    // Refresh the inactivity timer on every chunk (Node's kUpdateTimer, and
+    // what SocketHandlers.data does) so an active-reading socket with
+    // setTimeout() doesn't spuriously emit "timeout".
+    self._unrefTimer();
     self.bytesRead += nread;
     let ret;
     if (self[kBuffer]) {
@@ -2687,7 +2696,7 @@ function onStreamRead(nread, arrayBuffer) {
       // invoke the callback once per slice (re-fetching kBufferGen() each time,
       // as Node does) rather than truncating and dropping the remainder.
       let offset = 0;
-      ret = true;
+      let pause = false;
       do {
         let userBuf = self[kBufferGen]();
         let n;
@@ -2703,11 +2712,14 @@ function onStreamRead(nread, arrayBuffer) {
           n = nread - offset;
         }
         offset += n;
-        ret = self[kBufferCb](n, userBuf);
-        // Stop if the callback asked us to pause, or we made no progress
-        // (zero-length user buffer) to avoid an infinite loop.
-        if (ret === false || n === 0) break;
+        // `false` means "pause future reads", not "discard what I already
+        // have" — finish delivering this chunk, then honor the pause below.
+        if (self[kBufferCb](n, userBuf) === false) pause = true;
+        // Break on no progress (zero-length user buffer) to avoid looping
+        // forever.
+        if (n === 0) break;
       } while (offset < nread);
+      ret = pause ? false : true;
     } else {
       ret = self.push(arrayBuffer);
     }

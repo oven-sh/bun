@@ -142,3 +142,50 @@ test("net.Socket({handle, onread}) does not drop bytes when chunk > user buffer"
   expect(Buffer.concat(received).toString()).toBe("0123456789");
   expect(socket.bytesRead).toBe(10);
 });
+
+// Returning false from the onread callback means "pause future reads", not
+// "discard the rest of this chunk". Every byte of the in-hand chunk must still
+// be delivered before readStop() is applied.
+test("net.Socket({handle, onread}) delivers the whole chunk even if callback returns false", async () => {
+  let onread;
+  let readStopCalls = 0;
+  const handle = {
+    readStart() {
+      return 0;
+    },
+    readStop() {
+      readStopCalls++;
+      return 0;
+    },
+    close() {},
+    set onread(fn) {
+      onread = fn;
+    },
+    get onread() {
+      return onread;
+    },
+    reading: true,
+  };
+
+  const userBuf = Buffer.alloc(4);
+  const received: Buffer[] = [];
+  const socket = new Socket({
+    handle,
+    manualStart: true,
+    writable: false,
+    onread: {
+      buffer: userBuf,
+      callback(nread, buf) {
+        received.push(Buffer.from(buf.subarray(0, nread)));
+        return false; // backpressure on every slice
+      },
+    },
+  });
+
+  // 10 bytes into a 4-byte buffer → slices 4/4/2 all delivered, then pause.
+  onread.call(handle, 10, Buffer.from("0123456789"));
+
+  expect(Buffer.concat(received).toString()).toBe("0123456789");
+  expect(socket.bytesRead).toBe(10);
+  expect(readStopCalls).toBe(1); // paused once, after the full chunk
+});

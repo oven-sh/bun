@@ -92,14 +92,18 @@ function saveCrontabState(): Disposable {
 }
 
 // ==========================================================================
-// Normalized schedule (POSIX) — runs everywhere crontab can be stubbed
+// Normalized schedule (Linux crontab backend)
 //
-// Bun.cron() on POSIX locates `crontab` via PATH. By prepending a tiny shim
+// Bun.cron() on Linux locates `crontab` via PATH. By prepending a tiny shim
 // that records what Bun writes, we can assert the exact normalized schedule
-// (formatNumeric output) on any Linux/macOS host, without a real cron daemon.
-// This is the line that used to diverge from Bun.cron.parse(): a DOM/DOW pair
-// like "0 0 15 * 0-6" must keep the explicit weekday list (POSIX OR) instead
-// of collapsing 0-6 → *.
+// (formatNumeric output) without a real cron daemon. This is the line that
+// used to diverge from Bun.cron.parse(): a DOM/DOW pair like "0 0 15 * 0-6"
+// must keep the explicit weekday list (POSIX OR) instead of collapsing 0-6 → *.
+//
+// Linux-only: Bun.cron() picks its backend at compile time — launchd on macOS
+// (start_mac), schtasks on Windows — so the crontab shim is only reached on
+// Linux. The macOS plist form of this same fix is covered by the hasLaunchctl
+// tests below.
 // ==========================================================================
 
 async function registerWithCrontabStub(schedule: string, title: string): Promise<string> {
@@ -145,7 +149,7 @@ async function registerWithCrontabStub(schedule: string, title: string): Promise
   return line!;
 }
 
-describe.skipIf(isWindows)("normalized schedule (crontab stub)", () => {
+describe.skipIf(!isLinux)("normalized schedule (crontab stub)", () => {
   test("DOM/DOW both restricted keeps explicit weekday list (POSIX OR)", async () => {
     // Baseline: parse() fires daily (the 15th OR any weekday), not only the 15th.
     const from = Date.UTC(2025, 0, 1, 12, 0, 0); // Wed Jan 1
@@ -594,6 +598,29 @@ describe.skipIf(!hasAnyCronBackend)("Windows trigger-limit expressions", () => {
       const t = `test-fullrange-${title}`;
       try {
         // Must NOT throw /too many triggers/ — the full range fires every day.
+        const result = await Bun.cron(`${dir}/job.ts`, expr, t);
+        expect(result).toBeUndefined();
+      } finally {
+        await Bun.cron.remove(t);
+      }
+    });
+  }
+
+  // Category 2d: Full explicit DOM+DOW ranges that fire daily (POSIX OR), but with
+  // something that rules out Repetition (month restriction / non-24 hour list). On
+  // Windows these must emit a single "every day" trigger per (hour, minute), not an
+  // OR-split — otherwise the count doubles and can exceed the 48-trigger limit.
+  const fullRangeDailyNoRepetition = [
+    { expr: "0 0 1-31 6 0-6", title: "daily-june" }, // 1 trigger (ByMonthAllDays June)
+    { expr: "0,10,20,30,40,50 0-4 1-31 6 0-6", title: "30trig-june" }, // 6×5=30 triggers, not 60
+  ];
+  for (const { expr, title } of fullRangeDailyNoRepetition) {
+    test(`${expr} registers (daily via OR, no OR-split) on ${isWindows ? "Windows" : isMacOS ? "macOS" : "Linux"}`, async () => {
+      using dir = tempDir("bun-cron-test", {
+        "job.ts": `export default { scheduled() {} };`,
+      });
+      const t = `test-dailyor-${title}`;
+      try {
         const result = await Bun.cron(`${dir}/job.ts`, expr, t);
         expect(result).toBeUndefined();
       } finally {

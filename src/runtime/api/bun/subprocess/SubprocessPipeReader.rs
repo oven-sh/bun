@@ -422,26 +422,11 @@ bun_io::impl_buffered_reader_parent! {
     on_reader_error = |this, err| (*this).on_reader_error(err);
     loop_           = |this| (*this).loop_().cast();
     event_loop      = |this| (*this).event_loop_handle.as_event_loop_ctx();
-    on_max_buffer_overflow = |this, maxbuf| {
-        // Raw place read of the `process` backref (the embedded reader may
-        // hold `&mut self` higher on the stack, so no `&Self` is materialized).
-        let Some(process) = (*this).process else { return };
-        // `process` is the owning Subprocess back-pointer; live until
-        // `detach()`/finalize, both of which clear `(*this).process` first.
-        let sp = process.get();
-        let kind = if sp.stdout_maxbuf.get() == Some(maxbuf) {
-            let mut mb = sp.stdout_maxbuf.get();
-            bun_io::max_buf::MaxBuf::remove_from_subprocess(&mut mb);
-            sp.stdout_maxbuf.set(mb);
-            bun_io::max_buf::Kind::Stdout
-        } else {
-            let mut mb = sp.stderr_maxbuf.get();
-            bun_io::max_buf::MaxBuf::remove_from_subprocess(&mut mb);
-            sp.stderr_maxbuf.set(mb);
-            bun_io::max_buf::Kind::Stderr
-        };
-        sp.on_max_buffer(kind);
-    };
+    // `on_max_buffer_overflow` uses the `BufferedReaderParent` default, which
+    // dispatches the kill through the subprocess back-pointer carried on the
+    // `MaxBuf` (see `Subprocess::on_max_buffer_overflow`). Reading the owner off
+    // the `MaxBuf` rather than this reader keeps the kill reachable once the pipe
+    // is transferred to a `FileReader` on `ReadableStream` conversion.
 }
 
 // ported from: src/runtime/api/bun/subprocess/SubprocessPipeReader.zig

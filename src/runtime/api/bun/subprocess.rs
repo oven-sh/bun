@@ -704,6 +704,33 @@ impl Subprocess<'_> {
         let _ = self.try_kill(self.kill_signal);
     }
 
+    /// `MaxBuf`'s overflow dispatch fn (stored on the `MaxBuf` by
+    /// `spawn_maybe_sync`). Recovers the stream kind by matching `maxbuf` against
+    /// this subprocess's slots, clears it, and kills the child. Reached from
+    /// `BufferedReaderParentLink::on_max_buffer_overflow` via the `MaxBuf`, so it
+    /// fires regardless of whether a `SubprocessPipeReader` or a `FileReader` is
+    /// doing the read.
+    ///
+    /// # Safety
+    /// `ptr` is the erased `Subprocess<'static>` paired with `maxbuf` in
+    /// `create_for_subprocess`; it is live while the pairing is installed.
+    pub(crate) unsafe fn on_max_buffer_overflow(ptr: NonNull<()>, maxbuf: NonNull<MaxBuf::MaxBuf>) {
+        // SAFETY: caller contract — `ptr` is a live `Subprocess<'static>`.
+        let sp = unsafe { ptr.cast::<Subprocess<'static>>().as_ref() };
+        let kind = if sp.stdout_maxbuf.get() == Some(maxbuf) {
+            let mut mb = sp.stdout_maxbuf.get();
+            MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
+            sp.stdout_maxbuf.set(mb);
+            MaxBuf::Kind::Stdout
+        } else {
+            let mut mb = sp.stderr_maxbuf.get();
+            MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
+            sp.stderr_maxbuf.set(mb);
+            MaxBuf::Kind::Stderr
+        };
+        sp.on_max_buffer(kind);
+    }
+
     #[bun_jsc::host_fn(method)]
     pub fn kill(
         this: &Self,

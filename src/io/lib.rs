@@ -349,8 +349,10 @@ bun_dispatch::link_interface! {
         fn on_reader_error(err: bun_sys::Error);
         fn loop_ptr() -> *mut Loop;
         fn event_loop() -> EventLoopCtx;
-        // Only the `SubprocessPipeReader` arm acts on this; everything else
-        // no-ops (no other parent type wires a `MaxBuf`).
+        // The `BufferedReaderParent` trait default dispatches this via the
+        // subprocess back-pointer carried on the `MaxBuf` (see
+        // `MaxBuf::dispatch_overflow`); no parent type overrides it. Parents that
+        // never wire a `MaxBuf` are simply never called with one.
         fn on_max_buffer_overflow(maxbuf: core::ptr::NonNull<max_buf::MaxBuf>);
     }
 }
@@ -374,7 +376,7 @@ bun_dispatch::link_interface! {
 ///     on_reader_error  = |this, err| (*this).on_reader_error(err);
 ///     loop_            = |this| (*this).loop_();
 ///     event_loop       = |this| (*this).event_loop_handle.as_event_loop_ctx();
-///     // ↓ optional — only `SubprocessPipeReader` overrides this
+///     // ↓ optional — the trait default dispatches via the MaxBuf back-pointer
 ///     on_max_buffer_overflow = |this, maxbuf| { ... };
 /// }
 /// ```

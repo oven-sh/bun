@@ -735,7 +735,9 @@ Learn more about [using and writing security scanners](/pm/security-scanner-api)
 
 ### `install.minimumReleaseAge`
 
-Configure a minimum age for npm package versions. Package versions published more recently than this threshold will be filtered out during installation. Accepts either a number of seconds or an [`ms`](https://npmjs.com/package/ms)-style duration string like `"2d"`, `"1 week"`, or `"48h"`. Set to `0` to disable. Disabled by default.
+Configure a minimum age for npm package versions. Package versions published more recently than this threshold will be filtered out during installation. Accepts either a number of seconds or an [`ms`](https://npmjs.com/package/ms)-style duration string like `"2d"`, `"1 week"`, or `"48h"`. Set to `0` to disable.
+
+Default is disabled. Starting in Bun 1.4, new projects (lockfile `configVersion` ≥ 2) will default to `"2d"` (two days); projects with existing lockfiles keep the disabled default.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]

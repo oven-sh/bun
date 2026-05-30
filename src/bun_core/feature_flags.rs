@@ -4,6 +4,11 @@
 use crate::env;
 use crate::feature_flag;
 
+/// Enable breaking changes slated for the next major release of Bun (1.4).
+/// Flip to `true` when cutting the 1.4 branch to activate the gated install
+/// defaults (e.g. the 2-day `minimumReleaseAge`).
+pub const BREAKING_CHANGES_1_4: bool = false;
+
 /// Store and reuse file descriptors during module resolution
 /// This was a ~5% performance improvement
 pub const STORE_FILE_DESCRIPTORS: bool = !env::IS_BROWSER;

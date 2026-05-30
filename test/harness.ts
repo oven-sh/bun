@@ -62,6 +62,9 @@ export const bunEnv: NodeJS.Dict<string> = {
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
   BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
+  // Strip so an ambient export (used to preview the 1.4 install defaults)
+  // doesn't leak into fresh-project install tests that assert configVersion 1.
+  BUN_FEATURE_FLAG_INSTALL_CONFIG_V2: undefined,
   BUN_DEBUG_linkerctx: "0",
   WANTS_LOUD: "0",
   AGENT: "false",

@@ -105,12 +105,13 @@ impl OutdatedCommand {
         let lockfile: &mut bun_install::lockfile::Lockfile = unsafe { &mut *(*pm_ptr).lockfile };
         // SAFETY: `manager.log` is set non-null by `PackageManager::init`.
         let log = unsafe { &mut *log_ptr };
-        match lockfile.load_from_cwd::<true>(
+        let load_result = lockfile.load_from_cwd::<true>(
             // SAFETY: see PORT NOTE above — `load_from_cwd` accesses `manager`
             // fields disjoint from `lockfile` (Zig invariant).
             Some(unsafe { &mut *pm_ptr }),
             log,
-        ) {
+        );
+        match &load_result {
             LoadResult::NotFound => {
                 if not_silent {
                     Output::err_generic("missing lockfile, nothing outdated", ());
@@ -154,6 +155,12 @@ impl OutdatedCommand {
                 // is the same storage and no reassignment is needed.
             }
         }
+
+        // SAFETY: `load_result` borrows the lockfile, which is disjoint from
+        // `manager.options` that `apply_config_version_defaults` mutates.
+        _ = unsafe { &mut *pm_ptr }.apply_config_version_defaults(&load_result);
+        // `load_result`'s borrow of the lockfile ends at its last use above, so
+        // the `manager` reborrow below is free.
 
         if Output::enable_ansi_colors_stdout() {
             Self::outdated_dispatch::<true>(original_cwd, manager)
@@ -462,7 +469,9 @@ impl OutdatedCommand {
         // `&manager.options`).
         let cache_ctx = manager.manifest_disk_cache_ctx();
         let min_age_ms = manager.options.minimum_release_age_ms;
-        let needs_extended = min_age_ms.is_some();
+        // `Some(0.0)` means the filter is explicitly disabled — it behaves like
+        // unset, so only a positive age needs the extended manifest.
+        let needs_extended = min_age_ms.is_some_and(|ms| ms > 0.0);
         let excludes = manager.options.minimum_release_age_excludes;
 
         let mut version_buf: String = String::new();

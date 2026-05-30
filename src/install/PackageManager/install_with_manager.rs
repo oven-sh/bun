@@ -94,8 +94,8 @@ pub fn install_with_manager(
     // appended by manifest fetches in this resolve session.
     manager.lockfile.mark_loaded_packages();
 
-    let (config_version, changed_config_version) = load_result.choose_config_version();
-    manager.options.config_version = Some(config_version);
+    let changed_config_version = manager.apply_config_version_defaults(&load_result);
+    let config_version = manager.options.config_version.unwrap();
 
     let mut root = lockfile::Package::default();
     let mut needs_new_lockfile = !matches!(load_result, lockfile::LoadResult::Ok { .. })
@@ -793,7 +793,7 @@ pub fn install_with_manager(
                         linker = NodeLinker::Hoisted;
                         continue;
                     }
-                    ConfigVersion::V1 => {
+                    ConfigVersion::V1 | ConfigVersion::V2 => {
                         if !load_result.migrated_from_npm()
                             && manager.lockfile.workspace_paths.len() > 0
                         {

@@ -277,6 +277,10 @@ impl LogLevel {
 pub use crate::config_version::ConfigVersion;
 pub use bun_install_types::NodeLinker::NodeLinker;
 
+/// Default minimum release age applied to projects with configVersion >= 2
+/// when the user has not explicitly configured `minimumReleaseAge`.
+pub const DEFAULT_MINIMUM_RELEASE_AGE_MS: f64 = 2.0 * bun_core::time::MS_PER_DAY as f64;
+
 #[derive(Default, Copy, Clone)]
 pub struct Update {
     pub development: bool,
@@ -905,6 +909,13 @@ impl Options {
             self.do_.set(Do::SAVE_LOCKFILE, false);
             self.enable.set(Enable::FORCE_SAVE_LOCKFILE, false);
         }
+
+        // NOTE: an explicit `minimumReleaseAge = 0` is kept as `Some(0.0)`
+        // (not collapsed to `None`) so `apply_config_version_defaults` can
+        // tell "user disabled it" from "unset" and not apply the configVersion
+        // 2 default. The manifest-fetch gates and version filter already treat
+        // `Some(0.0)` like "unset" for fetching/filtering, so nothing extra is
+        // needed here.
 
         // PORT NOTE: moved from `defer { ... }` after scope assignment (see note above).
         self.did_override_default_scope = self.scope.url_hash != *Npm::registry::DEFAULT_URL_HASH;

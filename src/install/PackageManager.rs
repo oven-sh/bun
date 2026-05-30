@@ -865,6 +865,71 @@ impl PackageManager {
         self.update_requests = Box::default();
     }
 
+    /// Derive `options.config_version` from a lockfile load result and apply
+    /// any defaults that are gated on that version. Returns whether the
+    /// configVersion changed from what was saved in the lockfile (and
+    /// therefore the lockfile should be re-saved).
+    ///
+    /// Must be called after `Options::load()` and after the lockfile has
+    /// been loaded, but before any package resolution. Safe to call more
+    /// than once on the same manager (e.g. `bun update --interactive`
+    /// followed by `install_with_manager`): the second call re-derives the
+    /// version but does not re-apply defaults.
+    ///
+    /// NOTE: runtime auto-install (`init_with_runtime_once`) does not call this
+    /// — it doesn't load `bun.lock` or derive a configVersion — so the
+    /// configVersion-gated `minimumReleaseAge` default does NOT apply to
+    /// packages resolved by auto-install. Only `bun install` / `bun add` /
+    /// `bun update` / `bun outdated` / `bun pm trust` apply it. (Pre-existing
+    /// limitation: before this, configVersion only gated the linker, which
+    /// auto-install doesn't use.)
+    pub fn apply_config_version_defaults(
+        &mut self,
+        load_result: &lockfile::LoadResult<'_>,
+    ) -> bool {
+        use crate::config_version::ConfigVersion;
+
+        let (mut config_version, changed_config_version) = load_result.choose_config_version();
+
+        // Until `BREAKING_CHANGES_1_4` flips `ConfigVersion::CURRENT` to `V2`,
+        // the `BUN_FEATURE_FLAG_INSTALL_CONFIG_V2` environment variable opts
+        // fresh projects into the new defaults for testing. This mirrors what
+        // 1.4 will do: only the `NotFound` / `Err` cases (which currently
+        // pick `CURRENT`) are affected; existing and migrated lockfiles keep
+        // their chosen version.
+        if !bun_core::feature_flags::BREAKING_CHANGES_1_4
+            && !matches!(load_result, lockfile::LoadResult::Ok(_))
+            && bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_INSTALL_CONFIG_V2
+                .get()
+                .unwrap_or(false)
+        {
+            config_version = ConfigVersion::V2;
+        }
+
+        let already_applied = self.options.config_version.is_some();
+        self.options.config_version = Some(config_version);
+
+        if !already_applied {
+            match config_version {
+                ConfigVersion::V0 | ConfigVersion::V1 => {}
+                ConfigVersion::V2 => {
+                    // Only default when the user configured nothing. An
+                    // explicit `minimumReleaseAge = 0` is stored as
+                    // `Some(0.0)` (not `None`), so it correctly suppresses
+                    // the default and keeps the filter disabled — the
+                    // manifest-fetch gates and version filter already treat
+                    // `Some(0.0)` like "unset" for fetching/filtering.
+                    if self.options.minimum_release_age_ms.is_none() {
+                        self.options.minimum_release_age_ms =
+                            Some(package_manager_options::DEFAULT_MINIMUM_RELEASE_AGE_MS);
+                    }
+                }
+            }
+        }
+
+        changed_config_version
+    }
+
     /// Zig: `pm.lockfile.loadFromCwd(pm, allocator, log, attempt_loading_from_other_lockfile)`.
     ///
     /// PORT NOTE: reshaped for borrowck — the Zig call passes `pm` as a separate

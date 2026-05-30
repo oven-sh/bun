@@ -661,6 +661,16 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             // boxed lockfile. Project that field to a raw pointer (no second
             // Box-deref) so both arguments share one Stacked-Borrows lineage.
             let lf: *mut Lockfile = &raw mut *load_lockfile.ok_mut().lockfile;
+            // CONFIG VERSION: `bun pm migrate` intentionally does NOT call
+            // `apply_config_version_defaults` / `choose_config_version` here.
+            // `save_to_disk` writes `ConfigVersion::CURRENT`, so an explicit
+            // migrate is treated like a fresh project — it opts into the
+            // current install defaults (e.g. the 2-day `minimumReleaseAge`
+            // once `BREAKING_CHANGES_1_4` ships). This deliberately differs
+            // from `bun install`'s implicit auto-migrate, which preserves the
+            // conservative per-source mapping (npm/yarn → V0, pnpm → V1) so it
+            // never silently changes an existing project's behavior. See the
+            // doc comment on `ConfigVersion::CURRENT`.
             // SAFETY: `load_lockfile` is `Ok` (errors exited above). `lf` is a
             // reborrow of `ok.lockfile`; `save_to_disk` reads `load_result` only
             // for `save_format()` / `loaded_from_binary_lockfile()` (scalar

@@ -483,8 +483,10 @@ impl UpdateInteractiveCommand {
         // before borrowing `&mut manager.lockfile`.
         let not_silent = manager.options.log_level != LogLevel::Silent;
         let ctx_log_ptr: *mut bun_ast::Log = ctx.log;
+        let pm_ptr: *mut PackageManager = manager;
 
-        match manager.load_lockfile_from_cwd::<true>() {
+        let load_result = manager.load_lockfile_from_cwd::<true>();
+        match &load_result {
             LoadResult::NotFound => {
                 if not_silent {
                     Output::err_generic("missing lockfile, nothing outdated", ());
@@ -515,7 +517,10 @@ impl UpdateInteractiveCommand {
                     // for every subcommand and is non-null for the command's
                     // lifetime.
                     if unsafe { (*ctx_log_ptr).has_errors() } {
-                        manager
+                        // SAFETY: `load_result` borrows `manager.lockfile`;
+                        // `log_mut()` dereferences the disjoint `manager.log`
+                        // raw pointer.
+                        unsafe { &*pm_ptr }
                             .log_mut()
                             .print(std::ptr::from_mut(Output::error_writer()))?;
                     }
@@ -528,6 +533,13 @@ impl UpdateInteractiveCommand {
                 // `manager.lockfile` (Box) in place, so no reassignment.
             }
         }
+
+        // SAFETY: `load_result` borrows `manager.lockfile` (separate `Box`
+        // allocation); `apply_config_version_defaults` only touches
+        // `manager.options`, which is disjoint.
+        _ = unsafe { &mut *pm_ptr }.apply_config_version_defaults(&load_result);
+        // `load_result`'s borrow ends at its last use above, so the `manager`
+        // reborrow below is free.
 
         let workspace_pkg_ids: Vec<PackageID> = if !manager.options.filter_patterns.is_empty() {
             let filters = manager.options.filter_patterns;
@@ -910,7 +922,9 @@ impl UpdateInteractiveCommand {
         // borrow from `manager`, so the caller may keep using it afterwards.
         let cache_ctx = manager.manifest_disk_cache_ctx();
         let min_age_ms = manager.options.minimum_release_age_ms;
-        let needs_extended = min_age_ms.is_some();
+        // `Some(0.0)` means the filter is explicitly disabled — it behaves like
+        // unset, so only a positive age needs the extended manifest.
+        let needs_extended = min_age_ms.is_some_and(|ms| ms > 0.0);
         let excludes = manager.options.minimum_release_age_excludes;
         let update_to_latest = manager.options.do_.update_to_latest();
         let default_url_hash = *bun_install::npm::Registry::DEFAULT_URL_HASH;

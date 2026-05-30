@@ -265,6 +265,21 @@ export async function extractTarGz(tarball: string, dest: string, stripComponent
 }
 
 /**
+ * Run `tar -tzf <tarball>`, optionally capturing stdout.
+ *
+ * tarExe, not bare "tar": on Windows GNU tar (Git-for-Windows) parses the
+ * `C:\...` path as an rsh host:path spec and exits non-zero — which would
+ * look like corruption and delete a valid tarball. tarExe picks bsdtar.
+ */
+function tarRun(tarball: string, capture: boolean): ReturnType<typeof spawnSync> {
+  return spawnSync(tarExe, ["-tzf", tarball], {
+    encoding: "utf8",
+    stdio: ["ignore", capture ? "pipe" : "ignore", "ignore"],
+    ...(capture ? { maxBuffer: 64 * 1024 } : {}),
+  });
+}
+
+/**
  * Integrity probe: does `tar -tzf` walk the whole archive AND list entries?
  *
  * Used to decide whether a cached tarball is itself bad vs. extraction
@@ -284,17 +299,6 @@ export async function extractTarGz(tarball: string, dest: string, stripComponent
  * to the real exit code), the second reads only enough stdout to confirm
  * ≥1 entry (an ENOBUFS overflow there trivially means "many entries").
  */
-function tarRun(tarball: string, capture: boolean): ReturnType<typeof spawnSync> {
-  // tarExe, not bare "tar": on Windows GNU tar (Git-for-Windows) parses the
-  // `C:\...` path as an rsh host:path spec and exits non-zero — which would
-  // look like corruption and delete a valid tarball. tarExe picks bsdtar.
-  return spawnSync(tarExe, ["-tzf", tarball], {
-    encoding: "utf8",
-    stdio: ["ignore", capture ? "pipe" : "ignore", "ignore"],
-    ...(capture ? { maxBuffer: 64 * 1024 } : {}),
-  });
-}
-
 export function tarballListsCleanly(tarball: string): boolean {
   // Pass 1 — exit code only. stdout discarded, so no maxBuffer cap can kill
   // tar before it finishes; r.status is the archive's real verdict.
@@ -308,6 +312,7 @@ export function tarballListsCleanly(tarball: string): boolean {
   // clean, empty listing stays "bad" (the valid-but-empty-archive case).
   const list = tarRun(tarball, true);
   if (list.error !== undefined) return true; // ENOBUFS ⇒ lots of entries ⇒ keep
+  if (list.signal !== null) return true; // signal-killed — can't judge, keep (same as pass 1)
   return String(list.stdout ?? "").trim().length > 0;
 }
 

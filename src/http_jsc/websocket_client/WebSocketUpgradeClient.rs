@@ -1137,8 +1137,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// `unexpected-response` listener sees the complete payload instead of a
     /// truncated prefix.
     ///
-    /// `full` is the complete parsed buffer (head + whatever body bytes are
-    /// on hand). `response` was parsed from it.
+    /// `full` is the complete buffer contents (head + whatever body bytes are
+    /// on hand) — a copy of the buffer `response` was parsed from, so its
+    /// bytes match but `response`'s header pointers reference the original.
     ///
     /// # Safety
     /// `this` must point to a live `Self`. Takes `*mut Self` because the
@@ -1318,8 +1319,15 @@ impl<const SSL: bool> HTTPClient<SSL> {
         };
 
         // Build the raw-header array the C++ side copies into `rawHeaders`.
-        // SAFETY: the header name/value slices point into `full`, which
-        // outlives this synchronous call.
+        // SAFETY: the header name/value slices (and `response.status`) point
+        // into the buffer `response` was parsed from — `full` on the
+        // flush-deferred path, or the caller's `data`/`self.body` on the
+        // direct-dispatch paths (101 / bodiless / Transfer-Encoding), where
+        // `full` is a separate copy. Either buffer outlives this synchronous
+        // call: `data` is the uSockets read buffer live for the callback
+        // frame, `self.body` is owned by `*this` (kept alive by `_guard`
+        // above), and C++ copies every slice into a JS string before
+        // dispatchEvent runs any user JS.
         let mut raw_headers: Vec<super::cpp_websocket::RawHeader> =
             Vec::with_capacity(response.headers.list.len());
         for h in response.headers.list {

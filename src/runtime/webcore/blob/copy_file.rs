@@ -1457,9 +1457,22 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn prepare_read_write_loop(&mut self) {
-        // Open the destination first, so that if we need to call
-        // mkdirp(), we don't spend extra time opening the file handle for
-        // the source.
+        // Open the source first: the destination open below creates/truncates
+        // (its `WRONLY | CREAT` maps to FILE_OVERWRITE_IF), so opening the
+        // source first means a missing/unreadable source rejects without having
+        // touched the destination — matching POSIX `do_open_file::<Both>`.
+        self.read_write_loop.source_fd = match Self::prepare_pathlike(
+            &mut self.source_file_store.data_mut().as_file_mut().pathlike,
+            &mut self.read_write_loop.must_close_source_fd,
+            true,
+        ) {
+            bun_sys::Result::Ok(fd) => fd,
+            bun_sys::Result::Err(err) => {
+                self.throw(err);
+                return;
+            }
+        };
+
         self.read_write_loop.destination_fd = match Self::prepare_pathlike(
             &mut self
                 .destination_file_store
@@ -1472,22 +1485,13 @@ impl<'a> CopyFileWindows<'a> {
             bun_sys::Result::Ok(fd) => fd,
             bun_sys::Result::Err(err) => {
                 if self.mkdirp_if_not_exists && err.get_errno() == bun_sys::E::ENOENT {
+                    // mkdirp() re-enters copyfile() → prepare_read_write_loop,
+                    // which reopens the source, so release the fd we just took.
+                    self.read_write_loop.close();
                     self.mkdirp();
                     return;
                 }
 
-                self.throw(err);
-                return;
-            }
-        };
-
-        self.read_write_loop.source_fd = match Self::prepare_pathlike(
-            &mut self.source_file_store.data_mut().as_file_mut().pathlike,
-            &mut self.read_write_loop.must_close_source_fd,
-            true,
-        ) {
-            bun_sys::Result::Ok(fd) => fd,
-            bun_sys::Result::Err(err) => {
                 self.throw(err);
                 return;
             }

@@ -190,7 +190,18 @@ class BunWebSocket extends EventEmitter {
   #paused = false;
   #fragments = false;
   #binaryType = "nodebuffer";
+  // True once an 'error' has already been surfaced to EventEmitter listeners
+  // (either a synthetic non-101 error or because 'unexpected-response' fired).
+  // Gates the bridge closure so the native 'Expected 101' error isn't
+  // re-emitted onto the EventEmitter a second time.
   #unexpectedResponseEmitted = false;
+  // True only when 'unexpected-response' actually fired — i.e. the consumer
+  // handled the non-101 response, so real ws emits no 'error' at all. Gates
+  // the `addEventListener('error')` / `onerror` wrappers (which live on
+  // `this.#ws`, not the EventEmitter). Kept separate from
+  // `#unexpectedResponseEmitted` so a synthetic `emit('error')` to an
+  // `on('error')` listener doesn't also swallow a DOM-style handler's error.
+  #unexpectedResponseHandled = false;
   // Wrappers for `addEventListener('error', h)` so the native 'Expected 101'
   // error is suppressed after 'unexpected-response' (matching `on('error')`
   // and real npm `ws`). Keyed by the user's listener so `removeEventListener`
@@ -421,19 +432,21 @@ class BunWebSocket extends EventEmitter {
       return;
     }
     if (this.listenerCount("unexpected-response") > 0) {
-      // The consumer handled the response via 'unexpected-response', so
-      // suppress the native 'Expected 101' error that follows.
+      // The consumer handled the response via 'unexpected-response'. Real ws
+      // emits no 'error' at all in this case, so suppress the native follow-up
+      // for every registration style (EventEmitter bridge AND the DOM-style
+      // wrappers).
       this.#unexpectedResponseEmitted = true;
+      this.#unexpectedResponseHandled = true;
       // `unexpected-response` emits `(request, response)` per ws docs.
       this.emit("unexpected-response", this.#getSyntheticRequest(), res);
     } else if (this.listenerCount("error") > 0) {
       // An EventEmitter 'error' listener (on/once/addListener/...) gets a
-      // synthetic error here; suppress the native follow-up so it isn't
-      // delivered twice via the bridge closure. `addEventListener('error')` /
-      // `onerror` handlers live on `this.#ws` and don't count toward
-      // `listenerCount('error')`, so when only those are registered this
-      // branch is skipped, the flag stays false, and they receive the native
-      // error directly (exactly once).
+      // synthetic error here; mark it emitted so the bridge closure doesn't
+      // deliver the native follow-up to the EventEmitter a second time. We do
+      // NOT set #unexpectedResponseHandled — a DOM-style handler
+      // (addEventListener('error')/onerror) registered alongside still gets the
+      // native error exactly once, since its wrapper gates on that flag.
       this.#unexpectedResponseEmitted = true;
       this.emit("error", new Error("Unexpected server response: " + statusCode));
     }
@@ -674,12 +687,15 @@ class BunWebSocket extends EventEmitter {
       // so distinct wrappers would defeat the native EventTarget's identity
       // dedup — check our own map instead (and avoid leaking the prior wrapper).
       if (this.#errorListenerWrappers?.has(listener)) return;
-      // Suppress the native 'Expected 101' error after 'unexpected-response'
-      // fired, consistent with `on('error')` (line ~483) and real ws. Wrap in
-      // a gated closure and remember it so `removeEventListener` can detach it.
+      // Suppress the native 'Expected 101' error only when 'unexpected-response'
+      // actually handled the non-101 (matching real ws, which emits no error
+      // then). Gate on #unexpectedResponseHandled — NOT #unexpectedResponse
+      // Emitted — so a synthetic emit to a co-registered `on('error')` listener
+      // doesn't also swallow this handler. Wrap in a gated closure and remember
+      // it so `removeEventListener` can detach it.
       const self = this;
       const wrapper = function (event) {
-        if (self.#unexpectedResponseEmitted) return;
+        if (self.#unexpectedResponseHandled) return;
         return listener.$call(this, event);
       };
       (this.#errorListenerWrappers ??= new WeakMap()).set(listener, wrapper);
@@ -729,12 +745,14 @@ class BunWebSocket extends EventEmitter {
       this.#ws.onerror = value;
       return;
     }
-    // Suppress the native 'Expected 101' error after 'unexpected-response',
-    // consistent with `on('error')` / `addEventListener('error')` and real ws.
+    // Suppress the native 'Expected 101' error only when 'unexpected-response'
+    // handled the non-101 (matching `addEventListener('error')` and real ws).
+    // Gate on #unexpectedResponseHandled so a co-registered `on('error')`
+    // listener's synthetic emit doesn't swallow this handler's error.
     const self = this;
     const fn = this.#onerror;
     this.#ws.onerror = function (event) {
-      if (self.#unexpectedResponseEmitted) return;
+      if (self.#unexpectedResponseHandled) return;
       return fn.$call(this, event);
     };
   }

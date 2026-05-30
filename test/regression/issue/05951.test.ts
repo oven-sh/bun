@@ -507,6 +507,53 @@ test.concurrent(
   },
 );
 
+// Mixed registration styles: on('error') (EventEmitter) AND addEventListener
+// ('error')/onerror (native this.#ws), with on('upgrade') but no
+// 'unexpected-response'. Each handler must fire exactly once — the synthetic
+// emit suppresses the EE bridge re-fire, but the DOM-style handler must still
+// receive the native error (gated on a separate "handled" flag).
+test.concurrent("ws error handlers each fire once when on('error') and addEventListener/onerror are mixed", async () => {
+  const { stdout, exitCode } = await run(/* js */ `
+    const { createServer } = require("net");
+    const { once } = require("events");
+    const { WebSocket } = require("ws");
+
+    async function runOne(registerDom) {
+      const server = createServer(s =>
+        s.once("data", () => s.end("HTTP/1.1 503 Service Unavailable\\r\\n\\r\\n")),
+      ).listen(0, "127.0.0.1");
+      await once(server, "listening");
+
+      const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
+      ws.on("upgrade", () => {});
+      let onCount = 0;
+      let domCount = 0;
+      // The synthetic error (on) fires synchronously in #onHandshake; the
+      // native error (DOM handler) arrives a tick later after the client
+      // terminates. Await BOTH so neither the test nor 'close' races ahead of
+      // the native delivery.
+      const onSeen = Promise.withResolvers();
+      const domSeen = Promise.withResolvers();
+      ws.on("error", () => { onCount++; onSeen.resolve(); });
+      registerDom(ws, () => { domCount++; domSeen.resolve(); });
+      await Promise.all([onSeen.promise, domSeen.promise]);
+      server.close();
+      try { ws.terminate(); } catch {}
+      return { onCount, domCount };
+    }
+
+    const ael = await runOne((ws, h) => ws.addEventListener("error", h));
+    const prop = await runOne((ws, h) => { ws.onerror = h; });
+    console.log(JSON.stringify({ ael, prop }));
+    process.exit(0);
+  `);
+  // Both the on('error') handler and the DOM-style handler fire exactly once.
+  expect(stdout).toMatchInlineSnapshot(
+    `"{"ael":{"onCount":1,"domCount":1},"prop":{"onCount":1,"domCount":1}}"`,
+  );
+  expect(exitCode).toBe(0);
+});
+
 // DOM dedup: registering the identical listener twice via addEventListener is
 // a no-op. Because we wrap the listener in a suppression closure, a naive
 // implementation would create two distinct wrappers and fire the handler

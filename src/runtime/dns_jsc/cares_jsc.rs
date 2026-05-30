@@ -659,6 +659,46 @@ pub(crate) struct ErrorDeferred {
     pub promise: bun_jsc::JSPromiseStrong,
 }
 
+/// Node's `getaddrinfo` errors carry libuv's negative `EAI_*` errno
+/// (`err.errno`), not the positive c-ares enum value. `c_ares::Error::init_eai`
+/// collapses `EAI_NONAME`/`EAI_NODATA` into `ENOTFOUND`, so NXDOMAIN reports
+/// `UV_EAI_NONAME` (-3008) — matching Node for the common case.
+fn getaddrinfo_uv_errno(e: c_ares::Error) -> i32 {
+    // libuv `uv/errno.h` EAI_* codes. Platform-invariant ABI constants;
+    // `bun_libuv_sys` only re-exports them on Windows (its `libuv` module is
+    // `#![cfg(windows)]`), so inline the small subset we need — mirroring how
+    // `bun_libuv_sys/lib.rs` inlines its own non-Windows errno subset.
+    const UV_EAI_AGAIN: i32 = -3001;
+    const UV_EAI_BADFLAGS: i32 = -3002;
+    const UV_EAI_CANCELED: i32 = -3003;
+    const UV_EAI_FAIL: i32 = -3004;
+    const UV_EAI_FAMILY: i32 = -3005;
+    const UV_EAI_MEMORY: i32 = -3006;
+    const UV_EAI_NODATA: i32 = -3007;
+    const UV_EAI_NONAME: i32 = -3008;
+    const UV_EAI_SERVICE: i32 = -3010;
+    const UV_EAI_SOCKTYPE: i32 = -3011;
+    const UV_EAI_BADHINTS: i32 = -3013;
+    match e {
+        c_ares::Error::ENODATA => UV_EAI_NODATA,
+        // `c_ares::Error::code()` aliases ENOTFOUND/ENONAME/EBADNAME to
+        // "DNS_ENOTFOUND"; keep errno in lockstep with code/message.
+        c_ares::Error::ENOTFOUND | c_ares::Error::ENONAME | c_ares::Error::EBADNAME => {
+            UV_EAI_NONAME
+        }
+        c_ares::Error::EBADFAMILY => UV_EAI_FAMILY,
+        c_ares::Error::EBADFLAGS => UV_EAI_BADFLAGS,
+        c_ares::Error::EBADHINTS => UV_EAI_BADHINTS,
+        c_ares::Error::ENOMEM => UV_EAI_MEMORY,
+        c_ares::Error::ESERVICE => UV_EAI_SERVICE,
+        c_ares::Error::ECONNREFUSED => UV_EAI_SOCKTYPE,
+        c_ares::Error::ETIMEOUT => UV_EAI_AGAIN,
+        c_ares::Error::ECANCELLED => UV_EAI_CANCELED,
+        c_ares::Error::EBADSTR => UV_EAI_BADHINTS,
+        _ => UV_EAI_FAIL,
+    }
+}
+
 impl ErrorDeferred {
     pub(crate) fn init(
         errno: c_ares::Error,
@@ -691,8 +731,16 @@ impl ErrorDeferred {
                 BStr::new(&code[4..])
             ))
         };
+        // Node reports libuv's negative EAI errno for getaddrinfo/getnameinfo
+        // (both go through uv); the c-ares query paths (resolve*/reverse) keep
+        // the raw c-ares value.
+        let errno = if self.syscall == b"getaddrinfo" || self.syscall == b"getnameinfo" {
+            getaddrinfo_uv_errno(self.errno)
+        } else {
+            self.errno as i32
+        };
         let system_error = SystemError {
-            errno: self.errno as i32,
+            errno,
             code: bstr::String::static_(code),
             message,
             syscall: bstr::String::clone_utf8(self.syscall),
@@ -700,13 +748,11 @@ impl ErrorDeferred {
             ..Default::default()
         };
 
+        // Node's DNS errors are plain `Error` instances — `err.name` is
+        // inherited from `Error.prototype.name`, not an own property.
+        // `to_error_instance*` already uses `ErrorType::Error`, so no `.put` needed.
         let instance =
             system_error.to_error_instance_with_async_stack(global_this, self.promise.get());
-        instance.put(
-            global_this,
-            b"name",
-            bstr::String::static_(b"DNSException").to_js(global_this)?,
-        );
 
         // `self` (and thus self.promise / self.hostname) drops at scope exit — matches
         // Zig's `defer this.deinit()`; hostname was `take()`n above to avoid double-deref.
@@ -769,7 +815,7 @@ pub(crate) fn error_to_js_with_syscall(
     syscall: &'static [u8],
 ) -> JsResult<JSValue> {
     let code = this.code();
-    let instance = SystemError {
+    Ok(SystemError {
         errno: this as i32,
         code: bstr::String::static_(&code[4..]),
         syscall: bstr::String::static_(syscall),
@@ -780,13 +826,7 @@ pub(crate) fn error_to_js_with_syscall(
         )),
         ..Default::default()
     }
-    .to_error_instance(global_this);
-    instance.put(
-        global_this,
-        b"name",
-        bstr::String::static_(b"DNSException").to_js(global_this)?,
-    );
-    Ok(instance)
+    .to_error_instance(global_this))
 }
 
 pub(crate) fn error_to_js_with_syscall_and_hostname(
@@ -796,7 +836,7 @@ pub(crate) fn error_to_js_with_syscall_and_hostname(
     hostname: &[u8],
 ) -> JsResult<JSValue> {
     let code = this.code();
-    let instance = SystemError {
+    Ok(SystemError {
         errno: this as i32,
         code: bstr::String::static_(&code[4..]),
         message: bstr::String::create_format(format_args!(
@@ -809,13 +849,7 @@ pub(crate) fn error_to_js_with_syscall_and_hostname(
         hostname: bstr::String::clone_utf8(hostname),
         ..Default::default()
     }
-    .to_error_instance(global_this);
-    instance.put(
-        global_this,
-        b"name",
-        bstr::String::static_(b"DNSException").to_js(global_this)?,
-    );
-    Ok(instance)
+    .to_error_instance(global_this))
 }
 
 // ── canonicalizeIP host fn ─────────────────────────────────────────────────

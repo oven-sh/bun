@@ -494,14 +494,13 @@ impl CronRegisterJob {
         let s = unsafe { &mut *this };
         s.state = RegisterState::WritingPlist;
 
-        let calendar_xml = match cron_to_calendar_interval(s.schedule.as_bytes()) {
-            Ok(x) => x,
-            Err(_) => {
-                s.set_err(format_args!("Invalid cron expression"));
-                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
-                return unsafe { Self::finish(this) };
-            }
-        };
+        // Validate the schedule up front so an invalid expression errors before we
+        // create any directories. The plist body (which re-runs this) is built below.
+        if cron_to_calendar_interval(s.schedule.as_bytes()).is_err() {
+            s.set_err(format_args!("Invalid cron expression"));
+            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
+            return unsafe { Self::finish(this) };
+        }
 
         let Some(home) = env_var::HOME.get() else {
             s.set_err(format_args!("HOME environment variable not set"));
@@ -523,6 +522,23 @@ impl CronRegisterJob {
             return unsafe { Self::finish(this) };
         }
 
+        // Per-user log directory. World-writable /tmp lets another local user
+        // pre-create a symlink at the predictable path and have launchd write
+        // through it as this user (CWE-59/377). Must exist before launchd runs.
+        let mut log_dir = Vec::new();
+        let _ = write!(
+            &mut log_dir,
+            "{}/Library/Logs/bun/cron",
+            bstr::BStr::new(home)
+        );
+        if Fd::cwd().make_path(&log_dir).is_err() {
+            s.set_err(format_args!(
+                "Failed to create ~/Library/Logs/bun/cron directory"
+            ));
+            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
+            return unsafe { Self::finish(this) };
+        }
+
         let plist_path = match alloc_print_z(format_args!(
             "{}/Library/LaunchAgents/bun.cron.{}.plist",
             bstr::BStr::new(home),
@@ -537,61 +553,27 @@ impl CronRegisterJob {
         };
         s.tmp_path = Some(plist_path);
 
-        // XML-escape all dynamic values
-        macro_rules! try_escape {
-            ($e:expr) => {
-                match xml_escape($e) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        s.set_err(format_args!("Out of memory"));
-                        // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
-                        return unsafe { Self::finish(this) };
-                    }
-                }
-            };
-        }
-        let xml_title = try_escape!(s.title.as_bytes());
-        let xml_bun = try_escape!(s.bun_exe.as_bytes());
-        let xml_path = try_escape!(s.abs_path.as_bytes());
-        let xml_sched = try_escape!(s.schedule.as_bytes());
-
-        let mut plist = Vec::new();
-        if write!(
-            &mut plist,
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
-<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
-<plist version=\"1.0\">\n\
-<dict>\n\
-    <key>Label</key>\n\
-    <string>bun.cron.{0}</string>\n\
-    <key>ProgramArguments</key>\n\
-    <array>\n\
-        <string>{1}</string>\n\
-        <string>run</string>\n\
-        <string>--cron-title={0}</string>\n\
-        <string>--cron-period={3}</string>\n\
-        <string>{2}</string>\n\
-    </array>\n\
-    <key>StartCalendarInterval</key>\n\
-{4}\n\
-    <key>StandardOutPath</key>\n\
-    <string>/tmp/bun.cron.{0}.stdout.log</string>\n\
-    <key>StandardErrorPath</key>\n\
-    <string>/tmp/bun.cron.{0}.stderr.log</string>\n\
-</dict>\n\
-</plist>\n",
-            bstr::BStr::new(&xml_title),
-            bstr::BStr::new(&xml_bun),
-            bstr::BStr::new(&xml_path),
-            bstr::BStr::new(&xml_sched),
-            bstr::BStr::new(&calendar_xml),
-        )
-        .is_err()
-        {
-            s.set_err(format_args!("Out of memory"));
-            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
-            return unsafe { Self::finish(this) };
-        }
+        // Build the plist body (log paths, XML-escaping, calendar interval) via the
+        // shared helper so the macOS path and the `internal-for-testing` hook agree.
+        let plist = match build_launchd_plist(
+            home,
+            s.title.as_bytes(),
+            s.bun_exe.as_bytes(),
+            s.abs_path.as_bytes(),
+            s.schedule.as_bytes(),
+        ) {
+            Ok(p) => p,
+            Err(PlistError::InvalidSchedule) => {
+                s.set_err(format_args!("Invalid cron expression"));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
+                return unsafe { Self::finish(this) };
+            }
+            Err(PlistError::OutOfMemory) => {
+                s.set_err(format_args!("Out of memory"));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
+                return unsafe { Self::finish(this) };
+            }
+        };
 
         let file = match File::openat(
             Fd::cwd(),
@@ -2647,6 +2629,78 @@ pub fn cron_to_calendar_interval(schedule: &[u8]) -> Result<Vec<u8>, CalendarErr
         result.extend_from_slice(b"    </array>");
     }
     Ok(result)
+}
+
+/// Error building a launchd plist: either an invalid cron expression or an
+/// allocation failure while formatting.
+pub enum PlistError {
+    InvalidSchedule,
+    OutOfMemory,
+}
+
+/// Build the launchd plist body for a macOS cron job. Kept platform-independent
+/// (not `#[cfg(macos)]`) so the path and escaping logic can be unit-tested on any
+/// host via `bun:internal-for-testing`. `home` is the value of `$HOME`; the log
+/// paths are placed under `{home}/Library/Logs/bun/cron` — a per-user directory —
+/// rather than world-writable `/tmp` (CWE-59/377).
+pub fn build_launchd_plist(
+    home: &[u8],
+    title: &[u8],
+    bun_exe: &[u8],
+    abs_path: &[u8],
+    schedule: &[u8],
+) -> Result<Vec<u8>, PlistError> {
+    let calendar_xml =
+        cron_to_calendar_interval(schedule).map_err(|_| PlistError::InvalidSchedule)?;
+
+    let mut log_dir = Vec::new();
+    write!(
+        &mut log_dir,
+        "{}/Library/Logs/bun/cron",
+        bstr::BStr::new(home)
+    )
+    .map_err(|_| PlistError::OutOfMemory)?;
+
+    let xml_title = xml_escape(title).map_err(|_| PlistError::OutOfMemory)?;
+    let xml_bun = xml_escape(bun_exe).map_err(|_| PlistError::OutOfMemory)?;
+    let xml_path = xml_escape(abs_path).map_err(|_| PlistError::OutOfMemory)?;
+    let xml_sched = xml_escape(schedule).map_err(|_| PlistError::OutOfMemory)?;
+    let xml_log_dir = xml_escape(&log_dir).map_err(|_| PlistError::OutOfMemory)?;
+
+    let mut plist = Vec::new();
+    write!(
+        &mut plist,
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+<plist version=\"1.0\">\n\
+<dict>\n\
+    <key>Label</key>\n\
+    <string>bun.cron.{0}</string>\n\
+    <key>ProgramArguments</key>\n\
+    <array>\n\
+        <string>{1}</string>\n\
+        <string>run</string>\n\
+        <string>--cron-title={0}</string>\n\
+        <string>--cron-period={3}</string>\n\
+        <string>{2}</string>\n\
+    </array>\n\
+    <key>StartCalendarInterval</key>\n\
+{4}\n\
+    <key>StandardOutPath</key>\n\
+    <string>{5}/bun.cron.{0}.stdout.log</string>\n\
+    <key>StandardErrorPath</key>\n\
+    <string>{5}/bun.cron.{0}.stderr.log</string>\n\
+</dict>\n\
+</plist>\n",
+        bstr::BStr::new(&xml_title),
+        bstr::BStr::new(&xml_bun),
+        bstr::BStr::new(&xml_path),
+        bstr::BStr::new(&xml_sched),
+        bstr::BStr::new(&calendar_xml),
+        bstr::BStr::new(&xml_log_dir),
+    )
+    .map_err(|_| PlistError::OutOfMemory)?;
+    Ok(plist)
 }
 
 fn append_calendar_key(result: &mut Vec<u8>, key: &[u8], val: i32) -> Result<(), CalendarError> {

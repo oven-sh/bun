@@ -446,6 +446,60 @@ pub fn bindgen_fmt_jsc_dispatch_fmt_string(
     }
 }
 
+/// `BunObject.cronPlistForTesting(home, title, bunExe, absPath, schedule) -> bun.String`
+/// (cron.test.ts internal — builds the macOS launchd plist body on any host so the
+/// log-path / XML-escaping logic can be asserted without a darwin-only code path).
+///
+/// # Safety
+/// All `arg_*` pointers and `out` must be valid C++ stack locals.
+// HOST_EXPORT(bindgen_BunObject_dispatchCronPlistForTesting1, c)
+// Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[allow(clippy::too_many_arguments)]
+pub fn bindgen_bunobject_dispatch_cron_plist_for_testing(
+    global: &JSGlobalObject,
+    arg_home: *const bun_core::String,
+    arg_title: *const bun_core::String,
+    arg_bun_exe: *const bun_core::String,
+    arg_abs_path: *const bun_core::String,
+    arg_schedule: *const bun_core::String,
+    out: *mut bun_core::String,
+) -> bool {
+    // SAFETY: every `arg_*` points to a `bun_core::String` on the C++ caller's
+    // stack (see GeneratedBindings.cpp call site); `to_utf8` only borrows.
+    let (home, title, bun_exe, abs_path, schedule) = unsafe {
+        (
+            (*arg_home).to_utf8(),
+            (*arg_title).to_utf8(),
+            (*arg_bun_exe).to_utf8(),
+            (*arg_abs_path).to_utf8(),
+            (*arg_schedule).to_utf8(),
+        )
+    };
+    use crate::api::cron::{PlistError, build_launchd_plist};
+    match build_launchd_plist(
+        home.slice(),
+        title.slice(),
+        bun_exe.slice(),
+        abs_path.slice(),
+        schedule.slice(),
+    ) {
+        Ok(plist) => {
+            // SAFETY: `out` is a valid C++ stack out-param.
+            unsafe { *out = bun_core::String::clone_utf8(&plist) };
+            true
+        }
+        Err(PlistError::InvalidSchedule) => {
+            let _ = global.throw_pretty(format_args!("Invalid cron expression"));
+            false
+        }
+        Err(PlistError::OutOfMemory) => {
+            let _ = global.throw_out_of_memory();
+            false
+        }
+    }
+}
+
 /// `DevServer.getDeinitCountForTesting() -> usize`.
 ///
 /// # Safety
@@ -715,6 +769,7 @@ bun_jsc::jsc_abi_extern! {
     // C++-side host fns (Generated*Bindings.cpp).
     fn bindgen_Fmt_jsc_jsFmtString(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
     fn bindgen_DevServer_jsGetDeinitCountForTesting(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+    fn bindgen_BunObject_jsCronPlistForTesting(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
 }
 
 // HOST_EXPORT(js2native_bindgen_fmt_jsc_fmtString, jsc)
@@ -725,6 +780,19 @@ pub fn js2native_bindgen_fmt_jsc_fmt_string(global: &JSGlobalObject) -> JSValue 
         Some(&name),
         3,
         bindgen_Fmt_jsc_jsFmtString,
+        false,
+        None,
+    )
+}
+
+// HOST_EXPORT(js2native_bindgen_BunObject_cronPlistForTesting, jsc)
+pub fn js2native_bindgen_bunobject_cron_plist_for_testing(global: &JSGlobalObject) -> JSValue {
+    let name = bun_core::ZigString::init_utf8(b"cronPlistForTesting");
+    bun_jsc::host_fn::new_runtime_function(
+        global,
+        Some(&name),
+        5,
+        bindgen_BunObject_jsCronPlistForTesting,
         false,
         None,
     )

@@ -257,3 +257,39 @@ describe("globalThis.gc", () => {
     });
   });
 });
+
+// Internal builtin modules are loaded lazily and several of them call
+// `Symbol(...)` / `Symbol.for(...)` at module top level. They must use the
+// pristine Symbol, not the user-mutable global: clobbering `globalThis.Symbol`
+// before the lazy load used to throw "Symbol is not a function" from native
+// code and trip an unexpected-exception assertion.
+describe.concurrent("builtin modules survive a clobbered global Symbol", () => {
+  const run = src => {
+    const result = Bun.spawnSync([bunExe(), "-e", src], { env: bunEnv });
+    const stderr = result.stderr.toString("utf8");
+    if (!result.success) throw new Error(stderr);
+    expect(stderr).not.toContain("ASSERTION FAILED");
+    return result.stdout.toString("utf8").trim();
+  };
+
+  it("Bun.SQL loads after Symbol is set to undefined", () => {
+    expect(run(`globalThis.Symbol = undefined; console.log(typeof Bun.SQL);`)).toBe("function");
+  });
+
+  it("node:events works after Symbol is set to undefined", () => {
+    expect(
+      run(
+        `globalThis.Symbol = undefined;` +
+          `const ee = new (require("node:events"))();` +
+          `ee.on("x", () => console.log("ok"));` +
+          `ee.emit("x");`,
+      ),
+    ).toBe("ok");
+  });
+
+  it("node:readline loads after Symbol is set to undefined", () => {
+    expect(run(`globalThis.Symbol = undefined; console.log(typeof require("node:readline").createInterface);`)).toBe(
+      "function",
+    );
+  });
+});

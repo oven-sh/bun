@@ -508,7 +508,11 @@ describe("fetch() with a concatenated multi-member gzip body", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Surface stdout (and require it non-empty) before the exit code so an
+      // empty-body regression reports a useful message instead of a bare
+      // Buffer.from("", "hex") -> empty buffer comparison failure downstream.
       expect(stderr).toBe("");
+      expect(stdout, `fetch produced no hex on stdout (stderr: ${stderr})`).not.toBe("");
       expect(exitCode).toBe(0);
       return Buffer.from(stdout, "hex");
     }

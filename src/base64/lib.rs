@@ -406,10 +406,12 @@ pub mod vlq {
             }
         }
 
-        VLQResult {
-            start: start + encoded_.len(),
-            value: 0,
-        }
+        // Reached when the input is empty or ends mid-VLQ (the last byte's
+        // continuation bit is set with no following byte, or all 8 bytes have
+        // it set — both malformed). No value was decoded; return `start`
+        // unchanged so callers' no-progress checks treat the truncated
+        // mapping as a parse failure instead of silently accepting `value: 0`.
+        VLQResult { start, value: 0 }
     }
 
     #[inline]

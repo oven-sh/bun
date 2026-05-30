@@ -39,7 +39,10 @@ unsafe impl<Value: Send, M: RawMutex + Sync> Sync for GuardedBy<Value, M> {}
 impl<Value, M: RawMutex + Default> GuardedBy<Value, M> {
     /// Creates a guarded value with a default-initialized mutex.
     pub fn init(value: Value) -> Self {
-        Self::init_with_mutex(value, M::default())
+        Self {
+            unsynchronized_value: UnsafeCell::new(value),
+            mutex: M::default(),
+        }
     }
 }
 
@@ -87,14 +90,6 @@ impl<Value> GuardedBy<Value, Mutex> {
 }
 
 impl<Value, M: RawMutex> GuardedBy<Value, M> {
-    /// Creates a guarded value with the given mutex.
-    pub fn init_with_mutex(value: Value, mutex: M) -> Self {
-        Self {
-            unsynchronized_value: UnsafeCell::new(value),
-            mutex,
-        }
-    }
-
     /// Locks the mutex and returns an RAII guard that dereferences to the protected value and
     /// releases the lock on drop.
     pub fn lock(&self) -> GuardedLock<'_, Value, M> {
@@ -108,17 +103,6 @@ impl<Value, M: RawMutex> GuardedBy<Value, M> {
     #[inline]
     pub fn get_mut(&mut self) -> &mut Value {
         self.unsynchronized_value.get_mut()
-    }
-
-    /// Returns the inner unprotected value.
-    ///
-    /// You must ensure that no other threads could be concurrently using `self`. This method
-    /// invalidates `self`, so you must ensure `self` is not used on any thread after calling
-    /// this method.
-    pub fn into_unprotected(self) -> Value {
-        // Zig: `bun.memory.deinit(&self.#mutex)` then return value, then `self.* = undefined`.
-        // In Rust, moving out of `self` drops `self.mutex` automatically.
-        self.unsynchronized_value.into_inner()
     }
 }
 

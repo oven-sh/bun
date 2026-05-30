@@ -133,6 +133,86 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
     return text_len;
 }
 
+// Index of the first byte that HTML-escapes: one of " & ' < >.
+// Returns text_len if none are present.
+size_t IndexOfHTMLEscapeChar8Impl(const uint8_t* HWY_RESTRICT text, size_t text_len)
+{
+    if (text_len == 0) return 0;
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_quot = hn::Set(d, uint8_t { '"' });
+    const auto vec_amp = hn::Set(d, uint8_t { '&' });
+    const auto vec_apos = hn::Set(d, uint8_t { '\'' });
+    const auto vec_lt = hn::Set(d, uint8_t { '<' });
+    const auto vec_gt = hn::Set(d, uint8_t { '>' });
+
+    size_t i = 0;
+    const size_t simd_text_len = text_len - (text_len % N);
+    for (; i < simd_text_len; i += N) {
+        const auto text_vec = hn::LoadU(d, text + i);
+        const auto found_mask = hn::Or(
+            hn::Or(hn::Eq(text_vec, vec_quot), hn::Eq(text_vec, vec_amp)),
+            hn::Or(hn::Eq(text_vec, vec_apos), hn::Or(hn::Eq(text_vec, vec_lt), hn::Eq(text_vec, vec_gt))));
+
+        const intptr_t pos = hn::FindFirstTrue(d, found_mask);
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    for (; i < text_len; ++i) {
+        const uint8_t c = text[i];
+        if (c == '"' || c == '&' || c == '\'' || c == '<' || c == '>') {
+            return i;
+        }
+    }
+
+    return text_len;
+}
+
+// Index of the first UTF-16 code unit that HTML-escapes: one of " & ' < >.
+// Returns text_len if none are present. The five metacharacters are all < 0x80,
+// so no surrogate code unit (0xD800-0xDFFF) can collide with them — non-ASCII
+// text with no metacharacters is reported as "nothing to escape", and the
+// escape loop can copy every non-metacharacter code unit through verbatim.
+size_t IndexOfHTMLEscapeChar16Impl(const uint16_t* HWY_RESTRICT text, size_t text_len)
+{
+    if (text_len == 0) return 0;
+    using D16 = hn::ScalableTag<uint16_t>;
+    D16 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_quot = hn::Set(d, uint16_t { '"' });
+    const auto vec_amp = hn::Set(d, uint16_t { '&' });
+    const auto vec_apos = hn::Set(d, uint16_t { '\'' });
+    const auto vec_lt = hn::Set(d, uint16_t { '<' });
+    const auto vec_gt = hn::Set(d, uint16_t { '>' });
+
+    size_t i = 0;
+    const size_t simd_text_len = text_len - (text_len % N);
+    for (; i < simd_text_len; i += N) {
+        const auto text_vec = hn::LoadU(d, text + i);
+        const auto found_mask = hn::Or(
+            hn::Or(hn::Eq(text_vec, vec_quot), hn::Eq(text_vec, vec_amp)),
+            hn::Or(hn::Eq(text_vec, vec_apos), hn::Or(hn::Eq(text_vec, vec_lt), hn::Eq(text_vec, vec_gt))));
+
+        const intptr_t pos = hn::FindFirstTrue(d, found_mask);
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    for (; i < text_len; ++i) {
+        const uint16_t c = text[i];
+        if (c == '"' || c == '&' || c == '\'' || c == '<' || c == '>') {
+            return i;
+        }
+    }
+
+    return text_len;
+}
+
 void CopyU16ToU8Impl(const uint16_t* HWY_RESTRICT input, size_t count,
     uint8_t* HWY_RESTRICT output)
 {
@@ -171,6 +251,100 @@ void CopyU16ToU8Impl(const uint16_t* HWY_RESTRICT input, size_t count,
     for (; i < count; ++i) {
         output[i] = static_cast<uint8_t>(input[i]); // Truncation happens here
     }
+}
+
+// Extra bytes the HTML-escaped output needs beyond the input length: each
+// metacharacter's entity is longer than its 1 source byte, by
+//   & -> &amp;   (+4)    < -> &lt;   (+3)    > -> &gt;   (+3)
+//   " -> &quot;  (+5)    ' -> &#x27; (+5)
+// so escaped_len == input_len + HtmlEscapeExtraLen(input). Summing per
+// metacharacter class with CountTrue keeps this a single pass, letting the
+// caller allocate the exact output size.
+size_t HtmlEscapeExtraLen8Impl(const uint8_t* HWY_RESTRICT text, size_t text_len)
+{
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_quot = hn::Set(d, uint8_t { '"' });
+    const auto vec_amp = hn::Set(d, uint8_t { '&' });
+    const auto vec_apos = hn::Set(d, uint8_t { '\'' });
+    const auto vec_lt = hn::Set(d, uint8_t { '<' });
+    const auto vec_gt = hn::Set(d, uint8_t { '>' });
+
+    size_t extra = 0;
+    size_t i = 0;
+    const size_t simd_text_len = text_len - (text_len % N);
+    for (; i < simd_text_len; i += N) {
+        const auto v = hn::LoadU(d, text + i);
+        extra += 4 * hn::CountTrue(d, hn::Eq(v, vec_amp));
+        extra += 3 * hn::CountTrue(d, hn::Or(hn::Eq(v, vec_lt), hn::Eq(v, vec_gt)));
+        extra += 5 * hn::CountTrue(d, hn::Or(hn::Eq(v, vec_quot), hn::Eq(v, vec_apos)));
+    }
+
+    for (; i < text_len; ++i) {
+        switch (text[i]) {
+        case '&':
+            extra += 4;
+            break;
+        case '<':
+        case '>':
+            extra += 3;
+            break;
+        case '"':
+        case '\'':
+            extra += 5;
+            break;
+        default:
+            break;
+        }
+    }
+
+    return extra;
+}
+
+// UTF-16 counterpart of HtmlEscapeExtraLen8Impl. Surrogate code units are all
+// > 0x80 and cannot match the metacharacters, so they contribute 0.
+size_t HtmlEscapeExtraLen16Impl(const uint16_t* HWY_RESTRICT text, size_t text_len)
+{
+    using D16 = hn::ScalableTag<uint16_t>;
+    D16 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_quot = hn::Set(d, uint16_t { '"' });
+    const auto vec_amp = hn::Set(d, uint16_t { '&' });
+    const auto vec_apos = hn::Set(d, uint16_t { '\'' });
+    const auto vec_lt = hn::Set(d, uint16_t { '<' });
+    const auto vec_gt = hn::Set(d, uint16_t { '>' });
+
+    size_t extra = 0;
+    size_t i = 0;
+    const size_t simd_text_len = text_len - (text_len % N);
+    for (; i < simd_text_len; i += N) {
+        const auto v = hn::LoadU(d, text + i);
+        extra += 4 * hn::CountTrue(d, hn::Eq(v, vec_amp));
+        extra += 3 * hn::CountTrue(d, hn::Or(hn::Eq(v, vec_lt), hn::Eq(v, vec_gt)));
+        extra += 5 * hn::CountTrue(d, hn::Or(hn::Eq(v, vec_quot), hn::Eq(v, vec_apos)));
+    }
+
+    for (; i < text_len; ++i) {
+        switch (text[i]) {
+        case '&':
+            extra += 4;
+            break;
+        case '<':
+        case '>':
+            extra += 3;
+            break;
+        case '"':
+        case '\'':
+            extra += 5;
+            break;
+        default:
+            break;
+        }
+    }
+
+    return extra;
 }
 
 // Implementation for scanCharFrequency (Unchanged from previous correct version)
@@ -1184,6 +1358,98 @@ size_t FirstNonAscii8Impl(const uint8_t* HWY_RESTRICT input, size_t len)
     return len;
 }
 
+// An "escape character" for ANSI tokenizing: ESC, the ST-terminated C1
+// introducers, plus C1 ST (0x9C) itself so a standalone terminator stops the
+// scan. Matches ANSIHelpers.h's scalar contract (isEscapeCharacter + 0x9C).
+template<class T>
+static HWY_INLINE bool IsEscapeCharScalar(T c)
+{
+    return c == 0x1b || c == 0x90 || c == 0x98 || c == 0x9b
+        || c == 0x9c || c == 0x9d || c == 0x9e || c == 0x9f;
+}
+
+// Scalar scan over [from, len); returns the first escape index or len.
+template<class T>
+static HWY_INLINE size_t IndexOfEscapeCharScalar(const T* HWY_RESTRICT input, size_t from, size_t len)
+{
+    for (size_t i = from; i < len; ++i) {
+        if (IsEscapeCharScalar(input[i]))
+            return i;
+    }
+    return len;
+}
+
+// Index of the first ANSI escape introducer, or len if none. Shared by
+// Bun.stripANSI / stringWidth / wrapAnsi / sliceAnsi via ANSIHelpers.h's
+// findEscapeCharacter.
+//
+// Two-stage like the original WTF-SIMD version: a broad range mask
+// (c & 0x70) == 0x10 catches 0x10-0x1F and 0x90-0x9F in one compare — the hot
+// no-escape path pays only this per chunk — then an exact 8-value match
+// refines a broad hit down to the real introducers. `T` is u8 (Latin-1) or
+// u16 (UTF-16); on u16 the broad mask 0xFF70 also rejects code units >= 0x100.
+//
+// Short inputs take the scalar path before any vector setup, so the kernel is
+// cheap when called standalone. (The only current caller, findEscapeCharacter,
+// gates dispatch at >= kEscapeDispatchThreshold, but this is extern "C".)
+template<class T>
+static HWY_INLINE size_t IndexOfEscapeCharImpl(const T* HWY_RESTRICT input, size_t len)
+{
+    const hn::ScalableTag<T> d;
+    const size_t N = hn::Lanes(d);
+
+    if (len < N)
+        return IndexOfEscapeCharScalar<T>(input, 0, len);
+
+    // Broad range: (c & ~0b10001111) == 0b00010000 → 0x10-0x1F and 0x90-0x9F.
+    const auto broad_mask = hn::Set(d, static_cast<T>(~0b10001111U));
+    const auto broad_vec = hn::Set(d, static_cast<T>(0b00010000));
+
+    // Exact introducers (including C1 ST 0x9C), used to reject broad-mask
+    // false positives (0x10-0x1A, 0x1C-0x1F, 0x91-0x97, 0x99-0x9A).
+    const auto vec_1b = hn::Set(d, static_cast<T>(0x1b));
+    const auto vec_90 = hn::Set(d, static_cast<T>(0x90));
+    const auto vec_98 = hn::Set(d, static_cast<T>(0x98));
+    const auto vec_9b = hn::Set(d, static_cast<T>(0x9b));
+    const auto vec_9c = hn::Set(d, static_cast<T>(0x9c));
+    const auto vec_9d = hn::Set(d, static_cast<T>(0x9d));
+    const auto vec_9e = hn::Set(d, static_cast<T>(0x9e));
+    const auto vec_9f = hn::Set(d, static_cast<T>(0x9f));
+
+    const auto exact_match = [&](auto chunk) HWY_ATTR {
+        return hn::Or(
+            hn::Or(hn::Or(hn::Eq(chunk, vec_1b), hn::Eq(chunk, vec_90)),
+                hn::Or(hn::Eq(chunk, vec_98), hn::Eq(chunk, vec_9b))),
+            hn::Or(hn::Or(hn::Eq(chunk, vec_9c), hn::Eq(chunk, vec_9d)),
+                hn::Or(hn::Eq(chunk, vec_9e), hn::Eq(chunk, vec_9f))));
+    };
+
+    size_t i = 0;
+    const size_t simd_len = len - (len % N);
+    for (; i < simd_len; i += N) {
+        const auto chunk = hn::LoadU(d, input + i);
+        const auto broad = hn::Eq(hn::And(chunk, broad_mask), broad_vec);
+        if (hn::AllFalse(d, broad))
+            continue;
+        const intptr_t pos = hn::FindFirstTrue(d, exact_match(chunk));
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    return IndexOfEscapeCharScalar<T>(input, i, len);
+}
+
+size_t IndexOfEscapeChar8Impl(const uint8_t* HWY_RESTRICT input, size_t len)
+{
+    return IndexOfEscapeCharImpl<uint8_t>(input, len);
+}
+
+size_t IndexOfEscapeChar16Impl(const uint16_t* HWY_RESTRICT input, size_t len)
+{
+    return IndexOfEscapeCharImpl<uint16_t>(input, len);
+}
+
 size_t CopyAsciiPrefixImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
 {
     D8 d;
@@ -1233,6 +1499,154 @@ size_t CopyAsciiPrefixImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t*
         dst[i] = c;
     }
     return len;
+}
+
+// Vector with the 0x20 case bit set in every lane holding an ASCII uppercase
+// letter ('A'..'Z') and 0 everywhere else. The uppercase test is the usual
+// unsigned range fold: (c - 'A') < 26. `VecFromMask` turns the predicate into a
+// lane mask that we AND with 0x20, so the case bit is OR-ed into uppercase
+// letters only and every other byte (digits, punctuation, Latin-1 >= 0x80) is
+// left untouched.
+template<class D>
+static HWY_INLINE hn::Vec<D> AsciiLowerBit(D d, hn::Vec<D> chunk)
+{
+    using T = hn::TFromD<D>;
+    const auto folded = hn::Sub(chunk, hn::Set(d, T { 'A' }));
+    const auto is_upper = hn::Lt(folded, hn::Set(d, T { 26 }));
+    return hn::And(hn::VecFromMask(d, is_upper), hn::Set(d, T { 0x20 }));
+}
+
+// Index of the first ASCII uppercase letter ('A'..'Z'), or len if none.
+// Used to early-out the header-name lowercasing: when a name is already
+// lowercase we hand back the original String without allocating a copy,
+// matching StringImpl::convertToASCIILowercase.
+size_t IndexOfFirstAsciiUpperImpl(const uint8_t* HWY_RESTRICT input, size_t len)
+{
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_A = hn::Set(d, uint8_t { 'A' });
+    const auto vec_26 = hn::Set(d, uint8_t { 26 });
+
+    size_t i = 0;
+    const size_t simd_len = len - (len % N);
+    for (; i < simd_len; i += N) {
+        const auto chunk = hn::LoadU(d, input + i);
+        // (c - 'A') < 26, unsigned: only 'A'..'Z' land in range; everything
+        // below 'A' wraps around to a large value.
+        const auto is_upper = hn::Lt(hn::Sub(chunk, vec_A), vec_26);
+        const intptr_t pos = hn::FindFirstTrue(d, is_upper);
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    for (; i < len; ++i) {
+        const uint8_t c = input[i];
+        if (static_cast<uint8_t>(c - 'A') < 26) {
+            return i;
+        }
+    }
+    return len;
+}
+
+// Copy `src` to `dst`, lowercasing ASCII uppercase letters ('A'..'Z') and
+// leaving every other byte (digits, punctuation, Latin-1 >= 0x80) untouched.
+// Per block: OR in the 0x20 case bit only on the uppercase lanes. Mirrors
+// StringImpl::convertToASCIILowercase's per-character mapping without the
+// scalar per-byte branch.
+void LowerAsciiImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
+{
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    size_t i = 0;
+    if (len >= N) {
+        const size_t simd_len = len - (len % N);
+        for (; i < simd_len; i += N) {
+            const auto chunk = hn::LoadU(d, src + i);
+            hn::StoreU(hn::Or(chunk, AsciiLowerBit(d, chunk)), d, dst + i);
+        }
+
+        if (i < len) {
+            const size_t start = len - N;
+            const auto chunk = hn::LoadU(d, src + start);
+            hn::StoreU(hn::Or(chunk, AsciiLowerBit(d, chunk)), d, dst + start);
+        }
+        return;
+    }
+
+    // Branchless case fold for the sub-vector remainder (no data-dependent
+    // branch per byte). On wide-vector targets the compiler still
+    // auto-vectorizes this with AVX-512 masked ops; those live in the
+    // runtime-dispatched target namespaces and are covered by the
+    // verify-baseline-static allowlist.
+    for (; i < len; ++i) {
+        const uint8_t c = src[i];
+        const uint8_t isUpper = static_cast<uint8_t>(c - 'A') < 26 ? 1 : 0;
+        dst[i] = static_cast<uint8_t>(c | (isUpper << 5));
+    }
+}
+
+// 16-bit (UTF-16) counterparts of the two kernels above. WTF strings holding
+// only ASCII may still be stored as 16-bit, so the header-name lowercasing
+// needs a 16-bit path too. The A-Z test and 0x20 case bit are identical; only
+// the lane width changes (ASCII letters are well within a 16-bit lane, and
+// code units >= 0x80 are left untouched).
+size_t IndexOfFirstAsciiUpper16Impl(const uint16_t* HWY_RESTRICT input, size_t len)
+{
+    const hn::ScalableTag<uint16_t> d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_A = hn::Set(d, uint16_t { 'A' });
+    const auto vec_26 = hn::Set(d, uint16_t { 26 });
+
+    size_t i = 0;
+    const size_t simd_len = len - (len % N);
+    for (; i < simd_len; i += N) {
+        const auto chunk = hn::LoadU(d, input + i);
+        const auto is_upper = hn::Lt(hn::Sub(chunk, vec_A), vec_26);
+        const intptr_t pos = hn::FindFirstTrue(d, is_upper);
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    for (; i < len; ++i) {
+        const uint16_t c = input[i];
+        if (static_cast<uint16_t>(c - 'A') < 26) {
+            return i;
+        }
+    }
+    return len;
+}
+
+void LowerAscii16Impl(const uint16_t* HWY_RESTRICT src, size_t len, uint16_t* HWY_RESTRICT dst)
+{
+    const hn::ScalableTag<uint16_t> d;
+    const size_t N = hn::Lanes(d);
+
+    size_t i = 0;
+    if (len >= N) {
+        const size_t simd_len = len - (len % N);
+        for (; i < simd_len; i += N) {
+            const auto chunk = hn::LoadU(d, src + i);
+            hn::StoreU(hn::Or(chunk, AsciiLowerBit(d, chunk)), d, dst + i);
+        }
+
+        if (i < len) {
+            const size_t start = len - N;
+            const auto chunk = hn::LoadU(d, src + start);
+            hn::StoreU(hn::Or(chunk, AsciiLowerBit(d, chunk)), d, dst + start);
+        }
+        return;
+    }
+
+    for (; i < len; ++i) {
+        const uint16_t c = src[i];
+        const uint16_t isUpper = static_cast<uint16_t>(c - 'A') < 26 ? 1 : 0;
+        dst[i] = static_cast<uint16_t>(c | (isUpper << 5));
+    }
 }
 
 // Lowercase hex encode: writes 2 output bytes per input byte.
@@ -1475,8 +1889,16 @@ HWY_EXPORT(EncodeHexLowerImpl);
 HWY_EXPORT(FillWithSkipMaskImpl);
 HWY_EXPORT(FirstNonAscii16Impl);
 HWY_EXPORT(FirstNonAscii8Impl);
+HWY_EXPORT(HtmlEscapeExtraLen16Impl);
+HWY_EXPORT(HtmlEscapeExtraLen8Impl);
 HWY_EXPORT(IndexOfAnyCharImpl);
 HWY_EXPORT(IndexOfCharImpl);
+HWY_EXPORT(IndexOfEscapeChar16Impl);
+HWY_EXPORT(IndexOfEscapeChar8Impl);
+HWY_EXPORT(IndexOfFirstAsciiUpper16Impl);
+HWY_EXPORT(IndexOfFirstAsciiUpperImpl);
+HWY_EXPORT(IndexOfHTMLEscapeChar8Impl);
+HWY_EXPORT(IndexOfHTMLEscapeChar16Impl);
 HWY_EXPORT(IndexOfInterestingCharacterInMultilineCommentImpl);
 HWY_EXPORT(IndexOfInterestingCharacterInStringLiteralImpl);
 HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplBacktick);
@@ -1484,6 +1906,8 @@ HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplQuote);
 HWY_EXPORT(IndexOfNewlineOrNonASCIIImpl);
 HWY_EXPORT(IndexOfNewlineOrNonASCIIOrHashOrAtImpl);
 HWY_EXPORT(IndexOfSpaceOrNewlineOrNonASCIIImpl);
+HWY_EXPORT(LowerAscii16Impl);
+HWY_EXPORT(LowerAsciiImpl);
 HWY_EXPORT(MemMemImpl);
 HWY_EXPORT(ScanCharFrequencyImpl);
 HWY_EXPORT(VisibleLatin1WidthExcludeANSIImpl);
@@ -1552,6 +1976,36 @@ size_t highway_index_of_char(const uint8_t* HWY_RESTRICT haystack, size_t haysta
     uint8_t needle)
 {
     return HWY_DYNAMIC_DISPATCH(IndexOfCharImpl)(haystack, haystack_len, needle);
+}
+
+size_t highway_index_of_escape_char8(const uint8_t* HWY_RESTRICT input, size_t len)
+{
+    return HWY_DYNAMIC_DISPATCH(IndexOfEscapeChar8Impl)(input, len);
+}
+
+size_t highway_index_of_escape_char16(const uint16_t* HWY_RESTRICT input, size_t len)
+{
+    return HWY_DYNAMIC_DISPATCH(IndexOfEscapeChar16Impl)(input, len);
+}
+
+size_t highway_index_of_html_escape_char8(const uint8_t* HWY_RESTRICT text, size_t text_len)
+{
+    return HWY_DYNAMIC_DISPATCH(IndexOfHTMLEscapeChar8Impl)(text, text_len);
+}
+
+size_t highway_index_of_html_escape_char16(const uint16_t* HWY_RESTRICT text, size_t text_len)
+{
+    return HWY_DYNAMIC_DISPATCH(IndexOfHTMLEscapeChar16Impl)(text, text_len);
+}
+
+size_t highway_html_escape_extra_len8(const uint8_t* HWY_RESTRICT text, size_t text_len)
+{
+    return HWY_DYNAMIC_DISPATCH(HtmlEscapeExtraLen8Impl)(text, text_len);
+}
+
+size_t highway_html_escape_extra_len16(const uint16_t* HWY_RESTRICT text, size_t text_len)
+{
+    return HWY_DYNAMIC_DISPATCH(HtmlEscapeExtraLen16Impl)(text, text_len);
 }
 
 size_t highway_index_of_interesting_character_in_string_literal(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t quote)
@@ -1637,6 +2091,26 @@ size_t highway_first_non_ascii8(const uint8_t* HWY_RESTRICT input, size_t len)
 size_t highway_copy_ascii_prefix(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
 {
     return HWY_DYNAMIC_DISPATCH(CopyAsciiPrefixImpl)(src, len, dst);
+}
+
+size_t highway_index_of_first_ascii_upper(const uint8_t* HWY_RESTRICT input, size_t len)
+{
+    return HWY_DYNAMIC_DISPATCH(IndexOfFirstAsciiUpperImpl)(input, len);
+}
+
+void highway_lower_ascii(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
+{
+    HWY_DYNAMIC_DISPATCH(LowerAsciiImpl)(src, len, dst);
+}
+
+size_t highway_index_of_first_ascii_upper16(const uint16_t* HWY_RESTRICT input, size_t len)
+{
+    return HWY_DYNAMIC_DISPATCH(IndexOfFirstAsciiUpper16Impl)(input, len);
+}
+
+void highway_lower_ascii16(const uint16_t* HWY_RESTRICT src, size_t len, uint16_t* HWY_RESTRICT dst)
+{
+    HWY_DYNAMIC_DISPATCH(LowerAscii16Impl)(src, len, dst);
 }
 
 void highway_encode_hex_lower(const uint8_t* HWY_RESTRICT input, size_t len, uint8_t* HWY_RESTRICT output)

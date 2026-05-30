@@ -83,7 +83,7 @@ pub extern "C" fn blob_store_array_buffer_deallocator(_bytes: *mut c_void, ctx: 
 /// string. Stricter than `is_all_ascii`: also rejects control characters such
 /// as CR/LF, which would otherwise be stored in `content_type` and written
 /// verbatim into outgoing HTTP headers.
-fn is_valid_blob_type(slice: &[u8]) -> bool {
+pub(crate) fn is_valid_blob_type(slice: &[u8]) -> bool {
     slice.iter().all(|&c| matches!(c, 0x20..=0x7E))
 }
 
@@ -113,9 +113,7 @@ pub type Ref = bun_ptr::ExternalShared<Blob>;
 /// 2: Added byte for whether it's a dom file, length and bytes for `stored_name`,
 ///    and f64 for `last_modified`.
 /// 3: Added File name serialization for File objects (when is_jsdom_file is true)
-/// 4: Added u64 slice size immediately after `offset`, so `blob.slice(a, b)` deserializes
-///    with the correct length instead of `[offset, store_end]`.
-const SERIALIZATION_VERSION: u8 = 4;
+const SERIALIZATION_VERSION: u8 = 3;
 
 pub use bun_jsc::generated::JSBlob as js;
 
@@ -726,9 +724,18 @@ impl BlobExt for Blob {
         &self,
         writer: &mut W,
     ) -> Result<(), bun_core::Error> {
+        let is_memory_backed = if let Some(store) = self.store.get() {
+            matches!(store.data, store::Data::Bytes(_))
+        } else {
+            false
+        };
+
         writer.write_int_le::<u8>(SERIALIZATION_VERSION)?;
-        writer.write_int_le::<u64>(self.offset.get())?;
-        writer.write_int_le::<u64>(self.size.get())?;
+        writer.write_int_le::<u64>(if is_memory_backed {
+            0
+        } else {
+            self.offset.get()
+        })?;
 
         let ct = self.content_type_slice();
         writer.write_int_le::<u32>(ct.len() as u32)?;
@@ -748,7 +755,18 @@ impl BlobExt for Blob {
         writer.write_int_le::<u8>(store_tag as u8)?;
 
         if let Some(store) = self.store.get() {
-            store.serialize(writer)?;
+            if let store::Data::Bytes(bytes) = &store.data {
+                let view = self.shared_view();
+                writer.write_int_le::<u32>(view.len() as u32)?;
+                writer.write_all(view)?;
+
+                let stored_name = bytes.stored_name.slice();
+                writer.write_int_le::<u32>(stored_name.len() as u32)?;
+                writer.write_all(stored_name)?;
+            } else {
+                self.resolve_size();
+                store.serialize(writer)?;
+            }
         }
 
         writer.write_int_le::<u8>(self.is_jsdom_file.get() as u8)?;
@@ -2712,7 +2730,7 @@ impl BlobExt for Blob {
         if bom == Some(strings::BOM::Utf16Le) {
             let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
             // Mirrors Zig `bun.reinterpretSlice(u16, buf)`: drop a trailing odd byte
-            // (`@divTrunc`) so `bytemuck::cast_slice` cannot panic on slop.
+            // (`@divTrunc`).
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
             //
             // ZIG PARITY: this branch intentionally does NOT `self.detach()` for
@@ -2720,8 +2738,18 @@ impl BlobExt for Blob {
             // returns without detaching, unlike `toJSONWithBytes`. Any change to
             // that asymmetry belongs upstream in the Zig source, not here.
             let buf = &buf[..buf.len() & !1];
-            let out =
-                OwnedString::new(BunString::clone_utf16(bytemuck::cast_slice::<u8, u16>(buf)));
+            let out = match bytemuck::try_cast_slice::<u8, u16>(buf) {
+                Ok(units) => OwnedString::new(BunString::clone_utf16(units)),
+                Err(_) => {
+                    let units: Vec<u16> = buf
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|pair| u16::from_le_bytes(*pair))
+                        .collect();
+                    OwnedString::new(BunString::clone_utf16(&units))
+                }
+            };
             return out.to_js(global);
         }
 
@@ -2937,11 +2965,21 @@ impl BlobExt for Blob {
 
         if bom == Some(strings::BOM::Utf16Le) {
             // Mirrors Zig `bun.reinterpretSlice(u16, buf)`: drop a trailing odd byte
-            // (`@divTrunc`) so `bytemuck::cast_slice` cannot panic on slop.
+            // (`@divTrunc`).
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
             let buf = &buf[..buf.len() & !1];
-            let mut out =
-                OwnedString::new(BunString::clone_utf16(bytemuck::cast_slice::<u8, u16>(buf)));
+            let mut out = match bytemuck::try_cast_slice::<u8, u16>(buf) {
+                Ok(units) => OwnedString::new(BunString::clone_utf16(units)),
+                Err(_) => {
+                    let units: Vec<u16> = buf
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|pair| u16::from_le_bytes(*pair))
+                        .collect();
+                    OwnedString::new(BunString::clone_utf16(&units))
+                }
+            };
             // PORT NOTE: Zig used `defer { free; detach }`. Reshaped to compute the
             // result first, then perform the deferred work explicitly — capturing
             // `&mut self` in a scopeguard closure conflicts with later uses below.
@@ -3572,13 +3610,22 @@ impl BlobExt for Blob {
                                         // or resizes this buffer before `done()`.
                                         joiner.push_cloned(buf.byte_slice());
                                     } else {
-                                        joiner.push_static(buf.byte_slice());
+                                        // SAFETY: the prescan above proved no remaining
+                                        // part can run user JS, so this buffer (rooted
+                                        // via `_keep`/`arg`) stays attached and valid
+                                        // until `joiner.done()` below.
+                                        joiner.push(unsafe {
+                                            bun_ptr::detach_lifetime(buf.byte_slice())
+                                        });
                                     }
                                     continue;
                                 }
                                 jsc::JSType::Array | jsc::JSType::DerivedArray => {
-                                    could_have_non_ascii = true;
-                                    break;
+                                    let sliced = item.to_slice_clone(global)?;
+                                    could_have_non_ascii =
+                                        could_have_non_ascii || sliced.is_allocated();
+                                    joiner.push_cloned(sliced.slice());
+                                    continue;
                                 }
                                 jsc::JSType::DOMWrapper => {
                                     if let Some(blob) = item.as_class_ref::<Blob>() {
@@ -3589,22 +3636,31 @@ impl BlobExt for Blob {
                                         if parts_can_run_js {
                                             joiner.push_cloned(blob.shared_view());
                                         } else {
-                                            joiner.push_static(blob.shared_view());
+                                            // SAFETY: the prescan above proved no
+                                            // remaining part can run user JS, so this
+                                            // Blob (rooted via `_keep`/`arg`) keeps its
+                                            // Store alive until `joiner.done()` below.
+                                            joiner.push(unsafe {
+                                                bun_ptr::detach_lifetime(blob.shared_view())
+                                            });
                                         }
                                         continue;
                                     } else {
-                                        let sliced = current.to_slice_clone(global)?;
+                                        let sliced = item.to_slice_clone(global)?;
                                         could_have_non_ascii =
                                             could_have_non_ascii || sliced.is_allocated();
                                         joiner.push_cloned(sliced.slice());
+                                        continue;
                                     }
                                 }
-                                _ => {}
+                                _ => {
+                                    let sliced = item.to_slice_clone(global)?;
+                                    could_have_non_ascii =
+                                        could_have_non_ascii || sliced.is_allocated();
+                                    joiner.push_cloned(sliced.slice());
+                                }
                             }
                         }
-
-                        // `reserve(iter.len)` above guarantees no realloc here.
-                        stack.push(item);
                     }
                 }
 
@@ -3638,7 +3694,11 @@ impl BlobExt for Blob {
                 | jsc::JSType::BigUint64Array
                 | jsc::JSType::DataView => {
                     let buf = current.as_array_buffer(global).unwrap();
-                    joiner.push_static(buf.slice());
+                    // SAFETY: this arm is only reached when the typed array is the
+                    // top-level value (the walk stack is empty), so no user JS runs
+                    // between this push and `joiner.done()` below; `_keep`/`arg` keeps
+                    // the buffer alive for that span.
+                    joiner.push(unsafe { bun_ptr::detach_lifetime(buf.slice()) });
                     could_have_non_ascii = true;
                 }
 
@@ -3929,7 +3989,7 @@ where
 /// `*jsc.JSGlobalObject`), so they are stored as plain references rather than
 /// raw pointers.
 struct FormDataContext<'a> {
-    joiner: StringJoiner,
+    joiner: StringJoiner<'a>,
     boundary: &'a [u8], // borrowed; outlives the joiner
     failed: bool,
     global_this: &'a JSGlobalObject,
@@ -3962,7 +4022,7 @@ impl FormDataContext<'_> {
     /// (Zig: `joiner.push(slice, slice.allocator.get())`); an owned slice
     /// (UTF-16 / non-ASCII Latin-1 conversion) transfers its allocation to the
     /// joiner. When `escape` is set, `"`/CR/LF are percent-encoded into a copy.
-    fn push_string_slice(joiner: &mut StringJoiner, slice: ZigStringSlice, escape: bool) {
+    fn push_string_slice(joiner: &mut StringJoiner<'_>, slice: ZigStringSlice, escape: bool) {
         if escape {
             if let Some(escaped) = escape_form_data_name(slice.slice()) {
                 joiner.push_owned(escaped);
@@ -3973,7 +4033,9 @@ impl FormDataContext<'_> {
             // `into_vec` moves the buffer out of an `Owned` slice without copying.
             joiner.push_owned(slice.into_vec().into_boxed_slice());
         } else if matches!(slice, ZigStringSlice::Static(..)) {
-            joiner.push_static(slice.slice());
+            // SAFETY: `Static` bytes are owned by the `DOMFormData` being serialized
+            // (never freed), which outlives `joiner.done()` in `from_dom_form_data`.
+            joiner.push(unsafe { bun_ptr::detach_lifetime(slice.slice()) });
         } else {
             // WTF-backed slices release their pin on drop — copy rather than
             // borrow past it. (`ZigString::to_slice` never produces these.)
@@ -4019,7 +4081,10 @@ impl FormDataContext<'_> {
                     b"application/octet-stream"
                 };
                 joiner.push_static(b"Content-Type: ");
-                joiner.push_static(content_type);
+                // SAFETY: either a `'static` literal or borrowed from the entry's Blob,
+                // which the `DOMFormData` keeps alive past `joiner.done()` in
+                // `from_dom_form_data`.
+                joiner.push(unsafe { bun_ptr::detach_lifetime(content_type) });
                 joiner.push_static(b"\r\n\r\n");
 
                 if blob.store.get().is_some() {
@@ -4071,10 +4136,10 @@ impl FormDataContext<'_> {
                             }
                         }
                         store::Data::Bytes(_) => {
-                            // Borrowed: the blob's store is kept alive by the
-                            // `DOMFormData` entry until after `joiner.done()`
-                            // (Zig used `pushStatic` here too).
-                            joiner.push_static(blob.shared_view());
+                            // SAFETY: borrowed from the blob's store, which the
+                            // `DOMFormData` entry keeps alive until after
+                            // `joiner.done()` (Zig used `pushStatic` here too).
+                            joiner.push(unsafe { bun_ptr::detach_lifetime(blob.shared_view()) });
                         }
                     }
                 }
@@ -4137,6 +4202,9 @@ fn read_slice<B: AsRef<[u8]>>(
     reader: &mut bun_io::FixedBufferStream<B>,
     len: usize,
 ) -> Result<Vec<u8>, bun_core::Error> {
+    if len > reader.buffer.as_ref().len().saturating_sub(reader.pos) {
+        return Err(bun_core::err!("TooSmall"));
+    }
     let mut slice = vec![0u8; len];
     reader
         .read_exact(&mut slice)
@@ -4150,11 +4218,6 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
 ) -> Result<JSValue, bun_core::Error> {
     let version = reader.read_int_le::<u8>()?;
     let offset = reader.read_int_le::<u64>()?;
-    let serialized_size: Option<u64> = if version >= 4 {
-        Some(reader.read_int_le::<u64>()?)
-    } else {
-        None
-    };
 
     let content_type_len = reader.read_int_le::<u32>()?;
     let mut content_type = read_slice(reader, content_type_len as usize)?;
@@ -4289,11 +4352,8 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
         let store_size = store.size();
         if store_size != MAX_SIZE {
             blob.offset.set(blob.offset.get().min(store_size));
-            let available = store_size - blob.offset.get();
-            // v4+ payloads carry the slice length on the wire; older payloads
-            // don't, so fall back to the store-derived size (pre-v4 behavior).
-            let requested: SizeType = serialized_size.unwrap_or_else(|| blob.size.get());
-            blob.size.set(requested.min(available));
+            blob.size
+                .set(blob.size.get().min(store_size - blob.offset.get()));
         }
     } else {
         blob.offset.set(0);

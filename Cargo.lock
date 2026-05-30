@@ -815,7 +815,7 @@ dependencies = [
 name = "bun_hash"
 version = "0.0.0"
 dependencies = [
- "twox-hash",
+ "bun_highway",
 ]
 
 [[package]]
@@ -1631,6 +1631,7 @@ dependencies = [
  "bun_url",
  "bun_watcher",
  "bun_wyhash",
+ "bun_zstd",
  "const_format",
  "enum-map",
  "enumset",
@@ -1699,6 +1700,7 @@ dependencies = [
  "bun_event_loop",
  "bun_glob",
  "bun_hash",
+ "bun_highway",
  "bun_http",
  "bun_http_jsc",
  "bun_http_types",
@@ -3545,12 +3547,6 @@ dependencies = [
  "serde",
  "serde_json",
 ]
-
-[[package]]
-name = "twox-hash"
-version = "2.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ea3136b675547379c4bd395ca6b938e5ad3c3d20fad76e7fe85f9e0d011419c"
 
 [[package]]
 name = "typed-arena"

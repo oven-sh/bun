@@ -14,6 +14,7 @@
 import { join } from "node:path";
 import { bunExeName, type Config } from "./config.ts";
 import { quote, slash } from "./shell.ts";
+import { ucrtServicingLibDir } from "./winsysroot.ts";
 
 export type FlagValue = string | string[] | ((cfg: Config) => string | string[]);
 
@@ -935,6 +936,16 @@ export const linkerFlags: Flag[] = [
     desc: "Target machine type for lld-link (required on arm64; x64 hosts default correctly but explicit is harmless)",
   },
   {
+    // Serviced UCRT overlay: an explicit /libpath: is searched before the
+    // /winsysroot-derived paths, so its libucrt.lib/ucrt.lib win over the
+    // splat's stale copies (see UCRT_SERVICING_VERSION in winsysroot.ts —
+    // the VS-manifest payload xwin downloads carries an ancient arm64 UCRT
+    // with broken printf formatting).
+    flag: c => quote(`/libpath:${ucrtServicingLibDir(c)!}`, false),
+    when: c => c.windows && c.host.os !== "windows",
+    desc: "Windows cross-compile: serviced Universal CRT static libs (SDK NuGet) override the splat's",
+  },
+  {
     // Windows cross-compile: these ldflags go after /link, straight to
     // lld-link, which doesn't see the compile-side `/winsysroot` from
     // globalFlags — repeat it in lld-link's own spelling so the MSVC CRT
@@ -943,6 +954,18 @@ export const linkerFlags: Flag[] = [
     flag: c => quote(`/winsysroot:${c.winsysroot!}`, false),
     when: c => c.windows && c.winsysroot !== undefined,
     desc: "Windows cross-compile: MSVC CRT + Windows SDK library search root (xwin splat)",
+  },
+  {
+    // BoringSSL's allocator hooks (defined in src/boringssl/lib.rs, routing
+    // OPENSSL_malloc to mimalloc) are referenced by BoringSSL only as COFF
+    // weak externals, which never pull the defining archive member on their
+    // own — so on Windows the hooks silently stayed unbound and every
+    // BoringSSL allocation (TLS handshakes, parsed certificates) landed on
+    // the CRT's NT heap instead of mimalloc. Force the symbols in so the
+    // weak externals bind, like they already do on ELF/Mach-O.
+    flag: ["/INCLUDE:OPENSSL_memory_alloc", "/INCLUDE:OPENSSL_memory_free", "/INCLUDE:OPENSSL_memory_get_size"],
+    when: c => c.windows,
+    desc: "Bind BoringSSL's mimalloc-backed allocator hooks (COFF weak externals don't pull archive members)",
   },
   {
     flag: ["/STACK:0x1200000,0x200000", "/errorlimit:0"],

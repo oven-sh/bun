@@ -287,10 +287,12 @@ impl History {
             content.push(b'\n');
         }
 
-        let file = match sys::open_a(path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o644) {
+        let file = match sys::open_a(path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o600) {
             sys::Result::Ok(fd) => sys::File::from_fd(fd),
             sys::Result::Err(_) => return,
         };
+        #[cfg(unix)]
+        let _ = sys::fchmod(file.fd(), 0o600);
         match file.write_all(&content) {
             sys::Result::Ok(()) => {}
             sys::Result::Err(_) => return,

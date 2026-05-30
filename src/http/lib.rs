@@ -211,6 +211,7 @@ pub struct Flags {
     /// Set after the first H3 retry so a stale-session/GOAWAY race retries
     /// once on a fresh connection but never loops.
     pub h3_retried: bool,
+    pub is_node_http_client: bool,
 }
 
 impl Default for Flags {
@@ -233,6 +234,7 @@ impl Default for Flags {
             force_http1: false,
             force_http3: false,
             h3_retried: false,
+            is_node_http_client: false,
         }
     }
 }
@@ -768,7 +770,7 @@ use core::ffi::c_uint;
 
 use bstr::BStr;
 use bun_boringssl as boringssl;
-use bun_collections::ArrayHashMap;
+use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::StringBuilder;
 use bun_core::{FeatureFlags, Global, Output, err};
 use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, immutable as strings};
@@ -1717,7 +1719,18 @@ impl<'a> HTTPClient<'a> {
         ) {
             return false;
         }
+        if self.has_tls_options_unsupported_by_h3() {
+            return false;
+        }
         h3_alt_svc_enabled()
+    }
+
+    fn has_tls_options_unsupported_by_h3(&self) -> bool {
+        self.signals.get(signals::Field::CertErrors)
+            || self
+                .tls_props
+                .as_ref()
+                .is_some_and(|tls| tls.get().requires_custom_request_ctx)
     }
 
     pub fn first_call<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
@@ -2165,6 +2178,9 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name()) => {
+                    if !self.flags.is_streaming_request_body {
+                        continue;
+                    }
                     // We don't want to override chunked encoding header if it was set by the user
                     if will_append {
                         add_transfer_encoding = false;
@@ -2246,7 +2262,10 @@ impl<'a> HTTPClient<'a> {
                     picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, value);
                 header_count += 1;
             }
-        } else if let Some(content_length) = original_content_length {
+        } else if let Some(content_length) = original_content_length
+            && (self.flags.is_node_http_client
+                || matches!(bun_core::parse_unsigned::<usize>(content_length, 10), Ok(0)))
+        {
             request_headers_buf[header_count] =
                 picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, content_length);
             header_count += 1;
@@ -2500,6 +2519,11 @@ impl<'a> HTTPClient<'a> {
                 return;
             }
             if self.http_proxy.is_some() || self.unix_socket_path.slice().len() > 0 {
+                self.fail(err!(HTTP3Unsupported));
+                self.complete_connecting_process();
+                return;
+            }
+            if self.has_tls_options_unsupported_by_h3() {
                 self.fail(err!(HTTP3Unsupported));
                 self.complete_connecting_process();
                 return;
@@ -3164,7 +3188,7 @@ impl<'a> HTTPClient<'a> {
             // if less than 16 it will always be a ShortRead
             if to_read!().len() < 16 {
                 bun_core::scoped_log!(fetch, "handleShortRead");
-                self.handle_short_read::<IS_SSL>(incoming_data, socket, needs_move);
+                self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
                 return;
             }
 
@@ -3187,7 +3211,7 @@ impl<'a> HTTPClient<'a> {
                         self.close_and_fail::<IS_SSL>(err!(ResponseHeadersTooLarge), socket);
                         return;
                     }
-                    self.handle_short_read::<IS_SSL>(incoming_data, socket, needs_move);
+                    self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
                     return;
                 }
                 Err(e) => {
@@ -3229,6 +3253,13 @@ impl<'a> HTTPClient<'a> {
                 bun_core::scoped_log!(fetch, "information headers");
 
                 self.state.pending_response = None;
+                if !needs_move {
+                    let remaining = to_read!().len();
+                    let buffer = &mut self.state.response_message_buffer.list;
+                    let consumed = buffer.len().saturating_sub(remaining);
+                    buffer.drain_front(consumed);
+                    to_read = bun_ptr::RawSlice::new(buffer.as_slice());
+                }
                 if to_read!().is_empty() {
                     // we only received 1XX responses, we wanna wait for the next status code
                     return;
@@ -4026,6 +4057,11 @@ impl<'a> HTTPClient<'a> {
     ) -> Result<bool, bun_core::Error> {
         debug_assert!(self.state.transfer_encoding == Encoding::Identity);
         let content_length = self.state.content_length;
+        if let Some(len) = content_length
+            && incoming_data.len() > len.saturating_sub(self.state.total_body_received)
+        {
+            self.state.flags.allow_keepalive = false;
+        }
         // is it exactly as much as we need?
         if is_only_buffer
             && let Some(len) = content_length

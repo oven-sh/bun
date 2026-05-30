@@ -98,7 +98,9 @@ impl<'a> Row<'a> {
                     ..SQLDataCell::default()
                 };
             }
-            MYSQL_TYPE_TINY | MYSQL_TYPE_SHORT => {
+            // YEAR arrives as a bare ASCII integer in the text protocol; parse it
+            // like SHORT so `.simple()` returns the same JS number as the binary path.
+            MYSQL_TYPE_TINY | MYSQL_TYPE_SHORT | MYSQL_TYPE_YEAR => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
                     let val: u16 = parse_int::<u16>(value.slice(), 10).unwrap_or(0);
                     *cell = SQLDataCell {
@@ -244,6 +246,21 @@ impl<'a> Row<'a> {
                 *cell = SQLDataCell {
                     tag: Tag::Date,
                     value: Value { date },
+                    ..SQLDataCell::default()
+                };
+            }
+            // NEWDECIMAL is always sent as an ASCII decimal string regardless of the
+            // column's BINARY flag / charset. Computed decimals (SUM/AVG/arithmetic/CAST)
+            // carry the BINARY flag and charset 63, so the catch-all arm's binary-charset
+            // heuristic would wrongly return them as a Buffer.
+            MYSQL_TYPE_NEWDECIMAL => {
+                let slice = value.slice();
+                *cell = SQLDataCell {
+                    tag: Tag::String,
+                    value: Value {
+                        string: clone_wtf_string_or_null(slice),
+                    },
+                    free_value: 1,
                     ..SQLDataCell::default()
                 };
             }

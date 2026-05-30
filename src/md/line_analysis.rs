@@ -637,6 +637,12 @@ impl Parser<'_> {
             }
 
             col_count += 1;
+            if col_count > types::TABLE_MAXCOLCOUNT {
+                return TableUnderlineResult {
+                    is_underline: false,
+                    col_count: 0,
+                };
+            }
 
             // Skip whitespace
             while pos < self.size && helpers::is_blank(ch(self.text, pos)) {

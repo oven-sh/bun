@@ -2,8 +2,8 @@
 
 // REFACTOR_BUN_AST: this module holds only the data-shaped pieces of
 // `runtime.zig` that the AST crate (and `bun_js_printer::Options`) need:
-// `Runtime::source_code`, `Imports`, `ReplaceableExport*`, `ServerComponentsMode`,
-// `Names`. The `Features` struct (carries `&mut RuntimeTranspilerCache`) and
+// `Runtime::source_code`, `Imports`, `ReplaceableExport*`, `ServerComponentsMode`.
+// The `Features` struct (carries `&mut RuntimeTranspilerCache`) and
 // `Fallback` HTML rendering (needs `bun_options_types::schema`, `bun_io`,
 // `bun_base64`) live in `bun_js_parser::parser::Runtime` to avoid the
 // `bun_options_types → bun_ast → bun_options_types` cycle.
@@ -139,14 +139,6 @@ impl ServerComponentsMode {
     }
 }
 
-// ─────────────────────────── Runtime.Names ───────────────────────────
-
-#[derive(Default, Clone, Copy)]
-pub struct Names;
-impl Names {
-    pub const ACTIVATE_FUNCTION: &'static [u8] = b"activate";
-}
-
 // ─────────────────────────── Runtime.Imports ───────────────────────────
 
 // If you change this, remember to update "runtime.js"
@@ -274,7 +266,6 @@ impl Imports {
     ];
 
     pub const NAME: &'static [u8] = b"bun:wrap";
-    pub const ALT_NAME: &'static [u8] = b"bun:wrap";
 
     /// Index → field. Expansion of Zig `@field(this, all[i])`.
     #[inline]

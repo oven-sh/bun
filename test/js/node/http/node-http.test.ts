@@ -913,6 +913,47 @@ describe("node:http", () => {
   });
 
   describe("get", () => {
+    it("treats host option containing URL delimiter characters as an unresolvable hostname", async () => {
+      let requestCount = 0;
+      const server = createServer((req, res) => {
+        requestCount++;
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end("ok");
+      });
+      try {
+        const url = await listen(server);
+
+        // The literal host option string is the DNS/connect target (Node.js semantics).
+        // Characters like "/" and "?" must not allow the value to be re-interpreted as a
+        // URL whose host points at a different server; the only acceptable outcome is a
+        // lookup failure with no request ever being sent.
+        const confusedHost = `127.0.0.1:${url.port}/?.invalid.example`;
+        const { promise, resolve, reject } = Promise.withResolvers();
+        const req = get({ host: confusedHost, path: "/info", auth: "svc:secret" }, res => {
+          res.resume();
+          reject(new Error(`request unexpectedly completed with status ${res.statusCode}`));
+        });
+        req.on("error", resolve);
+        const err: any = await promise;
+        expect(err.code).toBe("ENOTFOUND");
+        expect(err.hostname).toBe(confusedHost);
+        expect(requestCount).toBe(0);
+
+        // A plain host + port still works.
+        const { promise: okPromise, resolve: resolveOk, reject: rejectOk } = Promise.withResolvers();
+        get({ host: "127.0.0.1", port: url.port, path: "/info" }, res => {
+          let data = "";
+          res.setEncoding("utf8");
+          res.on("data", chunk => (data += chunk));
+          res.on("end", () => resolveOk({ statusCode: res.statusCode, data }));
+        }).on("error", rejectOk);
+        expect(await okPromise).toEqual({ statusCode: 200, data: "ok" });
+        expect(requestCount).toBe(1);
+      } finally {
+        server.close();
+      }
+    });
+
     it("should make a standard GET request, like request", async done => {
       const server = createServer((req, res) => {
         res.writeHead(200, { "Content-Type": "text/plain" });
@@ -2036,3 +2077,52 @@ it("client request path that does not begin with a slash stays on the configured
   expect(stdout).toContain("OK");
   expect(exitCode).toBe(0);
 }, 15_000);
+
+it("http.request rejects an options.port that is not a valid port number", async () => {
+  // options.port must be an integer in the range 0-65535 (Node.js throws
+  // ERR_SOCKET_BAD_PORT for anything else). Bun builds the request target as
+  // `${protocol}//${host}:${port}${path}`, so an arbitrary string port such as
+  // "80@other-host/" must be rejected up front instead of being parsed as part
+  // of the URL authority, which would change the host the request is sent to.
+  const getError = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (err) {
+      return err as NodeJS.ErrnoException;
+    }
+    return undefined;
+  };
+
+  for (const badPort of ["80@169.254.169.254/latest/meta-data/?", "1234abc", -1, 65536]) {
+    const err = getError(() => http.request({ host: "127.0.0.1", port: badPort, path: "/" }));
+    expect(err?.code).toBe("ERR_SOCKET_BAD_PORT");
+  }
+
+  const typeErr = getError(() => http.request({ host: "127.0.0.1", port: {} as any, path: "/" }));
+  expect(typeErr?.code).toBe("ERR_INVALID_ARG_TYPE");
+
+  // A valid port keeps working, including when passed as a numeric string.
+  const server = createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("ok " + req.url);
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const body = await new Promise<string>((resolve, reject) => {
+      const req = http.request({ host: "127.0.0.1", port: String(port), path: "/hello" }, res => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", chunk => (data += chunk));
+        res.on("end", () => resolve(data));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+    expect(body).toBe("ok /hello");
+  } finally {
+    server.close();
+  }
+});

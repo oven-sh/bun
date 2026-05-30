@@ -1033,8 +1033,22 @@ impl FSWatcher {
         // SAFETY: `FileSystem::instance()` returns the process-global singleton
         // initialized at startup; never null once init has run.
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
-        let file_path: &bun_core::ZStr =
-            Path::join_abs_string_buf_z::<platform::Auto>(cwd, &mut joined_buf[..], &[slice]);
+        let joined_buf_len = joined_buf.len();
+        let Some(joined) = Path::join_abs_string_buf_checked::<platform::Auto>(
+            cwd,
+            &mut joined_buf[..joined_buf_len - 1],
+            &[slice],
+        ) else {
+            return Err(bun_sys::Error {
+                errno: SystemErrno::ENAMETOOLONG as _,
+                syscall: bun_sys::Tag::watch,
+                path: args.path.slice().into(),
+                ..Default::default()
+            });
+        };
+        let joined_len = joined.len();
+        joined_buf[joined_len] = 0;
+        let file_path: &bun_core::ZStr = bun_core::ZStr::from_buf(&joined_buf[..], joined_len);
 
         let vm = args.global_this.bun_vm_ptr();
         // `bun_vm()` is the audited safe `&'static VirtualMachine` accessor —

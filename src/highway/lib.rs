@@ -62,6 +62,16 @@ unsafe extern "C" {
     fn highway_decode_hex8(input: *const u8, output: *mut u8, out_len: usize) -> usize;
 
     fn highway_decode_hex16(input: *const u16, output: *mut u8, out_len: usize) -> usize;
+
+    fn highway_xxhash3_64(input: *const u8, len: usize, seed: u64) -> u64;
+
+    fn highway_xxhash32(input: *const u8, len: usize, seed: u32) -> u32;
+
+    fn highway_xxhash64(input: *const u8, len: usize, seed: u64) -> u64;
+
+    fn highway_xxhash64_reset(state: *mut u8, seed: u64);
+    fn highway_xxhash64_update(state: *mut u8, input: *const u8, len: usize);
+    fn highway_xxhash64_digest(state: *const u8) -> u64;
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -453,6 +463,81 @@ pub fn index_of_space_or_newline_or_non_ascii(haystack: &[u8]) -> Option<usize> 
     }
 
     Some(result)
+}
+
+/// XxHash3 (`XXH3_64bits_withSeed`), runtime-dispatched to the widest SIMD ISA
+/// the CPU supports. Output is bit-identical to the xxHash reference for every
+/// input — only the long-input stripe loop is vectorized and its per-64-bit-
+/// lane math does not depend on vector width.
+///
+/// `seed` is the full 64-bit seed. Callers wanting the JS `@truncate(seed)`
+/// semantics must truncate before calling (as `HashObject` does).
+#[inline(always)]
+pub fn xxhash3_64(seed: u64, input: &[u8]) -> u64 {
+    // SAFETY: `input.ptr/len` are a valid readable range; for an empty slice
+    // the kernel takes the `len == 0` branch and never dereferences the
+    // pointer. The kernel only reads `input` and writes nothing through it.
+    unsafe { highway_xxhash3_64(input.as_ptr(), input.len(), seed) }
+}
+
+/// XxHash32 one-shot. Bit-identical to the xxHash reference / Zig
+/// `std.hash.XxHash32`. Scalar (XXH32 has no SIMD form); lives in the same C++
+/// TU as the XXH3 kernel.
+#[inline(always)]
+pub fn xxhash32(seed: u32, input: &[u8]) -> u32 {
+    // SAFETY: `input.ptr/len` are a valid readable range; read-only, and the
+    // pointer is never dereferenced when `len == 0`.
+    unsafe { highway_xxhash32(input.as_ptr(), input.len(), seed) }
+}
+
+/// XxHash64 one-shot. Bit-identical to the xxHash reference / Zig
+/// `std.hash.XxHash64`.
+#[inline(always)]
+pub fn xxhash64(seed: u64, input: &[u8]) -> u64 {
+    // SAFETY: `input.ptr/len` are a valid readable range; read-only, and the
+    // pointer is never dereferenced when `len == 0`.
+    unsafe { highway_xxhash64(input.as_ptr(), input.len(), seed) }
+}
+
+/// Streaming XxHash64 state. Mirrors the C++ `XXH64State` POD (80 bytes,
+/// 8-aligned; a compile-time `static_assert` on the C++ side keeps them in
+/// sync). `reset` → any number of `update(chunk)` → `digest()`; the result
+/// equals `xxhash64` of the concatenation. Bit-identical to Zig
+/// `std.hash.XxHash64` streaming.
+#[repr(C, align(8))]
+pub struct XxHash64State {
+    // 10 u64 == 80 bytes. Opaque storage; only the C kernel interprets it.
+    _storage: [u64; 10],
+}
+
+impl XxHash64State {
+    #[inline(always)]
+    pub fn new(seed: u64) -> Self {
+        let mut state = Self { _storage: [0; 10] };
+        // SAFETY: `state` is exactly `sizeof(XXH64State)` bytes of writable,
+        // 8-aligned storage; the kernel only writes within it.
+        unsafe { highway_xxhash64_reset(state._storage.as_mut_ptr().cast(), seed) };
+        state
+    }
+
+    #[inline(always)]
+    pub fn update(&mut self, bytes: &[u8]) {
+        // SAFETY: `self._storage` is a valid XXH64State; `bytes.ptr/len` are a
+        // valid readable range (never dereferenced when empty).
+        unsafe {
+            highway_xxhash64_update(
+                self._storage.as_mut_ptr().cast(),
+                bytes.as_ptr(),
+                bytes.len(),
+            )
+        };
+    }
+
+    #[inline(always)]
+    pub fn digest(&self) -> u64 {
+        // SAFETY: `self._storage` is a valid XXH64State; digest only reads it.
+        unsafe { highway_xxhash64_digest(self._storage.as_ptr().cast()) }
+    }
 }
 
 // ported from: src/highway/highway.zig

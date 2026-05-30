@@ -2871,3 +2871,103 @@ test("redirect target buffer stays attached while a builtin command is running",
   await running;
   expect(stringifyBuffer(buffer)).toEqual("pin.txt\n");
 });
+
+test("stdin redirect from a Uint8Array sends the bytes captured when the command starts", async () => {
+  // `< ${buf}` snapshots the buffer's contents when the command starts and
+  // streams them to the child's stdin across multiple event-loop turns.
+  // Mutating or detaching the source buffer after the command has started
+  // must not change what the child receives.
+  const SIZE = 4 * 1024 * 1024;
+  const input = new Uint8Array(SIZE).fill(0x41); // "A"
+  const childCode = `
+    const bytes = new Uint8Array(await Bun.stdin.arrayBuffer());
+    let a = 0;
+    let other = 0;
+    for (const byte of bytes) {
+      if (byte === 0x41) a++;
+      else other++;
+    }
+    console.log(JSON.stringify({ total: bytes.length, a, other }));
+  `;
+
+  const promise = $`${BUN} -e ${childCode} < ${input}`.env(bunEnv).nothrow();
+  // Calling .then() starts the interpreter synchronously, so the stdin
+  // redirect has captured the buffer's contents while the child process is
+  // still starting up and has read at most a pipe-buffer's worth of data.
+  const running = promise.then(o => o);
+
+  // Overwrite every byte of the source buffer, then detach it. Neither may
+  // affect the bytes delivered to the child.
+  input.fill(0x42); // "B"
+  try {
+    input.buffer.transfer();
+  } catch {}
+
+  const result = await running;
+  expect(JSON.parse(result.stdout.toString())).toEqual({ total: SIZE, a: SIZE, other: 0 });
+  expect(result.exitCode).toBe(0);
+}, 60_000);
+
+test("output redirect buffer for an external command stays attached until the command finishes", async () => {
+  // `> ${buf}` for an external (non-builtin) command stores the buffer and
+  // copies the child's stdout into it as chunks arrive across event-loop
+  // turns. The backing store must therefore stay attached for the whole
+  // duration of the command so those writes land in memory the caller still
+  // owns. (The builtin equivalent of this test is directly above; this one
+  // spawns a real subprocess so it goes through the subprocess output path.)
+  const buffer = new Uint8Array(new ArrayBuffer(1 << 16));
+  const childCode = "console.log('external-redirect-output')";
+  const promise = $`${BUN} -e ${childCode} > ${buffer}`.env(bunEnv).nothrow();
+  // Calling .then() starts the interpreter synchronously, so the redirect
+  // slot already holds the buffer while the child process is still running.
+  const running = promise.then(o => o);
+
+  // Attempting to detach the redirect target while the command is in flight
+  // must leave the buffer attached (refusing the detach by throwing is also
+  // acceptable).
+  try {
+    buffer.buffer.transfer();
+  } catch {}
+  expect(buffer.buffer.detached).toBe(false);
+
+  const result = await running;
+  expect(stringifyBuffer(buffer)).toEqual("external-redirect-output\n");
+  expect(result.exitCode).toBe(0);
+});
+
+test("cd treats interpolated arguments starting with tilde or dash as literal directory names", async () => {
+  // A value that arrives via template interpolation is data, not shell
+  // syntax: `cd ${value}` must change into the directory literally named by
+  // the value, even when it begins with `~` or `-`, instead of being
+  // reinterpreted as "go to $HOME" or "go to the previous directory".
+  using dir = tempDir("cd-literal-arg", {
+    "~": { "marker.txt": "tilde-dir\n" },
+    "-p": { "marker.txt": "dash-dir\n" },
+  });
+  const cwd = String(dir).replaceAll("\\", "/");
+
+  // Interpolated value beginning with `~` is a literal relative path.
+  {
+    const { stdout, stderr, exitCode } = await $`cd ${"~"} && cat marker.txt`.cwd(cwd).quiet().nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe("tilde-dir\n");
+    expect(exitCode).toBe(0);
+  }
+
+  // Interpolated value beginning with `-` is a literal relative path.
+  {
+    const { stdout, stderr, exitCode } = await $`cd ${"-p"} && cat marker.txt`.cwd(cwd).quiet().nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe("dash-dir\n");
+    expect(exitCode).toBe(0);
+  }
+
+  // A nonexistent interpolated target reports an error naming that exact
+  // value rather than silently changing to some other directory.
+  {
+    const { stdout, stderr, exitCode } = await $`cd ${"~does-not-exist"} && cat marker.txt`.cwd(cwd).quiet().nothrow();
+    expect(stderr.toString()).toContain("~does-not-exist");
+    expect(stdout.toString()).toBe("");
+    expect(exitCode).toBe(1);
+  }
+});

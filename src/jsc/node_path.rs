@@ -113,6 +113,7 @@ impl Clone for PathLike {
                 // The clone borrows the JS-owned backing store; only the
                 // original (if any) owns the allocation.
                 owns_buffer: false,
+                pinned: false,
             }),
             Self::SliceWithUnderlyingString(s) => {
                 // `dupe_ref()` alone leaves `utf8` empty (lib.rs:1603) — a
@@ -140,9 +141,13 @@ impl Clone for PathLike {
 impl Drop for PathLike {
     fn drop(&mut self) {
         match self {
-            // `PathString` is a borrowed (ptr,len) pair; `MarkedArrayBuffer`
-            // is JS-GC-owned. Neither needs an explicit release here.
-            Self::String(_) | Self::Buffer(_) => {}
+            Self::String(_) => {}
+            Self::Buffer(b) => {
+                if b.pinned {
+                    b.pinned = false;
+                    b.buffer.unpin();
+                }
+            }
             Self::SliceWithUnderlyingString(s) | Self::ThreadsafeString(s) => {
                 core::mem::take(s).deinit();
             }

@@ -75,14 +75,21 @@ function resolveWindowsCross(partial: PartialConfig = {}, toolchain = mockToolch
 }
 
 describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)", () => {
-  test("ci release x64 cross builds default to ThinLTO with cross-language LTO", () => {
+  test("ci release x64 cross builds default to non-LTO; --lto=on opts into ThinLTO with cross-language LTO", () => {
     const cfg = resolveWindowsCross();
     expect(cfg.windows).toBe(true);
     expect(cfg.crossTarget).toBe("x86_64-pc-windows-msvc");
-    expect(cfg.lto).toBe(true);
+    // Not the default: LLVM's ThinLTO backends miscompile JSC on x86-64 at
+    // -O1+ (see the ltoDefault comment in config.ts).
+    expect(cfg.lto).toBe(false);
+    expect(cfg.crossLangLto).toBe(false);
+
+    // The toolchain support is still wired up behind --lto=on.
+    const opted = resolveWindowsCross({ lto: true });
+    expect(opted.lto).toBe(true);
     // Rust↔C++ inlining: rustc emits bitcode (-Clinker-plugin-lto) and the
     // final lld-link runs one ThinLTO graph across both halves.
-    expect(cfg.crossLangLto).toBe(true);
+    expect(opted.crossLangLto).toBe(true);
   });
 
   test("no -lto WebKit prebuilt exists for arm64 or baseline — LTO is forced off there", () => {
@@ -111,7 +118,7 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
   });
 
   test("compile flags use clang-cl ThinLTO without whole-program vtables", () => {
-    const flags = computeFlags(resolveWindowsCross());
+    const flags = computeFlags(resolveWindowsCross({ lto: true }));
     expect(flags.cxxflags).toContain("-flto=thin");
     expect(flags.cflags).toContain("-flto=thin");
     // Every summaried module must agree on EnableSplitLTOUnit; rustc's
@@ -144,7 +151,7 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
       "gcc-ld/lld-link": "",
     });
     const rustLld = join(String(dir), "gcc-ld", "ld.lld");
-    const cfg = resolveWindowsCross({}, mockToolchain({ rustLld, rustLlvmVersion: "22.1.4" }));
+    const cfg = resolveWindowsCross({ lto: true }, mockToolchain({ rustLld, rustLlvmVersion: "22.1.4" }));
     expect(cfg.ld).toBe(join(String(dir), "gcc-ld", "lld-link"));
     // Cargo-driven links (bun_shim_impl.exe) must NOT follow the swap: rustc
     // treats a linker inside its own gcc-ld/ as rust-lld and prepends
@@ -161,14 +168,14 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     // configure time instead of an opaque "Invalid record" at link time.
     using bare = tempDir("win-cross-rust-lld-bare", { "gcc-ld/ld.lld": "" });
     const bareCfg = resolveWindowsCross(
-      {},
+      { lto: true },
       mockToolchain({ rustLld: join(String(bare), "gcc-ld", "ld.lld"), rustLlvmVersion: "22.1.4" }),
     );
     expect(bareCfg.ld).toBe("/fake/llvm/bin/lld-link");
   });
 
   test("LTO selects the -lto WebKit prebuilt with a windows-keyed cache dir", () => {
-    const lto = webkit.source(resolveWindowsCross());
+    const lto = webkit.source(resolveWindowsCross({ lto: true }));
     if (lto.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${lto.kind}`);
     expect(lto.url).toContain("bun-webkit-windows-amd64-lto.tar.gz");
     expect(lto.destDir).toContain("-windows");

@@ -228,13 +228,6 @@ impl DirInfo {
         self.tsconfig_json.map(arena_ref)
     }
 
-    pub fn has_parent_package(&self) -> bool {
-        let Some(parent) = self.get_parent() else {
-            return false;
-        };
-        !parent.is_node_modules()
-    }
-
     pub fn get_file_descriptor(&self) -> Fd {
         if FeatureFlags::STORE_FILE_DESCRIPTORS {
             // Route through `entries_at` directly (returns `Option<&mut EntriesOption>`)

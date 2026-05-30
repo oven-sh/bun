@@ -2025,7 +2025,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             }
         }
     }
-    if package_name.is_empty() {
+    if package_name.is_empty() || has_unsafe_tarball_filename_part(package_name) {
         return Err(PackError::InvalidPackageName);
     }
 
@@ -2036,7 +2036,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     let mut package_version = package_version_expr
         .as_string_cloned(bump)?
         .ok_or(PackError::InvalidPackageVersion)?;
-    if package_version.is_empty() {
+    if package_version.is_empty() || has_unsafe_tarball_filename_part(package_version) {
         return Err(PackError::InvalidPackageVersion);
     }
 
@@ -2258,7 +2258,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         package_name = package_name_expr
             .as_string_cloned(bump)?
             .ok_or(PackError::InvalidPackageName)?;
-        if package_name.is_empty() {
+        if package_name.is_empty() || has_unsafe_tarball_filename_part(package_name) {
             return Err(PackError::InvalidPackageName);
         }
 
@@ -2269,7 +2269,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         package_version = package_version_expr
             .as_string_cloned(bump)?
             .ok_or(PackError::InvalidPackageVersion)?;
-        if package_version.is_empty() {
+        if package_version.is_empty() || has_unsafe_tarball_filename_part(package_version) {
             return Err(PackError::InvalidPackageVersion);
         }
     }
@@ -3046,6 +3046,18 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
 // ───────────────────────────────────────────────────────────────────────────
 // tarball name / destination
 // ───────────────────────────────────────────────────────────────────────────
+
+/// The output tarball filename is derived from the package.json `name` and
+/// `version` fields. Reject values that could steer the formed filename
+/// outside the destination directory (`.`/`..` path components, backslashes,
+/// drive/ADS colons, NUL); other unusual-but-harmless names (e.g. empty scope
+/// segments) keep packing as before.
+fn has_unsafe_tarball_filename_part(value: &[u8]) -> bool {
+    value
+        .split(|&c| c == b'/')
+        .any(|component| component == b"." || component == b"..")
+        || value.iter().any(|&c| matches!(c, b'\\' | b':' | 0))
+}
 
 fn tarball_destination<'a>(
     pack_destination: &[u8],

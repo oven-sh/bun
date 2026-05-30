@@ -2,6 +2,7 @@
 
 #include "root.h"
 #include "sqlite3.h"
+#include <wtf/Lock.h>
 
 #if !OS(WINDOWS)
 #include <dlfcn.h>
@@ -219,9 +220,11 @@ static const char* sqlite3_lib_path = "sqlite3";
 #endif
 
 static HMODULE sqlite3_handle = nullptr;
+static WTF::Lock sqlite3_handle_lock;
 
 static int lazyLoadSQLite()
 {
+    WTF::Locker locker { sqlite3_handle_lock };
     if (sqlite3_handle)
         return 0;
 #if OS(WINDOWS)

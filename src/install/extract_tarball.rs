@@ -25,6 +25,8 @@ use bun_sys::FdDirExt;
 // TODO(port): narrow error set
 type Error = bun_core::Error;
 
+const MAX_DECOMPRESSED_TARBALL_SIZE: usize = 2 * 1024 * 1024 * 1024;
+
 pub struct ExtractTarball {
     pub name: StringOrTinyString,
     pub resolution: Resolution,
@@ -241,13 +243,29 @@ impl ExtractTarball {
         // `open_dir_at_windows_a` boundary, not here.
         let mut tmpname_buf = PathBuffer::uninit();
         let (name, basename) = self.name_and_basename();
+        let truncated_basename = &basename[0..basename.len().min(32)];
+        let tmpname_suffix: &[u8] =
+            if bun_install::dependency::is_safe_install_folder_name(truncated_basename) {
+                truncated_basename
+            } else if self.resolution.tag.is_git()
+                || self.resolution.tag == ResolutionTag::LocalTarball
+            {
+                b"package"
+            } else {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "Refusing to install package with invalid name \"{}\"",
+                        bun_fmt::s(name),
+                    ),
+                );
+                return Err(bun_core::err!("InstallFailed"));
+            };
 
         let mut resolved: &'static [u8] = b"";
-        let tmpname = FileSystem::tmpname(
-            &basename[0..basename.len().min(32)],
-            &mut tmpname_buf.0,
-            bun_core::fast_random(),
-        )?;
+        let tmpname =
+            FileSystem::tmpname(tmpname_suffix, &mut tmpname_buf.0, bun_core::fast_random())?;
         {
             let extract_destination = match bun_sys::make_path::make_open_path(
                 tmpdir,
@@ -344,6 +362,7 @@ impl ExtractTarball {
                 zlib_pool.list.clear();
                 let mut zlib_entry =
                     Zlib::ZlibReaderArrayList::init(tgz_bytes, &mut zlib_pool.list)?;
+                zlib_entry.max_output_size = MAX_DECOMPRESSED_TARBALL_SIZE;
                 if let Err(err) = zlib_entry.read_all(true) {
                     log.add_error_fmt(
                         None,
@@ -830,7 +849,9 @@ impl ExtractTarball {
                 .unwrap_or(false)
             {
                 // create an index storing each version of a package installed
-                if strings::index_of_char(basename, b'/').is_none() {
+                if strings::index_of_char(basename, b'/').is_none()
+                    && bun_install::dependency::is_safe_install_folder_name(name)
+                {
                     'create_index: {
                         let dest_name: &[u8] = match self.resolution.tag {
                             ResolutionTag::Github => &folder_name[b"@GH@".len()..],

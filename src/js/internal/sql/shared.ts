@@ -860,8 +860,12 @@ function parseOptions(
     }
   }
 
+  // Explicit tls/ssl options request an encrypted connection: if the server
+  // declines TLS, the connection is aborted instead of continuing in plaintext.
+  // Certificate verification is only enabled when explicitly requested
+  // (ca, rejectUnauthorized, or a verify-* sslmode).
   if (tls && sslMode === SSLMode.disable) {
-    sslMode = SSLMode.prefer;
+    sslMode = SSLMode.require;
   }
 
   port = Number(port);

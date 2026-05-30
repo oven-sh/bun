@@ -299,6 +299,10 @@ impl bun_jsc::Unprotect for StringOrBuffer {
     #[inline]
     fn unprotect(&mut self) {
         if let Self::Buffer(buffer) = self {
+            if buffer.pinned {
+                buffer.pinned = false;
+                buffer.buffer.unpin();
+            }
             buffer.buffer.value.unprotect();
         }
     }
@@ -451,7 +455,12 @@ impl StringOrBuffer {
             | JSType::BigInt64Array
             | JSType::BigUint64Array
             | JSType::DataView => {
-                let buffer = Buffer::from_array_buffer(global, value);
+                let buffer = if is_async {
+                    Buffer::from_js_pinned(global, value)
+                        .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
+                } else {
+                    Buffer::from_array_buffer(global, value)
+                };
 
                 if is_async {
                     buffer.buffer.value.protect();
@@ -517,7 +526,12 @@ impl StringOrBuffer {
         allow_string_object: bool,
     ) -> JsResult<bool> {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
-            let buffer = Buffer::from_array_buffer(global, value);
+            let buffer = if is_async {
+                Buffer::from_js_pinned(global, value)
+                    .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
+            } else {
+                Buffer::from_array_buffer(global, value)
+            };
             if is_async {
                 buffer.buffer.value.protect();
             }
@@ -1202,18 +1216,42 @@ impl PathLikeExt for PathLike {
         use jsc::JSType;
         match arg.js_type() {
             JSType::Uint8Array | JSType::DataView => {
-                let buffer = Buffer::from_typed_array(ctx, arg);
-                Valid::path_buffer(&buffer, ctx)?;
-                Valid::path_null_bytes(buffer.slice(), ctx)?;
+                let mut buffer = if arguments.will_be_async {
+                    Buffer::from_js_pinned(ctx, arg)
+                        .unwrap_or_else(|| Buffer::from_typed_array(ctx, arg))
+                } else {
+                    Buffer::from_typed_array(ctx, arg)
+                };
+                if let Err(err) = Valid::path_buffer(&buffer, ctx)
+                    .and_then(|_| Valid::path_null_bytes(buffer.slice(), ctx))
+                {
+                    if buffer.pinned {
+                        buffer.pinned = false;
+                        buffer.buffer.unpin();
+                    }
+                    return Err(err);
+                }
 
                 arguments.protect_eat();
                 Ok(Some(Self::Buffer(buffer)))
             }
 
             JSType::ArrayBuffer => {
-                let buffer = Buffer::from_array_buffer(ctx, arg);
-                Valid::path_buffer(&buffer, ctx)?;
-                Valid::path_null_bytes(buffer.slice(), ctx)?;
+                let mut buffer = if arguments.will_be_async {
+                    Buffer::from_js_pinned(ctx, arg)
+                        .unwrap_or_else(|| Buffer::from_array_buffer(ctx, arg))
+                } else {
+                    Buffer::from_array_buffer(ctx, arg)
+                };
+                if let Err(err) = Valid::path_buffer(&buffer, ctx)
+                    .and_then(|_| Valid::path_null_bytes(buffer.slice(), ctx))
+                {
+                    if buffer.pinned {
+                        buffer.pinned = false;
+                        buffer.buffer.unpin();
+                    }
+                    return Err(err);
+                }
 
                 arguments.protect_eat();
                 Ok(Some(Self::Buffer(buffer)))

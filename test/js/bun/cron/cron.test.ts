@@ -1794,3 +1794,40 @@ describe("Bun.cron.parse", () => {
     expect(fromNumber.getTime()).toBe(fromDate.getTime());
   });
 });
+
+// macOS launchd plist generation (cron_to_calendar_interval). Driven directly
+// via the internal binding so the 256-interval cap is exercised on every
+// platform — the Bun.cron(...) path only reaches it on macOS (launchd), so the
+// `describe.skipIf(!hasLaunchctl)` suites above skip it on Linux/Windows CI.
+describe("calendar interval generation (launchd)", () => {
+  const { cronToCalendarIntervalForTesting } = require("bun:internal-for-testing");
+
+  test("caps the total dict count at 256", () => {
+    // Single-pass Cartesian product: 10 × 10 × 3 = 300 entries, over the cap.
+    expect(() => cronToCalendarIntervalForTesting("0,1,2,3,4,5,6,7,8,9 0,1,2,3,4,5,6,7,8,9 1,2,3 * *")).toThrow(
+      /too many launchd calendar intervals/i,
+    );
+  });
+
+  test("caps the SUM across both OR-split passes", () => {
+    // Both day-of-month and day-of-week restricted → two passes:
+    // (10 × 10 × 2) + (10 × 10 × 2) = 400 entries. Each pass is under 256 but
+    // the sum is not — the cap must sum the passes, not check each one.
+    expect(() =>
+      cronToCalendarIntervalForTesting("0,1,2,3,4,5,6,7,8,9 0,1,2,3,4,5,6,7,8,9 1,15 * 1,3"),
+    ).toThrow(/too many launchd calendar intervals/i);
+  });
+
+  test("accepts expressions just under the cap", () => {
+    // 10 × 10 × 2 = 200 entries.
+    const xml = cronToCalendarIntervalForTesting("0,1,2,3,4,5,6,7,8,9 0,1,2,3,4,5,6,7,8,9 1,15 * *");
+    expect(xml).toContain("<array>");
+    expect(xml).toContain("<key>Minute</key>");
+    // 200 dicts emitted.
+    expect(xml.split("<dict>").length - 1).toBe(200);
+  });
+
+  test("rejects malformed expressions with a generic error", () => {
+    expect(() => cronToCalendarIntervalForTesting("not a cron")).toThrow(/Invalid cron expression/i);
+  });
+});

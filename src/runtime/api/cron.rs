@@ -2760,6 +2760,34 @@ fn emit_calendar_dicts(
     Ok(())
 }
 
+/// Testing-only (`bun:internal-for-testing`): drive `cron_to_calendar_interval`
+/// directly so the macOS launchd `StartCalendarInterval` 256-cap can be
+/// exercised on any platform (the production path only runs on macOS via
+/// `start_mac`). Returns the plist XML on success; throws on
+/// `InvalidCron`/`TooManyTriggers` with the same message `start_mac` surfaces.
+pub fn js_cron_to_calendar_interval_for_testing(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let arg = frame.argument(0);
+    if !arg.is_string() {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "cronToCalendarInterval expects a string schedule"
+        )));
+    }
+    let schedule = arg.to_slice(global)?;
+    match cron_to_calendar_interval(schedule.slice()) {
+        Ok(xml) => {
+            let s = bun_core::String::clone_utf8(&xml);
+            bun_jsc::bun_string_jsc::to_js(&s, global)
+        }
+        Err(CalendarError::TooManyTriggers) => Err(global.throw(format_args!(
+            "This cron expression expands to too many launchd calendar intervals (max 256). Use wildcards (*) for fields that don't need restricting, or simplify the expression."
+        ))),
+        Err(_) => Err(global.throw(format_args!("Invalid cron expression"))),
+    }
+}
+
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, PartialEq, Eq)]
 pub enum TaskXmlError {
     #[error("InvalidCron")]
